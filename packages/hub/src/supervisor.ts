@@ -13,6 +13,7 @@ import type * as P from '@dither-chat/protocol';
 import { writeSecretFile } from '@dither-chat/protocol/secret-file';
 import type { AccountRow, Store } from './store.ts';
 import { acquireLock, releaseLock } from './lock.ts';
+import { sliced, type SliceOptions } from './slices.ts';
 
 export interface InprocAdapter {
   start(emit: (ev: P.AdapterEvent) => void): void;
@@ -77,6 +78,8 @@ export interface CallSink {
 
 /** Another connection held the database past busy_timeout (SQLITE_BUSY). */
 export const isBusy = (e: unknown) => (e as { code?: string } | null)?.code === 'SQLITE_BUSY';
+/** Adapter events applied in one transaction, and between turns of the event loop when a batch is long. */
+export const EVENTS_STEP = 32;
 /** How long held events wait before they are tried again, and how many times in a row. */
 const HELD_RETRY_MS = 1000;
 const HELD_TRIES = 60;
@@ -314,8 +317,19 @@ export class Supervisor {
   private heldTries = 0;
   private heldTimer: ReturnType<typeof setTimeout> | null = null;
 
+  /** Batches not applied yet, in the order they came: a long one, and whatever came behind it. */
+  private inbox: { account: string; events: P.AdapterEvent[] }[] = [];
+  private applying: Promise<void> | null = null;
+  /** How a long batch shares the hub's thread (slices.ts); a test's clock and pauses. */
+  slices: SliceOptions = {};
+  /** Told how many events each transaction applied (a test's). */
+  onApplied?: (events: number) => void;
+
   /**
    * An account's events, from its socket, an in-process adapter, or (remote.ts) dither-accounts' manager, in order.
+   * A few, with nothing waiting: applied now, in one transaction (one commit: on a busy disk each commit is most of
+   * what an event costs). More (a history page, a snapshot, a member list: hundreds or thousands), or behind others:
+   * queued, and applied EVENTS_STEP at a time, each slice one transaction, with a turn of the event loop between.
    * One that fails is logged with its type and skipped; the rest go on. One the database was locked for (another
    * process held it past busy_timeout, store.ts) is held with everything after it, and tried again a second later.
    */
@@ -325,22 +339,65 @@ export class Supervisor {
       waiting.push(...events);
       return;
     }
-    for (let i = 0; i < events.length; i++) {
-      let r: 'busy' | void;
-      try {
-        r = this.handle(accountId, events[i]);
-      } catch (e) {
-        console.error(`[${accountId}] ${events[i].t} failed:`, e);
+    if (!this.inbox.length && events.length <= EVENTS_STEP) return this.applyNow(accountId, events);
+    this.inbox.push({ account: accountId, events: [...events] });
+    this.applying ??= sliced('adapter events: backlog', this.applySteps(), this.slices)
+      .catch((e) => console.error('applying adapter events failed', e))
+      .finally(() => (this.applying = null));
+  }
+
+  /** Once what is queued is applied (held events aside): a test's wait. */
+  drained(): Promise<void> {
+    return this.applying ?? Promise.resolve();
+  }
+
+  private *applySteps(): Generator<number, void> {
+    while (this.inbox.length) {
+      const b = this.inbox[0];
+      // Its account is held for a locked database: this waits behind what is held.
+      const waiting = this.held.get(b.account);
+      if (waiting) {
+        waiting.push(...b.events);
+        this.inbox.shift();
         continue;
       }
-      if (r === 'busy') {
-        this.held.set(accountId, events.slice(i));
-        console.warn(`[${accountId}] the database is locked: ${events.length - i} events wait to be applied again`);
-        this.heldTimer ??= setTimeout(() => this.retryHeld(), HELD_RETRY_MS);
-        (this.heldTimer as { unref?: () => void }).unref?.();
-        return;
-      }
+      const part = b.events.splice(0, EVENTS_STEP);
+      if (!b.events.length) this.inbox.shift();
+      this.applyNow(b.account, part);
+      yield part.length;
     }
+  }
+
+  /** These events in one transaction; from the first the database was locked for, held. */
+  private applyNow(accountId: string, events: P.AdapterEvent[]) {
+    let busyAt = -1;
+    try {
+      this.store.db.transaction(() => {
+        for (let i = 0; i < events.length; i++) {
+          let r: 'busy' | void;
+          try {
+            r = this.handle(accountId, events[i]);
+          } catch (e) {
+            console.error(`[${accountId}] ${events[i].t} failed:`, e);
+            continue;
+          }
+          if (r === 'busy') {
+            busyAt = i;
+            return;
+          }
+        }
+      })();
+    } catch (e) {
+      // The commit itself met the lock: none of them is in.
+      if (!isBusy(e)) throw e;
+      busyAt = 0;
+    }
+    this.onApplied?.(busyAt < 0 ? events.length : busyAt);
+    if (busyAt < 0) return;
+    this.held.set(accountId, events.slice(busyAt));
+    console.warn(`[${accountId}] the database is locked: ${events.length - busyAt} events wait to be applied again`);
+    this.heldTimer ??= setTimeout(() => this.retryHeld(), HELD_RETRY_MS);
+    (this.heldTimer as { unref?: () => void }).unref?.();
   }
 
   /** The held events, again (a timer's, or a test's). After HELD_TRIES in a row the database is taken to be stuck. */
@@ -353,8 +410,18 @@ export class Supervisor {
       this.heldTries = 0;
       return;
     }
-    for (const [id, evs] of held) this.apply(id, evs);
+    for (const [id, evs] of held) {
+      // What came for the account while it was held and is still queued comes after it.
+      for (const b of this.inbox) if (b.account === id) evs.push(...b.events.splice(0));
+      this.inbox = this.inbox.filter((b) => b.events.length);
+      this.apply(id, evs);
+    }
     if (!this.held.size) this.heldTries = 0;
+  }
+
+  /** Events queued to be applied, held ones included (a test waits for 0). */
+  get backlog(): number {
+    return this.inbox.reduce((n, b) => n + b.events.length, 0) + this.heldEvents;
   }
 
   /** Events waiting for the database (a test's). */

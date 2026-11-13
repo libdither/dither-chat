@@ -36,7 +36,8 @@ export async function compress(req: Request, res: Response | undefined): Promise
   const headers = new Headers(res.headers);
   headers.append('vary', 'accept-encoding');
   if (raw.byteLength < MIN_BYTES) return new Response(raw, { status: res.status, headers });
-  const body = new Uint8Array(enc === 'zstd' ? Bun.zstdCompressSync(raw, { level: 3 }) : Bun.gzipSync(raw, { level: 4 }));
+  // zstd on a thread of the pool, not the hub's: a bootstrap is megabytes, a few hundred ms to compress. The same bytes.
+  const body = new Uint8Array(enc === 'zstd' ? await Bun.zstdCompress(raw, { level: 3 }) : Bun.gzipSync(raw, { level: 4 }));
   headers.set('content-encoding', enc);
   headers.delete('content-length');
   return new Response(body, { status: res.status, headers });

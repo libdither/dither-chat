@@ -516,6 +516,70 @@ corruption on a crash, but a power cut could lose the last commits. That is a ch
 `test/stalls.test.ts` holds it: deciding on a message in a channel of 1,200 messages reads them a hundred at a time
 (a test's page) with a turn between, gets the features one read gets, and reads nothing the next time.
 
+### Checkpoints, long batches and the rest (2026-11-13)
+
+After #116 the live hub's first ten minutes still read 60–64 holds (24–34 s), one to three over a second (5.2–5.6 s),
+and later single events held it for 5 s and bursts of hundreds of events for 2–10 s. The same sealed copy reproduced
+them, with:
+- the copy's own traffic replayed as above;
+- four devices on the live socket;
+- a synthetic media cache with the live one's 78,882 names;
+- big batches as the live log shows them: a history fetch of 1,340 messages, a snapshot of 300 conversations and 300
+  identities, a member list of 1,000, eight pages of 20.
+
+The profile, by hold:
+
+- **Checkpoints.** The 6–10 s holds were single small commits (an ingest, a pending-triage row) spending seconds in
+  SQLite's `run`. That is SQLite's automatic checkpoint: the commit that takes the write-ahead log past 1,000 pages
+  copies the log back into the 1.4 GB database file and fsyncs it, inside itself. After a burst of writes the copy is
+  big, and it is why `flush` (which commits the journal) led the live log's labelled totals. The hub's connection
+  now does no checkpoints (`wal_autocheckpoint = 0`). A worker thread with its own connection runs a passive one every
+  second (`checkpoint.ts`): it waits for nobody and nobody waits for it, and commits are as safe as before. In ten
+  minutes of the replay it ran 599–601, the longest 0.5–1.6 s on its own thread. If the worker stops, the hub's
+  connection checkpoints again as SQLite would.
+- **Long batches** from the manager were applied one event at a time, each in its own transaction, all at once: 2.5 s
+  for the 1,340 and 2.7 s for the snapshot. `Supervisor.apply` now applies a batch of more than 32 events, or one
+  queued behind others, 32 at a time. Each slice is one transaction, with a turn of the event loop between. Small
+  batches go in at once, as before, but in one transaction. Same events, same order. An account held for a locked
+  database (#124) keeps its queued batches behind what it holds.
+- **Upkeep at 60 s** (and every six hours) listed and stat'ed the media cache's 78,882 names, then checked every
+  `.mime` again: 3 s on the live hub. It is now a generator, 512 names a slice (`pruneMediaCacheSteps`), and the same
+  files go.
+- **A flush** commits once: attention's folds (a transaction for each conversation) and the journal are one
+  transaction, and the frame goes to devices after the commit.
+- **Attention's rescore of everything** (every five minutes, after the learned order refits, and the first scoring at
+  each start) scores 64 conversations a slice. Devices get the whole list once the first scores are done; a bootstrap
+  before then works them out as it did.
+- **The bootstrap** compresses its zstd on the thread pool (`Bun.zstdCompress`, the same bytes) and remembers each
+  picture's signed link (`mediaSigner`), which was 15k HMACs a bootstrap on the live hub. Its bytes are unchanged
+  (budgets.json).
+
+Main and this side by side over the same ten minutes of replayed traffic, at the same load (6–14), from the hub's own
+stall lines. "Without polls" leaves out the holds that had one of the test's 60 bootstrap requests in them:
+
+| | main | this |
+|---|---|---|
+| holds of 200 ms or more, their sum, the longest | 101, 53.6 s, 5.3 s | 90, 39.6 s, 2.3 s |
+| over a second | 10 | 5 |
+| without polls | 52, 34.4 s, 5.3 s | 49, 26.4 s, 2.3 s |
+| with a poll in them, the longest | 1.9 s | 0.73 s |
+| the first minute | 7, 2.4 s, 0.69 s | 4, 1.5 s, 0.52 s |
+
+A profiled run of this at a lower load put it at 46 holds, 19.4 s, the longest 1.8 s.
+
+What is left is commits waiting for a busy disk. Each one fsyncs (`synchronous` stays FULL), and a few of them in a
+row take a second or two when other work on the machine has the disk: in the comparison run the checkpointer's own
+copies took up to 1.6 s on its thread. A message is now about four commits (its batch, its triage decision, the
+flush, the embedder's own database). Fewer would need the writes on a thread of their own, or `synchronous = NORMAL`,
+which is the owner's choice.
+
+`test/stalls.test.ts` holds it, by counts:
+- a cache walk takes 512 names a slice and lets the same files go;
+- a 1,000-event batch is applied 32 to a transaction with a turn between, in order;
+- with the checkpointer the hub's commits copy nothing back, and its thread copies all of the log;
+- a flush writes inside one transaction and sends after it;
+- the sliced rescore gives the same scores, 64 at most between turns.
+
 ## The snapshot after each open (2026-11-11)
 
 Opening a conversation saves the device's snapshot 1.5 s later, when the page is idle (snapshot.ts). Opening one marks

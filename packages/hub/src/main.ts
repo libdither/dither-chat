@@ -25,8 +25,10 @@ import { Supervisor } from './supervisor.ts';
 import { STOP_QUESTION, Triage, URGENT, type Judge } from './triage.ts';
 import { TriageVotes } from './votes.ts';
 import { loadVapidKeys } from './webpush.ts';
-import { NightlyBackup, pruneMediaCache, rotateAdapterLogs, tightenPermissions } from './housekeeping.ts';
+import { NightlyBackup, pruneMediaCacheSteps, rotateAdapterLogs, tightenPermissions } from './housekeeping.ts';
 import { StartupTrace } from './startup.ts';
+import { startCheckpointer } from './checkpoint.ts';
+import { sliced } from './slices.ts';
 import { noteWork, StallWatch } from './stalls.ts';
 import { CalendarLink, calendarChain, calendarUrl, ReminderDelivery, REMINDER_RULE_ID } from './calendar.ts';
 import { inQuietHours } from './triage.ts';
@@ -71,6 +73,8 @@ startup.mark('data dir');
 
 const store = new Store(join(dataDir, 'hub.sqlite'), mediaSigner(secret));
 startup.add(store.opening);
+// SQLite's checkpoints on a thread of their own, not inside whichever commit of the hub's comes next (checkpoint.ts).
+const checkpoints = startCheckpointer(store.db, join(dataDir, 'hub.sqlite'));
 // What the last run left undecided, before this run's adapters add their own (decided once the server is up).
 const leftover = store.takePendingTriage(Date.now() - 30 * 60_000);
 // The activity log (docs/activity.md). DITHER_ACTIVITY_FEATURES=1 lets triage see what it says, as reasons only.
@@ -242,7 +246,8 @@ if (!demo) backup.start();
 const upkeep = async () => {
   noteWork('upkeep');
   try {
-    const m = pruneMediaCache(join(dataDir, 'media-cache'));
+    // Tens of thousands of files: a slice at a time (slices.ts).
+    const m = await sliced('upkeep: media cache', pruneMediaCacheSteps(join(dataDir, 'media-cache')));
     if (m.removed) console.log(`media cache: removed ${m.removed} files, ${Math.round(m.bytes / 1048576)} MB kept`);
     rotateAdapterLogs(join(dataDir, 'accounts'));
     // In batches, with room for everything else between them.
@@ -413,16 +418,24 @@ server.start();
 startup.mark('http listen');
 // Every hold-up of the event loop from here on, with what began in it, for the first ten minutes (stalls.ts).
 const stalls = new StallWatch().begin();
+// Beside the stall log's summary: whether the checkpoints kept up, and how long the longest took on its own thread.
+setTimeout(() => {
+  const c = checkpoints.stats;
+  console.log(`checkpoints: ${c.done} in the first 10 min, the longest ${Math.round(c.longestMs)} ms off the hub's thread${c.failed ? `, ${c.failed} failed` : ''}`);
+}, 10 * 60_000).unref();
 calendar?.start();
 noteWork('attention: first scoring');
 attention.start((events) => server.broadcast(events));
 ranker.onFit = () => {
-  noteWork('attention: rescore all');
-  server.broadcast(attention.rescoreAll());
+  void attention
+    .rescoreAllSliced()
+    .then((events) => server.broadcast(events))
+    .catch((e) => console.error('attention: rescore failed', e));
 };
 ranker.start();
-// Scores live in memory and were worked out afresh: a client resuming from before this start takes the whole list.
-server.broadcast([{ t: 'attention', items: attention.list(), removed: [], replace: true }]);
+// Scores live in memory and were worked out afresh: a client resuming from before this start takes the whole list,
+// once the first scoring (a slice at a time) is done.
+void attention.firstScores.then(() => server.broadcast([{ t: 'attention', items: attention.list(), removed: [], replace: true }]));
 startup.mark('attention');
 if (store.journal.started === 'unclean') console.log('sync: the hub did not stop cleanly last time; clients start over with a full bootstrap');
 // Messages a crash or restart left undecided (taken before any adapter started): those from the last half hour still
@@ -449,6 +462,7 @@ const shutdown = async () => {
   // What is being triaged finishes first (a few seconds at most); the rest waits in triage_pending for the next start.
   await Promise.race([queue, new Promise((r) => setTimeout(r, 5_000))]);
   backup.stop();
+  checkpoints.stop();
   stalls.stop();
   ranker.stop();
   attention.stop();

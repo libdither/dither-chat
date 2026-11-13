@@ -3,8 +3,9 @@
  * database, the media cache kept under a size, adapter logs rotated, and triage rows nobody learns from let go.
  */
 
-import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, opendirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { whole } from './slices.ts';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -134,11 +135,44 @@ async function vacuumInto(from: string, to: string) {
  * DITHER_MEDIA_CACHE_MB caps it again: past that, the least recently shown files go first (server.ts touches a file
  * each time it serves it).
  */
-export function pruneMediaCache(dir: string, maxBytes = Number(process.env.DITHER_MEDIA_CACHE_MB) > 0 ? Number(process.env.DITHER_MEDIA_CACHE_MB) * 1024 * 1024 : Infinity, now = Date.now()): { removed: number; bytes: number } {
+export function pruneMediaCache(dir: string, maxBytes = mediaCacheCap(), now = Date.now()): { removed: number; bytes: number } {
+  return whole(pruneMediaCacheSteps(dir, maxBytes, now));
+}
+
+const mediaCacheCap = () => (Number(process.env.DITHER_MEDIA_CACHE_MB) > 0 ? Number(process.env.DITHER_MEDIA_CACHE_MB) * 1024 * 1024 : Infinity);
+
+/** The directory's names in its own order, a few at a time (the live cache is tens of thousands). */
+function* entries(dir: string): Generator<number, string[]> {
+  const d = opendirSync(dir);
+  const out: string[] = [];
+  try {
+    for (let e = d.readSync(); e; e = d.readSync()) {
+      out.push(e.name);
+      if (out.length % CACHE_STEP === 0) yield CACHE_STEP;
+    }
+  } finally {
+    d.closeSync();
+  }
+  return out;
+}
+
+/** Files looked at between turns of the event loop when upkeep walks the media cache. */
+export const CACHE_STEP = 512;
+
+/**
+ * `pruneMediaCache` as steps (slices.ts): on the live hub the cache is 80k names, every one stat'ed and every .mime
+ * checked, 3 s of the hub's thread in one go. The same files go, in the same order.
+ */
+export function* pruneMediaCacheSteps(dir: string, maxBytes = mediaCacheCap(), now = Date.now()): Generator<number, { removed: number; bytes: number }> {
   if (!existsSync(dir)) return { removed: 0, bytes: 0 };
   const files: { name: string; size: number; at: number }[] = [];
   let removed = 0;
-  for (const name of readdirSync(dir)) {
+  let done = 0;
+  for (const name of yield* entries(dir)) {
+    if (++done >= CACHE_STEP) {
+      done = 0;
+      yield CACHE_STEP;
+    }
     const p = join(dir, name);
     let st;
     try {
@@ -162,9 +196,19 @@ export function pruneMediaCache(dir: string, maxBytes = Number(process.env.DITHE
     rmSync(join(dir, f.name + '.mime'), { force: true });
     total -= f.size;
     removed++;
+    if (++done >= CACHE_STEP) {
+      done = 0;
+      yield CACHE_STEP;
+    }
   }
   // A .mime whose file is gone answers nothing.
-  for (const name of readdirSync(dir)) if (name.endsWith('.mime') && !existsSync(join(dir, name.slice(0, -5)))) rmSync(join(dir, name), { force: true });
+  for (const name of yield* entries(dir)) {
+    if (name.endsWith('.mime') && !existsSync(join(dir, name.slice(0, -5)))) rmSync(join(dir, name), { force: true });
+    if (++done >= CACHE_STEP) {
+      done = 0;
+      yield CACHE_STEP;
+    }
+  }
   return { removed, bytes: total };
 }
 

@@ -147,6 +147,12 @@ stalls: 46 of 200 ms or more in the first 10 min, the longest 802 ms (GET /api/h
 A request's own work is a hold of its own: a bootstrap is 0.25–0.7 s of it on the live hub's database. `nothing
 noted` means the work that held it does not note itself yet (`noteWork`).
 
+SQLite's checkpoints (copying the write-ahead log back into `hub.sqlite`) run on a thread of their own
+(`packages/hub/src/checkpoint.ts`), not inside whichever commit of the hub's passes 1,000 pages. Beside the stall
+log's summary the hub logs `checkpoints: N in the first 10 min, the longest X ms off the hub's thread`: N near 600
+says they kept up. If the thread fails, the hub logs `checkpoints: the worker … the hub's connection checkpoints
+again` and SQLite's own checkpoints come back, holds and all.
+
 CI starts the hub on databases older hubs left (`packages/hub/test/old-database.test.ts`, fixtures in
 `packages/hub/test/fixtures/old-db/`): it must copy the database aside, migrate, log that line and read back what the old
 hub stored. `bun scripts/old-db-fixture.ts <commit> <name>` makes another fixture from an older commit's demo hub
