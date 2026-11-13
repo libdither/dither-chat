@@ -182,6 +182,8 @@ function threads(epoch: number) {
   const kids = (id: string) => tree.filter((p) => p.replyTo?.id === id);
   // Each post's reply count is what is under it, as X counts it.
   for (const p of [r, ...tree]) p.counts = { ...p.counts, replies: kids(p.id).length };
+  // X counts a reply under Maya's that it never shows (a reply it filters out): "1 more reply" there brings nothing.
+  maya.counts = { ...maya.counts, replies: 1 };
   const all = [r, ...tree];
   // A reply and the first answers under it, as X shows one in a thread.
   const chain = (p: P.PostFact) => {

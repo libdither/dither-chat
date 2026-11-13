@@ -72,6 +72,7 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
   const [done, setDone] = useState<ReadonlySet<string>>(new Set());
   const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
   const [style, setStyle] = useState<CommentStyle>(readStyle);
+  const [failed, setFailed] = useState<ReadonlyMap<string, string>>(new Map());
   const scroller = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let live = true;
@@ -109,7 +110,14 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
       (e) => setMore((e as Error).message),
     );
   };
-  const nodes = useMemo(() => (t?.focal ? replyTree(t.post, [...t.replies.flat(), ...(t.logged ?? []), ...extra]) : []), [t, extra]);
+  const nodes = useMemo(() => {
+    if (!t?.focal) return [];
+    // Replies as X gave them (their counts newest), then what was logged before that they do not hold, then branches
+    // opened: a later copy wins, so the freshest read of a post is the one kept.
+    const given = t.replies.flat();
+    const ids = new Set(given.map((p) => p.id));
+    return replyTree((t.focal.repostOf ?? t.focal).id, [...(t.logged ?? []).filter((p) => !ids.has(p.id)), ...given, ...extra]);
+  }, [t, extra]);
   const with_ = (set: ReadonlySet<string>, id: string, on: boolean) => {
     const next = new Set(set);
     if (on) next.add(id);
@@ -121,21 +129,44 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
     if (!t) return;
     const id = n.post.id;
     setLoading((l) => with_(l, id, true));
+    setFailed((f) => {
+      const next = new Map(f);
+      next.delete(id);
+      return next;
+    });
+    const fail = (why: string) => {
+      // Kept: X may answer next time. Said, so the button does not just vanish.
+      setFailed((f) => new Map(f).set(id, why));
+      setLoading((l) => with_(l, id, false));
+    };
     api<P.PostThreadView>(`/api/posts/${t.network}/${id}/thread`).then(
       (v) => {
+        if (v.stored) return fail(v.stored);
         v.identities.forEach((i) => db.identities.has(i.id) || db.identities.set(i.id, i));
-        const known = new Set([...t.replies.flat(), ...(t.logged ?? []), ...extra].map((p) => p.id));
-        const fresh = [...v.replies.flat(), ...(v.logged ?? [])].filter((p) => !known.has(p.id));
-        setExtra((e) => [...e, ...fresh]);
-        // Nothing new under it: no button that never ends.
-        if (!fresh.some((p) => p.replyTo?.id === id)) setDone((d) => with_(d, id, true));
+        const got = [...v.replies.flat(), ...(v.logged ?? [])];
+        setExtra((e) => {
+          const known = new Set([...t.replies.flat(), ...(t.logged ?? []), ...e].map((p) => p.id));
+          return [...e, ...got.filter((p) => !known.has(p.id))];
+        });
+        // Nothing (more) under it on X: no button that never ends.
+        const known = new Set(nodes.flatMap(function all(x: TreeNode): string[] {
+          return [x.post.id, ...x.children.flatMap(all)];
+        }));
+        if (!got.some((p) => p.replyTo?.id === id && !known.has(p.id))) setDone((d) => with_(d, id, true));
         setLoading((l) => with_(l, id, false));
       },
-      () => {
-        setDone((d) => with_(d, id, true));
-        setLoading((l) => with_(l, id, false));
-      },
+      (e) => fail((e as Error).message),
     );
+  };
+  /** Fold or unfold a reply, keeping the keyboard where it was: on the control that now stands for it. */
+  const fold = (id: string) => {
+    const inside = !!document.activeElement?.closest(`[data-post="${CSS.escape(id)}"]`);
+    setFolded((f) => with_(f, id, !f.has(id)));
+    if (inside)
+      setTimeout(() => {
+        const node = scroller.current?.querySelector(`[data-post="${CSS.escape(id)}"]`);
+        (node?.querySelector('.ct-unfold, .ct-toggle, .ct-rail, .ct-flat-toggle') as HTMLElement | null)?.focus();
+      });
   };
   const pickStyle = (s: CommentStyle) => {
     setStyle(s);
@@ -214,7 +245,7 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
               <Comments
                 nodes={nodes}
                 style={style}
-                ctx={{ kit, network, op: author, folded, fold: (id) => setFolded((f) => with_(f, id, !f.has(id))), loading, done, load: loadUnder }}
+                ctx={{ kit, network, op: author, folded, fold, loading, done, failed, load: loadUnder }}
               />
               {!nodes.length && !t.more && <p class="thread-none">{t.stored ? 'No replies logged.' : 'No replies yet.'}</p>}
               {t.more && (

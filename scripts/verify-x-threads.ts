@@ -130,14 +130,18 @@ try {
     await Bun.sleep(150);
   };
   const moreUnder = () => page.eval<string[]>(`[...document.querySelectorAll('.ct-more')].map((b) => b.textContent)`);
-  check('"1 more reply" where X counts more under a reply than it showed', (await moreUnder()).length === 3, await moreUnder());
+  check('"1 more reply" where X counts more under a reply than it showed', (await moreUnder()).length === 4, await moreUnder());
+  // Under Maya's reply X counts one it never shows: asking brings nothing, and the button goes rather than staying.
+  await page.eval(`[...document.querySelectorAll('.ct-node[data-depth="0"]')].find((n) => n.querySelector(':scope > .ct-main .post-who b')?.textContent === 'Maya K.').querySelector(':scope > .ct-main .ct-more').click()`);
+  await page.until(`(() => { const n = [...document.querySelectorAll('.ct-node[data-depth="0"]')].find((n) => n.querySelector(':scope > .ct-main .post-who b')?.textContent === 'Maya K.'); return !n.querySelector('.ct-more') && !n.querySelector('.ct-node'); })()`, 15000)
+    .then(() => check('a branch X has nothing under goes quiet: no button that never ends', true), () => check('a branch X has nothing under goes quiet: no button that never ends', false));
   check('Show more replies while X has more', t.more);
   check('nothing sideways on a desktop', (await overflow('.thread-scroll')) === 0);
   if (shots) await toReplies(), await page.shot(join(shots, 'tour-02-thread-tree.png'));
 
   // A branch opens in place: under your answer to Alice, then under your answer to Nora, eight deep.
   const openUnder = (who: string, text: RegExp) =>
-    page.eval(`[...document.querySelectorAll('.ct-node')].find((n) => n.querySelector(':scope > .ct-main .post-who b')?.textContent === ${JSON.stringify(who)} && ${text}.test(n.querySelector(':scope > .ct-main .ct-text')?.textContent ?? '')).querySelector(':scope > .ct-main > .ct-more').click()`);
+    page.eval(`[...document.querySelectorAll('.ct-node')].find((n) => n.querySelector(':scope > .ct-main .post-who b')?.textContent === ${JSON.stringify(who)} && ${text}.test(n.querySelector(':scope > .ct-main .ct-text')?.textContent ?? '')).querySelector(':scope > .ct-main > .ct-more-wrap .ct-more').click()`);
   await openUnder('You', /At 10M/);
   await page.until(`[...document.querySelectorAll('.ct-node')].some((n) => /landmarks/.test(n.textContent))`, 15000);
   await openUnder('You', /Four landmarks/);
@@ -157,11 +161,12 @@ try {
   }
 
   // Folding a branch by its line, as on Reddit.
-  await page.eval(`[...document.querySelectorAll('.ct-node[data-depth="0"]')].find((n) => n.querySelector(':scope > .ct-main .post-who b')?.textContent === 'Alice Chen').querySelector(':scope > .ct-side .ct-rail').click()`);
+  await page.eval(`(() => { const r = [...document.querySelectorAll('.ct-node[data-depth="0"]')].find((n) => n.querySelector(':scope > .ct-main .post-who b')?.textContent === 'Alice Chen').querySelector(':scope > .ct-side .ct-rail'); r.focus(); r.click(); })()`);
   await page.until(`!!document.querySelector('.ct-node.folded')`, 5000);
   const fold = await page.eval<any>(`(() => { const n = document.querySelector('.ct-node.folded'); return { who: n.querySelector('.post-who b')?.textContent, said: n.querySelector('.ct-folded')?.textContent ?? '', inside: n.querySelectorAll('.ct-node').length }; })()`);
   check('the line down a reply folds its branch, saying how many it hides', fold.who === 'Alice Chen' && /\d+ more replies/.test(fold.said) && fold.inside === 0, fold);
   if (shots) await toReplies(), await page.shot(join(shots, 'tour-04-thread-folded.png'));
+  check('the keyboard stays on the folded reply (its Show button)', (await page.eval<string>(`document.activeElement?.className ?? ''`)) === 'ct-unfold', await page.eval(`document.activeElement?.className`));
   await page.eval(`document.querySelector('.ct-node.folded .ct-unfold').click()`);
   await page.until(`!document.querySelector('.ct-node.folded')`, 5000);
 
@@ -169,12 +174,13 @@ try {
   const pick = (label: string) => page.eval(`[...document.querySelectorAll('.thread-style button')].find((b) => b.textContent === ${JSON.stringify(label)}).click()`);
   await pick('Compact');
   await page.until(`!!document.querySelector('.ct.compact')`, 5000);
-  check('Compact: the tree without pictures, [–] to fold', (await page.eval<number>(`document.querySelectorAll('.ct.compact .ct-node .avatar').length`)) === 0 && (await page.eval<number>(`document.querySelectorAll('.ct.compact .ct-toggle').length`)) > 5);
+  const compact = await page.eval<any>(`({ avatars: document.querySelectorAll('.ct.compact .ct-node .avatar').length, toggles: document.querySelectorAll('.ct.compact .ct-toggle').length, nodes: document.querySelectorAll('.ct.compact .ct-node').length })`);
+  check('Compact: the tree without pictures, [–] to fold on every reply', compact.avatars === 0 && compact.toggles === compact.nodes && compact.nodes === t.tree.length, { ...compact, tree: t.tree.length });
   if (shots) await toReplies(), await page.shot(join(shots, 'tour-05-style-compact.png'));
   await pick('Flat');
   await page.until(`!!document.querySelector('.ct-flat')`, 5000);
   t = await thread();
-  check('Flat: replies to the post, everything under each one level in', t.flat.map((f: any[]) => f[0]).join(',') === 'You,Ravi,Alice Chen,Maya K.' && t.flat.find((f: any[]) => f[0] === 'Alice Chen')[1] >= 7, t.flat);
+  check('Flat: replies to the post, everything under each one level in', t.flat.map((f: any[]) => f[0]).join(',') === 'You,Ravi,Alice Chen,Maya K.' && t.flat.find((f: any[]) => f[0] === 'Alice Chen')[1] === 8, t.flat);
   if (shots) await toReplies(), await page.shot(join(shots, 'tour-06-style-flat.png'));
   await pick('Chains');
   await page.until(`document.querySelectorAll('.thread-chain').length > 0`, 5000);

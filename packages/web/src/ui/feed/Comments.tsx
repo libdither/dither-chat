@@ -39,16 +39,23 @@ export interface CommentCtx {
   /** Branches being read, and those the network had nothing more under. */
   loading: ReadonlySet<string>;
   done: ReadonlySet<string>;
+  /** Branches the network could not be asked for, and why: the button stays, to try again. */
+  failed: ReadonlyMap<string, string>;
   load: (n: TreeNode) => void;
 }
 
-function MoreUnder({ n, ctx }: { n: TreeNode; ctx: CommentCtx }) {
+function MoreUnder({ n, ctx, under }: { n: TreeNode; ctx: CommentCtx; under?: boolean }) {
   if (!n.hidden || ctx.done.has(n.post.id)) return null;
   const busy = ctx.loading.has(n.post.id);
+  const why = ctx.failed.get(n.post.id);
+  const who = under ? ` under ${ctx.kit.name(n.post.author ?? null)}` : '';
   return (
-    <button class="ct-more" onClick={() => ctx.load(n)} disabled={busy}>
-      {busy ? 'Loading…' : `${n.hidden} more ${n.hidden === 1 ? 'reply' : 'replies'}`}
-    </button>
+    <span class="ct-more-wrap">
+      <button class="ct-more" onClick={() => ctx.load(n)} disabled={busy}>
+        {busy ? 'Loading…' : why ? 'Try again' : `${n.hidden} more ${n.hidden === 1 ? 'reply' : 'replies'}${who}`}
+      </button>
+      {why && !busy && <span class="ct-more-why">{why}</span>}
+    </span>
   );
 }
 
@@ -104,7 +111,15 @@ function Node({ n, depth, ctx, compact }: { n: TreeNode; depth: number; ctx: Com
             <ctx.kit.Avatar id={p.author ?? p.id} name={name} url={ctx.kit.avatarUrl(p.author ?? null)} size={24} />
           </button>
         )}
-        {!folded && <button class="ct-rail" onClick={() => ctx.fold(p.id)} aria-expanded aria-label={`Fold ${name}'s reply and the ${n.size} under it`} title="Fold" />}
+        {!folded && (
+          <button
+            class="ct-rail"
+            onClick={() => ctx.fold(p.id)}
+            aria-expanded="true"
+            aria-label={n.size ? `Fold ${name}'s reply and the ${n.size} under it` : `Fold ${name}'s reply`}
+            title="Fold"
+          />
+        )}
       </div>
       <div class="ct-main">
         <Head p={p} ctx={ctx} avatar={0} folded={folded} size={n.size} />
@@ -178,18 +193,28 @@ function FlatBranch({ n, ctx }: { n: TreeNode; ctx: CommentCtx }) {
 
 /** The replies, in the reader's style. */
 export function Comments({ nodes, style, ctx }: { nodes: TreeNode[]; style: CommentStyle; ctx: CommentCtx }) {
-  if (style === 'chains')
+  if (style === 'chains') {
+    const byId = new Map<string, TreeNode>();
+    const index = (x: TreeNode) => (byId.set(x.post.id, x), x.children.forEach(index));
+    nodes.forEach(index);
+    const tops = new Set(nodes.map((x) => x.post.id));
     return (
       <>
-        {treeChains(nodes).map((chain) => (
-          <div class="thread-chain">
-            {chain.map((p, i) => (
-              <Row p={p} kit={ctx.kit} network={ctx.network} line={i < chain.length - 1} />
-            ))}
-          </div>
-        ))}
+        {treeChains(nodes).map((chain) => {
+          const first = chain[0];
+          const to = !tops.has(first.id) && first.replyTo?.author ? ctx.kit.handle(first.replyTo.author) : null;
+          return (
+            <div class="thread-chain">
+              {chain.map((p, i) => (
+                <Row p={p} kit={ctx.kit} network={ctx.network} line={i < chain.length - 1} above={i === 0 && to ? <span class="post-mark">Replying to @{to}</span> : undefined} />
+              ))}
+              {chain.map((p) => byId.get(p.id)).map((x) => x && <MoreUnder n={x} ctx={ctx} under />)}
+            </div>
+          );
+        })}
       </>
     );
+  }
   if (style === 'flat')
     return (
       <div class="ct ct-flatlist">

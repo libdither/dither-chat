@@ -158,7 +158,7 @@ export class Posts {
           this.recent.set(`${network}:${post}:`, { at: Date.now(), t, accountId });
           for (const [k, r] of this.recent) if (Date.now() - r.at >= CACHE_MS) this.recent.delete(k);
         }
-        return this.view(network, post, accountId, t, undefined);
+        return this.view(network, post, accountId, t, undefined, !cursor);
       } catch (e) {
         // A page of more replies has nothing logged to fall back on beyond the first page.
         if (cursor) throw e;
@@ -170,7 +170,7 @@ export class Posts {
   }
 
   /** The thread in hub ids, each post with the message it was logged as. */
-  private view(network: P.Network, post: string, accountId: string | null, t: P.PostThread, stored: string | undefined): P.PostThreadView {
+  private view(network: P.Network, post: string, accountId: string | null, t: P.PostThread, stored: string | undefined, withLogged = true): P.PostThreadView {
     const s = this.d.store;
     const media = (u: string) => s.mediaUrl(u, accountId);
     const one = (p: P.PostFact): P.PostView => {
@@ -180,7 +180,8 @@ export class Posts {
     };
     const shown = [...(t.focal ? [t.focal] : []), ...t.ancestors, ...t.replies.flat()];
     const ids = new Set(shown.map((p) => p.id));
-    const logged = t.focal ? this.logged(network, post).filter((p) => !ids.has(p.id)) : [];
+    // A page of more replies goes into a thread already holding them.
+    const logged = t.focal && withLogged ? this.logged(network, post).filter((p) => !ids.has(p.id)) : [];
     const all = [...shown, ...logged];
     const named = new Set<string>();
     for (const p of all) {
@@ -213,7 +214,8 @@ export class Posts {
            SELECT m.id, d.depth + 1 FROM message m JOIN d ON m.reply_to_id = d.id
            WHERE d.depth < ? AND m.native_id LIKE 'post:%' AND m.deleted = 0
          )
-         SELECT m.* FROM d JOIN message m ON m.id = d.id WHERE d.depth > 0 ORDER BY m.ts LIMIT ?`,
+         -- CROSS JOIN keeps d first: a plain join lets the planner scan message by ts and probe d (whole table).
+         SELECT m.* FROM d CROSS JOIN message m ON m.id = d.id WHERE d.depth > 0 ORDER BY m.ts LIMIT ?`,
       )
       .all(hubId('msg', network, postNativeId(post)), LOGGED_DEPTH, LOGGED_MAX) as Row[];
     return rows.map((r) => this.postOf(r)).filter((p): p is P.PostFact => !!p);

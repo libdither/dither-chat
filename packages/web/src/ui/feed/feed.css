@@ -733,6 +733,19 @@
   align-items: center;
   gap: 10px;
 }
+.ct-more-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.thread-chain > .ct-more-wrap {
+  margin: 0 0 8px 54px;
+}
+.ct-more-why {
+  color: var(--text-faint);
+  font-size: 12px;
+}
 /* Compact: no pictures, a narrow indent, [–] to fold. */
 .ct.compact .ct-node {
   gap: 4px;
