@@ -37,6 +37,7 @@ import { applyUpdate, updateReady } from '../pwa.ts';
 import { counting, rendered } from '../perf.ts';
 import { MailCenterLazy, MailComposerLazy, MailSidebarLazy } from './mail/lazy.tsx';
 import { RequestsPane } from './Requests.tsx';
+import { NoticesPaneLazy } from './Notices.tsx';
 import { CalendarPane } from './calendar/CalendarPane.tsx';
 import { calendarOn } from '../plans.ts';
 import { countKey } from '../clicklog.ts';
@@ -86,6 +87,8 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
       return { pane: <MailCenterLazy thread={r.thread} onBack={back} /> };
     case 'requests':
       return { pane: <RequestsPane focus={r.request} onBack={back} /> };
+    case 'notices':
+      return { pane: <NoticesPaneLazy focus={r.notice} onBack={back} /> };
     case 'calendar':
       return { pane: <CalendarPane at={r.at} /> };
   }
@@ -125,6 +128,7 @@ function sidebarFor(r: Route, onAdd: () => void): ComponentChildren {
     case 'mail':
       return <MailSidebarLazy list={r.list} active={r.thread} />;
     case 'requests':
+    case 'notices':
       return <InboxSidebar />;
     case 'calendar':
       return null;
