@@ -235,3 +235,127 @@ describe('Matrix', () => {
     for (const r of house.rows.filter((r) => r.kind === 'identity')) expect(r.insert).toMatch(/^<@@[\w.-]+:[\w.-]+> $/);
   });
 });
+
+describe('friends and everyone you know (Step 3)', () => {
+  const dev = () => conv('discord', 'dev', 'libdither');
+  const space = () => store.one<{ id: string }>(`SELECT id FROM space WHERE network = 'discord' AND name = 'libdither'`)!.id;
+  const person = (name: string) => store.one<{ id: string }>('SELECT id FROM person WHERE name = ?', name)!.id;
+  const native = (net: P.Network, name: string) => store.one<{ native_id: string }>('SELECT native_id FROM identity WHERE network = ? AND display_name = ?', net, name)!.native_id;
+  const section = (v: P.MentionablesView, s: P.MentionRow['section']) => v.rows.filter((r) => r.section === s);
+
+  // Alice Chen is one person on five networks, none of them Discord.
+  beforeAll(() => {
+    const [into, ...rest] = store.raw<{ id: string }>(`SELECT id FROM person WHERE name = 'Alice Chen' ORDER BY id`);
+    for (const p of rest) store.mergePersons(into.id, p.id);
+  });
+
+  test("unset, a messaging network's chat offers the people here alone", async () => {
+    const v = await view(dev(), '', { account: acc('discord-main') });
+    expect(v.scope).toBe('here');
+    expect(v.rows.every((r) => r.section === 'here')).toBe(true);
+  });
+
+  test("friends: your friends and contacts on any network and who you have a direct chat with, after the people here, and never repeated", async () => {
+    const v = await view(dev(), '', { account: acc('discord-main'), scope: 'friends' });
+    expect(v.scope).toBe('friends');
+    const here = section(v, 'here');
+    const friends = section(v, 'friends');
+    // The sections come in order: everything here, then the friends.
+    expect(v.rows.indexOf(friends[0])).toBe(here.length);
+    const shown = friends.map((r) => r.name);
+    for (const n of ['Jordan', 'Alice Chen', 'Mom', 'Noor', 'kai']) expect(shown).toContain(n);
+    // Quinn is here already; you are nobody's friend here.
+    expect(shown).not.toContain('Quinn');
+    expect(shown).not.toContain('zyan');
+    expect(friends.every((r) => r.kind === 'person' && r.personId && r.accounts?.length)).toBe(true);
+    expect(section(v, 'everyone')).toEqual([]);
+  });
+
+  test('a friend with an account on this network inserts its mention; one without inserts a reference that pings nobody', async () => {
+    const v = await view(dev(), '', { account: acc('discord-main'), scope: 'friends' });
+    const jordan = v.rows.find((r) => r.name === 'Jordan')!;
+    expect(jordan).toMatchObject({ kind: 'person', insert: `<@${native('discord', 'Jordan')}> `, pings: true, network: 'discord', section: 'friends' });
+    const alice = v.rows.find((r) => r.name === 'Alice Chen')!;
+    expect(alice).toMatchObject({ kind: 'person', insert: `<@person:${person('Alice Chen')}> `, pings: false, section: 'friends' });
+    // Her accounts, one row each, by reference: none is on Discord.
+    expect(alice.accounts!.map((r) => r.network).sort()).toEqual(['matrix', 'signal', 'telegram', 'whatsapp', 'x']);
+    for (const r of alice.accounts!) expect(r).toMatchObject({ kind: 'identity', insert: `<@identity:${r.identityId}> `, pings: false, personId: person('Alice Chen') });
+    // Jordan's one account is the one his row names.
+    expect(jordan.accounts).toEqual([expect.objectContaining({ insert: jordan.insert, pings: true, network: 'discord' })]);
+  });
+
+  test('everyone you know: anyone the hub has a person for, by a name typed', async () => {
+    const v = await view(dev(), 'pri', { account: acc('discord-main'), scope: 'everyone' });
+    expect(v.scope).toBe('everyone');
+    expect(section(v, 'everyone').map((r) => r.name)).toEqual(['Priya']);
+    expect(v.rows.find((r) => r.name === 'Priya')).toMatchObject({ insert: `<@person:${person('Priya')}> `, pings: false, network: 'signal' });
+    // Friends still come as friends, and Alice on Discord is here (the server's member) and not again.
+    const al = await view(dev(), 'alice', { account: acc('discord-main'), scope: 'everyone' });
+    expect(section(al, 'here').map((r) => r.name)).toContain('Alice');
+    expect(section(al, 'friends').map((r) => r.name)).toEqual(['Alice Chen']);
+    expect(section(al, 'everyone')).toEqual([]);
+  });
+
+  test('only on this network: friends and everyone narrowed to their accounts here', async () => {
+    const v = await view(dev(), '', { account: acc('discord-main'), scope: 'friends', same: '1' });
+    expect(v.sameNetwork).toBe(true);
+    const friends = section(v, 'friends');
+    expect(friends.map((r) => r.name)).toContain('Jordan');
+    expect(friends.map((r) => r.name)).not.toContain('Alice Chen');
+    expect(friends.every((r) => r.pings && r.accounts!.every((a) => a.network === 'discord'))).toBe(true);
+    expect(section(await view(dev(), 'pri', { account: acc('discord-main'), scope: 'everyone', same: '1' }), 'everyone')).toEqual([]);
+  });
+
+  test("the place's setting: a server sets it for its channels, a channel's own wins, a folder's comes last, and null inherits again", async () => {
+    store.patchPlacePrefs([{ kind: 'space', id: space(), mentionScope: 'friends', mentionSameNetwork: true }]);
+    expect(store.placePrefs().find((p) => p.id === space())).toMatchObject({ mentionScope: 'friends', mentionSameNetwork: true });
+    let v = await view(dev(), '', { account: acc('discord-main') });
+    expect(v).toMatchObject({ scope: 'friends', sameNetwork: true });
+    expect(section(v, 'friends').length).toBeGreaterThan(0);
+    // Asked for, the scope and the switch win over the setting.
+    v = await view(dev(), '', { account: acc('discord-main'), scope: 'here', same: '0' });
+    expect(v.scope).toBe('here');
+    expect(v.sameNetwork).toBeUndefined();
+    store.patchPlacePrefs([{ kind: 'conversation', id: dev(), mentionScope: 'everyone' }]);
+    expect((await view(dev(), '', { account: acc('discord-main') })).scope).toBe('everyone');
+    // Its switch still comes from the server.
+    expect((await view(dev(), '', { account: acc('discord-main') })).sameNetwork).toBe(true);
+    store.patchPlacePrefs([{ kind: 'conversation', id: dev(), mentionScope: null }, { kind: 'space', id: space(), mentionScope: null, mentionSameNetwork: null }]);
+    expect(store.placePrefs().find((p) => p.id === space())?.mentionScope).toBeUndefined();
+    expect((await view(dev(), '', { account: acc('discord-main') })).scope).toBe('here');
+    // A folder that holds the server.
+    store.setFolders([{ id: 'fld_m', name: 'm', icon: null, color: null, items: [{ kind: 'space', id: space() }] }]);
+    store.patchPlacePrefs([{ kind: 'folder', id: 'fld_m', mentionScope: 'friends' }]);
+    expect((await view(dev(), '', { account: acc('discord-main') })).scope).toBe('friends');
+    store.patchPlacePrefs([{ kind: 'folder', id: 'fld_m', mentionScope: null }]);
+    store.setFolders([]);
+  });
+
+  test('someone here who is one person on other networks too carries their accounts: this one by mention, the others by reference', async () => {
+    const quinn = (net: P.Network) => store.one<{ id: string; person_id: string }>('SELECT id, person_id FROM identity WHERE network = ? AND display_name = ?', net, 'Quinn')!;
+    store.mergePersons(quinn('discord').person_id, quinn('signal').person_id);
+    const row = (await view(dev(), 'quinn', { account: acc('discord-main') })).rows.find((r) => r.section === 'here' && r.identityId === quinn('discord').id)!;
+    expect(row.insert).toBe(`<@${native('discord', 'Quinn')}> `);
+    expect(row.accounts!.map((a) => [a.network, a.insert, a.pings]).sort()).toEqual([
+      ['discord', row.insert, true],
+      ['signal', `<@identity:${quinn('signal').id}> `, false],
+    ]);
+  });
+
+  test("where the account keeps references (the calendar): everyone by default, references inserted, nobody pinged", async () => {
+    const a = store.account(acc('discord-main'))!;
+    const caps = a.capabilities;
+    store.updateAccount(a.id, { capabilities: JSON.stringify([...JSON.parse(caps), 'personRefs']) });
+    try {
+      const v = await view(dev(), '', { account: a.id });
+      expect(v.scope).toBe('everyone');
+      expect(v.rows.every((r) => !r.pings || r.kind === 'role' || r.kind === 'everyone' || r.kind === 'here')).toBe(true);
+      for (const r of section(v, 'here').filter((r) => r.kind === 'identity' && r.identityId)) expect(r.insert).toBe(`<@identity:${r.identityId}> `);
+      const jordan = v.rows.find((r) => r.name === 'Jordan')!;
+      expect(jordan).toMatchObject({ insert: `<@person:${person('Jordan')}> `, pings: false });
+      expect(jordan.accounts![0].insert).toBe(`<@identity:${jordan.accounts![0].identityId}> `);
+    } finally {
+      store.updateAccount(a.id, { capabilities: caps });
+    }
+  });
+});

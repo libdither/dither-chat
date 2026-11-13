@@ -14,6 +14,10 @@ export interface MdContext {
   role?: (id: string) => { name: string; color?: string } | null;
   /** Now, for <t:…:R> (relative times); Date.now() when absent. */
   now?: number;
+  /** A hub person named by reference, <@person:per_…> (docs/mentions.md, "References"): their name. */
+  person?: (id: string) => string | null;
+  /** One of their accounts, <@identity:idn_…>: its name and its network's. */
+  identity?: (id: string) => { name: string; network: string } | null;
 }
 
 /** Discord's links to a server's own pages (<id:guide> and the like), as its client names them. */
@@ -95,6 +99,12 @@ export function renderMarkdown(src: string, ctx: MdContext): string {
   s = s.replace(/<t:(-?\d{1,13})(?::([tTdDfFR]))?>/g, (_, sec, style) =>
     slot(`<time class="md-time" title="${esc(timestampText(+sec, 'F'))}">${esc(timestampText(+sec, style ?? 'f', ctx.now))}</time>`),
   );
+  // A person or one of their accounts by reference: a Calendar chat's, or your message before the network's copy.
+  s = s.replace(/<@(person|identity):((?:per|idn)_[\w-]{1,64})>/g, (_, kind: string, id: string) => {
+    const i = kind === 'identity' ? ctx.identity?.(id) : null;
+    const name = kind === 'person' ? ctx.person?.(id) : i && `${i.name} · ${i.network}`;
+    return slot(`<span class="mention ref" data-${kind}="${esc(id)}" role="link" tabindex="0">@${esc(name ?? 'someone')}</span>`);
+  });
   s = s.replace(/<@!?([^>\s]+)>/g, (_, id) => {
     const u = ctx.user(id);
     // Discord user ids mean nothing to a reader; a Matrix id still does.

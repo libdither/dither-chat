@@ -31,6 +31,7 @@ import { useServerParts } from './ServerPartsLazy.tsx';
 import { Stories } from './StoriesLazy.tsx';
 import { useThreadParts } from './ThreadsLazy.tsx';
 import { useModeration } from './ModerationLazy.tsx';
+import { MentionFinds } from './MentionFinds.tsx';
 
 /** "Seen 12 of 1,287 listed (1%) · 214 online": honest about how little that may be. */
 export function coverageText(c: P.MemberCoverageView): string {
@@ -246,6 +247,8 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
         </p>
         <NetworkMute kind={kind} id={id} network={network} accountIds={accountIds} mute={(conv ?? space)?.nativeMute} />
       </Card>
+
+      <MentionFinds kind={kind} id={id} network={network} refs={accountIds.some((a) => db.accounts.get(a)?.capabilities.includes('personRefs'))} />
 
       {conv && conv.shape === 'group' && <Stories conversationId={conv.id} network={conv.network} />}
       {conv && retention.value.adversarial && <KeptHere conversationId={conv.id} />}

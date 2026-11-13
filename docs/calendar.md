@@ -83,6 +83,8 @@ A reminder is a message with `extra.reminder` (`CalendarReminderRef`: `id`, `eve
 Triage (triage.ts) makes any message so marked an alert unless its place is muted or List only; in quiet hours it is
 held quiet and not counted for the summary. Its hello may declare `personRefs`: the hub then leaves
 `<@person:per_…>` and `<@identity:idn_…>` in what you send as written (docs/mentions.md), and the service names them.
+The @ list in such a chat offers everyone you know by default and puts in those references, a person or one of their
+accounts, and none of its rows pings.
 
 ### The proxy: `/calendar/*`
 

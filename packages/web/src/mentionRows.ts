@@ -61,18 +61,26 @@ export function localRows(conversationId: string, query: string, max = 20): P.Me
 }
 
 /**
- * The hub's rows, then (only when the network did not answer) this device's that it left out. A full answer stands
- * alone: it already holds what this device knows, in the hub's order.
+ * The hub's rows, with (only when the network did not answer) this device's that it left out at the end of the
+ * people here, before friends and everyone. A full answer stands alone: it already holds what this device knows, in
+ * the hub's order.
  */
 export function mergeRows(hub: P.MentionablesView, local: P.MentionRow[]): P.MentionRow[] {
   if (!hub.partial) return hub.rows;
   const seen = new Set(hub.rows.map((r) => r.insert));
-  return [...hub.rows, ...local.filter((r) => !seen.has(r.insert))];
+  const here = hub.rows.filter((r) => r.section === 'here');
+  return [...here, ...local.filter((r) => !seen.has(r.insert)), ...hub.rows.slice(here.length)];
 }
 
 const answers = new Map<string, { at: number; value: Promise<P.MentionablesView>; known?: P.MentionablesView }>();
 const KEEP = 60_000;
-const keyOf = (conversationId: string, accountId: string | undefined, q: string) => `${conversationId}|${accountId ?? ''}|${q}`;
+/** The places' @ settings (docs/mentions.md): a change asks the hub again rather than draw a minute-old answer. */
+function settings(): string {
+  let s = '';
+  for (const p of db.placePrefs.values()) if (p.mentionScope || p.mentionSameNetwork !== undefined) s += `${p.kind}:${p.id}:${p.mentionScope ?? ''}:${p.mentionSameNetwork ?? ''};`;
+  return s;
+}
+const keyOf = (conversationId: string, accountId: string | undefined, q: string) => `${conversationId}|${accountId ?? ''}|${q}|${settings()}`;
 
 /** The hub's rows for what was typed, when it answered them this last minute: drawn at once, without asking again. */
 export function knownRows(conversationId: string, accountId: string | undefined, query: string): P.MentionablesView | null {

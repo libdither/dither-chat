@@ -3,7 +3,10 @@
  * Chromium: the hub's answer for a Discord server channel (who wrote there, the server's members from the network, its
  * roles, @everyone only for the admin account), the list opening on an @ and not in a mail address or code, its chunk
  * loaded only then, keys as in the emoji list (arrows, Enter, Tab, Escape), what goes into the box, a Signal group's
- * people from the hub alone, and a phone's width. Nothing is sent.
+ * people from the hub alone, and a phone's width. Then Step 3: the About's "@ finds" set to Here and friends brings
+ * the friends section (and Only on Discord narrows it), a friend with no Discord account goes out as a plain @Name, and
+ * a person's accounts open with →: their Discord one goes out as its mention and their Signal one as a plain name.
+ * Those are the only messages sent, to the demo world.
  *
  *   bun scripts/verify-mentions.ts [--port 8694] [--web <built dist>] [--work <empty dir>] [--shots <dir>]
  *
@@ -156,6 +159,135 @@ try {
   check('a new @ opens it again, and Tab puts @everyone in', text === `<@${quinn.nativeId}> and @everyone `, text);
   await clear();
 
+  // ------------------------------------------------------------------ Step 3: "@ finds", friends, references
+
+  v = await ask(dev.id, '', main.id);
+  check('unset, #dev offers the people here alone', v.scope === 'here' && v.rows.every((r) => r.section === 'here'), v.scope);
+  const prefOf = async () => ((await fetch(`${base}/api/bootstrap`).then((r) => r.json())) as P.Bootstrap).placePrefs.find((p) => p.kind === 'conversation' && p.id === dev.id);
+  await page.goto(`${base}/#/about/c/${dev.id}`);
+  await page.until(`!!document.querySelector('.pf-mentions select')`, 20000);
+  const card = await page.eval<{ options: string[]; toggle: string }>(
+    `(() => { const c = document.querySelector('.pf-mentions'); return { options: [...c.querySelectorAll('option')].map((o) => o.textContent), toggle: c.querySelector('.toggle-row')?.textContent ?? '' }; })()`,
+  );
+  check('the About has "@ finds": the default, the three choices, and Only on Discord', card.options.join('|') === 'Default (People here)|People here|Here and friends|Everyone you know' && card.toggle === 'Only on Discord', card);
+  if (shots) await page.shot(join(shots, 'mentions-finds.png'));
+  await page.eval(`(() => { const s = document.querySelector('.pf-mentions select'); s.value = 'friends'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  await until(async () => (await prefOf())?.mentionScope === 'friends', 5000, 'the setting was not saved');
+  v = await ask(dev.id, '', main.id);
+  const friendRows = v.rows.filter((r) => r.section === 'friends');
+  check('set to Here and friends, the hub answers friends after the people here', v.scope === 'friends' && friendRows.length > 3 && friendRows.every((r) => r.kind === 'person'), friendRows.map((r) => r.name));
+  const mom = friendRows.find((r) => r.name === 'Mom');
+  check('Mom (on Signal only) is a reference that pings nobody', !!mom && mom.insert.startsWith('<@person:per_') && !mom.pings, mom);
+
+  const messages = async () => ((await fetch(`${base}/api/conversations/${dev.id}/messages?limit=20`).then((r) => r.json())) as P.MessagePage).messages;
+  const sentBody = async (tag: string) => {
+    let body = '';
+    await until(async () => !!(body = (await messages()).find((m) => m.body.includes(tag))?.body ?? ''), 8000, `the message ${tag} did not arrive`);
+    return body;
+  };
+  const sections = () => page.eval<string[]>(`[...document.querySelectorAll('.mc-pop .mc-sec')].map((e) => e.textContent)`);
+  const pick = async (name: string) => {
+    const i = (await listed()).indexOf(name);
+    for (let n = 0; n < i; n++) await key('ArrowDown', 40);
+    await Bun.sleep(100);
+    return i;
+  };
+
+  await page.goto(`${base}/#/c/${dev.id}`);
+  await page.until(`!!${box}`, 20000);
+  await Bun.sleep(500);
+  await clear();
+  await type('@');
+  await page.until(`[...document.querySelectorAll('.mc-pop .mc-sec')].length > 1`, 5000).catch(() => {});
+  const heads = await sections();
+  check('the list has its sections: Here, then Friends', heads.join('|') === 'Here|Friends', heads);
+  if (shots) await page.shot(join(shots, 'mentions-friends.png'));
+  await clear();
+  await type('@mom');
+  await page.until(`[...document.querySelectorAll('.mc-pop .mc-name')].some((e) => e.textContent === 'Mom')`, 5000).catch(() => {});
+  const struck = await page.eval<boolean>(`[...document.querySelectorAll('.mc-pop .mc-opt')].some((b) => b.querySelector('.mc-name')?.textContent === 'Mom' && !!b.querySelector('.mc-ping.off'))`);
+  check('"@mom": Mom, under Friends, her bell struck through', struck && (await sections()).includes('Friends'));
+  await pick('Mom');
+  await key('Tab', 9);
+  await Bun.sleep(200);
+  text = await value();
+  check('Tab puts Mom in by reference', text === mom?.insert, text);
+  const tag1 = `step3-plain-${Date.now()}`;
+  await type(`hi ${tag1}`);
+  await key('Enter', 13);
+  const plainBody = await sentBody(tag1);
+  check('sent, it arrives as plain @Mom: no reference, no ping', plainBody === `@Mom hi ${tag1}`, plainBody);
+
+  // Theo is one person on Discord and Signal, and a member of the server: "@theo" finds him here, and → opens his accounts.
+  const theo = (await ask(dev.id, 'theo', main.id)).rows.find((r) => r.name === 'Theo' && r.section === 'here');
+  const theoDiscord = theo?.accounts?.find((a) => a.network === 'discord');
+  const theoSignal = theo?.accounts?.find((a) => a.network === 'signal');
+  check('"theo": Theo here, with his Discord and Signal accounts', !!theo && theo.insert === theoDiscord?.insert && !!theoSignal && !theoSignal.pings, theo);
+  await clear();
+  await type('@theo');
+  await page.until(`document.querySelector('.mc-pop .ec-opt.on .mc-name')?.textContent === 'Theo'`, 5000).catch(() => {});
+  await key('ArrowRight', 39);
+  await page.until(`!!document.querySelector('.mc-pop .mc-back')`, 3000).catch(() => {});
+  const accounts = await listed();
+  check("→ opens Theo's accounts, each with its network", accounts.length === 2 && accounts.includes(`${theoDiscord?.name} · Discord`) && accounts.includes(`${theoSignal?.name} · Signal`), accounts);
+  await key('Escape', 27);
+  await Bun.sleep(150);
+  check('Escape goes back to the list, still open', (await open()) && !(await page.eval<boolean>(`!!document.querySelector('.mc-pop .mc-back')`)) && (await picked()) === 'Theo');
+  await key('ArrowRight', 39);
+  await page.until(`!!document.querySelector('.mc-pop .mc-back')`, 3000).catch(() => {});
+  await pick(`${theoDiscord?.name} · Discord`);
+  await key('Enter', 13);
+  await Bun.sleep(200);
+  text = await value();
+  check('his Discord account goes in as its mention', text === `<@${(boot.identities.find((i) => i.id === theoDiscord?.identityId) ?? { nativeId: '?' }).nativeId}> `, text);
+  await type('and @theo');
+  await page.until(`document.querySelector('.mc-pop .ec-opt.on .mc-name')?.textContent === 'Theo'`, 5000).catch(() => {});
+  await key('ArrowRight', 39);
+  await page.until(`!!document.querySelector('.mc-pop .mc-back')`, 3000).catch(() => {});
+  await pick(`${theoSignal?.name} · Signal`);
+  await key('Enter', 13);
+  await Bun.sleep(200);
+  text = await value();
+  check('his Signal account goes in by reference', text.endsWith(`and <@identity:${theoSignal?.identityId}> `), text);
+  const tag2 = `step3-accounts-${Date.now()}`;
+  await type(tag2);
+  await key('Enter', 13);
+  const accBody = await sentBody(tag2);
+  const theoNative = boot.identities.find((i) => i.id === theoDiscord?.identityId)?.nativeId;
+  check('sent: his Discord account arrives as <@id>, his Signal one as a plain name', accBody === `<@${theoNative}> and @${theoSignal?.name} ${tag2}`, accBody);
+
+  // A friend from elsewhere with several accounts: Enter opens them, the person first.
+  await clear();
+  await type('@sam');
+  await page.until(`document.querySelector('.mc-pop .ec-opt.on .mc-name')?.textContent === 'Sam Rivera'`, 5000).catch(() => {});
+  await key('Enter', 13);
+  await page.until(`!!document.querySelector('.mc-pop .mc-back')`, 3000).catch(() => {});
+  const sam = await listed();
+  check('Enter on a friend from elsewhere opens their accounts: the person, then Matrix and Signal', sam.join('|') === 'Sam Rivera|Sam Rivera · Matrix|Sam Rivera · Signal' || sam.join('|') === 'Sam Rivera|Sam Rivera · Signal|Sam Rivera · Matrix', sam);
+  await key('Escape', 27);
+  await key('Escape', 27);
+  await Bun.sleep(150);
+  check('Escape twice: back, then closed', !(await open()));
+
+  // Only on Discord.
+  await page.goto(`${base}/#/about/c/${dev.id}`);
+  await page.until(`!!document.querySelector('.pf-mentions .toggle-row input')`, 20000);
+  await page.eval(`document.querySelector('.pf-mentions .toggle-row input').click()`);
+  await until(async () => (await prefOf())?.mentionSameNetwork === true, 5000, 'the switch was not saved');
+  v = await ask(dev.id, '', main.id);
+  const onDiscord = v.rows.filter((r) => r.section === 'friends');
+  check('Only on Discord: friends with a Discord account alone, each by its Discord account', v.sameNetwork === true && onDiscord.length > 0 && !onDiscord.some((r) => r.name === 'Mom') && onDiscord.every((r) => r.pings && r.accounts!.every((a) => a.network === 'discord')), onDiscord.map((r) => r.name));
+  await page.goto(`${base}/#/c/${dev.id}`);
+  await page.until(`!!${box}`, 20000);
+  await Bun.sleep(500);
+  await clear();
+  await type('@');
+  await page.until(`[...document.querySelectorAll('.mc-pop .mc-sec')].length > 1`, 5000).catch(() => {});
+  await Bun.sleep(400);
+  const narrowed = await listed();
+  check('…and the list shows them alone', narrowed.includes('Theo') && !narrowed.includes('Mom') && !narrowed.includes('Sam Rivera'), narrowed);
+  await clear();
+
   // A Signal group, on a phone.
   await page.size(390, 844, true);
   await page.goto(`${base}/#/inbox/c/${climb.id}`);
@@ -176,6 +308,33 @@ try {
   const priya = boot.identities.find((i) => i.network === 'signal' && i.displayName === 'Priya')!;
   text = await value();
   check("Enter puts Priya's Signal mention in, and sends nothing", text === `hey <@${priya.nativeId}> `, text);
+  await clear();
+
+  // #dev on a phone: the sections, and a person's accounts. The switch back to what it inherits, from the page (a write must come from it).
+  await page.eval(
+    `fetch('/api/place-prefs', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ items: [{ kind: 'conversation', id: ${JSON.stringify(dev.id)}, mentionSameNetwork: null }] }) }).then((r) => r.ok)`,
+  );
+  await until(async () => (await prefOf())?.mentionSameNetwork === undefined, 5000, 'the switch was not taken back');
+  await page.goto(`${base}/#/inbox/c/${dev.id}`);
+  await page.until(`!!document.querySelector('.app.phone') && !!${box}`, 20000);
+  await Bun.sleep(600);
+  await clear();
+  await type('@');
+  await page.until(`[...document.querySelectorAll('.mc-pop .mc-sec')].length > 1`, 5000).catch(() => {});
+  const phoneHeads = await sections();
+  if (shots) await page.shot(join(shots, 'mentions-phone-friends.png'));
+  await clear();
+  await type('@theo');
+  await page.until(`document.querySelector('.mc-pop .ec-opt.on .mc-name')?.textContent === 'Theo'`, 5000).catch(() => {});
+  await page.eval(`document.querySelector('.mc-pop .ec-opt.on .mc-more').click()`);
+  await page.until(`!!document.querySelector('.mc-pop .mc-back')`, 3000).catch(() => {});
+  const phoneFit = await page.eval<{ left: number; right: number; width: number; scroll: number } | null>(
+    `(() => { const p = document.querySelector('.mc-pop'); if (!p) return null; const r = p.getBoundingClientRect(); return { left: Math.round(r.left), right: Math.round(r.right), width: innerWidth, scroll: document.documentElement.scrollWidth }; })()`,
+  );
+  const phoneAccounts = await listed();
+  check("on a phone: the sections, and a tap on the arrow opens Theo's accounts, which fit the screen", phoneHeads.join('|') === 'Here|Friends' && phoneAccounts.length === 2 && !!phoneFit && phoneFit.left >= 0 && phoneFit.right <= phoneFit.width && phoneFit.scroll <= phoneFit.width, { phoneHeads, phoneAccounts, phoneFit });
+  if (shots) await page.shot(join(shots, 'mentions-phone-accounts.png'));
+  await key('Escape', 27);
   await clear();
 
   const errors = page.errors.filter((e) => !/WebSocket connection|Failed to load resource/.test(e));

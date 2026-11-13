@@ -351,6 +351,11 @@ function useMdContext(network: P.Network) {
       const c = convByNative(network, nativeId);
       return c ? convTitle(c) : null;
     },
+    person: (id: string) => db.persons.get(id)?.name ?? null,
+    identity: (id: string) => {
+      const i = db.identities.get(id);
+      return i ? { name: authorName(id), network: netName(i.network) } : null;
+    },
   };
 }
 
@@ -377,6 +382,9 @@ function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
     if (el.classList?.contains('spoiler')) el.classList.add('shown');
     const user = el.dataset?.user;
     if (user) openProfile(db.identityByNative.get(`${m.network}:${user}`));
+    // A reference names a person, or one of their accounts (docs/mentions.md).
+    if (el.dataset?.person) go({ view: 'profile', person: el.dataset.person });
+    else if (el.dataset?.identity) openProfile(el.dataset.identity);
     // An invite link opens the New box on it, not the browser; the link's menu still opens it there.
     const a = el.closest?.('a[href]') as HTMLAnchorElement | null;
     if (a && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && inviteRef(a.href)) {

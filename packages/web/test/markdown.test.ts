@@ -60,3 +60,22 @@ test('timestamps are written out in the style asked for, relative ones against n
   expect(renderMarkdown(`<t:${sec}:D>`, ctx)).toContain('2026');
   expect(renderMarkdown('<t:abc:R>', ctx)).toBe('&lt;t:abc:R&gt;');
 });
+
+test('a person or an account by reference is a chip with their name, linked to their page; code keeps it as written', () => {
+  const ctx = {
+    network: 'calendar' as const,
+    user: () => null,
+    room: () => null,
+    person: (id: string) => (id === 'per_a' ? 'Alice <Chen>' : null),
+    identity: (id: string) => (id === 'idn_b' ? { name: 'Bea', network: 'Signal' } : null),
+  };
+  expect(renderMarkdown('lunch with <@person:per_a>', ctx)).toBe('lunch with <span class="mention ref" data-person="per_a" role="link" tabindex="0">@Alice &lt;Chen&gt;</span>');
+  expect(renderMarkdown('<@identity:idn_b>', ctx)).toBe('<span class="mention ref" data-identity="idn_b" role="link" tabindex="0">@Bea · Signal</span>');
+  // Nobody this device knows: never the raw id.
+  expect(renderMarkdown('<@person:per_zz> <@identity:idn_zz>', ctx)).toBe(
+    '<span class="mention ref" data-person="per_zz" role="link" tabindex="0">@someone</span> <span class="mention ref" data-identity="idn_zz" role="link" tabindex="0">@someone</span>',
+  );
+  expect(renderMarkdown('`<@person:per_a>`', ctx)).toBe('<code class="md-inline">&lt;@person:per_a&gt;</code>');
+  // Without the lookups (a poll, a card): still a chip, not a user named "person:…".
+  expect(md('<@person:per_a>')).toContain('>@someone</span>');
+});
