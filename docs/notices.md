@@ -34,7 +34,9 @@ you declined is not asked again; the page says which, links to the manager's pag
 again" (`POST /api/notices/access/ask`). While it waits, the manager is asked every minute whether you answered.
 
 An account counts as one of notices' when the manager lists it with the `notifications` interface and a `read` or
-`write` grant. An account can carry both chat and notifications (Telegram): its events go to both.
+`write` grant, **unless the hub also holds a chat grant on it**. Telegram with dither-accounts'
+`DITHER_TELEGRAM_DESKTOP=1` carries both, and Desktop raises a popup (`notify.new`) for every message chat already
+triages and notifies: such an account is left to chat, its events go only there, and a gap restarts it as before.
 
 ## Keeping them
 
@@ -44,15 +46,28 @@ account), source, title, body, link (http and https only), reason, context, subj
 when, unread, and the decision: tier, importance, alert chance, reasons, facts, words, whether it notified, your
 marks. Kept 30 days; a marked one while it is learned from.
 
-- **Catch-up** (`notify.list`, unread only, since the newest kept, 50 a page, ten pages at most): when an account is
-  first listed, when the connection comes back, and after a gap. What it finds is rated but **notifies nobody**
-  ("Came by a catch-up: no notification"), as mail's late mail.
+- **Catch-up** (`notify.list`, unread only, since the oldest unread kept (else the newest kept), 50 a page, ten pages
+  at most, nothing older than 30 days): when an account is first listed, when the connection comes back, and after a
+  gap. What it finds is rated but **notifies nobody** ("Came by a catch-up: no notification"), as mail's late mail.
+  **What it no longer lists was read there meanwhile** (a `notify.read` lost in a gap or a manager restart): a notice
+  unread here, inside the window the listing covered (all of it, or from the oldest it reached when cut off) and kept
+  before the listing began, is read here, quietly: no notification, no `notify.markRead`.
 - **Live** (`notify.new`): kept, triaged, notified. The same notice again with nothing new (same time, still unread)
-  is ignored; with a newer time, or back unread, it is triaged again.
+  is ignored; with a newer time, or back unread, it is triaged again. One a catch-up found first (GitHub's list reads
+  the API at once, while `notify.new` waits for its poll) and that therefore notified nobody is decided again, live,
+  and may notify, while it is unread and raised within the hour.
+- **The local model is asked outside the queue** that keeps notices and reads in order, so a slow answer holds up
+  nothing else. Each notice's own steps stay in order: a read that comes while its answer is awaited is applied
+  first, and the notice is then decided as read (notifying nobody); a newer arrival of the same notice waits for the
+  one before, whose decision gives way to it.
 - **Read there** (`notify.read`): read here, never notified. Its notification leaves the phones once its group has
-  nothing unread (delivery.ts `read`, through `readTs`: a `{ clear }` push).
+  no unread notice that a notification showed (`readTs` looks only at those `delivered`; delivery.ts `read` then sends
+  a `{ clear }` push). `delivered` is set only when `Notifier.notice` really sent one, not when the phone's list or
+  the list's ten minutes held it.
 - **Read here** (opening it from a notification, Open, Mark read): read here, and `notify.markRead` on the service,
-  best effort, when the grant is `write`.
+  best effort, when the grant is `write`. The service's echo (`notify.read`) changes nothing. A later catch-up that
+  still lists it unread (the mark not there yet, failed, or a `read` grant) leaves it read, unless it was raised again
+  since (a newer time).
 
 ## Tiers
 
@@ -67,13 +82,15 @@ Notices have no Conversation tier: an **Alert**, a row on the **List**, **Below 
 | Urgency (absent: normal) | Alert chance starts at | Importance starts at | Local model |
 | --- | --- | --- | --- |
 | `high`: act soon (a security alert, an account that needs you) | 0.7 | 0.9 | not asked |
-| `normal`: addressed to you (a mention, a review asked of you) | its answer to the stop-now question on title and body, held to the bar of 0.2 (`ALERT_BAR.other`); 0.02 when it is off or did not answer within 3 s | 0.6 | asked |
+| `normal`: addressed to you (a mention, a review asked of you) | its answer to the stop-now question on title and body, held to the bar of 0.2 (`ALERT_BAR.other`); 0.02 when it is off or did not answer within 3 s | 0.72 | asked |
 | `low`: ambient (CI, activity you only watch) | 0.01 | 0.15 | not asked |
 
 An alert at 0.5 or more; else on the list at your level of importance (0.6 until you set it) or more; else below
-it. List only on the group or the account keeps it from alerting. Quiet hours hold an alert as a row on the list.
-Already read, or raised over an hour before it came here, it is rated and notifies nobody. A slow local model is not
-asked again later.
+it. A normal notice starts at 0.72, a margin over the default level, so what chat learned about features a notice
+shares (anything, a link) cannot sink every review request below the list before you mark one. List only on the
+group or the account keeps it from alerting. Quiet hours hold an alert as a row on the list, and count it for their
+summary when they end ("2 messages held for you"), as chat's held alerts are. Already read, or raised over an hour
+before it came here, it is rated and notifies nobody. A slow local model is not asked again later.
 
 **Reasons**, the deciding one first: "GitHub says it is urgent", "Reads as urgent: the local model's answer is 0.6
 against a bar of 0.2", "On the list: importance 60%, at or over your level of 60%", "List, learned from your marks
@@ -82,8 +99,10 @@ against a bar of 0.2", "On the list: importance 60%, at or over your level of 60
 
 **The facts** are learn.ts's: network `notice:<source>` (`notice:github`), shape `notice`, the group as the
 conversation, the account as the space, the first actor (their link, else their name) as the author, a mention when
-the reason is `mention`, `team_mention`, `review_requested` or `assign`, `urgent` for high, `link`. So "Alert was wrong"
-on a repository's notices moves that repository first, then that person, then the account.
+the reason is `mention`, `team_mention`, `review_requested` or `assign`, `urgent` for high, `link`. Chat's own flags
+(a reply to you, a question, @everyone, you active there, and a mention when the reason is not about you) are left
+out rather than false, so none of chat's "does not …" weights moves a notice. So "Alert was wrong" on a repository's
+notices moves that repository first, then that person, then the account.
 
 ## Marks
 
@@ -98,10 +117,14 @@ notification (sw.js and the Android app offer them by tier, as for a message), o
 the title "GitHub · libdither/dither-chat", the body "title — text", the group's unread notices as its lines. An
 alert goes everywhere and sounds once a burst; a list row is silent, phones only, through the phone's list (its start
 puts it on the list unless it is low and not about you), at most every ten minutes a group. The push and the live
-`notify` event carry `noticeId` and `messageId` (the same `ntc_` id); `network` is `notice`.
+`notify` event carry `noticeId` and `messageId` (the same `ntc_` id); `network` is `notice`. The phone's list is
+shared with chat and mail: a group of notices counts as one chat toward its eight open rows (`LIST_CAP`) and toward
+its three trials a day.
 
 **A tap** opens `#/notices/<id>` in the page (sw.js), the Android app (`Notifications.kt` reads `noticeId`) and from
-an ntfy topic, which marks it read. **Device rules**: a group's chain is the group, its account, then
+an ntfy topic, which marks it read. On Android an alert is a plain notification tagged with its group (so the hub's
+clear takes it away), with the marks, never a conversation's: no shortcut, not in the Conversations section; a list
+row is a row of the ranked list as any other. **Device rules**: a group's chain is the group, its account, then
 `network:notice`; Settings → Notifications → Each device lists **Notices**. "Mentions only" keeps the ones about you
 by name.
 
