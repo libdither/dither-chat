@@ -4,7 +4,7 @@
  * checked in a browser against the multiaccount demo.
  */
 import { expect, test } from 'bun:test';
-import { accountName, badgeDiffers, chatKey, groupChats, headIdents, labelText, leadTells, mergeRoutes, pickHolds, tagTells, tagText, tells, type HeadName, type RouteKey, type RoutePart } from '../src/chatroutes.ts';
+import { accountName, badgeDiffers, cameFromThem, chatKey, groupChats, headIdents, labelText, leadTells, mergeRoutes, pickHolds, tagTells, tagText, tells, type HeadName, type RouteKey, type RoutePart } from '../src/chatroutes.ts';
 import { inboxSnapshot, inboxView, rank, type Ranked } from '../src/ordering.ts';
 
 const r = (id: string, network: string, theirs: string, mine: string): RouteKey => ({ id, network, theirs, mine });
@@ -201,4 +201,16 @@ test('a pick holds until a message comes on another route after it', () => {
   expect(pickHolds('disc', 1000, [{ id: 'sig', lastMessageAt: 2000 }, { id: 'disc', lastMessageAt: 900 }])).toBe(false);
   // Messages on the picked route itself, or none at all, keep it.
   expect(pickHolds('disc', 1000, [{ id: 'disc', lastMessageAt: 3000 }, { id: 'sig', lastMessageAt: null }])).toBe(true);
+});
+
+test('where you came from counts only where they are: a DM with someone else says nothing of how to reach them', () => {
+  const kit = new Set(['kit-sig', 'kit-disc']);
+  const isKit = (id: string) => kit.has(id);
+  // A Discord DM with Sam, then Kit's page from the people list: no guess, the latest message (Signal) decides.
+  expect(cameFromThem({ participantIds: ['me-disc', 'sam'] }, [{ authorId: 'sam' }, { authorId: 'me-disc' }], isKit)).toBe(false);
+  // A group Kit is in, or a server channel where Kit wrote among the loaded messages: the account you read on.
+  expect(cameFromThem({ participantIds: ['me-disc', 'sam', 'kit-disc'] }, [], isKit)).toBe(true);
+  expect(cameFromThem({ participantIds: [] }, [{ authorId: null }, { authorId: 'kit-disc' }], isKit)).toBe(true);
+  // A channel Kit was not seen in.
+  expect(cameFromThem({ participantIds: [] }, [{ authorId: 'sam' }], isKit)).toBe(false);
 });

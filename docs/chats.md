@@ -46,9 +46,12 @@ The page adds guesses in front of that, because it knows things the hub doesn't.
    page sends through that DM;
 4. opened as the person (`#/people/<id>`), **where you came from**, if that was a conversation:
    - their DM itself;
-   - otherwise a DM through the account you were reading on (coming from a Discord server on `zyansheep`, the DM
-     through `zyansheep`);
-   - otherwise a DM on that network;
+   - otherwise, if they are there (a participant, or the author of a message loaded there), a DM through the account
+     you were reading on (coming from a Discord server on `zyansheep`, the DM through `zyansheep`), else a DM on that
+     network;
+   - a conversation they are not in (a DM with someone else, a channel they were not seen in) says nothing of them,
+     and the steps below decide: from a Discord DM with Sam to Kit's page from the people list, and Kit wrote on Signal
+     last, Kit's page sends through Signal (`cameFromThem` in `chatroutes.ts`);
 5. the route you chose (from the hub);
 6. the route of the latest message.
 

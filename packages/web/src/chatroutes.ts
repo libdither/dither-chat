@@ -162,6 +162,17 @@ export function pickHolds(to: string, at: number, routes: { id: string; lastMess
   return !routes.some((r) => r.id !== to && (r.lastMessageAt ?? 0) > at);
 }
 
+/**
+ * Whether the conversation you came from says how to reach them: one they are in, as a participant or as the author
+ * of a message loaded there (a Discord server's channel, where you clicked their name). A DM with someone else, or a
+ * place they were not seen in, says nothing of them: from a Discord DM with Sam to Kit's page from the people list,
+ * and Kit wrote on Signal last, Kit's page sends through Signal (not the Discord account you were reading on).
+ * `isTheirs` says whether an identity is one of theirs.
+ */
+export function cameFromThem(from: { participantIds: readonly string[] }, loaded: readonly { authorId: string | null }[], isTheirs: (identityId: string) => boolean): boolean {
+  return from.participantIds.some(isTheirs) || loaded.some((m) => m.authorId != null && isTheirs(m.authorId));
+}
+
 // ------------------------------------------------------------------ the inbox
 
 /** One route's inbox row, as the merge needs it (model.ts makes these of the hub's scores). */
