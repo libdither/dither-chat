@@ -75,7 +75,8 @@ else.
 - **A check is never an error.** When the network wants something only you can do (a captcha, proving it is you, a
   verified phone, Discord's server rules), the card says "Discord wants a check first … Nothing was done", with a
   button to the account's live view: on this hub when it carries one, else the account's page on dither-accounts,
-  else the account here.
+  else the account here. Discord's rules (and an application, and onboarding) can be answered from the server's page instead,
+  by you, where the account's adapter has `gates` ([servers.md](servers.md)).
 - **A confirm is the owner's.** When the network wants a confirm first (Discord: "You must confirm the friend request
   to add this user."), nothing was done: the card shows its words and Accept anyway or Add anyway, which sends the
   same thing again with `confirm: true`. An adapter confirms only when the command says so. Such a slot is given back

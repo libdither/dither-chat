@@ -89,6 +89,11 @@ notify once.
 eventKey, reminderId, meetingUrl}`, the push with the same plus `tier` and `level`. An ntfy topic's tap opens
 `#/calendar/<open>`. The Android app shows it as a plain notification that opens the app.
 
+### Networks' events: `GET /api/calendar/network-events`
+
+A Discord server's scheduled events, in the calendar's terms (`NetworkEvents`, [servers.md](servers.md)): for the
+calendar to read beside its own, once it does. Nothing on the calendar's side reads it yet.
+
 ## Running it
 
 | Variable | |

@@ -156,28 +156,28 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 
 | Feature | Discord has | dither has | Class | Value | Notes |
 |---|---|---|---|---|---|
-| Scheduled events: list, details, interested count | GUILD_EVENTS_FOR_GUILD, GUILD_SCHEDULED_EVENT_CREATE/UPDATE/DELETE, GUILD_EVENT_USER_COUNTS, USER_GUILD_EVENTS | none | a | H | They arrive in GUILD_CREATE and the gateway: passive. A natural feed for dither-calendar |
-| RSVP ("Interested") | USER_GUILD_EVENT (put/del), GUILD_SCHEDULED_EVENT_USER_ADD/REMOVE | none | a | M | client-path |
-| Event recurrence exceptions | GUILD_EVENT_EXCEPTIONS, GUILD_SCHEDULED_EVENT_EXCEPTION_* | none | a | L | Needed for correct calendar recurrences |
-| Create/edit events | GUILD_EVENTS_FOR_GUILD post | none | a | L | |
-| Onboarding (pick channels/roles on join) | GUILD_ONBOARDING, GUILD_ONBOARDING_RESPONSES, GUILD_ONBOARDING_* | join returns "rules" wait (rulesWait) | d | M | After joining from dither, onboarding prompts cannot be answered; some servers hide channels until done |
-| Membership screening / rules gate | GUILD_MEMBER_VERIFICATION, GUILD_MEMBER_REQUEST_TO_JOIN | detected as a check | d | M | add.md: "Ask" not built |
-| Join requests (apply to join) | GUILD_JOIN_REQUEST(S), GUILD_JOIN_REQUEST_CREATE/UPDATE, types 52–54 | not built (docs/chat.md "Not built: Ask") | a | L | |
-| Leave a server | GUILD_LEAVE (`/users/@me/guilds/{id}` del) | none | a | M | Protocol has `leave` events but no command |
-| Server nickname (self) | GUILD_MEMBER_NICK, SET_GUILD_MEMBER | read (nickOf); dither has per-account local nicknames only | b | L | |
-| Per-server profile (avatar, bio, banner) | USER_GUILD_PROFILE, GUILD_MEMBER_PROFILE_UPDATE | not read | a | L | |
-| Server tag / clan identity | USER_SET_GUILD_IDENTITY (`/users/@me/clan`) | none | a | L | |
-| Role self-assign via onboarding / role connections | GUILD_ROLE_CONNECTIONS_*, APPLICATION_USER_ROLE_CONNECTIONS | none | a | L | |
+| Scheduled events: list, details, interested count | GUILD_EVENTS_FOR_GUILD, GUILD_SCHEDULED_EVENT_CREATE/UPDATE/DELETE, GUILD_EVENT_USER_COUNTS, USER_GUILD_EVENTS | none | a | H | They arrive in GUILD_CREATE and the gateway: passive. A natural feed for dither-calendar **done** (net-gaps): passive from the store and gateway, a server's Events card, a calendar feed (docs/servers.md) |
+| RSVP ("Interested") | USER_GUILD_EVENT (put/del), GUILD_SCHEDULED_EVENT_USER_ADD/REMOVE | none | a | M | client-path **done** (net-gaps): Interested on and off, the series or one occurrence |
+| Event recurrence exceptions | GUILD_EVENT_EXCEPTIONS, GUILD_SCHEDULED_EVENT_EXCEPTION_* | none | a | L | Needed for correct calendar recurrences **done** (net-gaps): read, as EXDATEs and moved occurrences in the calendar feed |
+| Create/edit events | GUILD_EVENTS_FOR_GUILD post | none | a | L | **not built**: Discord's form has many parts (place, picture, recurrence); not cheap |
+| Onboarding (pick channels/roles on join) | GUILD_ONBOARDING, GUILD_ONBOARDING_RESPONSES, GUILD_ONBOARDING_* | join returns "rules" wait (rulesWait) | d | M | After joining from dither, onboarding prompts cannot be answered; some servers hide channels until done **done** (net-gaps): answered from the server's page through the client's own onboarding actions |
+| Membership screening / rules gate | GUILD_MEMBER_VERIFICATION, GUILD_MEMBER_REQUEST_TO_JOIN | detected as a check | d | M | add.md: "Ask" not built **done** (net-gaps): the rules shown, agreed only by the owner's tick |
+| Join requests (apply to join) | GUILD_JOIN_REQUEST(S), GUILD_JOIN_REQUEST_CREATE/UPDATE, types 52–54 | not built (docs/chat.md "Not built: Ask") | a | L | **done** (net-gaps): the application's questions answered from the server's page, its outcome as a gate event |
+| Leave a server | GUILD_LEAVE (`/users/@me/guilds/{id}` del) | none | a | M | Protocol has `leave` events but no command **done** (net-gaps): `leave` command, confirm, the owner told why not; group DMs and Signal groups left to a later package |
+| Server nickname (self) | GUILD_MEMBER_NICK, SET_GUILD_MEMBER | read (nickOf); dither has per-account local nicknames only | b | L | **done** (net-gaps): `setNick`, a card on the server's page |
+| Per-server profile (avatar, bio, banner) | USER_GUILD_PROFILE, GUILD_MEMBER_PROFILE_UPDATE | not read | a | L | **not built**: not cheap enough this round |
+| Server tag / clan identity | USER_SET_GUILD_IDENTITY (`/users/@me/clan`) | none | a | L | **not built**: not read yet |
+| Role self-assign via onboarding / role connections | GUILD_ROLE_CONNECTIONS_*, APPLICATION_USER_ROLE_CONNECTIONS | none | a | L | **not built**: roles through onboarding are; role connections are not |
 | Server folders (sidebar) | user settings proto guild_folders, GUILD_FOLDER_* | none; dither has its own folders | a | M | Importing Discord's folders once would seed dither's sidebar for free (USER_SETTINGS_PROTO is already in the client) |
-| Server discovery / directory | GUILD_DISCOVERY*, GLOBAL_DISCOVERY_SERVERS, DIRECTORY_CHANNEL_* | none | a | L | |
-| Server templates | GUILD_TEMPLATE(S) | none | a | L | |
-| Server boosting | APPLIED_GUILD_BOOST*, GUILD_BOOST types 8–11 | system lines | d | L | |
-| Server shop / role subscriptions / guild products | SERVER_SHOP, GUILD_ROLE_SUBSCRIPTION_*, GUILD_PRODUCT* | none | a | L | |
-| Guild home / server guide / welcome screen | GUILD_HOME_SETTINGS, GUILD_WELCOME_SCREEN | none | a | L | |
-| Server theme / powerups | GUILD_THEME, GUILD_POWERUPS, exp `2026-04_server_theme` | none | a | L | |
-| Invite create / revoke / list | INSTANT_INVITES, GUILD_INSTANT_INVITES, INVITE del | AboutChange `invite` exists; about.ts throws "Invite links are not supported on Discord yet" | b | M | Protocol/UI exist (Show QR beside a place's invite link); adapter refuses. client-path |
-| Friend invites (links that add a friend) | FRIEND_INVITES | accept yes (`inviteAccept` with friend) | d | L | Creating one: no |
-| Vanity URL | GUILD_VANITY_URL | not shown | a | L | |
+| Server discovery / directory | GUILD_DISCOVERY*, GLOBAL_DISCOVERY_SERVERS, DIRECTORY_CHANNEL_* | none | a | L | **not built**: out of scope |
+| Server templates | GUILD_TEMPLATE(S) | none | a | L | **not built**: out of scope |
+| Server boosting | APPLIED_GUILD_BOOST*, GUILD_BOOST types 8–11 | system lines | d | L | **not built**: out of scope (system lines only) |
+| Server shop / role subscriptions / guild products | SERVER_SHOP, GUILD_ROLE_SUBSCRIPTION_*, GUILD_PRODUCT* | none | a | L | **not built**: monetisation |
+| Guild home / server guide / welcome screen | GUILD_HOME_SETTINGS, GUILD_WELCOME_SCREEN | none | a | L | **not built**: out of scope |
+| Server theme / powerups | GUILD_THEME, GUILD_POWERUPS, exp `2026-04_server_theme` | none | a | L | **not built**: out of scope |
+| Invite create / revoke / list | INSTANT_INVITES, GUILD_INSTANT_INVITES, INVITE del | AboutChange `invite` exists; about.ts throws "Invite links are not supported on Discord yet" | b | M | Protocol/UI exist (Show QR beside a place's invite link); adapter refuses. client-path **done** (net-gaps): links listed with uses and expiry, made with Discord's choices, turned off |
+| Friend invites (links that add a friend) | FRIEND_INVITES | accept yes (`inviteAccept` with friend) | d | L | Creating one: no **not built**: making one is left out |
+| Vanity URL | GUILD_VANITY_URL | not shown | a | L | **done** (net-gaps): shown on the server's invite card |
 
 ## Moderation and admin
 
