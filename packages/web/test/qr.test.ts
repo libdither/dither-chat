@@ -36,11 +36,17 @@ test('the number is the only code where there is no name, and it is flagged for 
   const lid = ownCode('whatsapp', me('123456789012345@lid', null));
   expect(lid.code).toBeNull();
   expect(lid.notes[0]).toContain('has not said');
-  // Signal: a username needs the adapter, said every time.
+  // Signal: a username's link only as the adapter last set it; without one, the number's code and how to get one.
   const sig = ownCode('signal', me('00000000-0000-4000-8000-000000000001', '@zyan.42'));
   expect(sig.code).toBeNull();
-  expect(sig.notes.join(' ')).toContain("needs the account's adapter");
+  expect(sig.notes.join(' ')).toContain('Set a username on your profile');
   expect(ownCode('signal', me('00000000-0000-4000-8000-000000000001', '+15550100')).notes.join(' ')).toContain('username');
+  const link = ownCode('signal', me('00000000-0000-4000-8000-000000000001', '+15550100'), { name: 'zyan.42', link: 'https://signal.me/#eu/abcDEF123' });
+  expect(link.code).toEqual({ url: 'https://signal.me/#eu/abcDEF123', what: expect.stringContaining('zyan.42') });
+  expect(link.code?.number).toBeUndefined();
+  const noLink = ownCode('signal', me('00000000-0000-4000-8000-000000000001', '+15550100'), { name: 'zyan.42' });
+  expect(noLink.code?.number).toBe(true);
+  expect(noLink.notes.join(' ')).toContain('set it again');
 });
 
 test('no code where the identity does not make a link', () => {

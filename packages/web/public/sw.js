@@ -301,6 +301,9 @@ async function show(d) {
   // A request waiting on you (docs/add.md) has one of its own, and opens under Requests. A calendar reminder has one
   // per event (docs/calendar.md), so a second lead time takes the first one's place.
   const cal = d.calendar && typeof d.calendar.open === 'string' ? d.calendar : null;
+  // A call ringing you (docs/calls.md "Ringing"): one per call, with Answer and Decline, kept up until it is handled.
+  const ring = d.call && typeof d.call.id === 'string' ? d.call : null;
+  if (ring) return showRing(d, ring);
   const tag = cal ? `calendar:${cal.eventKey}` : d.conversationId ?? (d.requestId ? `request:${d.requestId}` : d.inbox ? 'dither-inbox' : 'dither');
   const look = await looks(d);
   // Its tier (docs/notifications.md): an alert, a Conversation or a list row. A hub from before the tiers says only
@@ -324,6 +327,24 @@ async function show(d) {
     icon: look.icon,
     badge: look.badge,
     data: { conversationId: d.conversationId, request: d.requestId, notice: d.noticeId, inbox: d.inbox, test: d.test, replyTo: d.replyTo, nid: d.nid, device: d.device, messageId: d.messageId, calendar: cal },
+    actions: actions.slice(0, self.Notification?.maxActions ?? 2),
+  });
+  return tag;
+}
+
+/** A call ringing you: Answer opens the chat, where the ring card answers it; Decline stops it ringing everywhere. */
+async function showRing(d, ring) {
+  const look = await looks(d);
+  const tag = ring.tag || `call:${ring.id}`;
+  const actions = [...(ring.canAnswer ? [{ action: 'answer', title: 'Answer' }] : []), ...(ring.canDecline ? [{ action: 'decline', title: 'Decline' }] : [])];
+  await self.registration.showNotification(d.title ?? 'Incoming call', {
+    body: d.body ?? '',
+    tag,
+    renotify: true,
+    requireInteraction: true,
+    icon: look.icon,
+    badge: look.badge,
+    data: { conversationId: d.conversationId, call: ring.id, device: d.device },
     actions: actions.slice(0, self.Notification?.maxActions ?? 2),
   });
   return tag;
@@ -389,6 +410,12 @@ async function sendReply(n, conv, text, replyTo) {
 
 self.addEventListener('notificationclick', (e) => {
   const { conversationId: conv, inbox, replyTo } = e.notification.data ?? {};
+  const ringing = e.notification.data?.call;
+  if (ringing && e.action === 'decline') {
+    e.notification.close();
+    e.waitUntil(fetch(`/api/calls/${encodeURIComponent(ringing)}/decline`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => {}));
+    return;
+  }
   // A platform that shows the action as a plain button gives no text: then it just opens, like any other click.
   const text = e.action === 'reply' && typeof e.reply === 'string' ? e.reply.trim() : '';
   if (conv && text) {

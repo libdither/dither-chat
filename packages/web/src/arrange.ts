@@ -49,6 +49,15 @@ export function setSort(scope: SortScope, mode: SortMode) {
   resort('mode');
 }
 
+/** Whether a network's archive hides and shows chats here (ArrangeSettings.followArchive; on unless turned off). */
+export const followsArchive = () => arrange.value.followArchive !== false;
+export function setFollowArchive(on: boolean) {
+  setArrange({ ...arrange.value, followArchive: on });
+  api<ArrangeSettings>('/api/arrange', { method: 'PATCH', body: { followArchive: on } })
+    .then(setArrange)
+    .catch((e) => toast({ kind: 'error', title: 'Could not save that', body: e.message }));
+}
+
 export function patchDismissed(dismissed: Record<string, string[] | null>) {
   const next = { ...arrange.value.dismissed };
   for (const [k, v] of Object.entries(dismissed)) v === null ? delete next[k] : (next[k] = v);

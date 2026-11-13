@@ -64,6 +64,7 @@ import { counting, rendered } from '../perf.ts';
 import { memo } from './memo.ts';
 import { convKind, rowTrack } from '../clicks.ts';
 import { useShown } from './more.tsx';
+import { VoicePeople } from './Ringing.tsx';
 
 // ------------------------------------------------------------------ navigation helpers
 
@@ -605,6 +606,7 @@ function ChannelRow({ c, active, depth, onOpen, alsoIn, dots = true }: { c: P.Co
         {dots && <AccountDots network={c.network} accountIds={c.vantages.map((v) => v.accountId)} size={6} />}
         <Count n={u.badge} />
       </button>
+      {(c.variant === 'voice' || c.variant === 'stage') && <VoicePeople conversationId={c.id} class="chan-voice" style={{ paddingLeft: `${36 + depth * 12}px` }} />}
       {shownThreads.map((t) => {
         const tu = unreadOf(t);
         return (

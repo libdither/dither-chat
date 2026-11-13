@@ -75,7 +75,8 @@ else.
 - **A check is never an error.** When the network wants something only you can do (a captcha, proving it is you, a
   verified phone, Discord's server rules), the card says "Discord wants a check first … Nothing was done", with a
   button to the account's live view: on this hub when it carries one, else the account's page on dither-accounts,
-  else the account here.
+  else the account here. Discord's rules (and an application, and onboarding) can be answered from the server's page instead,
+  by you, where the account's adapter has `gates` ([servers.md](servers.md)).
 - **A confirm is the owner's.** When the network wants a confirm first (Discord: "You must confirm the friend request
   to add this user."), nothing was done: the card shows its words and Accept anyway or Add anyway, which sends the
   same thing again with `confirm: true`. An adapter confirms only when the command says so. Such a slot is given back
@@ -136,7 +137,7 @@ What each network will do once its adapter has it. **None of the real adapters d
 
 | Network | Look up | Join | Add | Requests |
 |---|---|---|---|---|
-| Discord | invites with server, counts, inviter and expiry; usernames only partly (no lookup without sending the request) | Join; captcha and server rules come back as a check | Add friend (pending until they accept) | friend requests |
+| Discord | invites with server, counts, inviter and expiry; usernames only partly (no lookup without sending the request) | Join; captcha and server rules come back as a check | Add friend (pending until they accept) | friend requests; message requests and spam DMs (`message:<channel>`, spam ones `spam`) |
 | Matrix | `#alias` and `!id` with via servers; users by profile | Join, Ask (knock) | none; Message opens a DM | room and space invites |
 | Telegram | invites, @names (a person, group or channel) | Join, Ask (join requests) | Add contact, which does not share your number | join requests to groups you run |
 | Signal | group links only partly (signal-cli has no preview); usernames and phones | Join (admin approval is pending) | none; Message | message requests, group invites |
@@ -214,7 +215,7 @@ opens it in the app, which is the point for networks with no QR codes of their o
 | Telegram | `https://t.me/<username>` | without a username: `https://t.me/+<number>`, hidden until tapped, which Telegram opens only for people your privacy settings let find you by number |
 | WhatsApp | `https://wa.me/<number>` | always a number: hidden until tapped. An account known only by its LID has none |
 | Discord | `https://discord.com/users/<id>` | opens your profile, where they can send a friend request |
-| Signal | `https://signal.me/#p/+<number>` | hidden until tapped. A username code needs the adapter: Signal makes username links (`signal.me/#eu/…`) on its servers, and the page says so |
+| Signal | `https://signal.me/#p/+<number>` | your username's link (`signal.me/#eu/…`) instead once you set the username from your profile, not hidden: Signal makes the link on its servers and signal-cli shows it only when it sets it, so a username set on the phone shows the number's code and says to set it here |
 | X | `https://x.com/<handle>` | |
 | Instagram | `https://instagram.com/<username>` | |
 | Messenger | `https://m.me/<username>`, else `https://www.facebook.com/profile.php?id=<id>` | |
@@ -289,6 +290,8 @@ someone you know notifies once; and a profile has the buttons for how you stand 
 
 - **The Requests row.** While anything waits, the one-list inbox has a **Requests** row at its top, under "Needs you",
   whatever the filter: how many, who asked, and when the newest came. It counts on no badge: a request is not unread.
+  What a network filed as spam (Discord's spam DMs) is not counted or named there either, only said ("2 filed as
+  spam"), and waits last in the view under "Filed as spam"; it never notifies.
   Under it, a network's notifications about you have a row of their own built the same way (X's likes, reposts,
   replies and follows: [feed.md](feed.md)).
   Opening it is the Requests view (`#/requests`; `#/requests/<id>` shows one card, outlined). On a desktop it is the

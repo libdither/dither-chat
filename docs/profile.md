@@ -24,7 +24,8 @@ command (`packages/protocol/src/about.ts` `PersonAbout`).
 - **Actions.** One row. A person: Message (one network: straight there; several: a menu of each network, the merged
   thread, and starting a chat where there is none), All chats, More. A place: Open, Their profile (a DM), Mark
   read, Mute, Search, Copy link, More. **More** is the same menu the person or place has everywhere else, minus what
-  the row already has, plus Merge Another Identity In and Ask the Networks Again for a person. It has no Open on
+  the row already has, plus Merge Another Identity In and Ask the Networks Again for a person, and Ignore on a network
+  whose account can (docs/account-self.md). It has no Open on
   <network>: the browser is rarely signed in to the network's site, so Copy holds the profile link instead.
 - **Two columns**, one on a phone (under 900 px). Left: what it is and what you share. Right: how you stand with it.
 
@@ -49,6 +50,9 @@ Left:
   stock line such as WhatsApp's "Available" is left out); their links (connected accounts, GitHub, a phone number
   written two ways once); On Discord since; facts a network adds (Business, Time zone); how many of their messages
   the hub has, since when. A network that could not be asked says why, in a line.
+  Badges, the frame on their picture and their profile's colours, where the network shows them. On your own page,
+  under your bio: your name, pronouns, picture and banner on each network that lets you change them here
+  (docs/account-self.md).
 - **In common** (on your own page, **Your places**): servers as tiles with their icon, their nickname and roles
   there, or how many messages they wrote in it; then group chats with their picture, kind, and how many messages are
   from them. Discord's mutual servers count even where they never wrote; the rest comes from messages and member
@@ -79,7 +83,13 @@ Right:
 - **Notifications**: Always alert, a person rule `all`: every message of theirs is an alert
   ([notifications.md](notifications.md#rules)). Stars left the app on 2026-11-10 and the hub cleared the old ones
   once (`clearStars`, packages/hub/src/store.ts), so Always alert is the only way to have someone always get through.
-- **Note**: yours only, kept on the hub.
+- **Safety number** (Signal, capability `safetyNumbers`; below, "Safety numbers").
+- **Note**: yours only, kept on the hub, and on a network that keeps notes too (below, "Your nickname and note on the
+  network").
+
+More on a person also has **Block on <network>…** (asks first) or **Unblock on <network>** where an account can
+(capability `block`: `POST /api/identities/:id/block { unblock? }`). Nothing from someone your account's list says you
+blocked alerts (triage: "From someone you blocked"); on Signal their messages stop coming at all.
 
 ### Your own bio
 
@@ -91,6 +101,37 @@ identity (403 otherwise), only where the adapter lists `editProfile` (409), chec
 the adapter `setProfile` and keeps what it answers like any profile it was asked for. A network that refuses says
 why (502). On Signal and WhatsApp the About is also the status line, so the identity's status changes with it.
 Someone else's bio never has a pencil.
+
+Where the adapter's answer lists more under `editable` (Signal: `name`, `emoji`, `avatar`, `username`), the rest of
+your profile there shows under the bio: your name, the emoji by your About, your picture (Choose… uploads it, Remove
+asks first) and your username (Set, Change, Delete; Signal adds the number after the name). The same `PUT` takes
+`{ name }`, `{ emoji }` ('' clears it), `{ avatar: <upload id> | null }` and `{ username: <name> | null }`; the hub
+refuses a field the last answer did not list (409). Signal shows a username's link only when it sets one, so the link,
+and its code under My code (docs/add.md, "QR codes"), come from the last time it was set here.
+
+### Safety numbers
+
+On Signal, a person's page shows your safety number with them: the 60 digits in Signal's 12 groups of 5, **Show the
+code** (the bytes Signal's own QR holds, drawn as one for their phone's camera), and Verified or Not verified. **Mark
+as verified** asks first (only after comparing it with theirs, in person or on a call you trust, or their phone
+scanning the code), then sends `POST /api/identities/:id/verify { safetyNumber }`; the adapter refuses if it changed
+since. **Clear verification** sends `{ clear: true }`. A number that changed since this device first saw it says
+**Changed** with when, and your 1:1 with them gets the line "Your safety number with X has changed." (dither-accounts
+docs/signal.md). Signal keeps trusting a changed key, as its apps do; it is just no longer verified.
+
+### Your nickname and note on the network
+
+Signal keeps a private nickname and note for each contact, synced to your phone. Its adapter sends both (capability
+`contactNotes`, IdentityFact `nickname` and `note`), and the hub keeps what it last said (`identity.net_nickname`,
+`net_note`):
+- A nickname from the network becomes yours when you had none, or still had what it said before. When both changed,
+  yours stays here and the phone keeps its own. Yours, set or removed here (docs/chats.md "Names"), goes to the network
+  (`setContact`).
+- A note from the network becomes the person's note when theirs was empty or still what it said before, or when it
+  holds all of yours. When both changed and neither holds the other, they are joined (yours, a blank line, the
+  network's) and the joined note goes back, so neither side's text is lost. Your note, changed here, goes to each of
+  their accounts on a network that keeps notes.
+A change while the account is offline is kept here and not sent later: change it again once it is connected.
 
 ### Asking the networks
 
@@ -192,8 +233,11 @@ server (the most active twelve), **Members** by role.
 
 Right: **Seen as** (when several of your accounts are there: each may see and change different things),
 **Notifications** (the place's rule: Automatic, Always alert, List only or Mute, and under Automatic what holds here
-and from where; [notifications.md](notifications.md#rules)), **Invite link**, **Who can do what**, **Details** (your
-role, the account it is seen as, the native id to copy, when the network last said).
+and from where; [notifications.md](notifications.md#rules)), **Secure session** (a Signal 1:1: Reset secure session, for
+messages from them that could not be decrypted; it asks first, since they see it: [messages.md](messages.md)),
+**Blocking** for a Signal group (Block group asks first, then `POST /api/conversations/:id/block`; About.blocked says
+it is), **Invite link**, **Who can do what**, **Details** (your role, the account it is seen as, the native id to copy,
+when the network last said).
 
 Everything that changes something goes through the same checks as before (docs/group-settings.md): the network's
 rules, then a fresh About through the account whose view it is.

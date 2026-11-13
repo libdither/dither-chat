@@ -16,6 +16,7 @@
  *      (`judge`), and it alerts when its alert chance is even or better. That chance starts from the model's answer
  *      and moves with your marks.
  *   6. Else a Conversation stays one; anything else is on the list at your level of importance or more, or below it.
+ *   7. One its sender sent silently (Discord's @silent) never alerts: it stays a Conversation or a list row.
  *
  * A place's rule, most specific first:
  *   conversation > thread parent > containing spaces (nearest first) > account > network > global
@@ -36,7 +37,8 @@ import { describeActivity, type ActivityStore, type Features } from './activity.
 import { ALERT_BAR, alertBar, describeWeight, emptyModel, importance, learnedFrom, predict, prior, THRESHOLDS, tierFrom, TIER_NAME, words, type Facts, type Level, type Model, type Namer, type TierContext } from './learn.ts';
 import { InteractionLog } from './interact.ts';
 import { conversing, CONVERSING_REASON } from './tiers.ts';
-import { requestHeld } from './add.ts';
+import { blockedByYou, requestHeld } from './add.ts';
+import { quietAuthor } from './accountself.ts';
 import { FEED_REASON, feedItemOf, QUIET_FEED } from './feed.ts';
 
 type Row = Record<string, any>;
@@ -329,10 +331,24 @@ export class Triage {
     return NATIVE_DEFAULT[c.shape as P.Shape] ?? 'mentions';
   }
 
+  /** Does a space this conversation is in say @everyone and @here do not notify there (NativeMute.suppressEveryone)? */
+  suppressesEveryone(c: Row): boolean {
+    const parent = c.shape === 'thread' && c.parent_id ? (c.parent_id as string) : null;
+    for (const sp of this.ancestors(parent ?? c.id))
+      for (const r of this.store.raw<Row>(`SELECT native_mute FROM vantage WHERE target_kind = 'space' AND target_id = ? AND native_mute IS NOT NULL`, sp.id))
+        if ((JSON.parse(r.native_mute) as P.NativeMute).suppressEveryone === true) return true;
+    return false;
+  }
+
   async decide(messageId: string, now = Date.now()): Promise<Decision | null> {
     const d = this.decideByRules(messageId);
     if (d) await this.withActivity(d, messageId, now);
     if (d?.facts) await this.withModel(d, messageId, now);
+    if (d?.decision === 'push' && this.sentSilently(messageId)) {
+      // Its sender asked that it not notify anyone (Discord's @silent): it stays where it would be, silent.
+      d.decision = d.facts?.conv ? 'quiet' : 'digest';
+      d.reasons.unshift('Sent silently: it never alerts');
+    }
     if (d?.decision !== 'push') return d;
     const q = this.store.quietHours();
     if (!inQuietHours(q, now) || (q!.allowStarred && d.alwaysNotify)) return d;
@@ -349,6 +365,17 @@ export class Triage {
     const conversationId = this.store.one<Row>('SELECT conversation_id FROM message WHERE id = ?', messageId)!.conversation_id;
     this.store.setQuietHeld({ count: (held?.count ?? 0) + 1, conversationId, messageId });
     return d;
+  }
+
+  /** Its sender sent it silently (MessageFact.silent, kept in the message's extra). */
+  private sentSilently(messageId: string): boolean {
+    const x = this.store.one<Row>('SELECT extra FROM message WHERE id = ?', messageId)?.extra;
+    if (!x || !x.includes('"silent"')) return false;
+    try {
+      return JSON.parse(x).silent === true;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -533,6 +560,16 @@ export class Triage {
       reasons.push('A message request: it waits under Requests until you accept it');
       return { decision: 'silent', score: null, reasons, decidedBy: 'rules', title, body };
     }
+    if (author && blockedByYou(s.db, author.id)) {
+      reasons.push('From someone you blocked');
+      return { decision: 'silent', score: null, reasons, decidedBy: 'rules', title, body };
+    }
+    // Someone you ignore on their network never alerts either (accountself.ts).
+    const shut = quietAuthor(s.db, m.author_id);
+    if (shut) {
+      reasons.push(`${shut} on ${NETWORK_META[c.network as P.Network].name}`);
+      return { decision: 'silent', score: null, reasons, decidedBy: 'rules', title, body };
+    }
     if (feedType && QUIET_FEED.has(feedType)) {
       reasons.push(`${NETWORK_META[c.network as P.Network].name} notifications: ${feedType === 'other' ? FEED_REASON.other : `${authorName} ${FEED_REASON[feedType]}`}. Likes, reposts and follows wait in the feed and never notify`);
       return { decision: 'silent', score: null, reasons, decidedBy: 'rules', title, body };
@@ -542,7 +579,8 @@ export class Triage {
     const how = this.addressed(f, c);
     const native = this.nativeLevel(c);
     const net = NETWORK_META[c.network as P.Network].name;
-    const about = f.mention || f.reply || f.everyone;
+    // @everyone and @here in a server set to suppress them (Discord's own setting) would not have notified you.
+    const about = f.mention || f.reply || (f.everyone && !this.suppressesEveryone(c));
     // Would the network itself have notified you? Replies to you ping on Discord, @everyone wherever mentions do. A
     // place you once set to mentions only says the same of itself.
     const mentionsOnly = eff.level === 'mentions' && !eff.native;

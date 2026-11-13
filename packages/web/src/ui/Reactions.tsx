@@ -6,6 +6,7 @@ import { emojiNow, loadEmoji, searchEmoji, SKIN_TONES, skinOf } from '../emoji.t
 import { customMarkup } from '../emojiComplete.ts';
 import { fullTime } from '../format.ts';
 import { authorName, convTitle, netName, plainBody } from '../model.ts';
+import { clearReactions, modOf } from '../moderate.ts';
 import { hasMine, knownReactionContext, pickerFor, quickReactions, reactionContext, reactionScope, reactorsFor, reactorsLabel, replacing, toggleReaction, type Picked } from '../reactions.ts';
 import { canDelete, canEdit, deleteMessage, startEditing, api, db, isSelfIdentity, openProfile, prefs, rev, setPrefs, toast } from '../state.ts';
 import { haptic, useLayer } from '../phone.ts';
@@ -639,6 +640,12 @@ function Reactors({ m, reactionKey, style, anchor, onClose }: { m: P.MessageView
             <div class="reactor">
               <Avatar id={id} name={name} url={db.identities.get(id)?.avatar} size={24} />
               <span>{name}</span>
+              {/* A moderator takes someone's reaction off (docs/moderation.md). */}
+              {style === 'normal' && !isSelfIdentity(id) && modOf(m)?.reactions && (
+                <button class="icon-btn small reactor-remove" title={`Remove ${name}'s reaction`} aria-label={`Remove ${name}'s reaction`} onClick={() => clearReactions(m, reactionKey, id)}>
+                  <Icon name="x" size={12} />
+                </button>
+              )}
             </div>
           );
         })}

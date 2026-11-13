@@ -6,11 +6,12 @@ import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snap
 import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, emptyDb, identityVersion, indexThreads, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
 import { changed, mailChanged, timelineChanged, timelineRev } from './versions.ts';
 import { applyTyping, type TypingState } from './typers.ts';
-import { ECHO_SKEW, mayBeOut, openOutbox, settled, type Echo, type OutboxEntry } from './outbox.ts';
+import { ECHO_SKEW, mayBeOut, openOutbox, settled, type Echo, type OutboxEntry, type SendMedia } from './outbox.ts';
 import { hubTransport, UploadJob } from './upload.ts';
 import { href, parseHash, type Route } from './routes.ts';
 import { inboxFilterOf, type InboxFilter } from './ordering.ts';
 import { applyPlanEvent, calendarAt, calendarFromBootstrap, loadPlans } from './plans.ts';
+import { applyCalls, applyVoice, loadCalls } from './ringing.ts';
 
 // ------------------------------------------------------------------ data
 
@@ -143,6 +144,8 @@ export interface Prefs {
   pushEnabled: boolean;
   /** How this device carries calls: through the account's own client (bridge), or by itself (direct). */
   callMode: 'bridge' | 'direct';
+  /** This device's microphone in calls: noise suppression and sensitivity (Settings → Calls). Absent: CALL_INPUT_DEFAULT. */
+  callInput?: import('@dither-chat/protocol').CallInput;
   /** The inbox's filter (its menu beside the search box). */
   inboxFilter: InboxFilter;
   /** People's filter chip: chats, or one kind of list (docs/add.md "Relationships"). */
@@ -372,6 +375,13 @@ export function applyEvents(events: P.ClientEvent[]) {
         break;
       case 'typing':
         typing.value = applyTyping(typing.value, ev, Date.now(), isSelfIdentity);
+        break;
+      // Calls ringing you and voice channels (ringing.ts).
+      case 'calls':
+        applyCalls(ev.calls);
+        break;
+      case 'voice':
+        applyVoice(ev.channels);
         break;
       case 'sent': {
         // Which message a send of this page's became, ahead of the answer to its POST: settled below by id.
@@ -795,7 +805,7 @@ const sendUploads = new Map<string, UploadJob[]>();
 export const uploadsOf = (tempId: string): UploadJob[] => sendUploads.get(tempId) ?? [];
 
 /** `uploads`: the composer's uploads of `files`, one each, already under way. */
-type SendOpts = { accountId?: string; replyTo?: string; files?: File[]; uploads?: UploadJob[] };
+type SendOpts = { accountId?: string; replyTo?: string; files?: File[]; uploads?: UploadJob[]; media?: SendMedia; /** docs/sending.md */ silent?: boolean; mentionReplied?: boolean };
 /** Sends kept on this device until the hub has them (outbox.ts): a reload or the app being closed does not lose them. */
 const outbox = openOutbox(typeof indexedDB === 'undefined' ? undefined : indexedDB);
 /** Sends not yet through, by tempId: what they need to go out again. The outbox keeps the same. */
@@ -808,7 +818,7 @@ const pendingOf = (e: OutboxEntry): PendingSend => ({ tempId: e.tempId, conversa
 /** Shown at once as pending. Without the hub it waits, and goes out when the hub is back (flushOutgoing). */
 export async function send(conversationId: string, body: string, opts: SendOpts = {}) {
   const tempId = 'tmp-' + Math.random().toString(36).slice(2);
-  const e: OutboxEntry = { tempId, conversationId, body, ts: Date.now(), accountId: opts.accountId, replyTo: opts.replyTo, files: opts.files?.map((f) => ({ name: f.name, type: f.type, blob: f })) };
+  const e: OutboxEntry = { tempId, conversationId, body, ts: Date.now(), accountId: opts.accountId, replyTo: opts.replyTo, files: opts.files?.map((f) => ({ name: f.name, type: f.type, blob: f })), ...(opts.media ? { media: opts.media } : {}), ...(opts.silent ? { silent: true } : {}), ...(opts.mentionReplied === false ? { mentionReplied: false } : {}) };
   pending.value = [...pending.value, pendingOf(e)];
   outgoing.set(tempId, e);
   if (opts.uploads?.length) {
@@ -860,7 +870,7 @@ async function deliver(tempId: string) {
   const post = () => {
     // A message of ours that comes after this may be this send's (settle).
     setPending(tempId, { postedAt: Date.now() });
-    return api<P.SendResult>(`/api/conversations/${o.conversationId}/send`, { body: { body: o.body, accountId: o.accountId, replyTo: o.replyTo, attachments: o.attachments, clientId } });
+    return api<P.SendResult>(`/api/conversations/${o.conversationId}/send`, { body: { body: o.body, accountId: o.accountId, replyTo: o.replyTo, attachments: o.attachments, clientId, ...o.media, ...(o.silent ? { silent: true } : {}), ...(o.mentionReplied === false ? { mentionReplied: false } : {}) } });
   };
   try {
     if (o.files?.length && !o.attachments) await uploadAll();
@@ -1012,7 +1022,7 @@ export function openProfile(identityId: string | null | undefined) {
 /** The message the composer is rewriting. */
 export const editing = signal<P.MessageView | null>(null);
 
-function ownAccount(m: P.MessageView) {
+export function ownAccount(m: P.MessageView) {
   return [...db.accounts.values()].find((a) => a.selfIdentityId === m.authorId);
 }
 export const canEdit = (m: P.MessageView) => !m.deleted && m.kind !== 'system' && !!ownAccount(m)?.capabilities.includes('edit');
@@ -1192,6 +1202,7 @@ function bootstrap() {
       freshFromHub();
       performance.mark('dither:fresh');
       loadInbox().catch(() => {});
+      void loadCalls();
       // Timelines asked for before this socket may have missed anything: their newest pages again.
       for (const [key, t] of [...timelines]) if (!t.fetchedAt || t.fetchedAt < since) void reload(key);
       persistSoon(text);

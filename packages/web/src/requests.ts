@@ -16,9 +16,15 @@ export const REQUEST_GROUPS: { kind: Kind; title: string }[] = [
   { kind: 'join', title: 'Asking to join your groups' },
 ];
 
-/** One group per kind that has any, newest first in each. */
+/** Where what a network filed as spam waits: last, under a heading of its own. */
+export const SPAM_TITLE = 'Filed as spam';
+
+/** One group per kind that has any, newest first in each; what the network filed as spam in a last group of its own. */
 export function groupRequests(rs: readonly P.RequestView[]): { kind: Kind; title: string; requests: P.RequestView[] }[] {
-  return REQUEST_GROUPS.map((g) => ({ ...g, requests: rs.filter((r) => r.kind === g.kind).sort((a, b) => b.ts - a.ts) })).filter((g) => g.requests.length);
+  const plain = rs.filter((r) => !r.spam);
+  const spam = rs.filter((r) => r.spam).sort((a, b) => b.ts - a.ts);
+  const groups = REQUEST_GROUPS.map((g) => ({ ...g, requests: plain.filter((r) => r.kind === g.kind).sort((a, b) => b.ts - a.ts) })).filter((g) => g.requests.length);
+  return spam.length ? [...groups, { kind: spam[0]!.kind, title: SPAM_TITLE, requests: spam }] : groups;
 }
 
 /** What it asks, after their name: "wants to be friends", "invited you to Nix Hackathon 2026". */
@@ -66,12 +72,17 @@ export function targetMembers(r: Pick<P.RequestView, 'target'>): string | null {
 
 export const ANSWER_LABEL: Record<P.RequestAnswer, string> = { accept: 'Accept', decline: 'Decline', block: 'Block' };
 
-/** The inbox's Requests row: how many, who, and the newest. Null when nothing waits. */
-export function requestsRow(rs: readonly P.RequestView[], nameOf: (identityId: string | null) => string): { count: number; names: string[]; lastAt: number } | null {
+/**
+ * The inbox's Requests row: how many, who, and the newest. Null when nothing waits. What the network filed as spam is
+ * quieter: not in the count or the names, only said (`spam`), and its time counts only when nothing else waits.
+ */
+export function requestsRow(rs: readonly P.RequestView[], nameOf: (identityId: string | null) => string): { count: number; names: string[]; lastAt: number; spam?: number } | null {
   if (!rs.length) return null;
-  const sorted = [...rs].sort((a, b) => b.ts - a.ts);
-  const names = [...new Set(sorted.map((r) => nameOf(r.from)))].slice(0, 4);
-  return { count: rs.length, names, lastAt: sorted[0].ts };
+  const plain = rs.filter((r) => !r.spam);
+  const spam = rs.length - plain.length;
+  const sorted = [...(plain.length ? plain : rs)].sort((a, b) => b.ts - a.ts);
+  const names = plain.length ? [...new Set(sorted.map((r) => nameOf(r.from)))].slice(0, 4) : [];
+  return { count: plain.length, names, lastAt: sorted[0]!.ts, ...(spam ? { spam } : {}) };
 }
 
 /** Said beside a message request: why opening it here is safe, and what accepting does. */

@@ -6,7 +6,7 @@
 import type * as P from '@dither-chat/protocol';
 import { BIO_LIMIT, bioLength, NETWORK_META } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
-import { linkOf } from './add.ts';
+import { linkOf, setLink } from './add.ts';
 import { postAuthors, postView } from './feed.ts';
 import type { Store } from './store.ts';
 
@@ -15,8 +15,20 @@ type Row = Record<string, any>;
 export interface PeopleDeps {
   store: Store;
   online: (accountId: string) => boolean;
-  command: <T>(accountId: string, cmd: { t: 'profile'; who: string } | { t: 'setProfile'; change: { bio?: string } }, timeoutMs?: number) => Promise<T>;
+  command: <T>(accountId: string, cmd: PeopleCommand, timeoutMs?: number) => Promise<T>;
+  /** A line in the account's log (supervisor note), for changes made on the owner's click. */
+  note?: (accountId: string, line: string) => void;
 }
+
+type PeopleCommand =
+  | { t: 'profile'; who: string }
+  | { t: 'setProfile'; change: P.ProfileChange }
+  | { t: 'verify'; who: string; safetyNumber?: string; clear?: true }
+  | { t: 'block'; target: { kind: 'identity' | 'conversation'; nativeId: string }; unblock?: true }
+  | { t: 'setContact'; who: string; nickname?: string; note?: string };
+
+/** An error with the HTTP status the route answers with. */
+const fail = (message: string, status: number) => Object.assign(new Error(message), { status });
 
 const caps = (store: Store, accountId: string): P.Capability[] => JSON.parse(store.account(accountId)?.capabilities ?? '[]');
 
@@ -111,30 +123,149 @@ export class People {
    * account; the network's limit is checked here first. Throws with an HTTP status for the route.
    */
   async setBio(identityId: string, bio: string): Promise<P.PersonAboutView> {
+    return this.setOwn(identityId, { bio });
+  }
+
+  /**
+   * Change your own profile on one network: the bio, and where the adapter's last answer listed them as `editable`,
+   * the name, the emoji, the picture (a file in the spool, or null) and the username. Throws with an HTTP status.
+   */
+  async setOwn(identityId: string, change: P.ProfileChange): Promise<P.PersonAboutView> {
     const s = this.d.store;
     const n = s.nativeOf('identity', identityId);
-    if (!n) throw Object.assign(new Error('no such identity'), { status: 404 });
+    if (!n) throw fail('no such identity', 404);
     const net = NETWORK_META[n.network].name;
     const acc = s.one<Row>('SELECT id, label FROM account WHERE self_identity = ?', identityId);
-    if (!acc) throw Object.assign(new Error('Only your own profile can be changed.'), { status: 403 });
-    if (!caps(s, acc.id).includes('editProfile')) throw Object.assign(new Error(`Your bio on ${net} cannot be changed from here.`), { status: 409 });
-    if (!this.d.online(acc.id)) throw Object.assign(new Error(`${net} · ${acc.label} is not connected.`), { status: 409 });
-    const limit = BIO_LIMIT[n.network];
-    const len = bioLength(bio);
-    if (limit !== undefined && len > limit) throw Object.assign(new Error(`Too long for ${net}: ${len} characters, and it takes ${limit}.`), { status: 400 });
+    if (!acc) throw fail('Only your own profile can be changed.', 403);
+    if (!caps(s, acc.id).includes('editProfile')) throw fail(`Your profile on ${net} cannot be changed from here.`, 409);
+    if (!this.d.online(acc.id)) throw fail(`${net} · ${acc.label} is not connected.`, 409);
+    const fields = (Object.keys(change) as P.ProfileField[]).filter((k) => change[k] !== undefined);
+    if (!fields.length) throw fail('Nothing to change.', 400);
+    const editable = this.keptOne(identityId)?.about.editable ?? ['bio'];
+    const extra = fields.find((f) => f !== 'bio' && !editable.includes(f));
+    if (extra) throw fail(`Your ${extra} on ${net} cannot be changed from here.`, 409);
+    if (change.bio !== undefined) {
+      const limit = BIO_LIMIT[n.network];
+      const len = bioLength(change.bio);
+      if (limit !== undefined && len > limit) throw fail(`Too long for ${net}: ${len} characters, and it takes ${limit}.`, 400);
+    }
     let about: P.PersonAbout;
     try {
-      about = (await this.d.command<P.PersonAbout>(acc.id, { t: 'setProfile', change: { bio } }, 20_000)) ?? {};
+      about = (await this.d.command<P.PersonAbout>(acc.id, { t: 'setProfile', change }, 60_000)) ?? {};
     } catch (e) {
-      throw Object.assign(new Error(`${net} did not take it: ${(e as Error).message}`), { status: 502 });
+      throw fail(`${net} did not take it: ${(e as Error).message}`, 502);
     }
     // What the network has now, as if the profile had been asked again.
     const k = this.keptOne(identityId);
     const { unasked: _, ...was } = k?.about ?? {};
-    const now = { ...was, ...about, bio: about.bio ?? bio };
+    const now = { ...was, ...about, ...(change.bio !== undefined ? { bio: about.bio ?? change.bio } : {}) };
+    if (change.username === null && !about.username) delete now.username;
     this.keep(identityId, acc.id, n.network, now);
     s.dirty.identities.add(identityId);
     return this.view(identityId, acc.id, now, Date.now(), undefined);
+  }
+
+  /** An account that can do `cap` for someone: one sharing a chat with them first, connected. Throws with a status. */
+  private ableFor(identityId: string, cap: P.Capability, what: string): { id: string; label: string; native: string; network: P.Network } {
+    const s = this.d.store;
+    const n = s.nativeOf('identity', identityId);
+    if (!n) throw fail('no such identity', 404);
+    if (s.one<Row>('SELECT id FROM account WHERE self_identity = ?', identityId)) throw fail('That is one of your own accounts', 400);
+    const net = NETWORK_META[n.network].name;
+    const all = (s.db.query('SELECT id FROM account WHERE network = ?').all(n.network) as Row[]).map((r) => r.id as string).filter((a) => caps(s, a).includes(cap));
+    if (!all.length) throw fail(`${what} on ${net} isn't built for your accounts there yet`, 409);
+    const shared = (
+      s.db
+        .query(
+          `SELECT DISTINCT v.account_id AS id FROM participant p JOIN vantage v ON v.target_kind = 'conversation' AND v.target_id = p.conversation_id WHERE p.identity_id = ?`,
+        )
+        .all(identityId) as Row[]
+    ).map((r) => r.id as string);
+    const id = [...shared.filter((a) => all.includes(a)), ...all].find((a) => this.d.online(a));
+    if (!id) throw fail(`${net} · ${s.account(all[0])?.label} is not connected`, 409);
+    return { id, label: s.account(id)!.label, native: n.nativeId, network: n.network };
+  }
+
+  /**
+   * Mark your safety number with someone verified (the digits the owner compared) or clear the mark (capability
+   * 'safetyNumbers'). The answer is their profile, kept as a fresh one.
+   */
+  async verify(identityId: string, b: { safetyNumber?: unknown; clear?: unknown }): Promise<P.PersonAboutView> {
+    const acc = this.ableFor(identityId, 'safetyNumbers', 'Safety numbers');
+    const clear = b.clear === true;
+    if (!clear && typeof b.safetyNumber !== 'string') throw fail('safetyNumber: the digits you compared', 400);
+    let about: P.PersonAbout;
+    try {
+      about = (await this.d.command<P.PersonAbout>(acc.id, { t: 'verify', who: acc.native, ...(clear ? { clear: true as const } : { safetyNumber: b.safetyNumber as string }) }, 60_000)) ?? {};
+    } catch (e) {
+      throw fail((e as Error).message, 409);
+    }
+    this.d.note?.(acc.id, `[people] ${clear ? 'cleared the verified mark of' : 'verified'} a safety number`);
+    this.keep(identityId, acc.id, acc.network, about);
+    return this.view(identityId, acc.id, about, Date.now(), undefined);
+  }
+
+  /** Block or unblock someone (capability 'block'), on the owner's click. Their account's list says so at once. */
+  async block(identityId: string, unblock: boolean): Promise<{ blocked: boolean; accountId: string }> {
+    const acc = this.ableFor(identityId, 'block', unblock ? 'Unblocking' : 'Blocking');
+    let r: { blocked?: boolean } | null;
+    try {
+      r = await this.d.command<{ blocked?: boolean }>(acc.id, { t: 'block', target: { kind: 'identity', nativeId: acc.native }, ...(unblock ? { unblock: true as const } : {}) }, 60_000);
+    } catch (e) {
+      throw fail((e as Error).message, 409);
+    }
+    const blocked = typeof r?.blocked === 'boolean' ? r.blocked : !unblock;
+    const s = this.d.store;
+    this.d.note?.(acc.id, `[people] ${blocked ? 'blocked' : 'unblocked'} someone`);
+    // Their relationship event says the same soon after; an unblocked contact comes back as one then.
+    if (caps(s, acc.id).includes('relationships')) setLink(s, acc.id, identityId, blocked ? 'blocked' : linkOf(s.db, acc.id, identityId) === 'blocked' ? 'stranger' : null);
+    s.db.query(`UPDATE about SET data = json_set(data, '$.relationship', ?) WHERE target_id = ? AND account_id = ?`).run(blocked ? 'blocked' : 'stranger', identityId, acc.id);
+    s.dirty.identities.add(identityId);
+    return { blocked, accountId: acc.id };
+  }
+
+  /** Block or unblock a group (capability 'block'), through an account in it. */
+  async blockConversation(conversationId: string, unblock: boolean): Promise<{ blocked: boolean; accountId: string }> {
+    const s = this.d.store;
+    const n = s.nativeOf('conversation', conversationId);
+    if (!n) throw fail('no such conversation', 404);
+    const net = NETWORK_META[n.network].name;
+    const ids = (s.db.query(`SELECT account_id FROM vantage WHERE target_kind = 'conversation' AND target_id = ?`).all(conversationId) as Row[]).map((r) => r.account_id as string).filter((a) => caps(s, a).includes('block'));
+    if (!ids.length) throw fail(`Blocking groups on ${net} isn't built for your accounts there yet`, 409);
+    const id = ids.find((a) => this.d.online(a));
+    if (!id) throw fail(`${net} · ${s.account(ids[0])?.label} is not connected`, 409);
+    let r: { blocked?: boolean } | null;
+    try {
+      r = await this.d.command<{ blocked?: boolean }>(id, { t: 'block', target: { kind: 'conversation', nativeId: n.nativeId }, ...(unblock ? { unblock: true as const } : {}) }, 60_000);
+    } catch (e) {
+      throw fail((e as Error).message, 409);
+    }
+    const blocked = typeof r?.blocked === 'boolean' ? r.blocked : !unblock;
+    this.d.note?.(id, `[people] ${blocked ? 'blocked' : 'unblocked'} a group`);
+    return { blocked, accountId: id };
+  }
+
+  /**
+   * Your nickname or note for someone, kept on their network too (capability 'contactNotes'): through each connected
+   * account on that network that can. Best effort, after the change is saved here; a failure is a log line.
+   */
+  pushContactNotes(identityId: string, change: { nickname?: string; note?: string }) {
+    const s = this.d.store;
+    const n = s.nativeOf('identity', identityId);
+    if (!n || s.isSelf(identityId)) return;
+    const ids = (s.db.query('SELECT id FROM account WHERE network = ?').all(n.network) as Row[]).map((r) => r.id as string).filter((a) => caps(s, a).includes('contactNotes') && this.d.online(a));
+    for (const id of ids) {
+      this.d
+        .command(id, { t: 'setContact', who: n.nativeId, ...change }, 60_000)
+        .then(() => this.d.note?.(id, `[people] kept your ${change.nickname !== undefined ? 'nickname' : 'note'} for someone on ${NETWORK_META[n.network].name} too`))
+        .catch((e) => this.d.note?.(id, `[people] could not keep your ${change.nickname !== undefined ? 'nickname' : 'note'} on ${NETWORK_META[n.network].name}: ${(e as Error).message}`));
+    }
+  }
+
+  /** A person's note changed here: to each of their accounts on a network that keeps notes. */
+  pushPersonNote(personId: string, note: string) {
+    const ids = (this.d.store.db.query('SELECT id FROM identity WHERE person_id = ?').all(personId) as Row[]).map((r) => r.id as string);
+    for (const id of ids) this.pushContactNotes(id, { note });
   }
 
   /** An answer from the network: what changed since the last one, the status it carries, and the answer kept. */
@@ -156,7 +287,7 @@ export class People {
     const network = s.nativeOf('identity', identityId)!.network;
     const acc = accountId ? s.account(accountId) : null;
     const ident = (native: string) => (acc ? s.ensureIdentity(acc, native) : hubId('idn', network, native));
-    const { avatar, banner, mutualSpaces, mutualFriends, friends, posts, ...rest } = a;
+    const { avatar, banner, mutualSpaces, mutualFriends, friends, decoration, badges, posts, ...rest } = a;
     const spaces = mutualSpaces?.map((m) => {
       const id = hubId('spc', network, m.id);
       const known = s.one<Row>('SELECT id FROM space WHERE id = ?', id);
@@ -179,6 +310,8 @@ export class People {
       ...(stale ? { stale } : {}),
       ...(avatar ? { avatar: s.mediaUrl(avatar, accountId) } : {}),
       ...(banner ? { banner: s.mediaUrl(banner, accountId) } : {}),
+      ...(decoration ? { decoration: s.mediaUrl(decoration, accountId) ?? undefined } : {}),
+      ...(badges?.length ? { badges: badges.map((b) => ({ name: b.name, ...(b.icon ? { icon: s.mediaUrl(b.icon, accountId) ?? undefined } : {}) })) } : {}),
       ...(spaces ? { mutualSpaces: spaces } : {}),
       ...(mf ? { mutualFriends: mf } : {}),
       ...(fr ? { friends: fr } : {}),

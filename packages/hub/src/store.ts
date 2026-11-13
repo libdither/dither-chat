@@ -9,12 +9,23 @@ import { activityChart, type Zone } from './activitychart.ts';
 import { binsFor, estimateMessages, snowflakeTime, type ChannelInput } from './msgcount.ts';
 import { Journal } from './journal.ts';
 import { infoFor } from './mediainfo.ts';
+import { extraView, withNote } from './msgextra.ts';
 import { TypingRelay, typingTtl } from './typing.ts';
 import { stepTimer } from './startup.ts';
 import { addTables, ingestRelationships, ingestRequests, pendingLinks } from './add.ts';
+import { accountSelfView, ingestSelf } from './accountself.ts';
+import { lateNews } from './latenews.ts';
+import { eraseVoice, ingestCallEvent, voiceKept } from './callstate.ts';
+import { ingestStories } from './media.ts';
+import { applyPollUpdate, pollSeen, pollViews } from './polls.ts';
+import { ingestServers } from './servers.ts';
+import { ingestApps } from './apps.ts';
+import { ingestThreadFacts, threadParts, type ThreadParts } from './threads.ts';
+import { type DueReminder, ingestSaved } from './saved.ts';
 import { feedItemOf, feedView } from './feed.ts';
 import { keepAbout } from './people.ts';
 import { alertBar, type Facts } from './learn.ts';
+import { attachmentExtra, attachmentRich, embedViews, richView, type StoredExtra } from './rich.ts';
 
 type Row = Record<string, any>;
 
@@ -210,6 +221,8 @@ export class Store {
   readonly typers = new TypingRelay();
   /** People a merge, a split or a new person changed: mail/people.ts sends their mail threads again. */
   personsChanged: ((personIds: string[]) => void) | null = null;
+  /** A reminder set on a network came due (saved.ts): the server notifies. Called inside ingest's transaction. */
+  reminderDue: ((r: DueReminder) => void) | null = null;
   /** How long each step of opening the database took (startup.ts). */
   readonly opening: [string, number][];
 
@@ -245,12 +258,13 @@ export class Store {
       const reactionsBefore = this.oldReactions();
       const broadcastsUnknown = this.addMentionsAll();
       this.addColumns('message', { gone_how: 'TEXT', gone_at: 'INTEGER', imported: 'INTEGER NOT NULL DEFAULT 0' });
-      this.addColumns('identity', { status: 'TEXT', nickname: 'TEXT' });
+      this.addColumns('identity', { status: 'TEXT', nickname: 'TEXT', net_nickname: 'TEXT', net_note: 'TEXT' });
       this.addColumns('category', { threshold: 'REAL' });
       this.addColumns('triage', { shadow: 'TEXT', explore: 'TEXT', propensity: 'REAL', was: 'TEXT', alert_mark: 'INTEGER', less_mark: 'INTEGER', marked_at: 'INTEGER' });
       this.addColumns('owed_turn', { dismissed: 'INTEGER NOT NULL DEFAULT 0' });
       this.addColumns('visit', { depth: 'INTEGER', seen_to_ts: 'INTEGER', owed_since: 'INTEGER', owed_shown: 'INTEGER', typed: 'INTEGER NOT NULL DEFAULT 0', draft_left: 'INTEGER', exit: 'TEXT' });
       this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'" });
+      this.addColumns('attachment', { alt: 'TEXT', extra: 'TEXT' });
       this.addColumns('notice', { caught: 'INTEGER NOT NULL DEFAULT 0', shown_ts: 'INTEGER', held_at: 'INTEGER' });
       const oldTriage = this.setAsideTriage();
       const oldLog = this.setAside('change_log', 'actor_id', ['change_log_target']);
@@ -659,12 +673,14 @@ export class Store {
           break;
         case 'conversation':
           this.conversation(acc, ev.conversation);
+          // A thread's following and tags, a forum's tags (threads.ts).
+          ingestThreadFacts(this, acc, ev.conversation);
           break;
         case 'leave':
           this.leave(acc, ev.kind, ev.nativeId);
           break;
         case 'message': {
-          const id = this.message(acc, ev.message, !!ev.live);
+          const id = this.message(acc, ev.message, !!ev.live, lateNews(ev));
           if (id) fresh.push(id);
           // Their message ends their typing, as in Discord's client, whether or not the network says so.
           if (ev.live) this.typingStopped(hubId('cnv', acc.network, ev.message.conversation), hubId('idn', acc.network, ev.message.author));
@@ -684,6 +700,12 @@ export class Store {
           const mid = hubId('msg', acc.network, ev.message);
           if (!this.db.query('SELECT 1 FROM message WHERE id = ?').get(mid) || !this.retention().changes) break;
           this.messageEvent(mid, ev.pinned ? 'pin' : 'unpin', null, ev.by ? this.ensureIdentity(acc, ev.by) : null, acc.id, ev.ts ?? Date.now());
+          break;
+        }
+        case 'pollUpdate': {
+          // Votes are not news in themselves, as reactions are not (polls.ts).
+          const { t: _t, ...u } = ev;
+          if (applyPollUpdate(this.db, acc.network, (n) => this.ensureIdentity(acc, n), u)) this.markReacted(hubId('msg', acc.network, ev.message));
           break;
         }
         case 'role': {
@@ -725,7 +747,8 @@ export class Store {
           if (!this.db.query('SELECT 1 FROM conversation WHERE id = ?').get(cid)) break;
           this.ensureVantage(acc.id, 'conversation', cid);
           const v = this.db.query(`SELECT last_read_ts FROM vantage WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`).get(acc.id, cid) as Row;
-          const upTo = Math.max(v?.last_read_ts ?? 0, ev.upToTs);
+          // Marked unread on the network by hand: the read point moves back (attention.ts). Otherwise only forward.
+          const upTo = ev.manual === true ? ev.upToTs : Math.max(v?.last_read_ts ?? 0, ev.upToTs);
           const counts = ev.unread !== undefined ? { unread: ev.unread, mentions: ev.mentions ?? 0 } : this.countUnread(acc, cid, upTo);
           this.db
             .query(`UPDATE vantage SET last_read_ts = ?, unread = ?, mentions = ? WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`)
@@ -756,6 +779,39 @@ export class Store {
         case 'relationships':
         case 'relationship':
           ingestRelationships(this, acc, ev);
+          break;
+        case 'notices':
+        case 'selfState':
+        case 'ignored':
+          ingestSelf(this, acc, ev);
+          break;
+        // Calls ringing you, voice channels' people and status lines (callstate.ts).
+        case 'callState':
+        case 'voice':
+        case 'voiceStatus':
+          ingestCallEvent(this, acc, ev);
+          break;
+        case 'scheduledEvents':
+        case 'scheduledEvent':
+        case 'scheduledEventGone':
+        case 'gate':
+          ingestServers(this, acc, ev);
+          break;
+        // An interaction's outcome and a form a bot opened (apps.ts): to the page as they come.
+        case 'interaction':
+        case 'appModal':
+          ingestApps(this, acc, ev);
+          break;
+        // Stories: on their author's page only, never a message (media.ts).
+        case 'story':
+        case 'storyGone':
+          ingestStories(this, acc, ev);
+          break;
+        // Saved on the network, and its reminders (saved.ts).
+        case 'saved':
+        case 'unsaved':
+        case 'reminderDue':
+          ingestSaved(this, acc, ev, (r) => this.reminderDue?.(r));
           break;
         case 'personAbout':
           // What the network showed unasked (X: the people in your notifications), kept as an asked profile is.
@@ -881,6 +937,7 @@ export class Store {
       !before || before.handle !== after.handle || before.display_name !== after.display_name || before.avatar_url !== after.avatar_url || before.is_bot !== after.is_bot;
     if (changed) this.dirty.identities.add(id);
 
+    if (!f.isSelf && (f.nickname !== undefined || f.note !== undefined)) this.networkNotes(id, f);
     if (f.isSelf) {
       this.linkSelf(id, f);
       if (acc.self_identity !== id) {
@@ -894,6 +951,41 @@ export class Store {
       this.syncAutoPerson(after.person_id);
     }
     return id;
+  }
+
+  /** Your nickname or note went back to the network (server.ts pushes it through an account with 'contactNotes'). */
+  contactNotesOut?: (identityId: string, change: { nickname?: string; note?: string }) => void;
+
+  /**
+   * Your private nickname and note for someone as their network keeps them (IdentityFact nickname and note: Signal's).
+   * A change there is taken here when what is here is still what the network said before, or nothing. When both sides
+   * changed: the nickname here stays (the network keeps its own), and the two notes are joined and the joined note
+   * goes back, so neither side's text is lost.
+   */
+  private networkNotes(id: string, f: P.IdentityFact) {
+    const r = this.db.query('SELECT nickname, net_nickname, net_note, person_id FROM identity WHERE id = ?').get(id) as Row;
+    if (typeof f.nickname === 'string' && f.nickname !== r.net_nickname) {
+      const mine = r.nickname ?? '';
+      this.db.query('UPDATE identity SET net_nickname = ? WHERE id = ?').run(f.nickname, id);
+      if (mine !== f.nickname && (!mine || mine === (r.net_nickname ?? ''))) this.setIdentityNickname(id, f.nickname || null);
+    }
+    if (typeof f.note === 'string' && f.note !== r.net_note) {
+      this.db.query('UPDATE identity SET net_note = ? WHERE id = ?').run(f.note, id);
+      const pid = r.person_id ?? (f.note ? this.ensurePerson(id) : null);
+      if (!pid) return;
+      const mine = ((this.db.query('SELECT note FROM person WHERE id = ?').get(pid) as Row | null)?.note as string | null) ?? '';
+      const theirs = f.note;
+      if (mine === theirs) return;
+      // Only the network's changed (or there is none here): take it. Theirs holds all of ours: take it too.
+      if (!mine || mine === (r.net_note ?? '') || (theirs && theirs.includes(mine))) this.updatePerson(pid, { note: theirs });
+      // Ours holds all of theirs (or they cleared it while ours changed): ours goes back.
+      else if (!theirs || mine.includes(theirs)) this.contactNotesOut?.(id, { note: mine });
+      else {
+        const joined = `${mine}\n\n${theirs}`;
+        this.updatePerson(pid, { note: joined });
+        this.contactNotesOut?.(id, { note: joined });
+      }
+    }
   }
 
   private linkSelf(identityId: string, f: P.IdentityFact) {
@@ -1036,7 +1128,7 @@ export class Store {
     const parent = f.parentConversation ? hubId('cnv', acc.network, f.parentConversation) : null;
     const before = this.placeSig('conversation', id);
     const spacesBefore = this.parentsOf('conversation', id);
-    const was = this.db.query('SELECT name, topic, avatar_url, shape FROM conversation WHERE id = ?').get(id) as Row | null;
+    const was = this.db.query('SELECT name, topic, avatar_url, shape, archived FROM conversation WHERE id = ?').get(id) as Row | null;
     // A conversation first known only from a message (no name yet) filling in is not a change.
     if (was && (was.name || was.shape === 'direct'))
       this.logChanges('conversation', id, acc.id, [
@@ -1047,12 +1139,13 @@ export class Store {
     this.db
       .query(
         `INSERT INTO conversation (id, network, native_id, shape, variant, parent_id, name, topic, avatar_url, encrypted, archived, last_message_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?, ?)
          ON CONFLICT (network, native_id) DO UPDATE SET
            shape = excluded.shape, variant = excluded.variant,
            parent_id = CASE WHEN excluded.shape = 'thread' THEN COALESCE(excluded.parent_id, parent_id) ELSE excluded.parent_id END,
            name = COALESCE(excluded.name, name), topic = COALESCE(excluded.topic, topic),
-           avatar_url = COALESCE(excluded.avatar_url, avatar_url), encrypted = excluded.encrypted, archived = excluded.archived,
+           avatar_url = COALESCE(excluded.avatar_url, avatar_url), encrypted = excluded.encrypted,
+           archived = CASE WHEN ? IS NULL THEN archived ELSE excluded.archived END,
            last_message_at = CASE WHEN excluded.last_message_at IS NULL THEN last_message_at ELSE MAX(COALESCE(last_message_at, 0), excluded.last_message_at) END,
            updated_at = excluded.updated_at`,
       )
@@ -1067,11 +1160,15 @@ export class Store {
         f.topic ?? null,
         f.avatarUrl ?? null,
         f.encrypted ? 1 : 0,
-        f.archived ? 1 : 0,
+        // A fact that does not say keeps what was said (Signal says it only from a read of contacts).
+        f.archived === undefined ? null : f.archived ? 1 : 0,
         f.lastMessageAt ?? null,
         Date.now(),
+        f.archived === undefined ? null : 1,
       );
     this.ensureVantage(acc.id, 'conversation', id, f.mute);
+    // Archived or unarchived on the network: hidden or shown here too, when that changes, unless you turned it off.
+    if (f.archived !== undefined && !!was?.archived !== f.archived && this.followArchive()) this.patchPlacePrefs([{ kind: 'conversation', id, hidden: f.archived }]);
     if (f.spaces) {
       this.db.query(`DELETE FROM space_edge WHERE child_kind = 'conversation' AND child_id = ?`).run(id);
       for (const s of f.spaces) {
@@ -1136,7 +1233,8 @@ export class Store {
   }
 
   /** Returns the message id if it is new and live (needs triage). */
-  private message(acc: AccountRow, f: P.MessageFact, live: boolean): string | null {
+  /** `late`: heard late and still news (lateNews): new to the hub, it is triaged as a live one is. */
+  private message(acc: AccountRow, f: P.MessageFact, live: boolean, late = false): string | null {
     const cid = this.ensureConversation(acc, f.conversation);
     const id = hubId('msg', acc.network, f.nativeId);
     const author = this.ensureIdentity(acc, f.author);
@@ -1149,8 +1247,8 @@ export class Store {
     const thread = f.threadRoot ? hubId('cnv', acc.network, f.threadRoot) : null;
     // An edit: the words it had before, if this source's edits are kept (docs/history.md). A system line or a sticker
     // that comes back worded otherwise (an extractor that learned a new message type, or to show a sticker as itself)
-    // was never edited by anyone.
-    const reworded = old && [old.kind, f.kind].some((k) => k === 'system' || k === 'sticker');
+    // was never edited by anyone, nor was a call line saying how the call went.
+    const reworded = old && [old.kind, f.kind].some((k) => k === 'system' || k === 'sticker' || k === 'call');
     if (old && !old.deleted && old.body && f.body !== old.body && !reworded && this.keeps('edits', acc)) this.messageEvent(id, 'edit', { body: old.body }, author, acc.id, f.editedTs ?? Date.now());
     this.db
       .query(
@@ -1178,17 +1276,18 @@ export class Store {
         thread,
         f.mentionsSelf ? 1 : 0,
         f.mentionsSelf && f.mentionsAll ? 1 : 0,
-        f.extra || f.forward ? JSON.stringify({ ...f.extra, ...(f.forward ? { forward: f.forward } : {}) }) : null,
+        f.extra || f.forward || f.silent ? JSON.stringify({ ...f.extra, ...(f.forward ? { forward: f.forward } : {}), ...(f.silent ? { silent: true } : {}) }) : null,
       );
     if (f.attachments && !(old?.deleted && !f.attachments.length)) {
       this.db.query('DELETE FROM attachment WHERE message_id = ?').run(id);
       f.attachments.forEach((a, i) => {
         this.db
-          .query(`INSERT INTO attachment (id, message_id, kind, mime, name, size, width, height, url, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .run(hubId('att', acc.network, `${f.nativeId}#${a.nativeId ?? i}`), id, a.kind, a.mime ?? null, a.name ?? null, a.size ?? null, a.width ?? null, a.height ?? null, a.url, i);
+          .query(`INSERT INTO attachment (id, message_id, kind, mime, name, size, width, height, url, position, alt, extra) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(hubId('att', acc.network, `${f.nativeId}#${a.nativeId ?? i}`), id, a.kind, a.mime ?? null, a.name ?? null, a.size ?? null, a.width ?? null, a.height ?? null, a.url, i, a.alt?.slice(0, 2000) || null, attachmentExtra(a));
       });
     }
     if (f.reactions) this.reactionSnapshot(acc, id, f.reactions, existed);
+    if (existed && f.extra?.poll) pollSeen(this.db, id, f.extra);
     if (!existed) this.ingested.set(cid, Math.min(this.ingested.get(cid) ?? Infinity, f.ts));
     const newForAccount = this.db.query('INSERT OR IGNORE INTO message_seen (message_id, account_id) VALUES (?, ?)').run(id, acc.id).changes > 0;
 
@@ -1218,8 +1317,8 @@ export class Store {
     }
     const changed = before === null || JSON.stringify(this.messageViews([this.db.query('SELECT * FROM message WHERE id = ?').get(id) as Row])) !== before;
     if (changed || this.placeSig('conversation', cid) !== convBefore) this.dirty.conversations.add(cid);
-    if (live || (existed && changed)) this.dirty.messages.set(id, live);
-    return !existed && live && !fromSelf ? id : null;
+    if (live || late || (existed && changed)) this.dirty.messages.set(id, live || (late && !existed));
+    return !existed && (live || late) && !fromSelf ? id : null;
   }
 
   // ------------------------------------------------------------ history imports (imports/engine.ts, docs/import.md)
@@ -1551,6 +1650,12 @@ export class Store {
     });
     tx();
     this.dirty.extra.push({ t: 'folders', folders: this.folders() });
+  }
+
+  /** Whether a network's archive hides and shows chats here (ArrangeSettings.followArchive; on unless turned off). */
+  followArchive(): boolean {
+    const r = this.db.query(`SELECT value FROM arrange_setting WHERE key = 'followArchive'`).get() as Row | null;
+    return r?.value !== 'false';
   }
 
   placePrefs(): P.PlacePrefView[] {
@@ -2098,6 +2203,7 @@ export class Store {
       statuses: any(logged, 'status'),
       presence: any(logged, 'presence'),
       members: any('SELECT 1 FROM membership'),
+      voice: voiceKept(this),
     };
   }
 
@@ -2107,6 +2213,7 @@ export class Store {
       this.db.query('DELETE FROM member_coverage').run();
       return this.db.query('DELETE FROM membership').run().changes;
     }
+    if (what === 'voice') return eraseVoice(this);
     if (what === 'statuses' || what === 'presence')
       return this.db.query(`DELETE FROM change_log WHERE target_kind = 'identity' AND field = ?`).run(what === 'statuses' ? 'status' : 'presence').changes;
     const touched = (sql: string) => (this.db.query(sql).all() as Row[]).forEach((r) => this.dirty.messages.set(r.message_id, true));
@@ -2179,6 +2286,7 @@ export class Store {
       demo: !!r.demo,
       createdAt: r.created_at,
       ...((m) => (m ? { managedBy: m } : {}))(this.accountManaged(r.id)),
+      ...accountSelfView(this, r.id),
       ...(r.network === 'calendar' ? { url: calendarAccountUrl(json(r.config, {})) } : {}),
     };
   }
@@ -2248,7 +2356,21 @@ export class Store {
     const vs = this.db.query(`SELECT * FROM vantage WHERE target_kind = 'conversation' AND target_id = ?`).all(id) as Row[];
     const last = r.last_message_id ? (this.db.query('SELECT * FROM message WHERE id = ?').get(r.last_message_id) as Row) : null;
     const other = r.shape === 'direct' ? parts.find((p) => !this.isSelf(p)) : undefined;
-    return this.assembleConversation(r, spaceIds, parts, vs, last, this.peerOf(r, parts), other ? pendingLinks(this.db, [other]) : undefined);
+    return this.assembleConversation(r, spaceIds, parts, vs, last, this.peerOf(r, parts), other ? pendingLinks(this.db, [other]) : undefined, this.threadPartsOf([r]).get(id));
+  }
+
+  /** Threads' and forums' parts of these conversations, with each post's first message (threads.ts). */
+  private threadPartsOf(rows: Row[]): Map<string, ThreadParts & { firstRow?: Row | null }> {
+    const parts = threadParts(this, rows as never) as Map<string, ThreadParts & { firstRow?: Row | null }>;
+    const firsts = [...parts.values()].map((p) => p.firstId).filter((x): x is string => !!x);
+    if (!firsts.length) return parts;
+    const found = new Map((this.db.query('SELECT * FROM message WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0').all(JSON.stringify(firsts)) as Row[]).map((m) => [m.id as string, m]));
+    for (const [cid, p] of parts) {
+      const m = p.firstId ? found.get(p.firstId) : undefined;
+      // A post's first message is in the post; a thread started from a message has its starter in the channel.
+      if (m && m.conversation_id === cid) p.firstRow = m;
+    }
+    return parts;
   }
 
   /** Many conversations at once, as bootstrap() reads them: a handful of queries rather than five per conversation. */
@@ -2269,9 +2391,10 @@ export class Store {
       q(`SELECT m.* FROM message m WHERE m.id IN (SELECT last_message_id FROM conversation WHERE id IN (SELECT value FROM json_each(?)))`).map((m) => [m.id as string, m]),
     );
     const pending = rows.some((r) => r.shape === 'direct') ? pendingLinks(this.db) : undefined;
+    const threads = this.threadPartsOf(rows);
     return rows.map((r) => {
       const ps = (parts.get(r.id) ?? []).map((p) => p.identity_id as string);
-      return this.assembleConversation(r, (edges.get(r.id) ?? []).map((e) => e.parent_id), ps, vants.get(r.id) ?? [], lasts.get(r.last_message_id) ?? null, this.peerOf(r, ps), pending);
+      return this.assembleConversation(r, (edges.get(r.id) ?? []).map((e) => e.parent_id), ps, vants.get(r.id) ?? [], lasts.get(r.last_message_id) ?? null, this.peerOf(r, ps), pending, threads.get(r.id));
     });
   }
 
@@ -2282,7 +2405,7 @@ export class Store {
     return ((this.db.query('SELECT person_id FROM identity WHERE id = ?').get(peer) as Row) ?? {}).person_id ?? null;
   }
 
-  private assembleConversation(r: Row, spaceIds: string[], parts: string[], vs: Row[], last: Row | null, peer: string | null, links?: Map<string, P.PendingLinkView>): P.ConversationView {
+  private assembleConversation(r: Row, spaceIds: string[], parts: string[], vs: Row[], last: Row | null, peer: string | null, links?: Map<string, P.PendingLinkView>, th?: ThreadParts & { firstRow?: Row | null }): P.ConversationView {
     const via = vs[0]?.account_id ?? null;
     // A DM: a friend request between one of its accounts and the other person, either way (add.ts pendingLinks).
     const other = r.shape === 'direct' && links?.size ? parts.find((p) => !this.isSelf(p)) : undefined;
@@ -2307,7 +2430,20 @@ export class Store {
       lastMessageAt: r.last_message_at,
       nativeMute: json(vs.find((v) => v.native_mute)?.native_mute ?? null, null),
       ...(pending ? { pending } : {}),
+      ...(th?.thread || th?.firstRow ? { thread: this.threadView(th, via) } : {}),
+      ...(th?.forum ? { forum: th.forum } : {}),
     };
+  }
+
+  /** A thread's view: its facts, its first message as a preview, and that message's first picture for a gallery. */
+  private threadView(th: ThreadParts & { firstRow?: Row | null }, via: string | null): P.ThreadView {
+    const base = th.thread ?? { following: [], notFollowing: [], notify: null, muted: false, mutedUntil: null, locked: false, tags: [], pinned: false, private: false, ownerId: null, createdAt: null, messageCount: null };
+    let cover: string | null = null;
+    if (th.firstRow) {
+      const a = this.db.query(`SELECT url FROM attachment WHERE message_id = ? AND kind = 'image' ORDER BY position LIMIT 1`).get(th.firstRow.id) as Row | null;
+      cover = a ? this.media(a.url, via) : null;
+    }
+    return { ...base, first: this.preview(th.firstRow ?? null), cover };
   }
 
   // ------------------------------------------------------------ reactions
@@ -2540,6 +2676,7 @@ export class Store {
       RC.set(r.message_id, cur);
     }
     const T = new Map(tri.map((t) => [t.message_id, t]));
+    const POLL = pollViews(this.db, rows, (id) => this.isSelf(id));
     // What was kept of deleted and disappeared messages stays out of sight with adversarial features hidden.
     const unseal = this.retention().adversarial;
     return rows.map((r) => {
@@ -2548,9 +2685,11 @@ export class Store {
       const rx = new Map<string, string[]>();
       for (const x of R.get(r.id) ?? []) (rx.get(`${x.style}|${x.key}`) ?? rx.set(`${x.style}|${x.key}`, []).get(`${x.style}|${x.key}`)!).push(x.identity_id);
       const t = T.get(r.id);
-      const extra = json<{ encryptionWarning?: string; forward?: P.ForwardFact; feed?: unknown }>(r.extra, {});
+      const extra = json<StoredExtra & { encryptionWarning?: string; forward?: P.ForwardFact; feed?: unknown }>(r.extra, {});
       const encryptionWarning = extra.encryptionWarning;
       const forward = sentForwards.get(r.id) ?? (extra.forward ? this.forwardView(r.network, extra.forward) : null);
+      const rich = sealed ? undefined : richView(extra, r.network, r.body, this.linkedMessage);
+      const { notes, ...extras } = r.extra && !sealed ? this.extraView(r, extra as Record<string, unknown>, seenVia[0]) : {};
       // A feed conversation's message (docs/feed.md): what they did, with hub ids and signed pictures.
       const fi = extra.feed ? feedItemOf(extra) : null;
       const feed = fi ? feedView(fi, r.network, (u) => this.media(u, seenVia[0])) : null;
@@ -2558,6 +2697,7 @@ export class Store {
         ...(encryptionWarning ? { encryptionWarning } : {}),
         ...(forward ? { forward } : {}),
         ...(feed ? { feed } : {}),
+        ...extras,
         id: r.id,
         conversationId: r.conversation_id,
         network: r.network,
@@ -2576,18 +2716,26 @@ export class Store {
         ...(EV.get(r.id) ? { events: EV.get(r.id) } : {}),
         ...(PIN.get(r.id)?.pinned ? { pinned: true } : {}),
         ...(RC.get(r.id) ? { receipts: RC.get(r.id) } : {}),
-        attachments: (sealed ? [] : (A.get(r.id) ?? [])).map((a) => ({
-          id: a.id,
-          kind: a.kind,
-          mime: a.mime,
-          name: a.name,
-          size: a.size,
-          width: a.width,
-          height: a.height,
-          url: this.media(a.url, seenVia[0]) ?? '',
-          ...(infos?.get(a.url) ? { info: infos.get(a.url) } : {}),
-        })),
-        embeds: json<{ embeds?: P.EmbedView[] }>(r.extra, {}).embeds?.map((e) => ({ ...e, image: this.media(e.image, seenVia[0]) ?? undefined })) ?? [],
+        attachments: (sealed ? [] : (A.get(r.id) ?? [])).map((a) =>
+          withNote(
+            {
+              id: a.id,
+              kind: a.kind,
+              mime: a.mime,
+              name: a.name,
+              size: a.size,
+              width: a.width,
+              height: a.height,
+              url: this.media(a.url, seenVia[0]) ?? '',
+              ...(infos?.get(a.url) ? { info: infos.get(a.url) } : {}),
+              ...attachmentRich(a),
+            },
+            notes?.[a.position],
+          ),
+        ),
+        embeds: embedViews(extra, (u) => this.media(u, seenVia[0])),
+        ...(rich ? { rich } : {}),
+        ...(POLL.has(r.id) && !sealed ? { poll: POLL.get(r.id) } : {}),
         reactions: (RT.get(r.id) ?? [])
           .map((t): P.ReactionView => {
             const identityIds = rx.get(`${t.style}|${t.key}`) ?? [];
@@ -2600,6 +2748,25 @@ export class Store {
         triage: t ? triageView(t) : null,
         ...(marks.has(r.id) ? { replyMark: marks.get(r.id) } : {}),
       };
+    });
+  }
+
+  /** A message a link points at, as stored, with its file count: never fetched for a link (rich.ts). */
+  private linkedMessage = (network: P.Network, nativeId: string): Row | null =>
+    this.db.query('SELECT id, conversation_id, author_id, ts, body, deleted, (SELECT COUNT(*) FROM attachment a WHERE a.message_id = message.id) AS attachments FROM message WHERE id = ?').get(hubId('msg', network, nativeId)) as Row | null;
+
+  /** What a message's extra says beyond its text, as the web shows it (msgextra.ts). */
+  private extraView(r: Row, extra: Record<string, unknown>, via: string | undefined) {
+    return extraView(extra, r.reply_to_id, {
+      identity: (native) => {
+        const row = (/^\+\d+$/.test(native)
+          ? this.db.query('SELECT id FROM identity WHERE network = ? AND handle = ? LIMIT 1').get(r.network, native)
+          : this.db.query('SELECT id FROM identity WHERE id = ?').get(hubId('idn', r.network, native))) as Row | null;
+        return row?.id ?? null;
+      },
+      isSelf: (native) => this.isSelf(hubId('idn', r.network, native)),
+      media: (url) => this.media(url, via),
+      stored: (id) => !!this.db.query('SELECT 1 FROM message WHERE id = ?').get(id),
     });
   }
 
@@ -2991,10 +3158,11 @@ export class Store {
     }
     if (substring) {
       mode = 'substring';
-      const like = texts.map(() => `m.body LIKE ? ESCAPE '\\'`);
+      // A picture's alt text counts as its message's words here (rich.ts).
+      const like = texts.map(() => `(m.body LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM attachment a WHERE a.message_id = m.id AND a.alt LIKE ? ESCAPE '\\'))`);
       rows = (this.db
         .query(`SELECT m.*, m.rowid AS rid FROM message m WHERE ${[...like, ...without, ...where].join(' AND ')} ORDER BY ${order} LIMIT ? OFFSET ?`)
-        .all(...texts.map((t) => `%${likeEscape(t)}%`), ...withoutArgs, ...args, take, offset) as Row[]).map((r) => ({ ...r, snip: markSnippet(r.body, texts) }));
+        .all(...texts.flatMap((t) => [`%${likeEscape(t)}%`, `%${likeEscape(t)}%`]), ...withoutArgs, ...args, take, offset) as Row[]).map((r) => ({ ...r, snip: markSnippet(r.body, texts) }));
     }
 
     const more = rows.length > limit;
@@ -3156,6 +3324,7 @@ export class Store {
     const personOf = new Map(identities.map((i) => [i.id, i.personId]));
 
     const links = pendingLinks(db);
+    const threads = this.threadPartsOf(convRows);
     const conversations = convRows.map((r) => {
       const ps = (P_.get(r.id) ?? []).map((p) => p.identity_id);
       const peer = r.shape === 'direct' ? (personOf.get(ps.find((p) => !this.isSelf(p)) ?? '') ?? null) : null;
@@ -3167,6 +3336,7 @@ export class Store {
         r.last_message_id ? (lasts.get(r.last_message_id) ?? null) : null,
         peer,
         links,
+        threads.get(r.id),
       );
     });
 

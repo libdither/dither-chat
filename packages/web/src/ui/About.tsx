@@ -11,7 +11,7 @@ import { fullTime } from '../format.ts';
 import { authorName, convTitle, identityName, netName, plainBody } from '../model.ts';
 import { api, db, go, isSelfIdentity, openProfile, toast } from '../state.ts';
 import { Avatar } from './bits.tsx';
-import { Menuable } from './ContextMenu.tsx';
+import { groups, Menuable, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
 import { identityMenu } from './menus.tsx';
 import { QrImage } from './QrCodes.tsx';
@@ -26,6 +26,9 @@ export function openAbout(kind: AboutTarget['kind'], id: string) {
 const BOOL_ON: Partial<Record<P.AboutKey, string>> = { nsfw: 'Age-restricted', announceOnly: 'Only admins', joinApproval: 'Admins approve', encrypted: 'On' };
 const BOOL_OFF: Partial<Record<P.AboutKey, string>> = { nsfw: 'No', announceOnly: 'Everyone', joinApproval: 'No', encrypted: 'Off' };
 const HINT: Partial<Record<P.AboutKey, string>> = {
+  autoArchive: 'New threads hide themselves after this long without a message.',
+  userLimit: 'How many can be in it at once.',
+  bitrate: 'Higher sounds better and uses more data.',
   disappearing: 'New messages disappear after this long.',
   slowMode: 'How long members wait between messages.',
   nsfw: 'Members confirm their age before they see it.',
@@ -41,6 +44,12 @@ export function valueText(key: P.AboutKey, v: unknown): string {
     case 'disappearing':
     case 'slowMode':
       return durationLabel(v as number);
+    case 'autoArchive':
+      return durationLabel((v as number) * 60);
+    case 'userLimit':
+      return v ? `${v} people` : 'No limit';
+    case 'bitrate':
+      return `${Math.round((v as number) / 1000)} kbps`;
     case 'editInfo':
     case 'addMembers':
       return WHO_LABEL[v as P.Who];
@@ -54,18 +63,23 @@ export function valueText(key: P.AboutKey, v: unknown): string {
 }
 
 /** The choices a select offers for a setting, with the current value kept even when the network's list lacks it. */
-function choices(network: P.Network, key: P.AboutKey, current: unknown): { value: string; label: string }[] {
+function choices(network: P.Network, key: P.AboutKey, current: unknown, options?: number[]): { value: string; label: string }[] {
   const r = ABOUT_RULES[network];
   const nums = (xs: number[] | undefined) => [...new Set([...(xs ?? []), ...(typeof current === 'number' ? [current] : [])])].sort((a, b) => a - b).map((n) => ({ value: String(n), label: durationLabel(n) }));
   if (key === 'disappearing') return nums(r.disappearing);
   if (key === 'slowMode') return nums(r.slowMode);
+  // The place's own choices where they differ (a voice channel's bitrate by its server's boosts).
+  const own = (xs: number[] | undefined, fmt: (n: number) => string) => [...new Set([...(options ?? xs ?? []), ...(typeof current === 'number' ? [current] : [])])].sort((a, b) => a - b).map((n) => ({ value: String(n), label: fmt(n) }));
+  if (key === 'autoArchive') return own(r.autoArchive, (n) => valueText(key, n));
+  if (key === 'userLimit') return own(r.userLimit, (n) => valueText(key, n));
+  if (key === 'bitrate') return own(r.bitrate, (n) => valueText(key, n));
   if (key === 'editInfo' || key === 'addMembers') return (Object.keys(WHO_LABEL) as P.Who[]).map((w) => ({ value: w, label: WHO_LABEL[w] }));
   if (key === 'joinRule') return (Object.keys(JOIN_RULE_LABEL) as P.JoinRule[]).map((w) => ({ value: w, label: JOIN_RULE_LABEL[w] }));
   if (key === 'history') return (Object.keys(HISTORY_LABEL) as P.HistoryVisibility[]).map((w) => ({ value: w, label: HISTORY_LABEL[w] }));
   return [];
 }
 
-const NUMERIC: P.AboutKey[] = ['disappearing', 'slowMode'];
+const NUMERIC: P.AboutKey[] = ['disappearing', 'slowMode', 'autoArchive', 'userLimit', 'bitrate'];
 const BOOLEAN: P.AboutKey[] = ['nsfw', 'announceOnly', 'joinApproval', 'encrypted'];
 const TOP: P.AboutKey[] = ['name', 'topic', 'avatar'];
 
@@ -221,7 +235,16 @@ export function SettingRow({ network, k, s, busy, onChange }: { network: P.Netwo
   const id = `about-${k}`;
   let control;
   if (!s.canEdit) control = <span class="about-value">{valueText(k, s.value)}</span>;
-  else if (BOOLEAN.includes(k)) {
+  else if (s.writeOnly && BOOLEAN.includes(k)) {
+    // It can be set but not read back (Signal's join approval): a choice, never a switch that pretends to know.
+    control = (
+      <select id={id} class="select about-select" disabled={busy} value="" onChange={(e) => onChange((e.target as HTMLSelectElement).value === 'on')}>
+        <option value="">Unknown: set it…</option>
+        <option value="on">{valueText(k, true)}</option>
+        <option value="off">{valueText(k, false)}</option>
+      </select>
+    );
+  } else if (BOOLEAN.includes(k)) {
     const on = !!s.value;
     control = (
       <label class="about-switch">
@@ -242,7 +265,7 @@ export function SettingRow({ network, k, s, busy, onChange }: { network: P.Netwo
       </label>
     );
   } else {
-    const opts = choices(network, k, s.value);
+    const opts = choices(network, k, s.value, s.options);
     control = (
       <select id={id} class="select about-select" disabled={busy} value={s.value === null ? '' : String(s.value)} onChange={(e) => onChange(NUMERIC.includes(k) ? Number((e.target as HTMLSelectElement).value) : (e.target as HTMLSelectElement).value)}>
         {s.value === null && <option value="">Unknown</option>}
@@ -259,6 +282,7 @@ export function SettingRow({ network, k, s, busy, onChange }: { network: P.Netwo
           <b>{ABOUT_LABEL[k]}</b>
         </label>
         {HINT[k] && s.canEdit && <small>{HINT[k]}</small>}
+        {s.canEdit && s.reason && <small class="about-reason">{s.reason}</small>}
         <Locked s={s} />
       </div>
       <div class="about-row-control">
@@ -358,7 +382,7 @@ export function PinnedSection({ p, network, onOpen, onUnpin }: { p: NonNullable<
 
 const SHOWN = 120;
 
-export function MembersSection({ m, adding, onAdd }: { m: NonNullable<P.AboutView['members']>; adding?: P.AboutAdding; onAdd?: () => void }) {
+export function MembersSection({ m, adding, onAdd, extra }: { m: NonNullable<P.AboutView['members']>; adding?: P.AboutAdding; onAdd?: () => void; extra?: (member: NonNullable<P.AboutView['members']>['list'][number]) => MenuEntry[] }) {
   const [all, setAll] = useState(false);
   // Grouped by role, highest first, as Discord's member list does.
   const sorted = [...m.list].sort((a, b) => (b.rank ?? 0) - (a.rank ?? 0) || identityName(a.identityId).localeCompare(identityName(b.identityId)));
@@ -392,13 +416,13 @@ export function MembersSection({ m, adding, onAdd }: { m: NonNullable<P.AboutVie
             const self = isSelfIdentity(x.identityId);
             const name = self ? `${identityName(x.identityId)} (you)` : (p?.name ?? identityName(x.identityId));
             return (
-              <Menuable build={() => identityMenu(x.identityId)}>
+              <Menuable build={() => withExtra(identityMenu(x.identityId), extra?.(x) ?? [])}>
                 {(ctx) => (
                   <button class="member" onClick={() => openProfile(x.identityId)} {...ctx}>
                     <Avatar id={p?.id ?? x.identityId} name={name} url={p?.avatar ?? i?.avatar} size={28} />
                     <span>
                       <b style={x.color ? { color: x.color } : undefined}>{name}</b>
-                      <small>{i?.handle ?? i?.nativeId ?? ''}</small>
+                      <small>{x.label ? `${x.label.emoji ?? ''} ${x.label.text ?? ''}`.trim() : (i?.handle ?? i?.nativeId ?? '')}</small>
                     </span>
                   </button>
                 )}
@@ -414,4 +438,9 @@ export function MembersSection({ m, adding, onAdd }: { m: NonNullable<P.AboutVie
       )}
     </section>
   );
+}
+
+/** A member's menu with what moderating adds (Moderation.tsx), when it adds anything. */
+function withExtra(spec: MenuSpec | null, more: MenuEntry[]): MenuSpec | null {
+  return spec && more.length ? { ...spec, items: groups(spec.items, more) } : spec;
 }

@@ -52,12 +52,22 @@ export type AccountStatus = 'connecting' | 'online' | 'attention' | 'offline' | 
 /** Why an account needs a human. Drives the "Needs you" cards. */
 export type AttentionKind =
   | 'login' //           not logged in; open the live view and log in
-  | 'captcha' //         a captcha is on screen in the sandbox
+  | 'captcha' //         a captcha is on screen in the sandbox, or (detail.captcha: CaptchaCheck) one to solve in a browser
   | 'verify' //          email / phone / "suspicious activity" challenge
   | 'link_device' //     Signal, WhatsApp: scan the QR code with your phone
   | 'selector_broken' // the client changed and a hook no longer resolves
   | 'rate_limited'
   | 'unknown';
+
+/**
+ * A captcha the owner solves in their own browser (Signal's rate-limit challenge), in Attention.detail.captcha: open
+ * `url`, solve it, copy the link "Open Signal" points at, and paste it; it goes to the adapter as the account action
+ * `action` with { captcha }. Nothing solves it for them.
+ */
+export interface CaptchaCheck {
+  url: string;
+  action: string;
+}
 
 export interface Attention {
   kind: AttentionKind;

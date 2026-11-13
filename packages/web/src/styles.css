@@ -2476,6 +2476,327 @@ code {
   background: var(--bg-hover);
   color: var(--text-faint);
 }
+/* Stickers, voice messages and view-once in the composer (ui/ComposerMedia.tsx, docs/media-kinds.md). */
+.view-once-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.view-once-chip.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.ss-foot .view-once-chip {
+  margin: 0 12px 8px;
+}
+.voice-rec {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 50px;
+  padding: 7px;
+  background: var(--bg-input);
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+}
+.voice-rec-note {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.voice-rec-note.error {
+  color: var(--danger);
+}
+.voice-rec-dot {
+  width: 10px;
+  height: 10px;
+  margin: 0 4px;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: voice-rec-blink 1.2s ease-in-out infinite;
+}
+@keyframes voice-rec-blink {
+  50% {
+    opacity: 0.3;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-rec-dot {
+    animation: none;
+  }
+}
+.voice-rec-bars {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+  min-width: 0;
+}
+.voice-rec-bars i {
+  flex: 1;
+  min-width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.voice-rec-time {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.sticker-picker {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 380px;
+  max-width: calc(100vw - 16px);
+  height: 420px;
+  max-height: calc(100vh - 16px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg, 0 10px 30px rgb(0 0 0 / 0.3));
+}
+.sheet .sticker-picker-body,
+.sticker-picker-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sticker-tabs {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  padding: 8px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+}
+.sticker-tab {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+}
+.sticker-tab.on {
+  background: var(--bg-hover);
+}
+.sticker-tab img {
+  object-fit: contain;
+}
+.sticker-pack-name {
+  padding: 8px 12px 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.sticker-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 6px;
+  padding: 8px;
+  align-content: start;
+}
+.sticker-choice {
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.sticker-choice:hover,
+.sticker-choice:focus-visible {
+  background: var(--bg-hover);
+}
+.sticker-choice img,
+.sticker-choice .sticker {
+  width: 80px;
+  height: 80px;
+  object-fit: contain;
+}
+.sticker-note {
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.sticker-note.small {
+  font-size: 12px;
+  padding-top: 0;
+}
+.sticker-note.error {
+  color: var(--danger);
+}
+.sticker-install {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid var(--border);
+}
+.sticker-install input {
+  flex: 1;
+  min-width: 0;
+}
+/* Stories on a person's or group's page (ui/Stories.tsx). */
+.story-strip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 2px 0 6px;
+}
+.story-thumb {
+  flex: none;
+  width: 76px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.story-thumb > .story-media,
+.story-thumb > .story-text {
+  width: 72px;
+  height: 112px;
+  border-radius: 10px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  overflow: hidden;
+  font-size: 10px;
+}
+.story-thumb.seen > .story-media,
+.story-thumb.seen > .story-text {
+  outline-color: var(--border);
+}
+.story-media {
+  object-fit: cover;
+  background: var(--bg-raised);
+}
+.story-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 8px;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.story-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+  color: #fff;
+  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+}
+.story-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.story-bar .icon-btn {
+  color: #fff;
+}
+.story-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+.story-stage > .story-media,
+.story-stage > .story-text {
+  max-width: min(100%, 480px);
+  max-height: 100%;
+  width: 100%;
+  aspect-ratio: 9 / 16;
+  border-radius: 12px;
+  font-size: 22px;
+}
+.story-stage > .story-media {
+  object-fit: contain;
+  background: #000;
+}
+.story-link {
+  font-size: 13px;
+  color: inherit;
+  text-decoration: underline;
+}
+.story-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgb(255 255 255 / 0.15);
+  color: #fff;
+}
+.story-nav.prev {
+  left: 12px;
+}
+.story-nav.next {
+  right: 12px;
+}
+.story-reply {
+  padding: 8px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 520px;
+  width: 100%;
+  margin: 0 auto;
+}
+.story-quick {
+  display: flex;
+  justify-content: space-around;
+  font-size: 22px;
+}
+.story-reply form {
+  display: flex;
+  gap: 8px;
+}
+.story-reply input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid rgb(255 255 255 / 0.3);
+  background: rgb(255 255 255 / 0.08);
+  color: #fff;
+}
+.story-noreply {
+  text-align: center;
+  font-size: 13px;
+  opacity: 0.7;
+  padding: 12px;
+}
 .voice-note {
   display: flex;
   align-items: center;
@@ -2520,6 +2841,136 @@ code {
   color: var(--text-faint);
   font-size: 12.5px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* forum: tags, order, gallery, and the thread forms (ui/Threads.tsx, docs/threads.md) */
+.forum-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.forum-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.forum-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.forum-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.forum-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr));
+  gap: 10px;
+}
+.forum-post.archived {
+  opacity: 0.7;
+}
+.forum-post-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.forum-post .forum-post-head b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.forum-post span.forum-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  white-space: normal;
+}
+.forum-post span.forum-tag,
+.forum-tag {
+  font-size: 11.5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-hover, var(--border-soft));
+  color: var(--text-dim);
+}
+.forum-tag.muted {
+  color: var(--text-faint);
+}
+.forum-post span.forum-preview {
+  color: var(--text-dim);
+}
+.forum-meta {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.forum-post.tile {
+  padding: 8px;
+}
+.forum-cover {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--border-soft);
+}
+.forum-post span.forum-cover.none {
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+}
+.thread-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.thread-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+.thread-form label.forum-check {
+  flex-direction: row;
+}
+.thread-browser {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.thread-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.thread-tabs button {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text-dim);
+}
+.thread-tabs button.on {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.pf-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+}
+.pf-member-name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -7496,6 +7947,16 @@ body.dragging * {
 .hdr-btn.call-join.on {
   color: var(--danger);
 }
+.live-tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--danger);
+  color: #fff;
+  line-height: 14px;
+}
 
 @media (max-width: 820px) {
   .call-dock {
@@ -10914,6 +11375,56 @@ button.msg-edited.link:hover {
   color: var(--danger);
 }
 
+/* Your profile beyond the bio, and safety numbers (SignalPeople.tsx). */
+.pf-own-extras {
+  display: grid;
+  gap: 8px;
+  margin: 6px 0 10px;
+}
+.pf-own-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.pf-own-row > span:first-child {
+  min-width: 9em;
+  color: var(--text-dim);
+}
+.pf-own-row .input {
+  flex: 1 1 10em;
+  min-width: 0;
+}
+.pf-own-row .pf-own-emoji {
+  flex: 0 0 4.5em;
+}
+.pf-safety-one + .pf-safety-one {
+  margin-top: 14px;
+}
+.pf-safety-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.pf-safety-digits {
+  display: grid;
+  grid-template-columns: repeat(4, max-content);
+  gap: 4px 14px;
+  margin-bottom: 10px;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+}
+.pf-safety-qr {
+  max-width: 220px;
+  margin-bottom: 10px;
+}
+.captcha-solve {
+  display: grid;
+  gap: 6px;
+}
+
 /* The people graph (graph/GraphView.tsx): a canvas under the filters, with a card for what is picked. */
 .side-graph {
   margin-left: auto;
@@ -13719,6 +14230,487 @@ h1:hover > .pair-nick-edit,
 }
 .plan-btn:disabled {
   opacity: 0.6;
+}
+
+/* Calls ringing you (ui/Ringing.tsx): over everything, top right on a desktop, across the top on a phone. */
+.ring-cards {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(360px, calc(100vw - 32px));
+}
+.ring-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--bg-active);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.3);
+  color: var(--text);
+}
+.ring-who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+}
+.ring-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ring-text small {
+  color: var(--text-muted);
+}
+.ring-buttons {
+  display: flex;
+  gap: 8px;
+}
+.call-btn.answer {
+  background: #2f9e58;
+  color: #fff;
+}
+@media (max-width: 720px) {
+  .ring-cards {
+    left: 16px;
+    right: 16px;
+    width: auto;
+  }
+}
+/* Who is in a voice channel, on its row and its page. */
+.voice-people {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.voice-status {
+  font-size: 0.85em;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.voice-person {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.voice-people.chan-voice {
+  display: flex;
+  padding: 2px 8px 4px;
+}
+.voice-people.voice-here {
+  display: flex;
+  padding: 6px 16px;
+  gap: 10px;
+}
+/* What a message carries besides its text (ui/MessageExtras.tsx, docs/messages.md). */
+.reply-quote-own {
+  cursor: default;
+}
+.reply-quote-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex: none;
+}
+.msg-story-reply {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.att-with-note {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 100%;
+}
+.att-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.att-voice {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-faint);
+}
+.atts-missing {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 5px;
+}
+.att-missing,
+.msg-failed {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.msg-failed {
+  margin-top: 3px;
+  color: var(--danger, var(--text-dim));
+}
+.msg-failed small {
+  color: var(--text-faint);
+}
+.contact-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 5px;
+}
+.contact-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  width: min(320px, 100%);
+  padding: 10px 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.contact-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.contact-card-head span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.contact-card-head small,
+.contact-card-row small {
+  color: var(--text-faint);
+}
+.contact-card-pic {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.contact-card-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.contact-card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+/* A server's page beyond its settings (ServerParts.tsx, docs/servers.md): its events, what it asks on joining, its
+   invite links. */
+.srv-events {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.srv-event {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.srv-event.over {
+  opacity: 0.6;
+}
+.srv-event-cover {
+  width: 100%;
+  max-height: 140px;
+  object-fit: cover;
+}
+.srv-event-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  min-width: 0;
+}
+.srv-event-when {
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+.srv-event[data-status='active'] .srv-event-when b {
+  color: var(--accent);
+}
+.srv-event-name {
+  font-size: 14px;
+}
+.srv-event-where {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.srv-event-desc {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  white-space: pre-wrap;
+}
+.srv-event-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.srv-event-btns {
+  display: flex;
+  gap: 6px;
+}
+.srv-rules {
+  margin: 4px 0 8px;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.srv-check {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 4px 0;
+}
+.srv-question {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+}
+.srv-prompt {
+  border: none;
+  padding: 0;
+  margin: 8px 0;
+}
+.srv-prompt legend {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.srv-link {
+  margin-bottom: 8px;
+}
+.srv-vanity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 8px;
+}
+.srv-new-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+.srv-new-link label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Rich messages, the part in the main bundle (ui/rich/parts.tsx, docs/rich-messages.md). */
+.rich-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.rich-line b {
+  color: var(--text-dim);
+}
+.rich-mark {
+  font-size: 10.5px;
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border-soft);
+  color: var(--text-faint);
+}
+.veil {
+  position: relative;
+  display: block;
+  cursor: pointer;
+  overflow: hidden;
+  border-radius: 10px;
+}
+.veil > :first-child {
+  filter: blur(28px);
+  pointer-events: none;
+}
+.veil-word {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+}
+.att-img {
+  position: relative;
+}
+.alt-badge {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+}
+.embed-by {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.embed-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.mention.role {
+  background: color-mix(in oklab, currentColor 14%, transparent);
+}
+.md-time {
+  padding: 0 3px;
+  border-radius: 4px;
+  background: var(--bg-raised);
+}
+.msg-body ol {
+  margin: 2px 0;
+  padding-left: 26px;
+  white-space: normal;
+}
+
+/* Moderating from a place's page (ui/Moderation.tsx, docs/moderation.md). */
+.mod-banned h4 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.mod-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+.mod-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+}
+.mod-list li .btn {
+  margin-left: auto;
+}
+.mod-label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.mod-label .input {
+  flex: 1;
+  min-width: 0;
+}
+.mod-label .mod-emoji {
+  flex: 0 0 3.2em;
+  text-align: center;
+}
+.pf-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+}
+.reactor .reactor-remove {
+  margin-left: auto;
+}
+
+/* ---------------------------------------------------------------- sending extras (docs/sending.md) */
+.reply-mention {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+.reply-mention.on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.send-more {
+  align-self: center;
+  color: var(--text-faint);
+}
+.send-more.on {
+  color: var(--accent);
+}
+.scheduled-strip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.scheduled-strip.trouble {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.scheduled-strip-view {
+  margin-left: auto;
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* A network's notifications about you (docs/feed.md): the inbox's row under Requests, and follow counts on a profile.

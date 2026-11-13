@@ -44,7 +44,7 @@ export const NUMBER_WARNING = 'This code is your phone number: anyone who sees i
  * The link that adds or messages you on a network, from your own identity there: its native id and handle as the
  * adapter gave them. Phone-number links come back with `number` set, for the page to hide until tapped.
  */
-export function ownCode(network: P.Network, me: Pick<P.IdentityView, 'nativeId' | 'handle'>): OwnCodes {
+export function ownCode(network: P.Network, me: Pick<P.IdentityView, 'nativeId' | 'handle'>, username?: P.PersonAbout['username']): OwnCodes {
   const handle = (me.handle ?? '').trim().replace(/^@/, '');
   const unknown = `This account's ${network === 'matrix' ? 'Matrix ID' : network === 'discord' ? 'user id' : 'name'} does not make a link.`;
   const one = (url: string, what: string): OwnCodes => (readable(network, url) ? { code: { url, what }, notes: [] } : { code: null, notes: [unknown] });
@@ -66,9 +66,13 @@ export function ownCode(network: P.Network, me: Pick<P.IdentityView, 'nativeId' 
       return byNumber(phone && `https://wa.me/${phone.slice(1)}`, 'Opens a chat with you in WhatsApp.', phone ? [] : ["WhatsApp has not said this account's number, so there is no code to show."]);
     }
     case 'signal': {
+      // Your username's link, as the adapter last set it (Signal makes the link; signal-cli shows it only then).
+      if (username?.link && readable(network, username.link)) return { code: { url: username.link, what: `Opens a chat with you in Signal, by your username ${username.name}: your number stays hidden.` }, notes: [] };
       const phone = phoneOf(me.handle);
-      const username = "A code for your Signal username needs the account's adapter: Signal makes username links on its servers.";
-      return byNumber(phone && `https://signal.me/#p/${phone}`, 'Opens a chat with you in Signal.', [username]);
+      const note = username
+        ? `Your username is ${username.name}, but Signal shows its link only when it is set: set it again on your profile for a code without your number.`
+        : 'Set a username on your profile (Signal adds a number after it) for a code that does not show your number.';
+      return byNumber(phone && `https://signal.me/#p/${phone}`, 'Opens a chat with you in Signal.', [note]);
     }
     case 'x':
       return handle ? one(`https://x.com/${handle}`, 'Opens your X profile.') : { code: null, notes: ["X has not said this account's handle yet."] };
