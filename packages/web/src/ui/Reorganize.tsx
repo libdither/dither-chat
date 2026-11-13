@@ -44,7 +44,7 @@ export function startOrganize() {
 /** Where each row is, from the top of the list's content. */
 function rowTops(box: HTMLElement, sel: string) {
   const origin = box.getBoundingClientRect().top - box.scrollTop;
-  const id = (x: HTMLElement) => `${x.dataset.dndKey ?? x.dataset.row}|${x.dataset.dndFolder ?? ''}`;
+  const id = (x: HTMLElement) => `${x.dataset.dndKey ?? x.dataset.row ?? x.dataset.rowKey}|${x.dataset.dndFolder ?? ''}`;
   return new Map([...box.querySelectorAll<HTMLElement>(sel)].map((x) => [id(x), { el: x, top: x.getBoundingClientRect().top - origin }]));
 }
 

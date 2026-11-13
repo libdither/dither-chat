@@ -28,7 +28,8 @@ the desktop is unchanged apart from the fixes listed below.
 | Gesture | Where | What it does |
 |---|---|---|
 | Swipe right | Any page, from the edge or anywhere | Back to the page's own list (below), never to whatever was open before it. The page follows the finger and settles beside the list with its edge showing, as in Discord |
-| Swipe left, or tap the edge | A page left peeking beside the list | Brings it back |
+| Swipe left from the edge, or tap it | A page left peeking beside the list | Brings it back. A left swipe on the list beside it brings it back too, except on an inbox row that can be marked, which takes the swipe (next line) |
+| Swipe an inbox row left | Inbox | Its reply mark: "No reply needed" on a row with ↩, "Reply needed" on any other, shown under the row as it slides; Undo on the toast ([inbox.md](inbox.md) "Marks"). A tick when it crosses the line |
 | Swipe left | A page with details (conversation, person) | The details panel: source, accounts, notifications, members, threads |
 | Swipe right, tap the page, or back | The details panel | Closes it |
 | Swipe a message left | Conversation | Reply to it. A tick when it crosses the line |
