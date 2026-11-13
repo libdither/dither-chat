@@ -22,6 +22,7 @@ import { placeConvs } from './Organize.tsx';
 import { Action, Card, Columns, Facts, Hero, ProfilePage, Tag } from './ProfileShell.tsx';
 import { openConv } from './Sidebar.tsx';
 import { Loading } from './Loader.tsx';
+import { ResetSessionCard } from './ResetSession.tsx';
 import { canIndex, startIndexing } from './Indexing.tsx';
 import { useServerParts } from './ServerPartsLazy.tsx';
 
@@ -216,6 +217,8 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
       </Card>
 
       {conv && retention.value.adversarial && <KeptHere conversationId={conv.id} />}
+
+      {conv && <ResetSessionCard conv={conv} />}
 
       {space && view?.nick && sp && <sp.NickCard spaceId={space.id} view={view} onDone={replace} />}
 

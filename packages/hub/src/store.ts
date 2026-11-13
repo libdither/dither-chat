@@ -9,6 +9,7 @@ import { activityChart, type Zone } from './activitychart.ts';
 import { binsFor, estimateMessages, snowflakeTime, type ChannelInput } from './msgcount.ts';
 import { Journal } from './journal.ts';
 import { infoFor } from './mediainfo.ts';
+import { extraView, withNote } from './msgextra.ts';
 import { TypingRelay, typingTtl } from './typing.ts';
 import { stepTimer } from './startup.ts';
 import { addTables, ingestRelationships, ingestRequests, pendingLinks } from './add.ts';
@@ -2532,9 +2533,11 @@ export class Store {
       const extra = json<{ encryptionWarning?: string; forward?: P.ForwardFact }>(r.extra, {});
       const encryptionWarning = extra.encryptionWarning;
       const forward = sentForwards.get(r.id) ?? (extra.forward ? this.forwardView(r.network, extra.forward) : null);
+      const { notes, ...extras } = r.extra && !sealed ? this.extraView(r, extra, seenVia[0]) : {};
       return {
         ...(encryptionWarning ? { encryptionWarning } : {}),
         ...(forward ? { forward } : {}),
+        ...extras,
         id: r.id,
         conversationId: r.conversation_id,
         network: r.network,
@@ -2553,17 +2556,22 @@ export class Store {
         ...(EV.get(r.id) ? { events: EV.get(r.id) } : {}),
         ...(PIN.get(r.id)?.pinned ? { pinned: true } : {}),
         ...(RC.get(r.id) ? { receipts: RC.get(r.id) } : {}),
-        attachments: (sealed ? [] : (A.get(r.id) ?? [])).map((a) => ({
-          id: a.id,
-          kind: a.kind,
-          mime: a.mime,
-          name: a.name,
-          size: a.size,
-          width: a.width,
-          height: a.height,
-          url: this.media(a.url, seenVia[0]) ?? '',
-          ...(infos?.get(a.url) ? { info: infos.get(a.url) } : {}),
-        })),
+        attachments: (sealed ? [] : (A.get(r.id) ?? [])).map((a) =>
+          withNote(
+            {
+              id: a.id,
+              kind: a.kind,
+              mime: a.mime,
+              name: a.name,
+              size: a.size,
+              width: a.width,
+              height: a.height,
+              url: this.media(a.url, seenVia[0]) ?? '',
+              ...(infos?.get(a.url) ? { info: infos.get(a.url) } : {}),
+            },
+            notes?.[a.position],
+          ),
+        ),
         embeds: json<{ embeds?: P.EmbedView[] }>(r.extra, {}).embeds?.map((e) => ({ ...e, image: this.media(e.image, seenVia[0]) ?? undefined })) ?? [],
         reactions: (RT.get(r.id) ?? [])
           .map((t): P.ReactionView => {
@@ -2577,6 +2585,21 @@ export class Store {
         triage: t ? triageView(t) : null,
         ...(marks.has(r.id) ? { replyMark: marks.get(r.id) } : {}),
       };
+    });
+  }
+
+  /** What a message's extra says beyond its text, as the web shows it (msgextra.ts). */
+  private extraView(r: Row, extra: Record<string, unknown>, via: string | undefined) {
+    return extraView(extra, r.reply_to_id, {
+      identity: (native) => {
+        const row = (/^\+\d+$/.test(native)
+          ? this.db.query('SELECT id FROM identity WHERE network = ? AND handle = ? LIMIT 1').get(r.network, native)
+          : this.db.query('SELECT id FROM identity WHERE id = ?').get(hubId('idn', r.network, native))) as Row | null;
+        return row?.id ?? null;
+      },
+      isSelf: (native) => this.isSelf(hubId('idn', r.network, native)),
+      media: (url) => this.media(url, via),
+      stored: (id) => !!this.db.query('SELECT 1 FROM message WHERE id = ?').get(id),
     });
   }
 
