@@ -274,13 +274,14 @@ setInterval(() => {
   noteWork('votes and held alerts');
   votes.daily();
   const held = triage.takeHeldSummary();
-  if (held) deliver(held.title, held.body, held.conversationId, held.messageId, ['Quiet hours ended']);
+  // The last held one may be a notice: its tap opens Notices, not a chat.
+  if (held) deliver(held.title, held.body, held.conversationId, held.messageId, ['Quiet hours ended'], held.messageId.startsWith('ntc_') ? { noticeId: held.messageId } : {});
 }, 60_000);
 
 const push = new PushService(store, loadVapidKeys(dataDir), process.env.DITHER_PUSH_SUBJECT ?? process.env.DITHER_PUBLIC_URL ?? 'https://github.com/libdither/dither-chat');
 // Which list rows reach the phones (docs/notifications.md, "The phone's list"). DITHER_PHONE_LIST=shadow sends them all
 // and logs what it would have held; off, as before it.
-const phone = new PhoneList(store.db, { mode: phoneListMode(process.env.DITHER_PHONE_LIST), kept: (now) => triage.marked(now).convs, readTs: (cid) => delivery.readTs(cid) });
+const phone = new PhoneList(store.db, { mode: phoneListMode(process.env.DITHER_PHONE_LIST), kept: (now) => triage.marked(now).convs, readTs: (cid) => delivery.readAllTs(cid) });
 activity.noted = (w) => phone.noted(w);
 if (phone.mode !== 'on') console.log(`phone list: ${phone.mode} (DITHER_PHONE_LIST)`);
 
@@ -349,6 +350,7 @@ if (sup instanceof RoutedSupervisor && notices) sup.notices = notices;
 delivery.other = {
   gather: (id, m) => mailTriaged?.gather(id, m) ?? notices?.gather(id, m) ?? null,
   readTs: (id) => mailTriaged?.readTs(id) ?? notices?.readTs(id) ?? null,
+  readAllTs: (id) => mailTriaged?.readTs(id) ?? notices?.readAllTs(id) ?? null,
 };
 // Notifications sent before a restart still leave the phones when their chat is read (delivery.ts).
 delivery.restore();

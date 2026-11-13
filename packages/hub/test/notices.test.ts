@@ -8,6 +8,7 @@
  * or reaches the network.
  */
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
+import { Database } from 'bun:sqlite';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -16,6 +17,7 @@ import { Delivery } from '../src/delivery.ts';
 import { Devices } from '../src/devices.ts';
 import { emptyModel, features, train, THRESHOLDS, type Example, type Model } from '../src/learn.ts';
 import { Notifier } from '../src/notify.ts';
+import { PhoneList } from '../src/phonelist.ts';
 import { FakeNoticeSource, type FakeNotification } from '../src/notices/fake.ts';
 import { groupId, noticeId, Notices, type NoticeDelivery } from '../src/notices/index.ts';
 import { decideNotice, factsOf, startOf, type NoticeContext, type NoticeInput } from '../src/notices/triage.ts';
@@ -122,8 +124,9 @@ afterEach(() => {
 
 const note = (o: Partial<FakeNotification> & Pick<FakeNotification, 'id'>): FakeNotification => ({ source: 'github', title: `Notice ${o.id}`, body: null, url: null, reason: 'subscribed', context: 'o/r', subject: null, actors: [], at: T0, unread: true, ...o });
 
-function world(o: { judge?: (t: string) => Promise<number | null>; level?: 'read' | 'write'; sends?: () => boolean } = {}) {
+function world(o: { judge?: (t: string) => Promise<number | null>; level?: 'read' | 'write'; sends?: () => boolean; before?: (path: string) => void } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'dither-notices-'));
+  o.before?.(join(dir, 'hub.sqlite'));
   const store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
   store.db.exec('PRAGMA synchronous = OFF');
   const triage = new Triage(store);
@@ -239,7 +242,7 @@ describe('notices on the fake source', () => {
     expect(w.notices.gap(GH)).toBe(true);
     expect(w.notices.gap('acc_notMine')).toBe(false);
     await w.notices.idle();
-    expect(w.fake.calls.map((c) => c.input)).toEqual([{ unreadOnly: true, limit: 50, since: T0 - MIN }]);
+    expect(w.fake.calls.map((c) => c.input)).toEqual([{ unreadOnly: true, limit: 50, since: T0 - MIN - 1000 }]);
     expect(w.row('missed')).toMatchObject({ decision: 'push', delivered: 0 });
     w.fake.calls.length = 0;
     w.notices.connection(false);
@@ -323,7 +326,7 @@ describe('notices on the fake source', () => {
     w.fake.calls.length = 0;
     w.notices.gap(GH);
     await w.notices.idle();
-    expect(w.fake.calls.map((c) => c.input)).toEqual([{ unreadOnly: true, limit: 50, since: T0 - 30 * MIN }]);
+    expect(w.fake.calls.map((c) => c.input)).toEqual([{ unreadOnly: true, limit: 50, since: T0 - 30 * MIN - 1000 }]);
     expect(['a', 'b', 'c'].map((id) => w.row(id)?.unread)).toEqual([1, 0, 1]);
     // Quietly: nothing sent, nothing told to GitHub.
     expect(w.sent).toEqual([]);
@@ -447,6 +450,117 @@ describe('notices on the fake source', () => {
     // Without the chat grant (another app's chat account), its notices are ours.
     w.notices.accounts([{ id: 'acc_tg', kind: 'telegram', label: 'Telegram', interfaces: ['chat', 'notifications'], grants: { notifications: 'write' } }]);
     expect(w.notices.events('acc_tg', [])).toBe(true);
+  });
+
+  // ---- the second review's cases
+
+  test('a catch-up that lists a live notice while its local model is still out does not swallow it', async () => {
+    let answer!: (x: number) => void;
+    const w = world({ judge: () => new Promise<number>((r) => (answer = r)) });
+    w.fake.attach(w.notices);
+    await w.notices.idle();
+    w.fake.emit(GH, note({ id: 'n', urgency: 'normal', reason: 'mention', title: 'prod is down' }));
+    await w.clock.settle();
+    expect(w.row('n')?.decision).toBeNull();
+    // A gap or a reconnection, now: GitHub's list has it, unread.
+    const caught = w.notices.catchUp(GH);
+    await w.clock.settle();
+    answer(0.9);
+    await caught;
+    await w.notices.idle();
+    expect(w.row('n')).toMatchObject({ decision: 'push', caught: 0, delivered: 1, unread: 1 });
+    expect(w.sent.map((s) => s.id)).toEqual([noticeId(GH, 'n')]);
+  });
+
+  test('upstream "since" is exclusive (updated after): gap after gap marks nothing read', async () => {
+    const w = world();
+    w.fake.attach(w.notices);
+    await w.notices.idle();
+    w.fake.emit(GH, note({ id: 'a', urgency: 'high', at: T0 - 2000 }));
+    w.fake.emit(GH, note({ id: 'b', urgency: 'high', at: T0 - 1000 }));
+    await w.notices.idle();
+    for (let i = 0; i < 2; i++) {
+      await w.clock.advance(MIN);
+      w.notices.gap(GH);
+      await w.notices.idle();
+      expect([w.row('a')?.unread, w.row('b')?.unread]).toEqual([1, 1]);
+    }
+    // A second before the oldest unread, so it is listed.
+    expect(w.fake.calls.filter((c) => c.op === 'notify.list').at(-1)?.input.since).toBe(T0 - 3000);
+  });
+
+  test('a database whose notice table is older gets the new columns', async () => {
+    const old = `CREATE TABLE notice (id TEXT PRIMARY KEY, account TEXT NOT NULL, native_id TEXT NOT NULL, grp TEXT NOT NULL, source TEXT NOT NULL, title TEXT NOT NULL,
+      body TEXT, url TEXT, reason TEXT, context TEXT, subject TEXT, actors TEXT, urgency TEXT NOT NULL CHECK (urgency IN ('high', 'normal', 'low')), at INTEGER NOT NULL,
+      unread INTEGER NOT NULL DEFAULT 1, read_at INTEGER, decision TEXT, importance REAL, alert REAL, reasons TEXT, decided_by TEXT, facts TEXT, words TEXT,
+      delivered INTEGER NOT NULL DEFAULT 0, decided_at INTEGER, alert_mark INTEGER, less_mark INTEGER, marked_at INTEGER, created_at INTEGER NOT NULL) WITHOUT ROWID`;
+    const w = world({ before: (path) => new Database(path).exec(old) });
+    const cols = (w.store.db.query('PRAGMA table_info(notice)').all() as { name: string }[]).map((c) => c.name);
+    for (const c of ['caught', 'shown_ts', 'held_at']) expect(cols).toContain(c);
+    w.fake.attach(w.notices);
+    w.fake.emit(GH, note({ id: 'z', urgency: 'high' }));
+    await w.notices.idle();
+    expect(w.row('z')).toMatchObject({ decision: 'push', delivered: 1 });
+  });
+
+  test('an unread notice raised again within the list’s ten minutes keeps its notification on the phones', async () => {
+    let sends = true;
+    const w = world({ sends: () => sends });
+    w.fake.attach(w.notices);
+    await w.notices.idle();
+    const group = groupId(GH, 'o/r');
+    w.fake.emit(GH, note({ id: 'x', urgency: 'normal' }));
+    await w.notices.idle();
+    expect(w.row('x')?.delivered).toBe(1);
+    expect(w.notices.readTs(group)).toBe(T0 - 1);
+    // A new comment three minutes on: the notifier holds it (its ten minutes), and it is still unread.
+    sends = false;
+    await w.clock.advance(3 * MIN);
+    w.fake.emit(GH, note({ id: 'x', urgency: 'normal', at: T0 + 3 * MIN }));
+    await w.notices.idle();
+    expect(w.row('x')).toMatchObject({ unread: 1, delivered: 0 });
+    // What shows on the phones is the notice as it was at T0: not read past it.
+    expect(w.notices.readTs(group)).toBe(T0 - 1);
+    w.notices.markRead(noticeId(GH, 'x'));
+    expect(w.notices.readTs(group)).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
+  test('a held list episode of a group is read only once nothing in it is unread', async () => {
+    const w = world({ sends: () => false });
+    const delivery = new Delivery(w.store, w.triage);
+    delivery.other = w.notices;
+    const phone = new PhoneList(w.store.db, { mode: 'on', kept: () => new Set(), readTs: (cid) => delivery.readAllTs(cid) });
+    w.fake.attach(w.notices);
+    w.fake.emit(GH, note({ id: 'h', urgency: 'normal' }));
+    await w.notices.idle();
+    const group = groupId(GH, 'o/r');
+    expect(w.row('h')).toMatchObject({ decision: 'digest', delivered: 0, unread: 1 });
+    w.store.db
+      .query(`INSERT INTO phone_episode (conversation_id, day, mode, arm, propensity, sent, first_ts, started_at, last_at, posts) VALUES (?, '2026-11-12', 'on', 'gated', 0.5, 0, ?, ?, ?, 0)`)
+      .run(group, T0, T0, T0);
+    const outcome = () => w.store.one<{ outcome: string | null }>('SELECT outcome FROM phone_episode WHERE conversation_id = ?', group)?.outcome ?? null;
+    phone.sweep(T0 + 5_000);
+    expect(outcome()).toBeNull();
+    w.notices.markRead(noticeId(GH, 'h'));
+    phone.sweep(T0 + 10_000);
+    expect(outcome()).toBe('read');
+  });
+
+  test('quiet hours count a held notice once, and only one that would have notified', async () => {
+    const w = world();
+    w.store.setQuietHours({ enabled: true, start: '00:00', end: '23:59', timezone: 'UTC', allowStarred: false });
+    w.fake.attach(w.notices);
+    w.fake.emit(GH, note({ id: 'h', urgency: 'high' }));
+    // Read already, and raised two hours ago: held, but they would have notified nobody anyway.
+    w.fake.emit(GH, note({ id: 'r', urgency: 'high', unread: false, context: 'o/b' }));
+    w.fake.emit(GH, note({ id: 'late', urgency: 'high', at: T0 - 2 * 60 * MIN, context: 'o/c' }));
+    await w.notices.idle();
+    expect(w.store.quietHeld()?.count).toBe(1);
+    // Raised again: decided again, not counted again.
+    await w.clock.advance(MIN);
+    w.fake.emit(GH, note({ id: 'h', urgency: 'high', at: T0 + MIN }));
+    await w.notices.idle();
+    expect(w.store.quietHeld()).toMatchObject({ count: 1, messageId: noticeId(GH, 'h') });
   });
 
   test('the routes: the page, one notice, Mark read', async () => {

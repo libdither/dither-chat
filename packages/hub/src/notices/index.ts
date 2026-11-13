@@ -268,7 +268,9 @@ export class Notices implements NoticeSink {
       let whole = false;
       let token: string | null = null;
       for (let page = 0; page < PAGES; page++) {
-        const input: Record<string, unknown> = { unreadOnly: true, limit: PER_PAGE, ...(since !== null ? { since } : {}), ...(token ? { pageToken: token } : {}) };
+        // "since" is exclusive upstream (GitHub's "updated after", in whole seconds): a second before, so the oldest
+        // unread is listed too.
+        const input: Record<string, unknown> = { unreadOnly: true, limit: PER_PAGE, ...(since !== null ? { since: since - 1000 } : {}), ...(token ? { pageToken: token } : {}) };
         const r = (await this.o.link.call(account, 'notify.list', input, 60_000)) as { notifications?: unknown[]; next?: string | null } | null;
         const list = Array.isArray(r?.notifications) ? r!.notifications : [];
         let old = false;
@@ -332,8 +334,8 @@ export class Notices implements NoticeSink {
         .then((a) =>
           this.run('a decision', () => {
             const r = this.row(id);
-            // Changed since (a newer arrival is deciding it), or decided already.
-            if (!r || r.at !== at || r.decision != null) return;
+            // Changed since (a newer arrival is deciding it), or decided already (not by a catch-up that came meanwhile).
+            if (!r || r.at !== at || (r.decision != null && !r.caught)) return;
             this.decideNow(id, a);
           }),
         )
@@ -361,6 +363,8 @@ export class Notices implements NoticeSink {
   private keep(account: string, p: NonNullable<ReturnType<typeof parse>>, live: boolean): string | null {
     const id = noticeId(account, p.id);
     const prev = this.st.db.query('SELECT at, unread, read_at, decision, delivered, caught FROM notice WHERE id = ?').get(id) as Row | null;
+    // A live arrival of it is still being decided (its local model's answer is out): a catch-up listing the same leaves it.
+    if (!live && prev && this.steps.has(id) && p.at <= prev.at) return null;
     // Read here and not raised again since: a catch-up still listing it unread (our markRead not there yet, failed, or
     // a read-only grant) does not make it unread.
     const readHere = !!prev && prev.read_at != null && p.at <= prev.at;
@@ -413,13 +417,15 @@ export class Notices implements NoticeSink {
     this.st.db
       .query(`UPDATE notice SET decision = ?, importance = ?, alert = ?, reasons = ?, decided_by = ?, facts = ?, words = ?, delivered = 0, caught = ?, decided_at = ? WHERE id = ?`)
       .run(d.decision, d.importance, d.alert, JSON.stringify(d.reasons), d.decidedBy, d.facts ? JSON.stringify(d.facts) : null, JSON.stringify(d.words), o.catchUp ? 1 : 0, now, id);
-    // An alert quiet hours held is counted for their summary, as chat's are.
-    if (d.held) {
+    // An alert quiet hours held is counted for their summary, as chat's are: one that would have notified, once.
+    if (d.held && d.hold === null && r.held_at == null) {
       const held = this.st.quietHeld();
       this.st.setQuietHeld({ count: (held?.count ?? 0) + 1, conversationId: r.grp, messageId: r.id });
+      this.st.db.query('UPDATE notice SET held_at = ? WHERE id = ?').run(now, id);
     }
-    // Delivered only when a notification really went out: what is read of it then takes it off the phones (readTs).
-    if (ok && this.o.deliver?.(this.delivery(r, n, d))) this.st.db.query('UPDATE notice SET delivered = 1 WHERE id = ?').run(id);
+    // Delivered only when a notification really went out, and shown as of its time then: what is read of it takes the
+    // notification off the phones (readTs), and a later update the notifier held does not.
+    if (ok && this.o.deliver?.(this.delivery(r, n, d))) this.st.db.query('UPDATE notice SET delivered = 1, shown_ts = at WHERE id = ?').run(id);
     return d;
   }
 
@@ -525,12 +531,21 @@ export class Notices implements NoticeSink {
   }
 
   /**
-   * Read up to this time: just before the oldest unread notice in the group that a notification showed (delivery.ts
-   * compares the newest shown). What notified nobody (a catch-up's, below the list) does not keep it showing.
+   * Read up to this time, for taking its notification off the phones: just before the earliest time a notification
+   * showed of a notice still unread (`shown_ts`, its time as shown; delivery.ts compares the newest shown). What
+   * notified nobody (a catch-up's, below the list) does not keep it showing; a notice updated since it showed, the
+   * update held by the notifier, still does.
    */
   readTs(group: string): number | null {
     if (!group.startsWith('ntg_')) return null;
-    const r = this.st.db.query('SELECT MIN(at) AS at FROM notice WHERE grp = ? AND unread = 1 AND delivered = 1').get(group) as Row | null;
+    const r = this.st.db.query('SELECT MIN(shown_ts) AS at FROM notice WHERE grp = ? AND unread = 1 AND shown_ts IS NOT NULL').get(group) as Row | null;
+    return r?.at == null ? Number.MAX_SAFE_INTEGER : r.at - 1;
+  }
+
+  /** Read up to this time counting every notice (phonelist.ts's held episodes): just before the oldest unread. */
+  readAllTs(group: string): number | null {
+    if (!group.startsWith('ntg_')) return null;
+    const r = this.st.db.query('SELECT MIN(at) AS at FROM notice WHERE grp = ? AND unread = 1').get(group) as Row | null;
     return r?.at == null ? Number.MAX_SAFE_INTEGER : r.at - 1;
   }
 

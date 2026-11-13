@@ -77,10 +77,11 @@ export class FakeNoticeSource implements NoticeLink {
     if (!a) throw Object.assign(new Error('unknown account'), { code: 'unknown-account' });
     switch (op) {
       case 'notify.list': {
+        // "since" is exclusive, as GitHub's ("updated after") and dither-accounts' extractor have it.
         const since = typeof input.since === 'number' ? input.since : null;
         const limit = typeof input.limit === 'number' ? input.limit : 50;
         const start = typeof input.pageToken === 'string' ? Number(input.pageToken) : 0;
-        const all = [...a.notes.values()].filter((n) => (!input.unreadOnly || n.unread) && (since === null || n.at >= since)).sort((x, y) => y.at - x.at);
+        const all = [...a.notes.values()].filter((n) => (!input.unreadOnly || n.unread) && (since === null || n.at > since)).sort((x, y) => y.at - x.at);
         const page = all.slice(start, start + limit);
         return { notifications: page, next: start + limit < all.length ? String(start + limit) : null };
       }

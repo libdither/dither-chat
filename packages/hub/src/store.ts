@@ -251,6 +251,7 @@ export class Store {
       this.addColumns('owed_turn', { dismissed: 'INTEGER NOT NULL DEFAULT 0' });
       this.addColumns('visit', { depth: 'INTEGER', seen_to_ts: 'INTEGER', owed_since: 'INTEGER', owed_shown: 'INTEGER', typed: 'INTEGER NOT NULL DEFAULT 0', draft_left: 'INTEGER', exit: 'TEXT' });
       this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'" });
+      this.addColumns('notice', { caught: 'INTEGER NOT NULL DEFAULT 0', shown_ts: 'INTEGER', held_at: 'INTEGER' });
       const oldTriage = this.setAsideTriage();
       const oldLog = this.setAside('change_log', 'actor_id', ['change_log_target']);
       this.db.exec(schema);
