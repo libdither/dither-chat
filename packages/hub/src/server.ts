@@ -45,6 +45,7 @@ import { peopleGraph } from './graph.ts';
 import type { MailHub } from './mail/index.ts';
 import { mailPeople } from './mail/people.ts';
 import { Adding, linksOf, requestHeld, requestViews } from './add.ts';
+import { feedRefusal, isFeed } from './feed.ts';
 import { calendarOff, checkNotice, notifyAllowed, type CalendarLink } from './calendar.ts';
 import { ReplyMarks, type ReplyMark } from './replymarks.ts';
 import { mailAttention } from './mail/attention.ts';
@@ -982,6 +983,7 @@ export class HubServer {
       const conv = s.nativeOf('conversation', m[1]);
       if (!conv) return bad('no such conversation', 404);
       const accountId = this.pickAccount(m[1], url.searchParams.get('account') ?? undefined);
+      if (isFeed(s.db, m[1])) return ok({ accountId, canReact: false, reason: feedRefusal(conv.network), custom: [] } satisfies P.ReactionContextView);
       if (!accountId || !this.sup.online(accountId)) return ok({ accountId, canReact: false, reason: 'No connected account can react here.', custom: [] } satisfies P.ReactionContextView);
       const ctx = await this.sup.command<P.ReactionContext>(accountId, { t: 'reactionContext', conversation: conv.nativeId }, 15_000).catch(() => null);
       return ok(s.reactionContextView(accountId, conv.network, ctx ?? { canReact: true, custom: [] }));
@@ -1169,6 +1171,7 @@ export class HubServer {
       const msg = s.one<{ conversation_id: string; native_id: string }>('SELECT conversation_id, native_id FROM message WHERE id = ?', m[1]);
       if (!msg) return bad('no such message', 404);
       const conv = s.nativeOf('conversation', msg.conversation_id)!;
+      if (isFeed(s.db, msg.conversation_id)) return bad(feedRefusal(conv.network), 409);
       const style = b.style ?? 'normal';
       // Taking a reaction back has to go through the account that made it.
       const accountId = (b.remove && s.reactionAccount(m[1], b.key, style)) || this.pickAccount(msg.conversation_id, b.accountId);
@@ -1204,6 +1207,7 @@ export class HubServer {
       if (edit && !b.body?.trim()) return bad('empty message');
       const msg = s.one<{ conversation_id: string; native_id: string; author_id: string }>('SELECT conversation_id, native_id, author_id FROM message WHERE id = ?', m[1]);
       if (!msg) return bad('no such message', 404);
+      if (isFeed(s.db, msg.conversation_id)) return bad(feedRefusal(s.nativeOf('conversation', msg.conversation_id)!.network), 409);
       // Only the account that wrote it can change it, and only on a network that allows it.
       const acc = s.accounts().find((a) => a.self_identity === msg.author_id);
       if (!acc) return bad('this message is not yours', 403);
@@ -1617,8 +1621,9 @@ export class HubServer {
     const s = this.store;
     const targets = s.markRead(conversationId, upToTs);
     const conv = s.nativeOf('conversation', conversationId);
-    // An open message request: reading it here tells the sender nothing until it is accepted (add.ts).
-    for (const t of requestHeld(s.db, conversationId) ? [] : targets) {
+    // An open message request: reading it here tells the sender nothing until it is accepted (add.ts). A feed's reads
+    // stay on the hub (docs/feed.md): the network's own notifications page keeps its own.
+    for (const t of requestHeld(s.db, conversationId) || isFeed(s.db, conversationId) ? [] : targets) {
       if (conv && t.upTo && this.sup.online(t.accountId))
         this.sup.command(t.accountId, { t: 'markRead', conversation: conv.nativeId, upTo: t.upTo }).catch(() => {});
     }
@@ -1693,6 +1698,7 @@ export class HubServer {
   typing(conversationId: string, requested: string | undefined, stop: boolean): { sent: boolean; accountId?: string; why?: string } {
     if (!stop && !this.store.privacy().shareTyping) return { sent: false, why: 'off' };
     if (requestHeld(this.store.db, conversationId)) return { sent: false, why: 'a message request' };
+    if (isFeed(this.store.db, conversationId)) return { sent: false, why: 'notifications' };
     const conv = this.store.nativeOf('conversation', conversationId);
     const accountId = conv && this.pickAccount(conversationId, requested);
     if (!conv || !accountId || !this.sup.online(accountId)) return { sent: false, why: 'no connected account' };
@@ -1707,6 +1713,9 @@ export class HubServer {
   private sendRefusal(conversationId: string, accountId: string | null): string | null {
     // Writing to an open message request would answer it: Accept first, under Requests (docs/add.md).
     if (requestHeld(this.store.db, conversationId)) return 'Accept the message request first';
+    // A network's notifications are read-only (docs/feed.md).
+    const feed = this.store.one<{ network: P.Network }>(`SELECT network FROM conversation WHERE id = ? AND variant = 'feed'`, conversationId);
+    if (feed) return feedRefusal(feed.network);
     const c = this.store.conversationView(conversationId);
     const acc = accountId ? this.store.account(accountId) : null;
     return c ? sendBlocker(c, acc ? this.store.accountView(acc) : null) : 'No such conversation';

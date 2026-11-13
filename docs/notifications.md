@@ -8,7 +8,7 @@ Triage puts every new message from someone else in one of three tiers, below the
 | **Conversation** | `quiet` | a rule, no model: a DM, a mention of you or a reply to you, a chat you wrote in during the last day, or one where you usually answer | a silent row of its own, in Android's Conversations section | nothing | a boost while it is unread |
 | **List** | `digest` | its importance is at or above your level (0.6 until you set it) | a silent row in one collapsed bundle, sorted by importance, when [the phone's list](#the-phones-list) lets it through | nothing | listed, and its importance counts toward its place |
 | **Below the list** | `drop` | its importance is under your level | nothing | nothing | unread in its chat, nowhere else |
-| silent | `silent` | a place you muted, a message request you have not accepted | nothing | nothing | the unread badge only |
+| silent | `silent` | a place you muted, a message request you have not accepted, a like, repost or follow in a [feed](#the-feed) | nothing | nothing | the unread badge only |
 
 An Alert is for what cannot wait an hour or two. A Conversation is people talking with you. The List is whatever else
 is important enough for a ranked list on the phone. The rest stays unread in its chat.
@@ -494,6 +494,15 @@ something the network would have notified you about), `requestId` and no `conver
 through `deliverRequest` in main.ts, judged by `packages/hub/src/requestnotify.ts` 20 seconds after it arrives and
 only when under two days old. Quiet hours do not hold it, since it is silent; an account, a network or everything set to
 Mute, and device rules for its account or network, keep it off. Its activity log kind is `request`.
+
+## The feed
+
+A network's notifications about you (X's likes, reposts, replies, mentions, quotes and follows, [feed.md](feed.md))
+arrive as messages in a feed conversation. Likes, reposts, follows and anything else X notifies about are **silent**.
+A reply, a mention or a quote is kept to the list as List only keeps a place: **at most a silent row on the List**,
+never a Conversation or an alert, and the local model is not asked. It starts at the importance of something the
+network notified you about. Always alert (on the person, a keyword or the feed) does not change that, while Mute
+silences it. [feed.md](feed.md#notifications) says why.
 
 ## Reminders
 

@@ -25,6 +25,7 @@ import type { ArrangeSettings, UsageKind, UsageView } from './usage.ts';
 import type { FileInfo } from './files.ts';
 import type { MailAccess, MailAccountView, MailboxView, MailBootstrap, MailOutboxView, MailThreadView } from './mail.ts';
 import type { CalendarLinkView, CalendarNotifyRef, CalendarPlanView } from './calendar.ts';
+import type { FeedItem, PostFact } from './feed.ts';
 
 export interface AccountView {
   id: string;
@@ -559,6 +560,11 @@ export interface MessageView {
   replyMark?: ReplyMark;
   /** This message forwards another: body and attachments are what was forwarded. */
   forward?: ForwardView;
+  /**
+   * A feed conversation's message (variant 'feed', docs/feed.md): what they did, as the adapter's `extra.feed` said,
+   * with each post's `author` a hub identity id and its pictures the hub's signed media paths.
+   */
+  feed?: FeedItem;
 }
 
 /** A forward, shown as a card with where it came from. */
@@ -670,7 +676,7 @@ export interface PlaceStats {
 
 /** Everything the hub has stored about someone. It only knows what crossed your accounts. */
 /** What one network says about one of a person's identities (docs/profile.md): PersonAbout in hub ids. */
-export interface PersonAboutView extends Omit<PersonAbout, 'avatar' | 'banner' | 'mutualSpaces' | 'mutualFriends' | 'friends'> {
+export interface PersonAboutView extends Omit<PersonAbout, 'avatar' | 'banner' | 'mutualSpaces' | 'mutualFriends' | 'friends' | 'posts'> {
   identityId: string;
   network: Network;
   /** The account that asked. */
@@ -684,6 +690,13 @@ export interface PersonAboutView extends Omit<PersonAbout, 'avatar' | 'banner' |
   mutualSpaces?: { spaceId: string | null; nativeId: string; nick?: string; roles?: { name: string; color?: string }[]; joinedAt?: number }[];
   mutualFriends?: string[];
   friends?: string[];
+  /** Their recent posts (X), as PersonAbout's, with each `author` a hub identity id and pictures signed media paths. */
+  posts?: PostFact[];
+  /**
+   * Kept from what the network showed unasked (a `personAbout` event: X's notifications), not from asking it: no
+   * posts of their own, and the profile asks the network for them.
+   */
+  unasked?: true;
   /** Everyone those name, for rendering. */
   identities: IdentityView[];
 }

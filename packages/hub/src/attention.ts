@@ -970,9 +970,10 @@ export class Attention {
 
   private input(cid: string, now: number): (ScoreInput & { listed: boolean }) | null {
     const db = this.store.db;
-    const c = db.query(`SELECT c.id, c.shape, c.last_message_at, ${LISTED} AS listed FROM conversation c WHERE c.id = ?`).get(cid) as Row | null;
-    // An open message request waits under Requests, not in the inbox (add.ts).
-    if (!c || requestHeld(db, cid)) return null;
+    const c = db.query(`SELECT c.id, c.shape, c.variant, c.last_message_at, ${LISTED} AS listed FROM conversation c WHERE c.id = ?`).get(cid) as Row | null;
+    // An open message request waits under Requests, not in the inbox (add.ts); a network's notifications have a row
+    // of their own (docs/feed.md).
+    if (!c || c.variant === 'feed' || requestHeld(db, cid)) return null;
     const v = db.query(`SELECT MAX(unread) AS unread, MAX(mentions) AS mentions, MIN(COALESCE(last_read_ts, 0)) AS read FROM vantage WHERE target_kind = 'conversation' AND target_id = ?`).get(cid) as Row;
     const unread = v?.unread ?? 0;
     const mentions = v?.mentions ?? 0;

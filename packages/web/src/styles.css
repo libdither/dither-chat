@@ -13720,3 +13720,51 @@ h1:hover > .pair-nick-edit,
 .plan-btn:disabled {
   opacity: 0.6;
 }
+
+/* A network's notifications about you (docs/feed.md): the inbox's row under Requests, and follow counts on a profile.
+   The feed's cards and posts are styled in ui/feed/feed.css, with their chunk. */
+.feed-row .row-avatar .avatar-net,
+.feed-row-net {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+}
+.feed-row .row-bottom {
+  align-items: center;
+}
+.feed-row-who {
+  display: inline-flex;
+  flex: none;
+  margin-right: 6px;
+}
+.feed-row-who .avatar + .avatar {
+  margin-left: -6px;
+}
+.feed-row-who .avatar img,
+.feed-row-who .avatar-fallback {
+  box-shadow: 0 0 0 2px var(--bg-sidebar);
+}
+.feed-row .row-preview {
+  color: var(--text-faint);
+}
+.feed-row.unread .row-preview {
+  color: var(--text-dim);
+}
+.pf-follow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 2px 0 10px;
+}
+.pf-follow-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.pf-follow-line b {
+  color: var(--text);
+  font-weight: 650;
+}

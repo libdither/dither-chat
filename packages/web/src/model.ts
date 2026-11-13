@@ -596,12 +596,13 @@ export function sumUnread(convs: P.ConversationView[]): Unread {
 
 /**
  * Everything shown, summed: the app's badge and the Home tab's. Once per `rev`. Not an open message request's: that
- * waits under Requests, on no badge (docs/add.md).
+ * waits under Requests, on no badge (docs/add.md); nor a network's notifications, which have a row of their own
+ * (docs/feed.md).
  */
 export function totalUnread(): Unread {
   return memo('totalUnread', () => {
     const held = heldByRequest();
-    return sumUnread([...db.conversations.values()].filter((c) => visibleConv(c) && !held.has(c.id)));
+    return sumUnread([...db.conversations.values()].filter((c) => visibleConv(c) && !held.has(c.id) && c.variant !== 'feed'));
   });
 }
 
@@ -753,7 +754,8 @@ function convRows(): ConvInboxRow[] {
     const held = heldByRequest();
     for (const c of db.conversations.values()) {
       const a = db.attention.get(c.id);
-      if ((!a && !inboxShape(c)) || !visibleConv(c) || held.has(c.id)) continue;
+      // A network's notifications are their own row, under Requests (ui/FeedRow.tsx, docs/feed.md).
+      if ((!a && !inboxShape(c)) || !visibleConv(c) || held.has(c.id) || c.variant === 'feed') continue;
       const row: ConvInboxRow = a ? { kind: 'conv', key: c.id, conv: c, score: a.score, needs: a.needs, reasons: a.reasons, owedSince: a.owedSince } : unscored(c);
       if (!row.needs && c.shape !== 'self' && placePref('conversation', c.id).hidden) continue;
       const u = unreadOf(c);
