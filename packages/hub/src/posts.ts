@@ -65,8 +65,11 @@ const CACHE_MS = 2 * 60_000;
 /** The hub waits this long for X: the extractor paces its reads, and a read may wait behind a long history read. */
 const THREAD_TIMEOUT_MS = 150_000;
 
-/** Like, repost and posting wait this long for X (a write is not paced behind reads as long). */
-const WRITE_TIMEOUT_MS = 60_000;
+/**
+ * Like, repost and posting wait this long for X: longer than the extractor's own 120 s for a request, so a slow post
+ * comes back as what X said rather than as "it may have posted".
+ */
+const WRITE_TIMEOUT_MS = 130_000;
 /** A post sent with the same key within this long is the same post: a second press or a retried request posts once. */
 const PUBLISH_DEDUPE_MS = 10 * 60_000;
 /** Who reacted is asked again after this long (a like or repost of yours clears it at once). */
