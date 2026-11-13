@@ -148,11 +148,20 @@ export const validAdapterName = (a: unknown): a is string => typeof a === 'strin
 // ------------------------------------------------------------------ media
 
 export function mediaSigner(secret: string) {
+  // The same link signs the same way every time: a bootstrap signs every picture it names (15k on the live hub), so
+  // they are remembered rather than worked out again.
+  const signed = new Map<string, string>();
   return (raw: string | null | undefined, accountId: string | null | undefined): string | null => {
     if (!raw) return null;
     if (raw.startsWith('data:')) return raw;
-    const sig = createHmac('sha256', secret).update(`${raw}|${accountId ?? ''}`).digest('base64url').slice(0, 16);
-    return `/media/${sig}/${Buffer.from(raw).toString('base64url')}${accountId ? `?a=${accountId}` : ''}`;
+    const key = `${raw}|${accountId ?? ''}`;
+    const hit = signed.get(key);
+    if (hit) return hit;
+    const sig = createHmac('sha256', secret).update(key).digest('base64url').slice(0, 16);
+    const out = `/media/${sig}/${Buffer.from(raw).toString('base64url')}${accountId ? `?a=${accountId}` : ''}`;
+    if (signed.size >= 100_000) signed.clear();
+    signed.set(key, out);
+    return out;
   };
 }
 
@@ -373,6 +382,26 @@ export class HubServer {
   }
 
   flush() {
+    // What a flush writes (attention's folds, one transaction per conversation; the journal) is one transaction: one
+    // commit, and each commit waits for the disk on the hub's thread. The frame goes out once it is committed.
+    let events: P.ClientEvent[] = [];
+    let frame: string | null = null;
+    try {
+      frame = this.store.db.transaction(() => {
+        events = this.gather();
+        return this.record(events);
+      })();
+    } catch (e) {
+      // The commit failed (a lock held past busy_timeout): attention's folds are undone and fold again later; what
+      // the store gave up goes out and into the journal on its own.
+      console.error('flush: one transaction failed; sending what changed as it is', e);
+      frame = this.record(events);
+    }
+    if (frame) for (const c of this.clients) c.send(frame);
+  }
+
+  /** What changed since the last flush: the store's, mail's, and the scores they move. */
+  private gather(): P.ClientEvent[] {
     // What the store gives up here is no longer dirty: it goes out even when mail's or attention's part fails (a
     // locked database), or devices would miss it until their next bootstrap.
     const events = this.store.flush();
@@ -398,7 +427,7 @@ export class HubServer {
         console.error('flush: attention failed', e);
       }
     }
-    this.broadcast(events);
+    return events;
   }
 
   /** Every device drops what it kept and loads again: for changes made behind the journal's back. */
@@ -409,11 +438,16 @@ export class HubServer {
 
   /** To every client, and into the journal: a frame that changed something ends with its position (docs/sync.md). */
   broadcast(events: P.ClientEvent[]) {
-    if (!events.length) return;
+    const frame = this.record(events);
+    if (frame) for (const c of this.clients) c.send(frame);
+  }
+
+  /** Into the journal, and the frame that carries it; null when there is nothing to send. */
+  private record(events: P.ClientEvent[]): string | null {
+    if (!events.length) return null;
     if (events.some((e) => e.t === 'resync')) this.store.journal.restart();
     const seq = this.store.journal.record(changesOf(events));
-    const frame = JSON.stringify(seq === null ? events : [...events, { t: 'sync', seq } satisfies P.ClientEvent]);
-    for (const c of this.clients) c.send(frame);
+    return JSON.stringify(seq === null ? events : [...events, { t: 'sync', seq } satisfies P.ClientEvent]);
   }
 
   private openLiveView(ws: ServerWebSocket<LiveViewData>) {

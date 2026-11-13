@@ -136,7 +136,8 @@ test("a flush whose attention part fails still sends what the store gave up", ()
     },
   };
   const hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's', attention: attention as any });
-  hub.broadcast = (events) => void sent.push(events);
+  // A device on the live socket: what it is sent.
+  (hub as unknown as { clients: Set<{ send(f: string): void }> }).clients.add({ send: (f) => void sent.push(JSON.parse(f)) });
   store.flush();
   store.ingest(acc, msg('flushed'));
   hub.flush();
