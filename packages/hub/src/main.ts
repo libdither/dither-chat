@@ -383,6 +383,8 @@ const server = new HubServer(store, sup, triage, {
   mail,
   calendar,
   onReminder: (n) => reminders.deliver(n),
+  // A reminder you set on a network (Discord's "Remind me") notifies like an alert; quiet hours hold it quiet (saved.ts).
+  onSavedReminder: (n) => deliver(n.title, n.body, n.conversationId, n.messageId, ['A reminder you set on Discord'], server.replyFields(n.conversationId, n.messageId), 'held', inQuietHours(store.quietHours(), Date.now()) ? 'quiet' : 'push'),
   turn: process.env.DITHER_TURN_URLS && process.env.DITHER_TURN_SECRET ? { urls: process.env.DITHER_TURN_URLS.split(',').map((u) => u.trim()), secret: process.env.DITHER_TURN_SECRET } : undefined,
   onDemoReset: !demo ? undefined : async () => {
     for (const a of store.accounts().filter((a) => a.demo)) {

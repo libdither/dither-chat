@@ -32,6 +32,9 @@ export interface OutboxEntry {
   uploads?: (string | undefined)[];
   /** The uploads' ids on the hub, once all of each has arrived. */
   attachments?: string[];
+  /** Sent without notifying anyone, and (a reply) without pinging its author (docs/sending.md). */
+  silent?: boolean;
+  mentionReplied?: boolean;
   /** The hub refused it: shown with the reason, to try again or throw away. */
   failed?: string;
   /**

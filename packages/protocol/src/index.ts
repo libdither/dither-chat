@@ -23,3 +23,4 @@ export * from './extra.ts';
 export * from './poll.ts';
 export * from './threads.ts';
 export * from './moderation.ts';
+export * from './sending.ts';

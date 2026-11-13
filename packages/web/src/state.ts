@@ -796,7 +796,7 @@ const sendUploads = new Map<string, UploadJob[]>();
 export const uploadsOf = (tempId: string): UploadJob[] => sendUploads.get(tempId) ?? [];
 
 /** `uploads`: the composer's uploads of `files`, one each, already under way. */
-type SendOpts = { accountId?: string; replyTo?: string; files?: File[]; uploads?: UploadJob[] };
+type SendOpts = { accountId?: string; replyTo?: string; files?: File[]; uploads?: UploadJob[]; /** docs/sending.md */ silent?: boolean; mentionReplied?: boolean };
 /** Sends kept on this device until the hub has them (outbox.ts): a reload or the app being closed does not lose them. */
 const outbox = openOutbox(typeof indexedDB === 'undefined' ? undefined : indexedDB);
 /** Sends not yet through, by tempId: what they need to go out again. The outbox keeps the same. */
@@ -809,7 +809,7 @@ const pendingOf = (e: OutboxEntry): PendingSend => ({ tempId: e.tempId, conversa
 /** Shown at once as pending. Without the hub it waits, and goes out when the hub is back (flushOutgoing). */
 export async function send(conversationId: string, body: string, opts: SendOpts = {}) {
   const tempId = 'tmp-' + Math.random().toString(36).slice(2);
-  const e: OutboxEntry = { tempId, conversationId, body, ts: Date.now(), accountId: opts.accountId, replyTo: opts.replyTo, files: opts.files?.map((f) => ({ name: f.name, type: f.type, blob: f })) };
+  const e: OutboxEntry = { tempId, conversationId, body, ts: Date.now(), accountId: opts.accountId, replyTo: opts.replyTo, files: opts.files?.map((f) => ({ name: f.name, type: f.type, blob: f })), ...(opts.silent ? { silent: true } : {}), ...(opts.mentionReplied === false ? { mentionReplied: false } : {}) };
   pending.value = [...pending.value, pendingOf(e)];
   outgoing.set(tempId, e);
   if (opts.uploads?.length) {
@@ -861,7 +861,7 @@ async function deliver(tempId: string) {
   const post = () => {
     // A message of ours that comes after this may be this send's (settle).
     setPending(tempId, { postedAt: Date.now() });
-    return api<P.SendResult>(`/api/conversations/${o.conversationId}/send`, { body: { body: o.body, accountId: o.accountId, replyTo: o.replyTo, attachments: o.attachments, clientId } });
+    return api<P.SendResult>(`/api/conversations/${o.conversationId}/send`, { body: { body: o.body, accountId: o.accountId, replyTo: o.replyTo, attachments: o.attachments, clientId, ...(o.silent ? { silent: true } : {}), ...(o.mentionReplied === false ? { mentionReplied: false } : {}) } });
   };
   try {
     if (o.files?.length && !o.attachments) await uploadAll();
