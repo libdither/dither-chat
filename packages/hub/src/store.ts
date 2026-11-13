@@ -17,6 +17,7 @@ import { lateNews } from './latenews.ts';
 import { eraseVoice, ingestCallEvent, voiceKept } from './callstate.ts';
 import { ingestServers } from './servers.ts';
 import { alertBar, type Facts } from './learn.ts';
+import { attachmentExtra, attachmentRich, embedViews, richView, type StoredExtra } from './rich.ts';
 
 type Row = Record<string, any>;
 
@@ -239,6 +240,7 @@ export class Store {
       this.addColumns('owed_turn', { dismissed: 'INTEGER NOT NULL DEFAULT 0' });
       this.addColumns('visit', { depth: 'INTEGER', seen_to_ts: 'INTEGER', owed_since: 'INTEGER', owed_shown: 'INTEGER', typed: 'INTEGER NOT NULL DEFAULT 0', draft_left: 'INTEGER', exit: 'TEXT' });
       this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'" });
+      this.addColumns('attachment', { alt: 'TEXT', extra: 'TEXT' });
       const oldTriage = this.setAsideTriage();
       const oldLog = this.setAside('change_log', 'actor_id', ['change_log_target']);
       this.db.exec(schema);
@@ -1215,14 +1217,14 @@ export class Store {
         thread,
         f.mentionsSelf ? 1 : 0,
         f.mentionsSelf && f.mentionsAll ? 1 : 0,
-        f.extra || f.forward ? JSON.stringify({ ...f.extra, ...(f.forward ? { forward: f.forward } : {}) }) : null,
+        f.extra || f.forward || f.silent ? JSON.stringify({ ...f.extra, ...(f.forward ? { forward: f.forward } : {}), ...(f.silent ? { silent: true } : {}) }) : null,
       );
     if (f.attachments && !(old?.deleted && !f.attachments.length)) {
       this.db.query('DELETE FROM attachment WHERE message_id = ?').run(id);
       f.attachments.forEach((a, i) => {
         this.db
-          .query(`INSERT INTO attachment (id, message_id, kind, mime, name, size, width, height, url, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .run(hubId('att', acc.network, `${f.nativeId}#${a.nativeId ?? i}`), id, a.kind, a.mime ?? null, a.name ?? null, a.size ?? null, a.width ?? null, a.height ?? null, a.url, i);
+          .query(`INSERT INTO attachment (id, message_id, kind, mime, name, size, width, height, url, position, alt, extra) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(hubId('att', acc.network, `${f.nativeId}#${a.nativeId ?? i}`), id, a.kind, a.mime ?? null, a.name ?? null, a.size ?? null, a.width ?? null, a.height ?? null, a.url, i, a.alt?.slice(0, 2000) || null, attachmentExtra(a));
       });
     }
     if (f.reactions) this.reactionSnapshot(acc, id, f.reactions, existed);
@@ -2589,10 +2591,11 @@ export class Store {
       const rx = new Map<string, string[]>();
       for (const x of R.get(r.id) ?? []) (rx.get(`${x.style}|${x.key}`) ?? rx.set(`${x.style}|${x.key}`, []).get(`${x.style}|${x.key}`)!).push(x.identity_id);
       const t = T.get(r.id);
-      const extra = json<{ encryptionWarning?: string; forward?: P.ForwardFact }>(r.extra, {});
+      const extra = json<StoredExtra & { encryptionWarning?: string; forward?: P.ForwardFact }>(r.extra, {});
       const encryptionWarning = extra.encryptionWarning;
       const forward = sentForwards.get(r.id) ?? (extra.forward ? this.forwardView(r.network, extra.forward) : null);
-      const { notes, ...extras } = r.extra && !sealed ? this.extraView(r, extra, seenVia[0]) : {};
+      const rich = sealed ? undefined : richView(extra, r.network, r.body, this.linkedMessage);
+      const { notes, ...extras } = r.extra && !sealed ? this.extraView(r, extra as Record<string, unknown>, seenVia[0]) : {};
       return {
         ...(encryptionWarning ? { encryptionWarning } : {}),
         ...(forward ? { forward } : {}),
@@ -2627,11 +2630,13 @@ export class Store {
               height: a.height,
               url: this.media(a.url, seenVia[0]) ?? '',
               ...(infos?.get(a.url) ? { info: infos.get(a.url) } : {}),
+              ...attachmentRich(a),
             },
             notes?.[a.position],
           ),
         ),
-        embeds: json<{ embeds?: P.EmbedView[] }>(r.extra, {}).embeds?.map((e) => ({ ...e, image: this.media(e.image, seenVia[0]) ?? undefined })) ?? [],
+        embeds: embedViews(extra, (u) => this.media(u, seenVia[0])),
+        ...(rich ? { rich } : {}),
         reactions: (RT.get(r.id) ?? [])
           .map((t): P.ReactionView => {
             const identityIds = rx.get(`${t.style}|${t.key}`) ?? [];
@@ -2646,6 +2651,10 @@ export class Store {
       };
     });
   }
+
+  /** A message a link points at, as stored, with its file count: never fetched for a link (rich.ts). */
+  private linkedMessage = (network: P.Network, nativeId: string): Row | null =>
+    this.db.query('SELECT id, conversation_id, author_id, ts, body, deleted, (SELECT COUNT(*) FROM attachment a WHERE a.message_id = message.id) AS attachments FROM message WHERE id = ?').get(hubId('msg', network, nativeId)) as Row | null;
 
   /** What a message's extra says beyond its text, as the web shows it (msgextra.ts). */
   private extraView(r: Row, extra: Record<string, unknown>, via: string | undefined) {
@@ -3049,10 +3058,11 @@ export class Store {
     }
     if (substring) {
       mode = 'substring';
-      const like = texts.map(() => `m.body LIKE ? ESCAPE '\\'`);
+      // A picture's alt text counts as its message's words here (rich.ts).
+      const like = texts.map(() => `(m.body LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM attachment a WHERE a.message_id = m.id AND a.alt LIKE ? ESCAPE '\\'))`);
       rows = (this.db
         .query(`SELECT m.*, m.rowid AS rid FROM message m WHERE ${[...like, ...without, ...where].join(' AND ')} ORDER BY ${order} LIMIT ? OFFSET ?`)
-        .all(...texts.map((t) => `%${likeEscape(t)}%`), ...withoutArgs, ...args, take, offset) as Row[]).map((r) => ({ ...r, snip: markSnippet(r.body, texts) }));
+        .all(...texts.flatMap((t) => [`%${likeEscape(t)}%`, `%${likeEscape(t)}%`]), ...withoutArgs, ...args, take, offset) as Row[]).map((r) => ({ ...r, snip: markSnippet(r.body, texts) }));
     }
 
     const more = rows.length > limit;

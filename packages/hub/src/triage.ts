@@ -16,6 +16,7 @@
  *      (`judge`), and it alerts when its alert chance is even or better. That chance starts from the model's answer
  *      and moves with your marks.
  *   6. Else a Conversation stays one; anything else is on the list at your level of importance or more, or below it.
+ *   7. One its sender sent silently (Discord's @silent) never alerts: it stays a Conversation or a list row.
  *
  * A place's rule, most specific first:
  *   conversation > thread parent > containing spaces (nearest first) > account > network > global
@@ -339,6 +340,11 @@ export class Triage {
     const d = this.decideByRules(messageId);
     if (d) await this.withActivity(d, messageId, now);
     if (d?.facts) await this.withModel(d, messageId, now);
+    if (d?.decision === 'push' && this.sentSilently(messageId)) {
+      // Its sender asked that it not notify anyone (Discord's @silent): it stays where it would be, silent.
+      d.decision = d.facts?.conv ? 'quiet' : 'digest';
+      d.reasons.unshift('Sent silently: it never alerts');
+    }
     if (d?.decision !== 'push') return d;
     const q = this.store.quietHours();
     if (!inQuietHours(q, now) || (q!.allowStarred && d.alwaysNotify)) return d;
@@ -349,6 +355,17 @@ export class Triage {
     const conversationId = this.store.one<Row>('SELECT conversation_id FROM message WHERE id = ?', messageId)!.conversation_id;
     this.store.setQuietHeld({ count: (held?.count ?? 0) + 1, conversationId, messageId });
     return d;
+  }
+
+  /** Its sender sent it silently (MessageFact.silent, kept in the message's extra). */
+  private sentSilently(messageId: string): boolean {
+    const x = this.store.one<Row>('SELECT extra FROM message WHERE id = ?', messageId)?.extra;
+    if (!x || !x.includes('"silent"')) return false;
+    try {
+      return JSON.parse(x).silent === true;
+    } catch {
+      return false;
+    }
   }
 
   /**

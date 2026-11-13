@@ -213,7 +213,9 @@ CREATE TABLE IF NOT EXISTS attachment (
   width      INTEGER,
   height     INTEGER,
   url        TEXT NOT NULL,                  -- MediaUrl as the adapter gave it
-  position   INTEGER NOT NULL DEFAULT 0
+  position   INTEGER NOT NULL DEFAULT 0,
+  alt        TEXT,                           -- its description (alt text), searched (rich.ts)
+  extra      TEXT                            -- JSON: spoiler, explicit, voice (hub rich.ts attachmentExtra)
 );
 CREATE INDEX IF NOT EXISTS attachment_message ON attachment(message_id);
 

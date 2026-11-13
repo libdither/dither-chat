@@ -17,4 +17,5 @@ export * from './mail.ts';
 export * from './calendar.ts';
 export * from './attention.ts';
 export * from './servers.ts';
+export * from './rich.ts';
 export * from './extra.ts';
