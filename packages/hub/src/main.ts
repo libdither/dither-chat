@@ -10,6 +10,8 @@ import { FakeMailBackend, MailHub, ManagerMailBackend } from './mail/index.ts';
 import { mailPeople } from './mail/people.ts';
 import { mailAttention } from './mail/attention.ts';
 import { mailTriage, type MailNotice } from './mail/triage.ts';
+import { Notices, type NoticeDelivery } from './notices/index.ts';
+import { FakeNoticeSource, seedDemoNotices } from './notices/fake.ts';
 import { Delivery } from './delivery.ts';
 import { Notifier } from './notify.ts';
 import { listByPrior, PhoneList, phoneListMode } from './phonelist.ts';
@@ -31,9 +33,9 @@ import { startCheckpointer } from './checkpoint.ts';
 import { sliced } from './slices.ts';
 import { StallWatch, timedWrite } from './stalls.ts';
 import { NdjsonFile, setTraceSink, span, spansBetween, type Span } from './trace.ts';
-import { CalendarLink, calendarChain, calendarUrl, ReminderDelivery, REMINDER_RULE_ID } from './calendar.ts';
 import { inQuietHours } from './triage.ts';
 import { onRing, ringMuted, ringWords, sweepCalls } from './callstate.ts';
+import { CalendarAccounts, seedCalendarAccount } from './calendar-account.ts';
 
 // Each part of the start, logged in one line once requests are answered (startup.ts).
 const startup = new StartupTrace();
@@ -105,14 +107,12 @@ const delivery = new Delivery(store, triage);
 // New requests from someone you know notify once (docs/add.md "Requests").
 const requestNotices = new RequestNotifier(store);
 devices.otherChain = (id) => otherChain(id);
-/**
- * Rule keys for what is not a chat conversation: a request (its account, its network), a calendar reminder (the
- * calendar as a network of its own, `network:calendar`), a mail thread once mail is on (below).
- */
+/** Rule keys for what is not a chat conversation: a request (its account, its network), a mail thread once mail is on (below). */
 let mailChain: ((id: string) => string[] | null) | null = null;
+let noticeChain: ((id: string) => string[] | null) | null = null;
 function otherChain(id: string): string[] | null {
   if (id.startsWith('req_')) return requestChain(store.db, id);
-  return calendarChain(id) ?? mailChain?.(id) ?? null;
+  return mailChain?.(id) ?? noticeChain?.(id) ?? null;
 }
 attention.activity = activity;
 // Message embeddings and jev's answers as content features (docs/embeddings.md): made in the background, never blocking.
@@ -207,6 +207,7 @@ async function judgeLate(id: string) {
 let notifier: Notifier | null = null;
 const deliver: Notifier['message'] = (...a) => notifier?.message(...a);
 const deliverMail = (n: MailNotice) => notifier?.mail(n);
+const deliverNotice = (n: NoticeDelivery) => notifier?.notice(n) ?? false;
 
 /** A request's row on the list sorts as something the network would have notified you about. */
 const REQUEST_IMPORTANCE = 0.8;
@@ -224,20 +225,6 @@ function deliverRequest(n: RequestNotice) {
     .then((r) => nid && activity.sent(nid, r))
     .catch((e) => console.error('push failed', e));
 }
-
-/**
- * A calendar reminder (calendar.ts, docs/calendar.md): an alert that sounds on every device, or held quiet (phones only,
- * silent) in quiet hours. Device rules on `network:calendar` keep it off a device. Not part of quiet hours' summary.
- */
-const reminders = new ReminderDelivery({
-  inQuietHours: (now) => inQuietHours(store.quietHours(), now),
-  quietDevices: () => devices.quietOn(REMINDER_RULE_ID, false),
-  desktops: () => push.desktops(),
-  notification: () => activity.notification({ kind: 'reminder' }),
-  sent: (nid, r) => activity.sent(nid, r),
-  notify: (ev) => server.notify(ev),
-  push: (title, body, extra, skip, level) => push.notify(title, body, undefined, extra, skip, level),
-});
 
 /**
  * A call ringing you (callstate.ts, docs/calls.md "Ringing"): once, as an alert that sounds on every device, with
@@ -305,7 +292,8 @@ setInterval(
     span('votes and held alerts', {}, () => {
       votes.daily();
       const held = triage.takeHeldSummary();
-      if (held) deliver(held.title, held.body, held.conversationId, held.messageId, ['Quiet hours ended']);
+      // The last held one may be a notice: its tap opens Notices, not a chat.
+      if (held) deliver(held.title, held.body, held.conversationId, held.messageId, ['Quiet hours ended'], held.messageId.startsWith('ntc_') ? { noticeId: held.messageId } : {});
     }),
   60_000,
 );
@@ -313,7 +301,7 @@ setInterval(
 const push = new PushService(store, loadVapidKeys(dataDir), process.env.DITHER_PUSH_SUBJECT ?? process.env.DITHER_PUBLIC_URL ?? 'https://github.com/libdither/dither-chat');
 // Which list rows reach the phones (docs/notifications.md, "The phone's list"). DITHER_PHONE_LIST=shadow sends them all
 // and logs what it would have held; off, as before it.
-const phone = new PhoneList(store.db, { mode: phoneListMode(process.env.DITHER_PHONE_LIST), kept: (now) => triage.marked(now).convs, readTs: (cid) => delivery.readTs(cid) });
+const phone = new PhoneList(store.db, { mode: phoneListMode(process.env.DITHER_PHONE_LIST), kept: (now) => triage.marked(now).convs, readTs: (cid) => delivery.readAllTs(cid) });
 activity.noted = (w) => phone.noted(w);
 if (phone.mode !== 'on') console.log(`phone list: ${phone.mode} (DITHER_PHONE_LIST)`);
 
@@ -336,11 +324,14 @@ const categorizer = new Categorizer(store, categoryProvider());
 store.categoryProvider = categorizer.provider.id;
 startup.mark('categories');
 
+// dither-calendar beside the hub (calendar-account.ts, docs/calendar.md): on while an enabled calendar account is. Its
+// account runs in the hub, linked to the calendar's address; never on a demo hub.
+const calendars = new CalendarAccounts(store, { broadcast: (evs) => server.broadcast(evs), demo });
 const supOpts = {
   hubAdapterUrl: `ws://127.0.0.1:${tls ? plainPort : port}/adapter`,
   dataDir,
   repoRoot,
-  inproc: demoFactory,
+  inproc: (acc: Parameters<typeof demoFactory>[0], dir: string) => calendars.factory(acc) ?? demoFactory(acc, dir),
   onFresh: triageLater,
 };
 // dither-accounts (docs/accounts.md): the accounts its manager runs come through it; the rest run here as always.
@@ -371,15 +362,21 @@ const mailTriaged = mailTriage(mail);
 if (mailTriaged) {
   mailTriaged.connect({ store, triage, votes, deliver: (n) => deliverMail(n) });
   mailChain = (id) => mailTriaged.chain(id);
-  delivery.other = mailTriaged;
 }
+// Notices (docs/notices.md): dither-accounts' notifications interface, or a fake source in a demo world; off otherwise.
+const demoNotices = demo ? new FakeNoticeSource() : null;
+const noticeLink = demoNotices ?? (sup instanceof RoutedSupervisor ? { call: (a: string, op: string, input: Record<string, unknown>, t: number) => sup.callNotices(a, op, input, t), askAgain: () => sup.askNoticesAgain() } : null);
+const notices = noticeLink ? new Notices({ store, triage, votes, link: noticeLink, deliver: (n) => deliverNotice(n), managerUrl: accountsPage, access: demoNotices ? 'granted' : 'unreachable' }) : null;
+if (notices) noticeChain = (id) => notices.chain(id);
+if (sup instanceof RoutedSupervisor && notices) sup.notices = notices;
+// Mail threads and groups of notices: their lines, and when they were read (delivery.ts).
+delivery.other = {
+  gather: (id, m) => mailTriaged?.gather(id, m) ?? notices?.gather(id, m) ?? null,
+  readTs: (id) => mailTriaged?.readTs(id) ?? notices?.readTs(id) ?? null,
+  readAllTs: (id) => mailTriaged?.readTs(id) ?? notices?.readAllTs(id) ?? null,
+};
 // Notifications sent before a restart still leave the phones when their chat is read (delivery.ts).
 delivery.restore();
-
-// dither-calendar beside the hub (docs/calendar.md): DITHER_CALENDAR_URL, http://127.0.0.1:8470 by default; `off` or
-// empty for none. Never on a demo hub, so check:boot and the verify scripts never reach a live calendar.
-const calendarAt = calendarUrl(process.env, demo);
-const calendar = calendarAt ? new CalendarLink({ url: calendarAt, broadcast: (evs) => server.broadcast(evs) }) : undefined;
 
 const readQueue = new ReadQueue(store, sup);
 readQueue.start();
@@ -403,8 +400,8 @@ const server = new HubServer(store, sup, triage, {
   votes,
   archiveMedia: !demo,
   mail,
-  calendar,
-  onReminder: (n) => reminders.deliver(n),
+  notices: notices ?? undefined,
+  calendar: calendars,
   // A reminder you set on a network (Discord's "Remind me") notifies like an alert; quiet hours hold it quiet (saved.ts).
   onSavedReminder: (n) => deliver(n.title, n.body, n.conversationId, n.messageId, ['A reminder you set on Discord'], server.replyFields(n.conversationId, n.messageId), 'held', inQuietHours(store.quietHours(), Date.now()) ? 'quiet' : 'push'),
   turn: process.env.DITHER_TURN_URLS && process.env.DITHER_TURN_SECRET ? { urls: process.env.DITHER_TURN_URLS.split(',').map((u) => u.trim()), secret: process.env.DITHER_TURN_SECRET } : undefined,
@@ -431,7 +428,8 @@ if (demo && realAccounts.length) {
   console.error(`--demo: ${dataDir} holds real accounts. A demo world needs its own data dir: pass --data <dir> (default .data-demo).`);
   process.exit(1);
 }
-if (!demo && realAccounts.length) {
+// A calendar account alone does not make a hub a real one: a demo world reopened with a calendar beside it keeps its world.
+if (!demo && realAccounts.some((a) => a.network !== 'calendar')) {
   // A real hub carries no demo world. Older hubs mixed them; removing the accounts also drops what only they saw.
   for (const a of store.accounts().filter((a) => a.demo)) {
     store.deleteAccount(a.id);
@@ -442,8 +440,17 @@ if (!demo && realAccounts.length) {
 // A demo world showing adversarial features from the start (scripts/verify-history.ts): before its history is seeded.
 if (demo && flag('adversarial') && !store.retention().adversarial) store.setRetention({ ...store.retention(), adversarial: true, deleted: true, disappearing: true, statuses: true, presence: true, members: true });
 if (demo && !store.accounts().some((a) => a.demo)) createDemoAccounts(store);
+// The first start with calendar accounts: the calendar this hub had by DITHER_CALENDAR_URL (or its default) becomes
+// one, once (calendar-account.ts). Removing it later sticks.
+const seededCalendar = seedCalendarAccount(store, process.env, demo);
+calendars.sync();
+if (seededCalendar) console.log(`calendar: added a calendar account for ${calendars.url()} (once; remove it under Accounts to turn the calendar off)`);
 if (demoMail && !mail.store.account(DEMO_MAIL_ACCOUNT)) seedDemoMail(demoMail);
 else if (demoMail) seedDemoMail(demoMail, mail.store.account(DEMO_MAIL_ACCOUNT)!.created_at);
+if (demoNotices && notices) {
+  seedDemoNotices(demoNotices);
+  demoNotices.attach(notices);
+}
 startup.mark('server');
 // Before the manager's first account list, so mail hears it.
 mail.start();
@@ -464,7 +471,7 @@ setTimeout(() => {
   const c = checkpoints.stats;
   console.log(`checkpoints: ${c.done} in the first 10 min, the longest ${Math.round(c.longestMs)} ms off the hub's thread${c.failed ? `, ${c.failed} failed` : ''}`);
 }, 10 * 60_000).unref();
-calendar?.start();
+calendars.start();
 span('attention: first scoring', {}, () => attention.start((events) => server.broadcast(events)));
 ranker.onFit = () => {
   void attention
@@ -487,7 +494,7 @@ if (leftover.length) {
 // New servers and renamed channels turn up whenever an adapter says so; unchanged places cost a hash.
 void categorizer.refresh();
 setInterval(() => void span('categories', {}, () => categorizer.refresh()), 5 * 60_000);
-console.log(`dither-chat hub on ${tls ? 'https' : 'http'}://${hostname}:${port}${tls ? ` (plain http on ${plainPort}: adapters, CA download)` : ''}  data=${dataDir}${calendarAt ? `  calendar=${calendarAt}` : ''}`);
+console.log(`dither-chat hub on ${tls ? 'https' : 'http'}://${hostname}:${port}${tls ? ` (plain http on ${plainPort}: adapters, CA download)` : ''}  data=${dataDir}${calendars.url() ? `  calendar=${calendars.url()}` : ''}`);
 startup.mark('the rest');
 // Ready once the event loop is free to answer: what the start queued (adapters starting, the first refresh) runs first.
 setTimeout(() => {
@@ -504,7 +511,7 @@ const shutdown = async () => {
   ranker.stop();
   attention.stop();
   mail.stop();
-  calendar?.stop();
+  calendars.stop();
   embeddings?.close();
   server.stop();
   await sup.stopAll();

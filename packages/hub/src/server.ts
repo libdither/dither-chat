@@ -5,7 +5,7 @@ import { join, normalize, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type * as P from '@dither-chat/protocol';
 import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, parseCursor } from './chats.ts';
-import { ATTACHMENT_LIMITS, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { ACCOUNT_COLORS, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
@@ -54,10 +54,12 @@ import { People } from './people.ts';
 import { AccountSelf, ignoredOf } from './accountself.ts';
 import { peopleGraph } from './graph.ts';
 import type { MailHub } from './mail/index.ts';
+import type { Notices } from './notices/index.ts';
 import { mailPeople } from './mail/people.ts';
 import { Adding, linksOf, requestHeld, requestViews } from './add.ts';
 import { feedRefusal, isFeed } from './feed.ts';
-import { calendarOff, checkNotice, notifyAllowed, type CalendarLink } from './calendar.ts';
+import { calendarOff, type CalendarLink } from './calendar.ts';
+import { markCalendarAdded } from './calendar-account.ts';
 import { ReplyMarks, type ReplyMark } from './replymarks.ts';
 import { mailAttention } from './mail/attention.ts';
 import { callRoute } from './callstate.ts';
@@ -133,10 +135,13 @@ export interface ServerOpts {
   archiveMedia?: boolean;
   /** Mail (mail/index.ts, docs/mail.md): its routes, its part of the bootstrap and of each flush. */
   mail?: MailHub;
-  /** dither-calendar beside the hub (calendar.ts, docs/calendar.md): /calendar/*, GET /api/plans, the bootstrap's `calendar`. */
-  calendar?: CalendarLink;
-  /** A reminder from the calendar (POST /api/calendar/notify, loopback only). */
-  onReminder?: (n: P.ReminderNotice) => Promise<P.ReminderResult>;
+  /** Notices (notices/, docs/notices.md): /api/notices, the bootstrap's `notices`. */
+  notices?: Notices;
+  /**
+   * dither-calendar beside the hub (calendar-account.ts, docs/calendar.md): the link of the calendar account that is on,
+   * if any (/calendar/*, GET /api/plans, the bootstrap's `calendar`), and `sync` after the accounts change.
+   */
+  calendar?: { link(): CalendarLink | undefined; sync(): void };
   /** A reminder set on a network came due (saved.ts): main.ts notifies it like an alert. */
   onSavedReminder?: (n: { title: string; body: string; conversationId: string; messageId: string }) => void;
 }
@@ -683,18 +688,8 @@ export class HubServer {
     // dither-calendar (calendar.ts, docs/calendar.md). Its paths are not under /api/, so the cross-site check is here too.
     if (path === '/calendar' || path.startsWith('/calendar/')) {
       if (req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) return new Response('cross-site request refused', { status: 403 });
-      return this.opts.calendar ? this.opts.calendar.proxy(req, url) : calendarOff(path);
-    }
-    // A reminder from the calendar: a process on this machine, never a browser and never another device.
-    if (path === '/api/calendar/notify') {
-      if (!notifyAllowed(ip, req)) return Response.json({ ok: false, error: 'reminders come from this machine only' }, { status: 403 });
-      if (req.method !== 'POST') return Response.json({ ok: false, error: 'POST only' }, { status: 405 });
-      if (!this.opts.onReminder) return Response.json({ ok: false, error: 'reminders are off on this hub' }, { status: 503 });
-      const n = await req.json().catch(() => null);
-      const why = checkNotice(n);
-      if (why) return Response.json({ ok: false, error: `bad reminder: ${why}` }, { status: 400 });
-      const r = await this.opts.onReminder(n as P.ReminderNotice);
-      return Response.json(r, { status: r.ok ? 200 : 503 });
+      const link = this.opts.calendar?.link();
+      return link ? link.proxy(req, url) : calendarOff(path);
     }
 
     if (path.startsWith('/api/') && req.method !== 'GET' && !sameOrigin(req)) return new Response('cross-site request refused', { status: 403 });
@@ -767,11 +762,14 @@ export class HubServer {
       if (attention && !attention.hasScores) await attention.firstScores;
       // Everything changed so far is in the journal, so the position below covers what this reads.
       this.flush();
-      const calendar = this.opts.calendar;
-      return ok({ ...s.bootstrap(), attention: this.opts.attention?.list(), devices: this.opts.devices?.list(), ...(this.opts.mail ? { mail: this.opts.mail.bootstrap() } : {}), requests: requestViews(s), ...(calendar ? { calendar: calendar.view() } : {}), sync: s.journal.position() } satisfies P.Bootstrap);
+      const calendar = this.opts.calendar?.link();
+      return ok({ ...s.bootstrap(), attention: this.opts.attention?.list(), devices: this.opts.devices?.list(), ...(this.opts.mail ? { mail: this.opts.mail.bootstrap() } : {}), requests: requestViews(s), ...(calendar ? { calendar: calendar.view() } : {}), ...(this.opts.notices ? { notices: this.opts.notices.boot() } : {}), sync: s.journal.position() } satisfies P.Bootstrap);
     }
     // Plans the calendar found in chats, from the hub's cache (calendar.ts): the chips under messages.
-    if (path === '/api/plans' && method === 'GET') return this.opts.calendar ? ok(this.opts.calendar.plansView() satisfies P.PlansView) : bad('calendar is off on this hub', 404);
+    if (path === '/api/plans' && method === 'GET') {
+      const link = this.opts.calendar?.link();
+      return link ? ok(link.plansView() satisfies P.PlansView) : bad('calendar is off on this hub', 404);
+    }
     if (path === '/api/sync' && method === 'POST') {
       const b = await body<P.SyncRequest>();
       this.flush();
@@ -835,6 +833,11 @@ export class HubServer {
       const r = this.marks.setRow(ids, b.mark as ReplyMark | null, o);
       this.flush();
       return ok({ mark: b.mark, marked: r.marked, kind: 'message' });
+    }
+    // Notices (notices/index.ts).
+    if (path === '/api/notices' || path.startsWith('/api/notices/')) {
+      const r = this.opts.notices ? await this.opts.notices.route(req, url) : null;
+      return r ?? bad(this.opts.notices ? 'no such notices route' : 'notices are off on this hub', 404);
     }
     // Mail (mail/routes.ts).
     if (path === '/api/mail' || path.startsWith('/api/mail/')) {
@@ -1846,9 +1849,21 @@ export class HubServer {
       if (!NETWORKS.includes(b.network)) return bad('unknown network');
       if (b.adapter !== undefined && !validAdapterName(b.adapter)) return bad('unknown adapter');
       if (s.accounts().some((a) => a.demo)) return bad('This is a demo hub. Real accounts go on a hub with its own data dir, started without --demo.');
+      // A calendar (docs/calendar.md): one, at an http(s) address; the hub runs its link itself.
+      if (b.network === 'calendar') {
+        if (!this.opts.calendar) return bad('This hub has no calendar accounts', 409);
+        if (s.accounts().some((a) => a.network === 'calendar')) return bad('There is a calendar account already. Remove it first to use another calendar.', 409);
+        const given = (b.config as { url?: unknown } | null)?.url;
+        const url = given === undefined || given === '' ? CALENDAR_URL_DEFAULT : calendarAccountUrl(b.config);
+        if (!url) return bad("The calendar's address is an http(s) URL, like http://127.0.0.1:8470");
+        b.config = { url };
+        b.adapter = 'calendar';
+      }
       const used = new Set(s.accounts().map((a) => a.color));
       const color = b.color ?? ACCOUNT_COLORS.find((c) => !used.has(c)) ?? ACCOUNT_COLORS[0];
       const acc = s.createAccount({ network: b.network, label: b.label?.trim() || NETWORK_META[b.network].name, color, adapter: b.adapter ?? b.network, config: b.config });
+      // Added by hand: the first start's seed never adds one again (calendar-account.ts).
+      if (b.network === 'calendar') markCalendarAdded(s);
       if (this.sup.created) {
         try {
           await this.sup.created(acc, b.secret ?? {});
@@ -1862,6 +1877,7 @@ export class HubServer {
         this.sup.writeSecret(acc.id, b.secret ?? {});
         this.sup.start(acc.id);
       }
+      this.opts.calendar?.sync();
       return ok(s.accountView(acc));
     }
     if ((m = path.match(/^\/api\/accounts\/([\w-]+)$/))) {
@@ -1872,6 +1888,7 @@ export class HubServer {
         // ?purge=1: dither-accounts deletes the session's directory too, if it made it.
         await this.sup.forget?.(acc.id, url.searchParams.get('purge') === '1');
         s.deleteAccount(acc.id);
+        this.opts.calendar?.sync();
         this.flush();
         return ok();
       }
@@ -1887,6 +1904,7 @@ export class HubServer {
           await this.sup.stop(acc.id);
           s.updateAccount(acc.id, { status: 'disabled' });
         } else if (b.enabled === true) this.sup.start(acc.id);
+        if (b.enabled !== undefined) this.opts.calendar?.sync();
         return ok();
       }
     }

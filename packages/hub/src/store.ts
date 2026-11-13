@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } f
 import { dirname, join } from 'node:path';
 import { hubId, randomId } from '@dither-chat/protocol/ids';
 import type * as P from '@dither-chat/protocol';
-import { canonicalReactionKey, DEFAULT_RETENTION, parseSearch, PROTOCOL_VERSION, REACTION_RULES } from '@dither-chat/protocol';
+import { calendarAccountUrl, canonicalReactionKey, DEFAULT_RETENTION, parseSearch, PROTOCOL_VERSION, REACTION_RULES } from '@dither-chat/protocol';
 import { activityChart, type Zone } from './activitychart.ts';
 import { binsFor, estimateMessages, snowflakeTime, type ChannelInput } from './msgcount.ts';
 import { Journal } from './journal.ts';
@@ -265,6 +265,7 @@ export class Store {
       this.addColumns('visit', { depth: 'INTEGER', seen_to_ts: 'INTEGER', owed_since: 'INTEGER', owed_shown: 'INTEGER', typed: 'INTEGER NOT NULL DEFAULT 0', draft_left: 'INTEGER', exit: 'TEXT' });
       this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'" });
       this.addColumns('attachment', { alt: 'TEXT', extra: 'TEXT' });
+      this.addColumns('notice', { caught: 'INTEGER NOT NULL DEFAULT 0', shown_ts: 'INTEGER', held_at: 'INTEGER' });
       const oldTriage = this.setAsideTriage();
       const oldLog = this.setAside('change_log', 'actor_id', ['change_log_target']);
       this.db.exec(schema);
@@ -2286,6 +2287,7 @@ export class Store {
       createdAt: r.created_at,
       ...((m) => (m ? { managedBy: m } : {}))(this.accountManaged(r.id)),
       ...accountSelfView(this, r.id),
+      ...(r.network === 'calendar' ? { url: calendarAccountUrl(json(r.config, {})) } : {}),
     };
   }
 

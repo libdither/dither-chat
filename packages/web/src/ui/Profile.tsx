@@ -60,6 +60,7 @@ const WHAT_NETWORKS_SHARE: Record<P.Network, string> = {
   instagram: 'Username, name, bio and picture, and whether the account is private.',
   x: 'Name, handle, bio and picture, as their X profile shows them.',
   email: 'An address, and the name their mail is sent under. Mail has no profiles.',
+  calendar: 'The calendar talks for itself: it has no profile.',
 };
 
 /** What a network says when someone wrote nothing. */

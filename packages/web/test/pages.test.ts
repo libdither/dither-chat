@@ -52,13 +52,15 @@ const ROUTES: [hash: string, kind: 'list' | 'tab' | 'page' | 'over', own: string
   ['#/mail/t/th', 'page', '#/mail'],
   ['#/requests', 'page', '#/inbox'],
   ['#/requests/req1', 'page', '#/inbox'],
+  ['#/notices', 'page', '#/inbox'],
+  ['#/notices/ntc_1', 'page', '#/inbox'],
   ['#/calendar', 'tab', '#/calendar'],
   ['#/calendar/day/2026-11-14?x', 'tab', '#/calendar/day/2026-11-14?x'],
 ];
 
 test('the table covers every kind of route', () => {
   const views = new Set(ROUTES.map(([h]) => R(h).view));
-  expect([...views].sort()).toEqual(['accounts', 'calendar', 'directory', 'folder', 'inbox', 'mail', 'model', 'people', 'profile', 'requests', 'search', 'settings', 'space', 'spaces', 'triage']);
+  expect([...views].sort()).toEqual(['accounts', 'calendar', 'directory', 'folder', 'inbox', 'mail', 'model', 'notices', 'people', 'profile', 'requests', 'search', 'settings', 'space', 'spaces', 'triage']);
 });
 
 test("the calendar's own hash is kept verbatim, query and all, both ways", () => {
@@ -117,6 +119,9 @@ test('going to a page writes its list first, unless it comes from that list or j
   expect(written('#/requests', '#/inbox')).toBeNull();
   expect(written('#/requests/req1', '#/p/pal')).toBe('#/inbox');
   expect(written('#/requests', '#/requests/req1')).toBeNull();
+  // Notices too.
+  expect(written('#/notices/ntc_1', '#/p/pal')).toBe('#/inbox');
+  expect(written('#/notices', '#/notices/ntc_1')).toBeNull();
   // A page opened over another, and a list, have none.
   expect(written('#/p/pal', '#/s/srv/c/chan')).toBeNull();
   expect(written('#/s/srv', '#/s/srv/c/chan')).toBeNull();

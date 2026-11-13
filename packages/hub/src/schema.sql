@@ -822,3 +822,43 @@ CREATE TABLE IF NOT EXISTS member_coverage (
   online      INTEGER,
   reported_at INTEGER NOT NULL
 ) WITHOUT ROWID;
+
+-- Notices (notices/, docs/notices.md): what accounts and services tell you through dither-accounts' `notifications`
+-- interface, each with triage's decision on it. Kept 30 days; a marked one longer, while it is learned from.
+CREATE TABLE IF NOT EXISTS notice (
+  id          TEXT PRIMARY KEY,           -- ntc_<hash(account, native id)>: also the id marks take
+  account     TEXT NOT NULL,              -- the manager's account id
+  native_id   TEXT NOT NULL,              -- the extractor's own id
+  grp         TEXT NOT NULL,              -- ntg_<hash(account, context or source)>: one notification per group
+  source      TEXT NOT NULL,
+  title       TEXT NOT NULL,
+  body        TEXT,
+  url         TEXT,
+  reason      TEXT,
+  context     TEXT,
+  subject     TEXT,                       -- JSON {kind, title, url, state}
+  actors      TEXT,                       -- JSON [{name, url}]
+  urgency     TEXT NOT NULL CHECK (urgency IN ('high', 'normal', 'low')),
+  at          INTEGER NOT NULL,           -- when the source last raised it
+  unread      INTEGER NOT NULL DEFAULT 1,
+  read_at     INTEGER,
+  decision    TEXT,                       -- push | digest | drop | silent; null until decided
+  importance  REAL,
+  alert       REAL,                       -- the alert chance
+  reasons     TEXT,                       -- JSON, the deciding one first
+  decided_by  TEXT,
+  facts       TEXT,                       -- JSON learn.ts Facts, for marks to be learned from
+  words       TEXT,                       -- JSON
+  delivered   INTEGER NOT NULL DEFAULT 0, -- a notification went out
+  caught      INTEGER NOT NULL DEFAULT 0, -- decided as a catch-up found it (it notified nobody)
+  shown_ts    INTEGER,                    -- its time (at) as its notification last showed it; kept across updates
+  held_at     INTEGER,                    -- when quiet hours first held it (counted once for their summary)
+  decided_at  INTEGER,
+  alert_mark  INTEGER,                    -- 1 should have alerted, 0 the alert was wrong
+  less_mark   INTEGER,                    -- 1 less like this
+  marked_at   INTEGER,
+  created_at  INTEGER NOT NULL
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS notice_at ON notice(at);
+CREATE INDEX IF NOT EXISTS notice_grp ON notice(grp, at);
+CREATE INDEX IF NOT EXISTS notice_marked ON notice(marked_at) WHERE marked_at IS NOT NULL;
