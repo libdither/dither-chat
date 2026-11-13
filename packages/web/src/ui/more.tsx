@@ -35,14 +35,47 @@ export function useShown(total: number): [number, ComponentChild] {
 }
 
 function MoreRows({ onMore }: { onMore: () => void }) {
-  const ref = useRef<HTMLDivElement>(null);
+  const ref = useNear<HTMLDivElement>(onMore, '.side-scroll, .rail-scroll', MARGIN, true);
+  return <div ref={ref} class="more-rows" aria-hidden="true" />;
+}
+
+/**
+ * Calls `onNear` once when the element comes within `margin` of the view of its nearest `root` (a selector). Key the
+ * element by the page it asks for, so one still in view after that page arrives asks for the next.
+ */
+function useNear<T extends HTMLElement>(onNear: () => void, root: string, margin: string, noObserver: boolean) {
+  const ref = useRef<T>(null);
+  const call = useRef(onNear);
+  call.current = onNear;
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    if (typeof IntersectionObserver === 'undefined') return void onMore();
-    const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && onMore(), { root: el.closest('.side-scroll, .rail-scroll'), rootMargin: MARGIN });
+    if (typeof IntersectionObserver === 'undefined') return void (noObserver && call.current());
+    let done = false;
+    const io = new IntersectionObserver(
+      (es) => {
+        if (done || !es.some((e) => e.isIntersecting)) return;
+        done = true;
+        io.disconnect();
+        call.current();
+      },
+      { root: el.closest(root), rootMargin: margin },
+    );
     io.observe(el);
     return () => io.disconnect();
   }, []);
-  return <div ref={ref} class="more-rows" aria-hidden="true" />;
+  return ref;
+}
+
+/**
+ * A "More results" button that also presses itself when scrolled near (search results, chat and mail). It stays a
+ * button: without IntersectionObserver, or after a page that failed, a tap still asks.
+ */
+export function MoreResults({ onMore, root, busy, class: cls }: { onMore: () => void; root: string; busy?: boolean; class: string }) {
+  const ref = useNear<HTMLButtonElement>(onMore, root, '0px 0px 600px 0px', false);
+  return (
+    <button ref={ref} class={cls} disabled={busy} aria-busy={busy} onClick={onMore}>
+      {busy ? 'Loading…' : 'More results'}
+    </button>
+  );
 }

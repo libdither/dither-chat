@@ -16,6 +16,7 @@ import { Avatar, Empty } from '../bits.tsx';
 import { Icon } from '../icons.tsx';
 import { listTime } from './MessageCard.tsx';
 import { Loading } from '../Loader.tsx';
+import { MoreResults } from '../more.tsx';
 
 /** Under this many of the hub's own hits, the servers are asked without asking you. */
 const ASK_SERVER_UNDER = 20;
@@ -239,11 +240,7 @@ export function MailSearch({ q, active }: { q: string; active?: string }) {
             </button>
           </div>
         )}
-        {f && !f.loading && f.next && (
-          <button class="mail-more" onClick={() => void more(q)}>
-            More results
-          </button>
-        )}
+        {f && !f.loading && f.next && <MoreResults key={f.next} class="mail-more" root=".side-scroll" onMore={() => void more(q)} />}
         {f && !f.loading && !f.next && (!f.server || skipped(f.server)) && !f.serverLoading && (f.hits.length > 0 || !!f.server) && (
           <button class="mail-more" onClick={() => void askServers(q)}>
             Search the servers too
