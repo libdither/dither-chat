@@ -580,6 +580,31 @@ which is the owner's choice.
 - a flush writes inside one transaction and sends after it;
 - the sliced rescore gives the same scores, 64 at most between turns.
 
+### synchronous = NORMAL (2026-11-13)
+
+With #132 deployed, the live hub's ten minutes still read 178 holds of 200 ms or more (74.7 s, six over a second, the
+median 332 ms). Most were "adapter events" and "flush": commits, each waiting on the hub's one thread for an fsync of
+the log (`synchronous` was SQLite's default, FULL), about eight for each message. The longest came in the first minutes
+after a start, when a new device loaded the app (the deploy's check, a fresh browser profile): its first seconds write
+to the disk, and every fsync of the hub's waited behind them.
+
+The owner chose `synchronous = NORMAL` (store.ts, embeddings.ts). In WAL mode a commit is then written to the log
+without waiting for the disk, and the log reaches the disk at checkpoints, which the checkpoint thread runs about every
+second (checkpoint.ts). A clean stop checkpoints everything first (main.ts). A power cut or a crash of the machine can
+lose about the last second; a crash of the hub loses nothing; nothing can be corrupted (docs/deploy.md, "Durability").
+
+The sealed copy with the copy's traffic replayed, four devices on the live socket, the bootstrap polled every 5 s for
+four minutes, and a fresh headless Chromium profile loading the app after that (one browser at a time):
+
+| | FULL (main) | NORMAL |
+|---|---|---|
+| fsyncs in three minutes of the replay (66 messages) | 543, all on the hub's thread | 19, all on the checkpoint thread |
+| the 90 s after the fresh browser loads: holds, sum, longest | 21, 16.0 s, 3.1 s | 4, 1.2 s, 0.34 s |
+| the whole run: holds of 200 ms or more, sum, longest | 62, 30.1 s, 3.1 s | 50, 19.4 s, 2.3 s |
+| without the bootstrap polls' holds | 28, 19.0 s, 3.1 s | 16, 8.4 s, 2.3 s |
+
+What is left is mostly reads: the first scores at a start, the five-minute rescore's reads, and the bootstrap's own.
+
 ## The snapshot after each open (2026-11-11)
 
 Opening a conversation saves the device's snapshot 1.5 s later, when the page is idle (snapshot.ts). Opening one marks

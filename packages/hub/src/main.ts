@@ -474,6 +474,12 @@ const shutdown = async () => {
   // What stopping changed is in the journal too; then the next start can trust it (journal.ts).
   server.flush();
   store.journal.close();
+  // Commits reach the disk at checkpoints (synchronous = NORMAL, store.ts): a clean stop leaves none behind.
+  try {
+    store.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+  } catch (e) {
+    console.error('the last checkpoint failed', e);
+  }
   process.exit(0);
 };
 process.on('SIGINT', shutdown);
