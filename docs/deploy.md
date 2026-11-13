@@ -45,11 +45,11 @@ Caddy does this by default for an HTTP upstream.
 
 ### The service
 
-`~/.config/systemd/user/dither-chat.service`:
+`~/.config/systemd/user/dither-chat.service` (the deployer below gives it `current` as its working directory):
 
 ```ini
 [Service]
-WorkingDirectory=%h/Projects/dither-chat
+WorkingDirectory=%h/.local/share/dither-deploy/chat/current
 Environment=DITHER_DATA=%h/Projects/dither-chat/.data
 Environment=DITHER_PORT=8460
 Environment=DITHER_PUBLIC_URL=https://chat.tn.example.net
@@ -60,6 +60,75 @@ WantedBy=default.target
 ```
 
 Without `loginctl enable-linger $USER` a user service stops when you log out and does not start at boot.
+
+### Deploying itself
+
+A merge to `main` is live a few minutes later, without anyone deploying it: the deployer
+(`packages/deploy/src/deployer.ts`) ships dither-chat and dither-accounts from their default branches. A user timer
+runs it about once a minute. One run looks at both apps and ships what is new, dither-accounts first.
+
+**Releases.** Each app runs from a release folder of its own, `~/.local/share/dither-deploy/<app>/releases/<sha>`, a
+git worktree of the deployer's own clone, built once (`bun install --frozen-lockfile`, the web build). The service's
+`WorkingDirectory` is the app's `current` link, and `previous` is the release before it. Nobody edits a release, so
+what a service runs is always the commit it started on. Work happens in your own checkout or a worktree, which no
+service reads.
+
+**One run, per app:**
+
+1. Fetch, and pick the newest commit since the deployed one whose CI `check` passed (`plan.ts` `pick`). A commit still
+   in CI is waited for only when nothing newer has passed.
+2. Build its release. A build that fails is told and never tried again.
+3. Wait while a call is on (`GET /api/calls`).
+4. For the hub, copy the database to `backups/pre-deploy.sqlite` (at most every 6 hours: a schema change is copied by
+   the hub itself, and a rollback changes the code, not the database).
+5. Point `current` at the release and restart the service.
+6. Check it. The hub must log `startup: ready` and answer `/api/health`; the manager must answer its `/api/health`.
+   Both must stay up without systemd restarting them, and get the hub's accounts back to as many online as before.
+7. If a check fails, `current` goes back to `previous` and the service restarts on it. The commit is marked failed and
+   never tried again; the next commit that passes CI is.
+
+Either way the manager's notices say what happened (dither-accounts `POST /api/notices/local`), so it reaches the
+inbox and the phone: "Deployed dither-chat a14daa9" with the pull requests it brought (low), "Rolled back …" (high),
+"Did not deploy …" (normal). The log is `~/.local/share/dither-deploy/deploy.log`; what it remembers (failed commits,
+CI answers) is `state.json` beside it.
+
+**dither-accounts** runs its public `master` with one private commit on top: the `live` branch of a private remote,
+named by `DITHER_DEPLOY_ACCOUNTS_PRIVATE` (its git URL; unset, public `master` alone is deployed). Its release is `live` with the picked `master` commit merged in; once that holds, it is pushed back as `live`. A merge that
+conflicts is told and not deployed.
+
+**Holding.** A pull request labelled `hold-deploy` does not deploy by itself, nor does anything merged after it
+(those commits contain it); what merged before it still does. You are told once. Use it for a change that needs hands,
+such as one that must go out with a change to the other app. To stop an app's deploys altogether, put a file at
+`~/.local/share/dither-deploy/<app>/hold` (say why in it); delete it to go on. By hand:
+
+```sh
+bun packages/deploy/src/deployer.ts --dry               # what a run would do
+bun packages/deploy/src/deployer.ts ship chat <sha>     # ship this commit now, whatever its CI or a hold says
+bun packages/deploy/src/deployer.ts init chat <sha>     # set the current release without a restart (first setup)
+```
+
+The units, in `~/.config/systemd/user/`:
+
+```ini
+# dither-deploy.service
+[Service]
+Type=oneshot
+Environment=PATH=%h/.nix-profile/bin:/etc/profiles/per-user/%u/bin:/run/current-system/sw/bin
+Environment=DITHER_DEPLOY_ACCOUNTS_PRIVATE=https://github.com/<you>/<private repo>.git
+ExecStart=/etc/profiles/per-user/%u/bin/bun %h/.local/share/dither-deploy/chat/current/packages/deploy/src/deployer.ts
+TimeoutStartSec=40min
+
+# dither-deploy.timer
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=60s
+[Install]
+WantedBy=timers.target
+```
+
+The deployer runs from dither-chat's current release, so it ships its own changes too. A run that is still going when
+the timer fires is not started twice (a oneshot). It needs `gh` signed in (for CI and labels) and git able to fetch and
+push the private remote.
 
 ### Who can reach it
 
