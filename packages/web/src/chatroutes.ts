@@ -151,6 +151,17 @@ export function badgeDiffers(routes: RouteKey[]): boolean {
   return count(routes.map((r) => r.mine)) > 1;
 }
 
+// ------------------------------------------------------------------ a pick and what comes after it
+
+/**
+ * Whether a route picked at `at` (ms) still holds: until a message comes on another of the chat's routes after it.
+ * A pick made hours ago does not outlast the chat moving on: switched to Discord at one, and she has written on
+ * Signal since, her page sends through Signal again. The hub keeps its chosen route by the same rule (chats.ts).
+ */
+export function pickHolds(to: string, at: number, routes: { id: string; lastMessageAt: number | null }[]): boolean {
+  return !routes.some((r) => r.id !== to && (r.lastMessageAt ?? 0) > at);
+}
+
 // ------------------------------------------------------------------ the inbox
 
 /** One route's inbox row, as the merge needs it (model.ts makes these of the hub's scores). */
