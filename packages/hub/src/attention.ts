@@ -16,6 +16,7 @@ import type { Store } from './store.ts';
 import type { Triage } from './triage.ts';
 import type { ActivityStore } from './activity.ts';
 import { requestHeld } from './add.ts';
+import { QUIET_VARIANTS, QUIET_VARIANTS_SQL } from './feed.ts';
 import { sliced, whole, type SliceOptions } from './slices.ts';
 import { noteWork } from './stalls.ts';
 import { foldMark, NEEDS_HOLD } from './replymarks.ts';
@@ -915,6 +916,8 @@ export class Attention {
     if (!ing.size) return;
     const now = this.now();
     for (const [cid, ts] of ing) {
+      // A feed or logged posts is never scored (input() above): nothing to fold again.
+      if (this.store.db.query(`SELECT 1 FROM conversation WHERE id = ? AND variant IN ${QUIET_VARIANTS_SQL}`).get(cid)) continue;
       const row = this.store.db.query('SELECT cursor_ts FROM conv_feature WHERE conversation_id = ?').get(cid) as Row | null;
       if (row && ts < row.cursor_ts) this.store.db.query('UPDATE conv_feature SET stale_at = ? WHERE conversation_id = ?').run(now, cid);
       this.pending.add(cid);
@@ -977,7 +980,7 @@ export class Attention {
     const c = db.query(`SELECT c.id, c.shape, c.variant, c.last_message_at, ${LISTED} AS listed FROM conversation c WHERE c.id = ?`).get(cid) as Row | null;
     // An open message request waits under Requests, not in the inbox (add.ts); a network's notifications have a row
     // of their own (docs/feed.md).
-    if (!c || c.variant === 'feed' || c.variant === 'posts' || requestHeld(db, cid)) return null;
+    if (!c || QUIET_VARIANTS.has(c.variant) || requestHeld(db, cid)) return null;
     const v = db.query(`SELECT MAX(unread) AS unread, MAX(mentions) AS mentions, MIN(COALESCE(last_read_ts, 0)) AS read FROM vantage WHERE target_kind = 'conversation' AND target_id = ?`).get(cid) as Row;
     const unread = v?.unread ?? 0;
     const mentions = v?.mentions ?? 0;

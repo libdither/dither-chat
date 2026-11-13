@@ -13,6 +13,7 @@
  * what was said.
  */
 import type { Database } from 'bun:sqlite';
+import { QUIET_CONVS_SQL, QUIET_VARIANTS_SQL } from './feed.ts';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -323,7 +324,7 @@ export class InteractionLog {
       for (const m of db
         .query(
           `SELECT m.conversation_id AS conv, m.ts, COALESCE(i.person_id, m.author_id) AS author, m.author_id IN ${SELF_SQL} AS mine
-           FROM message m LEFT JOIN identity i ON i.id = m.author_id WHERE m.ts >= ? AND m.deleted = 0 AND m.rowid <= ? ORDER BY m.ts`,
+           FROM message m LEFT JOIN identity i ON i.id = m.author_id WHERE m.ts >= ? AND m.deleted = 0 AND m.rowid <= ? AND m.conversation_id NOT IN ${QUIET_CONVS_SQL} ORDER BY m.ts`,
         )
         .iterate(since, top.r ?? 0) as Iterable<InteractMessage>)
         this.fold.message({ ...m, mine: !!m.mine });
@@ -336,7 +337,8 @@ export class InteractionLog {
            FROM message m LEFT JOIN identity i ON i.id = m.author_id WHERE m.rowid > ? ORDER BY m.rowid LIMIT 2000`,
         )
         .all(this.cursor) as (InteractMessage & { rid: number; deleted: number })[];
-      for (const m of rows) if (!m.deleted) this.fold.message({ conv: m.conv, ts: m.ts, author: m.author, mine: !!m.mine });
+      const quiet = rows.length ? new Set((db.query(`SELECT id FROM conversation WHERE variant IN ${QUIET_VARIANTS_SQL}`).all() as { id: string }[]).map((r) => r.id)) : new Set<string>();
+      for (const m of rows) if (!m.deleted && !quiet.has(m.conv)) this.fold.message({ conv: m.conv, ts: m.ts, author: m.author, mine: !!m.mine });
       if (rows.length) this.cursor = rows[rows.length - 1].rid;
       if (rows.length < 2000) break;
     }

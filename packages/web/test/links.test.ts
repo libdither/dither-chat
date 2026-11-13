@@ -29,4 +29,23 @@ describe('linkParts', () => {
     expect(linkParts('art by @justamapping', 'discord')).toEqual(['art by @justamapping']);
     expect(linkParts('mail me@site.com', 'x')).toEqual(['mail me@site.com']);
   });
+  test('not inside another word, address or email, in any script', () => {
+    expect(linkParts('bücher.de hello.world@site.com contact.co@x.com ftp://a.com')).toEqual(['bücher.de hello.world@site.com contact.co@x.com ftp://a.com']);
+  });
+  test('sentences missing a space and file names are not links', () => {
+    expect(linkParts('great.So what. Nice.It works, do.it, build.sh, lib.so')).toEqual(['great.So what. Nice.It works, do.it, build.sh, lib.so']);
+  });
+  test('an address may end in = or _ or another script', () => {
+    expect(linkParts('https://ja.wikipedia.org/wiki/日本 and https://a.com/?q=')).toEqual([
+      { href: 'https://ja.wikipedia.org/wiki/日本', label: 'https://ja.wikipedia.org/wiki/日本' },
+      ' and ',
+      { href: 'https://a.com/?q=', label: 'https://a.com/?q=' },
+    ]);
+  });
+  test('only http(s) links are made', () => {
+    expect(linkParts('[x](javascript:alert(1)) javascript:alert(1) data:text/html,hi')).toEqual(['[x](javascript:alert(1)) javascript:alert(1) data:text/html,hi']);
+  });
+  test('a post keeps a Markdown link as written', () => {
+    expect(linkParts('[https://bank.com](https://evil.example)', 'x', false)).toEqual(['[', { href: 'https://bank.com](https://evil.example)', label: 'https://bank.com](https://evil.example)' }]);
+  });
 });

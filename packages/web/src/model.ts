@@ -98,6 +98,11 @@ export function convByNative(network: P.Network, nativeId: string): P.Conversati
 }
 
 /** A message body as one plain line, for quotes and previews. */
+/** A bio as one line, its links kept for Linked: X's is plain text as written (no Markdown to take out of it). */
+export function bioText(bio: string, network: P.Network): string {
+  return network === 'x' ? bio.replace(/\s+/g, ' ').trim() : plainBody(bio, network, true);
+}
+
 export function plainBody(body: string, network: P.Network, keepLinks = false): string {
   return plainMarkdown(resolveTokens(body, network).replace(/```[\s\S]*?```/g, '[code]').replace(/\|\|[\s\S]*?\|\|/g, '[spoiler]'), keepLinks);
 }

@@ -1,23 +1,43 @@
 /**
- * Links in plain text (a bio, a post): web addresses with or without their scheme, Markdown links, and on X an @handle,
- * as parts to draw. Pure, so tests can import it.
+ * Links in plain text (a bio, a post): web addresses with or without their scheme, Markdown links (bios only: a post
+ * shows its text as written), and on X an @handle, as parts to draw. Only http(s) links are made. Pure, so tests can
+ * import it.
  */
 import type * as P from '@dither-chat/protocol';
 
 export type LinkPart = string | { href: string; label: string };
 
-// Common endings of a bare address ("nachotype.com", "dither.link/talk"): a word with a dot is not a link without one,
-// so "e.g." or "node.js" stay words.
+// Endings of a bare address ("nachotype.com", "dither.link/talk"). Lowercase only, and none that is also a common
+// word or file ending ("do.it", "build.sh", "lib.so", "Nice.It"): a word with a dot is not a link without one.
 const TLDS =
-  'com|org|net|io|dev|app|co|me|ai|gg|xyz|link|sh|so|to|tv|fm|is|it|de|uk|us|ca|au|fr|nl|eu|jp|ch|se|no|fi|be|at|es|pl|in|info|blog|page|site|tech|art|lol|wtf|cafe|social|space|studio|works|zone|world|club|online|codes|tools|land|moe|ink|im|ly|cc|ws|lgbt|gay|garden|pub|wiki|cv|nz|br|mx|ru|kr|cn|tw|hk|sg';
-const BARE = `(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+(?:${TLDS})(?![a-z0-9-])(?::\\d{2,5})?(?:/[^\\s<>]*)?`;
-// A Markdown link; a link with its scheme; www.; a bare address; an @handle (X only, checked below).
-const LINK = new RegExp(`\\[([^\\]\\n]+)\\]\\((https?://[^)\\s]+)\\)|(https?://[^\\s<>]+)|(?<![\\w@.])(www\\.[^\\s<>]+|${BARE})|(?<![\\w@])@(\\w{1,30})\\b`, 'gi');
+  'com|org|net|io|dev|app|co|ai|gg|xyz|link|tv|fm|uk|de|fr|nl|eu|jp|ch|se|fi|ca|au|es|pl|info|blog|page|site|tech|art|cafe|social|space|studio|works|zone|world|club|online|codes|tools|moe|ink|ly|cc|garden|wiki|cv|nz|br|mx|ru|kr|cn|tw|hk|sg';
+const LABEL = '[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?';
+// Not inside a word, an address or an email (any script's letters count as a word: "bücher.de" is not "cher.de").
+const BEFORE = '(?<![\\p{L}\\p{N}_@.\\-/:])';
+const BARE = `(?:${LABEL}\\.)+(?:${TLDS})(?![\\p{L}\\p{N}_\\-@])(?::\\d{2,5})?(?:/[^\\s<>]*)?`;
+const URL_CHARS = '[^\\s<>]+';
 // What usually ends a sentence, not an address.
-const TRAIL = /[.,;:!?'"”’)\]]+$/;
+const TRAIL = /[.,;:!?'"”’)\]]+$/u;
 
-/** Text cut into plain runs and links. `network` x: an @handle links to its profile on x.com. */
-export function linkParts(text: string, network?: P.Network): LinkPart[] {
+function pattern(markdown: boolean): RegExp {
+  return new RegExp(
+    [
+      markdown ? `\\[([^\\]\\n]+)\\]\\((https?://[^)\\s]+)\\)` : '(?!)()()',
+      `${BEFORE}(https?://${URL_CHARS})`,
+      `${BEFORE}(www\\.${URL_CHARS}|${BARE})`,
+      `(?<![\\p{L}\\p{N}_@])@(\\w{1,30})(?![\\w@.])`,
+    ].join('|'),
+    'gu',
+  );
+}
+const WITH_MD = pattern(true);
+const PLAIN = pattern(false);
+
+/**
+ * Text cut into plain runs and links. `network` x: an @handle links to its profile on x.com. `markdown`: a Markdown
+ * link `[words](https://…)` shows its words (a bio); off, it stays text as written (a post, where X shows it so).
+ */
+export function linkParts(text: string, network?: P.Network, markdown = true): LinkPart[] {
   const out: LinkPart[] = [];
   let at = 0;
   const push = (s: string) => {
@@ -25,7 +45,7 @@ export function linkParts(text: string, network?: P.Network): LinkPart[] {
     if (typeof out[out.length - 1] === 'string') out[out.length - 1] += s;
     else out.push(s);
   };
-  for (const m of text.matchAll(LINK)) {
+  for (const m of text.matchAll(markdown ? WITH_MD : PLAIN)) {
     const start = m.index!;
     let whole = m[0];
     let part: LinkPart | null = null;
@@ -40,7 +60,7 @@ export function linkParts(text: string, network?: P.Network): LinkPart[] {
       const keep = trail.startsWith(')') && raw.slice(0, -trail.length).includes('(') ? ')' : '';
       const url = raw.slice(0, raw.length - trail.length) + keep;
       whole = url;
-      if (!/[a-z0-9/]$/i.test(url) && !keep) continue;
+      if (!url || /^https?:\/\/$/i.test(url)) continue;
       part = { href: m[3] ? url : `https://${url}`, label: url };
     }
     push(text.slice(at, start));

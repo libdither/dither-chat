@@ -8,6 +8,12 @@ import type * as P from '@dither-chat/protocol';
 import { FEED_ITEM_TYPES, NETWORK_META } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 
+/** Variants that are not chats (a feed, logged posts): nothing learns from them (docs/feed.md "Threads"). */
+export const QUIET_VARIANTS: ReadonlySet<string> = new Set(['feed', 'posts']);
+export const QUIET_VARIANTS_SQL = `('feed', 'posts')`;
+/** The conversations of those variants, for `conversation_id NOT IN …`. */
+export const QUIET_CONVS_SQL = `(SELECT id FROM conversation WHERE variant IN ${QUIET_VARIANTS_SQL})`;
+
 /**
  * A feed conversation, or the posts the hub logged (variant 'posts', posts.ts): read-only, kept out of the inbox's
  * rows, People and unread totals; nothing goes to the network.

@@ -12,7 +12,7 @@ import { openers } from '../direct.ts';
 import { composeTo } from '../mail/people.ts';
 import { senderLine } from '../mail/model.ts';
 import { countText, countTitle } from '../msgcount.ts';
-import { communitiesOf, convLabel, convTitle, directsOf, externalProfile, identityName, kindLabel, netName, plainBody, rootCommunity } from '../model.ts';
+import { communitiesOf, convLabel, convTitle, directsOf, externalProfile, identityName, kindLabel, netName, bioText, plainBody, rootCommunity } from '../model.ts';
 import { profileLinks } from '../requests.ts';
 import { api, db, go, isSelfIdentity, openMessage, openProfile, rev, setRule, toast } from '../state.ts';
 import { messageSomeone } from './Palette.tsx';
@@ -128,7 +128,7 @@ function AccountTile({ i, bio, since, go: open, goLabel, menu: menuOf }: { i: P.
             {since ? ` · since ${since}` : ''}
           </small>
         </span>
-        {bio && <p class="pf-acct-bio"><Linked text={plainBody(bio, i.network, true)} network={i.network} /></p>}
+        {bio && <p class="pf-acct-bio"><Linked text={bioText(bio, i.network)} network={i.network} /></p>}
       </div>
     </div>
   );
@@ -219,7 +219,7 @@ function OwnBio({ identity, about, account, label, onSaved }: { identity: P.Iden
       <div class="pf-bio pf-own-bio">
         {tag}
         <div class="about-text multi">
-          <p>{bio ? <Linked text={plainBody(bio, identity.network, true)} network={identity.network} /> : <em>No bio on {net} yet</em>}</p>
+          <p>{bio ? <Linked text={bioText(bio, identity.network)} network={identity.network} /> : <em>No bio on {net} yet</em>}</p>
           <button class="icon-btn small about-pencil" title={`Change your bio on ${net}`} aria-label={`Change your bio on ${net}`} onClick={() => (setDraft(bio), setError(null))}>
             <Icon name="pencil" size={13} />
           </button>
@@ -674,7 +674,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
                 </span>
               )}
               <p>
-                <Linked text={plainBody(a.bio!, a.network, true)} network={a.network} />
+                <Linked text={bioText(a.bio!, a.network)} network={a.network} />
               </p>
             </div>
           ))

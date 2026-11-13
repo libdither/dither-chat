@@ -160,12 +160,52 @@ describe('without X', () => {
   });
 });
 
+describe('what the review found', () => {
+  test('a copy from inside another post never replaces the post as logged, nor logs an edit', () => {
+    const posts = new Posts(deps());
+    const id = routingId();
+    const before = store.one<Record<string, any>>('SELECT body, extra, edited_ts FROM message WHERE id = ?', msgOf(id))!;
+    const clipped: P.PostFact = { id, url: 'https://x.com/i/web/status/' + id, ts: Date.now(), author: X.self.nativeId, text: 'Greedy routing in dither…' };
+    posts.log(acc.id, [{ id: '777', url: 'https://x.com/i/web/status/777', ts: Date.now(), author: X.lee.nativeId, text: 'Look at this', quoteOf: clipped }]);
+    const after = store.one<Record<string, any>>('SELECT body, extra, edited_ts FROM message WHERE id = ?', msgOf(id))!;
+    expect(after).toEqual(before);
+    expect(store.one(`SELECT 1 FROM message_event WHERE message_id = ? AND kind = 'edit'`, msgOf(id))).toBeNull();
+    // The quoting post is logged, and a post only ever seen quoted is logged from its copy.
+    expect(store.one('SELECT 1 FROM message WHERE id = ?', msgOf('777'))).not.toBeNull();
+    posts.log(acc.id, [{ id: '778', url: 'https://x.com/i/web/status/778', ts: Date.now(), author: X.lee.nativeId, text: 'Again', quoteOf: { ...clipped, id: '779' } }]);
+    expect(store.one<{ body: string }>('SELECT body FROM message WHERE id = ?', msgOf('779'))!.body).toBe('Greedy routing in dither…');
+  });
+
+  test('a page of more replies that brings none ends Show more', async () => {
+    const posts = new Posts({ ...deps(), command: async <T,>() => ({ ancestors: [], replies: [], more: 'again' }) as T });
+    expect((await posts.thread('x', routingId(), 'again')).more).toBeNull();
+  });
+
+  test('a thread read again within two minutes is answered without asking X', async () => {
+    const posts = new Posts(deps());
+    await posts.thread('x', routingId());
+    const n = sent.length;
+    await posts.thread('x', routingId());
+    expect(sent.length).toBe(n);
+  });
+
+  test("the stored thread finds replies logged through another account", async () => {
+    const other = store.createAccount({ id: 'acc_demo-x2', network: 'x', label: 'second', color: '#000', adapter: 'demo', demo: true, config: {} });
+    const id = routingId();
+    new Posts(deps()).log(other.id, [{ id: '880', url: 'https://x.com/i/web/status/880', ts: Date.now(), author: X.nora.nativeId, text: 'From the other account', replyTo: { id } }]);
+    online = false;
+    const t = await new Posts(deps()).thread('x', id);
+    online = true;
+    expect(t.replies.flat().some((p) => p.id === '880')).toBe(true);
+  });
+});
+
 describe('a profile', () => {
   test("someone's recent posts are logged when their profile is read", async () => {
     const posts = new Posts(deps());
     const people = new People({ ...deps(), posts: (a, ps) => posts.log(a, ps) });
     await people.get(idn(X.lee), true);
-    const lees = store.db.query('SELECT * FROM message WHERE conversation_id = ? AND author_id = ?').all(POSTS, idn(X.lee)) as Record<string, any>[];
+    const lees = store.db.query('SELECT * FROM message WHERE conversation_id = ? AND author_id = ?').all(POSTS, idn(X.lee)).filter((r: any) => !['post:777', 'post:778'].includes(r.native_id)) as Record<string, any>[];
     expect(lees.length).toBe(4);
     // A quoted post is a post of its own.
     expect(store.one('SELECT 1 FROM message WHERE conversation_id = ? AND author_id = ?', POSTS, idn(X.quinn))).not.toBeNull();
@@ -199,6 +239,12 @@ describe('the hub', () => {
     expect(hubSent.filter((c) => c.t === 'post')).toHaveLength(1);
     expect((await req('/api/posts/x/abc/thread')).status).toBe(404);
     expect((await req(`/api/posts/nowhere/1/thread`)).status).toBe(404);
+  });
+
+  test('asking the network for the history of the posts or the feed is refused on the hub', async () => {
+    const n = hubSent.length;
+    for (const c of [POSTS, hubId('cnv', 'x', 'feed')]) expect(await (await req(`/api/conversations/${c}/history`, { method: 'POST', body: '{}' })).json()).toEqual({ count: 0, done: true });
+    expect(hubSent.length).toBe(n);
   });
 
   test('the posts conversation is read-only: no message, reaction, edit or typing reaches X', async () => {

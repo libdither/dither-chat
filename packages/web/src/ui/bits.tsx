@@ -195,12 +195,13 @@ export function Menu({ trigger, children, align = 'left', up }: { trigger: (open
 
 /**
  * Plain text with its links as links (links.ts): web addresses with or without their scheme, Markdown links, and on
- * X an @handle. Each opens in a new tab; a click on one does not reach what the text sits in.
+ * X an @handle. Each opens in a new tab; a click on one does not reach what the text sits in. `markdown` false: a
+ * Markdown link stays as written (a post).
  */
-export function Linked({ text, network }: { text: string; network?: P.Network }) {
+export function Linked({ text, network, markdown = true }: { text: string; network?: P.Network; markdown?: boolean }) {
   return (
     <>
-      {linkParts(text, network).map((p) =>
+      {linkParts(text, network, markdown).map((p) =>
         typeof p === 'string' ? (
           p
         ) : (

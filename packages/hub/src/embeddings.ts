@@ -20,6 +20,7 @@ import { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
 import { isPrivateUrl } from './categorize.ts';
 import { BUSY_MS } from './store.ts';
+import { QUIET_CONVS_SQL, QUIET_VARIANTS, QUIET_VARIANTS_SQL } from './feed.ts';
 import { SLICE_ROWS, sliced, whole, type SliceOptions } from './slices.ts';
 import { noteWork } from './stalls.ts';
 
@@ -726,12 +727,14 @@ export interface MessageRow {
   body: string;
   extra: string | null;
   shape: string;
+  /** The conversation's variant: a feed's and logged posts' are not embedded. */
+  variant?: string;
   reply_body: string | null;
   reply_author: string | null;
 }
 
 const MESSAGE_SQL = `
-  SELECT m.id, m.rowid AS rid, m.conversation_id, m.author_id, i.person_id, m.ts, m.body, m.extra, c.shape,
+  SELECT m.id, m.rowid AS rid, m.conversation_id, m.author_id, i.person_id, m.ts, m.body, m.extra, c.shape, c.variant,
          r.body AS reply_body, r.author_id AS reply_author
   FROM message m
   JOIN conversation c ON c.id = m.conversation_id
@@ -775,9 +778,9 @@ export function* loadTurnsSteps(hub: Database, since: number, self: ReadonlySet<
   // Your reactions first, then their messages: there are far fewer of them than messages since `since`.
   const convs = hub
     .query(
-      `SELECT DISTINCT conversation_id AS c FROM message WHERE ts >= ? AND author_id IN (${mark})
-       UNION SELECT m.conversation_id FROM reaction x CROSS JOIN message m ON m.id = x.message_id WHERE m.ts >= ? AND x.identity_id IN (${mark})
-       ORDER BY 1`,
+      `SELECT c FROM (SELECT DISTINCT conversation_id AS c FROM message WHERE ts >= ? AND author_id IN (${mark})
+       UNION SELECT m.conversation_id FROM reaction x CROSS JOIN message m ON m.id = x.message_id WHERE m.ts >= ? AND x.identity_id IN (${mark}))
+       WHERE c NOT IN ${QUIET_CONVS_SQL} ORDER BY 1`,
     )
     .all(since, ...ids, since, ...ids) as { c: string }[];
   yield convs.length;
@@ -907,14 +910,14 @@ export class Embeddings {
     const cursor = Number(this.store.get('cursor'));
     if (top > cursor) {
       const rows = this.hub.query(`${MESSAGE_SQL} WHERE m.rowid > ? ORDER BY m.rowid LIMIT ?`).all(cursor, this.batch * 4) as MessageRow[];
-      await this.embedRows(rows.filter((r) => r.ts >= since), self, true);
+      await this.embedRows(rows.filter((r) => r.ts >= since && !QUIET_VARIANTS.has(r.variant ?? '')), self, true);
       this.store.set('cursor', String(rows.at(-1)!.rid));
       return 'new';
     }
     const low = Number(this.store.get('backfill') ?? 0);
     if (low > 1) {
       const rows = this.hub.query(`${MESSAGE_SQL} WHERE m.rowid < ? ORDER BY m.rowid DESC LIMIT ?`).all(low, this.batch * 4) as MessageRow[];
-      await this.embedRows(rows.filter((r) => r.ts >= since), self, false);
+      await this.embedRows(rows.filter((r) => r.ts >= since && !QUIET_VARIANTS.has(r.variant ?? '')), self, false);
       this.store.set('backfill', String(rows.length ? rows.at(-1)!.rid : 0));
       return 'backfill';
     }
@@ -924,7 +927,7 @@ export class Embeddings {
   /** The mean of a random sample of the last 30 days: what chatter looks like here, taken away from every vector. */
   private async setMean(self: ReadonlySet<string>, since: number) {
     const rows = this.hub
-      .query(`${MESSAGE_SQL} WHERE m.ts >= ? AND m.deleted = 0 AND length(m.body) > 0 ORDER BY random() LIMIT ?`)
+      .query(`${MESSAGE_SQL} WHERE m.ts >= ? AND m.deleted = 0 AND length(m.body) > 0 AND c.variant NOT IN ${QUIET_VARIANTS_SQL} ORDER BY random() LIMIT ?`)
       .all(since, this.opts.meanSample ?? 512) as MessageRow[];
     const mine = rows.filter((r) => !r.author_id || !self.has(r.author_id));
     const texts = mine.map((r) => inputFor(this.hub, r, self));

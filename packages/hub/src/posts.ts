@@ -35,14 +35,23 @@ export function postsConvNative(store: Store, acc: AccountRow): string {
   return self ? `posts:${self}` : 'posts';
 }
 
-/** The post and everything inside it worth a message of its own: a repost's original and a quoted post. */
-function withInner(p: P.PostFact, out: P.PostFact[] = []): P.PostFact[] {
-  if (p.repostOf) withInner(p.repostOf, out);
+/**
+ * The post and everything inside it worth a message of its own: a repost's original and a quoted post. `inner`: seen
+ * inside another, so possibly shortened (X clips a quoted post, and stops nesting two deep): such a copy only fills a
+ * post the hub does not have, never replaces one.
+ */
+function withInner(p: P.PostFact, out: { p: P.PostFact; inner: boolean }[] = [], inner = false): { p: P.PostFact; inner: boolean }[] {
   // A repost is the reposter's: it has no words of its own, and its original is what was said.
-  else out.push(p);
-  if (p.quoteOf) withInner(p.quoteOf, out);
+  if (p.repostOf) withInner(p.repostOf, out, inner);
+  else out.push({ p, inner });
+  if (p.quoteOf) withInner(p.quoteOf, out, true);
   return out;
 }
+
+/** A thread read is answered from the last read for this long: back and forth between posts asks X once. */
+const CACHE_MS = 2 * 60_000;
+/** The hub waits this long for X: the extractor paces its reads, and a read may wait behind a long history read. */
+const THREAD_TIMEOUT_MS = 150_000;
 
 /** A post as its message: its words, the post it answers, its pictures as attachments, the post itself in `extra`. */
 export function postMessage(p: P.PostFact, conversation: string): P.MessageFact | null {
@@ -65,6 +74,8 @@ export function postMessage(p: P.PostFact, conversation: string): P.MessageFact 
 export class Posts {
   /** Reads in flight, so two devices opening one thread ask once. */
   private asking = new Map<string, Promise<P.PostThreadView>>();
+  /** The last answers from the network, by post (first pages only). */
+  private recent = new Map<string, { at: number; view: P.PostThreadView }>();
 
   constructor(private d: PostsDeps) {}
 
@@ -86,17 +97,20 @@ export class Posts {
     const conv = postsConvNative(s, acc);
     const cid = hubId('cnv', acc.network, conv);
     let fresh = 0;
-    const all = posts.flatMap((p) => withInner(p));
+    // Whole posts first, so a post seen whole and quoted in one answer is logged whole.
+    const all = posts.flatMap((p) => withInner(p)).sort((a, b) => Number(a.inner) - Number(b.inner));
     const seen = new Set<string>();
     s.db.transaction(() => {
       if (!s.one('SELECT 1 FROM conversation WHERE id = ?', cid)) s.ingest(acc, { t: 'conversation', conversation: { nativeId: conv, shape: 'channel', variant: 'posts', name: `${NETWORK_META[acc.network].name} posts` } });
-      for (const p of all) {
+      for (const { p, inner } of all) {
         if (seen.has(p.id)) continue;
         seen.add(p.id);
         const f = postMessage(p, conv);
         if (!f) continue;
         const mid = hubId('msg', acc.network, f.nativeId);
         const had = s.one<Row>('SELECT conversation_id FROM message WHERE id = ?', mid);
+        // A copy from inside another post never replaces the post as logged: it may be clipped, and has lost its own quote.
+        if (had && inner) continue;
         if (!had) fresh++;
         // Logged by another account first: it stays where it is (one message per post).
         s.ingest(acc, { t: 'message', message: had && had.conversation_id !== cid ? { ...f, conversation: s.nativeOf('conversation', had.conversation_id)!.nativeId } : f });
@@ -111,7 +125,17 @@ export class Posts {
     const key = `${network}:${post}:${cursor ?? ''}`;
     const live = this.asking.get(key);
     if (live) return live;
-    const p = this.ask(network, post, cursor).finally(() => this.asking.delete(key));
+    const hit = !cursor ? this.recent.get(key) : null;
+    if (hit && Date.now() - hit.at < CACHE_MS) return Promise.resolve(hit.view);
+    const p = this.ask(network, post, cursor)
+      .then((v) => {
+        if (!cursor && !v.stored) {
+          this.recent.set(key, { at: Date.now(), view: v });
+          for (const [k, r] of this.recent) if (Date.now() - r.at >= CACHE_MS) this.recent.delete(k);
+        }
+        return v;
+      })
+      .finally(() => this.asking.delete(key));
     this.asking.set(key, p);
     return p;
   }
@@ -129,8 +153,10 @@ export class Posts {
           : null;
     if (accountId && !why) {
       try {
-        const t = await this.d.command<P.PostThread>(accountId, { t: 'post', post, ...(cursor ? { cursor } : {}) }, 90_000);
+        const t = await this.d.command<P.PostThread>(accountId, { t: 'post', post, ...(cursor ? { cursor } : {}) }, THREAD_TIMEOUT_MS);
         if (!t || (!t.focal && !cursor)) throw new Error(`${net} did not give this post`);
+        // A page of more replies that brings none, or the same cursor back, is the end: no button that never ends.
+        if (cursor && (!t.replies.flat().length || t.more === cursor)) t.more = null;
         this.log(accountId, [...(t.focal ? [t.focal] : []), ...t.ancestors, ...t.replies.flat()]);
         return this.view(network, post, accountId, t, undefined);
       } catch (e) {
@@ -206,8 +232,9 @@ export class Posts {
       ancestors.unshift(p);
       r = up;
     }
+    // Any account's logged posts (each post is logged once, where it was first read), through message_post_reply.
     const repliesTo = (id: string, limit: number) =>
-      s.db.query('SELECT * FROM message WHERE conversation_id = ? AND reply_to_id = ? AND deleted = 0 ORDER BY ts LIMIT ?').all(focalRow.conversation_id, id, limit) as Row[];
+      s.db.query(`SELECT * FROM message WHERE reply_to_id = ? AND native_id LIKE 'post:%' AND deleted = 0 ORDER BY ts LIMIT ?`).all(id, limit) as Row[];
     const direct = repliesTo(focalRow.id, STORED_REPLIES);
     // The author continuing their own thread first, as X shows it.
     direct.sort((a, b) => Number(b.author_id === focalRow.author_id) - Number(a.author_id === focalRow.author_id) || a.ts - b.ts);

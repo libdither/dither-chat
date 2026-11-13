@@ -1198,7 +1198,8 @@ export class HubServer {
       const b = await body<{ beforeTs?: number; limit?: number }>();
       const conv = s.nativeOf('conversation', m[1]);
       const accountId = this.pickAccount(m[1]);
-      if (!conv || !accountId) return ok({ count: 0, done: true });
+      // A feed or the logged posts is no chat on the network: nothing to read back there (docs/feed.md).
+      if (!conv || !accountId || isFeed(s.db, m[1])) return ok({ count: 0, done: true });
       const r = await this.sup.command(accountId, { t: 'history', conversation: conv.nativeId, beforeTs: b.beforeTs, limit: b.limit ?? 50 }, 60_000).catch((e) => ({ error: String(e.message) }));
       return ok(r ?? { count: 0, done: true });
     }

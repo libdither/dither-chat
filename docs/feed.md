@@ -142,7 +142,9 @@ each a short chain as X shows it (a reply and the answers under it), the author 
 **Where it comes from.** `GET /api/posts/:network/:post/thread[?cursor=]` (posts.ts): the hub asks an X account that
 can (capability `posts`, the `post` command, `PostThread`: `focal`, `ancestors`, `replies` as chains, `more`), the way
 X's own post page asks (TweetDetail). Nothing else is sent: nothing liked, viewed or marked. Two devices opening the
-same thread ask once. No account connected, or X failing: the thread comes back from what the hub logged, saying
+same thread ask once, and a thread read in the last two minutes is answered from that read (back and forth between a
+post and its replies asks X once). The hub waits up to 150 s: the extractor paces its reads. A page of more replies
+that brings none, or the same cursor back, ends Show more. No account connected, or X failing: the thread comes back from what the hub logged, saying
 why (`stored`): what it answers, back through the posts logged, and the replies logged under it (the author's first),
 with no Show more.
 
@@ -153,7 +155,10 @@ one), is kept as a **message**: one conversation per X account, `posts:<your id>
 posts". The message's id is `post:<post id>`, its author the post's author, its body the post's words, its reply the
 post it answers, its pictures attachments (each an image; a video's is its poster), and `extra.post` the post as X
 showed it last (its counts change at every read). A post read again is the same message: its words and counts
-updated, nothing doubled; a post already logged through another account stays where it is.
+updated, nothing doubled; a post already logged through another account stays where it is. A copy seen inside another
+post (quoted, or a repost's original) only logs a post the hub does not have: X clips a quoted post and stops nesting
+two deep, so such a copy never replaces the post as logged nor counts as an edit. The thread read back from what was
+logged follows `reply_to_id` across every account's posts (index `message_post_reply`).
 
 **Why messages, not a store of their own.** Mail has its own tables (`mail_*`, its own `mail_fts` and search,
 docs/mail-design.md) because a mail is not a chat message: subjects, folders and labels, threads by headers, bodies of
@@ -167,7 +172,10 @@ thread's first post as `root`) rides in `extra.post`, as the feed's `FeedItem` d
 **Quiet, as the feed is.** The posts conversation is read-only (a message, reaction, edit or setting is refused:
 "X's posts are read-only here", feed.ts `feedRefusalFor`), never unread (store.ts skips its unread count), never
 triaged (logged as backfill, not live), out of the inbox's rows, every unread total (web `isQuietConv`), attention's
-scores and a profile's In common. Everyone in a thread is an identity, not a person: no person is made for them, as
+scores and a profile's In common, and the forward picker. Nothing learns from it, as from a feed (feed.ts
+`QUIET_VARIANTS`): it is not embedded, not a place where you owe answers, not in the interaction fold, the inbox's
+rank history or its refolds. The hub never asks the network for its history (or a feed's): there is no such chat on
+X. Everyone in a thread is an identity, not a person: no person is made for them, as
 one is for someone in your notifications. Opening the conversation lists what was logged, newest first; a message
 of it (a search hit, Recent messages) opens its thread (`GET /api/messages/:id/thread`).
 

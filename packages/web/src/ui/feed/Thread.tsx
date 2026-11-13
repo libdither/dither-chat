@@ -23,7 +23,7 @@ function Text({ p, kit, network, cls }: { p: P.PostFact; kit: Kit; network: P.Ne
   if (!p.text) return null;
   return (
     <p class={cls}>
-      <kit.Linked text={p.text} network={network} />
+      <kit.Linked text={p.text} network={network} markdown={false} />
     </p>
   );
 }

@@ -216,7 +216,7 @@ function SaidCard({ card, kit }: { card: FeedCard; kit: Kit }) {
         {card.type === 'quote' && <p class="feed-context">quoted your post</p>}
         {text && (
           <p class="feed-text">
-            <kit.Linked text={text} network={m.network} />
+            <kit.Linked text={text} network={m.network} markdown={false} />
           </p>
         )}
         <Pictures media={theirs?.media} url={theirs ? kit.feed.postHref(m.network, theirs.id) : link} />
@@ -316,7 +316,7 @@ function PostItem({ p, kit, owner, network }: { p: P.PostFact; kit: Kit; owner: 
       {shown.replyTo && <span class="post-mark">Replying to {replyTo ? `@${replyTo}` : 'a post'}</span>}
       {shown.text && (
         <p class="post-text">
-          <kit.Linked text={shown.text} network={network} />
+          <kit.Linked text={shown.text} network={network} markdown={false} />
         </p>
       )}
       <Pictures media={shown.media} url={kit.feed.postHref(network, shown.id)} />
