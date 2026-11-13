@@ -66,7 +66,7 @@ marks. Kept 30 days; a marked one while it is learned from.
 - **Read there** (`notify.read`): read here, never notified. Its notification leaves the phones once its group has
   no unread notice that a notification showed: `readTs` is just below the earliest `shown_ts` (a notice's time as
   its notification last showed it, set only when `Notifier.notice` really sent one, and kept when the notice is
-  updated) among unread notices; delivery.ts `read` then sends a `{ clear }` push. So a notice raised again inside
+  updated, cleared when it is read) among unread notices; delivery.ts `read` then sends a `{ clear }` push. So a notice raised again inside
   the list's ten minutes, the update held, keeps its notification until it is read. The phone list's held episodes
   ask another question, whether anything in the group is unread (`readAllTs`): a group with an unread notice is not
   read, whether or not it was shown.
@@ -96,7 +96,8 @@ it. A normal notice starts at 0.72, a margin over the default level, so what cha
 shares (anything, a link) cannot sink every review request below the list before you mark one. List only on the
 group or the account keeps it from alerting. Quiet hours hold an alert as a row on the list, and count it for their
 summary when they end ("2 messages held for you"), as chat's held alerts are: only one that would have notified,
-and once (`held_at`), however often it is decided again. A summary whose last held one is a notice carries its
+and once a night (`held_at`), however often it is decided again; once the summary was taken, the same notice
+raised on a later night counts again. A summary whose last held one is a notice carries its
 `noticeId`, so its tap opens it under Notices; a group's id opened as a conversation shows Notices too. Already read, or raised over an hour
 before it came here, it is rated and notifies nobody. A slow local model is not asked again later.
 

@@ -561,6 +561,38 @@ describe('notices on the fake source', () => {
     w.fake.emit(GH, note({ id: 'h', urgency: 'high', at: T0 + MIN }));
     await w.notices.idle();
     expect(w.store.quietHeld()).toMatchObject({ count: 1, messageId: noticeId(GH, 'h') });
+    // The next night: the summary was taken (as takeHeldSummary does once quiet hours end), and the same notice is
+    // raised again. It is held, and counted again.
+    w.store.setQuietHeld(null);
+    await w.clock.advance(24 * 60 * MIN);
+    w.fake.emit(GH, note({ id: 'h', urgency: 'high', at: T0 + 24 * 60 * MIN }));
+    await w.notices.idle();
+    expect(w.store.quietHeld()).toMatchObject({ count: 1, messageId: noticeId(GH, 'h') });
+  });
+
+  test('a notice read and raised again under a hold does not keep a later notice of its group on the phones', async () => {
+    let sends = true;
+    const w = world({ sends: () => sends });
+    w.fake.attach(w.notices);
+    await w.notices.idle();
+    const group = groupId(GH, 'o/r');
+    w.fake.emit(GH, note({ id: 'x', urgency: 'normal' }));
+    await w.notices.idle();
+    w.notices.markRead(noticeId(GH, 'x'));
+    // x again, unread, while the notifier holds it: nothing of it shows.
+    sends = false;
+    await w.clock.advance(3 * MIN);
+    w.fake.emit(GH, note({ id: 'x', urgency: 'normal', at: T0 + 3 * MIN }));
+    await w.notices.idle();
+    expect(w.row('x')).toMatchObject({ unread: 1, shown_ts: null });
+    // y shows, then is read: the group is read past it, though x is unread.
+    sends = true;
+    await w.clock.advance(20 * MIN);
+    w.fake.emit(GH, note({ id: 'y', urgency: 'normal', at: T0 + 23 * MIN }));
+    await w.notices.idle();
+    expect(w.row('y')?.delivered).toBe(1);
+    w.notices.markRead(noticeId(GH, 'y'));
+    expect(w.notices.readTs(group)).toBe(Number.MAX_SAFE_INTEGER);
   });
 
   test('the routes: the page, one notice, Mark read', async () => {

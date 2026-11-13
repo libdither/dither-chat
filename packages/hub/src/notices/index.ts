@@ -299,7 +299,7 @@ export class Notices implements NoticeSink {
       if (from !== Infinity)
         await this.run('reads a catch-up found', () =>
           this.st.db
-            .query(`UPDATE notice SET unread = 0, read_at = ? WHERE account = ? AND unread = 1 AND at >= ? AND at <= ? AND created_at < ? AND native_id NOT IN (SELECT value FROM json_each(?))`)
+            .query(`UPDATE notice SET unread = 0, read_at = ?, shown_ts = NULL WHERE account = ? AND unread = 1 AND at >= ? AND at <= ? AND created_at < ? AND native_id NOT IN (SELECT value FROM json_each(?))`)
             .run(this.now(), account, from, started, started, JSON.stringify([...listed])),
         );
       this.prune();
@@ -377,7 +377,7 @@ export class Notices implements NoticeSink {
     }
     if (!fresh) {
       // Read there since: read here too.
-      if (!p.unread && prev.unread) this.st.db.query('UPDATE notice SET unread = 0, read_at = ? WHERE id = ?').run(this.now(), id);
+      if (!p.unread && prev.unread) this.st.db.query('UPDATE notice SET unread = 0, read_at = ?, shown_ts = NULL WHERE id = ?').run(this.now(), id);
       return null;
     }
     const grp = groupId(account, p.context ?? p.source);
@@ -417,9 +417,10 @@ export class Notices implements NoticeSink {
     this.st.db
       .query(`UPDATE notice SET decision = ?, importance = ?, alert = ?, reasons = ?, decided_by = ?, facts = ?, words = ?, delivered = 0, caught = ?, decided_at = ? WHERE id = ?`)
       .run(d.decision, d.importance, d.alert, JSON.stringify(d.reasons), d.decidedBy, d.facts ? JSON.stringify(d.facts) : null, JSON.stringify(d.words), o.catchUp ? 1 : 0, now, id);
-    // An alert quiet hours held is counted for their summary, as chat's are: one that would have notified, once.
-    if (d.held && d.hold === null && r.held_at == null) {
-      const held = this.st.quietHeld();
+    // An alert quiet hours held is counted for their summary, as chat's are: one that would have notified, once a
+    // night (counted again only once the last summary was taken: a stable id raised again on a later night is new).
+    const held = this.st.quietHeld();
+    if (d.held && d.hold === null && (r.held_at == null || !held)) {
       this.st.setQuietHeld({ count: (held?.count ?? 0) + 1, conversationId: r.grp, messageId: r.id });
       this.st.db.query('UPDATE notice SET held_at = ? WHERE id = ?').run(now, id);
     }
@@ -485,7 +486,7 @@ export class Notices implements NoticeSink {
   private readThere(account: string, ids: unknown[]) {
     const mine = ids.filter((x): x is string => typeof x === 'string').map((x) => noticeId(account, x));
     if (!mine.length) return;
-    this.st.db.query('UPDATE notice SET unread = 0, read_at = ? WHERE unread = 1 AND id IN (SELECT value FROM json_each(?))').run(this.now(), JSON.stringify(mine));
+    this.st.db.query('UPDATE notice SET unread = 0, read_at = ?, shown_ts = NULL WHERE unread = 1 AND id IN (SELECT value FROM json_each(?))').run(this.now(), JSON.stringify(mine));
   }
 
   /** Read here (opened, or Mark read): and upstream, best effort. Returns false for no such notice. */
@@ -493,7 +494,7 @@ export class Notices implements NoticeSink {
     const r = this.row(id);
     if (!r) return false;
     if (!r.unread) return true;
-    this.st.db.query('UPDATE notice SET unread = 0, read_at = ? WHERE id = ?').run(this.now(), id);
+    this.st.db.query('UPDATE notice SET unread = 0, read_at = ?, shown_ts = NULL WHERE id = ?').run(this.now(), id);
     if (this.accountsById.get(r.account)?.grants.notifications === 'write') {
       this.o.link.call(r.account, 'notify.markRead', { ids: [r.native_id] }, 30_000).catch((e) => console.warn(`notices: marking read upstream failed: ${(e as Error)?.message ?? e}`));
     }
