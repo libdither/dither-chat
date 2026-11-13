@@ -846,6 +846,7 @@ CREATE TABLE IF NOT EXISTS notice (
   facts       TEXT,                       -- JSON learn.ts Facts, for marks to be learned from
   words       TEXT,                       -- JSON
   delivered   INTEGER NOT NULL DEFAULT 0, -- a notification went out
+  caught      INTEGER NOT NULL DEFAULT 0, -- decided as a catch-up found it (it notified nobody)
   decided_at  INTEGER,
   alert_mark  INTEGER,                    -- 1 should have alerted, 0 the alert was wrong
   less_mark   INTEGER,                    -- 1 less like this

@@ -102,13 +102,13 @@ export class Notifier {
    * A notice's notification (notices/, docs/notices.md), as mail's: an alert, or a row on the list through the
    * phone's list; one notification per group (its repository, its app: the push's conversation), the devices whose
    * rules keep Notices, that account or that group off left out, the marks from the notification itself. The push
-   * carries `noticeId`, which the worker and the app open under Notices.
+   * carries `noticeId`, which the worker and the app open under Notices. Returns whether it went out.
    */
-  notice(n: NoticeDelivery) {
+  notice(n: NoticeDelivery): boolean {
     const { activity, devices, push, delivery, server, phone } = this.d;
-    if (n.level === 'digest' && !delivery.listDue(n.group)) return;
+    if (n.level === 'digest' && !delivery.listDue(n.group)) return false;
     if (n.level !== 'digest') phone.higher(n.group);
-    else if (!phone.list(n.group, n.prior, Date.now()).send) return;
+    else if (!phone.list(n.group, n.prior, Date.now()).send) return false;
     const nid = activity.notification({ kind: 'message', messageId: n.id, conversationId: n.group });
     const quiet = devices.quietOn(n.group, n.addressed);
     const level = n.level === 'push' ? 'push' : 'quiet';
@@ -119,5 +119,6 @@ export class Notifier {
       .notify(n.title, n.body, n.group, { ...n.look, noticeId: n.id, messageId: n.id, level, tier: n.level, ...(n.importance !== null ? { importance: n.importance } : {}), ...grouped, ...(nid ? { nid } : {}) }, skip, level)
       .then((r) => nid && activity.sent(nid, r))
       .catch((e) => console.error('push failed', e));
+    return true;
   }
 }

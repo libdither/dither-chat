@@ -6,10 +6,14 @@
  * grant, their events, a gap, the connection, and whether the grant was given. A demo hub has a fake source
  * (fake.ts) instead.
  *
- *  - **Catch-up** (`notify.list`, unread, since the newest kept): when an account is first seen, after the connection
- *    came back, and after a gap. What it finds is rated but notifies nobody.
+ *  - **Catch-up** (`notify.list`, unread, since the oldest unread kept): when an account is first seen, after the
+ *    connection came back, and after a gap. What it finds is rated but notifies nobody; what it no longer lists
+ *    (read there meanwhile) is read here too, quietly.
  *  - **Live** (`notify.new`): kept, triaged, and notified if its tier says so. A repeat with nothing new is ignored;
- *    one with a newer time, or back unread, is triaged again.
+ *    one with a newer time, or back unread, is triaged again; one a catch-up found first (so it notified nobody) is
+ *    decided again, live, while it is unread and fresh. The local model is asked outside the queue, so a slow one
+ *    holds up nothing else; each notice's own steps still go in order.
+ *  - **Not a chat account's**: an account the hub also reads as chat (Telegram Desktop's popups) is left to chat.
  *  - **Read there** (`notify.read`): read here too, never notified; its notification leaves the phones once its group
  *    has nothing unread left (delivery.ts `read`, through `readTs`).
  *  - **Read here** (opening it, Mark read): read here, and `notify.markRead` upstream, best effort.
@@ -20,6 +24,7 @@
 import type * as P from '@dither-chat/protocol';
 import { fit, type Grouped, type Line } from '../delivery.ts';
 import { ALERT_BAR, voteWeight, type Example, type Facts } from '../learn.ts';
+import { realClock, type Clock } from '../clock.ts';
 import type { Store } from '../store.ts';
 import type { Triage } from '../triage.ts';
 import type { OtherVotes, TriageVotes } from '../votes.ts';
@@ -84,12 +89,14 @@ export interface NoticesOpts {
   triage: Triage;
   votes?: TriageVotes | null;
   link: NoticeLink;
-  deliver?: (n: NoticeDelivery) => void;
+  /** Sends its notification; false when nothing went out (the phone's list held it, or it came within ten minutes). */
+  deliver?: (n: NoticeDelivery) => boolean;
   /** The manager's page (DITHER_ACCOUNTS_PUBLIC_URL), for "approve it there". */
   managerUrl?: string | null;
   /** Where access starts: a demo hub's fake source is granted from the start. */
   access?: P.NoticeAccessState;
-  now?: () => number;
+  /** The time and the timers (the local model's wait): a test's own. */
+  clock?: Clock;
 }
 
 const digest = (s: string) => Buffer.from(new Bun.CryptoHasher('sha256').update(s).digest().subarray(0, 12)).toString('base64url');
@@ -143,10 +150,14 @@ export class Notices implements NoticeSink {
   /** Everything that writes runs in order: catch-ups, live notices, reads. */
   private queue: Promise<void> = Promise.resolve();
   private now: () => number;
+  private clock: Clock;
+  /** Each notice's own steps (its local model's answer, then its decision), in order. */
+  private steps = new Map<string, Promise<void>>();
 
   constructor(private o: NoticesOpts) {
     this.st = o.store;
-    this.now = o.now ?? Date.now;
+    this.clock = o.clock ?? realClock;
+    this.now = () => this.clock.now();
     this.state = o.access ?? 'unreachable';
     const v: OtherVotes = {
       examples: (at) => this.examples(at),
@@ -157,18 +168,26 @@ export class Notices implements NoticeSink {
     this.prune();
   }
 
-  /** Catch-ups under way. */
+  /** Catch-ups and local model's answers under way. */
   private busy = new Set<Promise<unknown>>();
 
-  /** Resolves once the catch-ups under way and everything queued are done (tests wait on it). */
+  /** Resolves once the catch-ups and answers under way and everything queued are done (tests wait on it). */
   async idle(): Promise<void> {
-    while (this.busy.size) await Promise.all([...this.busy]);
-    await this.queue;
+    for (;;) {
+      if (this.busy.size) await Promise.all([...this.busy]);
+      await this.queue;
+      if (!this.busy.size) return;
+    }
+  }
+
+  private track<T>(p: Promise<T>): Promise<T> {
+    const q = p.finally(() => this.busy.delete(q));
+    this.busy.add(q);
+    return q;
   }
 
   private catchUpSoon(account: string) {
-    const p = this.catchUp(account).finally(() => this.busy.delete(p));
-    this.busy.add(p);
+    void this.track(this.catchUp(account));
   }
 
   private run(what: string, fn: () => unknown): Promise<void> {
@@ -182,7 +201,8 @@ export class Notices implements NoticeSink {
   // ---------------------------------------------------------- NoticeSink (remote.ts)
 
   accounts(list: NoticeAccountInfo[]) {
-    const mine = list.filter((a) => a.interfaces.includes('notifications') && (a.grants.notifications === 'read' || a.grants.notifications === 'write'));
+    // An account the hub reads as chat too (Telegram with Desktop's popups) is chat's: its messages notify there.
+    const mine = list.filter((a) => a.interfaces.includes('notifications') && (a.grants.notifications === 'read' || a.grants.notifications === 'write') && !(a.interfaces.includes('chat') && a.grants.chat));
     this.accountsById = new Map(mine.map((a) => [a.id, a]));
     for (const id of [...this.caught]) if (!this.accountsById.has(id)) this.caught.delete(id);
     if (this.up) for (const a of mine) if (!this.caught.has(a.id)) this.catchUpSoon(a.id);
@@ -191,7 +211,7 @@ export class Notices implements NoticeSink {
   events(account: string, events: { t: string; [k: string]: unknown }[]): boolean {
     if (!this.accountsById.has(account)) return false;
     for (const e of events) {
-      if (e.t === 'notify.new') this.run('a new notice', () => this.arrived(account, e.notification, true));
+      if (e.t === 'notify.new') this.run('a new notice', () => this.arrived(account, e.notification));
       else if (e.t === 'notify.read' && Array.isArray(e.ids)) this.run('a read', () => this.readThere(account, e.ids as unknown[]));
     }
     return true;
@@ -225,7 +245,11 @@ export class Notices implements NoticeSink {
 
   // ---------------------------------------------------------- catch-up
 
-  /** notify.list, unread, since the newest kept: rated quietly. Once at a time per account; asked again meanwhile, once more after. */
+  /**
+   * notify.list, unread, since the oldest unread kept (else the newest kept): what it finds is rated quietly, and what
+   * it does not list in the window it covered was read there meanwhile, so it is read here, quietly. Once at a time
+   * per account; asked again meanwhile, once more after.
+   */
   async catchUp(account: string): Promise<number> {
     if (this.catching.has(account)) {
       this.again.add(account);
@@ -235,11 +259,16 @@ export class Notices implements NoticeSink {
     this.caught.add(account);
     let n = 0;
     try {
-      const newest = this.st.db.query('SELECT MAX(at) AS at FROM notice WHERE account = ?').get(account) as Row | null;
-      const floor = this.now() - KEEP_MS;
+      const kept = this.st.db.query('SELECT MAX(at) AS newest, MIN(CASE WHEN unread = 1 THEN at END) AS unread FROM notice WHERE account = ?').get(account) as Row | null;
+      const since: number | null = kept?.unread ?? kept?.newest ?? null;
+      const started = this.now();
+      const floor = started - KEEP_MS;
+      const listed = new Set<string>();
+      let oldest = Infinity;
+      let whole = false;
       let token: string | null = null;
       for (let page = 0; page < PAGES; page++) {
-        const input: Record<string, unknown> = { unreadOnly: true, limit: PER_PAGE, ...(newest?.at ? { since: newest.at } : {}), ...(token ? { pageToken: token } : {}) };
+        const input: Record<string, unknown> = { unreadOnly: true, limit: PER_PAGE, ...(since !== null ? { since } : {}), ...(token ? { pageToken: token } : {}) };
         const r = (await this.o.link.call(account, 'notify.list', input, 60_000)) as { notifications?: unknown[]; next?: string | null } | null;
         const list = Array.isArray(r?.notifications) ? r!.notifications : [];
         let old = false;
@@ -251,12 +280,26 @@ export class Notices implements NoticeSink {
               old = true;
               continue;
             }
+            listed.add(p.id);
+            oldest = Math.min(oldest, p.at);
             if (this.keep(account, p, false)) n++;
           }
         });
         token = typeof r?.next === 'string' && r.next ? r.next : null;
-        if (!token || old) break;
+        if (!token || old) {
+          whole = true;
+          break;
+        }
       }
+      // The window the listing covered: all of it, or (cut off after PAGES) from the oldest it reached. What is unread
+      // here in it and was not listed was read there. Not what came here since the listing began.
+      const from = whole ? Math.max(since ?? floor, floor) : oldest;
+      if (from !== Infinity)
+        await this.run('reads a catch-up found', () =>
+          this.st.db
+            .query(`UPDATE notice SET unread = 0, read_at = ? WHERE account = ? AND unread = 1 AND at >= ? AND at <= ? AND created_at < ? AND native_id NOT IN (SELECT value FROM json_each(?))`)
+            .run(this.now(), account, from, started, started, JSON.stringify([...listed])),
+        );
       this.prune();
     } catch (e) {
       // Tried again at the next connection, account list after this, or gap.
@@ -271,13 +314,44 @@ export class Notices implements NoticeSink {
 
   // ---------------------------------------------------------- arrival
 
-  /** A live notice: kept, triaged, notified. */
-  private async arrived(account: string, raw: unknown, live: boolean) {
+  /**
+   * A live notice (in the queue): kept, then its own steps: the local model's answer (outside the queue, so a slow one
+   * holds up nothing else), then its decision and notification (back in the queue). A newer arrival of the same
+   * notice waits for the one before; a decision whose notice changed meanwhile is dropped for the newer one's.
+   */
+  private arrived(account: string, raw: unknown) {
     const p = parse(raw);
     if (!p) return;
-    const id = this.keep(account, p, live);
-    if (!id || !live) return;
-    await this.decide(id, true);
+    const id = this.keep(account, p, true);
+    if (!id) return;
+    const at = p.at;
+    const prev = this.steps.get(id) ?? Promise.resolve();
+    const step = this.track(
+      prev
+        .then(() => this.answer(id))
+        .then((a) =>
+          this.run('a decision', () => {
+            const r = this.row(id);
+            // Changed since (a newer arrival is deciding it), or decided already.
+            if (!r || r.at !== at || r.decision != null) return;
+            this.decideNow(id, a);
+          }),
+        )
+        .catch((e) => console.error('notices: a decision failed:', e)),
+    );
+    this.steps.set(id, step);
+    void step.finally(() => this.steps.get(id) === step && this.steps.delete(id));
+  }
+
+  /** The local model's answer for a kept notice, when it is one to ask. */
+  private async answer(id: string): Promise<{ judge?: number; unjudged?: boolean }> {
+    const r = this.row(id);
+    if (!r) return {};
+    const n = inputOf(r);
+    if (!wantsJudge(n, { rule: this.ruleFor(r.grp, r.account), keyword: this.keywordIn(textOf(n)) })) return {};
+    const j = await this.ask(textOf(n));
+    if (j === undefined) return { unjudged: true };
+    return j === null ? {} : { judge: Math.round(j * 1000) / 1000 };
   }
 
   /**
@@ -286,8 +360,17 @@ export class Notices implements NoticeSink {
    */
   private keep(account: string, p: NonNullable<ReturnType<typeof parse>>, live: boolean): string | null {
     const id = noticeId(account, p.id);
-    const prev = this.st.db.query('SELECT at, unread, decision FROM notice WHERE id = ?').get(id) as Row | null;
-    const fresh = !prev || p.at > prev.at || (p.unread && !prev.unread) || prev.decision == null;
+    const prev = this.st.db.query('SELECT at, unread, read_at, decision, delivered, caught FROM notice WHERE id = ?').get(id) as Row | null;
+    // Read here and not raised again since: a catch-up still listing it unread (our markRead not there yet, failed, or
+    // a read-only grant) does not make it unread.
+    const readHere = !!prev && prev.read_at != null && p.at <= prev.at;
+    const fresh = !prev || p.at > prev.at || (p.unread && !prev.unread && !readHere) || prev.decision == null;
+    // A catch-up found it first, and so it notified nobody: the live one decides it again while it is unread and fresh.
+    const late = live && !!prev && !fresh && prev.caught === 1 && !prev.delivered && prev.unread === 1 && p.unread && this.now() - p.at <= NOTICE_TRIAGE.freshMs;
+    if (late) {
+      this.st.db.query('UPDATE notice SET decision = NULL, caught = 0 WHERE id = ?').run(id);
+      return id;
+    }
     if (!fresh) {
       // Read there since: read here too.
       if (!p.unread && prev.unread) this.st.db.query('UPDATE notice SET unread = 0, read_at = ? WHERE id = ?').run(this.now(), id);
@@ -300,28 +383,11 @@ export class Notices implements NoticeSink {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
          ON CONFLICT (id) DO UPDATE SET grp = excluded.grp, source = excluded.source, title = excluded.title, body = excluded.body, url = excluded.url,
            reason = excluded.reason, context = excluded.context, subject = excluded.subject, actors = excluded.actors, urgency = excluded.urgency,
-           at = excluded.at, unread = excluded.unread, read_at = NULL, decision = NULL, delivered = 0`,
+           at = excluded.at, unread = excluded.unread, read_at = NULL, decision = NULL, delivered = 0, caught = 0`,
       )
       .run(id, account, p.id, grp, p.source, p.title.slice(0, 500), p.body?.slice(0, 2000) ?? null, p.url, p.reason, p.context, p.subject ? JSON.stringify(p.subject) : null, JSON.stringify(p.actors), p.urgency, p.at, p.unread ? 1 : 0, this.now());
     if (!live) this.decideNow(id, { catchUp: true });
     return id;
-  }
-
-  /** Decide on one kept notice (asking the local model when it may alert), keep the decision, and notify. */
-  async decide(id: string, live: boolean): Promise<NoticeDecision | null> {
-    const r = this.row(id);
-    if (!r) return null;
-    const n = inputOf(r);
-    const rule = this.ruleFor(r.grp, r.account);
-    const keyword = this.keywordIn(textOf(n));
-    let judge: number | undefined;
-    let unjudged = false;
-    if (live && wantsJudge(n, { rule, keyword })) {
-      const j = await this.ask(textOf(n));
-      if (j === undefined) unjudged = true;
-      else if (j !== null) judge = Math.round(j * 1000) / 1000;
-    }
-    return this.decideNow(id, { judge, unjudged, catchUp: !live });
   }
 
   private decideNow(id: string, o: { judge?: number; unjudged?: boolean; catchUp?: boolean }): NoticeDecision | null {
@@ -343,10 +409,17 @@ export class Notices implements NoticeSink {
       now,
     });
     const ok = d.hold === null && (d.decision === 'push' || d.decision === 'digest');
+    // Kept first: the notification's lines read the group's decisions.
     this.st.db
-      .query(`UPDATE notice SET decision = ?, importance = ?, alert = ?, reasons = ?, decided_by = ?, facts = ?, words = ?, delivered = ?, decided_at = ? WHERE id = ?`)
-      .run(d.decision, d.importance, d.alert, JSON.stringify(d.reasons), d.decidedBy, d.facts ? JSON.stringify(d.facts) : null, JSON.stringify(d.words), ok && this.o.deliver ? 1 : 0, now, id);
-    if (ok) this.o.deliver?.(this.delivery(r, n, d));
+      .query(`UPDATE notice SET decision = ?, importance = ?, alert = ?, reasons = ?, decided_by = ?, facts = ?, words = ?, delivered = 0, caught = ?, decided_at = ? WHERE id = ?`)
+      .run(d.decision, d.importance, d.alert, JSON.stringify(d.reasons), d.decidedBy, d.facts ? JSON.stringify(d.facts) : null, JSON.stringify(d.words), o.catchUp ? 1 : 0, now, id);
+    // An alert quiet hours held is counted for their summary, as chat's are.
+    if (d.held) {
+      const held = this.st.quietHeld();
+      this.st.setQuietHeld({ count: (held?.count ?? 0) + 1, conversationId: r.grp, messageId: r.id });
+    }
+    // Delivered only when a notification really went out: what is read of it then takes it off the phones (readTs).
+    if (ok && this.o.deliver?.(this.delivery(r, n, d))) this.st.db.query('UPDATE notice SET delivered = 1 WHERE id = ?').run(id);
     return d;
   }
 
@@ -355,16 +428,16 @@ export class Notices implements NoticeSink {
     const judge = this.o.triage.judge;
     const t = text.slice(0, NOTICE_TRIAGE.judgeChars).trim();
     if (!judge || !t) return null;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: unknown;
     try {
       return await Promise.race([
         judge(t).catch(() => null),
         new Promise<undefined>((r) => {
-          timer = setTimeout(() => r(undefined), this.o.triage.judgeTimeoutMs);
+          timer = this.clock.setTimeout(() => r(undefined), this.o.triage.judgeTimeoutMs);
         }),
       ]);
     } finally {
-      clearTimeout(timer);
+      this.clock.clearTimeout(timer);
     }
   }
 
@@ -451,10 +524,13 @@ export class Notices implements NoticeSink {
     return [`conversation:${group}`, ...(r ? [`account:${r.account}`] : []), 'network:notice'];
   }
 
-  /** Read up to this time: just before the oldest unread in the group (delivery.ts compares the newest shown). */
+  /**
+   * Read up to this time: just before the oldest unread notice in the group that a notification showed (delivery.ts
+   * compares the newest shown). What notified nobody (a catch-up's, below the list) does not keep it showing.
+   */
   readTs(group: string): number | null {
     if (!group.startsWith('ntg_')) return null;
-    const r = this.st.db.query('SELECT MIN(at) AS at FROM notice WHERE grp = ? AND unread = 1').get(group) as Row | null;
+    const r = this.st.db.query('SELECT MIN(at) AS at FROM notice WHERE grp = ? AND unread = 1 AND delivered = 1').get(group) as Row | null;
     return r?.at == null ? Number.MAX_SAFE_INTEGER : r.at - 1;
   }
 

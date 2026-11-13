@@ -10,9 +10,11 @@ export interface StubState {
   asked: { interface: string }[][];
   client: AccountsClient | null;
   calls: { account: string; op: string; input: Record<string, unknown> }[];
+  /** The manager's administration the hub asked for (a restart after a gap). */
+  admin: Record<string, unknown>[];
 }
 
-export const stub = ((globalThis as any).__accountsStub ??= { self: null, registered: [], asked: [], client: null, calls: [] }) as StubState;
+export const stub = ((globalThis as any).__accountsStub ??= { self: null, registered: [], asked: [], client: null, calls: [], admin: [] }) as StubState;
 
 export class AccountsClient {
   accounts: unknown[] = [];
@@ -24,7 +26,8 @@ export class AccountsClient {
     stub.calls.push({ account, op, input });
     return op === 'notify.list' ? { notifications: [], next: null } : {};
   }
-  async admin() {
+  async admin(action: Record<string, unknown>) {
+    stub.admin.push(action);
     return {};
   }
   liveViewUrl() {

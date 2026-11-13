@@ -57,14 +57,18 @@ export interface Facts {
   /** The author's person, else identity. */
   author: string | null;
   bot: boolean;
-  mention: boolean;
+  /**
+   * The chat flags below are absent from a notice's facts where they do not apply (notices/triage.ts), so no "does
+   * not …" feature is made from them and chat's weights on those do not move a notice.
+   */
+  mention?: boolean;
   /** @everyone / @here, not you by name. */
-  everyone: boolean;
-  reply: boolean;
-  question: boolean;
+  everyone?: boolean;
+  reply?: boolean;
+  question?: boolean;
   urgent: boolean;
   /** You wrote there in the half hour before. */
-  active: boolean;
+  active?: boolean;
   media: boolean;
   /** Where the rules alone put it; from before the tiers, where the network's settings (or yours) did. */
   base: Level;

@@ -1,8 +1,11 @@
 /**
  * Notices (notices/, docs/notices.md): triage's table (urgency, the local model's answer, your rules and marks →
- * tier), ingest on the fake source (a catch-up is quiet, live notices notify, reads go both ways, a gap and a
- * reconnection list again), marks teaching chat's model, Notifier.notice's push, the routes, and asking dither-accounts
- * for the grant once (RoutedSupervisor on a stand-in client). Nothing here sends a push or reaches the network.
+ * tier, and chat's own flags left out), ingest on the fake source and a fake clock (a catch-up is quiet, pages, keeps
+ * to 30 days and finds what was read there; live notices notify, a slow local model holds up nothing else, a catch-up
+ * that came first does not swallow a live one, reads go both ways and a local read stays read; quiet hours count what
+ * they hold), marks teaching chat's model, Notifier.notice's push, the routes, and asking dither-accounts for the grant
+ * once (RoutedSupervisor on a stand-in client), with a chat account's events left to chat. Nothing here sends a push
+ * or reaches the network.
  */
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -11,7 +14,7 @@ import { join, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { Delivery } from '../src/delivery.ts';
 import { Devices } from '../src/devices.ts';
-import { emptyModel, train, THRESHOLDS, type Example } from '../src/learn.ts';
+import { emptyModel, features, train, THRESHOLDS, type Example, type Model } from '../src/learn.ts';
 import { Notifier } from '../src/notify.ts';
 import { FakeNoticeSource, type FakeNotification } from '../src/notices/fake.ts';
 import { groupId, noticeId, Notices, type NoticeDelivery } from '../src/notices/index.ts';
@@ -21,6 +24,7 @@ import { Store } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
 import { TriageVotes } from '../src/votes.ts';
 import { stub } from './fixtures/accounts-client-stub.ts';
+import { FakeClock } from './fixtures/clock.ts';
 
 const MIN = 60_000;
 const T0 = Date.UTC(2026, 10, 12, 15, 0);
@@ -35,7 +39,7 @@ describe('triage of a notice', () => {
   test('urgency sets where the chances start', () => {
     expect(startOf('high')).toEqual({ alert: 0.7, important: 0.9 });
     expect(startOf('low')).toEqual({ alert: 0.01, important: 0.15 });
-    expect(startOf('normal')).toEqual({ alert: 0.02, important: 0.6 });
+    expect(startOf('normal')).toEqual({ alert: 0.02, important: 0.72 });
     // At the bar (0.2) it is even odds; well over it, an alert.
     expect(startOf('normal', 0.2).alert).toBeCloseTo(0.5, 2);
     expect(startOf('normal', 0.6).alert).toBeGreaterThan(0.8);
@@ -73,8 +77,24 @@ describe('triage of a notice', () => {
 
   test('the facts are chat’s, with their start kept', () => {
     const f = factsOf(input({ reason: 'mention' }));
-    expect(f).toMatchObject({ network: 'notice:github', shape: 'notice', conversation: 'ntg_repo', spaces: [GH], author: 'https://github.com/sam', mention: true, link: true, urgent: false, start: { alert: 0.02, important: 0.6 } });
-    expect(factsOf(input({ reason: 'subscribed', urgency: 'high' }))).toMatchObject({ mention: false, urgent: true });
+    expect(f).toMatchObject({ network: 'notice:github', shape: 'notice', conversation: 'ntg_repo', spaces: [GH], author: 'https://github.com/sam', mention: true, link: true, urgent: false, start: { alert: 0.02, important: 0.72 } });
+    const g = factsOf(input({ reason: 'subscribed', urgency: 'high' }));
+    expect(g.urgent).toBe(true);
+    // Chat's own flags are left out, not false.
+    for (const k of ['mention', 'reply', 'question', 'active', 'everyone', 'conv'] as const) expect(k in g).toBe(false);
+  });
+
+  test('what chat learned about its own flags does not move a notice', () => {
+    const neg = Object.fromEntries(['!mention', '!reply', '!question', '!active', '!everyone', '!known', 'everyone'].map((k) => [k, -3]));
+    const model: Model = { w: { alert: { ...neg }, important: { ...neg } } };
+    const n = input({ reason: 'subscribed' });
+    expect(features(factsOf(n)).map(([k]) => k).filter((k) => k in neg)).toEqual([]);
+    const plain = decideNotice(n, ctx({ judge: 0.05 }));
+    const learned = decideNotice(n, ctx({ judge: 0.05, model }));
+    expect(plain.decision).toBe('digest');
+    expect(learned.decision).toBe('digest');
+    expect(learned.importance).toBe(plain.importance);
+    expect(learned.alert).toBe(plain.alert);
   });
 
   test('marks move it: "Alert was wrong" on a repository’s high ones, "Less like this" on another’s normal ones', () => {
@@ -102,7 +122,7 @@ afterEach(() => {
 
 const note = (o: Partial<FakeNotification> & Pick<FakeNotification, 'id'>): FakeNotification => ({ source: 'github', title: `Notice ${o.id}`, body: null, url: null, reason: 'subscribed', context: 'o/r', subject: null, actors: [], at: T0, unread: true, ...o });
 
-function world(o: { judge?: (t: string) => Promise<number | null>; level?: 'read' | 'write' } = {}) {
+function world(o: { judge?: (t: string) => Promise<number | null>; level?: 'read' | 'write'; sends?: () => boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'dither-notices-'));
   const store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
   store.db.exec('PRAGMA synchronous = OFF');
@@ -111,8 +131,8 @@ function world(o: { judge?: (t: string) => Promise<number | null>; level?: 'read
   const votes = new TriageVotes(store, triage);
   const fake = new FakeNoticeSource();
   const sent: NoticeDelivery[] = [];
-  const clock = { now: T0 };
-  const notices = new Notices({ store, triage, votes, link: fake, deliver: (n) => sent.push(n), now: () => clock.now });
+  const clock = new FakeClock(T0);
+  const notices = new Notices({ store, triage, votes, link: fake, deliver: (n) => (sent.push(n), o.sends?.() ?? true), clock });
   fake.addAccount(GH, 'github', 'GitHub', o.level ?? 'write');
   cleanup = () => {
     store.db.close();
@@ -144,7 +164,7 @@ describe('notices on the fake source', () => {
     await w.notices.idle();
     expect(w.sent).toHaveLength(1);
     // Back with something new (a newer time): triaged again.
-    w.clock.now += MIN;
+    await w.clock.advance(MIN);
     w.fake.emit(GH, note({ id: 'new-high', urgency: 'high', title: 'Secret leaked', context: 'o/r', at: T0 + MIN }));
     await w.notices.idle();
     expect(w.sent).toHaveLength(2);
@@ -186,10 +206,17 @@ describe('notices on the fake source', () => {
     expect(w.row('a')?.unread).toBe(0);
     expect(w.notices.readTs(group)).toBe(T0);
     expect(w.sent).toHaveLength(2);
+    await w.clock.advance(MIN);
     expect(w.notices.markRead(noticeId(GH, 'b'))).toBe(true);
     expect(w.row('b')?.unread).toBe(0);
+    const readAt = w.row('b')?.read_at;
     expect(w.notices.readTs(group)).toBe(Number.MAX_SAFE_INTEGER);
     expect(w.fake.calls.filter((c) => c.op === 'notify.markRead').map((c) => c.input)).toEqual([{ ids: ['b'] }]);
+    // The service's echo (notify.read for b) changes nothing, and notifies nobody.
+    await w.clock.advance(MIN);
+    await w.notices.idle();
+    expect(w.row('b')).toMatchObject({ unread: 0, read_at: readAt });
+    expect(w.sent).toHaveLength(2);
     expect(w.notices.markRead('ntc_nope')).toBe(false);
   });
 
@@ -202,7 +229,7 @@ describe('notices on the fake source', () => {
     expect(w.fake.calls.some((c) => c.op === 'notify.markRead')).toBe(false);
   });
 
-  test('a gap and a reconnection list again, from the newest kept', async () => {
+  test('a gap and a reconnection list again, from the oldest unread kept', async () => {
     const w = world();
     w.fake.attach(w.notices);
     w.fake.emit(GH, note({ id: 'a', urgency: 'low', at: T0 - MIN }));
@@ -258,6 +285,168 @@ describe('notices on the fake source', () => {
     // Taken back.
     expect(w.votes.mark(noticeId(GH, 'a'), { alert: null }).marks).toEqual({});
     expect(() => w.votes.mark('ntc_nope', { less: true })).toThrow('never decided');
+  });
+
+  test('a notification that went nowhere does not count; what notified nobody does not keep the group showing', async () => {
+    let sends = true;
+    const w = world({ sends: () => sends });
+    // Caught up, unread, never notified, in the same group.
+    w.fake.put(GH, note({ id: 'old', urgency: 'high', at: T0 - 10 * MIN }));
+    w.fake.attach(w.notices);
+    await w.notices.idle();
+    const group = groupId(GH, 'o/r');
+    expect(w.notices.readTs(group)).toBe(Number.MAX_SAFE_INTEGER);
+    w.fake.emit(GH, note({ id: 'live', urgency: 'high' }));
+    await w.notices.idle();
+    expect(w.row('live')?.delivered).toBe(1);
+    expect(w.notices.readTs(group)).toBe(T0 - 1);
+    // Read: the group's notification may go, though the caught-up one is still unread.
+    w.notices.markRead(noticeId(GH, 'live'));
+    expect(w.row('old')?.unread).toBe(1);
+    expect(w.notices.readTs(group)).toBe(Number.MAX_SAFE_INTEGER);
+    // The notifier held one (the phone's list, its ten minutes): not delivered.
+    sends = false;
+    w.fake.emit(GH, note({ id: 'held', urgency: 'normal', context: 'o/held' }));
+    await w.notices.idle();
+    expect(w.row('held')).toMatchObject({ decision: 'digest', delivered: 0 });
+  });
+
+  test('a catch-up finds what was read there meanwhile, quietly; what it did not reach stays as it was', async () => {
+    const w = world();
+    for (const [id, m] of [['a', 30], ['b', 20], ['c', 10]] as const) w.fake.put(GH, note({ id, urgency: 'high', at: T0 - m * MIN }));
+    w.fake.attach(w.notices);
+    await w.notices.idle();
+    expect(['a', 'b', 'c'].map((id) => w.row(id)?.unread)).toEqual([1, 1, 1]);
+    // b read on GitHub while the manager was away: no notify.read came.
+    w.fake.put(GH, note({ id: 'b', urgency: 'high', at: T0 - 20 * MIN, unread: false }));
+    await w.clock.advance(MIN);
+    w.fake.calls.length = 0;
+    w.notices.gap(GH);
+    await w.notices.idle();
+    expect(w.fake.calls.map((c) => c.input)).toEqual([{ unreadOnly: true, limit: 50, since: T0 - 30 * MIN }]);
+    expect(['a', 'b', 'c'].map((id) => w.row(id)?.unread)).toEqual([1, 0, 1]);
+    // Quietly: nothing sent, nothing told to GitHub.
+    expect(w.sent).toEqual([]);
+    expect(w.fake.calls.some((c) => c.op === 'notify.markRead')).toBe(false);
+  });
+
+  test('catch-up pages, keeps to the last 30 days, and old notices go', async () => {
+    const w = world();
+    for (let i = 0; i < 120; i++) w.fake.put(GH, note({ id: `p${i}`, urgency: 'low', at: T0 - (i + 1) * MIN }));
+    w.fake.put(GH, note({ id: 'ancient', urgency: 'high', at: T0 - 31 * 24 * 60 * MIN }));
+    w.fake.attach(w.notices);
+    await w.notices.idle();
+    const lists = w.fake.calls.filter((c) => c.op === 'notify.list').map((c) => c.input.pageToken ?? null);
+    expect(lists).toEqual([null, '50', '100']);
+    expect(w.store.one<{ n: number }>('SELECT COUNT(*) AS n FROM notice')?.n).toBe(120);
+    expect(w.row('ancient')).toBeNull();
+    // A month on, they go, except one you marked (it is learned from).
+    w.votes.mark(noticeId(GH, 'p0'), { alert: true });
+    await w.clock.advance(31 * 24 * 60 * MIN);
+    w.notices.prune();
+    expect(w.store.one<{ n: number }>('SELECT COUNT(*) AS n FROM notice')?.n).toBe(1);
+    expect(w.row('p0')).not.toBeNull();
+  });
+
+  test('a slow local model holds up nothing else, and each notice’s own steps keep their order', async () => {
+    let answer!: (x: number) => void;
+    const w = world({ judge: (t) => (t.startsWith('slow') ? new Promise<number>((r) => (answer = r)) : Promise.resolve(0.01)) });
+    w.fake.attach(w.notices);
+    await w.notices.idle();
+    w.fake.emit(GH, note({ id: 'slow', urgency: 'normal', title: 'slow: prod is down', context: 'o/a' }));
+    w.fake.emit(GH, note({ id: 'quick', urgency: 'low', title: 'CI passed', context: 'o/b' }));
+    w.fake.emit(GH, note({ id: 'other', urgency: 'normal', title: 'A review', context: 'o/c' }));
+    await w.clock.settle();
+    expect(w.row('slow')?.decision).toBeNull();
+    expect(w.row('quick')?.decision).toBe('drop');
+    expect(w.row('other')?.decision).toBe('digest');
+    // Read there while its answer is awaited: decided after, as read, and so notifying nobody.
+    w.fake.readThere(GH, ['slow']);
+    await w.clock.settle();
+    expect(w.row('slow')).toMatchObject({ unread: 0, decision: null });
+    answer(0.9);
+    await w.notices.idle();
+    expect(w.row('slow')).toMatchObject({ decision: 'push', delivered: 0 });
+    expect(JSON.parse(w.row('slow')!.reasons)).toContain('Already read: no notification');
+    expect(w.sent.map((s) => s.id)).toEqual([noticeId(GH, 'other')]);
+  });
+
+  test('a local model that never answers is given up on at its time', async () => {
+    const w = world({ judge: () => new Promise<number>(() => {}) });
+    w.triage.judgeTimeoutMs = 3_000;
+    w.fake.attach(w.notices);
+    await w.notices.idle();
+    w.fake.emit(GH, note({ id: 'n', urgency: 'normal', title: 'A review' }));
+    await w.clock.advance(2_999);
+    expect(w.row('n')?.decision).toBeNull();
+    await w.clock.advance(1);
+    await w.notices.idle();
+    expect(w.row('n')?.decision).toBe('digest');
+    expect(JSON.parse(w.row('n')!.reasons)).toContain('The local model did not answer in time: not read for urgency');
+  });
+
+  test('quiet hours hold a high one as a list row, counted for their summary', async () => {
+    const w = world();
+    w.store.setQuietHours({ enabled: true, start: '00:00', end: '23:59', timezone: 'UTC', allowStarred: false });
+    w.fake.attach(w.notices);
+    w.fake.emit(GH, note({ id: 'h', urgency: 'high' }));
+    await w.notices.idle();
+    expect(w.row('h')?.decision).toBe('digest');
+    expect(w.store.quietHeld()).toMatchObject({ count: 1, conversationId: groupId(GH, 'o/r'), messageId: noticeId(GH, 'h') });
+    w.store.setQuietHours({ enabled: false, start: '00:00', end: '23:59', timezone: 'UTC', allowStarred: false });
+    expect(w.triage.takeHeldSummary(T0)).toMatchObject({ title: 'Quiet hours are over', body: '1 message held for you' });
+  });
+
+  test('a catch-up that came first does not swallow the live notification, while it is unread and fresh', async () => {
+    const w = world();
+    // GitHub's list reads the API at once; its notify.new waits for the poll.
+    w.fake.put(GH, note({ id: 'race', urgency: 'high', at: T0 - MIN }));
+    w.fake.put(GH, note({ id: 'stale', urgency: 'high', at: T0 - 2 * 60 * MIN }));
+    w.fake.put(GH, note({ id: 'read', urgency: 'high', at: T0 - MIN, context: 'o/x' }));
+    w.fake.attach(w.notices);
+    await w.notices.idle();
+    expect(w.row('race')).toMatchObject({ decision: 'push', delivered: 0, caught: 1 });
+    w.notices.markRead(noticeId(GH, 'read'));
+    for (const id of ['race', 'stale']) w.fake.emit(GH, note({ id, urgency: 'high', at: id === 'race' ? T0 - MIN : T0 - 2 * 60 * MIN }));
+    w.fake.emit(GH, note({ id: 'read', urgency: 'high', at: T0 - MIN, context: 'o/x' }));
+    await w.notices.idle();
+    expect(w.sent.map((s) => s.id)).toEqual([noticeId(GH, 'race')]);
+    expect(w.row('race')).toMatchObject({ delivered: 1, caught: 0 });
+    // And once only.
+    w.fake.emit(GH, note({ id: 'race', urgency: 'high', at: T0 - MIN }));
+    await w.notices.idle();
+    expect(w.sent).toHaveLength(1);
+  });
+
+  test('read here stays read when a catch-up still lists it unread, until it is raised again', async () => {
+    const w = world({ level: 'read' });
+    w.fake.attach(w.notices);
+    w.fake.emit(GH, note({ id: 'a', urgency: 'high', at: T0 - MIN }));
+    await w.notices.idle();
+    await w.clock.advance(MIN);
+    w.notices.markRead(noticeId(GH, 'a'));
+    // A read grant: GitHub still has it unread, and lists it so.
+    w.notices.gap(GH);
+    await w.notices.idle();
+    expect(w.row('a')?.unread).toBe(0);
+    expect(w.sent).toHaveLength(1);
+    // Raised again (a new comment): unread, and decided again.
+    w.fake.put(GH, note({ id: 'a', urgency: 'high', at: T0 + MIN }));
+    await w.clock.advance(MIN);
+    w.notices.gap(GH);
+    await w.notices.idle();
+    expect(w.row('a')).toMatchObject({ unread: 1, at: T0 + MIN });
+  });
+
+  test('an account the hub reads as chat too is left to chat', async () => {
+    const w = world();
+    w.fake.attach(w.notices);
+    w.notices.accounts([{ id: 'acc_tg', kind: 'telegram', label: 'Telegram', interfaces: ['chat', 'notifications'], grants: { chat: 'manage', notifications: 'write' } }]);
+    expect(w.notices.events('acc_tg', [{ t: 'notify.new', notification: note({ id: 'm1', source: 'telegram' }) }])).toBe(false);
+    expect(w.notices.gap('acc_tg')).toBe(false);
+    // Without the chat grant (another app's chat account), its notices are ours.
+    w.notices.accounts([{ id: 'acc_tg', kind: 'telegram', label: 'Telegram', interfaces: ['chat', 'notifications'], grants: { notifications: 'write' } }]);
+    expect(w.notices.events('acc_tg', [])).toBe(true);
   });
 
   test('the routes: the page, one notice, Mark read', async () => {
@@ -367,7 +556,7 @@ describe('asking dither-accounts for notices', () => {
     if (saved) writeFileSync(join(dir, 'accounts-app.json'), JSON.stringify({ app: 'app_stub', token: 'token_stub', url: 'http://manager.test' }));
     // It manages every chat kind already: only notices are in question here.
     const all = self && { ...self, grants: [...(self.grants ?? []), { interface: 'accounts', kinds: null }] };
-    Object.assign(stub, { self: all, registered: [], asked: [], client: null, calls: [] });
+    Object.assign(stub, { self: all, registered: [], asked: [], client: null, calls: [], admin: [] });
     const repoRoot = resolve(import.meta.dir, '../../..');
     const sup = new RoutedSupervisor(store, { hubAdapterUrl: 'ws://127.0.0.1:1/adapter', dataDir: dir, repoRoot, inproc: () => null, onFresh: () => {} }, { url: 'http://manager.test', dataDir: dir, repoRoot });
     const triage = new Triage(store);
@@ -408,21 +597,40 @@ describe('asking dither-accounts for notices', () => {
     expect(h.notices.access()).toBe('pending');
   });
 
-  test('granted: an account with notifications is caught up, and its events go to notices and to chat', async () => {
+  test('granted: a notifications account is caught up and its events are notices; a chat account’s go to chat, which restarts it after a gap', async () => {
     const h = await hub(true, { grants: [{ interface: 'notifications', kinds: null }] });
     expect(h.notices.access()).toBe('granted');
+    const applied: number[] = [];
+    h.sup.onApplied = (n) => applied.push(n);
+    const TG = 'acc_noticeTelegram';
     const c = stub.client!;
     c.opts.onConnection?.(true);
-    c.opts.onAccounts?.([{ id: GH, kind: 'telegram', label: 'Telegram', interfaces: ['chat', 'notifications'], running: true, online: true, enabled: true, grants: { chat: 'manage', notifications: 'write' }, dryRun: false }]);
+    c.opts.onAccounts?.([
+      { id: GH, kind: 'github', label: 'GitHub', interfaces: ['notifications'], running: true, online: true, enabled: true, grants: { notifications: 'write' }, dryRun: false },
+      { id: TG, kind: 'telegram', label: 'Telegram', interfaces: ['chat', 'notifications'], running: true, online: true, enabled: true, grants: { chat: 'manage', notifications: 'write' }, dryRun: false },
+    ]);
     await h.notices.idle();
     expect(stub.calls.map((x) => [x.account, x.op])).toEqual([[GH, 'notify.list']]);
-    c.opts.onEvents?.(GH, [{ t: 'notify.new', notification: note({ id: 'tg-1', source: 'telegram', context: 'Family', urgency: 'low' }) }]);
+    // GitHub's: a notice, and nothing for chat.
+    c.opts.onEvents?.(GH, [{ t: 'notify.new', notification: note({ id: 'gh-1', urgency: 'low' }) }]);
     await h.notices.idle();
     expect(h.store.one<{ n: number }>('SELECT COUNT(*) AS n FROM notice')?.n).toBe(1);
-    // A gap on an account that is chat's too: notices list again, and chat restarts it for a snapshot as before.
-    stub.calls.length = 0;
-    c.opts.onGap?.(GH, 3);
+    expect(applied).toEqual([]);
+    // Telegram's (chat and Desktop's popups): applied as chat, no notice.
+    c.opts.onEvents?.(TG, [{ t: 'status', status: 'online' }, { t: 'notify.new', notification: note({ id: 'tg-1', source: 'telegram', context: 'Family' }) }]);
+    await h.sup.drained();
     await h.notices.idle();
-    expect(stub.calls.map((x) => x.op)).toEqual(['notify.list']);
+    expect(applied).toEqual([2]);
+    expect(h.store.account(TG)?.status).toBe('online');
+    expect(h.store.one<{ n: number }>('SELECT COUNT(*) AS n FROM notice')?.n).toBe(1);
+    // A gap: GitHub's notices list again and nothing restarts; Telegram's restarts for a snapshot, as before.
+    stub.calls.length = 0;
+    // (Newly the manager's and online, it was restarted once already, for its first snapshot.)
+    stub.admin.length = 0;
+    c.opts.onGap?.(GH, 3);
+    c.opts.onGap?.(TG, 3);
+    await h.notices.idle();
+    expect(stub.calls.map((x) => [x.account, x.op])).toEqual([[GH, 'notify.list']]);
+    expect(stub.admin.filter((a) => a.do === 'restart')).toEqual([{ do: 'restart', account: TG }]);
   });
 });

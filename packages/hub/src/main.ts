@@ -200,7 +200,7 @@ async function judgeLate(id: string) {
 let notifier: Notifier | null = null;
 const deliver: Notifier['message'] = (...a) => notifier?.message(...a);
 const deliverMail = (n: MailNotice) => notifier?.mail(n);
-const deliverNotice = (n: NoticeDelivery) => notifier?.notice(n);
+const deliverNotice = (n: NoticeDelivery) => notifier?.notice(n) ?? false;
 
 /** A request's row on the list sorts as something the network would have notified you about. */
 const REQUEST_IMPORTANCE = 0.8;

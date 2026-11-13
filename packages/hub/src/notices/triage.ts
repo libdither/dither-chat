@@ -7,7 +7,8 @@
  *   2. One of your keywords, or Always alert on the group or the account: an alert.
  *   3. Else its two chances, which start from the source's urgency and move with your marks:
  *        high    alert 0.7, importance 0.9
- *        normal  alert from the local model's answer (the stop-now question, held to ALERT_BAR.other), importance 0.6
+ *        normal  alert from the local model's answer (the stop-now question, held to ALERT_BAR.other), importance 0.72
+ *                (over the list's default level of 0.6 by a margin, so a little of what chat learned cannot sink it)
  *        low     alert 0.01, importance 0.15 (the local model is not asked)
  *      An alert at even odds or more; else on the list at your level of importance or more; else below it. List only
  *      on the group or the account keeps it from alerting.
@@ -35,7 +36,7 @@ export type Urgency = P.NoticeUrgency;
 export function startOf(urgency: Urgency, judge?: number): P.TriageProbs {
   if (urgency === 'high') return { alert: 0.7, important: 0.9 };
   if (urgency === 'low') return { alert: 0.01, important: 0.15 };
-  return { alert: judge === undefined ? UNJUDGED : round(judgedAlert(judge, ALERT_BAR.other)), important: 0.6 };
+  return { alert: judge === undefined ? UNJUDGED : round(judgedAlert(judge, ALERT_BAR.other)), important: 0.72 };
 }
 
 /** Reasons that are about you by name: a mention, a review asked of you, an assignment. */
@@ -103,7 +104,11 @@ export const wantsJudge = (n: Pick<NoticeInput, 'urgency'>, c: Pick<NoticeContex
 /** The text the local model reads and the model's words come from. */
 export const textOf = (n: Pick<NoticeInput, 'title' | 'body'>) => `${n.title}${n.body ? `\n${n.body}` : ''}`;
 
-/** learn.ts's facts, from a notice. */
+/**
+ * learn.ts's facts, from a notice. Chat's own flags (a reply, a question, @everyone, you active there) mean nothing
+ * here and are left out, as is "mention" unless the reason is about you: so no "does not …" feature carries what chat
+ * learned onto a notice.
+ */
 export function factsOf(n: NoticeInput, judge?: number): Facts {
   const a = n.actors[0];
   return {
@@ -113,12 +118,8 @@ export function factsOf(n: NoticeInput, judge?: number): Facts {
     spaces: [n.account],
     author: a ? (a.url ?? a.name) : null,
     bot: false,
-    mention: !!n.reason && ADDRESSED.has(n.reason),
-    everyone: false,
-    reply: false,
-    question: false,
+    ...(n.reason && ADDRESSED.has(n.reason) ? { mention: true } : {}),
     urgent: n.urgency === 'high',
-    active: false,
     media: false,
     link: !!n.url,
     base: 'drop',

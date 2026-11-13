@@ -1,8 +1,8 @@
 /**
  * A fake `notifications` source (docs/notices.md "The demo world"): in tests and on a demo hub, standing where
  * dither-accounts' manager stands. Accounts hold notices in memory; `notify.list`, `notify.markRead`,
- * `notify.markAllRead` and `notify.mute` answer as the interface says, and `emit`/`readThere` send the events an
- * extractor would.
+ * `notify.markAllRead` and `notify.mute` answer as the interface says (a read sends `notify.read` back, as GitHub's
+ * extractor's next poll does), and `emit`/`readThere` send the events an extractor would.
  */
 import type { NoticeAccountInfo, NoticeLink, NoticeSink } from './index.ts';
 
@@ -84,12 +84,13 @@ export class FakeNoticeSource implements NoticeLink {
         const page = all.slice(start, start + limit);
         return { notifications: page, next: start + limit < all.length ? String(start + limit) : null };
       }
-      case 'notify.markRead':
-        for (const id of (input.ids as string[]) ?? []) {
-          const n = a.notes.get(id);
-          if (n) n.unread = false;
-        }
+      case 'notify.markRead': {
+        const ids = ((input.ids as string[]) ?? []).filter((id) => a.notes.has(id));
+        for (const id of ids) a.notes.get(id)!.unread = false;
+        // The echo: the service says they were read.
+        if (ids.length) this.sink?.events(account, [{ t: 'notify.read', ids }]);
         return {};
+      }
       case 'notify.markAllRead': {
         const before = typeof input.before === 'number' ? input.before : Infinity;
         for (const n of a.notes.values()) if (n.at <= before) n.unread = false;
