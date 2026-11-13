@@ -1,5 +1,5 @@
 /**
- * The one mock of src/state.ts for the tests that need one (snapshot.test.ts, model-memo.test.ts, apps.test.ts, menu-toggle.test.ts). Bun's module mocks
+ * The one mock of src/state.ts for the tests that need one (snapshot.test.ts, model-memo.test.ts, apps.test.ts, menu-toggle.test.ts, mention-complete.test.ts). Bun's module mocks
  * are the whole process's, and the first test file to load state.ts fixes what it exports for the rest: so every such
  * test uses this, which has what each of them reads. Its `db` is a real empty one (syncmodel.ts). `selfIds`: the
  * identities a test calls yours (none unless it says).
@@ -12,6 +12,10 @@ export const selfIds = new Set<string>();
 
 export const stateMock = () => ({
   db,
+  // No hub in a test: what asks one fails, as it does offline.
+  api: async () => {
+    throw new Error('no hub in tests');
+  },
   dataVersion,
   eventHooks: new Set(),
   inbox: { value: [] },

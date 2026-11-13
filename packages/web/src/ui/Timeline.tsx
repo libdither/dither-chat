@@ -82,6 +82,7 @@ import { JoinCallButton } from './Call.tsx';
 import { EmojiComplete, insertAtCaret } from './EmojiComplete.tsx';
 import { SlashCommandsLazy } from './apps/lazy.tsx';
 import { claimSend } from '../apps.ts';
+import { MentionComplete } from './MentionComplete.tsx';
 import { loadEmoji } from '../emoji.ts';
 import { isLottie, isSticker, Sticker } from './Sticker.tsx';
 import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
@@ -1355,6 +1356,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       {viewOnceChip}
       <EmojiComplete ta={ta} convId={targets.convId} network={conv?.network} />
       {!edit && <SlashCommandsLazy ta={ta} convId={targets.convId} accountId={sender?.id} text={text} />}
+      <MentionComplete ta={ta} convId={targets.convId} network={conv?.network} accountId={sender?.id} />
       {attaching && (
         <>
           <input

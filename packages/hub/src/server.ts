@@ -52,6 +52,7 @@ import { asked, attempt, candidatesAttempt } from './attempts.ts';
 import { Groups } from './groups.ts';
 import { People } from './people.ts';
 import { AccountSelf, ignoredOf } from './accountself.ts';
+import { mentionables } from './mentions.ts';
 import { peopleGraph } from './graph.ts';
 import type { MailHub } from './mail/index.ts';
 import type { Notices } from './notices/index.ts';
@@ -1254,6 +1255,11 @@ export class HubServer {
         if (e instanceof MediaError) return bad(e.message, e.status);
         return bad(`The network refused it: ${(e as Error).message}`, 502);
       }
+    }
+    // The composer's @ picker (mentions.ts, docs/mentions.md): who this conversation can ping.
+    if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/mentionables$/)) && method === 'GET') {
+      const v = await mentionables({ store: s, online: (a) => this.sup.online(a), command: (a, c, t) => this.sup.command(a, c, t), pickAccount: (c, a) => this.pickAccount(c, a) }, m[1], url.searchParams);
+      return v ? ok(v) : bad('no such conversation', 404);
     }
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/reaction-context$/))) {
       const conv = s.nativeOf('conversation', m[1]);
