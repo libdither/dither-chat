@@ -141,11 +141,10 @@ else the checkout's `git rev-parse --short=8 HEAD`, for the hub; the page's is i
 | `request` | a request answered with 5xx (server.ts `guarded`): a throw in a handler (500), or a 500/502 the handler answered, its message the answer's `error` | method and route template, `GET /api/conversations/:id/messages` |
 | `job` | a span a throw ended (trace.ts's hook, but for requests and `command <op>` spans: a command's caller says what came of it); the hub's `console.error` / `console.warn` sites that mean something went wrong: triage, upkeep, push, flush, attention, the ranker, embeddings, categorizing, backups, checkpoints, adapter events that failed or met a locked database, the manager's admin calls, mail's sync/outbox/ops/classify/people/triage, notices, jobs (but rate limits) | the span's or the job's name: `triage`, `flush: mail`, `adapter events`, `mail: changes` |
 | `attempt` | attempts.ts: making a group or adding people failed (500, 502, 504), or went through with someone refused (`name` `Partial`); a candidates lookup that failed. The hub.log lines stay | `groups: create`, `members: add`, `groups: candidates`, `members: candidates`; `extra` { what, account, network, conversation, people, failed } |
-| `client` (app `web`) | `POST /api/errors` from the page (packages/web/src/errors.ts): `window.onerror`, `unhandledrejection`, and `api()` answers of 5xx and fetches that did not reach the hub | the page's route template, `#/inbox/c/:id` |
+| `client` (app `web`) | `POST /api/errors` from the page (packages/web/src/errors.ts): `window.onerror`, `unhandledrejection`, and `api()` fetches that did not reach the hub (not answers with a status: the hub wrote its own `request` line for each 5xx) | the page's route template, `#/inbox/c/:id` |
 
 **Left out:** 4xx answers, 429 and rate limits, captchas and terms prompts (refusals, 4xx), aborted requests and a
-client that went away, 503 (an account offline, the manager not reachable: states the page shows) and 504 (timeouts
-the page explains; an attempt's 504 is still an `attempt` line), the hub stopping under a job (a closed database),
+client that went away, 503 (an account offline, the manager not reachable: a state the page shows), the hub stopping under a job (a closed database),
 adapters' own log lines, and the page's reports while it is offline. When unsure, it is reported: the watcher has an
 ignore list.
 

@@ -1,7 +1,8 @@
 /**
  * The page's errors, to the hub's traces/errors.ndjson (POST /api/errors; docs/tracing.md "Errors"): a throw nothing
- * caught, a rejection nothing handled, and an API call answered with 5xx (but 503 and 504) or that could not reach the
- * hub. Not 4xx, not an abort, not while offline. `where` is the page's route as a template (`#/inbox/c/:id`), never an id or anything
+ * caught, a rejection nothing handled, and an API call that could not reach the hub. Not an answer with a status: the
+ * hub writes each 5xx it answers itself, so the page sending it too would make one bug two. Not an abort, not while
+ * offline. `where` is the page's route as a template (`#/inbox/c/:id`), never an id or anything
  * typed; `message` is an Error's message (the hub clips it). At most 20 reports a minute, the same one at most once a
  * minute. Reporting never throws.
  */
@@ -77,23 +78,22 @@ export function reportPageError(e: PageError, error?: unknown): void {
 
 const isAbort = (e: unknown) => (e as { name?: string } | null)?.name === 'AbortError';
 
-/** An error object's report, or null for what is not one to send (an abort, an api() 4xx). */
+/** An error object's report, or null for what is not one to send (an abort, an api() error with a status: the hub has it). */
 export function pageError(e: unknown): PageError | null {
   if (e === null || e === undefined || isAbort(e)) return null;
-  const status = (e as { status?: unknown }).status;
-  if (typeof status === 'number' && (status < 500 || status === 503 || status === 504)) return null;
+  if (typeof (e as { status?: unknown }).status === 'number') return null;
   if (typeof e === 'object' && typeof (e as Error).message === 'string')
     return { name: String((e as Error).name || 'Error'), message: (e as Error).message, stack: typeof (e as Error).stack === 'string' ? (e as Error).stack : undefined };
   return { name: typeof e, message: `a ${typeof e} was thrown, not an Error` };
 }
 
 /**
- * api()'s failures: an answer of 5xx, or a fetch that did not reach the hub. 503 (an account offline, the manager not
- * reachable) and 504 (a timeout) are states the page shows, as the hub leaves them out of its own reports.
+ * api()'s failures: a fetch that did not reach the hub. An answer with a status is not sent: the hub wrote its own line
+ * for each 5xx (server.ts reportAnswer), and a 4xx is a refusal.
  */
 export function reportApiFailure(method: string, path: string, e: unknown, status?: number): void {
   if (isAbort(e)) return;
-  if (status !== undefined && (status < 500 || status === 503 || status === 504)) return;
+  if (status !== undefined) return;
   const what = `${method} ${apiTemplate(path)}`;
   const msg = status !== undefined ? `${what} answered ${status}` : `${what} failed: ${(e as Error)?.message ?? 'no answer'}`;
   reportPageError({ name: status !== undefined ? 'ApiError' : 'FetchError', message: msg, stack: (e as Error)?.stack, status }, e);

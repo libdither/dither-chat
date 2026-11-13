@@ -28,12 +28,12 @@ test('at most 20 a minute, the same one at most once a minute', () => {
   expect(l.allow('later', 130_001)).toBe(true);
 });
 
-test('not reported: an abort, a 4xx, a 503 or 504; reported: a 5xx, a plain throw', () => {
+test('not reported: an abort, an api() error with a status (the hub wrote it); reported: a plain throw', () => {
   expect(pageError(Object.assign(new Error('gone'), { name: 'AbortError' }))).toBeNull();
   expect(pageError(Object.assign(new Error('no'), { status: 404 }))).toBeNull();
   expect(pageError(Object.assign(new Error('offline'), { status: 503 }))).toBeNull();
   expect(pageError(Object.assign(new Error('slow'), { status: 504 }))).toBeNull();
-  expect(pageError(Object.assign(new Error('broke'), { status: 502 }))).toMatchObject({ name: 'Error', message: 'broke' });
+  expect(pageError(Object.assign(new Error('broke'), { status: 502 }))).toBeNull();
   expect(pageError(new TypeError('x is undefined'))).toMatchObject({ name: 'TypeError', message: 'x is undefined' });
   expect(pageError('typed text')).toEqual({ name: 'string', message: 'a string was thrown, not an Error' });
   expect(pageError(undefined)).toBeNull();

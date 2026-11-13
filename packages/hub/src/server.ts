@@ -173,14 +173,14 @@ export function mediaSigner(secret: string) {
   };
 }
 
-/** An error after the command went to the adapter: whether it was carried out is not known. */
 /**
  * A request answered with 5xx, as a line of traces/errors.ndjson: the route's template, the status, and the answer's
  * `error` (what the handler caught, an Error's message) when it is JSON. 503 (an account offline, the manager not
- * reachable: a state the page shows) and 504 (a timeout the page explains) are left out.
+ * reachable: a state the page shows) is left out. 504 is kept: one timeout is explained to you, but the same route
+ * timing out again and again is a bug, and the watcher's spike rule and ignore list tell the two apart.
  */
 async function reportAnswer(req: Request, route: string, res: Response, trace: string | undefined) {
-  if (res.status === 503 || res.status === 504) return;
+  if (res.status === 503) return;
   let message = `status ${res.status}`;
   try {
     if (res.headers.get('content-type')?.includes('json')) {
@@ -191,6 +191,7 @@ async function reportAnswer(req: Request, route: string, res: Response, trace: s
   reportError({ source: 'request', where: `${req.method} ${route}`, name: 'HttpError', message, status: res.status, trace });
 }
 
+/** An error after the command went to the adapter: whether it was carried out is not known. */
 const unknownOutcome = (e: unknown) => /timed out|disconnected mid/i.test(String((e as Error)?.message ?? e));
 
 /**
