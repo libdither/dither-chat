@@ -111,6 +111,7 @@ import { calendarOn } from '../plans.ts';
 import { PlanChipLazy } from './calendar/lazy.tsx';
 import { AltBadge, EmbedVideo, RichFoot, RichHead, RichMarks, Veil, veiled, Voice } from './rich/parts.tsx';
 import { VoicePeople } from './Ringing.tsx';
+import { ScheduledStrip, useSendExtras } from './SendExtras.tsx';
 
 
 // ------------------------------------------------------------------ header
@@ -1159,7 +1160,8 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       if (body !== m.body) void editMessage(m, body);
       return;
     }
-    send(targets.convId, body, { accountId: targets.accountId, replyTo: reply?.id, files: files.map((f) => f.file), uploads: files.map((f) => f.job!) });
+    send(targets.convId, body, { accountId: targets.accountId, replyTo: reply?.id, files: files.map((f) => f.file), uploads: files.map((f) => f.job!), ...extras.opts });
+    extras.sent();
     composerDone();
     type('');
     att.clear(true);
@@ -1168,6 +1170,21 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   };
   const canSend = !((!text.trim() && !files.length) || !!disabledReason || (att.failed && !edit));
   const sendTitle = att.failed && !edit ? 'A file did not upload: try it again or remove it' : undefined;
+  // Reply without a ping, send silently, send later (SendExtras.tsx, docs/sending.md).
+  const extras = useSendExtras({
+    conv,
+    sender,
+    reply,
+    canSend,
+    blocked: !!edit || !!disabledReason,
+    draft: async () => ({ body: text.trim(), attachments: (await Promise.all(files.map((f) => f.job!.settle()))).map((u) => u.id) }),
+    done: () => {
+      composerDone();
+      type('');
+      att.clear(true);
+      clearReply();
+    },
+  });
   const onText = (v: string) => {
     type(v);
     // Editing a sent message is not typing a new one.
@@ -1276,6 +1293,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
         void addFiles([...e.dataTransfer.files]);
       }}
     >
+      <ScheduledStrip conversationId={targets.convId} />
       {edit && (
         <div class="composer-reply">
           <Icon name="pencil" size={13} /> Editing your message
@@ -1288,6 +1306,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
         <div class="composer-reply">
           <Icon name="reply" size={13} /> Replying to <b>{isSelfIdentity(reply.authorId) ? 'yourself' : authorName(reply.authorId)}</b>
           <span>{plainBody(reply.body, reply.network).slice(0, 80)}</span>
+          {extras.replyToggle}
           <button class="icon-btn small" data-track="cancel reply" onClick={clearReply} aria-label="Cancel reply">
             <Icon name="x" size={13} />
           </button>
@@ -1364,6 +1383,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
               </button>
             )}
           </div>
+          {extras.button}
           {sendBtn}
         </div>
       ) : (
@@ -1383,6 +1403,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
             box
           )}
           {emojiBtn}
+          {extras.button}
           {sendBtn}
         </div>
       )}

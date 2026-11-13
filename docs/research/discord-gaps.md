@@ -69,15 +69,15 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 | Mark unread | MESSAGE_ACK with `manual: true` | markRead only | a | M | Hub has "Later" but cannot push an unread state back to Discord **done** (net-gaps): Mark Unread in the message menu (hub `unread.ts`) sends a manual ack; one made in Discord comes back as `read` with `manual` and moves the hub's read point back |
 | Bulk ack | BULK_ACK (`/read-states/ack-bulk`) | markRead one channel at a time | d | L | The hub's paced mark-all queue could use one request **done** (net-gaps): the read queue sends up to 50 per request (`markReadMany`) through the client's BULK_ACK |
 | Read-state sync for non-channel things (forum unread, guild events, profile) | USER_NON_CHANNEL_ACK, PROFILE_READ_STATE, FORUM_UNREADS | none | a | L | **not built**: L, and no forum unreads, event or profile read state in the hub to sync |
-| Saved messages / bookmarks | GET_SAVED_MESSAGES, PUT/DELETE_SAVED_MESSAGE, GET_BOOKMARKS, SAVED_MESSAGE_CREATE/DELETE, SAVED_MESSAGES_UPDATE | none | a | M | Pull them in as hub-side "kept"/marks; two-way sync is cheap. client-path |
-| Reminders ("Remind me") | MESSAGE_REMINDER_DUE, saved-messages `due_at` | none (hub has its own Later) | a | M | Could map onto dither's Later both ways |
-| Scheduled messages | SCHEDULED_MESSAGES (+ _SEND, _UPDATE, _DELETE), SCHEDULED_MESSAGE_DRAFT_CHANGE | none | a | M | Send later, natively (survives the hub being down). A hub-side send-later would work on every network |
+| Saved messages / bookmarks | GET_SAVED_MESSAGES, PUT/DELETE_SAVED_MESSAGE, GET_BOOKMARKS, SAVED_MESSAGE_CREATE/DELETE, SAVED_MESSAGES_UPDATE | none | a | M | Pull them in as hub-side "kept"/marks; two-way sync is cheap. client-path **done** (net-gaps): read when the list opens, Save Message / Remove From Saved through the client's own functions; kept beside the hub's marks, not mapped onto them ([sending.md](../sending.md)) |
+| Reminders ("Remind me") | MESSAGE_REMINDER_DUE, saved-messages `due_at` | none (hub has its own Later) | a | M | Could map onto dither's Later both ways **done** (net-gaps): Remind Me in the message menu, a due reminder notifies like an alert; not mapped onto Catch up's Later, which lasts a session ([sending.md](../sending.md)) |
+| Scheduled messages | SCHEDULED_MESSAGES (+ _SEND, _UPDATE, _DELETE), SCHEDULED_MESSAGE_DRAFT_CHANGE | none | a | M | Send later, natively (survives the hub being down). A hub-side send-later would work on every network **done** (net-gaps): the hub's Send later on every network (held when more than 30 min late), Discord's own read into the same list and cancellable where its experiment offers them; creating natively not built ([sending.md](../sending.md)) |
 | Send voice message | RECORD_VOICE_MESSAGE, IS_VOICE_MESSAGE upload with waveform | files only | a | L | |
 | Send stickers | STICKER_PACKS, `sticker_ids` on send | none | a | L | ROADMAP: later |
 | GIF picker | GIFS_SEARCH/TRENDING/SUGGEST (Tenor/Klipy) | none | a | L | Pasting a link already works |
-| Silent send (@silent) | SUPPRESS_NOTIFICATIONS on send | none | a | L | One flag in the send payload |
-| Reply without ping | `allowed_mentions.replied_user` (SET_PENDING_REPLY_SHOULD_MENTION) | hook sends `messageReference` only, so every reply pings | d | M | A toggle in the composer; one field in sendMessage options |
-| Suppress embeds on own message | MESSAGE patch flags 4 | none | a | L | |
+| Silent send (@silent) | SUPPRESS_NOTIFICATIONS on send | none | a | L | One flag in the send payload **done** (net-gaps): Send silently in the send menu, capability `silentSend` ([sending.md](../sending.md)) |
+| Reply without ping | `allowed_mentions.replied_user` (SET_PENDING_REPLY_SHOULD_MENTION) | hook sends `messageReference` only, so every reply pings | d | M | A toggle in the composer; one field in sendMessage options **done** (net-gaps): the reply bar's @ toggle, remembered per account, capability `replyMention` ([sending.md](../sending.md)) |
+| Suppress embeds on own message | MESSAGE patch flags 4 | none | a | L | **done** (net-gaps): Remove Embeds in the message menu ([sending.md](../sending.md)) |
 | Publish (crosspost) in announcement channel | MESSAGE_CROSSPOST | none | a | L | |
 | Create thread from message / in channel | CHANNEL_MESSAGE_THREADS, CHANNEL_THREADS (post) | reads threads only | b | M | |
 | Create forum post (title + tags) | CHANNEL_THREADS with `applied_tags`, FORUM_TAGS | none | a | M | Forums are read-only in dither |
@@ -87,9 +87,9 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 | Click a button / pick a select | INTERACTIONS (type 3), QUEUE_INTERACTION_COMPONENT_STATE | none | a | M | Needs components ingested first |
 | Modals from bots | INTERACTION_MODAL_CREATE, TEXT_INPUT, LABEL, FILE_UPLOAD | none | a | L | |
 | User-installed apps / context-menu commands | APPLICATION_COMMAND_INDEX_USER, type 23 | none | a | L | |
-| Report a message/user | REPORT_V2, GET_REPORT_MENU, SUBMIT_REPORT_MENU | none | a | L | Linking out to Discord is enough |
-| AI: translate, summarize thread, fix grammar, title | AI_TRANSLATE, AI_SUMMARIZE_THREAD, AI_FIX_GRAMMAR, AI_TEXT_TRANSFORM, AI_TITLE | none | a | L | The hub has local models; Discord's are gated and server-side |
-| Channel summaries ("conversations") | CHANNEL_SUMMARIES, CHANNEL_CONVERSATIONS (+ _MESSAGES), CONVERSATION_SUMMARY_UPDATE, RECEIVE_CHANNEL_SUMMARIES_BULK | none | a | M | Discord's own topic clustering of busy channels; could seed dither's catch-up for big servers. Gated per guild |
+| Report a message/user | REPORT_V2, GET_REPORT_MENU, SUBMIT_REPORT_MENU | none | a | L | Linking out to Discord is enough **done** (net-gaps): Report on Discord opens the message in Discord's app; no report request |
+| AI: translate, summarize thread, fix grammar, title | AI_TRANSLATE, AI_SUMMARIZE_THREAD, AI_FIX_GRAMMAR, AI_TEXT_TRANSFORM, AI_TITLE | none | a | L | The hub has local models; Discord's are gated and server-side **not built**: gated and server-side |
+| Channel summaries ("conversations") | CHANNEL_SUMMARIES, CHANNEL_CONVERSATIONS (+ _MESSAGES), CONVERSATION_SUMMARY_UPDATE, RECEIVE_CHANNEL_SUMMARIES_BULK | none | a | M | Discord's own topic clustering of busy channels; could seed dither's catch-up for big servers. Gated per guild **not built**: they come only when a channel is opened in Discord's own UI, behind a per-server gate |
 | Message edit while the hub thinks an older body | – | hub keeps edit log (message_event 'edit') | – | – | Not a gap |
 | Delete someone else's message (moderator) | MESSAGE del with MANAGE_MESSAGES | redact is own messages in UI? | d | L | Check whether the UI offers delete when the About says moderator |
 | Remove all reactions / one emoji (mod) | REMOVE_REACTIONS, REMOVE_EMOJI_REACTIONS | read only | b | L | |
@@ -236,12 +236,12 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 
 | Feature | Discord has | dither has | Class | Value | Notes |
 |---|---|---|---|---|---|
-| Message search, DMs-wide | SEARCH_TABS_DMS (`/users/@me/messages/search/tabs`) | search scope conversation/space/all; "all" across DMs? | d | M | Discord now searches all DMs in one request; the adapter searches one place at a time |
-| Search tabs (messages/media/files/links/pins) | SEARCH_TABS_CHANNEL/GUILD/DMS | one result list | d | L | |
-| Smart search (AI) | SMART_SEARCH (`/guilds/{id}/intelligence/search`) | none | a | L | Gated |
-| Suggested/recent searches synced | SUGGESTED_SEARCHES | dither keeps its own | – | – | |
+| Message search, DMs-wide | SEARCH_TABS_DMS (`/users/@me/messages/search/tabs`) | search scope conversation/space/all; "all" across DMs? | d | M | Discord now searches all DMs in one request; the adapter searches one place at a time **not built**: the request is made by a chunk not among those read, so its body is unknown; the hub asks each DM |
+| Search tabs (messages/media/files/links/pins) | SEARCH_TABS_CHANNEL/GUILD/DMS | one result list | d | L | **not built**: as DMs-wide search |
+| Smart search (AI) | SMART_SEARCH (`/guilds/{id}/intelligence/search`) | none | a | L | Gated **not built**: gated |
+| Suggested/recent searches synced | SUGGESTED_SEARCHES | dither keeps its own | – | – | **not built**: dither keeps its own |
 | Thread search | THREAD_SEARCH | used by `threads` | – | – | Done |
-| GIF/sticker/emoji search | GIFS_SEARCH, EMOJI_PACKS, TOP_EMOJIS_FOR_GUILD | emoji complete in composer; custom emoji in reaction picker | d | L | TOP_EMOJIS_FOR_GUILD could order dither's picker |
+| GIF/sticker/emoji search | GIFS_SEARCH, EMOJI_PACKS, TOP_EMOJIS_FOR_GUILD | emoji complete in composer; custom emoji in reaction picker | d | L | TOP_EMOJIS_FOR_GUILD could order dither's picker **done** (net-gaps) for emoji: the reaction picker orders each server's emoji by TopEmojiStore, no request; GIFs and stickers are media-kinds' |
 | Quick switcher (Ctrl+K) | QUICKSWITCHER_* | dither has its own | – | – | Not a gap |
 
 ## Nitro, monetization, social extras (low value; listed for completeness)
