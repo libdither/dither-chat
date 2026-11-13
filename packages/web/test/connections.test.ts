@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
-import { connectionLine, connections, connectionTags, linkKind, linksLine } from '../src/connections.ts';
+import { connectionLine, connections, connectionTags, linkKind, linksLine, withChanges } from '../src/connections.ts';
 
 const link = (accountId: string, identityId: string, relationship: P.LinkRelationship, x: Partial<P.PersonLinkView> = {}): P.PersonLinkView => ({ accountId, identityId, personId: 'per_a', relationship, since: null, ...x });
 const ids: Pick<P.IdentityView, 'id' | 'network'>[] = [
@@ -43,6 +43,12 @@ test('one way: You follow, Follows you (nothing to end), a request sent, blocked
   expect(connections(d, [], { i_d: { accountId: 'main', relationship: 'requesting' } })).toEqual([]);
 });
 
+test("two X accounts: the hub's follow from the older one's profile counts, though the newest answer is the other's", () => {
+  const x = [{ id: 'i_x', network: 'x' as const }];
+  const list = connections(x, [link('xb', 'i_x', 'following', { followsYou: true, from: 'profile', seenAt: 1 })], { i_x: { accountId: 'xa', relationship: 'stranger', followsYou: false } });
+  expect(list.map((c) => [c.kind, c.accountId, connectionLine(c)])).toEqual([['friend', 'xb', 'You follow each other on X']]);
+});
+
 test("a follow on an account's list is mutual when its profile or the hub's list says they follow back", () => {
   const x = [{ id: 'i_x', network: 'x' as const }];
   expect(connections(x, [link('xa', 'i_x', 'following', { followsYou: true })], {})[0].kind).toBe('friend');
@@ -66,4 +72,24 @@ test("People's rows: a mutual follow is a friend, and a row says what it is when
   expect(linksLine([link('tg', 'i', 'contact'), link('sig', 'i', 'contact')], net)).toBe('Contacts on Telegram and Signal');
   expect(linksLine([link('main', 'i', 'friend'), link('tg', 'i', 'contact')], net)).toBe('On Discord and Telegram');
   expect(linksLine([link('gone', 'i', 'friend')], net)).toBe('');
+});
+
+test('what the page changed: an ended link is gone, and what comes after it shows (Remove friend, then Add friend)', () => {
+  const d = [{ id: 'i_d', network: 'discord' as const }];
+  const links = [link('main', 'i_d', 'friend'), link('alt', 'i_d', 'friend')];
+  const abouts = { i_d: { accountId: 'main', relationship: 'friend' as const } };
+  const ended = withChanges(links, abouts, { 'main|i_d': 'stranger' });
+  expect(connections(d, ended.links, ended.abouts).map((c) => [c.kind, c.accountId])).toEqual([['friend', 'alt']]);
+  // Add friend on main again: the network says requested.
+  const again = withChanges(links, abouts, { 'main|i_d': 'requested' });
+  expect(connections(d, again.links, again.abouts).map((c) => [c.kind, c.accountId])).toEqual([
+    ['friend', 'alt'],
+    ['requested', 'main'],
+  ]);
+  expect(connectionTags(connections(d, again.links, again.abouts)).map((t) => t.label)).toEqual(['Friend', 'Request sent']);
+  // Unblock, then Add friend.
+  const owl = withChanges([link('main', 'i_d', 'blocked')], { i_d: { accountId: 'main', relationship: 'blocked' as const } }, { 'main|i_d': 'requested' });
+  expect(connections(d, owl.links, owl.abouts).map((c) => c.kind)).toEqual(['requested']);
+  // Nothing changed: as fetched.
+  expect(withChanges(links, abouts, {})).toEqual({ links, abouts });
 });

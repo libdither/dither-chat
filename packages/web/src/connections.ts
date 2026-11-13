@@ -62,6 +62,24 @@ export function connections(
 }
 
 /**
+ * What the page itself changed since the profile was fetched, laid over it: `changed` is the newest word per
+ * `account|identity` (stranger once ended; requested, friend and the like once made). A list entry of that pair is
+ * stale then and left out, and that account's profile answer says the new word. So Remove friend and then Add friend
+ * says Request sent, not nothing.
+ */
+export function withChanges<A extends Pick<P.PersonAboutView, 'accountId' | 'relationship'>>(
+  links: readonly P.PersonLinkView[],
+  abouts: Record<string, A | undefined>,
+  changed: Record<string, P.PersonRelationship>,
+): { links: P.PersonLinkView[]; abouts: Record<string, A | undefined> } {
+  const key = (accountId: string | null, identityId: string) => (accountId ? changed[`${accountId}|${identityId}`] : undefined);
+  return {
+    links: links.filter((l) => key(l.accountId, l.identityId) === undefined),
+    abouts: Object.fromEntries(Object.entries(abouts).map(([k, a]) => [k, a && key(a.accountId, k) !== undefined ? { ...a, relationship: key(a.accountId, k) } : a])),
+  };
+}
+
+/**
  * One connection in words, saying the network's own kind of it: "Friends on Discord", "You follow each other on
  * X", "In your Telegram contacts", "You follow them on X", "Follows you on X", "Friend request sent on Discord",
  * "Blocked on Discord".

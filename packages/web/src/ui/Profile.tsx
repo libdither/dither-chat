@@ -5,7 +5,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { RELATIONSHIP_LABEL, withList } from '@dither-chat/protocol';
-import { connections, connectionTags, type Connection } from '../connections.ts';
+import { connections, connectionTags, withChanges, type Connection } from '../connections.ts';
 import { useEffect, useState } from 'preact/hooks';
 import { ago, fullTime } from '../format.ts';
 import { bioEditor, bioLeft } from '../bio.ts';
@@ -315,9 +315,11 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const [merging, setMerging] = useState(false);
   // The hero's pencil, for a person of one account: its nickname (Nickname.tsx).
   const [naming, setNaming] = useState(false);
-  // Links ended from this page (`account|identity`), until the profile is fetched again.
-  const [ended, setEnded] = useState<string[]>([]);
-  useEffect(() => setEnded([]), [personId, identityId]);
+  // How this page changed where an account stands with them (`account|identity` → the newest word), until the profile
+  // is fetched again: ended (stranger), or made (Add friend, Accept). connections.ts withChanges.
+  const [changed, setChanged] = useState<Record<string, P.PersonRelationship>>({});
+  useEffect(() => setChanged({}), [personId, identityId]);
+  const change = (accountId: string | null, identityId: string, rel: P.PersonRelationship) => accountId && setChanged((x) => ({ ...x, [`${accountId}|${identityId}`]: rel }));
   const [filter, setFilter] = useState('');
   const person = personId ? db.persons.get(personId) : undefined;
   // The hub's merge search: people by any name or handle (an email address too), and email identities no person holds.
@@ -438,15 +440,9 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       return !seen.has(k) && seen.add(k);
     });
   const facts = said.flatMap((a) => (a.facts ?? []).map((f) => ({ ...f, network: a.network })));
-  // How your accounts stand with them, in one vocabulary (connections.ts); one ended here is gone until fetched again.
-  const isEnded = (accountId: string | null, identityId: string) => !!accountId && ended.includes(`${accountId}|${identityId}`);
-  const conns = isSelf
-    ? []
-    : connections(
-        ids,
-        (profile.links ?? []).filter((l) => !isEnded(l.accountId, l.identityId)),
-        Object.fromEntries(Object.entries(abouts).map(([k, a]) => [k, a && isEnded(a.accountId, k) ? { ...a, relationship: 'stranger' as const } : a])),
-      );
+  // How your accounts stand with them, in one vocabulary (connections.ts), with what this page changed laid over it.
+  const now = withChanges(profile.links ?? [], abouts, changed);
+  const conns = isSelf ? [] : connections(ids, now.links, now.abouts);
   const askedBy = said.filter((a) => a.relationship === 'requesting');
 
   // ---- merging
@@ -586,22 +582,24 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           {isSelf && <Tag tone="accent">You</Tag>}
           {first?.isBot && <Tag tone="muted">Bot</Tag>}
           {pronouns && <Tag>{pronouns}</Tag>}
-          {/* One tag per kind of connection, with the networks it is on: Friend (Discord, X), Contact (Telegram, Signal). */}
+          {/* The words a tag stands for ("Friends on Discord; You follow each other on X") are its hover and, hidden, what a screen reader says. */}
           {connectionTags(conns).map((t) => (
-            <Tag icon={t.kind === 'friend' ? 'users' : t.kind === 'blocked' ? 'x' : 'user'} tone={t.kind === 'friend' ? 'accent' : t.kind === 'blocked' ? 'warn' : undefined} title={t.title} kind={t.kind}>
+            <Tag icon={t.kind === 'friend' ? 'users' : t.kind === 'blocked' ? 'x' : 'user'} tone={t.kind === 'friend' ? 'accent' : t.kind === 'blocked' ? 'warn' : undefined} title={t.title} kind={t.kind} networks={t.networks}>
               {t.label}
               {t.networks.map((n) => (
-                <NetGlyph network={n} size={11} />
+                <NetGlyph network={n} size={11} decorative />
               ))}
+              <span class="sr-only">: {t.title}</span>
             </Tag>
           ))}
           {/* They asked you: a request, not a connection yet; Accept and Decline are in the row below. */}
           {!isSelf && askedBy.length > 0 && (
-            <Tag icon="userPlus" tone="accent" title={`Wants to be friends on ${askedBy.map((a) => netName(a.network)).join(' and ')}`} kind="requesting">
+            <Tag icon="userPlus" tone="accent" title={`Wants to be friends on ${askedBy.map((a) => netName(a.network)).join(' and ')}`} kind="requesting" networks={askedBy.map((a) => a.network)}>
               {RELATIONSHIP_LABEL.requesting}
               {askedBy.map((a) => (
-                <NetGlyph network={a.network} size={11} />
+                <NetGlyph network={a.network} size={11} decorative />
               ))}
+              <span class="sr-only"> on {askedBy.map((a) => netName(a.network)).join(' and ')}</span>
             </Tag>
           )}
         </>
@@ -617,7 +615,16 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       actions={
         <>
           {!isSelf && messageOptions > 0 && (messageOptions === 1 ? <Action primary icon="send" label="Message" onClick={message} /> : <Action primary icon="send" label="Message" menu={messageMenu} />)}
-          {!isSelf && <ConnectActions identities={ids} abouts={abouts} onChanged={learn} />}
+          {!isSelf && (
+            <ConnectActions
+              identities={ids}
+              abouts={abouts}
+              onChanged={(a) => {
+                if (a.relationship) change(a.accountId, a.identityId, a.relationship);
+                learn(a);
+              }}
+            />
+          )}
           {directs.length > 1 && person && <Action icon="merge" label="All chats" onClick={() => go({ view: 'people', person: person.id })} />}
           <Action icon="more" label="More" menu={moreMenu} />
         </>
@@ -902,7 +909,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           ids={ids}
           list={conns}
           onEnded={(identityId, accountId) => {
-            setEnded((x) => [...x, `${accountId}|${identityId}`]);
+            change(accountId, identityId, 'stranger');
             const a = abouts[identityId];
             if (a && a.accountId === accountId) learn({ ...a, relationship: 'stranger' });
           }}

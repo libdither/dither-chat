@@ -633,6 +633,9 @@ CREATE TABLE IF NOT EXISTS about (
   fetched_at INTEGER NOT NULL,
   PRIMARY KEY (target_id, account_id)
 ) WITHOUT ROWID;
+-- People's Friends and Following read the follows in kept profiles (add.ts profileFollows, docs/profile.md
+-- "Connections"): only these rows, not every profile with its posts. The query repeats this WHERE to use it.
+CREATE INDEX IF NOT EXISTS about_following ON about(account_id) WHERE json_extract(data, '$.relationship') = 'following';
 
 -- History (docs/history.md). What changed about places and people: old and new as JSON, who did it when the
 -- network says. Message-level history lives in message_event and receipt, which go with their message.

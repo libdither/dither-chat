@@ -363,8 +363,7 @@ export function ConnectActions({ identities, abouts, onChanged }: { identities: 
     if (!about || !rel) return [];
     if (rel.kind === 'connect') {
       const key = `${i.id}:${rel.action}`;
-      // Someone who follows you is followed back (connections.ts: the two of you become Friends).
-      const word = rel.action === 'follow' && about.followsYou ? 'Follow back' : ACTION_LABEL[rel.action];
+      const word = ACTION_LABEL[rel.action];
       return [
         <Action
           icon={CONNECT_ICON[rel.action]}
@@ -587,30 +586,42 @@ export function ProfileConnections({ identities, list, onEnded }: { identities: 
     <div class="pf-links-list">
       {kinds.map((kind) => (
         <div class="pf-conn-group" data-kind={kind}>
-          {kinds.length > 1 && <h4 class="pf-conn-title">{CONNECTION_TITLE[kind].group}</h4>}
-          {list
-            .filter((c) => c.kind === kind)
-            .map((x) => {
-              const account = db.accounts.get(x.accountId);
-              const since = x.since !== null && Number.isFinite(x.since) ? ` · since ${new Date(x.since).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}` : '';
-              return (
-                <div class="pf-link-row" data-rel={x.ends ?? 'follower'} data-kind={x.kind} data-network={x.network} data-account={x.accountId}>
-                  <NetBadge network={x.network} size={22} />
-                  <span class="pf-link-what">
-                    <b>{connectionLine(x)}</b>
-                    <small>
-                      {account && <span class="acc-dot" style={{ background: account.color }} />}
-                      {account ? `${several ? `${theirs(x.identityId)} ⇄ ` : ''}${account.label}${since}` : 'an account no longer here'}
-                    </small>
-                  </span>
-                  {x.ends && canRemove(account) && (
-                    <button class="btn ghost small" data-remove={x.ends} onClick={() => setEnding({ identityId: x.identityId, accountId: x.accountId, relationship: x.ends! })}>
-                      {REMOVE_LABEL[x.ends]}
-                    </button>
-                  )}
-                </div>
-              );
-            })}
+          {kinds.length > 1 && (
+            <h4 class="pf-conn-title" aria-hidden="true">
+              {CONNECTION_TITLE[kind].group}
+            </h4>
+          )}
+          <ul class="pf-conn-list" aria-label={CONNECTION_TITLE[kind].group}>
+            {list
+              .filter((c) => c.kind === kind)
+              .map((x) => {
+                const account = db.accounts.get(x.accountId);
+                const since = x.since !== null && Number.isFinite(x.since) ? ` · since ${new Date(x.since).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}` : '';
+                return (
+                  <li class="pf-link-row" data-rel={x.ends ?? 'follower'} data-kind={x.kind} data-network={x.network} data-account={x.accountId}>
+                    <NetBadge network={x.network} size={22} />
+                    <span class="pf-link-what">
+                      <b>{connectionLine(x)}</b>
+                      <small>
+                        {account && <span class="acc-dot" style={{ background: account.color }} />}
+                        {account ? `${several ? `${theirs(x.identityId)} ⇄ ` : ''}${account.label}${since}` : 'an account no longer here'}
+                      </small>
+                    </span>
+                    {x.ends && account && canRemove(account) && (
+                      // Two Discord accounts give two of the same button: each names its account.
+                      <button
+                        class="btn ghost small"
+                        data-remove={x.ends}
+                        aria-label={`${REMOVE_LABEL[x.ends]} on ${netName(x.network)} ${account.label}${several ? `, ${theirs(x.identityId)}` : ''}`}
+                        onClick={() => setEnding({ identityId: x.identityId, accountId: x.accountId, relationship: x.ends! })}
+                      >
+                        {REMOVE_LABEL[x.ends]}
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+          </ul>
         </div>
       ))}
       {ending && <RemoveDialog {...ending} onClose={() => setEnding(null)} onDone={() => onEnded(ending.identityId, ending.accountId)} />}
@@ -759,9 +770,9 @@ function LinkRowView({ row, relationship, active, dots, onEnd }: { row: LinkRow;
             {name}
           </span>
           {nets.length > 1 && (
-            <span class="plink-nets" aria-label={nets.map(netName).join(', ')}>
+            <span class="plink-nets" role="img" aria-label={`On ${nets.map(netName).join(' and ')}`}>
               {nets.map((n) => (
-                <NetGlyph network={n} size={11} />
+                <NetGlyph network={n} size={11} decorative />
               ))}
             </span>
           )}

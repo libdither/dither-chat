@@ -12795,11 +12795,32 @@ button.msg-edited.link:hover {
 .link-banner .request-answers .btn-row {
   flex-wrap: wrap;
 }
+/* Said to a screen reader, not shown: what a tag or a mark stands for. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
 /* A profile's Connections (connections.ts): grouped by kind, a row per account with its network's badge. */
 .pf-links-list {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.pf-conn-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .pf-conn-group {
   display: flex;

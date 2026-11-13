@@ -102,10 +102,13 @@ export function Card({ title, icon, count, extra, children, class: cls }: { titl
   );
 }
 
-/** A tag under the hero's name. `kind`: its data-kind, for scripts (a connection's kind, connections.ts). */
-export function Tag({ icon, children, tone, title, kind }: { icon?: string; children: ComponentChildren; tone?: 'accent' | 'warn' | 'muted'; title?: string; kind?: string }) {
+/**
+ * A tag under the hero's name. `kind` and `networks`: its data-kind and data-networks, for scripts (a connection's
+ * kind and where it is, connections.ts).
+ */
+export function Tag({ icon, children, tone, title, kind, networks }: { icon?: string; children: ComponentChildren; tone?: 'accent' | 'warn' | 'muted'; title?: string; kind?: string; networks?: string[] }) {
   return (
-    <span class={`pf-tag ${tone ?? ''}`} title={title} data-kind={kind}>
+    <span class={`pf-tag ${tone ?? ''}`} title={title} data-kind={kind} data-networks={networks?.join(' ')}>
       {icon && <Icon name={icon} size={11} />}
       {children}
     </span>

@@ -10,10 +10,13 @@
  * Following, from the profiles X showed; a profile's hero has one tag per kind with the networks it is on (Friend
  * with Discord and X, Contact with Telegram, Signal and WhatsApp), and no button that only says how you stand; its
  * Connections card groups each account's connection by kind in the network's own words ("You follow each other on
- * X"), with Remove friend where the account can; About keeps the follower counts and no longer says Follows you;
- * one-way follows, a request sent and a block read the same way; Follow back for someone who follows you; People's
- * Friends has the X mutuals beside the Discord friends and Following has the follows; nothing sideways on a phone;
- * nothing sent to any network; no script errors.
+ * X"), as lists, with Remove friend where the account can, each button named for its account, and no Unfollow or
+ * Follow on X, which cannot; the tags have their words for a screen reader; About keeps the follower counts and no
+ * longer says Follows you; one-way follows, a request sent and a block read the same way; People's Friends has the X
+ * mutuals beside the Discord friends and Following has the follows; nothing sideways on a phone; nothing sent to any
+ * network (X's writeLog, every other account's addLog) until, clicked: Remove friend on Jordan and Unblock on Owl,
+ * each then Add friend, which says Request sent, and the networks got exactly a remove and an add each; no script
+ * errors.
  */
 import { mkdirSync, mkdtempSync, openSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -80,16 +83,23 @@ const load = async (hash: string) => {
   await page.goto('about:blank');
   await page.goto(`${base}/${hash}`);
 };
-/** A profile, once the networks have answered. */
+/** A profile, once the networks have answered. A tag's words leave out what only a screen reader hears (`said`). */
 const profile = async (hash: string) => {
   await load(hash);
   await page.until(`!!document.querySelector('.pf-hero, .pf-tags') && !document.querySelector('.pf-asking')`, 20000);
   await Bun.sleep(300);
   return page.eval<any>(`({
-    tags: [...document.querySelectorAll('.pf-tags .pf-tag[data-kind]')].map((t) => ({ kind: t.dataset.kind, text: t.textContent, nets: [...t.querySelectorAll('svg.net-glyph')].map((s) => s.getAttribute('aria-label')) })),
+    tags: [...document.querySelectorAll('.pf-tags .pf-tag[data-kind]')].map((t) => ({
+      kind: t.dataset.kind,
+      text: [...t.childNodes].filter((n) => !n.classList?.contains('sr-only')).map((n) => n.textContent).join(''),
+      nets: t.dataset.networks,
+      said: t.querySelector('.sr-only')?.textContent ?? null,
+      glyphsHidden: [...t.querySelectorAll('svg.net-glyph')].every((s) => s.getAttribute('aria-hidden') === 'true'),
+    })),
     title: document.querySelector('.pf-standing h3')?.textContent ?? null,
     groups: [...document.querySelectorAll('.pf-standing .pf-conn-group')].map((g) => g.dataset.kind),
-    rows: [...document.querySelectorAll('.pf-standing .pf-link-row')].map((r) => ({ kind: r.dataset.kind, net: r.dataset.network, account: r.dataset.account, text: r.querySelector('b').textContent, remove: r.querySelector('[data-remove]')?.textContent ?? null })),
+    lists: [...document.querySelectorAll('.pf-standing .pf-conn-group')].map((g) => g.querySelector('ul')?.getAttribute('aria-label') ?? null),
+    rows: [...document.querySelectorAll('.pf-standing .pf-link-row')].map((r) => ({ kind: r.dataset.kind, net: r.dataset.network, account: r.dataset.account, item: r.tagName === 'LI' && r.parentElement.tagName === 'UL', text: r.querySelector('b').textContent, remove: r.querySelector('[data-remove]')?.textContent ?? null, label: r.querySelector('[data-remove]')?.getAttribute('aria-label') ?? null })),
     stateButtons: document.querySelectorAll('.pf-action[data-action="relationship"]').length,
     follow: document.querySelector('.pf-action[data-action="follow"]')?.textContent ?? null,
     counts: document.querySelector('.pf-follow')?.textContent ?? '',
@@ -113,12 +123,15 @@ try {
   await page.size(1280, 1000);
   let p = await profile(`#/p/${alice.id}`);
   const tag = (kind: string) => p.tags.find((t: any) => t.kind === kind);
-  check('the hero: one Friend tag, on Discord and X', tag('friend')?.text === 'Friend' && tag('friend').nets.join() === 'Discord,X', p.tags);
-  check('…and one Contact tag, on Telegram, Signal and WhatsApp', tag('contact')?.text === 'Contact' && ['Telegram', 'Signal', 'WhatsApp'].every((n) => tag('contact').nets.includes(n)), p.tags);
+  check('the hero: one Friend tag, on Discord and X', tag('friend')?.text === 'Friend' && tag('friend').nets === 'discord x', p.tags);
+  check('…and one Contact tag, on Telegram, Signal and WhatsApp', tag('contact')?.text === 'Contact' && ['telegram', 'signal', 'whatsapp'].every((n) => tag('contact').nets.split(' ').includes(n)), p.tags);
+  check('…each named in words for a screen reader, its marks hidden', tag('friend').said === ': Friends on Discord; You follow each other on X' && p.tags.every((t: any) => t.said && t.glyphsHidden), p.tags);
   check('no button that only says how you stand (Following, Request sent)', p.stateButtons === 0, p.stateButtons);
   check('Connections, grouped by kind: Friends then Contacts', p.title?.startsWith('Connections') && p.groups.join() === 'friend,contact', p.groups);
+  check('…each group a list named for its kind, a row an item', p.lists.join() === 'Friends,Contacts' && p.rows.every((r: any) => r.item), p.lists);
   const fr = p.rows.filter((r: any) => r.kind === 'friend');
-  check("Friends: Discord on both accounts with Remove friend, and X in X's words", fr.length === 3 && fr.filter((r: any) => r.net === 'discord' && r.text === 'Friends on Discord' && r.remove === 'Remove friend').length === 2 && fr.some((r: any) => r.net === 'x' && r.text === 'You follow each other on X' && r.remove === null), fr);
+  check("Friends: Discord on both accounts with Remove friend, and X in X's words, with no Unfollow (X cannot)", fr.length === 3 && fr.filter((r: any) => r.net === 'discord' && r.text === 'Friends on Discord' && r.remove === 'Remove friend').length === 2 && fr.some((r: any) => r.net === 'x' && r.text === 'You follow each other on X' && r.remove === null), fr);
+  check('…the two Remove friend buttons named apart, by account', fr.filter((r: any) => r.label).map((r: any) => r.label).sort().join(' | ') === 'Remove friend on Discord alt, alice.chen | Remove friend on Discord main, alice.chen', fr.map((r: any) => r.label));
   const ct = p.rows.filter((r: any) => r.kind === 'contact');
   check('Contacts: each address book in its own words', ct.length === 3 && ct.some((r: any) => r.text === 'In your Telegram contacts' && r.remove === 'Remove contact') && ct.some((r: any) => r.text === 'In your Signal contacts'), ct);
   check('About keeps the counts as facts, and no Follows you', /2,310 followers/.test(p.counts) && !/Follows you/.test(p.counts), p.counts);
@@ -126,13 +139,14 @@ try {
 
   // ------------------------------------------------------------------ one network: X
   p = await profile(`#/i/${nora.id}`);
-  check('Nora on X: a Friend, as you follow each other', p.tags.length === 1 && tag('friend')?.nets.join() === 'X' && p.rows.length === 1 && p.rows[0].text === 'You follow each other on X', p);
+  check('Nora on X: a Friend, as you follow each other', p.tags.length === 1 && tag('friend')?.nets === 'x' && p.rows.length === 1 && p.rows[0].text === 'You follow each other on X', p);
   check('…with no Following button', p.stateButtons === 0 && p.follow === null, p);
   if (shots) await page.shot(join(shots, 'connections-nora-desktop.png'));
   p = await profile(`#/i/${quinn.id}`);
   check('Quinn: You follow, one way', tag('following')?.text === 'You follow' && p.rows.length === 1 && p.rows[0].text === 'You follow them on X', p);
   p = await profile(`#/i/${raviX.id}`);
-  check('Ravi on X: Follows you, with Follow back', tag('follower')?.text === 'Follows you' && p.rows[0]?.text === 'Follows you on X' && p.rows[0]?.remove === null && /^Follow back/.test(p.follow ?? ''), p);
+  // X cannot follow from here (no connect capability), so no Follow back, nor a button that would fail.
+  check('Ravi on X: Follows you, and no Follow button X could not carry out', tag('follower')?.text === 'Follows you' && p.rows[0]?.text === 'Follows you on X' && p.rows[0]?.remove === null && p.follow === null, p);
   if (shots) await page.shot(join(shots, 'connections-follows-you-desktop.png'));
   p = await profile(`#/i/${mara.id}`);
   check('Mara: Request sent, with Cancel request', tag('requested')?.text === 'Request sent' && p.rows[0]?.text === 'Friend request sent on Discord' && p.rows[0]?.remove === 'Cancel request', p);
@@ -146,13 +160,13 @@ try {
     await page.eval(`document.querySelector('.people-chips [data-filter="${filter}"]').click()`);
     await page.until(`document.querySelectorAll('.plink-row').length > 0`, 15000);
     await Bun.sleep(200);
-    return page.eval<any[]>(`[...document.querySelectorAll('.plink-row')].map((r) => ({ id: r.dataset.plink, name: r.querySelector('.row-title').textContent, kinds: r.dataset.kinds, line: r.querySelector('.row-preview').textContent, nets: [...r.querySelectorAll('.plink-nets svg')].map((s) => s.getAttribute('aria-label')) }))`);
+    return page.eval<any[]>(`[...document.querySelectorAll('.plink-row')].map((r) => { const n = r.querySelector('.plink-nets'); return { id: r.dataset.plink, name: r.querySelector('.row-title').textContent, kinds: r.dataset.kinds, line: r.querySelector('.row-preview').textContent, nets: n ? { role: n.getAttribute('role'), label: n.getAttribute('aria-label'), hidden: [...n.querySelectorAll('svg')].every((s) => s.getAttribute('aria-hidden') === 'true') } : null }; })`);
   };
   let rows = await people('friend');
   const noraRow = rows.find((r) => r.id === nora.id);
   const aliceRow = rows.find((r) => r.name === 'Alice Chen');
   check("People's Friends: Nora, as you follow each other on X", !!noraRow && noraRow.kinds === 'friend' && noraRow.line === 'You follow each other on X', noraRow);
-  check('…and Alice once, a friend on Discord and X', !!aliceRow && aliceRow.nets.join() === 'Discord,X' && rows.filter((r) => r.name === 'Alice Chen').length === 1, aliceRow);
+  check('…and Alice once, a friend on Discord and X, the marks one image named in words', !!aliceRow && aliceRow.nets?.role === 'img' && aliceRow.nets.label === 'On Discord and X' && aliceRow.nets.hidden && rows.filter((r) => r.name === 'Alice Chen').length === 1, aliceRow);
   if (shots) await page.shot(join(shots, 'people-friends-desktop.png'));
   rows = await people('following');
   check("People's Following: Quinn, Nora and Alice", rows.length === 3 && rows.some((r) => r.id === quinn.id && r.kinds === 'following'), rows);
@@ -160,7 +174,7 @@ try {
   // ------------------------------------------------------------------ a phone
   await page.size(390, 844, true);
   p = await profile(`#/p/${alice.id}`);
-  check('on a phone: the same tags and Connections', tag('friend')?.nets.join() === 'Discord,X' && p.rows.length === 6, p.tags);
+  check('on a phone: the same tags and Connections', tag('friend')?.nets === 'discord x' && p.rows.length === 6, p.tags);
   if (shots) await page.shot(join(shots, 'connections-alice-phone-hero.png'));
   await page.eval(`document.querySelector('.pf-standing').scrollIntoView({ block: 'start' })`);
   await Bun.sleep(300);
@@ -172,10 +186,43 @@ try {
   if (shots) await page.shot(join(shots, 'people-friends-phone.png'));
 
   // ------------------------------------------------------------------ nothing went out
-  const sends = (await action('acc_demo-x', 'sendLog')).result?.sent ?? null;
-  const adds = await Promise.all(['acc_demo-discord-main', 'acc_demo-discord-alt', 'acc_demo-telegram'].map((a) => action(a, 'addLog').then((r) => r.result)));
-  check('nothing sent to X', Array.isArray(sends) && !sends.length, sends);
-  check('nothing added, answered or removed on any account', adds.every((r: any) => r && !r.add && !r.answer && !r.remove), adds);
+  // X: every command that is not a read (writeLog: markRead, send, add, remove…); the rest: what Add and Remove sent.
+  const writes = async () => (await action('acc_demo-x', 'writeLog')).result?.writes ?? null;
+  const others = boot.accounts.map((a: any) => a.id).filter((id: string) => id !== 'acc_demo-x');
+  const addLogs = async () => Object.fromEntries(await Promise.all(others.map(async (id: string) => [id, (await action(id, 'addLog')).result] as const)));
+  const counted = (r: any) => !!r && ['resolve', 'add', 'answer', 'remove'].every((k) => typeof r[k] === 'number');
+  let xw = await writes();
+  check('nothing sent to X: no command but reads', Array.isArray(xw) && xw.length === 0, xw);
+  let logs = await addLogs();
+  check('nothing added, answered or removed on any other account', others.length >= 5 && Object.values(logs).every((r: any) => counted(r) && !r.add && !r.answer && !r.remove), logs);
+
+  // ------------------------------------------------------------------ ending one, then making another (clicked)
+  await page.size(1280, 1000);
+  const endThenAdd = async (who: any, rel: string, what: string) => {
+    const asker = (await json(`/api/identities/${who.id}/about`)).accountId;
+    await profile(`#/i/${who.id}`);
+    const row = `.pf-standing .pf-link-row[data-account="${asker}"][data-rel="${rel}"]`;
+    await page.eval(`document.querySelector(${JSON.stringify(`${row} [data-remove]`)}).click()`);
+    await page.until(`!!document.querySelector('[data-confirm-remove="${rel}"]')`, 5000);
+    await page.eval(`document.querySelector('[data-confirm-remove="${rel}"]').click()`);
+    await page.until(`!document.querySelector(${JSON.stringify(row)}) && !!document.querySelector('.pf-action[data-action="friend"]')`, 10000);
+    check(`${what}: ended, its row goes and Add friend comes`, true);
+    await page.eval(`document.querySelector('.pf-action[data-action="friend"]').click()`);
+    await page.until(`!!document.querySelector('.pf-tag[data-kind="requested"]')`, 10000).catch(() => {});
+    const after = await page.eval<any>(`({ tag: !!document.querySelector('.pf-tag[data-kind="requested"]'), row: document.querySelector('.pf-standing .pf-link-row[data-kind="requested"][data-account="${asker}"] b')?.textContent ?? null })`);
+    check(`${what}, then Add friend: Request sent in the hero and in Connections`, after.tag && after.row === 'Friend request sent on Discord', after);
+    return asker;
+  };
+  const jordan = boot.identities.find((i: any) => i.network === 'discord' && i.displayName === 'Jordan');
+  const a1 = await endThenAdd(jordan, 'friend', 'Jordan: Remove friend');
+  if (shots) await page.shot(join(shots, 'connections-removed-then-added-desktop.png'));
+  const a2 = await endThenAdd(owl, 'blocked', 'Owl: Unblock');
+  logs = await addLogs();
+  const sent = (id: string) => logs[id] ?? {};
+  const want = (id: string) => [a1, a2].filter((a) => a === id).length;
+  check('…and the networks were sent exactly those: a remove and an add each, nothing else', others.every((id: string) => sent(id).remove === want(id) && sent(id).add === want(id) && !sent(id).answer), logs);
+  xw = await writes();
+  check('…and still nothing to X', Array.isArray(xw) && xw.length === 0, xw);
 
   const errors = page.errors.filter((e) => !/WebSocket connection|Failed to load resource/.test(e));
   check('no script errors', !errors.length, errors);

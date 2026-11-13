@@ -217,7 +217,15 @@ export function keepAbout(store: Store, identityId: string, accountId: string, n
   if (unasked) {
     if (k && k.at >= at) return false;
     const { posts: _, ...seen } = about;
-    about = { ...seen, ...(k?.about.posts ? { posts: k.about.posts } : {}), unasked: true } as Kept;
+    // How this account and they follow each other (docs/profile.md "Connections"): a profile seen in passing that
+    // does not say keeps what this account's last one said, until a profile asked for says otherwise.
+    const mine = s.one<Row>('SELECT data FROM about WHERE target_id = ? AND account_id = ?', identityId, accountId);
+    const last = mine ? (JSON.parse(mine.data) as Kept) : null;
+    const follows = {
+      ...(seen.relationship === undefined && last?.relationship !== undefined ? { relationship: last.relationship } : {}),
+      ...(seen.followsYou === undefined && last?.followsYou !== undefined ? { followsYou: last.followsYou } : {}),
+    };
+    about = { ...seen, ...follows, ...(k?.about.posts ? { posts: k.about.posts } : {}), unasked: true } as Kept;
   }
   // What their profile said before, if it says something else now (docs/history.md).
   if (k)

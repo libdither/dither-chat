@@ -131,28 +131,44 @@ friends and twitter follows should be similar kinds of things"). Code: `packages
 
 | Kind | What it covers | The row says | Ends with |
 |---|---|---|---|
-| **Friend** | a Discord friend; an X (or Instagram) account you follow and that follows you | Friends on Discord · You follow each other on X | Remove friend · Unfollow |
+| **Friend** | a Discord friend; an X (or Instagram) account you follow and that follows you | Friends on Discord · You follow each other on X | Remove friend · (Unfollow, once X can) |
 | **Contact** | in your Telegram, Signal or WhatsApp address book (Google Messages too) | In your Telegram contacts | Remove contact |
-| **You follow** | you follow them, they do not follow you | You follow them on X | Unfollow |
-| **Follows you** | they follow you, you do not follow them | Follows you on X | nothing (Follow back is in the hero) |
+| **You follow** | you follow them, they do not follow you | You follow them on X | (Unfollow, once X can) |
+| **Follows you** | they follow you, you do not follow them | Follows you on X | nothing |
 | **Request sent** | a friend request of yours waiting | Friend request sent on Discord | Cancel request |
 | **Blocked** | blocked | Blocked on Discord | Unblock |
 
 - **Each stays per account**: one row per account of yours and account of theirs, with the network's badge, its own
   word for it, which of their accounts (with several) and which of yours ("alice.chen ⇄ main"), and since when where
-  the network says. Rows are grouped under the kind, in the order above. The hero has one tag per kind with the
-  networks it is on ("Friend" with Discord and X marks, "Contact" with Telegram, Signal and WhatsApp).
+  the network says. Rows are grouped under the kind, in the order above, each group a list named for its kind. The
+  hero has one tag per kind with the networks it is on ("Friend" with Discord and X marks, "Contact" with Telegram,
+  Signal and WhatsApp); a screen reader hears what it stands for ("Friend: Friends on Discord; You follow each other
+  on X"), the hover shows the same. Two Remove friend buttons (Discord main and alt) are named apart by account.
+- **Nothing X cannot do.** Neither X adapter (the extractor nor the demo) can follow or unfollow (no `connect` or
+  `disconnect` capability), so an X row has no Unfollow and the hero no Follow or Follow back. They come with those
+  capabilities, through the same `connect` and `remove` paths as Discord's (docs/add.md).
+- **Changed on the page.** Ending one or making one (Remove friend, Unblock, Add friend, Accept) shows at once and
+  stays until the profile is fetched again: Remove friend and then Add friend says Request sent (connections.ts
+  `withChanges`).
 - **Counts are not connections.** Followers, following and posts are facts about their account: they stay in About.
   Someone asking to be your friend is a request, not yet a connection: the hero says "Wants to be friends" and has
   Accept and Decline.
 - **Only what the networks say.** A follow back counts only when the same account of yours follows them and its
-  profile of them says `followsYou`. X keeps no list the hub reads, so its follows are as of the last profile seen
-  (asked, or in your notifications); the network is asked again when the page opens.
+  profile of them says `followsYou`. X keeps no list the hub reads, so its follows are as of each account's last
+  profile of them (asked, or in your notifications); the network is asked again when the page opens. A profile seen
+  in a notification that leaves the follow fields out keeps the account's last known ones; a profile asked for is the
+  whole answer, so one without them means no follow. An account that keeps a list (`relationships`) is believed over
+  its profiles, so someone dropped from the list is gone even if an older profile said following. Your own identities
+  are never a connection (your second X account following your first).
+- **The profile says what People says.** `ProfileView.links` carries the same follows from kept profiles as People's
+  lists (hub add.ts `profileLinksOf`), per account, so with two X accounts the one that followed them months ago still
+  counts though the other asked last.
 - **People's lists use the same words.** Friends has Discord friends and the X accounts you follow each other with;
   Contacts the address books; Following everyone you follow. The Friends and Following chips show where an account
   keeps such a list, and for any X or Instagram account that reads profiles. A row says when you last talked, or
   else what the link is ("You follow each other on X"), with the networks' marks when it is on several. The hub adds
-  the profile-made follows to `GET /api/people` (`from: 'profile'`, docs/add.md).
+  the profile-made follows to `GET /api/people` (`from: 'profile'`, docs/add.md), reading only the kept profiles that
+  say following (index `about_following`).
 
 Before 2026-11-13 the right column said **How you stand** in each network's own label (Friend, In your contacts, You
 follow them), the hero left out follows and requests (disabled **Following** and **Request sent** buttons said them),

@@ -194,6 +194,8 @@ export class DemoX implements InprocAdapter {
   private readLog: { conversation: string; upTo: string; at: number }[] = [];
   private typingLog: { conversation: string; at: number }[] = [];
   private refused: string[] = [];
+  /** Every command that is not a read (action writeLog): what would have changed something on X, sent or not. */
+  private writes: string[] = [];
   private postLog: { post: string; cursor?: string; at: number }[] = [];
 
   constructor(
@@ -206,7 +208,8 @@ export class DemoX implements InprocAdapter {
     this.epoch = JSON.parse(this.acc.config || '{}').epoch ?? Date.now();
     const marker = join(this.dir, 'seeded');
     const firstRun = !existsSync(marker);
-    emit({ t: 'hello', network: 'x', version: 'demo', capabilities: ['send', 'history', 'markRead', 'typing', 'react', 'profile', 'posts', 'connect', 'openDirect'] });
+    // No `connect` or `disconnect`: it cannot follow or unfollow, as the real extractor cannot yet.
+    emit({ t: 'hello', network: 'x', version: 'demo', capabilities: ['send', 'history', 'markRead', 'typing', 'react', 'profile', 'posts', 'openDirect'] });
     emit({ t: 'status', status: 'online', self: { ...X.self, isSelf: true } });
     // Identity facts first, then what X showed about each of them (their profile came with the notification).
     for (const [k, i] of Object.entries(X)) if (k !== 'self') emit({ t: 'identity', identity: i });
@@ -242,6 +245,7 @@ export class DemoX implements InprocAdapter {
   command(cmd: P.AdapterCommand) {
     const reply = (result?: unknown) => 'id' in cmd && this.emit({ t: 'reply', id: cmd.id, ok: true, result });
     const fail = (error: string) => 'id' in cmd && this.emit({ t: 'reply', id: cmd.id, ok: false, error });
+    if (cmd.t !== 'profile' && cmd.t !== 'post' && cmd.t !== 'history' && cmd.t !== 'action') this.writes.push(cmd.t);
     switch (cmd.t) {
       case 'profile': {
         const who = this.whoOf(cmd.who);
@@ -271,7 +275,7 @@ export class DemoX implements InprocAdapter {
         this.refused.push(`${cmd.t}:${cmd.conversation}`);
         return fail('the demo X account sends nothing');
       case 'action':
-        return reply(cmd.action === 'readLog' ? { reads: this.readLog } : cmd.action === 'typingLog' ? { typing: this.typingLog } : cmd.action === 'sendLog' ? { sent: this.refused } : cmd.action === 'postLog' ? { posts: this.postLog } : { note: 'demo X has no such action' });
+        return reply(cmd.action === 'readLog' ? { reads: this.readLog } : cmd.action === 'typingLog' ? { typing: this.typingLog } : cmd.action === 'sendLog' ? { sent: this.refused } : cmd.action === 'postLog' ? { posts: this.postLog } : cmd.action === 'writeLog' ? { writes: this.writes } : { note: 'demo X has no such action' });
       default:
         if ('id' in cmd) fail('the demo X account cannot do that');
     }

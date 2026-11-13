@@ -11,9 +11,9 @@ import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { parseAdd } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
-import { ADD_LIMITS, Adding, linkOf, linksOf, pendingLinks, requestViews } from '../src/add.ts';
+import { ADD_LIMITS, Adding, linkOf, linksOf, pendingLinks, PROFILE_FOLLOWS_SQL, profileLinksOf, requestViews } from '../src/add.ts';
 import { createDemoAccounts, demoFactory } from '../src/demo.ts';
-import { People } from '../src/people.ts';
+import { keepAbout, keptAbout, People } from '../src/people.ts';
 import { mediaSigner } from '../src/server.ts';
 import { Store } from '../src/store.ts';
 
@@ -157,6 +157,76 @@ describe('the lists', () => {
     expect(mutual.find((l) => l.identityId === nora.id)!.from).toBeUndefined();
     store.ingest(acc, { t: 'relationship', fact: { identity: nora.native_id, relationship: 'stranger' } });
     store.ingest(acc, { t: 'relationship', fact: { identity: quinn.native_id, relationship: 'stranger' } });
+  });
+
+  /** The kept profile of someone through one account, to put back after a case. */
+  const keptOf = (identityId: string, accountId: string) => store.one<{ data: string; fetched_at: number }>('SELECT data, fetched_at FROM about WHERE target_id = ? AND account_id = ?', identityId, accountId);
+  const putBack = (identityId: string, accountId: string, row: { data: string; fetched_at: number } | null) =>
+    row ? store.db.query('UPDATE about SET data = ?, fetched_at = ? WHERE target_id = ? AND account_id = ?').run(row.data, row.fetched_at, identityId, accountId) : store.db.query('DELETE FROM about WHERE target_id = ? AND account_id = ?').run(identityId, accountId);
+  const xFollows = async (q: string) => ((await call('GET', `/api/people?${q}`)).json as P.PeopleLinksView).links.filter((l) => l.from === 'profile');
+
+  test('two X accounts: each says what its own profile of them said, and the profile says the same as People', async () => {
+    const X = 'acc_demo-x';
+    const nora = idn('x', 'nora_on_nets');
+    const self = idn('x', 'zyan_demo');
+    const before = keptOf(nora.id, X);
+    const xb = store.createAccount({ network: 'x', label: 'second', color: '#000000', adapter: 'x', id: 'acc_test-xb' });
+    // xb followed Nora months ago and she followed back; the demo account asked today and does not follow her.
+    keepAbout(store, nora.id, xb.id, 'x', { relationship: 'following', followsYou: true }, Date.now() - 90 * 86_400_000);
+    keepAbout(store, nora.id, X, 'x', { relationship: 'stranger', followsYou: false }, Date.now() + 1000);
+    // Your own account seen from xb, saying it follows you back: never a friend.
+    keepAbout(store, self.id, xb.id, 'x', { relationship: 'following', followsYou: true }, Date.now());
+    const friends = await xFollows('relationship=friend');
+    expect(friends.filter((l) => l.identityId === nora.id).map((l) => l.accountId)).toEqual([xb.id]);
+    expect(friends.some((l) => l.identityId === self.id)).toBe(false);
+    // ?account= on the made-up rows: xb's friend, not the demo account's.
+    expect((await xFollows(`relationship=friend&account=${xb.id}`)).map((l) => l.identityId)).toEqual([nora.id]);
+    expect((await xFollows(`relationship=friend&account=${X}`)).some((l) => l.identityId === nora.id)).toBe(false);
+    // The profile's links carry xb's follow though the newest answer (the demo account's) says stranger.
+    expect(keptAbout(store, nora.id)!.accountId).toBe(X);
+    expect(profileLinksOf(store.db, [nora.id])).toEqual([{ accountId: xb.id, identityId: nora.id, personId: expect.any(String), relationship: 'following', since: null, followsYou: true, from: 'profile', seenAt: expect.any(Number) }]);
+    store.db.query('DELETE FROM about WHERE account_id = ?').run(xb.id);
+    store.db.query('DELETE FROM account WHERE id = ?').run(xb.id);
+    putBack(nora.id, X, before);
+  });
+
+  test('an account that keeps a list is believed over its old profiles: someone dropped from it is gone', async () => {
+    const X = 'acc_demo-x';
+    const caps = store.account(X)!.capabilities;
+    expect((await xFollows(`relationship=following&account=${X}`)).length).toBe(3);
+    // The account now keeps a list, and nobody is on it: what its profiles said before no longer counts.
+    store.updateAccount(X, { capabilities: JSON.stringify([...JSON.parse(caps), 'relationships']) });
+    expect(await xFollows(`relationship=following&account=${X}`)).toEqual([]);
+    expect(await xFollows('relationship=friend')).toEqual([]);
+    expect(profileLinksOf(store.db, [idn('x', 'nora_on_nets').id])).toEqual([]);
+    store.updateAccount(X, { capabilities: caps });
+    expect((await xFollows(`relationship=following&account=${X}`)).length).toBe(3);
+  });
+
+  test('a profile seen in passing that does not say how you follow each other keeps what was known; an asked one does not', async () => {
+    const X = 'acc_demo-x';
+    const nora = idn('x', 'nora_on_nets');
+    const before = keptOf(nora.id, X)!;
+    expect(JSON.parse(before.data)).toMatchObject({ relationship: 'following', followsYou: true });
+    // A notification's profile without the follow fields: still a friend.
+    expect(keepAbout(store, nora.id, X, 'x', { bio: 'Seen in a notification.' }, Date.now() + 1000, true)).toBe(true);
+    expect(JSON.parse(keptOf(nora.id, X)!.data)).toMatchObject({ bio: 'Seen in a notification.', relationship: 'following', followsYou: true, unasked: true });
+    expect((await xFollows(`relationship=friend&account=${X}`)).some((l) => l.identityId === nora.id)).toBe(true);
+    // One that says otherwise wins.
+    keepAbout(store, nora.id, X, 'x', { followsYou: false }, Date.now() + 2000, true);
+    expect(JSON.parse(keptOf(nora.id, X)!.data)).toMatchObject({ relationship: 'following', followsYou: false });
+    // A profile asked for is the network's whole answer: no follow fields, no follow.
+    keepAbout(store, nora.id, X, 'x', { bio: 'Asked.' }, Date.now() + 3000);
+    expect((await xFollows(`relationship=following&account=${X}`)).some((l) => l.identityId === nora.id)).toBe(false);
+    putBack(nora.id, X, before);
+  });
+
+  test('the follows are read through index about_following, not every kept profile', () => {
+    for (const args of [[null, null], ['acc_demo-x', null]]) {
+      const plan = (store.db.query(`EXPLAIN QUERY PLAN ${PROFILE_FOLLOWS_SQL}`).all(...(args as [null, null])) as { detail: string }[]).map((r) => r.detail);
+      expect(plan.some((d) => /\bINDEX about_following\b/.test(d))).toBe(true);
+      expect(plan.some((d) => /^SCAN a\b/.test(d) && !/INDEX/.test(d))).toBe(false);
+    }
   });
 
   test("a profile's relationship comes from the list when the account has them on it", () => {

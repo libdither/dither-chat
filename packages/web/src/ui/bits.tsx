@@ -13,9 +13,10 @@ import { onMenu } from './ContextMenu.tsx';
 import { accountMenu } from './menus.tsx';
 import { drawLater } from './Later.tsx';
 
-export function NetGlyph({ network, size = 14, color }: { network: P.Network; size?: number; color?: string }) {
+/** `decorative`: hidden from screen readers, for where the network is already said in words around it. */
+export function NetGlyph({ network, size = 14, color, decorative }: { network: P.Network; size?: number; color?: string; decorative?: boolean }) {
   return (
-    <svg class="net-glyph" width={size} height={size} viewBox="0 0 24 24" fill={color ?? 'currentColor'} aria-label={netName(network)}>
+    <svg class="net-glyph" width={size} height={size} viewBox="0 0 24 24" fill={color ?? 'currentColor'} {...(decorative ? { 'aria-hidden': 'true' as const } : { 'aria-label': netName(network) })}>
       <path d={GLYPH[network]} />
     </svg>
   );

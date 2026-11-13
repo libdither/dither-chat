@@ -163,8 +163,8 @@ no one who reacted shows the count alone: the line opens no list.
   accounts has each account's under its handle.
 - **About** gains followers, following and posts counts, as facts about the account. Whether you follow them and they
   follow you is a connection, in the hero's tags and **Connections** in the same words as a Discord friend or a
-  contact: following each other is **Friend**, else **You follow** or **Follows you** (with **Follow back**)
-  ([profile.md](profile.md#connections)). Until 2026-11-13 About carried a **Follows you** tag.
+  contact: following each other is **Friend**, else **You follow** or **Follows you**
+  ([profile.md](profile.md#connections)). X cannot follow or unfollow from here yet, so there is no Follow back. Until 2026-11-13 About carried a **Follows you** tag.
 - **Feed actors' profiles** show what the hub logged (bio, counts, links, how you follow each other) at once, without
   asking.
   Asking X then brings their posts. Their feed items are in **Recent messages** ("X notifications", "Liked your post:

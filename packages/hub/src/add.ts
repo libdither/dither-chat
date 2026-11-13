@@ -311,7 +311,11 @@ export function pendingLinks(db: Database, identityIds?: string[]): Map<string, 
   return out;
 }
 
-/** GET /api/people: who is on your accounts' lists, by name; one relationship and one account when given. */
+/**
+ * GET /api/people: who is on your accounts' lists, by name; one relationship and one account when given. Then the
+ * follows that accounts with no list of them say in their kept profiles (profileFollows), and `followsYou` on a
+ * listed follow its profile says they return. `friend` also has the mutual follows, listed or not.
+ */
 export function peopleLinks(store: Store, relationship: string | null, accountId: string | null): P.PeopleLinksView {
   const db = store.db;
   addTables(db);
@@ -323,63 +327,66 @@ export function peopleLinks(store: Store, relationship: string | null, accountId
     )
     .all(relationship, accountId) as Row[];
   const links = rows.map(linkView);
-  if (relationship === null || relationship === 'friend' || relationship === 'following') {
-    const follows = followsOf(db, accountId);
-    const listed = new Map(links.map((l) => [`${l.accountId}\0${l.identityId}`, l]));
-    for (const f of follows) {
-      const have = listed.get(`${f.accountId}\0${f.identityId}`);
-      // On the account's list: the list says how you stand; its profile adds only that they follow back.
-      if (have) {
-        if (have.relationship === 'following' && f.followsYou) have.followsYou = true;
-        continue;
-      }
-      if (f.listed) continue;
-      // Friends are mutual follows too; Following is everyone followed.
-      if (relationship === 'friend' && !f.followsYou) continue;
-      links.push(f.link);
-    }
-  }
-  // Friends: also the follows on a list that its profile says are mutual.
-  const shown = relationship === 'friend' ? [...links, ...mutualOnLists(db, accountId, links)] : links;
+  if (relationship !== null && relationship !== 'friend' && relationship !== 'following') return { links, identities: store.identitiesByIds([...new Set(links.map((l) => l.identityId))]) };
+  const back = followedBackOnLists(db, { accountId });
+  // Following and all: a listed follow says it is returned. Friends: the listed follows that are, beside the friends.
+  for (const l of links) if (back.has(`${l.accountId}\0${l.identityId}`)) l.followsYou = true;
+  if (relationship === 'friend') links.push(...back.values());
+  const fromProfiles = profileFollows(db, { accountId }).filter((l) => relationship !== 'friend' || l.followsYou);
+  const shown = [...links, ...fromProfiles];
   return { links: shown, identities: store.identitiesByIds([...new Set(shown.map((l) => l.identityId))]) };
 }
 
 /**
- * Who your accounts follow, as their kept profiles of them say (the `about` table, docs/profile.md "Connections"):
- * for an account with no list of follows (X: its profiles and notifications say `relationship: 'following'` and
- * `followsYou`). `listed`: the account has them on its list, which wins.
+ * Who your accounts follow, as their kept profiles of them say (the `about` table, docs/profile.md "Connections"), for
+ * accounts that keep no list (no `relationships` capability: X today). An account with a list is left out, its list
+ * being the truth even when an older profile still says following, and so is anyone already on an account's list.
+ * Never your own identities: your second X account is not a friend of your first. Each `from: 'profile'`, `seenAt`
+ * when that profile was kept.
  */
-function followsOf(db: Database, accountId: string | null): { accountId: string; identityId: string; followsYou: boolean; listed: boolean; link: P.PersonLinkView }[] {
-  const rows = db
-    .query(
-      `SELECT a.account_id, a.target_id AS identity_id, a.fetched_at, i.person_id, json_extract(a.data, '$.followsYou') AS follows_you,
-              EXISTS (SELECT 1 FROM person_link l WHERE l.account_id = a.account_id AND l.identity_id = a.target_id) AS listed
-         FROM about a JOIN identity i ON i.id = a.target_id
-        WHERE json_extract(a.data, '$.relationship') = 'following' AND (?1 IS NULL OR a.account_id = ?1)`,
-    )
-    .all(accountId) as Row[];
-  return rows.map((r) => {
-    // JSON true reads back as 1.
-    const followsYou = r.follows_you === 1;
-    return {
-      accountId: r.account_id,
-      identityId: r.identity_id,
-      followsYou,
-      listed: !!r.listed,
-      link: { accountId: r.account_id, identityId: r.identity_id, personId: r.person_id ?? null, relationship: 'following', since: null, ...(followsYou ? { followsYou: true as const } : {}), from: 'profile', seenAt: r.fetched_at },
-    };
-  });
+export function profileFollows(db: Database, only: { accountId?: string | null; identityIds?: string[] }): P.PersonLinkView[] {
+  addTables(db);
+  const rows = db.query(PROFILE_FOLLOWS_SQL).all(only.accountId ?? null, only.identityIds ? JSON.stringify(only.identityIds) : null) as Row[];
+  // JSON true reads back as 1.
+  return rows.map((r) => ({ accountId: r.account_id, identityId: r.identity_id, personId: r.person_id ?? null, relationship: 'following', since: null, ...(r.follows_you === 1 ? { followsYou: true as const } : {}), from: 'profile', seenAt: r.fetched_at }));
 }
 
-/** With `?relationship=friend`: follows on an account's list whose kept profile says they follow back. */
-function mutualOnLists(db: Database, accountId: string | null, have: P.PersonLinkView[]): P.PersonLinkView[] {
+/**
+ * profileFollows' query, `?1` an account or null, `?2` a JSON array of identities or null. Its first condition is
+ * index `about_following`'s WHERE (schema.sql), word for word, so only those rows are read, not every kept profile
+ * with its posts (links.test.ts checks the plan).
+ */
+export const PROFILE_FOLLOWS_SQL = `SELECT a.account_id, a.target_id AS identity_id, a.fetched_at, i.person_id, json_extract(a.data, '$.followsYou') AS follows_you
+   FROM about a JOIN identity i ON i.id = a.target_id JOIN account acc ON acc.id = a.account_id
+  WHERE json_extract(a.data, '$.relationship') = 'following'
+    AND (?1 IS NULL OR a.account_id = ?1)
+    AND (?2 IS NULL OR a.target_id IN (SELECT value FROM json_each(?2)))
+    AND NOT EXISTS (SELECT 1 FROM json_each(acc.capabilities) c WHERE c.value = 'relationships')
+    AND NOT EXISTS (SELECT 1 FROM person_link l WHERE l.account_id = a.account_id AND l.identity_id = a.target_id)
+    AND a.target_id NOT IN (SELECT self_identity FROM account WHERE self_identity IS NOT NULL)
+    AND NOT EXISTS (SELECT 1 FROM person p WHERE p.id = i.person_id AND p.is_self = 1)
+  ORDER BY a.account_id, a.target_id`;
+
+/** Follows on an account's list whose kept profile (same account) says they follow back, keyed `account\0identity`. */
+function followedBackOnLists(db: Database, only: { accountId?: string | null; identityIds?: string[] }): Map<string, P.PersonLinkView> {
   const rows = db
     .query(
       `SELECT l.*, i.person_id FROM person_link l JOIN identity i ON i.id = l.identity_id JOIN about a ON a.target_id = l.identity_id AND a.account_id = l.account_id
-        WHERE l.relationship = 'following' AND json_extract(a.data, '$.followsYou') = 1 AND (?1 IS NULL OR l.account_id = ?1)`,
+        WHERE l.relationship = 'following' AND json_extract(a.data, '$.followsYou') = 1 AND (?1 IS NULL OR l.account_id = ?1)
+          AND (?2 IS NULL OR l.identity_id IN (SELECT value FROM json_each(?2)))`,
     )
-    .all(accountId) as Row[];
-  return rows.map((r) => ({ ...linkView(r), followsYou: true as const })).filter((l) => !have.some((h) => h.accountId === l.accountId && h.identityId === l.identityId));
+    .all(only.accountId ?? null, only.identityIds ? JSON.stringify(only.identityIds) : null) as Row[];
+  return new Map(rows.map((r) => [`${r.account_id}\0${r.identity_id}`, { ...linkView(r), followsYou: true as const }]));
+}
+
+/**
+ * A profile's links (ProfileView.links): each account's list entries for these identities, with `followsYou` where
+ * its profile says so, and the follows from the profiles of accounts with no list, so the profile says what People's
+ * lists say, whichever account asked last.
+ */
+export function profileLinksOf(db: Database, identityIds: string[]): P.PersonLinkView[] {
+  const back = followedBackOnLists(db, { identityIds });
+  return [...linksOf(db, identityIds).map((l) => (back.has(`${l.accountId}\0${l.identityId}`) ? { ...l, followsYou: true as const } : l)), ...profileFollows(db, { identityIds })];
 }
 
 // ------------------------------------------------------------------ pacing
