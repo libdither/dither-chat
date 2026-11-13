@@ -34,7 +34,7 @@ export function PollCardLazy({ m, fallback }: { m: P.MessageView; fallback: Comp
   return p ? <p.PollCard m={m} /> : <>{fallback}</>;
 }
 
-export function PollMakerLazy(props: { conversationId: string; network: P.Network; accountId?: string; onClose: () => void }) {
+export function PollMakerLazy(props: { conversationId: string; network: P.Network; accountId?: string; question?: string; onClose: () => void; onSent?: () => void }) {
   const p = useParts();
   return p ? <p.PollMaker {...props} /> : null;
 }
