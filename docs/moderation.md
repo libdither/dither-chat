@@ -81,10 +81,16 @@ up to 1,000, on a click ("Show who is banned"), as the server settings page make
 | Server icon | Manage Server | PNG, JPEG, GIF or WebP, up to 8 MB, sent as a data URI. A group DM's icon is the group DMs work, not here |
 | Hide threads after inactivity | Manage Channels | text, announcement, forum and media channels: an hour, a day, 3 days, a week |
 | User limit, bitrate | Manage Channels | voice channels; bitrate up to 96, 128, 256 or 384 kbps by the server's boosts |
+| Server mute or unmute someone in voice | Mute Members, in the voice channel they are in | the call's people (the open call dock): the client's `setServerMute`. No rank above theirs is needed, as in the client |
+| Server deafen or undeafen | Deafen Members, there | the client's `setServerDeaf` |
+| Move to another voice channel of the server | Move Members, there and in the channel they go to | `PATCH /guilds/{g}/members/{u}` `{channel_id}`, the request the client's `setChannel` sends (which does not hand back the answer) |
+| Disconnect from voice | Move Members, there | the same with `channel_id: null` |
 
 Not built, by decision ("open Discord" on the page): the audit log, AutoMod rules, pruning, emoji, sticker and
 soundboard management, integrations, moderator reports and raid actions. Role member lists and member search for
-moderators are never read (member scraping). Server mute, deafen and moving people in voice wait for the voice work.
+moderators are never read (member scraping). The voice actions are offered from a voice or stage channel's own About
+(`voiceMute`, `voiceDeafen`, `voiceMove`), on the people of the call you are in (docs/calls.md "In a call"); whether
+someone is in voice is the client's to say, checked in the page.
 
 ## Hub API
 

@@ -10,10 +10,13 @@
  *   encryption     DAVE, in a worker running Discord's own libdave (dave-worker.ts)
  *
  * Written from a study of the public web client's behaviour (docs/calls.md), not from its code.
- * Audio only for now.
+ * Audio only for now (video: docs/calls.md "Receiving camera video"). Each person's audio arrives on its own receive
+ * slot, so a person muted for this account is left out of what plays here, and one at another volume plays through a
+ * gain of its own.
  */
 
 import type * as P from '@dither-chat/protocol';
+import { VOLUME_MAX } from '@dither-chat/protocol';
 import { peerStats, type Transport, type TransportHost } from '../call.ts';
 import { daveWorkerSource } from './dave-worker.ts';
 import { answer, codecPt, firstSsrc, offerForServer } from './sdp.ts';
@@ -49,6 +52,13 @@ export function discordTransport(host: TransportHost): Transport {
   let renegotiating: Promise<void> = Promise.resolve();
   const counts = { encrypted: 0, decrypted: 0, dropped: 0, passthrough: 0 };
   let secureVersion = 0;
+  /** mid -> the remote audio track on it. */
+  const tracks = new Map<string, MediaStreamTrack>();
+  /** mid -> its own way out, for a person at another volume. */
+  const routed = new Map<string, { gain: GainNode; src: MediaStreamAudioSourceNode; el: HTMLAudioElement }>();
+  let volumes = new Map<string, { volume: number; muted: boolean }>();
+  let deaf = false;
+  let vadLevel = vadLevelOf(host.input);
 
   const send = (op: number, d: unknown) => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ op, d }));
   const sendBinary = (op: number, data: Uint8Array) => {
@@ -235,8 +245,11 @@ export function discordTransport(host: TransportHost): Transport {
     transforms(t0, true);
     pc.ontrack = (e) => {
       if (e.track.kind !== 'audio') return;
-      remote.addTrack(e.track);
+      const mid = e.transceiver?.mid;
+      if (mid) tracks.set(mid, e.track);
+      else remote.addTrack(e.track);
       host.speaker.srcObject = remote;
+      outputs();
       host.speaker.play().catch(() => {});
     };
     pc.onconnectionstatechange = () => {
@@ -267,7 +280,7 @@ export function discordTransport(host: TransportHost): Transport {
     await pc.setRemoteDescription({ type: 'answer', sdp: answer(serverSdp, pc.localDescription!.sdp, assigned, opusPt) });
     for (const [id, ssrc] of userSsrc) giveSlot(id, ssrc);
     send(15, { any: 100 });
-    vadStop = startVad(host.mic, (on) => {
+    vadStop = startVad(host.mic, () => vadLevel, (on) => {
       speaking = on;
       send(5, { speaking: on ? 1 : 0, delay: 0, ssrc: ownSsrc });
     });
@@ -317,7 +330,58 @@ export function discordTransport(host: TransportHost): Transport {
       await pc.setLocalDescription(await pc.createOffer());
       if (c?.t.mid) assigned.set(c.t.mid, { id: c.id, ssrc: c.ssrc });
       await pc.setRemoteDescription({ type: 'answer', sdp: answer(serverSdp, pc.localDescription!.sdp, assigned, opusPt) });
+      outputs();
     }).catch((e) => console.warn('renegotiation failed', e));
+  }
+
+  /**
+   * Each receive slot's track goes where its person's volume says: with everyone else (100), nowhere (muted for this
+   * account), or through a gain of its own. Chrome feeds a remote track into Web Audio only while an element plays it,
+   * so a routed track also plays, muted, in an element of its own.
+   */
+  function outputs() {
+    for (const [mid, track] of tracks) {
+      if (track.readyState === 'ended') {
+        tracks.delete(mid);
+        unroute(mid);
+        continue;
+      }
+      const who = assigned.get(mid)?.id;
+      const v = who ? volumes.get(who) : undefined;
+      const own = !!v && !v.muted && v.volume !== 100 && !!host.ctx;
+      const inMix = !v || (!v.muted && !own);
+      if (inMix && !remote.getTracks().includes(track)) remote.addTrack(track);
+      if (!inMix && remote.getTracks().includes(track)) remote.removeTrack(track);
+      if (!own) {
+        unroute(mid);
+        continue;
+      }
+      let r = routed.get(mid);
+      if (!r) {
+        const ctx = host.ctx!;
+        const stream = new MediaStream([track]);
+        const el = new Audio();
+        el.muted = true;
+        el.srcObject = stream;
+        el.play().catch(() => {});
+        const src = ctx.createMediaStreamSource(stream);
+        const gain = ctx.createGain();
+        src.connect(gain);
+        gain.connect(ctx.destination);
+        routed.set(mid, (r = { gain, src, el }));
+      }
+      r.gain.gain.value = deaf ? 0 : Math.max(0, Math.min(VOLUME_MAX, v!.volume)) / 100;
+    }
+  }
+  function unroute(mid: string) {
+    const r = routed.get(mid);
+    if (!r) return;
+    routed.delete(mid);
+    try {
+      r.src.disconnect();
+      r.gain.disconnect();
+    } catch {}
+    r.el.srcObject = null;
   }
 
   return {
@@ -342,6 +406,15 @@ export function discordTransport(host: TransportHost): Transport {
     },
     setDeafened(deafened) {
       host.speaker.muted = deafened;
+      deaf = deafened;
+      outputs();
+    },
+    setVolumes(byUser) {
+      volumes = byUser;
+      outputs();
+    },
+    setInput(input) {
+      vadLevel = vadLevelOf(input);
     },
     async stats() {
       if (!pc) return null;
@@ -371,14 +444,21 @@ export function discordTransport(host: TransportHost): Transport {
     userSsrc.clear();
     freeSlots.length = 0;
     serverSdp = '';
+    for (const mid of [...routed.keys()]) unroute(mid);
+    tracks.clear();
     if (final) remote.getTracks().forEach((t) => remote.removeTrack(t));
   }
 }
 
 // ------------------------------------------------------------------ speaking
 
+/** The level gate's threshold, as RMS: 'auto' is this client's own default; a level in dB is the owner's choice. */
+export function vadLevelOf(input: P.CallInput): number {
+  return input.sensitivity === 'auto' ? 0.015 : Math.pow(10, input.sensitivity / 20);
+}
+
 /** A plain level gate: speaking above the threshold, with a short hangover so words don't flicker. */
-function startVad(mic: MediaStream, onChange: (speaking: boolean) => void): () => void {
+function startVad(mic: MediaStream, level: () => number, onChange: (speaking: boolean) => void): () => void {
   const ctx = new AudioContext();
   const src = ctx.createMediaStreamSource(mic);
   const an = ctx.createAnalyser();
@@ -392,7 +472,7 @@ function startVad(mic: MediaStream, onChange: (speaking: boolean) => void): () =
     an.getFloatTimeDomainData(buf);
     let sum = 0;
     for (const v of buf) sum += v * v;
-    const loud = !!track?.enabled && Math.sqrt(sum / buf.length) > 0.015;
+    const loud = !!track?.enabled && Math.sqrt(sum / buf.length) > level();
     const now = Date.now();
     if (loud) last = now;
     const next = loud || now - last < 400;

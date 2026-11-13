@@ -7947,6 +7947,16 @@ body.dragging * {
 .hdr-btn.call-join.on {
   color: var(--danger);
 }
+.live-tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--danger);
+  color: #fff;
+  line-height: 14px;
+}
 
 @media (max-width: 820px) {
   .call-dock {

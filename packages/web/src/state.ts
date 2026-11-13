@@ -142,6 +142,8 @@ export interface Prefs {
   pushEnabled: boolean;
   /** How this device carries calls: through the account's own client (bridge), or by itself (direct). */
   callMode: 'bridge' | 'direct';
+  /** This device's microphone in calls: noise suppression and sensitivity (Settings → Calls). Absent: CALL_INPUT_DEFAULT. */
+  callInput?: import('@dither-chat/protocol').CallInput;
   /** The inbox's filter (its menu beside the search box). */
   inboxFilter: InboxFilter;
   /** People's filter chip: chats, or one kind of list (docs/add.md "Relationships"). */

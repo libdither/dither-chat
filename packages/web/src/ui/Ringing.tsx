@@ -96,10 +96,11 @@ export function VoicePeople({ conversationId, size = 18, names, class: cls = '',
       {v.members.map((m) => {
         const p = who(m.identityId);
         return (
-          <span class="voice-person" title={`${p.name}${m.muted ? ' (muted)' : ''}${m.deafened ? ' (deafened)' : ''}${m.streaming ? ' (live)' : ''}`}>
+          <span class="voice-person" title={`${p.name}${m.muted ? ' (muted)' : ''}${m.deafened ? ' (deafened)' : ''}${m.video ? ' (camera on)' : ''}${m.streaming ? ' (live)' : ''}`}>
             <Avatar id={p.personId ?? m.identityId} name={p.name} url={p.avatar} size={size} network="discord" />
             {names && <span class="voice-name">{p.name}</span>}
             {(m.muted || m.deafened) && <Icon name={m.deafened ? 'headphonesOff' : 'micOff'} size={12} class="call-flag" />}
+            {m.streaming && <span class="live-tag">LIVE</span>}
           </span>
         );
       })}

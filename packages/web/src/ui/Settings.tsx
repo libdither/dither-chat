@@ -25,6 +25,7 @@ import { Sheet } from './Sheet.tsx';
 import { chosenTheme, followsSystem, Swatch, ThemeList } from './Themes.tsx';
 import { themeById } from '../themes.ts';
 import { followsArchive, setFollowArchive } from '../arrange.ts';
+import { applyCallInput, myInput } from '../call.ts';
 
 /** Settings' sections: listed beside them on a desktop, and in a sheet from their header on a phone. */
 export const SECTIONS: [title: string, icon: string, id: string][] = [
@@ -417,6 +418,7 @@ export function SettingsPane() {
                 ? "The account's own client on the hub joins the call, and its audio is passed to this device. Works the way the network's app does, at the cost of the hub's CPU."
                 : 'This device joins the call itself, with a one-call token from the account. Its connection still goes through the hub. Lighter on the hub, a little more work for the device.'}
             </p>
+            <CallInputSettings />
           </section>
 
           <section class="set-block">
@@ -470,6 +472,50 @@ function AppearanceTheme() {
           <ThemeList />
         </Sheet>
       )}
+    </>
+  );
+}
+
+/** This device's microphone in calls: the browser's noise suppression, and when it counts as speaking. */
+function CallInputSettings() {
+  const input = myInput();
+  const set = (next: P.CallInput) => {
+    setPrefs({ callInput: next });
+    applyCallInput(next);
+  };
+  const auto = input.sensitivity === 'auto';
+  return (
+    <>
+      <div class="set-rule">
+        <span class="set-rule-label">Noise suppression</span>
+        <div class="level-picker">
+          {([true, false] as const).map((on) => (
+            <button class={`chip-btn ${input.noiseSuppression === on ? 'on' : ''}`} onClick={() => set({ ...input, noiseSuppression: on })}>
+              {on ? 'On' : 'Off'}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div class="set-rule">
+        <span class="set-rule-label">Input sensitivity</span>
+        <div class="level-picker">
+          <button class={`chip-btn ${auto ? 'on' : ''}`} onClick={() => set({ ...input, sensitivity: 'auto' })}>
+            Automatic
+          </button>
+          <button class={`chip-btn ${!auto ? 'on' : ''}`} onClick={() => set({ ...input, sensitivity: auto ? -50 : input.sensitivity })}>
+            Set by hand
+          </button>
+        </div>
+      </div>
+      {!auto && (
+        <div class="set-rule">
+          <span class="set-rule-label">Speaking above {input.sensitivity} dB</span>
+          <input type="range" min={-100} max={0} step={1} value={input.sensitivity as number} aria-label="Input sensitivity in dB" onChange={(e) => set({ ...input, sensitivity: Number((e.target as HTMLInputElement).value) })} />
+        </div>
+      )}
+      <p class="set-help">
+        For this device. Through the account, its own client gets the same choices, as its voice settings; from this device, the device applies them itself. A person's volume and mute for you are in the call: tap them.
+      </p>
     </>
   );
 }
