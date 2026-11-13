@@ -25,3 +25,6 @@ CREATE INDEX IF NOT EXISTS mail_text_age ON mail_text(received_at);
 
 CREATE INDEX IF NOT EXISTS mail_message_age ON mail_message(account_id, received_at);
 CREATE INDEX IF NOT EXISTS mail_body_used ON mail_body(used_at);
+-- The bodies too big to cache, by when they were last read (cache.ts evict): without it, finding them read every
+-- body's row to its `keep`, after its text and html (519 MB on the live hub, 350 ms every few seconds while mail came).
+CREATE INDEX IF NOT EXISTS mail_body_big ON mail_body(used_at) WHERE keep = -1;

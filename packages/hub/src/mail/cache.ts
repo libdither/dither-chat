@@ -18,6 +18,7 @@
  */
 import type * as M from '@dither-chat/protocol/mail-iface';
 import { MAIL_LIMITS } from './limits.ts';
+import { timedWork } from '../stalls.ts';
 import type { MailStore } from './store.ts';
 
 const MB = 1024 * 1024;
@@ -76,6 +77,8 @@ export class BodyCache {
 
   /** Bytes in a table that count against its cap: those of messages of accounts that do not keep all their mail. */
   private capped(table: 'mail_body' | 'mail_text'): number {
+    // When every account with mail here keeps all of it (the live hub's), nothing counts: no need to add up every row.
+    if (!this.store.one(`SELECT 1 AS x FROM mail_message INDEXED BY mail_message_age WHERE account_id NOT IN (${this.store.keptSql}) LIMIT 1`)) return 0;
     // Through the index holding `bytes` (schema-keep.sql): the rows have it after the text.
     const index = table === 'mail_body' ? 'mail_body_bytes' : 'mail_text_kept';
     return this.store.one<{ n: number | null }>(`SELECT SUM(x.bytes) AS n FROM ${table} x INDEXED BY ${index} JOIN mail_message m ON m.id = x.message_id WHERE m.account_id NOT IN (${this.store.keptSql})`)?.n ?? 0;
@@ -87,7 +90,7 @@ export class BodyCache {
     this.timer = setTimeout(() => {
       this.timer = null;
       try {
-        this.sweep();
+        timedWork('mail: cache sweep', () => this.sweep());
       } catch {
         // The database closed: the hub is stopping.
       }

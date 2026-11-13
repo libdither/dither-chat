@@ -638,6 +638,38 @@ load) held the hub 24 times for 200 ms or more, 5.6 s in all, the longest 0.32 s
 polls, 4 times and 1.1 s. What is left is mostly the bootstrap's reads. Whether to move the hub's writes to a thread of
 their own: [writer-thread.md](writer-thread.md) (not now; move the bootstrap's build to a reader first).
 
+### Mail's body cache, every six seconds (2026-11-13)
+
+With NORMAL live (deploy 36) the ten minutes still read 113 holds of 200 ms or more, 79 of them 500–700 ms, and they
+came every 5.9–6.1 s. That is mail's body cache (`mail/cache.ts`): each body the keep-all archive fetches (about one a
+second) asks for a sweep 5 s later, and a sweep took 480–560 ms on a copy of the live database, where nothing was over
+either cap:
+
+- **The bodies too big to cache** were found with `keep = -1 AND used_at < ?` by the `used_at` index. Every body was
+  older than ten minutes, so it read all 14,199 rows. `keep` is the last column, after the text and the html, so each
+  read went through the body itself (519 MB), once to list them and once more to delete them: 175 ms each. A partial
+  index on just those (`mail_body_big`, schema-big.sql) finds them in 0–2 ms. On the live hub there are none.
+- **The caps** added up every row's bytes, bodies and search text, for the accounts that do not keep all their mail.
+  On the live hub that is no account, which took 120 ms to find out. When every account with mail keeps all of it, the
+  sweep now says 0 without adding up.
+- The sweep notes itself (`mail: cache sweep`). Mail's other work that an answer from its backend sets off is noted
+  and logged as `slow: <time> in <what>` past 500 ms: pages of summaries, bodies, its events.
+
+The first sweep after a start reads those bodies from the disk, not from memory. It comes 5 s after the first body the
+archive fetches, which can be minutes after the start. That is likely the single 5.6–6.4 s hold of every deploy's first
+minutes, labelled only with the small adapter batches around it. The partial index removes that read as well.
+
+On the copy, a body about every second through the hub's own MailStore and BodyCache, for 46 s:
+
+| | main | this |
+|---|---|---|
+| holds of 100 ms or more | 8 (1,237 ms, then 460–520 ms, every ~6 s) | 0 |
+| one sweep | 480–560 ms | 3–4 ms |
+
+The index is new in the mail schema, so the first start with it copies the database aside before migrating (the
+`pre-migrate copy` in the startup line, 7–26 s on the live hub). `test/stalls.test.ts` checks the plan, and that a
+sweep with every account keeping all its mail adds up nothing.
+
 ## The snapshot after each open (2026-11-11)
 
 Opening a conversation saves the device's snapshot 1.5 s later, when the page is idle (snapshot.ts). Opening one marks

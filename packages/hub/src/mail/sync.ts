@@ -15,7 +15,7 @@
 import type * as P from '@dither-chat/protocol';
 import type * as M from '@dither-chat/protocol/mail-iface';
 import { type Clock, realClock } from '../clock.ts';
-import { noteWork } from '../stalls.ts';
+import { noteWork, timedWork } from '../stalls.ts';
 import { asMailError, type MailBackend } from './backend.ts';
 import { Backfill, Budget } from './backfill.ts';
 import { storeBody } from './cache.ts';
@@ -179,6 +179,14 @@ export class AccountSync {
     this.store.setState(b.id, r.state);
   }
 
+  /**
+   * Summaries from the server into the store and on to its listeners (people, the inbox's rows, triage): one piece on
+   * the hub's thread, set off by an answer, so it is noted and timed (stalls.ts).
+   */
+  private take(box: Row, messages: M.MailSummary[], live: boolean, gen?: number) {
+    timedWork(`mail: ${messages.length} summaries`, () => this.stored(this.store.ingest(this.accountId, box, messages, gen), live));
+  }
+
   stored(ing: Ingested, live: boolean) {
     if (ing.added.length) this.ctx.ingested(this.accountId, ing.added, live);
     this.orphan(ing.orphans);
@@ -189,7 +197,7 @@ export class AccountSync {
     const r = await this.call<{ messages: M.MailSummary[]; next: string | null }>('mail.list', { mailboxId: b.native_id, limit: n });
     const row = this.store.mailbox(b.id);
     if (!row) return;
-    this.stored(this.store.ingest(this.accountId, row, r.messages), false);
+    this.take(row, r.messages, false);
     const oldest = r.messages.length ? Math.min(...r.messages.map((m) => m.receivedAt)) : null;
     this.store.setListed(b.id, { next: r.next, horizon: oldest, complete: !r.next });
   }
@@ -202,7 +210,7 @@ export class AccountSync {
       const held = this.store.mailboxHeld(b.id).n;
       if (held >= max) return;
       const r = await this.call<{ messages: M.MailSummary[]; next: string | null }>('mail.list', { mailboxId: row.native_id, limit: Math.min(MAIL_LIMITS.page, max - held), before: row.list_next });
-      this.stored(this.store.ingest(this.accountId, row, r.messages), false);
+      this.take(row, r.messages, false);
       const oldest = r.messages.length ? Math.min(...r.messages.map((m) => m.receivedAt)) : row.horizon;
       this.store.setListed(b.id, { next: r.next, horizon: oldest === null ? row.horizon : Math.min(oldest, row.horizon ?? oldest), complete: !r.next });
       if (!r.messages.length) return;
@@ -229,12 +237,12 @@ export class AccountSync {
         .run(P1, 'mailboxes', () => this.refreshMailboxes())
         .then(() => {
           const row = this.store.mailboxByNative(this.accountId, m.mailboxId);
-          if (row) this.stored(this.store.ingest(this.accountId, row, [m]), true);
+          if (row) this.take(row, [m], true);
         })
         .catch((e) => this.ctx.log(`[${this.accountId}] mailboxes: ${asMailError(e).message}`));
       return;
     }
-    this.stored(this.store.ingest(this.accountId, b, [m]), true);
+    this.take(b, [m], true);
   }
 
   /** `mail.changed`: a changes pass when it is a followed mailbox and the state is new to the hub. */
@@ -287,7 +295,7 @@ export class AccountSync {
           }
           b = this.store.mailbox(mailboxId);
           if (!b) return;
-          this.stored(this.store.ingest(this.accountId, b, r.added), true);
+          this.take(b, r.added, true);
           this.store.changeFlags(b.id, r.changed);
           this.orphan(this.store.dropLocations(b.id, r.removed));
           this.store.setState(b.id, r.state);
@@ -320,7 +328,7 @@ export class AccountSync {
         const r: { messages: M.MailSummary[]; next: string | null } = await this.call('mail.list', { mailboxId: b.native_id, limit: MAIL_LIMITS.page, ...(next ? { before: next } : {}) });
         const row = this.store.mailbox(b.id);
         if (!row) return;
-        this.stored(this.store.ingest(this.accountId, row, r.messages, gen), true);
+        this.take(row, r.messages, true, gen);
         listed += r.messages.length;
         for (const m of r.messages) oldest = Math.min(oldest, m.receivedAt);
         next = r.next;
@@ -379,7 +387,7 @@ export class AccountSync {
       const at = this.store.nativeOf(messageId);
       if (!at) throw asMailError(Object.assign(new Error('the server no longer has this message'), { status: 404 }));
       const m = background ? await this.background<M.MailMessage>('mail.get', { id: at.id }, 65_000) : await this.call<M.MailMessage>('mail.get', { id: at.id }, 65_000);
-      storeBody(this.store, messageId, m);
+      timedWork('mail: a body', () => storeBody(this.store, messageId, m));
     });
   }
 
