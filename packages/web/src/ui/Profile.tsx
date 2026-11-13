@@ -22,7 +22,7 @@ import { Icon } from './icons.tsx';
 import { nicknamable, nicknameEntries, NicknamedName, NicknameInput, ownName } from './Nickname.tsx';
 import { ActivityCard } from './ActivityCard.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
-import { identityMenu, personMenu } from './menus.tsx';
+import { copyEntries, identityMenu, personMenu } from './menus.tsx';
 import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, Tag } from './ProfileShell.tsx';
 import { ConnectActions, ProfileLinks } from './Requests.tsx';
 import { openConv } from './Sidebar.tsx';
@@ -511,19 +511,19 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     const extra: MenuEntry[] = groups(
       // One account's nickname is theirs (with several, each tile has its own).
       ids.length === 1 && !first?.isBot ? nicknameEntries(first, () => setNaming(true)) : [],
-      [!isSelf && { label: 'Merge Another Identity In', icon: 'merge', run: () => setMerging(true) }, { label: 'Ask the Networks Again', icon: 'refresh', run: refresh }],
-      // Block or unblock, where an account can (Signal): asked again after, so the page says how you stand.
-      isSelf ? [] : (peopleExtras()?.blockEntries(ids, profile.links ?? [], abouts, () => void refresh()) ?? []),
+      [{ label: 'Ask the Networks Again', icon: 'refresh', run: refresh }],
       // Ignore on their networks (ProfileSelf.tsx).
       isSelf || !S ? [] : S.selfEntries(ids, profile, profile.links ?? [], update),
     );
     // What the page already shows as a button is not repeated.
-    const shown = new Set(['Profile', 'Message']);
+    const shown = new Set(['Profile', 'Message', 'Copy']);
     const items = (base?.items ?? [])
       .filter((e) => !('label' in e && shown.has(e.label as string)))
       .filter((e, i, xs) => e.kind !== 'sep' || (i > 0 && i < xs.length - 1 && xs[i - 1].kind !== 'sep'));
     return { label: `${name} actions`, items: groups(items, extra) };
   };
+  // Block or unblock, where an account can (Signal): asked again after, so the page says how you stand.
+  const blocks = isSelf ? [] : (extras?.blockEntries(ids, profile.links ?? [], abouts, () => void refresh()) ?? []);
 
   // ---- each account: one account is the hero's chip and a row on the right; several are tiles of their own
   const several = ids.length > 1;
@@ -625,7 +625,10 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       actions={
         <>
           {!isSelf && messageOptions > 0 && (messageOptions === 1 ? <Action primary icon="send" label="Message" onClick={message} /> : <Action primary icon="send" label="Message" menu={messageMenu} />)}
+          {!isSelf && <Action icon="merge" label="Merge" title="Merge another identity in" onClick={() => setMerging(!merging)} />}
           {!isSelf && <ConnectActions identities={ids} abouts={abouts} onChanged={learn} />}
+          {ids.length > 0 && <Action icon="copy" label="Copy" menu={() => ({ label: 'Copy', items: copyEntries(ids) })} />}
+          {blocks.length > 0 && <Action icon="x" label="Block" menu={() => ({ label: 'Block', items: blocks })} />}
           <Action icon="more" label="More" menu={moreMenu} />
         </>
       }
