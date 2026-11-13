@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -32,9 +33,18 @@ function protocolHash() {
   return hash.digest('hex').slice(0, 12);
 }
 
+/** This build's git short sha, for the page's error reports (src/errors.ts); 'dev' when git cannot say. */
+function buildSha() {
+  try {
+    return execFileSync('git', ['rev-parse', '--short=8', 'HEAD'], { cwd: import.meta.dirname, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() || 'dev';
+  } catch {
+    return 'dev';
+  }
+}
+
 export default defineConfig({
   plugins: [preact(), serviceWorkerBuild()],
-  define: { __SNAPSHOT_SCHEMA__: JSON.stringify(protocolHash()) },
+  define: { __SNAPSHOT_SCHEMA__: JSON.stringify(protocolHash()), __BUILD_SHA__: JSON.stringify(buildSha()) },
   server: {
     port: 5319,
     proxy: {

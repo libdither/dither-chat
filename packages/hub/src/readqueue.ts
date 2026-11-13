@@ -10,6 +10,7 @@ import type * as P from '@dither-chat/protocol';
 import type { Store } from './store.ts';
 import { requestHeld } from './add.ts';
 import { isFeed } from './feed.ts';
+import { jobFailed } from './errors.ts';
 
 /** Time between reads on one account, in ms. */
 export const READ_PACE: Record<P.Network, number> = { discord: 1500, matrix: 300, signal: 300, whatsapp: 1000, telegram: 500, gmessages: 500, messenger: 1000, instagram: 1000, x: 1000, email: 1000, calendar: 0 };
@@ -101,6 +102,7 @@ export class ReadQueue {
       const attempts = row.attempts + 1;
       if (attempts >= MAX_ATTEMPTS) {
         console.warn(`read queue: giving up on ${row.conversation_id} for ${acc.id}: ${(e as Error).message}`);
+        jobFailed('read queue: mark read', e, { account: acc.id, network: acc.network, conversation: row.conversation_id });
         del();
         this.failed++;
       } else {

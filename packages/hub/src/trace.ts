@@ -126,6 +126,12 @@ const RECENT = 64;
 const recent: Span[] = [];
 let recentHead = 0;
 
+/** Told of every span a throw or a rejection ended, with what was thrown (errors.ts writes the jobs among them). */
+let onThrow: ((name: string, e: unknown) => void) | null = null;
+export function setSpanThrowHook(h: ((name: string, e: unknown) => void) | null) {
+  onThrow = h;
+}
+
 /** Where finished spans go; null turns tracing off. */
 export function setTraceSink(s: ((r: SpanRecord) => void) | null) {
   sink = s;
@@ -165,6 +171,7 @@ export function span<T>(name: string, attrs: Attrs, fn: (s: Span) => T, o: SpanO
   } catch (e) {
     s.fail(e);
     finish(s);
+    thrown(name, e);
     throw e;
   }
   if (r instanceof Promise) {
@@ -176,6 +183,7 @@ export function span<T>(name: string, attrs: Attrs, fn: (s: Span) => T, o: SpanO
       (e) => {
         s.fail(e);
         finish(s);
+        thrown(name, e);
         throw e;
       },
     ) as T;
@@ -205,6 +213,12 @@ export function startSpan(name: string, attrs: Attrs = {}): Span & { end(): void
     done = true;
   };
   return s;
+}
+
+function thrown(name: string, e: unknown) {
+  try {
+    onThrow?.(name, e);
+  } catch {}
 }
 
 function finish(s: Span) {

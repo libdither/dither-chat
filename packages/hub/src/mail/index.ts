@@ -27,6 +27,7 @@ import { MailOutbox } from './outbox.ts';
 import { mountRouters, type MailRoute } from './routes.ts';
 import { MailStore } from './store.ts';
 import { AccountSync } from './sync.ts';
+import { jobFailed } from '../errors.ts';
 
 export interface MailHubEvents {
   ingested: { accountId: string; messageIds: string[]; live: boolean };
@@ -131,6 +132,7 @@ export class MailHub {
         fn(e);
       } catch (err) {
         this.log(`a ${event} listener failed: ${(err as Error)?.message ?? err}`);
+        jobFailed(`mail: ${event} listener`, err);
       }
     }
   }

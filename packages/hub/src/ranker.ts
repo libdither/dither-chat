@@ -23,6 +23,7 @@ import { flagged, isChoice, loadWorld, momentOf, mutedBy, Rebuild } from './rank
 import { noteWork } from './stalls.ts';
 import { BUSY_MS, type Store } from './store.ts';
 import type { Triage } from './triage.ts';
+import { jobFailed } from './errors.ts';
 
 type Row = Record<string, any>;
 const MIN = 60_000;
@@ -214,7 +215,7 @@ export class InboxRanker implements AttentionJudge {
   start() {
     if (this.mode === 'off' || this.timer) return;
     const check = () => {
-      if (!this.busy && this.due()) this.refit().catch((e) => console.error('inbox ranking: refit failed', e));
+      if (!this.busy && this.due()) this.refit().catch((e) => (console.error('inbox ranking: refit failed', e), jobFailed('inbox ranking: refit', e)));
     };
     setTimeout(check, 20_000);
     this.timer = setInterval(check, CHECK_EVERY);

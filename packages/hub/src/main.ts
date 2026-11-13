@@ -32,8 +32,9 @@ import { StartupTrace } from './startup.ts';
 import { startCheckpointer } from './checkpoint.ts';
 import { sliced } from './slices.ts';
 import { StallWatch, timedWrite } from './stalls.ts';
-import { NdjsonFile, setTraceSink, span, spansBetween, type Span } from './trace.ts';
+import { NdjsonFile, setSpanThrowHook, setTraceSink, span, spansBetween, type Span } from './trace.ts';
 import { CalendarAccounts, seedCalendarAccount } from './calendar-account.ts';
+import { ErrorLog, jobFailed, reportError, setErrorLog } from './errors.ts';
 
 // Each part of the start, logged in one line once requests are answered (startup.ts).
 const startup = new StartupTrace();
@@ -43,8 +44,15 @@ startup.mark('code');
 process.umask(0o077);
 // One stray throw must not take the hub down. systemd would restart it, but every client would then start over with a
 // full download, and what was queued would wait for the next start. Log it and carry on.
-process.on('uncaughtException', (e) => console.error('uncaught exception (the hub keeps running)', e));
-process.on('unhandledRejection', (e) => console.error('unhandled rejection (the hub keeps running)', e));
+// Both also go to traces/errors.ndjson (errors.ts) once it is open, below.
+process.on('uncaughtException', (e) => {
+  console.error('uncaught exception (the hub keeps running)', e);
+  reportError({ source: 'uncaught', where: 'process', error: e });
+});
+process.on('unhandledRejection', (e) => {
+  console.error('unhandled rejection (the hub keeps running)', e);
+  reportError({ source: 'rejection', where: 'process', error: e });
+});
 
 const args = process.argv.slice(2);
 const flag = (n: string) => args.includes(`--${n}`) || process.env[`DITHER_${n.toUpperCase()}`] === '1';
@@ -77,7 +85,30 @@ const traceOn = opt('trace', '1') !== '0';
 const traceFile = traceOn ? new NdjsonFile(join(dataDir, 'traces/hub.trace.ndjson')) : null;
 const stallFile = traceOn ? new NdjsonFile(join(dataDir, 'traces/event-loop-stalls.ndjson'), { maxBytes: 2 * 1024 * 1024, keep: 3 }) : null;
 if (traceFile) setTraceSink(traceFile.push);
+// Every real error, the hub's and the page's, to traces/errors.ndjson (errors.ts; the contract dither-accounts'
+// bugwatch reads, docs/tracing.md "Errors"). Off with the trace.
+const errorFile = traceOn ? new NdjsonFile(join(dataDir, 'traces/errors.ndjson'), { maxBytes: 5 * 1024 * 1024, keep: 5 }) : null;
+const errorLog = errorFile ? new ErrorLog(errorFile.push, { root: repoRoot, version: buildVersion() }).start() : null;
+setErrorLog(errorLog);
+// A span a throw ended is a job that failed, but for a request (its 5xx is reported as one, server.ts) and a command to
+// an adapter (what came of it is its caller's to say: a refusal can be expected).
+setSpanThrowHook((name, e) => {
+  if (!/^[A-Z]+ \//.test(name) && !name.startsWith('command ')) jobFailed(name, e);
+});
 startup.mark('data dir');
+
+/** This build's git short sha: DITHER_VERSION, else the checkout's HEAD; undefined when neither says. */
+function buildVersion(): string | undefined {
+  const v = process.env.DITHER_VERSION?.trim();
+  if (v) return v.slice(0, 40);
+  try {
+    const r = Bun.spawnSync(['git', 'rev-parse', '--short=8', 'HEAD'], { cwd: repoRoot, stdout: 'pipe', stderr: 'ignore' });
+    const sha = r.success ? r.stdout.toString().trim() : '';
+    return /^[0-9a-f]{7,40}$/.test(sha) ? sha : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 const store = new Store(join(dataDir, 'hub.sqlite'), mediaSigner(secret));
 startup.add(store.opening);
@@ -132,6 +163,7 @@ function alertJudge(): Judge | null {
     return async (text) => (await jev.judge(STOP_QUESTION, [text]))[0] ?? null;
   } catch (e) {
     console.error(`alerts: ${(e as Error).message}; only your rules alert`);
+    jobFailed('alerts: model', e);
     return null;
   }
 }
@@ -142,7 +174,10 @@ startup.mark('models');
 let queue = Promise.resolve();
 function triageLater(ids: string[]) {
   store.pendTriage(ids);
-  queue = queue.then(() => triageNow(ids)).catch((e) => console.error('triage queue', e));
+  queue = queue.then(() => triageNow(ids)).catch((e) => {
+    console.error('triage queue', e);
+    jobFailed('triage queue', e);
+  });
 }
 async function triageNow(ids: string[]) {
   // The new messages' content features, if jev answers quickly; else triage goes on without them (embeddings.ts
@@ -176,6 +211,7 @@ async function triageOne(id: string, sp: Span) {
     if (d.unjudged) setTimeout(() => void judgeLate(id), LATE_JUDGE_MS);
   } catch (e) {
     console.error('triage failed', id, e);
+    jobFailed('triage', e);
     sp.fail(e);
   } finally {
     if (!done) store.triageDone(id);
@@ -198,6 +234,7 @@ async function judgeLate(id: string) {
     deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message', 'push', d.score);
   } catch (e) {
     console.error('late alert check failed', id, e);
+    jobFailed('late alert check', e);
   }
 }
 
@@ -221,19 +258,26 @@ function deliverRequest(n: RequestNotice) {
   push
     .notify(n.title, n.body, undefined, { ...look, requestId: n.requestId, level: 'quiet', tier: 'digest', importance: REQUEST_IMPORTANCE, ...(nid ? { nid } : {}) }, [...quiet, ...push.desktops()], 'quiet')
     .then((r) => nid && activity.sent(nid, r))
-    .catch((e) => console.error('push failed', e));
+    .catch((e) => {
+      console.error('push failed', e);
+      jobFailed('push: request', e);
+    });
 }
 
+const pushClearFailed = (e: unknown) => {
+  console.error('push clear failed', e);
+  jobFailed('push: clear', e);
+};
 // Read anywhere since its notification went out: off the phones. New requests that settled: judged, once each.
 setInterval(
   () =>
     span('notifications: read and requests', {}, () => {
       for (const cid of delivery.read()) {
         phone.read(cid);
-        push.clear(cid).catch((e) => console.error('push clear failed', e));
+        push.clear(cid).catch(pushClearFailed);
       }
       // List rows 12 hours old leave the phones; held ones whose chat was read are over (phonelist.ts).
-      for (const cid of phone.sweep()) push.clear(cid).catch((e) => console.error('push clear failed', e));
+      for (const cid of phone.sweep()) push.clear(cid).catch(pushClearFailed);
       for (const n of requestNotices.due()) deliverRequest(n);
     }),
   5_000,
@@ -259,6 +303,7 @@ const upkeepNow = async () => {
     if (gone) console.log(`triage: let go of ${gone} rows nobody learns from`);
   } catch (e) {
     console.error('upkeep failed', e);
+    jobFailed('upkeep', e);
   }
 };
 setTimeout(() => void upkeep(), 60_000);
@@ -294,6 +339,7 @@ function categoryProvider(): CategoryProvider {
     return new OllamaProvider(process.env.DITHER_OLLAMA_URL ?? 'http://127.0.0.1:11434', name);
   } catch (e) {
     console.error(`categories: ${(e as Error).message}; using keywords`);
+    jobFailed('categories: model', e);
     return new KeywordProvider();
   }
 }
@@ -452,7 +498,10 @@ ranker.onFit = () => {
   void attention
     .rescoreAllSliced()
     .then((events) => server.broadcast(events))
-    .catch((e) => console.error('attention: rescore failed', e));
+    .catch((e) => {
+      console.error('attention: rescore failed', e);
+      jobFailed('attention: rescore', e);
+    });
 };
 ranker.start();
 // Scores live in memory and were worked out afresh: a client resuming from before this start takes the whole list,
@@ -499,8 +548,10 @@ const shutdown = async () => {
   } catch (e) {
     console.error('the last checkpoint failed', e);
   }
+  errorLog?.stop();
   traceFile?.close();
   stallFile?.close();
+  errorFile?.close();
   process.exit(0);
 };
 process.on('SIGINT', shutdown);

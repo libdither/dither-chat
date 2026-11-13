@@ -45,6 +45,7 @@ import { P0 } from './queue.ts';
 import type { MailRouter } from './routes.ts';
 import { unsupportedOp } from './store.ts';
 import type { AccountSync } from './sync.ts';
+import { jobFailed } from '../errors.ts';
 
 declare module './index.ts' {
   interface MailHubEvents {
@@ -574,7 +575,10 @@ export class MailOps {
       this.timerAt = Infinity;
       this.pump().catch((e) => {
         // A hub whose database closed under it (its tests) has nothing left to send.
-        if (!/closed database/.test(String((e as Error)?.message))) console.warn(`mail: ops: ${(e as Error)?.message ?? e}`);
+        if (!/closed database/.test(String((e as Error)?.message))) {
+          console.warn(`mail: ops: ${(e as Error)?.message ?? e}`);
+          jobFailed('mail: ops', e);
+        }
       });
     }, Math.max(0, ms));
     unref(this.timer);

@@ -33,6 +33,7 @@ import type { Store } from '../store.ts';
 import type { MailHub } from './index.ts';
 import { mailPeople, type MailSender } from './people.ts';
 import type { MailRouter } from './routes.ts';
+import { jobFailed } from '../errors.ts';
 
 type Row = Record<string, any>;
 
@@ -306,6 +307,7 @@ export class MailClassifier {
     } catch (e) {
       // A closed database (the hub stopping): the rest waits for the next change.
       console.warn(`mail classify: ${(e as Error)?.message ?? e}`);
+      jobFailed('mail: classify', e);
       return;
     }
     // Senders of mail now personal get their identity (slice 6).

@@ -23,6 +23,7 @@ import type * as P from '@dither-chat/protocol';
 import { randomId } from '@dither-chat/protocol/ids';
 import { type Clock, realClock, sleep, unref } from './clock.ts';
 import type { Store } from './store.ts';
+import { jobFailed } from './errors.ts';
 
 type Row = Record<string, any>;
 
@@ -295,6 +296,7 @@ export class Jobs {
         } catch (e: any) {
           const msg = String(e?.message ?? e).slice(0, 300);
           this.log(`job ${t.job_id} ${t.kind} ${t.target_id}: ${msg}`);
+          if (!/rate.?limit|retry_after|429/i.test(msg)) jobFailed(`job: ${t.kind}`, e, { account: accountId, job: t.job_id });
           // A rate limit is the network asking for time, not the task failing: the adapter waits it out, so ask later.
           if (/rate.?limit|retry_after|429/i.test(msg)) await sleep(this.clock, 30_000);
           else this.store.db.query('UPDATE job_task SET done = 1, error = ?, updated_at = ? WHERE job_id = ? AND kind = ? AND target_id = ?').run(msg, this.clock.now(), t.job_id, t.kind, t.target_id);

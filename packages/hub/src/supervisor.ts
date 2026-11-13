@@ -16,6 +16,7 @@ import { acquireLock, releaseLock } from './lock.ts';
 import { sliced, type SliceOptions } from './slices.ts';
 import { timedWrite } from './stalls.ts';
 import { span } from './trace.ts';
+import { jobFailed, reportError } from './errors.ts';
 
 export interface InprocAdapter {
   start(emit: (ev: P.AdapterEvent) => void): void;
@@ -344,7 +345,7 @@ export class Supervisor {
     if (!this.inbox.length && events.length <= EVENTS_STEP) return this.applyNow(accountId, events);
     this.inbox.push({ account: accountId, events: [...events] });
     this.applying ??= sliced('adapter events: backlog', this.applySteps(), this.slices)
-      .catch((e) => console.error('applying adapter events failed', e))
+      .catch((e) => (console.error('applying adapter events failed', e), jobFailed('adapter events: backlog', e)))
       .finally(() => (this.applying = null));
   }
 
@@ -381,6 +382,7 @@ export class Supervisor {
             r = this.handle(accountId, events[i]);
           } catch (e) {
             console.error(`[${accountId}] ${events[i].t} failed:`, e);
+            jobFailed('adapter event', e, { account: accountId, event: events[i].t });
             continue;
           }
           if (r === 'busy') {
@@ -398,6 +400,7 @@ export class Supervisor {
     if (busyAt < 0) return;
     this.held.set(accountId, events.slice(busyAt));
     console.warn(`[${accountId}] the database is locked: ${events.length - busyAt} events wait to be applied again`);
+    reportError({ source: 'job', where: 'adapter events', name: 'SQLiteError', message: 'database is locked: events wait to be applied again', extra: { account: accountId, events: events.length - busyAt } });
     this.heldTimer ??= setTimeout(() => this.retryHeld(), HELD_RETRY_MS);
     (this.heldTimer as { unref?: () => void }).unref?.();
   }
@@ -408,7 +411,10 @@ export class Supervisor {
     const held = [...this.held];
     this.held.clear();
     if (++this.heldTries > HELD_TRIES) {
-      for (const [id, evs] of held) console.error(`[${id}] the database stayed locked: ${evs.length} events not applied (${[...new Set(evs.map((e) => e.t))].join(', ')})`);
+      for (const [id, evs] of held) {
+        console.error(`[${id}] the database stayed locked: ${evs.length} events not applied (${[...new Set(evs.map((e) => e.t))].join(', ')})`);
+        reportError({ source: 'job', where: 'adapter events', name: 'SQLiteError', message: 'the database stayed locked: events not applied', extra: { account: id, events: evs.length } });
+      }
       this.heldTries = 0;
       return;
     }
@@ -463,12 +469,14 @@ export class Supervisor {
     } catch (e) {
       if (isBusy(e)) return 'busy';
       console.error(`[${accountId}] ingest ${ev.t} failed:`, e);
+      jobFailed('ingest', e, { account: accountId, event: ev.t });
       return;
     }
     try {
       if (fresh.length) this.opts.onFresh(fresh);
     } catch (e) {
       console.error(`[${accountId}] triage of ${fresh.length} new messages could not start:`, e);
+      jobFailed('triage: start', e, { account: accountId });
     }
   }
 
