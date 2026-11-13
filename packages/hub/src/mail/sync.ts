@@ -283,6 +283,9 @@ export class AccountSync {
   changes(mailboxId: string, nested = false): Promise<void> {
     return this.queue
       .run(P1, `changes:${mailboxId}`, async () => {
+        // Queued while the account was online; it may have gone since (the manager restarting, the extractor
+        // reconnecting): its coming back runs a catch-up.
+        if (!this.workable) return;
         let b = this.store.mailbox(mailboxId);
         if (!b?.follow) return;
         if (!b.state) return this.takeState(b);
@@ -306,7 +309,13 @@ export class AccountSync {
       })
       .then(
         () => (nested ? undefined : this.settle()),
-        (e) => (this.ctx.log(`[${this.accountId}] changes: ${asMailError(e).message}`), jobFailed('mail: changes', e, { account: this.accountId })),
+        (e) => {
+          const err = asMailError(e);
+          this.ctx.log(`[${this.accountId}] changes: ${err.message}`);
+          // The manager's `offline` (its extractor not connected, as while the manager restarts) is a state, not a
+          // bug: the account's coming back runs a catch-up.
+          if (err.code !== 'offline') jobFailed('mail: changes', e, { account: this.accountId });
+        },
       );
   }
 
