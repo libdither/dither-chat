@@ -10914,6 +10914,56 @@ button.msg-edited.link:hover {
   color: var(--danger);
 }
 
+/* Your profile beyond the bio, and safety numbers (SignalPeople.tsx). */
+.pf-own-extras {
+  display: grid;
+  gap: 8px;
+  margin: 6px 0 10px;
+}
+.pf-own-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.pf-own-row > span:first-child {
+  min-width: 9em;
+  color: var(--text-dim);
+}
+.pf-own-row .input {
+  flex: 1 1 10em;
+  min-width: 0;
+}
+.pf-own-row .pf-own-emoji {
+  flex: 0 0 4.5em;
+}
+.pf-safety-one + .pf-safety-one {
+  margin-top: 14px;
+}
+.pf-safety-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.pf-safety-digits {
+  display: grid;
+  grid-template-columns: repeat(4, max-content);
+  gap: 4px 14px;
+  margin-bottom: 10px;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+}
+.pf-safety-qr {
+  max-width: 220px;
+  margin-bottom: 10px;
+}
+.captcha-solve {
+  display: grid;
+  gap: 6px;
+}
+
 /* The people graph (graph/GraphView.tsx): a canvas under the filters, with a card for what is picked. */
 .side-graph {
   margin-left: auto;

@@ -248,6 +248,8 @@ export interface About {
   leaving?: AboutLeaving;
   /** Your own nickname here (capability 'nick', the `setNick` command): value null for none. */
   nick?: { value: string | null; canEdit: boolean; reason?: string; max?: number };
+  /** You blocked this group: nothing from it reaches you (capability 'block'; the `block` command changes it). */
+  blocked?: boolean;
 }
 
 export interface AboutTarget {
@@ -472,6 +474,30 @@ export interface PersonAbout {
   links?: { label: string; value: string; url?: string; verified?: boolean }[];
   /** Anything else worth a line: "Business account", "Local time". */
   facts?: { label: string; value: string }[];
+  /** Your safety number with them (capability 'safetyNumbers'). */
+  safety?: SafetyNumber;
+  /** When the person is you: what the `setProfile` command can change on this account. Absent: only the bio. */
+  editable?: ProfileField[];
+  /** When the person is you: your username and its link, where the network has them and one is set. */
+  username?: { name: string; link?: string };
+}
+
+/** What `setProfile` may change: the bio, the profile name, the emoji by the bio, the picture, the username. */
+export type ProfileField = 'bio' | 'name' | 'emoji' | 'avatar' | 'username';
+
+/**
+ * A safety number (Signal): the digits two people compare to know nobody sits between them, and what their phones
+ * scan instead. `trust`: verified (you compared it and said so), unverified (trusted as first seen, Signal's default),
+ * untrusted (it changed and is not accepted yet).
+ */
+export interface SafetyNumber {
+  /** The digits, without spaces (Signal shows 60 in 12 groups of 5). */
+  digits: string;
+  /** What Signal's QR code holds, base64: shown as a QR code of those bytes, for their phone to scan. */
+  scannable?: string;
+  trust: 'verified' | 'unverified' | 'untrusted';
+  /** ms epoch: when their key last changed, if it changed since this device first saw it. */
+  changedAt?: number;
 }
 
 /**

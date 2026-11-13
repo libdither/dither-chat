@@ -498,6 +498,7 @@ function AttentionBlock({ a }: { a: P.AccountView }) {
           {(at.detail as any).emoji}
         </p>
       )}
+      {at.kind === 'captcha' && !!(at.detail as { captcha?: P.CaptchaCheck } | undefined)?.captcha?.url && <SolveCaptcha account={a} check={(at.detail as { captcha: P.CaptchaCheck }).captcha} />}
       {at.kind === 'login' && !at.liveView && (a.network === 'gmessages' ? <SignInWith account={a} what="cookies" /> : a.network === 'telegram' || a.network === 'matrix' ? <SignInWith account={a} what="password" /> : null)}
       {at.liveView && (
         <button class="btn primary" onClick={() => setLive(true)}>
@@ -519,6 +520,40 @@ async function attentionAction(a: P.AccountView, action: string, args?: Record<s
     toast({ kind: 'error', title: 'That did not work', body: e.message });
     return false;
   }
+}
+
+/**
+ * A captcha to solve in your own browser (Signal's rate-limit challenge): open its page, solve it, and paste the link
+ * "Open Signal" points at. Nothing here solves it.
+ */
+function SolveCaptcha({ account, check }: { account: P.AccountView; check: P.CaptchaCheck }) {
+  const [value, setValue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    if (await attentionAction(account, check.action, { captcha: value.trim() })) {
+      setValue('');
+      toast({ kind: 'info', title: 'Sent', body: `${netName(account.network)} takes it from here.` });
+    }
+    setBusy(false);
+  };
+  return (
+    <div class="captcha-solve">
+      <p class="det-note">
+        Open{' '}
+        <a href={check.url} target="_blank" rel="noopener noreferrer">
+          the captcha page
+        </a>
+        , solve it, then copy the link of “Open Signal” (right-click, or long-press on a phone) and paste it here.
+      </p>
+      <div class="qr-pair">
+        <input class="input" autocomplete="off" spellcheck={false} placeholder="signalcaptcha://…" value={value} onInput={(e) => setValue((e.target as HTMLInputElement).value)} aria-label="The captcha link" />
+        <button class="btn primary" disabled={busy || !value.trim()} onClick={() => void submit()}>
+          {busy ? 'Sending…' : 'Send'}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 /** Telegram's sign-in by number: the code it sent, again, or back to a QR code. */

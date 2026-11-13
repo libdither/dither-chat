@@ -36,7 +36,7 @@ import { describeActivity, type ActivityStore, type Features } from './activity.
 import { ALERT_BAR, alertBar, describeWeight, emptyModel, importance, learnedFrom, predict, prior, THRESHOLDS, tierFrom, TIER_NAME, words, type Facts, type Level, type Model, type Namer, type TierContext } from './learn.ts';
 import { InteractionLog } from './interact.ts';
 import { conversing, CONVERSING_REASON } from './tiers.ts';
-import { requestHeld } from './add.ts';
+import { blockedByYou, requestHeld } from './add.ts';
 
 type Row = Record<string, any>;
 
@@ -529,6 +529,10 @@ export class Triage {
     }
     if (requestHeld(s.db, c.id)) {
       reasons.push('A message request: it waits under Requests until you accept it');
+      return { decision: 'silent', score: null, reasons, decidedBy: 'rules', title, body };
+    }
+    if (author && blockedByYou(s.db, author.id)) {
+      reasons.push('From someone you blocked');
       return { decision: 'silent', score: null, reasons, decidedBy: 'rules', title, body };
     }
 

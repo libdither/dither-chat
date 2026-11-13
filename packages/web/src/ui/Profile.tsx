@@ -27,6 +27,7 @@ import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, Tag } from 
 import { ConnectActions, ProfileLinks } from './Requests.tsx';
 import { openConv } from './Sidebar.tsx';
 import { Loading } from './Loader.tsx';
+import { peopleExtras } from './peopleExtras.ts';
 
 /** What a network's profile holds at most, for when it says little. */
 const WHAT_NETWORKS_SHARE: Record<P.Network, string> = {
@@ -347,6 +348,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const startable = isSelf ? [] : nets.filter((n) => !directs.some((d) => d.network === n)).map((n) => ids.find((i) => i.network === n)!).filter((i) => openers(accounts, i.network).length > 0);
   const rule = person ? db.rules.find((x) => x.scope === 'person' && x.target === person.id) : undefined;
   const said = ids.map((i) => abouts[i.id]).filter((a): a is P.PersonAboutView => !!a);
+  // Safety numbers, blocking and your own profile beyond the bio: their own chunk, loaded once a profile shows.
+  const extras = peopleExtras();
   const discord = said.find((a) => a.network === 'discord');
 
   /** Person actions need a Person; someone seen only in a channel gets one the first time you act. */
@@ -482,6 +485,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       // One account's nickname is theirs (with several, each tile has its own).
       ids.length === 1 && !first?.isBot ? nicknameEntries(first, () => setNaming(true)) : [],
       [!isSelf && { label: 'Merge Another Identity In', icon: 'merge', run: () => setMerging(true) }, { label: 'Ask the Networks Again', icon: 'refresh', run: refresh }],
+      // Block or unblock, where an account can (Signal): asked again after, so the page says how you stand.
+      isSelf ? [] : (peopleExtras()?.blockEntries(ids, profile.links ?? [], abouts, () => void refresh()) ?? []),
     );
     // What the page already shows as a button is not repeated.
     const shown = new Set(['Profile', 'Message']);
@@ -648,7 +653,10 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       )}
       <Card title="About" icon="info" extra={asking ? <span class="pf-asking">Asking…</span> : undefined}>
         {editable.map(({ i, account }) => (
-          <OwnBio identity={i} about={abouts[i.id]} account={account} label={editable.length + bios.length > 1 || nets.length > 1} onSaved={learn} />
+          <>
+            <OwnBio identity={i} about={abouts[i.id]} account={account} label={editable.length + bios.length > 1 || nets.length > 1} onSaved={learn} />
+            {extras && <extras.OwnProfileExtras identity={i} about={abouts[i.id]} onSaved={learn} />}
+          </>
         ))}
         {several ? (
           // Each account's bio is on its tile (Accounts, above).
@@ -824,6 +832,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
               {people(mutualFriends)}
             </Card>
           )}
+
+      {!isSelf && extras && <extras.SafetyCard abouts={said} name={name} onChanged={learn} />}
 
       {!isSelf && (
         <ProfileLinksCard

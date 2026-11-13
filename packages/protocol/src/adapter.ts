@@ -113,6 +113,15 @@ export type Capability =
   | 'inviteLinks'
   /** Sets your own nickname in a space (About.nick, the `setNick` command). */
   | 'nick'
+  /**
+   * Shows your safety number with each person and whether you verified it (PersonAbout.safety), and marks it verified
+   * or clears that (the `verify` command). A change of their key comes as a system line in your 1:1 (Signal).
+   */
+  | 'safetyNumbers'
+  /** Blocks and unblocks people and groups outside a request (the `block` command, About.blocked). */
+  | 'block'
+  /** Keeps your private nickname and note for someone on the network too (IdentityFact nickname and note, the `setContact` command). */
+  | 'contactNotes'
   /** Tells the sender you played a voice note or opened a video of theirs (the `viewed` command; Signal's viewed receipt). */
   | 'viewed'
   /** Sends a link preview with a message (`send`'s `preview`). Advertised only while the account's own setting allows previews. */
@@ -133,6 +142,13 @@ export interface IdentityFact {
   isSelf?: boolean;
   /** In the address book / friends list. Contacts get a Person, strangers in big channels do not. */
   contact?: boolean;
+  /**
+   * Your private nickname for them as the network keeps it (Signal's nickname, capability 'contactNotes'); '' when
+   * none. Left out when the adapter did not read it. `displayName` is then their own or address-book name, without it.
+   */
+  nickname?: string;
+  /** Your private note about them as the network keeps it (Signal's contact note, capability 'contactNotes'); '' when none. */
+  note?: string;
 }
 
 /** Someone seen as a member of a space. The identity fact for `who` is emitted first. */
@@ -305,6 +321,15 @@ export interface OutgoingAttachment {
   mime: string;
   size: number;
   kind: AttachmentKind;
+}
+
+/** What the `setProfile` command changes: only the fields given (see it there). */
+export interface ProfileChange {
+  bio?: string;
+  name?: string;
+  emoji?: string;
+  avatar?: OutgoingAttachment | null;
+  username?: string | null;
 }
 
 /** What openDirect answers. The conversation fact has already been emitted when this arrives. */
@@ -596,8 +621,12 @@ export type AdapterCommand =
    * Change the account's own profile (capability 'editProfile'). Only the fields given change. `bio`: the bio or
    * About text ('' clears it). The adapter checks the network's limit (about.ts BIO_LIMIT) and fails with a plain
    * error past it. reply.result: PersonAbout of the account itself as it now stands.
+   *
+   * The other fields are offered only where that PersonAbout's `editable` lists them: `name` your profile name,
+   * `emoji` the emoji beside your bio (Signal's About emoji, '' clears), `avatar` a picture in the hub's spool (null
+   * removes yours), `username` your username (Signal picks its number: name.12; null deletes it).
    */
-  | { t: 'setProfile'; id: string; change: { bio?: string } }
+  | { t: 'setProfile'; id: string; change: ProfileChange }
   /**
    * reply.result for join: { direct?: DirectVoiceSession }. One call per account at a time. `ring` (capability
    * 'ringCalls'): in a direct or group conversation, ring the others as the network's own call button does.
@@ -662,6 +691,23 @@ export type AdapterCommand =
   | { t: 'answerGate'; id: string; space: string; answer: GateAnswer }
   /** Your own nickname in a space, '' to clear it (capability 'nick', checked against nickProblem). reply.result: the About as it now stands. */
   | { t: 'setNick'; id: string; space: string; nick: string }
+  /**
+   * Mark your safety number with someone verified (capability 'safetyNumbers'): `safetyNumber` is the one the owner
+   * compared, and the adapter refuses when it is not the current one ("It changed; look again"). `clear` takes the
+   * mark away. reply.result: PersonAbout of them as it now stands.
+   */
+  | { t: 'verify'; id: string; who: string; safetyNumber?: string; clear?: true }
+  /**
+   * Block or (`unblock`) unblock a person (kind 'identity') or a group (kind 'conversation'), on the owner's click
+   * (capability 'block'). Nothing from them reaches you while blocked. reply.result: { blocked: boolean }; a
+   * relationship event follows for a person.
+   */
+  | { t: 'block'; id: string; target: { kind: 'identity' | 'conversation'; nativeId: string }; unblock?: true }
+  /**
+   * Your private nickname or note for someone, kept on the network too (capability 'contactNotes'). Only the fields
+   * given change; '' clears one. reply.result: {}; an identity fact with what the network now keeps follows.
+   */
+  | { t: 'setContact'; id: string; who: string; nickname?: string; note?: string }
   /** Account-specific actions, e.g. 'relogin', 'startLink', 'resync'. */
   | { t: 'action'; id: string; action: string; args?: unknown }
   | { t: 'shutdown' }

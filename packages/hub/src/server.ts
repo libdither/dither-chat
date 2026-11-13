@@ -267,7 +267,9 @@ export class HubServer {
       note: (a, line) => sup.note(a, line),
     });
     this.groups = new Groups({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line) });
-    this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
+    this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line) });
+    // A note joined from yours and the network's goes back to the network (store.ts networkNotes).
+    store.contactNotesOut = (id, change) => this.people.pushContactNotes(id, change);
     this.adding = new Adding({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), liveView: (a) => !!sup.liveViewUrl?.(a) || !!store.account(a)?.live_view });
     this.servers = new Servers({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), pickAccount: (c, a) => this.pickAccount(c, a), note: (a, line) => sup.note(a, line), flush: () => this.flush(), aboutView: (k, i, n, a, ab) => this.abouts.view(k, i, n, a, ab, Date.now(), undefined, true) });
     sup.calls = this.calls;
@@ -812,12 +814,39 @@ export class HubServer {
     // What the network says about one identity (people.ts, docs/profile.md). ?fresh=1 asks even if a recent answer is kept.
     if ((m = path.match(/^\/api\/identities\/([\w-]+)\/about$/))) {
       if (!s.nativeOf('identity', m[1])) return bad('no such identity', 404);
-      // Your own bio, on a network whose adapter can change it (capability 'editProfile').
+      // Your own profile, on a network whose adapter can change it (capability 'editProfile'): the bio, and where it
+      // says so the name, emoji, picture (an upload id, or null) and username (null deletes it).
       if (method === 'PUT') {
-        const b = await body<{ bio?: unknown }>();
-        if (typeof b.bio !== 'string') return bad('bio: a string');
+        const b = await body<{ bio?: unknown; name?: unknown; emoji?: unknown; avatar?: unknown; username?: unknown }>();
+        const change: P.ProfileChange = {};
+        if (b.bio !== undefined) {
+          if (typeof b.bio !== 'string') return bad('bio: a string');
+          change.bio = b.bio;
+        }
+        if (b.name !== undefined) {
+          if (typeof b.name !== 'string' || !b.name.trim()) return bad('name: a name');
+          change.name = b.name.trim().slice(0, 200);
+        }
+        if (b.emoji !== undefined) {
+          if (typeof b.emoji !== 'string') return bad('emoji: an emoji, or "" for none');
+          change.emoji = b.emoji;
+        }
+        if (b.username !== undefined) {
+          if (b.username !== null && typeof b.username !== 'string') return bad('username: a name, or null to delete it');
+          change.username = b.username;
+        }
+        if (b.avatar !== undefined) {
+          if (b.avatar === null) change.avatar = null;
+          else {
+            const file = typeof b.avatar === 'string' ? this.uploads.get([b.avatar])?.[0] : undefined;
+            if (!file) return bad('avatar: an upload id, or null to remove the picture');
+            change.avatar = file;
+          }
+        }
+        if (!Object.keys(change).length) return bad('bio, name, emoji, avatar or username');
         try {
-          const v = await this.people.setBio(m[1], b.bio);
+          const v = await this.people.setOwn(m[1], change);
+          if (change.avatar) this.uploads.remove([b.avatar as string]);
           this.flush();
           return ok(v);
         } catch (e) {
@@ -827,6 +856,27 @@ export class HubServer {
       const v = await this.people.get(m[1], url.searchParams.get('fresh') === '1');
       this.flush();
       return ok(v);
+    }
+    // Your safety number with someone: mark it verified ({ safetyNumber }) or clear that ({ clear: true }).
+    if ((m = path.match(/^\/api\/identities\/([\w-]+)\/verify$/)) && method === 'POST') {
+      try {
+        const v = await this.people.verify(m[1], await body<{ safetyNumber?: unknown; clear?: unknown }>());
+        this.flush();
+        return ok(v);
+      } catch (e) {
+        return bad((e as Error).message, (e as { status?: number }).status ?? 500);
+      }
+    }
+    // Block someone or a group, or ({ unblock: true }) unblock them, on the owner's click (capability 'block').
+    if ((m = path.match(/^\/api\/(identities|conversations)\/([\w-]+)\/block$/)) && method === 'POST') {
+      const b = await body<{ unblock?: unknown }>();
+      try {
+        const v = m[1] === 'identities' ? await this.people.block(m[2], b.unblock === true) : await this.people.blockConversation(m[2], b.unblock === true);
+        this.flush();
+        return ok(v);
+      } catch (e) {
+        return bad((e as Error).message, (e as { status?: number }).status ?? 500);
+      }
     }
     if ((m = path.match(/^\/api\/identities\/([\w-]+)\/person$/)) && method === 'POST') {
       if (!s.nativeOf('identity', m[1])) return bad('no such identity', 404);
@@ -1273,6 +1323,8 @@ export class HubServer {
       const b = await body<{ name?: unknown; note?: unknown }>();
       if (b.name !== undefined) return bad(NICKNAME_MOVED);
       s.updatePerson(m[1], { ...(typeof b.note === 'string' ? { note: b.note } : {}) });
+      // Kept on their networks too, where an account keeps notes (capability 'contactNotes').
+      if (typeof b.note === 'string') this.people.pushPersonNote(m[1], b.note);
       this.flush();
       return ok();
     }
@@ -1282,6 +1334,8 @@ export class HubServer {
       if (b.nickname !== null && typeof b.nickname !== 'string') return bad('Say nickname: a name, or null to take it away');
       if (s.isSelf(m[1])) return bad('your own accounts go by the names you gave them on their networks');
       if (!s.setIdentityNickname(m[1], b.nickname ? b.nickname.trim().slice(0, 200) : null)) return bad('no such identity', 404);
+      // Kept on their network too, where the account keeps nicknames (capability 'contactNotes').
+      this.people.pushContactNotes(m[1], { nickname: b.nickname ? b.nickname.trim().slice(0, 200) : '' });
       this.flush();
       return ok({ identity: s.identitiesByIds([m[1]])[0] });
     }
