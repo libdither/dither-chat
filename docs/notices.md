@@ -49,6 +49,9 @@ marks. Kept 30 days; a marked one while it is learned from.
 - **Catch-up** (`notify.list`, unread only, since the oldest unread kept (else the newest kept), 50 a page, ten pages
   at most, nothing older than 30 days): when an account is first listed, when the connection comes back, and after a
   gap. What it finds is rated but **notifies nobody** ("Came by a catch-up: no notification"), as mail's late mail.
+  Upstream `since` is exclusive ("updated after", whole seconds), so the hub asks from a second before the oldest
+  unread. A notice whose live arrival is still waiting on the local model is left alone by a catch-up (it is decided,
+  and may notify, as live), and a live decision is not dropped for a catch-up's that came meanwhile.
   **What it no longer lists was read there meanwhile** (a `notify.read` lost in a gap or a manager restart): a notice
   unread here, inside the window the listing covered (all of it, or from the oldest it reached when cut off) and kept
   before the listing began, is read here, quietly: no notification, no `notify.markRead`.
@@ -61,9 +64,12 @@ marks. Kept 30 days; a marked one while it is learned from.
   first, and the notice is then decided as read (notifying nobody); a newer arrival of the same notice waits for the
   one before, whose decision gives way to it.
 - **Read there** (`notify.read`): read here, never notified. Its notification leaves the phones once its group has
-  no unread notice that a notification showed (`readTs` looks only at those `delivered`; delivery.ts `read` then sends
-  a `{ clear }` push). `delivered` is set only when `Notifier.notice` really sent one, not when the phone's list or
-  the list's ten minutes held it.
+  no unread notice that a notification showed: `readTs` is just below the earliest `shown_ts` (a notice's time as
+  its notification last showed it, set only when `Notifier.notice` really sent one, and kept when the notice is
+  updated) among unread notices; delivery.ts `read` then sends a `{ clear }` push. So a notice raised again inside
+  the list's ten minutes, the update held, keeps its notification until it is read. The phone list's held episodes
+  ask another question, whether anything in the group is unread (`readAllTs`): a group with an unread notice is not
+  read, whether or not it was shown.
 - **Read here** (opening it from a notification, Open, Mark read): read here, and `notify.markRead` on the service,
   best effort, when the grant is `write`. The service's echo (`notify.read`) changes nothing. A later catch-up that
   still lists it unread (the mark not there yet, failed, or a `read` grant) leaves it read, unless it was raised again
@@ -89,7 +95,9 @@ An alert at 0.5 or more; else on the list at your level of importance (0.6 until
 it. A normal notice starts at 0.72, a margin over the default level, so what chat learned about features a notice
 shares (anything, a link) cannot sink every review request below the list before you mark one. List only on the
 group or the account keeps it from alerting. Quiet hours hold an alert as a row on the list, and count it for their
-summary when they end ("2 messages held for you"), as chat's held alerts are. Already read, or raised over an hour
+summary when they end ("2 messages held for you"), as chat's held alerts are: only one that would have notified,
+and once (`held_at`), however often it is decided again. A summary whose last held one is a notice carries its
+`noticeId`, so its tap opens it under Notices; a group's id opened as a conversation shows Notices too. Already read, or raised over an hour
 before it came here, it is rated and notifies nobody. A slow local model is not asked again later.
 
 **Reasons**, the deciding one first: "GitHub says it is urgent", "Reads as urgent: the local model's answer is 0.6
