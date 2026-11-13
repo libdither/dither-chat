@@ -13,6 +13,24 @@ world's Discord account, `hub/src/demosending.ts`), the Discord side against rep
 (dither-accounts `test/hook-sending.test.ts`, `test/sending.test.ts`), the page's pure parts in
 `web/test/sendtimes.test.ts`.
 
+## The box on a computer
+
+Everything in the box sits on its last line, as tall as the send button, so a long draft grows up and away from the
+controls rather than splitting them (`styles.css`, "A computer's box"). From left to right:
+
+- **The + menu** (`Timeline.tsx`, `plusItems`): what this chat's network takes besides words, and only that. Today:
+  **Upload a file** (with the network's size limit), **Poll** where an account here has `pollCreate`
+  ([polls.md](polls.md)), and **Sticker** where it has `sendStickers` ([media-kinds.md](media-kinds.md)); the sticker
+  picker opens beside the +. Where files are all the network takes (Matrix, Telegram, WhatsApp and the rest), the + is
+  a paperclip that opens the file picker at once. Nothing that does not work here is shown, disabled or not.
+  Dropping or pasting files still attaches them without it.
+- The account the message goes from, where there is a choice.
+- The text, then the emoji picker.
+- **Send, with its menu as the narrow right half** of the same button (Send silently, Send later). An empty box shows
+  the microphone in send's place ([media-kinds.md](media-kinds.md)).
+
+A phone keeps its own row: + outside the box opening the attach sheet, sticker and camera inside it.
+
 ## Reply without a ping
 
 Every reply used to ping its author on Discord: the hook sent only the message reference. The reply bar now has an
@@ -25,7 +43,7 @@ the default. The send command's field is `mentionReplied: false`; the hub passes
 
 ## Send silently
 
-The send button's menu (the small arrow beside it) has **Send silently** where the account can (capability
+The send button's menu (its narrow right half on a computer, an arrow beside it on a phone) has **Send silently** where the account can (capability
 `silentSend`): Discord's @silent, flag `SUPPRESS_NOTIFICATIONS` (4096) in the client's own send options. It is for one
 message, as @silent is: the next send is loud again. The bell-off icon on the arrow says it is on. A message sent
 silently by anyone never alerts here either ([rich-messages.md](rich-messages.md)).

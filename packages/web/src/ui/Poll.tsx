@@ -3,13 +3,13 @@
  * or made (PollLazy.tsx). The card has a bar per option, your vote marked, the voters where the network shows them
  * (Signal), and its end; you choose, then Vote. A poll you made ends early from its card where the network allows.
  */
-import { useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
 import { POLL_RULES, pollDraftProblem, pollHoursLabel } from '@dither-chat/protocol';
 import { renderMarkdown } from '../markdown.ts';
 import { identityName } from '../model.ts';
 import { canEndPoll, endPoll, makePoll, vote, voter } from '../polls.ts';
-import { Modal } from './bits.tsx';
+import { SourceChip } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import './Poll.css';
 
@@ -111,74 +111,104 @@ export function PollCard({ m }: { m: P.MessageView }) {
   );
 }
 
-/** Making a poll: a question, 2 to 10 options, one or several choices, and how long, where the network has a timer. */
-export function PollMaker({ conversationId, network, accountId, onClose }: { conversationId: string; network: P.Network; accountId?: string; onClose: () => void }) {
+/**
+ * Making a poll, in the composer's place (docs/polls.md "Making one"): shaped like the poll it becomes, with the
+ * network's name and limits in its header. `question`: what the box held, as the question to start from. Enter moves
+ * to the next line and sends from the last; Esc goes back to the message box.
+ */
+export function PollMaker({ conversationId, network, accountId, question: initial = '', onClose, onSent }: { conversationId: string; network: P.Network; accountId?: string; question?: string; onClose: () => void; onSent?: () => void }) {
   const rules = POLL_RULES[network]!;
-  const [question, setQuestion] = useState('');
+  const [question, setQuestion] = useState(initial.replace(/\s+/g, ' ').trim().slice(0, rules.questionMax));
   const [options, setOptions] = useState(['', '']);
   const [multi, setMulti] = useState(false);
   const [hours, setHours] = useState(rules.defaultHours);
   const [busy, setBusy] = useState(false);
+  const form = useRef<HTMLFormElement>(null);
   const filled = options.map((o) => o.trim()).filter(Boolean);
   const draft: P.PollDraft = { question: question.trim(), options: filled, multi, ...(rules.hours && hours ? { hours } : {}) };
   const problem = question.trim() && filled.length ? pollDraftProblem(network, draft) : null;
+  const ready = !busy && !problem && !!question.trim() && filled.length >= 2;
   const set = (i: number, v: string) => {
     const next = options.map((o, j) => (j === i ? v : o));
     // A new empty row once the last is used, up to the network's most.
     if (i === next.length - 1 && v && next.length < rules.maxOptions) next.push('');
     setOptions(next);
   };
-  const submit = async (e: Event) => {
-    e.preventDefault();
-    if (problem || busy || !question.trim() || filled.length < 2) return;
+  const submit = async (e?: Event) => {
+    e?.preventDefault();
+    if (!ready) return;
     setBusy(true);
-    if (await makePoll(conversationId, draft, accountId)) onClose();
-    else setBusy(false);
+    if (await makePoll(conversationId, draft, accountId)) {
+      onSent?.();
+      onClose();
+    } else setBusy(false);
   };
+  const fields = () => [...(form.current?.querySelectorAll<HTMLInputElement>('input[data-line]') ?? [])];
+  const keys = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      onClose();
+    } else if (e.key === 'Enter' && !e.isComposing) {
+      e.preventDefault();
+      const all = fields();
+      const at = all.indexOf(e.currentTarget as HTMLInputElement);
+      const next = all[at + 1];
+      if (next && !(e.ctrlKey || e.metaKey) && (e.currentTarget as HTMLInputElement).value.trim()) next.focus();
+      else void submit();
+    }
+  };
+  const how = `${rules.minOptions} to ${rules.maxOptions} options`;
   return (
-    <Modal title="New poll" onClose={onClose}>
-      <form class="poll-maker" onSubmit={submit}>
-        <label class="field-label" for="poll-q">
-          Question
-        </label>
-        <input id="poll-q" class="poll-maker-q" value={question} maxLength={rules.questionMax} onInput={(e) => setQuestion(e.currentTarget.value)} placeholder="What should we ask?" autoFocus />
-        <div class="field-label">Options</div>
-        <div class="poll-maker-options">
-          {options.map((o, i) => (
-            <div class="poll-maker-row">
-              <input value={o} maxLength={rules.optionMax} onInput={(e) => set(i, e.currentTarget.value)} placeholder={`Option ${i + 1}`} aria-label={`Option ${i + 1}`} />
-              {options.length > 2 && (
-                <button type="button" class="icon-btn small" aria-label={`Remove option ${i + 1}`} onClick={() => setOptions(options.filter((_, j) => j !== i))}>
-                  <Icon name="x" size={14} />
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-        <label class="check-row">
-          <input type="checkbox" checked={multi} onChange={(e) => setMulti(e.currentTarget.checked)} />
-          <span>Allow more than one choice</span>
-        </label>
-        {rules.hours && (
-          <label class="poll-maker-hours">
-            <span>Open for</span>
-            <select value={hours} onChange={(e) => setHours(Number(e.currentTarget.value))}>
-              {rules.hours.map((h) => (
-                <option value={h}>{pollHoursLabel(h)}</option>
-              ))}
-            </select>
-          </label>
-        )}
-        {problem && <p class="det-note error">{problem}</p>}
-        <div class="modal-actions">
-          <button type="button" class="btn" onClick={onClose}>
-            Cancel
+    <form class="poll-draft" ref={form} onSubmit={submit} data-track-area="new poll">
+      <div class="poll-draft-head">
+        <Icon name="list" size={14} />
+        New poll
+        <SourceChip network={network} />
+        <span class="poll-draft-space" />
+        <span class="poll-draft-limit">{how}</span>
+        <button type="button" class="icon-btn small" data-track="new poll (close)" onClick={onClose} aria-label="Back to the message" title="Back to the message (Esc)">
+          <Icon name="x" size={14} />
+        </button>
+      </div>
+      <input data-line class="poll-draft-q" value={question} maxLength={rules.questionMax} onInput={(e) => setQuestion(e.currentTarget.value)} onKeyDown={keys} placeholder="Ask a question" aria-label="Question" autoFocus />
+      <div class="poll-draft-options">
+        {options.map((o, i) => (
+          <div class="poll-draft-row">
+            <span class={`poll-mark ${multi ? 'square' : ''}`} aria-hidden="true" />
+            <input data-line value={o} maxLength={rules.optionMax} onInput={(e) => set(i, e.currentTarget.value)} onKeyDown={keys} placeholder={i < 2 ? `Option ${i + 1}` : 'Add an option'} aria-label={`Option ${i + 1}`} />
+            {options.length > 2 && o && (
+              <button type="button" class="icon-btn small" aria-label={`Remove option ${i + 1}`} onClick={() => setOptions(options.filter((_, j) => j !== i))}>
+                <Icon name="x" size={13} />
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+      <div class="poll-draft-foot">
+        <div class="poll-draft-pills" role="radiogroup" aria-label="How many choices">
+          <button type="button" role="radio" aria-checked={!multi} class={`poll-pill ${!multi ? 'on' : ''}`} onClick={() => setMulti(false)}>
+            One choice
           </button>
-          <button class="btn primary" disabled={busy || !!problem || !question.trim() || filled.length < 2}>
-            {busy ? 'Sending…' : 'Send poll'}
+          <button type="button" role="radio" aria-checked={multi} class={`poll-pill ${multi ? 'on' : ''}`} onClick={() => setMulti(true)}>
+            Several
           </button>
+          {rules.hours && (
+            <label class="poll-pill poll-pill-select" title="How long it stays open">
+              <Icon name="clock" size={12} />
+              <select value={hours} onChange={(e) => setHours(Number(e.currentTarget.value))} aria-label="Open for">
+                {rules.hours.map((h) => (
+                  <option value={h}>Open {pollHoursLabel(h)}</option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
-      </form>
-    </Modal>
+        {problem && <span class="poll-draft-problem">{problem}</span>}
+        <span class="poll-draft-space" />
+        <button class="send-btn" data-track="send poll" disabled={!ready} aria-label="Send poll" title={ready ? 'Send poll' : 'A question and two options first'}>
+          <Icon name="send" size={17} />
+        </button>
+      </div>
+    </form>
   );
 }

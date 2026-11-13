@@ -71,8 +71,12 @@ try {
   await Bun.sleep(500);
 
   // ------------------------------------------------------------------ stickers
-  check('a sticker button beside the emoji button on Signal', await page.eval(`!!document.querySelector('.composer .composer-emoji + .composer-sticker')`));
-  await click('.composer-sticker');
+  // On a computer stickers are in the + menu (docs/sending.md "The + menu").
+  check('no sticker button in the box on a computer', await page.eval(`!document.querySelector('.composer .composer-sticker')`));
+  await click('.composer-plus-menu');
+  await page.until(`!!document.querySelector('.plus-menu [data-track="stickers"]')`, 5000);
+  check('the + menu offers Sticker on Signal', true);
+  await click('.plus-menu [data-track="stickers"]');
   await page.until(`document.querySelectorAll('.sticker-picker .sticker-choice').length > 0`, 10000);
   check("the picker shows the account's pack, and no More when there is no next page", await page.eval(`!document.querySelector('.sticker-tab.more') && document.querySelectorAll('.sticker-tab:not(.more)').length === 1`));
   check('Signal offers to install a pack from a link', await page.eval(`!!document.querySelector('.sticker-install input')`));

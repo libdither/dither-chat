@@ -385,7 +385,7 @@ try {
   await page.goto(`${base}/#/inbox/c/${conv.id}`);
   await page.until(`!!document.querySelector('.composer textarea')`, 20000);
   await Bun.sleep(500);
-  check('the desktop keeps its paperclip and no + or camera', (await has('.composer-box .attach-btn')) && !(await has('.composer-plus')) && !(await has('.composer-camera')));
+  check('the desktop has its paperclip or + menu, and no phone + or camera', ((await has('.composer-box .attach-btn')) || (await has('.composer-box .composer-plus-menu'))) && !(await has('.composer-plus')) && !(await has('.composer-camera')));
 
   const errors = page.errors.filter((e) => !/WebSocket connection|Failed to load resource|File chooser dialog can only be shown/.test(e));
   check('no script errors', !errors.length, errors);

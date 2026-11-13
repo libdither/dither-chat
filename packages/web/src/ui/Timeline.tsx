@@ -89,7 +89,7 @@ import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
 import { TypingBar } from './Typing.tsx';
 import { useGrow } from './grow.ts';
 import { AttachSheet, CameraView, SendScreen } from './Attach.tsx';
-import { mediaOffer, StickerButton, stickerInstaller, ViewOnceChip, VoiceButton } from './ComposerMedia.tsx';
+import { mediaOffer, preloadStickers, StickerButton, StickerPicker, stickerInstaller, ViewOnceChip, VoiceButton } from './ComposerMedia.tsx';
 import { CAPTURE_ACCEPT, MEDIA_ACCEPT, opensSendScreen } from '../camera.ts';
 import { phone, touchOnly } from '../phone.ts';
 import { composerDone, composerTyped } from '../typing.ts';
@@ -1228,12 +1228,56 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   const attaching = canAttach && !edit && !disabledReason;
   // Making a poll (docs/polls.md): where an account here makes them, not in an open message request.
   const [polling, setPolling] = useState(false);
+  useEffect(() => setPolling(false), [targets.convId]);
   const pollAccount = conv && !edit && !disabledReason ? pollMaker(targets.convId, sender?.id) : null;
-  const pollBtn = pollAccount && !onPhone && (
-    <button class="icon-btn poll-btn" data-track="poll" onClick={() => setPolling(true)} title="New poll" aria-label="New poll">
-      <Icon name="list" size={17} />
-    </button>
-  );
+  // A computer's + (docs/sending.md "The + menu"): what this chat's network takes besides words, and only that. Where
+  // files are all it takes, the + is a paperclip that opens the file picker at once.
+  const [stickerAt, setStickerAt] = useState<DOMRect | null>(null);
+  useEffect(() => setStickerAt(null), [targets.convId]);
+  const plusRef = useRef<HTMLButtonElement>(null);
+  const canSticker = !!conv && !disabledReason && !edit && offer.stickers;
+  type PlusItem = { track: string; icon: string; label: string; note?: string; run: () => void; hover?: () => void };
+  const plusItems: PlusItem[] = onPhone
+    ? []
+    : ([
+        attaching && { track: 'attach', icon: 'paperclip', label: 'Upload a file', note: limit.replace('up to ', ''), run: () => picker.current?.click() },
+        pollAccount && { track: 'poll', icon: 'list', label: 'Poll', run: () => setPolling(true) },
+        canSticker && { track: 'stickers', icon: 'sticker', label: 'Sticker', run: () => plusRef.current && setStickerAt(plusRef.current.getBoundingClientRect()), hover: preloadStickers },
+      ] as (PlusItem | false | null | undefined)[]).filter((x): x is PlusItem => !!x);
+  const plus =
+    plusItems.length === 1 && plusItems[0].track === 'attach' ? (
+      <button class="icon-btn attach-btn" data-track="attach" onClick={() => picker.current?.click()} title={`Attach files, ${limit}`} aria-label="Attach files">
+        <Icon name="paperclip" size={17} />
+      </button>
+    ) : plusItems.length > 0 ? (
+      <Menu
+        up
+        trigger={(toggle) => (
+          <button ref={plusRef} class="icon-btn composer-plus-menu" data-track="plus" onClick={toggle} title="Files, polls and stickers" aria-label="More to send">
+            <Icon name="plus" size={18} />
+          </button>
+        )}
+      >
+        {(close) => (
+          <div class="level-menu plus-menu">
+            {plusItems.map((it) => (
+              <button
+                class="menu-item"
+                data-track={it.track}
+                onPointerEnter={it.hover}
+                onClick={() => {
+                  close();
+                  it.run();
+                }}
+              >
+                <Icon name={it.icon} size={15} /> {it.label}
+                {it.note && <span class="plus-note">{it.note}</span>}
+              </button>
+            ))}
+          </div>
+        )}
+      </Menu>
+    ) : null;
   const openCamera = () => {
     // No camera API at all: the system's camera, from this tap.
     if (!navigator.mediaDevices?.getUserMedia) return capture.current?.click();
@@ -1411,7 +1455,20 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           )}
         </>
       )}
-      {onPhone ? (
+      {polling && conv && pollAccount ? (
+        // A poll is drafted where the message box was; what the box held is its question (docs/polls.md).
+        <PollMakerLazy
+          conversationId={targets.convId}
+          network={conv.network}
+          accountId={pollAccount.id}
+          question={text.trim()}
+          onClose={() => {
+            setPolling(false);
+            requestAnimationFrame(() => ta.current?.focus());
+          }}
+          onSent={() => type('')}
+        />
+      ) : onPhone ? (
         <div class="composer-row">
           {attaching && (
             <button class="icon-btn composer-plus" data-track="plus" onClick={() => setSheet(true)} aria-label="Attach photos, videos or files">
@@ -1441,12 +1498,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
         </div>
       ) : (
         <div class={`composer-box ${disabledReason ? 'disabled' : ''}`}>
-          {attaching && (
-            <button class="icon-btn attach-btn" data-track="attach" onClick={() => picker.current?.click()} title={`Attach files, ${limit}`} aria-label="Attach files">
-              <Icon name="paperclip" size={17} />
-            </button>
-          )}
-          {pollBtn}
+          {plus}
           {sendAsMenu}
           {lead ? (
             <div class={`pair-lead ${text ? 'raised' : ''}`}>
@@ -1457,10 +1509,20 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
             box
           )}
           {emojiBtn}
-          {stickerBtn}
-          {extras.button}
-          {sendBtn}
+          <div class={`send-split ${extras.button ? 'two' : ''}`}>
+            {sendBtn}
+            {extras.button}
+          </div>
         </div>
+      )}
+      {stickerAt && canSticker && (
+        <StickerPicker
+          conversationId={targets.convId}
+          accountId={targets.accountId ?? sender?.id}
+          anchor={stickerAt}
+          onSend={(st) => sendMedia({ media: { sticker: st.id } })}
+          onClose={() => setStickerAt(null)}
+        />
       )}
       {emojiAt && conv && (
         <InsertPicker
@@ -1481,7 +1543,6 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           {...(offer.viewOnce ? { onViewOnce: () => (setViewOnce(true), photos.current?.click()) } : {})}
         />
       )}
-      {polling && conv && <PollMakerLazy conversationId={targets.convId} network={conv.network} accountId={pollAccount?.id} onClose={() => setPolling(false)} />}
       {camera && (
         <CameraView
           onClose={() => setCamera(false)}

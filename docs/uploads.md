@@ -25,7 +25,7 @@ on the hub's disk until it is sent, and through a restart of either end.
 ## On a phone
 
 The row is Signal's and Discord's: **+** on the left, the message box with a **camera** button inside it on the
-right, and send (`ui/Attach.tsx`, pure parts in `camera.ts`). The desktop keeps its paperclip, paste and drop.
+right, and send (`ui/Attach.tsx`, pure parts in `camera.ts`). The desktop keeps paste and drop, and files are **Upload a file** in its + menu, or a plain paperclip where files are all the network takes ([sending.md](sending.md)).
 
 - **+** opens a sheet with **Photos & videos** (`accept="image/*,video/*"`, several at once) and **File** (any kind,
   several). On Android 13 and later the app opens the system photo picker for the first, which needs no permission

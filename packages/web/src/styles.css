@@ -2523,12 +2523,10 @@ code {
   font-size: 12px;
 }
 .attach-btn {
-  align-self: center;
   margin-left: -6px;
 }
 /* The composer's emoji button, beside send (Reactions.tsx, InsertPicker). */
 .composer-emoji {
-  align-self: center;
   color: var(--text-faint);
 }
 .composer-emoji:hover,
@@ -2619,6 +2617,64 @@ code {
 .send-btn:disabled {
   background: var(--bg-hover);
   color: var(--text-faint);
+}
+/* A computer's box: every control is as tall as send and sits on the last line, whatever the text's height; one
+   line of text is that tall too (docs/sending.md "The box"). */
+.composer > .composer-box {
+  padding-left: 12px;
+}
+.composer > .composer-box textarea {
+  padding: 8px 0;
+}
+.composer > .composer-box > .icon-btn,
+.composer > .composer-box > .menu-anchor > .icon-btn {
+  height: 36px;
+}
+.composer > .composer-box > .menu-anchor:first-child {
+  margin-left: -6px;
+}
+.composer-plus-menu {
+  color: var(--text-faint);
+}
+.composer-plus-menu:hover {
+  color: var(--text);
+}
+.plus-menu .menu-item {
+  align-items: center;
+  min-width: 190px;
+}
+.plus-note {
+  margin-left: auto;
+  padding-left: 16px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+/* Send and its ways (silently, later) as one button with a narrow half. */
+.send-split {
+  display: flex;
+  flex: none;
+}
+.send-split.two > .send-btn {
+  border-radius: 9px 0 0 9px;
+}
+.send-split > .menu-anchor > .send-more {
+  width: 22px;
+  height: 36px;
+  border-radius: 0 9px 9px 0;
+  background: color-mix(in oklab, var(--accent-fill) 82%, #000);
+  color: var(--on-accent);
+}
+.send-split > .menu-anchor > .send-more:hover {
+  background: color-mix(in oklab, var(--accent-fill) 70%, #000);
+}
+.send-split:has(> .send-btn:disabled) > .menu-anchor > .send-more {
+  background: var(--bg-hover);
+  color: var(--text-faint);
+  box-shadow: inset 1px 0 0 var(--border);
+}
+.send-split > .menu-anchor > .send-more.on {
+  color: var(--on-accent);
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 /* Stickers, voice messages and view-once in the composer (ui/ComposerMedia.tsx, docs/media-kinds.md). */
 .view-once-chip {
@@ -14914,7 +14970,6 @@ h1:hover > .pair-nick-edit,
   border-color: var(--accent);
 }
 .send-more {
-  align-self: center;
   color: var(--text-faint);
 }
 .send-more.on {

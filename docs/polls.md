@@ -60,10 +60,19 @@ show counts only.
   made it.
 
 The card on phone and desktop: you pick, then press **Vote**. **Take vote back** and **End poll** appear only where
-they apply. Counts show once you have voted, once the poll has ended, or when no account here can vote. The card
-and the New poll dialog are a lazy chunk (`ui/PollLazy.tsx`). Until it loads, the message shows its text. To make
-a poll: the list button beside the paperclip on desktop, or **Poll** in the + sheet on a phone. A poll can also be
-ended from the message menu (**End Poll**).
+they apply. Counts show once you have voted, once the poll has ended, or when no account here can vote. A poll can
+also be ended from the message menu (**End Poll**).
+
+### Making one
+
+**Poll** in the + menu on a computer ([sending.md](sending.md) "The box on a computer"), or in the + sheet on a phone,
+turns the message box into the poll's draft, shaped like the poll it becomes (`PollMaker` in `ui/Poll.tsx`). Its header
+names the network and its limits ("2 to 10 options"). What the box held becomes the question, its lines joined. An
+option row is added as the last is used, up to the network's most; the marks are round for one choice and square for
+several. The pills choose **One choice** or **Several**, and on Discord how long it stays **Open** (Signal has no
+timer, so no pill). Enter goes to the next line, and from the last one (or with Ctrl) sends; Esc, or the ×, goes back
+to the message box with its text. Once sent the box comes back empty. The card and the draft are a lazy chunk
+(`ui/PollLazy.tsx`); until it loads, a poll message shows its text.
 
 ## Pins
 

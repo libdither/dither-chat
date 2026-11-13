@@ -113,39 +113,112 @@
 .poll-card.ended .poll-option {
   opacity: 0.85;
 }
-.poll-maker {
+/* Making a poll, in the composer's place (PollMaker): shaped like the card it becomes. */
+.poll-draft {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  overflow: hidden;
 }
-.poll-maker input,
-.poll-maker select {
+.poll-draft-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px 5px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.poll-draft-space {
+  flex: 1;
+}
+.poll-draft-limit {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.poll-draft input {
   width: 100%;
   min-width: 0;
+  border: none;
+  background: none;
+  outline: none;
+  padding: 4px 0;
+  color: var(--text);
 }
-.poll-maker-options {
+.poll-draft input::placeholder {
+  color: var(--text-faint);
+}
+.poll-draft .poll-draft-q {
+  padding: 10px 14px 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.poll-draft-options {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  padding: 2px 6px 4px 14px;
+  max-height: min(260px, var(--app-h, 100dvh) * 0.35);
+  overflow-y: auto;
 }
-.poll-maker-row {
+.poll-draft-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 9px;
+  min-height: 32px;
 }
-.poll-maker-hours {
+.poll-draft-row .poll-mark {
+  width: 16px;
+  height: 16px;
+}
+.poll-mark.square {
+  border-radius: 4px;
+}
+.poll-draft-foot {
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
+  align-items: flex-end;
   gap: 8px;
+  padding: 7px;
+  border-top: 1px solid var(--border-soft);
 }
-.poll-maker-hours select {
-  width: auto;
-}
-.poll-maker .check-row {
+.poll-draft-pills {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-self: center;
+  padding-left: 5px;
 }
-.poll-maker .check-row input {
-  width: auto;
+.poll-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.poll-pill:hover {
+  color: var(--text);
+}
+.poll-pill.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.poll-pill-select select {
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+.poll-draft-problem {
+  align-self: center;
+  font-size: 12px;
+  color: var(--danger);
 }
