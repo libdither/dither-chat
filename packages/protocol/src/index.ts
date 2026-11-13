@@ -17,3 +17,4 @@ export * from './mail.ts';
 export * from './calendar.ts';
 export * from './feed.ts';
 export * from './notices.ts';
+export * from './mentions.ts';
