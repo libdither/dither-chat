@@ -2079,7 +2079,8 @@ class DemoAdapter implements InprocAdapter {
       if (shape === 'direct' || shape === 'self') {
         set('disappearing', true);
         set('encrypted', false, `Always on in ${NETWORK_META_NAME[net]}.`);
-        return { noun, fields, members: { list: members, complete: true }, rules: [{ what: 'Change disappearing messages', who: shape === 'self' ? 'You' : 'Either of you', you: true }] };
+        // Signal keeps no pinned list a linked device reads: the hub adds the pins it saw (docs/polls.md).
+        return { noun, fields, members: { list: members, complete: true }, rules: [{ what: 'Change disappearing messages', who: shape === 'self' ? 'You' : 'Either of you', you: true }], ...(wa ? {} : { pinned: { messages: [], canEdit: true } }) };
       }
       const info = admin || v.editInfo === 'everyone';
       const onlyAdmins = 'Only admins can change this.';
@@ -2115,6 +2116,7 @@ class DemoAdapter implements InprocAdapter {
         you: { role: admin ? 'Admin' : 'Member', rank: admin ? 100 : 0 },
         invite: { link: admin ? place.invite : wa ? null : place.invite, canCreate: admin, canRevoke: admin && !!place.invite, ...(admin ? {} : { reason: 'Only admins can change the invite link.' }) },
         ...(wa && conv ? { facts: [{ label: 'Created', value: '2024-03-02' }] } : []),
+        ...(wa || !conv ? {} : { pinned: { messages: [], canEdit: admin || !v.announceOnly, ...(admin || !v.announceOnly ? {} : { reason: 'Only admins can send messages here.' }) } }),
       };
     }
     // Matrix: power levels.
@@ -2179,17 +2181,9 @@ class DemoAdapter implements InprocAdapter {
     const seq = Math.max(cmd.seq ?? 0, this.pollSeq.get(cmd.message) ?? 0) + 1;
     this.pollSeq.set(cmd.message, seq);
     if (this.network === 'signal') this.emit({ t: 'pollUpdate', conversation: cmd.conversation, message: cmd.message, vote: { voter: this.self.nativeId, options: cmd.options, seq, ts: Date.now() } });
-    else {
-      const was = this.pollMine.get(cmd.message) ?? [];
-      const add: Record<string, number> = {};
-      for (const o of was) add[o] = (add[o] ?? 0) - 1;
-      for (const o of cmd.options) add[o] = (add[o] ?? 0) + 1;
-      this.pollMine.set(cmd.message, cmd.options);
-      this.emit({ t: 'pollUpdate', conversation: cmd.conversation, message: cmd.message, add, mine: cmd.options });
-    }
+    else this.emit({ t: 'pollUpdate', conversation: cmd.conversation, message: cmd.message, mine: cmd.options });
     return {};
   }
-  private pollMine = new Map<string, string[]>();
 
   /** Apply a change the hub has checked, and say so the way the network would. */
   private configure(target: P.AboutTarget, change: P.AboutChange): P.About {
@@ -2198,6 +2192,8 @@ class DemoAdapter implements InprocAdapter {
     else if (change.key === 'pin') {
       place.pinned = place.pinned.filter((m) => m !== change.message);
       if (!change.remove) place.pinned.unshift(change.message);
+      // As the adapters say their own pins (polls.ts in dither-accounts, the Signal adapter).
+      if (conv) this.emit({ t: 'pin', conversation: target.nativeId, message: change.message, pinned: !change.remove, by: this.self.nativeId, ts: Date.now() });
     } else (place.values as Record<string, unknown>)[change.key] = change.value;
     if (change.key === 'name' || change.key === 'topic') {
       if (conv) {

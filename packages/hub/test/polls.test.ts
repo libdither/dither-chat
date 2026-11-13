@@ -160,9 +160,12 @@ describe("Discord's counts", () => {
     store.ingest(dis, { t: 'message', live: false, message: { nativeId: MSG, conversation: CHAN, author: DSELF, ts: T, body: '**Lunch?**', extra: { poll } } });
     expect(view('discord', MSG).poll!.options.map((o) => o.count)).toEqual([3, 1]);
     store.ingest(dis, { t: 'pollUpdate', conversation: CHAN, message: MSG, add: { '2': 1 } });
-    store.ingest(dis, { t: 'pollUpdate', conversation: CHAN, message: MSG, add: { '1': -1, '2': 1 }, mine: ['2'] });
+    // Your own vote said alone: the counts move by what changed in it.
+    store.ingest(dis, { t: 'pollUpdate', conversation: CHAN, message: MSG, mine: ['1'] });
+    expect(view('discord', MSG).poll!.options.map((o) => [o.count, o.mine])).toEqual([[4, true], [2, false]]);
+    store.ingest(dis, { t: 'pollUpdate', conversation: CHAN, message: MSG, mine: ['2'] });
     let p = view('discord', MSG).poll!;
-    expect(p.options.map((o) => [o.count, o.mine])).toEqual([[2, false], [3, true]]);
+    expect(p.options.map((o) => [o.count, o.mine])).toEqual([[3, false], [3, true]]);
     expect(p.options[0].voters).toBeUndefined();
     store.ingest(dis, { t: 'message', live: false, message: { nativeId: MSG, conversation: CHAN, author: DSELF, ts: T, body: '**Lunch?**', extra: { poll: { ...poll, counts: { '1': 5, '2': 5 } } } } });
     p = view('discord', MSG).poll!;

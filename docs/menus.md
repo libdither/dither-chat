@@ -36,7 +36,7 @@ One component draws them all (`packages/web/src/ui/ContextMenu.tsx`); what each 
 | Group | Items |
 |---|---|
 | Reactions | quick-reaction row (your 4 most used here), Add Reaction › (6 + Other Reactions…), View Reactions › (who reacted, per emoji) |
-| Actions | Edit Message **E** (own, where the network allows), Reply **R**, Forward **F**, Open Thread, Copy Text **C**, Copy Message Link |
+| Actions | Edit Message **E** (own, where the network allows), Reply **R**, Forward **F**, Pin Message › / Unpin Message (where the account can pin; Signal asks how long), End Poll (your own poll), Open Thread, Copy Text **C**, Copy Message Link |
 | Going places | Go to Replied Message, Go to Original Message (forwards), Profile |
 | Marks | Should have alerted (on a message that alerted it reads Alert was wrong), Less like this |
 | Red | Delete Message **Del** (own, where the network allows) |
@@ -52,8 +52,7 @@ place's. A mark teaches the next decision and leaves this message where it is. O
 reasons at the bottom of the sheet, not among the items. They replaced the four levels a message could be
 voted to.
 
-Left out: **Pin** and **Mark Unread** (no adapter command, and read state cannot go backwards on the networks
-here), **Create Thread**, **Apps**, **Speak Message**, **Report**. The hover bar gains Forward and a More (…)
+Left out: **Mark Unread** where read state cannot go backwards on the network, **Create Thread**, **Apps**, **Speak Message**, **Report**. The hover bar gains Forward and a More (…)
 button that opens this menu.
 
 ### A conversation or channel (sidebar rows, the channel tree, the header)

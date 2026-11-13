@@ -62,6 +62,8 @@ export interface PollVoteFact {
  * The `pollUpdate` event (capability 'polls'). Every part is optional and says only what changed:
  * - counts: votes per option as the network now says them, replacing what the hub had (mine and voters with them);
  * - add: votes to add (or, negative, take away) per option, when the network says only that one changed;
+ * - mine alone (no counts, no add): your own vote changed to these options, and the hub moves the counts by the
+ *   difference (a vote you just made, before the network counts it);
  * - vote: one voter's whole vote (Signal), tallied by the hub;
  * - ended: the poll closed.
  */

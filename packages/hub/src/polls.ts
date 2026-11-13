@@ -105,14 +105,27 @@ export function applyPollUpdate(db: Database, network: P.Network, voterId: (nati
   let voters: number | null = cur?.voters ?? null;
   let mine = json<string[] | null>(cur?.mine, null);
   let ended = !!cur?.ended;
-  if (ev.counts) counts = numbers(ev.counts);
-  if (ev.add) {
-    const base = counts ?? { ...(pollFact(json<Row>(msg.extra, {}).poll)?.counts ?? {}) };
-    for (const [k, v] of Object.entries(ev.add)) if (typeof v === 'number') base[k] = Math.max(0, (base[k] ?? 0) + v);
+  const fact = pollFact(json<Row>(msg.extra, {}).poll);
+  const move = (add: Record<string, number>) => {
+    const base = counts ?? { ...(fact?.counts ?? {}) };
+    for (const [k, v] of Object.entries(add)) if (typeof v === 'number') base[k] = Math.max(0, (base[k] ?? 0) + v);
     counts = base;
+  };
+  if (ev.counts) counts = numbers(ev.counts);
+  if (ev.add) move(ev.add);
+  if (Array.isArray(ev.mine)) {
+    const next = ev.mine.filter((x) => typeof x === 'string');
+    // Your own vote said alone: the counts move by what changed in it.
+    if (!ev.counts && !ev.add) {
+      const was = mine ?? fact?.mine ?? [];
+      const add: Record<string, number> = {};
+      for (const o of was) if (!next.includes(o)) add[o] = (add[o] ?? 0) - 1;
+      for (const o of next) if (!was.includes(o)) add[o] = (add[o] ?? 0) + 1;
+      move(add);
+    }
+    mine = next;
   }
   if (typeof ev.voters === 'number') voters = ev.voters;
-  if (Array.isArray(ev.mine)) mine = ev.mine.filter((x) => typeof x === 'string');
   if (ev.ended) ended = true;
   db.query(
     `INSERT INTO poll_state (message_id, counts, voters, mine, ended, at) VALUES (?, ?, ?, ?, ?, ?)

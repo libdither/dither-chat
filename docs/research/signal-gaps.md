@@ -206,14 +206,17 @@ A side finding: `MessageFact.extra` (quote, poll, sticker, storyReply, viewOnce,
 
 - (a)/(d) M/H: poll votes are dropped (`dataMessage.pollVote` → "ignoring a poll vote", debug log), so no tally is
   ever shown. `pollCreate` becomes text lines plus `extra.poll`, which the web never renders as a poll (c).
-  `pollTerminate` becomes "ended the poll".
+  `pollTerminate` becomes "ended the poll". **done** (net-gaps): votes tallied by the hub (each voter's highest vote count wins), voters
+  named as Signal shows them, the poll card in the web ([polls.md](../polls.md)).
 - (a) M: no voting or poll-making. `sendPollVote --poll-author --poll-timestamp -o <idx…> --vote-count n`,
   `sendPollCreate -q -o … [--no-multi]` and `sendPollTerminate --poll-timestamp` are unused. The protocol has no poll
-  command or event.
+  command or event. **done** (net-gaps): `pollVote`, `pollCreate`, `pollEnd` commands and the `pollUpdate` event (protocol poll.ts);
+  quiet in a message request.
 - (b) M: pinning and unpinning. Incoming `pinMessage{…, pinDurationSeconds}` and `unpinMessage` become `pin` events
   (with duration timers), and the About shows pinned messages. But `sendPinMessage [-d secs] -a -t` and
   `sendUnpinMessage` are never called, and `configure {key:'pin'}` throws "Signal keeps no list of pinned messages to
-  change", which is wrong for 0.14.8.
+  change", which is wrong for 0.14.8. **done** (net-gaps): `sendPinMessage` with Signal's durations (1 day, 1 week, 30 days, for good) and
+  `sendUnpinMessage`; the hub lists the pins it saw.
 
 ## Misc
 
