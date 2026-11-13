@@ -198,7 +198,7 @@ export class Triage {
     if (c.shape === 'channel') {
       const sp = this.ancestors(c.id)[0];
       const top = sp ? this.communityOf(sp.id) : null;
-      return `#${c.name ?? 'channel'}${top ? ` · ${top.name}` : ''}`;
+      return `${c.network === 'discord' ? '#' : ''}${c.name ?? 'channel'}${top ? ` · ${top.name}` : ''}`;
     }
     return c.name ?? 'Group';
   }
