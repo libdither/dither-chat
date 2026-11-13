@@ -1,7 +1,10 @@
-/** Where filing puts a thread on the page before the hub answers (mail/filing.ts), and where Undo takes it back. */
+/**
+ * Where filing puts a thread on the page before the hub answers (mail/filing.ts), where Undo takes it back, and which
+ * writes an account lets the page offer (canWrite).
+ */
 import { expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
-import { archivedInAll, destinationIn, movedView, moveTargetsIn, undoTarget } from '../src/mail/filing.ts';
+import { archivedInAll, canWrite, destinationIn, movedView, moveKind, moveTargetsIn, undoTarget } from '../src/mail/filing.ts';
 
 const box = (id: string, role: P.MailboxRole | null, accountId = 'acc_a', path = id): P.MailboxView => ({ id, accountId, name: path, path, parentId: null, role, unread: null, total: null, followed: false });
 const imap = new Map(
@@ -75,4 +78,50 @@ test('Gmail: Move to Inbox from All Mail is a copy there, so its labels stay; it
   expect(movedView(g, archived, 'inbox')).toMatchObject({ mailboxIds: ['g-all', 'g-work', 'g-imp', 'g-in'], roles: ['all', 'important', 'inbox'] });
   expect(undoTarget(g, archived, 'inbox')).toBe('archive');
   expect(moveTargetsIn(g, archived).map((b) => b.id)).toEqual(['g-in', 'g-trash', 'g-work']);
+});
+
+test('canWrite: a read grant offers nothing; listed writes offer only those; a 501 takes its kind away', () => {
+  const acc = (o: Partial<P.MailAccountView> = {}): P.MailAccountView => ({
+    id: 'acc_a',
+    kind: 'imap',
+    label: 'a',
+    address: null,
+    name: null,
+    color: '#888',
+    level: 'write',
+    dryRun: false,
+    online: true,
+    problem: null,
+    send: { ok: null, why: null },
+    sync: { phase: 'idle', synced: 0, oldest: null },
+    managedUrl: null,
+    deleteAt: null,
+    ...o,
+  });
+  const kinds = ['seen', 'flagged', 'move', 'trash', 'junk'] as const;
+  const offered = (a: P.MailAccountView) => kinds.filter((k) => canWrite(a, k));
+  // IMAP and Proton say nothing of writes: every kind is offered.
+  expect(offered(acc())).toEqual([...kinds]);
+  expect(offered(acc({ writes: null }))).toEqual([...kinds]);
+  expect(offered(acc({ level: 'read' }))).toEqual([]);
+  expect(canWrite(acc({ level: 'read' }))).toBe(false);
+  // Gmail, a kind at a time.
+  const google = acc({ kind: 'google', writes: ['seen', 'flagged'] });
+  expect(offered(google)).toEqual(['seen', 'flagged']);
+  expect(canWrite(google)).toBe(true);
+  expect(canWrite(google, 'flag.seen')).toBe(true);
+  expect(offered(acc({ writes: [] }))).toEqual([]);
+  // A 501: that kind; an older `move` counts for the trash and junk while no writes are listed.
+  const ops = (unsupported: string[]) => ({ waiting: 0, error: null, unsupported });
+  expect(offered(acc({ ops: ops(['flag.flagged']) }))).toEqual(['seen', 'move', 'trash', 'junk']);
+  expect(canWrite(acc({ ops: ops(['flag.flagged']) }), 'flag.flagged')).toBe(false);
+  expect(offered(acc({ ops: ops(['trash']) }))).toEqual(['seen', 'flagged', 'move', 'junk']);
+  expect(offered(acc({ ops: ops(['move']) }))).toEqual(['seen', 'flagged']);
+  expect(offered(acc({ writes: ['move', 'trash'], ops: ops(['move']) }))).toEqual(['trash']);
+});
+
+test('moveKind: into the trash, into junk, else a move', () => {
+  expect(['in', 'arch', 'work', 'trash', 'junk'].map((id) => moveKind(imap.get(id)))).toEqual(['move', 'move', 'move', 'trash', 'junk']);
+  expect(moveKind(destinationIn(gmail, t(['g-in', 'g-all'], gmail, 'acc_g'), 'archive'))).toBe('move');
+  expect(moveKind(undefined)).toBe('move');
 });
