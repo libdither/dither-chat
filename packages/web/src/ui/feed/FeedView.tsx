@@ -72,31 +72,34 @@ function Mine({ p, kit, network }: { p: P.PostFact; kit: Kit; network: P.Network
 }
 
 /** Someone's post that talks to you: theirs in full, opening its thread; the words alone when the network sent no post. */
-function Talk({ t, kit, network, above, size }: { t: FeedTalk; kit: Kit; network: P.Network; above?: ComponentChildren; size?: number }) {
+function Talk({ t, kit, network, above, size, under }: { t: FeedTalk; kit: Kit; network: P.Network; above?: ComponentChildren; size?: number; under?: string }) {
   const m = t.message;
-  const p: P.PostFact = t.theirs ?? { id: '', url: m.feed?.url ?? '', ts: m.ts, text: m.body, ...(m.authorId ? { author: m.authorId } : {}) };
   const tag = t.fresh ? 'new' : t.type === 'quote' ? 'quoted' : undefined;
-  if (!t.theirs) {
-    return (
-      <div class={`thread-post ${t.fresh ? 'fresh' : ''}`}>
-        <button class="thread-face" onClick={() => openProfile(m.authorId)} aria-label={`${kit.name(m.authorId)}'s profile`}>
-          <kit.Avatar id={m.authorId ?? m.id} name={kit.name(m.authorId)} url={kit.avatarUrl(m.authorId)} size={size ?? 30} />
-        </button>
-        <div class="thread-main">
-          {above}
-          <span class="thread-head">
-            <b>{kit.name(m.authorId)}</b>
-            <span class="post-handle">· {kit.ago(m.ts)}</span>
-            {tag && <span class={`post-tag ${tag === 'new' ? 'new' : ''}`}>{tag}</span>}
-          </span>
-          <p class="post-text">
-            <kit.Linked text={m.body} network={network} markdown={false} />
-          </p>
-        </div>
+  if (t.theirs) return <Row p={t.theirs} kit={kit} network={network} line={false} size={size ?? 30} tag={tag} above={above} hideQuote={under} />;
+  const link = m.feed?.url;
+  return (
+    <div class="thread-post">
+      <button class="thread-face" onClick={() => openProfile(m.authorId)} aria-label={`${kit.name(m.authorId)}'s profile`}>
+        <kit.Avatar id={m.authorId ?? m.id} name={kit.name(m.authorId)} url={kit.avatarUrl(m.authorId)} size={size ?? 30} />
+      </button>
+      <div class="thread-main">
+        {above}
+        <span class="thread-head">
+          <b>{kit.name(m.authorId)}</b>
+          <span class="post-handle">· {kit.ago(m.ts)}</span>
+          {tag && <span class={`post-tag ${tag === 'new' ? 'new' : ''}`}>{tag}</span>}
+        </span>
+        <p class="post-text">
+          <kit.Linked text={m.body} network={network} markdown={false} />
+        </p>
+        {link && (
+          <a class="post-open" href={link} target="_blank" rel="noreferrer">
+            <kit.Icon name="external" size={12} /> Open on {NETWORK_META[network].name}
+          </a>
+        )}
       </div>
-    );
-  }
-  return <Row p={p} kit={kit} network={network} line={false} size={size ?? 30} tag={tag} fresh={t.fresh} above={above} />;
+    </div>
+  );
 }
 
 /** Who liked and reposted a post: every one the feeds named (the hub's list, not just the pages held), each opening their profile. */
@@ -111,7 +114,7 @@ function Reactors({ u, kit }: { u: PostUnit; kit: Kit }) {
       },
       (e) => setError((e as Error).message),
     );
-  }, [u.key]);
+  }, [u.key, u.reactors.like.length, u.reactors.repost.length]);
   const lists = useMemo(() => {
     const by = { like: [] as P.MessageView[], repost: [] as P.MessageView[] };
     const seen = new Set<string>();
@@ -131,9 +134,9 @@ function Reactors({ u, kit }: { u: PostUnit; kit: Kit }) {
   const unnamed = counts[tab] - shown.length;
   return (
     <div class="feed-reactors" role="region" aria-label="Who reacted">
-      <div class="feed-reactors-tabs" role="tablist">
+      <div class="feed-reactors-tabs">
         {(['like', 'repost'] as const).map((k) => (
-          <button role="tab" aria-selected={tab === k} class={`feed-tab ${tab === k ? 'on' : ''}`} onClick={() => setTab(k)}>
+          <button aria-pressed={tab === k} class={`feed-tab ${tab === k ? 'on' : ''}`} onClick={() => setTab(k)}>
             {k === 'like' ? 'Likes' : 'Reposts'} <span class="feed-tab-n">{kit.feed.shortCount(counts[k])}</span>
           </button>
         ))}
@@ -153,6 +156,7 @@ function Reactors({ u, kit }: { u: PostUnit; kit: Kit }) {
             </span>
           </button>
         ))}
+      {page && !shown.length && unnamed <= 0 && <p class="feed-reactors-note">Nobody yet.</p>}
       {page && unnamed > 0 && (
         <p class="feed-reactors-note">
           {net} counts {counts[tab].toLocaleString()}; your notifications named {shown.length ? `these ${shown.length}` : 'none of them'}.
@@ -177,7 +181,7 @@ function PostCard({ u, kit, filter }: { u: PostUnit; kit: Kit; filter: FeedFilte
       {talk.length > 0 && (
         <div class="feed-talk">
           {talk.map((t) => (
-            <Talk t={t} kit={kit} network={u.network} />
+            <Talk t={t} kit={kit} network={u.network} under={u.post.id} />
           ))}
         </div>
       )}
@@ -283,7 +287,8 @@ function Unit({ u, kit, filter }: { u: FeedUnit; kit: Kit; filter: FeedFilter })
 /** The feed below its header. Read on the hub as it shows (the network is told nothing); older pages as it scrolls. */
 export function FeedView({ c, kit }: { c: P.ConversationView; kit: Kit }) {
   const tkey = timelineKey('c', c.id);
-  timelineRev(tkey).value;
+  // A message patched in place (an edit, a delete) keeps the array and its length: the revision tells.
+  const rev = timelineRev(tkey).value;
   useEffect(() => void loadTimeline(tkey), [tkey]);
   const t = timelines.get(tkey);
   // What was new when it opened stays marked while it is open.
@@ -301,24 +306,30 @@ export function FeedView({ c, kit }: { c: P.ConversationView; kit: Kit }) {
       /* a private window: the choice lasts while the page is open */
     }
   };
-  const units = useMemo(() => kit.feed.feedUnits(t?.messages ?? [], readTs, filter), [t?.messages, t?.messages.length, readTs, filter]);
-  const freshTalk = useMemo(() => kit.feed.feedUnits(t?.messages ?? [], readTs, 'talk').reduce((n, u) => n + (u.kind === 'post' ? u.talk.filter((x) => x.fresh).length : u.fresh ? 1 : 0), 0), [t?.messages, t?.messages.length, readTs]);
+  const units = useMemo(() => kit.feed.feedUnits(t?.messages ?? [], readTs, filter), [t?.messages, rev, readTs, filter]);
+  const freshTalk = useMemo(() => kit.feed.feedUnits(t?.messages ?? [], readTs, 'talk').reduce((n, u) => n + (u.kind === 'post' ? u.talk.filter((x) => x.fresh).length : u.fresh ? 1 : 0), 0), [t?.messages, rev, readTs]);
   const scroller = useRef<HTMLDivElement>(null);
   const onScroll = () => {
     const el = scroller.current;
     if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 400 && t?.hasMore && !t.loading) void loadTimeline(tkey, true);
   };
+  // A page of likes on two posts is two cards, and filtered it may be none: older pages load until the list fills the
+  // pane or there are no more, so scrolling is never what finds them.
+  useEffect(() => {
+    const el = scroller.current;
+    if (el && t?.hasMore && !t.loading && el.scrollHeight <= el.clientHeight + 400) void loadTimeline(tkey, true);
+  }, [units.length, t?.hasMore, t?.loading, filter]);
   const net = NETWORK_META[c.network].name;
   const open = kit.feed.notificationsUrl(c.network);
   return (
     <>
       <div class="feed-scroll" ref={scroller} onScroll={onScroll} data-feed-view={c.id}>
         <div class="feed-list">
-          <div class="feed-filter" role="tablist" aria-label="Show">
-            <button role="tab" aria-selected={filter === 'all'} class={`feed-tab ${filter === 'all' ? 'on' : ''}`} onClick={() => pick('all')}>
+          <div class="feed-filter" role="group" aria-label="Show">
+            <button aria-pressed={filter === 'all'} class={`feed-tab ${filter === 'all' ? 'on' : ''}`} onClick={() => pick('all')}>
               Everything
             </button>
-            <button role="tab" aria-selected={filter === 'talk'} class={`feed-tab ${filter === 'talk' ? 'on' : ''}`} onClick={() => pick('talk')} title="Leave out likes, reposts and follows">
+            <button aria-pressed={filter === 'talk'} class={`feed-tab ${filter === 'talk' ? 'on' : ''}`} onClick={() => pick('talk')} title="Leave out likes, reposts and follows">
               Replies and mentions {freshTalk > 0 && <span class="feed-tab-n">{freshTalk}</span>}
             </button>
           </div>
@@ -326,7 +337,7 @@ export function FeedView({ c, kit }: { c: P.ConversationView; kit: Kit }) {
             <Unit key={u.key} u={u} kit={kit} filter={filter} />
           ))}
           {t?.loading && <kit.Loading inline label="Loading notifications…" />}
-          {!t?.loading && !units.length && (
+          {!t?.loading && !t?.hasMore && !units.length && (
             <kit.Empty icon="bell" title={filter === 'talk' ? 'Nobody has said anything yet' : 'Nothing yet'}>
               {filter === 'talk' ? `When people reply to, quote or mention you on ${net}, it shows here.` : `When people like, repost, reply to or quote your posts on ${net}, mention you or follow you, it shows here.`}
             </kit.Empty>

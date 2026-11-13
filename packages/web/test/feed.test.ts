@@ -144,3 +144,10 @@ test('by post: what is new, and the reactions line in words and counts', () => {
   const old = feedUnits([msg('repost', 'a', 1, { post: post('3') })], 35)[0] as Extract<(typeof units)[0], { kind: 'post' }>;
   expect([old.fresh, reactorsPhrase(old, name), reactionCounts(old).repost]).toEqual([false, 'Reposted by Alice', 1]);
 });
+
+test('by post, talk only: a card is new for what was said, not for a like it does not show', () => {
+  const p1 = post('1');
+  const units = feedUnits([msg('reply', 'a', 10, { post: p1, theirs: post('9') }), msg('like', 'b', 90, { post: p1 })], 50, 'talk');
+  expect(units[0].fresh).toBe(false);
+  expect(feedUnits([msg('reply', 'a', 10, { post: p1, theirs: post('9') }), msg('like', 'b', 90, { post: p1 })], 50)[0].fresh).toBe(true);
+});

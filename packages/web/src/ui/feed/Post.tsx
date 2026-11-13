@@ -89,7 +89,7 @@ export function Who({ id, kit }: { id: string | null; kit: Kit }) {
 }
 
 /** A post in a thread, small: their picture on the left with the line down to the next, then who, when and what. */
-export function Row({ p, kit, network, line, focal, size = 36, above, tag, fresh }: {
+export function Row({ p, kit, network, line, focal, size = 36, above, tag, hideQuote }: {
   p: P.PostFact;
   kit: Kit;
   network: P.Network;
@@ -101,8 +101,8 @@ export function Row({ p, kit, network, line, focal, size = 36, above, tag, fresh
   above?: ComponentChildren;
   /** A word after its time ("new", "quoted"). */
   tag?: string;
-  /** Came after the read line. */
-  fresh?: boolean;
+  /** Leave out the post it quotes when it is this one (a quote under the post it quotes, in the feed). */
+  hideQuote?: string;
 }) {
   const shown = p.repostOf ?? p;
   const who = shown.author ?? null;
@@ -111,7 +111,7 @@ export function Row({ p, kit, network, line, focal, size = 36, above, tag, fresh
     kit.openPost(network, shown.id);
   };
   return (
-    <article class={`thread-post ${line ? 'line' : ''} ${fresh ? 'fresh' : ''}`} data-post={shown.id} onClick={open} tabIndex={focal ? undefined : 0} onKeyDown={(e) => !focal && e.key === 'Enter' && e.target === e.currentTarget && kit.openPost(network, shown.id)}>
+    <article class={`thread-post ${line ? 'line' : ''}`} data-post={shown.id} onClick={open} tabIndex={focal ? undefined : 0} onKeyDown={(e) => !focal && e.key === 'Enter' && e.target === e.currentTarget && kit.openPost(network, shown.id)}>
       <button class="thread-face" onClick={(e) => (e.stopPropagation(), openProfile(who))} aria-label={`${kit.name(who)}'s profile`}>
         <kit.Avatar id={who ?? shown.id} name={kit.name(who)} url={kit.avatarUrl(who)} size={size} />
       </button>
@@ -131,7 +131,7 @@ export function Row({ p, kit, network, line, focal, size = 36, above, tag, fresh
         </div>
         <Text p={shown} kit={kit} network={network} cls="post-text" />
         <Pics media={shown.media} />
-        {shown.quoteOf && <QuotedIn p={shown.quoteOf} kit={kit} network={network} />}
+        {shown.quoteOf && shown.quoteOf.id !== hideQuote && <QuotedIn p={shown.quoteOf} kit={kit} network={network} />}
         <Counts p={shown} kit={kit} />
       </div>
     </article>

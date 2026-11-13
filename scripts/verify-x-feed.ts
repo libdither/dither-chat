@@ -113,18 +113,20 @@ try {
   // ------------------------------------------------------------------ the feed, desktop: by post
   await page.eval(`document.querySelector('.feed-row').click()`);
   await page.until(`location.hash.includes(${JSON.stringify(feed.id)}) && document.querySelectorAll('.feed-unit').length >= 4`, 20000);
-  if ((await page.eval(`document.querySelector('.feed-tab[aria-selected="true"]')?.textContent ?? ''`)) !== 'Everything') await page.eval(`document.querySelector('.feed-filter .feed-tab').click()`);
+  if ((await page.eval(`document.querySelector('.feed-filter .feed-tab[aria-pressed="true"]')?.textContent ?? ''`)) !== 'Everything') await page.eval(`document.querySelector('.feed-filter .feed-tab').click()`);
   const units = await page.eval<any[]>(`[...document.querySelectorAll('.feed-unit')].map((u) => ({
     unit: u.dataset.unit, text: u.textContent, mine: u.querySelector('.feed-mine')?.textContent ?? '', pic: !!u.querySelector('.feed-mine-pic'),
     talk: [...u.querySelectorAll('.feed-talk .thread-post')].map((t) => t.textContent), react: u.querySelector('.feed-react')?.textContent ?? null,
+    likes: u.querySelector('.feed-react-counts .like')?.textContent.trim() ?? null, reposts: u.querySelector('.feed-react-counts .repost')?.textContent.trim() ?? null,
+    quotedInTalk: !!u.querySelector('.feed-talk .post-quoted'),
     pics: u.querySelectorAll('.post-media img').length, fresh: u.classList.contains('fresh'),
   }))`);
   const routing = units.find((u) => /Greedy routing/.test(u.mine));
   const sheaves = units.find((u) => /Sheafification/.test(u.mine));
   check('your post is one card: small at its head, with its picture', !!routing && routing.unit === 'post' && routing.pic, routing?.mine);
   check("…Ravi's reply under it in full, marked new", !!routing && routing.talk.length === 1 && /Ravi/.test(routing.talk[0]) && /Does it hold up under churn/.test(routing.talk[0]) && /new/.test(routing.talk[0]), routing?.talk);
-  check('…five likes and a repost as one quiet line: counts as X gives them, who by name', !!routing?.react && /41/.test(routing.react) && /3/.test(routing.react) && /Liked by Theo, Maya K\. and 3 others/.test(routing.react), routing?.react);
-  check("another post: Lee's quote under it, its likes by name", !!sheaves && /cleanest one-line summary/.test(sheaves.talk.join(' ')) && /quoted/.test(sheaves.talk.join(' ')) && /Liked by Alice Chen and Nora/.test(sheaves.react ?? ''), sheaves);
+  check('…five likes and a repost as one quiet line: counts as X gives them, who by name', !!routing?.react && routing.likes === '41' && routing.reposts === '3' && /Liked by Theo, Maya K\. and 3 others/.test(routing.react), routing?.react);
+  check("another post: Lee's quote under it (not quoting the post again), its likes by name", !!sheaves && /cleanest one-line summary/.test(sheaves.talk.join(' ')) && /quoted/.test(sheaves.talk.join(' ')) && !sheaves.quotedInTalk && /Liked by Alice Chen and Nora/.test(sheaves.react ?? ''), sheaves);
   check('two follows are one row', units.some((u) => u.unit === 'follow' && /Sam and Lee followed you/.test(u.text)), units.filter((u) => u.unit === 'follow').map((u) => u.text));
   const mention = units.find((u) => u.unit === 'said');
   check('a mention is their post on its own, with its picture', !!mention && /mentioned you/.test(mention.text) && /discrete Morse theory/.test(mention.text) && mention.pics === 1, mention);

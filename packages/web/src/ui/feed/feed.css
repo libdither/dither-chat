@@ -1,4 +1,4 @@
-/* A network's notifications as cards, and a person's recent posts (docs/feed.md). Loaded with the feed's chunk. */
+/* A network's notifications by post, threads and a person's recent posts (docs/feed.md). Loaded with the feed's chunk. */
 .feed-pane {
   overflow: hidden;
 }
@@ -14,51 +14,6 @@
   display: flex;
   flex-direction: column;
 }
-.feed-card {
-  --feed-tone: var(--accent);
-  display: flex;
-  gap: 12px;
-  padding: 14px 12px 14px 10px;
-  border-bottom: 1px solid var(--border-soft);
-  border-left: 3px solid transparent;
-}
-.feed-card.fresh {
-  border-left-color: var(--feed-tone);
-  background: color-mix(in oklab, var(--feed-tone) 6%, transparent);
-}
-.feed-card[data-type='like'] {
-  --feed-tone: #f91880;
-}
-.feed-card[data-type='repost'] {
-  --feed-tone: #00ba7c;
-}
-.feed-card[data-type='other'] {
-  --feed-tone: var(--text-faint);
-}
-.feed-icon {
-  flex: none;
-  width: 36px;
-  display: flex;
-  justify-content: flex-end;
-  padding-top: 6px;
-  color: var(--feed-tone);
-}
-.feed-card[data-type='like'] .feed-icon .icon {
-  fill: currentColor;
-}
-.feed-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.feed-faces {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
-}
 .feed-face {
   padding: 0;
   border-radius: 50%;
@@ -66,82 +21,22 @@
 }
 .feed-face:hover,
 .feed-face:focus-visible {
-  outline: 2px solid var(--feed-tone);
+  outline: 2px solid var(--accent);
   outline-offset: 1px;
-}
-.feed-faces-more {
-  font-size: 12px;
-  color: var(--text-faint);
-  padding-left: 4px;
-}
-.feed-what,
-.feed-context,
-.feed-text {
-  margin: 0;
-}
-.feed-what {
-  color: var(--text-dim);
-}
-.feed-name {
-  padding: 0;
-  font-weight: 650;
-  color: var(--text);
-}
-.feed-name:hover {
-  text-decoration: underline;
 }
 .feed-when {
   margin-left: 8px;
   font-size: 12px;
   color: var(--text-faint);
 }
-.feed-said-face {
-  position: relative;
-  flex: none;
-  padding: 0;
-  align-self: flex-start;
-  line-height: 0;
-}
-.feed-said-icon {
-  position: absolute;
-  right: -4px;
-  bottom: -4px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: var(--feed-tone);
-  color: var(--on-accent);
-  box-shadow: 0 0 0 2px var(--bg-center);
-}
-.feed-said-head {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0 6px;
-}
-.feed-said-head .feed-when {
-  margin-left: 0;
-}
-.feed-context {
-  font-size: 13px;
-  color: var(--text-faint);
-}
-.feed-context a {
-  color: var(--text-dim);
-}
-.feed-text,
 .post-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   margin: 0;
 }
-.feed-text a,
 .post-text a {
   color: var(--link);
 }
-.feed-open,
 .post-open {
   display: inline-flex;
   align-items: center;
@@ -151,7 +46,6 @@
   color: var(--text-faint);
   text-decoration: none;
 }
-.feed-open:hover,
 .post-open:hover {
   color: var(--link);
 }
@@ -192,21 +86,6 @@
   padding: 8px 10px;
   background: var(--bg-raised);
 }
-.post-label {
-  font-size: 12px;
-  color: var(--text-faint);
-}
-.post-quoted-body {
-  display: flex;
-  gap: 10px;
-}
-.post-quoted-text {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
 .post-clip {
   display: -webkit-box;
   -webkit-line-clamp: 3;
@@ -219,20 +98,6 @@
 }
 .post-clip:hover {
   color: var(--text);
-}
-.post-thumb {
-  flex: none;
-  width: 72px;
-  height: 72px;
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--bg-hover);
-}
-.post-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
 }
 .post-by {
   display: flex;
@@ -256,15 +121,11 @@
 .post-who:hover b {
   text-decoration: underline;
 }
-.post-handle,
-.post-time {
+.post-handle {
   color: var(--text-faint);
   font-size: 12px;
   white-space: nowrap;
   text-decoration: none;
-}
-.post-time:hover {
-  text-decoration: underline;
 }
 .post-media {
   display: grid;
@@ -329,12 +190,6 @@
   font-size: 12px;
   color: var(--text-faint);
 }
-.post-foot {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
 .post-counts {
   display: flex;
   gap: 12px;
@@ -342,15 +197,11 @@
   font-size: 12px;
   color: var(--text-faint);
 }
-.post-foot .post-open {
-  margin-left: auto;
-}
 
 /* A card or post that opens its thread (docs/feed.md "Threads"). */
 .opens {
   cursor: pointer;
 }
-.feed-card.opens:hover,
 .post-item.opens:hover {
   background: color-mix(in oklab, var(--text) 3%, transparent);
 }
@@ -516,7 +367,6 @@
   align-self: center;
   margin: 14px 0;
 }
-
 
 /* The feed by post (docs/feed.md "The feed's page"): your post small, what people said under it in full, who reacted
    as one quiet line opening the list. */
@@ -769,18 +619,7 @@
   .feed-scroll {
     padding: 4px 8px 16px;
   }
-  .feed-card {
-    gap: 10px;
-    padding: 12px 8px 12px 6px;
-  }
-  .feed-icon {
-    width: 26px;
-  }
   .feed-bar {
     margin: 0 8px calc(8px + env(safe-area-inset-bottom, 0px));
-  }
-  .post-thumb {
-    width: 56px;
-    height: 56px;
   }
 }
