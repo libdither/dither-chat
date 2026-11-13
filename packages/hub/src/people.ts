@@ -7,6 +7,7 @@ import type * as P from '@dither-chat/protocol';
 import { BIO_LIMIT, bioLength, NETWORK_META } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { linkOf } from './add.ts';
+import { postAuthors, postView } from './feed.ts';
 import type { Store } from './store.ts';
 
 type Row = Record<string, any>;
@@ -82,7 +83,8 @@ export class People {
     if (!n) throw new Error('no such identity');
     const accountId = this.accountFor(identityId);
     const k = this.keptOne(identityId);
-    if (!force && k && Date.now() - k.at < FRESH_MS) return this.view(identityId, k.accountId, k.about, k.at, undefined);
+    // What the network showed unasked (a `personAbout` event) is no answer: it has no posts, so the network is asked.
+    if (!force && k && !k.about.unasked && Date.now() - k.at < FRESH_MS) return this.view(identityId, k.accountId, k.about, k.at, undefined);
     const net = NETWORK_META[n.network].name;
     const why = !accountId
       ? `None of your accounts is on ${net}.`
@@ -94,7 +96,7 @@ export class People {
     if (accountId && !why) {
       try {
         const about = await this.d.command<P.PersonAbout>(accountId, { t: 'profile', who: n.nativeId }, 20_000);
-        this.keep(identityId, accountId, n.network, about, k);
+        this.keep(identityId, accountId, n.network, about);
         return this.view(identityId, accountId, about ?? {}, Date.now(), undefined);
       } catch (e) {
         const stale = `Could not ask ${net}: ${(e as Error).message}`;
@@ -128,41 +130,24 @@ export class People {
     }
     // What the network has now, as if the profile had been asked again.
     const k = this.keptOne(identityId);
-    const now = { ...k?.about, ...about, bio: about.bio ?? bio };
-    this.keep(identityId, acc.id, n.network, now, k);
+    const { unasked: _, ...was } = k?.about ?? {};
+    const now = { ...was, ...about, bio: about.bio ?? bio };
+    this.keep(identityId, acc.id, n.network, now);
     s.dirty.identities.add(identityId);
     return this.view(identityId, acc.id, now, Date.now(), undefined);
   }
 
   /** An answer from the network: what changed since the last one, the status it carries, and the answer kept. */
-  private keep(identityId: string, accountId: string, network: P.Network, about: P.PersonAbout | null | undefined, k: { about: P.PersonAbout } | null) {
-    const s = this.d.store;
-    // What their profile said before, if it says something else now (docs/history.md).
-    if (k && about)
-      s.logChanges('identity', identityId, accountId, [
-        // On Signal and WhatsApp the About is the status, logged as one below.
-        ['bio', ABOUT_IS_STATUS.has(network) ? undefined : k.about.bio, ABOUT_IS_STATUS.has(network) ? undefined : (about.bio ?? '')],
-        ['pronouns', k.about.pronouns, about.pronouns ?? ''],
-        ['banner', k.about.banner, about.banner],
-      ]);
-    // The status as of now, the same as an adapter's customStatus says it.
-    if (about) {
-      const st = ABOUT_IS_STATUS.has(network) ? { text: about.bio, emoji: about.status?.emoji } : 'status' in about ? (about.status ?? null) : undefined;
-      if (st !== undefined) s.setStatus(identityId, st, accountId);
-    }
-    s.db
-      .query('INSERT INTO about (target_id, account_id, data, fetched_at) VALUES (?, ?, ?, ?) ON CONFLICT (target_id, account_id) DO UPDATE SET data = excluded.data, fetched_at = excluded.fetched_at')
-      .run(identityId, accountId, JSON.stringify(about ?? {}), Date.now());
+  private keep(identityId: string, accountId: string, network: P.Network, about: P.PersonAbout | null | undefined) {
+    if (about) keepAbout(this.d.store, identityId, accountId, network, about, Date.now());
+    else
+      this.d.store.db
+        .query('INSERT INTO about (target_id, account_id, data, fetched_at) VALUES (?, ?, ?, ?) ON CONFLICT (target_id, account_id) DO UPDATE SET data = excluded.data, fetched_at = excluded.fetched_at')
+        .run(identityId, accountId, '{}', Date.now());
   }
 
-  private keptOne(identityId: string): { about: P.PersonAbout; at: number; accountId: string } | null {
-    const r = this.d.store.one<Row>('SELECT data, fetched_at, account_id FROM about WHERE target_id = ? ORDER BY fetched_at DESC LIMIT 1', identityId);
-    if (!r) return null;
-    try {
-      return { about: JSON.parse(r.data), at: r.fetched_at, accountId: r.account_id };
-    } catch {
-      return null;
-    }
+  private keptOne(identityId: string): { about: Kept; at: number; accountId: string } | null {
+    return keptAbout(this.d.store, identityId);
   }
 
   /** Native ids to hub ids, pictures to signed paths. */
@@ -171,7 +156,7 @@ export class People {
     const network = s.nativeOf('identity', identityId)!.network;
     const acc = accountId ? s.account(accountId) : null;
     const ident = (native: string) => (acc ? s.ensureIdentity(acc, native) : hubId('idn', network, native));
-    const { avatar, banner, mutualSpaces, mutualFriends, friends, ...rest } = a;
+    const { avatar, banner, mutualSpaces, mutualFriends, friends, posts, ...rest } = a;
     const spaces = mutualSpaces?.map((m) => {
       const id = hubId('spc', network, m.id);
       const known = s.one<Row>('SELECT id FROM space WHERE id = ?', id);
@@ -179,6 +164,9 @@ export class People {
     });
     const mf = mutualFriends?.map(ident);
     const fr = friends?.map(ident);
+    // Their posts (X, docs/feed.md): authors as hub ids, pictures signed; whoever a repost or quote names comes along.
+    const ps = posts?.map((p) => postView(p, network, (u) => s.mediaUrl(u, accountId)));
+    const named = [...new Set((posts ?? []).flatMap((p) => postAuthors(p)))].map((n) => hubId('idn', network, n)).filter((id) => id !== identityId);
     // The account's own list says how you stand, when it has them on it (add.ts person_link); else the profile.
     const listed = accountId ? linkOf(s.db, accountId, identityId) : null;
     return {
@@ -194,7 +182,53 @@ export class People {
       ...(spaces ? { mutualSpaces: spaces } : {}),
       ...(mf ? { mutualFriends: mf } : {}),
       ...(fr ? { friends: fr } : {}),
-      identities: s.identitiesByIds([...(mf ?? []), ...(fr ?? [])]),
+      ...(ps ? { posts: ps } : {}),
+      identities: s.identitiesByIds([...(mf ?? []), ...(fr ?? []), ...named]),
     };
   }
+}
+
+/** A kept answer: what the network said, and whether it said it unasked (a `personAbout` event). */
+type Kept = P.PersonAbout & { unasked?: true };
+
+/** The newest answer kept for someone, from any account. */
+export function keptAbout(store: Store, identityId: string): { about: Kept; at: number; accountId: string } | null {
+  const r = store.one<Row>('SELECT data, fetched_at, account_id FROM about WHERE target_id = ? ORDER BY fetched_at DESC LIMIT 1', identityId);
+  if (!r) return null;
+  try {
+    return { about: JSON.parse(r.data), at: r.fetched_at, accountId: r.account_id };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Keep what a network said about someone (the `about` table): what changed since the last answer (docs/history.md),
+ * the status it carries, and the answer. `unasked`: a `personAbout` event (X's notifications, docs/feed.md), seen at
+ * `at`: kept unless an answer newer than that is held, with the posts of the last asked answer kept, and marked so
+ * that opening the profile still asks the network. Returns whether it was kept.
+ */
+export function keepAbout(store: Store, identityId: string, accountId: string, network: P.Network, about: P.PersonAbout, at: number, unasked = false): boolean {
+  const s = store;
+  const k = keptAbout(s, identityId);
+  if (unasked) {
+    if (k && k.at >= at) return false;
+    const { posts: _, ...seen } = about;
+    about = { ...seen, ...(k?.about.posts ? { posts: k.about.posts } : {}), unasked: true } as Kept;
+  }
+  // What their profile said before, if it says something else now (docs/history.md).
+  if (k)
+    s.logChanges('identity', identityId, accountId, [
+      // On Signal and WhatsApp the About is the status, logged as one below.
+      ['bio', ABOUT_IS_STATUS.has(network) ? undefined : k.about.bio, ABOUT_IS_STATUS.has(network) ? undefined : (about.bio ?? '')],
+      ['pronouns', k.about.pronouns, about.pronouns ?? ''],
+      ['banner', k.about.banner, about.banner],
+    ]);
+  // The status as of now, the same as an adapter's customStatus says it.
+  const st = ABOUT_IS_STATUS.has(network) ? { text: about.bio, emoji: about.status?.emoji } : 'status' in about ? (about.status ?? null) : undefined;
+  if (st !== undefined) s.setStatus(identityId, st, accountId);
+  s.db
+    .query('INSERT INTO about (target_id, account_id, data, fetched_at) VALUES (?, ?, ?, ?) ON CONFLICT (target_id, account_id) DO UPDATE SET data = excluded.data, fetched_at = excluded.fetched_at')
+    .run(identityId, accountId, JSON.stringify(about), at);
+  return true;
 }

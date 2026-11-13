@@ -1,5 +1,6 @@
 /**
- * Demo world: six in-process adapters (two Discord accounts, Signal, Matrix, WhatsApp, Telegram)
+ * Demo world: seven in-process adapters (two Discord accounts, Signal, Matrix, WhatsApp, Telegram, and X's
+ * notifications feed in demo-x.ts)
  * that emit the same facts real adapters do, so the whole pipeline (dedupe,
  * person merging, triage, folders) runs on realistic data.
  *
@@ -15,6 +16,7 @@ import { ABOUT_LABEL as P_ABOUT_LABEL, BIO_LIMIT as P_BIO_LIMIT, NETWORK_META } 
 import { hubId } from '@dither-chat/protocol/ids';
 import type { AccountRow, Store } from './store.ts';
 import type { InprocAdapter } from './supervisor.ts';
+import { DEMO_X_ACCOUNT, DemoX } from './demo-x.ts';
 import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
 
@@ -2707,17 +2709,19 @@ class DemoAdapter implements InprocAdapter {
 
 export function demoFactory(acc: AccountRow, dir: string): InprocAdapter | null {
   if (acc.adapter !== 'demo') return null;
+  if (acc.id === DEMO_X_ACCOUNT.id) return new DemoX(acc, dir);
   const key = DEMO_ACCOUNTS.find((d) => d.id === acc.id)?.key;
   return key ? new DemoAdapter(key, acc, dir) : null;
 }
 
-export function createDemoAccounts(store: Store): AccountRow[] {
+/** `x: false` leaves out the X account and its feed (docs/feed.md): scripts/perf-world.ts's world predates it. */
+export function createDemoAccounts(store: Store, o: { x?: boolean } = {}): AccountRow[] {
   // A new world (a fresh hub, Reset demo, each test): names and settings changed in the last one start over.
   demoPlaces.clear();
   for (const [c, f] of FIRST_CONVS) c.fact = f;
   for (const [x, f] of FIRST_SPACES) x.fact = f;
   const epoch = Date.now();
-  return DEMO_ACCOUNTS.map((d) => store.createAccount({ id: d.id, network: d.network, label: d.label, color: d.color, adapter: 'demo', demo: true, config: { epoch } }));
+  return [...DEMO_ACCOUNTS, ...(o.x === false ? [] : [DEMO_X_ACCOUNT])].map((d) => store.createAccount({ id: d.id, network: d.network, label: d.label, color: d.color, adapter: 'demo', demo: true, config: { epoch } }));
 }
 
 /** Hub-side organisation for the demo: merged people, folders, rules. Applied once. */

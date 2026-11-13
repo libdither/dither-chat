@@ -52,7 +52,7 @@ export function seedWorld(dir: string, opts: { scale?: number; anchor?: number }
   const store = new Store(join(dir, 'hub.sqlite'), () => null);
   // The whole world fits in memory: without this, the bulk insert spends most of its time paging.
   store.db.exec('PRAGMA cache_size = -262144; PRAGMA synchronous = OFF;');
-  const accounts = createDemoAccounts(store);
+  const accounts = createDemoAccounts(store, { x: false });
   const disc = accounts.find((a) => a.id === 'acc_demo-discord-main')!;
   const sig = accounts.find((a) => a.id === 'acc_demo-signal')!;
 

@@ -25,7 +25,8 @@ What needs you shows on the row, not in a section. A reply you owe that the hub 
 row's `owedSince`, and it needs you, `needs`) has ↩ and how long it has waited, in the accent colour, beside the
 unread count when there is one. An unanswered message from long ago, or from someone you rarely answer, has faded
 below `needs` and has no ↩. A turn whose chance of an answer has fallen under 5% (`OWED_SHOWN`, owed.ts) has no
-`owedSince` at all, so a row that needs you for something else does not say "↩ 14w". Accounts that need you and the Requests row stay above the list.
+`owedSince` at all, so a row that needs you for something else does not say "↩ 14w". Accounts that need you, the Requests row and a network's notifications ([feed.md](feed.md), a row per feed under
+Requests) stay above the list. A feed is never one of the ranked rows, and its unread count is on no badge.
 
 **Sections, tried and removed.** From 2026-11-09 to 2026-11-10 the list had three sections, each in the learned order:
 Waiting on you (a reply you owe that needs you), New (unread) and Earlier (the rest). They were removed because hard

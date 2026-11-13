@@ -12,6 +12,8 @@ import { infoFor } from './mediainfo.ts';
 import { TypingRelay, typingTtl } from './typing.ts';
 import { stepTimer } from './startup.ts';
 import { addTables, ingestRelationships, ingestRequests, pendingLinks } from './add.ts';
+import { feedItemOf, feedView } from './feed.ts';
+import { keepAbout } from './people.ts';
 import { alertBar, type Facts } from './learn.ts';
 
 type Row = Record<string, any>;
@@ -749,6 +751,10 @@ export class Store {
         case 'relationship':
           ingestRelationships(this, acc, ev);
           break;
+        case 'personAbout':
+          // What the network showed unasked (X: the people in your notifications), kept as an asked profile is.
+          keepAbout(this, this.ensureIdentity(acc, ev.who), acc.id, acc.network, ev.about, ev.ts, true);
+          break;
         case 'reply':
         case 'log':
           break;
@@ -1180,13 +1186,16 @@ export class Store {
     if (!existed) this.ingested.set(cid, Math.min(this.ingested.get(cid) ?? Infinity, f.ts));
     const newForAccount = this.db.query('INSERT OR IGNORE INTO message_seen (message_id, account_id) VALUES (?, ?)').run(id, acc.id).changes > 0;
 
-    const conv = this.db.query('SELECT last_message_at, last_message_id FROM conversation WHERE id = ?').get(cid) as Row;
+    const conv = this.db.query('SELECT last_message_at, last_message_id, variant FROM conversation WHERE id = ?').get(cid) as Row;
     if (conv.last_message_at == null || f.ts >= conv.last_message_at) {
       this.db.query('UPDATE conversation SET last_message_id = ?, last_message_at = ? WHERE id = ?').run(id, f.ts, cid);
       // The list shows who wrote the last message; a live one brings its author along anyway.
       if (!live && conv.last_message_id !== id) this.dirty.identities.add(author);
     }
     const fromSelf = author === acc.self_identity || this.isSelf(author);
+    // Someone in your notifications (docs/feed.md) is someone: a person, so their profile and what they did are kept
+    // and found like anyone you talk with.
+    if (!fromSelf && !existed && conv.variant === 'feed') this.ensurePerson(author);
     if (newForAccount && !fromSelf) {
       this.db
         .query(
@@ -2532,12 +2541,16 @@ export class Store {
       const rx = new Map<string, string[]>();
       for (const x of R.get(r.id) ?? []) (rx.get(`${x.style}|${x.key}`) ?? rx.set(`${x.style}|${x.key}`, []).get(`${x.style}|${x.key}`)!).push(x.identity_id);
       const t = T.get(r.id);
-      const extra = json<{ encryptionWarning?: string; forward?: P.ForwardFact }>(r.extra, {});
+      const extra = json<{ encryptionWarning?: string; forward?: P.ForwardFact; feed?: unknown }>(r.extra, {});
       const encryptionWarning = extra.encryptionWarning;
       const forward = sentForwards.get(r.id) ?? (extra.forward ? this.forwardView(r.network, extra.forward) : null);
+      // A feed conversation's message (docs/feed.md): what they did, with hub ids and signed pictures.
+      const fi = extra.feed ? feedItemOf(extra) : null;
+      const feed = fi ? feedView(fi, r.network, (u) => this.media(u, seenVia[0])) : null;
       return {
         ...(encryptionWarning ? { encryptionWarning } : {}),
         ...(forward ? { forward } : {}),
+        ...(feed ? { feed } : {}),
         id: r.id,
         conversationId: r.conversation_id,
         network: r.network,

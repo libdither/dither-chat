@@ -108,6 +108,7 @@ import { Loading } from './Loader.tsx';
 import { Slices, whenIdle } from '../slices.ts';
 import { calendarOn } from '../plans.ts';
 import { PlanChipLazy } from './calendar/lazy.tsx';
+import { FeedViewLazy } from './feed/lazy.tsx';
 
 
 // ------------------------------------------------------------------ header
@@ -1429,6 +1430,14 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
   useEffect(() => setReply(null), [convId]);
   useEffect(() => void reactionContext(convId), [convId]);
   if (!c) return <Empty icon="groups" title="Conversation not found" />;
+  // A network's notifications about you: cards, and no composer (docs/feed.md).
+  if (c.variant === 'feed')
+    return (
+      <section class="pane feed-pane">
+        <ConvHeader c={c} onBack={onBack} />
+        <FeedViewLazy c={c} />
+      </section>
+    );
   const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && visibleAccount(a.id));
   const sendAsValue = prefs.value.sendAs[c.id] ?? accounts.find((a) => a.status === 'online')?.id ?? accounts[0]?.id;
   const voice = c.variant === 'voice' || c.variant === 'stage';

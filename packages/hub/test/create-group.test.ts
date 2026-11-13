@@ -71,7 +71,8 @@ const command = <T>(account: string, cmd: any) => {
 beforeAll(() => {
   store = new Store(join(dir, 'hub.sqlite'), mediaSigner('s'));
   store.db.transaction(() => {
-    for (const acc of createDemoAccounts(store)) {
+    // The X account makes no groups and is no part of this (feed.test.ts has it).
+    for (const acc of createDemoAccounts(store, { x: false })) {
       const adir = join(dir, acc.id);
       mkdirSync(adir, { recursive: true });
       const a = demoFactory(acc, adir)!;
