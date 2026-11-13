@@ -12,6 +12,7 @@
 import type { MediaUrl } from './adapter.ts';
 import { NETWORK_META, type Network } from './ontology.ts';
 import type { AboutLeaving, InviteLinkFact, InviteOptions } from './servers.ts';
+import { PIN_DURATIONS } from './poll.ts';
 
 /** Who may do something, as far as the networks agree. */
 export type Who = 'everyone' | 'admins';
@@ -117,6 +118,11 @@ export interface AboutPinned {
   messages: string[];
   canEdit: boolean;
   reason?: string;
+  /**
+   * The network's whole list, just read (Discord's pinned list). Absent: the network keeps none this account can read
+   * (Signal), so the hub adds the pins it saw itself.
+   */
+  complete?: boolean;
 }
 
 /**
@@ -261,7 +267,7 @@ export interface AboutTarget {
 export type AboutChange =
   | { [K in AboutKey]: { key: K; value: AboutValues[K] } }[AboutKey]
   | { key: 'invite'; op: 'create' | 'revoke'; /** create: seconds, 0 never. */ maxAge?: number; /** create: 0 no limit. */ maxUses?: number; temporary?: boolean; /** revoke: which link, else the newest. */ code?: string }
-  | { key: 'pin'; message: string; remove?: boolean };
+  | { key: 'pin'; message: string; remove?: boolean; /** How long it stays pinned, one of poll.ts PIN_DURATIONS for the network (null: until unpinned); absent: its default. */ seconds?: number | null };
 
 // ---------------------------------------------------------------- per network
 
@@ -394,7 +400,11 @@ export const HISTORY_LABEL: Record<HistoryVisibility, string> = {
 export function aboutChangeProblem(network: Network, kind: AboutTarget['kind'], change: AboutChange): string | null {
   const rules = ABOUT_RULES[network];
   if (change.key === 'invite') return inviteChangeProblem(change);
-  if (change.key === 'pin') return typeof change.message === 'string' && change.message ? null : 'which message?';
+  if (change.key === 'pin') {
+    if (typeof change.message !== 'string' || !change.message) return 'which message?';
+    if (change.seconds === undefined || change.remove) return null;
+    return PIN_DURATIONS[network]?.includes(change.seconds) ? null : 'Not one of the pin durations this network offers';
+  }
   if (!ABOUT_KEYS.includes(change.key)) return `unknown setting ${String(change.key)}`;
   if (!rules[kind].includes(change.key)) return `${ABOUT_LABEL[change.key]} is not a setting here`;
   const v = change.value as unknown;

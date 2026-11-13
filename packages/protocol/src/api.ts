@@ -24,6 +24,7 @@ import type {
 import type { ArrangeSettings, UsageKind, UsageView } from './usage.ts';
 import type { FileInfo } from './files.ts';
 import type { RichView, VoiceFact } from './rich.ts';
+import type { PollView } from './poll.ts';
 import type { MailAccess, MailAccountView, MailboxView, MailBootstrap, MailOutboxView, MailThreadView } from './mail.ts';
 import type { CalendarLinkView, CalendarNotifyRef, CalendarPlanView } from './calendar.ts';
 import type { ContactCardView, MissingAttachmentFact, QuoteView, SendFailureView, StoryReplyView } from './extra.ts';
@@ -595,6 +596,8 @@ export interface MessageView {
   failed?: SendFailureView[];
   /** Files it had that the account could not download. */
   missingAttachments?: MissingAttachmentFact[];
+  /** A poll, with its votes as the hub has them (poll.ts). */
+  poll?: PollView;
 }
 
 /** A forward, shown as a card with where it came from. */

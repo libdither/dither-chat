@@ -53,6 +53,7 @@ import { calendarOff, checkNotice, notifyAllowed, type CalendarLink } from './ca
 import { ReplyMarks, type ReplyMark } from './replymarks.ts';
 import { mailAttention } from './mail/attention.ts';
 import { callRoute } from './callstate.ts';
+import { handlesPolls, pollRoute } from './polls.ts';
 
 
 type ClientData = { kind: 'client' };
@@ -618,6 +619,11 @@ export class HubServer {
     // Calls ringing you and voice channels (callstate.ts, docs/calls.md "Ringing").
     if (path.startsWith('/api/calls/') || path === '/api/voice') {
       const r = await callRoute({ store: s, online: (a) => this.sup.online(a), command: (a, c, t) => this.sup.command(a, c, t), flush: () => this.flush() }, req, url, path);
+      if (r) return r;
+    }
+    // Voting in polls, making them and ending them early (polls.ts, docs/polls.md).
+    if (handlesPolls(path)) {
+      const r = await pollRoute({ store: s, online: (a) => this.sup.online(a), command: (a, c, t) => this.sup.command(a, c, t), pickAccount: (c, a) => this.pickAccount(c, a), flush: () => this.flush() }, req, path);
       if (r) return r;
     }
     // Joining and adding, and requests (add.ts).

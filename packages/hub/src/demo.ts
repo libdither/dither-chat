@@ -2158,6 +2158,39 @@ class DemoAdapter implements InprocAdapter {
     };
   }
 
+  /**
+   * Polls as the network would answer: a vote comes back as Signal's whole vote (its voters shown) or Discord's counts
+   * moved by one; a poll made is a message with extra.poll; ending one closes it (docs/polls.md).
+   */
+  private pollSeq = new Map<string, number>();
+  private poll(cmd: Extract<P.AdapterCommand, { t: 'pollVote' | 'pollCreate' | 'pollEnd' }>): unknown {
+    if (cmd.t === 'pollCreate') {
+      const nativeId = `${cmd.conversation}~poll-${Date.now()}`;
+      const options = cmd.poll.options.map((text, i) => ({ id: this.network === 'signal' ? String(i) : String(i + 1), text }));
+      const poll: P.PollFact = { question: cmd.poll.question, options, ...(cmd.poll.multi ? { multi: true } : {}), ...(cmd.poll.hours ? { expires: Date.now() + cmd.poll.hours * 3_600_000 } : {}), counts: {} };
+      const body = [`**${cmd.poll.question}**`, ...cmd.poll.options.map((o) => `- ${o}`)].join('\n');
+      this.emit({ t: 'message', live: true, message: { nativeId, conversation: cmd.conversation, author: this.self.nativeId, ts: Date.now(), kind: 'text', body, extra: { poll } } });
+      return { nativeId };
+    }
+    if (cmd.t === 'pollEnd') {
+      this.emit({ t: 'pollUpdate', conversation: cmd.conversation, message: cmd.message, ended: true });
+      return {};
+    }
+    const seq = Math.max(cmd.seq ?? 0, this.pollSeq.get(cmd.message) ?? 0) + 1;
+    this.pollSeq.set(cmd.message, seq);
+    if (this.network === 'signal') this.emit({ t: 'pollUpdate', conversation: cmd.conversation, message: cmd.message, vote: { voter: this.self.nativeId, options: cmd.options, seq, ts: Date.now() } });
+    else {
+      const was = this.pollMine.get(cmd.message) ?? [];
+      const add: Record<string, number> = {};
+      for (const o of was) add[o] = (add[o] ?? 0) - 1;
+      for (const o of cmd.options) add[o] = (add[o] ?? 0) + 1;
+      this.pollMine.set(cmd.message, cmd.options);
+      this.emit({ t: 'pollUpdate', conversation: cmd.conversation, message: cmd.message, add, mine: cmd.options });
+    }
+    return {};
+  }
+  private pollMine = new Map<string, string[]>();
+
   /** Apply a change the hub has checked, and say so the way the network would. */
   private configure(target: P.AboutTarget, change: P.AboutChange): P.About {
     const { place, conv, space } = this.place(target);
@@ -2269,6 +2302,8 @@ class DemoAdapter implements InprocAdapter {
       // The networks whose servers search (netsearch.ts).
       ...(this.network === 'discord' || this.network === 'matrix' ? (['search'] as const) : []),
       ...(this.network === 'discord' ? DEMO_SERVER_CAPS : []),
+      // Polls and pins, as the Discord and Signal adapters have them (docs/polls.md).
+      ...(this.network === 'discord' || this.network === 'signal' ? (['polls', 'pollVote', 'pollCreate', 'pollEnd', 'pin'] as const) : []),
     ];
     this.emit({ t: 'hello', network: this.network, version: 'demo', capabilities: all.filter((c) => !this.without.has(c)) });
   }
@@ -2424,6 +2459,13 @@ class DemoAdapter implements InprocAdapter {
     // A pin, a reaction taken back, a role, a status, and your message read.
     msg(`${climb.nativeId}~h-pin`, S.priya, 58, 'Mesa is open till 10 on Thursdays now');
     emit({ t: 'pin', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, pinned: true, by: S.alice.nativeId, ts: ago(57) });
+    // A poll and its votes, as Signal sends them: each voter's whole vote, the later of two winning (docs/polls.md).
+    const poll: P.PollFact = { question: 'Which night this week?', options: [{ id: '0', text: 'Tuesday' }, { id: '1', text: 'Thursday' }, { id: '2', text: 'Both' }] };
+    msg(`${climb.nativeId}~h-poll`, S.sam, 54, '📊 **Which night this week?**\n• Tuesday\n• Thursday\n• Both', { extra: { poll } });
+    const voted = (who: P.IdentityFact, options: string[], seq: number, min: number) => emit({ t: 'pollUpdate', conversation: climb.nativeId, message: `${climb.nativeId}~h-poll`, vote: { voter: who.nativeId, options, seq, ts: ago(min) } });
+    voted(S.priya, ['0'], 1, 53);
+    voted(S.alice, ['2'], 1, 52);
+    voted(S.priya, ['1'], 2, 50);
     emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, author: S.sam.nativeId, key: '😢' });
     emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, author: S.sam.nativeId, key: '😢', remove: true });
     emit({ t: 'role', target: { kind: 'conversation', nativeId: climb.nativeId }, member: S.sam.nativeId, role: 'Admin', given: true, by: S.priya.nativeId, ts: ago(56) });
@@ -2618,6 +2660,15 @@ class DemoAdapter implements InprocAdapter {
       case 'openDirect':
         try {
           reply(this.openDirect(cmd.peer));
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
+        break;
+      case 'pollVote':
+      case 'pollCreate':
+      case 'pollEnd':
+        try {
+          reply(this.poll(cmd));
         } catch (e) {
           this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
         }

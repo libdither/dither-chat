@@ -26,6 +26,7 @@
 import type { AboutChange, AboutTarget, PersonRelationship } from './about.ts';
 import type { AddAction, AddRef, RelationshipFact, RequestAnswer, RequestFact } from './add.ts';
 import type { AttentionCapability, AttentionCommand } from './attention.ts';
+import type { PollCapability, PollCommand, PollUpdate } from './poll.ts';
 import type { CallFact, CallMode, CallState, VoiceMember } from './call.ts';
 import type { GateAnswer, ScheduledEventFact, SpaceGate } from './servers.ts';
 import type { LinkPreviewOut } from './extra.ts';
@@ -130,7 +131,9 @@ export type Capability =
   /** Resets the encrypted session with someone in a direct conversation (the `resetSession` command; Signal's end session). */
   | 'resetSession'
   /** Mentions found late, native mutes, unread by hand, many read at once (attention.ts). */
-  | AttentionCapability;
+  | AttentionCapability
+  /** Polls read, voted in, made and ended; pins changed (poll.ts). */
+  | PollCapability;
 
 // ---------------------------------------------------------------- facts
 
@@ -423,6 +426,8 @@ export type AdapterEvent =
    *
    * A message pinned or unpinned. */
   | { t: 'pin'; conversation: string; message: string; pinned: boolean; by?: string; ts?: number }
+  /** Votes in a poll as they come, or the poll closing (capability 'polls', poll.ts PollUpdate). */
+  | ({ t: 'pollUpdate' } & PollUpdate)
   /** Someone given a role or losing one: a Discord role by name, a Matrix power level ("Admin", "Moderator"), admin on Signal or WhatsApp. */
   | { t: 'role'; target: AboutTarget; member: string; role: string; given: boolean; color?: string; by?: string; ts?: number }
   /**
@@ -724,6 +729,8 @@ export type AdapterCommand =
   | { t: 'action'; id: string; action: string; args?: unknown }
   | { t: 'shutdown' }
   /** mute, markUnread, markReadMany (attention.ts). */
-  | AttentionCommand;
+  | AttentionCommand
+  /** pollVote, pollCreate, pollEnd (poll.ts). */
+  | PollCommand;
 
 export type AdapterCommandType = AdapterCommand['t'];

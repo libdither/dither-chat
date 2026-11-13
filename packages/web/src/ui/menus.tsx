@@ -36,6 +36,7 @@ import { canMarkUnread, markUnreadFrom } from '../unread.ts';
 import { openAttachment, openWith, save } from './fileopen.tsx';
 import { fileKind, fileMime, openFileViewer, VIEWABLE } from '../files.ts';
 import { inviteRef } from '../invites.ts';
+import { canEndPoll, endPoll, pin, pinChoices, pinnable } from '../polls.ts';
 
 export { openAttachment };
 
@@ -188,6 +189,8 @@ function messageEntries(m: P.MessageView, onReply?: () => void, marks = true): M
       canEdit(m) && { label: 'Edit Message', icon: 'pencil', hint: 'E', track: 'edit', run: () => startEditing(m) },
       live && onReply && { label: 'Reply', icon: 'reply', hint: 'R', track: 'reply', run: onReply },
       forwardable(m) && { label: 'Forward', icon: 'forward', hint: 'F', track: 'forward', run: () => (forwarding.value = m) },
+      pinnable(m) && pinEntry(m),
+      canEndPoll(m) && { label: 'End Poll', icon: 'list', track: 'end poll', run: () => confirm('End this poll now? Nobody can vote after.') && void endPoll(m) },
       thread && { label: 'Open Thread', icon: 'thread', track: 'open thread', run: () => openConv(thread) },
       !!text.trim() && !m.deleted && m.kind !== 'encrypted' && { label: 'Copy Text', icon: 'copy', hint: 'C', track: 'copy text', run: () => copy(plainBody(text, m.network), 'Text copied') },
       { label: 'Copy Message Link', icon: 'link', track: 'copy link', run: () => copy(messageLink(m), 'Link copied') },
@@ -208,6 +211,14 @@ function messageEntries(m: P.MessageView, onReply?: () => void, marks = true): M
       { label: 'Copy dither-chat ID', icon: 'idBadge', track: 'copy dither-chat id', run: () => copy(m.id, 'ID copied') },
     ],
   );
+}
+
+/** Pin or Unpin (docs/polls.md "Pins"), with how long where the network's pins run out (Signal). */
+function pinEntry(m: P.MessageView): MenuEntry {
+  if (m.pinned) return { label: 'Unpin Message', icon: 'pin', track: 'unpin', run: () => void pin(m, true) };
+  const choices = pinChoices(m.network);
+  if (!choices.length) return { label: 'Pin Message', icon: 'pin', track: 'pin', run: () => void pin(m, false) };
+  return { label: 'Pin Message', icon: 'pin', track: 'pin', sub: choices.map((c): MenuEntry => ({ label: c.label, track: 'pin (duration)', run: () => void pin(m, false, c.seconds) })) };
 }
 
 export function messageMenu(m: P.MessageView, onReply?: () => void): MenuSpec {

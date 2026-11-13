@@ -15,6 +15,7 @@ import { stepTimer } from './startup.ts';
 import { addTables, ingestRelationships, ingestRequests, pendingLinks } from './add.ts';
 import { lateNews } from './latenews.ts';
 import { eraseVoice, ingestCallEvent, voiceKept } from './callstate.ts';
+import { applyPollUpdate, pollSeen, pollViews } from './polls.ts';
 import { ingestServers } from './servers.ts';
 import { alertBar, type Facts } from './learn.ts';
 import { attachmentExtra, attachmentRich, embedViews, richView, type StoredExtra } from './rich.ts';
@@ -675,6 +676,12 @@ export class Store {
           this.messageEvent(mid, ev.pinned ? 'pin' : 'unpin', null, ev.by ? this.ensureIdentity(acc, ev.by) : null, acc.id, ev.ts ?? Date.now());
           break;
         }
+        case 'pollUpdate': {
+          // Votes are not news in themselves, as reactions are not (polls.ts).
+          const { t: _t, ...u } = ev;
+          if (applyPollUpdate(this.db, acc.network, (n) => this.ensureIdentity(acc, n), u)) this.markReacted(hubId('msg', acc.network, ev.message));
+          break;
+        }
         case 'role': {
           const kind = ev.target.kind;
           const tid = hubId(kind === 'space' ? 'spc' : 'cnv', acc.network, ev.target.nativeId);
@@ -1228,6 +1235,7 @@ export class Store {
       });
     }
     if (f.reactions) this.reactionSnapshot(acc, id, f.reactions, existed);
+    if (existed && f.extra?.poll) pollSeen(this.db, id, f.extra);
     if (!existed) this.ingested.set(cid, Math.min(this.ingested.get(cid) ?? Infinity, f.ts));
     const newForAccount = this.db.query('INSERT OR IGNORE INTO message_seen (message_id, account_id) VALUES (?, ?)').run(id, acc.id).changes > 0;
 
@@ -2583,6 +2591,7 @@ export class Store {
       RC.set(r.message_id, cur);
     }
     const T = new Map(tri.map((t) => [t.message_id, t]));
+    const POLL = pollViews(this.db, rows, (id) => this.isSelf(id));
     // What was kept of deleted and disappeared messages stays out of sight with adversarial features hidden.
     const unseal = this.retention().adversarial;
     return rows.map((r) => {
@@ -2637,6 +2646,7 @@ export class Store {
         ),
         embeds: embedViews(extra, (u) => this.media(u, seenVia[0])),
         ...(rich ? { rich } : {}),
+        ...(POLL.has(r.id) && !sealed ? { poll: POLL.get(r.id) } : {}),
         reactions: (RT.get(r.id) ?? [])
           .map((t): P.ReactionView => {
             const identityIds = rx.get(`${t.style}|${t.key}`) ?? [];

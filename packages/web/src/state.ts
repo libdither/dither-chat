@@ -1013,7 +1013,7 @@ export function openProfile(identityId: string | null | undefined) {
 /** The message the composer is rewriting. */
 export const editing = signal<P.MessageView | null>(null);
 
-function ownAccount(m: P.MessageView) {
+export function ownAccount(m: P.MessageView) {
   return [...db.accounts.values()].find((a) => a.selfIdentityId === m.authorId);
 }
 export const canEdit = (m: P.MessageView) => !m.deleted && m.kind !== 'system' && !!ownAccount(m)?.capabilities.includes('edit');

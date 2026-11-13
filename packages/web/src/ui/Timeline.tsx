@@ -93,6 +93,8 @@ import { noteSeen } from '../activity.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { ForwardCard, forwarding } from './Forward.tsx';
 import { InviteCards } from './InviteCard.tsx';
+import { PollCardLazy, PollMakerLazy } from './PollLazy.tsx';
+import { pollMaker } from '../polls.ts';
 import { AttachmentNote, ContactCards, MissingFiles, played, QuoteFallback, SendFailures, StoryReplyLine, withoutCardLines } from './MessageExtras.tsx';
 import { attachmentMenu, conversationMenu, identityMenu, imageMenu, linkMenu, messageMenu, openAttachment, personMenu } from './menus.tsx';
 import { fileFacts, fileIcon, fileKind, openFileViewer, VIEWABLE } from '../files.ts';
@@ -697,7 +699,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           <>
             <RichHead m={m} />
             <StoryReplyLine m={m} />
-            <Body m={m.contacts ? withoutCardLines(m) : m} tail={ticks} />
+            {m.poll ? <PollCardLazy m={m} fallback={<Body m={m} />} /> : <Body m={m.contacts ? withoutCardLines(m) : m} tail={ticks} />}
             <Attachments m={m} />
             <MissingFiles m={m} />
             <ContactCards m={m} />
@@ -707,7 +709,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           </>
         )}
         <SendFailures m={m} />
-        {ticks && (!m.body || m.deleted) && <span class="msg-marks">{ticks}</span>}
+        {ticks && (!m.body || m.deleted || (m.poll && !m.forward)) && <span class="msg-marks">{ticks}</span>}
         {grouped && (m.editedTs || m.edits) && <Edited m={m} />}
         {grouped && (m.pinned || m.rich?.silent || m.rich?.marks) && (
           <span class="msg-marks">
@@ -1175,6 +1177,14 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
   };
   const limit = conv ? `up to ${ATTACHMENT_LIMITS[conv.network].bytes / 1024 / 1024} MB each` : '';
   const attaching = canAttach && !edit && !disabledReason;
+  // Making a poll (docs/polls.md): where an account here makes them, not in an open message request.
+  const [polling, setPolling] = useState(false);
+  const pollAccount = conv && !edit && !disabledReason ? pollMaker(targets.convId, sender?.id) : null;
+  const pollBtn = pollAccount && !onPhone && (
+    <button class="icon-btn poll-btn" data-track="poll" onClick={() => setPolling(true)} title="New poll" aria-label="New poll">
+      <Icon name="list" size={17} />
+    </button>
+  );
   const openCamera = () => {
     // No camera API at all: the system's camera, from this tap.
     if (!navigator.mediaDevices?.getUserMedia) return capture.current?.click();
@@ -1373,6 +1383,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
               <Icon name="paperclip" size={17} />
             </button>
           )}
+          {pollBtn}
           {sendAsMenu}
           {lead ? (
             <div class={`pair-lead ${text ? 'raised' : ''}`}>
@@ -1395,7 +1406,8 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           onClose={() => setEmojiAt(null)}
         />
       )}
-      {sheet && <AttachSheet limit={limit} onClose={() => setSheet(false)} onPhotos={() => photos.current?.click()} onFile={() => picker.current?.click()} />}
+      {sheet && <AttachSheet limit={limit} onClose={() => setSheet(false)} onPhotos={() => photos.current?.click()} onFile={() => picker.current?.click()} onPoll={pollAccount ? () => setPolling(true) : undefined} />}
+      {polling && conv && <PollMakerLazy conversationId={targets.convId} network={conv.network} accountId={pollAccount?.id} onClose={() => setPolling(false)} />}
       {camera && (
         <CameraView
           onClose={() => setCamera(false)}

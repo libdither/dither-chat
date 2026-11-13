@@ -19,7 +19,7 @@ import { Sheet } from './Sheet.tsx';
 
 // ------------------------------------------------------------------ the + sheet
 
-export function AttachSheet({ onPhotos, onFile, onClose, limit }: { onPhotos: () => void; onFile: () => void; onClose: () => void; limit: string }) {
+export function AttachSheet({ onPhotos, onFile, onPoll, onClose, limit }: { onPhotos: () => void; onFile: () => void; onPoll?: () => void; onClose: () => void; limit: string }) {
   // The picker opens from the tap itself, which a browser asks of it; the sheet goes as it opens.
   const pick = (open: () => void) => () => {
     open();
@@ -43,6 +43,15 @@ export function AttachSheet({ onPhotos, onFile, onClose, limit }: { onPhotos: ()
             <small>Any kind, {limit}</small>
           </span>
         </button>
+        {onPoll && (
+          <button class="sheet-action attach-action" data-track="poll" onClick={pick(onPoll)}>
+            <Icon name="list" size={22} />
+            <span>
+              Poll
+              <small>A question with options to vote on</small>
+            </span>
+          </button>
+        )}
       </div>
     </Sheet>
   );
