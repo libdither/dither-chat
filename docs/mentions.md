@@ -5,7 +5,7 @@ mention in the message, so the person is notified the way that network notifies,
 
 This page covers the picker, the hub's endpoint, the adapter command behind it, and what a mention becomes on each
 network. Steps 1 and 2 of the design approved on 2026-11-13 are built: the people here, their roles, and @everyone where
-you may write it. Step 3 adds a place setting for whom the picker offers (friends, everyone known, optionally only on the
+you may write it, on Discord, Matrix and Telegram (dither-accounts), and from the hub alone elsewhere. Step 3 adds a place setting for whom the picker offers (friends, everyone known, optionally only on the
 chat's network), with `<@person:…>` and `<@identity:…>` tokens that the hub turns into native mentions on send.
 
 ## In a body
@@ -120,14 +120,26 @@ capability comes in the hello once ChannelStore, UserStore, GuildMemberStore and
 
 It is not paced. Typing is not paced either, the hub keeps answers a minute, and the web app waits for a pause.
 
-### Matrix and Telegram (Step 2)
+### Matrix and Telegram (Step 2, dither-accounts)
 
-- Matrix: the room's joined members whose name or id holds the letters typed. `everyone` is true when your power level
-  reaches the room's `notifications.room` level (50 by default).
-- Telegram: for a supergroup, the client's own member search (channels.getParticipants with a search filter); for a basic
-  group, its members. A channel's subscribers are left out.
+- Matrix (`extractors/matrix/src/mentions.ts`): the room's joined members, as its state holds them. Lazy loading brings
+  the senders of recent events, so with nothing typed these are about who spoke lately. Letters typed in a room whose
+  members are not all loaded fetch `/joined_members` once, kept five minutes in memory. Members match by display name or
+  user id. `everyone` is true when your power level reaches the room's `notifications.room` level (50 unless the room
+  sets it).
+- Telegram (`extractors/telegram/src/mentions.ts`, `adapter.ts mentionables`): a DM's other person, or a basic group's
+  members (one messages.getFullChat). In a supergroup, nothing with nothing typed (the hub knows who wrote there); for
+  letters typed, Telegram's own member search, channels.getParticipants with channelParticipantsSearch, as its @ list
+  asks. A broadcast channel offers nobody. Telegram has no @all. The people found are remembered so a mention of them can
+  be sent, and no identity goes to the hub.
 
 Signal and WhatsApp have no command. Their groups store their participants, so the hub's own sources cover them.
+WhatsApp leaves out the participants of a group over 256 members. Such a group offers who wrote there, marked partial.
+
+Incoming, Telegram's plain `@username` (a messageEntityMention) becomes `<@id>` when it names a user this account knows,
+as a mention by name (messageEntityMentionName) already did. Matrix's `@room`, as `m.mentions.room` or (no `m.mentions`,
+an older client) as `@room` in the body, sets `mentionsSelf` and `mentionsAll` when its sender may notify the room. That
+is the way Discord's @everyone does.
 
 ## What a mention becomes, and who is notified
 
@@ -152,6 +164,8 @@ Incoming mentions of you set `mentionsSelf` (and `mentionsAll` for @everyone, @h
 - `scripts/verify-mentions.ts`: a demo hub of its own and headless Chromium, on desktop and phone width.
 - dither-accounts `extractors/discord/test/mentionables.test.ts` and `hook-mentionables.test.ts`: the mapping, and the
   hook against a small replica of the client's stores.
+- dither-accounts `extractors/matrix/test/mentions.test.ts` (members, the cache, @room both ways) and Telegram's
+  `adapter.test.ts` (mentionables against the fake Telegram) and `entities.test.ts` (an @username it knows).
 
 The demo adapter answers `mentionables` for Discord and Matrix (`demo.ts`). Discord's libdither server has two
 mentionable roles, and the main account is its admin, so it may write @everyone there and the alt may not. A Matrix
