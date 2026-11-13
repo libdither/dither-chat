@@ -99,6 +99,7 @@ Built in slices from [mail-design.md](mail-design.md) (its §12); what works now
 | Discord server channels live while idle | H | ? | blocked | Discord pushes nothing for unopened channels, so they update when opened. Mentions in them are no longer blocked: see the next row |
 | Discord mentions in unopened channels | H | M | done | From Discord's own recent-mentions list, asked after connecting and when its notification center says something came, at most every five minutes; triaged as live only while under ten minutes old ([notifications.md](notifications.md#from-the-network-itself)). Built against fakes only (2026-11-12, net-gaps), not yet run on a live client |
 | Discord message requests and spam, mutes both ways, Mark Unread, bulk read | M | M | done | Message requests and spam DMs under Requests (spam never notifies); mutes changed in Discord arrive at once and "Mute on Discord" with a timer on a place's About; Mark Unread both ways; mark-all in bulk. Built against fakes only (2026-11-12, net-gaps) |
+| Moderating groups and servers: remove, ban, admins, roles, timeouts, others' messages and reactions, join requests, labels, pictures, leaving as the only admin | L | M | done | Signal groups and Discord servers ([moderation.md](moderation.md)): only where the account may, one click and a confirm each, at most 30 an hour. Audit log, AutoMod, pruning, emoji and integrations stay in Discord. Built against fakes only (2026-11-12, net-gaps), not run on a live account |
 
 ## Notifications
 

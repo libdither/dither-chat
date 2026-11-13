@@ -91,9 +91,9 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 | AI: translate, summarize thread, fix grammar, title | AI_TRANSLATE, AI_SUMMARIZE_THREAD, AI_FIX_GRAMMAR, AI_TEXT_TRANSFORM, AI_TITLE | none | a | L | The hub has local models; Discord's are gated and server-side |
 | Channel summaries ("conversations") | CHANNEL_SUMMARIES, CHANNEL_CONVERSATIONS (+ _MESSAGES), CONVERSATION_SUMMARY_UPDATE, RECEIVE_CHANNEL_SUMMARIES_BULK | none | a | M | Discord's own topic clustering of busy channels; could seed dither's catch-up for big servers. Gated per guild |
 | Message edit while the hub thinks an older body | – | hub keeps edit log (message_event 'edit') | – | – | Not a gap |
-| Delete someone else's message (moderator) | MESSAGE del with MANAGE_MESSAGES | redact is own messages in UI? | d | L | Check whether the UI offers delete when the About says moderator |
-| Remove all reactions / one emoji (mod) | REMOVE_REACTIONS, REMOVE_EMOJI_REACTIONS | read only | b | L | |
-| Remove someone else's reaction (mod) | REACTION with user id | none | a | L | |
+| Delete someone else's message (moderator) | MESSAGE del with MANAGE_MESSAGES | redact is own messages in UI? | d | L | Check whether the UI offers delete when the About says moderator | **done** (net-gaps): Delete Message (Moderator) in the message menu where the reaction context says Manage Messages
+| Remove all reactions / one emoji (mod) | REMOVE_REACTIONS, REMOVE_EMOJI_REACTIONS | read only | b | L | | **done** (net-gaps): Remove Reactions in the message menu
+| Remove someone else's reaction (mod) | REACTION with user id | none | a | L | | **done** (net-gaps): a × by each person in the list of who reacted
 
 ## Mentions, inbox, notifications
 
@@ -183,19 +183,19 @@ Read-only research, 2026-11-12. Source of "what Discord can do": the JS bundles 
 
 | Feature | Discord has | dither has | Class | Value | Notes |
 |---|---|---|---|---|---|
-| Kick / ban / timeout | GUILD_MEMBER del, GUILD_BAN, BULK_GUILD_BAN_V2, `communication_disabled_until` | none | a | L | Only matters if the user moderates |
-| Audit log | GUILD_AUDIT_LOG, GUILD_AUDIT_LOG_ENTRY_CREATE | none | a | L | |
-| AutoMod rules | GUILD_AUTOMOD_RULES, GUILD_AUTOMOD_ALERT_ACTION, AUTO_MODERATION_MENTION_RAID_DETECTION | none | a | L | |
-| Raid / incident actions | GUILD_INCIDENT_ACTIONS, types 36–39 | system lines | d | L | |
-| Roles: create/edit/assign | GUILD_ROLES, GUILD_ROLE, GUILD_ROLE_CREATE/UPDATE | role names read, role changes logged (`role` event) | b | L | |
+| Kick / ban / timeout | GUILD_MEMBER del, GUILD_BAN, BULK_GUILD_BAN_V2, `communication_disabled_until` | none | a | L | Only matters if the user moderates | **done** (net-gaps): Kick, Ban (with the dialog's delete-history choices), Unban from the Bans list, Time Out with Discord's durations, in a member's menu where the client says this account may (docs/moderation.md)
+| Audit log | GUILD_AUDIT_LOG, GUILD_AUDIT_LOG_ENTRY_CREATE | none | a | L | | **not built**: L, open Discord
+| AutoMod rules | GUILD_AUTOMOD_RULES, GUILD_AUTOMOD_ALERT_ACTION, AUTO_MODERATION_MENTION_RAID_DETECTION | none | a | L | | **not built**: L, open Discord
+| Raid / incident actions | GUILD_INCIDENT_ACTIONS, types 36–39 | system lines | d | L | | **not built**: L, open Discord
+| Roles: create/edit/assign | GUILD_ROLES, GUILD_ROLE, GUILD_ROLE_CREATE/UPDATE | role names read, role changes logged (`role` event) | b | L | | assign and remove **done** (net-gaps): Roles in a member's menu, below your top role, never managed roles; create/edit **not built** (open Discord)
 | Role member lists | GUILD_ROLE_MEMBER_IDS, GUILD_ROLE_MEMBER_COUNTS | none | a | – | **no**: active member scraping |
 | Member search / safety (mods) | GUILD_MEMBER_SEARCH, MEMBER_SAFETY_SUPPLEMENTAL, GUILD_MEMBERS_UNUSUAL_DM_ACTIVITY | walkMembers (op 8, explicit index job) | d | – | **no** beyond what exists: active scraping |
-| Prune | GUILD_PRUNE(_V2) | none | a | L | |
-| Emoji/sticker/soundboard management | GUILD_EMOJIS, GUILD_STICKER, GUILD_SOUNDBOARD_SOUND, EMOJI_UPLOAD_* | none | a | L | |
-| Server settings beyond name | GUILD patch (icon, banner, description, verification level, system channel, AFK…) | name only (PATCHABLE.guild) | d | L | |
-| Channel settings beyond name/topic/slowmode/nsfw | CHANNEL patch (default auto-archive, user limit, bitrate, region, tags, default reaction, sort) | name/topic/slowmode/nsfw | d | L | announceOnly and avatar refused |
-| Moderator reports / DSA | MODERATOR_REPORT_CLOSE, SUBMIT_MODERATOR_MESSAGE_REPORT, REPORT_TO_MOD_REOPEN | none | a | L | |
-| Integrations / bots in a server | GUILD_INTEGRATIONS, GUILD_APPLICATIONS | none | a | L | |
+| Prune | GUILD_PRUNE(_V2) | none | a | L | | **not built**: L, a batch action, open Discord
+| Emoji/sticker/soundboard management | GUILD_EMOJIS, GUILD_STICKER, GUILD_SOUNDBOARD_SOUND, EMOJI_UPLOAD_* | none | a | L | | **not built**: L, open Discord
+| Server settings beyond name | GUILD patch (icon, banner, description, verification level, system channel, AFK…) | name only (PATCHABLE.guild) | d | L | | **done** (net-gaps): description (Community servers) and icon; banner, verification, system channel, AFK **not built** (L)
+| Channel settings beyond name/topic/slowmode/nsfw | CHANNEL patch (default auto-archive, user limit, bitrate, region, tags, default reaction, sort) | name/topic/slowmode/nsfw | d | L | announceOnly and avatar refused | **done** (net-gaps): default auto-archive, user limit, bitrate (by boosts); region, tags, default reaction, sort **not built** (L)
+| Moderator reports / DSA | MODERATOR_REPORT_CLOSE, SUBMIT_MODERATOR_MESSAGE_REPORT, REPORT_TO_MOD_REOPEN | none | a | L | | **not built**: L, open Discord
+| Integrations / bots in a server | GUILD_INTEGRATIONS, GUILD_APPLICATIONS | none | a | L | | **not built**: L, open Discord
 
 ## People, friends, profiles
 

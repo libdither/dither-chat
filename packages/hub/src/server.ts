@@ -2,9 +2,10 @@ import type { Server, ServerWebSocket, Socket, WebSocketHandler } from 'bun';
 import { createHmac } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type * as P from '@dither-chat/protocol';
 import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, parseCursor } from './chats.ts';
-import { ATTACHMENT_LIMITS, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, RETENTION_GUARDED, RULE_LEVELS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { ACCOUNT_COLORS, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
@@ -43,6 +44,7 @@ import { fetchPublicToFile } from './fetchsafe.ts';
 import { AboutError, Abouts } from './about.ts';
 import { Servers } from './servers.ts';
 import { Threads } from './threads.ts';
+import { Moderation } from './moderation.ts';
 import { asked, attempt, candidatesAttempt } from './attempts.ts';
 import { Groups } from './groups.ts';
 import { People } from './people.ts';
@@ -225,6 +227,8 @@ export class HubServer {
   readonly servers: Servers;
   /** Following threads, starting threads and posts, archiving, publishing, running a group (threads.ts, docs/threads.md). */
   readonly threads: Threads;
+  /** Removing, banning, roles and timeouts, others' messages and reactions, member labels (moderation.ts, docs/moderation.md). */
+  readonly moderation: Moderation;
   /** Your marks on whether a message needs a reply (replymarks.ts). */
   private get marks(): ReplyMarks {
     return (this._marks ??= new ReplyMarks(this.store));
@@ -289,6 +293,15 @@ export class HubServer {
       note: (a, line) => sup.note(a, line),
       flush: () => this.flush(),
       aboutView: (k, i, n, a, ab) => this.abouts.view(k, i, n, a, ab, Date.now(), undefined, true),
+    });
+    this.moderation = new Moderation({
+      store,
+      online: (a) => sup.online(a),
+      command: (a, c, t) => sup.command(a, c, t),
+      pickAccount: (c, a) => this.pickAccount(c, a),
+      keep: (k, i, n, a, ab) => (this.abouts.keep(i, a, ab), this.abouts.view(k, i, n, a, ab, Date.now(), undefined, true)),
+      note: (a, line) => sup.note(a, line),
+      flush: () => this.flush(),
     });
     this.servers = new Servers({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), pickAccount: (c, a) => this.pickAccount(c, a), note: (a, line) => sup.note(a, line), flush: () => this.flush(), aboutView: (k, i, n, a, ab) => this.abouts.view(k, i, n, a, ab, Date.now(), undefined, true) });
     sup.calls = this.calls;
@@ -653,6 +666,8 @@ export class HubServer {
     if (Servers.handles(path)) return (await this.servers.route(req, url, path))!;
     // Following threads, starting threads and posts, archiving, publishing, running a group (threads.ts).
     if (Threads.handles(path)) return (await this.threads.route(req, url, path))!;
+    // Moderating members, others' messages and reactions, member labels (moderation.ts).
+    if (Moderation.handles(path)) return (await this.moderation.route(req, url, path))!;
     // Reply marks (replymarks.ts, docs/inbox.md "Marks"): on a message, its mail twin, and on an inbox row.
     if ((m = path.match(/^\/api\/(mail\/)?messages\/([\w-]+)\/reply-mark$/)) && method === 'POST') {
       const b = await body<{ mark?: unknown; surface?: unknown; device?: unknown }>();
@@ -995,7 +1010,20 @@ export class HubServer {
       try {
         if (method === 'POST') {
           const b = await body<{ change?: P.AboutChange; accountId?: string }>();
-          const v = await this.abouts.configure(kind, m[2], b.change as P.AboutChange, b.accountId);
+          // A new picture comes as an upload id (/api/uploads); the adapter gets the file as a file:// URL.
+          let upload: string | null = null;
+          let change = b.change as P.AboutChange;
+          if (change?.key === 'avatar') {
+            if (!req.headers.get('origin')) return bad('The picture is changed from the app itself', 403);
+            upload = typeof change.value === 'string' ? change.value : null;
+            const file = upload ? this.uploads.get([upload])?.[0] : undefined;
+            if (!file) return bad('avatar: an upload id');
+            if (!P_PICTURE_TYPES.includes(file.mime)) return bad('A picture is a PNG, JPEG, GIF or WebP image', 415);
+            if (file.size > P_PICTURE_MAX) return bad(`A picture is at most ${P_PICTURE_MAX / 1024 / 1024} MB`, 413);
+            change = { key: 'avatar', value: pathToFileURL(file.path).href };
+          }
+          const v = await this.abouts.configure(kind, m[2], change, b.accountId);
+          if (upload) this.uploads.remove([upload]);
           this.flush();
           return ok(v);
         }

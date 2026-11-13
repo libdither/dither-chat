@@ -11,6 +11,7 @@ import { identityName } from '../model.ts';
 import { canEndPoll, endPoll, makePoll, vote, voter } from '../polls.ts';
 import { Modal } from './bits.tsx';
 import { Icon } from './icons.tsx';
+import './Poll.css';
 
 /** An option's emoji: a custom one (`<:name:id>`) as its picture. Questions and options are plain text. */
 const emoji = (text: string, network: P.Network) => ({ __html: renderMarkdown(text, { network, user: () => null, room: () => null }) });

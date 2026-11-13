@@ -16,6 +16,7 @@ import { phone } from '../phone.ts';
 import { mark } from '../triage.ts';
 import { desk, openLink } from '../desk.ts';
 import { pickerFor, quickReactions, reactionScope, reactorsFor, replacing, toggleReaction } from '../reactions.ts';
+import { clearReactions, moderatorDelete, modOf } from '../moderate.ts';
 import { api, canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
 import { messageSomeone, openPalette } from './Palette.tsx';
 import { hasHistory, historyOf } from './MessageHistory.tsx';
@@ -209,6 +210,7 @@ function messageEntries(m: P.MessageView, onReply?: () => void, marks = true): M
     marks ? markEntries(m) : [],
     // Google Messages has no unsend: a delete only takes it off your phone.
     [canDelete(m) && { label: m.network === 'gmessages' ? 'Delete From Your Phone' : 'Delete Message', icon: 'trash', hint: 'Del', danger: true, track: 'delete', run: () => deleteMessage(m) }],
+    moderatorEntries(m),
     [
       { label: 'Copy Message ID', icon: 'idBadge', track: 'copy message id', run: () => copy(m.nativeId, 'Message ID copied') },
       { label: 'Copy dither-chat ID', icon: 'idBadge', track: 'copy dither-chat id', run: () => copy(m.id, 'ID copied') },
@@ -222,6 +224,28 @@ function pinEntry(m: P.MessageView): MenuEntry {
   const choices = pinChoices(m.network);
   if (!choices.length) return { label: 'Pin Message', icon: 'pin', track: 'pin', run: () => void pin(m, false) };
   return { label: 'Pin Message', icon: 'pin', track: 'pin', sub: choices.map((c): MenuEntry => ({ label: c.label, track: 'pin (duration)', run: () => void pin(m, false, c.seconds) })) };
+}
+
+/** Someone else's message where this account moderates (docs/moderation.md): delete it, take reactions off. */
+function moderatorEntries(m: P.MessageView): MenuEntry[] {
+  const mod = modOf(m);
+  if (!mod) return [];
+  const label = (r: P.ReactionView) => (r.emoji ? `:${r.emoji.name}:` : r.key.match(/^(.+):\d+$/) ? `:${r.key.split(':')[0]}:` : r.key);
+  return [
+    mod.delete && m.kind !== 'system' && { label: 'Delete Message (Moderator)', icon: 'trash', danger: true, track: 'mod delete', run: () => moderatorDelete(m) },
+    mod.reactions &&
+      m.reactions.length > 0 && {
+        label: 'Remove Reactions',
+        icon: 'smile',
+        danger: true,
+        track: 'mod reactions',
+        sub: [
+          { label: 'All Reactions', danger: true, track: 'mod reactions (all)', run: () => clearReactions(m) },
+          { kind: 'sep' },
+          ...m.reactions.filter((r) => r.style !== 'super').map((r): MenuEntry => ({ label: `Every ${label(r)}`, track: 'mod reactions (one)', run: () => clearReactions(m, r.key, undefined, label(r)) })),
+        ],
+      },
+  ].filter(Boolean) as MenuEntry[];
 }
 
 export function messageMenu(m: P.MessageView, onReply?: () => void): MenuSpec {

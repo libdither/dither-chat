@@ -59,29 +59,29 @@ A side finding: `MessageFact.extra` (quote, poll, sticker, storyReply, viewOnce,
 ## Groups and admin
 
 - (a) M/H: you cannot leave a group. `quitGroup` (with `--admin` to hand over when you are the last admin, and
-  `--delete`) is used only to decline invitations. The protocol has no "leave conversation" command.
-- (a) M: removing a member is unused (`updateGroup -r/--remove-member`). `about.ts` AboutChange has no kick.
+  `--delete`) is used only to decline invitations. The protocol has no "leave conversation" command. **done** (net-gaps): the general `leave` runs `quitGroup`; as its only admin the page asks who takes over (`--admin`); `--delete` is a box with its own confirm; the history stays (docs/moderation.md).
+- (a) M: removing a member is unused (`updateGroup -r/--remove-member`). `about.ts` AboutChange has no kick. **done** (net-gaps): `moderate` remove, from a member's menu, admins only.
 - (a) M: adding or removing admins is unused (`updateGroup --admin / --remove-admin`). The adapter shows admins and
-  emits `role` events from re-reads, but protocol/About has no "make admin" change.
-- (a) L: ban and unban are unused (`updateGroup --ban/--unban`). `listGroups.banned[]` is read into types but never shown.
+  emits `role` events from re-reads, but protocol/About has no "make admin" change. **done** (net-gaps): Make Admin / Remove as Admin in a member's menu.
+- (a) L: ban and unban are unused (`updateGroup --ban/--unban`). `listGroups.banned[]` is read into types but never shown. **done** (net-gaps): Ban in a member's menu, the banned listed with Unban on the Moderation card.
 - (a) M: join requests to groups you admin go unanswered. `listGroups.requestingMembers[]` appears only as a count
   ("Asking to join"); approving (`updateGroup -m <requester>`) or refusing (`-r`) is not offered. docs/signal.md lists
-  it as not built.
+  it as not built. **done** (net-gaps): requests of kind `join` under Requests (`join:<group>:<person>`), Accept adds them, Decline turns them away.
 - (a) L/M: the group picture cannot be changed. `updateGroup -a/--avatar` exists, but groupAbout says "Changing the
-  picture is not supported yet".
+  picture is not supported yet". **done** (net-gaps): Change picture on the group's page (`configure` avatar, a `file://` path the hub gives).
 - (b) L: link approval can be set but not read. `updateGroup --link enabled-with-approval` exists, but
   `listGroups` JSON does not say whether approval is on (`groupInviteLink` only), so `joinApproval` is shown as
-  unknown and not editable. The write side could still be offered (see (e) for the read side).
+  unknown and not editable. The write side could still be offered (see (e) for the read side). **done** (net-gaps): the write side, offered as "Unknown: set it…" with the link on; the read side stays a signal-cli limit, said in the panel.
 - (a) L: member labels are a newer Signal feature: `listGroups.members[].label/labelEmoji` and `updateGroup
-  --member-label/--member-label-emoji` (your own label). They are not mapped or set.
-- (a) L: ending a group is unused (`terminateGroup -g`). `isTerminated` is read: it blocks changes and invitations.
+  --member-label/--member-label-emoji` (your own label). They are not mapped or set. **done** (net-gaps): everyone's labels by their names in the member list; your own on the "Your label" card (`setLabel`).
+- (a) L: ending a group is unused (`terminateGroup -g`). `isTerminated` is read: it blocks changes and invitations. **done** (net-gaps): End the group… on the Moderation card, after typing its name.
 - (a) M: admin delete is unused. `sendAdminDelete -a <author> -t <ts>` (and `--story`) exists, but `redact` refuses
   others' messages with "Signal only lets you delete your own messages for everyone". Incoming `adminDelete` is
-  mapped to `delete` (b).
+  mapped to `delete` (b). **done** (net-gaps): Delete Message (Moderator) in the message menu where you are an admin (`redact` with `moderator`, `sendAdminDelete`).
 - (d) L: the group revision (`JsonGroupInfo.revision`) is ignored. Every UPDATE triggers a full `listGroups` re-read
-  and a diff (`describeGroupChange`), which cannot name who acted when several changes arrive together.
+  and a diff (`describeGroupChange`), which cannot name who acted when several changes arrive together. **not built**: `listGroups` has no revision, so an update has no baseline to be compared with after a restart; not cheap.
 - (d) L: groups can only be made with 10 people at most (`GROUP_RULES.signal.max = 10`). signal-cli has no such cap.
-  This is the protocol's pacing choice, not Signal's.
+  This is the protocol's pacing choice, not Signal's. **not built**: kept on purpose; it is the hub's few-at-a-time pacing, the same as `ADD_MEMBERS_MAX`, and the adapter's `createGroupParams` guard relies on it.
 - (a) L: group calls cannot be started, and `groupCallUpdate.eraId` only gives "started a group call". See (e).
 
 ## Contacts, profiles, usernames

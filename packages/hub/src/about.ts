@@ -8,6 +8,7 @@ import { ABOUT_LABEL, aboutChangeProblem, ADD_MEMBERS_MAX, addMembersNotBuilt, N
 import { hubId } from '@dither-chat/protocol/ids';
 import { addTables, givePace, takePace } from './add.ts';
 import type { Attempt } from './attempts.ts';
+import { lockedModeration, moderationView } from './moderation.ts';
 import type { Store } from './store.ts';
 
 export interface AboutDeps {
@@ -92,6 +93,8 @@ export class Abouts {
     const acc = this.d.store.account(accountId)!;
     if (!this.d.online(accountId)) throw new AboutError(`${NETWORK_META[t.network].name} · ${acc.label} is not connected`, 409);
     if (!caps(this.d.store, accountId).includes('configure')) throw new AboutError(`${acc.label} cannot change settings on ${NETWORK_META[t.network].name}`, 409);
+    // A new picture goes to adapters that take one (the hub gave it a file:// URL in its upload spool).
+    if (change.key === 'avatar' && !caps(this.d.store, accountId).includes('setPicture')) throw new AboutError(`Changing the picture isn't built for ${acc.label} on ${NETWORK_META[t.network].name} yet.`, 409);
     const target = { kind, nativeId: t.nativeId };
     // Never on a stale answer: what this account may do can have changed since the panel opened.
     const fresh = await this.d.command<P.About>(accountId, { t: 'about', target }, 30_000).catch((e: Error) => {
@@ -218,7 +221,8 @@ export class Abouts {
     return { accountId, added, invited, failed, about };
   }
 
-  private keep(targetId: string, accountId: string, about: P.About) {
+  /** Keep this account's About of a place (moderation.ts keeps the one a change answers with). */
+  keep(targetId: string, accountId: string, about: P.About) {
     // Settings that changed since this account last said (docs/history.md). Name, description and picture come with
     // the conversation itself and are logged there.
     const prev = this.kept(targetId, accountId);
@@ -282,6 +286,8 @@ export class Abouts {
         ...(m.role ? { role: m.role } : {}),
         ...(m.rank !== undefined ? { rank: m.rank } : {}),
         ...(m.color ? { color: m.color } : {}),
+        ...(m.label && typeof m.label === 'object' ? { label: m.label } : {}),
+        ...(m.mod && typeof m.mod === 'object' ? { mod: m.mod } : {}),
       })),
       total: about.members.total,
       complete: about.members.complete,
@@ -298,11 +304,14 @@ export class Abouts {
     const adding = addingOf(s, kind, id, network, accountId, about.adding, stale);
     const canConfigure =
       configurable && !stale && (Object.values(fields).some((f) => f?.canEdit) || !!about.invite?.canCreate || !!about.invite?.canRevoke || !!about.pinned?.canEdit || !!about.nick?.canEdit);
+    const moderation = moderationView(s, acc, network, about.moderation);
+    const named = [...(members?.list.map((m) => m.identityId) ?? []), ...(moderation?.banned ?? []), ...(moderation?.requesting ?? [])];
     return {
       ...about,
       fields,
       members,
-      identities: s.identitiesByIds(members?.list.map((m) => m.identityId) ?? []),
+      moderation,
+      identities: s.identitiesByIds([...new Set(named)]),
       pinned,
       // A group's owner in hub ids, as the members are (threads.ts AboutOwnership).
       ...(about.ownership ? { ownership: { ...about.ownership, ...(about.ownership.owner ? { owner: acc ? s.ensureIdentity(acc, about.ownership.owner) : hubId('idn', network, about.ownership.owner) } : {}) } } : {}),
@@ -384,6 +393,8 @@ export function readOnly(about: P.About, reason: string): P.About {
     ...(about.adding ? { adding: { ...about.adding, can: false, reason } } : {}),
     ...(about.leaving ? { leaving: { ...about.leaving, can: false, reason } } : {}),
     ...(about.nick ? { nick: { ...about.nick, canEdit: false, reason } } : {}),
+    ...(about.moderation ? { moderation: lockedModeration(about.moderation, reason) } : {}),
+    ...(about.label ? { label: { ...about.label, canEdit: false, reason } } : {}),
   };
 }
 
