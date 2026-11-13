@@ -89,6 +89,11 @@ in a sandboxed browser there; you sign in in its live view, and a new chat with 
 them as networks (labels, addressing a new chat by @username or phone number, the add dialog's fields, the QR, code,
 password, emoji and cookie steps of their sign-in).
 
+`t3` is T3 Code's coding threads (dither-accounts' docs/t3.md), on the machine where T3 Code runs: each thread a chat
+with its agent (state in the conversation's topic: working, waiting for your answer, finished), its project a space,
+and a message sent there the thread's next turn. It has no sign-in, reactions, files or profiles. A new thread starts
+in T3 Code for now; it shows up here once it exists.
+
 A hub registered before these kinds existed asks the manager on its next start to manage them too
 (`kindsToAsk` in remote.ts): approve that request on the manager's page. A request still open, or one you denied, is
 not asked again.

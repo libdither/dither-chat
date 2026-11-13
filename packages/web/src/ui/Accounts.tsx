@@ -997,6 +997,12 @@ const NET_HELP: Record<P.Network, { adapter: string; blurb: string; fields: { ke
     blurb: 'Runs X in a sandboxed browser in dither-accounts, for your direct messages. After you add it, open its live view and sign in to X as on your desktop.',
     fields: [],
   },
+  // Runs only in dither-accounts, beside T3 Code on the same machine (its docs/t3.md).
+  t3: {
+    adapter: 't3',
+    blurb: "Shows T3 Code's coding threads as chats: each thread a conversation with its agent, under its project, and what you write goes to the thread as its next turn. It runs in dither-accounts on the machine T3 Code runs on, through T3's own command line, and needs nothing to sign in. Which projects it shows is set on dither-accounts' page (all by default).",
+    fields: [],
+  },
   // A calendar service beside the hub (docs/calendar.md): the hub links to it itself, never through dither-accounts.
   calendar: {
     adapter: 'calendar',
