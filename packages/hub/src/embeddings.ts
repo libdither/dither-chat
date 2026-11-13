@@ -19,6 +19,7 @@
 import { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
 import { isPrivateUrl } from './categorize.ts';
+import { BUSY_MS } from './store.ts';
 import { SLICE_ROWS, sliced, whole, type SliceOptions } from './slices.ts';
 import { noteWork } from './stalls.ts';
 
@@ -529,6 +530,7 @@ export class EmbeddingStore {
 
   constructor(path: string, readonly version = `${EMBED_MODEL}|${DIMS}|${EMBED_INSTRUCT}`) {
     this.db = new Database(path, { create: true });
+    this.db.exec(`PRAGMA busy_timeout = ${BUSY_MS}`);
     this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value BLOB);

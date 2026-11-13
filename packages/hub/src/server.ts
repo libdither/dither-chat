@@ -373,9 +373,15 @@ export class HubServer {
   }
 
   flush() {
+    // What the store gives up here is no longer dirty: it goes out even when mail's or attention's part fails (a
+    // locked database), or devices would miss it until their next bootstrap.
     const events = this.store.flush();
     if (events.length) noteWork('flush');
-    if (this.opts.mail) events.push(...this.opts.mail.flush());
+    try {
+      if (this.opts.mail) events.push(...this.opts.mail.flush());
+    } catch (e) {
+      console.error('flush: mail failed', e);
+    }
     const a = this.opts.attention;
     if (a) {
       const changed: string[] = [];
@@ -386,7 +392,11 @@ export class HubServer {
         else if (e.t === 'conversation.removed') removed.push(e.id);
         else if (e.t === 'rules') rules = true;
       }
-      events.push(...(rules ? a.rescoreAll() : a.sync(changed, removed)));
+      try {
+        events.push(...(rules ? a.rescoreAll() : a.sync(changed, removed)));
+      } catch (e) {
+        console.error('flush: attention failed', e);
+      }
     }
     this.broadcast(events);
   }

@@ -92,6 +92,14 @@ the first chance. Copies you made yourself are never removed. Before opening a d
 seen, the hub also copies it to `backups/pre-migrate-<time>.sqlite` (newest five kept), and every migration runs in
 one transaction. Mail's schema files (`packages/hub/src/mail/schema*.sql`) count as the schema too.
 
+A copy of the live database by hand: `sqlite3 hub.sqlite "VACUUM INTO 'backups/<name>.sqlite'"`, or let the hub's own
+nightly copy be the one. Never `cp` it: in WAL mode the file alone is not the database. Any other connection to it can
+hold a lock for a moment, mostly while it opens or closes, and the hub's writes then wait for it (`busy_timeout`, 2 s
+on the hub's one thread). A copy by a script that opens it read-only from bun locked out the live hub's writes 26
+times in one 30 s backup (2026-11-13) before the hub waited; the sqlite3 shell did not in the same test. Past 2 s a
+write fails as before: an adapter's event then waits with those after it and is applied again a second later
+(`packages/hub/src/supervisor.ts`), and other writes log the failure.
+
 Every six hours it clears partial downloads from `media-cache/`. The cache itself is kept indefinitely: the media
 archive (`packages/hub/src/mediaarchive.ts`) fills it with every remote attachment soon after it arrives, because Discord's links
 expire. Each kept file is then looked at once for what it really is (`mediainfo.ts`, [files.md](files.md)), in the

@@ -75,6 +75,12 @@ export interface CallSink {
   onAdapterGone(accountId: string): void;
 }
 
+/** Another connection held the database past busy_timeout (SQLITE_BUSY). */
+export const isBusy = (e: unknown) => (e as { code?: string } | null)?.code === 'SQLITE_BUSY';
+/** How long held events wait before they are tried again, and how many times in a row. */
+const HELD_RETRY_MS = 1000;
+const HELD_TRIES = 60;
+
 export class Supervisor {
   protected running = new Map<string, Running>();
   private pending = new Map<string, Pending>();
@@ -156,7 +162,7 @@ export class Supervisor {
     const inproc = this.opts.inproc(acc, dir);
     if (inproc) {
       r.inproc = inproc;
-      inproc.start((ev) => this.handle(id, ev));
+      inproc.start((ev) => this.apply(id, [ev]));
       return;
     }
 
@@ -300,11 +306,66 @@ export class Supervisor {
     } catch {
       return;
     }
-    this.handle(ws.data.accountId, ev);
+    this.apply(ws.data.accountId, [ev]);
   }
 
-  /** An adapter's event, from its socket, an in-process adapter, or (remote.ts) dither-accounts' manager. */
-  protected handle(accountId: string, ev: P.AdapterEvent) {
+  /** Events held after the database was locked, by account, with all that came after them for that account. */
+  private held = new Map<string, P.AdapterEvent[]>();
+  private heldTries = 0;
+  private heldTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * An account's events, from its socket, an in-process adapter, or (remote.ts) dither-accounts' manager, in order.
+   * One that fails is logged with its type and skipped; the rest go on. One the database was locked for (another
+   * process held it past busy_timeout, store.ts) is held with everything after it, and tried again a second later.
+   */
+  apply(accountId: string, events: P.AdapterEvent[]) {
+    const waiting = this.held.get(accountId);
+    if (waiting) {
+      waiting.push(...events);
+      return;
+    }
+    for (let i = 0; i < events.length; i++) {
+      let r: 'busy' | void;
+      try {
+        r = this.handle(accountId, events[i]);
+      } catch (e) {
+        console.error(`[${accountId}] ${events[i].t} failed:`, e);
+        continue;
+      }
+      if (r === 'busy') {
+        this.held.set(accountId, events.slice(i));
+        console.warn(`[${accountId}] the database is locked: ${events.length - i} events wait to be applied again`);
+        this.heldTimer ??= setTimeout(() => this.retryHeld(), HELD_RETRY_MS);
+        (this.heldTimer as { unref?: () => void }).unref?.();
+        return;
+      }
+    }
+  }
+
+  /** The held events, again (a timer's, or a test's). After HELD_TRIES in a row the database is taken to be stuck. */
+  retryHeld() {
+    this.heldTimer = null;
+    const held = [...this.held];
+    this.held.clear();
+    if (++this.heldTries > HELD_TRIES) {
+      for (const [id, evs] of held) console.error(`[${id}] the database stayed locked: ${evs.length} events not applied (${[...new Set(evs.map((e) => e.t))].join(', ')})`);
+      this.heldTries = 0;
+      return;
+    }
+    for (const [id, evs] of held) this.apply(id, evs);
+    if (!this.held.size) this.heldTries = 0;
+  }
+
+  /** Events waiting for the database (a test's). */
+  get heldEvents(): number {
+    let n = 0;
+    for (const evs of this.held.values()) n += evs.length;
+    return n;
+  }
+
+  /** One event. 'busy': the database was locked and nothing of it was applied. */
+  protected handle(accountId: string, ev: P.AdapterEvent): 'busy' | void {
     if (ev.t === 'reply') {
       const p = this.pending.get(ev.id);
       if (!p) return;
@@ -326,11 +387,19 @@ export class Supervisor {
     }
     const acc = this.store.account(accountId);
     if (!acc) return;
+    let fresh: string[];
     try {
-      const fresh = this.store.ingest(acc, ev);
+      // One transaction: on a throw, nothing of the event is in.
+      fresh = this.store.ingest(acc, ev);
+    } catch (e) {
+      if (isBusy(e)) return 'busy';
+      console.error(`[${accountId}] ingest ${ev.t} failed:`, e);
+      return;
+    }
+    try {
       if (fresh.length) this.opts.onFresh(fresh);
     } catch (e) {
-      console.error(`[${accountId}] ingest ${ev.t} failed:`, e);
+      console.error(`[${accountId}] triage of ${fresh.length} new messages could not start:`, e);
     }
   }
 

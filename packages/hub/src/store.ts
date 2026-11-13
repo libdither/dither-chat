@@ -174,6 +174,9 @@ const PRESENCE_DEVICES = new Set<string>(['desktop', 'mobile', 'web']);
  */
 const MIGRATIONS = 5;
 
+/** How long a write waits for another connection's lock before it fails (PRAGMA busy_timeout). */
+export const BUSY_MS = 2000;
+
 /** mail/schema*.sql as MailStore runs them (mail/store.ts mailSchemas), read here without importing mail's store. */
 function mailSchemaText(): string {
   const dir = new URL('./mail/', import.meta.url);
@@ -212,6 +215,12 @@ export class Store {
     const timer = stepTimer();
     this.opening = timer.out;
     this.db = new Database(path, { create: true, strict: true });
+    // Another process opening this database (a backup's VACUUM INTO, the sqlite3 shell) can hold a lock for a moment,
+    // most often while it opens or closes. Without a wait every write in that moment fails (SQLITE_BUSY): 26 on the
+    // live hub in one backup. With it a write waits up to BUSY_MS, on the hub's one thread, so not much longer than a
+    // lock held for an open on a busy machine; past it the write fails as before (adapter events wait and are applied
+    // again: supervisor.ts).
+    this.db.exec(`PRAGMA busy_timeout = ${BUSY_MS}`);
     // Outside any transaction: inside one, SQLite ignores foreign_keys.
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
     timer.step('db open');
