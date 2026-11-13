@@ -20,6 +20,7 @@ import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
 import { DEMO_SERVER_CAPS, DemoServers } from './demoservers.ts';
 import { DEMO_THREAD_CAPS, DemoThreads } from './demothreads.ts';
+import { DEMO_MOD_CAPS, DemoModeration } from './demomod.ts';
 
 type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa' | 'tg';
 
@@ -1839,6 +1840,8 @@ class DemoAdapter implements InprocAdapter {
   private servers: DemoServers | null = null;
   /** Discord threads, forums and group DMs beyond messages (demothreads.ts). */
   private threadsDemo: DemoThreads | null = null;
+  /** Moderating, member labels and leaving a Signal group (demomod.ts). */
+  private mod: DemoModeration | null = null;
   /** Capabilities a verify script took away (action 'capabilities'), to see the page without them. */
   private without = new Set<P.Capability>();
   private network: P.Network;
@@ -2175,7 +2178,7 @@ class DemoAdapter implements InprocAdapter {
     else if (change.key === 'pin') {
       place.pinned = place.pinned.filter((m) => m !== change.message);
       if (!change.remove) place.pinned.unshift(change.message);
-    } else (place.values as Record<string, unknown>)[change.key] = change.value;
+    } else if (change.key !== 'avatar') (place.values as Record<string, unknown>)[change.key] = change.value;
     if (change.key === 'name' || change.key === 'topic') {
       if (conv) {
         conv.fact = { ...conv.fact, [change.key]: change.value };
@@ -2282,6 +2285,7 @@ class DemoAdapter implements InprocAdapter {
       ...(this.network === 'discord' ? DEMO_SELF_CAPS : []),
       ...(this.network === 'discord' ? DEMO_SERVER_CAPS : []),
       ...(this.network === 'discord' ? DEMO_THREAD_CAPS : []),
+      ...(DEMO_MOD_CAPS[this.network] ?? []),
     ];
     this.emit({ t: 'hello', network: this.network, version: 'demo', capabilities: all.filter((c) => !this.without.has(c)) });
   }
@@ -2312,6 +2316,25 @@ class DemoAdapter implements InprocAdapter {
 
     for (const s of SPACES) if (s.acc.includes(this.key)) emit({ t: 'space', space: s.fact });
     if (this.network === 'discord') this.startServers(epoch);
+    if (DEMO_MOD_CAPS[this.network]) {
+      this.mod = new DemoModeration({
+        network: this.network,
+        selfId: this.self.nativeId,
+        emit: (ev) => this.emit(ev),
+        admin: (t) => {
+          const conv = t.kind === 'conversation' ? this.findConv(t.nativeId) : undefined;
+          const where = conv && this.network === 'discord' ? this.guildOf(conv) : null;
+          return ADMIN_IN[this.key].includes(t.nativeId) || (!!where && ADMIN_IN[this.key].includes(where));
+        },
+        guildOf: (t) => {
+          if (this.network !== 'discord') return null;
+          if (t.kind === 'space') return this.findSpace(t.nativeId)?.fact.kind === 'community' ? t.nativeId : null;
+          const conv = this.findConv(t.nativeId);
+          return conv && conv.fact.shape !== 'direct' && conv.fact.shape !== 'group' ? this.guildOf(conv) : null;
+        },
+        about: (t) => this.serverAbout(t, this.about(t)),
+      });
+    }
     // Members the client loaded anyway (passive), with Discord's counts: kept only with the adversarial members setting.
     if (this.key === 'dmain')
       emit({
@@ -2706,11 +2729,30 @@ class DemoAdapter implements InprocAdapter {
         reply();
         break;
       case 'redact':
+        if (cmd.moderator && !this.mod?.messages({ kind: 'conversation', nativeId: cmd.conversation })?.delete) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: 'You may not delete others’ messages here.' });
+          break;
+        }
         this.emit({ t: 'delete', conversation: cmd.conversation, nativeId: cmd.message });
         reply();
         break;
-      case 'reactionContext':
-        reply(this.reactionContext());
+      case 'reactionContext': {
+        const moderation = this.mod?.messages({ kind: 'conversation', nativeId: cmd.conversation });
+        reply({ ...this.reactionContext(), ...(moderation ? { moderation } : {}) });
+        break;
+      }
+      case 'moderate':
+      case 'bans':
+      case 'setLabel':
+      case 'clearReactions':
+        try {
+          const r = this.mod?.command(cmd);
+          if (!r) throw new Error(`${cmd.t} is not in this demo network`);
+          if (cmd.t === 'clearReactions') this.emit({ t: 'reactionsCleared', conversation: cmd.conversation, message: cmd.message, ...(cmd.key && !cmd.who ? { key: cmd.key } : {}) });
+          reply(r.value);
+        } catch (e) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+        }
         break;
       case 'profile':
         reply(this.selfDemo ? this.selfDemo.decorate(cmd.who, this.signalExtras(this.profile(cmd.who), cmd.who)) : this.signalExtras(this.profile(cmd.who), cmd.who));
@@ -2773,6 +2815,15 @@ class DemoAdapter implements InprocAdapter {
         }
         break;
       case 'leave':
+        // A Signal group (demomod.ts).
+        if (this.network === 'signal') {
+          try {
+            reply(this.mod!.command(cmd)!.value);
+          } catch (e) {
+            this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+          }
+          break;
+        }
         // A group DM or a DM (demothreads.ts); a server (demoservers.ts).
         if (cmd.target.kind === 'conversation') {
           try {
@@ -2801,7 +2852,8 @@ class DemoAdapter implements InprocAdapter {
       case 'about':
       case 'configure':
         try {
-          reply(this.threadAbout(cmd.target, this.serverAbout(cmd.target, cmd.t === 'about' || this.servers?.configureInvite(cmd.target, cmd.change) ? this.about(cmd.target) : this.configure(cmd.target, cmd.change))));
+          const a = this.threadAbout(cmd.target, this.serverAbout(cmd.target, cmd.t === 'about' || this.servers?.configureInvite(cmd.target, cmd.change) ? this.about(cmd.target) : this.configure(cmd.target, cmd.change)));
+          reply(this.mod ? this.mod.about(cmd.target, a) : a);
         } catch (e) {
           this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
         }

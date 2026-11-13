@@ -28,6 +28,7 @@ import type { AddAction, AddRef, RelationshipFact, RequestAnswer, RequestFact } 
 import type { AttentionCapability, AttentionCommand } from './attention.ts';
 import type { CallFact, CallMode, CallState, VoiceMember } from './call.ts';
 import type { GateAnswer, ScheduledEventFact, SpaceGate } from './servers.ts';
+import type { MessageModeration, ModAction, ReactionClear } from './moderation.ts';
 import type { LinkPreviewOut } from './extra.ts';
 import type { AccountStatus, AttachmentKind, Attention, MessageKind, Network, ReactionStyle, Shape, SpaceKind, Variant } from './ontology.ts';
 import type { SelfCapability, SelfCommand, SelfEvent } from './self.ts';
@@ -131,6 +132,15 @@ export type Capability =
   | 'linkPreviews'
   /** Resets the encrypted session with someone in a direct conversation (the `resetSession` command; Signal's end session). */
   | 'resetSession'
+  /**
+   * Moderates where the account may (moderation.ts): About.moderation and the `moderate` and `bans` commands for
+   * members, ReactionContext.moderation, `redact` with `moderator` and `clearReactions` for others' messages.
+   */
+  | 'moderate'
+  /** Shows members' labels in groups (AboutMember.label) and sets your own (About.label, the `setLabel` command; Signal). */
+  | 'memberLabels'
+  /** Changes a group's or server's picture through `configure` with key 'avatar' (a file:// URL the hub gives it). */
+  | 'setPicture'
   /** Mentions found late, native mutes, unread by hand, many read at once (attention.ts). */
   | AttentionCapability
   /** The account's own self and block, ignore, notes (self.ts, docs/account-self.md). */
@@ -308,6 +318,8 @@ export interface ReactionContext {
   custom: { id: string; name: string; icon?: MediaUrl; emoji: CustomEmojiFact[] }[];
   /** Absent: this network has no super reactions. */
   super?: { available: boolean; reason?: string };
+  /** What this account may do to others' messages here (capability 'moderate'). Absent: nothing. */
+  moderation?: MessageModeration;
 }
 
 /**
@@ -632,7 +644,28 @@ export type AdapterCommand =
   /** Name the people behind a total: identity facts first, then reply.result: { authors: string[] } */
   | { t: 'reactors'; id: string; conversation: string; message: string; key: string; style?: ReactionStyle }
   | { t: 'edit'; id: string; conversation: string; message: string; body: string }
-  | { t: 'redact'; id: string; conversation: string; message: string }
+  /**
+   * Delete a message for everyone. `moderator` (capability 'moderate'): it is someone else's, deleted as an admin or
+   * moderator may (Discord's Manage Messages, Signal's admin delete); the adapter checks it may first.
+   */
+  | { t: 'redact'; id: string; conversation: string; message: string; moderator?: true }
+  /**
+   * Take reactions off a message as a moderator (capability 'moderate', ReactionContext.moderation.reactions): all of
+   * them, one emoji's (`key`), or one person's (`key` and `who`, a native identity id). reply.result: {}
+   */
+  | ({ t: 'clearReactions'; id: string; conversation: string; message: string } & ReactionClear)
+  /**
+   * One moderating action on a group's or server's members (capability 'moderate', moderation.ts), checked by the hub
+   * against a fresh About.moderation. reply.result: the About as it now stands.
+   */
+  | { t: 'moderate'; id: string; target: AboutTarget; action: ModAction }
+  /** Who is banned from a server, one read as its own Bans list makes it (capability 'moderate'). Identity facts first, then reply.result: BansResult. */
+  | { t: 'bans'; id: string; target: AboutTarget }
+  /**
+   * Your own member label in a group, '' to clear it (capability 'memberLabels', checked against memberLabelProblem).
+   * reply.result: the About as it now stands.
+   */
+  | { t: 'setLabel'; id: string; conversation: string; text: string; emoji?: string }
   /** reply.result: { mime: string, base64: string } */
   | { t: 'fetchMedia'; id: string; url: MediaUrl }
   /** Settings, members and permissions of a conversation or space. Identity facts for members first, then reply.result: About */
@@ -717,7 +750,16 @@ export type AdapterCommand =
    * checked a fresh About's `leaving`. `silent`: without telling the others, where the network can. The leave event
    * first, then reply.result: LeaveResult.
    */
-  | { t: 'leave'; id: string; target: AboutTarget; silent?: boolean }
+  | {
+      t: 'leave';
+      id: string;
+      target: AboutTarget;
+      silent?: boolean;
+      /** Native identity ids made admin as you leave (AboutLeaving.needsAdmin; Signal's `--admin`). */
+      admins?: string[];
+      /** Forget the group's data on this device too (AboutLeaving.canForget; Signal's `--delete`). */
+      forget?: true;
+    }
   /** What a space asks of this account now (capability 'gates'). reply.result: SpaceGate | null. */
   | { t: 'gate'; id: string; space: string }
   /** The owner's answer to it, checked against gateAnswerProblem (capability 'gates'). reply.result: GateResult. */

@@ -29,6 +29,7 @@ import { NetworkMute } from './NetworkMute.tsx';
 import { VoicePeople } from './Ringing.tsx';
 import { useServerParts } from './ServerPartsLazy.tsx';
 import { useThreadParts } from './ThreadsLazy.tsx';
+import { useModeration } from './ModerationLazy.tsx';
 
 /** "Seen 12 of 1,287 listed (1%) · 214 online": honest about how little that may be. */
 export function coverageText(c: P.MemberCoverageView): string {
@@ -49,6 +50,17 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
   const sp = useServerParts((kind === 'space' && db.spaces.get(id)?.kind === 'community') || !!view?.leaving || !!view?.nick || !!view?.invite?.options);
   // A thread's following, archiving and locking; a group's owner, removing and its picture (Threads.tsx).
   const tp = useThreadParts(!!view?.thread || !!view?.ownership);
+  // Moderating, your label, a new picture, leaving as the only admin (Moderation.tsx): a chunk loaded only where they apply.
+  const md = useModeration(!!view && (!!view.moderation || !!view.label || !!view.leaving?.needsAdmin || !!view.leaving?.canForget || !!view.fields.avatar?.canEdit));
+  const [leavingHere, setLeavingHere] = useState(false);
+  const pickPicture = () => {
+    if (!view || !md) return;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/png,image/jpeg,image/gif,image/webp';
+    input.onchange = () => void md.changePicture(view, input.files?.[0], replace);
+    input.click();
+  };
   // Add people (docs/group-settings.md): the palette's picker for this group, as the account this page is seen as.
   const addPeople = () => view && kind === 'conversation' && openPalette({ kind: 'add', conversationId: id, accountId: view.accountId, adding: view.adding, onDone: replace });
   const network = (conv ?? space)?.network;
@@ -110,7 +122,15 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
           {conv && <Action icon="search" label="Search" onClick={() => go({ view: 'search', q: `in:${conv.id}` })} />}
           {link && <Action icon="link" label="Copy link" onClick={() => copy(link, 'Link copied')} />}
           {space?.kind === 'community' && events > 0 && <Action icon="calendar" label="Events" title="Its scheduled events" onClick={() => document.getElementById('srv-events')?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />}
-          {view?.leaving && <Action icon="back" label="Leave" title={view.leaving.can ? `Leave this ${noun.toLowerCase()}` : view.leaving.reason} onClick={() => void sp?.leavePlace(kind, id, title, view)} />}
+          {view?.leaving && (
+            <Action
+              icon="back"
+              label="Leave"
+              title={view.leaving.can ? `Leave this ${noun.toLowerCase()}` : view.leaving.reason}
+              onClick={() => (view.leaving!.can && (view.leaving!.needsAdmin || view.leaving!.canForget) && md ? setLeavingHere(true) : void sp?.leavePlace(kind, id, title, view))}
+            />
+          )}
+          {view?.fields.avatar?.canEdit && md && <Action icon="image" label="Change picture" kind="picture" onClick={pickPicture} />}
           {indexable && <Action icon="archive" label="Index…" kind="index" title={`Index this ${noun.toLowerCase()}: its whole history, and its members`} onClick={() => startIndexing(kind, id)} />}
           <Action icon="more" label="More" menu={() => (conv ? conversationMenu(conv) : spaceMenu(space!))} />
         </>
@@ -178,7 +198,7 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
 
       {view?.members && (
         <div class="pf-card pf-embed">
-          <MembersSection m={view.members} adding={view.adding} onAdd={addPeople} />
+          <MembersSection m={view.members} adding={view.adding} onAdd={addPeople} extra={md && view.moderation ? (x) => md.memberEntries(view, x, replace) : undefined} />
         </div>
       )}
       <HistoryCard path={`/api/${kind === 'space' ? 'spaces' : 'conversations'}/${id}/changes`} network={network} />
@@ -188,6 +208,7 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
   const GroupBlock = conv?.shape === 'group' ? peopleExtras()?.GroupBlock : undefined;
   const side = (
     <>
+      {leavingHere && view?.leaving && md && <md.LeaveCard kind={kind} id={id} name={title} view={view} onCancel={() => setLeavingHere(false)} />}
       {accountIds.length > 1 && (
         <Card title="Seen as" icon="eye">
           <div class="about-as" role="radiogroup" aria-label="Whose view">
@@ -237,6 +258,10 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
       {conv && <ResetSessionCard conv={conv} />}
 
       {space && view?.nick && sp && <sp.NickCard spaceId={space.id} view={view} onDone={replace} />}
+
+      {conv && view?.label && md && <md.LabelCard view={view} onDone={replace} />}
+
+      {view && md?.moderates(view) && <md.ModerationCard view={view} onDone={replace} />}
 
       {view?.invite?.options && sp && (
         <div class="pf-card pf-embed">

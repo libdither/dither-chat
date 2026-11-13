@@ -70,6 +70,13 @@ export interface AboutLeaving {
   warning?: string;
   /** The network can leave without telling the others (Discord group DMs). */
   silent?: boolean;
+  /**
+   * You are its only admin and others are in it: the network wants someone made admin as you leave (Signal's
+   * `quitGroup --admin`). The app asks whom, from its members, before leaving.
+   */
+  needsAdmin?: boolean;
+  /** This device can also forget the group's data as it leaves (Signal's `--delete`), on a confirm of its own. */
+  canForget?: boolean;
 }
 
 /** What `leave` answers. The adapter has emitted the leave event first. */
@@ -270,4 +277,8 @@ export interface SpaceGateView {
 export interface LeaveRequest {
   accountId?: string;
   silent?: boolean;
+  /** Who becomes admin as you leave (AboutLeaving.needsAdmin): hub identity ids. */
+  admins?: string[];
+  /** Also forget the group's data on this device (AboutLeaving.canForget), confirmed on its own. */
+  forget?: boolean;
 }

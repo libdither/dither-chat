@@ -14288,3 +14288,46 @@ h1:hover > .pair-nick-edit,
   padding-left: 26px;
   white-space: normal;
 }
+
+/* Moderating from a place's page (ui/Moderation.tsx, docs/moderation.md). */
+.mod-banned h4 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.mod-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+.mod-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+}
+.mod-list li .btn {
+  margin-left: auto;
+}
+.mod-label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.mod-label .input {
+  flex: 1;
+  min-width: 0;
+}
+.mod-label .mod-emoji {
+  flex: 0 0 3.2em;
+  text-align: center;
+}
+.pf-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+}
+.reactor .reactor-remove {
+  margin-left: auto;
+}
