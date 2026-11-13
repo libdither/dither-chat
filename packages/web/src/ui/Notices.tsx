@@ -27,6 +27,8 @@ export function NoticesRow() {
   if (!boot) return null;
   const unread = unreadNotices(page);
   const newest = page?.items[0];
+  // The list's word is newer than the bootstrap's (a grant given since).
+  const access = page?.access ?? boot.access;
   return (
     <button class="row requests-row notices-row" data-track="notices row" onClick={() => go({ view: 'notices' })} title="What your accounts and services told you">
       <span class="row-avatar">
@@ -42,7 +44,7 @@ export function NoticesRow() {
           {newest && <span class="row-time">{ago(newest.at)}</span>}
         </span>
         <span class="row-bottom">
-          <span class="row-preview">{boot.access !== 'granted' ? accessLine(boot.access) : unread[0]?.title ?? newest?.title ?? 'Nothing yet'}</span>
+          <span class="row-preview">{access !== 'granted' ? accessLine(access) : (unread[0]?.title ?? newest?.title ?? 'Nothing yet')}</span>
         </span>
       </span>
     </button>

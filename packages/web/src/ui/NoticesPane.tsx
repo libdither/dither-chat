@@ -22,13 +22,18 @@ export function NoticesPane({ focus, onBack }: { focus?: string; onBack?: () => 
   const page = noticesPage.value;
   const [open, setOpen] = useState<string | null>(focus ?? null);
   useEffect(() => void loadNotices(), []);
+  // The notice a tap opened: once it is in the list (it may have come after the list was fetched), open, read and shown.
+  const here = !!focus && !!page?.items.some((n) => n.id === focus);
   useEffect(() => {
     if (!focus) return;
     setOpen(focus);
-    // Opened from its notification, or a link to it: read.
+    if (!here) {
+      if (page) void loadNotices();
+      return;
+    }
     if (page?.items.find((n) => n.id === focus)?.unread) void readNotice(focus).catch(() => {});
     document.querySelector(`[data-notice="${CSS.escape(focus)}"]`)?.scrollIntoView({ block: 'center' });
-  }, [focus, !!page]);
+  }, [focus, here]);
   const items = page?.items ?? [];
   const unread = unreadNotices(page).length;
   const access = page?.access ?? noticesBoot.value?.access ?? 'unreachable';
