@@ -170,4 +170,62 @@ describe('calls', () => {
     expect(st.stage).toEqual({ topic: 'Town hall', moderator: true });
     expect(st.participants[0]).toMatchObject({ id: hubId('idn', 'discord', '42'), stage: 'hand', volume: 50 });
   });
+
+  test('video and watching go to the adapter only in bridge mode, only where it can, with native ids', async () => {
+    const { calls, commands, socket } = setup((c) => (c.op === 'join' ? { direct } : {}), ['calls', 'callVideo', 'watchStreams']);
+    const ws = socket();
+    calls.message(ws as any, join('bridge'));
+    await tick();
+    calls.message(ws as any, JSON.stringify({ op: 'video', camera: true, screen: false }));
+    calls.message(ws as any, JSON.stringify({ op: 'watch', user: 'idn_discord_42', on: true }));
+    await tick();
+    expect(commands.find((c) => c.op === 'video')).toMatchObject({ t: 'call', op: 'video', camera: true, screen: false });
+    expect(commands.find((c) => c.op === 'watch')).toMatchObject({ op: 'watch', user: '42', on: true });
+
+    // Direct mode carries no video: the device is told why.
+    const d = socket();
+    calls.message(d as any, join('direct', 'acc_b'));
+    await tick();
+    calls.message(d as any, JSON.stringify({ op: 'video', camera: true, screen: false }));
+    await tick();
+    expect(d.sent.find((m) => m.t === 'error')?.message).toContain('bridge mode');
+
+    // An adapter without the capability: refused in words, nothing asked.
+    const old = setup(() => ({}), ['calls']);
+    const o = old.socket();
+    old.calls.message(o as any, join('bridge'));
+    await tick();
+    old.calls.message(o as any, JSON.stringify({ op: 'watch', user: 'idn_discord_42', on: true }));
+    await tick();
+    expect(o.sent.find((m) => m.t === 'error')?.message).toContain("isn't available");
+    expect(old.commands.some((c) => c.op === 'watch')).toBe(false);
+  });
+
+  test("the account's own state and the video slots reach the device in hub ids", async () => {
+    const { calls, socket } = setup();
+    const ws = socket();
+    calls.message(ws as any, join('bridge'));
+    await tick();
+    const id = ws.sent.find((m) => m.t === 'joined').call;
+    calls.onAdapterEvent('acc_a', {
+      t: 'call',
+      call: id,
+      state: {
+        conversation: 'c',
+        participants: [{ id: '42', muted: false, deafened: false, speaking: true, video: true, streaming: true }],
+        self: { connected: true, muted: false, deafened: false, camera: true, watching: ['42'] },
+        video: [
+          { slot: '4', who: '42', source: 'camera' },
+          { slot: '5', who: '42', source: 'stream' },
+        ],
+      },
+    });
+    const st = ws.sent.find((m) => m.t === 'state').state;
+    const who = hubId('idn', 'discord', '42');
+    expect(st.self).toEqual({ connected: true, muted: false, deafened: false, camera: true, watching: [who] });
+    expect(st.video).toEqual([
+      { slot: '4', who, source: 'camera' },
+      { slot: '5', who, source: 'stream' },
+    ]);
+  });
 });

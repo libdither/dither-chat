@@ -28,6 +28,7 @@ import { genericType } from './fileinfo.ts';
 import { mediaHeaders, SAFE_HEADERS, sniffMime } from './mediaheaders.ts';
 import { ImportSources } from './imports/sources.ts';
 import { Calls, type CallSocketData, type TurnConfig, type VoiceSocketData } from './calls.ts';
+import { type CallRoomSocketData, demoCallRoom } from './democalls.ts';
 import { clampDays, parseZone } from './activitychart.ts';
 import { compress } from './compress.ts';
 import { forwardMessage } from './forward.ts';
@@ -111,7 +112,7 @@ function ownSocket(path: string): boolean {
     return false;
   }
 }
-type WsData = ClientData | LiveViewData | AdapterSocketData | CallSocketData | VoiceSocketData;
+type WsData = ClientData | LiveViewData | AdapterSocketData | CallSocketData | VoiceSocketData | CallRoomSocketData;
 
 export interface ServerOpts {
   port: number;
@@ -463,6 +464,7 @@ export class HubServer {
           else if (d.kind === 'adapter') self.sup.attach(ws as ServerWebSocket<AdapterSocketData>);
           else if (d.kind === 'call') return;
           else if (d.kind === 'voice') self.calls.voiceOpen(ws as ServerWebSocket<VoiceSocketData>);
+          else if (d.kind === 'callroom') demoCallRoom.attach(ws as ServerWebSocket<CallRoomSocketData>);
           else self.openLiveView(ws as ServerWebSocket<LiveViewData>);
         },
         message(ws, msg) {
@@ -473,6 +475,7 @@ export class HubServer {
           } else if (d.kind === 'adapter') self.sup.receive(ws as ServerWebSocket<AdapterSocketData>, msg);
           else if (d.kind === 'call') self.calls.message(ws as ServerWebSocket<CallSocketData>, msg);
           else if (d.kind === 'voice') self.calls.voiceMessage(ws as ServerWebSocket<VoiceSocketData>, msg);
+          else if (d.kind === 'callroom') demoCallRoom.message(msg);
           else if (d.kind === 'liveview') {
             const buf = typeof msg === 'string' ? new TextEncoder().encode(msg) : new Uint8Array(msg);
             if (d.vnc) d.vnc.write(buf);
@@ -486,6 +489,7 @@ export class HubServer {
           else if (d.kind === 'adapter') self.sup.detach(ws as ServerWebSocket<AdapterSocketData>);
           else if (d.kind === 'call') self.calls.close(ws as ServerWebSocket<CallSocketData>);
           else if (d.kind === 'voice') self.calls.voiceClose(ws as ServerWebSocket<VoiceSocketData>);
+          else if (d.kind === 'callroom') demoCallRoom.detach(ws as ServerWebSocket<CallRoomSocketData>);
           else {
             d.closed = true;
             d.vnc?.end();
@@ -752,6 +756,13 @@ export class HubServer {
       return new Response('upgrade failed', { status: 400 });
     }
     if (path === '/api/calls') return Response.json(this.calls.stats());
+    // The demo call room (democalls.ts): the far end of demo calls, on demo hubs only.
+    if (path === '/api/demo/callroom' || path === '/demo/callroom.html') {
+      if (!this.store.accounts().some((a) => a.demo)) return new Response('not a demo hub', { status: 404 });
+      if (path === '/demo/callroom.html') return new Response(Bun.file(join(import.meta.dir, 'demo-callroom.html')), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' } });
+      if (server.upgrade(req, { data: { kind: 'callroom' } satisfies CallRoomSocketData })) return undefined;
+      return new Response('upgrade failed', { status: 400 });
+    }
     let m: RegExpMatchArray | null;
     // Call lab (scripts/call-lab.ts): only on a hub started with DITHER_LAB=1, from loopback, never from a browser.
     if (process.env.DITHER_LAB === '1' && req.method === 'POST' && !req.headers.get('origin') && /^(127\.|::1$|::ffff:127\.)/.test(server.requestIP(req)?.address ?? '') && (m = path.match(/^\/api\/lab\/([\w-]+)$/))) {
@@ -778,6 +789,8 @@ export class HubServer {
     }
     if (path === '/api/voice/dave') return this.daveCurrent();
     if ((m = path.match(/^\/voice\/dave\/([0-9a-f]{16})\/(libdave\.mjs|libdave\.wasm)$/))) return this.daveFile(m[1], m[2]);
+    if (path === '/api/voice/sounds') return this.callSounds();
+    if ((m = path.match(/^\/voice\/sounds\/([a-z0-9_]{1,40})\.mp3$/))) return this.callSound(m[1]);
     if ((m = path.match(/^\/media\/([\w-]+)\/([\w-]+)$/))) return this.media(m[1], m[2], url.searchParams.get('a'));
     // Custom emoji inside message bodies: the id is all a body has, and it can only reach Discord's CDN.
     if ((m = path.match(/^\/emoji\/discord\/(\d+)(\.animated)?$/))) return this.fetchMedia(discordEmojiUrl(m[1], !!m[2]), null);
@@ -2404,6 +2417,22 @@ export class HubServer {
         'cache-control': 'public, max-age=31536000, immutable',
       },
     });
+  }
+
+  /**
+   * Discord's own call sounds (join, leave, mute and the rest), as scripts/dave/update.ts copied them from the public web
+   * client next to libdave: never part of this repo. Which ones there are; the device makes its own for the rest.
+   */
+  private callSounds(): Response {
+    const file = join(this.daveRoot(), 'sounds', 'sounds.json');
+    const names = existsSync(file) ? ((JSON.parse(readFileSync(file, 'utf8')) as { sounds?: Record<string, unknown> }).sounds ?? {}) : {};
+    return Response.json({ sounds: Object.keys(names).filter((n) => /^[a-z0-9_]{1,40}$/.test(n)) }, { headers: { 'cache-control': 'no-cache' } });
+  }
+
+  private callSound(name: string): Response {
+    const file = join(this.daveRoot(), 'sounds', `${name}.mp3`);
+    if (!existsSync(file)) return new Response('not found', { status: 404 });
+    return new Response(Bun.file(file), { headers: { 'content-type': 'audio/mpeg', 'cache-control': 'public, max-age=86400' } });
   }
 
   // ---------------------------------------------------------------- media

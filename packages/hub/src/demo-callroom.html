@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Demo call room</title>
+<style>
+  :root { color-scheme: dark light; font: 14px/1.4 system-ui, sans-serif; }
+  body { margin: 16px; background: Canvas; color: CanvasText; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p { margin: 0 0 12px; opacity: 0.75; max-width: 60ch; }
+  #status { font-weight: 600; }
+  table { border-collapse: collapse; margin-top: 8px; }
+  td, th { border: 1px solid color-mix(in srgb, CanvasText 20%, transparent); padding: 4px 8px; text-align: left; }
+  #bot { display: flex; gap: 8px; margin-top: 12px; }
+  #bot canvas { width: 240px; border-radius: 6px; }
+</style>
+</head>
+<body>
+<h1>Demo call room</h1>
+<p>Stands in for each demo account's Discord client in a call (docs/calls.md "Demo calls"): keep this tab open while you try calls on a demo hub. Lev, the room's bot, talks, has a camera on and is live.</p>
+<div id="status">Connecting…</div>
+<table><thead><tr><th>Call</th><th>Account</th><th>Mic</th><th>Camera frames</th><th>Screen frames</th><th>Watching</th></tr></thead><tbody id="calls"></tbody></table>
+<div id="bot"></div>
+<script>
+'use strict';
+// Plain script: the demo hub serves this file as it is (packages/hub/src/demo-callroom.html).
+const BRIDGE = { audio: '0', camera: '1', screen: '2', screenAudio: '3', video: ['4', '5', '6', '7'] };
+const ctx = new AudioContext();
+const calls = new Map();
+let ws = null;
+let bot = null;
+
+// ------------------------------------------------------------ the bot: a voice, a camera and a stream
+function card(label, hue) {
+  const cv = document.createElement('canvas');
+  cv.width = 640;
+  cv.height = 360;
+  const g = cv.getContext('2d');
+  let n = 0;
+  setInterval(() => {
+    const t = performance.now() / 1000;
+    n++;
+    g.fillStyle = `hsl(${(hue + t * 30) % 360},45%,35%)`;
+    g.fillRect(0, 0, 640, 360);
+    g.fillStyle = '#fff';
+    g.font = 'bold 40px sans-serif';
+    g.fillText(label, 24, 60);
+    g.font = '28px monospace';
+    g.fillText(String(n), 24, 330);
+    g.beginPath();
+    g.arc(320 + Math.sin(t * 2) * 200, 200, 40, 0, Math.PI * 2);
+    g.fill();
+  }, 1000 / 24);
+  document.getElementById('bot').appendChild(cv);
+  return cv.captureStream(24).getVideoTracks()[0];
+}
+function voice() {
+  // Syllables: short tones with gaps, loud enough to count as speaking.
+  const dest = ctx.createMediaStreamDestination();
+  const say = () => {
+    const at = ctx.currentTime + 0.02;
+    for (let i = 0; i < 4; i++) {
+      const o = ctx.createOscillator();
+      o.type = 'triangle';
+      o.frequency.value = 180 + Math.random() * 140;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, at + i * 0.22);
+      g.gain.linearRampToValueAtTime(0.25, at + i * 0.22 + 0.02);
+      g.gain.linearRampToValueAtTime(0, at + i * 0.22 + 0.18);
+      o.connect(g).connect(dest);
+      o.start(at + i * 0.22);
+      o.stop(at + i * 0.22 + 0.2);
+    }
+  };
+  setInterval(say, 1500);
+  return dest;
+}
+function makeBot(b) {
+  if (bot) return bot;
+  const out = voice();
+  const meter = ctx.createAnalyser();
+  meter.fftSize = 512;
+  ctx.createMediaStreamSource(out.stream).connect(meter);
+  bot = { id: b.id, name: b.name, out, meter, camera: card(`${b.name}'s camera`, 200), stream: card(`${b.name}'s screen`, 20) };
+  return bot;
+}
+
+// ------------------------------------------------------------ levels and frames
+function level(an) {
+  if (!an) return 0;
+  const buf = new Float32Array(an.fftSize);
+  an.getFloatTimeDomainData(buf);
+  let s = 0;
+  for (const v of buf) s += v * v;
+  return Math.sqrt(s / buf.length);
+}
+/** Counts the frames of a track this room receives (a hidden <video> plays it). */
+function frames(track) {
+  const v = document.createElement('video');
+  v.muted = true;
+  v.srcObject = new MediaStream([track]);
+  v.play().catch(() => {});
+  const counter = { n: 0, w: 0, h: 0 };
+  const tick = (_now, meta) => {
+    counter.n++;
+    counter.w = meta.width;
+    counter.h = meta.height;
+    v.requestVideoFrameCallback(tick);
+  };
+  v.requestVideoFrameCallback(tick);
+  return counter;
+}
+
+// ------------------------------------------------------------ one call: one device's bridge
+function inChannel(c) {
+  return [...calls.values()].filter((x) => x.channel === c.channel);
+}
+function sendEvent(call, ev) {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'event', call, ev }));
+}
+/** Everyone else's microphone, and the bot, into this call's mix. */
+function remix() {
+  for (const c of calls.values()) {
+    for (const g of c.gains.values()) g.disconnect();
+    c.gains.clear();
+    const add = (key, node) => {
+      const g = ctx.createGain();
+      g.gain.value = 1;
+      node.connect(g).connect(c.mix);
+      c.gains.set(key, g);
+    };
+    if (bot) add('bot', ctx.createMediaStreamSource(bot.out.stream));
+    for (const o of inChannel(c)) if (o !== c && o.micSrc && !o.muted) add(o.id, o.micSrc);
+  }
+}
+/** Whose video each of this call's slots carries: the bot's camera, others' cameras, and the streams it watches. */
+function assign(c) {
+  const live = [];
+  if (bot) live.push({ who: bot.id, source: 'camera', track: bot.camera });
+  if (bot && c.watching.has(bot.id)) live.push({ who: bot.id, source: 'stream', track: bot.stream });
+  for (const o of inChannel(c)) {
+    if (o === c) continue;
+    if (o.wantCam && o.cam) live.push({ who: o.self, source: 'camera', track: o.cam });
+    if (o.wantScr && o.scr && c.watching.has(o.self)) live.push({ who: o.self, source: 'stream', track: o.scr });
+  }
+  const want = new Map(live.slice(0, c.slots.size).map((v) => [`${v.who}:${v.source}`, v]));
+  for (const s of c.slots.values()) if (s.key && !want.has(s.key)) { s.key = null; s.sender.replaceTrack(null); }
+  for (const [key, v] of want) {
+    if ([...c.slots.values()].some((s) => s.key === key)) continue;
+    const free = [...c.slots.values()].find((s) => !s.key);
+    if (!free) break;
+    free.key = key;
+    free.sender.replaceTrack(v.track);
+  }
+  return [...c.slots.entries()].filter(([, s]) => s.key).map(([mid, s]) => ({ slot: mid, who: s.key.split(':')[0], source: s.key.split(':')[1] }));
+}
+function stateOf(c) {
+  const people = [];
+  if (bot) people.push({ id: bot.id, muted: false, deafened: false, speaking: level(bot.meter) > 0.02, video: true, streaming: true });
+  for (const o of inChannel(c)) people.push({ id: o.self, muted: o.muted, deafened: o.deafened, speaking: !o.muted && level(o.meter) > 0.02, video: !!(o.wantCam && o.cam), ...(o.wantScr && o.scr ? { streaming: true } : {}) });
+  return {
+    channelId: c.channel,
+    conversation: c.channel,
+    participants: people,
+    self: { connected: !!c.pc && c.pc.connectionState === 'connected', muted: c.muted, deafened: c.deafened, ...(c.wantCam ? { camera: true } : {}), ...(c.wantScr ? { streaming: true } : {}), ...(c.watching.size ? { watching: [...c.watching] } : {}) },
+    video: assign(c),
+  };
+}
+function push() {
+  for (const c of calls.values()) {
+    const st = stateOf(c);
+    const key = JSON.stringify(st);
+    if (key === c.last) continue;
+    c.last = key;
+    sendEvent(c.id, { state: st });
+  }
+  draw();
+}
+setInterval(push, 300);
+
+async function offer(c, data) {
+  if (c.pc) c.pc.close();
+  const pc = new RTCPeerConnection({ iceServers: data.iceServers || [] });
+  c.pc = pc;
+  c.slots = new Map();
+  pc.onicecandidate = (e) => sendEvent(c.id, { signal: { candidate: e.candidate ? e.candidate.toJSON() : null } });
+  pc.onconnectionstatechange = () => push();
+  pc.ontrack = (e) => {
+    const mid = e.transceiver && e.transceiver.mid;
+    if (mid === BRIDGE.camera) { c.cam = e.track; c.camFrames = frames(e.track); }
+    else if (mid === BRIDGE.screen) { c.scr = e.track; c.scrFrames = frames(e.track); }
+    else if (mid === BRIDGE.audio) {
+      const stream = new MediaStream([e.track]);
+      // Chromium feeds a remote track to Web Audio only while a media element plays it.
+      const el = new Audio();
+      el.muted = true;
+      el.srcObject = stream;
+      el.play().catch(() => {});
+      c.micSrc = ctx.createMediaStreamSource(stream);
+      c.meter = ctx.createAnalyser();
+      c.meter.fftSize = 512;
+      c.micSrc.connect(c.meter);
+      remix();
+    }
+  };
+  await pc.setRemoteDescription({ type: 'offer', sdp: data.sdp });
+  for (const t of pc.getTransceivers()) {
+    if (t.mid === BRIDGE.audio) {
+      t.direction = 'sendrecv';
+      await t.sender.replaceTrack(c.mix.stream.getAudioTracks()[0]);
+    } else if (BRIDGE.video.includes(t.mid)) {
+      t.direction = 'sendonly';
+      c.slots.set(t.mid, { sender: t.sender, key: null });
+    }
+  }
+  await pc.setLocalDescription(await pc.createAnswer());
+  sendEvent(c.id, { signal: { type: 'answer', sdp: pc.localDescription.sdp } });
+}
+
+async function command(m) {
+  const cmd = m.cmd;
+  if (m.bot) makeBot(m.bot);
+  if (cmd.op === 'join') {
+    if (ctx.state !== 'running') await ctx.resume().catch(() => {});
+    for (const old of calls.values()) if (old.self === m.self) leave(old, 'replaced');
+    const mix = ctx.createMediaStreamDestination();
+    calls.set(cmd.call, { id: cmd.call, self: m.self, channel: cmd.conversation || cmd.channelId, mix, gains: new Map(), slots: new Map(), watching: new Set(), muted: !!cmd.muted, deafened: !!cmd.deafened, wantCam: false, wantScr: false, peak: 0, last: '' });
+    remix();
+    push();
+    return {};
+  }
+  const c = calls.get(cmd.call);
+  if (!c) return { stale: true };
+  switch (cmd.op) {
+    case 'leave':
+      leave(c, null);
+      return { ok: true };
+    case 'signal':
+      if (cmd.data && cmd.data.type === 'offer') await offer(c, cmd.data);
+      else if (cmd.data && cmd.data.candidate && c.pc) await c.pc.addIceCandidate(cmd.data.candidate).catch(() => {});
+      return { ok: true };
+    case 'mute':
+      c.muted = !!cmd.muted;
+      c.deafened = !!cmd.deafened;
+      remix();
+      push();
+      return { ok: true };
+    case 'video':
+      c.wantCam = !!cmd.camera;
+      c.wantScr = !!cmd.screen;
+      push();
+      return { ok: true };
+    case 'watch':
+      if (cmd.on) c.watching.add(cmd.user);
+      else c.watching.delete(cmd.user);
+      push();
+      return { ok: true };
+    case 'sounds':
+      return { sounds: [], reason: 'The demo has no soundboard.' };
+    default:
+      return { ok: true };
+  }
+}
+function leave(c, ended) {
+  calls.delete(c.id);
+  if (c.pc) c.pc.close();
+  if (ended) sendEvent(c.id, { ended });
+  remix();
+  push();
+}
+
+// ------------------------------------------------------------ what the tests read
+function summary() {
+  return [...calls.values()].map((c) => {
+    c.peak = Math.max(c.peak * 0.9, level(c.meter));
+    return { call: c.id, self: c.self, connected: !!c.pc && c.pc.connectionState === 'connected', muted: c.muted, micLevel: Math.round(level(c.meter) * 1000) / 1000, camera: c.camFrames ? { ...c.camFrames } : null, screen: c.scrFrames ? { ...c.scrFrames } : null, wantCam: c.wantCam, wantScr: c.wantScr, watching: [...c.watching], slots: [...c.slots.entries()].filter(([, s]) => s.key).map(([mid, s]) => `${mid}=${s.key}`) };
+  });
+}
+window.__room = { summary, calls };
+function draw() {
+  const rows = summary().map((s) => `<tr><td>${s.call.slice(0, 8)}</td><td>${s.self}</td><td>${s.muted ? 'muted' : s.micLevel}</td><td>${s.camera ? s.camera.n : '–'}</td><td>${s.screen ? s.screen.n : '–'}</td><td>${s.watching.join(', ') || '–'}</td></tr>`);
+  document.getElementById('calls').innerHTML = rows.join('');
+}
+
+// ------------------------------------------------------------ the hub
+function connect() {
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/demo/callroom`);
+  ws.onopen = () => (document.getElementById('status').textContent = 'Open: demo calls come here.');
+  ws.onclose = () => {
+    document.getElementById('status').textContent = 'Not connected to the hub; trying again…';
+    for (const c of [...calls.values()]) leave(c, null);
+    setTimeout(connect, 2000);
+  };
+  ws.onmessage = async (e) => {
+    const m = JSON.parse(e.data);
+    if (m.t !== 'command') return;
+    try {
+      ws.send(JSON.stringify({ t: 'reply', id: m.id, ok: true, result: await command(m) }));
+    } catch (err) {
+      ws.send(JSON.stringify({ t: 'reply', id: m.id, ok: false, error: String((err && err.message) || err) }));
+    }
+  };
+}
+connect();
+</script>
+</body>
+</html>

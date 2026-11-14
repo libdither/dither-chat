@@ -18,6 +18,7 @@ import { hubId } from '@dither-chat/protocol/ids';
 import type { AccountRow, Store } from './store.ts';
 import { DEMO_SELF_CAPS, DemoSelf } from './demoself.ts';
 import type { InprocAdapter } from './supervisor.ts';
+import { DEMO_CALL_CAPS, demoCallRoom } from './democalls.ts';
 import { DEMO_X_ACCOUNT, DemoX } from './demo-x.ts';
 import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
@@ -2341,6 +2342,8 @@ class DemoAdapter implements InprocAdapter {
       ...(this.network === 'discord' ? DEMO_THREAD_CAPS : []),
       ...(DEMO_MOD_CAPS[this.network] ?? []),
       ...(this.network === 'discord' ? DEMO_SEND_CAPS : []),
+      // Voice calls, carried by the demo call room (democalls.ts).
+      ...(this.network === 'discord' ? DEMO_CALL_CAPS : []),
     ];
     this.emit({ t: 'hello', network: this.network, version: 'demo', capabilities: all.filter((c) => !this.without.has(c)) });
   }
@@ -2767,6 +2770,19 @@ class DemoAdapter implements InprocAdapter {
       return;
     }
     switch (cmd.t) {
+      case 'call':
+        // The far end of a demo call is the demo call room (democalls.ts), wherever it is open.
+        if (this.network !== 'discord') {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: 'Calls are on the demo Discord accounts.' });
+          return;
+        }
+        demoCallRoom
+          .command((ev) => this.emit(ev), { self: this.self.nativeId, bot: { id: D.lev.nativeId, name: D.lev.displayName ?? 'Lev' } }, cmd)
+          .then(
+            (result) => reply(result),
+            (e) => this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message }),
+          );
+        return;
       case 'send': {
         const nativeId = `${cmd.conversation}~sent-${Date.now()}`;
         // The file leaves the spool once this returns, and a demo has nowhere else to keep it.

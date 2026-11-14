@@ -8315,6 +8315,84 @@ body.dragging * {
 .call-btn:disabled {
   opacity: 0.4;
 }
+/* Camera and screen sending. */
+.call-btn.on {
+  background: var(--accent);
+  color: var(--on-accent, #fff);
+}
+/* The microphone's loudness as a ring around its button. */
+.call-btn.mic {
+  box-shadow: 0 0 0 calc(var(--mic-level, 0) * 4px) color-mix(in oklab, var(--good) 70%, transparent);
+  transition:
+    background 0.15s,
+    transform 0.1s,
+    box-shadow 0.08s linear;
+}
+.call-dock:has(.call-btn.on) .call-btn,
+.call-dock-buttons:has(> :nth-child(5)) .call-btn {
+  width: 34px;
+  height: 34px;
+}
+/* Video floats over the conversation, beside the dock: others' cameras and streams, and what this device sends. */
+.call-videos {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 41;
+  width: min(680px, calc(100vw - var(--rail-w) - var(--sidebar-w) - 48px));
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 8px;
+  padding: 8px;
+  background: var(--bg-raised);
+  border: 1px solid var(--bg-active);
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.35);
+}
+.call-video {
+  position: relative;
+  margin: 0;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.call-video video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  cursor: zoom-in;
+  display: block;
+}
+.call-video.mirror video {
+  transform: scaleX(-1);
+}
+.call-video figcaption {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #fff;
+  background: rgb(0 0 0 / 0.55);
+  max-width: calc(100% - 12px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.call-watch {
+  margin-top: 4px;
+  font-size: 12px;
+}
+.app.phone .call-videos {
+  left: 8px;
+  right: 8px;
+  top: calc(8px + env(safe-area-inset-top));
+  bottom: auto;
+  width: auto;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
 .call-dock-body {
   padding: 4px 12px 12px;
   max-height: 50vh;
