@@ -13,6 +13,7 @@ import { Avatar, Empty, Linked } from '../bits.tsx';
 import { useLongPress } from '../Reactions.tsx';
 import { Sheet } from '../Sheet.tsx';
 import { Icon } from '../icons.tsx';
+import { languageName, needsTranslation } from '@dither-chat/protocol';
 import { Loading } from '../Loader.tsx';
 import { clip, feedBarLine, feedUnits, namesPhrase, notificationsUrl, opensPost, parsePostKey, postHref, postKey, reactionCounts, reactorsPhrase, shortCount } from '../../feed.ts';
 
@@ -51,6 +52,8 @@ export const kit = {
   openPost: (network: P.Network, post: string) => go({ view: 'inbox', conv: postKey(network, post) }),
   /** feed.ts, which the row draws with too: imported by the chunk, rolldown would split it into a startup file. */
   feed: { clip, feedBarLine, feedUnits, namesPhrase, notificationsUrl, reactionCounts, reactorsPhrase, shortCount, opensPost, parsePostKey, postHref },
+  // Startup already has these (Settings → Translation): handed over, so the chunk does not split them out.
+  translate: { needsTranslation, languageName },
 };
 export type Kit = typeof kit;
 

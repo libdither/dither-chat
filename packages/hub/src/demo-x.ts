@@ -179,6 +179,10 @@ function threads(epoch: number, made: readonly P.PostFact[] = []) {
   const wasm = under(49, me, 55, 'It is about 400 lines of Rust with no threads, so wasm should be easy. Want to try?', theo, { counts: { likes: 3 } });
   const theo2 = under(50, X.theo, 50, 'On it this weekend.', wasm, { counts: { likes: 2 } });
   const quinn = under(37, X.quinn, 65, 'Saving this for the weekend.', r, { counts: { likes: 1 } });
+  // Replies in other languages, as X tags them (legacy.lang): the demo's translate answers for them.
+  const kenji = under(60, FANS[1]!, 62, '面白い結果ですね。ランドマークなしでこの数字は驚きです。', r, { counts: { likes: 3 }, lang: 'ja' });
+  const paula = under(61, FANS[2]!, 58, '¿Funciona también con grafos dirigidos? Me interesa para redes de sensores.', r, { counts: { likes: 2 }, lang: 'es' });
+  const toPaula = under(62, me, 52, 'Not yet: greedy routing needs the links both ways. Directed graphs are on the list.', paula, { counts: { likes: 1 }, lang: 'en' });
   // A long back-and-forth under Theo's: one answer each, ten deep (the tree draws it as one run).
   const bf: P.PostFact[] = [];
   const turns: [Who | 'me', number, string][] = [
@@ -192,7 +196,7 @@ function threads(epoch: number, made: readonly P.PostFact[] = []) {
   ];
   turns.forEach(([w, min, text], i) => bf.push(under(51 + i, w === 'me' ? me : X[w], min, text, bf[i - 1] ?? theo2, { counts: { likes: i % 3 } })));
   // What you posted here (a reply goes under what it answers).
-  const tree = [cont1, cont2, raviIn, ans, ravi2, pulled, noraChurn, alice, tail, alice2, nora, land, nora2, lee, sam, maya2, lee2, maya, theo, wasm, theo2, ...bf, quinn, ...made];
+  const tree = [cont1, cont2, raviIn, ans, ravi2, pulled, noraChurn, alice, tail, alice2, nora, land, nora2, lee, sam, maya2, lee2, maya, theo, wasm, theo2, ...bf, quinn, kenji, paula, toPaula, ...made];
   const kids = (id: string) => tree.filter((p) => p.replyTo?.id === id);
   // Each post's reply count is what is under it, as X counts it.
   for (const p of [r, ...tree]) p.counts = { ...p.counts, replies: kids(p.id).length };
@@ -208,7 +212,7 @@ function threads(epoch: number, made: readonly P.PostFact[] = []) {
   const thread = (id: string, cursor?: string): P.PostThread | null => {
     if (id === r.id)
       return cursor === 'more-1'
-        ? { focal: { ...r, root: r.id }, ancestors: [], replies: [chain(theo), chain(quinn)], more: null }
+        ? { focal: { ...r, root: r.id }, ancestors: [], replies: [chain(theo), chain(kenji), chain(paula), chain(quinn)], more: null }
         : { focal: { ...r, root: r.id }, ancestors: [], replies: [cont1, raviIn, alice, maya].map(chain), more: 'more-1' };
     const at = all.find((p) => p.id === id);
     const known = at ?? [...Object.values(mine), ...feed(epoch).flatMap((x) => [x.item.post, x.item.theirs]), ...(Object.keys(X) as Who[]).flatMap((w) => postsOf(w, epoch))].find((p) => p?.id === id);
@@ -226,6 +230,12 @@ function threads(epoch: number, made: readonly P.PostFact[] = []) {
   };
   return Object.assign(thread, { known: (id: string) => all.find((p) => p.id === id) ?? [...Object.values(mine), ...feed(epoch).flatMap((x) => [x.item.post, x.item.theirs]), ...(Object.keys(X) as Who[]).flatMap((w) => postsOf(w, epoch))].find((p) => p?.id === id) ?? null });
 }
+
+/** What the demo's X says a post in another language means, as its "Translate post" would (by Grok). */
+const TRANSLATED: Record<number, { text: string; from: string }> = {
+  60: { text: 'Interesting result. That number without landmarks is surprising.', from: 'ja' },
+  61: { text: 'Does it also work with directed graphs? I am interested in it for sensor networks.', from: 'es' },
+};
 
 /** People who liked or reposted your routing post beyond those in your notifications (X names them on asking). */
 const FANS = [
@@ -258,6 +268,7 @@ export class DemoX implements InprocAdapter {
   /** The next like or repost is refused (action failNextAct): the verify script sees the page take it back. */
   private failNext = false;
   private postLog: { post: string; cursor?: string; at: number }[] = [];
+  private translateLog: { post: string; to: string; at: number }[] = [];
 
   constructor(
     private acc: AccountRow,
@@ -270,7 +281,7 @@ export class DemoX implements InprocAdapter {
     const marker = join(this.dir, 'seeded');
     const firstRun = !existsSync(marker);
     // No `connect` or `disconnect`: it cannot follow or unfollow, as the real extractor cannot yet.
-    emit({ t: 'hello', network: 'x', version: 'demo', capabilities: ['send', 'history', 'markRead', 'typing', 'react', 'profile', 'posts', 'postActions', 'publish', 'postReactors', 'openDirect'] });
+    emit({ t: 'hello', network: 'x', version: 'demo', capabilities: ['send', 'history', 'markRead', 'typing', 'react', 'profile', 'posts', 'postActions', 'publish', 'postReactors', 'translate', 'openDirect'] });
     emit({ t: 'status', status: 'online', self: { ...X.self, isSelf: true } });
     // Identity facts first, then what X showed about each of them (their profile came with the notification).
     for (const [k, i] of Object.entries(X)) if (k !== 'self') emit({ t: 'identity', identity: i });
@@ -306,7 +317,7 @@ export class DemoX implements InprocAdapter {
   command(cmd: P.AdapterCommand) {
     const reply = (result?: unknown) => 'id' in cmd && this.emit({ t: 'reply', id: cmd.id, ok: true, result });
     const fail = (error: string) => 'id' in cmd && this.emit({ t: 'reply', id: cmd.id, ok: false, error });
-    if (cmd.t !== 'profile' && cmd.t !== 'post' && cmd.t !== 'postReactors' && cmd.t !== 'history' && cmd.t !== 'action') this.writes.push(cmd.t === 'postAct' ? `postAct:${cmd.act}` : cmd.t);
+    if (cmd.t !== 'profile' && cmd.t !== 'post' && cmd.t !== 'postReactors' && cmd.t !== 'translate' && cmd.t !== 'history' && cmd.t !== 'action') this.writes.push(cmd.t === 'postAct' ? `postAct:${cmd.act}` : cmd.t);
     switch (cmd.t) {
       case 'profile': {
         const who = this.whoOf(cmd.who);
@@ -319,6 +330,8 @@ export class DemoX implements InprocAdapter {
         this.postLog.push({ post: cmd.post, ...(cmd.cursor ? { cursor: cmd.cursor } : {}), at: Date.now() });
         const t = threads(this.epoch, this.made)(cmd.post, cmd.cursor);
         if (!t) return fail('X did not give this post');
+        // Authors from outside the demo's people (the fans who answer in other languages): their facts first.
+        for (const i of FANS) if ([...t.replies.flat(), ...t.ancestors, t.focal].some((p) => p?.author === i.nativeId)) this.emit({ t: 'identity', identity: i });
         const v = (p: P.PostFact) => this.viewed(p);
         return reply({ ...t, ...(t.focal ? { focal: v(t.focal) } : {}), ancestors: t.ancestors.map(v), replies: t.replies.map((c) => c.map(v)) } satisfies P.PostThread);
       }
@@ -351,6 +364,12 @@ export class DemoX implements InprocAdapter {
         };
         this.made.push(p);
         return reply(p satisfies P.PostFact);
+      }
+      case 'translate': {
+        this.translateLog.push({ post: cmd.post, to: cmd.to, at: Date.now() });
+        const n = Object.keys(TRANSLATED).map(Number).find((k) => pid(k) === cmd.post);
+        if (n === undefined) return fail('X has no translation for this post');
+        return reply({ text: TRANSLATED[n]!.text, from: TRANSLATED[n]!.from, by: 'Grok' } satisfies P.NetworkTranslation);
       }
       case 'postReactors': {
         const known = threads(this.epoch, this.made).known(cmd.post);
@@ -385,7 +404,7 @@ export class DemoX implements InprocAdapter {
         this.refused.push(`${cmd.t}:${cmd.conversation}`);
         return fail('the demo X account sends nothing');
       case 'action':
-        return reply(cmd.action === 'readLog' ? { reads: this.readLog } : cmd.action === 'typingLog' ? { typing: this.typingLog } : cmd.action === 'sendLog' ? { sent: this.refused } : cmd.action === 'postLog' ? { posts: this.postLog } : cmd.action === 'writeLog' ? { writes: this.writes } : cmd.action === 'failNextAct' ? ((this.failNext = true), { note: 'the next like or repost is refused' }) : { note: 'demo X has no such action' });
+        return reply(cmd.action === 'readLog' ? { reads: this.readLog } : cmd.action === 'typingLog' ? { typing: this.typingLog } : cmd.action === 'sendLog' ? { sent: this.refused } : cmd.action === 'postLog' ? { posts: this.postLog } : cmd.action === 'translateLog' ? { translated: this.translateLog } : cmd.action === 'writeLog' ? { writes: this.writes } : cmd.action === 'failNextAct' ? ((this.failNext = true), { note: 'the next like or repost is refused' }) : { note: 'demo X has no such action' });
       default:
         if ('id' in cmd) fail('the demo X account cannot do that');
     }
