@@ -64,7 +64,14 @@ peeking, and back once more goes to whatever was open before. Where the entry be
 (history from a wider window), the swipe puts the list in the page's place. A profile, a place's About page, a
 search in one conversation, an account page and All communities open on top of the page you were on, as
 Discord opens a profile or a search over the channel: back closes them onto that page, or goes to their list
-when they were opened directly. `src/pages.ts` decides all of this and is unit tested.
+when they were opened directly (that list is written under them then, so the phone's back button never leaves the
+app from a page). Two pages stack on the page they were opened from the same way (`stacksOn`): a post's thread, from
+anywhere (another post, the feed, a profile, search results), as X goes back from a reply to its post; and a thread or
+forum post opened from the channel it was started in, as Discord does. Opened directly, they are their list's pages.
+`src/pages.ts` decides all of this and is unit tested; `test/navigation.test.ts` runs a model of the history over
+every pair of routes and chains of three, and checks that the three ways back agree, that back from a page never
+leaves the app, that a stacked page goes back to exactly its page, and that pressing Back again and again reaches a
+list. A new kind of route goes in its ROUTES.
 
 **Keyboard.** The viewport asks Chromium to resize the layout for the keyboard
 (`interactive-widget=resizes-content`). Where only the visual viewport shrinks (iOS Safari), the app is

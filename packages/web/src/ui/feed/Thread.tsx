@@ -367,7 +367,7 @@ export function ThreadView({ src, kit: base, onBack }: { src: Src; kit: Kit; onB
     const to = href ? base.feed.parsePostKey(href.slice('#/inbox/c/'.length)) : null;
     if (to && 'post' in to) noteLeaving(to.post);
   };
-  const back = parent ? () => base.openPost(parent.network, parent.post) : onBack;
+  const back = parent ? () => base.backToPost(parent.network, parent.post) : onBack;
   const posted = (p: P.PostView, mode: 'reply' | 'quote') => {
     setAnswering(null);
     if (mode === 'reply' && p.replyTo) setMine((m) => [p, ...m]);

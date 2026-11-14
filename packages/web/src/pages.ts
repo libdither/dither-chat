@@ -4,10 +4,12 @@
  * going back from it (a swipe, its back button, the phone's) always shows that list with the page peeking at its
  * edge, never whatever was open before it. A profile, a place's About page, a search in one conversation, an
  * account page and All communities instead open on top of the page you were on, as Discord opens a profile or a
- * search over the channel; back closes them onto that page. Pure: what it needs of the hub's data comes in as
- * `Places`.
+ * search over the channel; back closes them onto that page. A post's thread, and a thread or forum post opened from
+ * its channel, stack on the page they were opened from the same way (`stacksOn`). Pure: what it needs of the hub's
+ * data comes in as `Places`.
  */
 import { searchOp } from '@dither-chat/protocol';
+import { isPostKey } from './feed.ts';
 import { href, type Route } from './routes.ts';
 
 /** What the pages need to know of the hub's data. */
@@ -16,6 +18,26 @@ export interface Places {
   home(conv: string): Route;
   /** The list a place's About page belongs to: the community it is in (or is), else the inbox. Null for a person. */
   placeHome(r: Extract<Route, { view: 'profile' }>): Route | null;
+  /** The conversation a thread or forum post was started in; null for any other conversation. */
+  parent(conv: string): string | null;
+}
+
+/** The conversation a route shows (not its About page, which is a profile). */
+const convOf = (r: Route): string | undefined => (r.view === 'profile' ? undefined : 'conv' in r ? r.conv : undefined);
+
+/**
+ * Whether page `to`, opened from route `from`, goes on top of it rather than on its list: back closes it onto `from`.
+ * A post's thread does from anywhere (another post, the feed, a profile, search results), as X goes back from a reply
+ * to the post it was opened from; a thread or forum post does from the channel it is in, as Discord does. Opened
+ * directly (from nothing) it is a list's page like any other.
+ */
+export function stacksOn(to: Route, from: Route | null, places: Places): boolean {
+  if (!from || !isPage(to)) return false;
+  const conv = convOf(to);
+  if (!conv) return false;
+  if (isPostKey(conv)) return true;
+  const parent = places.parent(conv);
+  return !!parent && convOf(from) === parent;
 }
 
 /** A page that slides in over the lists. */
@@ -113,13 +135,16 @@ export const listUnder = (r: Route, places: Places): Route | null => (isPage(r) 
 const bare = (r: Route) => href(r.view === 'requests' ? { view: 'requests' } : r.view === 'notices' ? { view: 'notices' } : 'msg' in r ? { ...r, msg: undefined } : r);
 
 /**
- * The list entry to write before page `to` when going there `from` a route (null for an entry made outside the
- * app, which has nothing before it): none when it comes from that list, or for a jump within the page it is on
- * (to a message, or another request), which stacks on it.
+ * The entry to write before page `to` when going there `from` a route (null for an entry made outside the app, which
+ * has nothing before it): its list, but none when it comes from that list, for a jump within the page it is on (to a
+ * message, or another request), or for a page that stacks on the one it comes from. A page that opens over another,
+ * opened directly, gets its list too, so the phone's back button never leaves the app from a page.
  */
 export function listToWrite(to: Route, from: Route | null, places: Places): Route | null {
+  if (!from && opensOver(to)) return ownList(to, places);
   const list = listUnder(to, places);
   if (!list || !from) return list;
+  if (stacksOn(to, from, places)) return null;
   return href(from) === href(list) || bare(from) === bare(to) ? null : list;
 }
 
@@ -128,6 +153,7 @@ export function listToWrite(to: Route, from: Route | null, places: Places): Rout
  * directly), and how: `back` steps back through history to it, `replace` puts it in the page's place.
  */
 export function wayBack(r: Route, prev: Route | null, places: Places): { to: Route; how: 'back' | 'replace' } {
+  if (prev && stacksOn(r, prev, places)) return { to: prev, how: 'back' };
   if (opensOver(r)) {
     if (prev) return { to: prev, how: 'back' };
     // Opened directly: searching a conversation goes back to that conversation, the rest to their list.

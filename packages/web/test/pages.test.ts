@@ -1,16 +1,19 @@
 /** Where back goes from a page on a phone (pages.ts): every route kind's own list, and how back gets there. */
 import { expect, test } from 'bun:test';
-import { isPage, isTabRoot, listToWrite, listUnder, opensOver, ownList, restAfter, wayBack, type Places } from '../src/pages.ts';
+import { isPage, isTabRoot, listToWrite, listUnder, opensOver, ownList, restAfter, stacksOn, wayBack, type Places } from '../src/pages.ts';
 import { href, parseHash } from '../src/routes.ts';
 
-// A channel in a server, a DM with a person, a group chat that lives in the inbox, and a channel in a second server.
+// A channel in a server, a thread started in it, a DM with a person, a group chat that lives in the inbox, a channel in
+// a second server, and (anything else) a conversation in the inbox: X's notifications (feedx), a post's thread (pst_x_1).
 const places: Places = {
   home: (id) =>
     id === 'chan' ? { view: 'space', space: 'srv', conv: 'chan' }
+    : id === 'thr' ? { view: 'space', space: 'srv', conv: 'thr' }
     : id === 'chan2' ? { view: 'space', space: 'srv2', conv: 'chan2' }
     : id === 'dm' ? { view: 'people', person: 'pal' }
     : { view: 'inbox', conv: id },
   placeHome: (r) => (r.space ? { view: 'space', space: r.space } : r.conv === 'chan' ? { view: 'space', space: 'srv' } : r.conv ? { view: 'inbox' } : null),
+  parent: (id) => (id === 'thr' ? 'chan' : null),
 };
 const R = (h: string) => parseHash(h);
 const list = (h: string) => href(ownList(R(h), places));
@@ -21,6 +24,9 @@ const ROUTES: [hash: string, kind: 'list' | 'tab' | 'page' | 'over', own: string
   ['#/inbox/c/group', 'page', '#/inbox'],
   ['#/inbox/c/chan', 'page', '#/inbox'],
   ['#/inbox/c/mth_1', 'page', '#/inbox'],
+  ['#/inbox/c/feedx', 'page', '#/inbox'],
+  ['#/inbox/c/pst_x_1', 'page', '#/inbox'],
+  ['#/inbox/c/pst_x_2', 'page', '#/inbox'],
   ['#/triage', 'tab', '#/triage'],
   ['#/model', 'over', '#/triage'],
   ['#/people', 'list', '#/people'],
@@ -34,6 +40,7 @@ const ROUTES: [hash: string, kind: 'list' | 'tab' | 'page' | 'over', own: string
   ['#/spaces', 'list', '#/spaces'],
   ['#/s/srv', 'list', '#/s/srv'],
   ['#/s/srv/c/chan', 'page', '#/s/srv'],
+  ['#/s/srv/c/thr', 'page', '#/s/srv'],
   ['#/f/fold', 'list', '#/f/fold'],
   ['#/f/fold/c/group', 'page', '#/f/fold'],
   ['#/f/fold/p/pal', 'page', '#/f/fold'],
@@ -125,6 +132,19 @@ test('going to a page writes its list first, unless it comes from that list or j
   // A page opened over another, and a list, have none.
   expect(written('#/p/pal', '#/s/srv/c/chan')).toBeNull();
   expect(written('#/s/srv', '#/s/srv/c/chan')).toBeNull();
+  // …but opened directly, a page opened over another has its list under it, as a list's page has.
+  expect(written('#/p/pal', null)).toBe('#/people');
+  expect(written('#/model', null)).toBe('#/triage');
+  expect(written('#/search?q=in%3Achan%20hello', null)).toBe('#/s/srv');
+  // A post's thread stacks on wherever it was opened from; opened directly, it is in the inbox.
+  expect(written('#/inbox/c/pst_x_2', '#/inbox/c/pst_x_1')).toBeNull();
+  expect(written('#/inbox/c/pst_x_1', '#/inbox/c/feedx')).toBeNull();
+  expect(written('#/inbox/c/pst_x_1', '#/p/pal')).toBeNull();
+  expect(written('#/inbox/c/pst_x_1', '#/search?q=hello')).toBeNull();
+  expect(written('#/inbox/c/pst_x_1', null)).toBe('#/inbox');
+  // A thread stacks on the channel it was started in, and only on it.
+  expect(written('#/s/srv/c/thr', '#/s/srv/c/chan')).toBeNull();
+  expect(written('#/s/srv/c/thr', '#/s/srv2/c/chan2')).toBe('#/s/srv');
 });
 
 test("back from a list's page always goes to its list, and steps back through history only when that is the entry before", () => {
@@ -147,6 +167,22 @@ test("back from a list's page always goes to its list, and steps back through hi
   // A search hit goes to the list the conversation lives in, not back to the results.
   expect(way('#/search/c/chan?q=hello&m=m1', '#/search?q=hello')).toEqual(['#/s/srv', 'replace']);
   expect(way('#/search/c/chan?q=hello&m=m1', '#/s/srv')).toEqual(['#/s/srv', 'back']);
+});
+
+test('back from a post goes to the post, feed, profile or results it was opened from; from a thread, to its channel', () => {
+  const way = (h: string, prev: string | null) => {
+    const w = wayBack(R(h), prev ? R(prev) : null, places);
+    return [href(w.to), w.how];
+  };
+  expect(way('#/inbox/c/pst_x_2', '#/inbox/c/pst_x_1')).toEqual(['#/inbox/c/pst_x_1', 'back']);
+  expect(way('#/inbox/c/pst_x_1', '#/inbox/c/feedx')).toEqual(['#/inbox/c/feedx', 'back']);
+  expect(way('#/inbox/c/pst_x_1', '#/p/pal')).toEqual(['#/p/pal', 'back']);
+  expect(way('#/inbox/c/pst_x_1', '#/search?q=hello')).toEqual(['#/search?q=hello', 'back']);
+  expect(way('#/inbox/c/pst_x_1', '#/inbox')).toEqual(['#/inbox', 'back']);
+  expect(way('#/inbox/c/pst_x_1', null)).toEqual(['#/inbox', 'replace']);
+  expect(way('#/s/srv/c/thr', '#/s/srv/c/chan')).toEqual(['#/s/srv/c/chan', 'back']);
+  expect(way('#/s/srv/c/thr', '#/s/srv2/c/chan2')).toEqual(['#/s/srv', 'replace']);
+  expect(stacksOn(R('#/s/srv/c/chan'), R('#/s/srv/c/thr'), places)).toBe(false);
 });
 
 test('back from a page opened over another closes it onto that page, or goes to its list when opened directly', () => {
@@ -174,7 +210,9 @@ test("the card's rest after back matches where back lands", () => {
     if (kind !== 'page') continue;
     for (const prev of [null, '#/search?q=hello', '#/s/srv2/c/chan2', '#/p/pal']) {
       const r = R(h);
-      expect([h, prev, restAfter(r, wayBack(r, prev ? R(prev) : null, places).to, places)]).toEqual([h, prev, 'peek']);
+      // A page that stacks on the page or tab it came from lands there, open.
+      const want = prev && stacksOn(r, R(prev), places) && (isPage(R(prev)) || isTabRoot(R(prev))) ? 'open' : 'peek';
+      expect([h, prev, restAfter(r, wayBack(r, prev ? R(prev) : null, places).to, places)]).toEqual([h, prev, want]);
     }
   }
   const after = (h: string, prev: string) => restAfter(R(h), wayBack(R(h), R(prev), places).to, places);
