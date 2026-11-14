@@ -216,8 +216,8 @@ As built, where it differs from §7: "Always from" is its own table, `mail_sende
   name means it moved and the next changes pass finds where. `unknown` asks what changed too. Each write call sends
   each message's thread beside its id (`threadIds`), which the google kind uses and IMAP and Proton ignore.
 - **What an account writes.** An account's status may list the writes it makes now (`details.writes`: `seen`,
-  `flagged`, `move` for archive, Inbox and folders or labels, `trash`, `junk`). Gmail on the web gains them a kind at
-  a time. A kind it leaves out is refused at once with no call ("Gmail can't archive from here yet"), its buttons and
+  `flagged`, `move` for archive, Inbox and folders or labels, `trash`, `junk`). Gmail on the web lists all but `junk`
+  (dither-accounts does not report spam to Google for you). A kind it leaves out is refused at once with no call ("Gmail can't archive from here yet"), its buttons and
   menu items are hidden (web `canWrite`), and read in view keeps read state here only when `seen` is not listed. A
   status that lists a kind clears an earlier 501 for it. Without a list (IMAP, Proton) every kind is tried, as
   before. The hub keeps the list in `mail_account.writes` and shows it as the account's `writes`.
@@ -475,10 +475,10 @@ how its ids are.
 
 ## Gmail
 
-A Gmail account reaches the hub in one of two ways. As dither-accounts' **Email (IMAP)** account with the provider
-`gmail` (its `extractors/imap`, with an app password), its kind is `imap` and a message has an id per mailbox (below).
-As its **google** kind, Gmail read through the signed-in browser ("Gmail on the web", further below), a message has one
-id in every mailbox. The hub knows it is Gmail by the status's `details.provider` ('Gmail', which both say), by its
+A Gmail account reaches the hub in one of two ways. As dither-accounts' **google** kind, Gmail read, marked, filed and
+sent through the signed-in browser ("Gmail on the web", further below), a message has one id in every mailbox; this is
+the way to add one. As its **Email (IMAP)** account with the provider `gmail` (its `extractors/imap`, with an app
+password), its kind is `imap` and a message has an id per mailbox (below). The hub knows it is Gmail by the status's `details.provider` ('Gmail', which both say), by its
 address, or by its `[Gmail]` (or `[Google Mail]`) mailboxes (`MailStore.gmail`), so a Workspace address works too.
 
 What is Gmail the server's holds either way: its search syntax, Important as a view, a move out of All Mail that only
@@ -549,16 +549,20 @@ message).
 
 ### Gmail on the web
 
-dither-accounts' google kind reads Gmail through the signed-in browser. Its status says `provider` 'Gmail',
-`idPerMessage`, `summaryHeaders`, `sendCap` and `maxRecipients`; its kind is `google`. Modelled by `fake.ts`'s
-`ids: 'gmail-web'` (its header says how), from what dither-accounts said it will send, before it shipped:
+dither-accounts' google kind reads, marks, files and sends Gmail through the signed-in browser, the way Gmail's own
+page does (its docs/google.md, "Gmail mail" and "Writing to Gmail"). Its status says `provider` 'Gmail',
+`idPerMessage`, `summaryHeaders` (false), `writes` (every kind but `junk`), `canSend`, `sendCap` (25 MB) and
+`maxRecipients` (100); its kind is `google`. Modelled by `fake.ts`'s `ids: 'gmail-web'` (its header says how):
 
-- **Mailboxes** are labels with Gmail's ids: INBOX, SENT, DRAFT, TRASH, SPAM (`junk`), IMPORTANT (`important`), an All
-  Mail made up from them (`all`: every message not in Trash or Spam) and each label of yours (`Label_<n>`, by path).
+- **Mailboxes** are labels with Gmail's own ids (`^i` Inbox, `^f` Sent, `^r` Drafts, `^k` Trash, `^s` Spam (`junk`),
+  `^io_im` Important, `^x_<n>` each of yours, by path) and an All Mail made up from them (`all`: every message not in
+  Trash or Spam). `fake.ts` names them as Gmail's API does (INBOX, `Label_<n>`); the hub goes by role and id, never by
+  those names.
 - **One message, one id** in each mailbox that lists it. The hub keeps a location per mailbox all the same, each with
   that id; nothing is put back on its labels (they come whole, from every mailbox).
-- **Summaries without headers.** As dither-accounts reads Gmail's web protocol, a summary carries no Message-ID,
-  In-Reply-To, References or list headers (`summaryHeaders` false); `mail.get` has them, as on Proton ("Summaries
+- **Summaries without headers.** As dither-accounts reads Gmail's web protocol, a listed summary carries no
+  Message-ID, In-Reply-To, References or list headers (`summaryHeaders` false; those that come from Gmail's sync, in
+  `mail.changes` and `mail.arrived`, carry the first three); `mail.get` has them, as on Proton ("Summaries
   without headers"). Its `emailId` is its id, so the hub keys it `e:<id>` (store.ts `identify`); where a status says
   `idPerMessage`, a summary with neither a Message-ID nor an emailId gets its id as its emailId, and a message that has
   that emailId already is the one, so `mail.get`'s answer (with a Message-ID) finds the same row. The body fills in the
@@ -571,16 +575,22 @@ dither-accounts' google kind reads Gmail through the signed-in browser. Its stat
   `copyFrom`, no copy made), so an archive undone after it went is as it was. Into a label from Inbox, Inbox comes off;
   the labels it has stay, and the hub does not take it out of them either. An archive goes at once (no hold: undoing it
   is putting \Inbox back). Trash and Spam hold it alone, so the hub drops its other places when the move is answered,
-  and what you sent is not moved.
+  and what you sent is not moved. Spam is not written: the google kind leaves `junk` out of its `writes`, so Report spam
+  is hidden for it.
+- **Sending** goes through Gmail's page too: the files uploaded, a draft saved, then sent, a reply in the thread of the
+  message it answers with its In-Reply-To. What was sent comes back by Gmail's sync, as one message in Sent.
 
 **Checked**: `hub/test/mail-gmail-web.test.ts` (what the hub reads of the status, with a Workspace address and no
 `[Gmail]` mailbox; one message and one id through the first sync, the backfill and an opened label, also without a
 Message-ID; Move to Inbox from All Mail, into a label from Inbox; archive and Undo, not held; trash and Undo; star,
-read and unread; changes made in Gmail itself; search in Gmail's syntax; the send caps from the status). **Not
-checked**: a real google-kind account. Whether `mail.move` takes off Inbox (as here) or the label of the mailbox the
-hub moved from is dither-accounts' to settle; the hub copes with either after the next changes pass.
+read and unread; changes made in Gmail itself; search in Gmail's syntax; the send caps and writes from the status). dither-accounts checked its writes and sends on a real Gmail page; **not
+checked yet** through the hub on a real google-kind account. As there, `mail.move` takes off Inbox, as modelled here,
+and leaves your other labels on.
 
-**Adding one** (on the owner's side; nothing is added from here):
+**Adding one** (on the owner's side; nothing is added from here): on dither-accounts' page, **Add → Google**, and sign
+in to Google once in its live view (dither-accounts' docs/google.md). The hub sees it under its existing `mail` grant.
+
+Over IMAP instead:
 
 1. In your Google Account turn on 2-Step Verification (myaccount.google.com → Security), then make an app password
    (Security → App passwords, named "dither-accounts", say). Google shows its 16 letters once. A Workspace account whose
