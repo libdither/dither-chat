@@ -22,12 +22,13 @@
 import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
-import { NETWORKS } from '@dither-chat/protocol';
-import { ACCOUNT_COLORS, type AccountRow } from './store.ts';
+import { kindAsk, NETWORKS } from '@dither-chat/protocol';
+import { ACCOUNT_COLORS, type AccountRow, type Store } from './store.ts';
 import { timedWork } from './stalls.ts';
 import { span } from './trace.ts';
 import { Supervisor } from './supervisor.ts';
 import type { MailSink } from './mail/backend.ts';
+import { ASK_LEVEL, ASK_REASON, type ManagerLink, publishManager } from './accounts-manager.ts';
 import type { NoticeSink } from './notices/index.ts';
 import { jobFailed } from './errors.ts';
 
@@ -40,6 +41,12 @@ function kindsOf(events: { t: string }[]): string {
 
 /** The kinds this hub hands to the manager when they are new. */
 export const MANAGED_KINDS = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x', 't3'];
+
+/**
+ * The kinds this hub asks to add and run: its chat kinds, and Proton Mail, which Add account adds through the manager
+ * (docs/accounts.md, "Adding mail"). Others (imap, google, github) are asked for one at a time from Add account.
+ */
+export const ASKED_KINDS = [...MANAGED_KINDS, 'proton'];
 
 /** The attention an account gets while the manager cannot run it, and when the manager no longer has it. */
 const NOT_RUNNING = 'Not running in dither-accounts: ';
@@ -90,10 +97,35 @@ interface ClientModule {
   requestAccess?(url: string, app: string, token: string, requests: unknown[]): Promise<unknown>;
 }
 
-/** What the manager says of this app (AppInfo), as much as kindsToAsk and mailAccessOf read. */
+/** What the manager says of this app (AppInfo), as much as kindsToAsk, mailAccessOf and asksOf read. */
 interface AppSelf {
   grants?: { interface: string; kinds: string[] | null }[];
-  requests?: { interface: string; kinds?: string[] | null; state?: string }[];
+  requests?: { interface: string; kinds?: string[] | null; accounts?: '*' | string[]; state?: string }[];
+}
+
+/** This hub's requests that wait on the manager's page or were declined there (the page's dim icons and Add account). */
+export function asksOf(info: AppSelf | null | undefined): P.AccessAsk[] {
+  return (info?.requests ?? [])
+    .filter((r) => r.state === 'pending' || r.state === 'denied')
+    .map((r) => ({ interface: r.interface, accounts: Array.isArray(r.accounts) ? r.accounts : '*', kinds: r.kinds ?? null, state: r.state as 'pending' | 'denied' }));
+}
+
+/** The manager's account, as the page reads it (accounts.ts ManagedAccountView). */
+export function managedViewOf(a: AccountView): P.ManagedAccountView {
+  return {
+    id: a.id,
+    kind: a.kind,
+    label: a.label,
+    interfaces: a.interfaces,
+    grants: a.grants,
+    manages: !!a.manages,
+    liveView: !!a.liveView,
+    online: a.online,
+    running: a.running,
+    enabled: a.enabled,
+    error: a.error ?? null,
+    origin: a.origin ?? null,
+  };
 }
 
 /** The hub's request for mail (docs/mail.md): read and write, every account, added on the manager's page (§14 Q5). */
@@ -133,7 +165,7 @@ export const noticesToAsk = (info: AppSelf | null | undefined): boolean => notic
  * The chat kinds this hub runs that it has neither a grant for nor asked about: an open request waits for you, and a
  * denied one is your answer, so neither is asked again.
  */
-export function kindsToAsk(info: AppSelf | null | undefined, kinds: readonly string[] = MANAGED_KINDS): string[] {
+export function kindsToAsk(info: AppSelf | null | undefined, kinds: readonly string[] = ASKED_KINDS): string[] {
   const covered = new Set<string>();
   const add = (k: string[] | null | undefined) => (k == null ? kinds.forEach((x) => covered.add(x)) : k.forEach((x) => covered.add(x)));
   for (const g of info?.grants ?? []) if (g.interface === 'accounts') add(g.kinds);
@@ -166,10 +198,15 @@ interface Saved {
   remote?: string[];
 }
 
-export class RoutedSupervisor extends Supervisor {
+export class RoutedSupervisor extends Supervisor implements ManagerLink {
   private client: Client | null = null;
-  /** Accounts the manager lists for this hub. */
+  /** The chat accounts the manager lists for this hub (the ones it runs for the chat side). */
   private remote = new Map<string, AccountView>();
+  /** Every account the manager lists for this hub, chat or not: the page's one list (accounts-manager.ts). */
+  private all = new Map<string, AccountView>();
+  /** This hub's requests waiting on the manager's page, or declined there. */
+  private asks: P.AccessAsk[] = [];
+  private kindsCache: { at: number; kinds: P.ManagedKindView[] } | null = null;
   private firstList: Promise<void>;
   private gotFirstList!: () => void;
   private saved: Saved | null = null;
@@ -282,7 +319,7 @@ export class RoutedSupervisor extends Supervisor {
         describe: 'The chat hub: reads and answers your chats on every network, and manages the chat accounts it adds.',
         requests: [
           { interface: 'chat', level: 'manage', accounts: '*', reason: 'Show your chats, send what you write, and manage chats and servers as you ask' },
-          { interface: 'accounts', level: 'manage', kinds: MANAGED_KINDS, reason: 'Add, sign in and remove the chat accounts you set up in the hub' },
+          { interface: 'accounts', level: 'manage', kinds: ASKED_KINDS, reason: 'Add, sign in and remove the chat and mail accounts you set up in the hub' },
           ...(this.mail ? [MAIL_REQUEST] : []),
           ...(this.notices ? [NOTICES_REQUEST] : []),
         ],
@@ -294,6 +331,8 @@ export class RoutedSupervisor extends Supervisor {
     }
     this.mailAccess(mailAccessOf(info) ?? 'pending');
     this.noticesAccess(noticesAccessOf(info) ?? 'pending');
+    this.asks = asksOf(info);
+    this.publish();
     this.client = new mod.AccountsClient({
       url,
       app: this.saved!.app,
@@ -302,7 +341,8 @@ export class RoutedSupervisor extends Supervisor {
         this.accountsChanged(list);
         this.mail?.accounts(list);
         this.notices?.accounts(list);
-        if (this.mailWaiting || this.noticesWaiting) void this.readMailAccess();
+        // A new list may answer a request (a grant approved): read the requests again.
+        void this.readMailAccess();
       },
       onEvents: (account, events) =>
         span(
@@ -340,6 +380,8 @@ export class RoutedSupervisor extends Supervisor {
       onConnection: (up) => {
         this.mail?.connection(up);
         this.notices?.connection(up);
+        this.kindsCache = null;
+        this.publish();
         if (up) return;
         for (const id of this.remote.keys()) this.markOffline(id);
       },
@@ -359,20 +401,92 @@ export class RoutedSupervisor extends Supervisor {
   }
   /** While a grant waits for you: the manager is asked every minute (and on each account list) whether you answered. */
   private waitTimer() {
-    const waiting = (this.mailWaiting && !!this.mail) || (this.noticesWaiting && !!this.notices);
+    const waiting = (this.mailWaiting && !!this.mail) || (this.noticesWaiting && !!this.notices) || this.asks.some((a) => a.state === 'pending');
     if (waiting && !this.mailTimer) this.mailTimer = setInterval(() => void this.readMailAccess(), 60_000);
     if (!waiting && this.mailTimer) {
       clearInterval(this.mailTimer);
       this.mailTimer = null;
     }
   }
-  /** Mail's grant and notices', as the manager says them now. */
+  /** Mail's grant and notices', and this hub's waiting requests, as the manager says them now. */
   private async readMailAccess() {
     if (!this.mod || !this.saved) return;
     const info = (await this.mod.self(this.remoteOpts.url, this.saved.app, this.saved.token).catch(() => null)) as AppSelf | null;
     if (!info) return;
+    const asks = asksOf(info);
+    if (JSON.stringify(asks) !== JSON.stringify(this.asks)) this.kindsCache = null;
+    this.asks = asks;
+    this.publish();
     this.mailAccess(mailAccessOf(info) ?? 'pending');
     this.noticesAccess(noticesAccessOf(info) ?? 'pending');
+  }
+
+  // ---------------------------------------------------------- the page's one list (accounts-manager.ts)
+
+  view(): P.AccountsManagerView {
+    return { url: this.remoteOpts.publicUrl ?? null, reachable: !!this.client?.connected, accounts: [...this.all.values()].map(managedViewOf), asks: this.asks };
+  }
+
+  private publish() {
+    publishManager(this.storeRef as Store, this.view());
+  }
+
+  async kinds(): Promise<P.ManagedKindView[] | null> {
+    if (!this.client?.connected) return null;
+    if (this.kindsCache && Date.now() - this.kindsCache.at < 30_000) return this.kindsCache.kinds;
+    // A manager before the `kinds` action answers it as an account action with no account: then null.
+    const r = (await this.client.admin({ do: 'kinds' }, 10_000).catch(() => null)) as { kinds?: Omit<P.ManagedKindView, 'asked'>[] } | null;
+    if (!Array.isArray(r?.kinds)) return null;
+    const kinds = r.kinds.map((k) => {
+      const ask = !k.manages ? kindAsk(this.asks, k.kind) : undefined;
+      return { kind: k.kind, name: k.name, interfaces: k.interfaces, add: k.add ?? null, manages: !!k.manages, ...(ask ? { asked: ask.state } : {}) };
+    });
+    this.kindsCache = { at: Date.now(), kinds };
+    return kinds;
+  }
+
+  private async request(requests: unknown[]) {
+    if (!this.mod?.requestAccess || !this.saved) throw Object.assign(new Error('dither-accounts is not reachable'), { status: 503 });
+    await this.mod.requestAccess(this.remoteOpts.url, this.saved.app, this.saved.token, requests);
+    this.kindsCache = null;
+    await this.readMailAccess();
+    this.waitTimer();
+  }
+
+  async ask(accountId: string, iface: string) {
+    const level = ASK_LEVEL[iface];
+    if (!level) throw Object.assign(new Error(`dither-chat does not use ${iface}`), { status: 400 });
+    await this.request([{ interface: iface, level, accounts: [accountId], reason: ASK_REASON[iface] }]);
+  }
+
+  async askKind(kind: string) {
+    await this.request([{ interface: 'accounts', level: 'manage', kinds: [kind], reason: `Add, sign in and remove ${kind} accounts from dither-chat` }]);
+  }
+
+  async create(kind: string, label: string, form: Record<string, string>): Promise<string> {
+    if (!this.client?.connected) throw Object.assign(new Error(UNREACHABLE), { status: 503 });
+    // `form` goes through the kind's own add form there (a manager before it ignores it: fine for a kind with no fields).
+    const r = (await this.client.admin({ do: 'create', kind, label, form, config: {} })) as { id: string };
+    return r.id;
+  }
+
+  managedOnly(id: string): P.ManagedAccountView | null {
+    const v = this.all.get(id);
+    return v && !this.remote.has(id) && !this.storeRef.account(id) ? managedViewOf(v) : null;
+  }
+
+  private managing(id: string): boolean {
+    return !!this.all.get(id)?.manages && !!this.client;
+  }
+
+  async remove(id: string, purge: boolean) {
+    if (!this.managing(id)) throw Object.assign(new Error('dither-chat may not remove this account; do it on dither-accounts’ page'), { status: 403 });
+    await this.client!.admin({ do: 'delete', account: id, purge });
+  }
+
+  async setEnabled(id: string, enabled: boolean) {
+    if (!this.managing(id)) throw Object.assign(new Error('dither-chat may not run this account; do it on dither-accounts’ page'), { status: 403 });
+    await this.client!.admin({ do: 'update', account: id, enabled });
   }
 
   // ---------------------------------------------------------- notices' grant (as mail's)
@@ -413,6 +527,8 @@ export class RoutedSupervisor extends Supervisor {
   }
 
   private accountsChanged(list: AccountView[]) {
+    this.all = new Map(list.map((a) => [a.id, a]));
+    this.publish();
     const chat = list.filter((a) => a.interfaces.includes('chat') && a.grants.chat);
     const prev = this.remote;
     const before = new Set(prev.keys());
@@ -504,7 +620,7 @@ export class RoutedSupervisor extends Supervisor {
   }
 
   override async restart(id: string) {
-    if (!this.remote.has(id)) return super.restart(id);
+    if (!this.remote.has(id) && !this.managedOnly(id)) return super.restart(id);
     await this.client?.admin({ do: 'restart', account: id });
   }
 
@@ -567,6 +683,10 @@ export class RoutedSupervisor extends Supervisor {
 
   /** The manager keeps the log where the account lives, which for one it made is not here. */
   override async log(id: string): Promise<string> {
+    if (!this.remote.has(id) && this.managedOnly(id)) {
+      if (!this.client) throw new Error('dither-accounts is not reachable');
+      return ((await this.client.admin({ do: 'log', account: id, lines: 400 })) as { lines: string[] }).lines.join('\n').slice(-20_000);
+    }
     if (!this.remote.has(id)) return super.log(id);
     if (!this.client) throw new Error('dither-accounts is not reachable');
     const r = (await this.client.admin({ do: 'log', account: id, lines: 400 })) as { lines: string[] };
@@ -577,7 +697,7 @@ export class RoutedSupervisor extends Supervisor {
 
   /** The manager's socket for it, on this hub's token: the hub carries it on to the page's live view. */
   override liveViewUrl(id: string): string | null {
-    const v = this.remote.get(id);
+    const v = this.remote.get(id) ?? this.all.get(id);
     return v?.liveView && v.manages && this.client ? this.client.liveViewUrl(id) : null;
   }
 }

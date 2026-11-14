@@ -300,6 +300,24 @@ describe('accounts', () => {
     expect(st.accountView(st.account(ACC)!).send).toEqual({ ok: false, why: 'login refused' });
   });
 
+  test("status per interface: a layer only another interface rests on is not mail's problem", () => {
+    const calendar = [
+      { name: 'browser', state: 'ok' },
+      { name: 'signed in', state: 'ok' },
+      { name: 'API key', state: 'failed', note: 'every key was refused', interface: 'google.calendar' },
+      { name: 'Gmail page', state: 'ok', interface: 'mail' },
+    ];
+    // Calendar stops; the account says so, but mail works.
+    st.setStatus(ACC, { status: 'error', attention: { message: 'Google Calendar: every key was refused' }, self: { email: ME }, layers: calendar });
+    expect(st.accountView(st.account(ACC)!)).toMatchObject({ problem: null, online: true });
+    // Gmail's own layer stops: its note, not the account's words about Calendar.
+    st.setStatus(ACC, { status: 'error', attention: { message: 'Google Calendar: every key was refused' }, self: { email: ME }, layers: [...calendar.slice(0, 3), { name: 'Gmail page', state: 'waiting', note: 'Gmail is loading', interface: 'mail' }] });
+    expect(st.accountView(st.account(ACC)!)).toMatchObject({ problem: { layer: 'Gmail page', message: 'Gmail page: Gmail is loading' }, online: false });
+    // A layer both rest on: the account's own words.
+    st.setStatus(ACC, { status: 'attention', attention: { message: 'Sign in to Google in the live view' }, self: { email: ME }, layers: [{ name: 'signed in', state: 'waiting' }, ...calendar.slice(2)] });
+    expect(st.accountView(st.account(ACC)!).problem).toEqual({ layer: 'signed in', message: 'Sign in to Google in the live view' });
+  });
+
   test('what its server is: what the status says, kept until it says otherwise; until it says, by the kind', () => {
     const MB = 1024 * 1024;
     const view = (id: string) => st.accountView(st.account(id)!);

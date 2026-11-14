@@ -313,7 +313,7 @@ export function patchMessage(id: string, patch: (m: P.MessageView) => P.MessageV
 /** Events that change nothing in `db`: typing, toasts and read progress have signals of their own. */
 const NOT_DB = new Set<P.ClientEvent['t']>(['typing', 'notify', 'sync', 'readProgress', 'resync', 'sent', 'plans', 'calendar']);
 /** Events that change what lists show but no names or settings: `metaRev` stays. */
-const LIST_ONLY = new Set<P.ClientEvent['t']>(['message', 'message.deleted', 'identity', 'attention', 'usage', 'arrange', 'requests']);
+const LIST_ONLY = new Set<P.ClientEvent['t']>(['message', 'message.deleted', 'identity', 'attention', 'usage', 'arrange', 'requests', 'accountsManager']);
 /** Events that change names (`metaRev` moves) but not what is where (versions.ts `changed('shown')`): people. */
 const SHOWN_ONLY = new Set<P.ClientEvent['t']>(['person', 'person.removed']);
 

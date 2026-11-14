@@ -101,7 +101,8 @@ beforeAll(async () => {
 
   const { createManager } = await import(join(ACCOUNTS, 'packages/manager/src/index.ts'));
   mkdirSync(join(dir, 'manager'), { recursive: true });
-  m = await createManager({ dataDir: join(dir, 'manager'), port: 0 });
+  // Its page open without a login, as in dither-accounts' own tests: this test approves the requests there.
+  m = await createManager({ dataDir: join(dir, 'manager'), port: 0, openPage: true });
 
   store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
   sup = new RoutedSupervisor(store, { hubAdapterUrl: 'ws://127.0.0.1:1/adapter', dataDir: dir, repoRoot: REPO, onFresh: () => {} } as any, { url: m.url, dataDir: dir, repoRoot: REPO, firstListMs: 2000 });
@@ -116,7 +117,7 @@ beforeAll(async () => {
   const st = await (await fetch(`${m.url}/api/state`)).json();
   for (const app of st.apps) for (const r of app.requests) if (r.state === 'pending') await fetch(`${m.url}/api/requests/${r.id}/approve`, { method: 'POST', body: '{}' });
 
-  // The account, added on the manager's page (§14 Q5: never from the hub).
+  // The account, added on the manager's page (an imap account; the hub adds only Proton Mail itself).
   const res = await fetch(`${m.url}/api/accounts`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

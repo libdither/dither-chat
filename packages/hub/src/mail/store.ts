@@ -10,7 +10,7 @@
 import type { Database } from 'bun:sqlite';
 import { readdirSync, readFileSync } from 'node:fs';
 import type * as P from '@dither-chat/protocol';
-import { mailPreview, parseMailList, parseWithList, quoteStart } from '@dither-chat/protocol';
+import { interfaceTrouble, mailPreview, parseMailList, parseWithList, quoteStart } from '@dither-chat/protocol';
 import { mailId } from '@dither-chat/protocol/ids';
 import type * as M from '@dither-chat/protocol/mail-iface';
 import { ACCOUNT_COLORS } from '../store.ts';
@@ -252,11 +252,26 @@ export class MailStore {
   setStatus(id: string, st: Record<string, any>): boolean {
     const was = this.account(id);
     if (!was) return false;
-    const layers: { name: string; state: string; note?: string }[] = Array.isArray(st.layers) ? st.layers : [];
-    const bad = layers.find((l) => l.state !== 'ok');
+    const all: { name: string; state: string; note?: string; interface?: string }[] = Array.isArray(st.layers) ? st.layers : [];
+    // Layers only another interface rests on (a Google account's Calendar API) are not mail's problem (StatusLayer.interface).
+    const tagged = all.some((l) => typeof l.interface === 'string');
+    const layers = all.filter((l) => !l.interface || l.interface === 'mail');
+    const bad = tagged ? interfaceTrouble(all, 'mail') : layers.find((l) => l.state !== 'ok');
     const failed = layers.find((l) => l.state === 'failed');
     const att = st.attention as { message?: string } | null | undefined;
-    const problem = st.status === 'online' && !att ? null : att?.message ? { layer: failed?.name ?? bad?.name ?? null, message: att.message } : bad ? { layer: bad.name, message: bad.note ? `${bad.name}: ${bad.note}` : `${bad.name}: ${bad.state}` } : null;
+    // With tagged layers, mail is fine when none of its own (or the shared ones) is waiting or failed, whatever the
+    // account says of itself: its attention may be about the other interface.
+    const mailFine = tagged && !interfaceTrouble(all, 'mail');
+    const problem =
+      (st.status === 'online' && !att) || mailFine
+        ? null
+        : att?.message && (!tagged || !bad?.interface)
+          ? { layer: failed?.name ?? bad?.name ?? null, message: att.message }
+          : bad
+            ? { layer: bad.name, message: bad.note ? `${bad.name}: ${bad.note}` : `${bad.name}: ${bad.state}` }
+            : att?.message
+              ? { layer: null, message: att.message }
+              : null;
     const details = (st.details ?? {}) as Record<string, unknown>;
     const sendLayer = layers.find((l) => /send path|smtp/i.test(l.name));
     const prevSend = json<{ ok: boolean | null; why: string | null; at?: number; refused?: boolean }>(was.send, { ok: null, why: null });
@@ -275,7 +290,8 @@ export class MailStore {
     const address = self.email ?? was.address ?? null;
     const name = self.displayName ?? was.display_name ?? null;
     const addresses = Array.isArray(self.addresses) ? JSON.stringify(self.addresses) : was.addresses;
-    const online = st.status === 'online' ? 1 : 0;
+    // Calls wait while it is not online; with its own layers fine (another interface stopped), mail goes on.
+    const online = st.status === 'online' || (mailFine && st.status !== 'offline' && st.status !== 'disabled') ? 1 : 0;
     const syncMode = typeof details.sync === 'string' ? details.sync : was.sync_mode;
     const bit = (v: unknown, had: number | null | undefined) => (typeof v === 'boolean' ? (v ? 1 : 0) : (had ?? null));
     const count = (v: unknown, had: number | null | undefined) => (typeof v === 'number' && Number.isFinite(v) && v >= 1 ? Math.floor(v) : (had ?? null));
