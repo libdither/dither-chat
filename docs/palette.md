@@ -56,7 +56,7 @@ pushed fresh starts empty unless it was opened with text (a pasted link).
 
 | Page | What it is |
 |---|---|
-| Root | Jump anywhere: the top of the inbox with nothing typed, then the match times the inbox's score ([inbox.md](inbox.md)); "Join …" first for a pasted invite, "Search messages for …" last; "New…" last with nothing typed |
+| Root | Jump anywhere: the top of the inbox with nothing typed, then the match times the inbox's score ([inbox.md](inbox.md)), a person matched by their name or any of their accounts' display names, handles and nicknames; "Join …" first for a pasted invite, "Search messages for …" last; "New…" last with nothing typed |
 | New | With nothing typed, its rows: "New group with <them>" when a 1:1 DM is on screen, "Add people to <the group on screen>" or "Add people to a group", New group, Scan a code, My code, then the people you would most likely message (the inbox's score, then the latest message). Typed or pasted, everything [add.md](add.md) reads, by its rules: a link is looked up on paste or Enter, a bare word only when its row is clicked or taken with Enter |
 | Message | Someone known on several networks: which one. Someone with a DM on the network chosen goes straight there |
 | Message X on Network | Send as, what opening does there, Open conversation (Enter) |

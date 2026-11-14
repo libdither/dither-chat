@@ -134,7 +134,7 @@
     "js/src/ui/NoticesPane.tsx.bytes": { "measured": 4144, "budget": 4222 },
     "js/src/ui/NoticesPane.tsx.gzip": { "measured": 1761, "budget": 1794, "reason": "net-gaps on main: the pane shares the message row parts the gaps packages grew (rich marks, polls)" },
     "js/src/ui/PalettePages.tsx.bytes": { "measured": 34801, "budget": 34939 },
-    "js/src/ui/PalettePages.tsx.gzip": { "measured": 11737, "budget": 11751, "reason": "New group's pages in the palette (ui/NewGroup.tsx, groups.ts): people across accounts, where, a name" },
+    "js/src/ui/PalettePages.tsx.gzip": { "measured": 11763, "budget": 11999, "reason": "Ctrl+K finds a person by any of their accounts' display names, handles and nicknames (Switcher also-names)" },
     "js/src/ui/Poll.tsx.bytes": { "measured": 6019, "budget": 6035, "reason": "Poll chunk: the poll is drafted in the message box's place (PollMaker as an inline draft with pills, keys and its own styles) instead of a dialog" },
     "js/src/ui/Poll.tsx.gzip": { "measured": 2569, "budget": 2621, "reason": "Poll card: a tap votes at once where the network lets a vote change (PollRules.voteChangeable), and a final vote locks the options" },
     "js/src/ui/ProfileSelf.tsx.bytes": { "measured": 4252, "budget": 4338 },
