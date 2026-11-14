@@ -11,7 +11,8 @@ on the hub's disk until it is sent, and through a restart of either end.
   - `Over Discord’s 10 MB limit (this is 12 MB)`: the network's limit, from `ATTACHMENT_LIMITS` in the protocol;
   - `Over the hub’s 25 MB limit`: `MAX_UPLOAD`, only for a network that takes more than the hub does (none today);
   - `Cannot be read`: moved or deleted since it was picked, a folder, or no permission;
-  - `Discord takes 10 files at a time`: the ones after the tenth.
+  - for mail only, `Email takes 20 files at a time`: the ones after the twentieth. Elsewhere any number can be
+    attached: see "More files than a message takes" below.
 
   Refused files leave the row when you send or remove them. Before this, files over the limit were left out with a
   toast that named no file, and files over the count were dropped without a word.
@@ -21,6 +22,24 @@ on the hub's disk until it is sent, and through a restart of either end.
   shows "Waiting for the hub" instead: it tries again when the hub is back, and does not hold a send.
 - **Send while files are still uploading**, and the message goes to the outbox as any send does (docs/sync.md) and
   waits for them. Its pending copy says "Uploading…", with each file's percentage. The composer is free at once.
+
+## More files than a message takes
+
+Each network takes so many files in one message (`ATTACHMENT_LIMITS[network].files`: 10 on most, 1 in an X direct
+message). Attach more and they all stay, and the row (or the phone's send screen) says `Goes as 3 messages: Discord
+takes 10 files in one`. Send makes that many messages, in the order the files were attached, each with as many as
+the network takes; the words and the reply go with the first, silent with all of them (`send` in `state.ts`,
+`fileBatches` and `splitsFiles` in the protocol).
+
+- Each is a send of its own: its own pending copy, upload progress, retry and clientId. One that fails does not
+  make the others go twice.
+- They go one after another, each once the one before is through, so they arrive in order; the outbox flushes
+  oldest first, one at a time, for the same reason after the hub was away.
+- Send later does the same on the hub when the time comes (`sendlater.ts`): clientIds are the scheduled id, then
+  `<id>#1`, `<id>#2`…, so trying a failed one again sends only those that did not go, and its note says how many
+  went.
+- Mail does not split: one letter carries its files. The hub's send still refuses more than a network takes in one
+  request (413), which the app no longer asks for.
 
 ## On a phone
 

@@ -132,6 +132,33 @@ describe('Send later', () => {
     later.cancel(v.id);
   });
 
+  test('more files than Discord takes in one message go as several, in order, the words and the reply with the first', async () => {
+    const ids = Array.from({ length: 23 }, (_, k) => `f${k}`);
+    const v = later.create({ conversationId: cid, accountId: acc, body: 'the album', replyTo: 'msg_q', attachments: ids, silent: true, mentionReplied: false, dueAt: t + 2 * MIN });
+    const before = sends.length;
+    t += 2 * MIN;
+    await later.tick();
+    const went = sends.slice(before).map((x) => x.b);
+    expect(went.map((b) => b.attachments)).toEqual([ids.slice(0, 10), ids.slice(10, 20), ids.slice(20)]);
+    expect(went.map((b) => b.clientId)).toEqual([v.id, `${v.id}#1`, `${v.id}#2`]);
+    expect(went.map((b) => b.body)).toEqual(['the album', '', '']);
+    expect(went.map((b) => b.replyTo)).toEqual(['msg_q', undefined, undefined]);
+    expect(went.map((b) => b.mentionReplied)).toEqual([false, undefined, undefined]);
+    expect(went.every((b) => b.silent)).toBe(true);
+    expect(later.get(v.id)).toMatchObject({ state: 'sent' });
+  });
+
+  test('a batch refused after the first went says how many went', async () => {
+    let n = 0;
+    answer = () => (n++ ? Response.json({ error: 'Discord takes files up to 10 MB' }, { status: 413 }) : Response.json({ ok: true, accountId: acc, messageId: 'msg_b1' }));
+    const v = later.create({ conversationId: cid, accountId: acc, body: '', attachments: Array.from({ length: 12 }, (_, k) => `g${k}`), dueAt: t + 2 * MIN });
+    t += 2 * MIN;
+    await later.tick();
+    expect(later.get(v.id)).toMatchObject({ state: 'failed', note: '1 of 2 messages went; the rest did not: Discord takes files up to 10 MB' });
+    answer = () => Response.json({ ok: true, accountId: acc, messageId: 'msg_sent4' });
+    later.cancel(v.id);
+  });
+
   test('a restart in the middle of a send never sends it again by itself', () => {
     const v = later.create({ conversationId: cid, accountId: acc, body: 'mid-send', dueAt: t + 2 * MIN });
     store.db.query(`UPDATE send_later SET state = 'sending' WHERE id = ?`).run(v.id);

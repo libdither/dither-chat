@@ -7,12 +7,13 @@
  * Signal's sheet also shows a grid of recent photos. That would need the Android app to read every photo on the
  * phone; the system's photo picker stands in for it, and needs no permission.
  */
+import type * as P from '@dither-chat/protocol';
 import { createPortal, type ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { baseType, clockOf, HOLD_MS, nextCamera, photoName, recorderType, videoName, type Cam } from '../camera.ts';
 import { bytes } from '../format.ts';
 import { useLayer } from '../phone.ts';
-import { statusOf, Thumb, type Attached } from './ComposerFiles.tsx';
+import { splitNote, statusOf, Thumb, type Attached } from './ComposerFiles.tsx';
 import { useGrow } from './grow.ts';
 import { Icon } from './icons.tsx';
 import { Sheet } from './Sheet.tsx';
@@ -305,6 +306,8 @@ export function SendScreen(props: {
   enterSends: () => boolean;
   /** Beside the caption: the view-once switch, where the network has it. */
   extra?: ComponentChildren;
+  /** For saying when they go as several messages. */
+  network?: P.Network;
 }) {
   const { files, remove, text, onText, onSend, onClose } = props;
   const [at, setAt] = useState(0);
@@ -367,6 +370,10 @@ export function SendScreen(props: {
           )}
         </div>
         {props.extra}
+        {(() => {
+          const split = splitNote(files, props.network);
+          return split && <div class="ss-split">{split}</div>;
+        })()}
         <div class="ss-compose">
           <div class="ss-caption">
             <textarea

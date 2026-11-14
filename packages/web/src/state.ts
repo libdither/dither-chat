@@ -1,6 +1,6 @@
 import { effect, signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { SYNC_VERSION } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, fileBatches, splitsFiles, SYNC_VERSION } from '@dither-chat/protocol';
 import { leaveLayerEntry, takeOverLayers } from './phone.ts';
 import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snapshot.ts';
 import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, emptyDb, identityVersion, indexThreads, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
@@ -828,10 +828,39 @@ const delivering = new Set<string>();
 const setPending = (tempId: string, patch: Partial<PendingSend>) => (pending.value = pending.value.map((x) => (x.tempId === tempId ? { ...x, ...patch } : x)));
 const pendingOf = (e: OutboxEntry): PendingSend => ({ tempId: e.tempId, conversationId: e.conversationId, body: e.body, ts: e.ts, accountId: e.accountId, files: e.files?.map((f) => f.name), failed: e.failed });
 
-/** Shown at once as pending. Without the hub it waits, and goes out when the hub is back (flushOutgoing). */
+/**
+ * Shown at once as pending. Without the hub it waits, and goes out when the hub is back (flushOutgoing).
+ *
+ * More files than the network takes in one message go as several sends, each with as many as it takes, in order: the
+ * words and the reply with the first (docs/uploads.md, "More files than a message takes"). Each is a send of its own,
+ * with its own pending copy and retry, so a batch that fails does not send the others twice.
+ */
 export async function send(conversationId: string, body: string, opts: SendOpts = {}) {
+  const network = db.conversations.get(conversationId)?.network;
+  const per = network && splitsFiles(network) ? ATTACHMENT_LIMITS[network].files : 0;
+  const files = opts.files ?? [];
+  if (!per || files.length <= per) return sendOne(conversationId, body, opts, Date.now());
+  const fileRuns = fileBatches(files, per);
+  const uploadRuns = opts.uploads ? fileBatches(opts.uploads, per) : [];
+  const now = Date.now();
+  // All shown at once, a millisecond apart so they keep their order; then each goes once the one before is through.
+  const ids = await Promise.all(
+    fileRuns.map((run, k) =>
+      queueSend(conversationId, k ? '' : body, { ...opts, files: run, uploads: uploadRuns[k], ...(k ? { replyTo: undefined, mentionReplied: undefined } : {}) }, now + k),
+    ),
+  );
+  for (const id of ids) if (id) await deliver(id);
+}
+
+async function sendOne(conversationId: string, body: string, opts: SendOpts, ts: number) {
+  const tempId = await queueSend(conversationId, body, opts, ts);
+  if (tempId) await deliver(tempId);
+}
+
+/** Kept and shown as pending; the tempId to deliver now, or null when it waits for the hub. */
+async function queueSend(conversationId: string, body: string, opts: SendOpts, ts: number): Promise<string | null> {
   const tempId = 'tmp-' + Math.random().toString(36).slice(2);
-  const e: OutboxEntry = { tempId, conversationId, body, ts: Date.now(), accountId: opts.accountId, replyTo: opts.replyTo, files: opts.files?.map((f) => ({ name: f.name, type: f.type, blob: f })), ...(opts.media ? { media: opts.media } : {}), ...(opts.silent ? { silent: true } : {}), ...(opts.mentionReplied === false ? { mentionReplied: false } : {}) };
+  const e: OutboxEntry = { tempId, conversationId, body, ts, accountId: opts.accountId, replyTo: opts.replyTo, files: opts.files?.map((f) => ({ name: f.name, type: f.type, blob: f })), ...(opts.media ? { media: opts.media } : {}), ...(opts.silent ? { silent: true } : {}), ...(opts.mentionReplied === false ? { mentionReplied: false } : {}) };
   pending.value = [...pending.value, pendingOf(e)];
   outgoing.set(tempId, e);
   if (opts.uploads?.length) {
@@ -845,9 +874,9 @@ export async function send(conversationId: string, body: string, opts: SendOpts 
   if (!connected.value) {
     setPending(tempId, { queued: true });
     probe();
-    return;
+    return null;
   }
-  await deliver(tempId);
+  return tempId;
 }
 
 async function deliver(tempId: string) {
@@ -933,8 +962,20 @@ function forget(tempId: string) {
   void outbox.remove(tempId);
 }
 
-function flushOutgoing() {
-  for (const p of pending.value) if (p.queued) void deliver(p.tempId);
+/** One at a time, oldest first: the batches of one send (and sends in a row) arrive in the order they were made. */
+let flushing = false;
+async function flushOutgoing() {
+  if (flushing) return;
+  flushing = true;
+  try {
+    for (let next; (next = pending.value.filter((p) => p.queued && !delivering.has(p.tempId)).sort((a, b) => a.ts - b.ts)[0]); ) {
+      await deliver(next.tempId);
+      // Still queued: the hub went away again, and its coming back flushes the rest.
+      if (pending.value.some((p) => p.tempId === next.tempId && p.queued)) break;
+    }
+  } finally {
+    flushing = false;
+  }
 }
 
 /** A refused send, again. */
@@ -971,7 +1012,7 @@ export async function restoreOutbox() {
   for (const e of kept) outgoing.set(e.tempId, e);
   pending.value = [...pending.value, ...kept.map((e) => ({ ...pendingOf(e), queued: !e.failed }))].sort((a, b) => a.ts - b.ts);
   // The sync after connecting sends them; if it is already done, now.
-  if (connected.value && synced && !held) flushOutgoing();
+  if (connected.value && synced && !held) void flushOutgoing();
   else if (!connected.value) probe();
 }
 
@@ -1223,7 +1264,7 @@ function bootstrap() {
       // Timelines asked for before this socket may have missed anything: their newest pages again.
       for (const [key, t] of [...timelines]) if (!t.fetchedAt || t.fetchedAt < since) void reload(key);
       persistSoon(text);
-      flushOutgoing();
+      void flushOutgoing();
     } catch (e: any) {
       toast({ kind: 'error', title: 'Could not load', body: String(e.message) });
     } finally {
@@ -1274,7 +1315,7 @@ function resync() {
     performance.mark('dither:fresh');
     release();
     persistSoon();
-    flushOutgoing();
+    void flushOutgoing();
   });
 }
 

@@ -1405,7 +1405,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           </button>
         </div>
       )}
-      <AttachedFiles files={att.files} remove={att.remove} />
+      <AttachedFiles files={att.files} remove={att.remove} network={conv?.network} />
       {viewOnceChip}
       <EmojiComplete ta={ta} convId={targets.convId} network={conv?.network} />
       {!edit && <SlashCommandsLazy ta={ta} convId={targets.convId} accountId={sender?.id} text={text} />}
@@ -1567,6 +1567,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
           onClose={() => setReview(false)}
           enterSends={() => !touchKeyboard()}
           extra={viewOnceChip}
+          network={conv?.network}
         />
       )}
     </div>

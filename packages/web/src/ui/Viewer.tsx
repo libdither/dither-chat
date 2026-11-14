@@ -1,6 +1,12 @@
 /**
  * Images, full screen. Pinch or double-tap to zoom, drag to pan, swipe sideways between a message's images,
- * swipe down to put it away. With a mouse: the wheel zooms, the arrows page, Escape closes.
+ * swipe down to put it away. With a mouse: the wheel zooms, a double click zooms in, a drag pans, the arrows page,
+ * + and - zoom, 0 fits it again, Escape closes.
+ *
+ * The picture is sized here, to fit the screen, rather than by CSS: in the grid that centres it, max-height: 100% does
+ * not hold, so a large photo or a long screenshot was drawn at its own size, cut off, with the zoom and the pan
+ * worked out for a fitted picture that was not there. A large picture zooms far enough to see its own pixels twice
+ * over, and a long one fills the screen's width at a double tap.
  *
  * Other files open here too (docs/files.md): text and code, Markdown, JSON, CSV, PDF and archives, each shown by a
  * viewer in a chunk of its own (files/), loaded when such a file is first opened. On a phone they fill the screen; on a
@@ -184,6 +190,7 @@ function NoView({ a }: { a: FileSource }) {
   );
 }
 
+/** Zoom over the fitted size, at least; a large picture goes further (top()). */
 const MAX = 5;
 
 function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) {
@@ -197,13 +204,26 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
   useLayer(close);
 
   const fitted = () => {
-    const el = pic.current!;
+    const el = pic.current;
     const W = innerWidth;
     const H = innerHeight;
-    const nw = el.naturalWidth || img.width || W;
-    const nh = el.naturalHeight || img.height || H;
+    const nw = el?.naturalWidth || img.width || W;
+    const nh = el?.naturalHeight || img.height || H;
     const k = Math.min(W / nw, H / nh, 1);
-    return { w: nw * k, h: nh * k, W, H };
+    return { w: nw * k, h: nh * k, W, H, nw };
+  };
+  /** As far as it zooms: MAX, or to twice the picture's own pixels where that is further. */
+  const top = () => {
+    const f = fitted();
+    return Math.max(MAX, (2 * f.nw) / f.w);
+  };
+  /** The picture at its fitted size, once its size is known (from the message, else once it loads). */
+  const layout = () => {
+    const el = pic.current;
+    if (!el || !(el.naturalWidth || img.width)) return;
+    const f = fitted();
+    el.style.width = `${f.w}px`;
+    el.style.height = `${f.h}px`;
   };
   const clamp = (s: number, x: number, y: number) => {
     const f = fitted();
@@ -217,13 +237,14 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
     if (!el) return;
     el.style.transition = ms ? `transform ${ms}ms cubic-bezier(.2,.8,.2,1)` : 'none';
     el.style.transform = `translate(${t.x}px, ${t.y}px) scale(${t.s})${extra}`;
+    root.current?.toggleAttribute('data-zoomed', t.s > 1.01);
   };
   /** Zoom to `s`, keeping the screen point (px, py) where it is. */
   const zoomAt = (s: number, px: number, py: number, ms = 0) => {
     const cur = z.current;
     const cx = innerWidth / 2;
     const cy = innerHeight / 2;
-    const ns = Math.min(MAX, Math.max(1, s));
+    const ns = Math.min(top(), Math.max(1, s));
     const x = px - cx - ((px - cx - cur.x) * ns) / cur.s;
     const y = py - cy - ((py - cy - cur.y) * ns) / cur.s;
     show(clamp(ns, x, y), ms);
@@ -233,13 +254,30 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
     if (n < 0 || n >= images.length) return;
     setI(n);
   };
-  useLayoutEffect(() => show({ s: 1, x: 0, y: 0 }), [i]);
+  useLayoutEffect(() => {
+    layout();
+    show({ s: 1, x: 0, y: 0 });
+  }, [i]);
+  // A turned phone or a resized window: fitted again, the zoom kept within the new edges.
+  useEffect(() => {
+    const r = () => {
+      layout();
+      const t = z.current;
+      show(clamp(t.s, t.x, t.y));
+    };
+    addEventListener('resize', r);
+    return () => removeEventListener('resize', r);
+  }, [i]);
 
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if (e.key === 'Escape') close();
       if (e.key === 'ArrowLeft') page(-1);
       if (e.key === 'ArrowRight') page(1);
+      const ms = reducedMotion() ? 0 : 160;
+      if (e.key === '+' || e.key === '=') zoomAt(z.current.s * 1.5, innerWidth / 2, innerHeight / 2, ms);
+      if (e.key === '-') zoomAt(z.current.s / 1.5, innerWidth / 2, innerHeight / 2, ms);
+      if (e.key === '0') show({ s: 1, x: 0, y: 0 }, ms);
     };
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
@@ -257,20 +295,33 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
     let moved = false;
     let onImage = false;
     const backdrop = (p: number) => el.style.setProperty('--viewer-bg', String(p));
+    // A layer of its own only while a finger or the mouse moves it: a picture kept on one is drawn once at its fitted
+    // size and blurs as it zooms, so once it stops it is drawn again at the zoom, sharp.
+    let still = 0;
+    const moving = () => {
+      clearTimeout(still);
+      if (pic.current) pic.current.style.willChange = 'transform';
+    };
+    const stopped = () => {
+      clearTimeout(still);
+      still = window.setTimeout(() => pic.current && (pic.current.style.willChange = ''), 260);
+    };
     /** After a pinch or a pan: back within the zoom limits, and no empty space at the edges. */
     const settle = () => {
       const t = z.current;
       const ms = reducedMotion() ? 0 : 200;
+      const most = top();
       if (t.s < 1) show({ s: 1, x: 0, y: 0 }, ms);
-      else if (t.s > MAX) {
-        const k = MAX / t.s;
-        show(clamp(MAX, t.x * k, t.y * k), ms);
+      else if (t.s > most) {
+        const k = most / t.s;
+        show(clamp(most, t.x * k, t.y * k), ms);
       } else show(clamp(t.s, t.x, t.y), ms);
     };
 
     const down = (e: PointerEvent) => {
       if ((e.target as HTMLElement).closest('.viewer-bar, .viewer-nav')) return;
       el.setPointerCapture(e.pointerId);
+      moving();
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
       base = z.current;
       if (pts.size === 2) {
@@ -294,7 +345,7 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
         const mx = (a.x + b.x) / 2;
         const my = (a.y + b.y) / 2;
         // Follow the fingers freely, a little past the limits; the release brings it back in.
-        const s = Math.min(MAX * 1.3, Math.max(0.6, (base.s * d) / pinch0.d));
+        const s = Math.min(top() * 1.3, Math.max(0.6, (base.s * d) / pinch0.d));
         const cx = innerWidth / 2;
         const cy = innerHeight / 2;
         show({ s, x: mx - cx - ((pinch0.mx - cx - base.x) * s) / base.s, y: my - cy - ((pinch0.my - cy - base.y) * s) / base.s });
@@ -336,10 +387,12 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
           return;
         }
         settle();
+        stopped();
         mode = null;
         return;
       }
       if (pts.size) return;
+      stopped();
       const dx = e.clientX - start.x;
       const dy = e.clientY - start.y;
       const motion = reducedMotion();
@@ -370,7 +423,12 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
         const now = performance.now();
         if (now - lastTap.t < 300 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30) {
           if (z.current.s > 1.01) show({ s: 1, x: 0, y: 0 }, motion ? 0 : 220);
-          else zoomAt(2.5, e.clientX, e.clientY, motion ? 0 : 220);
+          else {
+            // A long screenshot or a wide panorama fills the screen the other way; anything else zooms 2.5 times.
+            const f = fitted();
+            const fill = Math.max(f.W / f.w, f.H / f.h);
+            zoomAt(fill > 1.25 ? fill : 2.5, e.clientX, e.clientY, motion ? 0 : 220);
+          }
           lastTap = { t: 0, x: 0, y: 0 };
         } else lastTap = { t: now, x: e.clientX, y: e.clientY };
       }
@@ -379,6 +437,8 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
       zoomAt(z.current.s * Math.exp(-e.deltaY / 300), e.clientX, e.clientY);
+      moving();
+      stopped();
     };
     el.addEventListener('pointerdown', down);
     el.addEventListener('pointermove', move);
@@ -391,6 +451,7 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
       el.removeEventListener('pointerup', up);
       el.removeEventListener('pointercancel', up);
       el.removeEventListener('wheel', wheel);
+      clearTimeout(still);
     };
   }, [i]);
 
@@ -408,7 +469,11 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
           <Icon name="x" size={22} />
         </button>
       </div>
-      <img ref={pic} class="viewer-img" src={img.url} alt={img.name ?? ''} draggable={false} />
+      <img ref={pic} class="viewer-img" src={img.url} alt={img.name ?? ''} draggable={false} onLoad={() => {
+        layout();
+        const t = z.current;
+        show(clamp(t.s, t.x, t.y));
+      }} />
       {images.length > 1 && i > 0 && (
         <button class="viewer-nav prev" onClick={() => page(-1)} aria-label="Previous image">
           <Icon name="back" size={22} />

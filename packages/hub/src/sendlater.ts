@@ -7,14 +7,16 @@
  * If the account is not connected it waits and says so, and goes out once the account is back, unless that is more
  * than SEND_LATER_LATE_MS after its time: then it is held, and goes only when you say "Send now" (or you cancel it).
  * A refusal (the network said no, the place cannot be written in) leaves it failed with the reason, to edit and
- * pick a time again, send now, or cancel. Sent ones stay on the list a little while, then go.
+ * pick a time again, send now, or cancel. Sent ones stay on the list a little while, then go. More files than the
+ * network takes in one message go as several messages, in order, the words and the reply with the first; each has
+ * its own clientId (the id, then id#1, id#2…), so a retry sends only the ones that did not go.
  *
  * A network's own scheduled messages (Discord's, capability 'nativeScheduled') are read beside these when the list is
  * opened, as `where: 'network'`, and can be cancelled; they are the network's to send, not the hub's.
  */
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META, SEND_LATER_LATE_MS, SEND_LATER_MAX, sendLaterProblem } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, fileBatches, NETWORK_META, SEND_LATER_LATE_MS, SEND_LATER_MAX, sendLaterProblem, splitsFiles } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { type Clock, realClock } from './clock.ts';
 import type { Store } from './store.ts';
@@ -233,17 +235,31 @@ export class SendLater {
     if (announce) this.changed();
     try {
       const mention = r.mention === null ? undefined : r.mention === 1;
-      const res = await this.d.send(r.conversation_id, {
-        body: r.body,
-        accountId: r.account_id,
-        clientId: r.id,
-        ...(r.reply_to ? { replyTo: r.reply_to } : {}),
-        ...(JSON.parse(r.attachments).length ? { attachments: JSON.parse(r.attachments) } : {}),
-        ...(r.silent ? { silent: true } : {}),
-        ...(mention !== undefined ? { mentionReplied: mention } : {}),
-      });
-      const answer = (await res.json().catch(() => ({}))) as { error?: string; messageId?: string; unknown?: boolean };
+      const files = JSON.parse(r.attachments) as string[];
+      const network = this.store.nativeOf('conversation', r.conversation_id)?.network;
+      const runs = network && splitsFiles(network) ? fileBatches(files, ATTACHMENT_LIMITS[network].files) : [files];
+      let res!: Response;
+      let answer: { error?: string; messageId?: string; unknown?: boolean } = {};
+      let first: string | undefined;
+      for (let k = 0; k < runs.length; k++) {
+        res = await this.d.send(r.conversation_id, {
+          body: k ? '' : r.body,
+          accountId: r.account_id,
+          clientId: k ? `${r.id}#${k}` : r.id,
+          ...(r.reply_to && !k ? { replyTo: r.reply_to } : {}),
+          ...(runs[k].length ? { attachments: runs[k] } : {}),
+          ...(r.silent ? { silent: true } : {}),
+          ...(mention !== undefined && !k ? { mentionReplied: mention } : {}),
+        });
+        answer = (await res.json().catch(() => ({}))) as typeof answer;
+        if (!res.ok) {
+          if (k) answer.error = `${k} of ${runs.length} messages went; the rest did not: ${answer.error || `the send failed (${res.status})`}`;
+          break;
+        }
+        first ??= answer.messageId;
+      }
       if (res.ok) {
+        answer.messageId = first;
         this.store.db.query(`UPDATE send_later SET state = 'sent', note = NULL, message_id = ?, done_at = ? WHERE id = ?`).run(answer.messageId ?? null, this.clock.now(), r.id);
       } else if (res.status === 409 && /no connected account/.test(answer.error ?? '')) {
         // Gone offline between the look and the send: it waits again, under the same late rule.

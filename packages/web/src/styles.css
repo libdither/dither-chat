@@ -2460,6 +2460,12 @@ code {
   gap: 8px;
   padding-bottom: 8px;
 }
+/* More files than one message takes: how many messages they go as (ComposerFiles.tsx splitNote). */
+.composer-files-split {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--text-dim);
+}
 .composer-file {
   display: flex;
   align-items: center;
@@ -6211,12 +6217,16 @@ code {
   opacity: var(--viewer-bg, 1);
 }
 .viewer-img {
+  /* Sized to fit by Viewer.tsx (layout): in this grid a percentage max-height does not hold. Kept on a layer of its
+     own only while it moves, so it is drawn sharp at the zoom it stops at. */
   position: relative;
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-  will-change: transform;
+  max-width: none;
+  max-height: none;
   -webkit-user-drag: none;
+  cursor: zoom-in;
+}
+.viewer[data-zoomed] .viewer-img {
+  cursor: grab;
 }
 .viewer-bar {
   position: absolute;
@@ -13965,6 +13975,10 @@ html.kb-open .ss-foot {
 }
 .ss-one-bar {
   flex: 1;
+}
+.ss-split {
+  font-size: 12px;
+  color: rgb(255 255 255 / 0.7);
 }
 .ss-compose {
   display: flex;
