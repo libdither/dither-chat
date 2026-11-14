@@ -22,6 +22,7 @@ import { Embeddings, Jev } from './embeddings.ts';
 import { PushService } from './push.ts';
 import { ReadQueue } from './readqueue.ts';
 import { HubServer, mediaSigner } from './server.ts';
+import { BRISK, paceFromEnv } from './readingpace.ts';
 import { Store } from './store.ts';
 import { RoutedSupervisor } from './remote.ts';
 import { Supervisor } from './supervisor.ts';
@@ -450,6 +451,8 @@ const server = new HubServer(store, sup, triage, {
   devices,
   votes,
   archiveMedia: !demo,
+  // Index jobs and the gap fill read like a person (readingpace.ts); a demo's networks are fake, so no need there.
+  pace: demo ? BRISK : paceFromEnv(),
   mail,
   notices: notices ?? undefined,
   calendar: calendars,

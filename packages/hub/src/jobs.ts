@@ -4,8 +4,9 @@
  *
  * A job's run is planned as tasks: one per conversation to page back to its start (channels, and the threads the hub
  * knows under them), one per space whose members to walk. Each account works through its tasks one at a time, the
- * highest priority job first, with a pause between requests on top of the adapter's own pacing (the Discord
- * extractor spaces requests out and backs off on a 429). Progress is in job_task, so a restart carries on.
+ * highest priority job first, at a person's reading pace (readingpace.ts: in the owner's hours, in sessions with
+ * breaks, a pause per page that grows with what is on it, a daily cap), on top of the adapter's own pacing (the
+ * Discord extractor spaces requests out and backs off on a 429). Progress is in job_task, so a restart carries on.
  *
  * Pages are kept as history_span: stretches known whole. A conversation's walk skips any span it meets, so a job
  * that repeats fetches only what came since, and a channel already walked to its start costs one page.
@@ -13,23 +14,29 @@
  * Threads: Discord's channel lists only the threads someone opened lately, so each channel's are listed first, active
  * then archived (DiscordChatExporter's route for user accounts), and every thread found gets a history task of its own.
  *
- * Members: a walk first asks for the most recently joined members a page at a time (Discord's op 35 lists the 10,000
- * newest, 1,000 a page, to an ordinary member too), which is the whole of a server up to that size. A bigger server,
- * or an adapter without that list, is walked by name prefix (a to z, 0 to 9: a user account may not send an empty
- * query, as discord.py-self's query_members insists), and a prefix that came back full is asked again one character
- * longer, so a big server is listed without one request asking for everyone.
+ * Members: a walk asks for the most recently joined members a page at a time (Discord's op 35 lists the 10,000
+ * newest, 1,000 a page, to an ordinary member too: the list behind a server's Members page), which is the whole of a
+ * server up to that size; a bigger one is listed that far and no further, since asking a member search for "a", "b",
+ * "c" is nothing a person does. Only an adapter without that list is walked by name prefix (a to z, 0 to 9: a user
+ * account may not send an empty query), and a prefix that came back full is asked again one character longer.
  */
 import type * as P from '@dither-chat/protocol';
 import { randomId } from '@dither-chat/protocol/ids';
 import { type Clock, realClock, sleep, unref } from './clock.ts';
 import type { Store } from './store.ts';
 import { jobFailed } from './errors.ts';
+import { READING, ReadingPace } from './readingpace.ts';
 
 type Row = Record<string, any>;
 
-const PAGE = 100;
-/** Between requests per account, on top of the adapter's own pacing. */
-export const PAUSE_MS = 1500;
+/** Messages a page: what Discord's client loads when you scroll up. */
+export const PAGE = 50;
+/** The pace's name for this reader (readingpace.ts: one reader per account). */
+const READER = 'jobs';
+/** A wait for the pace is slept in steps this long at most, so a pause, a stop or an account going offline tells soon. */
+const REST_STEP_MS = 60_000;
+/** An adapter that cannot read just now (deferMs) is asked again after at most this long. */
+const DEFER_MAX_MS = 10 * 60_000;
 /** How often the queue looks for work to start and repeating jobs that are due. */
 const TICK_MS = 5000;
 const WALK_LIMIT = 100;
@@ -40,7 +47,7 @@ export const WALK_PREFIXES = [...WALK_ALPHABET];
 const RECENT = '@recent:';
 /** How a walk starts: the recent members' first page. */
 export const WALK_START = [RECENT];
-/** The most recent members a network lists (Discord's op 35): a server bigger than this is walked by name. */
+/** The most recent members a network lists (Discord's op 35): a server bigger than this is listed that far. */
 export const RECENT_MAX = 10_000;
 /** Members a recent page holds at most. */
 const RECENT_PAGE = 1000;
@@ -65,13 +72,16 @@ export interface JobsOptions {
   online: (accountId: string) => boolean;
   log?: (msg: string) => void;
   clock?: Clock;
+  /** How fast to read (readingpace.ts); a person's pace by default. Shared with the gap fill, one reader per account. */
+  pace?: ReadingPace;
 }
 
 export class Jobs {
   private clock: Clock;
   private log: (msg: string) => void;
-  /** Accounts working now, and what on. */
-  private working = new Map<string, { jobId: string; name: string }>();
+  /** Accounts working now, and what on; `resting` while it waits for the pace. */
+  private working = new Map<string, { jobId: string; name: string; resting?: boolean }>();
+  readonly pace: ReadingPace;
   private timer: unknown = null;
   private stopped = false;
 
@@ -81,6 +91,7 @@ export class Jobs {
   ) {
     this.clock = o.clock ?? realClock;
     this.log = o.log ?? (() => {});
+    this.pace = o.pace ?? new ReadingPace(store, READING, this.clock);
   }
 
   start() {
@@ -288,11 +299,23 @@ export class Jobs {
         const t = this.next(accountId);
         if (!t) return;
         this.store.db.query(`UPDATE job SET state = 'running', started_at = COALESCE(started_at, ?) WHERE id = ? AND state = 'queued'`).run(this.clock.now(), t.job_id);
+        const rest = this.pace.wait(accountId, READER);
+        if (rest > 0) {
+          this.working.set(accountId, { jobId: t.job_id, name: '', resting: true });
+          await sleep(this.clock, Math.min(rest, REST_STEP_MS));
+          continue;
+        }
         this.working.set(accountId, { jobId: t.job_id, name: this.placeName(t.kind === 'members' ? 'space' : 'conversation', t.target_id) });
+        let pause = 0;
         try {
-          if (t.kind === 'history') await this.page(t);
-          else if (t.kind === 'threads') await this.threads(t);
-          else await this.walk(t);
+          if (t.kind === 'history') {
+            const r = await this.page(t);
+            if (r.deferMs) pause = Math.min(Math.max(r.deferMs, 1000), DEFER_MAX_MS);
+            else pause = this.pace.read(accountId, READER, r.count, r.done);
+          } else {
+            const done = t.kind === 'threads' ? await this.threads(t) : await this.walk(t);
+            pause = this.pace.read(accountId, READER, 0, done);
+          }
         } catch (e: any) {
           const msg = String(e?.message ?? e).slice(0, 300);
           this.log(`job ${t.job_id} ${t.kind} ${t.target_id}: ${msg}`);
@@ -302,10 +325,11 @@ export class Jobs {
           else this.store.db.query('UPDATE job_task SET done = 1, error = ?, updated_at = ? WHERE job_id = ? AND kind = ? AND target_id = ?').run(msg, this.clock.now(), t.job_id, t.kind, t.target_id);
         }
         this.finishIfDone(t.job_id);
-        await sleep(this.clock, PAUSE_MS);
+        if (pause > 0) await sleep(this.clock, pause);
       }
     } finally {
       this.working.delete(accountId);
+      this.pace.release(accountId, READER);
     }
   }
 
@@ -344,24 +368,33 @@ export class Jobs {
     })();
   }
 
-  /** One page back, skipping what spans say the hub has whole. */
-  private async page(t: Row) {
+  /** One page back, skipping what spans say the hub has whole: the messages it held and whether the conversation is done. */
+  private async page(t: Row): Promise<{ count: number; done: boolean; deferMs?: number }> {
     const cid = t.target_id as string;
     const native = this.store.nativeOf('conversation', cid)?.nativeId;
     if (!native) throw new Error('the conversation is gone');
-    const save = (cursor: number | null, patch: { pages?: number; fetched?: number; done?: boolean } = {}) =>
+    // The adapter's own cursor for where the last page ended (`walk`: {next, at}), good while the cursor is still there.
+    let mark: { next?: string; at?: number } = {};
+    try {
+      mark = JSON.parse(t.walk || '{}') ?? {};
+    } catch {
+      /* none */
+    }
+    const save = (cursor: number | null, patch: { pages?: number; fetched?: number; done?: boolean; next?: string } = {}) =>
       this.store.db
-        .query('UPDATE job_task SET cursor = ?, pages = pages + ?, fetched = fetched + ?, done = ?, updated_at = ? WHERE job_id = ? AND kind = ? AND target_id = ?')
-        .run(cursor, patch.pages ?? 0, patch.fetched ?? 0, patch.done ? 1 : 0, this.clock.now(), t.job_id, 'history', cid);
+        .query('UPDATE job_task SET cursor = ?, walk = ?, pages = pages + ?, fetched = fetched + ?, done = ?, updated_at = ? WHERE job_id = ? AND kind = ? AND target_id = ?')
+        .run(cursor, patch.next && cursor !== null ? JSON.stringify({ next: patch.next, at: cursor }) : null, patch.pages ?? 0, patch.fetched ?? 0, patch.done ? 1 : 0, this.clock.now(), t.job_id, 'history', cid);
     let cursor: number = t.cursor ?? this.clock.now() + 1;
     // Over what is known whole already; a span reaching the start ends the walk.
     for (let s = this.spanAt(cid, cursor); s; s = this.spanAt(cid, cursor)) {
-      if (s.from_ts === 0) return save(cursor, { done: true });
+      if (s.from_ts === 0) return (save(cursor, { done: true }), { count: 0, done: true });
       cursor = s.from_ts;
     }
     const below = this.store.db.query('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ? AND ts < ?');
     const before = (below.get(cid, cursor) as Row).n as number;
-    const r = (await this.o.command(t.account_id, { t: 'history', conversation: native, beforeTs: cursor, limit: PAGE }, 180_000)) as P.HistoryResult | null;
+    const cmd = { t: 'history' as const, conversation: native, beforeTs: cursor, limit: PAGE, pace: 'read' as const, ...(mark.next && mark.at === cursor ? { cursor: mark.next } : {}) };
+    const r = (await this.o.command(t.account_id, cmd, 180_000)) as P.HistoryResult | null;
+    if (r?.deferMs && !r.count) return { count: 0, done: false, deferMs: r.deferMs };
     const count = r?.count ?? 0;
     let oldest: number | null = typeof r?.oldest === 'number' ? r.oldest : null;
     if (count && oldest === null) {
@@ -378,15 +411,18 @@ export class Jobs {
     if (!r || r.done || !count || oldest === null || oldest >= cursor) {
       // The start of the conversation: everything below the cursor is whole.
       this.addSpan(cid, 0, cursor);
-      return save(cursor, { pages: 1, fetched, done: true });
+      save(cursor, { pages: 1, fetched, done: true });
+      return { count, done: true };
     }
     this.addSpan(cid, oldest, cursor);
-    save(oldest, { pages: 1, fetched });
+    save(oldest, { pages: 1, fetched, next: typeof r.next === 'string' ? r.next : undefined });
+    return { count, done: false };
   }
 
   // ------------------------------------------------------------------ members
 
-  private async walk(t: Row) {
+  /** One step of a member walk; true when the walk is done. */
+  private async walk(t: Row): Promise<boolean> {
     const sid = t.target_id as string;
     const native = this.store.nativeOf('space', sid)?.nativeId;
     if (!native) throw new Error('the space is gone');
@@ -401,31 +437,34 @@ export class Jobs {
         .query('UPDATE job_task SET walk = ?, pages = pages + 1, fetched = fetched + ?, done = ?, updated_at = ? WHERE job_id = ? AND kind = ? AND target_id = ?')
         .run(JSON.stringify(queue), patch.listed ?? 0, patch.done || !queue.length ? 1 : 0, this.clock.now(), t.job_id, 'members', sid);
     const prefix = queue.shift();
-    if (prefix === undefined) return save({ done: true });
+    if (prefix === undefined) return (save({ done: true }), true);
     // A walk saved before walks stopped asking with an empty query.
     if (prefix === '') {
       queue.unshift(...WALK_PREFIXES.filter((c) => !queue.includes(c)));
-      return save({});
+      return (save({}), false);
     }
     if (prefix.startsWith(RECENT)) {
       const after = prefix.slice(RECENT.length) || undefined;
       const r = (await this.o.command(t.account_id, { t: 'walkMembers', space: native, query: '', limit: RECENT_PAGE, recent: true, ...(after ? { after } : {}) }, 60_000)) as P.WalkResult | null;
       const count = r?.count ?? 0;
-      // No such list here (the answer has no `next`), or more members than it reaches: by name instead.
-      if (r?.next === undefined || (typeof r.total === 'number' && r.total > RECENT_MAX)) queue.unshift(...WALK_PREFIXES);
-      else if (typeof r.next === 'string' && r.next && count > 0) queue.unshift(RECENT + r.next);
-      return save({ listed: count });
+      // No such list here (the answer has no `next`): by name instead. The list's end, or RECENT_MAX (where Discord's
+      // ends), ends the walk: a bigger server is listed that far.
+      if (r?.next === undefined) queue.unshift(...WALK_PREFIXES);
+      else if (typeof r.next === 'string' && r.next && count > 0 && (t.fetched ?? 0) + count < RECENT_MAX) queue.unshift(RECENT + r.next);
+      save({ listed: count });
+      return !queue.length;
     }
     const r = (await this.o.command(t.account_id, { t: 'walkMembers', space: native, query: prefix, limit: WALK_LIMIT }, 60_000)) as P.WalkResult | null;
     const count = r?.count ?? 0;
     if (count >= WALK_LIMIT && prefix.length < WALK_DEPTH) queue.unshift(...[...WALK_ALPHABET, ' ', '_', '.'].map((c) => prefix + c));
     save({ listed: count });
+    return !queue.length;
   }
 
   // ------------------------------------------------------------------ threads
 
-  /** One page of a channel's threads; at the end, a history task for each thread under it this run has none for. */
-  private async threads(t: Row) {
+  /** One page of a channel's threads; at the end, a history task for each thread under it this run has none for. True when done. */
+  private async threads(t: Row): Promise<boolean> {
     const cid = t.target_id as string;
     const native = this.store.nativeOf('conversation', cid)?.nativeId;
     if (!native) throw new Error('the conversation is gone');
@@ -442,7 +481,7 @@ export class Jobs {
       at.waits = (at.waits ?? 0) + 1;
       this.store.db.query('UPDATE job_task SET walk = ?, updated_at = ? WHERE job_id = ? AND kind = ? AND target_id = ?').run(JSON.stringify(at), this.clock.now(), t.job_id, 'threads', cid);
       await sleep(this.clock, Math.min(r.retryAfterMs, 30_000));
-      return;
+      return false;
     }
     const count = r?.count ?? 0;
     let done = false;
@@ -453,12 +492,13 @@ export class Jobs {
     this.store.db
       .query('UPDATE job_task SET walk = ?, pages = pages + 1, fetched = fetched + ?, done = ?, updated_at = ? WHERE job_id = ? AND kind = ? AND target_id = ?')
       .run(JSON.stringify(at), count, done ? 1 : 0, now, t.job_id, 'threads', cid);
-    if (!done) return;
+    if (!done) return false;
     const put = this.store.db.query('INSERT OR IGNORE INTO job_task (job_id, kind, target_id, account_id, updated_at) VALUES (?, ?, ?, ?, ?)');
     for (const th of this.store.raw<Row>(`SELECT id FROM conversation WHERE parent_id = ? AND shape = 'thread'`, cid)) {
       const acc = this.accountFor('conversation', th.id, 'history') ?? t.account_id;
       put.run(t.job_id, 'history', th.id, acc, now);
     }
+    return true;
   }
 
   // ------------------------------------------------------------------ views
@@ -481,7 +521,9 @@ export class Jobs {
       j.id,
     )!;
     const net = j.target_kind === 'folder' ? null : this.store.one<Row>(`SELECT network FROM ${j.target_kind === 'space' ? 'space' : 'conversation'} WHERE id = ?`, j.target_id)?.network ?? null;
-    const current = [...this.working.values()].find((w) => w.jobId === j.id)?.name ?? null;
+    const w = [...this.working.entries()].find(([, x]) => x.jobId === j.id);
+    const current = w && !w[1].resting ? w[1].name : null;
+    const resting = w?.[1].resting ? this.pace.resting(w[0]) : null;
     return {
       id: j.id,
       target: { kind: j.target_kind, id: j.target_id, name: this.targetName(j.target_kind, j.target_id) ?? '(gone)', network: net },
@@ -503,6 +545,7 @@ export class Jobs {
       current,
       skipped: j.skipped ?? 0,
       error: j.error ?? null,
+      resting,
     };
   }
 }

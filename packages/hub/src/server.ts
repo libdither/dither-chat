@@ -19,6 +19,8 @@ import { cleanFileName, Uploads } from './uploads.ts';
 import { ImportRunner } from './imports/engine.ts';
 import { GapFill } from './imports/gapfill.ts';
 import { Jobs } from './jobs.ts';
+import { type PaceConfig, READING, ReadingPace } from './readingpace.ts';
+import { realClock } from './clock.ts';
 import { NetSearch } from './netsearch.ts';
 import { linkPath, MediaArchiver } from './mediaarchive.ts';
 import { infoFor, MediaInfo } from './mediainfo.ts';
@@ -139,6 +141,8 @@ export interface ServerOpts {
   votes?: TriageVotes;
   /** Fetch every remote attachment into the media cache soon after it arrives (mediaarchive.ts). A real hub, not a demo. */
   archiveMedia?: boolean;
+  /** How index jobs and the gap fill read (readingpace.ts): a person's pace unless told otherwise. */
+  pace?: PaceConfig;
   /** Mail (mail/index.ts, docs/mail.md): its routes, its part of the bootstrap and of each flush. */
   mail?: MailHub;
   /** Notices (notices/, docs/notices.md): /api/notices, the bootstrap's `notices`. */
@@ -327,8 +331,10 @@ export class HubServer {
     this.imports = new ImportSources(opts.dataDir, (msg) => console.warn(msg));
     // An import fills and adds messages behind the journal's back: every device reloads its chats (a resync).
     this.importer = new ImportRunner(store, this.imports, opts.dataDir, (msg) => console.warn(msg), () => this.resync());
-    this.gapfill = new GapFill(store, (acc, cmd) => this.sup.command(acc, cmd, 180_000), (msg) => console.warn(msg));
-    this.jobs = new Jobs(store, { command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 180_000), online: (a) => sup.online(a), log: (msg) => console.warn(msg) });
+    // One pace for both, so the gap fill and a job never read through one account at once.
+    const pace = new ReadingPace(store, opts.pace ?? READING, realClock);
+    this.gapfill = new GapFill(store, (acc, cmd) => this.sup.command(acc, cmd, 180_000), (msg) => console.warn(msg), realClock, pace);
+    this.jobs = new Jobs(store, { command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 180_000), online: (a) => sup.online(a), log: (msg) => console.warn(msg), pace });
     this.netsearch = new NetSearch(store, {
       command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 60_000),
       online: (a) => sup.online(a),

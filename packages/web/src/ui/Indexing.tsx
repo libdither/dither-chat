@@ -183,6 +183,13 @@ const when = (ts: number) => `${dayLabel(ts).replace(/^(Today|Yesterday)$/, (d) 
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
 
+/** Why a job is waiting on the reading pace (docs/indexing.md "Reading pace"). */
+const RESTING_LABEL: Record<NonNullable<P.JobView['resting']>['why'], string> = {
+  hours: 'Outside your usual hours',
+  cap: "Read the day's share",
+  break: 'Taking a break',
+};
+
 function repeatLabel(hours: number): string {
   return JOB_REPEATS.find((r) => r.hours === hours)?.label ?? (hours % 24 ? `Every ${plural(hours, 'hour')}` : `Every ${plural(hours / 24, 'day')}`);
 }
@@ -227,6 +234,11 @@ function JobRow({ j, reload }: { j: P.JobView; reload: () => void }) {
         <div class="job-line job-now">
           <Loading inline label={`Now: ${j.current}`} />
         </div>
+      )}
+      {j.state === 'running' && j.resting && (
+        <p class="job-line job-resting">
+          {RESTING_LABEL[j.resting.why]}, reading again {when(j.resting.until)}
+        </p>
       )}
       {j.skipped > 0 && <p class="job-line job-skipped">{plural(j.skipped, 'place')} no account can fetch</p>}
       {j.error && (
@@ -321,7 +333,7 @@ export function IndexingSettings() {
       <h3>Indexing</h3>
       <p class="set-help">
         A server, a folder or a conversation fetched whole: its history back to the start, its member list, or both, so this hub's search finds what was said before your accounts were watching. Start one from a server's About page, a folder's menu or a
-        channel's.
+        channel's. It reads like a person scrolling back: in your usual hours, a while at a time, a few thousand messages a day per account, so a big server takes days.
       </p>
       {error && !jobs && (
         <p class="set-help job-error" role="alert">
