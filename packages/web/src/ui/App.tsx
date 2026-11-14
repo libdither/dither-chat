@@ -1,7 +1,8 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
-import { accountsNeedingYou, chatPersonOf, inboxBadge, rootCommunity, totalUnread } from '../model.ts';
-import { adoptEntry, api, connected, db, go, loaded, pending, prefs, previousRoute, readProgress, refresh, rev, route, setListUnder, unreachable, type Route } from '../state.ts';
+import { effect, untracked } from '@preact/signals';
+import { accountsNeedingYou, chatPersonOf, convsUnder, inboxBadge, rootCommunity, totalUnread } from '../model.ts';
+import { adoptEntry, api, connected, db, go, loaded, pending, prefs, previousRoute, readProgress, refresh, rev, route, setListUnder, setRouteFill, unreachable, type Route } from '../state.ts';
 import { isPage, isTabRoot, listKey, listToWrite, ownList, restAfter, wayBack, type Places } from '../pages.ts';
 import { dropLayer, phone, pushLayer } from '../phone.ts';
 import { AccountPane, AccountsSidebar, AddAccount, addingAccount } from './Accounts.tsx';
@@ -38,6 +39,7 @@ import { Viewer } from './Viewer.tsx';
 import { PEEK, panel, usePager, type Rest } from './Pager.ts';
 import { Boot } from './Loader.tsx';
 import { applyUpdate, updateReady } from '../pwa.ts';
+import { noteChannel, readLastChannels, saveLastChannels, withLastChannel } from '../lastchannel.ts';
 import { counting, rendered } from '../perf.ts';
 import { MailCenterLazy, MailComposerLazy, MailSidebarLazy } from './mail/lazy.tsx';
 import { RequestsPane } from './Requests.tsx';
@@ -211,6 +213,23 @@ const places: Places = {
 };
 // A list's page keeps its list under it in history, so the phone's back button shows the list as the swipe does.
 setListUnder((to, from) => (phone.value ? listToWrite(to, from, places) : null));
+
+// Opening a server goes back to the channel last opened in it, on a computer, where its list stays beside it
+// (docs/servers.md "Opening a server"). On a phone the server's list is the page you open.
+let lastChannels = readLastChannels();
+const serverOf = (space: string) => rootCommunity(space)?.id ?? space;
+setRouteFill((r) => (phone.value ? r : withLastChannel(r, lastChannels, serverOf, (space, conv) => convsUnder(space).some((c) => c.id === conv))));
+effect(() => {
+  const r = route.value;
+  // A channel's About page is not reading it.
+  if (r.view === 'profile' || !('conv' in r) || !r.conv) return;
+  const conv = r.conv;
+  untracked(() => {
+    const space = r.view === 'space' ? r.space : db.conversations.get(conv)?.spaceIds[0];
+    const next = space && noteChannel(lastChannels, serverOf(space), conv);
+    if (next) saveLastChannels((lastChannels = next));
+  });
+});
 
 /** Back from page `r`, by a swipe or its back button: to its list, or off the page it was opened over (pages.ts). */
 function leave(r: Route) {

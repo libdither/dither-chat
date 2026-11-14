@@ -193,6 +193,9 @@ window.addEventListener('hashchange', (e) => {
 let listUnder: (to: Route, from: Route | null) => Route | null = () => null;
 /** Which list to write under a page in history, going there `from` a route: App says, from pages.ts, on a phone. */
 export const setListUnder = (f: (to: Route, from: Route | null) => Route | null) => void (listUnder = f);
+let fill: (r: Route) => Route = (r) => r;
+/** What go() adds to a route before going: App fills in a server's last channel (lastchannel.ts). */
+export const setRouteFill = (f: (r: Route) => Route) => void (fill = f);
 /** Told of a list entry put under page `page`, which no route change announces (activity.ts keeps a trail of entries). */
 export const listUnderHooks = new Set<(list: string, page: string) => void>();
 
@@ -215,6 +218,7 @@ function write(h: string, prev: string | null, replace: boolean, from: Route | n
  * phone a list's page goes on top of that list, so back from it, by any way, shows the list (pages.ts).
  */
 export function go(r: Route, replace = false) {
+  r = fill(r);
   const h = href(r);
   const layered = takeOverLayers();
   if (h === location.hash && !replace) {
