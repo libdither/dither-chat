@@ -1092,7 +1092,11 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
 function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, disabledReason, lead }: {
   targets: { convId: string; accountId?: string };
   placeholder: string;
-  /** A person page (ui/Pairs.tsx): a line in place of the placeholder that can be clicked; it moves to the box's edge once typed in. */
+  /**
+   * A person page (ui/Pairs.tsx): where the message goes. On a computer a line over the box whose names can be clicked,
+   * the box's placeholder just "Message"; on a phone it takes the placeholder's place and moves to the box's edge once
+   * typed in.
+   */
   lead?: ComponentChildren;
   sendAs?: { options: { id: string; label: any }[]; value: string; onChange: (v: string) => void; label: string };
   onSendAs?: never;
@@ -1321,7 +1325,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       data-track="text box"
       rows={1}
       value={chips.shown}
-      placeholder={disabledReason ?? (lead ? '' : placeholder)}
+      placeholder={disabledReason ?? (!lead ? placeholder : onPhone ? '' : 'Message')}
       disabled={!!disabledReason}
       onInput={chips.onInput}
       onBlur={composerDone}
@@ -1397,6 +1401,8 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       }}
     >
       <ScheduledStrip conversationId={targets.convId} />
+      {/* A computer's route line sits over the box, out of the text's way; a phone's is in the box (below). */}
+      {lead && !onPhone && !polling && <div class="pair-lead-above">{lead}</div>}
       {edit && (
         <div class="composer-reply">
           <Icon name="pencil" size={13} /> Editing your message
@@ -1510,14 +1516,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
         <div class={`composer-box ${disabledReason ? 'disabled' : ''}`}>
           {plus}
           {sendAsMenu}
-          {lead ? (
-            <div class={`pair-lead ${text ? 'raised' : ''}`}>
-              <div class="pair-lead-slot">{lead}</div>
-              {box}
-            </div>
-          ) : (
-            box
-          )}
+          {box}
           {emojiBtn}
           <div class={`send-split ${extras.button ? 'two' : ''}`}>
             {sendBtn}

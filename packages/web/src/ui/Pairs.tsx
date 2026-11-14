@@ -20,6 +20,7 @@ import { identityName, netColor, netName, visibleAccount } from '../model.ts';
 import { phone } from '../phone.ts';
 import { api, db, go, isSelfIdentity, prefs, route, setPrefs, timelineKey, timelines, toast } from '../state.ts';
 import { AccountChip, Avatar, Count, Menu, NetBadge, NetGlyph } from './bits.tsx';
+import { Icon } from './icons.tsx';
 
 // ------------------------------------------------------------------ pairs
 
@@ -251,6 +252,7 @@ function Token({ label, options, onPick, picture }: { label: string; options: { 
       <button class="pair-token" data-track="send through" title={`Switch to ${options[(cur + 1) % 2].label}`} onClick={() => onPick(options[(cur + 1) % 2].id)}>
         {picture}
         {label}
+        <Icon name="repeat" size={10} class="pair-token-hint" />
       </button>
     );
   return (
@@ -260,6 +262,7 @@ function Token({ label, options, onPick, picture }: { label: string; options: { 
         <button class="pair-token" data-track="send through" title="Choose" onClick={toggle} aria-haspopup="menu">
           {picture}
           {label}
+          <Icon name="chevronDown" size={10} class="pair-token-hint" />
         </button>
       )}
     >
@@ -287,7 +290,8 @@ function Token({ label, options, onPick, picture }: { label: string; options: { 
 /**
  * Where a message goes, by the same rule as the tags and no more: "Message Kit on Signal", "Message Kit on Discord
  * (kit.work)", and "from zyn.alt" only when the account of theirs it goes to can be reached from several of yours
- * (chatroutes.ts leadTells). The parts that can change switch. In the box while it is empty, on its edge once typed in.
+ * (chatroutes.ts leadTells). The parts that can change switch. On a computer it is a line over the box ("To Kit on
+ * Signal"); on a phone it is in the box while it is empty, on its edge once typed in.
  */
 export function PairLead({ person, directs, focus, onFocus }: { person: P.PersonView; directs: P.ConversationView[]; focus: P.ConversationView; onFocus: (convId: string) => void }) {
   const keys = directs.map(routeKey);
@@ -311,9 +315,9 @@ export function PairLead({ person, directs, focus, onFocus }: { person: P.Person
   };
   return (
     <span class="pair-lead-line">
-      {/* As the line under the name says it: "Message Kit on Discord · to kit.work · via zyn.alt"; on a phone
+      {/* As the line under the name says it: "To Kit on Discord · to kit.work · via zyn.alt"; on a phone
           "To kit.work · via zyn.alt". */}
-      {phone.value ? 'To ' : 'Message '}
+      {'To '}
       <Token
         label={theirLabel(cur)}
         options={theirs.map((p) => ({ id: p.theirs?.id ?? p.conv.id, label: theirLabel(p), picture: <Avatar id={p.theirs?.id ?? p.conv.id} name={theirName(p)} url={p.theirs?.avatar} size={16} network={p.conv.network} /> }))}

@@ -1055,7 +1055,7 @@
   margin: 0 12px 8px;
 }
 /* The composer. */
-.composer {
+.post-composer {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1065,7 +1065,7 @@
   border-radius: 14px;
   background: var(--bg-raised);
 }
-.composer:focus-within {
+.post-composer:focus-within {
   border-color: color-mix(in oklab, var(--accent) 60%, var(--border));
 }
 .compose-to {
@@ -1254,7 +1254,7 @@
   content: ' ✓';
   color: var(--accent);
 }
-.thread-focal .composer,
+.thread-focal .post-composer,
 .thread-focal .compose-closed {
   margin-top: 4px;
 }

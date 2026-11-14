@@ -14291,7 +14291,43 @@ html.kb-open .ss-foot {
 /* ---------------------------------------------------------------- a person on several accounts (ui/Pairs.tsx) */
 
 
-/* The message box's line: in place of the placeholder while empty, on the box's top edge once typed in. */
+/* The message box's line. On a computer, a quiet line over the box ("To Kit on Signal ⌄"), where it never covers
+   what you type; its names that switch are buttons with a hover tint and a hint (⌄ opens a list, ⟳ swaps two). */
+/* Not clipped: a list of routes opens up out of it. A long line wraps between its parts instead. */
+.pair-lead-above {
+  margin: 0 0 5px 4px;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--text-faint);
+}
+.pair-lead-above .pair-token,
+.pair-lead-above .pair-last {
+  white-space: nowrap;
+}
+.pair-lead-above .pair-token {
+  border-bottom: none;
+  border-radius: 5px;
+  padding: 0 4px;
+  margin: 0 -1px 0 -3px;
+  align-items: center;
+}
+.pair-lead-above .pair-token.fixed {
+  padding: 0;
+  margin: 0;
+}
+.pair-lead-above button.pair-token:hover {
+  background: var(--bg-hover);
+}
+.pair-token-hint {
+  opacity: 0.7;
+}
+.pair-lead-above .pair-last {
+  font-size: 11px;
+}
+.pair-lead-above .menu-anchor {
+  display: inline-block;
+}
+/* On a phone: in place of the placeholder while empty, on the box's top edge once typed in. */
 .pair-lead {
   flex: 1;
   min-width: 0;

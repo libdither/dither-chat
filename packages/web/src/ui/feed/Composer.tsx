@@ -114,7 +114,7 @@ export function PostComposer({
     if (!autoFocus || !area.current) return;
     area.current.focus({ preventScroll: true });
     // The whole box in view, its buttons too.
-    area.current.closest('.composer')?.scrollIntoView({ block: 'nearest' });
+    area.current.closest('.post-composer')?.scrollIntoView({ block: 'nearest' });
   }, [autoFocus, draftKey, open]);
   useEffect(() => keepDraft(draftKey, text), [text, draftKey]);
   // The box grows with what is written.
@@ -164,7 +164,7 @@ export function PostComposer({
       </button>
     );
   return (
-    <div class={`composer ${st.level}`} data-composer={target.quote ? 'quote' : target.replyTo ? 'reply' : 'post'}>
+    <div class={`post-composer ${st.level}`} data-composer={target.quote ? 'quote' : target.replyTo ? 'reply' : 'post'}>
       {to && !target.quote && (
         <span class="compose-to">
           Replying to <b>@{to}</b>
