@@ -24,12 +24,12 @@ On its first start in this mode, the hub registers as the app `dither-chat` and 
 `$DITHER_DATA/accounts-app.json` (0600). It asks for four things:
 
 - **`chat` at manage, on all accounts:** read, write and settings.
-- **`accounts` at manage, for discord, signal, matrix and whatsapp:** add, sign in, start, stop and remove the chat
-  accounts it sets up.
-- **`mail` at write, on all accounts:** read your email, and (in later slices) mark, file and send it
-  ([mail.md](mail.md)). Mail accounts are added on the manager's page, never by the hub. A hub registered before mail
-  asks for it once on its next start (`mailToAsk` in remote.ts); Mail shows whether the request waits for you or was
-  declined, with "Ask again".
+- **`accounts` at manage, for its chat kinds and `proton`** (`ASKED_KINDS` in remote.ts): add, sign in, start, stop and
+  remove the chat accounts it sets up, and Proton Mail accounts (since 2026-11-13; "Adding mail" below). A hub
+  registered before a kind asks for it once on its next start (`kindsToAsk`).
+- **`mail` at write, on all accounts:** read your email, mark, file and send it ([mail.md](mail.md)). A hub registered
+  before mail asks for it once on its next start (`mailToAsk` in remote.ts); Accounts shows whether the request waits
+  for you or was declined, with "Ask again".
 - **`notifications` at write, on all accounts:** what your accounts and services tell you (GitHub, dither-accounts'
   own word about an account), ranked with your chats, and read there when you read them here
   ([notices.md](notices.md)). Asked once like mail (`noticesToAsk`); an account with both chat and notifications
@@ -39,6 +39,51 @@ Approve them on the manager's page or with `bun ~/Projects/dither-accounts/packa
 `… approve <request>`.
 
 If the manager forgets the app, the hub registers again on its next start.
+
+## One list
+
+Accounts shows every account the hub uses in one list, whatever it brings here: chats, mail, notices, a calendar. A
+row is everything the hub has under one id (protocol `accounts.ts`): the chat account, the mail account, and what the
+manager says of it (`ManagedAccountView`: its kind, the interfaces it offers, this hub's grants, whether the hub may run
+it). The manager's whole list for this hub, with this hub's requests that wait on its page (`AccessAsk`), reaches the
+page as `accountsManager` in the bootstrap, each sync and a live event of that name (`publishManager` in
+`accounts-manager.ts`).
+
+- **Feature icons.** A row says what the account does here with a few icons, in a fixed set and order (`FEATURES`):
+  chats, mail, calendar, notices, then calls, servers (a network's own word: spaces, communities) and a feed. Chats,
+  mail and notices come from grants (and the hub's own chat and mail accounts); calls from the chat account's
+  capabilities; servers when it sees a community; a feed when it has a feed conversation (X). A dot on an icon says that
+  part stopped (`trouble`, with why). An interface the account offers that the hub uses but has no grant for is a dim
+  icon (`off`); its page asks the manager for it on that one account (`POST /api/accounts/:id/ask { interface }`,
+  `accounts: [id]`), and the icon says `asked` until you answer on the manager's page, or `denied`. Interfaces the hub
+  does not use (Google Calendar, which dither-calendar reads) get no icon.
+- **One pill.** The row's status is the worst of its parts (`rowStatus`); a mail account with no access says "No
+  access"; an account nothing of which is used here says "Not used" (or "Asked").
+- **Its page.** The features again with what each needs, then a section per part: the chat account's (as before), Mail
+  (address, access, what is held, sending, changes waiting, "Delete now" once access ended), or a pointer to Notices.
+  Restart, Disable, the log, the live view and Remove work for an account with no chats here too, through the manager
+  (`managedOnly`), when it lets the hub run that kind; otherwise the page says the manager runs it and links there.
+- **Status per interface.** A layer of an account's status may name the one interface that rests on it
+  (`StatusLayer.interface`: a Google account's Calendar API is `google.calendar`'s, its Gmail layers `mail`'s). The mail
+  side reads only its own and the shared layers (`interfaceTrouble`), so a stopped Calendar API neither marks mail
+  broken nor holds its calls.
+- **A demo world** has a stand-in manager (`DemoManager`): its mail and notices accounts, a Google account whose mail
+  the hub may not read (to ask for), dither-accounts' kinds, and requests that wait. `scripts/verify-accounts.ts` walks
+  it in headless Chromium.
+
+## Adding mail
+
+Add account offers the chat networks and the manager's other kinds side by side, each tile with the icons of what an
+account of it can do here (`NETWORK_FEATURES`, `kindFeatures`). The kinds come from the manager (`GET
+/api/accounts/kinds`, its `kinds` admin action: name, interfaces, add form, whether this hub may add one); a manager
+too old to list them leaves a note to add mail on its page.
+
+- **A kind the hub may add** (Proton Mail, once you approve the `accounts` request for `proton`): its own form, from the
+  manager's manifest, sent as `form` (`POST /api/accounts/managed { kind, label, form }`); the manager splits it into
+  config and the account's secret file and checks it as its own page does. Proton has no fields: the new account asks
+  you to sign in in its live view, which its page opens here. It then reads and sends as any mail account.
+- **A kind it may not add yet** (IMAP, Google, GitHub): asking (`POST /api/accounts/kinds/:kind/ask`), or the manager's
+  page. Either way the account shows up in the list.
 
 ## While the hub restarts
 

@@ -70,6 +70,7 @@ import { callRoute } from './callstate.ts';
 import { handlesPolls, pollRoute } from './polls.ts';
 import { SendExtras } from './sendextras.ts';
 import { reminderWords } from './saved.ts';
+import { ASK_LEVEL, isChatKind, type ManagerLink } from './accounts-manager.ts';
 
 
 type ClientData = { kind: 'client' };
@@ -141,6 +142,8 @@ export interface ServerOpts {
   mail?: MailHub;
   /** Notices (notices/, docs/notices.md): /api/notices, the bootstrap's `notices`. */
   notices?: Notices;
+  /** dither-accounts for the accounts page (accounts-manager.ts): its kinds, asking, adding mail accounts, those without a chat account. */
+  manager?: ManagerLink;
   /**
    * dither-calendar beside the hub (calendar-account.ts, docs/calendar.md): the link of the calendar account that is on,
    * if any (/calendar/*, GET /api/plans, the bootstrap's `calendar`), and `sync` after the accounts change.
@@ -1977,6 +1980,77 @@ export class HubServer {
       // Conversations under this rule now explain themselves differently.
       for (const c of s.raw<{ id: string }>('SELECT id FROM conversation')) s.dirty.conversations.add(c.id);
       return ok();
+    }
+
+    // The one list (docs/accounts.md): dither-accounts' kinds for Add account, asking it for more, and adding an account
+    // of a kind that is not a chat network (Proton Mail) there.
+    const mgr = this.opts.manager;
+    if (path === '/api/accounts/kinds' && method === 'GET') {
+      return ok({ kinds: (await mgr?.kinds().catch(() => null)) ?? null, url: s.accountsManager?.url ?? null } satisfies P.KindsPage);
+    }
+    if ((m = path.match(/^\/api\/accounts\/kinds\/([\w.-]+)\/ask$/)) && method === 'POST') {
+      if (!mgr) return bad('This hub has no dither-accounts', 409);
+      try {
+        await mgr.askKind(m[1]);
+      } catch (e) {
+        return bad((e as Error).message, (e as { status?: number }).status ?? 502);
+      }
+      return ok();
+    }
+    if (path === '/api/accounts/managed' && method === 'POST') {
+      if (!mgr) return bad('This hub has no dither-accounts', 409);
+      const b = await body<{ kind?: unknown; label?: unknown; form?: unknown }>();
+      if (typeof b.kind !== 'string' || !/^[\w.-]{1,40}$/.test(b.kind)) return bad('kind is a kind name');
+      if (isChatKind(b.kind)) return bad('Chat accounts are added with POST /api/accounts');
+      const form: Record<string, string> = {};
+      if (b.form && typeof b.form === 'object' && !Array.isArray(b.form))
+        for (const [k, v] of Object.entries(b.form).slice(0, 50)) if (typeof v === 'string' && /^[\w.-]{1,40}$/.test(k)) form[k] = v.slice(0, 4000);
+      try {
+        const id = await mgr.create(b.kind, typeof b.label === 'string' ? b.label.trim().slice(0, 200) : '', form);
+        return ok({ id });
+      } catch (e) {
+        return bad((e as Error).message, (e as { status?: number }).status ?? 502);
+      }
+    }
+    if ((m = path.match(/^\/api\/accounts\/([\w-]+)\/ask$/)) && method === 'POST') {
+      if (!mgr) return bad('This hub has no dither-accounts', 409);
+      const b = await body<{ interface?: unknown }>();
+      if (typeof b.interface !== 'string' || !ASK_LEVEL[b.interface]) return bad(`interface is one of ${Object.keys(ASK_LEVEL).join(', ')}`);
+      try {
+        await mgr.ask(m[1], b.interface);
+      } catch (e) {
+        return bad((e as Error).message, (e as { status?: number }).status ?? 502);
+      }
+      return ok();
+    }
+    // An account with no chat account here (mail, notices) is run through the manager: restart, its log, enabling, removing.
+    const only = (id: string) => (s.account(id) ? null : (mgr?.managedOnly(id) ?? null));
+    if ((m = path.match(/^\/api\/accounts\/([\w-]+)(\/action|\/log)?$/)) && only(m[1])) {
+      const id = m[1];
+      try {
+        if (!m[2] && method === 'DELETE') {
+          await mgr!.remove(id, url.searchParams.get('purge') === '1');
+          return ok();
+        }
+        if (!m[2] && method === 'PATCH') {
+          const b = await body<{ enabled?: unknown }>();
+          if (typeof b.enabled !== 'boolean') return bad('Only enabled can change here; rename it on dither-accounts’ page');
+          await mgr!.setEnabled(id, b.enabled);
+          return ok();
+        }
+        if (m[2] === '/action' && method === 'POST') {
+          const b = await body<{ action?: string }>();
+          if (b.action !== 'restart') return bad('Only restart, for an account with no chats here');
+          await mgr!.restart(id);
+          return ok();
+        }
+        if (m[2] === '/log') {
+          const text = await mgr!.log(id).catch((e: Error) => `(the log is not available: ${e.message})`);
+          return new Response(text, { headers: { 'content-type': 'text/plain; charset=utf-8', ...SAFE_HEADERS } });
+        }
+      } catch (e) {
+        return bad((e as Error).message, (e as { status?: number }).status ?? 502);
+      }
     }
 
     if (path === '/api/accounts' && method === 'POST') {

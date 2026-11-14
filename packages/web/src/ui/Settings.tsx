@@ -4,8 +4,10 @@ import { listPreview } from '../board.ts';
 import { liveRules, netName, ruleIcon, ruleName } from '../model.ts';
 import { api, db, go, mailRev, prefs, rev, setPrefs, setRule, toast } from '../state.ts';
 import { loadPolicy, setListLevel, triagePolicy } from '../triage.ts';
-import { STATUS, addingAccount } from './Accounts.tsx';
-import { AccountChip, NetBadge, showSection } from './bits.tsx';
+import { addingAccount, RowName } from './Accounts.tsx';
+import { FeatureIcons, KindBadge } from './AccountFeatures.tsx';
+import { accountRows } from '../accountrows.ts';
+import { NetBadge, showSection } from './bits.tsx';
 import { drawLater, Later } from './Later.tsx';
 import { Icon } from './icons.tsx';
 import { DeviceRules } from './DeviceRules.tsx';
@@ -225,16 +227,18 @@ function MailSettings() {
 
 /** A phone has no rail with an accounts button: they head its settings, the way Discord's "You" tab does. */
 function AccountsBlock() {
-  const accounts = [...db.accounts.values()];
+  mailRev.value;
+  const rows = accountRows();
   return (
     <section class="set-block phone-only" id="set-accounts">
       <h3>Accounts</h3>
-      {accounts.map((a) => (
-        <button class="link-row acc-link" onClick={() => go({ view: 'accounts', account: a.id })}>
-          <NetBadge network={a.network} size={22} />
-          <AccountChip account={a} small />
-          <span class={`status-pill ${a.status}`}>{STATUS[a.status]}</span>
-          {a.attention && <small class="acc-attention">{a.attention.message}</small>}
+      {rows.map((r) => (
+        <button class="link-row acc-link" data-account={r.id} onClick={() => go({ view: 'accounts', account: r.id })}>
+          <KindBadge kind={r.kind} size={22} />
+          <RowName row={r} />
+          <FeatureIcons row={r} size={12} />
+          <span class={`status-pill ${r.status.status}`}>{r.status.label}</span>
+          {r.note && r.status.status !== 'online' && <small class="acc-attention">{r.note}</small>}
           <Icon name="chevronRight" size={16} class="link-row-go" />
         </button>
       ))}

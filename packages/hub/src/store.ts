@@ -1701,7 +1701,7 @@ export class Store {
   /** Which provider fills category_score; shown in Settings. */
   categoryProvider = 'keyword';
   /** Set by main.ts when accounts run in dither-accounts: the manager's page, if known. */
-  accountsManager: { url: string | null } | null = null;
+  accountsManager: P.AccountsManagerView | null = null;
   /** Which accounts dither-accounts runs (remote.ts sets it); views carry it as managedBy. */
   accountManaged: (id: string) => P.AccountManaged | undefined = () => undefined;
 

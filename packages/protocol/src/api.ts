@@ -29,6 +29,7 @@ import type { RichView, VoiceFact } from './rich.ts';
 import type { PollView } from './poll.ts';
 import type { MailAccess, MailAccountView, MailboxView, MailBootstrap, MailOutboxView, MailThreadView } from './mail.ts';
 import type { CalendarLinkView, CalendarNotifyRef, CalendarPlanView } from './calendar.ts';
+import type { AccountsManagerView } from './accounts.ts';
 import type { AccountSelfView } from './self.ts';
 import type { ContactCardView, MissingAttachmentFact, QuoteView, SendFailureView, StoryReplyView } from './extra.ts';
 import type { ForumView, ThreadView } from './threads.ts';
@@ -1184,7 +1185,7 @@ export interface Bootstrap {
   placeCategories: PlaceCategoryView[];
   categoryProvider: string;
   /** Set when this hub's chat accounts run in dither-accounts. Absent from older hubs and hubs that run their own. */
-  accountsManager?: { url: string | null };
+  accountsManager?: AccountsManagerView;
   rules: RuleView[];
   /** Absent from hubs that predate per-device rules. */
   devices?: DeviceView[];
@@ -1258,6 +1259,8 @@ export interface InboxPage {
 export type ClientEvent =
   | { t: 'account'; account: AccountView }
   | { t: 'account.removed'; id: string }
+  /** dither-accounts' list for this hub, its requests waiting on you, or whether it is reachable changed (accounts.ts). */
+  | { t: 'accountsManager'; manager: AccountsManagerView }
   | { t: 'identity'; identity: IdentityView }
   | { t: 'person'; person: PersonView }
   | { t: 'person.removed'; id: string }
@@ -1390,7 +1393,7 @@ export type SyncResponse =
       selfPersonId?: string | null;
       categoryProvider?: string;
       /** As in the bootstrap; null: this hub runs its own accounts. */
-      accountsManager?: { url: string | null } | null;
+      accountsManager?: AccountsManagerView | null;
       reactionUsage?: ReactionUsage[];
       /** Messages the inbox lists that arrived or changed since. */
       inbox?: MessageView[];

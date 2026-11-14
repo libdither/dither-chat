@@ -272,13 +272,13 @@ async function phone(themeName: string, first: boolean) {
     await Bun.sleep(500);
   }
 
-  // A view chip, then the Accounts screen's Mail group.
+  // A view chip, then the mail account in Accounts' one list (docs/accounts.md).
   await tap(await at('.sidebar .mail-chips .chip-btn', `el => el.textContent === 'Sent'`));
   await page.until(`location.hash.includes('v%3Asent')`, 5000);
   check(`${tag}: Sent lists what you sent`, (await page.eval<number>(`document.querySelectorAll('.sidebar .mail-row').length`)) >= 3);
   await page.goto(`${base}/#/accounts`);
-  await page.until(`!!document.querySelector('.acc-mail-group .mail-acc')`, 10000);
-  check(`${tag}: Accounts has a Mail group with the account`, (await page.eval<string>(`document.querySelector('.acc-mail-group').textContent`)).includes('zyan@dither.example'));
+  await page.until(`!!document.querySelector('.acc-row [data-feature="mail"]')`, 10000);
+  check(`${tag}: Accounts lists the mail account with the others, with a mail icon`, (await page.eval<string>(`document.querySelector('.acc-row:has([data-feature="mail"])').textContent`)).includes('zyan@dither.example'));
   check(`${tag}: no sideways overflow: accounts`, !(await overflow()).length, await overflow());
 }
 

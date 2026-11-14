@@ -22,9 +22,11 @@ Email beside your chats, through dither-accounts' `mail` interface. The design, 
   ellipsis.
 - **Read here**: a thread that has been on screen for a second counts as read on the hub. Slice 4 (below) tells the
   server too, unless Settings says "only when I mark it".
-- **Accounts → Mail** and **Settings → Mail** list the mail accounts: online or not, what is wrong ("Sign in to Proton
-  in the live view"), "Sending is off: …" when dither-accounts says so, and a link to the account on the manager's
-  page. Accounts are added there, never here.
+- **Accounts** lists the mail accounts with the others, one list ([accounts.md](accounts.md), "One list"): a mail icon,
+  a dot on it when something is wrong; the account's page has its Mail section (what is wrong, "Sign in to Proton in
+  the live view" with the live view, "Sending is off: …", what is held). **Settings → Mail** links to those pages.
+  Proton Mail is added from Add account once dither-accounts lets the hub add it; the other kinds on the manager's page,
+  or from Add account after asking ([accounts.md](accounts.md), "Adding mail").
 - **When access ends** (the account leaves the manager's list, or the hub's grant goes), its mail stays readable for
   24 hours and then is deleted from the hub. "Delete now" does it at once.
 - **Offline**: the page keeps the threads it was showing and the last threads and bodies it opened, so they show
@@ -588,7 +590,7 @@ hub moved from is dither-accounts' to settle; the hub copes with either after th
 2. On dither-accounts' page: Accounts → add → **Email (IMAP)**: your Gmail address, Provider `gmail`, the app password,
    and your name. Leave the server fields empty (the preset fills imap.gmail.com:993 and smtp.gmail.com:465) and Copy to
    Sent at `auto` (Gmail keeps its own).
-3. The hub sees it within seconds under its existing `mail` grant and syncs it: Accounts → Mail shows it online; Mail's
+3. The hub sees it within seconds under its existing `mail` grant and syncs it: Accounts lists it online; Mail's
    account menu has it, and the mailboxes menu its labels. Its "sync" detail should say CONDSTORE; dither-accounts'
    docs/mail.md has a checklist for what only a real mailbox shows.
 
@@ -598,8 +600,9 @@ hub moved from is dither-accounts' to settle; the hub copes with either after th
    the manager's page.
 2. On its next start the hub asks dither-accounts for `mail` at `write`, on every account. Approve it on the manager's
    page. Until you do, Mail says so and links there; if you decline, Mail offers "Ask again".
-3. Add the mail account on the manager's page (Email (IMAP) or Proton Mail). The hub sees it within seconds and syncs:
-   Inbox's newest 50 first, then Sent's, then both down to 500.
+3. Add the mail account: Proton Mail from Add account here (after approving the hub's `accounts` request for `proton`),
+   or any kind on the manager's page. The hub sees it within seconds and syncs: Inbox's newest 50 first, then Sent's,
+   then both down to 500.
 
 A grant narrower than asked is respected: with `read`, the account says "read only: marked read here only". Proton
 cannot send from the hub yet (`mail.send` answers 501 there); reading works.

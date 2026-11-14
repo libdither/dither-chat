@@ -4,6 +4,7 @@ import { Categorizer, JevProvider, KeywordProvider, OllamaProvider, type Categor
 import { ActivityStore } from './activity.ts';
 import { Attention } from './attention.ts';
 import { exploreOn, InboxRanker, rankMode } from './ranker.ts';
+import { DemoManager, type ManagerLink } from './accounts-manager.ts';
 import { applyDemoOverlay, createDemoAccounts, DEMO_MAIL_ACCOUNT, demoFactory, seedDemoMail } from './demo.ts';
 import { demoMailImages } from './mail/demo-html.ts';
 import { FakeMailBackend, MailHub, ManagerMailBackend } from './mail/index.ts';
@@ -385,7 +386,7 @@ const accountsUrl = process.env.DITHER_ACCOUNTS_URL;
 const accountsPage = process.env.DITHER_ACCOUNTS_PUBLIC_URL || null;
 const sup = accountsUrl && !demo ? new RoutedSupervisor(store, supOpts, { url: accountsUrl, dataDir, repoRoot, publicUrl: accountsPage }) : new Supervisor(store, supOpts);
 if (sup instanceof RoutedSupervisor) {
-  store.accountsManager = { url: accountsPage };
+  store.accountsManager = { url: accountsPage, reachable: false };
   store.accountManaged = (id) => sup.managed(id);
 }
 
@@ -428,8 +429,12 @@ const readQueue = new ReadQueue(store, sup);
 readQueue.start();
 startup.mark('mail');
 
+// The page's one list of accounts (accounts-manager.ts): what dither-accounts lists, or a demo world's stand-in for it.
+const manager: ManagerLink | null = sup instanceof RoutedSupervisor ? sup : demo ? new DemoManager({ store, mail: demoMail, notices: demoNotices }) : null;
+
 const server = new HubServer(store, sup, triage, {
   port,
+  manager: manager ?? undefined,
   hostname,
   dataDir,
   webDist,
@@ -497,6 +502,7 @@ if (demoNotices && notices) {
   seedDemoNotices(demoNotices);
   demoNotices.attach(notices);
 }
+if (manager instanceof DemoManager) manager.publish();
 startup.mark('server');
 // Before the manager's first account list, so mail hears it.
 mail.start();

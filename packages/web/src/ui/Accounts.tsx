@@ -1,17 +1,18 @@
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { CALENDAR_URL_DEFAULT, NETWORK_META, NETWORKS } from '@dither-chat/protocol';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { accountRow, accountRows, kindName, type AccountRow } from '../accountrows.ts';
 import { ago } from '../format.ts';
 import { netName } from '../model.ts';
 import { qrSvg } from '../qr.ts';
 import { api, db, go, mailRev, prefs, rev, toast } from '../state.ts';
 import { dropLayer, pushLayer, useLayer } from '../phone.ts';
-import { AccountChip, Modal, NetBadge } from './bits.tsx';
+import { AccountChip, Modal } from './bits.tsx';
+import { FeatureIcons, FeatureStrip, KindBadge } from './AccountFeatures.tsx';
 import { Icon } from './icons.tsx';
 import { ImportsSection } from './Imports.tsx';
 import { TelegramSignIns } from './TelegramSignIns.tsx';
-import { MailAccessNote, MailAccountRows } from './mail/MailAccounts.tsx';
+import { MailAccessNote, MailAccountSection } from './mail/MailAccounts.tsx';
 import { Loading } from './Loader.tsx';
 import { StoriesSetting } from './StoriesSetting.tsx';
 
@@ -33,20 +34,23 @@ export const STATUS: Record<P.AccountStatus, string> = {
   disabled: 'Disabled',
 };
 
+/** The one list (docs/accounts.md "One list"): every account this hub uses, chats, mail or notices alike. */
 export function AccountsSidebar({ active, onAdd }: { active?: string; onAdd: () => void }) {
   rev.value;
   mailRev.value;
-  const accounts = [...db.accounts.values()];
+  const rows = accountRows();
+  const mgr = db.accountsManager;
+  const mailWaits = db.mail.access.state !== 'off' && db.mail.access.state !== 'granted';
   return (
     <div class="sidebar-inner">
       <header class="side-head">
         <h1>Accounts</h1>
         <span class="side-sub">
-          {db.accountsManager ? (
+          {mgr ? (
             <>
               Each account runs in{' '}
-              {db.accountsManager.url ? (
-                <a href={db.accountsManager.url} target="_blank" rel="noopener">
+              {mgr.url ? (
+                <a href={mgr.url} target="_blank" rel="noopener">
                   dither-accounts
                 </a>
               ) : (
@@ -59,25 +63,30 @@ export function AccountsSidebar({ active, onAdd }: { active?: string; onAdd: () 
         </span>
       </header>
       <div class="side-scroll">
-        {accounts.map((a) => (
-          <button class={`row acc-row ${a.id === active ? 'active' : ''}`} onClick={() => go({ view: 'accounts', account: a.id })}>
+        {mgr?.reachable === false && <p class="acc-note">dither-accounts is not answering. What it runs keeps running; this list is what it last said.</p>}
+        {mailWaits && (
+          <div class="acc-note">
+            <MailAccessNote />
+          </div>
+        )}
+        {rows.map((r) => (
+          <button class={`row acc-row ${r.id === active ? 'active' : ''}`} data-account={r.id} data-kind={r.kind} onClick={() => go({ view: 'accounts', account: r.id })}>
             <span class="row-avatar">
-              <NetBadge network={a.network} size={30} />
+              <KindBadge kind={r.kind} size={30} />
             </span>
             <span class="row-main">
               <span class="row-top">
                 <span class="row-title">
-                  <AccountChip account={a} small />
+                  <RowName row={r} />
                 </span>
-                <span class={`status-pill ${a.status}`}>{STATUS[a.status]}</span>
+                <span class={`status-pill ${r.status.status}`}>{r.status.label}</span>
               </span>
               <span class="row-bottom">
                 <span class="row-preview">
-                  {netName(a.network)}
-                  {a.demo ? ' · demo data' : ''}
-                  {a.attention ? ` · ${a.attention.message}` : ''}
-                  {a.self?.notices.length ? ` · ${a.self.notices[0].title}` : ''}
+                  {r.platform}
+                  {r.note ? ` · ${r.note}` : ''}
                 </span>
+                <FeatureIcons row={r} />
               </span>
             </span>
           </button>
@@ -85,15 +94,19 @@ export function AccountsSidebar({ active, onAdd }: { active?: string; onAdd: () 
         <button class="add-btn" onClick={onAdd}>
           <Icon name="plus" size={16} /> Add account
         </button>
-        {db.mail.access.state !== 'off' && (
-          <section class="acc-mail-group" aria-label="Mail">
-            <h2 class="acc-group-head">Mail</h2>
-            <MailAccessNote />
-            <MailAccountRows />
-          </section>
-        )}
       </div>
     </div>
+  );
+}
+
+/** A row's name with its colour: a chat account's chip (with its menu), else the same look. */
+export function RowName({ row }: { row: AccountRow }) {
+  if (row.chat) return <AccountChip account={row.chat} small />;
+  return (
+    <span class="acc-chip small" title={`${row.platform} account “${row.name}”`}>
+      <span class="acc-dot" style={{ background: row.color }} />
+      {row.name}
+    </span>
   );
 }
 
@@ -194,7 +207,12 @@ function LinkCode({ account, at }: { account: P.AccountView; at: P.Attention }) 
 
 const XK = { CONTROL: 0xffe3, V: 0x76, SUPER_L: 0xffeb };
 
-export function LiveView({ account, onClose }: { account: P.AccountView; onClose: () => void }) {
+const liveName = (t: LiveTarget) => (t.network ? netName(t.network) : kindName(t.kind ?? 'email'));
+
+/** What a live view shows: a chat account, or an account dither-accounts runs for mail (its kind, then). */
+export type LiveTarget = { id: string; label: string; network?: P.Network | null; kind?: string };
+
+export function LiveView({ account, onClose }: { account: LiveTarget; onClose: () => void }) {
   const box = useRef<HTMLDivElement>(null);
   const rfbRef = useRef<any>(null);
   const clearTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -295,12 +313,12 @@ export function LiveView({ account, onClose }: { account: P.AccountView; onClose
   };
 
   return (
-    <div class="lv-full" role="dialog" aria-label={`Live view of ${netName(account.network)} ${account.label}`}>
+    <div class="lv-full" role="dialog" aria-label={`Live view of ${liveName(account)} ${account.label}`}>
       <header class="lv-bar">
         <span class="lv-title">
-          <NetBadge network={account.network} size={18} />
+          <KindBadge kind={account.network ?? account.kind ?? 'email'} size={18} />
           <span class="lv-name">
-            {netName(account.network)} {account.label}
+            {liveName(account)} {account.label}
           </span>
           <span class={`lv-state ${state}`}>{state}</span>
         </span>
@@ -781,17 +799,32 @@ function LogView({ accountId }: { accountId: string }) {
 
 export function AccountPane({ accountId, onBack }: { accountId: string; onBack?: () => void }) {
   rev.value;
-  const a = db.accounts.get(accountId);
+  mailRev.value;
+  const row = accountRow(accountId);
   const [showLog, setShowLog] = useState(false);
   const [live, setLive] = useState(false);
   const [busy, setBusy] = useState('');
   const [purge, setPurge] = useState(false);
   const S = selfParts.value;
   useEffect(() => void loadSelf(), []);
-  if (!a) return null;
-  const m = a.managedBy;
+  if (!row)
+    return (
+      <section class="pane account-pane">
+        <div class="account-scroll">
+          <p class="det-note">This account is not in the list. One just added shows up as soon as it starts.</p>
+        </div>
+      </section>
+    );
+  const a = row.chat;
+  const mail = row.mail;
+  const mg = row.managed;
   // Its session can go too when dither-accounts holds it; an imported one's session is this hub's, and stays.
-  const canPurge = !!m && m.origin !== 'import';
+  const canPurge = a ? !!a.managedBy && a.managedBy.origin !== 'import' : !!mg && mg.origin !== 'import';
+  // An account with no chats here is run through dither-accounts, when it lets this hub.
+  const runs = !!a || !!mg?.manages;
+  const liveOk = a ? a.liveView : !!mg?.liveView && !!mg.manages;
+  const disabled = a ? a.status === 'disabled' : mg ? !mg.enabled : false;
+  const page = a?.managedBy?.url ?? mail?.managedUrl ?? db.accountsManager?.url ?? null;
   const act = async (fn: () => Promise<unknown>, label: string) => {
     setBusy(label);
     try {
@@ -802,12 +835,12 @@ export function AccountPane({ accountId, onBack }: { accountId: string; onBack?:
       setBusy('');
     }
   };
-  const seen = {
+  const seen = a && {
     spaces: [...db.spaces.values()].filter((s) => s.accountIds.includes(a.id)).length,
     convs: [...db.conversations.values()].filter((c) => c.vantages.some((v) => v.accountId === a.id)).length,
   };
   return (
-    <section class="pane account-pane">
+    <section class="pane account-pane" data-account-pane={row.id}>
       <header class="conv-head">
         {onBack && (
           <button class="icon-btn back" data-track="pager: back button" onClick={onBack} aria-label="Back">
@@ -815,316 +848,174 @@ export function AccountPane({ accountId, onBack }: { accountId: string; onBack?:
           </button>
         )}
         <span class="conv-head-icon">
-          <NetBadge network={a.network} size={34} />
+          <KindBadge kind={row.kind} size={34} />
         </span>
         <div class="conv-head-text">
           <h2>
-            {netName(a.network)} · {a.label}
+            {row.platform} · {row.name}
           </h2>
           <div class="conv-head-sub">
-            <span class={`status-pill ${a.status}`}>{STATUS[a.status]}</span>
-            <span class="muted-label">{a.capabilities.length} capabilities · added {ago(a.createdAt)}</span>
+            <span class={`status-pill ${row.status.status}`}>{row.status.label}</span>
+            <span class="muted-label">{a ? `added ${ago(a.createdAt)}` : mg?.origin === 'self' ? 'added from here' : mg ? 'added on dither-accounts' : ''}</span>
           </div>
         </div>
       </header>
       <div class="account-scroll">
-        {a.attention && <AttentionBlock a={a} />}
+        <FeatureStrip row={row} />
+        {a?.attention && <AttentionBlock a={a} />}
         {/* What the network wants done, its status, folders and sessions (AccountSelf.tsx). */}
-        <AccountNotices a={a} openLive={() => setLive(true)} />
-        <section class="det-section">
-          <h3>Connection</h3>
-          <dl class="kv">
-            <dt>Network</dt>
-            <dd>{netName(a.network)}</dd>
-            <dt>Label</dt>
-            <dd>{a.label}</dd>
-            <dt>Status</dt>
-            <dd>{STATUS[a.status]}</dd>
-            {a.network === 'calendar' && (
-              <>
-                <dt>Calendar at</dt>
-                <dd>{a.url ?? 'no address'}</dd>
-              </>
-            )}
-            <dt>Runs in</dt>
-            <dd>
-              {m ? (
+        {a && <AccountNotices a={a} openLive={() => setLive(true)} />}
+        {mail && <MailAccountSection a={mail} openLive={liveOk ? () => setLive(true) : undefined} />}
+        {!a && !mail && row.features.some((f) => f.feature === 'notices' && f.state !== 'off') && (
+          <section class="det-section">
+            <h3>Notices</h3>
+            <p class="det-note">
+              What it tells you shows under Notices, ranked with your chats.{' '}
+              <button class="link-btn" onClick={() => go({ view: 'notices' })}>
+                Open Notices
+              </button>
+            </p>
+          </section>
+        )}
+        {a && seen && (
+          <section class="det-section">
+            <h3>Connection</h3>
+            <dl class="kv">
+              <dt>Network</dt>
+              <dd>{netName(a.network)}</dd>
+              <dt>Label</dt>
+              <dd>{a.label}</dd>
+              <dt>Status</dt>
+              <dd>{STATUS[a.status]}</dd>
+              {a.network === 'calendar' && (
                 <>
-                  dither-accounts
-                  {m.url && (
-                    <>
-                      {' · '}
-                      <a href={m.url} target="_blank" rel="noopener">
-                        its page there
-                      </a>
-                    </>
-                  )}
+                  <dt>Calendar at</dt>
+                  <dd>{a.url ?? 'no address'}</dd>
                 </>
-              ) : (
-                'this hub'
               )}
-            </dd>
-            <dt>Carries</dt>
-            <dd>
-              {seen.spaces} {seen.spaces === 1 ? 'space' : 'spaces'} · {seen.convs} {seen.convs === 1 ? 'conversation' : 'conversations'}
-            </dd>
-            <dt>Can</dt>
-            <dd class="caps">
-              {a.capabilities.map((c) => (
-                <span class="cap">{c}</span>
-              ))}
-            </dd>
-          </dl>
-        </section>
-        {a.network === 'matrix' && !a.demo && <EncryptionSection a={a} />}
-        {a.network === 'telegram' && !a.demo && <TelegramSignIns a={a} />}
-        {a.capabilities.includes('stories') && <StoriesSetting a={a} />}
-        {S && <S.AccountSelfSection a={a} openLive={() => setLive(true)} />}
-        <ImportsSection a={a} />
+              <dt>Runs in</dt>
+              <dd>
+                {a.managedBy ? (
+                  <>
+                    dither-accounts
+                    {a.managedBy.url && (
+                      <>
+                        {' · '}
+                        <a href={a.managedBy.url} target="_blank" rel="noopener">
+                          its page there
+                        </a>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  'this hub'
+                )}
+              </dd>
+              <dt>Carries</dt>
+              <dd>
+                {seen.spaces} {seen.spaces === 1 ? 'space' : 'spaces'} · {seen.convs} {seen.convs === 1 ? 'conversation' : 'conversations'}
+              </dd>
+              <dt>Can</dt>
+              <dd class="caps">
+                {a.capabilities.map((c) => (
+                  <span class="cap">{c}</span>
+                ))}
+              </dd>
+            </dl>
+          </section>
+        )}
+        {a?.network === 'matrix' && !a.demo && <EncryptionSection a={a} />}
+        {a?.network === 'telegram' && !a.demo && <TelegramSignIns a={a} />}
+        {a?.capabilities.includes('stories') && <StoriesSetting a={a} />}
+        {a && S && <S.AccountSelfSection a={a} openLive={() => setLive(true)} />}
+        {a && <ImportsSection a={a} />}
         <section class="det-section">
           <h3>Controls</h3>
-          <div class="btn-row">
-            <button class="btn ghost" disabled={!!busy} onClick={() => act(() => api(`/api/accounts/${a.id}/action`, { body: { action: 'restart' } }), 'restart')}>
-              <Icon name="refresh" size={14} /> {busy === 'restart' ? 'Restarting…' : 'Restart adapter'}
-            </button>
-            <button
-              class="btn ghost"
-              disabled={!!busy}
-              onClick={() => act(() => api(`/api/accounts/${a.id}`, { method: 'PATCH', body: { enabled: a.status === 'disabled' } }), 'toggle')}
-            >
-              <Icon name="power" size={14} /> {a.status === 'disabled' ? 'Enable' : 'Disable'}
-            </button>
-            <button class="btn ghost" onClick={() => setShowLog(!showLog)}>
-              <Icon name="panel" size={14} /> {showLog ? 'Hide log' : 'Adapter log'}
-            </button>
-            {a.liveView && (
-              <button class="btn ghost" onClick={() => setLive(true)}>
-                <Icon name="monitor" size={14} /> Live view
+          {runs ? (
+            <div class="btn-row">
+              <button class="btn ghost" disabled={!!busy} onClick={() => act(() => api(`/api/accounts/${row.id}/action`, { body: { action: 'restart' } }), 'restart')}>
+                <Icon name="refresh" size={14} /> {busy === 'restart' ? 'Restarting…' : a ? 'Restart adapter' : 'Restart'}
               </button>
-            )}
-          </div>
-          {live && <LiveView account={a} onClose={() => setLive(false)} />}
-          {showLog && <LogView accountId={a.id} />}
-        </section>
-        <section class="det-section danger">
-          <h3>Remove</h3>
-          <p class="det-note">Disconnects the adapter and drops anything only this account could see. The account on {netName(a.network)} itself is untouched.</p>
-          {canPurge && (
-            <label class="toggle-row">
-              <input type="checkbox" checked={purge} onChange={(e) => setPurge((e.target as HTMLInputElement).checked)} />
-              <span>
-                <b>Also delete its session</b>
-                <small>
-                  Unticked, dither-accounts keeps the session, so the account can come back without signing in again.
-                  {(a.network === 'signal' || a.network === 'whatsapp') && ' Deleting it does not unlink this device on your phone: do that there too.'}
-                </small>
-              </span>
-            </label>
+              <button class="btn ghost" disabled={!!busy} onClick={() => act(() => api(`/api/accounts/${row.id}`, { method: 'PATCH', body: { enabled: disabled } }), 'toggle')}>
+                <Icon name="power" size={14} /> {disabled ? 'Enable' : 'Disable'}
+              </button>
+              <button class="btn ghost" onClick={() => setShowLog(!showLog)}>
+                <Icon name="panel" size={14} /> {showLog ? 'Hide log' : a ? 'Adapter log' : 'Its log'}
+              </button>
+              {liveOk && (
+                <button class="btn ghost" onClick={() => setLive(true)}>
+                  <Icon name="monitor" size={14} /> Live view
+                </button>
+              )}
+            </div>
+          ) : (
+            <p class="det-note">
+              dither-accounts runs it, and has not let dither-chat start, stop or remove it.{' '}
+              {page && (
+                <a href={page} target="_blank" rel="noopener">
+                  Open it there
+                </a>
+              )}
+            </p>
           )}
-          <button
-            class="btn danger"
-            disabled={!!busy}
-            onClick={() => {
-              const doPurge = canPurge && purge;
-              if (confirm(`Remove the ${netName(a.network)} account “${a.label}” from dither-chat${doPurge ? ', and delete its session' : ''}?`))
-                act(async () => {
-                  await api(`/api/accounts/${a.id}${doPurge ? '?purge=1' : ''}`, { method: 'DELETE' });
-                  go({ view: 'accounts' });
-                }, 'delete');
-            }}
-          >
-            <Icon name="trash" size={14} /> Remove account
-          </button>
+          {live && <LiveView account={{ id: row.id, label: row.name, network: row.network, kind: row.kind }} onClose={() => setLive(false)} />}
+          {showLog && <LogView accountId={row.id} />}
         </section>
+        {runs && (
+          <section class="det-section danger">
+            <h3>Remove</h3>
+            <p class="det-note">
+              {a
+                ? `Disconnects the adapter and drops anything only this account could see. The account on ${netName(a.network)} itself is untouched.`
+                : `Stops it and removes it from dither-accounts. Its mail here goes a day later; the account at ${row.platform} itself is untouched.`}
+            </p>
+            {canPurge && (
+              <label class="toggle-row">
+                <input type="checkbox" checked={purge} onChange={(e) => setPurge((e.target as HTMLInputElement).checked)} />
+                <span>
+                  <b>Also delete its session</b>
+                  <small>
+                    Unticked, dither-accounts keeps the session, so the account can come back without signing in again.
+                    {(a?.network === 'signal' || a?.network === 'whatsapp') && ' Deleting it does not unlink this device on your phone: do that there too.'}
+                  </small>
+                </span>
+              </label>
+            )}
+            <button
+              class="btn danger"
+              disabled={!!busy}
+              onClick={() => {
+                const doPurge = canPurge && purge;
+                if (confirm(`Remove the ${row.platform} account “${row.name}” from dither-chat${doPurge ? ', and delete its session' : ''}?`))
+                  act(async () => {
+                    await api(`/api/accounts/${row.id}${doPurge ? '?purge=1' : ''}`, { method: 'DELETE' });
+                    go({ view: 'accounts' });
+                  }, 'delete');
+              }}
+            >
+              <Icon name="trash" size={14} /> Remove account
+            </button>
+          </section>
+        )}
       </div>
     </section>
   );
 }
 
-const NET_HELP: Record<P.Network, { adapter: string; blurb: string; fields: { key: string; label: string; placeholder?: string; secret?: boolean; optional?: boolean }[]; config?: string[] }> = {
-  discord: {
-    adapter: 'discord',
-    blurb: 'Runs the real Discord web client in a sandbox on the hub. After you add it, open the live view and sign in there once; dither-chat drives it from the inside, the way Vencord does.',
-    fields: [],
-  },
-  signal: {
-    adapter: 'signal',
-    blurb: 'Links this hub as another Signal device through signal-cli. After you add it, scan the QR code with your phone. Your primary phone stays in charge.',
-    fields: [],
-  },
-  matrix: {
-    adapter: 'matrix',
-    blurb: 'Talks to your homeserver with the Matrix API directly — no browser, no bridge.',
-    fields: [
-      { key: 'userId', label: 'User ID', placeholder: '@you:matrix.org' },
-      { key: 'password', label: 'Password', secret: true },
-    ],
-    config: ['homeserver'],
-  },
-  whatsapp: {
-    adapter: 'whatsapp',
-    blurb: 'Links this hub as another WhatsApp device, like WhatsApp Web. After you add it, scan the QR code with your phone, or ask for a pairing code. Your phone stays in charge; open WhatsApp on it at least every two weeks or the link lapses.',
-    fields: [],
-  },
-  // These two run only in dither-accounts (docs/accounts.md).
-  telegram: {
-    adapter: 'telegram',
-    blurb: "Signs in to Telegram as you, as another device the way Telegram Desktop does. Leave api_id and api_hash empty to use Telegram Desktop's own app, or give both from an app of your own (my.telegram.org, API development tools), which is what Telegram's terms ask for. After you add it, scan the QR code with Telegram on your phone, or sign in with your number and the code Telegram sends.",
-    fields: [
-      { key: 'apiId', label: 'api_id', placeholder: "empty: Telegram Desktop's", optional: true },
-      { key: 'apiHash', label: 'api_hash', placeholder: "empty: Telegram Desktop's", secret: true, optional: true },
-      { key: 'testDc', label: "Telegram's test servers", placeholder: 'yes, for a test account; else leave empty', optional: true },
-    ],
-  },
-  gmessages: {
-    adapter: 'gmessages',
-    blurb: 'Pairs with Google Messages on your Android phone, like messages.google.com: your texts (SMS and RCS) go through the phone, which must stay on and online. After you add it, scan the QR code under Device pairing in Messages. If your phone has no QR scanner there any more, paste the cookies of messages.google.com (signed in) below instead, and tap the emoji your phone shows.',
-    fields: [{ key: 'cookies', label: 'Google cookies', placeholder: '“Copy as cURL” of messages.google.com, or SID=…; HSID=…', secret: true, optional: true }],
-  },
-  // These three run in dither-accounts, in a sandboxed browser hooked into the real web app.
-  messenger: {
-    adapter: 'messenger',
-    blurb: 'Runs Messenger in a sandboxed browser in dither-accounts. After you add it, open its live view and sign in to Facebook as on your desktop.',
-    fields: [],
-  },
-  instagram: {
-    adapter: 'instagram',
-    blurb: 'Runs Instagram in a sandboxed browser in dither-accounts. After you add it, open its live view and sign in to Instagram as on your desktop.',
-    fields: [],
-  },
-  x: {
-    adapter: 'x',
-    blurb: 'Runs X in a sandboxed browser in dither-accounts, for your direct messages. After you add it, open its live view and sign in to X as on your desktop.',
-    fields: [],
-  },
-  // Runs only in dither-accounts, beside T3 Code on the same machine (its docs/t3.md).
-  t3: {
-    adapter: 't3',
-    blurb: "Shows T3 Code's coding threads as chats: each thread a conversation with its agent, under its project, and what you write goes to the thread as its next turn. It runs in dither-accounts on the machine T3 Code runs on, through T3's own command line, and needs nothing to sign in. Which projects it shows is set on dither-accounts' page (all by default).",
-    fields: [],
-  },
-  // A calendar service beside the hub (docs/calendar.md): the hub links to it itself, never through dither-accounts.
-  calendar: {
-    adapter: 'calendar',
-    blurb:
-      "Links dither-calendar (or another calendar that speaks the same protocol) at this address. While the account is here, the calendar is too: its pane and tab, the plans it finds in your chats, its reminders, and a Calendar chat where you write what to add. Remove the account to turn all of it off.",
-    fields: [],
-  },
-  // Not offered here: mail accounts are added on dither-accounts' page (Mail, below the chat accounts).
-  email: {
-    adapter: 'imap',
-    blurb: 'Mail accounts (IMAP, or Proton Mail) are added on the dither-accounts page; they show up here under Mail.',
-    fields: [],
-  },
-};
+/** Add account (AddAccount.tsx): a chunk of its own, loaded the first time it opens. */
+type AddChunk = typeof import('./AddAccount.tsx');
+const addChunk = signal<AddChunk | null>(null);
+let addLoading: Promise<unknown> | null = null;
+const loadAdd = () => (addLoading ??= import('./AddAccount.tsx').then((m) => (addChunk.value = m), () => (addLoading = null)));
 
 export function AddAccount({ onClose }: { onClose: () => void }) {
-  rev.value;
-  const [network, setNetwork] = useState<P.Network>('discord');
-  const [label, setLabel] = useState('');
-  const [homeserver, setHomeserver] = useState('https://matrix.org');
-  const [calendarUrl, setCalendarUrl] = useState(CALENDAR_URL_DEFAULT);
-  const [fields, setFields] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
-  const help = NET_HELP[network];
-  const submit = async () => {
-    setBusy(true);
-    try {
-      const secret: Record<string, string> = {};
-      for (const f of help.fields) if (fields[f.key]) secret[f.key] = fields[f.key];
-      const account = await api<P.AccountView>('/api/accounts', {
-        body: {
-          network,
-          adapter: help.adapter,
-          label: label.trim() || undefined,
-          config: network === 'matrix' ? { homeserver } : network === 'calendar' ? { url: calendarUrl.trim() } : {},
-          secret,
-        },
-      });
-      toast({ kind: 'info', title: 'Account added', body: `${netName(network)} · ${account.label}. Finish setup from its page.` });
-      onClose();
-      go({ view: 'accounts', account: account.id });
-    } catch (e: any) {
-      toast({ kind: 'error', title: 'Could not add account', body: e.message });
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Modal title="Add an account" onClose={onClose}>
-      <div class="add-form">
-        <label class="field-label">Network</label>
-        <div class="net-pick">
-          {NETWORKS.map((n) => (
-            <button class={`net-opt ${network === n ? 'on' : ''}`} style={{ '--net': NETWORK_META[n].color } as any} onClick={() => setNetwork(n)}>
-              <NetBadge network={n} size={22} />
-              {netName(n)}
-            </button>
-          ))}
-        </div>
-        <p class="add-blurb">{help.blurb}</p>
-        {db.accountsManager && network !== 'calendar' && (
-          <p class="add-note">
-            <Icon name="info" size={14} /> It runs in dither-accounts
-            {db.accountsManager.url ? (
-              <>
-                , so you can also add it on{' '}
-                <a href={db.accountsManager.url} target="_blank" rel="noopener">
-                  its page
-                </a>
-                .
-              </>
-            ) : (
-              '.'
-            )}
-          </p>
-        )}
-        <label class="field-label">
-          Label <span class="muted-label">— how you tell two accounts on {netName(network)} apart</span>
-        </label>
-        <input class="input" placeholder={network === 'discord' ? 'main / alt' : network === 'signal' || network === 'whatsapp' ? 'personal' : 'matrix.org'} value={label} onInput={(e) => setLabel((e.target as HTMLInputElement).value)} />
-        {network === 'matrix' && (
-          <>
-            <label class="field-label">Homeserver</label>
-            <input class="input" value={homeserver} onInput={(e) => setHomeserver((e.target as HTMLInputElement).value)} />
-          </>
-        )}
-        {network === 'calendar' && (
-          <>
-            <label class="field-label">
-              Address <span class="muted-label">— where the calendar runs, as this hub reaches it</span>
-            </label>
-            <input class="input" value={calendarUrl} placeholder={CALENDAR_URL_DEFAULT} onInput={(e) => setCalendarUrl((e.target as HTMLInputElement).value)} />
-          </>
-        )}
-        {help.fields.map((f) => (
-          <>
-            <label class="field-label">
-              {f.label} {f.optional && <span class="muted-label">— optional</span>}
-            </label>
-            <input
-              class="input"
-              type={(f.secret ? 'password' : 'text') as 'text'}
-              placeholder={f.placeholder}
-              value={fields[f.key] ?? ''}
-              onInput={(e) => setFields({ ...fields, [f.key]: (e.target as HTMLInputElement).value })}
-            />
-          </>
-        ))}
-        {help.fields.length === 0 && network !== 'matrix' && (
-          <p class="add-note">
-            <Icon name="info" size={14} /> No credentials to type here. You finish signing in on the account's page after it is added.
-          </p>
-        )}
-        <div class="modal-actions">
-          <button class="btn ghost" onClick={onClose}>
-            Cancel
-          </button>
-          <button class="btn primary" disabled={busy} onClick={submit}>
-            {busy ? 'Adding…' : 'Add account'}
-          </button>
-        </div>
-      </div>
-    </Modal>
-  );
+  const C = addChunk.value;
+  useEffect(() => void loadAdd(), []);
+  if (!C)
+    return (
+      <Modal title="Add an account" onClose={onClose}>
+        <Loading inline label="Loading…" />
+      </Modal>
+    );
+  return <C.AddAccount onClose={onClose} />;
 }

@@ -12,6 +12,8 @@ export interface StubState {
   calls: { account: string; op: string; input: Record<string, unknown> }[];
   /** The manager's administration the hub asked for (a restart after a gap). */
   admin: Record<string, unknown>[];
+  /** What `admin({ do: 'kinds' })` answers; absent: as a manager before it, which refuses it. */
+  kinds?: unknown[];
 }
 
 export const stub = ((globalThis as any).__accountsStub ??= { self: null, registered: [], asked: [], client: null, calls: [], admin: [] }) as StubState;
@@ -28,6 +30,12 @@ export class AccountsClient {
   }
   async admin(action: Record<string, unknown>) {
     stub.admin.push(action);
+    if (action.do === 'kinds') {
+      if (!stub.kinds) throw new Error('no such account');
+      return { kinds: stub.kinds };
+    }
+    if (action.do === 'create') return { id: (action.id as string | undefined) ?? `acc_made${stub.admin.length}` };
+    if (action.do === 'log') return { lines: [`log of ${action.account}`], size: 1 };
     return {};
   }
   liveViewUrl() {
