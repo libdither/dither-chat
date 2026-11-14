@@ -85,8 +85,12 @@ const thread = () =>
       focalWho: f?.querySelector('.post-who b')?.textContent ?? null,
       ancestors: [...document.querySelectorAll('.thread-list > .thread-post')].map((p) => p.querySelector('.post-who b')?.textContent),
       chains: [...document.querySelectorAll('.thread-chain')].map((c) => [...c.querySelectorAll('.thread-post')].map((p) => p.querySelector('.post-who b')?.textContent)),
-      // The comment tree: each reply's depth and who wrote it, in page order ("2:Nora").
-      tree: [...document.querySelectorAll('.ct-node')].map((n) => n.dataset.depth + ':' + (n.querySelector(':scope > .ct-main .post-who b')?.textContent ?? '')),
+      // The comment tree in page order: a reply that branches or starts a run as its depth and who wrote it ("2:Nora"),
+      // a post going on in a run after it as "+" and who ("+Ravi").
+      tree: [...document.querySelectorAll('.ct-node, .ct-step')].map((n) =>
+        n.classList.contains('ct-step') ? '+' + (n.querySelector(':scope > .ct-head .post-who b')?.textContent ?? '') : n.dataset.depth + ':' + (n.querySelector(':scope > .ct-main > .ct-head .post-who b')?.textContent ?? ''),
+      ),
+      nodes: document.querySelectorAll('.ct-node').length,
       flat: [...document.querySelectorAll('.ct-flat')].map((f) => [f.querySelector('.ct-flat-top .post-who b')?.textContent, f.querySelectorAll('.ct-flat-reply').length]),
       style: document.querySelector('.ct-style-btn')?.textContent.trim() ?? null,
       lines: document.querySelectorAll('.thread-post.line').length,
@@ -119,9 +123,17 @@ try {
   check('a card in the feed opens its post in the app', /^#\/inbox\/c\/pst_x_\d+$/.test(t.hash) && /Greedy routing/.test(t.focal ?? ''), t.hash);
   const routing = t.hash.match(/pst_x_(\d+)/)?.[1] ?? '';
   check('the post large, by its author, with Open on X', t.focalWho === 'You' && /^https:\/\/x\.com\/zyan_demo\/status\/\d+$/.test(t.openOnX ?? ''), t);
+  const postReads = async () => ((await action('postLog')).result?.posts ?? []) as { post: string; cursor?: string }[];
+  // Read ahead: reading down the thread, the hidden answers near the screen and the next page load without a press.
+  for (let i = 0, still = 0; i < 80 && still < 3; i++) {
+    const at = await page.eval<any>(`(() => { const s = document.querySelector('.thread-scroll'); s.scrollTop += s.clientHeight * 0.6; return { end: s.scrollTop + s.clientHeight >= s.scrollHeight - 2, busy: !!document.querySelector('.ct-more:disabled, .thread-more:disabled') }; })()`);
+    still = at.end && !at.busy ? still + 1 : 0;
+    await Bun.sleep(250);
+  }
+  t = await thread();
   check(
-    "replies as a tree by default: X's chains put under the posts they answer, the author's own first",
-    t.style === 'Tree' && t.tree.join(' ') === '0:You 1:You 0:Ravi 1:You 2:Ravi 0:Alice Chen 1:You 2:Alice Chen 0:Maya K.',
+    "replies as a tree by default: X's chains under the posts they answer, the author's own first, a reply with one answer going on in its column",
+    t.style === 'Tree' && t.tree.slice(0, 2).join(' ') === '0:You +You' && t.tree.slice(2, 4).join(' ') === '0:Ravi +You' && t.tree.includes('1:Ravi') && t.tree.includes('1:Nora'),
     t.tree,
   );
   // The replies in view for a screenshot (the post's picture fills the first screen).
@@ -129,35 +141,43 @@ try {
     await page.eval(`document.querySelector(${JSON.stringify(sel)})?.scrollIntoView({ block: 'start' })`);
     await Bun.sleep(150);
   };
-  const moreUnder = () => page.eval<string[]>(`[...document.querySelectorAll('.ct-more')].map((b) => b.textContent)`);
-  check('"1 more reply" where X counts more under a reply than it showed', (await moreUnder()).length === 4, await moreUnder());
-  // Under Maya's reply X counts one it never shows: asking brings nothing, and the button goes rather than staying.
-  await page.eval(`[...document.querySelectorAll('.ct-node[data-depth="0"]')].find((n) => n.querySelector(':scope > .ct-main .post-who b')?.textContent === 'Maya K.').querySelector(':scope > .ct-main .ct-more').click()`);
-  await page.until(`(() => { const n = [...document.querySelectorAll('.ct-node[data-depth="0"]')].find((n) => n.querySelector(':scope > .ct-main .post-who b')?.textContent === 'Maya K.'); return !n.querySelector('.ct-more') && !n.querySelector('.ct-node'); })()`, 15000)
-    .then(() => check('a branch X has nothing under goes quiet: no button that never ends', true), () => check('a branch X has nothing under goes quiet: no button that never ends', false));
-  check('Show more replies while X has more', t.more);
+  const asked = await postReads();
+  check(
+    'what X counts under a reply and did not show loads by itself, nearest first: Nora under your answer to Alice, then Lee under your landmarks, to the end',
+    (await page.eval<boolean>(`['Did you try landmarks', 'sheaf question in disguise', 'Your advisor is right', 'Pulled: a node'].every((w) => [...document.querySelectorAll('.ct-text')].some((x) => x.textContent.includes(w)))`)),
+    asked.map((r) => r.post.slice(-4)),
+  );
+  check('…each asked of X once', new Set(asked.map((r) => r.post + (r.cursor ?? ''))).size === asked.length, asked.length);
+  check('a branch X has nothing under goes quiet: no button that never ends', !(await page.eval<boolean>(`!!document.querySelector('.ct-more')`)));
+  check('the next page of replies came before the end was reached: Theo and Quinn, and no button', !t.more && t.tree.includes('0:Theo') && t.tree.includes('0:Quinn'), t.tree);
   check('nothing sideways on a desktop', (await overflow('.thread-scroll')) === 0);
   if (shots) await toReplies(), await page.shot(join(shots, 'tour-02-thread-tree.png'));
 
-  // A branch opens in place: under your answer to Alice, then under your answer to Nora, eight deep.
-  const openUnder = (who: string, text: RegExp) =>
-    page.eval(`[...document.querySelectorAll('.ct-node')].find((n) => n.querySelector(':scope > .ct-main .post-who b')?.textContent === ${JSON.stringify(who)} && ${text}.test(n.querySelector(':scope > .ct-main .ct-text')?.textContent ?? '')).querySelector(':scope > .ct-main > .ct-more-wrap .ct-more').click()`);
-  await openUnder('You', /At 10M/);
-  await page.until(`[...document.querySelectorAll('.ct-node')].some((n) => /landmarks/.test(n.textContent))`, 15000);
-  await openUnder('You', /Four landmarks/);
-  await page.until(`!!document.querySelector('.ct-continue')`, 15000);
-  t = await thread();
-  check(
-    "a reply's other branches open under it, as deep as they go",
-    t.tree.includes('2:Nora') && t.tree.includes('3:You') && t.tree.includes('4:Lee') && t.tree.includes('5:Sam'),
-    t.tree,
-  );
-  const cont = await page.eval<string | null>(`document.querySelector('.ct-continue')?.textContent ?? null`);
-  check('past six deep a branch says Continue this thread', !!cont && /Continue this thread/.test(cont), cont);
+  // A back-and-forth, Theo and you ten turns, is one run down Theo's column, its middle folded.
+  const theoRun = () =>
+    page.eval<any>(`(() => {
+      const n = [...document.querySelectorAll('.ct-node[data-depth="0"]')].find((x) => x.querySelector(':scope > .ct-main > .ct-head .post-who b')?.textContent === 'Theo');
+      const steps = [...n.querySelectorAll(':scope > .ct-main > .ct-run > .ct-step')];
+      return { steps: steps.length, gap: n.querySelector('.ct-run-gap')?.textContent ?? null, kids: n.querySelectorAll('.ct-node').length, xs: [...new Set(steps.map((s) => Math.round(s.getBoundingClientRect().left)))], pair: n.querySelector('.ct-run')?.getAttribute('aria-label') ?? null };
+    })()`);
+  let run = await theoRun();
+  check('a back-and-forth is one run: no step in per turn, its middle folded "5 more between Theo and You"', run.steps === 4 && run.gap === '5 more between Theo and You' && run.kids === 0 && run.xs.length === 1, run);
   if (shots) {
-    await page.eval(`[...document.querySelectorAll('.ct-node')].find((n) => n.dataset.depth === '1' && /At 10M/.test(n.textContent))?.scrollIntoView({ block: 'start' })`);
+    await page.eval(`[...document.querySelectorAll('.ct-node[data-depth="0"]')].find((x) => x.querySelector(':scope > .ct-main > .ct-head .post-who b')?.textContent === 'Theo').scrollIntoView({ block: 'start' })`);
     await Bun.sleep(150);
-    await page.shot(join(shots, 'tour-03-thread-deep.png'));
+    await page.shot(join(shots, 'tour-03-thread-run.png'));
+  }
+  await page.eval(`document.querySelector('.ct-run-gap').click()`);
+  await page.until(`!document.querySelector('.ct-run-gap')`, 3000);
+  run = await theoRun();
+  check('…and opening it shows every turn, in the same column', run.steps === 9 && run.xs.length === 1 && run.pair === 'Back and forth between Theo and You', run);
+  if (shots) await Bun.sleep(100), await page.shot(join(shots, 'tour-03b-thread-run-open.png'));
+  // Branches indent only where a reply has two answers: the deepest here is two in.
+  check('only a reply with two answers or more indents: two levels for this whole thread', Math.max(...t.tree.filter((x: string) => /^\d/.test(x)).map((x: string) => Number(x.split(':')[0]))) === 2, t.tree);
+  if (shots) {
+    await page.eval(`[...document.querySelectorAll('.ct-step')].find((n) => /At 10M/.test(n.textContent))?.scrollIntoView({ block: 'start' })`);
+    await Bun.sleep(150);
+    await page.shot(join(shots, 'tour-03c-thread-deep.png'));
   }
 
   // Folding a branch by its line, as on Reddit.
@@ -180,33 +200,49 @@ try {
   await pick('Compact');
   await page.until(`!!document.querySelector('.ct.compact')`, 5000);
   const compact = await page.eval<any>(`({ avatars: document.querySelectorAll('.ct.compact .ct-node .avatar').length, toggles: document.querySelectorAll('.ct.compact .ct-toggle').length, nodes: document.querySelectorAll('.ct.compact .ct-node').length })`);
-  check('Compact: the tree without pictures, [–] to fold on every reply', compact.avatars === 0 && compact.toggles === compact.nodes && compact.nodes === t.tree.length, { ...compact, tree: t.tree.length });
+  check('Compact: the tree without pictures, [–] to fold on every reply', compact.avatars === 0 && compact.toggles === compact.nodes && compact.nodes === t.nodes, { ...compact, nodes: t.nodes });
   if (shots) await toReplies(), await page.shot(join(shots, 'tour-05-style-compact.png'));
   await pick('Flat');
   await page.until(`!!document.querySelector('.ct-flat')`, 5000);
   t = await thread();
-  check('Flat: replies to the post, everything under each one level in', t.flat.map((f: any[]) => f[0]).join(',') === 'You,Ravi,Alice Chen,Maya K.' && t.flat.find((f: any[]) => f[0] === 'Alice Chen')[1] === 8, t.flat);
+  check('Flat: replies to the post, everything under each one level in', t.flat.map((f: any[]) => f[0]).join(',') === 'You,Ravi,Alice Chen,Maya K.,Theo,Quinn' && t.flat.find((f: any[]) => f[0] === 'Alice Chen')[1] === 9, t.flat);
   if (shots) await toReplies(), await page.shot(join(shots, 'tour-06-style-flat.png'));
   await pick('Chains');
   await page.until(`document.querySelectorAll('.thread-chain').length > 0`, 5000);
   t = await thread();
-  check("Chains: X's own way, each branch a chain joined by a line", t.chains[0].every((w: string) => w === 'You') && t.chains[1].join('>') === 'Ravi>You>Ravi' && t.lines >= 3, t.chains);
+  check("Chains: X's own way, each branch a chain joined by a line", t.chains[0].every((w: string) => w === 'You') && t.chains[1].join('>').startsWith('Ravi>You>Ravi') && t.lines >= 3, t.chains);
   if (shots) await toReplies(), await page.shot(join(shots, 'tour-07-style-chains.png'));
   await pick('Tree');
   await page.until(`!!document.querySelector('.ct.tree')`, 5000);
   check('the style is kept on the device', (await page.eval(`localStorage.getItem('dither.thread.style')`)) === 'tree');
 
-  await page.eval(`document.querySelector('.thread-more').click()`);
-  await page.until(`!document.querySelector('.thread-more') && [...document.querySelectorAll('.ct-node[data-depth="0"]')].some((n) => /Quinn/.test(n.textContent))`, 15000);
-  t = await thread();
-  check('more replies come on asking, and the button goes when there are no more', t.tree.filter((x: string) => x.startsWith('0:')).slice(-2).join(',') === '0:Theo,0:Quinn', t.tree);
-
-  // Continue this thread: the branch as a thread of its own, what it answers above it.
-  await page.eval(`document.querySelector('.ct-continue').click()`);
+  // A reply as a thread of its own (its time), what it answers above it; and Back to where you were.
+  await page.eval(`[...document.querySelectorAll('.ct-step, .ct-node')].find((n) => /sheaf question in disguise/.test(n.querySelector('.ct-text')?.textContent ?? '') && n.querySelector('.post-who b')?.textContent === 'Sam').querySelector('.ct-time').scrollIntoView({ block: 'center' })`);
+  await Bun.sleep(150);
+  const leftAt = await page.eval<number>(`document.querySelector('.thread-scroll').scrollTop`);
+  await page.eval(`[...document.querySelectorAll('.ct-step, .ct-node')].find((n) => /sheaf question in disguise/.test(n.querySelector('.ct-text')?.textContent ?? '') && n.querySelector('.post-who b')?.textContent === 'Sam').querySelector('.ct-time').click()`);
   await page.until(`!!document.querySelector('.thread-focal') && /sheaf question/.test(document.querySelector('.thread-focal-text')?.textContent ?? '')`, 15000);
   t = await thread();
-  check('Continue this thread opens the branch with everything it answers above it', t.focalWho === 'Sam' && t.ancestors.join('>') === 'You>Alice Chen>You>Nora>You>Lee', t.ancestors);
-  if (shots) await page.shot(join(shots, 'tour-08-continue.png'));
+  check('a reply opens as its own thread, with everything it answers above it', t.focalWho === 'Sam' && t.ancestors.join('>') === 'You>Alice Chen>You>Nora>You>Lee', t.ancestors);
+  const crumb = await page.eval<string | null>(`document.querySelector('.thread-crumb')?.textContent.trim() ?? null`);
+  check('…and says where Back goes: the thread it came from', crumb === 'Back to your post', crumb);
+  if (shots) await page.shot(join(shots, 'tour-08-subthread.png'));
+  await page.eval(`document.querySelector('.thread-crumb').click()`);
+  await page.until(`/Greedy routing/.test(document.querySelector('.thread-focal-text')?.textContent ?? '') && document.querySelectorAll('.ct-node').length > 5`, 15000);
+  const back = await page.eval<any>(`({ top: document.querySelector('.thread-scroll').scrollTop, lit: [...document.querySelectorAll('.ct-lit')].map((n) => n.querySelector('.post-who b')?.textContent), crumb: !!document.querySelector('.thread-crumb') })`);
+  check('Back returns to the thread as it was left: where it was scrolled, what was opened, the reply you went into lit', Math.abs(back.top - leftAt) < 4 && back.lit.join() === 'Sam' && !back.crumb, { ...back, leftAt });
+  if (shots) await page.shot(join(shots, 'tour-08b-back.png'));
+  // Two deep and back twice: Sam's, then Lee's above it, then back to Sam's, then to yours.
+  await page.eval(`[...document.querySelectorAll('.ct-step, .ct-node')].find((n) => /sheaf question in disguise/.test(n.querySelector('.ct-text')?.textContent ?? '') && n.querySelector('.post-who b')?.textContent === 'Sam').querySelector('.ct-time').click()`);
+  await page.until(`/sheaf question/.test(document.querySelector('.thread-focal-text')?.textContent ?? '')`, 15000);
+  await page.eval(`[...document.querySelectorAll('.thread-list > .thread-post')].at(-1).click()`);
+  await page.until(`document.querySelector('.thread-focal .post-who b')?.textContent === 'Lee'`, 15000);
+  const c2 = await page.eval<string | null>(`document.querySelector('.thread-crumb')?.textContent.trim() ?? null`);
+  check("a post above it opens too, and Back names the one before: Sam's", c2 === "Back to Sam's post", c2);
+  await page.eval(`document.querySelector('.thread-pane .conv-head .back').click()`);
+  await page.until(`document.querySelector('.thread-focal .post-who b')?.textContent === 'Sam'`, 15000);
+  const c3 = await page.eval<string | null>(`document.querySelector('.thread-crumb')?.textContent.trim() ?? null`);
+  check("the header's Back goes the same way, one at a time", c3 === 'Back to your post', c3);
 
   // ------------------------------------------------------------------ a reply opens with what it answers
   await load(`#/inbox/c/${feed.id}`);
@@ -214,7 +250,7 @@ try {
   await page.eval(`document.querySelector('.feed-talk .post-text').click()`);
   await page.until(`!!document.querySelector('.thread-focal') && /churn/.test(document.querySelector('.thread-focal-text')?.textContent ?? '') && document.querySelectorAll('.thread-list > .thread-post').length > 0`, 15000);
   t = await thread();
-  check("a reply in the feed opens its own thread with what it answers above it", t.focalWho === 'Ravi' && t.ancestors.join('>') === 'You' && t.tree.slice(0, 3).join(' ') === '0:You 1:Ravi 2:You', t);
+  check("a reply in the feed opens its own thread with what it answers above it", t.focalWho === 'Ravi' && t.ancestors.join('>') === 'You' && t.tree.slice(0, 4).join(' ') === '0:You 1:Ravi +You 1:Nora', t);
   if (shots) await page.shot(join(shots, 'tour-09-reply-thread.png'));
 
   // ------------------------------------------------------------------ logged as messages
@@ -254,7 +290,7 @@ try {
   const reads = (await action('postLog')).result?.posts ?? null;
   const sends = (await action('sendLog')).result?.sent ?? null;
   const marks = (await action('readLog')).result?.reads ?? null;
-  check('X was asked for each thread, the second page with its cursor', Array.isArray(reads) && reads.length >= 4 && reads.some((r: any) => r.cursor === 'more-1'), reads);
+  check('X was asked for each thread, the second page with its cursor', Array.isArray(reads) && reads.length >= 4 && reads.some((r: any) => r.cursor === 'more-1'), reads?.length);
   check('…and sent nothing: no message, no read mark', Array.isArray(sends) && !sends.length && Array.isArray(marks) && !marks.length, { sends, marks });
 
   // ------------------------------------------------------------------ light, and a phone
@@ -274,12 +310,12 @@ try {
   check('nothing sideways on a phone', (await overflow('.thread-scroll')) === 0, await overflow('.thread-scroll'));
   if (shots) await page.shot(join(shots, 'x-thread-phone.png'));
   await load(`#/inbox/c/pst_x_${routing}`);
-  await page.until(`document.querySelectorAll('.ct-node').length > 10`, 20000);
+  await page.until(`document.querySelectorAll('.ct-node, .ct-step').length > 10`, 20000);
   t = await thread();
-  check('on a phone, the branches opened before come back with the thread, from what was logged', t.tree.includes('5:Sam'), t.tree);
+  check('on a phone, the branches read before come back with the thread', t.tree.includes('+Sam') || t.tree.some((x: string) => x.endsWith(':Sam')), t.tree);
   check('…and nothing sideways', (await overflow('.thread-scroll')) === 0, await overflow('.thread-scroll'));
   if (shots) await page.shot(join(shots, 'x-tree-phone.png'));
-  await page.eval(`[...document.querySelectorAll('.ct-node')].find((n) => n.dataset.depth === '1' && /At 10M/.test(n.textContent)).scrollIntoView({ block: 'start' })`);
+  await page.eval(`[...document.querySelectorAll('.ct-step')].find((n) => /At 10M/.test(n.textContent)).scrollIntoView({ block: 'start' })`);
   await Bun.sleep(200);
   if (shots) await page.shot(join(shots, 'x-tree-phone-deep.png'));
   await load(`#/inbox/c/${feed.id}`);
