@@ -101,3 +101,104 @@ export function releasesInUse(releasesDir: string, procs: ProcView[]): Set<strin
   }
   return used;
 }
+
+/**
+ * dither-accounts' restarts for changed code after a deploy, as its /api/health says (its docs/supervisor.md): adopted
+ * extractors whose code changed restart one at a time, minutes after the manager is up. Absent (a manager before them):
+ * nothing to wait for.
+ */
+export interface CodeRestarts {
+  queued: number;
+  /** Restarts under way now (one per kind at most). */
+  active: number;
+  restarted: number;
+  online: number;
+  crashed: number;
+}
+
+/** Whether those restarts are done. */
+export function codeRestartsSettled(c: CodeRestarts | null | undefined): boolean {
+  return !c || (c.queued === 0 && !Number(c.active));
+}
+/** Restarted extractors that crashed on the new code: what rolls a deploy back (a slow restart does not). */
+export function codeRestartsProblem(c: CodeRestarts | null | undefined): string | null {
+  if (!c || !c.crashed) return null;
+  return `${c.crashed} of the ${c.restarted} extractor${c.restarted === 1 ? '' : 's'} restarted for changed code crashed since`;
+}
+/**
+ * Once every restart for changed code is done (none queued or under way), each restarted extractor must be online: one
+ * that is not, after a grace, is new code that does not come up (the manager stops restarting its kind then).
+ */
+export function codeRestartsOffline(c: CodeRestarts | null | undefined): string | null {
+  if (!c || !codeRestartsSettled(c) || c.online >= c.restarted) return null;
+  const n = c.restarted - c.online;
+  return `${n} of the ${c.restarted} extractor${c.restarted === 1 ? '' : 's'} restarted for changed code did not come online`;
+}
+
+/**
+ * A release folder without the `.deploy-built` marker: a folder something runs from (current, previous, an extractor
+ * that outlived the manager), or one with its dependencies installed, is a working build from before the marker and is
+ * marked; only one nothing uses and without them is a half-built leftover, made again.
+ */
+export function unmarkedRelease(inUse: boolean, installed: boolean): 'mark' | 'rebuild' {
+  return inUse || installed ? 'mark' : 'rebuild';
+}
+
+/** Extractors whose restart for changed code has not finished: waiting, under way, or not back online yet. */
+export function codeRestartsUnfinished(c: CodeRestarts | null | undefined): number {
+  if (!c) return 0;
+  return c.queued + Number(c.active) + Math.max(0, c.restarted - c.online);
+}
+
+/**
+ * A run's time (docs/deploy.md "Time"): the unit gives it TimeoutStartSec (40 min) and kills it after. Everything a run
+ * does fits in RUN_BUDGET_MS, with ROLLBACK_MS kept for a rollback and its check: a forward check must be done by
+ * `check`, a rollback by `end`. An app is not restarted when its check would have less than MIN_CHECK_MS.
+ */
+export const RUN_BUDGET_MS = 32 * 60_000;
+export const ROLLBACK_MS = 12 * 60_000;
+export const MIN_CHECK_MS = 6 * 60_000;
+export function deadlines(runStart: number, budgetMs = RUN_BUDGET_MS, rollbackMs = ROLLBACK_MS): { check: number; end: number } {
+  const end = runStart + budgetMs;
+  return { check: end - rollbackMs, end };
+}
+export function timeToShip(now: number, d: { check: number }, min = MIN_CHECK_MS): boolean {
+  return d.check - now >= min;
+}
+
+/**
+ * A release being checked, saved before its restart: a run killed before the check ended leaves it for the next.
+ * `phase`: restarting (saved before `current` moves), checking (it runs), rolling back.
+ */
+export interface Pending {
+  rel: string;
+  previous: string;
+  target: string;
+  at: string;
+  phase?: 'restarting' | 'checking' | 'rolling-back';
+}
+/**
+ * What the next run does with a check that did not finish. A release that never ran (killed before `current` moved)
+ * is just forgotten: its commit is not failed. Otherwise it counts as failed, and the release before comes back
+ * (`relink` unless a rollback had already moved it), restarted and checked as a rollback.
+ */
+export function interrupted(p: Pending | undefined, current: string | null): { drop: true } | { drop: false; relink: boolean; why: string } | null {
+  if (!p) return null;
+  if ((p.phase ?? 'checking') === 'restarting' && current !== p.rel) return { drop: true };
+  return { drop: false, relink: current !== p.previous, why: `its check did not finish (the deployer stopped at ${p.at.slice(11, 16)} UTC)` };
+}
+
+/**
+ * The release a killed chat check left is the one this deployer runs from (its unit runs chat/current's): it must not
+ * judge itself. Then the run is handed to the release before's deployer, when that one can resolve it.
+ */
+export function reexecFrom(pendingChat: Pending | undefined, ownRelease: string | null, previousCanResolve: boolean, already: boolean): string | null {
+  if (already || !pendingChat || !ownRelease || pendingChat.rel !== ownRelease || pendingChat.previous === ownRelease) return null;
+  return previousCanResolve ? pendingChat.previous : null;
+}
+
+/** Whether a deployer lock ({pid, start}) belongs to a run still going (`alive` checks pid and start time). */
+export function lockHeld(lock: { pid?: unknown; start?: unknown } | null, self: number, alive: (pid: number, start: string | undefined) => boolean): number | null {
+  if (!lock || typeof lock.pid !== 'number' || lock.pid === self) return null;
+  return alive(lock.pid, typeof lock.start === 'string' ? lock.start : undefined) ? lock.pid : null;
+}

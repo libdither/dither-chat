@@ -31,6 +31,7 @@ import type { MailSink } from './mail/backend.ts';
 import { ASK_LEVEL, ASK_REASON, type ManagerLink, publishManager } from './accounts-manager.ts';
 import type { NoticeSink } from './notices/index.ts';
 import { jobFailed } from './errors.ts';
+import { Stagger } from './stagger.ts';
 
 /** A batch's event kinds with how many of each, for its span: `message×3,typing`. */
 function kindsOf(events: { t: string }[]): string {
@@ -200,6 +201,23 @@ interface Saved {
 
 export class RoutedSupervisor extends Supervisor implements ManagerLink {
   private client: Client | null = null;
+  /**
+   * Restarts after a gap, one at a time per kind (stagger.ts): a manager that went without handing over gaps every
+   * account. One removed meanwhile is dropped without a word.
+   */
+  private gapRestarts = new Stagger((account) => {
+    if (!this.remote.has(account) || !this.client) return Promise.resolve();
+    return this.client.admin({ do: 'restart', account }).catch((e) => {
+      if (!this.remote.has(account)) return;
+      console.error(`[${account}] restart after a gap failed:`, e);
+      jobFailed('dither-accounts: restart after a gap', e, { account });
+    });
+  });
+
+  /** Restarts after a gap waiting or under way (the hub's /api/health; the deployer waits for them). */
+  gapRestartsWaiting(): number {
+    return this.gapRestarts.size;
+  }
   /** The chat accounts the manager lists for this hub (the ones it runs for the chat side). */
   private remote = new Map<string, AccountView>();
   /** Every account the manager lists for this hub, chat or not: the page's one list (accounts-manager.ts). */
@@ -374,8 +392,8 @@ export class RoutedSupervisor extends Supervisor implements ManagerLink {
         const notices = this.notices?.gap(account) ?? false;
         if (this.mail?.gap(account)) return;
         if (notices && !this.remote.has(account)) return;
-        console.warn(`[${account}] the manager dropped ${dropped} events while the hub was away; restarting the adapter for a fresh snapshot`);
-        this.client?.admin({ do: 'restart', account }).catch((e) => (console.error(`[${account}] restart after a gap failed:`, e), jobFailed('dither-accounts: restart after a gap', e, { account })));
+        console.warn(`[${account}] the manager dropped ${dropped} events while the hub was away; restarting the adapter for a fresh snapshot (one of a kind at a time: ${this.gapRestarts.size} waiting)`);
+        this.gapRestarts.add(account, this.remote.get(account)?.kind ?? '');
       },
       onConnection: (up) => {
         this.mail?.connection(up);
@@ -627,6 +645,7 @@ export class RoutedSupervisor extends Supervisor implements ManagerLink {
   /** Local adapters stop with the hub; the manager's keep running, and their events wait for the hub to return. */
   override async stopAll() {
     await super.stopAll();
+    this.gapRestarts.stop();
     if (this.mailTimer) clearInterval(this.mailTimer);
     this.mailTimer = null;
     this.client?.close();

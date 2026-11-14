@@ -22,10 +22,10 @@
  *   bun packages/deploy/src/deployer.ts ship <app> <sha>   # deploy that branch commit now (checks and rollback as ever)
  *   touch <root>/<app>/hold                               # pause an app's deploys (write why in it)
  */
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { type Candidate, deployedNotice, failedNotice, pick, type ProcView, releasesInUse, short } from './plan.ts';
+import { type Candidate, type CodeRestarts, codeRestartsOffline, codeRestartsProblem, codeRestartsSettled, codeRestartsUnfinished, deadlines, deployedNotice, failedNotice, interrupted, lockHeld, type Pending, pick, type ProcView, reexecFrom, releasesInUse, ROLLBACK_MS, short, timeToShip, unmarkedRelease } from './plan.ts';
 
 const HOME = homedir();
 const ROOT = process.env.DITHER_DEPLOY_ROOT ?? join(HOME, '.local/share/dither-deploy');
@@ -33,6 +33,8 @@ const HUB = process.env.DITHER_DEPLOY_HUB ?? 'http://127.0.0.1:8460';
 const MANAGER = process.env.DITHER_DEPLOY_MANAGER ?? 'http://127.0.0.1:8486';
 const HUB_DATA = process.env.DITHER_DEPLOY_HUB_DATA ?? join(HOME, '.local/share/dither-chat');
 const MANAGER_DATA = process.env.DITHER_DEPLOY_MANAGER_DATA ?? join(HOME, '.local/share/dither-accounts');
+/** Written in a release folder once its build is done: one without it is half built. */
+const BUILT = '.deploy-built';
 /** Releases kept besides the current and the one before it. */
 const KEEP = 3;
 /** How far back on the branch a commit to ship is looked for. */
@@ -52,9 +54,18 @@ interface App {
   overlay?: { remote: string; url: string; branch: string };
   unit: string;
   build: string[][];
-  /** Wait for the service to be up after a restart; throws why not. */
-  up: (since: Since) => Promise<void>;
+  /**
+   * Wait for the service to be up after a restart; throws why not. Every wait in it ends by the check's deadline
+   * (`until`). `rollback`: the release before is back, so only that it runs is checked, not dither-accounts' restarts
+   * for changed code.
+   */
+  up: (since: Since, o: { rollback: boolean }) => Promise<string | void>;
 }
+
+/** This run's time (plan.ts deadlines): set when it starts. */
+const RUN = deadlines(Date.now());
+/** When the check under way must be done by; every `until` in it stops there. */
+let checkBy = RUN.check;
 
 /** What the checks compare with: taken just before a restart. */
 interface Since {
@@ -75,11 +86,27 @@ const APPS: App[] = [
     ...(ACCOUNTS_PRIVATE ? { overlay: { remote: 'private', url: ACCOUNTS_PRIVATE, branch: 'live' } } : {}),
     unit: 'dither-accounts.service',
     build: [[bun, 'install', '--frozen-lockfile'], [bun, 'run', 'web:build']],
-    up: async (s) => {
+    up: async (s, o) => {
       await until(() => health(`${MANAGER}/api/health`), 120_000, 'the manager to answer /api/health');
+      // Extractors whose code changed restart one at a time per kind after the manager is up (its docs/supervisor.md).
+      // Waited for while this check has time (leaving room for what follows); still restarting then is no failure: it
+      // is said in the notice, and later crashes reach you through the manager's own notices.
+      const settled = !o.rollback && (await untilOr(async () => codeRestartsSettled(await codeRestarts()), 1_800_000, checkBy - 7 * 60_000));
       await steady('dither-accounts.service', s);
-      // The hub's accounts run under the manager: they come back online.
-      await until(async () => (await onlineAccounts()) >= s.online, 300_000, `the hub's accounts to be online again (${s.online} before)`);
+      // A restarted extractor that crashed on the new code rolls the deploy back.
+      if (!o.rollback) await codeRestartsHeld();
+      // All done in time: each restarted one must be online, a minute's grace on (the manager stopped restarting a kind
+      // whose restarted extractor did not come up: new code that does not run).
+      if (settled) {
+        let offline: string | null = null;
+        const up = await untilOr(async () => !(offline = codeRestartsOffline(await codeRestarts())), 60_000);
+        if (!up && offline) throw new Error(offline);
+      }
+      // The hub's accounts run under the manager: they come back online, but for those still restarting.
+      const unfinished = o.rollback ? 0 : codeRestartsUnfinished(await codeRestarts().catch(() => null));
+      await until(async () => (await onlineAccounts()) >= s.online - unfinished, 300_000, `the hub's accounts to be online again (${s.online} before${unfinished ? `, ${unfinished} still restarting` : ''})`);
+      const still = o.rollback ? 0 : codeRestartsUnfinished(await codeRestarts().catch(() => null));
+      if (still) return `${still} extractor${still === 1 ? ' was' : 's were'} still restarting for changed code when the check ended.`;
     },
   },
   {
@@ -99,7 +126,11 @@ const APPS: App[] = [
       // could not load the manager's client from a release folder, and nothing else showed it). A fresh hub's notices
       // say "unreachable" until it has connected and read its grants.
       await until(hubLinked, 120_000, 'the hub to connect to dither-accounts (its notices access to leave "unreachable")');
-      await until(async () => (await onlineAccounts()) >= s.online, 180_000, `its accounts to be online again (${s.online} before)`);
+      // Accounts it restarts after gaps (one per kind at a time) come back first; those still waiting are not counted.
+      await untilOr(async () => (await hubGapRestarts()) === 0, 180_000);
+      const gaps = await hubGapRestarts().catch(() => 0);
+      await until(async () => (await onlineAccounts()) >= s.online - gaps, 180_000, `its accounts to be online again (${s.online} before${gaps ? `, ${gaps} still restarting after gaps` : ''})`);
+      if (gaps) return `${gaps} account${gaps === 1 ? ' was' : 's were'} still being restarted after gaps when the check ended.`;
     },
   },
 ];
@@ -132,6 +163,8 @@ const tryRun = (cmd: string[], cwd?: string) => {
 const git = (dir: string, ...args: string[]) => run(['git', '-C', dir, ...args]);
 
 async function until(f: () => boolean | Promise<boolean>, ms: number, what: string) {
+  // Never past the check's deadline: the unit kills a run that takes too long (plan.ts deadlines).
+  ms = Math.max(1000, Math.min(ms, checkBy - Date.now()));
   const end = Date.now() + ms;
   while (Date.now() < end) {
     try {
@@ -142,13 +175,64 @@ async function until(f: () => boolean | Promise<boolean>, ms: number, what: stri
   throw new Error(`timed out after ${Math.round(ms / 1000)} s waiting for ${what}`);
 }
 
+/** Like `until`, but running out of time (by `by` at the latest) is an answer, not a failure: false. */
+async function untilOr(f: () => boolean | Promise<boolean>, ms: number, by = checkBy): Promise<boolean> {
+  const end = Math.min(Date.now() + ms, by, checkBy);
+  for (;;) {
+    try {
+      if (await f()) return true;
+    } catch {}
+    if (Date.now() + 2000 > end) return false;
+    await Bun.sleep(2000);
+  }
+}
+
+/** Restarts the hub still has to do after gaps (its /api/health; 0 from a hub before them). */
+async function hubGapRestarts(): Promise<number> {
+  const r = await fetch(`${HUB}/api/health`, { signal: AbortSignal.timeout(3000) });
+  if (!r.ok) throw new Error(`health ${r.status}`);
+  return Number(((await r.json()) as { gapRestarts?: number }).gapRestarts ?? 0) || 0;
+}
+
+/** At most `ms`, and never past the check's deadline. */
+const capped = (ms: number) => Math.max(1000, Math.min(ms, checkBy - Date.now()));
+
 async function health(url: string) {
   const r = await fetch(url, { signal: AbortSignal.timeout(3000) });
   return r.ok;
 }
 
+/**
+ * No extractor restarted for changed code crashed since: asked again for up to 90 s (a moment of not answering is no
+ * code problem; neither is one still restarting), then the last thing heard is why not.
+ */
+async function codeRestartsHeld() {
+  let last = 'dither-accounts did not answer /api/health';
+  try {
+    await until(async () => {
+      try {
+        const problem = codeRestartsProblem(await codeRestarts());
+        if (!problem) return true;
+        last = problem;
+      } catch (e) {
+        last = `dither-accounts did not answer /api/health (${(e as Error).message})`;
+      }
+      return false;
+    }, 90_000, 'the restarted extractors to hold');
+  } catch {
+    throw new Error(last);
+  }
+}
+
+/** dither-accounts' restarts for changed code (counts only), or null from a manager that has none. */
+async function codeRestarts(): Promise<CodeRestarts | null> {
+  const r = await fetch(`${MANAGER}/api/health`, { signal: AbortSignal.timeout(3000) });
+  if (!r.ok) throw new Error(`health ${r.status}`);
+  return ((await r.json()) as { codeRestarts?: CodeRestarts }).codeRestarts ?? null;
+}
+
 async function onlineAccounts(): Promise<number> {
-  const r = await fetch(`${HUB}/api/bootstrap`, { signal: AbortSignal.timeout(60_000) });
+  const r = await fetch(`${HUB}/api/bootstrap`, { signal: AbortSignal.timeout(capped(60_000)) });
   if (!r.ok) throw new Error(`bootstrap ${r.status}`);
   const b = (await r.json()) as { accounts: { status?: string }[] };
   return b.accounts.filter((a) => a.status === 'online').length;
@@ -175,7 +259,7 @@ const active = (unit: string) => tryRun(['systemctl', '--user', 'is-active', uni
 
 /** Up, and not crashing: still active and not restarted by systemd since, 20 s on. */
 async function steady(unit: string, s: Since) {
-  await Bun.sleep(20_000);
+  await Bun.sleep(Math.max(0, Math.min(20_000, checkBy - Date.now())));
   if (!active(unit)) throw new Error(`${unit} is not active`);
   if (restarts(unit) > s.restarts) throw new Error(`${unit} crashed and restarted ${restarts(unit) - s.restarts} times`);
 }
@@ -233,14 +317,16 @@ interface State {
   known: Record<string, { check: 'success' | 'failure'; held: number }>;
   /** The hold already told about, by app (one notice per held pull request). */
   toldHeld: Record<string, number>;
+  /** A release whose check is under way, by app (plan.ts Pending): one left here by a killed run is rolled back. */
+  pending: Record<string, Pending>;
 }
 const stateFile = join(ROOT, 'state.json');
 function loadState(): State {
   try {
     const s = JSON.parse(readFileSync(stateFile, 'utf8')) as Partial<State>;
-    return { failed: s.failed ?? {}, branchOf: s.branchOf ?? {}, known: s.known ?? {}, toldHeld: s.toldHeld ?? {} };
+    return { failed: s.failed ?? {}, branchOf: s.branchOf ?? {}, known: s.known ?? {}, toldHeld: s.toldHeld ?? {}, pending: s.pending ?? {} };
   } catch {
-    return { failed: {}, branchOf: {}, known: {}, toldHeld: {} };
+    return { failed: {}, branchOf: {}, known: {}, toldHeld: {}, pending: {} };
   }
 }
 function saveState(s: State) {
@@ -346,10 +432,22 @@ function makeRelease(a: App, branchSha: string, running: string): string {
     sha = git(tmp, 'rev-parse', 'HEAD');
   } else git(repoOf(a), 'worktree', 'add', '-q', '--detach', tmp, branchSha);
   const dest = releaseOf(a, sha);
-  if (existsSync(dest)) {
+  if (existsSync(join(dest, BUILT))) {
     git(repoOf(a), 'worktree', 'remove', '--force', tmp);
     return sha;
   }
+  if (existsSync(dest)) {
+    // No marker: a release from before it (what runs now, the one before, one an outlived extractor runs from, or with
+    // its dependencies installed) is marked, never removed; a half-built one nothing uses is made again.
+    const inUse = [linked(a, 'current'), linked(a, 'previous')].includes(sha) || releasesInUse(join(dirOf(a), 'releases'), processes()).has(sha);
+    if (unmarkedRelease(inUse, existsSync(join(dest, 'node_modules'))) === 'mark') {
+      writeFileSync(join(dest, BUILT), `${new Date().toISOString()} (marked: built before the marker)\n`);
+      git(repoOf(a), 'worktree', 'remove', '--force', tmp);
+      return sha;
+    }
+    tryRun(['git', '-C', repoOf(a), 'worktree', 'remove', '--force', dest]);
+  }
+  rmSync(dest, { recursive: true, force: true });
   git(repoOf(a), 'worktree', 'move', tmp, dest);
   try {
     for (const step of a.build) run(step, dest, 900_000);
@@ -357,6 +455,7 @@ function makeRelease(a: App, branchSha: string, running: string): string {
     tryRun(['git', '-C', repoOf(a), 'worktree', 'remove', '--force', dest]);
     throw e;
   }
+  writeFileSync(join(dest, BUILT), `${new Date().toISOString()}\n`);
   return sha;
 }
 
@@ -465,6 +564,10 @@ async function deploy(a: App, state: State, byHand?: string): Promise<'shipped' 
     }
     target = p.ship;
   }
+  if (!timeToShip(Date.now(), RUN)) {
+    log(`${a.name}: ${short(target)} waits for the next run: too little of this one's time is left for its check`);
+    return 'waiting';
+  }
   const calls = await callsOn();
   if (calls) {
     log(`${a.name}: ${short(target)} waits: ${calls} call${calls === 1 ? '' : 's'} on`);
@@ -498,29 +601,38 @@ async function deploy(a: App, state: State, byHand?: string): Promise<'shipped' 
   const subjects = git(repoOf(a), 'log', '--first-parent', '--format=%s', range).split('\n').filter(Boolean);
 
   if (a.key === 'chat') backup();
+  // The build took this run's time too: a check that could not finish waits for the next run (the release is built).
+  if (!timeToShip(Date.now(), RUN)) {
+    log(`${a.name}: ${short(rel)} is built; its restart waits for the next run (too little of this one's time is left)`);
+    return 'waiting';
+  }
   const s = await since(a);
+  // Saved before the restart: if this run is killed before the check ends, the next one rolls it back (resolvePending).
+  const pending: Pending = { rel, previous: current, target, at: new Date().toISOString(), phase: 'restarting' };
+  state.pending[a.key] = pending;
+  saveState(state);
   link(a, 'previous', current);
   link(a, 'current', rel);
+  pending.phase = 'checking';
+  saveState(state);
   run(['systemctl', '--user', 'restart', a.unit]);
+  let note: string | void;
   try {
-    await a.up(s);
+    checkBy = RUN.check;
+    note = await a.up(s, { rollback: false });
   } catch (e) {
     const why = (e as Error).message;
     log(`${a.name}: ${short(rel)} did not hold: ${why}; rolling back to ${short(current)}`);
     fail(why);
-    link(a, 'current', current);
-    run(['systemctl', '--user', 'restart', a.unit]);
-    let back = true;
-    try {
-      await a.up(await since(a));
-    } catch (e2) {
-      back = false;
-      log(`${a.name}: the rollback did not come up either: ${(e2 as Error).message}`);
-    }
-    const n = failedNotice(a.name, target, why, back ? current : null, true);
-    await notice(`${a.key}-failed`, n.title, n.body, 'high', a.name);
+    pending.phase = 'rolling-back';
+    saveState(state);
+    await rollBack(a, current, target, why);
+    delete state.pending[a.key];
+    saveState(state);
     return 'failed';
   }
+  delete state.pending[a.key];
+  saveState(state);
   log(`${a.name}: ${short(rel)} is up (${Math.round((Date.now() - s.at) / 1000)} s)`);
   if (a.overlay) {
     // The private branch follows what runs, as it did when this was done by hand.
@@ -528,32 +640,165 @@ async function deploy(a: App, state: State, byHand?: string): Promise<'shipped' 
     if (pushed === null) log(`${a.name}: could not push ${short(rel)} to ${a.overlay.remote}/${a.overlay.branch} (moved meanwhile?)`);
   }
   const n = deployedNotice(a.name, target, subjects);
-  await notice(a.key, n.title, n.body, 'low', a.name);
+  // Something still under way when the check ended (restarts for changed code, after gaps): said, at normal urgency.
+  if (note) log(`${a.name}: ${note}`);
+  await notice(a.key, n.title, note ? `${n.body}\n${note}` : n.body, note ? 'normal' : 'low', a.name);
   prune(a);
   return 'shipped';
 }
 
+/** `current` back to the release before, the service restarted on it and checked as a rollback, and the notice. */
+async function rollBack(a: App, to: string, target: string, why: string) {
+  if (linked(a, 'current') !== to) link(a, 'current', to);
+  run(['systemctl', '--user', 'restart', a.unit]);
+  let back = true;
+  try {
+    // Its own time, from what this run has left (ROLLBACK_MS was kept for it): never the forward check's 30 minutes.
+    checkBy = Math.min(Date.now() + ROLLBACK_MS, RUN.end);
+    await a.up(await since(a), { rollback: true });
+  } catch (e2) {
+    back = false;
+    log(`${a.name}: the rollback did not come up either: ${(e2 as Error).message}`);
+  }
+  const n = failedNotice(a.name, target, why, back ? to : null, true);
+  await notice(`${a.key}-failed`, n.title, n.body, 'high', a.name);
+}
+
+/**
+ * A check a killed run left unfinished (state.pending): it counts as failed, never tried again, and the release before
+ * comes back, checked as a rollback, with its notice. A run killed during a rollback leaves the same, and it is done
+ * again.
+ */
+async function resolvePending(a: App, state: State) {
+  const p = state.pending[a.key];
+  const r = interrupted(p, linked(a, 'current'));
+  if (!p || !r) return;
+  if (r.drop) {
+    // Killed before `current` moved: the release never ran, its commit is not failed; the next pick may ship it.
+    log(`${a.name}: ${short(p.rel)} was saved for a check but never started: forgotten`);
+    delete state.pending[a.key];
+    saveState(state);
+    return;
+  }
+  log(`${a.name}: ${short(p.rel)}: ${r.why}; rolling back to ${short(p.previous)}`);
+  (state.failed[a.key] ??= {})[p.target] = r.why;
+  saveState(state);
+  if (!dry) await rollBack(a, p.previous, p.target, r.why);
+  delete state.pending[a.key];
+  saveState(state);
+}
+
 // ---------------------------------------------------------------- main
+
+/** The release folder name this deployer runs from (chat's), or null. */
+function ownRelease(): string | null {
+  try {
+    const m = realpathSync(import.meta.dir).match(/\/releases\/([^/]+)\/packages\/deploy\/src$/);
+    return m ? m[1]! : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A process's start time (/proc/<pid>/stat field 22), so a pid handed on is not taken for it. */
+function startOf(pid: number): string | null {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One run at a time (the timer's, `ship` by hand): `<root>/deploy.lock` names the run that holds it, by pid and start
+ * time. A second run says so and goes; a lock whose run has ended is taken over.
+ */
+const LOCK_FILE = join(ROOT, 'deploy.lock');
+function takeLock(): number | null {
+  // Made whole beside it, then linked into place: a link fails when the lock exists, so two runs never both take it.
+  const mine = `${LOCK_FILE}.${process.pid}`;
+  writeFileSync(mine, JSON.stringify({ pid: process.pid, start: startOf(process.pid), at: new Date().toISOString() }));
+  try {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        linkSync(mine, LOCK_FILE);
+        break;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'EEXIST' || attempt > 0) throw e;
+      }
+      let lock: { pid?: unknown; start?: unknown } | null = null;
+      try {
+        lock = JSON.parse(readFileSync(LOCK_FILE, 'utf8'));
+      } catch {}
+      const held = lockHeld(lock, process.pid, (pid, start) => startOf(pid) !== null && (start === undefined || startOf(pid) === start));
+      if (held) return held;
+      // Its run has ended: taken over (once; a run that takes it meanwhile wins).
+      rmSync(LOCK_FILE, { force: true });
+    }
+  } catch (e) {
+    let pid = -1;
+    try {
+      pid = Number(JSON.parse(readFileSync(LOCK_FILE, 'utf8')).pid) || -1;
+    } catch {}
+    log(`could not take ${LOCK_FILE}: ${(e as Error).message}`);
+    return pid;
+  } finally {
+    rmSync(mine, { force: true });
+  }
+  process.on('exit', () => {
+    try {
+      if (JSON.parse(readFileSync(LOCK_FILE, 'utf8')).pid === process.pid) rmSync(LOCK_FILE, { force: true });
+    } catch {}
+  });
+  return null;
+}
 
 async function main() {
   mkdirSync(ROOT, { recursive: true });
   const args = process.argv.slice(2).filter((x) => !x.startsWith('--'));
   const state = loadState();
+  // A chat check a killed run left is about the release this deployer runs from: the one before judges it.
+  const chat = APPS.find((x) => x.key === 'chat')!;
+  const prevDeployer = state.pending.chat ? join(releaseOf(chat, state.pending.chat.previous), 'packages/deploy/src/deployer.ts') : '';
+  const canResolve = !!prevDeployer && existsSync(prevDeployer) && readFileSync(prevDeployer, 'utf8').includes('resolvePending');
+  const from = reexecFrom(state.pending.chat, ownRelease(), canResolve, process.env.DITHER_DEPLOY_REEXEC === '1');
+  if (from && !dry) {
+    log(`dither-chat: ${short(state.pending.chat!.rel)}, which this deployer runs from, was left unchecked: handing the run to ${short(from)}'s deployer`);
+    const p = Bun.spawn([process.execPath, prevDeployer, ...process.argv.slice(2)], { env: { ...process.env, DITHER_DEPLOY_REEXEC: '1' }, stdio: ['inherit', 'inherit', 'inherit'] });
+    process.exit(await p.exited);
+  }
+  // A dry run changes nothing, so it takes no lock.
+  const held = dry ? null : takeLock();
+  if (held) {
+    log(`another deployer run (pid ${held}) is under way: this one goes`);
+    if (args[0] === 'ship') process.exitCode = 1;
+    return;
+  }
   if (args[0] === 'init') {
     const a = APPS.find((x) => x.key === args[1]);
     if (!a || !args[2]) throw new Error('init <chat|accounts> <sha>');
     clone(a);
     fetchAll(a);
     const sha = git(repoOf(a), 'rev-parse', args[2]);
-    if (!existsSync(releaseOf(a, sha))) {
-      git(repoOf(a), 'worktree', 'add', '-q', '--detach', releaseOf(a, sha), sha);
+    if (!existsSync(join(releaseOf(a, sha), BUILT))) {
+      if (!existsSync(releaseOf(a, sha))) git(repoOf(a), 'worktree', 'add', '-q', '--detach', releaseOf(a, sha), sha);
       for (const step of a.build) run(step, releaseOf(a, sha), 900_000);
+      writeFileSync(join(releaseOf(a, sha), BUILT), `${new Date().toISOString()}\n`);
     }
     if (a.overlay) state.branchOf[sha] = git(repoOf(a), 'merge-base', sha, `origin/${a.branch}`);
     saveState(state);
     link(a, 'current', sha);
     log(`${a.name}: init: current is ${short(sha)} (no restart)`);
     return;
+  }
+  // What a killed run left half-checked comes first, before anything new ships.
+  for (const a of APPS) {
+    try {
+      await resolvePending(a, state);
+    } catch (e) {
+      log(`${a.name}: resolving an unfinished check: ${(e as Error).message}`);
+    }
   }
   if (args[0] === 'ship') {
     const a = APPS.find((x) => x.key === args[1]);
