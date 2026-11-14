@@ -22,10 +22,10 @@
  *   bun packages/deploy/src/deployer.ts ship <app> <sha>   # deploy that branch commit now (checks and rollback as ever)
  *   touch <root>/<app>/hold                               # pause an app's deploys (write why in it)
  */
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { type Candidate, deployedNotice, failedNotice, pick, short } from './plan.ts';
+import { type Candidate, deployedNotice, failedNotice, pick, type ProcView, releasesInUse, short } from './plan.ts';
 
 const HOME = homedir();
 const ROOT = process.env.DITHER_DEPLOY_ROOT ?? join(HOME, '.local/share/dither-deploy');
@@ -360,10 +360,43 @@ function makeRelease(a: App, branchSha: string, running: string): string {
   return sha;
 }
 
-/** Old releases go, keeping the current, the one before it and the newest few others. */
+/** This user's processes: where each runs and its command line (processes it cannot read are left out). */
+function processes(): ProcView[] {
+  const out: ProcView[] = [];
+  let pids: string[] = [];
+  try {
+    pids = readdirSync('/proc').filter((d) => /^\d+$/.test(d));
+  } catch {
+    return out;
+  }
+  for (const pid of pids) {
+    try {
+      let cwd: string | null = null;
+      try {
+        cwd = readlinkSync(`/proc/${pid}/cwd`);
+      } catch {}
+      out.push({ cwd, cmdline: readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean) });
+    } catch {}
+  }
+  return out;
+}
+
+/**
+ * Old releases go, keeping the current, the one before it, the newest few others, and every one a running process
+ * still uses (an extractor of dither-accounts that outlived the manager's restarts runs from the release it started in).
+ */
 function prune(a: App) {
-  const keep = new Set([linked(a, 'current'), linked(a, 'previous')].filter(Boolean) as string[]);
   const dir = join(dirOf(a), 'releases');
+  let real = dir;
+  try {
+    real = realpathSync(dir);
+  } catch {}
+  const procs = processes();
+  const used = new Set([...releasesInUse(dir, procs), ...releasesInUse(real, procs)]);
+  const links = [linked(a, 'current'), linked(a, 'previous')].filter(Boolean) as string[];
+  const keep = new Set([...links, ...used]);
+  const older = [...used].filter((d) => !links.includes(d));
+  if (older.length) log(`${a.name}: keeping older releases still in use: ${older.map(short).join(', ')}`);
   const rels = readdirSync(dir)
     .filter((d) => !d.startsWith('.') && !keep.has(d))
     .map((d) => ({ d, t: statSync(join(dir, d)).mtimeMs }))

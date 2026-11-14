@@ -71,7 +71,10 @@ runs it about once a minute. One run looks at both apps and ships what is new, d
 git worktree of the deployer's own clone, built once (`bun install --frozen-lockfile`, the web build). The service's
 `WorkingDirectory` is the app's `current` link, and `previous` is the release before it. Nobody edits a release, so
 what a service runs is always the commit it started on. Work happens in your own checkout or a worktree, which no
-service reads.
+service reads. After a deploy, old releases are pruned: the current one, the one before it and the newest three others
+stay, and so does every release a running process still uses (its working directory or command line is in it,
+`plan.ts` `releasesInUse`): dither-accounts' extractors outlive the manager's restarts and keep running from the
+release they started in until their own code changes (dither-accounts docs/supervisor.md).
 
 **One run, per app:**
 
