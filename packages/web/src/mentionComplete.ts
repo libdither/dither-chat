@@ -9,7 +9,8 @@ import { insideCode } from './emojiComplete.ts';
 
 /** What may stand right before the `@`. */
 const LEAD = String.raw`(?:^|[\s([{"'>*_~|])`;
-const OPEN = new RegExp(`${LEAD}@([^\\s@<>\`]{0,32})$`);
+// Not right after a chip (composerChips.ts), whose name ends in an invisible tag character.
+const OPEN = new RegExp(`${LEAD}@([^\\s@<>\`\\uDB40]{0,32})$`);
 
 export interface MentionTrigger {
   /** Index of the `@`. */
