@@ -5,6 +5,7 @@ import { noteChannel, withLastChannel, type LastChannels } from '../src/lastchan
 const under: Record<string, string[]> = { srv: ['general', 'memes'], sub: ['memes'], other: ['news'] };
 const serverOf = (space: string) => (space === 'sub' ? 'srv' : space);
 const isUnder = (space: string, conv: string) => !!under[space]?.includes(conv);
+const first = (space: string) => under[space]?.[0];
 
 test('a server opened with no channel gets the one last opened there', () => {
   const m = noteChannel({}, 'srv', 'memes')!;
@@ -13,11 +14,17 @@ test('a server opened with no channel gets the one last opened there', () => {
   expect(withLastChannel({ view: 'space', space: 'sub' }, m, serverOf, isUnder)).toEqual({ view: 'space', space: 'sub', conv: 'memes' });
 });
 
-test('a channel asked for, another view, a server never opened, or a channel gone: the route as it was', () => {
-  const m: LastChannels = { srv: 'gone', other: 'news' };
-  expect(withLastChannel({ view: 'space', space: 'other', conv: 'x' }, m, serverOf, isUnder)).toEqual({ view: 'space', space: 'other', conv: 'x' });
-  expect(withLastChannel({ view: 'inbox' }, m, serverOf, isUnder)).toEqual({ view: 'inbox' });
-  expect(withLastChannel({ view: 'space', space: 'new' }, m, serverOf, isUnder)).toEqual({ view: 'space', space: 'new' });
+test('a channel asked for, or another view: the route as it was', () => {
+  const m: LastChannels = { other: 'news' };
+  expect(withLastChannel({ view: 'space', space: 'other', conv: 'x' }, m, serverOf, isUnder, first)).toEqual({ view: 'space', space: 'other', conv: 'x' });
+  expect(withLastChannel({ view: 'inbox' }, m, serverOf, isUnder, first)).toEqual({ view: 'inbox' });
+});
+
+test('a server never opened, or whose channel is gone, opens on its first channel; with none, its list', () => {
+  const m: LastChannels = { srv: 'gone' };
+  expect(withLastChannel({ view: 'space', space: 'srv' }, m, serverOf, isUnder, first)).toEqual({ view: 'space', space: 'srv', conv: 'general' });
+  expect(withLastChannel({ view: 'space', space: 'other' }, m, serverOf, isUnder, first)).toEqual({ view: 'space', space: 'other', conv: 'news' });
+  expect(withLastChannel({ view: 'space', space: 'empty' }, m, serverOf, isUnder, first)).toEqual({ view: 'space', space: 'empty' });
   expect(withLastChannel({ view: 'space', space: 'srv' }, m, serverOf, isUnder)).toEqual({ view: 'space', space: 'srv' });
 });
 

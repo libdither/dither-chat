@@ -1,7 +1,7 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { effect, untracked } from '@preact/signals';
-import { accountsNeedingYou, chatPersonOf, convsUnder, inboxBadge, rootCommunity, totalUnread } from '../model.ts';
+import { accountsNeedingYou, chatPersonOf, convsUnder, firstChannel, inboxBadge, rootCommunity, totalUnread } from '../model.ts';
 import { adoptEntry, api, connected, db, go, loaded, pending, prefs, previousRoute, readProgress, refresh, rev, route, setListUnder, setRouteFill, unreachable, type Route } from '../state.ts';
 import { isPage, isTabRoot, listKey, listToWrite, ownList, restAfter, wayBack, type Places } from '../pages.ts';
 import { dropLayer, phone, pushLayer } from '../phone.ts';
@@ -214,11 +214,11 @@ const places: Places = {
 // A list's page keeps its list under it in history, so the phone's back button shows the list as the swipe does.
 setListUnder((to, from) => (phone.value ? listToWrite(to, from, places) : null));
 
-// Opening a server goes back to the channel last opened in it, on a computer, where its list stays beside it
-// (docs/servers.md "Opening a server"). On a phone the server's list is the page you open.
+// Opening a server goes back to the channel last opened in it, else its first channel to read, on a computer, where
+// its list stays beside it (docs/servers.md "Opening a server"). On a phone the server's list is the page you open.
 let lastChannels = readLastChannels();
 const serverOf = (space: string) => rootCommunity(space)?.id ?? space;
-setRouteFill((r) => (phone.value ? r : withLastChannel(r, lastChannels, serverOf, (space, conv) => convsUnder(space).some((c) => c.id === conv))));
+setRouteFill((r) => (phone.value ? r : withLastChannel(r, lastChannels, serverOf, (space, conv) => convsUnder(space).some((c) => c.id === conv), firstChannel)));
 effect(() => {
   const r = route.value;
   // A channel's About page is not reading it.
