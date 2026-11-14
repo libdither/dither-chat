@@ -7303,6 +7303,11 @@ body.dragging * {
 .search-place small {
   color: var(--text-faint);
 }
+.search-place small mark {
+  background: none;
+  color: var(--text-dim);
+  font-weight: 650;
+}
 .search-hit mark {
   padding: 0 1px;
   border-radius: 3px;
