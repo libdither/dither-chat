@@ -146,7 +146,7 @@ describe('what the extractor says', () => {
     expect(a.address).toBe(ME.email);
     expect(st.mailboxes(ACC).some((b) => /^\[(gmail|google mail)\]/i.test(b.path))).toBe(false);
     expect([st.gmail(ACC), st.idPerMessage(ACC), st.gmailPerMailbox(ACC)]).toEqual([true, true, false]);
-    expect(st.accountView(a)).toMatchObject({ kind: 'google', sendCap: 25 * MB, maxRecipients: 500 });
+    expect(st.accountView(a)).toMatchObject({ kind: 'google', sendCap: 25 * MB, maxRecipients: 100, writes: ['seen', 'flagged', 'move', 'trash'] });
     // Labels are mailboxes; All Mail is the one the hub keeps up with, beside Inbox and Sent.
     expect(
       st

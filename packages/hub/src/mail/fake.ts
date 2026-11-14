@@ -115,8 +115,8 @@ export interface FakeOpts {
 const MB = 1024 * 1024;
 /** What dither-accounts' Proton extractor says of its server: one id a message, 25 MB of files, 100 recipients. */
 export const PROTON_DETAILS = { idPerMessage: true, sendCap: 25 * MB, maxRecipients: 100 };
-/** And its google kind's: Gmail, one id a message, Gmail's 25 MB of files and 500 recipients. */
-export const GMAIL_WEB_DETAILS = { provider: 'Gmail', idPerMessage: true, sendCap: 25 * MB, maxRecipients: 500 };
+/** And its google kind's: Gmail, one id a message, 25 MB of files, 100 recipients, every write but Spam. */
+export const GMAIL_WEB_DETAILS = { provider: 'Gmail', idPerMessage: true, sendCap: 25 * MB, maxRecipients: 100, writes: ['seen', 'flagged', 'move', 'trash'] };
 
 /** A message as the fake server keeps it. */
 export interface FakeMessage extends Omit<M.MailMessage, 'mailboxId' | 'id'> {

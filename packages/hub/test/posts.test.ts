@@ -118,9 +118,12 @@ describe('a thread read from X', () => {
     const posts = new Posts(deps());
     const t = await posts.thread('x', routingId(), 'more-1');
     expect(sent.at(-1)).toMatchObject({ t: 'post', cursor: 'more-1' });
-    expect(t.replies.map((c) => c.map((p) => p.author))).toEqual([[idn(X.theo), idn(X.self), idn(X.theo)], [idn(X.quinn)]]);
+    // Theo's chain, the replies in Japanese and in Spanish (yours under it), then Quinn's.
+    expect(t.replies.map((c) => c.map((p) => p.author))[0]).toEqual([idn(X.theo), idn(X.self), idn(X.theo)]);
+    expect(t.replies.map((c) => c.length)).toEqual([3, 1, 2, 1]);
+    expect(t.replies.at(-1)![0]!.author).toBe(idn(X.quinn));
     expect(t.more).toBeNull();
-    expect((store.one<{ n: number }>('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ?', POSTS)!).n).toBe(14);
+    expect((store.one<{ n: number }>('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ?', POSTS)!).n).toBe(17);
   });
 
   test('a reply opens with what it answers above it', async () => {
@@ -165,7 +168,7 @@ describe('without X', () => {
     // The author's own continuation first, then the others, each with what was logged under it.
     expect(t.replies[0][0].author).toBe(idn(X.self));
     expect(t.replies.find((c) => c[0].author === idn(X.ravi))!.map((p) => p.author)).toEqual([idn(X.ravi), idn(X.self), idn(X.ravi), idn(X.self)]);
-    expect(t.replies.length).toBe(6);
+    expect(t.replies.length).toBe(8);
     const deep = await posts.thread('x', t.replies.find((c) => c[0].author === idn(X.ravi))![2].id);
     expect(deep.ancestors.map((p) => p.author)).toEqual([idn(X.self), idn(X.ravi), idn(X.self)]);
     // A post never logged: nothing to show, and still a plain answer.

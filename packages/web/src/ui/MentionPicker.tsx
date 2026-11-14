@@ -38,6 +38,9 @@ function noteOf(r: P.MentionRow, network: P.Network | undefined): string | null 
   return r.isBot ? 'bot' : null;
 }
 
+/** A chip's name: an account by reference says its network, as a message names it ("@Theo · Signal"). */
+const labelOf = (r: P.MentionRow) => (r.insert.startsWith('<@identity:') && r.network ? `@${r.name} · ${netName(r.network as P.Network)}` : `@${r.name}`);
+
 const SECTION: Record<P.MentionRow['section'], string> = { here: 'Here', friends: 'Friends', everyone: 'Everyone you know' };
 /** Someone whose accounts the list can open: a person, or an account here whose person has others. */
 const opens = (r: P.MentionRow | undefined) => (r?.accounts?.length ?? 0) > 1;
@@ -46,7 +49,14 @@ const opens = (r: P.MentionRow | undefined) => (r?.accounts?.length ?? 0) > 1;
  * `find` is mentionComplete.ts's findMentionTrigger, handed in by MentionComplete.tsx: imported here as well, it would
  * be split out of the app's own chunk into a file of its own that the app loads at start.
  */
-export function MentionPicker({ ta, convId, network, accountId, find }: MentionProps & { find: (text: string, caret: number) => MentionTrigger | null }) {
+export function MentionPicker({
+  ta,
+  convId,
+  network,
+  accountId,
+  find,
+  chip,
+}: MentionProps & { find: (text: string, caret: number) => MentionTrigger | null; chip: (token: string, label: string) => string }) {
   const [trig, setTrig] = useState<MentionTrigger | null>(null);
   const [sel, setSel] = useState(0);
   const [rows, setRows] = useState<P.MentionRow[]>([]);
@@ -103,9 +113,12 @@ export function MentionPicker({ ta, convId, network, accountId, find }: MentionP
   const insert = (r: P.MentionRow) => {
     const el = ta.current;
     if (!el || !trig) return;
+    // A person, an account or a role goes in as a chip: its name in the box, its token in the body (ChipBox.tsx).
+    const token = r.insert.trimEnd();
+    const text = r.kind === 'everyone' || r.kind === 'here' ? token : chip(token, labelOf(r));
     // One space after it, as the network's own client puts one, unless one is there already.
     const next = el.value[trig.end];
-    replaceRange(el, trig.start, trig.end, next !== undefined && /\s/.test(next) ? r.insert.trimEnd() : r.insert);
+    replaceRange(el, trig.start, trig.end, r.insert.endsWith(' ') && !(next !== undefined && /\s/.test(next)) ? text + ' ' : text);
     setTrig(null);
   };
 

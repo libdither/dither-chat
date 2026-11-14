@@ -3,7 +3,7 @@ import { mailSearchable, NETWORKS, parseSearch, searchOp, searchOps, setSearchOp
 import type { ComponentType } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { clock, dayLabel } from '../format.ts';
-import { allCommunities, authorName, communitiesOf, convLabel, convTitle, netName, people, plainBody, plainMarkdown, resolveTokens, visibleConv } from '../model.ts';
+import { allCommunities, authorName, communitiesOf, convLabel, convTitle, netName, plainBody, plainMarkdown, resolveTokens, visibleConv } from '../model.ts';
 import { api, back, db, go, mailRev, openMessage, openProfile, rev, route } from '../state.ts';
 import { retention } from '../history.ts';
 import { Avatar, Empty, NetBadge, NetGlyph } from './bits.tsx';
@@ -127,20 +127,26 @@ function Filters({ q, set }: { q: string; set: (q: string) => void }) {
   );
 }
 
-function Places({ text }: { text: string }) {
+/** People as the hub ranked them (by any name, handle, old name, note, status or bio), then places named like the words. */
+function Places({ text, found }: { text: string; found: P.PersonHit[] }) {
   const n = text.toLowerCase();
   if (n.length < 2) return null;
-  const persons = people().map((x) => x.person).filter((p) => p.name.toLowerCase().includes(n)).slice(0, 6);
+  const persons = found.slice(0, 8);
   const spaces = allCommunities().filter((s) => s.name.toLowerCase().includes(n)).slice(0, 6);
   const convs = [...db.conversations.values()].filter((c) => visibleConv(c) && c.shape !== 'direct' && convTitle(c).toLowerCase().includes(n)).slice(0, 8);
   if (!persons.length && !spaces.length && !convs.length) return null;
   return (
     <div class="search-places">
-      {persons.map((p) => (
-        <Menuable build={() => personMenu(p)}>{(ctx) => <button class="search-place" onClick={() => go({ view: 'profile', person: p.id })} {...ctx}>
-          <Avatar id={p.id} name={p.name} url={p.avatar} size={24} /> {p.name} <small>Person</small>
-        </button>}</Menuable>
-      ))}
+      {persons.map(({ id, match }) => {
+        const i = db.identities.get(id);
+        const p = i?.personId ? db.persons.get(i.personId) : undefined;
+        return (
+          <Menuable build={() => (p ? personMenu(p) : identityMenu(id))}>{(ctx) => <button class="search-place" onClick={() => openProfile(id)} {...ctx}>
+            <Avatar id={p?.id ?? id} name={authorName(id)} url={p?.avatar ?? i?.avatar} size={24} network={p ? undefined : i?.network} /> {authorName(id)}{' '}
+            <small>{match ? <Snippet text={match} network={i?.network ?? 'discord'} /> : p ? 'Person' : 'Seen in chats'}</small>
+          </button>}</Menuable>
+        );
+      })}
       {spaces.map((s) => (
         <Menuable build={() => spaceMenu(s)}>{(ctx) => <button class="search-place" onClick={() => go({ view: 'space', space: s.id })} {...ctx}>
           <Avatar id={s.id} name={s.name} url={s.icon} size={24} square network={s.network} /> {s.name} <small>{netName(s.network)} community</small>
@@ -456,7 +462,6 @@ export function SearchPane({ q, onBack }: { q: string; onBack?: () => void }) {
     const c = db.conversations.get(h.message.conversationId);
     return c && visibleConv(c);
   });
-  const strangers = (page?.people ?? []).filter((id) => !db.identities.get(id)?.personId).slice(0, 6);
   const recent = !q.trim() ? recentSearches() : [];
   const first = () => list.current?.querySelector<HTMLElement>('.search-hit')?.focus();
   return (
@@ -502,16 +507,7 @@ export function SearchPane({ q, onBack }: { q: string; onBack?: () => void }) {
             ))}
           </div>
         )}
-        <Places text={text} />
-        {strangers.length > 0 && (
-          <div class="search-places">
-            {strangers.map((id) => (
-              <Menuable build={() => identityMenu(id)}>{(ctx) => <button class="search-place" onClick={() => openProfile(id)} {...ctx}>
-                <Avatar id={id} name={authorName(id)} url={db.identities.get(id)?.avatar} size={24} network={db.identities.get(id)?.network} /> {authorName(id)} <small>Seen in chats</small>
-              </button>}</Menuable>
-            ))}
-          </div>
-        )}
+        <Places text={text} found={page?.people ?? []} />
         <MailGroup q={q} />
         {loading && <Loading label="Searching…" />}
         {page && !loading && !visible.length && <Empty icon="search" title="No matching messages">Only what your accounts have fetched is stored here, so older messages may exist on the network.</Empty>}

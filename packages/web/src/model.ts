@@ -302,6 +302,20 @@ export function spaceChildren(id: string): TreeNode[] {
   );
 }
 
+/** Channels a server can open on: ones with messages to read, not voice rooms, forums or feeds. */
+const OPENS_ON: ReadonlySet<P.Variant> = new Set(['text', 'announcement', 'rules']);
+
+/** A space's first channel to read, in list order through its categories and subspaces, as Discord opens a server. */
+export function firstChannel(id: string, seen = new Set<string>()): string | undefined {
+  if (seen.has(id)) return undefined;
+  seen.add(id);
+  for (const n of spaceChildren(id)) {
+    const hit = n.kind === 'conversation' ? (OPENS_ON.has(db.conversations.get(n.id)!.variant) ? n.id : undefined) : firstChannel(n.id, seen);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
 function nodeName(n: TreeNode) {
   return n.kind === 'conversation' ? convTitle(db.conversations.get(n.id)) : (db.spaces.get(n.id)?.name ?? '');
 }

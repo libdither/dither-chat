@@ -38,9 +38,13 @@ export function noteChannel(m: LastChannels, server: string, conv: string): Last
   return out;
 }
 
-/** A server opened with no channel gets the one last opened there, if it is still under it; else the route as it was. */
-export function withLastChannel(r: Route, m: LastChannels, serverOf: (space: string) => string, isUnder: (space: string, conv: string) => boolean): Route {
+/**
+ * A server opened with no channel gets the one last opened there, if it is still under it; else its first channel to
+ * read (`first`), as Discord does; with neither, the route as it was.
+ */
+export function withLastChannel(r: Route, m: LastChannels, serverOf: (space: string) => string, isUnder: (space: string, conv: string) => boolean, first: (space: string) => string | undefined = () => undefined): Route {
   if (r.view !== 'space' || r.conv) return r;
-  const conv = m[serverOf(r.space)];
-  return conv && isUnder(r.space, conv) ? { ...r, conv } : r;
+  const last = m[serverOf(r.space)];
+  const conv = last && isUnder(r.space, last) ? last : first(r.space);
+  return conv ? { ...r, conv } : r;
 }
