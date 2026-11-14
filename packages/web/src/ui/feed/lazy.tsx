@@ -50,7 +50,7 @@ export const kit = {
   /** A post's thread, beside the inbox (docs/feed.md "Threads"). */
   openPost: (network: P.Network, post: string) => go({ view: 'inbox', conv: postKey(network, post) }),
   /** feed.ts, which the row draws with too: imported by the chunk, rolldown would split it into a startup file. */
-  feed: { clip, feedBarLine, feedUnits, namesPhrase, notificationsUrl, reactionCounts, reactorsPhrase, shortCount, opensPost, postHref },
+  feed: { clip, feedBarLine, feedUnits, namesPhrase, notificationsUrl, reactionCounts, reactorsPhrase, shortCount, opensPost, parsePostKey, postHref },
 };
 export type Kit = typeof kit;
 

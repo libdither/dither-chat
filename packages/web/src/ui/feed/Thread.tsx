@@ -7,12 +7,20 @@
  * chains), "N more replies" under a reply to open that branch, and "Show more replies" while the network has more.
  * The hub logs each post as it reads it, and brings back the branches logged before.
  *
+ * Read ahead: the next page of replies loads as the end of the list comes within a screen or so, and a reply's hidden
+ * answers as it does (AUTO_BRANCHES at most per thread, two at a time; each is a call to the network), so "more" is
+ * mostly there before it is asked for. The buttons stay for the rest.
+ *
+ * The way back: a thread opened from inside another (a reply's time, "Continue this thread", a post above) remembers
+ * the one it came from (`trail`), which is named under the header ("Back to Maya's post") and is where Back goes; it
+ * comes back as it was left, where it was scrolled to, the reply that was opened lit for a moment.
+ *
  * Also the posts conversation itself (variant 'posts'): what the hub logged, newest first, each opening its thread.
  */
 import { Fragment, h } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { api, db, loadTimeline, openProfile, timelineKey, timelines } from '../../state.ts';
 import { timelineRev } from '../../versions.ts';
 import type { Kit } from './lazy.tsx';
@@ -33,6 +41,37 @@ function readStyle(): CommentStyle {
 }
 
 type Src = { network: P.Network; post: string } | { message: string };
+
+/** Hidden answers loaded without a press, per thread opened, and how many at once. */
+const AUTO_BRANCHES = 24;
+const AUTO_AT_ONCE = 2;
+/** Pages of replies read ahead without a press. */
+const AUTO_PAGES = 8;
+
+/** A thread as it was left: what was read and opened, and where it was scrolled to. */
+interface Kept {
+  t: P.PostThreadView;
+  extra: P.PostView[];
+  done: ReadonlySet<string>;
+  folded: ReadonlySet<string>;
+  mine: P.PostView[];
+  acted: ReadonlyMap<string, { viewer: P.PostViewer; counts: P.PostFact['counts'] }>;
+  scrollTop: number;
+}
+/** A thread left for another opened from inside it: where Back goes. */
+interface Crumb {
+  key: string;
+  network: P.Network;
+  post: string;
+  /** "Maya's post", "your post". */
+  label: string;
+  /** The post opened from it, lit on coming back. */
+  went: string;
+  kept: Kept;
+}
+/** The threads behind the one shown, newest last; and the one being left, until the next thread takes it. */
+const trail: Crumb[] = [];
+let leaving: { crumb: Crumb; at: number } | null = null;
 
 /** The post asked for, large: who, its words, pictures, the quote, its full time, counts, and Open on X. */
 function Focal({ p, kit, network, joined, answer, children }: { p: P.PostView; kit: Kit; network: P.Network; joined: boolean; answer: AnswerCtx; children?: preact.ComponentChildren }) {
@@ -65,11 +104,25 @@ function Focal({ p, kit, network, joined, answer, children }: { p: P.PostView; k
 }
 
 /** A post's thread, as a pane: read from the hub (which asks the network and logs it), more replies on asking. */
-export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: () => void }) {
+export function ThreadView({ src, kit: base, onBack }: { src: Src; kit: Kit; onBack?: () => void }) {
+  const key = 'message' in src ? src.message : `${src.network}:${src.post}`;
+  // How this thread was come to: back to one left (as it was), from another (which Back returns to), or afresh.
+  const [arrival] = useState(() => {
+    const top = trail[trail.length - 1];
+    if (top && top.key === key) {
+      trail.pop();
+      leaving = null;
+      return { kept: top.kept as Kept | null, went: top.went, parent: trail[trail.length - 1] ?? null };
+    }
+    if (leaving && Date.now() - leaving.at < 5000 && leaving.crumb.key !== key) trail.push(leaving.crumb);
+    else trail.length = 0;
+    leaving = null;
+    return { kept: null as Kept | null, went: null as string | null, parent: trail[trail.length - 1] ?? null };
+  });
+  const parent = arrival.parent;
   const [t, setT] = useState<P.PostThreadView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [more, setMore] = useState<'idle' | 'loading' | string>('idle');
-  const key = 'message' in src ? src.message : `${src.network}:${src.post}`;
   // Branches opened under replies (their threads' replies), folded replies, and the reader's style.
   const [extra, setExtra] = useState<P.PostView[]>([]);
   const [loading, setLoading] = useState<ReadonlySet<string>>(new Set());
@@ -82,7 +135,23 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
   const [mine, setMine] = useState<P.PostView[]>([]);
   const [acted, setActed] = useState<ReadonlyMap<string, { viewer: P.PostViewer; counts: P.PostFact['counts'] }>>(new Map());
   const scroller = useRef<HTMLDivElement>(null);
+  // Pages and branches read ahead so far.
+  const autoPages = useRef(0);
+  const autoBudget = useRef(AUTO_BRANCHES);
+  const queue = useRef<TreeNode[]>([]);
+  const running = useRef(0);
   useEffect(() => {
+    const k = arrival.kept;
+    if (k) {
+      // Back to a thread as it was left: nothing asked again.
+      setT(k.t);
+      setExtra(k.extra);
+      setDone(k.done);
+      setFolded(k.folded);
+      setMine(k.mine);
+      setActed(k.acted);
+      return;
+    }
     let live = true;
     setT(null);
     setError(null);
@@ -104,12 +173,21 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
     );
     return () => void (live = false);
   }, [key]);
-  // The post itself in view, under what it answers.
-  useEffect(() => {
-    if (t?.ancestors.length) scroller.current?.querySelector('[data-focal]')?.scrollIntoView({ block: 'start' });
+  // The post itself in view, under what it answers; or, coming back, where it was, the reply opened lit.
+  useLayoutEffect(() => {
+    if (!t) return;
+    const k = arrival.kept;
+    if (k && scroller.current) {
+      scroller.current.scrollTop = k.scrollTop;
+      const lit = arrival.went ? scroller.current.querySelector(`[data-post="${CSS.escape(arrival.went)}"]`) : null;
+      if (lit) {
+        lit.classList.add('ct-lit');
+        setTimeout(() => lit.classList.remove('ct-lit'), 2200);
+      }
+    } else if (t.ancestors.length) scroller.current?.querySelector('[data-focal]')?.scrollIntoView({ block: 'start' });
   }, [t?.post]);
   const loadMore = () => {
-    if (!t?.more) return;
+    if (!t?.more || more === 'loading') return;
     setMore('loading');
     api<P.PostThreadView>(`/api/posts/${t.network}/${t.post}/thread?cursor=${encodeURIComponent(t.more)}`).then(
       (v) => {
@@ -127,8 +205,8 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
     // opened: a later copy wins, so the freshest read of a post is the one kept.
     const given = t.replies.flat();
     const ids = new Set(given.map((p) => p.id));
-    // Yours first, as Reddit puts what you just wrote at the top.
-    return replyTree((t.focal.repostOf ?? t.focal).id, [...mine, ...(t.logged ?? []).filter((p) => !ids.has(p.id)), ...given, ...extra]);
+    // Yours first, as Reddit puts what you just wrote at the top; then X's order, then what only the log holds.
+    return replyTree((t.focal.repostOf ?? t.focal).id, [...mine, ...given, ...(t.logged ?? []).filter((p) => !ids.has(p.id)), ...extra]);
   }, [t, extra, mine]);
   const with_ = (set: ReadonlySet<string>, id: string, on: boolean) => {
     const next = new Set(set);
@@ -136,9 +214,9 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
     else next.delete(id);
     return next;
   };
-  /** A reply's branch: its own thread's replies, put into the tree. */
-  const loadUnder = (n: TreeNode) => {
-    if (!t) return;
+  /** A reply's branch: its own thread's replies, put into the tree. Done once read: asking again gives the same. */
+  const loadUnder = (n: TreeNode): Promise<void> => {
+    if (!t) return Promise.resolve();
     const id = n.post.id;
     setLoading((l) => with_(l, id, true));
     setFailed((f) => {
@@ -151,7 +229,7 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
       setFailed((f) => new Map(f).set(id, why));
       setLoading((l) => with_(l, id, false));
     };
-    api<P.PostThreadView>(`/api/posts/${t.network}/${id}/thread`).then(
+    return api<P.PostThreadView>(`/api/posts/${t.network}/${id}/thread`).then(
       (v) => {
         if (v.stored) return fail(v.stored);
         v.identities.forEach((i) => db.identities.has(i.id) || db.identities.set(i.id, i));
@@ -160,16 +238,49 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
           const known = new Set([...t.replies.flat(), ...(t.logged ?? []), ...e].map((p) => p.id));
           return [...e, ...got.filter((p) => !known.has(p.id))];
         });
-        // Nothing (more) under it on X: no button that never ends.
-        const known = new Set(nodes.flatMap(function all(x: TreeNode): string[] {
-          return [x.post.id, ...x.children.flatMap(all)];
-        }));
-        if (!got.some((p) => p.replyTo?.id === id && !known.has(p.id))) setDone((d) => with_(d, id, true));
+        // Read: what X shows under it is in the tree now (what it counts and never shows stays hidden), so no button
+        // that never ends, and nothing read twice.
+        setDone((d) => with_(d, id, true));
         setLoading((l) => with_(l, id, false));
       },
       (e) => fail((e as Error).message),
     );
   };
+  /** A reply's hidden answers, near the screen: queued, two read at a time, while the thread's allowance lasts. */
+  const pump = () => {
+    while (running.current < AUTO_AT_ONCE && queue.current.length) {
+      const n = queue.current.shift()!;
+      running.current++;
+      void loadUnder(n).finally(() => {
+        running.current--;
+        pump();
+      });
+    }
+  };
+  const auto = (n: TreeNode) => {
+    if (autoBudget.current <= 0 || queue.current.some((x) => x.post.id === n.post.id)) return;
+    autoBudget.current--;
+    setLoading((l) => with_(l, n.post.id, true));
+    queue.current.push(n);
+    pump();
+  };
+  // The next page of replies, as the end of the list nears.
+  const end = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = end.current;
+    if (!t?.more || more !== 'idle' || !el || autoPages.current >= AUTO_PAGES || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(
+      (es) => {
+        if (!es.some((e) => e.isIntersecting)) return;
+        io.disconnect();
+        autoPages.current++;
+        loadMore();
+      },
+      { root: scroller.current, rootMargin: '0px 0px 2400px 0px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [t?.more, more]);
   /** Fold or unfold a reply, keeping the keyboard where it was: on the control that now stands for it. */
   const fold = (id: string) => {
     const inside = !!document.activeElement?.closest(`[data-post="${CSS.escape(id)}"]`);
@@ -190,6 +301,24 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
     }
   };
   const network = t?.network ?? ('network' in src ? src.network : 'x');
+  const focalOf = t?.focal ? (t.focal.repostOf ?? t.focal) : null;
+  const label = !focalOf ? 'the post' : base.isSelf(focalOf.author ?? null) ? 'your post' : `${base.name(focalOf.author ?? null)}'s post`;
+  /** Leaving for another thread from inside this one: it is kept, to come back to. */
+  const noteLeaving = (went: string) => {
+    if (!t || went === t.post) return;
+    leaving = {
+      at: Date.now(),
+      crumb: { key: `${t.network}:${t.post}`, network: t.network, post: t.post, label, went, kept: { t, extra, done, folded, mine, acted, scrollTop: scroller.current?.scrollTop ?? 0 } },
+    };
+  };
+  const kit: Kit = useMemo(() => ({ ...base, openPost: (n: P.Network, id: string) => (noteLeaving(id), base.openPost(n, id)) }), [base, t, extra, done, folded, mine, acted, label]);
+  const onLink = (e: MouseEvent) => {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const href = (e.target as Element | null)?.closest?.('a[href^="#/inbox/c/pst_"]')?.getAttribute('href');
+    const to = href ? base.feed.parsePostKey(href.slice('#/inbox/c/'.length)) : null;
+    if (to && 'post' in to) noteLeaving(to.post);
+  };
+  const back = parent ? () => base.openPost(parent.network, parent.post) : onBack;
   const posted = (p: P.PostView, mode: 'reply' | 'quote') => {
     setAnswering(null);
     if (mode === 'reply' && p.replyTo) setMine((m) => [p, ...m]);
@@ -225,10 +354,10 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
   const focal = t?.focal;
   const author = focal ? ((focal.repostOf ?? focal).author ?? null) : null;
   return (
-    <section class="pane feed-pane thread-pane" aria-label="Post">
+    <section class="pane feed-pane thread-pane" aria-label="Post" onClickCapture={onLink}>
       <header class="conv-head">
-        {onBack && (
-          <button class="icon-btn back" data-track="pager: back button" onClick={onBack} aria-label="Back">
+        {back && (
+          <button class={`icon-btn back ${parent ? 'to-thread' : ''}`} data-track="pager: back button" onClick={back} aria-label={parent ? `Back to ${parent.label}` : 'Back'}>
             <kit.Icon name="back" />
           </button>
         )}
@@ -247,6 +376,11 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
           </a>
         )}
       </header>
+      {parent && (
+        <button class="thread-crumb" onClick={back} data-track="thread: back to the thread it came from">
+          <kit.Icon name="back" size={14} /> Back to <b>{parent.label}</b>
+        </button>
+      )}
       <div class="feed-scroll thread-scroll" ref={scroller} data-thread={t?.post ?? ''}>
         <div class="feed-list thread-list">
           {!t && !error && <kit.Loading inline label={`Reading the thread from ${net}…`} />}
@@ -299,12 +433,13 @@ export function ThreadView({ src, kit, onBack }: { src: Src; kit: Kit; onBack?: 
               <Comments
                 nodes={nodes}
                 style={style}
-                ctx={{ kit, network, op: author, folded, fold, loading, done, failed, load: loadUnder, below }}
+                ctx={{ kit, network, op: author, folded, fold, loading, done, failed, load: (n) => void loadUnder(n), auto, root: scroller, below }}
               />
+              <div ref={end} class="thread-end" aria-hidden="true" />
               {!nodes.length && !t.more && <p class="thread-none">{t.stored ? 'No replies logged.' : 'No replies yet.'}</p>}
               {t.more && (
                 <button class="btn thread-more" onClick={loadMore} disabled={more === 'loading'}>
-                  {more === 'loading' ? 'Loading…' : 'Show more replies'}
+                  {more === 'loading' ? 'Loading more replies…' : 'Show more replies'}
                 </button>
               )}
               {more !== 'idle' && more !== 'loading' && <p class="thread-none">{more}</p>}

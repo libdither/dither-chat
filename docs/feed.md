@@ -180,6 +180,16 @@ Links, @handles, pictures, names and Open on X inside a card keep doing what the
 by a line from its picture; the post itself, large, with its full time, its counts and Open on X; then **Replies** as a
 comment section; **Show more replies** while X has more. The header says whose post it is.
 
+**Read ahead.** The next page of replies loads as the end of the list comes within about two screens, up to eight
+pages without a press; a reply's **N more replies** loads by itself the same way, two at a time and at most 24 per
+thread opened, since each is one TweetDetail read (about 7 s on X). What is left, or failed, keeps its button.
+
+**Back from a sub-thread.** A thread opened from inside another (a reply's time, Continue this thread, a post above
+the post, a toast's View) remembers the one it was opened from: a line under the header says where Back goes ("Back
+to Maya's post"), and so does the header's Back. Back brings that thread as it was left, with nothing read again: its
+branches, folds and what you did, scrolled where it was, the reply you went into lit for a moment. Each step back
+goes one thread up; opening a thread from anywhere else (the feed, a profile, a search) starts afresh.
+
 **Replies as a tree** (`ui/feed/tree.ts`, `Comments.tsx`). Every post known under the post goes under the one it
 answers: X's chains (a reply and the first answers under it), the branches the hub logged before (`logged`, below),
 and the branches opened since. Siblings keep the order they first came in, X's order: the author's own continuation
@@ -187,11 +197,15 @@ first, then what X ranks highest. Where X counts more replies under a post than 
 that post's thread and puts its replies in place, as Reddit's "load more comments". Four ways to draw it, chosen in a
 quiet menu beside Replies ("Tree ▾", each with what it is like) and kept on the device:
 
-- **Tree** (the default, as Reddit): each reply's picture, name, OP on the post's author, time (which opens the reply
-  as a thread of its own), words, pictures and likes; under it its replies, one step in, with a line down its left
-  that **folds the branch** when clicked ("Alice Chen · 8 more replies", Show to unfold). Past six deep, **Continue
-  this thread** opens the branch as a thread, what it answers above it.
-- **Compact** (as Hacker News): the same tree without pictures or counts, a narrow indent, [–] and [+] to fold.
+- **Tree** (the default, as Reddit, with LessWrong's thin lines): each reply's picture (small, by the name), name, OP
+  on the post's author, time (which opens the reply as a thread of its own), words, pictures and likes; under it its
+  replies, a short step in, with a hairline down its left that **folds the branch** when clicked ("Alice Chen · 8
+  more replies", Show to unfold). **A reply with one answer goes on in its column** (a run, `tree.ts` `runOf`): a
+  back-and-forth reads down the page, joined by a line, instead of stepping right each turn, and only a reply with
+  two answers or more indents. A run longer than eight shows its first three and last two, the rest behind "5 more
+  between Theo and You" (`runPair`, when two people take turns). Six levels in, **Continue this thread** opens the
+  branch as a thread, what it answers above it.
+- **Compact** (as Hacker News): the same tree and runs without pictures or counts, [–] and [+] to fold.
 - **Flat** (as YouTube and Discourse): each reply to the post, then everything under it one level in, oldest first,
   each saying whom it answers ("to @ravi_routes"), folded with Hide replies.
 - **Chains** (as X): each branch as a chain joined by its pictures, a branch's other answers as chains after it.
@@ -316,8 +330,9 @@ baselines predate it.
   logged posts, the thread read back without X, a profile's posts logged, the routes, and nothing sent to X.
 - `packages/web/test/links.test.ts`: links in bios.
 - `scripts/verify-x-threads.ts`: in a real browser on a fresh demo hub, desktop and phone: links in bios, a feed card,
-  a profile's post and a search hit opening their threads, the replies as a tree, branches opened in place eight deep,
-  Continue this thread, folding, the Compact, Flat and Chains styles, Show more replies, a reply with what it answers,
+  a profile's post and a search hit opening their threads, the replies as a tree, hidden branches and the next page
+  read ahead while scrolling, a ten-turn back-and-forth as one run, folding, the Compact, Flat and Chains styles, a
+  reply opened as its own thread and Back to where you were (two deep), a reply with what it answers,
   the logged branches coming back, the posts conversation out of the inbox, nothing sent to X but the reads. With
   `--shots`, a tour (`tour-01` … `tour-09`).
 - `scripts/verify-x-feed.ts`: against a fresh demo hub in a real browser, on a desktop and a phone, dark and light,

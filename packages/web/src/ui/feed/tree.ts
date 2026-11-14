@@ -46,6 +46,25 @@ export function replyTree(rootId: string, posts: readonly P.PostView[]): TreeNod
   return build(rootId);
 }
 
+/**
+ * A run: the node, then while the last has exactly one answer, that answer. A back-and-forth (one reply each, turn
+ * after turn) is one run, drawn down one column instead of a step in per turn; the tree branches, and indents, only
+ * where a reply has two answers or more.
+ */
+export function runOf(n: TreeNode): TreeNode[] {
+  const run = [n];
+  for (let x = n; x.children.length === 1; ) run.push((x = x.children[0]));
+  return run;
+}
+
+/** The people taking turns in a run, when it is two of them going back and forth (each step the other one). */
+export function runPair(run: readonly TreeNode[]): [string, string] | null {
+  const a = run[0]?.post.author;
+  const b = run[1]?.post.author;
+  if (!a || !b || a === b) return null;
+  return run.every((x, i) => x.post.author === (i % 2 ? b : a)) ? [a, b] : null;
+}
+
 /** How many posts a tree holds. */
 export const treeSize = (nodes: readonly TreeNode[]) => nodes.reduce((n, c) => n + 1 + c.size, 0);
 

@@ -5,12 +5,17 @@
  * A post's replies drawn as a comment section (docs/feed.md "Threads"), from the tree tree.ts makes. Four ways, the
  * reader's choice, kept on the device:
  *
- * - **Tree** (as Reddit): each reply under the one it answers, a line down its left that folds the branch when
- *   clicked, "N more replies" where the network counts more than are known, "Continue this thread" past six deep.
- * - **Compact** (as Hacker News): the same tree without pictures, a narrow indent and [–] to fold.
+ * - **Tree** (as Reddit, with LessWrong's thin lines): each reply under the one it answers, a hairline down its left
+ *   that folds the branch when clicked, "Continue this thread" past six levels in. A reply with one answer goes on in
+ *   the same column (a run), so a back-and-forth reads down the page instead of stepping right each turn; only a
+ *   reply with two answers or more branches, and indents. A run longer than eight shows its first three and last two.
+ * - **Compact** (as Hacker News): the same tree and runs without pictures, and [–] to fold.
  * - **Flat** (as YouTube and Discourse): replies to the post, each with every answer under it in one level, oldest
  *   first, saying whom each answers.
  * - **Chains** (as X): each reply and the answers under it as a chain joined by its pictures.
+ *
+ * "N more replies" (the network counts more under a reply than are known) loads by itself as it comes near the screen
+ * (ctx.auto, a few at a time); its button stays for when that is used up or fails.
  */
 import { Fragment, h, type ComponentChildren } from 'preact';
 import type * as P from '@dither-chat/protocol';
@@ -18,7 +23,7 @@ import { openProfile } from '../../state.ts';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Kit } from './lazy.tsx';
 import { Counts, Pics, QuotedIn, Row, Text, Who } from './Post.tsx';
-import { treeChains, type TreeNode } from './tree.ts';
+import { runOf, runPair, treeChains, type TreeNode } from './tree.ts';
 
 export type CommentStyle = 'tree' | 'compact' | 'flat' | 'chains';
 export const COMMENT_STYLES: { id: CommentStyle; label: string; title: string }[] = [
@@ -62,6 +67,10 @@ export function StyleMenu({ style, pick, kit }: { style: CommentStyle; pick: (s:
 
 /** Past this depth a branch opens as a thread of its own. */
 export const MAX_DEPTH = 6;
+/** A run longer than this shows its first RUN_HEAD and last RUN_TAIL, with the rest behind a button. */
+export const RUN_FOLD = 8;
+const RUN_HEAD = 3;
+const RUN_TAIL = 2;
 
 export interface CommentCtx {
   kit: Kit;
@@ -76,19 +85,35 @@ export interface CommentCtx {
   /** Branches the network could not be asked for, and why: the button stays, to try again. */
   failed: ReadonlyMap<string, string>;
   load: (n: TreeNode) => void;
+  /** Load a reply's hidden answers without a press, as it nears the screen (the thread decides how many and when). */
+  auto?: (n: TreeNode) => void;
+  /** What "near the screen" is measured against: the thread's scroller. */
+  root?: { current: HTMLElement | null };
   /** What goes under a reply in place of its counts: its actions, and a composer when answering it. */
   below?: (p: P.PostFact) => ComponentChildren;
 }
 
 function MoreUnder({ n, ctx, under }: { n: TreeNode; ctx: CommentCtx; under?: boolean }) {
-  if (!n.hidden || ctx.done.has(n.post.id)) return null;
-  const busy = ctx.loading.has(n.post.id);
-  const why = ctx.failed.get(n.post.id);
+  const id = n.post.id;
+  const busy = ctx.loading.has(id);
+  const why = ctx.failed.get(id);
+  const wanted = !!n.hidden && !ctx.done.has(id) && !busy && !why;
+  const box = useRef<HTMLSpanElement>(null);
+  // Near the screen (two screens or so ahead: X takes seconds to answer), it loads by itself.
+  useEffect(() => {
+    const el = box.current;
+    if (!wanted || !ctx.auto || !el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && (io.disconnect(), ctx.auto!(n)), { root: ctx.root?.current ?? null, rootMargin: '1600px 0px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [wanted, id]);
+  if (!n.hidden || ctx.done.has(id)) return null;
   const who = under ? ` under ${ctx.kit.name(n.post.author ?? null)}` : '';
+  const many = `${n.hidden} more ${n.hidden === 1 ? 'reply' : 'replies'}`;
   return (
-    <span class="ct-more-wrap">
+    <span class="ct-more-wrap" ref={box}>
       <button class="ct-more" onClick={() => ctx.load(n)} disabled={busy}>
-        {busy ? 'Loading…' : why ? 'Try again' : `${n.hidden} more ${n.hidden === 1 ? 'reply' : 'replies'}${who}`}
+        {busy ? `Loading ${many}…` : why ? 'Try again' : `${many}${who}`}
       </button>
       {why && !busy && <span class="ct-more-why">{why}</span>}
     </span>
@@ -130,21 +155,38 @@ function Body({ p, ctx }: { p: P.PostView; ctx: CommentCtx }) {
   );
 }
 
-/** Tree and Compact: one reply, its rail, and what is under it. */
+/** One post of a run, after the first: its head with a small picture, what it says, and what may load under it. */
+function Step({ n, ctx, compact }: { n: TreeNode; ctx: CommentCtx; compact: boolean }) {
+  return (
+    <div class="ct-step" data-post={n.post.id}>
+      <Head p={n.post} ctx={ctx} avatar={compact ? 0 : 20} folded={false} size={0} />
+      <Body p={n.post} ctx={ctx} />
+      <MoreUnder n={n} ctx={ctx} />
+    </div>
+  );
+}
+
+/** Tree and Compact: one reply and the run that goes on from it in its column, its rail, and the branches under it. */
 function Node({ n, depth, ctx, compact }: { n: TreeNode; depth: number; ctx: CommentCtx; compact: boolean }) {
   const p = n.post;
   const folded = ctx.folded.has(p.id);
   const name = ctx.kit.name(p.author ?? null);
+  const run = runOf(n);
+  const last = run[run.length - 1];
+  const steps = run.slice(1);
+  // A long run shows its ends; `run:<id>` in "folded" means its middle was opened.
+  const whole = run.length <= RUN_FOLD || ctx.folded.has(`run:${p.id}`);
+  const head = whole ? steps : steps.slice(0, RUN_HEAD - 1);
+  const tail = whole ? [] : steps.slice(-RUN_TAIL);
+  const gap = steps.length - head.length - tail.length;
+  const pair = runPair(run);
+  const between = pair ? ` between ${ctx.kit.name(pair[0])} and ${ctx.kit.name(pair[1])}` : '';
   return (
     <div class={`ct-node ${folded ? 'folded' : ''}`} data-post={p.id} data-depth={depth}>
       <div class="ct-side">
-        {compact ? (
+        {compact && (
           <button class="ct-toggle" onClick={() => ctx.fold(p.id)} aria-expanded={!folded} aria-label={folded ? `Unfold ${name}'s reply` : `Fold ${name}'s reply`}>
             {folded ? '[+]' : '[–]'}
-          </button>
-        ) : (
-          <button class="ct-face" onClick={() => openProfile(p.author ?? null)} aria-label={`${name}'s profile`}>
-            <ctx.kit.Avatar id={p.author ?? p.id} name={name} url={ctx.kit.avatarUrl(p.author ?? null)} size={24} />
           </button>
         )}
         {!folded && (
@@ -158,7 +200,7 @@ function Node({ n, depth, ctx, compact }: { n: TreeNode; depth: number; ctx: Com
         )}
       </div>
       <div class="ct-main">
-        <Head p={p} ctx={ctx} avatar={0} folded={folded} size={n.size} />
+        <Head p={p} ctx={ctx} avatar={compact ? 0 : 20} folded={folded} size={n.size} />
         {folded ? (
           !compact && (
             <button class="ct-unfold" onClick={() => ctx.fold(p.id)} aria-expanded={false}>
@@ -168,19 +210,35 @@ function Node({ n, depth, ctx, compact }: { n: TreeNode; depth: number; ctx: Com
         ) : (
           <>
             <Body p={p} ctx={ctx} />
-            {n.children.length > 0 &&
+            {run.length > 1 && <MoreUnder n={n} ctx={ctx} />}
+            {steps.length > 0 && (
+              <div class={`ct-run ${pair ? 'pair' : ''}`} aria-label={pair ? `Back and forth${between}` : undefined}>
+                {head.map((x) => (
+                  <Step key={x.post.id} n={x} ctx={ctx} compact={compact} />
+                ))}
+                {gap > 0 && (
+                  <button class="ct-run-gap" onClick={() => ctx.fold(`run:${p.id}`)}>
+                    {gap} more{between}
+                  </button>
+                )}
+                {tail.map((x) => (
+                  <Step key={x.post.id} n={x} ctx={ctx} compact={compact} />
+                ))}
+              </div>
+            )}
+            {last.children.length > 0 &&
               (depth + 1 >= MAX_DEPTH ? (
-                <a class="ct-continue" href={ctx.kit.feed.postHref(ctx.network, p.id)}>
-                  Continue this thread ({n.size}) ›
+                <a class="ct-continue" href={ctx.kit.feed.postHref(ctx.network, last.post.id)}>
+                  Continue this thread ({last.size}) ›
                 </a>
               ) : (
                 <div class="ct-kids">
-                  {n.children.map((c) => (
+                  {last.children.map((c) => (
                     <Node key={c.post.id} n={c} depth={depth + 1} ctx={ctx} compact={compact} />
                   ))}
                 </div>
               ))}
-            <MoreUnder n={n} ctx={ctx} />
+            {run.length === 1 && <MoreUnder n={n} ctx={ctx} />}
           </>
         )}
       </div>

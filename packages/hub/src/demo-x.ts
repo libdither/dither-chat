@@ -179,8 +179,20 @@ function threads(epoch: number, made: readonly P.PostFact[] = []) {
   const wasm = under(49, me, 55, 'It is about 400 lines of Rust with no threads, so wasm should be easy. Want to try?', theo, { counts: { likes: 3 } });
   const theo2 = under(50, X.theo, 50, 'On it this weekend.', wasm, { counts: { likes: 2 } });
   const quinn = under(37, X.quinn, 65, 'Saving this for the weekend.', r, { counts: { likes: 1 } });
+  // A long back-and-forth under Theo's: one answer each, ten deep (the tree draws it as one run).
+  const bf: P.PostFact[] = [];
+  const turns: [Who | 'me', number, string][] = [
+    ['me', 48, 'Great. The one thing that needs care is the random seed: it comes from the clock.'],
+    ['theo', 46, 'I will pass the seed in from JS then. Same numbers on every run?'],
+    ['me', 44, 'Same numbers for the same seed, yes. CI checks that.'],
+    ['theo', 40, 'First build is 180 KB of wasm. A million nodes takes 40 s in Firefox.'],
+    ['me', 38, 'About twice the native time. Most of it is the neighbour search.'],
+    ['theo', 30, 'A grid index brings it to 25 s. PR is up.'],
+    ['me', 25, 'Merged, thank you! Linking it from the post.'],
+  ];
+  turns.forEach(([w, min, text], i) => bf.push(under(51 + i, w === 'me' ? me : X[w], min, text, bf[i - 1] ?? theo2, { counts: { likes: i % 3 } })));
   // What you posted here (a reply goes under what it answers).
-  const tree = [cont1, cont2, raviIn, ans, ravi2, pulled, noraChurn, alice, tail, alice2, nora, land, nora2, lee, sam, maya2, lee2, maya, theo, wasm, theo2, quinn, ...made];
+  const tree = [cont1, cont2, raviIn, ans, ravi2, pulled, noraChurn, alice, tail, alice2, nora, land, nora2, lee, sam, maya2, lee2, maya, theo, wasm, theo2, ...bf, quinn, ...made];
   const kids = (id: string) => tree.filter((p) => p.replyTo?.id === id);
   // Each post's reply count is what is under it, as X counts it.
   for (const p of [r, ...tree]) p.counts = { ...p.counts, replies: kids(p.id).length };
