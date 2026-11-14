@@ -61,6 +61,7 @@ import { mailPeople } from './mail/people.ts';
 import { Adding, profileLinksOf, requestHeld, requestViews } from './add.ts';
 import { feedRefusalFor, isFeed } from './feed.ts';
 import { Posts, PostsError } from './posts.ts';
+import { TranslateError, Translator } from './translate.ts';
 import { calendarOff, type CalendarLink } from './calendar.ts';
 import { markCalendarAdded } from './calendar-account.ts';
 import { ReplyMarks, type ReplyMark } from './replymarks.ts';
@@ -281,6 +282,8 @@ export class HubServer {
   readonly people: People;
   /** Public posts read and logged as messages (posts.ts, docs/feed.md "Threads"). */
   readonly posts: Posts;
+  /** Translating posts and messages: the network's own, or a translation server (translate.ts). */
+  readonly translator: Translator;
   /** The account's own self, block, ignore and notes (accountself.ts). */
   readonly self: AccountSelf;
   /** Joining, adding people, and requests waiting on you (add.ts, docs/add.md). */
@@ -347,6 +350,7 @@ export class HubServer {
     });
     this.groups = new Groups({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line) });
     this.posts = new Posts({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), changed: () => this.flush() });
+    this.translator = new Translator({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     this.self = new AccountSelf({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), quietHours: () => store.quietHours() });
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), posts: (a, ps) => this.posts.log(a, ps) });
@@ -1162,6 +1166,23 @@ export class HubServer {
         return ok(v);
       } catch (e) {
         return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
+      }
+    }
+    // Translation (translate.ts, docs/translate.md): the settings, and texts translated by the network or a server.
+    if (path === '/api/translate/settings') {
+      try {
+        if (method === 'PUT') this.translator.setSettings(await body<Record<string, unknown>>());
+        return ok({ settings: this.translator.settings(), networks: this.translator.networks() });
+      } catch (e) {
+        return bad((e as Error).message, e instanceof TranslateError ? e.status : 500);
+      }
+    }
+    if (path === '/api/translate' && method === 'POST') {
+      const b = await body<{ items?: unknown; to?: unknown }>();
+      try {
+        return ok(await this.translator.translate(b.items, b.to));
+      } catch (e) {
+        return bad((e as Error).message, e instanceof TranslateError ? e.status : 500);
       }
     }
     // Who liked or reposted a post, ranked for you (reactors.ts).
