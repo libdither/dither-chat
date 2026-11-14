@@ -23,7 +23,7 @@ export function emptyDb() {
     placeCategories: new Map<string, P.PlaceCategoryView[]>(),
     categoryProvider: 'keyword',
     /** Set when the hub's accounts run in dither-accounts: its page, if the hub knows where. */
-    accountsManager: null as { url: string | null } | null,
+    accountsManager: null as P.AccountsManagerView | null,
     rules: [] as P.RuleView[],
     /** Devices and their own notification rules (docs/devices.md). */
     devices: [] as P.DeviceView[],
@@ -166,6 +166,9 @@ export function applyEventTo(db: Db, ev: P.ClientEvent): boolean {
   switch (ev.t) {
     case 'account':
       db.accounts.set(ev.account.id, ev.account);
+      return false;
+    case 'accountsManager':
+      db.accountsManager = ev.manager;
       return false;
     case 'account.removed':
       db.accounts.delete(ev.id);

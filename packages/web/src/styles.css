@@ -432,6 +432,24 @@ code {
   align-items: center;
   gap: 6px;
 }
+.acc-row .row-title {
+  min-width: 0;
+}
+/* A long name (a mail address) ends in an ellipsis instead of pushing the pill to a line of its own. */
+.acc-row .acc-chip {
+  display: inline-block;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+.acc-row .acc-chip .acc-dot {
+  display: inline-block;
+  margin-right: 5px;
+  vertical-align: middle;
+}
 .row-title {
   font-weight: 600;
   color: var(--text);
@@ -4260,6 +4278,8 @@ textarea.chip-box {
   color: var(--text-faint);
   margin-left: auto;
   text-transform: capitalize;
+  white-space: nowrap;
+  flex: none;
 }
 .status-pill.online {
   color: var(--good);
@@ -4269,6 +4289,11 @@ textarea.chip-box {
 .status-pill.error {
   color: var(--warn);
   background: color-mix(in oklab, var(--warn) 15%, transparent);
+  /* Not the attention card's box (.attention, below), whose class it shares. */
+  border: 0;
+  border-radius: 10px;
+  padding: 1px 8px;
+  margin-bottom: 0;
 }
 .add-btn {
   display: flex;
@@ -4286,6 +4311,145 @@ textarea.chip-box {
 .add-btn:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+/* The one list (docs/accounts.md): what an account does here, as small icons on its row. */
+.feat-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  color: var(--text-dim);
+}
+.feat {
+  position: relative;
+  display: inline-flex;
+}
+/* Offered but not used here, asked for, or declined: dim. */
+.feat.off,
+.feat.denied {
+  opacity: 0.32;
+}
+.feat.asked {
+  opacity: 0.55;
+}
+/* Stopped: a dot on the icon. */
+.feat.trouble::after {
+  content: '';
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 0 1.5px var(--bg-sidebar);
+}
+.acc-row .row-bottom .feat-icons {
+  margin-left: auto;
+}
+.acc-note {
+  margin: 4px 8px 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm, 8px);
+  background: var(--bg-raised);
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.acc-note .mail-note {
+  margin: 0;
+}
+.acc-link .feat-icons {
+  margin-left: auto;
+}
+/* On its page: each feature, what stopped it, and asking for the ones not used here. */
+.feat-strip {
+  list-style: none;
+  margin: 0 0 18px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 8px;
+}
+.feat-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--border-soft, var(--border));
+  border-radius: 10px;
+  background: var(--bg-raised);
+}
+.feat-chip-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--good);
+  background: color-mix(in oklab, var(--good) 14%, transparent);
+}
+.feat-chip-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  font-size: 13px;
+}
+.feat-chip-text small {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+/* What stopped it is said in full below (its section, the attention card): one line here. */
+.feat-chip.trouble .feat-chip-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.feat-chip.trouble .feat-chip-icon {
+  color: var(--warn);
+  background: color-mix(in oklab, var(--warn) 15%, transparent);
+}
+.feat-chip.trouble .feat-chip-text small {
+  color: var(--warn);
+}
+.feat-chip:is(.off, .denied, .asked) {
+  background: none;
+  border-style: dashed;
+}
+.feat-chip:is(.off, .denied, .asked) .feat-chip-icon {
+  color: var(--text-faint);
+  background: var(--bg-raised);
+}
+.feat-chip .btn {
+  flex: none;
+}
+.det-callout {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  font-size: 13px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+}
+.det-callout > span {
+  flex: 1;
+  min-width: 12em;
+}
+.det-callout.warn {
+  color: var(--text);
+  background: color-mix(in oklab, var(--warn) 12%, transparent);
+}
+.det-callout.warn > .icon {
+  color: var(--warn);
 }
 .account-pane,
 .settings {
@@ -4795,6 +4959,28 @@ textarea.chip-box {
   border-color: var(--net);
   background: color-mix(in oklab, var(--net) 10%, transparent);
   color: var(--text);
+}
+.net-opt .feat-icons.tile {
+  gap: 4px;
+  color: var(--text-faint);
+}
+.net-opt.on .feat-icons.tile {
+  color: var(--text-dim);
+}
+/* A kind this hub may not add yet: asking comes first. */
+.net-opt.asks > .net-badge {
+  opacity: 0.6;
+}
+.field-hint {
+  display: block;
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.add-error {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: var(--danger);
 }
 .add-blurb {
   font-size: 12.5px;
@@ -12663,60 +12849,20 @@ button.msg-edited.link:hover {
   color: var(--text-faint);
 }
 
-/* Accounts' Mail group and Settings' Mail block. */
-.acc-mail-group {
-  margin-top: 14px;
-  padding: 0 4px;
-}
-.acc-group-head {
-  margin: 8px 8px 0;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-faint);
-}
+/* Settings' Mail block: each mail account, a link to its page under Accounts. */
 .mail-accounts {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin: 8px;
+  gap: 2px;
+  margin: 8px 0;
 }
-.mail-acc {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  min-width: 0;
-}
-.mail-acc-top {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.mail-acc-name {
+.mail-accounts .mail-acc-name {
   flex: 1;
   min-width: 0;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.mail-acc-sub,
-.mail-acc-line {
-  font-size: 12.5px;
-  color: var(--text-dim);
-  overflow-wrap: anywhere;
-}
-.mail-acc .link-btn {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12.5px;
 }
 
 /* Mail: the composer and the outbox strip (slice 5, ui/mail/Composer.tsx). */

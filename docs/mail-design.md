@@ -326,7 +326,8 @@ Every Message-ID and reference goes into `mail_ref`, pointing at its thread.
 `pending` or `denied`, the hub reads `self()` every 60 s and on each account list. The page shows what to do (§6.6):
 pending gives a link to the manager's Apps page, denied gives "Ask again", which sends a new `requestAccess`. A grant
 narrower than asked (read, some accounts, dry run) is respected and explained where it bites. The hub never asks for
-`accounts` on `imap` or `proton`: mail accounts are added on the manager's page (Q5).
+`accounts` on `imap`: those are added on the manager's page (Q5). It asks for `proton` since 2026-11-13, so Proton Mail
+is added from Add account (docs/accounts.md, "Adding mail").
 
 ### 3.3 First sync and paging
 
@@ -884,7 +885,9 @@ All are optional fields, so existing extractors stay valid, and dither-chat work
    `mail.flag`.
 4. **Unknown senders who look human reach the one-list inbox only when triage rates them Active or above** (slice 8).
 5. **Mail accounts are added on the dither-accounts manager's page**, not from dither-chat. The Accounts screen's Mail
-   group lists them and links there; there is no add form here.
-6. **When access to an account ends, its cached mail is deleted after 24 hours**, with "Delete now" in Settings (and
-   in the Accounts screen's Mail group). Built in slice 1: the account's level becomes null, `gone_at` is set, a sweep
+   group lists them and links there; there is no add form here. *Changed 2026-11-13 (the owner): Accounts is one list
+   with no Mail group, and Proton Mail is added from Add account through the manager (docs/accounts.md, "One list" and
+   "Adding mail"); other kinds still on its page, or after asking.*
+6. **When access to an account ends, its cached mail is deleted after 24 hours**, with "Delete now" on the account's
+   page under Accounts (its Mail section). Built in slice 1: the account's level becomes null, `gone_at` is set, a sweep
    deletes it a day later, and coming back on the list before then keeps everything.
