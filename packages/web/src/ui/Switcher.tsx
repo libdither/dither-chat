@@ -87,8 +87,11 @@ function items(): Item[] {
     out.push(action('a:scan', 'Scan a code', 'An invite or a profile, with the camera or a picture', 'scan', { kind: 'scan' }));
     out.push(action('a:mine', 'My code', "Your accounts' codes, for someone to scan", 'qr', { kind: 'mine' }));
   }
-  for (const { person, last } of people())
-    out.push({ key: person.id, label: person.name, sub: 'Person', icon: <Avatar id={person.id} name={person.name} url={person.avatar} size={24} />, to: { view: 'people', person: person.id }, last, score: scoreOf(directsOf(person.id).map((d) => d.id)), track: 'row (person)' });
+  for (const { person, last } of people()) {
+    // Found by any of their accounts' names and handles too, not only the name the person goes by.
+    const also = person.identityIds.flatMap((id) => ((i) => (i ? [i.displayName, i.handle, i.nickname] : []))(db.identities.get(id))).filter((n): n is string => !!n && n !== person.name);
+    out.push({ key: person.id, label: person.name, sub: 'Person', icon: <Avatar id={person.id} name={person.name} url={person.avatar} size={24} />, to: { view: 'people', person: person.id }, last, score: scoreOf(directsOf(person.id).map((d) => d.id)), track: 'row (person)', also });
+  }
   for (const s of allCommunities()) out.push({ key: s.id, label: s.name, sub: `${netName(s.network)} community`, icon: <Avatar id={s.id} name={s.name} url={s.icon} size={24} square network={s.network} />, to: { view: 'space', space: s.id }, last: 0, track: 'row (community)' });
   for (const f of db.folders) out.push({ key: f.id, label: f.name, sub: 'Folder', icon: <Icon name="folder" size={18} />, to: { view: 'folder', folder: f.id }, last: 0, track: 'row (folder)' });
   for (const c of db.conversations.values()) {
