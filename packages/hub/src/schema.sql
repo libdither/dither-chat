@@ -258,7 +258,9 @@ CREATE TABLE IF NOT EXISTS folder (
   name     TEXT NOT NULL,
   icon     TEXT,
   color    TEXT,
-  position REAL NOT NULL
+  position REAL NOT NULL,
+  parent_id  TEXT,                            -- the folder it sits in (one level: a parent has none)
+  parent_pos REAL                             -- its place among the parent's items
 );
 
 -- A folder holds anything from any network: communities, single conversations, people.

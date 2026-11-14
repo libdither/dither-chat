@@ -15156,3 +15156,202 @@ h1:hover > .pair-nick-edit,
 .notice-actions a.chip-btn {
   text-decoration: none;
 }
+
+/* ---- folders inside folders, and the quiet shelf (docs/organize.md) ---- */
+/* A folder of folders shows a second edge, so it reads as a stack before it is opened. */
+.folder-icon.nested .folder-grid {
+  box-shadow: 3px -3px 0 -1px var(--bg-rail), 3px -3px 0 0 color-mix(in oklab, var(--folder) 55%, transparent);
+}
+.rail-folder.inner {
+  width: calc(100% - 8px);
+  margin: 0 4px;
+}
+.rail-folder.open .rail-folder.open {
+  background: color-mix(in srgb, var(--folder) 22%, transparent);
+  border-radius: 12px;
+}
+.rail-item.quiet .rail-btn {
+  opacity: 0.55;
+}
+.rail-item.quiet .rail-btn:hover {
+  opacity: 1;
+}
+.rail-shelf .rail-btn {
+  height: 26px;
+  width: 40px;
+  border-radius: 13px;
+  background: transparent;
+  border: 1px dashed color-mix(in oklab, var(--rail-ink) 35%, transparent);
+  color: color-mix(in oklab, var(--rail-ink) 75%, transparent);
+}
+.rail-shelf .rail-btn:hover {
+  border-radius: 13px;
+  border-style: solid;
+}
+.rail-shelf-face {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.rail-shelf-n::before {
+  content: 'z ';
+  font-weight: 400;
+  opacity: 0.7;
+}
+.shelf-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 14px;
+  color: var(--text-faint);
+  font-size: 13px;
+  border-top: 1px dashed var(--border-soft);
+}
+.shelf-row:hover {
+  color: var(--text);
+}
+.org-row.in-folder.deep {
+  padding-left: 58px;
+}
+.org-near {
+  display: inline-flex;
+  gap: 4px;
+  flex: none;
+}
+.org-near .chip-btn {
+  font-size: 11.5px;
+  padding: 2px 8px;
+  opacity: 0.75;
+}
+.org-row:hover .org-near .chip-btn,
+.org-row:focus-visible .org-near .chip-btn {
+  opacity: 1;
+}
+
+/* ---- the suggested layout (SuggestedLayout.tsx) ---- */
+.org-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-soft);
+}
+.org-plan-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.org-plan-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-faint);
+}
+.org-plan-toggle h3 {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin: 0;
+}
+.org-plan-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 42vh;
+  overflow-y: auto;
+}
+.org-plan-group.persona {
+  border-left: 2px solid var(--border);
+  padding-left: 8px;
+}
+.org-plan-acc {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 13px;
+  color: color-mix(in srgb, var(--acc) 65%, var(--text));
+  padding: 2px 0;
+}
+.org-plan-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-areas: 'box icon name why' '. . members members';
+  align-items: center;
+  column-gap: 8px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.org-plan-row:hover {
+  background: var(--bg-hover);
+}
+.org-plan-row.off {
+  opacity: 0.5;
+}
+.org-plan-row input {
+  grid-area: box;
+  margin: 0;
+}
+.org-plan-icon {
+  grid-area: icon;
+  display: inline-flex;
+  color: var(--folder);
+}
+.org-plan-name {
+  grid-area: name;
+  font-weight: 600;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.org-plan-count {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--folder) 22%, transparent);
+  color: color-mix(in srgb, var(--folder) 55%, var(--text));
+}
+.org-plan-why {
+  grid-area: why;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.org-plan-members {
+  grid-area: members;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.org-plan-persona {
+  grid-template-areas: 'box icon name why';
+  background: var(--accent-soft);
+}
+.org-plan-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+@media (max-width: 640px) {
+  .org-plan-row {
+    grid-template-columns: auto auto minmax(0, 1fr);
+    grid-template-areas: 'box icon name' '. . why' '. . members';
+  }
+}

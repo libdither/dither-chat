@@ -1,6 +1,6 @@
 /** Arranging the sidebar: what a drop saves, and the menu entries for everything that is not a drag. */
 import type * as P from '@dither-chat/protocol';
-import { applyDrop, moveStep, type DropTarget, type Layout } from '../layout.ts';
+import { applyDrop, mayHold, moveStep, type DropTarget, type Layout } from '../layout.ts';
 import { convsUnder, convTitle, directsOf, folderConvs, placePref, railEntries, sumUnread } from '../model.ts';
 import { db, go, markAllRead, patchPlaces, route, saveFolders } from '../state.ts';
 import { openMenu, type MenuEntry } from './ContextMenu.tsx';
@@ -32,7 +32,7 @@ function save(next: Layout, pinned?: { key: string; pinned: boolean }) {
         color: had.get(f.id)?.color ?? null,
         items: f.items.map((k) => {
           const { kind, id } = splitKey(k);
-          return { kind: kind as 'space' | 'conversation' | 'person', id };
+          return { kind: kind as P.FolderItemKind, id };
         }),
       })),
     );
@@ -59,14 +59,19 @@ function moveToFolder(key: string, folderId: string | null) {
   const l = currentLayout();
   const folders = l.folders.map((f) => ({ ...f, items: f.items.filter((k) => k !== key) }));
   if (folderId) folders.find((f) => f.id === folderId)?.items.push(key);
-  save({ order: l.order.filter((k) => !folderId || k !== key), folders });
+  // Out of a folder that sits in a folder: into the outer one, as a step up.
+  const outer = !folderId && db.folders.find((f) => f.items.some((i) => toKey(i) === key));
+  const up = outer ? db.folders.find((f) => f.items.some((i) => i.kind === 'folder' && i.id === outer.id)) : undefined;
+  if (up && mayHold(folders, up.id, key)) folders.find((f) => f.id === up.id)?.items.push(key);
+  const order = l.order.filter((k) => k !== key);
+  save({ order: folderId || up ? order : [...order, key], folders });
 }
 
 export function newFolderWith(key: string) {
   const { kind, id } = splitKey(key);
   const name = prompt('Folder name', 'New folder')?.trim();
   if (!name) return;
-  saveFolders([...db.folders, { id: randomId(), name, icon: null, color: null, items: [{ kind: kind as 'space' | 'conversation' | 'person', id }] }]);
+  saveFolders([...db.folders, { id: randomId(), name, icon: null, color: null, items: [{ kind: kind as P.FolderItemKind, id }] }]);
 }
 
 /** Where a place sits in the sidebar: pin, order, folders, hide. Every place's menu ends with these. */
@@ -83,19 +88,20 @@ export function arrangeEntries(key: string): MenuEntry[] {
     if (auto) freezeOrder(true);
     save({ ...currentLayout(), order: moveStep(currentLayout().order, key, d) });
   };
-  const others = db.folders.filter((f) => f.id !== inFolder?.id);
+  const layout = currentLayout();
+  const others = db.folders.filter((f) => f.id !== inFolder?.id && mayHold(layout.folders, f.id, key));
   return [
     pref && pos >= 0 && { label: pref.pinned ? 'Unpin' : 'Pin to Top', icon: 'star', run: () => patchPlaces([{ kind: placeKind, id, pinned: !pref.pinned }]) },
     kind === 'conversation' && !inFolder && { label: pref?.railed ? 'Remove from Sidebar' : 'Add to Sidebar', icon: 'plus', run: () => patchPlaces([{ kind: 'conversation', id, railed: !pref?.railed }]) },
     pos >= 0 && { label: 'Move Up', icon: 'chevronUp', disabled: pos === 0, run: () => step(-1) },
     pos >= 0 && { label: 'Move Down', icon: 'chevronDown', disabled: pos === order.length - 1, run: () => step(1) },
-    kind !== 'folder' && {
+    (kind !== 'folder' || others.length > 0) && {
       label: 'Move to Folder',
       icon: 'folder',
       sub: [
         ...others.map((f): MenuEntry => ({ label: f.name, icon: 'folder', run: () => moveToFolder(key, f.id) })),
         ...(others.length ? [{ kind: 'sep' } as MenuEntry] : []),
-        { label: 'New Folder…', icon: 'plus', run: () => newFolderWith(key) },
+        ...(kind !== 'folder' ? [{ label: 'New Folder…', icon: 'plus', run: () => newFolderWith(key) } as MenuEntry] : []),
       ],
     },
     inFolder && { label: `Take Out of ${inFolder.name}`, icon: 'unlink', run: () => moveToFolder(key, null) },
@@ -137,8 +143,10 @@ export function folderEntries(id: string): MenuEntry[][] {
         icon: 'trash',
         danger: true,
         run: () => {
-          if (!confirm(`Delete the folder "${folder.name}"? What is in it stays in the sidebar.`)) return;
-          saveFolders(db.folders.filter((f) => f.id !== id));
+          const outer = db.folders.find((f) => f.items.some((i) => i.kind === 'folder' && i.id === id));
+          if (!confirm(`Delete the folder "${folder.name}"? What is in it stays ${outer ? `in ${outer.name}` : 'in the sidebar'}.`)) return;
+          // Inside another folder, what it held moves up into that one, where it was.
+          saveFolders(db.folders.filter((f) => f.id !== id).map((f) => (f.id === outer?.id ? { ...f, items: f.items.flatMap((i) => (i.kind === 'folder' && i.id === id ? folder.items : [i])) } : f)));
           const r = route.value;
           if (r.view === 'folder' && r.folder === id) go({ view: 'inbox' });
         },

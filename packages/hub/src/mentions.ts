@@ -115,6 +115,8 @@ export function mentionSetting(store: Store, conversationId: string, refs: boole
         held.push(['person', r.id]);
     for (const [kind, id] of held)
       for (const f of store.raw<Row>('SELECT folder_id FROM folder_item WHERE item_kind = ? AND item_id = ? ORDER BY folder_id', kind, id)) chain.push(['folder', f.folder_id]);
+    // A folder inside a folder: the outer one says for it when it does not.
+    for (const [, id] of chain.filter(([k]) => k === 'folder')) for (const f of store.raw<Row>('SELECT parent_id FROM folder WHERE id = ? AND parent_id IS NOT NULL', id)) chain.push(['folder', f.parent_id]);
   }
   const prefs = new Map(
     (chain.length ? store.raw<Row>(`SELECT kind, id, mention_scope, mention_same FROM place_pref WHERE mention_scope IS NOT NULL OR mention_same IS NOT NULL`) : []).map((r) => [`${r.kind}:${r.id}`, r]),

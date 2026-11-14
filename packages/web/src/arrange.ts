@@ -58,6 +58,14 @@ export function setFollowArchive(on: boolean) {
     .catch((e) => toast({ kind: 'error', title: 'Could not save that', body: e.message }));
 }
 
+/** Quiet servers on a shelf at the end of each list (ArrangeSettings.quietShelf; on unless turned off; quiet.ts). */
+export function setQuietShelf(on: boolean) {
+  setArrange({ ...arrange.value, quietShelf: on });
+  api<ArrangeSettings>('/api/arrange', { method: 'PATCH', body: { quietShelf: on } })
+    .then(setArrange)
+    .catch((e) => toast({ kind: 'error', title: 'Could not save that', body: e.message }));
+}
+
 export function patchDismissed(dismissed: Record<string, string[] | null>) {
   const next = { ...arrange.value.dismissed };
   for (const [k, v] of Object.entries(dismissed)) v === null ? delete next[k] : (next[k] = v);
@@ -72,6 +80,13 @@ const score = (kind: UsageKind, id: string, badge: number) => smartScore(usageOf
 
 function itemSortable(it: P.FolderView['items'][number]): Sortable | null {
   const key = `${it.kind}:${it.id}`;
+  if (it.kind === 'folder') {
+    // A folder inside a folder sorts as one unit by its best member, as a folder at the top does.
+    const f = db.folders.find((x) => x.id === it.id);
+    if (!f) return null;
+    const members = f.items.filter((x) => x.kind !== 'folder').map(itemSortable).filter((x): x is Sortable => !!x);
+    return { key, name: f.name, pinned: false, position: null, last: Math.max(0, ...folderConvs(f).map((c) => c.lastMessageAt ?? 0)), score: 0, members };
+  }
   if (it.kind === 'space') {
     const s = db.spaces.get(it.id);
     return s ? { key, name: s.name, pinned: false, position: null, last: activityOfSpace(s.id), score: score('space', s.id, spaceUnread(s.id).badge) } : null;
