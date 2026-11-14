@@ -75,3 +75,29 @@ export function failedNotice(app: string, tried: string, why: string, runs: stri
     body: `${clip(why, 300)}\n${now} It will not try ${short(tried)} again; the next commit that passes CI is tried.`,
   };
 }
+
+/** A process as /proc shows it: its working directory and command line. */
+export interface ProcView {
+  cwd: string | null;
+  cmdline: string[];
+}
+
+/**
+ * The releases in `releasesDir` that a running process uses: its working directory or an argument of its command line
+ * is inside one. dither-accounts' extractors outlive the manager's restarts (its docs/supervisor.md), so one started
+ * many deploys ago still runs, and loads files, from the release it started in.
+ */
+export function releasesInUse(releasesDir: string, procs: ProcView[]): Set<string> {
+  const base = releasesDir.replace(/\/+$/, '') + '/';
+  const used = new Set<string>();
+  const add = (p: string | null) => {
+    if (!p || !p.startsWith(base)) return;
+    const name = p.slice(base.length).split('/')[0];
+    if (name && !name.startsWith('.')) used.add(name);
+  };
+  for (const p of procs) {
+    add(p.cwd);
+    for (const a of p.cmdline) add(a);
+  }
+  return used;
+}

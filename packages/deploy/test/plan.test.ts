@@ -3,7 +3,7 @@
  * what the notice says.
  */
 import { expect, test } from 'bun:test';
-import { type Candidate, deployedNotice, failedNotice, pick, pullsOf } from '../src/plan.ts';
+import { type Candidate, deployedNotice, failedNotice, pick, pullsOf, releasesInUse } from '../src/plan.ts';
 
 const c = (sha: string, check: Candidate['check']): Candidate => ({ sha, check });
 
@@ -60,4 +60,21 @@ test('a failed deploy says what was tried, why, what runs now, and that it will 
   expect(n.body).toContain('will not try f4190cc again');
   expect(failedNotice('dither-accounts', 'aaaaaaa', 'bun install failed', 'bbbbbbb', false).title).toBe('Did not deploy dither-accounts aaaaaaa');
   expect(failedNotice('dither-chat', 'aaaaaaa', 'x', null, true).body).toContain('may be down');
+});
+
+test("a release a running process uses is kept: its working directory or a path on its command line is in it", () => {
+  const rel = '/srv/deploy/accounts/releases';
+  const used = releasesInUse(rel + '/', [
+    // The manager, run from the current release.
+    { cwd: `${rel}/ccc`, cmdline: ['bun', 'packages/manager/src/main.ts'] },
+    // An extractor that outlived the manager's restarts: started many deploys ago, from its own release.
+    { cwd: `${rel}/aaa`, cmdline: ['bun', `${rel}/aaa/extractors/telegram/src/main.ts`] },
+    { cwd: '/tmp', cmdline: ['bun', `${rel}/bbb/extractors/discord/src/main.ts`] },
+    // Not a release: the folder itself, a release being built, another app's, nothing.
+    { cwd: rel, cmdline: [] },
+    { cwd: `${rel}/.new-ddd`, cmdline: [] },
+    { cwd: '/srv/deploy/chat/releases/eee', cmdline: [`${rel}x/fff`] },
+    { cwd: null, cmdline: [] },
+  ]);
+  expect([...used].sort()).toEqual(['aaa', 'bbb', 'ccc']);
 });
