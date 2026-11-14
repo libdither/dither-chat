@@ -3,7 +3,7 @@
  * what the notice says.
  */
 import { expect, test } from 'bun:test';
-import { type Candidate, codeRestartsProblem, codeRestartsSettled, deployedNotice, failedNotice, pick, pullsOf, releasesInUse } from '../src/plan.ts';
+import { type Candidate, codeRestartsProblem, codeRestartsSettled, deadlines, deployedNotice, failedNotice, interrupted, MIN_CHECK_MS, pick, pullsOf, releasesInUse, ROLLBACK_MS, RUN_BUDGET_MS, timeToShip } from '../src/plan.ts';
 
 const c = (sha: string, check: Candidate['check']): Candidate => ({ sha, check });
 
@@ -91,4 +91,20 @@ test("dither-accounts' restarts for changed code: waited for until none is queue
   expect(codeRestartsProblem(c(0, false, 3, 3, 0))).toBe(null);
   expect(codeRestartsProblem(c(0, false, 3, 2, 0))).toBe('of the 3 extractors restarted for changed code, 1 not online');
   expect(codeRestartsProblem(c(0, false, 1, 1, 1))).toBe('of the 1 extractor restarted for changed code, 1 crashed since');
+});
+
+test("a run's time fits the unit's TimeoutStartSec (40 min) with room: a forward check, then a rollback's, then notices", () => {
+  expect(RUN_BUDGET_MS).toBeLessThanOrEqual(35 * 60_000);
+  const d = deadlines(0);
+  expect(d).toEqual({ check: RUN_BUDGET_MS - ROLLBACK_MS, end: RUN_BUDGET_MS });
+  expect(timeToShip(0, d)).toBe(true);
+  // Too little left for a check (a long build, the first app's deploy): it waits for the next run.
+  expect(timeToShip(d.check - MIN_CHECK_MS + 1, d)).toBe(false);
+});
+
+test('a check a killed run left unfinished is failed and rolled back; one killed during its rollback is rolled back again', () => {
+  expect(interrupted(undefined, 'bbb')).toBe(null);
+  const p = { rel: 'bbb', previous: 'aaa', target: 'ttt', at: '2026-11-14T03:04:05.000Z' };
+  expect(interrupted(p, 'bbb')).toEqual({ relink: true, why: 'its check did not finish (the deployer stopped at 03:04 UTC)' });
+  expect(interrupted(p, 'aaa')?.relink).toBe(false);
 });

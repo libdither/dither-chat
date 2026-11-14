@@ -126,3 +126,35 @@ export function codeRestartsProblem(c: CodeRestarts | null | undefined): string 
   const parts = [down > 0 ? `${down} not online` : '', c.crashed > 0 ? `${c.crashed} crashed since` : ''].filter(Boolean);
   return `of the ${c.restarted} extractor${c.restarted === 1 ? '' : 's'} restarted for changed code, ${parts.join(' and ')}`;
 }
+
+/**
+ * A run's time (docs/deploy.md "Time"): the unit gives it TimeoutStartSec (40 min) and kills it after. Everything a run
+ * does fits in RUN_BUDGET_MS, with ROLLBACK_MS kept for a rollback and its check: a forward check must be done by
+ * `check`, a rollback by `end`. An app is not restarted when its check would have less than MIN_CHECK_MS.
+ */
+export const RUN_BUDGET_MS = 32 * 60_000;
+export const ROLLBACK_MS = 12 * 60_000;
+export const MIN_CHECK_MS = 6 * 60_000;
+export function deadlines(runStart: number, budgetMs = RUN_BUDGET_MS, rollbackMs = ROLLBACK_MS): { check: number; end: number } {
+  const end = runStart + budgetMs;
+  return { check: end - rollbackMs, end };
+}
+export function timeToShip(now: number, d: { check: number }, min = MIN_CHECK_MS): boolean {
+  return d.check - now >= min;
+}
+
+/** A release being checked, saved before its restart: a run killed before the check ended leaves it for the next. */
+export interface Pending {
+  rel: string;
+  previous: string;
+  target: string;
+  at: string;
+}
+/**
+ * What the next run does with a check that did not finish: it counts as failed, and `current` goes back to the release
+ * before (`relink`, unless a rollback had already moved it) with the service restarted and checked as a rollback.
+ */
+export function interrupted(p: Pending | undefined, current: string | null): { relink: boolean; why: string } | null {
+  if (!p) return null;
+  return { relink: current !== p.previous, why: `its check did not finish (the deployer stopped at ${p.at.slice(11, 16)} UTC)` };
+}

@@ -89,9 +89,19 @@ release they started in until their own code changes (dither-accounts docs/super
    leaves `unreachable`); the manager must answer its `/api/health`. Both must stay up without systemd restarting
    them, and get the hub's accounts back to as many online as before. For the manager, first its extractors whose code
    changed must have restarted (one at a time, after it is up: its `/api/health` `codeRestarts`, waited for up to 30
-   minutes), and every one of them be online with none crashed since (`plan.ts` `codeRestartsProblem`).
+   minutes), and every one of them be online with none crashed since (`plan.ts` `codeRestartsProblem`, asked again
+   for up to 90 s; a manager that does not answer for a moment is no code problem).
 7. If a check fails, `current` goes back to `previous` and the service restarts on it. The commit is marked failed and
    never tried again; the next commit that passes CI is.
+
+**Time.** The unit kills a run after `TimeoutStartSec` (40 minutes, below). A run therefore keeps to 32 minutes
+(`plan.ts` `RUN_BUDGET_MS`), every wait in a check ending by its deadline: a forward check must be done 12 minutes
+before the end (`ROLLBACK_MS`, kept for a rollback and its own lighter check, which does not wait for dither-accounts'
+restarts for changed code), and an app is not restarted when its check would have less than 6 minutes (it waits for
+the next run, its release already built). Before each restart the release is saved as pending in `state.json`; a run
+killed before its check ended leaves it there, and the next run treats it as failed: the release before comes back,
+checked as a rollback, with the "Rolled back" notice, and the commit is never tried again. If you raise or lower the
+unit's `TimeoutStartSec`, keep it at least 8 minutes above `RUN_BUDGET_MS`.
 
 Either way the manager's notices say what happened (dither-accounts `POST /api/notices/local`), so it reaches the
 inbox and the phone: "Deployed dither-chat a14daa9" with the pull requests it brought (low), "Rolled back …" (high),

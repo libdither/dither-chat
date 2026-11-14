@@ -25,7 +25,7 @@
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { type Candidate, type CodeRestarts, codeRestartsProblem, codeRestartsSettled, deployedNotice, failedNotice, pick, type ProcView, releasesInUse, short } from './plan.ts';
+import { type Candidate, type CodeRestarts, codeRestartsProblem, codeRestartsSettled, deadlines, deployedNotice, failedNotice, interrupted, type Pending, pick, type ProcView, releasesInUse, ROLLBACK_MS, short, timeToShip } from './plan.ts';
 
 const HOME = homedir();
 const ROOT = process.env.DITHER_DEPLOY_ROOT ?? join(HOME, '.local/share/dither-deploy');
@@ -52,9 +52,18 @@ interface App {
   overlay?: { remote: string; url: string; branch: string };
   unit: string;
   build: string[][];
-  /** Wait for the service to be up after a restart; throws why not. */
-  up: (since: Since) => Promise<void>;
+  /**
+   * Wait for the service to be up after a restart; throws why not. Every wait in it ends by the check's deadline
+   * (`until`). `rollback`: the release before is back, so only that it runs is checked, not dither-accounts' restarts
+   * for changed code.
+   */
+  up: (since: Since, o: { rollback: boolean }) => Promise<void>;
 }
+
+/** This run's time (plan.ts deadlines): set when it starts. */
+const RUN = deadlines(Date.now());
+/** When the check under way must be done by; every `until` in it stops there. */
+let checkBy = RUN.check;
 
 /** What the checks compare with: taken just before a restart. */
 interface Since {
@@ -75,14 +84,13 @@ const APPS: App[] = [
     ...(ACCOUNTS_PRIVATE ? { overlay: { remote: 'private', url: ACCOUNTS_PRIVATE, branch: 'live' } } : {}),
     unit: 'dither-accounts.service',
     build: [[bun, 'install', '--frozen-lockfile'], [bun, 'run', 'web:build']],
-    up: async (s) => {
+    up: async (s, o) => {
       await until(() => health(`${MANAGER}/api/health`), 120_000, 'the manager to answer /api/health');
       // Extractors whose code changed restart one at a time after the manager is up (its docs/supervisor.md): wait
       // until the last has, then (steady's 20 s on) every one of them must be online and none crashed since.
-      await until(async () => codeRestartsSettled(await codeRestarts()), 1_800_000, 'dither-accounts to restart the extractors whose code changed');
+      if (!o.rollback) await until(async () => codeRestartsSettled(await codeRestarts()), 1_800_000, 'dither-accounts to restart the extractors whose code changed');
       await steady('dither-accounts.service', s);
-      const problem = codeRestartsProblem(await codeRestarts());
-      if (problem) throw new Error(problem);
+      if (!o.rollback) await codeRestartsHeld();
       // The hub's accounts run under the manager: they come back online.
       await until(async () => (await onlineAccounts()) >= s.online, 300_000, `the hub's accounts to be online again (${s.online} before)`);
     },
@@ -137,6 +145,8 @@ const tryRun = (cmd: string[], cwd?: string) => {
 const git = (dir: string, ...args: string[]) => run(['git', '-C', dir, ...args]);
 
 async function until(f: () => boolean | Promise<boolean>, ms: number, what: string) {
+  // Never past the check's deadline: the unit kills a run that takes too long (plan.ts deadlines).
+  ms = Math.max(1000, Math.min(ms, checkBy - Date.now()));
   const end = Date.now() + ms;
   while (Date.now() < end) {
     try {
@@ -150,6 +160,28 @@ async function until(f: () => boolean | Promise<boolean>, ms: number, what: stri
 async function health(url: string) {
   const r = await fetch(url, { signal: AbortSignal.timeout(3000) });
   return r.ok;
+}
+
+/**
+ * Every extractor restarted for changed code online, none crashed since: asked again for up to 90 s (a moment of not
+ * answering is no code problem), then the last thing heard is why not.
+ */
+async function codeRestartsHeld() {
+  let last = 'dither-accounts did not answer /api/health';
+  try {
+    await until(async () => {
+      try {
+        const problem = codeRestartsProblem(await codeRestarts());
+        if (!problem) return true;
+        last = problem;
+      } catch (e) {
+        last = `dither-accounts did not answer /api/health (${(e as Error).message})`;
+      }
+      return false;
+    }, 90_000, 'the restarted extractors online');
+  } catch {
+    throw new Error(last);
+  }
 }
 
 /** dither-accounts' restarts for changed code (counts only), or null from a manager that has none. */
@@ -245,14 +277,16 @@ interface State {
   known: Record<string, { check: 'success' | 'failure'; held: number }>;
   /** The hold already told about, by app (one notice per held pull request). */
   toldHeld: Record<string, number>;
+  /** A release whose check is under way, by app (plan.ts Pending): one left here by a killed run is rolled back. */
+  pending: Record<string, Pending>;
 }
 const stateFile = join(ROOT, 'state.json');
 function loadState(): State {
   try {
     const s = JSON.parse(readFileSync(stateFile, 'utf8')) as Partial<State>;
-    return { failed: s.failed ?? {}, branchOf: s.branchOf ?? {}, known: s.known ?? {}, toldHeld: s.toldHeld ?? {} };
+    return { failed: s.failed ?? {}, branchOf: s.branchOf ?? {}, known: s.known ?? {}, toldHeld: s.toldHeld ?? {}, pending: s.pending ?? {} };
   } catch {
-    return { failed: {}, branchOf: {}, known: {}, toldHeld: {} };
+    return { failed: {}, branchOf: {}, known: {}, toldHeld: {}, pending: {} };
   }
 }
 function saveState(s: State) {
@@ -477,6 +511,10 @@ async function deploy(a: App, state: State, byHand?: string): Promise<'shipped' 
     }
     target = p.ship;
   }
+  if (!timeToShip(Date.now(), RUN)) {
+    log(`${a.name}: ${short(target)} waits for the next run: too little of this one's time is left for its check`);
+    return 'waiting';
+  }
   const calls = await callsOn();
   if (calls) {
     log(`${a.name}: ${short(target)} waits: ${calls} call${calls === 1 ? '' : 's'} on`);
@@ -510,29 +548,32 @@ async function deploy(a: App, state: State, byHand?: string): Promise<'shipped' 
   const subjects = git(repoOf(a), 'log', '--first-parent', '--format=%s', range).split('\n').filter(Boolean);
 
   if (a.key === 'chat') backup();
+  // The build took this run's time too: a check that could not finish waits for the next run (the release is built).
+  if (!timeToShip(Date.now(), RUN)) {
+    log(`${a.name}: ${short(rel)} is built; its restart waits for the next run (too little of this one's time is left)`);
+    return 'waiting';
+  }
   const s = await since(a);
+  // Saved before the restart: if this run is killed before the check ends, the next one rolls it back (resolvePending).
+  state.pending[a.key] = { rel, previous: current, target, at: new Date().toISOString() };
+  saveState(state);
   link(a, 'previous', current);
   link(a, 'current', rel);
   run(['systemctl', '--user', 'restart', a.unit]);
   try {
-    await a.up(s);
+    checkBy = RUN.check;
+    await a.up(s, { rollback: false });
   } catch (e) {
     const why = (e as Error).message;
     log(`${a.name}: ${short(rel)} did not hold: ${why}; rolling back to ${short(current)}`);
     fail(why);
-    link(a, 'current', current);
-    run(['systemctl', '--user', 'restart', a.unit]);
-    let back = true;
-    try {
-      await a.up(await since(a));
-    } catch (e2) {
-      back = false;
-      log(`${a.name}: the rollback did not come up either: ${(e2 as Error).message}`);
-    }
-    const n = failedNotice(a.name, target, why, back ? current : null, true);
-    await notice(`${a.key}-failed`, n.title, n.body, 'high', a.name);
+    await rollBack(a, current, target, why);
+    delete state.pending[a.key];
+    saveState(state);
     return 'failed';
   }
+  delete state.pending[a.key];
+  saveState(state);
   log(`${a.name}: ${short(rel)} is up (${Math.round((Date.now() - s.at) / 1000)} s)`);
   if (a.overlay) {
     // The private branch follows what runs, as it did when this was done by hand.
@@ -543,6 +584,40 @@ async function deploy(a: App, state: State, byHand?: string): Promise<'shipped' 
   await notice(a.key, n.title, n.body, 'low', a.name);
   prune(a);
   return 'shipped';
+}
+
+/** `current` back to the release before, the service restarted on it and checked as a rollback, and the notice. */
+async function rollBack(a: App, to: string, target: string, why: string) {
+  if (linked(a, 'current') !== to) link(a, 'current', to);
+  run(['systemctl', '--user', 'restart', a.unit]);
+  let back = true;
+  try {
+    // Its own time, from what this run has left (ROLLBACK_MS was kept for it): never the forward check's 30 minutes.
+    checkBy = Math.min(Date.now() + ROLLBACK_MS, RUN.end);
+    await a.up(await since(a), { rollback: true });
+  } catch (e2) {
+    back = false;
+    log(`${a.name}: the rollback did not come up either: ${(e2 as Error).message}`);
+  }
+  const n = failedNotice(a.name, target, why, back ? to : null, true);
+  await notice(`${a.key}-failed`, n.title, n.body, 'high', a.name);
+}
+
+/**
+ * A check a killed run left unfinished (state.pending): it counts as failed, never tried again, and the release before
+ * comes back, checked as a rollback, with its notice. A run killed during a rollback leaves the same, and it is done
+ * again.
+ */
+async function resolvePending(a: App, state: State) {
+  const p = state.pending[a.key];
+  const r = interrupted(p, linked(a, 'current'));
+  if (!p || !r) return;
+  log(`${a.name}: ${short(p.rel)}: ${r.why}; rolling back to ${short(p.previous)}`);
+  (state.failed[a.key] ??= {})[p.target] = r.why;
+  saveState(state);
+  if (!dry) await rollBack(a, p.previous, p.target, r.why);
+  delete state.pending[a.key];
+  saveState(state);
 }
 
 // ---------------------------------------------------------------- main
@@ -566,6 +641,14 @@ async function main() {
     link(a, 'current', sha);
     log(`${a.name}: init: current is ${short(sha)} (no restart)`);
     return;
+  }
+  // What a killed run left half-checked comes first, before anything new ships.
+  for (const a of APPS) {
+    try {
+      await resolvePending(a, state);
+    } catch (e) {
+      log(`${a.name}: resolving an unfinished check: ${(e as Error).message}`);
+    }
   }
   if (args[0] === 'ship') {
     const a = APPS.find((x) => x.key === args[1]);
