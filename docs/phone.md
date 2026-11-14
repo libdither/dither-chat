@@ -38,7 +38,7 @@ the desktop is unchanged apart from the fixes listed below.
 | Long-press, or hold and drag | A rail entry, a row, a card in All communities | The arrange sheet; or drag to reorder and make folders |
 | Drag down | A sheet's grabber or header; anywhere in it once scrolled to its top | Dismisses it. A short drag springs back |
 | Pull down | The top of a list or Catch up | Reloads everything from the hub, or reconnects |
-| Pinch, double-tap, drag | An image | Zoom and pan, up to 5x |
+| Pinch, double-tap, drag | An image | Zoom and pan, up to 5x, or to twice the picture's own pixels where that is further. A double tap on a long screenshot or a panorama fills the screen's width (or height) |
 | Swipe sideways, swipe down | An image | Next or previous image of the message; close |
 | Flick sideways or up | A toast | Dismisses it |
 

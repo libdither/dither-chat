@@ -1,10 +1,11 @@
 /**
  * Files attached in the composer (docs/uploads.md). Each starts uploading as it is attached and shows how far it got,
  * with a cancel; one that failed can be tried again. A file that cannot be sent stays in the row, saying why (too
- * large for the network or the hub, empty, unreadable, one too many), rather than being left out without a word.
+ * large for the network or the hub, empty, unreadable), rather than being left out without a word. More files than
+ * the network takes in one message go as several messages (state.ts send), and the row says how many.
  */
 import type * as P from '@dither-chat/protocol';
-import { ATTACHMENT_LIMITS } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, splitsFiles } from '@dither-chat/protocol';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { bytes } from '../format.ts';
 import { netName } from '../model.ts';
@@ -33,10 +34,11 @@ export function useAttached(network: P.Network | undefined, convId: string) {
     if (!network || !list.length) return;
     const net = { name: netName(network), ...ATTACHMENT_LIMITS[network] };
     const checked = await Promise.all(list.map(async (file) => ({ file, readable: file.size === 0 || (await readable(file)) })));
-    // Counted against what is attached by now, refused ones aside.
+    // Counted against what is attached by now, refused ones aside, where a network's count is a hard one.
+    const splits = splitsFiles(network);
     let n = cur.current.filter((f) => !f.refused).length;
     const added = checked.map(({ file, readable }): Attached => {
-      const refused = refusalOf({ size: file.size, readable }, n, net);
+      const refused = refusalOf({ size: file.size, readable }, splits ? 0 : n, net);
       if (refused) return { key: keys++, file, url: null, refused };
       n++;
       return { key: keys++, file, url: isMedia(file) ? URL.createObjectURL(file) : null, job: startUpload(file) };
@@ -70,15 +72,26 @@ export function useAttached(network: P.Network | undefined, convId: string) {
   return { files, add, remove, clear, sendable, failed };
 }
 
-export function AttachedFiles({ files, remove }: { files: Attached[]; remove: (key: number) => void }) {
+export function AttachedFiles({ files, remove, network }: { files: Attached[]; remove: (key: number) => void; network?: P.Network }) {
   if (!files.length) return null;
+  const split = splitNote(files, network);
   return (
     <div class="composer-files">
       {files.map((f) => (
         <AttachedFile key={f.key} f={f} remove={() => remove(f.key)} />
       ))}
+      {split && <div class="composer-files-split">{split}</div>}
     </div>
   );
+}
+
+/** "Goes as 3 messages: Discord takes 10 files in one", when the files that can go are more than one message takes. */
+export function splitNote(files: Attached[], network?: P.Network): string | null {
+  if (!network || !splitsFiles(network)) return null;
+  const per = ATTACHMENT_LIMITS[network].files;
+  const n = files.filter((f) => !f.refused).length;
+  if (n <= per) return null;
+  return `Goes as ${Math.ceil(n / per)} messages: ${netName(network)} takes ${per} ${per === 1 ? 'file' : 'files'} in one`;
 }
 
 function AttachedFile({ f, remove }: { f: Attached; remove: () => void }) {
