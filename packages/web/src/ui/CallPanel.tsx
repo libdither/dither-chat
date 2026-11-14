@@ -8,7 +8,7 @@
 import type * as P from '@dither-chat/protocol';
 import { modVerb, VOLUME_MAX } from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
-import { type ActiveCall, askSounds, callCan, playSound, setPersonVolume, stageAction } from '../call.ts';
+import { type ActiveCall, askSounds, callCan, isCallSelf, playSound, setPersonVolume, stageAction, watchStream } from '../call.ts';
 import { convTitle } from '../model.ts';
 import { api, db, go, isSelfIdentity, toast } from '../state.ts';
 import { Avatar } from './bits.tsx';
@@ -20,7 +20,8 @@ const STAGE_WORDS: Record<P.StageRole, string> = { speaker: 'Speaking', audience
 
 export function name(identityId: string): string {
   const i = db.identities.get(identityId);
-  const person = i?.personId ? db.persons.get(i.personId) : null;
+  // Another of the owner's own accounts is named as that account, not "You".
+  const person = i?.personId && !isSelfIdentity(identityId) ? db.persons.get(i.personId) : null;
   return person?.name ?? i?.displayName ?? i?.handle ?? 'Someone';
 }
 
@@ -65,7 +66,7 @@ function moveTargets(conversationId: string): P.ConversationView[] {
 
 /** What a tap on someone in the call offers. */
 function personMenu(call: ActiveCall, p: P.CallParticipant, about: P.AboutView | null, setAbout: (v: P.AboutView) => void): MenuEntry[] {
-  if (isSelfIdentity(p.id)) return [];
+  if (isCallSelf(call, p.id)) return [];
   const who = name(p.id);
   const volume = p.volume ?? 100;
   const mod = about?.moderation;
@@ -132,8 +133,8 @@ function Person({ call, p, about, setAbout }: { call: ActiveCall; p: P.CallParti
   const states = [
     p.serverMuted ? 'muted by a moderator' : p.muted ? 'muted' : '',
     p.serverDeafened ? 'deafened by a moderator' : p.deafened ? 'deafened' : '',
-    p.video ? 'camera on (video is not shown here yet)' : '',
-    p.streaming ? 'live (watching is not built here yet)' : '',
+    p.video ? (call.mode === 'bridge' ? 'camera on' : 'camera on (video shows in bridge mode)') : '',
+    p.streaming ? 'live' : '',
     p.localMute ? 'muted for you' : p.volume !== undefined && p.volume !== 100 ? `${p.volume}% for you` : '',
     p.stage ? STAGE_WORDS[p.stage].toLowerCase() : '',
   ].filter(Boolean);
@@ -141,9 +142,11 @@ function Person({ call, p, about, setAbout }: { call: ActiveCall; p: P.CallParti
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     openMenu({ x: r.left + r.width / 2, y: r.bottom }, { items: personMenu(call, p, about, setAbout), head: <b>{who}</b>, track: 'call person menu' });
   };
+  const watching = !!call.self?.watching?.includes(p.id);
+  const canWatch = p.streaming && !isCallSelf(call, p.id) && call.mode === 'bridge' && callCan('watchStreams');
   return (
     <li class={`${p.speaking ? 'speaking' : ''} ${p.localMute ? 'local-mute' : ''}`}>
-      <button class="call-person" onClick={open} disabled={isSelfIdentity(p.id)} title={states.length ? `${who}: ${states.join(', ')}` : who} aria-label={states.length ? `${who}, ${states.join(', ')}` : who}>
+      <button class="call-person" onClick={open} disabled={isCallSelf(call, p.id)} title={states.length ? `${who}: ${states.join(', ')}` : who} aria-label={states.length ? `${who}, ${states.join(', ')}` : who}>
         <span class="call-avatar">
           <Avatar id={idn?.personId ?? p.id} name={who} url={idn?.avatar ?? null} size={40} network="discord" />
         </span>
@@ -156,13 +159,18 @@ function Person({ call, p, about, setAbout }: { call: ActiveCall; p: P.CallParti
           {p.volume !== undefined && p.volume !== 100 && !p.localMute && <span class="call-vol">{p.volume}%</span>}
         </span>
       </button>
+      {canWatch && (
+        <button class={`chip-btn call-watch ${watching ? 'on' : ''}`} onClick={() => watchStream(p.id, !watching)} data-track={watching ? 'stop watching stream' : 'watch stream'}>
+          {watching ? 'Stop watching' : 'Watch'}
+        </button>
+      )}
     </li>
   );
 }
 
 /** A stage: its topic, and your own hand, speaking and listening. */
 function StageBar({ call }: { call: ActiveCall }) {
-  const me = call.participants.find((p) => isSelfIdentity(p.id));
+  const me = call.participants.find((p) => isCallSelf(call, p.id));
   const role = me?.stage ?? 'audience';
   const s = call.stage!;
   const can = callCan('stage');
@@ -258,6 +266,9 @@ export function CallPanel({ call }: { call: ActiveCall }) {
       {call.stats && (
         <p class="call-stats">
           {call.stats.codec ?? 'audio'} · {call.stats.path ?? '?'} · {call.stats.rttMs ?? '?'} ms · ↑{kb(call.stats.sent)} ↓{kb(call.stats.received)}
+          {call.stats.videoIn && call.stats.videoIn.fps > 0 && ` · video in ${call.stats.videoIn.width}×${call.stats.videoIn.height} ${call.stats.videoIn.fps} fps`}
+          {call.stats.videoOut && call.stats.videoOut.fps > 0 && ` · out ${call.stats.videoOut.width}×${call.stats.videoOut.height} ${call.stats.videoOut.fps} fps`}
+          {call.timing.connected !== undefined && ` · joined in ${(call.timing.connected / 1000).toFixed(1)} s`}
         </p>
       )}
       {c && (

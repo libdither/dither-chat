@@ -162,6 +162,14 @@ export class Calls {
         need('soundboard', 'The soundboard');
         if (typeof msg.sound !== 'string' || !/^\d{1,20}$/.test(msg.sound) || typeof msg.guild !== 'string' || !/^\d{1,20}$/.test(msg.guild)) throw new Error('Which sound?');
         return { ...base, op: 'sound', sound: msg.sound, guild: msg.guild };
+      case 'video':
+        need('callVideo', 'Video');
+        if (call.mode !== 'bridge') throw new Error('Video goes through bridge mode: switch it in Settings → Calls.');
+        return { ...base, op: 'video', camera: !!msg.camera, screen: !!msg.screen, ...(msg.screenAudio ? { screenAudio: true } : {}) };
+      case 'watch':
+        need('watchStreams', 'Watching a stream');
+        if (call.mode !== 'bridge') throw new Error('Watching a stream goes through bridge mode: switch it in Settings → Calls.');
+        return { ...base, op: 'watch', user: native(msg.user), on: !!msg.on };
       default:
         return null;
     }
@@ -278,8 +286,18 @@ export class Calls {
 
   /** Native user ids become hub identity ids, with the identities alongside so the device can draw them. */
   private hubState(call: Live, st: P.CallState): P.CallState & { identities: P.IdentityView[] } {
-    const participants = st.participants.map((p) => ({ ...p, id: hubId('idn', call.network, p.id) }));
-    return { conversation: call.conversation, participants, ...(st.stage ? { stage: st.stage } : {}), identities: this.store.identitiesByIds(participants.map((p) => p.id)) };
+    const idn = (native: string) => hubId('idn', call.network, native);
+    const participants = st.participants.map((p) => ({ ...p, id: idn(p.id) }));
+    const video = Array.isArray(st.video) ? st.video.filter((v) => typeof v?.who === 'string' && typeof v.slot === 'string').map((v) => ({ slot: v.slot, who: idn(v.who), source: v.source === 'stream' ? ('stream' as const) : ('camera' as const) })) : undefined;
+    const self = st.self ? { ...st.self, ...(Array.isArray(st.self.watching) ? { watching: st.self.watching.filter((w) => typeof w === 'string').map(idn) } : {}) } : undefined;
+    return {
+      conversation: call.conversation,
+      participants,
+      ...(st.stage ? { stage: st.stage } : {}),
+      ...(video ? { video } : {}),
+      ...(self ? { self } : {}),
+      identities: this.store.identitiesByIds([...new Set([...participants.map((p) => p.id), ...(video ?? []).map((v) => v.who)])]),
+    };
   }
 
   // ------------------------------------------------------------ voice socket (direct mode)

@@ -147,6 +147,11 @@ export interface Prefs {
   callMode: 'bridge' | 'direct';
   /** This device's microphone in calls: noise suppression and sensitivity (Settings → Calls). Absent: CALL_INPUT_DEFAULT. */
   callInput?: import('@dither-chat/protocol').CallInput;
+  /** This device's microphone and camera for calls (a deviceId; absent: the browser's default). */
+  callMicId?: string;
+  callCameraId?: string;
+  /** Call sounds on this device: someone joins or leaves, you mute (default on). */
+  callSounds?: boolean;
   /** The inbox's filter (its menu beside the search box). */
   inboxFilter: InboxFilter;
   /** People's filter chip: chats, or one kind of list (docs/add.md "Relationships"). */

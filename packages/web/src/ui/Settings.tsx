@@ -524,6 +524,93 @@ function CallInputSettings() {
       <p class="set-help">
         For this device. Through the account, its own client gets the same choices, as its voice settings; from this device, the device applies them itself. A person's volume and mute for you are in the call: tap them.
       </p>
+      <CallDevices />
+      <div class="set-rule">
+        <span class="set-rule-label">Call sounds</span>
+        <div class="level-picker">
+          {([true, false] as const).map((on) => (
+            <button class={`chip-btn ${(prefs.value.callSounds !== false) === on ? 'on' : ''}`} onClick={() => setPrefs({ callSounds: on })}>
+              {on ? 'On' : 'Off'}
+            </button>
+          ))}
+        </div>
+      </div>
+      <p class="set-help">Someone joining or leaving, muting, a camera or a stream starting: Discord's own sounds when the hub has them, short chimes otherwise.</p>
+    </>
+  );
+}
+
+/** Which microphone and camera this device uses in calls, and a meter to see the microphone works. */
+function CallDevices() {
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  const [level, setLevel] = useState<number | null>(null);
+  const p = prefs.value;
+  const list = () =>
+    navigator.mediaDevices
+      ?.enumerateDevices()
+      .then(setDevices)
+      .catch(() => {});
+  useEffect(() => {
+    void list();
+    navigator.mediaDevices?.addEventListener?.('devicechange', list);
+    return () => navigator.mediaDevices?.removeEventListener?.('devicechange', list);
+  }, []);
+  // A few seconds of the chosen microphone's loudness, from a click (it asks for the microphone, and names the devices).
+  const test = async () => {
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: p.callMicId ? { deviceId: { exact: p.callMicId } } : true });
+    } catch (e) {
+      toast({ kind: 'error', title: 'No microphone', body: (e as Error).message });
+      return;
+    }
+    void list();
+    const ctx = new AudioContext();
+    const an = ctx.createAnalyser();
+    an.fftSize = 512;
+    ctx.createMediaStreamSource(stream).connect(an);
+    const buf = new Float32Array(an.fftSize);
+    const t = setInterval(() => {
+      an.getFloatTimeDomainData(buf);
+      let sum = 0;
+      for (const v of buf) sum += v * v;
+      setLevel(Math.max(0, Math.min(1, (20 * Math.log10(Math.sqrt(sum / buf.length) + 1e-9) + 60) / 60)));
+    }, 80);
+    setTimeout(() => {
+      clearInterval(t);
+      stream.getTracks().forEach((x) => x.stop());
+      void ctx.close();
+      setLevel(null);
+    }, 6000);
+  };
+  const pick = (kind: MediaDeviceKind, label: string, value: string | undefined, set: (id: string | undefined) => void) => {
+    const of = devices.filter((d) => d.kind === kind && d.deviceId);
+    return (
+      <div class="set-rule">
+        <span class="set-rule-label">{label}</span>
+        <select value={value ?? ''} onChange={(e) => set((e.target as HTMLSelectElement).value || undefined)} aria-label={label}>
+          <option value="">The browser's default</option>
+          {of.map((d, i) => (
+            <option value={d.deviceId}>{d.label || `${label} ${i + 1}`}</option>
+          ))}
+        </select>
+      </div>
+    );
+  };
+  return (
+    <>
+      {pick('audioinput', 'Microphone', p.callMicId, (id) => setPrefs({ callMicId: id }))}
+      {pick('videoinput', 'Camera', p.callCameraId, (id) => setPrefs({ callCameraId: id }))}
+      <div class="set-rule">
+        <span class="set-rule-label">Test the microphone</span>
+        {level === null ? (
+          <button class="chip-btn" onClick={() => void test()}>
+            Test for 6 s
+          </button>
+        ) : (
+          <meter class="mic-meter" min={0} max={1} low={0.25} high={0.85} optimum={0.5} value={level} aria-label="Microphone loudness" />
+        )}
+      </div>
     </>
   );
 }

@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
-import { activeCall, canCall, canRing, leaveCall, setDeafened, setMuted, startCall } from '../call.ts';
+import { activeCall, callMedia, canCall, canRing, canShareScreen, canVideo, leaveCall, micLevel, setCamera, setDeafened, setMuted, setScreen, startCall } from '../call.ts';
 import { callIn } from '../ringing.ts';
-import { db, prefs, rev } from '../state.ts';
+import { db, isSelfIdentity, prefs, rev } from '../state.ts';
 import { convTitle } from '../model.ts';
 import { Icon } from './icons.tsx';
 
@@ -80,9 +80,20 @@ export function CallDock() {
   const title = c ? convTitle(c) : 'Call';
   const speaking = call.participants.filter((p) => p.speaking);
   const effect = call.effects.at(-1)?.effect;
-  const status = call.phase === 'connecting' ? 'Connecting…' : call.phase === 'ended' ? (call.note ?? 'Call ended') : elapsed(call.since, now);
+  // Bridge mode: live once the bridge is, but people hear you only once the account's own client has connected.
+  const reaching = call.phase === 'live' && call.mode === 'bridge' && call.self && !call.self.connected;
+  const status = call.phase === 'connecting' ? 'Connecting…' : call.phase === 'ended' ? (call.note ?? 'Call ended') : reaching ? 'Connecting to Discord…' : elapsed(call.since, now);
+  const video = canVideo();
   return (
-    <section class={`call-dock ${open ? 'open' : ''} ${call.phase}`} aria-label="Call" data-call-stats={call.stats ? JSON.stringify(call.stats) : undefined} data-call-phase={call.phase}>
+    <section
+      class={`call-dock ${open ? 'open' : ''} ${call.phase}`}
+      aria-label="Call"
+      data-call-stats={call.stats ? JSON.stringify(call.stats) : undefined}
+      data-call-phase={call.phase}
+      data-call-connected={call.self?.connected || call.timing.connected !== undefined ? '1' : undefined}
+      data-call-timing={JSON.stringify(call.timing)}
+    >
+      <CallVideos />
       <div class="call-dock-bar">
         <button class="call-dock-title" onClick={() => setOpen(!open)} aria-expanded={open}>
           <span class={`call-dot ${call.phase}`} />
@@ -96,12 +107,29 @@ export function CallDock() {
           </span>
         </button>
         <div class="call-dock-buttons">
-          <button class={`call-btn ${call.muted ? 'off' : ''}`} onClick={() => setMuted(!call.muted)} aria-label={call.muted ? 'Unmute' : 'Mute'} title={call.muted ? 'Unmute' : 'Mute'} disabled={call.phase === 'ended'}>
+          <button
+            class={`call-btn mic ${call.muted ? 'off' : ''}`}
+            onClick={() => setMuted(!call.muted)}
+            aria-label={call.muted ? 'Unmute' : 'Mute'}
+            title={call.listenOnly ? 'No microphone: listening only' : call.self?.muted && !call.muted ? 'The account is still muted: tap to try again' : call.muted ? 'Unmute' : 'Mute'}
+            disabled={call.phase === 'ended' || call.listenOnly}
+            style={{ '--mic-level': call.muted ? 0 : micLevel.value }}
+          >
             <Icon name={call.muted ? 'micOff' : 'mic'} size={18} />
           </button>
           <button class={`call-btn ${call.deafened ? 'off' : ''}`} onClick={() => setDeafened(!call.deafened)} aria-label={call.deafened ? 'Undeafen' : 'Deafen'} title={call.deafened ? 'Undeafen' : 'Deafen'} disabled={call.phase === 'ended'}>
             <Icon name={call.deafened ? 'headphonesOff' : 'headphones'} size={18} />
           </button>
+          {video && (
+            <button class={`call-btn ${call.camera ? 'on' : ''}`} onClick={() => void setCamera(!call.camera)} aria-label={call.camera ? 'Turn camera off' : 'Turn camera on'} title={call.camera ? 'Turn camera off' : 'Turn camera on'} data-track="call camera">
+              <Icon name="camera" size={18} />
+            </button>
+          )}
+          {video && canShareScreen() && (
+            <button class={`call-btn ${call.screen ? 'on' : ''}`} onClick={() => void setScreen(!call.screen)} aria-label={call.screen ? 'Stop sharing' : 'Share your screen or a window'} title={call.screen ? 'Stop sharing' : 'Share your screen or a window'} data-track="call screen">
+              <Icon name="monitor" size={18} />
+            </button>
+          )}
           <button class="call-btn leave" onClick={leaveCall} aria-label="Leave the call" title="Leave the call" disabled={call.phase === 'ended'}>
             <Icon name="phoneOff" size={18} />
           </button>
@@ -112,8 +140,46 @@ export function CallDock() {
   );
 }
 
+/** One video: a stream on a <video>, a tap for full screen. */
+function VideoTile({ stream, label, mirror, slot }: { stream: MediaStream; label: string; mirror?: boolean; slot?: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const v = ref.current;
+    if (v && v.srcObject !== stream) {
+      v.srcObject = stream;
+      v.play().catch(() => {});
+    }
+  }, [stream]);
+  return (
+    <figure class={`call-video ${mirror ? 'mirror' : ''}`} data-video-slot={slot}>
+      <video ref={ref} autoplay playsInline muted onClick={(e) => void (e.currentTarget as HTMLVideoElement).requestFullscreen?.().catch(() => {})} />
+      <figcaption>{label}</figcaption>
+    </figure>
+  );
+}
+
+/** Video in the call: others' cameras and streams on the bridge's slots, and what this device sends. */
+function CallVideos() {
+  const call = activeCall.value;
+  const media = callMedia.value;
+  if (!call || call.phase === 'ended') return null;
+  const remote = call.video.map((v) => ({ v, stream: media.slots.get(v.slot) })).filter((x) => !!x.stream);
+  if (!remote.length && !media.camera && !media.screen) return null;
+  return (
+    <div class="call-videos" aria-label="Video">
+      {remote.map(({ v, stream }) => (
+        <VideoTile key={`${v.slot}:${v.who}:${v.source}`} stream={stream!} slot={v.slot} label={`${name(v.who)}${v.source === 'stream' ? ' · screen' : ''}`} />
+      ))}
+      {media.screen && <VideoTile key="my-screen" stream={media.screen} label="Your screen" />}
+      {media.camera && <VideoTile key="my-camera" stream={media.camera} label="You" mirror />}
+    </div>
+  );
+}
+
+
 function name(identityId: string): string {
   const i = db.identities.get(identityId);
-  const person = i?.personId ? db.persons.get(i.personId) : null;
+  // Another of the owner's own accounts is named as that account, not "You".
+  const person = i?.personId && !isSelfIdentity(identityId) ? db.persons.get(i.personId) : null;
   return person?.name ?? i?.displayName ?? i?.handle ?? 'Someone';
 }
