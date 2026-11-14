@@ -8,14 +8,22 @@
  * imported one, down to that imported one (or to the start of the conversation, when nothing was imported). Pages
  * go back from the top of the gap until a page brings nothing above it. Progress is kept in gap_fill, so a restart
  * carries on. Direct and group chats always; server channels only where an import reached, unless asked.
+ *
+ * At a person's reading pace (readingpace.ts), shared with the index jobs: one reader per account at a time.
  */
 import type * as P from '@dither-chat/protocol';
 import { type Clock, realClock, sleep } from '../clock.ts';
+import { READING, ReadingPace } from '../readingpace.ts';
 import type { Store } from '../store.ts';
 
-const PAGE = 100;
-/** Between pages, on top of the extractor's own pacing. */
-export const PAUSE_MS = 1500;
+/** Messages a page: what Discord's client loads when you scroll up. */
+const PAGE = 50;
+/** The pace's name for this reader. */
+const READER = 'gapfill';
+/** A wait for the pace is slept in steps this long at most, so a stop tells soon. */
+const REST_STEP_MS = 60_000;
+/** An extractor that cannot read just now (deferMs) is asked again after at most this long. */
+const DEFER_MAX_MS = 10 * 60_000;
 /** A page's messages may land just after its answer (remote accounts): looked for this often, this many times. */
 const LAND_MS = 500;
 const LAND_TRIES = 6;
@@ -32,9 +40,10 @@ export class GapFill {
 
   constructor(
     private store: Store,
-    private command: (accountId: string, cmd: { t: 'history'; conversation: string; beforeTs?: number; limit: number }) => Promise<{ count: number; done: boolean } | null>,
+    private command: (accountId: string, cmd: { t: 'history'; conversation: string; beforeTs?: number; limit: number; cursor?: string; pace?: 'read' }) => Promise<P.HistoryResult | null>,
     private log: (msg: string) => void = () => {},
     private clock: Clock = realClock,
+    private pace: ReadingPace = new ReadingPace(store, READING, clock),
   ) {}
 
   /** Conversations still to do, and done, for an account. */
@@ -120,6 +129,8 @@ export class GapFill {
       if (!native) continue;
       const gapEnd = (g.gap_end as number | null) ?? 0;
       let cursor = this.top(g.conversation_id, gapEnd) ?? this.clock.now();
+      // The extractor's own cursor for where its last page ended, while the cursor is still there.
+      let mark: { next: string; at: number } | null = null;
       let pages = g.pages as number;
       let fetched = g.fetched as number;
       const save = (patch: { done?: boolean; error?: string | null }) =>
@@ -128,10 +139,14 @@ export class GapFill {
           .run(pages, fetched, patch.done ? 1 : 0, patch.error ?? null, this.clock.now(), accountId, g.conversation_id);
       try {
         for (;;) {
-          if (state.stop) return save({});
+          if (!(await this.turn(accountId, state))) return save({});
           const count = () => (this.store.db.query('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ?').get(g.conversation_id) as Row).n as number;
           const before = count();
-          const r = await this.command(accountId, { t: 'history', conversation: native, beforeTs: cursor, limit: PAGE });
+          const r = await this.command(accountId, { t: 'history', conversation: native, beforeTs: cursor, limit: PAGE, pace: 'read', ...(mark && mark.at === cursor ? { cursor: mark.next } : {}) });
+          if (r?.deferMs && !r.count) {
+            await sleep(this.clock, Math.min(Math.max(r.deferMs, 1000), DEFER_MAX_MS));
+            continue;
+          }
           pages++;
           // The page's messages may land just after the answer (remote accounts): give them a moment.
           let next = this.top(g.conversation_id, gapEnd);
@@ -143,11 +158,13 @@ export class GapFill {
           // Done: the start of the conversation, or a page that brought nothing above the gap.
           if (!r || r.done || !r.count || next === null || next >= cursor) {
             save({ done: true });
+            await sleep(this.clock, this.pace.read(accountId, READER, r?.count ?? 0, true));
             break;
           }
           cursor = next;
+          mark = typeof r.next === 'string' && r.oldest === next ? { next: r.next, at: next } : null;
           save({});
-          await sleep(this.clock, PAUSE_MS);
+          await sleep(this.clock, this.pace.read(accountId, READER, r.count, false));
         }
       } catch (e: any) {
         this.log(`gap fill ${accountId} ${g.conversation_id}: ${e?.message ?? e}`);
@@ -155,6 +172,17 @@ export class GapFill {
       }
     }
     state.current = null;
+    this.pace.release(accountId, READER);
     this.store.db.query('DELETE FROM meta WHERE key = ?').run(`gapfill:${accountId}`);
+  }
+
+  /** Waits until the pace lets the account read; false when stopped first. */
+  private async turn(accountId: string, state: { stop: boolean }): Promise<boolean> {
+    for (;;) {
+      if (state.stop) return false;
+      const rest = this.pace.wait(accountId, READER);
+      if (rest <= 0) return true;
+      await sleep(this.clock, Math.min(rest, REST_STEP_MS));
+    }
   }
 }

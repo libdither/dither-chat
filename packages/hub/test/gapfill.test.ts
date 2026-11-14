@@ -7,7 +7,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
-import { GapFill, PAUSE_MS } from '../src/imports/gapfill.ts';
+import { GapFill } from '../src/imports/gapfill.ts';
+import { BRISK, ReadingPace } from '../src/readingpace.ts';
 import { MediaArchiver } from '../src/mediaarchive.ts';
 import { mediaSigner } from '../src/server.ts';
 import { Store } from '../src/store.ts';
@@ -55,6 +56,7 @@ describe('gap fill', () => {
       },
       () => {},
       clock,
+      new ReadingPace(store, BRISK, clock),
     );
     const v = gaps.start('acc_dc');
     expect(v.conversations).toBe(1);
@@ -66,9 +68,8 @@ describe('gap fill', () => {
     expect(asked[0]).toBe(T0 + 90 * minute);
     expect(Math.min(...asked)).toBeGreaterThan(T0 + 20 * minute);
     expect(s.fetched).toBe(69);
-    // A page every 1.5 s at most, on top of the extractor's own pacing.
-    expect(PAUSE_MS).toBe(1500);
-    expect(at.slice(1).map((t, i) => t - at[i])).toEqual(asked.slice(1).map(() => PAUSE_MS));
+    // Without the reading pace (readingpace.test.ts), a page every 1.5 s, on top of the extractor's own pacing.
+    expect(at.slice(1).map((t, i) => t - at[i])).toEqual(asked.slice(1).map(() => BRISK.page[0]));
   });
 
   test('a conversation nothing was imported into goes back to its start; channels only when asked', async () => {
@@ -87,6 +88,7 @@ describe('gap fill', () => {
       },
       () => {},
       clock,
+      new ReadingPace(store, BRISK, clock),
     );
     gaps.start('acc_dc');
     await clock.until(() => !gaps.status('acc_dc').running, 60_000, 'the gap fill');
