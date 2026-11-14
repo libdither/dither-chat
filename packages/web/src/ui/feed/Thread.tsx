@@ -7,9 +7,10 @@
  * chains), "N more replies" under a reply to open that branch, and "Show more replies" while the network has more.
  * The hub logs each post as it reads it, and brings back the branches logged before.
  *
- * Read ahead: the next page of replies loads as the end of the list comes within a screen or so, and a reply's hidden
- * answers as it does (AUTO_BRANCHES at most per thread, two at a time; each is a call to the network), so "more" is
- * mostly there before it is asked for. The buttons stay for the rest.
+ * Read ahead: a reply's hidden answers are read as they come within two screens or so (AUTO_BRANCHES at most per
+ * thread, two at a time; each is a call to the network), and the next page of replies as the end nears; what is read
+ * waits behind its button, which says so (a dot: hollow not read, pulsing being read, filled read and shown at once),
+ * so nothing moves under the reader and a press shows it without waiting.
  *
  * The way back: a thread opened from inside another (a reply's time, "Continue this thread", a post above) remembers
  * the one it came from (`trail`), which is named under the header ("Back to Maya's post") and is where Back goes; it
@@ -41,6 +42,12 @@ function readStyle(): CommentStyle {
 }
 
 type Src = { network: P.Network; post: string } | { message: string };
+
+/** "4 more replies": a page read ahead, by the posts it holds. */
+const shortMore = (v: P.PostThreadView) => {
+  const n = v.replies.flat().length;
+  return n ? `${n} more ${n === 1 ? 'reply' : 'replies'}` : 'more replies';
+};
 
 /** Hidden answers loaded without a press, per thread opened, and how many at once. */
 const AUTO_BRANCHES = 24;
@@ -123,6 +130,12 @@ export function ThreadView({ src, kit: base, onBack }: { src: Src; kit: Kit; onB
   const [t, setT] = useState<P.PostThreadView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [more, setMore] = useState<'idle' | 'loading' | string>('idle');
+  // Read ahead and not shown yet: the next page of replies, and the answers under replies (by reply).
+  const [nextPage, setNextPage] = useState<P.PostThreadView | null>(null);
+  const [ready, setReady] = useState<ReadonlyMap<string, P.PostView[]>>(new Map());
+  const wantMore = useRef(false);
+  const [asking, setAsking] = useState(false);
+  const want = useRef(new Set<string>());
   // Branches opened under replies (their threads' replies), folded replies, and the reader's style.
   const [extra, setExtra] = useState<P.PostView[]>([]);
   const [loading, setLoading] = useState<ReadonlySet<string>>(new Set());
@@ -186,17 +199,32 @@ export function ThreadView({ src, kit: base, onBack }: { src: Src; kit: Kit; onB
       }
     } else if (t.ancestors.length) scroller.current?.querySelector('[data-focal]')?.scrollIntoView({ block: 'start' });
   }, [t?.post]);
-  const loadMore = () => {
-    if (!t?.more || more === 'loading') return;
+  /** A page of replies put under the others (what is there already is not put twice). */
+  const showPage = (v: P.PostThreadView) => {
+    wantMore.current = false;
+    setAsking(false);
+    setNextPage(null);
+    setT((t0) => {
+      if (!t0) return t0;
+      const seen = new Set(t0.replies.flat().map((p) => p.id));
+      return { ...t0, replies: [...t0.replies, ...v.replies.filter((c) => !c.some((p) => seen.has(p.id)))], more: v.more };
+    });
+  };
+  /** The next page of replies: shown (`show`), or read ahead and kept behind the button. */
+  const loadMore = (show: boolean) => {
+    if (!t?.more) return;
+    if (nextPage) return void (show && showPage(nextPage));
+    if (show) (wantMore.current = true), setAsking(true);
+    if (more === 'loading') return;
     setMore('loading');
     api<P.PostThreadView>(`/api/posts/${t.network}/${t.post}/thread?cursor=${encodeURIComponent(t.more)}`).then(
       (v) => {
         v.identities.forEach((i) => db.identities.has(i.id) || db.identities.set(i.id, i));
-        const seen = new Set(t.replies.flat().map((p) => p.id));
-        setT({ ...t, replies: [...t.replies, ...v.replies.filter((c) => !c.some((p) => seen.has(p.id)))], more: v.more });
+        if (wantMore.current) showPage(v);
+        else setNextPage(v);
         setMore('idle');
       },
-      (e) => setMore((e as Error).message),
+      (e) => (setMore((e as Error).message), setAsking(false)),
     );
   };
   const nodes = useMemo(() => {
@@ -214,7 +242,32 @@ export function ThreadView({ src, kit: base, onBack }: { src: Src; kit: Kit; onB
     else next.delete(id);
     return next;
   };
-  /** A reply's branch: its own thread's replies, put into the tree. Done once read: asking again gives the same. */
+  /** Answers read under a reply, put into the tree. */
+  const showUnder = (id: string, got: P.PostView[]) => {
+    want.current.delete(id);
+    setReady((r) => {
+      const next = new Map(r);
+      next.delete(id);
+      return next;
+    });
+    setExtra((e) => {
+      const known = new Set([...(t?.replies.flat() ?? []), ...(t?.logged ?? []), ...e].map((p) => p.id));
+      return [...e, ...got.filter((p) => !known.has(p.id))];
+    });
+    setDone((d) => with_(d, id, true));
+  };
+  /** "N more replies" pressed: shown at once if read ahead, when it comes if being read, else read now. */
+  const openUnder = (n: TreeNode) => {
+    const id = n.post.id;
+    const had = ready.get(id);
+    if (had) return showUnder(id, had);
+    want.current.add(id);
+    if (!loading.has(id)) void loadUnder(n);
+  };
+  /**
+   * A reply's branch: its own thread's replies, read; shown if asked for, else kept behind its button (read ahead).
+   * Done once read: asking again gives the same.
+   */
   const loadUnder = (n: TreeNode): Promise<void> => {
     if (!t) return Promise.resolve();
     const id = n.post.id;
@@ -234,13 +287,9 @@ export function ThreadView({ src, kit: base, onBack }: { src: Src; kit: Kit; onB
         if (v.stored) return fail(v.stored);
         v.identities.forEach((i) => db.identities.has(i.id) || db.identities.set(i.id, i));
         const got = [...v.replies.flat(), ...(v.logged ?? [])];
-        setExtra((e) => {
-          const known = new Set([...t.replies.flat(), ...(t.logged ?? []), ...e].map((p) => p.id));
-          return [...e, ...got.filter((p) => !known.has(p.id))];
-        });
-        // Read: what X shows under it is in the tree now (what it counts and never shows stays hidden), so no button
-        // that never ends, and nothing read twice.
-        setDone((d) => with_(d, id, true));
+        // Nothing X shows under it (what it counts and never shows stays hidden): no button that never ends.
+        if (want.current.has(id) || !got.some((p) => p.replyTo?.id === id)) showUnder(id, got);
+        else setReady((r) => new Map(r).set(id, got));
         setLoading((l) => with_(l, id, false));
       },
       (e) => fail((e as Error).message),
@@ -264,23 +313,23 @@ export function ThreadView({ src, kit: base, onBack }: { src: Src; kit: Kit; onB
     queue.current.push(n);
     pump();
   };
-  // The next page of replies, as the end of the list nears.
+  // The next page of replies read ahead, as the end of the list nears.
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = end.current;
-    if (!t?.more || more !== 'idle' || !el || autoPages.current >= AUTO_PAGES || typeof IntersectionObserver === 'undefined') return;
+    if (!t?.more || nextPage || more !== 'idle' || !el || autoPages.current >= AUTO_PAGES || typeof IntersectionObserver === 'undefined') return;
     const io = new IntersectionObserver(
       (es) => {
         if (!es.some((e) => e.isIntersecting)) return;
         io.disconnect();
         autoPages.current++;
-        loadMore();
+        loadMore(false);
       },
       { root: scroller.current, rootMargin: '0px 0px 2400px 0px' },
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [t?.more, more]);
+  }, [t?.more, more, nextPage]);
   /** Fold or unfold a reply, keeping the keyboard where it was: on the control that now stands for it. */
   const fold = (id: string) => {
     const inside = !!document.activeElement?.closest(`[data-post="${CSS.escape(id)}"]`);
@@ -433,13 +482,16 @@ export function ThreadView({ src, kit: base, onBack }: { src: Src; kit: Kit; onB
               <Comments
                 nodes={nodes}
                 style={style}
-                ctx={{ kit, network, op: author, folded, fold, loading, done, failed, load: (n) => void loadUnder(n), auto, root: scroller, below }}
+                ctx={{ kit, network, op: author, folded, fold, loading, done, failed, ready, load: openUnder, auto, root: scroller, below }}
               />
               <div ref={end} class="thread-end" aria-hidden="true" />
               {!nodes.length && !t.more && <p class="thread-none">{t.stored ? 'No replies logged.' : 'No replies yet.'}</p>}
               {t.more && (
-                <button class="btn thread-more" onClick={loadMore} disabled={more === 'loading'}>
-                  {more === 'loading' ? 'Loading more replies…' : 'Show more replies'}
+                // Its dot says whether the page is read ahead: hollow not yet, pulsing being read, filled shows at once.
+                <button class={`btn thread-more`} data-pre={nextPage ? 'ready' : more === 'loading' ? 'loading' : 'idle'} onClick={() => loadMore(true)} disabled={asking}>
+                  <span class="pre-dot" aria-hidden="true" />
+                  {asking ? 'Loading more replies…' : nextPage ? `Show ${shortMore(nextPage)}` : 'Show more replies'}
+                  <span class="sr-only">{nextPage ? ', read already' : more === 'loading' ? ', being read' : ''}</span>
                 </button>
               )}
               {more !== 'idle' && more !== 'loading' && <p class="thread-none">{more}</p>}

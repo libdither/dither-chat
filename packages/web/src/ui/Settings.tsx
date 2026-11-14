@@ -26,6 +26,7 @@ import { chosenTheme, followsSystem, Swatch, ThemeList } from './Themes.tsx';
 import { themeById } from '../themes.ts';
 import { followsArchive, setFollowArchive } from '../arrange.ts';
 import { applyCallInput, myInput } from '../call.ts';
+import { TranslateSettings } from './TranslateSettings.tsx';
 
 /** Settings' sections: listed beside them on a desktop, and in a sheet from their header on a phone. */
 export const SECTIONS: [title: string, icon: string, id: string][] = [
@@ -40,6 +41,7 @@ export const SECTIONS: [title: string, icon: string, id: string][] = [
   ['Adversarial features', 'eyeOff', 'set-adversarial'],
   ['Usage', 'activity', 'set-usage'],
   ['Appearance', 'eye', 'set-appearance'],
+  ['Translation', 'globe', 'set-translate'],
   ['Mail', 'mail', 'set-mail'],
   // The phone app opens links and files in the phone's apps by itself.
   ...(android ? [] : ([['Desktop helper', 'monitor', 'set-desk']] as [string, string, string][])),
@@ -390,6 +392,8 @@ export function SettingsPane() {
               </span>
             </label>
           </section>
+
+          <TranslateSettings />
 
           <DeskSettings />
 
