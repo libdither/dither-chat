@@ -168,7 +168,7 @@ export class Jobs {
     const conversations = new Set<string>();
     const roots: { kind: 'space' | 'conversation'; id: string }[] =
       kind === 'folder'
-        ? this.store.raw<Row>(`SELECT item_kind, item_id FROM folder_item WHERE folder_id = ? AND item_kind IN ('space', 'conversation') ORDER BY position`, id).map((r) => ({ kind: r.item_kind, id: r.item_id }))
+        ? this.store.raw<Row>(`SELECT item_kind, item_id FROM folder_item WHERE (folder_id = ? OR folder_id IN (SELECT id FROM folder WHERE parent_id = ?)) AND item_kind IN ('space', 'conversation') ORDER BY position`, id, id).map((r) => ({ kind: r.item_kind, id: r.item_id }))
         : [{ kind, id }];
     let frontier = roots.filter((r) => r.kind === 'space').map((r) => r.id);
     for (const r of roots) if (r.kind === 'conversation') conversations.add(r.id);

@@ -349,7 +349,8 @@ export function railEntries(which: 'shown' | 'hidden' = 'shown'): RailEntry[] {
       return { inFolder, convs: [...db.conversations.values()].filter((c) => visibleConv(c) && !inFolder.has(`conversation:${c.id}`) && placePref('conversation', c.id).railed).map((c) => c.id) };
     });
     const entries: RailEntry[] = [
-      ...db.folders.map((folder): RailEntry => ({ key: `folder:${folder.id}`, kind: 'folder', folder })),
+      // A folder inside a folder is drawn there, not at the top.
+      ...db.folders.filter((folder) => !railed.inFolder.has(`folder:${folder.id}`)).map((folder): RailEntry => ({ key: `folder:${folder.id}`, kind: 'folder', folder })),
       ...allCommunities()
         .filter((s) => !railed.inFolder.has(`space:${s.id}`))
         .map((space): RailEntry => ({ key: `space:${space.id}`, kind: 'space', space })),
@@ -635,10 +636,20 @@ export function spaceUnread(id: string): Unread {
   return memo('su:' + id, () => sumUnread(convsUnder(id)));
 }
 
+/** The folder a folder sits in, if it is inside one. */
+export function parentFolder(id: string): P.FolderView | undefined {
+  return db.folders.find((f) => f.items.some((it) => it.kind === 'folder' && it.id === id));
+}
+
+/** What a folder holds, with a folder inside it read as its own items: for counts, names and pictures. */
+export function folderLeaves(f: P.FolderView): P.FolderView['items'] {
+  return f.items.flatMap((it) => (it.kind === 'folder' ? (db.folders.find((x) => x.id === it.id)?.items.filter((x) => x.kind !== 'folder') ?? []) : [it]));
+}
+
 export function folderConvs(f: P.FolderView): P.ConversationView[] {
   return memo('fc:' + f.id, () => {
     const out = new Map<string, P.ConversationView>();
-    for (const it of f.items) {
+    for (const it of folderLeaves(f)) {
       if (it.kind === 'space') for (const c of convsUnder(it.id)) out.set(c.id, c);
       else if (it.kind === 'conversation') {
         const c = db.conversations.get(it.id);

@@ -37,6 +37,8 @@ export class DemoSelf {
     private spaces: string[],
     /** Blocks someone the way the demo's Add does (its list says it), or with null unblocks them. */
     private block: (who: string, blocked: boolean) => void,
+    /** The network's folders, where a scenario says them (DITHER_DEMO_SCENARIO=servers); else one made up from `spaces`. */
+    private folders?: P.NetworkFolder[],
   ) {
     const f = join(dir, 'self.json');
     const kept = existsSync(f) ? (JSON.parse(readFileSync(f, 'utf8')) as Partial<State>) : {};
@@ -51,7 +53,7 @@ export class DemoSelf {
   start() {
     if (this.network !== 'discord') return;
     const [a, b, ...rest] = this.spaces;
-    const folders: P.NetworkFolder[] = [...(a && b ? [{ id: '1', name: 'Projects', color: '#5865f2', spaces: [a, b] }] : a ? [{ spaces: [a] }] : []), ...rest.map((s) => ({ spaces: [s] }))];
+    const folders: P.NetworkFolder[] = this.folders ?? [...(a && b ? [{ id: '1', name: 'Projects', color: '#5865f2', spaces: [a, b] }] : a ? [{ spaces: [a] }] : []), ...rest.map((s) => ({ spaces: [s] }))];
     this.emit({ t: 'selfState', state: { presence: this.state.presence, folders, privacy: [{ label: 'Direct messages from server members', value: 'Allowed' }, { label: 'Message requests', value: 'On for servers you do not know' }] } });
     this.emit({ t: 'ignored', identities: this.state.ignored });
     this.emit({ t: 'notices', notices: this.state.notices });

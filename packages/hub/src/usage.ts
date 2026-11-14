@@ -113,14 +113,15 @@ export class UsageStore {
     const stored: Record<string, P.SortMode> = get('sort') ?? {};
     const sort = { ...DEFAULT_ARRANGE.sort };
     for (const scope of SCOPES) if (SORT_MODES.includes(stored[scope])) sort[scope] = stored[scope];
-    return { sort, dismissed: get('dismissed') ?? {}, ...(get('followArchive') === false ? { followArchive: false } : {}) };
+    return { sort, dismissed: get('dismissed') ?? {}, ...(get('followArchive') === false ? { followArchive: false } : {}), ...(get('quietShelf') === false ? { quietShelf: false } : {}) };
   }
 
   /** Only what is given changes: a sort mode per scope, and dismissals per category (null brings one back). */
-  patchArrange(p: { sort?: Partial<Record<string, string>>; dismissed?: Record<string, string[] | null>; followArchive?: unknown }): P.ArrangeSettings {
+  patchArrange(p: { sort?: Partial<Record<string, string>>; dismissed?: Record<string, string[] | null>; followArchive?: unknown; quietShelf?: unknown }): P.ArrangeSettings {
     const cur = this.arrange();
     const put = (k: string, v: unknown) => this.db.query('INSERT OR REPLACE INTO arrange_setting (key, value) VALUES (?, ?)').run(k, JSON.stringify(v));
     if (typeof p.followArchive === 'boolean') put('followArchive', p.followArchive);
+    if (typeof p.quietShelf === 'boolean') put('quietShelf', p.quietShelf);
     if (p.sort) {
       const sort = { ...cur.sort };
       for (const [scope, mode] of Object.entries(p.sort)) {

@@ -129,15 +129,15 @@ says so in a toast. Dropping into a folder does not need it.
 
 Rail sort button → "Organize Servers…", or the same entry at the end of any place's menu. One list of
 every rail entry in the current order, folder members indented under their folder, hidden places in a
-section at the end, each with its network, folder, categories, and usage ("1 h 20 min lately · opened
+section at the end, each with its network, folder and usage, and for a place in no folder, where it could go (below) ("1 h 20 min lately · opened
 1h").
 
 - **Select**: click, Shift+click for a range; keyboard ↑/↓ (or j/k), Space or Enter, Shift+↑/↓ to extend,
   Ctrl+A for all, `/` to filter.
 - **Act on the selection**: Move to… (`M`, a menu of folders plus New Folder), New folder (`N`, name it
   inline), Pin/Unpin (`P`), Hide/Show (`H`), Out of folder (`U`). Selecting a folder for a move moves
-  its contents (folders do not nest); a folder a move empties is removed.
-- **Suggested folders** come from the categorizer (`categorize.ts`): for each category, the loose
+  the folder itself into a folder that may hold it (below), else its contents; a folder a move empties is removed.
+- **Folders by topic** (closed until you open it) come from the categorizer (`categorize.ts`): for each category, the loose
   (unpinned, not in a folder) rail places that belong to it, at least two, or one if a folder of that
   name exists ("Add to …"). *Create* makes the folder in the category's colour; *Edit* selects its places
   and opens the name field so you can change both; *×* dismisses it. A dismissal remembers the places it
@@ -151,6 +151,81 @@ section at the end, each with its network, folder, categories, and usage ("1 h 2
   is; a sensitivity slider decides how sure it must be. *Select all* selects the matches for a move, *Save as
   category* keeps the question as a category with that threshold, so its folder is suggested and new servers are
   scored for it too. Nothing is saved by asking (`POST /api/categories/probe`).
+
+## Folders inside folders
+
+A folder can hold folders, one level deep: a folder that holds folders sits at the top, and a folder inside one holds
+only places. It is meant for a level above topics, such as one folder per account (two Discord accounts for two
+lives), with that account's folders and loose servers inside.
+
+- **Storing it.** A `folder` item in `FolderView.items` (`PUT /api/folders`) puts that folder inside; the hub keeps it
+  as `folder.parent_id` and `parent_pos`, in the same order as the parent's places. A deeper or circular nesting keeps
+  the first link it reads; the rest stay at the top.
+- **Arranging it.** Drop a folder on a folder to put it in, or use Move to Folder in its menu (`layout.ts` `mayHold`
+  says where it may go). Dragging it out of the open parent, or Take Out Of, brings it back to the top. Deleting a
+  folder inside a folder moves what it held up into the outer one; deleting the outer one leaves its folders at the top.
+- **Showing it.** In the rail an open folder shows its folders as folders, each opening in place on a deeper tint; a
+  closed folder of folders shows the first places of its folders. On a phone a folder inside a folder is a row that
+  opens it, and its page says which folder it is in.
+- **What reads it.** Counts, mark-as-read, index jobs and the @ list's "@ finds" take a folder's folders in with it;
+  a folder inside a folder inherits "@ finds" from the outer one when it says nothing.
+
+## Quiet shelf
+
+A quiet server is one you never opened here (no visit in the usage history), with nothing unread and nothing new in
+180 days (`quiet.ts`). Two or more of them in a list sit on a shelf at its end, closed: a dashed pill with their
+count, at the end of the rail, of each open folder and of the phone's lists. A click lays them out, dimmed; another
+puts them away. It is display only: nothing leaves a folder, and a quiet server you open, pin or get a message in
+comes off the shelf by itself. The order menu's **Quiet Servers on a Shelf** turns it off for every device
+(`ArrangeSettings.quietShelf`).
+
+Why a shelf and not an "Old" folder: on a real sidebar of 165 servers, 60 were quiet by this rule, and most of them sat in
+school folders kept on purpose, not in the folder for old servers. Quiet says how a server is used, not what it is.
+
+## Suggested layout
+
+The Organize view opens with a suggested layout (`protocol/src/folderplan.ts`, shown by `ui/SuggestedLayout.tsx`): what
+the rules below would do, as a tree you tick, and one button to take it. Nothing you arranged moves: only servers
+outside your folders (or loose inside an account's folder) are placed, and a folder of the same name is added to
+rather than made twice. A toast undoes it.
+
+The rules, in the order they claim servers:
+
+1. **The network's folders.** Each folder Discord keeps (`AccountSelfView.folders`) becomes one, named as there. An
+   unnamed one waits for rule 2.
+2. **Shared words.** A word in the names of 3 or more of one account's servers makes a folder of the servers that
+   have it ("Lakeside", "Westbrook"). Filler words do not count ("server", "club", "official"…), and a word of five
+   letters or more also matches its first four run together ("HackLakeside" for "Lakeside"). An unnamed network
+   folder at least half on such a word goes in whole; otherwise it stays a folder of its own.
+3. **One folder per account.** With two or more accounts of 5 or more servers on one network, each gets a folder of
+   its own, in its colour, holding its folders and its other servers. A server two of them see is the bigger
+   account's; one on a network where you have one account is your biggest account's.
+
+A server no rule places is left where it is, with its three nearest folders on its line in the list, then "Other…"
+for any folder (one click moves it):
+nearest by the words of its name, topic and channel names (tf-idf) and by the categorizer's scores. They are
+suggestions, never filed by themselves.
+
+### Backtest
+
+`packages/protocol/test/folderplan.test.ts` runs the rules on a made-up sidebar like the demo's servers scenario
+(`FOLDERPLAN_PRINT=1` prints the numbers); `scripts/backtest-folders.ts <hub copy>` runs them on a copy of a real hub
+against the folders there, read-only. On a real sidebar of 165 servers in 13 folders, filed by hand (2026-11-13; "placed right": the
+server lands in a folder standing for the one they chose; "together wrongly": pairs put in one folder that they keep
+apart):
+
+| Rules | Placed right | Together wrongly | Loose |
+|---|---|---|---|
+| The network's folders | 48% | 0% | 52% |
+| + one folder per account | 48% | 0% | 52% |
+| + shared words | 67% | 2% | 32% |
+| + every loose server into its first suggestion | 75% | 40% | 0% |
+| No network folders: shared words and accounts | 25% | 1% | 75% |
+
+A server taken out and put back by the word rule or the suggestions: first guess right 41%, one of the first two 57%, one of the first three 72%.
+So the first three rules are applied as one suggestion, and topic stays a suggestion per server. On the made-up
+sidebar the first three rules place 68% with no pair wrong. The earlier study that chose these rules, with the local
+model's embeddings and judgments, is not in the repo.
 
 ## Categories and the model
 
@@ -174,7 +249,8 @@ Yes/No on a place still beats any score.
 | `GET /api/usage` | `{ now, halfLife, places: UsageView[], arrange }` |
 | `POST /api/usage` | `{ batch, deltas: [{ kind, id, seconds, visits, at, lastVisit }] }` → `{ applied }` |
 | `DELETE /api/usage` | everything, or `{ kind, id }` |
-| `PATCH /api/arrange` | `{ sort?: { rail?, people? }, dismissed?: { [categoryId]: string[] \| null } }` |
+| `PATCH /api/arrange` | `{ sort?: { rail?, people? }, dismissed?: { [categoryId]: string[] \| null }, followArchive?, quietShelf? }` |
+| `PUT /api/folders` | `{ folders: FolderView[] }`, every folder; a `folder` item nests one |
 | `POST /api/categories/probe` | `{ question }` → `{ provider, question, scores: [{ kind, id, p }] }`, nothing saved |
 | `PATCH /api/categories/:id` | `{ threshold }` among the rest; `null` goes back to the provider's default |
 

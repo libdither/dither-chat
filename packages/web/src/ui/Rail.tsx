@@ -1,7 +1,7 @@
 import { loadRetention } from '../history.ts';
 import type * as P from '@dither-chat/protocol';
 import { Fragment } from 'preact';
-import { accountsNeedingYou, convTitle, directsOf, folderConvs, people, inboxBadge, placePref, railEntries, spaceUnread, sumUnread, netName, unreadOf, visibleConv, type RailEntry } from '../model.ts';
+import { accountsNeedingYou, convTitle, directsOf, folderConvs, folderLeaves, people, inboxBadge, placePref, railEntries, spaceUnread, sumUnread, netName, unreadOf, visibleConv, type RailEntry } from '../model.ts';
 import { db, go, mailRev, markAllRead, patchPlaces, rev, route, type Route } from '../state.ts';
 import { unreadInbox } from '../mail/model.ts';
 import { preloadMail } from './mail/lazy.tsx';
@@ -21,6 +21,7 @@ import { startInbox } from '../inbox.ts';
 import { openMenu } from './ContextMenu.tsx';
 import { useShown } from './more.tsx';
 import { whenIdle } from '../slices.ts';
+import { openShelves, shelve, toggleShelf } from '../quiet.ts';
 
 /** `track`: its key for button counts (clicks.ts), never the title, which may be a name. */
 function RailItem({ active, unread, badge, title, sub, onClick, children, dnd, menu, class: cls, track }: { active: boolean; unread?: boolean; badge?: number; title: string; sub?: string; onClick: () => void; children: any; dnd?: Record<string, unknown>; menu?: () => MenuSpec | null; class?: string; track: string }) {
@@ -53,7 +54,8 @@ function SpaceIcon({ space }: { space: P.SpaceView }) {
 }
 
 function FolderIcon({ folder }: { folder: P.FolderView }) {
-  const minis = folder.items.slice(0, 4).map((it) => {
+  // A folder of folders shows its folders' first places; its own come after.
+  const minis = folderLeaves(folder).slice(0, 4).map((it) => {
     if (it.kind === 'space') {
       const s = db.spaces.get(it.id);
       return s ? { id: s.id, name: s.name, url: s.icon, net: s.network } : null;
@@ -65,8 +67,9 @@ function FolderIcon({ folder }: { folder: P.FolderView }) {
     const c = db.conversations.get(it.id);
     return c ? { id: c.id, name: c.name ?? '?', url: c.avatar, net: c.network } : null;
   });
+  const nested = folder.items.some((it) => it.kind === 'folder');
   return (
-    <span class="folder-icon" style={{ '--folder': folder.color ?? '#8b93a7' } as any}>
+    <span class={`folder-icon ${nested ? 'nested' : ''}`} style={{ '--folder': folder.color ?? '#8b93a7' } as any}>
       <span class="folder-grid">
         {minis.map((m) =>
           m ? (
@@ -86,7 +89,9 @@ const mentions = (n: number) => (n ? `${n} unread ${n === 1 ? 'mention' : 'menti
 
 /** What a folder holds, as Discord's tooltip lists it. */
 function folderNames(f: P.FolderView): string {
-  const names = f.items.map((it) => (it.kind === 'space' ? db.spaces.get(it.id)?.name : it.kind === 'person' ? db.persons.get(it.id)?.name : db.conversations.get(it.id)?.name)).filter(Boolean) as string[];
+  const names = f.items
+    .map((it) => (it.kind === 'folder' ? db.folders.find((x) => x.id === it.id)?.name : it.kind === 'space' ? db.spaces.get(it.id)?.name : it.kind === 'person' ? db.persons.get(it.id)?.name : db.conversations.get(it.id)?.name))
+    .filter(Boolean) as string[];
   return names.length > 4 ? `${names.slice(0, 4).join(', ')} and ${names.length - 4} more` : names.join(', ');
 }
 
@@ -97,7 +102,7 @@ function dnd(key: string, folder?: string, accepts = false) {
   return { ...dragProps({ key, label: placeLabel(key), group: 'rail', folder, accepts, onDrop: railDrop, onMenu: (x, y) => openPlaceMenu(key, placeLabel(key), x, y, folder) }) };
 }
 
-function RailSpace({ space: s, route: r, folder }: { space: P.SpaceView; route: Route; folder?: string }) {
+function RailSpace({ space: s, route: r, folder, quiet }: { space: P.SpaceView; route: Route; folder?: string; quiet?: boolean }) {
   const u = spaceUnread(s.id);
   const key = `space:${s.id}`;
   return (
@@ -111,7 +116,7 @@ function RailSpace({ space: s, route: r, folder }: { space: P.SpaceView; route: 
       onClick={() => go({ view: 'space', space: s.id })}
       track={folder ? 'community (in a folder)' : 'community'}
       dnd={dnd(key, folder, !folder)}
-      class={dropClass(key, folder)}
+      class={`${dropClass(key, folder)} ${quiet ? 'quiet' : ''}`}
     >
       <SpaceIcon space={s} />
     </RailItem>
@@ -156,13 +161,48 @@ function RailPerson({ id, route: r, folder }: { id: string; route: Route; folder
 function RailEntryView({ entry: e, route: r }: { entry: RailEntry; route: Route }) {
   if (e.kind === 'space') return <RailSpace space={e.space} route={r} />;
   if (e.kind === 'conversation') return <RailConv conv={e.conv} route={r} />;
-  const f = e.folder;
+  return <RailFolder folder={e.folder} route={r} />;
+}
+
+/** Whether the open route is somewhere in the folder, or in a folder inside it. */
+function routeIn(f: P.FolderView, r: Route): boolean {
+  if (r.view === 'folder' && r.folder === f.id) return true;
+  return f.items.some((it) => {
+    if (it.kind === 'folder') {
+      const c = db.folders.find((x) => x.id === it.id);
+      return !!c && routeIn(c, r);
+    }
+    return it.kind === 'space' ? r.view === 'space' && r.space === it.id : it.kind === 'conversation' && 'conv' in r && r.conv === it.id;
+  });
+}
+
+/** A folder in the rail; `parent` when it sits inside another folder (one level). */
+function RailFolder({ folder: f, route: r, parent }: { folder: P.FolderView; route: Route; parent?: string }) {
+  // It reads the shelf's signal, so signals would skip it when its props stay the same: it follows `rev` itself.
+  rev.value;
   const u = sumUnread(folderConvs(f));
   const open = placePref('folder', f.id).open;
   // A closed folder stands in for what is open inside it, as Discord's does.
-  const inside = (r.view === 'folder' && r.folder === f.id) || f.items.some((it) => (it.kind === 'space' ? r.view === 'space' && r.space === it.id : it.kind === 'conversation' && 'conv' in r && r.conv === it.id));
+  const inside = routeIn(f, r);
+  const key = `folder:${f.id}`;
+  const items = open ? arrangedFolderItems(f) : [];
+  const { shown, quiet } = shelve(items, (it) => `${it.kind}:${it.id}`);
+  const shelfOpen = openShelves.value.has(key);
+  const item = (it: P.FolderView['items'][number]) => {
+    if (it.kind === 'folder') {
+      const c = db.folders.find((x) => x.id === it.id);
+      return c ? <RailFolder folder={c} route={r} parent={f.id} /> : null;
+    }
+    if (it.kind === 'person') return <RailPerson id={it.id} route={r} folder={f.id} />;
+    if (it.kind === 'space') {
+      const s = db.spaces.get(it.id);
+      return s ? <RailSpace space={s} route={r} folder={f.id} quiet={quiet.includes(it)} /> : null;
+    }
+    const c = db.conversations.get(it.id);
+    return c ? <RailConv conv={c} route={r} folder={f.id} /> : null;
+  };
   return (
-    <div class={`rail-folder ${open ? 'open' : ''}`} style={{ '--folder': f.color ?? '#8b93a7' } as any}>
+    <div class={`rail-folder ${open ? 'open' : ''} ${parent ? 'inner' : ''}`} style={{ '--folder': f.color ?? '#8b93a7' } as any}>
       <RailItem
         active={inside && !open}
         unread={!open && u.unread > 0}
@@ -170,9 +210,9 @@ function RailEntryView({ entry: e, route: r }: { entry: RailEntry; route: Route 
         title={f.name}
         sub={folderNames(f)}
         onClick={() => patchPlaces([{ kind: 'folder', id: f.id, open: !open }])}
-        track={open ? 'folder (close)' : 'folder (open)'}
-        dnd={dnd(e.key, undefined, true)}
-        class={dropClass(e.key)}
+        track={open ? (parent ? 'folder in a folder (close)' : 'folder (close)') : parent ? 'folder in a folder (open)' : 'folder (open)'}
+        dnd={dnd(key, parent, true)}
+        class={dropClass(key, parent)}
       >
         {open ? (
           <span class="folder-open-icon">{f.icon ? <span class="folder-open-emoji">{f.icon}</span> : <Icon name="folder" size={20} />}</span>
@@ -180,17 +220,26 @@ function RailEntryView({ entry: e, route: r }: { entry: RailEntry; route: Route 
           <FolderIcon folder={f} />
         )}
       </RailItem>
-      {open &&
-        arrangedFolderItems(f).map((it) => {
-          if (it.kind === 'person') return <RailPerson id={it.id} route={r} folder={f.id} />;
-          if (it.kind === 'space') {
-            const s = db.spaces.get(it.id);
-            return s ? <RailSpace space={s} route={r} folder={f.id} /> : null;
-          }
-          const c = db.conversations.get(it.id);
-          return c ? <RailConv conv={c} route={r} folder={f.id} /> : null;
-        })}
+      {shown.map(item)}
+      {quiet.length > 0 && shelfOpen && quiet.map(item)}
+      {quiet.length > 0 && <QuietShelf list={key} n={quiet.length} open={shelfOpen} />}
     </div>
+  );
+}
+
+/** The quiet servers of a list, closed: their count; a click lays them out (quiet.ts). */
+function QuietShelf({ list, n, open }: { list: string; n: number; open: boolean }) {
+  return (
+    <RailItem
+      class="rail-shelf"
+      active={false}
+      title={open ? 'Put quiet servers away' : `${n} quiet ${n === 1 ? 'server' : 'servers'}`}
+      sub="Never opened here and nothing new in 6 months. Turn the shelf off in the order menu."
+      track={open ? 'quiet shelf (close)' : 'quiet shelf (open)'}
+      onClick={() => toggleShelf(list)}
+    >
+      <span class="rail-shelf-face">{open ? <Icon name="chevronUp" size={16} /> : <span class="rail-shelf-n">{n}</span>}</span>
+    </RailItem>
   );
 }
 
@@ -263,7 +312,10 @@ export function Rail() {
     void loadRetention();
   }, []);
   useFlip(scroll, snapshot.value.v);
-  const entries = arrangedRail();
+  const all = arrangedRail();
+  // Quiet servers at the top level sit on a shelf at the end, as in each folder.
+  const { shown: entries, quiet } = shelve(all, (e) => e.key);
+  const shelfOpen = openShelves.value.has('rail');
   const [drawn, more] = useShown(entries.length);
 
   return (
@@ -287,6 +339,8 @@ export function Rail() {
           </Fragment>
         ))}
         {more}
+        {quiet.length > 0 && shelfOpen && quiet.map((e) => (e.kind === 'space' ? <RailSpace space={e.space} route={r} quiet /> : <RailEntryView entry={e} route={r} />))}
+        {quiet.length > 0 && <QuietShelf list="rail" n={quiet.length} open={shelfOpen} />}
         <RailItem active={r.view === 'directory'} title="All communities" track="all communities" sub="Browse, sort and categorise" onClick={() => go({ view: 'directory' })}>
           <Icon name="grid" size={20} />
         </RailItem>

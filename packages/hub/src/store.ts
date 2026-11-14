@@ -290,6 +290,7 @@ export class Store {
       this.addColumns('attachment', { alt: 'TEXT', extra: 'TEXT' });
       this.addColumns('notice', { caught: 'INTEGER NOT NULL DEFAULT 0', shown_ts: 'INTEGER', held_at: 'INTEGER' });
       this.addColumns('place_pref', { mention_scope: 'TEXT', mention_same: 'INTEGER' });
+      this.addColumns('folder', { parent_id: 'TEXT', parent_pos: 'REAL' });
       const oldTriage = this.setAsideTriage();
       const oldLog = this.setAside('change_log', 'actor_id', ['change_log_target']);
       this.db.exec(schema);
@@ -1660,15 +1661,33 @@ export class Store {
     for (const r of rows) this.dirty.conversations.add(r.id);
   }
 
+  /**
+   * Replaces every folder. A `folder` item puts that folder inside this one (folder.parent_id), one level deep: a
+   * folder that holds folders cannot itself be inside one, so a deeper or circular nesting keeps only the first link
+   * read, and a folder listed in two keeps the first.
+   */
   setFolders(folders: P.FolderView[]) {
     const tx = this.db.transaction(() => {
       const kept = new Set(folders.map((f) => f.id));
       for (const r of this.db.query('SELECT id FROM folder').all() as Row[]) if (!kept.has(r.id)) this.db.query(`DELETE FROM place_pref WHERE kind = 'folder' AND id = ?`).run(r.id);
       this.db.query('DELETE FROM folder').run();
-      folders.forEach((f, i) => {
-        const id = f.id || randomId('fld');
-        this.db.query('INSERT INTO folder (id, name, icon, color, position) VALUES (?, ?, ?, ?, ?)').run(id, f.name, f.icon, f.color, i);
+      const ids = folders.map((f) => f.id || randomId('fld'));
+      const known = new Set(ids);
+      const parent = new Map<string, { id: string; pos: number }>();
+      folders.forEach((f, i) =>
         f.items.forEach((it, j) => {
+          if (it.kind !== 'folder' || !known.has(it.id) || it.id === ids[i] || parent.has(it.id) || parent.has(ids[i])) return;
+          // A folder that already holds folders stays at the top.
+          if ([...parent.values()].some((p) => p.id === it.id)) return;
+          parent.set(it.id, { id: ids[i], pos: j });
+        }),
+      );
+      folders.forEach((f, i) => {
+        const id = ids[i];
+        const p = parent.get(id);
+        this.db.query('INSERT INTO folder (id, name, icon, color, position, parent_id, parent_pos) VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, f.name, f.icon, f.color, i, p?.id ?? null, p?.pos ?? null);
+        f.items.forEach((it, j) => {
+          if (it.kind === 'folder') return;
           this.db.query('INSERT OR IGNORE INTO folder_item (folder_id, item_kind, item_id, position) VALUES (?, ?, ?, ?)').run(id, it.kind, it.id, j);
         });
       });
@@ -3405,7 +3424,13 @@ export class Store {
       name: f.name,
       icon: f.icon,
       color: f.color,
-      items: items.filter((i) => i.folder_id === f.id).map((i) => ({ kind: i.item_kind, id: i.item_id })),
+      // Folders inside it and what it holds share one order.
+      items: [
+        ...items.filter((i) => i.folder_id === f.id).map((i) => ({ kind: i.item_kind as P.FolderItemKind, id: i.item_id as string, pos: i.position as number })),
+        ...fs.filter((c) => c.parent_id === f.id).map((c) => ({ kind: 'folder' as const, id: c.id as string, pos: (c.parent_pos ?? -1) as number })),
+      ]
+        .sort((a, b) => a.pos - b.pos)
+        .map(({ kind, id }) => ({ kind, id })),
     }));
   }
 

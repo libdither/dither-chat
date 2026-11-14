@@ -738,12 +738,14 @@ export interface ForwardResult {
   skipped?: string[];
 }
 
+/** What a folder holds. A `folder` item is a folder inside it: one level only, so a folder that holds folders sits at the top. */
+export type FolderItemKind = 'space' | 'conversation' | 'person' | 'folder';
 export interface FolderView {
   id: string;
   name: string;
   icon: string | null;
   color: string | null;
-  items: { kind: 'space' | 'conversation' | 'person'; id: string }[];
+  items: { kind: FolderItemKind; id: string }[];
 }
 
 /** Where a place sits in your sidebar. Hub-only: networks never see it. */

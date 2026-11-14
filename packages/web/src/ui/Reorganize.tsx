@@ -5,9 +5,11 @@
 import type * as P from '@dither-chat/protocol';
 import { categoryThreshold, NETWORK_META, type SortMode, type SortScope } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { arrange, arrangedFolderItems, arrangedRail, freezeOrder, organizing, patchDismissed, resort, setInteracting, setSort, snapshot, SORT_LABELS, sortOf, startArrange } from '../arrange.ts';
+import { arrange, arrangedFolderItems, arrangedRail, freezeOrder, organizing, patchDismissed, resort, setInteracting, setQuietShelf, setSort, snapshot, SORT_LABELS, sortOf, startArrange } from '../arrange.ts';
+import { quietShelfOn } from '../quiet.ts';
 import { ago } from '../format.ts';
-import { categoriesOf, convTitle, kindLabel, netName, placePref, railEntries, type RailEntry } from '../model.ts';
+import { categoriesOf, convTitle, folderLeaves, kindLabel, netName, parentFolder, placePref, railEntries, type RailEntry } from '../model.ts';
+import { mayHold } from '../layout.ts';
 import { api, db, patchPlaces, rev, saveFolders, toast } from '../state.ts';
 import { resetUsage, usageSummary } from '../usage.ts';
 import { Avatar, Modal } from './bits.tsx';
@@ -15,6 +17,8 @@ import { contextMenu, openMenu, type MenuEntry } from './ContextMenu.tsx';
 import { drag } from './dnd.tsx';
 import { Icon } from './icons.tsx';
 import { pct, Sensitivity } from './Sensitivity.tsx';
+import { SuggestedLayout } from './SuggestedLayout.tsx';
+import { currentPlan, loadPlanner, planner } from '../folderplan.ts';
 
 // ------------------------------------------------------------------ when the order may change
 
@@ -90,6 +94,7 @@ export function sortEntries(scope: SortScope): MenuEntry[] {
     { kind: 'sep' },
     scope === 'rail' && { label: 'Freeze This Order', icon: 'lock', disabled: mode === 'manual', run: () => freezeOrder() },
     mode === 'smart' && { label: 'Sort Again Now', icon: 'refresh', run: () => resort('asked') },
+    scope === 'rail' && { label: 'Quiet Servers on a Shelf', checked: quietShelfOn(), run: () => setQuietShelf(!quietShelfOn()) },
     { label: 'Organize Servers…', icon: 'layers', run: () => (organizing.value = true) },
     {
       label: 'Reset Usage History…',
@@ -136,13 +141,23 @@ export function SortButton({ scope, class: cls }: { scope: SortScope; class?: st
 
 // ------------------------------------------------------------------ bulk changes
 
-type ItemKind = 'space' | 'conversation' | 'person';
+type ItemKind = P.FolderItemKind;
 const split = (key: string) => ({ kind: key.slice(0, key.indexOf(':')), id: key.slice(key.indexOf(':') + 1) });
 const toKey = (it: { kind: string; id: string }) => `${it.kind}:${it.id}`;
 const randomId = () => 'fld_' + Math.random().toString(36).slice(2, 12);
-/** What a move takes: places as they are, and a folder's contents (folders do not nest, so they merge). */
-const movable = (keys: string[]) => [
-  ...new Set(keys.flatMap((k) => (k.startsWith('folder:') ? (db.folders.find((f) => f.id === split(k).id)?.items.map(toKey) ?? []) : [k]))),
+const asLayout = (fs: P.FolderView[]) => fs.map((f) => ({ id: f.id, items: f.items.map(toKey) }));
+/**
+ * What a move into `target` takes: places as they are; a folder itself where it may sit inside the target (one level),
+ * else its contents, which merge. Out of every folder (`target` null), a folder goes as it is.
+ */
+const movable = (keys: string[], target: string | null = null) => [
+  ...new Set(
+    keys.flatMap((k) => {
+      if (!k.startsWith('folder:')) return [k];
+      if (target === null || mayHold(asLayout(db.folders), target, k)) return [k];
+      return db.folders.find((f) => f.id === split(k).id)?.items.map(toKey).filter((x) => !x.startsWith('folder:') || mayHold(asLayout(db.folders), target, x)) ?? [];
+    }),
+  ),
 ];
 
 /** Saves folders after a bulk move: a folder the move emptied goes; one that was already empty stays. */
@@ -155,17 +170,18 @@ function commit(folders: P.FolderView[]) {
 
 /** Moves places into a folder (or out of every folder, with null), keeping the folder's order. */
 export function moveToFolder(keys: string[], folderId: string | null) {
-  const ks = new Set(movable(keys));
+  const ks = new Set(movable(keys, folderId));
   if (!ks.size) return;
   const folders = db.folders.map((f) => ({ ...f, items: f.items.filter((it) => !ks.has(toKey(it))) }));
   const target = folderId ? folders.find((f) => f.id === folderId) : null;
-  if (target) target.items = [...target.items, ...[...ks].map((k) => split(k) as { kind: ItemKind; id: string })];
+  if (target) target.items = [...target.items, ...[...ks].filter((k) => k !== `folder:${folderId}`).map((k) => split(k) as { kind: ItemKind; id: string })];
   commit(folders);
 }
 
 /** A new folder of these places, where the first of them was in the rail. */
 export function newFolder(keys: string[], name: string, color: string | null = null): string | null {
-  const ks = movable(keys);
+  // Into a new folder, a folder goes whole unless it holds folders itself.
+  const ks = [...new Set(keys.flatMap((k) => (k.startsWith('folder:') && db.folders.find((f) => f.id === split(k).id)?.items.some((i) => i.kind === 'folder') ? (db.folders.find((f) => f.id === split(k).id)?.items.map(toKey) ?? []) : [k])))];
   if (!ks.length) return null;
   const id = randomId();
   const set = new Set(ks);
@@ -244,11 +260,14 @@ function placeRow(key: string, folder?: string, hidden?: boolean): Row | null {
   if (kind === 'folder') {
     const f = db.folders.find((x) => x.id === id);
     if (!f) return null;
+    const n = folderLeaves(f).length;
+    const inner = f.items.filter((i) => i.kind === 'folder').length;
     return {
       key,
+      folder,
       hidden,
       name: f.name,
-      sub: `Folder · ${f.items.length} ${f.items.length === 1 ? 'place' : 'places'}`,
+      sub: `Folder · ${inner ? `${inner} ${inner === 1 ? 'folder' : 'folders'}, ` : ''}${n} ${n === 1 ? 'place' : 'places'}`,
       icon: (
         <span class="folder-row-icon" style={{ '--folder': f.color ?? '#8b93a7' } as any}>
           {f.icon ?? <Icon name="folder" />}
@@ -272,9 +291,16 @@ function placeRow(key: string, folder?: string, hidden?: boolean): Row | null {
 function allRows(): Row[] {
   const out: Row[] = [];
   const push = (r: Row | null) => r && out.push(r);
+  const folder = (f: P.FolderView) => {
+    for (const it of arrangedFolderItems(f)) {
+      push(placeRow(toKey(it), f.id));
+      const inner = it.kind === 'folder' ? db.folders.find((x) => x.id === it.id) : undefined;
+      if (inner) folder(inner);
+    }
+  };
   for (const e of arrangedRail()) {
     push(placeRow(e.key));
-    if (e.kind === 'folder') for (const it of arrangedFolderItems(e.folder)) push(placeRow(toKey(it), e.folder.id));
+    if (e.kind === 'folder') folder(e.folder);
   }
   for (const e of railEntries('hidden') as RailEntry[]) push(placeRow(e.key, undefined, true));
   return out;
@@ -283,13 +309,31 @@ function allRows(): Row[] {
 function usageLine(key: string): string {
   const { kind, id } = split(key);
   if (kind === 'folder') return '';
-  const u = usageSummary(kind as ItemKind, id);
+  const u = usageSummary(kind as P.UsageKind, id);
   const m = Math.round(u.minutes);
   const time = m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : m > 0 ? `${m} min` : '';
   return [time && `${time} lately`, u.lastVisit && `opened ${ago(u.lastVisit)}`].filter(Boolean).join(' · ');
 }
 
 const rowId = (r: Row) => `${r.key}|${r.folder ?? ''}`;
+
+/** Folders shown on a loose place's line, at most this many before "Other…". */
+const TARGETS = 4;
+/**
+ * Where a loose place could go: the planner's nearest folders first (marked best), then the other folders beside it,
+ * biggest first: inside its account's folder when it sits in one, else every folder that holds places.
+ */
+function moveTargets(key: string, inFolder: string | undefined, suggest: { folder: string; name: string }[]): { folder: string; name: string; best: boolean }[] {
+  const holds = (f: P.FolderView) => !f.items.some((i) => i.kind === 'folder');
+  const scope = inFolder ? (db.folders.find((f) => f.id === inFolder)?.items.filter((i) => i.kind === 'folder').map((i) => db.folders.find((f) => f.id === i.id)).filter((f): f is P.FolderView => !!f) ?? []) : db.folders.filter(holds);
+  const ok = (id: string) => db.folders.some((f) => f.id === id && holds(f)) && mayHold(asLayout(db.folders), id, key);
+  const best = suggest.filter((x) => !x.folder.startsWith('step:') && ok(x.folder)).map((x) => ({ folder: x.folder, name: x.name, best: true }));
+  const rest = scope
+    .filter((f) => ok(f.id) && !best.some((b) => b.folder === f.id))
+    .sort((a, b) => b.items.length - a.items.length)
+    .map((f) => ({ folder: f.id, name: f.name, best: false }));
+  return [...best, ...rest].slice(0, TARGETS);
+}
 
 /** What the filter asks the model when matching by meaning: a question as typed, else "about …". */
 export const probeQuestion = (text: string) => (/\?\s*$/.test(text) ? text.trim() : `Is this community about ${text.trim()}?`);
@@ -320,6 +364,7 @@ function Organize({ onClose }: { onClose: () => void }) {
   const [probe, setProbe] = useState<{ question: string; p: Map<string, number>; provider: string } | null>(null);
   const [probing, setProbing] = useState<string | null>(null);
   const [cut, setCut] = useState(0.12);
+  const [topics, setTopics] = useState(false);
   /** Category thresholds being dragged, by id. */
   const [at, setAt] = useState<Record<string, number>>({});
   const list = useRef<HTMLDivElement>(null);
@@ -343,6 +388,10 @@ function Organize({ onClose }: { onClose: () => void }) {
     for (const x of xs) if (!order.current.includes(x.category.id)) order.current.push(x.category.id);
     return xs.sort((a, b) => order.current.indexOf(a.category.id) - order.current.indexOf(b.category.id));
   }, [rev.value, arrange.value, at]);
+
+  // The suggested layout, and each loose server's nearest folders (docs/organize.md).
+  useEffect(() => void loadPlanner(), []);
+  const plan = useMemo(() => currentPlan(), [rev.value, planner.value]);
 
   const ask = async (text = q) => {
     if (!text.trim()) return;
@@ -403,7 +452,7 @@ function Organize({ onClose }: { onClose: () => void }) {
       label: 'Move to folder',
       head: <div class="cm-sheet-title">Move {keys.length} to…</div>,
       items: [
-        ...db.folders.map((f): MenuEntry => ({ label: f.name, icon: 'folder', run: () => (moveToFolder(keys, f.id), clear()) })),
+        ...db.folders.map((f): MenuEntry => ({ label: parentFolder(f.id) ? `${parentFolder(f.id)!.name} › ${f.name}` : f.name, icon: 'folder', run: () => (moveToFolder(keys, f.id), clear()) })),
         ...(db.folders.length ? [{ kind: 'sep' } as MenuEntry] : []),
         { label: 'New Folder…', icon: 'plus', hint: 'N', run: () => startDraft() },
         anyFolderMember && { label: 'Out of Its Folder', icon: 'unlink', hint: 'U', run: () => (moveToFolder(keys, null), clear()) },
@@ -523,10 +572,16 @@ function Organize({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
+        {!needle && plan && <SuggestedLayout plan={plan} />}
+
         {sugg.length > 0 && (
-          <section class="org-suggest" aria-label="Suggested folders">
-            <h3>Suggested folders</h3>
-            <div class="org-suggest-list">
+          <section class="org-suggest" aria-label="Folders by topic">
+            {/* Topics colour every server; they stay out of the way unless asked for. */}
+            <button class="org-plan-toggle" aria-expanded={topics} onClick={() => setTopics(!topics)}>
+              <Icon name={topics ? 'chevronDown' : 'chevronRight'} size={13} />
+              <h3>Folders by topic ({sugg.length})</h3>
+            </button>
+            {topics && <div class="org-suggest-list">
               {sugg.map((s) => (
                 <article class="org-sugg" style={{ '--cat': s.category.color ?? '#8b93a7' } as any}>
                   <div class="org-sugg-text">
@@ -569,7 +624,7 @@ function Organize({ onClose }: { onClose: () => void }) {
                   </div>
                 </article>
               ))}
-            </div>
+            </div>}
           </section>
         )}
 
@@ -625,13 +680,16 @@ function Organize({ onClose }: { onClose: () => void }) {
           {rows.map((r, i) => {
             const pref = r.folder || split(r.key).kind === 'person' ? null : placePref(split(r.key).kind as P.PlaceKind, split(r.key).id);
             const on = sel.has(rowId(r));
-            const cats = r.key.startsWith('space:') || r.key.startsWith('conversation:') ? categoriesOf(split(r.key).kind as 'space' | 'conversation', split(r.key).id) : [];
             const firstHidden = r.hidden && !rows[i - 1]?.hidden;
+            // A place not in a folder (or loose inside an account's folder): where it could go, on its own line.
+            const level = !r.folder || db.folders.find((f) => f.id === r.folder)?.items.some((i) => i.kind === 'folder');
+            const movable = level && !r.hidden && (r.key.startsWith('space:') || r.key.startsWith('conversation:'));
+            const near = movable ? moveTargets(r.key, r.folder, plan?.suggest[split(r.key).id] ?? []) : [];
             return (
               <>
                 {firstHidden && <div class="org-section">Hidden</div>}
                 <div
-                  class={`org-row ${on ? 'on' : ''} ${r.folder ? 'in-folder' : ''} ${r.key.startsWith('folder:') ? 'is-folder' : ''} ${r.hidden ? 'is-hidden' : ''}`}
+                  class={`org-row ${on ? 'on' : ''} ${r.folder ? 'in-folder' : ''} ${r.folder && parentFolder(r.folder) ? 'deep' : ''} ${r.key.startsWith('folder:') ? 'is-folder' : ''} ${r.hidden ? 'is-hidden' : ''}`}
                   role="option"
                   aria-selected={on}
                   tabIndex={i === focus ? 0 : -1}
@@ -652,15 +710,54 @@ function Organize({ onClose }: { onClose: () => void }) {
                     </span>
                     <span class="org-sub">
                       {r.sub}
-                      {r.folder && ` · in ${db.folders.find((f) => f.id === r.folder)?.name ?? 'a folder'}`}
+                      {r.folder && ` · in ${[parentFolder(r.folder)?.name, db.folders.find((f) => f.id === r.folder)?.name ?? 'a folder'].filter(Boolean).join(' › ')}`}
                     </span>
                   </span>
-                  <span class="org-cats">
-                    {cats.slice(0, 2).map((c) => (
-                      <span class="cat-chip" style={{ '--cat': c.color ?? '#8b93a7' } as any}>
-                        {c.name}
-                      </span>
-                    ))}
+                  <span class="org-moves" aria-label={movable ? `Move ${r.name} to` : undefined}>
+                    {movable && (
+                      <>
+                        {near.map((x) => {
+                          const f = db.folders.find((y) => y.id === x.folder);
+                          const outer = parentFolder(x.folder);
+                          return (
+                            <button
+                              class={`move-chip ${x.best ? 'best' : ''}`}
+                              style={{ '--folder': f?.color ?? 'var(--accent)' } as any}
+                              title={x.best ? `Move to ${x.name}: it fits best` : `Move to ${x.name}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                moveToFolder([r.key], x.folder);
+                                toast({ kind: 'info', title: `Moved to “${x.name}”`, body: r.name });
+                              }}
+                            >
+                              <Icon name={x.best ? 'sparkles' : 'folder'} size={12} />
+                              {/* The account's folder it sits in already goes without saying. */}
+                              {outer && outer.id !== r.folder ? <span class="move-chip-in">{outer.name} ›</span> : null}
+                              {x.name}
+                            </button>
+                          );
+                        })}
+                        <button
+                          class="move-chip other"
+                          title="Pick a folder"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const b = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                            openMenu({ x: b.left, y: b.bottom + 4 }, {
+                              label: 'Move to folder',
+                              head: <div class="cm-sheet-title">Move {r.name} to…</div>,
+                              items: [
+                                ...db.folders.filter((f) => mayHold(asLayout(db.folders), f.id, r.key) && !near.some((x) => x.folder === f.id)).map((f): MenuEntry => ({ label: parentFolder(f.id) ? `${parentFolder(f.id)!.name} › ${f.name}` : f.name, icon: 'folder', run: () => moveToFolder([r.key], f.id) })),
+                                { kind: 'sep' } as MenuEntry,
+                                { label: 'New Folder…', icon: 'plus', run: () => (setSel(new Set([rowId(r)])), startDraft()) },
+                              ],
+                            }, e.currentTarget as HTMLElement);
+                          }}
+                        >
+                          {near.length ? 'Other…' : 'Move to…'}
+                        </button>
+                      </>
+                    )}
                   </span>
                   <span class="org-usage">{asked ? <span class="org-score">{pct(scoreOf(r)!)}</span> : usageLine(r.key)}</span>
                 </div>

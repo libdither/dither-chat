@@ -10,7 +10,7 @@ import { JOB_PRIORITIES, JOB_REPEATS, NETWORK_META } from '@dither-chat/protocol
 import { signal } from '@preact/signals';
 import { useEffect, useState } from 'preact/hooks';
 import { clock, dayLabel } from '../format.ts';
-import { convLabel, convTitle } from '../model.ts';
+import { convLabel, convTitle, folderLeaves } from '../model.ts';
 import { api, db, go, rev, toast } from '../state.ts';
 import { Modal, NetGlyph, showSection } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -54,8 +54,8 @@ function describe(kind: P.JobTargetKind, id: string): { name: string; noun: stri
   }
   const f = db.folders.find((x) => x.id === id);
   if (!f) return null;
-  const spaces = f.items.filter((i) => i.kind === 'space').map((i) => db.spaces.get(i.id)).filter((s): s is P.SpaceView => !!s);
-  const convs = f.items.filter((i) => i.kind === 'conversation').map((i) => db.conversations.get(i.id)).filter((c): c is P.ConversationView => !!c);
+  const spaces = folderLeaves(f).filter((i) => i.kind === 'space').map((i) => db.spaces.get(i.id)).filter((s): s is P.SpaceView => !!s);
+  const convs = folderLeaves(f).filter((i) => i.kind === 'conversation').map((i) => db.conversations.get(i.id)).filter((c): c is P.ConversationView => !!c);
   const accounts = [...spaces.flatMap((s) => s.accountIds), ...convs.flatMap((c) => c.vantages.map((v) => v.accountId))];
   const communities = spaces.filter((s) => s.kind === 'community');
   const nets = new Set([...spaces.map((s) => s.network), ...convs.map((c) => c.network)]);

@@ -12,6 +12,8 @@ import {
   directsOf,
   effectiveLevel,
   folderConvs,
+  folderLeaves,
+  parentFolder,
   heldByRequest,
   inboxKeyOf,
   placePref,
@@ -54,6 +56,7 @@ import { chatKey } from '../chatroutes.ts';
 import { groups, type MenuSpec } from './ContextMenu.tsx';
 import { openAbout } from './About.tsx';
 import { arrangeDrop, arrangedFolderItems, arrangedPeople, arrangedRail, snapshot } from '../arrange.ts';
+import { openShelves, shelve, toggleShelf } from '../quiet.ts';
 import { inboxSnap, shownInbox } from '../inbox.ts';
 import { linkAccounts, PeopleAccountPicker, PeopleLinks, RequestsRow, usePeopleLinks } from './Requests.tsx';
 import { FeedRows } from './FeedRow.tsx';
@@ -742,10 +745,12 @@ export function SpaceSidebar({ spaceId, activeConv }: { spaceId: string; activeC
 
 export function FolderSidebar({ folderId, activeConv, activePerson }: { folderId: string; activeConv?: string; activePerson?: string }) {
   rev.value;
-  const f = db.folders.find((x) => x.id === folderId);
-  if (!f) return <div class="sidebar-inner" />;
+  const found = db.folders.find((x) => x.id === folderId);
+  if (!found) return <div class="sidebar-inner" />;
+  const f = found;
   const nets = new Set<string>();
-  for (const it of f.items) {
+  const outer = parentFolder(f.id);
+  for (const it of folderLeaves(f)) {
     if (it.kind === 'space') nets.add(db.spaces.get(it.id)?.network ?? '');
     if (it.kind === 'conversation') nets.add(db.conversations.get(it.id)?.network ?? '');
     if (it.kind === 'person') directsOf(it.id).forEach((d) => nets.add(d.network));
@@ -760,11 +765,57 @@ export function FolderSidebar({ folderId, activeConv, activePerson }: { folderId
           {f.name}
         </h1>
         <span class="side-sub">
-          Folder across {[...nets].map((n) => netName(n as P.Network)).join(', ')}
+          {outer ? (
+            <>
+              In{' '}
+              <button class="link-btn" onClick={() => go({ view: 'folder', folder: outer.id })}>
+                {outer.name}
+              </button>
+              {' · '}
+            </>
+          ) : (
+            'Folder '
+          )}
+          across {[...nets].map((n) => netName(n as P.Network)).join(', ')}
         </span>
       </header>
       <div class="side-scroll tree">
-        {arrangedFolderItems(f).map((it) => {
+        {(() => {
+          const all = arrangedFolderItems(f);
+          const { shown, quiet } = shelve(all, (it) => `${it.kind}:${it.id}`);
+          const list = `folder:${f.id}`;
+          const on = openShelves.value.has(list);
+          return [...shown, ...(on ? quiet : [])].map(row).concat(quiet.length ? [<ShelfRow list={list} n={quiet.length} open={on} />] : []);
+        })()}
+      </div>
+    </div>
+  );
+
+  function row(it: P.FolderView['items'][number]) {
+          if (it.kind === 'folder') {
+            const c = db.folders.find((x) => x.id === it.id);
+            if (!c) return null;
+            const u = sumUnread(folderConvs(c));
+            const n = folderLeaves(c).length;
+            return (
+              <button class="row conv-row place-row" onClick={() => go({ view: 'folder', folder: c.id })} onContextMenu={onMenu(() => folderMenuSpec(c.id))}>
+                <span class="row-avatar">
+                  <span class="folder-row-icon" style={{ '--folder': c.color ?? '#8b93a7' } as any}>
+                    {c.icon ?? <Icon name="folder" />}
+                  </span>
+                </span>
+                <span class="row-main">
+                  <span class="row-top">
+                    <span class="row-title">{c.name}</span>
+                  </span>
+                  <span class="row-bottom">
+                    <span class="row-preview">Folder · {n} {n === 1 ? 'place' : 'places'}</span>
+                    <Count n={u.badge} />
+                  </span>
+                </span>
+              </button>
+            );
+          }
           if (it.kind === 'space') {
             const s = db.spaces.get(it.id);
             if (!s) return null;
@@ -790,9 +841,16 @@ export function FolderSidebar({ folderId, activeConv, activePerson }: { folderId
           }
           const c = db.conversations.get(it.id);
           return c && visibleConv(c) ? <ConvRow c={c} active={c.id === activeConv} onClick={() => open(c)} /> : null;
-        })}
-      </div>
-    </div>
+  }
+}
+
+/** A list's quiet servers, closed: one row with their count (quiet.ts). */
+function ShelfRow({ list, n, open }: { list: string; n: number; open: boolean }) {
+  return (
+    <button class="row shelf-row" aria-expanded={open} onClick={() => toggleShelf(list)} title="Never opened here and nothing new in 6 months">
+      <Icon name={open ? 'chevronUp' : 'chevronDown'} size={14} />
+      <span>{open ? 'Put quiet servers away' : `${n} quiet ${n === 1 ? 'server' : 'servers'}`}</span>
+    </button>
   );
 }
 
@@ -824,7 +882,7 @@ function SpacesEntry({ entry: e, hidden }: { entry: RailEntry; hidden?: boolean 
   const u = e.kind === 'folder' ? sumUnread(folderConvs(e.folder)) : e.kind === 'space' ? spaceUnread(e.space.id) : unreadOf(e.conv);
   const sub =
     e.kind === 'folder'
-      ? `Folder · ${e.folder.items.length} items`
+      ? `Folder · ${folderLeaves(e.folder).length} ${folderLeaves(e.folder).length === 1 ? 'place' : 'places'}`
       : e.kind === 'space'
         ? `${netName(e.space.network)} ${NETWORK_META[e.space.network].spaceNoun}`
         : kindLabel(e.conv);
@@ -878,9 +936,19 @@ export function SpacesSidebar() {
             </span>
           </span>
         </button>
-        {arrangedRail().map((e) => (
-          <SpacesEntry entry={e} />
-        ))}
+        {(() => {
+          const { shown, quiet } = shelve(arrangedRail(), (e) => e.key);
+          const on = openShelves.value.has('rail');
+          return (
+            <>
+              {shown.map((e) => (
+                <SpacesEntry entry={e} />
+              ))}
+              {on && quiet.map((e) => <SpacesEntry entry={e} />)}
+              {quiet.length > 0 && <ShelfRow list="rail" n={quiet.length} open={on} />}
+            </>
+          );
+        })()}
         {hidden.length > 0 && <SectionHead id="spaces-h" label="Hidden" count={hidden.length} />}
         {!isCollapsed('spaces-h') && hidden.map((e) => <SpacesEntry entry={e} hidden />)}
       </div>
