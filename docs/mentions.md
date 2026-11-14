@@ -69,9 +69,55 @@ A row here for someone the hub knows as one person on other networks too carries
 can name one of them: in a Discord channel, Theo's Signal account is put in by reference and goes out as plain @Theo K. The list listens on the composer in the capture phase, so the composer's own Enter (send) and Escape
 (cancel the reply) never see those keys while it is open. On a phone, Enter in the list picks a row, and does not start a
 new line. A pick replaces the `@query` with the row's `insert` (`<@nativeId> `, `<@&id> `, `@everyone `), through
-`execCommand('insertText')`, so it can be undone. It adds a space unless one follows already.
+`execCommand('insertText')`, so it can be undone. It adds a space unless one follows already. A person, an account or
+a role goes in as a chip, which the box shows as its name ([In the message box](#in-the-message-box)); `@everyone` and
+`@here` go in as the text they are.
 
 The account asked is the one the composer sends from (the send-as chip, else the connected one).
+
+## In the message box
+
+A mention in the box reads as its name, "@Quinn", drawn as a chip, while the body keeps its token: the box is not a
+rich text editor, it holds plain text, and a mention is drawn as one piece only while it is all there, as a font draws a
+ligature only while all its letters are. The owner asked for it on 2026-11-13: the box showed `<@700000000000000001>`.
+
+How it is held (`packages/web/src/composerChips.ts`). The box's text holds a chip as its `@`, then the token in
+invisible Unicode tag characters (U+E0020 to U+E007E, one for each ASCII character of `<@…>`), then the rest of the
+name, then a cancel tag (U+E007F). So the box's text says everything by itself: undo and redo, a draft, a paste and the
+caret keep a chip whole, and nothing is kept beside it. The tags go after the `@`, not before it: a browser counts tag
+characters as one character with the one before them, so with the tags first a selection could not start at the
+chip, and deleting it left the tags behind. The composer keeps the body (`text` in Timeline.tsx's Composer, the draft
+in localStorage): `toBody` takes each chip back to its token and drops any other tag character, so none is ever sent.
+`toShown` makes the box's text for a body (a draft, a message being edited), as chips where this device can name the
+token: its person or account in the db (as a message names it, Timeline.tsx `useMdContext`), else the name the @ list
+gave it this session (a server member the hub never stored, a role). A token it cannot name, or one inside code, stays
+as written.
+
+What rides in the app (`ui/ChipBox.tsx`, `useChipBox`): the box's text for the body, the body for what is typed, and two
+rules on each edit the box makes by itself (a word deleted, a keyboard's correction, typing over a selection). A chip
+the edit cut into but did not take whole is taken out whole (`cuts`, the edit found where the old and new text differ,
+ending at the caret). A token typed whole becomes a chip at its `>` (`typedToken`). Undo and redo are left as they come.
+
+The chips themselves (`ui/ChipLayer.ts`) are a chunk of their own, about 2 KB gzipped, loaded the first time a chip is
+in the box; until it loads the box already reads "@Quinn". It is drawn with `h`, not JSX, and gets everything that
+reads the db as props: either would split a file of its own out of the app's start. It draws:
+
+- Each chip's background, behind the box's own text: a copy of the box's text, laid out with the box's font, padding,
+  borders, width and scrollbar, placed under it and scrolled with it. The box (`textarea.chip-box`) is lifted over the
+  copy, so the caret, the selection and the text are the box's own. The chip is `--accent-soft`, 2 px wider than the name
+  on each side.
+- One piece. A caret put inside a chip, by a click or an arrow, goes to the end it was moving towards (or the nearer
+  one). Backspace right after a chip, or Delete right before one, takes it whole, and so does typing over a selection
+  that cuts into one, each as one step to undo (`beforeinput`). A selection made by dragging or with Shift takes the
+  chips it cuts into whole once it is made.
+- Copy and cut: `text/plain` reads the names ("hi @Quinn"), and `text/x-dither-chat-body` carries the body; a paste in
+  a message box reads that first, else turns tokens in plain text into chips.
+- A click on a chip opens the person's page (an account by reference, or by its id on this network, opens its own),
+  only in a box that had the caret already: the tap that puts the caret in the box never leaves the chat. Over one that
+  opens, the pointer is a hand and the box's tooltip says whose page. A role, or a member the hub does not hold, has no
+  page.
+
+The @ list does not open right after a chip (`mentionComplete.ts`), as its name ends in a tag character.
 
 ## The setting: "@ finds"
 
@@ -256,10 +302,13 @@ Incoming mentions of you set `mentionsSelf` (and `mentionsAll` for @everyone, @h
   store resolves each to, and every path that sends: the send, a chat's send, an edit, Send later's Send now, a
   forward's note, and a `personRefs` account given them as written.
 - `packages/web/test/mention-complete.test.ts`: when an `@` opens the list, matching, this device's rows, and merging.
+- `packages/web/test/composer-chips.test.ts`: chips in the box's text: the body and the names they read as, a body
+  made into the box's text, a typed token, an edit that cuts into a chip, and where a chip's name and page come from.
 - `packages/web/test/markdown.test.ts`: references as chips.
 - `scripts/verify-mentions.ts`: a demo hub of its own and headless Chromium, on desktop and phone width. Step 3: the
   About's setting changes the sections, the switch filters, a friend with no account here sends as plain `@Name`, and
-  one on this network as `<@id>`.
+  one on this network as `<@id>`. Chips: drawn under the name, the caret stepping over them, Backspace and undo, the
+  draft, a typed token, copy and paste, and a click opening the page only once the box has the caret.
 - dither-accounts `extractors/discord/test/mentionables.test.ts` and `hook-mentionables.test.ts`: the mapping, and the
   hook against a small replica of the client's stores.
 - dither-accounts `extractors/matrix/test/mentions.test.ts` (members, the cache, @room both ways) and Telegram's

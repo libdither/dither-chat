@@ -2575,6 +2575,28 @@ code {
   max-height: min(220px, var(--app-h, 100dvh) * 0.4);
 }
 /* One line when empty, however long the placeholder, so the box never grows for it. */
+/* Mentions in the box as chips (ui/ChipLayer.ts, docs/mentions.md): each chip's background, in a copy of the box's
+   text laid out as the box lays it out, behind the box's own text; the box is lifted over it. */
+.chip-copy {
+  position: absolute;
+  margin: 0;
+  overflow: hidden;
+  pointer-events: none;
+  color: transparent;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  border-style: solid;
+  border-color: transparent;
+}
+.chip-m {
+  background: var(--accent-soft);
+  border-radius: 4px;
+  padding: 0 2px;
+  margin: 0 -2px;
+}
+textarea.chip-box {
+  position: relative;
+}
 .composer-box textarea::placeholder,
 .cu-reply textarea::placeholder {
   white-space: nowrap;
