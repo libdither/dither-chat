@@ -210,6 +210,7 @@ const places: Places = {
     return c ? homeRoute(c) : { view: 'inbox', conv: id };
   },
   placeHome,
+  parent: (id) => db.conversations.get(id)?.parentId ?? null,
 };
 // A list's page keeps its list under it in history, so the phone's back button shows the list as the swipe does.
 setListUnder((to, from) => (phone.value ? listToWrite(to, from, places) : null));

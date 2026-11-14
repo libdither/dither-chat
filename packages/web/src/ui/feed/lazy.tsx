@@ -8,7 +8,7 @@ import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { fullTime, ago } from '../../format.ts';
 import { authorName } from '../../model.ts';
-import { db, go, isSelfIdentity, toast } from '../../state.ts';
+import { db, go, isSelfIdentity, previousRoute, toast } from '../../state.ts';
 import { Avatar, Empty, Linked } from '../bits.tsx';
 import { useLongPress } from '../Reactions.tsx';
 import { Sheet } from '../Sheet.tsx';
@@ -50,6 +50,14 @@ export const kit = {
   toast,
   /** A post's thread, beside the inbox (docs/feed.md "Threads"). */
   openPost: (network: P.Network, post: string) => go({ view: 'inbox', conv: postKey(network, post) }),
+  /** Back to the post this thread was opened from: a step back through history when that is the entry before, so
+   * the phone's back button and this agree; else opened afresh. */
+  backToPost: (network: P.Network, post: string) => {
+    const conv = postKey(network, post);
+    const prev = previousRoute();
+    if (prev?.view === 'inbox' && prev.conv === conv) history.back();
+    else go({ view: 'inbox', conv });
+  },
   /** feed.ts, which the row draws with too: imported by the chunk, rolldown would split it into a startup file. */
   feed: { clip, feedBarLine, feedUnits, namesPhrase, notificationsUrl, reactionCounts, reactorsPhrase, shortCount, opensPost, parsePostKey, postHref },
   // Startup already has these (Settings → Translation): handed over, so the chunk does not split them out.

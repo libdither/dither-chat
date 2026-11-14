@@ -440,12 +440,34 @@ try {
   if (shots) await page.shot(join(shots, 'x-tree-phone-deep.png'));
   await load(`#/inbox/c/${feed.id}`);
   await page.until(`document.querySelectorAll('.feed-unit').length >= 4`, 20000);
+  // Back on a phone (pages.ts stacksOn): a post goes back to the post, feed or profile it was opened from, every way.
+  const focalWho = () => page.eval<string | null>(`document.querySelector('.thread-focal .post-who b')?.textContent ?? null`);
+  const feedHash = `#/inbox/c/${feed.id}`;
   await page.eval(`document.querySelector('.feed-talk .post-text').click()`);
-  await page.until(`!!document.querySelector('.thread-focal')`, 20000);
+  await page.until(`document.querySelector('.thread-focal .post-who b')?.textContent === 'Ravi' && document.querySelectorAll('.thread-list > .thread-post').length > 0`, 20000);
+  await page.eval(`document.querySelector('.thread-list > .thread-post').click()`);
+  await page.until(`document.querySelector('.thread-focal .post-who b')?.textContent === 'You'`, 15000);
+  check('on a phone: a post opened from a reply', (await focalWho()) === 'You');
+  await page.eval('history.back()');
+  await page.until(`document.querySelector('.thread-focal .post-who b')?.textContent === 'Ravi'`, 10000).catch(() => {});
+  check("…the phone's back button goes back to the reply, not to the inbox", (await focalWho()) === 'Ravi' && /pst_x_/.test(await page.eval<string>('location.hash')), await page.eval('location.hash'));
   await page.eval(`document.querySelector('.thread-pane .conv-head .back').click()`);
-  // A phone files every page opened in the inbox on top of the inbox's list (pages.ts): Back shows the list.
-  await page.until(`location.hash === '#/inbox' && !!document.querySelector('.feed-row')`, 10000);
-  check('Back shows the inbox, as from any page opened there', true);
+  await page.until(`location.hash === ${JSON.stringify(feedHash)} && document.querySelectorAll('.feed-unit').length >= 4`, 10000).catch(() => {});
+  check("…the header's Back from it goes to the feed it was opened from", (await page.eval<string>('location.hash')) === feedHash, await page.eval('location.hash'));
+  await page.eval(`document.querySelector('.conv-head .back').click()`);
+  await page.until(`location.hash === '#/inbox' && !!document.querySelector('.feed-row')`, 10000).catch(() => {});
+  check('…and the feed back to the inbox', (await page.eval<string>('location.hash')) === '#/inbox', await page.eval('location.hash'));
+  // A post from a person's page goes back to that page.
+  await load(`#/i/${alice.id}`);
+  await page.until(`!!document.querySelector('.thread-post[data-post]')`, 20000).catch(() => {});
+  const profileHash = await page.eval<string>('location.hash');
+  if (await page.eval<boolean>(`!!document.querySelector('.thread-post[data-post]')`)) {
+    await page.eval(`document.querySelector('.thread-post[data-post]').click()`);
+    await page.until(`!!document.querySelector('.thread-focal')`, 15000);
+    await page.eval(`document.querySelector('.thread-pane .conv-head .back').click()`);
+    await page.until(`location.hash === ${JSON.stringify(profileHash)}`, 10000).catch(() => {});
+    check("a post opened from a person's page: Back goes to the page", (await page.eval<string>('location.hash')) === profileHash, await page.eval('location.hash'));
+  }
   await load(`#/i/${alice.id}`);
   await page.until(`[...document.querySelectorAll('a.text-link')].length > 0`, 20000);
   if (shots) await page.shot(join(shots, 'x-bio-link-phone.png'));
