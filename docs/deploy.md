@@ -87,10 +87,13 @@ release they started in until their own code changes (dither-accounts docs/super
 5. Point `current` at the release and restart the service.
 6. Check it. The hub must log `startup: ready`, answer `/api/health` and connect to the manager (its notices' access
    leaves `unreachable`); the manager must answer its `/api/health`. Both must stay up without systemd restarting
-   them, and get the hub's accounts back to as many online as before. For the manager, first its extractors whose code
-   changed must have restarted (one at a time, after it is up: its `/api/health` `codeRestarts`, waited for up to 30
-   minutes), and every one of them be online with none crashed since (`plan.ts` `codeRestartsProblem`, asked again
-   for up to 90 s; a manager that does not answer for a moment is no code problem).
+   them, and get the hub's accounts back to as many online as before (less those still restarting, below). For the
+   manager, its extractors whose code changed restart after it is up (one per kind at a time: its `/api/health`
+   `codeRestarts`); the check waits for them while it has time, and only a crash of one of them fails it (`plan.ts`
+   `codeRestartsProblem`, asked again for up to 90 s). Restarts still under way when its time is up are no failure:
+   the "Deployed" notice says how many (normal urgency), and later crashes reach you through the manager's own
+   notices. For the hub, the accounts it restarts after gaps (one per kind at a time; its `/api/health`
+   `gapRestarts`) are waited for the same way.
 7. If a check fails, `current` goes back to `previous` and the service restarts on it. The commit is marked failed and
    never tried again; the next commit that passes CI is.
 
@@ -98,10 +101,16 @@ release they started in until their own code changes (dither-accounts docs/super
 (`plan.ts` `RUN_BUDGET_MS`), every wait in a check ending by its deadline: a forward check must be done 12 minutes
 before the end (`ROLLBACK_MS`, kept for a rollback and its own lighter check, which does not wait for dither-accounts'
 restarts for changed code), and an app is not restarted when its check would have less than 6 minutes (it waits for
-the next run, its release already built). Before each restart the release is saved as pending in `state.json`; a run
-killed before its check ended leaves it there, and the next run treats it as failed: the release before comes back,
-checked as a rollback, with the "Rolled back" notice, and the commit is never tried again. If you raise or lower the
-unit's `TimeoutStartSec`, keep it at least 8 minutes above `RUN_BUDGET_MS`.
+the next run, its release already built; a release folder counts as built only once its build wrote `.deploy-built`).
+Before each restart the release is saved as pending in `state.json`, with how far it got; a run killed before its
+check ended leaves it there, and the next run treats it as failed: the release before comes back, checked as a
+rollback, with the "Rolled back" notice, and the commit is never tried again. One killed before `current` moved never
+ran: it is just forgotten. A killed check of dither-chat is the release the deployer itself runs from (the unit runs
+`chat/current`'s), so the next run hands itself to the release before's deployer to resolve it. If you raise or lower
+the unit's `TimeoutStartSec`, keep it at least 8 minutes above `RUN_BUDGET_MS`.
+
+**One run at a time.** `<root>/deploy.lock` names the run under way (pid and start time); a second one, the timer's
+or a `ship` by hand, says so in the log and goes (a `ship` exits with 1). A lock whose run has ended is taken over.
 
 Either way the manager's notices say what happened (dither-accounts `POST /api/notices/local`), so it reaches the
 inbox and the phone: "Deployed dither-chat a14daa9" with the pull requests it brought (low), "Rolled back …" (high),

@@ -109,22 +109,26 @@ export function releasesInUse(releasesDir: string, procs: ProcView[]): Set<strin
  */
 export interface CodeRestarts {
   queued: number;
-  active: boolean;
+  /** Restarts under way now (one per kind at most). */
+  active: number;
   restarted: number;
   online: number;
   crashed: number;
 }
 
-/** Whether those restarts are done (`settled`), and once they are, whether they held (null) or why not. */
+/** Whether those restarts are done. */
 export function codeRestartsSettled(c: CodeRestarts | null | undefined): boolean {
-  return !c || (c.queued === 0 && !c.active);
+  return !c || (c.queued === 0 && !Number(c.active));
 }
+/** Restarted extractors that crashed on the new code: what rolls a deploy back (a slow restart does not). */
 export function codeRestartsProblem(c: CodeRestarts | null | undefined): string | null {
-  if (!c || !c.restarted) return null;
-  const down = c.restarted - c.online;
-  if (down <= 0 && c.crashed === 0) return null;
-  const parts = [down > 0 ? `${down} not online` : '', c.crashed > 0 ? `${c.crashed} crashed since` : ''].filter(Boolean);
-  return `of the ${c.restarted} extractor${c.restarted === 1 ? '' : 's'} restarted for changed code, ${parts.join(' and ')}`;
+  if (!c || !c.crashed) return null;
+  return `${c.crashed} of the ${c.restarted} extractor${c.restarted === 1 ? '' : 's'} restarted for changed code crashed since`;
+}
+/** Extractors whose restart for changed code has not finished: waiting, under way, or not back online yet. */
+export function codeRestartsUnfinished(c: CodeRestarts | null | undefined): number {
+  if (!c) return 0;
+  return c.queued + Number(c.active) + Math.max(0, c.restarted - c.online);
 }
 
 /**
@@ -143,18 +147,39 @@ export function timeToShip(now: number, d: { check: number }, min = MIN_CHECK_MS
   return d.check - now >= min;
 }
 
-/** A release being checked, saved before its restart: a run killed before the check ended leaves it for the next. */
+/**
+ * A release being checked, saved before its restart: a run killed before the check ended leaves it for the next.
+ * `phase`: restarting (saved before `current` moves), checking (it runs), rolling back.
+ */
 export interface Pending {
   rel: string;
   previous: string;
   target: string;
   at: string;
+  phase?: 'restarting' | 'checking' | 'rolling-back';
 }
 /**
- * What the next run does with a check that did not finish: it counts as failed, and `current` goes back to the release
- * before (`relink`, unless a rollback had already moved it) with the service restarted and checked as a rollback.
+ * What the next run does with a check that did not finish. A release that never ran (killed before `current` moved)
+ * is just forgotten: its commit is not failed. Otherwise it counts as failed, and the release before comes back
+ * (`relink` unless a rollback had already moved it), restarted and checked as a rollback.
  */
-export function interrupted(p: Pending | undefined, current: string | null): { relink: boolean; why: string } | null {
+export function interrupted(p: Pending | undefined, current: string | null): { drop: true } | { drop: false; relink: boolean; why: string } | null {
   if (!p) return null;
-  return { relink: current !== p.previous, why: `its check did not finish (the deployer stopped at ${p.at.slice(11, 16)} UTC)` };
+  if ((p.phase ?? 'checking') === 'restarting' && current !== p.rel) return { drop: true };
+  return { drop: false, relink: current !== p.previous, why: `its check did not finish (the deployer stopped at ${p.at.slice(11, 16)} UTC)` };
+}
+
+/**
+ * The release a killed chat check left is the one this deployer runs from (its unit runs chat/current's): it must not
+ * judge itself. Then the run is handed to the release before's deployer, when that one can resolve it.
+ */
+export function reexecFrom(pendingChat: Pending | undefined, ownRelease: string | null, previousCanResolve: boolean, already: boolean): string | null {
+  if (already || !pendingChat || !ownRelease || pendingChat.rel !== ownRelease || pendingChat.previous === ownRelease) return null;
+  return previousCanResolve ? pendingChat.previous : null;
+}
+
+/** Whether a deployer lock ({pid, start}) belongs to a run still going (`alive` checks pid and start time). */
+export function lockHeld(lock: { pid?: unknown; start?: unknown } | null, self: number, alive: (pid: number, start: string | undefined) => boolean): number | null {
+  if (!lock || typeof lock.pid !== 'number' || lock.pid === self) return null;
+  return alive(lock.pid, typeof lock.start === 'string' ? lock.start : undefined) ? lock.pid : null;
 }

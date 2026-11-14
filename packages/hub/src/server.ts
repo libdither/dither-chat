@@ -811,7 +811,8 @@ export class HubServer {
     let m: RegExpMatchArray | null;
     const num = (k: string) => (url.searchParams.get(k) ? Number(url.searchParams.get(k)) : null);
 
-    if (path === '/api/health') return ok({ ok: true, now: Date.now() });
+    // gapRestarts: accounts the hub still has to restart after a gap (remote.ts), which the deployer waits for.
+    if (path === '/api/health') return ok({ ok: true, now: Date.now(), gapRestarts: (this.sup as { gapRestartsWaiting?: () => number }).gapRestartsWaiting?.() ?? 0 });
     if (path === '/api/demo/reset' && method === 'POST') {
       if (!this.opts.onDemoReset) return bad('demo is not enabled', 404);
       await this.opts.onDemoReset();

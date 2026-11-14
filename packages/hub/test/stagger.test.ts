@@ -1,37 +1,75 @@
-/** The hub's restarts after a gap, one at a time with a pause (src/stagger.ts). */
+/** The hub's restarts after a gap: one at a time per kind, kinds side by side, a pause between (src/stagger.ts). */
 import { expect, test } from 'bun:test';
 import { Stagger } from '../src/stagger.ts';
 
-test('gap restarts go one at a time, a pause between, each account once while it waits', async () => {
+/** Lets every promise that can settle now settle. */
+const settle = async () => {
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+};
+
+/** A Stagger whose restarts and pauses end when the test says, with what happened in order. */
+function harness() {
   const log: string[] = [];
-  let release: () => void = () => {};
+  const restarts = new Map<string, () => void>();
+  const pauses: (() => void)[] = [];
   const s = new Stagger(
-    async (k) => {
+    (k) => {
       log.push(`start ${k}`);
-      await new Promise<void>((r) => (release = r));
-      log.push(`done ${k}`);
+      return new Promise<void>((r) => restarts.set(k, () => (log.push(`done ${k}`), r())));
     },
-    1000,
-    async (ms) => {
+    5000,
+    (ms) => {
       log.push(`pause ${ms}`);
+      return new Promise<void>((r) => pauses.push(r));
     },
   );
-  for (const k of ['a', 'b', 'a', 'c']) s.add(k);
-  await Bun.sleep(1);
-  expect(log).toEqual(['start a']);
-  expect(s.waiting).toEqual(['b', 'c']);
-  for (let i = 0; i < 3; i++) {
-    release();
-    await Bun.sleep(1);
-  }
-  expect(log).toEqual(['start a', 'done a', 'pause 1000', 'start b', 'done b', 'pause 1000', 'start c', 'done c']);
-  // A failed restart does not stop the rest.
-  const t = new Stagger(async (k) => {
-    if (k === 'x') throw new Error('no');
-    log.push(`ran ${k}`);
-  }, 0);
+  return { s, log, end: (k: string) => restarts.get(k)!(), pause: () => pauses.shift()!() };
+}
+
+test('one at a time per kind, a pause between; kinds side by side; each account once while it waits or runs', async () => {
+  const { s, log, end, pause } = harness();
+  for (const [k, g] of [['a1', 'discord'], ['a2', 'discord'], ['a1', 'discord'], ['b1', 'telegram']] as const) s.add(k, g);
+  await settle();
+  expect(log).toEqual(['start a1', 'start b1']);
+  expect(s.size).toBe(3);
+  end('a1');
+  await settle();
+  expect(log.slice(2)).toEqual(['done a1', 'pause 5000']);
+  // Queued again while it runs: not twice.
+  s.add('a2', 'discord');
+  pause();
+  await settle();
+  expect(log.at(-1)).toBe('start a2');
+  end('a2');
+  end('b1');
+  await settle();
+  expect(s.size).toBe(0);
+});
+
+test('a failed restart does not stop the rest; stop() drops what waits and takes nothing new', async () => {
+  const log: string[] = [];
+  const t = new Stagger(
+    async (k) => {
+      if (k === 'x') throw new Error('no');
+      log.push(`ran ${k}`);
+    },
+    0,
+    async () => {},
+  );
   t.add('x');
   t.add('y');
-  await Bun.sleep(5);
-  expect(log.at(-1)).toBe('ran y');
+  await settle();
+  expect(log).toEqual(['ran y']);
+
+  const { s, log: l2, end } = harness();
+  s.add('p', 'g');
+  s.add('q', 'g');
+  await settle();
+  s.stop();
+  expect(s.size).toBe(1); // the one under way finishes
+  s.add('r', 'g');
+  end('p');
+  await settle();
+  expect(l2).toEqual(['start p', 'done p']);
+  expect(s.size).toBe(0);
 });
