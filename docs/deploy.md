@@ -79,7 +79,9 @@ release they started in until their own code changes (dither-accounts docs/super
 **One run, per app:**
 
 1. Fetch, and pick the newest commit since the deployed one whose CI `check` passed (`plan.ts` `pick`). A commit still
-   in CI is waited for only when nothing newer has passed.
+   in CI is waited for only when nothing newer has passed. GitHub's answer is remembered once the CI is done, a pass for
+   good. A failure is asked about again while passing would make it the commit to ship (`worthAsking`), so a rerun of
+   a flaky job that goes green deploys: after a tenth of the failure's age, from a minute up to an hour (`askAgain`).
 2. Build its release. A build that fails is told and never tried again.
 3. Wait while a call is on (`GET /api/calls`).
 4. For the hub, copy the database to `backups/pre-deploy.sqlite` (at most every 6 hours: a schema change is copied by

@@ -25,7 +25,7 @@
 import { appendFileSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { type Candidate, type CodeRestarts, codeRestartsOffline, codeRestartsProblem, codeRestartsSettled, codeRestartsUnfinished, deadlines, deployedNotice, failedNotice, interrupted, lockHeld, type Pending, pick, type ProcView, reexecFrom, releasesInUse, ROLLBACK_MS, short, timeToShip, unmarkedRelease } from './plan.ts';
+import { askAgain, type Candidate, type CodeRestarts, codeRestartsOffline, codeRestartsProblem, codeRestartsSettled, codeRestartsUnfinished, deadlines, deployedNotice, failedNotice, interrupted, type Known, lockHeld, type Pending, pick, type ProcView, reexecFrom, releasesInUse, ROLLBACK_MS, short, timeToShip, unmarkedRelease, worthAsking } from './plan.ts';
 
 const HOME = homedir();
 const ROOT = process.env.DITHER_DEPLOY_ROOT ?? join(HOME, '.local/share/dither-deploy');
@@ -313,8 +313,11 @@ interface State {
   failed: Record<string, Record<string, string>>;
   /** dither-accounts: the `master` commit each release was made of (its own sha is the merge onto `live`). */
   branchOf: Record<string, string>;
-  /** What GitHub said of a commit once it was final (its CI done, its pull request's labels), so it is asked once. */
-  known: Record<string, { check: 'success' | 'failure'; held: number }>;
+  /**
+   * What GitHub said of a commit once it was final (its CI done, its pull request's labels), so it is not asked every
+   * run: a pass for good, a failure until a rerun could make it the one to ship (plan.ts Known, worthAsking).
+   */
+  known: Record<string, Known>;
   /** The hold already told about, by app (one notice per held pull request). */
   toldHeld: Record<string, number>;
   /** A release whose check is under way, by app (plan.ts Pending): one left here by a killed run is rolled back. */
@@ -387,21 +390,36 @@ function heldOf(a: App, sha: string): number {
   return Number(out ?? 0) || 0;
 }
 
-/** A commit as the pick needs it: its CI and its hold, asked of GitHub until the CI is final, then remembered. */
-function candidate(a: App, sha: string, state: State): Candidate {
+/**
+ * A commit as the pick needs it: its CI and its hold, asked of GitHub until the CI is final, then remembered.
+ * `fresh`: ask even so (a failure a rerun may have passed).
+ */
+function candidate(a: App, sha: string, state: State, fresh = false): Candidate {
   const k = state.known[sha];
-  if (k) return { sha, check: k.check, ...(k.held ? { held: k.held } : {}) };
+  if (k && !fresh) return { sha, check: k.check, ...(k.held ? { held: k.held } : {}) };
   const check = ciOf(a, sha);
   const held = heldOf(a, sha);
-  if (check === 'success' || check === 'failure') state.known[sha] = { check, held };
+  const now = Date.now();
+  if (check === 'success') state.known[sha] = { check, held };
+  // A failure asked again keeps when it was first seen, so it is asked less often as it ages (plan.ts askAgain).
+  else if (check === 'failure') state.known[sha] = { check, held, first: k?.check === 'failure' ? (k.first ?? now) : now, asked: now };
+  // Running again (a rerun) or gone: not final, so asked every run until it is.
+  else delete state.known[sha];
+  if (k && k.check !== check) log(`${a.name}: ${short(sha)}'s CI ${check === 'success' ? 'passed on a rerun' : check === 'pending' ? 'runs again' : 'has no check run now'}`);
   return { sha, check, ...(held ? { held } : {}) };
 }
 
-/** The branch's commits newer than the one deployed (the recent ones when it is not on the branch), newest first. */
-function candidates(a: App, deployedBranchSha: string | null, state: State): Candidate[] {
+/**
+ * The branch's commits newer than the one deployed (the recent ones when it is not on the branch), newest first. A
+ * remembered CI failure that would ship if it passed is asked about again when due: a rerun may have passed it.
+ */
+function candidates(a: App, deployedBranchSha: string | null, state: State, failed: ReadonlySet<string>): Candidate[] {
   const range = deployedBranchSha && tryRun(['git', '-C', repoOf(a), 'merge-base', '--is-ancestor', deployedBranchSha, `origin/${a.branch}`]) !== null ? `${deployedBranchSha}..origin/${a.branch}` : `origin/${a.branch}`;
   const shas = git(repoOf(a), 'rev-list', '--first-parent', `-n${DEPTH}`, range).split('\n').filter(Boolean);
-  return shas.map((sha) => candidate(a, sha, state));
+  const all = shas.map((sha) => candidate(a, sha, state));
+  const now = Date.now();
+  const again = new Set(worthAsking(all, failed).filter((sha) => askAgain(state.known[sha], now)));
+  return again.size ? all.map((c) => (again.has(c.sha) ? candidate(a, c.sha, state, true) : c)) : all;
 }
 
 /**
@@ -548,7 +566,7 @@ async function deploy(a: App, state: State, byHand?: string): Promise<'shipped' 
       return 'waiting';
     }
     const failed = new Set(Object.keys(state.failed[a.key] ?? {}));
-    const p = pick(candidates(a, deployedBranch, state), failed);
+    const p = pick(candidates(a, deployedBranch, state, failed), failed);
     saveState(state);
     if ('none' in p) {
       if (p.held && state.toldHeld[a.key] !== p.held) {
