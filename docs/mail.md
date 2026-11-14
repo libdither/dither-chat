@@ -583,9 +583,10 @@ page does (its docs/google.md, "Gmail mail" and "Writing to Gmail"). Its status 
 **Checked**: `hub/test/mail-gmail-web.test.ts` (what the hub reads of the status, with a Workspace address and no
 `[Gmail]` mailbox; one message and one id through the first sync, the backfill and an opened label, also without a
 Message-ID; Move to Inbox from All Mail, into a label from Inbox; archive and Undo, not held; trash and Undo; star,
-read and unread; changes made in Gmail itself; search in Gmail's syntax; the send caps and writes from the status). dither-accounts checked its writes and sends on a real Gmail page; **not
-checked yet** through the hub on a real google-kind account. As there, `mail.move` takes off Inbox, as modelled here,
-and leaves your other labels on.
+read and unread; changes made in Gmail itself; search in Gmail's syntax; the send caps and writes from the status). Through the hub on a real google-kind account (2026-11-14, test messages
+between the owner's own Gmail and Proton accounts): star and unstar, unread and read, archive and back to Inbox, into a
+label (Inbox came off, as modelled here), trash and back (your labels stay), a new message with a file, and a reply
+with a file (in the original's thread on both sides, with its In-Reply-To), each seen in Gmail itself.
 
 **Adding one** (on the owner's side; nothing is added from here): on dither-accounts' page, **Add → Google**, and sign
 in to Google once in its live view (dither-accounts' docs/google.md). The hub sees it under its existing `mail` grant.
