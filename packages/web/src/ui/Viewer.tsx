@@ -9,7 +9,11 @@
  * over, and a long one fills the screen's width at a double tap.
  *
  * Zoomed in, it pans past its edges by up to SLACK of the screen, so its top can come out from under the bar; a pan
- * let go with speed glides on and slows, and the wheel eases to the zoom it asks for rather than jumping there.
+ * let go with speed glides on and slows.
+ *
+ * A touchpad is followed directly, never animated: its pinch (the browser's Ctrl+wheel, or Safari's gesture events)
+ * zooms by exactly the fingers' scale about the point under them, in the same frame, and two fingers moving pan a
+ * zoomed picture. Only a mouse wheel's notches, coarse steps, are eased (EASE_MS).
  *
  * Other files open here too (docs/files.md): text and code, Markdown, JSON, CSV, PDF and archives, each shown by a
  * viewer in a chunk of its own (files/), loaded when such a file is first opened. On a phone they fill the screen; on a
@@ -199,7 +203,7 @@ const MAX = 5;
 const SLACK = 0.4;
 /** How fast a glide slows (ms for its speed to fall to a third), and how fast the wheel's zoom catches up. */
 const GLIDE_MS = 325;
-const EASE_MS = 70;
+const EASE_MS = 45;
 
 function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) {
   const [i, setI] = useState(start);
@@ -253,7 +257,8 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
     halt();
     let last = performance.now();
     const frame = (now: number) => {
-      const dt = Math.min(64, now - last);
+      // A frame's time can be from before this was asked for: never a step back.
+      const dt = Math.max(0, Math.min(64, now - last));
       last = now;
       anim.current = step(dt) ? requestAnimationFrame(frame) : 0;
     };
@@ -510,13 +515,44 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
       }
       mode = null;
     };
+    /** Wheel events from a touchpad until then: a stream keeps its kind, momentum and all. */
+    let padUntil = 0;
+    /** Follow it now, in this frame: a pinch or a two-finger pan. */
+    const direct = (t: { s: number; x: number; y: number }) => {
+      halt();
+      wheelTo.current = null;
+      easing = false;
+      moving();
+      show(clamp(t.s, t.x, t.y));
+      stopped();
+    };
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
-      // A trackpad's pinch comes as the wheel with Ctrl held, in small steps: it zooms faster per step. Lines and
-      // pages (Firefox's wheel) count as 40 px a line.
-      const dy = e.deltaY * (e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? innerHeight : 1);
+      // deltaMode read first: Firefox then keeps a mouse wheel in lines, which count as 40 px; pages as a screen.
+      const unit = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? innerHeight : 1;
+      const dx = e.deltaX * unit;
+      const dy = e.deltaY * unit;
+      // A pinch on a touchpad: Chrome sends deltaY = -100·ln(scale) of the fingers, Firefox about the same, so this
+      // is their scale, applied at once about the point between them.
+      if (e.ctrlKey) {
+        const cur = z.current;
+        const ns = Math.min(top(), Math.max(1, cur.s * Math.exp(-dy / 100)));
+        const cx = innerWidth / 2;
+        const cy = innerHeight / 2;
+        return direct({ s: ns, x: e.clientX - cx - ((e.clientX - cx - cur.x) * ns) / cur.s, y: e.clientY - cy - ((e.clientY - cy - cur.y) * ns) / cur.s });
+      }
+      // Two fingers moving on a touchpad: fine steps in pixels, often sideways too. A mouse wheel's notches are
+      // whole lines, or whole and large in pixels.
+      const now = performance.now();
+      if (e.deltaMode === 0 && (dx !== 0 || !Number.isInteger(dy) || Math.abs(dy) < 50)) padUntil = now + 400;
+      if (now < padUntil) {
+        padUntil = now + 400;
+        const t = z.current;
+        if (t.s > 1.01) direct({ s: t.s, x: t.x - dx, y: t.y - dy });
+        return;
+      }
       const from = wheelTo.current?.s ?? z.current.s;
-      const s = Math.min(top(), Math.max(1, from * Math.exp(-dy / (e.ctrlKey ? 100 : 300))));
+      const s = Math.min(top(), Math.max(1, from * Math.exp(-dy / 300)));
       wheelTo.current = { s, px: e.clientX, py: e.clientY };
       if (reducedMotion()) {
         wheelTo.current = null;
@@ -545,7 +581,26 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
     el.addEventListener('pointerup', up);
     el.addEventListener('pointercancel', up);
     el.addEventListener('wheel', wheel, { passive: false });
+    // Safari's touchpad pinch: gesture events with the scale since the pinch began.
+    let g0 = 1;
+    const gStart = (e: Event) => {
+      e.preventDefault();
+      g0 = z.current.s;
+    };
+    const gChange = (e: Event) => {
+      e.preventDefault();
+      const ge = e as Event & { scale: number; clientX: number; clientY: number };
+      const cur = z.current;
+      const ns = Math.min(top(), Math.max(1, g0 * ge.scale));
+      const cx = innerWidth / 2;
+      const cy = innerHeight / 2;
+      direct({ s: ns, x: ge.clientX - cx - ((ge.clientX - cx - cur.x) * ns) / cur.s, y: ge.clientY - cy - ((ge.clientY - cy - cur.y) * ns) / cur.s });
+    };
+    el.addEventListener('gesturestart', gStart);
+    el.addEventListener('gesturechange', gChange);
     return () => {
+      el.removeEventListener('gesturestart', gStart);
+      el.removeEventListener('gesturechange', gChange);
       el.removeEventListener('pointerdown', down);
       el.removeEventListener('pointermove', move);
       el.removeEventListener('pointerup', up);
