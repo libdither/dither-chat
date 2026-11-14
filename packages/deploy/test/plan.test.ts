@@ -3,7 +3,7 @@
  * what the notice says.
  */
 import { expect, test } from 'bun:test';
-import { type Candidate, deployedNotice, failedNotice, pick, pullsOf, releasesInUse } from '../src/plan.ts';
+import { type Candidate, codeRestartsProblem, codeRestartsSettled, deployedNotice, failedNotice, pick, pullsOf, releasesInUse } from '../src/plan.ts';
 
 const c = (sha: string, check: Candidate['check']): Candidate => ({ sha, check });
 
@@ -77,4 +77,18 @@ test("a release a running process uses is kept: its working directory or a path 
     { cwd: null, cmdline: [] },
   ]);
   expect([...used].sort()).toEqual(['aaa', 'bbb', 'ccc']);
+});
+
+test("dither-accounts' restarts for changed code: waited for until none is queued or under way, then every one must be online and none crashed", () => {
+  const c = (queued: number, active: boolean, restarted: number, online: number, crashed: number) => ({ queued, active, restarted, online, crashed });
+  // A manager from before them says nothing: nothing to wait for, nothing wrong.
+  expect(codeRestartsSettled(null)).toBe(true);
+  expect(codeRestartsProblem(null)).toBe(null);
+  expect(codeRestartsSettled(c(2, false, 0, 0, 0))).toBe(false);
+  expect(codeRestartsSettled(c(0, true, 1, 0, 0))).toBe(false);
+  expect(codeRestartsSettled(c(0, false, 3, 3, 0))).toBe(true);
+  expect(codeRestartsProblem(c(0, false, 0, 0, 0))).toBe(null);
+  expect(codeRestartsProblem(c(0, false, 3, 3, 0))).toBe(null);
+  expect(codeRestartsProblem(c(0, false, 3, 2, 0))).toBe('of the 3 extractors restarted for changed code, 1 not online');
+  expect(codeRestartsProblem(c(0, false, 1, 1, 1))).toBe('of the 1 extractor restarted for changed code, 1 crashed since');
 });

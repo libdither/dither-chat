@@ -101,3 +101,28 @@ export function releasesInUse(releasesDir: string, procs: ProcView[]): Set<strin
   }
   return used;
 }
+
+/**
+ * dither-accounts' restarts for changed code after a deploy, as its /api/health says (its docs/supervisor.md): adopted
+ * extractors whose code changed restart one at a time, minutes after the manager is up. Absent (a manager before them):
+ * nothing to wait for.
+ */
+export interface CodeRestarts {
+  queued: number;
+  active: boolean;
+  restarted: number;
+  online: number;
+  crashed: number;
+}
+
+/** Whether those restarts are done (`settled`), and once they are, whether they held (null) or why not. */
+export function codeRestartsSettled(c: CodeRestarts | null | undefined): boolean {
+  return !c || (c.queued === 0 && !c.active);
+}
+export function codeRestartsProblem(c: CodeRestarts | null | undefined): string | null {
+  if (!c || !c.restarted) return null;
+  const down = c.restarted - c.online;
+  if (down <= 0 && c.crashed === 0) return null;
+  const parts = [down > 0 ? `${down} not online` : '', c.crashed > 0 ? `${c.crashed} crashed since` : ''].filter(Boolean);
+  return `of the ${c.restarted} extractor${c.restarted === 1 ? '' : 's'} restarted for changed code, ${parts.join(' and ')}`;
+}

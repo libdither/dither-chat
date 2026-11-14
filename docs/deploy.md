@@ -87,7 +87,9 @@ release they started in until their own code changes (dither-accounts docs/super
 5. Point `current` at the release and restart the service.
 6. Check it. The hub must log `startup: ready`, answer `/api/health` and connect to the manager (its notices' access
    leaves `unreachable`); the manager must answer its `/api/health`. Both must stay up without systemd restarting
-   them, and get the hub's accounts back to as many online as before.
+   them, and get the hub's accounts back to as many online as before. For the manager, first its extractors whose code
+   changed must have restarted (one at a time, after it is up: its `/api/health` `codeRestarts`, waited for up to 30
+   minutes), and every one of them be online with none crashed since (`plan.ts` `codeRestartsProblem`).
 7. If a check fails, `current` goes back to `previous` and the service restarts on it. The commit is marked failed and
    never tried again; the next commit that passes CI is.
 

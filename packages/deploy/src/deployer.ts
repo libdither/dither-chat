@@ -25,7 +25,7 @@
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { type Candidate, deployedNotice, failedNotice, pick, type ProcView, releasesInUse, short } from './plan.ts';
+import { type Candidate, type CodeRestarts, codeRestartsProblem, codeRestartsSettled, deployedNotice, failedNotice, pick, type ProcView, releasesInUse, short } from './plan.ts';
 
 const HOME = homedir();
 const ROOT = process.env.DITHER_DEPLOY_ROOT ?? join(HOME, '.local/share/dither-deploy');
@@ -77,7 +77,12 @@ const APPS: App[] = [
     build: [[bun, 'install', '--frozen-lockfile'], [bun, 'run', 'web:build']],
     up: async (s) => {
       await until(() => health(`${MANAGER}/api/health`), 120_000, 'the manager to answer /api/health');
+      // Extractors whose code changed restart one at a time after the manager is up (its docs/supervisor.md): wait
+      // until the last has, then (steady's 20 s on) every one of them must be online and none crashed since.
+      await until(async () => codeRestartsSettled(await codeRestarts()), 1_800_000, 'dither-accounts to restart the extractors whose code changed');
       await steady('dither-accounts.service', s);
+      const problem = codeRestartsProblem(await codeRestarts());
+      if (problem) throw new Error(problem);
       // The hub's accounts run under the manager: they come back online.
       await until(async () => (await onlineAccounts()) >= s.online, 300_000, `the hub's accounts to be online again (${s.online} before)`);
     },
@@ -145,6 +150,13 @@ async function until(f: () => boolean | Promise<boolean>, ms: number, what: stri
 async function health(url: string) {
   const r = await fetch(url, { signal: AbortSignal.timeout(3000) });
   return r.ok;
+}
+
+/** dither-accounts' restarts for changed code (counts only), or null from a manager that has none. */
+async function codeRestarts(): Promise<CodeRestarts | null> {
+  const r = await fetch(`${MANAGER}/api/health`, { signal: AbortSignal.timeout(3000) });
+  if (!r.ok) throw new Error(`health ${r.status}`);
+  return ((await r.json()) as { codeRestarts?: CodeRestarts }).codeRestarts ?? null;
 }
 
 async function onlineAccounts(): Promise<number> {
