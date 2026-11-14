@@ -73,3 +73,42 @@ test('a failed restart does not stop the rest; stop() drops what waits and takes
   expect(l2).toEqual(['start p', 'done p']);
   expect(s.size).toBe(0);
 });
+
+test('one loop per kind, pauses included: an account added during the pause waits its turn, and the count stays right', async () => {
+  const { s, log, end, pause } = harness();
+  let running = 0;
+  let most = 0;
+  const watch = (k: string) => {
+    running++;
+    most = Math.max(most, running);
+    end(k);
+    running--;
+  };
+  s.add('a', 'discord');
+  s.add('b', 'discord');
+  await settle();
+  expect(log).toEqual(['start a']);
+  watch('a');
+  await settle();
+  expect(log.at(-1)).toBe('pause 5000');
+  // Added during the pause: no second loop, so it does not start beside b.
+  s.add('c', 'discord');
+  await settle();
+  expect(log.filter((l) => l.startsWith('start'))).toEqual(['start a']);
+  expect(s.size).toBe(2);
+  pause();
+  await settle();
+  expect(log.at(-1)).toBe('start b');
+  expect(s.size).toBe(2);
+  watch('b');
+  await settle();
+  pause();
+  await settle();
+  expect(log.at(-1)).toBe('start c');
+  expect(s.size).toBe(1);
+  watch('c');
+  await settle();
+  expect(s.size).toBe(0);
+  expect(log.filter((l) => l.startsWith('start'))).toEqual(['start a', 'start b', 'start c']);
+  expect(most).toBe(1);
+});

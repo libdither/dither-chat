@@ -7,7 +7,10 @@
  */
 export class Stagger {
   private queues = new Map<string, string[]>();
+  /** The job under way in each group. */
   private busy = new Map<string, string>();
+  /** Groups whose loop runs, pauses included: one loop per group, so never two jobs of a group at once. */
+  private draining = new Set<string>();
   private stopped = false;
 
   constructor(
@@ -20,7 +23,7 @@ export class Stagger {
     if (this.stopped || [...this.busy.values()].includes(key) || [...this.queues.values()].some((q) => q.includes(key))) return;
     const q = this.queues.get(group) ?? this.queues.set(group, []).get(group)!;
     q.push(key);
-    if (!this.busy.has(group)) void this.drain(group);
+    if (!this.draining.has(group)) void this.drain(group);
   }
 
   /** Waiting or under way: what the hub's health reports, and the deployer waits for. */
@@ -36,20 +39,26 @@ export class Stagger {
   }
 
   private async drain(group: string) {
-    const q = this.queues.get(group);
-    let first = true;
-    while (q?.length && !this.stopped) {
-      if (!first) await this.sleep(this.pauseMs);
-      first = false;
-      const key = q.shift();
-      if (key === undefined || this.stopped) break;
-      this.busy.set(group, key);
-      try {
-        await this.run(key);
-      } catch {
-      } finally {
-        this.busy.delete(group);
+    this.draining.add(group);
+    try {
+      let first = true;
+      for (;;) {
+        const q = this.queues.get(group);
+        if (!q?.length || this.stopped) break;
+        if (!first) await this.sleep(this.pauseMs);
+        first = false;
+        const key = this.queues.get(group)?.shift();
+        if (key === undefined || this.stopped) break;
+        this.busy.set(group, key);
+        try {
+          await this.run(key);
+        } catch {
+        } finally {
+          this.busy.delete(group);
+        }
       }
+    } finally {
+      this.draining.delete(group);
     }
   }
 }

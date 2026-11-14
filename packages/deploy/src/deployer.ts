@@ -22,10 +22,10 @@
  *   bun packages/deploy/src/deployer.ts ship <app> <sha>   # deploy that branch commit now (checks and rollback as ever)
  *   touch <root>/<app>/hold                               # pause an app's deploys (write why in it)
  */
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { type Candidate, type CodeRestarts, codeRestartsProblem, codeRestartsSettled, codeRestartsUnfinished, deadlines, deployedNotice, failedNotice, interrupted, lockHeld, type Pending, pick, type ProcView, reexecFrom, releasesInUse, ROLLBACK_MS, short, timeToShip } from './plan.ts';
+import { type Candidate, type CodeRestarts, codeRestartsOffline, codeRestartsProblem, codeRestartsSettled, codeRestartsUnfinished, deadlines, deployedNotice, failedNotice, interrupted, lockHeld, type Pending, pick, type ProcView, reexecFrom, releasesInUse, ROLLBACK_MS, short, timeToShip, unmarkedRelease } from './plan.ts';
 
 const HOME = homedir();
 const ROOT = process.env.DITHER_DEPLOY_ROOT ?? join(HOME, '.local/share/dither-deploy');
@@ -91,10 +91,17 @@ const APPS: App[] = [
       // Extractors whose code changed restart one at a time per kind after the manager is up (its docs/supervisor.md).
       // Waited for while this check has time (leaving room for what follows); still restarting then is no failure: it
       // is said in the notice, and later crashes reach you through the manager's own notices.
-      if (!o.rollback) await untilOr(async () => codeRestartsSettled(await codeRestarts()), 1_800_000, checkBy - 7 * 60_000);
+      const settled = !o.rollback && (await untilOr(async () => codeRestartsSettled(await codeRestarts()), 1_800_000, checkBy - 7 * 60_000));
       await steady('dither-accounts.service', s);
       // A restarted extractor that crashed on the new code rolls the deploy back.
       if (!o.rollback) await codeRestartsHeld();
+      // All done in time: each restarted one must be online, a minute's grace on (the manager stopped restarting a kind
+      // whose restarted extractor did not come up: new code that does not run).
+      if (settled) {
+        let offline: string | null = null;
+        const up = await untilOr(async () => !(offline = codeRestartsOffline(await codeRestarts())), 60_000);
+        if (!up && offline) throw new Error(offline);
+      }
       // The hub's accounts run under the manager: they come back online, but for those still restarting.
       const unfinished = o.rollback ? 0 : codeRestartsUnfinished(await codeRestarts().catch(() => null));
       await until(async () => (await onlineAccounts()) >= s.online - unfinished, 300_000, `the hub's accounts to be online again (${s.online} before${unfinished ? `, ${unfinished} still restarting` : ''})`);
@@ -429,8 +436,17 @@ function makeRelease(a: App, branchSha: string, running: string): string {
     git(repoOf(a), 'worktree', 'remove', '--force', tmp);
     return sha;
   }
-  // A folder without the marker is a build a killed run left half done: made again.
-  if (existsSync(dest)) tryRun(['git', '-C', repoOf(a), 'worktree', 'remove', '--force', dest]);
+  if (existsSync(dest)) {
+    // No marker: a release from before it (what runs now, the one before, one an outlived extractor runs from, or with
+    // its dependencies installed) is marked, never removed; a half-built one nothing uses is made again.
+    const inUse = [linked(a, 'current'), linked(a, 'previous')].includes(sha) || releasesInUse(join(dirOf(a), 'releases'), processes()).has(sha);
+    if (unmarkedRelease(inUse, existsSync(join(dest, 'node_modules'))) === 'mark') {
+      writeFileSync(join(dest, BUILT), `${new Date().toISOString()} (marked: built before the marker)\n`);
+      git(repoOf(a), 'worktree', 'remove', '--force', tmp);
+      return sha;
+    }
+    tryRun(['git', '-C', repoOf(a), 'worktree', 'remove', '--force', dest]);
+  }
   rmSync(dest, { recursive: true, force: true });
   git(repoOf(a), 'worktree', 'move', tmp, dest);
   try {
@@ -700,13 +716,36 @@ function startOf(pid: number): string | null {
  */
 const LOCK_FILE = join(ROOT, 'deploy.lock');
 function takeLock(): number | null {
-  let lock: { pid?: unknown; start?: unknown } | null = null;
+  // Made whole beside it, then linked into place: a link fails when the lock exists, so two runs never both take it.
+  const mine = `${LOCK_FILE}.${process.pid}`;
+  writeFileSync(mine, JSON.stringify({ pid: process.pid, start: startOf(process.pid), at: new Date().toISOString() }));
   try {
-    lock = JSON.parse(readFileSync(LOCK_FILE, 'utf8'));
-  } catch {}
-  const held = lockHeld(lock, process.pid, (pid, start) => startOf(pid) !== null && (start === undefined || startOf(pid) === start));
-  if (held) return held;
-  writeFileSync(LOCK_FILE, JSON.stringify({ pid: process.pid, start: startOf(process.pid), at: new Date().toISOString() }));
+    for (let attempt = 0; ; attempt++) {
+      try {
+        linkSync(mine, LOCK_FILE);
+        break;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'EEXIST' || attempt > 0) throw e;
+      }
+      let lock: { pid?: unknown; start?: unknown } | null = null;
+      try {
+        lock = JSON.parse(readFileSync(LOCK_FILE, 'utf8'));
+      } catch {}
+      const held = lockHeld(lock, process.pid, (pid, start) => startOf(pid) !== null && (start === undefined || startOf(pid) === start));
+      if (held) return held;
+      // Its run has ended: taken over (once; a run that takes it meanwhile wins).
+      rmSync(LOCK_FILE, { force: true });
+    }
+  } catch (e) {
+    let pid = -1;
+    try {
+      pid = Number(JSON.parse(readFileSync(LOCK_FILE, 'utf8')).pid) || -1;
+    } catch {}
+    log(`could not take ${LOCK_FILE}: ${(e as Error).message}`);
+    return pid;
+  } finally {
+    rmSync(mine, { force: true });
+  }
   process.on('exit', () => {
     try {
       if (JSON.parse(readFileSync(LOCK_FILE, 'utf8')).pid === process.pid) rmSync(LOCK_FILE, { force: true });
@@ -724,12 +763,13 @@ async function main() {
   const prevDeployer = state.pending.chat ? join(releaseOf(chat, state.pending.chat.previous), 'packages/deploy/src/deployer.ts') : '';
   const canResolve = !!prevDeployer && existsSync(prevDeployer) && readFileSync(prevDeployer, 'utf8').includes('resolvePending');
   const from = reexecFrom(state.pending.chat, ownRelease(), canResolve, process.env.DITHER_DEPLOY_REEXEC === '1');
-  if (from) {
+  if (from && !dry) {
     log(`dither-chat: ${short(state.pending.chat!.rel)}, which this deployer runs from, was left unchecked: handing the run to ${short(from)}'s deployer`);
     const p = Bun.spawn([process.execPath, prevDeployer, ...process.argv.slice(2)], { env: { ...process.env, DITHER_DEPLOY_REEXEC: '1' }, stdio: ['inherit', 'inherit', 'inherit'] });
     process.exit(await p.exited);
   }
-  const held = takeLock();
+  // A dry run changes nothing, so it takes no lock.
+  const held = dry ? null : takeLock();
   if (held) {
     log(`another deployer run (pid ${held}) is under way: this one goes`);
     if (args[0] === 'ship') process.exitCode = 1;

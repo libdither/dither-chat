@@ -3,7 +3,7 @@
  * what the notice says.
  */
 import { expect, test } from 'bun:test';
-import { type Candidate, codeRestartsProblem, codeRestartsSettled, codeRestartsUnfinished, deadlines, deployedNotice, failedNotice, interrupted, lockHeld, MIN_CHECK_MS, pick, pullsOf, reexecFrom, releasesInUse, ROLLBACK_MS, RUN_BUDGET_MS, timeToShip } from '../src/plan.ts';
+import { type Candidate, codeRestartsOffline, codeRestartsProblem, codeRestartsSettled, codeRestartsUnfinished, deadlines, deployedNotice, failedNotice, interrupted, lockHeld, MIN_CHECK_MS, pick, pullsOf, reexecFrom, releasesInUse, ROLLBACK_MS, RUN_BUDGET_MS, timeToShip, unmarkedRelease } from '../src/plan.ts';
 
 const c = (sha: string, check: Candidate['check']): Candidate => ({ sha, check });
 
@@ -132,4 +132,19 @@ test('one deployer run at a time: a lock held by a run still going (pid and star
   expect(lockHeld({ pid: 8, start: 's8' }, 9, alive)).toBe(null); // that run ended
   expect(lockHeld({ pid: 9, start: 's9' }, 9, alive)).toBe(null);
   expect(lockHeld(null, 9, alive)).toBe(null);
+});
+
+test("restarts done in time: each restarted extractor must be online (new code that does not come up rolls back); not yet done: no verdict", () => {
+  const c = (queued: number, active: number, restarted: number, online: number) => ({ queued, active, restarted, online, crashed: 0 });
+  expect(codeRestartsOffline(null)).toBe(null);
+  expect(codeRestartsOffline(c(0, 0, 3, 3))).toBe(null);
+  expect(codeRestartsOffline(c(0, 0, 3, 2))).toBe('1 of the 3 extractors restarted for changed code did not come online');
+  // Still going (the budget ran out first): said in the notice, not failed.
+  expect(codeRestartsOffline(c(2, 1, 3, 2))).toBe(null);
+});
+
+test('a release folder without the built marker is marked when something runs from it or it is installed, else made again', () => {
+  expect(unmarkedRelease(true, false)).toBe('mark'); // current, previous, or an outlived extractor's
+  expect(unmarkedRelease(false, true)).toBe('mark'); // built before the marker existed
+  expect(unmarkedRelease(false, false)).toBe('rebuild'); // a half-built leftover nothing uses
 });

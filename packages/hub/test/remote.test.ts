@@ -162,7 +162,8 @@ describe('remote accounts through dither-accounts', () => {
 
   test('a supervisor will not start an account another process runs', async () => {
     // The manager's extractor for REMOTE has DITHER_ACCOUNT_ID in its environment: a plain local supervisor refuses.
-    await until(() => m.sup.state(REMOTE).online, 10_000, 'the manager running the account');
+    // Settled first: no restart after a gap still waiting or under way (the one before may have queued it).
+    await until(() => sup.gapRestartsWaiting() === 0 && m.sup.state(REMOTE).online && !!m.sup.details(REMOTE).pid, 10_000, 'the manager running the account');
     store.updateAccount(REMOTE, { status: 'online', attention: null });
     const local = new Supervisor(store, { ...supOpts(), repoRoot: REPO });
     // A real adapter kind, so start gets as far as the lock; the lock check comes before any spawn.

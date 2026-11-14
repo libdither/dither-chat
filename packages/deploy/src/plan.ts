@@ -125,6 +125,25 @@ export function codeRestartsProblem(c: CodeRestarts | null | undefined): string 
   if (!c || !c.crashed) return null;
   return `${c.crashed} of the ${c.restarted} extractor${c.restarted === 1 ? '' : 's'} restarted for changed code crashed since`;
 }
+/**
+ * Once every restart for changed code is done (none queued or under way), each restarted extractor must be online: one
+ * that is not, after a grace, is new code that does not come up (the manager stops restarting its kind then).
+ */
+export function codeRestartsOffline(c: CodeRestarts | null | undefined): string | null {
+  if (!c || !codeRestartsSettled(c) || c.online >= c.restarted) return null;
+  const n = c.restarted - c.online;
+  return `${n} of the ${c.restarted} extractor${c.restarted === 1 ? '' : 's'} restarted for changed code did not come online`;
+}
+
+/**
+ * A release folder without the `.deploy-built` marker: a folder something runs from (current, previous, an extractor
+ * that outlived the manager), or one with its dependencies installed, is a working build from before the marker and is
+ * marked; only one nothing uses and without them is a half-built leftover, made again.
+ */
+export function unmarkedRelease(inUse: boolean, installed: boolean): 'mark' | 'rebuild' {
+  return inUse || installed ? 'mark' : 'rebuild';
+}
+
 /** Extractors whose restart for changed code has not finished: waiting, under way, or not back online yet. */
 export function codeRestartsUnfinished(c: CodeRestarts | null | undefined): number {
   if (!c) return 0;
