@@ -1438,3 +1438,22 @@ if (typeof window !== 'undefined') {
   document.addEventListener('visibilitychange', wake);
   setInterval(() => document.visibilityState === 'visible' && probe(), PING_EVERY);
 }
+
+// ------------------------------------------------------------------ translation (docs/translate.md)
+
+/** The hub's translation settings and the networks that translate their own posts; null until first asked. */
+export const translation = signal<{ settings: P.TranslateSettings; networks: P.Network[] } | null>(null);
+let translationAsked: Promise<void> | null = null;
+/** Asks the hub once (again when `fresh`): what a post's text needs to know to translate itself. */
+export function loadTranslation(fresh = false): Promise<void> {
+  if (!translationAsked || fresh)
+    translationAsked = api<{ settings: P.TranslateSettings; networks: P.Network[] }>('/api/translate/settings').then(
+      (v) => void (translation.value = v),
+      () => void (translationAsked = null),
+    );
+  return translationAsked;
+}
+/** Changes some settings on the hub (Settings → Translation); the page follows at once. */
+export async function setTranslation(patch: Partial<P.TranslateSettings>): Promise<void> {
+  translation.value = await api<{ settings: P.TranslateSettings; networks: P.Network[] }>('/api/translate/settings', { method: 'PUT', body: patch });
+}

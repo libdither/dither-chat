@@ -3294,6 +3294,9 @@ export class Store {
     else this.db.query('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value').run(key, JSON.stringify(value));
   }
 
+  /** A setting kept as JSON in meta (translate.ts's), or null. */
+  metaValue = <T>(key: string) => this.metaJson<T>(key);
+  setMetaValue = (key: string, value: unknown) => this.setMetaJson(key, value);
   quietHours = () => this.metaJson<P.QuietHours>('quiet_hours');
   privacy = (): P.PrivacySettings => ({ shareTyping: this.metaJson<P.PrivacySettings>('privacy')?.shareTyping ?? true });
   setPrivacy = (p: P.PrivacySettings) => this.setMetaJson('privacy', p);

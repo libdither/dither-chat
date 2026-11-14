@@ -8,16 +8,107 @@
  */
 import { Fragment, h, type ComponentChildren } from 'preact';
 import type * as P from '@dither-chat/protocol';
-import { openProfile } from '../../state.ts';
+import { useEffect, useState } from 'preact/hooks';
+import { loadTranslation, openProfile, translation } from '../../state.ts';
 import type { Kit } from './lazy.tsx';
+import { askTranslation, trRev, trState } from './translate.ts';
 
-/** One post's text with its links (and on X its @handles). */
+/**
+ * One post's text with its links (and on X its @handles); in another language, translated (docs/translate.md): by
+ * itself when the settings say so, else on "Translate post". Shown under the original ("Translated from Japanese by
+ * Grok via X · Hide") or in its place ("· Show original"), as the settings say; either way a press goes back.
+ */
 export function Text({ p, kit, network, cls }: { p: P.PostFact; kit: Kit; network: P.Network; cls: string }) {
+  trRev.value;
+  const tr = translation.value;
+  useEffect(() => void loadTranslation(), []);
+  const [asked, setAsked] = useState(false);
+  // The reader's own choice on this post: the original in place of the translation, or the translation hidden.
+  const [flipped, setFlipped] = useState(false);
+  const set = tr?.settings;
+  const can = !!set && !!p.text && kit.translate.needsTranslation(p.lang, set.to) && (tr!.networks.includes(network) || !!set.serverUrl);
+  const want = can && (set!.auto || asked);
+  const item: P.TranslateItem | null = want ? { key: `${network}:${p.id}`, text: p.text, network, post: p.id, ...(p.lang ? { lang: p.lang } : {}) } : null;
+  useEffect(() => {
+    if (item && set) askTranslation(item, set.to);
+  }, [item?.key, set?.to]);
   if (!p.text) return null;
-  return (
+  const original = (
     <p class={cls}>
       <kit.Linked text={p.text} network={network} markdown={false} />
     </p>
+  );
+  if (!can || !set) return original;
+  const stop = (e: Event) => e.stopPropagation();
+  if (!want)
+    return (
+      <>
+        {original}
+        <button class="tr-ask" onClick={(e) => (stop(e), setAsked(true))}>
+          Translate post
+        </button>
+      </>
+    );
+  const st = trState(set.to, item!.key);
+  const from = kit.translate.languageName((st?.s === 'done' && st.t.from) || p.lang || '');
+  if (!st || st.s === 'loading')
+    return (
+      <>
+        {original}
+        <span class="tr-note tr-busy" aria-live="polite">
+          <kit.Icon name="globe" size={12} /> Translating from {from}…
+        </span>
+      </>
+    );
+  if (st.s === 'failed')
+    return (
+      <>
+        {original}
+        <span class="tr-note tr-failed">
+          <kit.Icon name="globe" size={12} /> Could not translate: {st.why}
+          <button class="tr-btn" onClick={(e) => (stop(e), askTranslation(item!, set.to, true))}>
+            Try again
+          </button>
+        </span>
+      </>
+    );
+  const said = `Translated from ${from} by ${st.t.by}`;
+  const translated = (
+    <p class={`${cls} tr-text`} lang={set.to}>
+      <kit.Linked text={st.t.text} network={network} markdown={false} />
+    </p>
+  );
+  if (set.show === 'replace')
+    return (
+      <>
+        {flipped ? original : translated}
+        <span class="tr-note">
+          <kit.Icon name="globe" size={12} /> {flipped ? `Written in ${from}` : said} ·{' '}
+          <button class="tr-btn" aria-pressed={flipped} onClick={(e) => (stop(e), setFlipped(!flipped))}>
+            {flipped ? 'Show translation' : 'Show original'}
+          </button>
+        </span>
+      </>
+    );
+  return (
+    <>
+      {original}
+      {flipped ? (
+        <button class="tr-ask" onClick={(e) => (stop(e), setFlipped(false))}>
+          Show translation
+        </button>
+      ) : (
+        <div class="tr-box">
+          <span class="tr-note">
+            <kit.Icon name="globe" size={12} /> {said} ·{' '}
+            <button class="tr-btn" onClick={(e) => (stop(e), setFlipped(true))}>
+              Hide
+            </button>
+          </span>
+          {translated}
+        </div>
+      )}
+    </>
   );
 }
 
