@@ -8,6 +8,9 @@
  * worked out for a fitted picture that was not there. A large picture zooms far enough to see its own pixels twice
  * over, and a long one fills the screen's width at a double tap.
  *
+ * Zoomed in, it pans past its edges by up to SLACK of the screen, so its top can come out from under the bar; a pan
+ * let go with speed glides on and slows, and the wheel eases to the zoom it asks for rather than jumping there.
+ *
  * Other files open here too (docs/files.md): text and code, Markdown, JSON, CSV, PDF and archives, each shown by a
  * viewer in a chunk of its own (files/), loaded when such a file is first opened. On a phone they fill the screen; on a
  * wider screen they open in a box over the app, which a click beside it closes. The header always has Download; with
@@ -192,6 +195,11 @@ function NoView({ a }: { a: FileSource }) {
 
 /** Zoom over the fitted size, at least; a large picture goes further (top()). */
 const MAX = 5;
+/** How far past its edges a zoomed picture pans, as a share of the screen (reached by 2x, none at 1x). */
+const SLACK = 0.4;
+/** How fast a glide slows (ms for its speed to fall to a third), and how fast the wheel's zoom catches up. */
+const GLIDE_MS = 325;
+const EASE_MS = 70;
 
 function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) {
   const [i, setI] = useState(start);
@@ -225,12 +233,35 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
     el.style.width = `${f.w}px`;
     el.style.height = `${f.h}px`;
   };
-  const clamp = (s: number, x: number, y: number) => {
+  /** How far it may be moved each way at zoom `s`: to its edges, and SLACK of the screen past them once zoomed. */
+  const bounds = (s: number) => {
     const f = fitted();
-    const ox = Math.max(0, (f.w * s - f.W) / 2);
-    const oy = Math.max(0, (f.h * s - f.H) / 2);
+    const k = Math.min(1, Math.max(0, s - 1)) * SLACK;
+    return { ox: Math.max(0, (f.w * s - f.W) / 2) + k * f.W, oy: Math.max(0, (f.h * s - f.H) / 2) + k * f.H };
+  };
+  const clamp = (s: number, x: number, y: number) => {
+    const { ox, oy } = bounds(s);
     return { s, x: Math.min(ox, Math.max(-ox, x)), y: Math.min(oy, Math.max(-oy, y)) };
   };
+  /** One motion at a time on a frame clock (a glide, the wheel's easing): a new one, or a finger, stops the last. */
+  const anim = useRef(0);
+  const halt = () => {
+    cancelAnimationFrame(anim.current);
+    anim.current = 0;
+  };
+  const run = (step: (dt: number) => boolean) => {
+    halt();
+    let last = performance.now();
+    const frame = (now: number) => {
+      const dt = Math.min(64, now - last);
+      last = now;
+      anim.current = step(dt) ? requestAnimationFrame(frame) : 0;
+    };
+    anim.current = requestAnimationFrame(frame);
+  };
+  /** Where the wheel is taking the zoom, and about which point. */
+  const wheelTo = useRef<{ s: number; px: number; py: number } | null>(null);
+  useEffect(() => halt, []);
   const show = (t: { s: number; x: number; y: number }, ms = 0, extra = '') => {
     z.current = t;
     const el = pic.current;
@@ -255,6 +286,8 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
     setI(n);
   };
   useLayoutEffect(() => {
+    halt();
+    wheelTo.current = null;
     layout();
     show({ s: 1, x: 0, y: 0 });
   }, [i]);
@@ -275,6 +308,10 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
       if (e.key === 'ArrowLeft') page(-1);
       if (e.key === 'ArrowRight') page(1);
       const ms = reducedMotion() ? 0 : 160;
+      if (e.key === '+' || e.key === '=' || e.key === '-' || e.key === '0') {
+        halt();
+        wheelTo.current = null;
+      }
       if (e.key === '+' || e.key === '=') zoomAt(z.current.s * 1.5, innerWidth / 2, innerHeight / 2, ms);
       if (e.key === '-') zoomAt(z.current.s / 1.5, innerWidth / 2, innerHeight / 2, ms);
       if (e.key === '0') show({ s: 1, x: 0, y: 0 }, ms);
@@ -291,6 +328,10 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
     let base = z.current;
     let pinch0 = { d: 1, mx: 0, my: 0 };
     let samples: { x: number; t: number }[] = [];
+    /** The wheel's easing is the motion under way (halt() from elsewhere clears wheelTo, which ends it). */
+    let easing = false;
+    /** A pan's last moves, for the speed it glides on with. */
+    let trail: { x: number; y: number; t: number }[] = [];
     let lastTap = { t: 0, x: 0, y: 0 };
     let moved = false;
     let onImage = false;
@@ -306,7 +347,7 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
       clearTimeout(still);
       still = window.setTimeout(() => pic.current && (pic.current.style.willChange = ''), 260);
     };
-    /** After a pinch or a pan: back within the zoom limits, and no empty space at the edges. */
+    /** After a pinch or a pan: back within the zoom limits and the edges (with their slack). */
     const settle = () => {
       const t = z.current;
       const ms = reducedMotion() ? 0 : 200;
@@ -321,6 +362,8 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
     const down = (e: PointerEvent) => {
       if ((e.target as HTMLElement).closest('.viewer-bar, .viewer-nav')) return;
       el.setPointerCapture(e.pointerId);
+      halt();
+      wheelTo.current = null;
       moving();
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
       base = z.current;
@@ -334,6 +377,7 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
         moved = false;
         onImage = e.target === pic.current;
         samples = [{ x: e.clientY, t: performance.now() }];
+        trail = [{ x: e.clientX, y: e.clientY, t: performance.now() }];
       }
     };
     const move = (e: PointerEvent) => {
@@ -361,7 +405,14 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
         mode = base.s > 1.01 ? 'pan' : axis === 'y' ? 'dismiss' : images.length > 1 ? 'page' : 'dismiss';
       }
       const now = performance.now();
-      if (mode === 'pan') show({ s: base.s, x: base.x + dx, y: base.y + dy });
+      if (mode === 'pan') {
+        trail.push({ x: e.clientX, y: e.clientY, t: now });
+        while (trail.length > 2 && now - trail[0].t > 100) trail.shift();
+        // Past the edges' slack it still follows, at a third of the finger's pace; the release brings it back.
+        const { ox, oy } = bounds(base.s);
+        const give = (v: number, o: number) => (Math.abs(v) <= o ? v : Math.sign(v) * (o + (Math.abs(v) - o) / 3));
+        show({ s: base.s, x: give(base.x + dx, ox), y: give(base.y + dy, oy) });
+      }
       else if (mode === 'dismiss') {
         samples.push({ x: e.clientY, t: now });
         if (samples.length > 5) samples.shift();
@@ -396,8 +447,33 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
       const dx = e.clientX - start.x;
       const dy = e.clientY - start.y;
       const motion = reducedMotion();
-      if (mode === 'pan') settle();
-      else if (mode === 'dismiss') {
+      if (mode === 'pan') {
+        // Let go with speed: it glides on, slowing, and stops at the edges' slack.
+        const a = trail[0];
+        const b = trail[trail.length - 1];
+        const gap = b && a && b.t - a.t > 0 && performance.now() - b.t < 80 ? b.t - a.t : 0;
+        let vx = gap ? (b.x - a.x) / gap : 0;
+        let vy = gap ? (b.y - a.y) / gap : 0;
+        const t0 = z.current;
+        const inside = clamp(t0.s, t0.x, t0.y);
+        if (motion || Math.hypot(vx, vy) < 0.15 || inside.x !== t0.x || inside.y !== t0.y) settle();
+        else {
+          moving();
+          run((dt) => {
+            const t = z.current;
+            const next = clamp(t.s, t.x + vx * dt, t.y + vy * dt);
+            if (next.x !== t.x + vx * dt) vx = 0;
+            if (next.y !== t.y + vy * dt) vy = 0;
+            const k = Math.exp(-dt / GLIDE_MS);
+            vx *= k;
+            vy *= k;
+            show(next);
+            const on = Math.hypot(vx, vy) > 0.02;
+            if (!on) stopped();
+            return on;
+          });
+        }
+      } else if (mode === 'dismiss') {
         const v = velocity(samples);
         if (Math.abs(dy) > 120 || Math.abs(v) > 0.6) {
           const ms = motion ? 0 : settleMs(innerHeight - Math.abs(dy), v, 220);
@@ -436,9 +512,33 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
     };
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
-      zoomAt(z.current.s * Math.exp(-e.deltaY / 300), e.clientX, e.clientY);
+      // A trackpad's pinch comes as the wheel with Ctrl held, in small steps: it zooms faster per step. Lines and
+      // pages (Firefox's wheel) count as 40 px a line.
+      const dy = e.deltaY * (e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? innerHeight : 1);
+      const from = wheelTo.current?.s ?? z.current.s;
+      const s = Math.min(top(), Math.max(1, from * Math.exp(-dy / (e.ctrlKey ? 100 : 300))));
+      wheelTo.current = { s, px: e.clientX, py: e.clientY };
+      if (reducedMotion()) {
+        wheelTo.current = null;
+        return zoomAt(s, e.clientX, e.clientY);
+      }
       moving();
-      stopped();
+      // Already easing: it eases to the new target. A glide under way gives way to the wheel.
+      if (easing && anim.current) return;
+      easing = true;
+      run((dt) => {
+        const to = wheelTo.current;
+        if (!to) return (easing = false);
+        const cur = z.current.s;
+        const near = Math.abs(to.s / cur - 1) < 0.002;
+        zoomAt(near ? to.s : cur + (to.s - cur) * (1 - Math.exp(-dt / EASE_MS)), to.px, to.py);
+        if (near) {
+          wheelTo.current = null;
+          easing = false;
+          stopped();
+        }
+        return !near;
+      });
     };
     el.addEventListener('pointerdown', down);
     el.addEventListener('pointermove', move);
