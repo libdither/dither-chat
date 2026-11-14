@@ -290,7 +290,7 @@ export function planFolders(input: PlanInput): FolderPlan {
       .map((c) => ({ folder: c.folder, name: c.name, score: hasExtra ? (dot(w, c.w) + dot(x, c.x)) / 2 : dot(w, c.w) }))
       .filter((c) => c.score > 0.02)
       .sort((a, b) => b.score - a.score)
-      .slice(0, 2);
+      .slice(0, 3);
     if (scored.length) suggest[s.id] = scored;
   }
 
@@ -446,13 +446,14 @@ export function scoreLayout(pred: Map<string, string | null>, truth: Map<string,
 
 /**
  * A server you join tomorrow: each one in `truth` is taken out and placed back by the suggestions alone, against the
- * truth's folders. Returns how often the first suggestion is right, and how often one of the two is.
+ * truth's folders. Returns how often the first suggestion is right, and how often one of the first two or three is.
  */
-export function leaveOneOut(input: PlanInput, truth: FolderView[]): { top1: number; top2: number; n: number } {
+export function leaveOneOut(input: PlanInput, truth: FolderView[]): { top1: number; top2: number; top3: number; n: number } {
   const truthOf = placement(truth);
   const ids = input.spaces.filter((s) => truthOf.get(s.id)).map((s) => s.id);
   let top1 = 0,
-    top2 = 0;
+    top2 = 0,
+    top3 = 0;
   for (const id of ids) {
     const folders = truth.map((f) => ({ ...f, items: f.items.filter((it) => !(it.kind === 'space' && it.id === id)) }));
     const plan = planFolders({ ...input, folders, networkFolders: [] });
@@ -461,7 +462,8 @@ export function leaveOneOut(input: PlanInput, truth: FolderView[]): { top1: numb
     const s = st ? [{ folder: st.into ?? `step:${st.id}` }] : (plan.suggest[id] ?? []);
     if (s[0]?.folder === truthOf.get(id)) top1++;
     if (s.slice(0, 2).some((x) => x.folder === truthOf.get(id))) top2++;
+    if (s.slice(0, 3).some((x) => x.folder === truthOf.get(id))) top3++;
   }
   const n = ids.length || 1;
-  return { top1: top1 / n, top2: top2 / n, n: ids.length };
+  return { top1: top1 / n, top2: top2 / n, top3: top3 / n, n: ids.length };
 }

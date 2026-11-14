@@ -129,7 +129,7 @@ says so in a toast. Dropping into a folder does not need it.
 
 Rail sort button → "Organize Servers…", or the same entry at the end of any place's menu. One list of
 every rail entry in the current order, folder members indented under their folder, hidden places in a
-section at the end, each with its network, folder, categories, and usage ("1 h 20 min lately · opened
+section at the end, each with its network, folder and usage, and for a place in no folder, where it could go (below) ("1 h 20 min lately · opened
 1h").
 
 - **Select**: click, Shift+click for a range; keyboard ↑/↓ (or j/k), Space or Enter, Shift+↑/↓ to extend,
@@ -137,7 +137,7 @@ section at the end, each with its network, folder, categories, and usage ("1 h 2
 - **Act on the selection**: Move to… (`M`, a menu of folders plus New Folder), New folder (`N`, name it
   inline), Pin/Unpin (`P`), Hide/Show (`H`), Out of folder (`U`). Selecting a folder for a move moves
   the folder itself into a folder that may hold it (below), else its contents; a folder a move empties is removed.
-- **Suggested folders** come from the categorizer (`categorize.ts`): for each category, the loose
+- **Folders by topic** (closed until you open it) come from the categorizer (`categorize.ts`): for each category, the loose
   (unpinned, not in a folder) rail places that belong to it, at least two, or one if a folder of that
   name exists ("Add to …"). *Create* makes the folder in the category's colour; *Edit* selects its places
   and opens the name field so you can change both; *×* dismisses it. A dismissal remembers the places it
@@ -201,7 +201,8 @@ The rules, in the order they claim servers:
    its own, in its colour, holding its folders and its other servers. A server two of them see is the bigger
    account's; one on a network where you have one account is your biggest account's.
 
-A server no rule places is left where it is, with its two nearest folders beside it in the list ("Move to" chips):
+A server no rule places is left where it is, with its three nearest folders on its line in the list, then "Other…"
+for any folder (one click moves it):
 nearest by the words of its name, topic and channel names (tf-idf) and by the categorizer's scores. They are
 suggestions, never filed by themselves.
 
@@ -221,7 +222,7 @@ apart):
 | + every loose server into its first suggestion | 75% | 40% | 0% |
 | No network folders: shared words and accounts | 25% | 1% | 75% |
 
-A server taken out and put back by the word rule or the suggestions: first guess right 41%, one of the first two 57%.
+A server taken out and put back by the word rule or the suggestions: first guess right 41%, one of the first two 57%, one of the first three 72%.
 So the first three rules are applied as one suggestion, and topic stays a suggestion per server. On the made-up
 sidebar the first three rules place 68% with no pair wrong. The earlier study that chose these rules, with the local
 model's embeddings and judgments, is not in the repo.

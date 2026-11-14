@@ -90,7 +90,7 @@ export function SuggestedLayout({ plan }: { plan: FolderPlan }) {
             <button class="btn primary small" disabled={!chosen.length && !(split && personas)} onClick={() => takePlan(plan, { steps: new Set(chosen.map((s) => s.id)), personas: split && personas })}>
               Apply: {made} {made === 1 ? 'folder' : 'folders'}, {servers} {servers === 1 ? 'server' : 'servers'} filed
             </button>
-            <span class="set-help">{Object.keys(plan.suggest).length ? `${Object.keys(plan.suggest).length} servers no rule places: their best folders show beside them below.` : ''}</span>
+            <span class="set-help">{Object.keys(plan.suggest).length ? `${Object.keys(plan.suggest).length} servers no rule places: where they could go shows beside each below.` : ''}</span>
           </div>
         </>
       )}

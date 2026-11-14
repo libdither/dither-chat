@@ -98,7 +98,7 @@ for (const [label, r] of runs) {
   console.log(`${label.padEnd(46)} placed right ${pct(s.placedRight)}  pairs together wrongly ${pct(1 - s.pairPrecision)}  loose ${pct(s.loose)}  (${after.length} folders)`);
 }
 const loo = leaveOneOut(input, truthFolders);
-console.log(`a server taken out and put back: first guess ${pct(loo.top1)}, in the first two ${pct(loo.top2)} (n ${loo.n})`);
+console.log(`a server taken out and put back: first guess ${pct(loo.top1)}, in the first two ${pct(loo.top2)}, in the first three ${pct(loo.top3)} (n ${loo.n})`);
 if (args.includes('--names')) {
   const plan = planFolders(input);
   for (const st of plan.steps) console.log(`  ${st.rule.padEnd(7)} ${st.name}: ${st.spaces.map((id) => names.get(id)).join(', ')}`);

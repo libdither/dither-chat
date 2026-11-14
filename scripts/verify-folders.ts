@@ -42,6 +42,29 @@ const folderSel = async (name: string) => {
   return f ? `.rail [data-dnd-key="folder:${f.id}"] > .rail-btn` : null;
 };
 const away = () => p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 900, y: 600 });
+/** On a phone: the Spaces list, then the Organize view from its order button. */
+async function phoneOrganize(tag: string) {
+  await p.size(390, 844, true);
+  await p.goto(`${hub}/#/spaces`);
+  await p.until(`!!document.querySelector('.side-sort')`, 15000);
+  // The demo's own notices (a mail bridge that stopped) would cover the list's header.
+  await p.eval(`document.head.insertAdjacentHTML('beforeend', '<style id=no-toasts>.toasts, .toast { display: none !important }</style>')`);
+  await Bun.sleep(600);
+  if (shots) await p.shot(`${shots}/${tag}-phone-spaces.png`);
+  await click('.side-sort');
+  await p.until(`[...document.querySelectorAll('.cm-item, [role=menuitem]')].some((e) => e.textContent.includes('Organize Servers'))`, 5000);
+  await p.eval(`[...document.querySelectorAll('.cm-item, [role=menuitem]')].find((e) => e.textContent.includes('Organize Servers')).click()`);
+  await p.until(`!!document.querySelector('.org-list')`, 5000);
+  await Bun.sleep(600);
+  if (shots) await p.shot(`${shots}/${tag}-phone-organize.png`);
+  const chip = await p.eval<boolean>(`(() => { const c = document.querySelector('.move-chip'); if (!c) return false; c.scrollIntoView({ block: 'center' }); const r = c.closest('.org-row').getBoundingClientRect(); return r.right <= innerWidth + 1; })()`);
+  if (shots) await p.shot(`${shots}/${tag}-phone-moves.png`);
+  await p.eval(`document.getElementById('no-toasts')?.remove()`);
+  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await p.size(1280, 1000);
+  return chip;
+}
 
 try {
   await p.size(1280, 1000);
@@ -68,6 +91,11 @@ try {
     await p.shot(`${shots}/2-rail-shelf-open.png`);
   }
   await click('.rail-scroll > .rail-shelf .rail-btn');
+
+  // The same on a phone, before anything is filed.
+  check(await phoneOrganize('a'), 'on a phone, a row’s move-to line fits the screen');
+  await p.goto(`${hub}/#/`);
+  await p.until(`!!document.querySelector('.rail-sort .rail-btn')`, 15000);
 
   // The suggested layout in the Organize view.
   await click('.rail-sort .rail-btn');
@@ -160,12 +188,21 @@ try {
   await p.until(`[...document.querySelectorAll('.cm-item, [role=menuitem]')].some((e) => e.textContent.includes('Organize Servers'))`, 5000);
   await p.eval(`[...document.querySelectorAll('.cm-item, [role=menuitem]')].find((e) => e.textContent.includes('Organize Servers')).click()`);
   await p.until(`!!document.querySelector('.org-list')`, 5000);
-  const near = await p.eval<number>(`document.querySelectorAll('.org-near .chip-btn').length`);
-  check(near > 0, 'loose servers show their nearest folders beside them', near);
+  const near = await p.eval<number>(`document.querySelectorAll('.move-chip:not(.other)').length`);
+  check(near > 0, 'loose servers show their nearest folders on their line', near);
+  check(!(await p.eval<boolean>(`!!document.querySelector('.org-list .cat-chip')`)), 'rows show no topic tags');
   if (shots) {
-    await p.eval(`document.querySelector('.org-near')?.scrollIntoView({ block: 'center' })`);
+    await p.eval(`document.querySelector('.move-chip')?.scrollIntoView({ block: 'center' })`);
     await p.shot(`${shots}/9-organize-near.png`);
   }
+  // One click on a suggestion files it.
+  const before = (await bootstrap()).folders.reduce((n: number, f: any) => n + f.items.length, 0);
+  const first = await p.eval<string>(`document.querySelector('.move-chip.best')?.textContent ?? ''`);
+  await click('.move-chip.best');
+  await Bun.sleep(600);
+  const b2 = await bootstrap();
+  check(b2.folders.find((f: any) => first.endsWith(f.name))?.items.length > 0 && b2.folders.reduce((n: number, f: any) => n + f.items.length, 0) === before, 'a click on a suggestion moves the server there', first);
+  check(await phoneOrganize('b'), 'and on a phone after Apply');
 } catch (e) {
   console.log('FAIL', (e as Error).message);
   failures++;

@@ -317,6 +317,24 @@ function usageLine(key: string): string {
 
 const rowId = (r: Row) => `${r.key}|${r.folder ?? ''}`;
 
+/** Folders shown on a loose place's line, at most this many before "Other…". */
+const TARGETS = 4;
+/**
+ * Where a loose place could go: the planner's nearest folders first (marked best), then the other folders beside it,
+ * biggest first: inside its account's folder when it sits in one, else every folder that holds places.
+ */
+function moveTargets(key: string, inFolder: string | undefined, suggest: { folder: string; name: string }[]): { folder: string; name: string; best: boolean }[] {
+  const holds = (f: P.FolderView) => !f.items.some((i) => i.kind === 'folder');
+  const scope = inFolder ? (db.folders.find((f) => f.id === inFolder)?.items.filter((i) => i.kind === 'folder').map((i) => db.folders.find((f) => f.id === i.id)).filter((f): f is P.FolderView => !!f) ?? []) : db.folders.filter(holds);
+  const ok = (id: string) => db.folders.some((f) => f.id === id && holds(f)) && mayHold(asLayout(db.folders), id, key);
+  const best = suggest.filter((x) => !x.folder.startsWith('step:') && ok(x.folder)).map((x) => ({ folder: x.folder, name: x.name, best: true }));
+  const rest = scope
+    .filter((f) => ok(f.id) && !best.some((b) => b.folder === f.id))
+    .sort((a, b) => b.items.length - a.items.length)
+    .map((f) => ({ folder: f.id, name: f.name, best: false }));
+  return [...best, ...rest].slice(0, TARGETS);
+}
+
 /** What the filter asks the model when matching by meaning: a question as typed, else "about …". */
 export const probeQuestion = (text: string) => (/\?\s*$/.test(text) ? text.trim() : `Is this community about ${text.trim()}?`);
 
@@ -346,6 +364,7 @@ function Organize({ onClose }: { onClose: () => void }) {
   const [probe, setProbe] = useState<{ question: string; p: Map<string, number>; provider: string } | null>(null);
   const [probing, setProbing] = useState<string | null>(null);
   const [cut, setCut] = useState(0.12);
+  const [topics, setTopics] = useState(false);
   /** Category thresholds being dragged, by id. */
   const [at, setAt] = useState<Record<string, number>>({});
   const list = useRef<HTMLDivElement>(null);
@@ -556,9 +575,13 @@ function Organize({ onClose }: { onClose: () => void }) {
         {!needle && plan && <SuggestedLayout plan={plan} />}
 
         {sugg.length > 0 && (
-          <section class="org-suggest" aria-label="Suggested folders">
-            <h3>Suggested folders</h3>
-            <div class="org-suggest-list">
+          <section class="org-suggest" aria-label="Folders by topic">
+            {/* Topics colour every server; they stay out of the way unless asked for. */}
+            <button class="org-plan-toggle" aria-expanded={topics} onClick={() => setTopics(!topics)}>
+              <Icon name={topics ? 'chevronDown' : 'chevronRight'} size={13} />
+              <h3>Folders by topic ({sugg.length})</h3>
+            </button>
+            {topics && <div class="org-suggest-list">
               {sugg.map((s) => (
                 <article class="org-sugg" style={{ '--cat': s.category.color ?? '#8b93a7' } as any}>
                   <div class="org-sugg-text">
@@ -601,7 +624,7 @@ function Organize({ onClose }: { onClose: () => void }) {
                   </div>
                 </article>
               ))}
-            </div>
+            </div>}
           </section>
         )}
 
@@ -657,12 +680,11 @@ function Organize({ onClose }: { onClose: () => void }) {
           {rows.map((r, i) => {
             const pref = r.folder || split(r.key).kind === 'person' ? null : placePref(split(r.key).kind as P.PlaceKind, split(r.key).id);
             const on = sel.has(rowId(r));
-            const cats = r.key.startsWith('space:') || r.key.startsWith('conversation:') ? categoriesOf(split(r.key).kind as 'space' | 'conversation', split(r.key).id) : [];
             const firstHidden = r.hidden && !rows[i - 1]?.hidden;
-            // A server no rule places: its two nearest folders, one click each.
-            // Loose, or loose inside an account's folder (a folder of folders).
+            // A place not in a folder (or loose inside an account's folder): where it could go, on its own line.
             const level = !r.folder || db.folders.find((f) => f.id === r.folder)?.items.some((i) => i.kind === 'folder');
-            const near = level && r.key.startsWith('space:') ? (plan?.suggest[split(r.key).id] ?? []).filter((x) => !x.folder.startsWith('step:') && db.folders.some((f) => f.id === x.folder)) : [];
+            const movable = level && !r.hidden && (r.key.startsWith('space:') || r.key.startsWith('conversation:'));
+            const near = movable ? moveTargets(r.key, r.folder, plan?.suggest[split(r.key).id] ?? []) : [];
             return (
               <>
                 {firstHidden && <div class="org-section">Hidden</div>}
@@ -691,29 +713,51 @@ function Organize({ onClose }: { onClose: () => void }) {
                       {r.folder && ` · in ${[parentFolder(r.folder)?.name, db.folders.find((f) => f.id === r.folder)?.name ?? 'a folder'].filter(Boolean).join(' › ')}`}
                     </span>
                   </span>
-                  {near.length > 0 && (
-                    <span class="org-near" aria-label="Suggested folders">
-                      {near.map((x) => (
+                  <span class="org-moves" aria-label={movable ? `Move ${r.name} to` : undefined}>
+                    {movable && (
+                      <>
+                        {near.map((x) => {
+                          const f = db.folders.find((y) => y.id === x.folder);
+                          const outer = parentFolder(x.folder);
+                          return (
+                            <button
+                              class={`move-chip ${x.best ? 'best' : ''}`}
+                              style={{ '--folder': f?.color ?? 'var(--accent)' } as any}
+                              title={x.best ? `Move to ${x.name}: it fits best` : `Move to ${x.name}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                moveToFolder([r.key], x.folder);
+                                toast({ kind: 'info', title: `Moved to “${x.name}”`, body: r.name });
+                              }}
+                            >
+                              <Icon name={x.best ? 'sparkles' : 'folder'} size={12} />
+                              {/* The account's folder it sits in already goes without saying. */}
+                              {outer && outer.id !== r.folder ? <span class="move-chip-in">{outer.name} ›</span> : null}
+                              {x.name}
+                            </button>
+                          );
+                        })}
                         <button
-                          class="chip-btn small"
-                          title={`Move to ${x.name}`}
+                          class="move-chip other"
+                          title="Pick a folder"
                           onClick={(e) => {
                             e.stopPropagation();
-                            moveToFolder([r.key], x.folder);
-                            toast({ kind: 'info', title: `Moved to “${x.name}”`, body: r.name });
+                            const b = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                            openMenu({ x: b.left, y: b.bottom + 4 }, {
+                              label: 'Move to folder',
+                              head: <div class="cm-sheet-title">Move {r.name} to…</div>,
+                              items: [
+                                ...db.folders.filter((f) => mayHold(asLayout(db.folders), f.id, r.key) && !near.some((x) => x.folder === f.id)).map((f): MenuEntry => ({ label: parentFolder(f.id) ? `${parentFolder(f.id)!.name} › ${f.name}` : f.name, icon: 'folder', run: () => moveToFolder([r.key], f.id) })),
+                                { kind: 'sep' } as MenuEntry,
+                                { label: 'New Folder…', icon: 'plus', run: () => (setSel(new Set([rowId(r)])), startDraft()) },
+                              ],
+                            }, e.currentTarget as HTMLElement);
                           }}
                         >
-                          <Icon name="folder" size={11} /> {x.name}
+                          {near.length ? 'Other…' : 'Move to…'}
                         </button>
-                      ))}
-                    </span>
-                  )}
-                  <span class="org-cats">
-                    {cats.slice(0, 2).map((c) => (
-                      <span class="cat-chip" style={{ '--cat': c.color ?? '#8b93a7' } as any}>
-                        {c.name}
-                      </span>
-                    ))}
+                      </>
+                    )}
                   </span>
                   <span class="org-usage">{asked ? <span class="org-score">{pct(scoreOf(r)!)}</span> : usageLine(r.key)}</span>
                 </div>
