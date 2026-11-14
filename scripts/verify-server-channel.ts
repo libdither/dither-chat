@@ -1,7 +1,7 @@
 /**
  * Opening a server goes back to the channel last opened in it (docs/servers.md "Opening a server"), end to end against
  * a demo hub in headless Chromium:
- * - a server never opened shows its list with no channel;
+ * - a server never opened opens on its first channel to read (the demo's first is a text one);
  * - after a channel is opened there, opening another server and coming back opens that channel again;
  * - it is still so after a reload (kept on the device);
  * - on a phone the server opens on its list.
@@ -43,8 +43,8 @@ try {
   const [a, b] = await p.eval<string[]>(`[...document.querySelectorAll('.rail-scroll .rail-item[data-dnd-key^="space:"]')].map((e) => e.dataset.dndKey.slice(6)).slice(0, 2)`);
 
   await click(railSel(a));
-  await p.until(`location.hash === ${JSON.stringify(`#/s/${encodeURIComponent(a)}`)} && document.querySelectorAll('.chan').length > 1`, 5000);
-  check(!(await hash()).includes('/c/'), 'a server never opened shows its list, no channel', await hash());
+  await p.until(`location.hash.startsWith(${JSON.stringify(`#/s/${encodeURIComponent(a)}/c/`)}) && document.querySelectorAll('.chan').length > 1`, 5000);
+  check(await p.eval<boolean>(`document.querySelector('.chan') === document.querySelector('.chan.active')`), 'a server never opened opens on its first channel', await hash());
 
   // Open its second channel, so it is not just the first one by chance.
   await click('.chan', 1);
