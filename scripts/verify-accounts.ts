@@ -97,9 +97,10 @@ try {
 
   // Light theme.
   await p.eval(`localStorage.setItem('dither-chat:prefs', JSON.stringify({ ...JSON.parse(localStorage.getItem('dither-chat:prefs') || '{}'), theme: 'light' }))`);
-  await p.goto(`${hub}/#/accounts/acc_demo-mail`);
-  await p.eval(`location.reload()`);
-  await p.until(`!!document.querySelector('[data-mail-section]')`, 10000);
+  // A new load (the query makes it one), so the theme is read again.
+  await p.goto(`${hub}/?light#/accounts/${made}`);
+  await p.until(`document.documentElement.dataset.theme === 'light' || getComputedStyle(document.body).backgroundColor !== 'rgb(0, 0, 0)'`, 10000).catch(() => {});
+  await p.until(`!!document.querySelector('[data-mail-section]') && document.querySelectorAll('.acc-row').length > 8`, 10000);
   if (shots) await p.shot(`${shots}/light.png`);
   await p.eval(`localStorage.setItem('dither-chat:prefs', JSON.stringify({ ...JSON.parse(localStorage.getItem('dither-chat:prefs') || '{}'), theme: 'dark' }))`);
 
