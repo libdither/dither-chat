@@ -3,7 +3,7 @@
  * what the notice says.
  */
 import { expect, test } from 'bun:test';
-import { type Candidate, codeRestartsOffline, codeRestartsProblem, codeRestartsSettled, codeRestartsUnfinished, deadlines, deployedNotice, failedNotice, interrupted, lockHeld, MIN_CHECK_MS, pick, pullsOf, reexecFrom, releasesInUse, ROLLBACK_MS, RUN_BUDGET_MS, timeToShip, unmarkedRelease } from '../src/plan.ts';
+import { askAgain, type Candidate, codeRestartsOffline, codeRestartsProblem, codeRestartsSettled, codeRestartsUnfinished, deadlines, deployedNotice, failedNotice, interrupted, lockHeld, MIN_CHECK_MS, pick, pullsOf, recheckAfter, reexecFrom, releasesInUse, ROLLBACK_MS, RUN_BUDGET_MS, timeToShip, unmarkedRelease, worthAsking } from '../src/plan.ts';
 
 const c = (sha: string, check: Candidate['check']): Candidate => ({ sha, check });
 
@@ -32,6 +32,32 @@ test('a pull request labelled hold-deploy holds itself and everything after it; 
   const list = [c('eee', 'success'), { ...c('ddd', 'success'), held: 170 }, c('ccc', 'success')];
   expect(pick(list, new Set())).toEqual({ ship: 'ccc' });
   expect(pick(list.slice(0, 2), new Set())).toEqual({ none: '#170 has the hold-deploy label', held: 170 });
+});
+
+test('a CI failure is asked about again only when passing would make it the one to ship', () => {
+  // The newest commit failed CI (a flaky job): a rerun could pass it, so it is worth asking about again.
+  expect(worthAsking([c('ddd', 'failure'), c('ccc', 'failure')], new Set())).toEqual(['ddd', 'ccc']);
+  // An older failure under a newer pass would not ship even if it passed.
+  expect(worthAsking([c('eee', 'failure'), c('ddd', 'success'), c('ccc', 'failure')], new Set())).toEqual(['eee']);
+  // A newer pass that failed here does not count: the one under it would ship.
+  expect(worthAsking([c('ddd', 'success'), c('ccc', 'failure')], new Set(['ddd']))).toEqual(['ccc']);
+  // One that failed here is never tried again, whatever its CI says; nor is a held one or what came after it.
+  expect(worthAsking([c('ddd', 'failure')], new Set(['ddd']))).toEqual([]);
+  expect(worthAsking([c('eee', 'failure'), { ...c('ddd', 'failure'), held: 170 }, c('ccc', 'failure')], new Set())).toEqual(['ccc']);
+});
+
+test('a CI failure is asked again after a tenth of its age, a minute to an hour; a pass never', () => {
+  const min = 60_000;
+  expect(recheckAfter(0)).toBe(min);
+  expect(recheckAfter(30 * min)).toBe(3 * min);
+  expect(recheckAfter(48 * 60 * min)).toBe(60 * min);
+  const t = 1_000 * min;
+  expect(askAgain({ check: 'success', held: 0 }, t)).toBe(false);
+  // Older state, with no times: asked now.
+  expect(askAgain({ check: 'failure', held: 0 }, t)).toBe(true);
+  // Failed 30 minutes ago, asked 2 minutes ago: not yet (3 minutes); asked 3 minutes ago: yes.
+  expect(askAgain({ check: 'failure', held: 0, first: t - 30 * min, asked: t - 2 * min }, t)).toBe(false);
+  expect(askAgain({ check: 'failure', held: 0, first: t - 30 * min, asked: t - 3 * min }, t)).toBe(true);
 });
 
 test("the notice names each pull request that came with a deploy, oldest first, and counts the rest", () => {

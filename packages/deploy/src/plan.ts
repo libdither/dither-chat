@@ -34,6 +34,45 @@ export function pick(all: Candidate[], failed: ReadonlySet<string>): Pick {
   return { none: branch.every((c) => failed.has(c.sha)) ? 'every new commit failed here before' : 'no new commit passed CI' };
 }
 
+/**
+ * What GitHub said of a commit once its CI was final (state.json `known`), so it is not asked every run. A pass is
+ * final. A failure is not: a rerun of a flaky job can still pass it (2026-11-14, e6d94b3 kept its first answer and
+ * never shipped after its rerun went green), so a failure keeps when it was first seen and last asked.
+ */
+export interface Known {
+  check: 'success' | 'failure';
+  /** The `hold-deploy` pull request it came from, else 0. */
+  held: number;
+  first?: number;
+  asked?: number;
+}
+
+/**
+ * The commits whose CI failed that would ship if it passed: those newer than what ships now, and not held. Only these
+ * are worth asking about again; an older failure would not ship even after a rerun.
+ */
+export function worthAsking(all: Candidate[], failed: ReadonlySet<string>): string[] {
+  return all
+    .filter((c, i) => {
+      if (c.check !== 'failure' || failed.has(c.sha)) return false;
+      const p = pick(all.map((d, j) => (j === i ? { ...d, check: 'success' as const } : d)), failed);
+      return 'ship' in p && p.ship === c.sha;
+    })
+    .map((c) => c.sha);
+}
+
+/** How long a CI failure is trusted before GitHub is asked again: a tenth of its age, from a minute up to an hour. */
+export function recheckAfter(age: number): number {
+  return Math.min(60 * 60_000, Math.max(60_000, age / 10));
+}
+
+/** Whether a failure worth asking about (`worthAsking`) is due to be asked again; one with no times (older state) is. */
+export function askAgain(k: Known, now: number): boolean {
+  if (k.check !== 'failure') return false;
+  if (k.first === undefined || k.asked === undefined) return true;
+  return now - k.asked >= recheckAfter(now - k.first);
+}
+
 export const short = (sha: string) => sha.slice(0, 7);
 
 /** The pull requests in these commit subjects (a squash merge ends "(#123)"), oldest first, each once. */
