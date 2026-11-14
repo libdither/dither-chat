@@ -83,6 +83,7 @@ import { EmojiComplete, insertAtCaret } from './EmojiComplete.tsx';
 import { SlashCommandsLazy } from './apps/lazy.tsx';
 import { claimSend } from '../apps.ts';
 import { MentionComplete } from './MentionComplete.tsx';
+import { useChipBox } from './ChipBox.tsx';
 import { loadEmoji } from '../emoji.ts';
 import { isLottie, isSticker, Sticker } from './Sticker.tsx';
 import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
@@ -1224,6 +1225,8 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
     // Editing a sent message is not typing a new one.
     if (!edit) composerTyped({ conversationId: targets.convId, accountId: sender?.id }, v);
   };
+  // Mentions in the box are chips; the box holds their names, the body their tokens (ChipBox.tsx, docs/mentions.md).
+  const chips = useChipBox(ta, text, onText, conv?.network);
   const limit = conv ? `up to ${ATTACHMENT_LIMITS[conv.network].bytes / 1024 / 1024} MB each` : '';
   const attaching = canAttach && !edit && !disabledReason;
   // Making a poll (docs/polls.md): where an account here makes them, not in an open message request.
@@ -1312,19 +1315,19 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       )}
     </Menu>
   );
-  const box = (
+  const field = (
     <textarea
       ref={ta}
       data-track="text box"
       rows={1}
-      value={text}
+      value={chips.shown}
       placeholder={disabledReason ?? (lead ? '' : placeholder)}
       disabled={!!disabledReason}
-      onInput={(e) => onText((e.target as HTMLTextAreaElement).value)}
+      onInput={chips.onInput}
       onBlur={composerDone}
       onPaste={(e) => {
         const pasted = [...(e.clipboardData?.files ?? [])];
-        if (!pasted.length) return;
+        if (!pasted.length) return void chips.onPaste(e);
         e.preventDefault();
         void addFiles(pasted);
       }}
@@ -1342,6 +1345,13 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
         }
       }}
     />
+  );
+  // The chips' layer goes first: drawn behind the box's text (ChipLayer.ts).
+  const box = (
+    <>
+      {chips.layer}
+      {field}
+    </>
   );
   const emojiBtn = conv && !disabledReason && (
     <button

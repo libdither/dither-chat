@@ -124,16 +124,23 @@ try {
   const routing = t.hash.match(/pst_x_(\d+)/)?.[1] ?? '';
   check('the post large, by its author, with Open on X', t.focalWho === 'You' && /^https:\/\/x\.com\/zyan_demo\/status\/\d+$/.test(t.openOnX ?? ''), t);
   const postReads = async () => ((await action('postLog')).result?.posts ?? []) as { post: string; cursor?: string }[];
-  // Read ahead: reading down the thread, the hidden answers near the screen and the next page load without a press.
-  for (let i = 0, still = 0; i < 80 && still < 3; i++) {
-    const at = await page.eval<any>(`(() => { const s = document.querySelector('.thread-scroll'); s.scrollTop += s.clientHeight * 0.6; return { end: s.scrollTop + s.clientHeight >= s.scrollHeight - 2, busy: !!document.querySelector('.ct-more:disabled, .thread-more:disabled') }; })()`);
-    still = at.end && !at.busy ? still + 1 : 0;
-    await Bun.sleep(250);
-  }
+  // Read ahead: reading down the thread, the hidden answers near the screen and the next page are read, and wait
+  // behind their buttons, which say so by their dot.
+  const scrollDown = async () => {
+    for (let i = 0, still = 0; i < 80 && still < 3; i++) {
+      const at = await page.eval<any>(`(() => { const s = document.querySelector('.thread-scroll'); s.scrollTop += s.clientHeight * 0.6; return { end: s.scrollTop + s.clientHeight >= s.scrollHeight - 2, busy: !!document.querySelector('[data-pre="loading"]') }; })()`);
+      still = at.end && !at.busy ? still + 1 : 0;
+      await Bun.sleep(250);
+    }
+  };
+  const pres = () => page.eval<{ pre: string; text: string }[]>(`[...document.querySelectorAll('.ct-more, .thread-more')].map((b) => ({ pre: b.dataset.pre, text: b.textContent.trim() }))`);
+  const before = await pres();
+  check('each "more" button says whether it is read yet: a dot, hollow, pulsing or filled', before.length >= 3 && before.every((b) => ['idle', 'loading', 'ready'].includes(b.pre)), before);
+  await scrollDown();
   t = await thread();
   check(
     "replies as a tree by default: X's chains under the posts they answer, the author's own first, a reply with one answer going on in its column",
-    t.style === 'Tree' && t.tree.slice(0, 2).join(' ') === '0:You +You' && t.tree.slice(2, 4).join(' ') === '0:Ravi +You' && t.tree.includes('1:Ravi') && t.tree.includes('1:Nora'),
+    t.style === 'Tree' && t.tree.slice(0, 2).join(' ') === '0:You +You' && t.tree.slice(2, 4).join(' ') === '0:Ravi +You',
     t.tree,
   );
   // The replies in view for a screenshot (the post's picture fills the first screen).
@@ -141,15 +148,39 @@ try {
     await page.eval(`document.querySelector(${JSON.stringify(sel)})?.scrollIntoView({ block: 'start' })`);
     await Bun.sleep(150);
   };
+  const after = await pres();
+  const shownYet = () => page.eval<boolean>(`[...document.querySelectorAll('.ct-text')].some((x) => /Did you try landmarks/.test(x.textContent))`);
+  check(
+    'read ahead while scrolling: every button now says it is read (a filled dot), and nothing moved in under the reader',
+    after.length >= 3 && after.every((b) => b.pre === 'ready') && !(await shownYet()),
+    after,
+  );
+  check('a page read ahead says how many it holds', after.some((b) => /^Show \d+ more repl/.test(b.text)), after);
+  check('…and a branch read ahead, how many it will add: one under your answer to Ravi', after.some((b) => b.text.startsWith('1 more reply')) && !after.some((b) => b.text.startsWith('2 more')), after);
+  if (shots) {
+    await page.eval(`(() => { const b = document.querySelector('[data-pre="ready"]'); const s = document.querySelector('.thread-scroll'); s.scrollTop += b.getBoundingClientRect().top - s.getBoundingClientRect().top - s.clientHeight / 2; })()`);
+    await Bun.sleep(150);
+    await page.shot(join(shots, 'tour-02a-read-ahead.png'));
+  }
+  const readBefore = (await postReads()).length;
+  // Each press shows what was read at once; what it shows has buttons of its own, read in turn.
+  for (let i = 0; i < 12 && (await page.eval<boolean>(`!!document.querySelector('.ct-more, .thread-more')`)); i++) {
+    await page.until(`!document.querySelector('[data-pre="loading"]')`, 15000).catch(() => {});
+    const at = Date.now();
+    const clicked = await page.eval<boolean>(`(() => { const b = document.querySelector('[data-pre="ready"]'); if (!b) return false; b.click(); return true; })()`);
+    if (clicked) check(i === 0 ? 'a read-ahead button shows its replies at once' : `…and the next (${i + 1})`, Date.now() - at < 400);
+    else await scrollDown();
+  }
+  t = await thread();
   const asked = await postReads();
   check(
-    'what X counts under a reply and did not show loads by itself, nearest first: Nora under your answer to Alice, then Lee under your landmarks, to the end',
+    'every hidden branch, opened: Nora under your answer to Alice, Lee under your landmarks, to the end',
     (await page.eval<boolean>(`['Did you try landmarks', 'sheaf question in disguise', 'Your advisor is right', 'Pulled: a node'].every((w) => [...document.querySelectorAll('.ct-text')].some((x) => x.textContent.includes(w)))`)),
     asked.map((r) => r.post.slice(-4)),
   );
-  check('…each asked of X once', new Set(asked.map((r) => r.post + (r.cursor ?? ''))).size === asked.length, asked.length);
+  check('…each asked of X once, the presses asking nothing more than the reading ahead did for those', new Set(asked.map((r) => r.post + (r.cursor ?? ''))).size === asked.length && readBefore >= 4, { asked: asked.length, readBefore });
   check('a branch X has nothing under goes quiet: no button that never ends', !(await page.eval<boolean>(`!!document.querySelector('.ct-more')`)));
-  check('the next page of replies came before the end was reached: Theo and Quinn, and no button', !t.more && t.tree.includes('0:Theo') && t.tree.includes('0:Quinn'), t.tree);
+  check('the next page of replies: Theo, Quinn, and the replies in other languages, and no button', !t.more && t.tree.includes('0:Theo') && t.tree.includes('0:Quinn') && t.tree.includes('0:Kenji'), t.tree);
   check('nothing sideways on a desktop', (await overflow('.thread-scroll')) === 0);
   if (shots) await toReplies(), await page.shot(join(shots, 'tour-02-thread-tree.png'));
 
@@ -205,7 +236,7 @@ try {
   await pick('Flat');
   await page.until(`!!document.querySelector('.ct-flat')`, 5000);
   t = await thread();
-  check('Flat: replies to the post, everything under each one level in', t.flat.map((f: any[]) => f[0]).join(',') === 'You,Ravi,Alice Chen,Maya K.,Theo,Quinn' && t.flat.find((f: any[]) => f[0] === 'Alice Chen')[1] === 9, t.flat);
+  check('Flat: replies to the post, everything under each one level in', t.flat.map((f: any[]) => f[0]).join(',') === 'You,Ravi,Alice Chen,Maya K.,Theo,Kenji,Paula,Quinn' && t.flat.find((f: any[]) => f[0] === 'Alice Chen')[1] === 9, t.flat);
   if (shots) await toReplies(), await page.shot(join(shots, 'tour-06-style-flat.png'));
   await pick('Chains');
   await page.until(`document.querySelectorAll('.thread-chain').length > 0`, 5000);
@@ -215,6 +246,95 @@ try {
   await pick('Tree');
   await page.until(`!!document.querySelector('.ct.tree')`, 5000);
   check('the style is kept on the device', (await page.eval(`localStorage.getItem('dither.thread.style')`)) === 'tree');
+
+  // ------------------------------------------------------------------ translation (docs/translate.md)
+  // Kenji wrote in Japanese and Paula in Spanish (X says so): translated by themselves, under the original.
+  const tr = (who: string) =>
+    page.eval<any>(`(() => {
+      const n = [...document.querySelectorAll('.ct-node, .ct-step')].find((x) => x.querySelector('.post-who b')?.textContent === ${JSON.stringify(who)});
+      if (!n) return null;
+      const main = n.querySelector(':scope > .ct-main') ?? n;
+      return { texts: [...main.querySelectorAll(':scope > .ct-text')].map((p) => p.textContent.trim()), box: main.querySelector(':scope > .tr-box .tr-text')?.textContent.trim() ?? null, note: main.querySelector(':scope > .tr-note, :scope > .tr-box .tr-note')?.textContent.replace(/\\s+/g, ' ').trim() ?? null, ask: main.querySelector(':scope > .tr-ask')?.textContent ?? null };
+    })()`);
+  const trSettings = (b: object) => fetch(`${base}/api/translate/settings`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) }).then((r) => r.json());
+  await page.until(`[...document.querySelectorAll('.tr-box .tr-text')].length >= 2`, 15000).catch(() => {});
+  let k = await tr('Kenji');
+  check(
+    'a reply in Japanese, translated by itself under the original, saying from what and by whom',
+    !!k && /面白い/.test(k.texts[0] ?? '') && k.box === 'Interesting result. That number without landmarks is surprising.' && k.note === 'Translated from Japanese by Grok via X · Hide',
+    k,
+  );
+  const pa = await tr('Paula');
+  check('…and one in Spanish; your English answer under it is left alone', !!pa && /directed graphs/.test(pa.box ?? '') && (await page.eval<number>(`document.querySelectorAll('.tr-box').length`)) === 2, pa);
+  if (shots) {
+    await page.eval(`[...document.querySelectorAll('.ct-node')].find((x) => x.querySelector('.post-who b')?.textContent === 'Kenji')?.scrollIntoView({ block: 'center' })`);
+    await Bun.sleep(150);
+    await page.shot(join(shots, 'tour-10-translate-below.png'));
+  }
+  await page.eval(`[...document.querySelectorAll('.ct-node')].find((x) => x.querySelector('.post-who b')?.textContent === 'Kenji').querySelector('.tr-box .tr-btn').click()`);
+  k = await tr('Kenji');
+  check('Hide folds it to "Show translation"', !k.box && k.ask === 'Show translation', k);
+  const trAsked = ((await action('translateLog')).result?.translated ?? []) as { post: string }[];
+  check('X was asked once for each, nothing for English', trAsked.length === 2, trAsked);
+
+  // In place: the translation stands in, Show original swaps back.
+  await trSettings({ show: 'replace' });
+  await load(`#/inbox/c/pst_x_${routing}`);
+  await page.until(`[...document.querySelectorAll('.ct-node, .ct-step')].some((x) => x.querySelector('.post-who b')?.textContent === 'Kenji') && !!document.querySelector('.tr-note .tr-btn')`, 20000).catch(() => {});
+  k = await tr('Kenji');
+  check('"In its place": the translation is the text, with a note and Show original', k?.texts[0] === 'Interesting result. That number without landmarks is surprising.' && k.note === 'Translated from Japanese by Grok via X · Show original', k);
+  if (shots) {
+    await page.eval(`[...document.querySelectorAll('.ct-node')].find((x) => x.querySelector('.post-who b')?.textContent === 'Kenji')?.scrollIntoView({ block: 'center' })`);
+    await Bun.sleep(150);
+    await page.shot(join(shots, 'tour-11-translate-replace.png'));
+  }
+  await page.eval(`[...document.querySelectorAll('.ct-node')].find((x) => x.querySelector('.post-who b')?.textContent === 'Kenji').querySelector('.tr-note .tr-btn').click()`);
+  k = await tr('Kenji');
+  check('…Show original brings the Japanese back, and Show translation the English', /面白い/.test(k.texts[0] ?? '') && k.note === 'Written in Japanese · Show translation', k);
+  check('…nothing asked of X again (the hub keeps what it translated)', (((await action('translateLog')).result?.translated ?? []) as unknown[]).length === 2);
+
+  // Not by itself: "Translate post", as X has it.
+  await trSettings({ auto: false, show: 'below' });
+  await load(`#/inbox/c/pst_x_${routing}`);
+  await page.until(`!!document.querySelector('.tr-ask')`, 20000).catch(() => {});
+  k = await tr('Kenji');
+  check('translation off: Japanese as written, and a Translate post link', /面白い/.test(k?.texts[0] ?? '') && !k.box && k.ask === 'Translate post', k);
+  await page.eval(`[...document.querySelectorAll('.ct-node')].find((x) => x.querySelector('.post-who b')?.textContent === 'Kenji').querySelector('.tr-ask').click()`);
+  await page.until(`[...document.querySelectorAll('.tr-box .tr-text')].length === 1`, 10000).catch(() => {});
+  k = await tr('Kenji');
+  check('…a press translates it, that one only', !!k.box && (await page.eval<number>(`document.querySelectorAll('.tr-box').length`)) === 1, k);
+  await trSettings({ auto: true });
+
+  // Settings → Translation.
+  await load('#/settings');
+  await page.until(`!!document.querySelector('#set-translate input[type="checkbox"]')`, 20000);
+  const set = await page.eval<any>(`(() => { const s = document.querySelector('#set-translate'); return { auto: s.querySelector('input[type="checkbox"]').checked, to: s.querySelector('select').value, chips: [...s.querySelectorAll('.chip-btn.on')].map((b) => b.textContent), help: s.textContent }; })()`);
+  check('Settings → Translation: by themselves, into English, under the original, the network first; X can translate', set.auto && set.to === 'en' && set.chips.join('|') === "Under the original|The network's own" && /X can translate its own posts/.test(set.help), set);
+  await page.eval(`[...document.querySelectorAll('#set-translate .chip-btn')].find((b) => b.textContent === 'In its place').click()`);
+  await page.until(`[...document.querySelectorAll('#set-translate .chip-btn.on')].some((b) => b.textContent === 'In its place')`, 5000).catch(() => {});
+  const saved = await fetch(`${base}/api/translate/settings`).then((r) => r.json());
+  check('…a choice there is kept on the hub', saved.settings.show === 'replace', saved.settings);
+  await page.eval(`(() => { const i = document.querySelector('#tr-url'); i.value = 'ftp://nope'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await Bun.sleep(100);
+  await page.eval(`[...document.querySelectorAll('#set-translate .btn')].find((b) => b.textContent === 'Save').click()`);
+  await page.until(`!!document.querySelector('#set-translate .error-text')`, 5000).catch(() => {});
+  const err = await page.eval<string | null>(`document.querySelector('#set-translate .error-text')?.textContent ?? null`);
+  check('…and a server address that is none is refused, saying why', !!err && /http or https/.test(err), err);
+  if (shots) {
+    await page.eval(`document.querySelector('#set-translate').scrollIntoView({ block: 'start' })`);
+    await Bun.sleep(150);
+    await page.shot(join(shots, 'tour-12-translate-settings.png'));
+  }
+  await trSettings({ show: 'below', auto: true });
+  await load(`#/inbox/c/pst_x_${routing}`);
+  await page.until(`document.querySelectorAll('.ct-node').length > 5`, 20000);
+  await scrollDown();
+  for (let i = 0; i < 12 && (await page.eval<boolean>(`!!document.querySelector('[data-pre="ready"]')`)); i++) {
+    await page.eval(`document.querySelector('[data-pre="ready"]').click()`);
+    await Bun.sleep(100);
+    await page.until(`!document.querySelector('[data-pre="loading"]')`, 15000).catch(() => {});
+    if (!(await page.eval<boolean>(`!!document.querySelector('[data-pre="ready"]')`))) await scrollDown();
+  }
 
   // A reply as a thread of its own (its time), what it answers above it; and Back to where you were.
   await page.eval(`[...document.querySelectorAll('.ct-step, .ct-node')].find((n) => /sheaf question in disguise/.test(n.querySelector('.ct-text')?.textContent ?? '') && n.querySelector('.post-who b')?.textContent === 'Sam').querySelector('.ct-time').scrollIntoView({ block: 'center' })`);

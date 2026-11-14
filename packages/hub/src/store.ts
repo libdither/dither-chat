@@ -149,14 +149,37 @@ export function normalizeForCompare(s: string): string {
     .toLowerCase();
 }
 
-export function markSnippet(body: string, terms: string[]): string {
+export function markSnippet(body: string, terms: string[], before = 60, len = 200): string {
   const lower = body.toLowerCase();
   const first = Math.min(...terms.map((t) => lower.indexOf(t.toLowerCase())).filter((i) => i >= 0));
-  const start = Math.max(0, (Number.isFinite(first) ? first : 0) - 60);
-  let out = (start ? '…' : '') + body.slice(start, start + 200) + (body.length > start + 200 ? '…' : '');
+  const start = Math.max(0, (Number.isFinite(first) ? first : 0) - before);
+  let out = (start ? '…' : '') + body.slice(start, start + len) + (body.length > start + len ? '…' : '');
   for (const t of terms) out = out.replace(new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), (m) => `\u0001${m}\u0002`);
   return out;
 }
+
+/** Lowercase without accents, for comparing names. */
+const fold = (s: string) => s.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase();
+
+/** How well a folded word matches a name: all of it, its start, the start of a word in it, or the middle of one. */
+export function nameScore(name: string | null | undefined, word: string): number {
+  if (!name) return 0;
+  const n = fold(name);
+  if (n === word) return 1;
+  if (n.startsWith(word)) return 0.8;
+  const at = n.indexOf(word);
+  if (at < 0) return 0;
+  return /[\p{L}\p{N}]/u.test(n[at - 1]) ? 0.4 : 0.6;
+}
+
+/** The text of an identity's status column (JSON { text, emoji, at }). */
+const statusText = (raw: string | null): string | null => {
+  try {
+    return (raw && (JSON.parse(raw) as { text?: string }).text) || null;
+  } catch {
+    return null;
+  }
+};
 
 /** Edits from a to b, a swap of neighbours counting as one; anything past `max` is max + 1. */
 export function editDistance(a: string, b: string, max: number): number {
@@ -3101,6 +3124,108 @@ export class Store {
     return { persons: views, identities: [...this.identitiesByIds(views.flatMap((p) => p.identityIds)), ...loose.map((r) => this.identityView(r))] };
   }
 
+  /**
+   * People for a search (docs/search.md, "People"): everyone with every word somewhere in a name, a handle, a name
+   * they had before (the change log), your nickname or note, their status or their bio. Ranked by where the words
+   * landed, the name first and a bio last, then by whether they are a person of yours, starred, and how much they
+   * post. One identity per person; `match` says what matched when the name shown does not.
+   */
+  findPeople(needle: string, limit = 12): P.PersonHit[] {
+    // SQL's LIKE folds ASCII case only, so it gets the words as typed; ranking folds accents too.
+    const typed = [...new Set(needle.toLowerCase().split(/\s+/).filter(Boolean))];
+    const words = typed.map(fold);
+    if (!words.length) return [];
+    const byWord = (w: string) => {
+      const like = `%${likeEscape(w)}%`;
+      const ids = this.db
+        .query(
+          `SELECT i.id FROM identity i LEFT JOIN person p ON p.id = i.person_id
+           WHERE i.display_name LIKE ?1 ESCAPE '\\' OR i.handle LIKE ?1 ESCAPE '\\' OR i.nickname LIKE ?1 ESCAPE '\\' OR i.net_nickname LIKE ?1 ESCAPE '\\'
+             OR i.net_note LIKE ?1 ESCAPE '\\' OR json_extract(i.status, '$.text') LIKE ?1 ESCAPE '\\' OR p.name LIKE ?1 ESCAPE '\\' OR p.note LIKE ?1 ESCAPE '\\'
+           UNION SELECT target_id FROM about WHERE target_id LIKE 'idn\\_%' ESCAPE '\\' AND json_extract(data, '$.bio') LIKE ?1 ESCAPE '\\'
+           UNION SELECT target_id FROM change_log WHERE target_kind = 'identity' AND field IN ('displayName', 'handle') AND old LIKE ?1 ESCAPE '\\'`,
+        )
+        .all(like) as Row[];
+      return new Set(ids.map((r) => r.id as string));
+    };
+    let ids = byWord(typed[0]);
+    for (const w of typed.slice(1)) {
+      const next = byWord(w);
+      ids = new Set([...ids].filter((id) => next.has(id)));
+    }
+    if (!ids.size) return [];
+    const rows = this.db
+      .query(
+        `SELECT i.*, p.name AS person_name, p.note, p.starred, p.is_self,
+           (SELECT group_concat(json_extract(c.old, '$'), char(31)) FROM change_log c WHERE c.target_kind = 'identity' AND c.target_id = i.id AND c.field IN ('displayName', 'handle')) AS past,
+           (SELECT group_concat(json_extract(a.data, '$.bio'), char(31)) FROM about a WHERE a.target_id = i.id) AS bio
+         FROM identity i LEFT JOIN person p ON p.id = i.person_id
+         WHERE i.id IN (SELECT value FROM json_each(?)) AND COALESCE(p.is_self, 0) = 0 ORDER BY p.id IS NULL LIMIT 2000`,
+      )
+      .all(JSON.stringify([...ids])) as Row[];
+
+    const scored: { r: Row; score: number; match: string | null }[] = [];
+    for (const r of rows) {
+      if (this.isSelf(r.id)) continue;
+      const shown: string = r.person_name ?? shownName(r);
+      const list = (s: string | null) => (s ? s.split('\u001f').filter(Boolean) : []);
+      // [text, weight, how it reads under the name when it is what matched]
+      const fields: [string | null, number, string | null][] = [
+        [shown, 100, null],
+        [r.display_name, 90, r.display_name],
+        [r.handle, 85, r.handle],
+        [r.nickname, 80, r.nickname],
+        [r.net_nickname, 80, r.net_nickname],
+        ...list(r.past).map((n): [string, number, string] => [n, 60, `was ${n}`]),
+        [r.note, 45, r.note && `Note: ${r.note}`],
+        [r.net_note, 45, r.net_note && `Note: ${r.net_note}`],
+        [statusText(r.status), 30, statusText(r.status)],
+        ...list(r.bio).map((b): [string, number, string] => [b, 30, b]),
+      ];
+      let score = 0;
+      let match: [number, string] | null = null;
+      let every = true;
+      for (const w of words) {
+        let best = 0;
+        for (const [text, weight, label] of fields) {
+          const s = weight * nameScore(text, w);
+          if (s > best) best = s;
+          // What explains a word the shown name does not.
+          if (s > 0 && label && label !== shown && !nameScore(shown, w) && (!match || s > match[0])) match = [s, label];
+        }
+        if (!best) {
+          every = false;
+          break;
+        }
+        score += best;
+      }
+      // Several words: all of them as the name, or its start, over the same words scattered.
+      const whole = words.length > 1 ? 50 * nameScore(shown, words.join(' ')) : 0;
+      if (every) scored.push({ r, score: score + whole, match: match && markSnippet(match[1].replace(/\s+/g, ' '), words, 20, 80) });
+    }
+    scored.sort((a, b) => b.score - a.score);
+
+    // Then knowing them, more than how much they post: a person of yours whose handle matches beats a busy stranger
+    // whose name starts with the word, not one whose name is the word.
+    const top = scored.slice(0, limit * 4);
+    const posted = this.db.query('SELECT COUNT(*) AS n FROM (SELECT 1 FROM message WHERE author_id = ? LIMIT 1000)');
+    for (const s of top) {
+      const n = (posted.get(s.r.id) as Row).n as number;
+      s.score += (s.r.person_id ? 40 : 0) + (s.r.starred ? 30 : 0) + 6 * Math.log10(1 + n);
+    }
+    top.sort((a, b) => b.score - a.score);
+    const seen = new Set<string>();
+    const out: P.PersonHit[] = [];
+    for (const s of top) {
+      const key = s.r.person_id ?? s.r.id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ id: s.r.id, match: s.match });
+      if (out.length === limit) break;
+    }
+    return out;
+  }
+
   accountsNamed(name: string): string[] {
     return (this.db.query(`SELECT id FROM account WHERE id = ?1 OR label = ?1 COLLATE NOCASE`).all(name) as Row[]).map((r) => r.id);
   }
@@ -3199,11 +3324,11 @@ export class Store {
     const snips = new Map(page.map((r) => [r.id, r.snip as string]));
     const last = page[page.length - 1];
     const needle = [...q.phrases, ...q.terms].join(' ').trim();
-    const people = needle.length >= 2 ? this.identitiesNamed(needle).slice(0, 12) : [];
+    const people = needle.length >= 2 ? this.findPeople(needle) : [];
     const shownIds = this.identitiesOf(views).map((i) => i.id);
     return {
       hits: views.map((m) => ({ message: m, snippet: snips.get(m.id) ?? '' })),
-      identities: this.identitiesByIds([...shownIds, ...people]),
+      identities: this.identitiesByIds([...shownIds, ...people.map((p) => p.id)]),
       people,
       next: !more ? null : (q.relevance ? String(offset + limit) : `${last.ts}:${last.rid}`) + (substring ? ':s' : ''),
       mode,
@@ -3294,6 +3419,9 @@ export class Store {
     else this.db.query('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value').run(key, JSON.stringify(value));
   }
 
+  /** A setting kept as JSON in meta (translate.ts's), or null. */
+  metaValue = <T>(key: string) => this.metaJson<T>(key);
+  setMetaValue = (key: string, value: unknown) => this.setMetaJson(key, value);
   quietHours = () => this.metaJson<P.QuietHours>('quiet_hours');
   privacy = (): P.PrivacySettings => ({ shareTyping: this.metaJson<P.PrivacySettings>('privacy')?.shareTyping ?? true });
   setPrivacy = (p: P.PrivacySettings) => this.setMetaJson('privacy', p);

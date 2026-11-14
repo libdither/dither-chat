@@ -56,6 +56,22 @@ edit one operator in the text, which is how the filter chips work: the query sta
 Paging is by cursor (time and rowid), or by offset for `sort:relevance`. `context=n` (at most 3) adds the n messages
 before and after each hit in its conversation; the web asks for one.
 
+## People
+
+The first page also carries the people the words find (`SearchPage.people`, `findPeople` in store.ts), best first,
+twelve at most and one identity per person. Every word must be somewhere among an account's display name, handle,
+names and handles from before a rename (the change log, docs/history.md), your nickname for it, the person's name,
+your note, the network's nickname and note, their status, and the bio from their kept profile (docs/profile.md).
+
+Ranked by where the words landed: the name shown, then the display name, the handle, a nickname, an old name, a note,
+and a status or bio last; all of the name beats its start, its start beats a word inside it, and that beats the middle
+of a word. Several words typed as the whole name beat the same words scattered. Then a person of yours counts for more
+than how much someone posts, so a friend whose handle holds the word comes before busy strangers whose names start
+with it, though not before one whose name is the word. Each person carries `match`, what matched when the name shown
+does not: their handle, "was <old name>", a note or a piece of their bio, with the words marked.
+
+Matching is `LIKE`, as `from:` is: case folds for Latin letters only, and accents must be typed (`zoë`, not `zoe`).
+
 ## In the app
 
 - **The box** (the search page and the inbox's) lists the operators when empty, under recent searches. Typing a word
@@ -64,6 +80,8 @@ before and after each hit in its conversation; the web asks for one.
   chip under the box rather than in the text.
 - **Filters** under the box: networks, kinds, mentions, pinned, edited, deleted (hidden when kept messages are set to
   stay out of sight), the sort, and From, In, After, Before fields.
+- **People and places** above the results: the people the hub found (above, "People"), each with what matched under
+  the name when the name does not show it, then communities and chats whose names hold the words.
 - **Results**: hits in a row from the same conversation share a heading; each hit has its line before and after,
   dimmed. Click a hit or a line to jump there. Down from the box goes into the results.
 - **Ctrl+F** in a chat opens search in that chat; on the search page it goes to the box.

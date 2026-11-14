@@ -1054,12 +1054,20 @@ export interface SearchHit {
   after?: MessageView[];
 }
 
+/** Someone found by a name, a handle, a name they had before, your nickname or note, their status or bio. */
+export interface PersonHit {
+  /** The identity that matched best. */
+  id: string;
+  /** What matched when the name shown does not, e.g. a handle, "was Sam", a piece of their bio. Matches between \u0001 and \u0002. */
+  match: string | null;
+}
+
 export interface SearchPage {
   hits: SearchHit[];
   /** Identities for rendering, including people matched by name. */
   identities: IdentityView[];
-  /** Identity ids whose name matches, for people the client may not hold. */
-  people: string[];
+  /** People matching the words, best first, one identity per person. */
+  people: PersonHit[];
   /** Pass as &cursor= for the next page; null at the end. */
   next: string | null;
   mode: 'fulltext' | 'substring' | 'filters';

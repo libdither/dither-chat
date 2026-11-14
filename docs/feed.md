@@ -180,9 +180,15 @@ Links, @handles, pictures, names and Open on X inside a card keep doing what the
 by a line from its picture; the post itself, large, with its full time, its counts and Open on X; then **Replies** as a
 comment section; **Show more replies** while X has more. The header says whose post it is.
 
-**Read ahead.** The next page of replies loads as the end of the list comes within about two screens, up to eight
-pages without a press; a reply's **N more replies** loads by itself the same way, two at a time and at most 24 per
-thread opened, since each is one TweetDetail read (about 7 s on X). What is left, or failed, keeps its button.
+**Read ahead.** A reply's hidden answers ("N more replies") are read as they come within about two screens, two at a
+time and at most 24 per thread opened (each is one TweetDetail read, about 7 s on X), and the next page of replies as
+the end of the list nears, up to eight pages. What is read waits behind its button, so nothing moves in under the
+reader, and the button says so by a dot: hollow not read yet, pulsing being read, filled read already (a press shows it
+at once, and a page says how many it holds: "Show 7 more replies"). A press on one not read yet reads it then; one
+being read shows it as it comes. A branch where X has nothing it shows goes quiet.
+
+**Translated.** A post in another language (X's `lang`) is translated by itself, under the original or in its place:
+docs/translate.md.
 
 **Back from a sub-thread.** A thread opened from inside another (a reply's time, Continue this thread, a post above
 the post, a toast's View) remembers the one it was opened from: a line under the header says where Back goes ("Back

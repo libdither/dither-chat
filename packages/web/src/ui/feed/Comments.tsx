@@ -85,6 +85,8 @@ export interface CommentCtx {
   /** Branches the network could not be asked for, and why: the button stays, to try again. */
   failed: ReadonlyMap<string, string>;
   load: (n: TreeNode) => void;
+  /** Answers read ahead under a reply and not shown yet: its button shows them at once. */
+  ready?: ReadonlyMap<string, P.PostView[]>;
   /** Load a reply's hidden answers without a press, as it nears the screen (the thread decides how many and when). */
   auto?: (n: TreeNode) => void;
   /** What "near the screen" is measured against: the thread's scroller. */
@@ -97,7 +99,8 @@ function MoreUnder({ n, ctx, under }: { n: TreeNode; ctx: CommentCtx; under?: bo
   const id = n.post.id;
   const busy = ctx.loading.has(id);
   const why = ctx.failed.get(id);
-  const wanted = !!n.hidden && !ctx.done.has(id) && !busy && !why;
+  const read = ctx.ready?.get(id);
+  const wanted = !!n.hidden && !ctx.done.has(id) && !busy && !why && !read;
   const box = useRef<HTMLSpanElement>(null);
   // Near the screen (two screens or so ahead: X takes seconds to answer), it loads by itself.
   useEffect(() => {
@@ -109,11 +112,17 @@ function MoreUnder({ n, ctx, under }: { n: TreeNode; ctx: CommentCtx; under?: bo
   }, [wanted, id]);
   if (!n.hidden || ctx.done.has(id)) return null;
   const who = under ? ` under ${ctx.kit.name(n.post.author ?? null)}` : '';
-  const many = `${n.hidden} more ${n.hidden === 1 ? 'reply' : 'replies'}`;
+  // Read ahead, the count is what came and is not shown yet (X may count some it never shows).
+  const count = read ? read.filter((p) => p.replyTo?.id === id && !n.children.some((c) => c.post.id === p.id)).length || n.hidden : n.hidden;
+  const many = `${count} more ${count === 1 ? 'reply' : 'replies'}`;
+  const pre = read ? 'ready' : busy ? 'loading' : 'idle';
   return (
     <span class="ct-more-wrap" ref={box}>
-      <button class="ct-more" onClick={() => ctx.load(n)} disabled={busy}>
-        {busy ? `Loading ${many}…` : why ? 'Try again' : `${many}${who}`}
+      {/* Its dot: hollow not read yet, pulsing being read, filled read ahead and shown at once. */}
+      <button class="ct-more" data-pre={why ? 'failed' : pre} onClick={() => ctx.load(n)} title={pre === 'ready' ? 'Read already: shows at once' : pre === 'loading' ? 'Being read from the network' : 'Not read yet'}>
+        <span class="pre-dot" aria-hidden="true" />
+        {why ? 'Try again' : `${many}${who}`}
+        <span class="sr-only">{pre === 'ready' ? ', read already' : pre === 'loading' ? ', being read' : ''}</span>
       </button>
       {why && !busy && <span class="ct-more-why">{why}</span>}
     </span>

@@ -1273,3 +1273,94 @@
     margin: 0 8px calc(8px + env(safe-area-inset-bottom, 0px));
   }
 }
+
+/* A post's translation (Post.tsx Text, docs/translate.md): under the original in a soft box, or in its place with a
+   note; "Translate post" when it is not automatic. */
+.tr-box {
+  margin-top: 4px;
+  padding: 4px 10px 6px;
+  border-left: 2px solid color-mix(in oklab, var(--accent) 45%, var(--border));
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in oklab, var(--accent) 6%, transparent);
+}
+.tr-box .tr-text {
+  margin: 2px 0 0;
+}
+.tr-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.tr-note > svg {
+  flex: none;
+}
+.tr-busy {
+  animation: tr-busy 1.4s ease-in-out infinite;
+}
+@keyframes tr-busy {
+  50% {
+    opacity: 0.45;
+  }
+}
+.tr-failed {
+  color: var(--text-dim);
+}
+.tr-btn,
+.tr-ask {
+  padding: 0;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: inherit;
+}
+.tr-ask {
+  align-self: flex-start;
+  font-size: 12.5px;
+  margin-top: 2px;
+}
+.tr-btn:hover,
+.tr-ask:hover {
+  text-decoration: underline;
+}
+
+/* Whether "more" is read ahead (Thread.tsx): a hollow ring not yet, pulsing while it is read, filled when a press shows
+   it at once. */
+.pre-dot {
+  display: inline-block;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  vertical-align: 1px;
+  opacity: 0.7;
+}
+[data-pre='loading'] > .pre-dot {
+  animation: pre-dot 1s ease-in-out infinite;
+}
+[data-pre='ready'] > .pre-dot {
+  background: currentColor;
+  opacity: 1;
+}
+[data-pre='failed'] > .pre-dot {
+  border-style: dashed;
+}
+@keyframes pre-dot {
+  50% {
+    transform: scale(0.55);
+    opacity: 0.35;
+  }
+}
+.ct-more {
+  display: inline-flex;
+  align-items: center;
+}
+.thread-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}

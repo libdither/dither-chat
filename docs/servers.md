@@ -10,8 +10,9 @@ docs/chat.md "Servers"); the demo world answers the same way (`packages/hub/src/
 
 - **Opening a server.** On a computer, opening a server (its icon on the left, Ctrl+K, a search result, a link to it)
   goes to the channel you last opened in it, here or from the inbox or search, while its channel list stays beside
-  it. A server never opened, or whose last channel is gone, shows its list as before. On a phone the server's list
-  is still the page it opens. Remembered per device, in the browser (`web/src/lastchannel.ts`).
+  it. A server never opened, or whose last channel is gone, opens on its first channel to read (text, announcements
+  or rules, in list order through its categories), as Discord does; one with none shows its list. On a phone the
+  server's list is still the page it opens. Remembered per device, in the browser (`web/src/lastchannel.ts`).
 - **Events.** A server's page has an Events card, and an Events button in its header when it has any: each event's
   cover, when (with "Every week" for a repeating one, and how many coming occurrences were called off), where (a voice
   or stage channel, or a place outside), its description, how many are interested and who made it. **Interested** turns

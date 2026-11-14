@@ -6,7 +6,10 @@
  * people from the hub alone, and a phone's width. Then Step 3: the About's "@ finds" set to Here and friends brings
  * the friends section (and Only on Discord narrows it), a friend with no Discord account goes out as a plain @Name, and
  * a person's accounts open with →: their Discord one goes out as its mention and their Signal one as a plain name.
- * Those are the only messages sent, to the demo world.
+ * Those are the only messages sent, to the demo world. And the chips in the box: a picked mention reads as its name,
+ * drawn as a chip, while the body keeps its token; the caret steps over it, Backspace takes it whole and undo brings it
+ * back, a token typed whole becomes one, a copy pastes back as one, the draft keeps the token, and a click on it opens
+ * the person's page once the box has the caret.
  *
  *   bun scripts/verify-mentions.ts [--port 8694] [--web <built dist>] [--work <empty dir>] [--shots <dir>]
  *
@@ -101,7 +104,16 @@ try {
     await page.eval(`(() => { const t = ${box}; t.focus(); t.select(); document.execCommand('delete'); })()`);
     await Bun.sleep(150);
   };
-  const value = () => page.eval<string>(`${box}.value`);
+  // The box holds each chip's token in invisible tag characters before its name (composerChips.ts): the body it
+  // sends, and what it shows.
+  const raw = () => page.eval<string>(`${box}.value`);
+  const bodyOf = (v: string) =>
+    v
+      .replace(/@(\u{E003C}\u{E0040}[\u{E0021}-\u{E007E}]+?\u{E003E})[^\n\u{E0000}-\u{E007F}]*\u{E007F}/gu, (_, t: string) => String.fromCodePoint(...[...t].map((c) => c.codePointAt(0)! - 0xe0000)))
+      .replace(/[\u{E0000}-\u{E007F}]/gu, '');
+  const shownOf = (v: string) => v.replace(/[\u{E0000}-\u{E007F}]/gu, '');
+  const value = async () => bodyOf(await raw());
+  const shown = async () => shownOf(await raw());
   const open = () => page.eval<boolean>(`!!document.querySelector('.mc-pop')`);
   const listed = () => page.eval<string[]>(`[...document.querySelectorAll('.mc-pop .mc-name')].map((e) => e.textContent)`);
   const picked = () => page.eval<string>(`document.querySelector('.mc-pop .ec-opt.on .mc-name')?.textContent ?? ''`);
@@ -138,6 +150,7 @@ try {
   const quinn = boot.identities.find((i) => i.network === 'discord' && i.displayName === 'Quinn')!;
   let text = await value();
   check('Enter puts Quinn in as a mention and a space, and sends nothing', text === `<@${quinn.nativeId}> ` && !(await open()), text);
+  check('…which the box shows as his name', (await shown()) === '@Quinn ', await shown());
   await type('and @ev');
   await page.until(`[...document.querySelectorAll('.mc-pop .mc-name')].some((e) => e.textContent === '@everyone')`, 5000).catch(() => {});
   const ev = await listed();
@@ -157,6 +170,103 @@ try {
   await Bun.sleep(200);
   text = await value();
   check('a new @ opens it again, and Tab puts @everyone in', text === `<@${quinn.nativeId}> and @everyone `, text);
+  await clear();
+
+  // ------------------------------------------------------------------ chips in the box
+
+  const caret = () => page.eval<number>(`${box}.selectionStart`);
+  const chipsDrawn = () => page.eval<string[]>(`[...document.querySelectorAll('.chip-copy .chip-m')].map((e) => e.textContent.replace(/[\\u{E0000}-\\u{E007F}]/gu, ''))`);
+  const keyMod = async (k: string, code: string, keyCode: number, modifiers: number, commands: string[] = []) => {
+    await page.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: k, code, windowsVirtualKeyCode: keyCode, modifiers, commands });
+    await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code, windowsVirtualKeyCode: keyCode, modifiers });
+  };
+  await clear();
+  await type('hi @qui');
+  await page.until(`document.querySelector('.mc-pop .ec-opt.on .mc-name')?.textContent === 'Quinn'`, 5000);
+  await key('Enter', 13);
+  await page.until(`!!document.querySelector('.chip-copy .chip-m')`, 5000).catch(() => {});
+  text = await value();
+  const drawn = await chipsDrawn();
+  check('a picked name is drawn as a chip, its chunk loaded only now', drawn.join('|') === '@Quinn' && (await shown()) === 'hi @Quinn ' && text === `hi <@${quinn.nativeId}> `, { drawn, text });
+  const geo = await page.eval<{ chip: DOMRect; box: DOMRect; behind: boolean }>(
+    `(() => { const c = document.querySelector('.chip-copy .chip-m').getBoundingClientRect(); const b = ${box}.getBoundingClientRect(); const copy = document.querySelector('.chip-copy'); return { chip: c.toJSON(), box: b.toJSON(), behind: copy.compareDocumentPosition(${box}) === Node.DOCUMENT_POSITION_FOLLOWING }; })()`,
+  );
+  // Where the box draws "@Quinn": measured on a span laid out as the box's text is.
+  const at = await page.eval<number>(
+    `(() => { const t = ${box}; const s = getComputedStyle(t); const m = document.createElement('span'); m.style.font = s.font; m.style.whiteSpace = 'pre'; m.textContent = 'hi '; document.body.append(m); const w = m.getBoundingClientRect().width; m.remove(); return t.getBoundingClientRect().left + parseFloat(s.borderLeftWidth) + parseFloat(s.paddingLeft) + w; })()`,
+  );
+  // The chip's background reaches 2 px either side of the name (styles.css .chip-m).
+  check('…behind the box, right under the name the box draws', geo.behind && Math.abs(geo.chip.left + 2 - at) < 1.5 && geo.chip.top >= geo.box.top && geo.chip.bottom <= geo.box.bottom, { chip: geo.chip.left, at });
+  if (shots) await page.shot(join(shots, 'mentions-chip.png'));
+  const rawText = await raw();
+  const chipEnd = rawText.length - 1;
+  const chipStart = 3;
+  await page.eval(`(() => { const t = ${box}; t.focus(); t.setSelectionRange(${chipStart + 6}, ${chipStart + 6}); })()`);
+  await Bun.sleep(100);
+  const snapped = await caret();
+  check('a caret put inside the name goes to an end of the chip', snapped === chipStart || snapped === chipEnd, snapped);
+  await page.eval(`${box}.setSelectionRange(${chipEnd + 1}, ${chipEnd + 1})`);
+  await Bun.sleep(50);
+  await key('ArrowLeft', 37);
+  await Bun.sleep(50);
+  await key('ArrowLeft', 37);
+  await Bun.sleep(100);
+  const left = await caret();
+  await key('ArrowRight', 39);
+  await Bun.sleep(100);
+  const right = await caret();
+  check('ArrowLeft and ArrowRight step over the chip whole', left === chipStart && right === chipEnd, { left, right, chipStart, chipEnd });
+  await key('Backspace', 8);
+  await Bun.sleep(150);
+  text = await value();
+  check('Backspace after it takes the whole chip', text === 'hi  ' && (await chipsDrawn()).length === 0, text);
+  // Ctrl+Z; headless Chromium is given its editing command, as a desktop's key bindings would.
+  await keyMod('z', 'KeyZ', 90, 2, ['undo']);
+  await Bun.sleep(150);
+  text = await value();
+  check('…and undo brings it back, whole', text === `hi <@${quinn.nativeId}> ` && (await chipsDrawn()).join('|') === '@Quinn', text);
+  const draft = await page.eval<string | null>(`localStorage.getItem(${JSON.stringify(`dither-chat:draft:${dev.id}`)})`);
+  check('the draft keeps the token, not the name', draft === `hi <@${quinn.nativeId}> `, draft);
+  await page.goto(`${base}/#/c/${climb.id}`);
+  await page.until(`!!${box}`, 20000);
+  await page.goto(`${base}/#/c/${dev.id}`);
+  await page.until(`!!document.querySelector('.chip-copy .chip-m')`, 10000).catch(() => {});
+  check('back in the chat, the draft shows the chip again', (await shown()) === 'hi @Quinn ' && (await value()) === `hi <@${quinn.nativeId}> `, await shown());
+  await clear();
+  await type(`by hand <@${quinn.nativeId}`);
+  await Bun.sleep(100);
+  const before = await chipsDrawn();
+  await type('>');
+  await page.until(`!!document.querySelector('.chip-copy .chip-m')`, 5000).catch(() => {});
+  check('a token typed whole becomes a chip at its >', before.length === 0 && (await shown()) === 'by hand @Quinn' && (await value()) === `by hand <@${quinn.nativeId}>`, await shown());
+  const copied = await page.eval<{ plain: string; body: string }>(
+    `(() => { const t = ${box}; t.focus(); t.select(); const d = new DataTransfer(); t.dispatchEvent(new ClipboardEvent('copy', { clipboardData: d, bubbles: true, cancelable: true })); return { plain: d.getData('text/plain'), body: d.getData('text/x-dither-chat-body') }; })()`,
+  );
+  check('a copy reads as the name, and carries the token for a box', copied.plain === 'by hand @Quinn' && copied.body === `by hand <@${quinn.nativeId}>`, copied);
+  await page.eval(
+    `(() => { const t = ${box}; t.setSelectionRange(t.value.length, t.value.length); const d = new DataTransfer(); d.setData('text/plain', ${JSON.stringify(' @Quinn')}); d.setData('text/x-dither-chat-body', ${JSON.stringify(` <@${quinn.nativeId}>`)}); t.dispatchEvent(new ClipboardEvent('paste', { clipboardData: d, bubbles: true, cancelable: true })); })()`,
+  );
+  await Bun.sleep(150);
+  check('…and pastes back as a chip', (await chipsDrawn()).length === 2 && (await value()) === `by hand <@${quinn.nativeId}> <@${quinn.nativeId}>`, await value());
+  // A click: not while the box is getting the caret, then once it has it.
+  const centre = await page.eval<{ x: number; y: number }>(`(() => { const r = document.querySelector('.chip-copy .chip-m').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+  const click = async () => {
+    await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: centre.x, y: centre.y });
+    await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: centre.x, y: centre.y, button: 'left', clickCount: 1 });
+    await page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: centre.x, y: centre.y, button: 'left', clickCount: 1 });
+    await Bun.sleep(300);
+  };
+  await page.eval(`${box}.blur()`);
+  await click();
+  const stayed = await page.eval<string>('location.hash');
+  check('a click on a chip in a box without the caret only puts the caret there', stayed.includes(dev.id) && (await page.eval<boolean>(`document.activeElement === ${box}`)), stayed);
+  const cursor = await page.eval<string>(`${box}.style.cursor`);
+  await click();
+  const went = await page.eval<string>('location.hash');
+  check("once it has the caret, a click opens Quinn's page", went === `#/i/${quinn.id}` || (!!quinn.personId && went === `#/p/${quinn.personId}`), { went, cursor });
+  await page.goto(`${base}/#/c/${dev.id}`);
+  await page.until(`!!${box}`, 20000);
+  await Bun.sleep(300);
   await clear();
 
   // ------------------------------------------------------------------ Step 3: "@ finds", friends, references

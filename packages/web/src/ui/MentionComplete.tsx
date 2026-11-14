@@ -5,6 +5,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
+import { chipFor } from '../composerChips.ts';
 import { findMentionTrigger } from '../mentionComplete.ts';
 
 export interface MentionProps {
@@ -44,5 +45,5 @@ export function MentionComplete(props: MentionProps) {
       el.removeEventListener('click', look);
     };
   }, [props.ta.current, picker]);
-  return picker ? <picker.MentionPicker {...props} find={findMentionTrigger} /> : null;
+  return picker ? <picker.MentionPicker {...props} find={findMentionTrigger} chip={(token, label) => chipFor(props.network, token, label)} /> : null;
 }
