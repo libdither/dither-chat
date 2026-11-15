@@ -114,9 +114,9 @@ try {
   const shownOf = (v: string) => v.replace(/[\u{E0000}-\u{E007F}]/gu, '');
   const value = async () => bodyOf(await raw());
   const shown = async () => shownOf(await raw());
-  const open = () => page.eval<boolean>(`!!document.querySelector('.mc-pop')`);
-  const listed = () => page.eval<string[]>(`[...document.querySelectorAll('.mc-pop .mc-name')].map((e) => e.textContent)`);
-  const picked = () => page.eval<string>(`document.querySelector('.mc-pop .ec-opt.on .mc-name')?.textContent ?? ''`);
+  const open = () => page.eval<boolean>(`!!document.querySelector('.mp-pop')`);
+  const listed = () => page.eval<string[]>(`[...document.querySelectorAll('.mp-pop .mp-name')].map((e) => e.textContent)`);
+  const picked = () => page.eval<string>(`document.querySelector('.mp-pop .ec-opt.on .mp-name')?.textContent ?? ''`);
   const chunkLoaded = () => page.eval<boolean>(`performance.getEntriesByType('resource').some((e) => /MentionPicker/.test(e.name))`);
 
   await page.size(1280, 860);
@@ -129,14 +129,14 @@ try {
   check("a mail address and code open nothing, and the list's chunk is not loaded", !(await open()) && !(await chunkLoaded()));
   await clear();
   await type('@');
-  await page.until(`!!document.querySelector('.mc-pop .mc-name')`, 5000);
+  await page.until(`!!document.querySelector('.mp-pop .mp-name')`, 5000);
   check("an @ loads the list's chunk and opens it", await chunkLoaded());
   await Bun.sleep(400);
   const first = await listed();
   check('…with the people who wrote here', ['Quinn', 'Lev'].every((n) => first.includes(n)), first);
   if (shots) await page.shot(join(shots, 'mentions-desktop.png'));
   await type('qui');
-  await page.until(`document.querySelector('.mc-pop .mc-name')?.textContent === 'Quinn'`, 5000);
+  await page.until(`document.querySelector('.mp-pop .mp-name')?.textContent === 'Quinn'`, 5000);
   await Bun.sleep(400);
   const quin = await listed();
   check("typing narrows it, Quinn first, then the network's members", quin[0] === 'Quinn' && quin.some((n) => /^quin/.test(n)), quin);
@@ -152,7 +152,7 @@ try {
   check('Enter puts Quinn in as a mention and a space, and sends nothing', text === `<@${quinn.nativeId}> ` && !(await open()), text);
   check('…which the box shows as his name', (await shown()) === '@Quinn ', await shown());
   await type('and @ev');
-  await page.until(`[...document.querySelectorAll('.mc-pop .mc-name')].some((e) => e.textContent === '@everyone')`, 5000).catch(() => {});
+  await page.until(`[...document.querySelectorAll('.mp-pop .mp-name')].some((e) => e.textContent === '@everyone')`, 5000).catch(() => {});
   const ev = await listed();
   check('"@ev" offers @everyone (the main account is admin here)', ev.includes('@everyone'), ev);
   await key('Escape', 27);
@@ -165,7 +165,7 @@ try {
   check('typing on after Escape leaves it closed for that @', !(await open()));
   await page.eval(`(() => { const t = ${box}; t.focus(); t.setSelectionRange(t.value.length - 4, t.value.length); document.execCommand('delete'); })()`);
   await type('@eve');
-  await page.until(`document.querySelector('.mc-pop .ec-opt.on .mc-name')?.textContent === '@everyone'`, 5000).catch(() => {});
+  await page.until(`document.querySelector('.mp-pop .ec-opt.on .mp-name')?.textContent === '@everyone'`, 5000).catch(() => {});
   await key('Tab', 9);
   await Bun.sleep(200);
   text = await value();
@@ -182,7 +182,7 @@ try {
   };
   await clear();
   await type('hi @qui');
-  await page.until(`document.querySelector('.mc-pop .ec-opt.on .mc-name')?.textContent === 'Quinn'`, 5000);
+  await page.until(`document.querySelector('.mp-pop .ec-opt.on .mp-name')?.textContent === 'Quinn'`, 5000);
   await key('Enter', 13);
   await page.until(`!!document.querySelector('.chip-copy .chip-m')`, 5000).catch(() => {});
   text = await value();
@@ -295,7 +295,7 @@ try {
     await until(async () => !!(body = (await messages()).find((m) => m.body.includes(tag))?.body ?? ''), 8000, `the message ${tag} did not arrive`);
     return body;
   };
-  const sections = () => page.eval<string[]>(`[...document.querySelectorAll('.mc-pop .mc-sec')].map((e) => e.textContent)`);
+  const sections = () => page.eval<string[]>(`[...document.querySelectorAll('.mp-pop .mp-sec')].map((e) => e.textContent)`);
   const pick = async (name: string) => {
     const i = (await listed()).indexOf(name);
     for (let n = 0; n < i; n++) await key('ArrowDown', 40);
@@ -308,14 +308,14 @@ try {
   await Bun.sleep(500);
   await clear();
   await type('@');
-  await page.until(`[...document.querySelectorAll('.mc-pop .mc-sec')].length > 1`, 5000).catch(() => {});
+  await page.until(`[...document.querySelectorAll('.mp-pop .mp-sec')].length > 1`, 5000).catch(() => {});
   const heads = await sections();
   check('the list has its sections: Here, then Friends', heads.join('|') === 'Here|Friends', heads);
   if (shots) await page.shot(join(shots, 'mentions-friends.png'));
   await clear();
   await type('@mom');
-  await page.until(`[...document.querySelectorAll('.mc-pop .mc-name')].some((e) => e.textContent === 'Mom')`, 5000).catch(() => {});
-  const struck = await page.eval<boolean>(`[...document.querySelectorAll('.mc-pop .mc-opt')].some((b) => b.querySelector('.mc-name')?.textContent === 'Mom' && !!b.querySelector('.mc-ping.off'))`);
+  await page.until(`[...document.querySelectorAll('.mp-pop .mp-name')].some((e) => e.textContent === 'Mom')`, 5000).catch(() => {});
+  const struck = await page.eval<boolean>(`[...document.querySelectorAll('.mp-pop .mp-opt')].some((b) => b.querySelector('.mp-name')?.textContent === 'Mom' && !!b.querySelector('.mp-ping.off'))`);
   check('"@mom": Mom, under Friends, her bell struck through', struck && (await sections()).includes('Friends'));
   await pick('Mom');
   await key('Tab', 9);
@@ -335,25 +335,25 @@ try {
   check('"theo": Theo here, with his Discord and Signal accounts', !!theo && theo.insert === theoDiscord?.insert && !!theoSignal && !theoSignal.pings, theo);
   await clear();
   await type('@theo');
-  await page.until(`document.querySelector('.mc-pop .ec-opt.on .mc-name')?.textContent === 'Theo'`, 5000).catch(() => {});
+  await page.until(`document.querySelector('.mp-pop .ec-opt.on .mp-name')?.textContent === 'Theo'`, 5000).catch(() => {});
   await key('ArrowRight', 39);
-  await page.until(`!!document.querySelector('.mc-pop .mc-back')`, 3000).catch(() => {});
+  await page.until(`!!document.querySelector('.mp-pop .mp-back')`, 3000).catch(() => {});
   const accounts = await listed();
   check("→ opens Theo's accounts, each with its network", accounts.length === 2 && accounts.includes(`${theoDiscord?.name} · Discord`) && accounts.includes(`${theoSignal?.name} · Signal`), accounts);
   await key('Escape', 27);
   await Bun.sleep(150);
-  check('Escape goes back to the list, still open', (await open()) && !(await page.eval<boolean>(`!!document.querySelector('.mc-pop .mc-back')`)) && (await picked()) === 'Theo');
+  check('Escape goes back to the list, still open', (await open()) && !(await page.eval<boolean>(`!!document.querySelector('.mp-pop .mp-back')`)) && (await picked()) === 'Theo');
   await key('ArrowRight', 39);
-  await page.until(`!!document.querySelector('.mc-pop .mc-back')`, 3000).catch(() => {});
+  await page.until(`!!document.querySelector('.mp-pop .mp-back')`, 3000).catch(() => {});
   await pick(`${theoDiscord?.name} · Discord`);
   await key('Enter', 13);
   await Bun.sleep(200);
   text = await value();
   check('his Discord account goes in as its mention', text === `<@${(boot.identities.find((i) => i.id === theoDiscord?.identityId) ?? { nativeId: '?' }).nativeId}> `, text);
   await type('and @theo');
-  await page.until(`document.querySelector('.mc-pop .ec-opt.on .mc-name')?.textContent === 'Theo'`, 5000).catch(() => {});
+  await page.until(`document.querySelector('.mp-pop .ec-opt.on .mp-name')?.textContent === 'Theo'`, 5000).catch(() => {});
   await key('ArrowRight', 39);
-  await page.until(`!!document.querySelector('.mc-pop .mc-back')`, 3000).catch(() => {});
+  await page.until(`!!document.querySelector('.mp-pop .mp-back')`, 3000).catch(() => {});
   await pick(`${theoSignal?.name} · Signal`);
   await key('Enter', 13);
   await Bun.sleep(200);
@@ -369,9 +369,9 @@ try {
   // A friend from elsewhere with several accounts: Enter opens them, the person first.
   await clear();
   await type('@sam');
-  await page.until(`document.querySelector('.mc-pop .ec-opt.on .mc-name')?.textContent === 'Sam Rivera'`, 5000).catch(() => {});
+  await page.until(`document.querySelector('.mp-pop .ec-opt.on .mp-name')?.textContent === 'Sam Rivera'`, 5000).catch(() => {});
   await key('Enter', 13);
-  await page.until(`!!document.querySelector('.mc-pop .mc-back')`, 3000).catch(() => {});
+  await page.until(`!!document.querySelector('.mp-pop .mp-back')`, 3000).catch(() => {});
   const sam = await listed();
   check('Enter on a friend from elsewhere opens their accounts: the person, then Matrix and Signal', sam.join('|') === 'Sam Rivera|Sam Rivera · Matrix|Sam Rivera · Signal' || sam.join('|') === 'Sam Rivera|Sam Rivera · Signal|Sam Rivera · Matrix', sam);
   await key('Escape', 27);
@@ -392,7 +392,7 @@ try {
   await Bun.sleep(500);
   await clear();
   await type('@');
-  await page.until(`[...document.querySelectorAll('.mc-pop .mc-sec')].length > 1`, 5000).catch(() => {});
+  await page.until(`[...document.querySelectorAll('.mp-pop .mp-sec')].length > 1`, 5000).catch(() => {});
   await Bun.sleep(400);
   const narrowed = await listed();
   check('…and the list shows them alone', narrowed.includes('Theo') && !narrowed.includes('Mom') && !narrowed.includes('Sam Rivera'), narrowed);
@@ -405,11 +405,11 @@ try {
   await Bun.sleep(600);
   await clear();
   await type('hey @pri');
-  await page.until(`document.querySelector('.mc-pop .mc-name')?.textContent === 'Priya'`, 5000).catch(() => {});
+  await page.until(`document.querySelector('.mp-pop .mp-name')?.textContent === 'Priya'`, 5000).catch(() => {});
   const pri = await listed();
   check('a Signal group: "@pri" finds Priya alone', pri.length === 1 && pri[0] === 'Priya', pri);
   const fit = await page.eval<{ left: number; right: number; width: number; scroll: number } | null>(
-    `(() => { const p = document.querySelector('.mc-pop'); if (!p) return null; const r = p.getBoundingClientRect(); return { left: Math.round(r.left), right: Math.round(r.right), width: innerWidth, scroll: document.documentElement.scrollWidth }; })()`,
+    `(() => { const p = document.querySelector('.mp-pop'); if (!p) return null; const r = p.getBoundingClientRect(); return { left: Math.round(r.left), right: Math.round(r.right), width: innerWidth, scroll: document.documentElement.scrollWidth }; })()`,
   );
   check('on a phone the list fits the screen and nothing scrolls sideways', !!fit && fit.left >= 0 && fit.right <= fit.width && fit.scroll <= fit.width, fit);
   if (shots) await page.shot(join(shots, 'mentions-phone.png'));
@@ -430,16 +430,16 @@ try {
   await Bun.sleep(600);
   await clear();
   await type('@');
-  await page.until(`[...document.querySelectorAll('.mc-pop .mc-sec')].length > 1`, 5000).catch(() => {});
+  await page.until(`[...document.querySelectorAll('.mp-pop .mp-sec')].length > 1`, 5000).catch(() => {});
   const phoneHeads = await sections();
   if (shots) await page.shot(join(shots, 'mentions-phone-friends.png'));
   await clear();
   await type('@theo');
-  await page.until(`document.querySelector('.mc-pop .ec-opt.on .mc-name')?.textContent === 'Theo'`, 5000).catch(() => {});
-  await page.eval(`document.querySelector('.mc-pop .ec-opt.on .mc-more').click()`);
-  await page.until(`!!document.querySelector('.mc-pop .mc-back')`, 3000).catch(() => {});
+  await page.until(`document.querySelector('.mp-pop .ec-opt.on .mp-name')?.textContent === 'Theo'`, 5000).catch(() => {});
+  await page.eval(`document.querySelector('.mp-pop .ec-opt.on .mp-more').click()`);
+  await page.until(`!!document.querySelector('.mp-pop .mp-back')`, 3000).catch(() => {});
   const phoneFit = await page.eval<{ left: number; right: number; width: number; scroll: number } | null>(
-    `(() => { const p = document.querySelector('.mc-pop'); if (!p) return null; const r = p.getBoundingClientRect(); return { left: Math.round(r.left), right: Math.round(r.right), width: innerWidth, scroll: document.documentElement.scrollWidth }; })()`,
+    `(() => { const p = document.querySelector('.mp-pop'); if (!p) return null; const r = p.getBoundingClientRect(); return { left: Math.round(r.left), right: Math.round(r.right), width: innerWidth, scroll: document.documentElement.scrollWidth }; })()`,
   );
   const phoneAccounts = await listed();
   check("on a phone: the sections, and a tap on the arrow opens Theo's accounts, which fit the screen", phoneHeads.join('|') === 'Here|Friends' && phoneAccounts.length === 2 && !!phoneFit && phoneFit.left >= 0 && phoneFit.right <= phoneFit.width && phoneFit.scroll <= phoneFit.width, { phoneHeads, phoneAccounts, phoneFit });
