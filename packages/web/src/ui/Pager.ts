@@ -101,12 +101,10 @@ function restCss(rest: Rest): string {
 }
 
 /**
- * Can something under the finger scroll sideways that way, or does it claim a swipe that way for itself
- * (`data-claims-swipe="left"`: an inbox row swiped left marks it, ui/ReplyMark.tsx)? Then the swipe is its, not ours.
+ * Can something under the finger scroll sideways that way? Then the swipe is its, not ours.
  */
 function scrollsSideways(from: HTMLElement | null, stop: HTMLElement, dx: number): boolean {
   for (let n = from; n && n !== stop; n = n.parentElement) {
-    if (n.dataset?.claimsSwipe === (dx < 0 ? 'left' : 'right')) return true;
     if (n.scrollWidth <= n.clientWidth + 1) continue;
     const ox = getComputedStyle(n).overflowX;
     if (ox !== 'auto' && ox !== 'scroll') continue;
