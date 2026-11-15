@@ -43,6 +43,7 @@ Opens are visits to the chat of 5 s or more in use (`labels.ts` `OPEN_DWELL`), o
 | `inbox.top8`, `inbox.deep` | the share of them from the first 8 rows, and from below row 20 | those opens |
 | `needs.predicted`, `needs.answered` | for owed replies whose 3 days ended that day, the mean "needs a reply" chance shown (`needs_prediction`, kept at 15 min, 1 h, 6 h and a day of age) and the share answered within the 3 days ([inbox.md](inbox.md#needs-a-reply)) | chances kept |
 | `needs.brier`, `needs.brier_table` | the same: the Brier score of the chance shown, and of the owed table's chance alone | chances kept |
+| `foryou.clicked`, `foryou.clicked_explore` | of the For you items on screen that day (a `shown` event, [foryou.md](foryou.md)), the share opened from it; and the same for exploration slots alone, which no order chose | items shown, and those from exploration slots |
 
 Why each:
 
@@ -97,8 +98,6 @@ The loop, for an agent once a week:
 
 ## Seams
 
-- **The feed.** A feed to replace Catch up, with impressions logged, is being built. Once it logs them, add its
-  click-through rate the same way.
 - **Replay headlines** are not recorded: a replay's numbers go in its pull request and its doc.
 
 A new scorer is a generator over one day (`DayContext`: the day's bounds, your identities, opens by chat) that yields

@@ -291,7 +291,7 @@ What you tell triage about a decision. Any decision that is not silent can be ma
 - **On the notification itself** (the Android app, and `sw.js` in a browser): an alert has **Not urgent**, the same
   as "Alert was wrong"; a Conversation row has **Should have alerted**; a list row has **Less like this** and
   **Should have alerted**.
-- **On How it sorts** (`#/model`; from Catch up's header, the inbox button's menu and Settings → Notifications),
+- **On How it sorts** (`#/model`; from For you's header, the inbox button's menu and Settings → Notifications),
   which lists the last week under Alerts, Conversations, List and Below the list, one line per conversation with
   its importance, the two toggles and *Why*. The hub gives it the alerts and Conversations, newest first, the list
   by importance, and the 40 most important of the last two days that fell below it (`GET /api/inbox`, `store.ts`

@@ -235,6 +235,8 @@ export { api, apiHooks } from './api.ts';
 // ------------------------------------------------------------------ applying hub data
 
 const putIdentity = (i: P.IdentityView) => void (put(db, i) && changed('shown'));
+/** People a page brought that the client may not know yet (For you's items). */
+export const adoptIdentities = (list: P.IdentityView[]) => list.forEach(putIdentity);
 
 export function applyBootstrap(b: P.Bootstrap) {
   applyBootstrapTo(db, b);

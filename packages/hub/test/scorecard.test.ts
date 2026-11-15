@@ -148,6 +148,15 @@ describe('scoring a day', () => {
     visit('y', at(21), 2, 'inbox', 0);
     visit('z', at(21.5), 2, 'inbox', 9);
     visit('z', at(22), 2, 'inbox', 25);
+
+    // For you: four items served and shown that day (two from exploration slots), one of each kind opened; a fifth
+    // served and never shown; a sixth shown the next day.
+    const item = store.db.query(`INSERT INTO foryou_item (id, epoch, message_id, conversation_id, position, slot, propensity, created_at) VALUES (?, 'ep', ?, 'cnv_x', ?, ?, ?, ?)`);
+    const ev = store.db.query(`INSERT INTO foryou_event (item_id, device, kind, at, ms) VALUES (?, 'dev-a', ?, ?, ?)`);
+    ['rank', 'rank', 'explore', 'explore', 'rank', 'rank'].forEach((slot, i) => item.run(`ep.${i}`, `msg_f${i}`, i, slot, slot === 'rank' ? 1 : 0.2, at(9)));
+    for (const i of [0, 1, 2, 3]) ev.run(`ep.${i}`, 'shown', at(9) + i * MIN, 1500);
+    ev.run('ep.5', 'shown', at(30), 1500);
+    for (const i of [0, 2]) ev.run(`ep.${i}`, 'clicked', at(9.5), null);
   });
   afterAll(() => {
     store.db.close();
@@ -212,6 +221,12 @@ describe('scoring a day', () => {
     expect(s['needs.answered'].value).toBeCloseTo(1 / 3, 6);
     expect(s['needs.brier'].value).toBeCloseTo((0.4 ** 2 + 0.2 ** 2 + 0.9 ** 2) / 3, 6);
     expect(s['needs.brier_table'].value).toBeCloseTo((0.2 ** 2 + 0.5 ** 2 + 0.9 ** 2) / 3, 6);
+  });
+
+  test('For you: the share of shown items opened, and of exploration slots alone', () => {
+    const s = score();
+    expect(s['foryou.clicked']).toMatchObject({ value: 0.5, n: 4 });
+    expect(s['foryou.clicked_explore']).toMatchObject({ value: 0.5, n: 2 });
   });
 
   test('the hub keeps each matured day once, waits for the rest, and scores again when the metrics change', () => {

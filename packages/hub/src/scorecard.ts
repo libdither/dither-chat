@@ -30,7 +30,7 @@ const DAY = 24 * HOUR;
  * decisions or visits have since been let go then scores with less (housekeeping.ts keeps triage 90 days, the log for
  * its retention).
  */
-/** 2: the needs-reply chance's calibration (needsReply), scored back over the days already kept. */
+/** 2: the needs-reply chance's calibration (needsReply) and For you's opens, scored back over the days already kept. */
 export const SCORE_VERSION = 2;
 /** A notification was followed when you opened its chat within this long. */
 const FOLLOW_WITHIN = 3 * HOUR;
@@ -74,8 +74,7 @@ interface DayContext {
 
 /**
  * A metric's scorer: yields how many rows it read since it last yielded (slices.ts), returns its rows for the day.
- * To score something new, add a scorer here and its chart to the protocol's SCORE_CHARTS. One is waiting on work in
- * progress (docs/scorecard.md, "Seams"): the feed's click-through rate.
+ * To score something new, add a scorer here and its chart to the protocol's SCORE_CHARTS (docs/scorecard.md, "Seams").
  */
 type DayScorer = (c: DayContext) => Generator<number, ScoreRow[]>;
 
@@ -386,7 +385,27 @@ function* needsReply(c: DayContext): Generator<number, ScoreRow[]> {
   ];
 }
 
-const SCORERS: DayScorer[] = [notified, decisions, unprompted, inbox, needsReply];
+/**
+ * For you (foryou.ts, docs/foryou.md): of the items on screen that day (a `shown` event on any device), the share
+ * opened from it (`clicked`); and the same for exploration slots alone, whose items no order chose.
+ */
+function* foryou(c: DayContext): Generator<number, ScoreRow[]> {
+  // A copy from before For you has no tables for it: nothing to score.
+  if (!c.db.query(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'foryou_event'`).get()) return [row(c.day, 'foryou.clicked', null, 0), row(c.day, 'foryou.clicked_explore', null, 0)];
+  const rows = c.db
+    .query(
+      `SELECT i.slot AS slot, EXISTS (SELECT 1 FROM foryou_event k WHERE k.item_id = e.item_id AND k.kind = 'clicked') AS clicked
+       FROM foryou_event e JOIN foryou_item i ON i.id = e.item_id WHERE e.kind = 'shown' AND e.at >= ? AND e.at < ? GROUP BY e.item_id LIMIT 50000`,
+    )
+    .all(c.from, c.to) as Row[];
+  yield rows.length;
+  const clicked = rows.filter((r) => r.clicked).length;
+  const explore = rows.filter((r) => r.slot === 'explore');
+  const exploreClicked = explore.filter((r) => r.clicked).length;
+  return [row(c.day, 'foryou.clicked', share(clicked, rows.length), rows.length, { clicked }), row(c.day, 'foryou.clicked_explore', share(exploreClicked, explore.length), explore.length, { clicked: exploreClicked })];
+}
+
+const SCORERS: DayScorer[] = [notified, decisions, unprompted, inbox, needsReply, foryou];
 
 /**
  * Your identities: what you wrote is by one of these. As interact.ts SELF_SQL, but on identity's person index: SQLite
@@ -540,6 +559,8 @@ export function seedDemoScores(db: Database, now: number) {
         ['needs.answered', clamp(0.74 - 0.03 * t + 0.08 * wob(i, 19)), 30 + (i % 12)],
         ['needs.brier', clamp(0.17 - 0.03 * t + 0.02 * wob(i, 20)), 30 + (i % 12)],
         ['needs.brier_table', clamp(0.19 + 0.02 * wob(i, 21)), 30 + (i % 12)],
+        ['foryou.clicked', i < 10 ? null : clamp(0.08 + 0.06 * t + 0.03 * wob(i, 18)), i < 10 ? 0 : 30 + ((i * 5) % 25)],
+        ['foryou.clicked_explore', i < 10 ? null : clamp(0.05 + 0.04 * t + 0.04 * wob(i, 19)), i < 10 ? 0 : 6 + (i % 5)],
       ];
       for (const [m, value, n] of v) put.run(day, m, value, n, now);
     }

@@ -116,6 +116,15 @@ export const SCORE_CHARTS: ScoreChart[] = [
       { key: 'needs.brier_table', label: 'Reply table alone', kind: 'brier', better: false },
     ],
   },
+  {
+    id: 'foryou',
+    title: 'For you: items you opened',
+    about: 'Of the For you items that were on your screen that day, the share you opened; and the same for the items it was trying out (exploration), which no order chose.',
+    metrics: [
+      { key: 'foryou.clicked', label: 'All items shown', kind: 'share', better: true },
+      { key: 'foryou.clicked_explore', label: 'Items it was trying', kind: 'share', better: true },
+    ],
+  },
 ];
 
 /** Every metric, in chart order. */
