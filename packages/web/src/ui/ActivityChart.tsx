@@ -228,7 +228,12 @@ function Timeline({ v, self }: { v: P.ActivityChartView; self: boolean }) {
             tabIndex={0}
             role="img"
             aria-label={`Messages per ${unit}. ${activitySummary(v, self)}`}
-            onPointerMove={(e) => e.pointerType !== 'touch' && !(e.target as Element).closest('.act-mark-hit') && setSel({ bar: barAt(e) })}
+            onPointerMove={(e) => {
+              if (e.pointerType === 'touch' || (e.target as Element).closest('.act-mark-hit')) return;
+              // The same bar keeps the same state, so the chart is drawn again only when the pointer reaches another.
+              const bar = barAt(e);
+              setSel((s) => (s && 'bar' in s && s.bar === bar ? s : { bar }));
+            }}
             onPointerDown={(e) => !(e.target as Element).closest('.act-mark-hit') && setSel({ bar: barAt(e) })}
             onPointerLeave={(e) => e.pointerType !== 'touch' && setSel(null)}
             // A tap focuses it too: keep the bar the tap picked.

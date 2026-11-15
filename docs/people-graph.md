@@ -31,8 +31,10 @@ Nothing is guessed: two identities are one person only if you (or a direct chat)
 
 ## Using it
 
-- **Move**: drag to pan, scroll or pinch to zoom, the buttons at the bottom right (zoom in, out, fit everything), or
-  `+`, `-` and `0` with the graph focused.
+- **Move**: drag to pan, a mouse wheel or a pinch to zoom, the buttons at the bottom right (zoom in, out, fit
+  everything), or `+`, `-` and `0` with the graph focused. A touchpad is followed as it moves: its pinch zooms by the
+  fingers' own scale about the point between them, two fingers moving pan, and two fingers on a touch screen pan with
+  their midpoint as they pinch.
 - **Hover** a node for what it is; **click** it for a card: who or what, its networks, the accounts with a direct chat
   with them (or that see the place), Profile / About and Chats / Open, the places a person is in, and who they share
   places with — tagged "other account" when you have direct chats with each of them on different accounts. A place's
