@@ -15,7 +15,7 @@ const splitKey = (key: string) => {
 };
 const toKey = (it: P.FolderView['items'][number]) => `${it.kind}:${it.id}`;
 
-export function currentLayout(): Layout {
+function currentLayout(): Layout {
   return { order: railEntries().map((e) => e.key), folders: db.folders.map((f) => ({ id: f.id, items: f.items.map(toKey) })) };
 }
 
@@ -58,7 +58,7 @@ function moveToFolder(key: string, folderId: string | null) {
   save({ order: l.order.filter((k) => !folderId || k !== key), folders });
 }
 
-export function newFolderWith(key: string) {
+function newFolderWith(key: string) {
   const { kind, id } = splitKey(key);
   const name = prompt('Folder name', 'New folder')?.trim();
   if (!name) return;

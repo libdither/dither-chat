@@ -33,7 +33,7 @@ export const ADD_LIMITS: Record<PaceKind, { windowMs: number; max: number; netwo
 };
 
 /** How long the hub waits for the network. A join may wait on it (a Discord guild's first sync, a Matrix knock). */
-export const ADD_TIMEOUTS = { resolve: 30_000, add: 90_000, answer: 90_000, remove: 90_000 };
+const ADD_TIMEOUTS = { resolve: 30_000, add: 90_000, answer: 90_000, remove: 90_000 };
 
 /**
  * Previews kept in memory per account and reading, so an invite in a message that was looked up once shows again
@@ -326,7 +326,7 @@ export function pendingLinks(db: Database, identityIds?: string[]): Map<string, 
  * follows that accounts with no list of them say in their kept profiles (profileFollows), and `followsYou` on a
  * listed follow its profile says they return. `friend` also has the mutual follows, listed or not.
  */
-export function peopleLinks(store: Store, relationship: string | null, accountId: string | null): P.PeopleLinksView {
+function peopleLinks(store: Store, relationship: string | null, accountId: string | null): P.PeopleLinksView {
   const db = store.db;
   addTables(db);
   const rows = db
@@ -354,7 +354,7 @@ export function peopleLinks(store: Store, relationship: string | null, accountId
  * Never your own identities: your second X account is not a friend of your first. Each `from: 'profile'`, `seenAt`
  * when that profile was kept.
  */
-export function profileFollows(db: Database, only: { accountId?: string | null; identityIds?: string[] }): P.PersonLinkView[] {
+function profileFollows(db: Database, only: { accountId?: string | null; identityIds?: string[] }): P.PersonLinkView[] {
   addTables(db);
   const rows = db.query(PROFILE_FOLLOWS_SQL).all(only.accountId ?? null, only.identityIds ? JSON.stringify(only.identityIds) : null) as Row[];
   // JSON true reads back as 1.
@@ -441,7 +441,7 @@ export function givePace(db: Database, accountId: string, kind: PaceKind, at: nu
 
 // ------------------------------------------------------------------ routes
 
-export interface AddDeps {
+interface AddDeps {
   store: Store;
   online(accountId: string): boolean;
   command<T>(accountId: string, cmd: P.AdapterCommand extends infer C ? (C extends { id: string } ? Omit<C, 'id'> : C) : never, timeoutMs: number): Promise<T>;

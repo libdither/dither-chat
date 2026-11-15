@@ -25,7 +25,7 @@ export interface DeskConfig {
   now?: () => number;
 }
 
-export interface Paired {
+interface Paired {
   origin: string;
   token: string;
   at: number;
@@ -76,7 +76,7 @@ export function unpair(c: Pick<DeskConfig, 'configDir'>) {
 }
 
 const hashCode = (code: string) => createHash('sha256').update(normalizeCode(code)).digest('hex');
-export const normalizeCode = (code: string) => code.toUpperCase().replace(/[^A-Z0-9]/g, '');
+const normalizeCode = (code: string) => code.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
 /** A one-time code for the web app's Settings; it works for five minutes and five tries. */
 export function startPairing(c: Pick<DeskConfig, 'configDir'>, origin?: string, now = Date.now()): string {

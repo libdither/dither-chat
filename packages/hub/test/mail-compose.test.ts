@@ -155,11 +155,20 @@ describe('HTML', () => {
 
   test('a reply quotes the original in a blockquote; no script gets through', () => {
     const h = messageHtml('reply', 'Sure <b>', orig({ text: 'Hi <script>alert(1)</script>' }), true, 'UTC');
-    expect(h).toContain('<div dir="auto">Sure &lt;b&gt;</div>');
+    expect(h).toContain('<div dir="auto"><p style="margin:0">Sure &lt;b&gt;</p></div>');
     expect(h).toContain('<div class="dc-quote-head">On Tue, Nov 3, 2026 at 3:42 PM, Sam Lee &lt;sam@lee.example&gt; wrote:</div><blockquote type="cite"');
     expect(h).toContain('Hi &lt;script&gt;alert(1)&lt;/script&gt;');
     expect(h).not.toContain('<script');
-    expect(messageHtml('reply', 'Sure', orig(), false)).toBe('<div dir="auto">Sure</div>');
+    expect(messageHtml('reply', 'Sure', orig(), false)).toBe('<div dir="auto"><p style="margin:0">Sure</p></div>');
+  });
+
+  test('your text is Markdown (protocol mail-markdown.ts): marks, lists and links; typed HTML stays text', () => {
+    const h = messageHtml('new', 'Hi **Sam**, _see_ [the menu](https://ramen.example/menu).\n\n1. book\n2. go\n\nThanks\n--\nKit <b>', null, false);
+    expect(h).toBe(
+      '<div dir="auto"><p style="margin:0 0 1em">Hi <strong>Sam</strong>, <em>see</em> <a href="https://ramen.example/menu">the menu</a>.</p>\n' +
+        '<ol>\n<li>book</li>\n<li>go</li>\n</ol>\n<p style="margin:0">Thanks<br>--<br>Kit &lt;b&gt;</p></div>',
+    );
+    expect(messageHtml('new', '[x](javascript:alert(1)) <script>alert(1)</script>', null, false)).not.toMatch(/<script|javascript:/);
   });
 
   test('a forward carries its block', () => {

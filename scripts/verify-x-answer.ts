@@ -59,8 +59,6 @@ let boot = await json('/api/bootstrap');
 if (!boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub');
 await until(async () => (boot = await json('/api/bootstrap')).conversations.some((c: any) => c.variant === 'feed'), 15_000, 'no feed conversation');
 const feed = boot.conversations.find((c: any) => c.variant === 'feed');
-const alice = boot.identities.find((i: any) => i.network === 'x' && i.handle === 'alicechen_dev');
-const quinn = boot.identities.find((i: any) => i.network === 'x' && i.handle === 'quinnwrites');
 
 const { page, close } = await launch();
 const load = async (hash: string) => {
@@ -68,25 +66,6 @@ const load = async (hash: string) => {
   await page.goto(`${base}/${hash}`);
 };
 const overflow = (sel: string) => page.eval<number>(`(() => { const s = document.querySelector(${JSON.stringify(sel)}); return s ? s.scrollWidth - s.clientWidth : -1; })()`);
-const thread = () =>
-  page.eval<any>(`(() => {
-    const f = document.querySelector('.thread-focal');
-    return {
-      hash: location.hash,
-      focal: f?.querySelector('.thread-focal-text')?.textContent ?? null,
-      focalWho: f?.querySelector('.post-who b')?.textContent ?? null,
-      ancestors: [...document.querySelectorAll('.thread-list > .thread-post')].map((p) => p.querySelector('.post-who b')?.textContent),
-      chains: [...document.querySelectorAll('.thread-chain')].map((c) => [...c.querySelectorAll('.thread-post')].map((p) => p.querySelector('.post-who b')?.textContent)),
-      // The comment tree: each reply's depth and who wrote it, in page order ("2:Nora").
-      tree: [...document.querySelectorAll('.ct-node')].map((n) => n.dataset.depth + ':' + (n.querySelector(':scope > .ct-main .post-who b')?.textContent ?? '')),
-      flat: [...document.querySelectorAll('.ct-flat')].map((f) => [f.querySelector('.ct-flat-top .post-who b')?.textContent, f.querySelectorAll('.ct-flat-reply').length]),
-      style: document.querySelector('.thread-style [aria-pressed="true"]')?.textContent ?? null,
-      lines: document.querySelectorAll('.thread-post.line').length,
-      more: !!document.querySelector('.thread-more'),
-      openOnX: f?.querySelector('.post-open')?.href ?? null,
-      stored: document.querySelector('.thread-stored')?.textContent ?? null,
-    };
-  })()`);
 
 
 const center = (sel: string) => page.eval<{ x: number; y: number } | null>(`(() => { const r = document.querySelector(${JSON.stringify(sel)})?.getBoundingClientRect(); return r ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null; })()`);

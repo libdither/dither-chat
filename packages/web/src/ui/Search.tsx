@@ -248,7 +248,7 @@ const RANKED: Record<P.NetSearchView['ranked'], string> = { jev: 'Ordered by jev
 const andList = (xs: string[]) => (xs.length > 1 ? `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}` : (xs[0] ?? ''));
 
 /** The networks some account of yours can search on its own servers. */
-export function searchableNetworks(): P.Network[] {
+function searchableNetworks(): P.Network[] {
   return [...new Set([...db.accounts.values()].filter((a) => a.status !== 'disabled' && a.capabilities.includes('search')).map((a) => a.network))];
 }
 

@@ -106,7 +106,7 @@ try {
   await p.until(`[...document.querySelectorAll('.reaction.mine')].some((r) => r.textContent.includes('👍'))`, 8000);
   await move('.msg:not(.system)');
   await Bun.sleep(300);
-  const row = await p.eval<{ cls: string; title: string }[]>(`[...document.querySelectorAll('.msg-actions button')].filter((b) => b.getBoundingClientRect().width).slice(0, 4).map((b) => ({ cls: b.className, title: b.title }))`);
+  const row = await p.eval<{ cls: string; title: string }[]>(`[...document.querySelectorAll('.msg-actions button')].filter((b) => b.getBoundingClientRect().width).slice(0, 5).map((b) => ({ cls: b.className, title: b.title }))`);
   const add = row.find((b) => b.cls.includes('swap'));
   check(add && /keeps one per person/.test(add.title), 'on Signal, with a reaction of yours, the add button shows the swap icon', add);
   check(row.some((b) => b.cls.includes('on') && b.title.includes('Take back your 👍')), 'your reaction is marked in the quick row', row.map((b) => b.title));

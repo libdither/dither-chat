@@ -19,7 +19,7 @@ type Emit = (ev: P.AdapterEvent) => void;
 type CallCommand = Extract<P.AdapterCommand, { t: 'call' }>;
 
 /** Who the room's bot is in the demo world, and the account a command comes from. */
-export interface RoomContext {
+interface RoomContext {
   self: string;
   bot: { id: string; name: string };
 }

@@ -40,7 +40,7 @@ export function startOf(urgency: Urgency, judge?: number): P.TriageProbs {
 }
 
 /** Reasons that are about you by name: a mention, a review asked of you, an assignment. */
-export const ADDRESSED = new Set(['mention', 'team_mention', 'review_requested', 'assign']);
+const ADDRESSED = new Set(['mention', 'team_mention', 'review_requested', 'assign']);
 
 const SOURCES: Record<string, string> = { github: 'GitHub', telegram: 'Telegram', 'dither-accounts': 'dither-accounts' };
 export const sourceName = (s: string) => SOURCES[s] ?? (s ? s[0].toUpperCase() + s.slice(1) : 'A service');

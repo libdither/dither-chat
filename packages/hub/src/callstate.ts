@@ -28,7 +28,7 @@ type Row = Record<string, any>;
 
 const made = new WeakSet<Database>();
 
-export function callTables(db: Database) {
+function callTables(db: Database) {
   if (made.has(db)) return;
   db.exec(`CREATE TABLE IF NOT EXISTS call_log (
     id                  TEXT PRIMARY KEY,
@@ -138,7 +138,7 @@ function caps(acc: Pick<AccountRow, 'capabilities'> | null | undefined): P.Capab
   }
 }
 
-export function callView(store: Store, r: Row): P.CallView {
+function callView(store: Store, r: Row): P.CallView {
   const acc = store.account(r.account_id);
   const c = caps(acc);
   const participants = JSON.parse(r.participants || '[]') as string[];
@@ -244,7 +244,7 @@ export function currentCalls(store: Store, now = Date.now()): P.CallView[] {
 }
 
 /** A conversation's calls, newest first (GET /api/calls/ringing?conversation=). */
-export function conversationCalls(store: Store, conversationId: string, limit = 50): P.CallView[] {
+function conversationCalls(store: Store, conversationId: string, limit = 50): P.CallView[] {
   callTables(store.db);
   return (store.db.query('SELECT * FROM call_log WHERE conversation_id = ? ORDER BY started_at DESC LIMIT ?').all(conversationId, limit) as Row[]).map((r) => callView(store, r));
 }
@@ -281,7 +281,7 @@ export function markDeclined(store: Store, id: string, now = Date.now()): P.Call
   return callView(store, store.db.query('SELECT * FROM call_log WHERE id = ?').get(id) as Row);
 }
 
-export function callRow(store: Store, id: string): Row | null {
+function callRow(store: Store, id: string): Row | null {
   callTables(store.db);
   return store.db.query('SELECT * FROM call_log WHERE id = ?').get(id) as Row | null;
 }
@@ -289,7 +289,7 @@ export function callRow(store: Store, id: string): Row | null {
 // ------------------------------------------------------------------ voice channels
 
 /** Who is in voice channels is logged: an adversarial feature, off unless shown and switched on. */
-export function logsVoice(store: Store): boolean {
+function logsVoice(store: Store): boolean {
   const r = store.retention();
   return r.adversarial && !!r.voice;
 }
@@ -300,7 +300,7 @@ function flagsOf(m: P.VoiceMember): Record<string, boolean> {
   return f;
 }
 
-export function voiceView(store: Store, conversationId: string): P.VoiceChannelView {
+function voiceView(store: Store, conversationId: string): P.VoiceChannelView {
   const db = store.db;
   callTables(db);
   const members = logsVoice(store)
@@ -320,7 +320,7 @@ export function voiceChannels(store: Store): P.VoiceChannelView[] {
 }
 
 /** One `voice` event: the channel's people now. Joins and leaves go in the change log under each person. */
-export function ingestVoice(store: Store, acc: AccountRow, ev: Extract<P.AdapterEvent, { t: 'voice' }>, now = Date.now()) {
+function ingestVoice(store: Store, acc: AccountRow, ev: Extract<P.AdapterEvent, { t: 'voice' }>, now = Date.now()) {
   if (!logsVoice(store) || typeof ev.conversation !== 'string' || !Array.isArray(ev.members)) return;
   const db = store.db;
   callTables(db);
@@ -369,7 +369,7 @@ function logVoice(store: Store, iid: string, conversationId: string | null, acco
 }
 
 /** A channel's status line. */
-export function ingestVoiceStatus(store: Store, acc: AccountRow, ev: Extract<P.AdapterEvent, { t: 'voiceStatus' }>, now = Date.now()) {
+function ingestVoiceStatus(store: Store, acc: AccountRow, ev: Extract<P.AdapterEvent, { t: 'voiceStatus' }>, now = Date.now()) {
   if (typeof ev.conversation !== 'string') return;
   const text = typeof ev.text === 'string' && ev.text.trim() ? ev.text.trim().slice(0, 500) : null;
   const db = store.db;
@@ -405,7 +405,7 @@ export function ingestCallEvent(store: Store, acc: AccountRow, ev: Extract<P.Ada
 
 // ------------------------------------------------------------------ routes
 
-export interface CallRouteDeps {
+interface CallRouteDeps {
   store: Store;
   online: (accountId: string) => boolean;
   command: <T>(accountId: string, cmd: any, timeoutMs?: number) => Promise<T>;

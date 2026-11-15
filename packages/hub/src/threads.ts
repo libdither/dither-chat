@@ -30,7 +30,7 @@ type Cmd =
   | Omit<Extract<P.ThreadsCommand, { t: 'setOwner' }>, 'id'>
   | Omit<Extract<P.ThreadsCommand, { t: 'setPicture' }>, 'id'>;
 
-export interface ThreadsDeps {
+interface ThreadsDeps {
   store: Store;
   online: (accountId: string) => boolean;
   command: <T>(accountId: string, cmd: Cmd, timeoutMs?: number) => Promise<T>;
@@ -57,7 +57,7 @@ export class ThreadsError extends Error {
 const made = new WeakSet<Database>();
 
 /** The tables: each account's facts of a thread, and a forum's own (the same for every account). */
-export function threadTables(db: Database) {
+function threadTables(db: Database) {
   if (made.has(db)) return;
   db.exec(`CREATE TABLE IF NOT EXISTS thread_info (
     conversation_id TEXT NOT NULL,

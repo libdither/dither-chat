@@ -70,5 +70,3 @@ export const setDeviceRule = (device: string, scope: P.DeviceScope, target: stri
 
 export const forgetDevice = (id: string) => api('/api/devices', { method: 'DELETE', body: { id } });
 
-/** Is this notification kept off this device by its own rules? The hub works it out (docs/devices.md). */
-export const quietHere = (ev: { quiet?: string[] }) => !!ev.quiet?.includes(deviceId());

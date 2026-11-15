@@ -79,7 +79,7 @@ FAMILIES.clojure = FAMILIES.lisp;
 FAMILIES.erlang = FAMILIES.latex;
 
 /** Common names a Markdown code block uses for a language. */
-export const ALIASES: Record<string, string> = { js: 'javascript', jsx: 'javascript', mjs: 'javascript', ts: 'typescript', tsx: 'typescript', py: 'python', rs: 'rust', sh: 'shell', bash: 'shell', zsh: 'shell', console: 'shell', rb: 'ruby', yml: 'yaml', 'c++': 'cpp', cs: 'csharp', kt: 'kotlin', golang: 'go', md: 'markdown', patch: 'diff', html: 'html', svg: 'xml', jsonc: 'json', hs: 'haskell', docker: 'dockerfile', make: 'makefile', tex: 'latex' };
+const ALIASES: Record<string, string> = { js: 'javascript', jsx: 'javascript', mjs: 'javascript', ts: 'typescript', tsx: 'typescript', py: 'python', rs: 'rust', sh: 'shell', bash: 'shell', zsh: 'shell', console: 'shell', rb: 'ruby', yml: 'yaml', 'c++': 'cpp', cs: 'csharp', kt: 'kotlin', golang: 'go', md: 'markdown', patch: 'diff', html: 'html', svg: 'xml', jsonc: 'json', hs: 'haskell', docker: 'dockerfile', make: 'makefile', tex: 'latex' };
 
 function scan(text: string, f: Family): Token[] {
   const out: Token[] = [];

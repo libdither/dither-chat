@@ -2,44 +2,135 @@
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "workspaces": {
     ".": {
-      "entry": ["scripts/**/*.ts"],
-      "project": ["scripts/**/*.ts"]
+      "entry": [
+        "scripts/**/*.ts"
+      ],
+      "project": [
+        "scripts/**/*.ts"
+      ]
     },
     "packages/hub": {
-      "entry": ["src/cli.ts", "src/**/*-worker.ts", "test/**/*.ts"],
-      "project": ["src/**/*.ts", "test/**/*.ts"]
+      "entry": [
+        "src/cli.ts",
+        "src/**/*-worker.ts",
+        "test/**/*.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "test/**/*.ts"
+      ]
     },
     "packages/web": {
-      "entry": ["index.html", "test/**/*.{ts,tsx}", "public/sw.js"],
-      "project": ["src/**/*.{ts,tsx}", "test/**/*.{ts,tsx}"]
+      "entry": [
+        "index.html",
+        "test/**/*.{ts,tsx}",
+        "public/sw.js",
+        "src/graph/GraphView.tsx",
+        "src/mail/api.ts",
+        "src/prefetch.ts",
+        "src/ui/AccountPane.tsx",
+        "src/ui/AccountSelf.tsx",
+        "src/ui/AddAccount.tsx",
+        "src/ui/apps/Apps.tsx",
+        "src/ui/calendar/PlanChip.tsx",
+        "src/ui/CallPanel.tsx",
+        "src/ui/ChipLayer.ts",
+        "src/ui/mail/ComposerCard.tsx",
+        "src/ui/feed/FeedView.tsx",
+        "src/ui/files/ArchiveView.tsx",
+        "src/ui/files/JsonView.tsx",
+        "src/ui/files/MarkdownView.tsx",
+        "src/ui/files/PdfView.tsx",
+        "src/ui/files/TableView.tsx",
+        "src/ui/files/TextView.tsx",
+        "src/ui/mail/screens.ts",
+        "src/ui/MediaParts.tsx",
+        "src/ui/MentionPicker.tsx",
+        "src/ui/Moderation.tsx",
+        "src/ui/NoticesPane.tsx",
+        "src/ui/PalettePages.tsx",
+        "src/ui/Poll.tsx",
+        "src/ui/ProfileSelf.tsx",
+        "src/ui/rich/Rich.tsx",
+        "src/ui/SendLists.tsx",
+        "src/ui/ServerParts.tsx",
+        "src/ui/SignalPeople.tsx",
+        "src/ui/Threads.tsx",
+        "src/voice/discord.ts"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx}",
+        "test/**/*.{ts,tsx}"
+      ]
     },
     "packages/protocol": {
-      "entry": ["test/**/*.ts"],
-      "project": ["src/**/*.ts", "test/**/*.ts"]
+      "entry": [
+        "test/**/*.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "test/**/*.ts"
+      ]
     },
     "packages/adapter-discord": {
-      "entry": ["src/main.ts", "src/lab/*.{ts,js}", "src/extension/**/*.{ts,js}", "test/**/*.ts"],
-      "project": ["src/**/*.{ts,js}", "test/**/*.ts"]
+      "entry": [
+        "src/main.ts",
+        "src/lab/*.{ts,js}",
+        "src/extension/**/*.{ts,js}",
+        "test/**/*.ts"
+      ],
+      "project": [
+        "src/**/*.{ts,js}",
+        "test/**/*.ts"
+      ]
     },
     "packages/adapter-matrix": {
-      "entry": ["src/main.ts", "testbed/*.ts", "test/**/*.ts"],
-      "project": ["src/**/*.ts", "testbed/**/*.ts", "test/**/*.ts"]
+      "entry": [
+        "src/main.ts",
+        "testbed/*.ts",
+        "test/**/*.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "testbed/**/*.ts",
+        "test/**/*.ts"
+      ]
     },
     "packages/adapter-signal": {
-      "entry": ["test/**/*.ts"],
-      "project": ["src/**/*.ts", "test/**/*.ts"]
+      "entry": [
+        "test/**/*.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "test/**/*.ts"
+      ]
     },
     "packages/adapter-whatsapp": {
-      "entry": ["test/**/*.ts"],
-      "project": ["src/**/*.ts", "test/**/*.ts"]
+      "entry": [
+        "test/**/*.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "test/**/*.ts"
+      ]
     },
     "packages/deploy": {
-      "entry": ["test/**/*.ts"],
-      "project": ["src/**/*.ts", "test/**/*.ts"]
+      "entry": [
+        "test/**/*.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "test/**/*.ts"
+      ]
     },
     "packages/desk": {
-      "entry": ["test/**/*.ts"],
-      "project": ["src/**/*.ts", "test/**/*.ts"]
+      "entry": [
+        "test/**/*.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "test/**/*.ts"
+      ]
     }
   }
 }

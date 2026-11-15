@@ -25,7 +25,7 @@ export function noteWork(what: string, at = performance.now()) {
 }
 
 /** What began between `from` and `to`, each once with how often, in order. */
-export function workBetween(from: number, to: number): string {
+function workBetween(from: number, to: number): string {
   const seen = new Map<string, number>();
   for (let i = 0; i < ring.length; i++) {
     const n = ring[(head + i) % ring.length];
@@ -71,7 +71,7 @@ export interface StallRecord {
   involuntarySwitches?: number;
 }
 
-export interface StallOptions {
+interface StallOptions {
   everyMs?: number;
   /** Holds this long or longer are logged while `forMs` lasts... */
   overMs?: number;

@@ -3,7 +3,7 @@ import type * as P from '@dither-chat/protocol';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { accountRows, kindName, type AccountRow } from '../accountrows.ts';
 import { netName } from '../model.ts';
-import { api, db, go, mailRev, rev } from '../state.ts';
+import { db, go, mailRev, rev } from '../state.ts';
 import { useLayer } from '../phone.ts';
 import { AccountChip, Modal } from './bits.tsx';
 import { FeatureIcons, KindBadge } from './AccountFeatures.tsx';
@@ -104,7 +104,7 @@ const XK = { CONTROL: 0xffe3, V: 0x76, SUPER_L: 0xffeb };
 const liveName = (t: LiveTarget) => (t.network ? netName(t.network) : kindName(t.kind ?? 'email'));
 
 /** What a live view shows: a chat account, or an account dither-accounts runs for mail (its kind, then). */
-export type LiveTarget = { id: string; label: string; network?: P.Network | null; kind?: string };
+type LiveTarget = { id: string; label: string; network?: P.Network | null; kind?: string };
 
 export function LiveView({ account, onClose }: { account: LiveTarget; onClose: () => void }) {
   const box = useRef<HTMLDivElement>(null);

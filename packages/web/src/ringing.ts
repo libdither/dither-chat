@@ -8,7 +8,7 @@ import type * as P from '@dither-chat/protocol';
 import { api } from './api.ts';
 
 /** Calls the hub told this page about, by id. */
-export const calls = signal<Map<string, P.CallView>>(new Map());
+const calls = signal<Map<string, P.CallView>>(new Map());
 /** Voice channels with people or a status line, by conversation id. */
 export const voice = signal<Map<string, P.VoiceChannelView>>(new Map());
 

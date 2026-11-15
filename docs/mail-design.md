@@ -619,7 +619,7 @@ account. Pull down refreshes.
 ```
 
 Recipients are chips completing from people (email identities first) and `mail_sender`. From is fixed text until §13.
-The body is plain text, sent as `text` plus a simple `html` from it. Attachments use chat's upload flow (`startUpload`)
+The body is Markdown, sent as `text` as written plus the `html` it makes (as built: docs/mail.md, "Formatting"). Attachments use chat's upload flow (`startUpload`)
 with the account's limits shown. Drafts save to the hub every 2 s, keyed by thread or `new:<uuid>`. Send shows
 "Sending… Undo" for 10 s.
 

@@ -27,7 +27,7 @@ export function ProfilePage({ title, onBack, children, label }: { title: string;
 }
 
 /** The banner's colour when there is no picture: what the network gave, else the network's own. */
-export function bannerStyle(banner: string | null | undefined, accent: string | null | undefined, network: P.Network | undefined): Record<string, string> {
+function bannerStyle(banner: string | null | undefined, accent: string | null | undefined, network: P.Network | undefined): Record<string, string> {
   const c = accent ?? (network ? NETWORK_META[network].color : 'var(--accent)');
   return banner ? { '--pf-accent': c, backgroundImage: `url("${banner}")` } : { '--pf-accent': c };
 }

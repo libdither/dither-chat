@@ -4,9 +4,9 @@ import { resolvesPrivate } from './webpush.ts';
 export type Lookup = (host: string) => Promise<string[]>;
 
 /** The most one media fetch may bring in: DITHER_MEDIA_MAX_MB, 500 MB unless told otherwise. */
-export const MEDIA_MAX_BYTES = Math.max(1, Number(process.env.DITHER_MEDIA_MAX_MB) || 500) * 1024 * 1024;
+const MEDIA_MAX_BYTES = Math.max(1, Number(process.env.DITHER_MEDIA_MAX_MB) || 500) * 1024 * 1024;
 
-export type PublicFetch = { ok: true; mime: string; bytes: number } | { ok: false; status: number; error: string };
+type PublicFetch = { ok: true; mime: string; bytes: number } | { ok: false; status: number; error: string };
 
 /**
  * GET a URL that someone else chose (an embed's image, an avatar a network named) into a file, for the media proxy:

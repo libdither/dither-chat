@@ -12,8 +12,8 @@ import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { fetchPublicToFile, type Lookup } from './fetchsafe.ts';
 
-export const PAGE_MAX = 512 * 1024;
-export const IMAGE_MAX = 1024 * 1024;
+const PAGE_MAX = 512 * 1024;
+const IMAGE_MAX = 1024 * 1024;
 const TIMEOUT_MS = 5_000;
 const TITLE_MAX = 200;
 const DESCRIPTION_MAX = 300;

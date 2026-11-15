@@ -29,7 +29,7 @@ async function copyText(text: string, el: HTMLElement | null): Promise<'copied' 
 }
 
 /** A code with its link under it, Copy, and Share where the device has a share sheet. */
-export function QrLink({ url, label, title }: { url: string; label: string; title: string }) {
+function QrLink({ url, label, title }: { url: string; label: string; title: string }) {
   const [copied, setCopied] = useState<'copied' | 'selected' | null>(null);
   const link = useRef<HTMLElement>(null);
   const canShare = typeof navigator.share === 'function';

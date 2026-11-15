@@ -40,7 +40,7 @@ export interface ErrorRecord {
   count?: number;
 }
 
-export interface ErrorReport {
+interface ErrorReport {
   source: ErrorSource;
   where: string;
   /** What was thrown: its name, message and stack are taken from it. */
@@ -58,8 +58,8 @@ export interface ErrorReport {
   version?: string;
 }
 
-export const MESSAGE_MAX = 300;
-export const STACK_FRAMES = 10;
+const MESSAGE_MAX = 300;
+const STACK_FRAMES = 10;
 const FRAME_MAX = 300;
 const WHERE_MAX = 120;
 const NAME_MAX = 60;
@@ -136,7 +136,7 @@ export function withRequest<T>(fn: () => T): T {
 
 export const reportedInRequest = () => inRequest.getStore()?.reported ?? false;
 
-export interface ErrorLogOptions {
+interface ErrorLogOptions {
   now?: () => number;
   /** Paths in stacks are written relative to this. */
   root?: string;

@@ -1,4 +1,4 @@
-import { createPortal, type ComponentChildren, type JSX } from 'preact';
+import { createPortal, type ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
 import { GLYPH } from '../brand.ts';
@@ -120,7 +120,7 @@ export function Count({ n, muted }: { n: number; muted?: boolean }) {
 }
 
 /** Dialogs on a phone are bottom sheets: same content, a grabber, and drag down or press back to close. */
-export function useDialog(onClose: () => void) {
+function useDialog(onClose: () => void) {
   const box = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
   close.current = onClose;
@@ -174,7 +174,9 @@ export function Menu({ trigger, children, align = 'left', up }: { trigger: (open
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!open) return;
+    // A phone's menu is a sheet on the body, outside this anchor, and closes itself on a tap past it (Sheet.tsx); a
+    // press inside it, or the one a finger lifting from a long-press makes, must not close it here.
+    if (!open || phone.value) return;
     const h = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && setOpen(false);
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);

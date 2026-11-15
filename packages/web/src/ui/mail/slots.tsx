@@ -27,7 +27,7 @@ export interface BodyProps {
   account: P.MailAccountView | undefined;
 }
 /** Null: not this renderer's message; the next one in the table gets it. */
-export type BodyRenderer = (p: BodyProps) => ComponentChildren | null;
+type BodyRenderer = (p: BodyProps) => ComponentChildren | null;
 
 export interface MessageAction {
   id: string;
@@ -48,11 +48,12 @@ export interface ThreadAction {
 }
 
 export type RowWrapper = ComponentType<{ thread: P.MailThreadView; children: ComponentChildren }>;
-export type ListBar = ComponentType<{ list: string }>;
+type ListBar = ComponentType<{ list: string }>;
 
-// A plain HTML part (only text, links, lists, quotes, bold, italic) with a text part beside it reads as the text does,
-// in the app's theme; anything styled keeps its white sheet.
-export const BODY_RENDERERS: BodyRenderer[] = [(p) => (p.body.html && !p.body.html.plain ? <HtmlBody {...p} /> : null), (p) => <TextBody {...p} />];
+// A plain HTML part (no colours, fonts, images or tables) with a text part beside it reads as the text does, in the
+// app's theme; formatted (bold, headings, code: Markdown sent from here, say), as its HTML in the app's theme; anything
+// styled keeps its white sheet.
+export const BODY_RENDERERS: BodyRenderer[] = [(p) => (p.body.html && (!p.body.html.plain || p.body.html.formatted) ? <HtmlBody {...p} /> : null), (p) => <TextBody {...p} />];
 /** On a phone the latest message is answered from the bar below, so its own buttons would be the same twice. */
 const underMessage = (m: P.MailMessageView, a: P.MailAccountView | undefined) => canAnswer(a) && !(phone.value && latestOf(m.threadId)?.id === m.id);
 const onTheBar = (t: P.MailThreadView, a: P.MailAccountView | undefined) => phone.value && canAnswer(a) && !!latestOf(t.id);

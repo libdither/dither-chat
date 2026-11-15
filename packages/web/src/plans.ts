@@ -24,7 +24,7 @@ const byId = new Map<string, P.CalendarPlanView>();
 export const planByMessage = new Map<string, P.CalendarPlanView>();
 
 /** Plans in, as a whole list (`replace`) or as changes. */
-export function putPlans(plans: P.CalendarPlanView[], replace = false) {
+function putPlans(plans: P.CalendarPlanView[], replace = false) {
   if (replace) {
     byId.clear();
     planByMessage.clear();
@@ -47,7 +47,7 @@ export function patchPlan(id: string, a: P.CalendarProposalAnswer) {
   putPlans([{ ...p, state: a.state, change: a.change, title: a.title, allDay: a.allDay, startAt: a.startAt, endAt: a.endAt, startDate: a.startDate, endDate: a.endDate, location: a.location, updatedAt: Math.max(p.updatedAt, a.updatedAt ?? 0) }]);
 }
 
-export function setCalendarLink(v: P.CalendarLinkView | null) {
+function setCalendarLink(v: P.CalendarLinkView | null) {
   const cur = calendarLink.value;
   if (v && cur && cur.reachable === v.reachable && cur.waiting === v.waiting) return;
   calendarLink.value = v;

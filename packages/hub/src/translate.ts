@@ -15,7 +15,7 @@ import type { Store } from './store.ts';
 
 type Row = Record<string, any>;
 
-export interface TranslateDeps {
+interface TranslateDeps {
   store: Store;
   online: (accountId: string) => boolean;
   command: <T>(accountId: string, cmd: { t: 'translate'; post: string; to: string; lang?: string }, timeoutMs?: number) => Promise<T>;
@@ -33,8 +33,8 @@ export class TranslateError extends Error {
 }
 
 /** At most this many texts in one call, each at most this long. */
-export const TRANSLATE_MAX_ITEMS = 40;
-export const TRANSLATE_MAX_TEXT = 5000;
+const TRANSLATE_MAX_ITEMS = 40;
+const TRANSLATE_MAX_TEXT = 5000;
 /** Translations kept, the oldest dropped first. */
 const KEEP = 4000;
 /** How many a call translates at once (a network's own call is one post each). */

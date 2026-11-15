@@ -10,7 +10,7 @@ let parts: Parts | null = null;
 let loading: Promise<Parts> | null = null;
 
 /** Some account has stories, on this network. */
-export const storiesHere = (network: string | undefined) => !!network && [...db.accounts.values()].some((a) => a.network === network && a.capabilities.includes('stories'));
+const storiesHere = (network: string | undefined) => !!network && [...db.accounts.values()].some((a) => a.network === network && a.capabilities.includes('stories'));
 
 export function Stories({ identityId, conversationId, network }: { identityId?: string; conversationId?: string; network?: string }) {
   const want = storiesHere(network);

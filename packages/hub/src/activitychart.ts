@@ -12,8 +12,8 @@ import type { Database } from 'bun:sqlite';
 
 export const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
-export const DEFAULT_DAYS = 30;
-export const MAX_DAYS = 365;
+const DEFAULT_DAYS = 30;
+const MAX_DAYS = 365;
 
 /** A time zone: an IANA name, or a fixed offset in minutes east of UTC. */
 export type Zone = { tz: string } | { offset: number };
@@ -64,7 +64,7 @@ export function offsetAt(z: Zone, t: number): number {
   return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - s;
 }
 
-export interface Piece {
+interface Piece {
   from: number;
   to: number;
   offset: number;
@@ -101,13 +101,13 @@ export function offsetPieces(z: Zone, from: number, to: number): Piece[] {
 }
 
 /** The instant a local wall-clock time names; a time a clock skips gives the instant just after the skip. */
-export function instantOf(z: Zone, local: number): number {
+function instantOf(z: Zone, local: number): number {
   let t = local - offsetAt(z, local);
   t = local - offsetAt(z, t);
   return t;
 }
 
-export interface LocalRange {
+interface LocalRange {
   /** The first day's midnight, as local wall-clock ms (UTC fields read as local). */
   first: number;
   /** The instant of that midnight. */
@@ -144,7 +144,7 @@ export function rangePieces(z: Zone, r: LocalRange, now: number): Piece[] {
 }
 
 /** Fractional hour of the range an instant falls in, by the piece that holds it. */
-export function hourOf(pieces: Piece[], r: LocalRange, t: number): number | null {
+function hourOf(pieces: Piece[], r: LocalRange, t: number): number | null {
   const p = pieces.find((x) => t >= x.from && t < x.to);
   return p ? (t + p.offset - r.first) / HOUR : null;
 }
@@ -153,7 +153,7 @@ const PRIORITY: Record<P.PresenceState, number> = { online: 3, dnd: 2, idle: 1, 
 const STATE_INDEX: Record<P.PresenceState, number> = { online: 0, idle: 1, dnd: 2, offline: 3 };
 
 /** One identity's presence: the state when the range starts (null: not known), then each change in it. */
-export interface PresenceInput {
+interface PresenceInput {
   before: P.PresenceState | null;
   changes: { at: number; state: P.PresenceState }[];
 }
@@ -221,11 +221,11 @@ export function presenceHours(stretches: { from: number; to: number; state: P.Pr
 }
 
 /** Where a conversation's messages are, by its shape. */
-export function whereOf(shape: string): P.ActivityWhere {
+function whereOf(shape: string): P.ActivityWhere {
   return shape === 'direct' || shape === 'self' ? 'dm' : shape === 'group' ? 'group' : 'server';
 }
 
-export interface ChartInput {
+interface ChartInput {
   /** Their identities. */
   ids: string[];
   /** Your identities; empty on your own page (no back-and-forth to show). */

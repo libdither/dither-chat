@@ -5,7 +5,7 @@
 import { signal } from '@preact/signals';
 import type { DropTarget, DropWhere } from '../layout.ts';
 
-export interface DragState {
+interface DragState {
   key: string;
   label: string;
   x: number;
@@ -14,7 +14,7 @@ export interface DragState {
 }
 export const drag = signal<DragState | null>(null);
 
-export interface DragOpts {
+interface DragOpts {
   key: string;
   label: string;
   /** Drops stay within rows of the same group. */

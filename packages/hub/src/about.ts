@@ -12,7 +12,7 @@ import { lockedModeration, moderationView } from './moderation.ts';
 import { feedRefusal, isFeed } from './feed.ts';
 import type { Store } from './store.ts';
 
-export interface AboutDeps {
+interface AboutDeps {
   store: Store;
   online: (accountId: string) => boolean;
   command: <T>(
@@ -28,7 +28,7 @@ export interface AboutDeps {
 }
 
 /** How long the hub waits for people to be added: each is its own request on some networks. */
-export const ADD_MEMBERS_TIMEOUT = 90_000;
+const ADD_MEMBERS_TIMEOUT = 90_000;
 /** At most this many people offered to pick from. */
 const CANDIDATES_MAX = 400;
 

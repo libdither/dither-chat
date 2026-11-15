@@ -68,6 +68,15 @@ export async function loadShadow() {
   } catch {}
 }
 
+/** How well "needs a reply" chances matched what you did (docs/inbox.md, "Needs a reply"): How it sorts shows it. */
+export const needsCalibration = signal<P.NeedsReplyCalibration | null>(null);
+
+export async function loadNeedsCalibration() {
+  try {
+    needsCalibration.value = await api<P.NeedsReplyCalibration>('/api/attention/needs-reply');
+  } catch {}
+}
+
 export async function relearn() {
   triagePolicy.value = await api<P.TriagePolicyView>('/api/triage/policy/relearn', { body: {} });
 }

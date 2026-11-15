@@ -29,7 +29,7 @@ export function rememberReplyMentions(accountId: string | undefined, on: boolean
 
 // ------------------------------------------------------------------ times
 
-export interface TimeChoice {
+interface TimeChoice {
   label: string;
   at: number;
 }

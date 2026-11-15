@@ -35,7 +35,7 @@ const STATUS_TEXT: Record<P.ImportSourceStatus, string> = {
 
 const STAGE_TEXT: Record<P.ImportRunView['stage'], string> = { reading: 'Reading the export', applying: 'Adding to the hub', done: 'Done', error: 'Failed', stopped: 'Stopped' };
 
-export function bytes(n: number): string {
+function bytes(n: number): string {
   if (n < 1024) return `${n} B`;
   const units = ['KB', 'MB', 'GB', 'TB'];
   let v = n;

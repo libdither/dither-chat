@@ -22,7 +22,7 @@ export interface Sortable {
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 /** A folder counts as its best member: the one you use most, the latest message, the first name. */
-export function asUnit(x: Sortable): Sortable {
+function asUnit(x: Sortable): Sortable {
   const m = x.members;
   if (!m?.length) return x;
   return { ...x, score: Math.max(x.score, ...m.map((y) => y.score)), last: Math.max(x.last, ...m.map((y) => y.last)) };
@@ -36,7 +36,7 @@ const byHand = (a: Sortable, b: Sortable) => {
   return b.last - a.last;
 };
 
-export function comparator(mode: SortMode): (a: Sortable, b: Sortable) => number {
+function comparator(mode: SortMode): (a: Sortable, b: Sortable) => number {
   const name = (a: Sortable, b: Sortable) => collator.compare(a.name, b.name) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
   switch (mode) {
     case 'manual':
@@ -174,7 +174,7 @@ export function inboxFilterOf(stored: unknown): InboxFilter {
 }
 
 /** What the filter asks of an inbox row. */
-export interface Filtered {
+interface Filtered {
   /** A thread of mail (docs/mail.md), not a chat. */
   mail: boolean;
   /** A DM: one other person. */

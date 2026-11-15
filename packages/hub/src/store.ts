@@ -51,10 +51,10 @@ export interface AccountRow {
   created_at: number;
 }
 
-export type MediaSigner = (raw: string | null | undefined, accountId: string | null | undefined) => string | null;
+type MediaSigner = (raw: string | null | undefined, accountId: string | null | undefined) => string | null;
 
 /** Objects touched since the last flush; the server turns these into ClientEvents. */
-export class Dirty {
+class Dirty {
   accounts = new Set<string>();
   identities = new Set<string>();
   persons = new Set<string>();
@@ -90,7 +90,7 @@ const json = <T>(s: string | null | undefined, fallback: T): T => {
 const PREVIEW_LEN = 140;
 
 /** A stored decision as the app sees it. Chances from before the tiers (three of them) are not the two it reads. */
-export function triageView(t: Row): P.TriageView {
+function triageView(t: Row): P.TriageView {
   const probs = json<Partial<P.TriageProbs> | null>(t.probs, null);
   const marks: P.TriageMarks = { ...(t.alert_mark != null ? { alert: !!t.alert_mark } : {}), ...(t.less_mark ? { less: true } : {}) };
   // The local model's answer is kept with the facts, which also say which bar it was held to.
@@ -127,7 +127,7 @@ export function previewText(body: string, kind: string): string {
  * An account's name as you see it: your nickname for it, else its display name, else its handle, else its id. A
  * person's name is made of these (docs/chats.md, Names); `SHOWN` is the same in SQL, on a table aliased `i`.
  */
-export const shownName = (r: Row): string =>
+const shownName = (r: Row): string =>
   r.nickname || r.display_name || r.handle || r.native_id;
 export const SHOWN = `COALESCE(NULLIF(i.nickname, ''), i.display_name, i.handle, i.native_id)`;
 
@@ -140,7 +140,7 @@ const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hang
  * Two renderings of one message compared for an import: an export's body was rebuilt from HTML, so mentions,
  * emoji, links and Markdown marks may be written differently while the words are the same.
  */
-export function normalizeForCompare(s: string): string {
+function normalizeForCompare(s: string): string {
   return s
     .replace(/<a?:(\w+):\d+>/g, '$1')
     .replace(/<@[!&]?\d+>|<#\d+>|@\S+|#\S+/g, '')
@@ -162,7 +162,7 @@ export function markSnippet(body: string, terms: string[], before = 60, len = 20
 const fold = (s: string) => s.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase();
 
 /** How well a folded word matches a name: all of it, its start, the start of a word in it, or the middle of one. */
-export function nameScore(name: string | null | undefined, word: string): number {
+function nameScore(name: string | null | undefined, word: string): number {
   if (!name) return 0;
   const n = fold(name);
   if (n === word) return 1;
@@ -970,7 +970,10 @@ export class Store {
       }
       this.selfIdentities.add(id);
     } else if (f.contact) {
-      this.ensurePerson(id);
+      // A contact always has a person; one first heard without a name (Signal before its profile arrives) is named by
+      // its id, so a later name or picture reaches the person too (the person keeps a name you gave it: manual).
+      const pid = this.ensurePerson(id);
+      if (changed && after.person_id) this.syncAutoPerson(pid);
     } else if (changed && after.person_id) {
       this.syncAutoPerson(after.person_id);
     }

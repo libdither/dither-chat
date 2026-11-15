@@ -554,7 +554,7 @@ const MAX_FILES = 200_000;
 
 
 /** What a Molly backup folder holds, by names and sizes only. */
-export function signalFolder(raw: string): { census: P.ImportCensus; newestBackup: string | null } {
+function signalFolder(raw: string): { census: P.ImportCensus; newestBackup: string | null } {
   const files = walk(raw);
   const snapshots = new Set<string>();
   let attachments = 0;

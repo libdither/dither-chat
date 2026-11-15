@@ -14,7 +14,7 @@ export function qrSvg(text: string): string {
   return renderSVG(text, { ecc: 'M', border: 4, whiteColor: '#ffffff', blackColor: '#000000' }).replace('<svg ', '<svg shape-rendering="crispEdges" ');
 }
 
-export interface OwnCode {
+interface OwnCode {
   /** The link the code holds. */
   url: string;
   /** What scanning it does, in a sentence. */
@@ -24,7 +24,7 @@ export interface OwnCode {
 }
 
 /** An account's own code, when one can be built, and plain notes on what it is or why there is none. */
-export interface OwnCodes {
+interface OwnCodes {
   code: OwnCode | null;
   notes: string[];
 }

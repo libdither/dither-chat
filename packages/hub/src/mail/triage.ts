@@ -59,7 +59,7 @@ type Row = Record<string, any>;
 const MIN = 60_000;
 const DAY = 24 * 60 * MIN;
 
-export const MAIL_TRIAGE = {
+const MAIL_TRIAGE = {
   /** A new message's body is waited for this long (§3.4); then it is decided on what is there. */
   bodyWaitMs: 5_000,
   /** Mail that reached the server longer ago than this when it comes here (a catch-up) notifies nobody. */
@@ -104,7 +104,7 @@ export interface MailNotice {
   look: { network: 'email'; icon?: string };
 }
 
-export interface MailTriageDeps {
+interface MailTriageDeps {
   /** The chat store: people, rules, quiet hours. */
   store: Store;
   /** The live model (votes.ts keeps it there) and its names. */
@@ -143,11 +143,11 @@ const lc = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
 const round = (x: number) => Math.round(x * 1000) / 1000;
 const rounded = (p: P.TriageProbs): P.TriageProbs => ({ alert: round(p.alert), important: round(p.important) });
 /** The subject without Re:, Fwd: and the like, for showing. */
-export const bareSubject = (s: string | null | undefined) => (s ?? '').replace(/^(?:\s*(?:re|fwd?|aw|wg|sv|tr)\s*(?:\[\d+\])?\s*:\s*)+/i, '').trim() || '(no subject)';
+const bareSubject = (s: string | null | undefined) => (s ?? '').replace(/^(?:\s*(?:re|fwd?|aw|wg|sv|tr)\s*(?:\[\d+\])?\s*:\s*)+/i, '').trim() || '(no subject)';
 /** An inline picture goes only when small (delivery.ts). */
 const small = (icon: string | null | undefined) => !!icon && (!icon.startsWith('data:') || icon.length < 1500);
 
-export class MailTriage {
+class MailTriage {
   private deps: MailTriageDeps | null = null;
   /** New messages waiting for their body, at most bodyWaitMs. */
   private waiting = new Map<string, Timer>();

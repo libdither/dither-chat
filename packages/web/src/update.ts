@@ -20,7 +20,7 @@ export interface UpdateState {
   busy: boolean;
 }
 
-export type UpdateStep =
+type UpdateStep =
   /** Ask the waiting worker to take over (sw.js 'skipWaiting'); the controller change comes next. */
   | 'apply'
   /** Load the page again: the worker in control already serves the new build. */

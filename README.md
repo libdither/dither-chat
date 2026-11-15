@@ -28,12 +28,14 @@ as one person. The app learns which messages are worth interrupting you for.
 
 ## What it looks like
 
-### Catch up: what needs you, one card at a time
+### For you: the channel messages worth a look
 
-A queue of the conversations that need you, in the order you'd most want them. Each card has a reply box, so you
-can answer without opening the chat. On a keyboard: `j`/`k` to move, `e` for done, `l` for later.
+The inbox keeps what needs you: DMs, small groups, replies you owe. **For you** is for the rest: single messages from
+busy channels and big groups that you'd otherwise scroll past, ranked by how much they matter to you, with a burst of
+messages folded into one. Looking at an item doesn't mark anything read. On a keyboard: `j`/`k` to move, `Enter` to
+open, `x` to hide ([for you](docs/foryou.md)).
 
-![Catch up: a queue of cards, each with the latest message and a reply box](docs/screenshots/readme/triage.webp)
+![For you: ranked messages from Discord and Matrix channels, beside the inbox](docs/screenshots/readme/foryou.webp)
 
 ### How it sorts, in plain words
 
@@ -104,7 +106,7 @@ answer from it ([feed](docs/feed.md)).
 The same app, laid out like Discord's mobile app. Swipe between the list, the chat and its details. Swipe a message
 to reply. Long-press for anything a mouse hover would give you ([phone](docs/phone.md), [Android](docs/android.md)).
 
-![Five phone screens: home, Catch up, a Signal chat, a Discord channel and a profile](docs/screenshots/readme/phone.webp)
+![Five phone screens: home, For you, a Signal chat, a Discord channel and a profile](docs/screenshots/readme/phone.webp)
 
 ### And the rest
 

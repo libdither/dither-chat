@@ -28,12 +28,12 @@ import { jobFailed } from './errors.ts';
 type Head = P.TriageHead;
 
 export const DIMS = 256;
-export const EMBED_MODEL = 'qwen3-embedding:0.6b';
+const EMBED_MODEL = 'qwen3-embedding:0.6b';
 /** A fixed string: jev caches by it, and vectors made with another are not comparable. */
-export const EMBED_INSTRUCT = 'Given a chat message someone received, represent what it asks of them, who it involves and how soon it needs them';
+const EMBED_INSTRUCT = 'Given a chat message someone received, represent what it asks of them, who it involves and how soon it needs them';
 /** Bodies shorter than this carry the start of the message they reply to: "lol" to you is not "lol" to someone else. */
-export const SHORT = 40;
-export const RETENTION_DAYS = 30;
+const SHORT = 40;
+const RETENTION_DAYS = 30;
 const MIN = 60_000;
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
@@ -44,11 +44,11 @@ const DAY = 86_400_000;
  * that decides anything, whether a message cannot wait, is triage's own (triage.ts `STOP_QUESTION`).
  */
 export const QUESTIONS: Record<string, string> = {};
-export const JEV_INSTRUCT = 'Given a chat message someone received, judge whether it meets the description';
+const JEV_INSTRUCT = 'Given a chat message someone received, judge whether it meets the description';
 
 // ------------------------------------------------------------------ what is embedded
 
-export interface EmbedInput {
+interface EmbedInput {
   body: string;
   shape: string;
   /** The message it replies to, and whether that one is yours. */
@@ -60,7 +60,7 @@ export interface EmbedInput {
 const SHAPE_WORD: Record<string, string> = { direct: 'DM', group: 'group chat', channel: 'channel', thread: 'thread', self: 'note to self' };
 
 /** Mentions, custom emoji and code fences out; whitespace folded; at most `max` characters. */
-export function cleanText(s: string, max = 1000): string {
+function cleanText(s: string, max = 1000): string {
   return s
     .replace(/<[@#:!&a-z]*[^>]*>/gi, ' ')
     .replace(/```/g, ' ')
@@ -125,8 +125,8 @@ export function dequantize(q: Int8Array, scale: number): Float32Array {
   return Float32Array.from(q, (x) => x * scale);
 }
 
-export const sigmoid = (z: number) => 1 / (1 + Math.exp(-z));
-export const logit = (p: number, eps = 1e-3) => {
+const sigmoid = (z: number) => 1 / (1 + Math.exp(-z));
+const logit = (p: number, eps = 1e-3) => {
   const q = Math.min(1 - eps, Math.max(eps, p));
   return Math.log(q / (1 - q));
 };
@@ -143,16 +143,16 @@ export interface Turn {
   reacted?: boolean;
 }
 
-export interface Outcome {
+interface Outcome {
   /** How long until you answered it (a reply, a reaction, or your next message there), or null. */
   delay: number | null;
   /** You had written there in the quarter hour before: you were already in the conversation. */
   engaged: boolean;
 }
 
-export const ENGAGED_MS = 15 * MIN;
+const ENGAGED_MS = 15 * MIN;
 export const PING_MS = 15 * MIN;
-export const ACTIVE_MS = 3 * 60 * MIN;
+const ACTIVE_MS = 3 * 60 * MIN;
 
 /**
  * What you did about each message from someone else. Your reply goes to the message it names, else to the last
@@ -203,12 +203,12 @@ export function rateLogit(pos: number, n: number, prior: number, m = 2): number 
 
 // ------------------------------------------------------------------ the linear probe
 
-export interface Probe {
+interface Probe {
   w: Float64Array;
   b: number;
 }
 
-export interface ProbeOptions {
+interface ProbeOptions {
   /** Each example's starting logit (the conversation's answer rate): the probe learns what is left. */
   offset?: readonly number[];
   weight?: readonly number[];
@@ -354,7 +354,7 @@ export function crossFit(X: readonly ArrayLike<number>[], y: readonly number[], 
   return whole(crossFitSteps(X, y, folds, o));
 }
 
-export function* crossFitSteps(X: readonly ArrayLike<number>[], y: readonly number[], folds: readonly number[], o: ProbeOptions = {}): Generator<number, (number | null)[]> {
+function* crossFitSteps(X: readonly ArrayLike<number>[], y: readonly number[], folds: readonly number[], o: ProbeOptions = {}): Generator<number, (number | null)[]> {
   const out: (number | null)[] = X.map(() => null);
   for (const f of new Set(folds)) {
     const tr = folds.flatMap((g, i) => (g === f ? [] : [i]));
@@ -389,7 +389,7 @@ export function chooseLambda(X: readonly ArrayLike<number>[], y: readonly number
   return whole(chooseLambdaSteps(X, y, folds, o, grid));
 }
 
-export function* chooseLambdaSteps(X: readonly ArrayLike<number>[], y: readonly number[], folds: readonly number[], o: ProbeOptions = {}, grid = LAMBDAS): Generator<number, number> {
+function* chooseLambdaSteps(X: readonly ArrayLike<number>[], y: readonly number[], folds: readonly number[], o: ProbeOptions = {}, grid = LAMBDAS): Generator<number, number> {
   let best = { lambda: o.lambda ?? 10, loss: Infinity };
   for (const lambda of grid) {
     const oof = yield* crossFitSteps(X, y, folds, { ...o, lambda });
@@ -515,7 +515,7 @@ export function rocAuc(scores: readonly number[], labels: readonly (0 | 1)[]): n
 
 // ------------------------------------------------------------------ the store
 
-export interface Stored {
+interface Stored {
   conversation: string;
   author: string | null;
   ts: number;
@@ -772,7 +772,7 @@ export function loadTurns(hub: Database, since: number, self: ReadonlySet<string
 type Turns = { turns: Turn[]; rows: Map<string, { conversation: string; author: string | null; ts: number }> };
 
 /** `loadTurns` as steps (slices.ts): a page of a conversation's messages at a time, in the same order. */
-export function* loadTurnsSteps(hub: Database, since: number, self: ReadonlySet<string>): Generator<number, Turns> {
+function* loadTurnsSteps(hub: Database, since: number, self: ReadonlySet<string>): Generator<number, Turns> {
   const ids = [...self];
   if (!ids.length) return { turns: [], rows: new Map() };
   const mark = ids.map(() => '?').join(',');
@@ -814,7 +814,7 @@ export function* loadTurnsSteps(hub: Database, since: number, self: ReadonlySet<
 
 // ------------------------------------------------------------------ the background job
 
-export interface EmbeddingsOptions {
+interface EmbeddingsOptions {
   jev?: JevClient;
   now?: () => number;
   /** Texts per jev call. */

@@ -30,7 +30,7 @@ const LAND_TRIES = 6;
 
 type Row = Record<string, any>;
 
-export interface GapFillOptions {
+interface GapFillOptions {
   /** Server channels too, not only the ones an import reached. */
   allChannels?: boolean;
 }

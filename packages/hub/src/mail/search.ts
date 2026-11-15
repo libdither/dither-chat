@@ -35,14 +35,14 @@ import type { MailRouter } from './routes.ts';
 type Row = Record<string, any>;
 
 /** server=auto asks the servers when a first page has fewer hits than this. */
-export const SERVER_UNDER = 20;
+const SERVER_UNDER = 20;
 /** Messages asked of each server. */
-export const SERVER_LIMIT = 50;
+const SERVER_LIMIT = 50;
 /** How long a page waits for the servers. */
-export const SERVER_WAIT_MS = 20_000;
+const SERVER_WAIT_MS = 20_000;
 
 export const PROTON_NOTE = "Proton's server searches subjects and addresses only, not the text of messages. Text is searched here, in the mail this hub has fetched.";
-export const LOCAL_NOTE = 'Searched here: this hub holds all of its mail.';
+const LOCAL_NOTE = 'Searched here: this hub holds all of its mail.';
 
 const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => '\\' + c);
@@ -54,7 +54,7 @@ const ROLE_NAMES: Record<string, string> = { inbox: 'inbox', sent: 'sent', draft
  * The words as the index matched them, for marking them in a body: from a word's start (the whole word: the last one
  * typed is a prefix), any case, accents folded; run over NFD text. `inside`: anywhere, as the LIKE fallback matched.
  */
-export function wordsPattern(texts: string[], inside: boolean): RegExp | null {
+function wordsPattern(texts: string[], inside: boolean): RegExp | null {
   const letters = (w: string) => [...w].map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\p{M}*').join('');
   const alts = texts
     .map((t) => t.normalize('NFD').replace(/\p{M}/gu, '').split(/[^\p{L}\p{N}]+/u).filter(Boolean))
@@ -65,7 +65,7 @@ export function wordsPattern(texts: string[], inside: boolean): RegExp | null {
 }
 
 /** A body's text around its first match, each match between \u0001 and \u0002; null when nothing in it matches. */
-export function snippetOf(body: string, re: RegExp): string | null {
+function snippetOf(body: string, re: RegExp): string | null {
   const text = body.normalize('NFD');
   re.lastIndex = 0;
   const m = re.exec(text);
@@ -94,7 +94,7 @@ interface ServerAnswer extends P.MailServerSearch {
 }
 
 /** How to put a query to an account's server. */
-export type ServerForm = 'gmail' | 'imap' | 'proton';
+type ServerForm = 'gmail' | 'imap' | 'proton';
 
 export class MailSearch {
   constructor(private hub: MailHub) {}

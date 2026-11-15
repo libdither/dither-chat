@@ -23,16 +23,17 @@ const DAY = 24 * HOUR;
 /** Opened within this long of a push (or of the last message of a burst nobody was pushed for) counts as opened. */
 export const OPEN_WINDOW = HOUR;
 /** A message from you within this long of opening counts as a reply. */
-export const REPLY_AFTER = 10 * MIN;
+const REPLY_AFTER = 10 * MIN;
 /** Unpushed messages closer together than this are one burst: one chance to open the chat anyway. */
-export const BURST_GAP = 30 * MIN;
+const BURST_GAP = 30 * MIN;
 /** Features look back this far. */
-export const FEATURE_WINDOW = 90 * DAY;
+const FEATURE_WINDOW = 90 * DAY;
 /** Features are worked out again after this long. */
 const FEATURE_TTL = 5 * MIN;
 /** Hard caps, whatever the retention: the oldest rows go first. */
-export const MAX_VISITS = 200_000;
-export const MAX_NOTIFICATIONS = 100_000;
+const MAX_VISITS = 200_000;
+const MAX_NOTIFICATIONS = 100_000;
+const MAX_FORYOU = 200_000;
 const PRUNE_EVERY = 10 * MIN;
 
 const EVENT_COLUMN: Partial<Record<P.NotificationEventKind, string>> = {
@@ -97,7 +98,7 @@ export function cleanVisit(v: Partial<P.VisitRecord>, now: number): P.VisitRecor
 }
 
 /** Hub-side sanity for one inbox action from a device, or null to drop it. */
-export function cleanAction(a: Partial<P.InboxAction>, now: number): P.InboxAction | null {
+function cleanAction(a: Partial<P.InboxAction>, now: number): P.InboxAction | null {
   const id = str(a?.id, 64);
   const device = str(a?.device, 64);
   const targetId = str(a?.targetId, 200);
@@ -226,7 +227,7 @@ export function describeActivity(f: P.PlaceActivity): string | null {
 // ------------------------------------------------------------------ the store
 
 /** `reminder`: a calendar reminder from before calendar accounts, with no message or conversation (old rows; now a reminder is a message). */
-export type NotificationKind = 'message' | 'held' | 'digest' | 'request' | 'reminder';
+type NotificationKind = 'message' | 'held' | 'digest' | 'request' | 'reminder';
 
 export interface Features {
   conversation: P.PlaceActivity;
@@ -413,7 +414,7 @@ export class ActivityStore {
   }
 
   /** Drops what is past retention, then the oldest past the row caps. Returns how many rows went. */
-  prune(now = Date.now(), force = false, caps = { visits: MAX_VISITS, notifications: MAX_NOTIFICATIONS }): number {
+  prune(now = Date.now(), force = false, caps: { visits: number; notifications: number; foryou?: number } = { visits: MAX_VISITS, notifications: MAX_NOTIFICATIONS }): number {
     if (!force && now - this.lastPrune < PRUNE_EVERY) return 0;
     this.lastPrune = now;
     const cutoff = now - this.settings().retentionDays * DAY;
@@ -429,6 +430,11 @@ export class ActivityStore {
       this.db.query('DELETE FROM notification_event WHERE notification_id NOT IN (SELECT id FROM notification)').run();
       this.db.query('DELETE FROM triage_input WHERE at < ?').run(cutoff);
       n += this.db.query('DELETE FROM inbox_action WHERE at < ?').run(cutoff).changes;
+      // For you's served items and what devices said of them (foryou.ts).
+      n += this.db.query('DELETE FROM foryou_item WHERE created_at < ?').run(cutoff).changes;
+      const f = over('foryou_item', caps.foryou ?? MAX_FORYOU);
+      if (f) n += this.db.query('DELETE FROM foryou_item WHERE id IN (SELECT id FROM foryou_item ORDER BY created_at LIMIT ?)').run(f).changes;
+      n += this.db.query('DELETE FROM foryou_event WHERE at < ?').run(cutoff).changes;
     })();
     if (n) this.cache.clear();
     return n;
@@ -451,7 +457,7 @@ export class ActivityStore {
 
   /** Everything in the log. Usage totals (place_usage) are separate and stay. */
   clear() {
-    this.db.exec('DELETE FROM visit; DELETE FROM notification; DELETE FROM notification_event; DELETE FROM triage_input; DELETE FROM inbox_action;');
+    this.db.exec('DELETE FROM visit; DELETE FROM notification; DELETE FROM notification_event; DELETE FROM triage_input; DELETE FROM inbox_action; DELETE FROM foryou_item; DELETE FROM foryou_event;');
     this.cache.clear();
   }
 

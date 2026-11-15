@@ -46,7 +46,7 @@ const ok = (x: unknown = { ok: true }) => Response.json(x);
 const bad = (error: string, status = 400) => Response.json({ error }, { status });
 
 /** Slice 1: what reading needs. */
-export const readRoutes: MailRouter = (hub) => [
+const readRoutes: MailRouter = (hub) => [
   {
     method: 'GET',
     path: /^\/api\/mail$/,

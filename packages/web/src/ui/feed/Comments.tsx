@@ -66,13 +66,13 @@ export function StyleMenu({ style, pick, kit }: { style: CommentStyle; pick: (s:
 }
 
 /** Past this depth a branch opens as a thread of its own. */
-export const MAX_DEPTH = 6;
+const MAX_DEPTH = 6;
 /** A run longer than this shows its first RUN_HEAD and last RUN_TAIL, with the rest behind a button. */
-export const RUN_FOLD = 8;
+const RUN_FOLD = 8;
 const RUN_HEAD = 3;
 const RUN_TAIL = 2;
 
-export interface CommentCtx {
+interface CommentCtx {
   kit: Kit;
   network: P.Network;
   /** The thread's author: their replies say OP. */

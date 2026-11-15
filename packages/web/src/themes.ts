@@ -583,7 +583,7 @@ export function themeById(id: string | undefined): Theme {
 }
 
 /** What a theme's colours are drawn against, for the contrast checks: its three main surfaces. */
-export const surfacesOf = (c: Palette) => [c.center, c.sidebar, c.raised];
+const surfacesOf = (c: Palette) => [c.center, c.sidebar, c.raised];
 
 /** Network colours (protocol's NETWORK_META), which show as text on chips and crumbs. */
 export const NETWORK_COLORS = ['#5865F2', '#3A91F5', '#0DBD8B', '#1DAA61'];

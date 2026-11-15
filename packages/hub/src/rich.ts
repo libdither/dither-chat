@@ -66,7 +66,7 @@ export function embedViews(x: StoredExtra, media: Media): P.EmbedView[] {
 }
 
 /** What may follow a message link: the stored message it points at, or nothing. */
-export type FindLinked = (network: P.Network, nativeId: string) => Row | null;
+type FindLinked = (network: P.Network, nativeId: string) => Row | null;
 
 /** MessageView.rich: what the stored extra has of RichExtra, sent silently, and the messages its links point at. */
 export function richView(x: StoredExtra, network: P.Network, body: string, find: FindLinked): P.RichView | undefined {

@@ -12,7 +12,7 @@ import { api, db, eventHooks, toast } from './state.ts';
 /** Outcomes heard, by nonce, newest last. */
 export const interactions = signal<Map<string, P.InteractionView>>(new Map());
 /** The last interaction sent from this page on each message, by message id: what its controls show. */
-export const pressed = signal<Map<string, string>>(new Map());
+const pressed = signal<Map<string, string>>(new Map());
 /** Forms bots opened in answer, oldest first: the dialog shows the first. */
 export const forms = signal<P.AppModalView[]>([]);
 /** A message's Apps (its message commands), asked for from its menu. */
@@ -36,7 +36,7 @@ eventHooks.add((ev) => {
 });
 
 /** The account that would act in a conversation (as the composer picks it) and whether it has `cap`. */
-export function accountFor(convId: string, requested?: string): P.AccountView | null {
+function accountFor(convId: string, requested?: string): P.AccountView | null {
   const conv = db.conversations.get(convId);
   const accs = (conv?.vantages ?? []).map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a);
   return accs.find((a) => a.id === requested) ?? accs.find((a) => a.status === 'online') ?? accs[0] ?? null;

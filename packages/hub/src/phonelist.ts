@@ -17,9 +17,15 @@
  *   clear-all (dismissals from one device within two seconds) ends the episodes and snoozes the same, and is kept as
  *   `cleared`, never as a "no" about the chat.
  * - **Twelve hours** and a row goes: a `{ clear }` push to the registrations that take one.
+ * - **Five pushes a day.** Every list push (a new row, or an open row brought up to date) spends one of the day's
+ *   budget, the hub's local day. To spend it on the day's most important rows rather than its first, a push also
+ *   needs its importance at the day's bar: the importance of the budget-th most important push the earlier days
+ *   asked for (the median over the last week; none until two days are kept). On a day like the last ones, about
+ *   the budget's worth clear it; spent, the rest wait for tomorrow. A trial needs only the budget, not the bar.
+ *   Each push asked for is kept (`phone_push`), sent or held, for the bar and a later replay.
  *
  * `DITHER_PHONE_LIST`: `on` (the default), `shadow` (rows go out as before; the log says what the gate would have
- * done), `off` (as before, nothing kept).
+ * done), `off` (as before, nothing kept). `DITHER_PHONE_LIST_BUDGET`: list pushes a day (5), or `off` for no budget.
  */
 import type { Database } from 'bun:sqlite';
 import type { Facts } from './learn.ts';
@@ -36,6 +42,8 @@ export const SNOOZE_MS = 6 * HOUR;
 export const EXPIRE_MS = 12 * HOUR;
 /** Trials a day, at most. */
 export const TRIALS_PER_DAY = 3;
+/** List pushes a day, unless DITHER_PHONE_LIST_BUDGET says otherwise. */
+export const DAILY_BUDGET = 5;
 /** Dismissals from one device this close together are a clear-all. */
 export const BULK_MS = 2_000;
 /** How many earlier days the expected number of held chats is read from. */
@@ -46,14 +54,20 @@ const PHONE = /android|iphone|ipad|\bios\b/i;
 
 export type PhoneListMode = 'off' | 'shadow' | 'on';
 export const phoneListMode = (v: string | undefined): PhoneListMode => (v === 'off' || v === 'shadow' ? v : 'on');
+/** DITHER_PHONE_LIST_BUDGET: a whole number of list pushes a day, `off` for no budget, else DAILY_BUDGET. */
+export function phoneListBudget(v: string | undefined): number {
+  if (v === 'off') return Infinity;
+  const n = v?.trim() ? Number(v) : NaN;
+  return Number.isInteger(n) && n >= 0 ? n : DAILY_BUDGET;
+}
 
 /** Why an episode is on the phones (or, `gated`, is not). */
-export type Arm = 'prior' | 'keep' | 'trial' | 'gated';
-export type Outcome = 'tapped' | 'dismissed' | 'cleared' | 'read' | 'expired' | 'superseded';
+type Arm = 'prior' | 'keep' | 'trial' | 'gated';
+type Outcome = 'tapped' | 'dismissed' | 'cleared' | 'read' | 'expired' | 'superseded';
 /** What kept a row off the phones. */
-export type Held = 'gated' | 'snoozed' | 'cap';
+type Held = 'gated' | 'snoozed' | 'cap' | 'budget';
 
-export interface Verdict {
+interface Verdict {
   /** Its row goes to the phones (in shadow, always). */
   send: boolean;
   arm: Arm | null;
@@ -82,13 +96,15 @@ export function dayOf(t: number): string {
 /** Local midnight at the start of `t`'s day. */
 const midnight = (t: number) => new Date(new Date(t).setHours(0, 0, 0, 0)).getTime();
 
-export interface PhoneListOptions {
+interface PhoneListOptions {
   mode: PhoneListMode;
   /** Chats with a "keep" mark (triage.ts `marked`: "should have alerted" in the last 90 days). */
   kept: (now: number) => Set<string>;
   /** Read up to this time, anywhere (delivery.ts `readTs`). */
   readTs: (conversationId: string) => number;
   random?: () => number;
+  /** List pushes a day (DITHER_PHONE_LIST_BUDGET); DAILY_BUDGET when not given. */
+  budget?: number;
 }
 
 /** What the activity log heard from a device about a notification (activity.ts `noted`). */
@@ -101,8 +117,10 @@ export interface DeviceWord {
 
 export class PhoneList {
   readonly mode: PhoneListMode;
+  readonly budget: number;
   private random: () => number;
   private expected: { day: string; n: number } | null = null;
+  private bars: { day: string; bar: number } | null = null;
   /** What was asked and answered since the last log line. */
   private tally = new Map<string, number>();
   private tallyAt = Date.now();
@@ -112,25 +130,28 @@ export class PhoneList {
     private o: PhoneListOptions,
   ) {
     this.mode = o.mode;
+    this.budget = o.budget ?? DAILY_BUDGET;
     this.random = o.random ?? Math.random;
   }
 
   /**
    * May this list message's row go to the phones now? Asked only when a push would go out (not within the list's ten
-   * minutes). `prior`: `listByPrior` of its facts. `ts`: the message's time.
+   * minutes). `prior`: `listByPrior` of its facts. `ts`: the message's time. `importance`: triage's, 0 to 1, for the
+   * day's bar (unknown: it passes the bar, not the budget).
    */
-  list(conversationId: string, prior: boolean, ts: number, now = Date.now()): Verdict {
+  list(conversationId: string, prior: boolean, ts: number, now = Date.now(), importance: number | null = null): Verdict {
     if (this.mode === 'off') return { send: true, arm: null, held: null };
-    const v = this.decide(conversationId, prior, ts, now);
+    const v = this.decide(conversationId, prior, ts, now, importance);
     const k = v.send ? `sent ${v.arm}` : `held ${v.held}`;
     this.tally.set(k, (this.tally.get(k) ?? 0) + 1);
     return this.mode === 'shadow' ? { ...v, send: true } : v;
   }
 
-  private decide(cid: string, prior: boolean, ts: number, now: number): Verdict {
+  private decide(cid: string, prior: boolean, ts: number, now: number, importance: number | null): Verdict {
     const open = this.db.query(`SELECT id, arm, sent FROM phone_episode WHERE conversation_id = ? AND ended_at IS NULL AND mode = ?`).get(cid, this.mode) as Row | null;
     if (open) {
       if (!open.sent) return { send: false, arm: open.arm, held: 'gated' };
+      if (!this.spend(cid, importance, open.arm !== 'trial', now)) return { send: false, arm: open.arm, held: 'budget' };
       this.db.query('UPDATE phone_episode SET posts = posts + 1, last_at = ? WHERE id = ?').run(now, open.id);
       return { send: true, arm: open.arm, held: null };
     }
@@ -138,6 +159,7 @@ export class PhoneList {
     if (this.snoozed(cid, now)) return { send: false, arm, held: 'snoozed' };
     if (this.openRows() >= LIST_CAP) return { send: false, arm, held: 'cap' };
     if (arm) {
+      if (!this.spend(cid, importance, true, now)) return { send: false, arm, held: 'budget' };
       this.begin(cid, arm, null, true, ts, now);
       return { send: true, arm, held: null };
     }
@@ -146,6 +168,7 @@ export class PhoneList {
     if (this.db.query(`SELECT 1 FROM phone_episode WHERE conversation_id = ? AND day = ? AND arm IN ('trial', 'gated') AND mode = ?`).get(cid, day, this.mode)) return { send: false, arm: 'gated', held: 'gated' };
     const p = this.propensity(day, now);
     const trial = p > 0 && this.random() < p;
+    if (trial) this.spend(cid, importance, false, now);
     this.begin(cid, trial ? 'trial' : 'gated', p, trial, ts, now);
     return trial ? { send: true, arm: 'trial', held: null, propensity: p } : { send: false, arm: 'gated', held: 'gated', propensity: p };
   }
@@ -154,6 +177,43 @@ export class PhoneList {
     this.db
       .query(`INSERT INTO phone_episode (conversation_id, day, mode, arm, propensity, sent, first_ts, started_at, last_at, posts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(cid, dayOf(now), this.mode, arm, propensity, sent ? 1 : 0, ts, now, now, sent ? 1 : 0);
+  }
+
+  /**
+   * One push of the day's budget, if there is one left and `importance` clears the day's bar (`barred`; a trial is
+   * not). Kept either way, as asked.
+   */
+  private spend(cid: string, importance: number | null, barred: boolean, now: number): boolean {
+    const day = dayOf(now);
+    const ok = this.spent(day) < this.budget && (!barred || importance === null || importance >= this.bar(day, now));
+    this.db.query('INSERT INTO phone_push (at, day, mode, conversation_id, importance, sent) VALUES (?, ?, ?, ?, ?, ?)').run(now, day, this.mode, cid, importance, ok ? 1 : 0);
+    return ok;
+  }
+
+  /** List pushes sent on a day (in shadow: that would have been). */
+  spent(day: string): number {
+    return (this.db.query('SELECT COUNT(*) AS n FROM phone_push WHERE day = ? AND mode = ? AND sent = 1').get(day, this.mode) as Row).n;
+  }
+
+  /**
+   * The importance a push needs today: on each of the last week's days, the budget-th highest importance among the
+   * pushes asked for (0 on a day with fewer), and their median; 0 until two days are kept, or with no budget.
+   */
+  bar(day: string, now: number): number {
+    if (this.bars?.day === day) return this.bars.bar;
+    let bar = 0;
+    if (Number.isFinite(this.budget) && this.budget > 0) {
+      const byDay = new Map<string, number[]>();
+      for (const r of this.db.query('SELECT day, importance FROM phone_push WHERE day < ? AND at >= ? AND mode = ? AND importance IS NOT NULL').all(day, midnight(now) - HISTORY_DAYS * DAY, this.mode) as Row[]) {
+        const xs = byDay.get(r.day) ?? [];
+        xs.push(r.importance);
+        byDay.set(r.day, xs);
+      }
+      const nth = [...byDay.values()].map((xs) => xs.sort((a, b) => b - a)[this.budget - 1] ?? 0).sort((a, b) => a - b);
+      if (nth.length >= 2) bar = nth.length % 2 ? nth[(nth.length - 1) / 2] : (nth[nth.length / 2 - 1] + nth[nth.length / 2]) / 2;
+    }
+    this.bars = { day, bar };
+    return bar;
   }
 
   /** List rows the hub sent and has not seen go. */
@@ -166,12 +226,12 @@ export class PhoneList {
   }
 
   /**
-   * The chance of a trial for a chat held now: the day's budget over the chats held on a day, as the last days had
-   * them; nothing once the day's trials are spent. Exact: it is the chance the coin is tossed with.
+   * The chance of a trial for a chat held now: the day's trials over the chats held on a day, as the last days had
+   * them; nothing once the day's trials, or its pushes, are spent. Exact: it is the chance the coin is tossed with.
    */
   propensity(day: string, now: number): number {
     const done = (this.db.query(`SELECT COUNT(*) AS n FROM phone_episode WHERE day = ? AND arm = 'trial' AND mode = ?`).get(day, this.mode) as Row).n;
-    if (done >= TRIALS_PER_DAY) return 0;
+    if (done >= TRIALS_PER_DAY || this.spent(day) >= this.budget) return 0;
     return Math.min(1, TRIALS_PER_DAY / Math.max(1, this.expectedChats(day, now)));
   }
 
@@ -269,11 +329,12 @@ export class PhoneList {
     this.tallyAt = now;
     this.db.query('DELETE FROM phone_snooze WHERE until <= ?').run(now);
     this.db.query('DELETE FROM phone_episode WHERE started_at < ? AND ended_at IS NOT NULL').run(now - KEEP_MS);
+    this.db.query('DELETE FROM phone_push WHERE at < ?').run(now - KEEP_MS);
     if (!t.size) return;
     const part = (prefix: string) => [...t].filter(([k]) => k.startsWith(prefix)).map(([k, n]) => `${n} ${k.slice(prefix.length)}`);
     const sent = part('sent ');
     const held = part('held ');
     const would = this.mode === 'shadow' ? 'would have held' : 'held';
-    console.log(`phone list (${this.mode}): in the last hour ${sent.length ? `sent ${sent.join(', ')}` : 'sent none'}; ${would} ${held.length ? held.join(', ') : 'none'}; ${this.openRows()} of ${LIST_CAP} rows open`);
+    console.log(`phone list (${this.mode}): in the last hour ${sent.length ? `sent ${sent.join(', ')}` : 'sent none'}; ${would} ${held.length ? held.join(', ') : 'none'}; ${this.openRows()} of ${LIST_CAP} rows open; ${Number.isFinite(this.budget) ? `${this.spent(dayOf(now))} of ${this.budget} pushes today, bar ${this.bar(dayOf(now), now).toFixed(2)}` : 'no daily budget'}`);
   }
 }

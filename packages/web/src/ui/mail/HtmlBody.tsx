@@ -6,6 +6,9 @@
  * it, fold the quoted part behind ···, catch every click on a link and open it the way chat's links open (a link whose
  * text names another site asks first), and hand touches to the pager so a swipe over the body still goes back.
  * When the frame cannot load (the hub is away), the text part shows instead.
+ *
+ * Formatted plain HTML (`html.formatted`: bold, headings, code, and no colours or fonts of its own, as Markdown sent
+ * from here makes) is drawn in the app's theme instead of on the sheet: the page gives the frame its colours and font.
  */
 import type * as P from '@dither-chat/protocol';
 import { hostsDiffer, shownHost } from '@dither-chat/protocol';
@@ -19,9 +22,10 @@ import { forwardTouches } from '../Pager.ts';
 import { ImageBanner } from './ImageBanner.tsx';
 import type { BodyProps } from './slots.tsx';
 import { TextBody } from './TextBody.tsx';
+import { themeFrame } from './frameTheme.ts';
 
 /** A link out of a mail, opened as chat's links are: the desktop helper, else a new tab (Android: its browser). */
-export function openOut(url: string) {
+function openOut(url: string) {
   void openLink(url).then((ok) => {
     if (ok) return;
     if (/^mailto:/i.test(url)) window.location.assign(url);
@@ -66,9 +70,10 @@ function foldQuotes(doc: Document, wrap: HTMLElement): HTMLElement[] {
 }
 
 /** Everything the page does inside a loaded frame; returns how to undo it. */
-function host(f: HTMLIFrameElement, doc: Document): () => void {
+function host(f: HTMLIFrameElement, doc: Document, themed: boolean): () => void {
   const win = doc.defaultView!;
   const wrap = doc.querySelector<HTMLElement>('.dc-mail')!;
+  const unTheme = themed ? themeFrame(f, doc) : null;
   const folded = foldQuotes(doc, wrap);
   let width = 0;
   const fit = () => {
@@ -162,6 +167,7 @@ function host(f: HTMLIFrameElement, doc: Document): () => void {
   // Web fonts and late layout.
   const late = setTimeout(fit, 400);
   return () => {
+    unTheme?.();
     clearTimeout(late);
     ro.disconnect();
     untouch();
@@ -214,7 +220,7 @@ export function HtmlBody(p: BodyProps) {
         if (doc && doc.URL !== 'about:blank') setState('failed');
         return;
       }
-      undo = host(f, doc);
+      undo = host(f, doc, !!html.formatted);
       setState('ready');
     };
     f.addEventListener('load', loaded);
@@ -223,13 +229,13 @@ export function HtmlBody(p: BodyProps) {
       f.removeEventListener('load', loaded);
       undo?.();
     };
-  }, [html.url]);
+  }, [html.url, html.formatted]);
   if (state === 'failed') return <TextBody {...p} />;
   const from = p.message.from.name || p.message.from.email;
   return (
     <div class={`mail-html ${state}`}>
       <ImageBanner message={p.message} body={p.body} />
-      <div class="mail-sheet">
+      <div class={`mail-sheet ${html.formatted ? 'themed' : ''}`}>
         <iframe ref={frame} key={html.url} class="mail-frame" src={html.url} sandbox="allow-same-origin" referrerpolicy="no-referrer" title={`Mail from ${from}`} />
       </div>
     </div>

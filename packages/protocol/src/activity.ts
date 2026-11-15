@@ -7,7 +7,10 @@
 /** What was on screen. `conversation` is any open timeline: a DM, a group, a channel or a thread. */
 export type VisitView =
   | 'inbox'
+  /** How it sorts; before 2026-11-15 also Catch up. */
   | 'triage'
+  /** For you (docs/foryou.md). */
+  | 'foryou'
   | 'conversation'
   | 'space'
   | 'person'
@@ -27,17 +30,18 @@ export type VisitView =
   | 'calendar'
   /** Notices (docs/notices.md). */
   | 'notices';
-export const VISIT_VIEWS: readonly VisitView[] = ['inbox', 'triage', 'conversation', 'space', 'person', 'people', 'profile', 'folder', 'spaces', 'search', 'settings', 'accounts', 'directory', 'mail', 'requests', 'calendar', 'notices'];
+export const VISIT_VIEWS: readonly VisitView[] = ['inbox', 'triage', 'foryou', 'conversation', 'space', 'person', 'people', 'profile', 'folder', 'spaces', 'search', 'settings', 'accounts', 'directory', 'mail', 'requests', 'calendar', 'notices'];
 
 /**
  * How the user got there. `notification`: a tap on a push (sw.js, the Android app); `toast`: on the in-app
- * notification; `inbox`/`triage`: a row of the ranked inbox or the triage board; `rail`: the rail or the phone's
+ * notification; `inbox`/`triage`: a row of the ranked inbox or the triage board; `foryou`: an item of For you (`rank` is
+ * its position); `rail`: the rail or the phone's
  * tab bar; `list`: another list (a space's channels, People); `search`: a search result; `link`: a link, mention,
  * reply or jump inside a timeline; `back`/`forward`: browser history; `start`: the app opened here; `resume`: back
  * after a long time away, still here.
  */
-export type VisitSource = 'notification' | 'toast' | 'inbox' | 'triage' | 'rail' | 'list' | 'search' | 'link' | 'back' | 'forward' | 'start' | 'resume' | 'other';
-export const VISIT_SOURCES: readonly VisitSource[] = ['notification', 'toast', 'inbox', 'triage', 'rail', 'list', 'search', 'link', 'back', 'forward', 'start', 'resume', 'other'];
+export type VisitSource = 'notification' | 'toast' | 'inbox' | 'triage' | 'foryou' | 'rail' | 'list' | 'search' | 'link' | 'back' | 'forward' | 'start' | 'resume' | 'other';
+export const VISIT_SOURCES: readonly VisitSource[] = ['notification', 'toast', 'inbox', 'triage', 'foryou', 'rail', 'list', 'search', 'link', 'back', 'forward', 'start', 'resume', 'other'];
 
 /** One stay, as the device sends it. Sent again while it lasts, with the same id: the hub keeps the latest. */
 export interface VisitRecord {

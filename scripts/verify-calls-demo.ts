@@ -61,10 +61,6 @@ async function device(p: Page, account: string) {
 const call = <T = any>(p: Page, expr: string) => p.eval<T>(`(() => { const c = window.__activeCall.value; return ${expr}; })()`);
 const sounds = (p: Page) => p.eval<string[]>(`window.__callSounds.map((s) => s.name)`);
 const roomCalls = () => room.page.eval<any[]>(`window.__room.summary()`);
-const roomCall = async (identity: string) => {
-  const native = boot.identities?.find?.((i: any) => i.id === identity)?.nativeId;
-  return (await roomCalls()).find((x) => x.self === native) ?? (await roomCalls()).find((x) => identity.endsWith(x.self));
-};
 const press = (p: Page, track: string) => p.eval(`document.querySelector('[data-track="${track}"]').click()`);
 
 try {

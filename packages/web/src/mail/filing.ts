@@ -15,7 +15,7 @@ type Boxes = ReadonlyMap<string, P.MailboxView>;
 
 const ROLE_TARGETS = new Set(['archive', 'inbox', 'trash', 'junk']);
 /** Mailboxes that are not folders: what you sent stays there, and All mail and flag views are not moved out of. */
-export const NOT_FOLDER = new Set(['sent', 'drafts', 'all', 'flagged', 'important']);
+const NOT_FOLDER = new Set(['sent', 'drafts', 'all', 'flagged', 'important']);
 
 /** The mailbox `to` names in this thread's account. */
 export function destinationIn(boxes: Boxes, t: P.MailThreadView, to: P.MailMoveTarget): P.MailboxView | undefined {

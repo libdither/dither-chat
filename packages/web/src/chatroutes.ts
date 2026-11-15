@@ -29,7 +29,7 @@ export interface RouteKey {
 }
 
 /** Which parts a route's label needs. All false: the chat has one route. */
-export interface Tells {
+interface Tells {
   network: boolean;
   theirs: boolean;
   mine: boolean;
@@ -51,7 +51,7 @@ export function tells(route: RouteKey, routes: RouteKey[]): Tells {
 }
 
 /** The names a label is made of. */
-export interface RouteNames {
+interface RouteNames {
   network: string;
   theirs: string;
   mine: string;
@@ -201,7 +201,7 @@ export interface RoutePart {
   muted: boolean;
 }
 
-export interface Merged<T extends RoutePart> {
+interface Merged<T extends RoutePart> {
   score: number;
   needs: boolean;
   reasons: string[];
@@ -239,7 +239,7 @@ export function mergeRoutes<T extends RoutePart>(parts: T[]): Merged<T> {
 export const chatKey = (personId: string) => `person:${personId}`;
 
 /** A person's chat as one inbox row: the merge, its key, and its routes' rows newest first. */
-export interface ChatRow<T extends RoutePart> extends Merged<T> {
+interface ChatRow<T extends RoutePart> extends Merged<T> {
   key: string;
   personId: string;
   parts: T[];
