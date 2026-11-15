@@ -2333,10 +2333,13 @@ code {
   color: var(--text-faint);
 }
 
-/* Floats over the message, so it does not narrow every line of text to make room for itself. */
+/* Floats over the message, so it does not narrow every line of text to make room for itself. As in Discord, it sits
+   above the message rather than on it, over the gap and the end of the message before, dipping 2px into its own
+   (it is 34px tall): its first line, often a reply's quote, stays readable. A message that starts a group with its
+   name line (no reply above it) takes it lower, onto that line's empty right side (`.head`). */
 .msg-actions {
   position: absolute;
-  top: -12px;
+  top: -32px;
   right: 16px;
   z-index: 2;
   display: none;
@@ -2351,6 +2354,9 @@ code {
 .msg:hover > .msg-actions,
 .msg-actions:focus-within {
   display: flex;
+}
+.msg.head > .msg-actions {
+  top: -16px;
 }
 .icon-btn.emoji {
   font-size: 16px;

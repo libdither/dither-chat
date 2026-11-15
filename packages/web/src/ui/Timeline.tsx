@@ -655,7 +655,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
   const ticks = m.receipts && isSelfIdentity(m.authorId) ? <Ticks m={m} /> : null;
   return (
     <div
-      class={`msg ${grouped ? 'grouped' : ''} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''}`}
+      class={`msg ${grouped ? 'grouped' : target || m.quote ? '' : 'head'} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''}`}
       id={`m-${m.id}`}
       ref={(el) => void (el && swipeReply.set(el, () => onReply(m)))}
       {...menuProps}
