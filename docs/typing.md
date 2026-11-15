@@ -9,7 +9,8 @@ their own clients tell it.
   typing…", "**Alice**, **Bob** and **Carol** are typing…", or "Several people are typing…" for four or more. Names
   are bold. The line is always there, empty or not, so someone starting to type never moves the timeline
   (`ui/Typing.tsx`, the "typing" section at the end of `styles.css`). A person's merged timeline shows typing from
-  any of their conversations.
+  any of their conversations. There the row also holds where your message goes ("To Kit on Signal",
+  [chats.md](chats.md)), at its start, and who is typing moves to its end.
 - Small dots on the avatar of a DM or group row in the inbox and the people list, where Discord puts them.
 - Never yourself: not your other accounts, and not an identity merged into you.
 - A typer lasts as long as their network's own clients show one without a refresh (Discord 10 s, Signal 15 s, Matrix

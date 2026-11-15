@@ -1,4 +1,3 @@
-import type * as P from '@dither-chat/protocol';
 import { NETWORKS, SEARCH_HAS, SEARCH_IS, SEARCH_OPS, SEARCH_SORT, searchValue } from '@dither-chat/protocol';
 import type { ComponentChildren, Ref } from 'preact';
 import { useState } from 'preact/hooks';
@@ -26,7 +25,7 @@ export function rememberSearch(q: string) {
   if (q) localStorage.setItem(RECENT_KEY, JSON.stringify([q, ...recentSearches().filter((r) => r !== q)].slice(0, 8)));
 }
 
-export function forgetSearches() {
+function forgetSearches() {
   localStorage.removeItem(RECENT_KEY);
 }
 

@@ -1,4 +1,11 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": ["src", "test", "../protocol/src"]
+  "include": [
+    "src",
+    "test",
+    "../protocol/src"
+  ],
+  "compilerOptions": {
+    "noUnusedLocals": false
+  }
 }

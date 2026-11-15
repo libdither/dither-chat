@@ -17,14 +17,14 @@ interface Port {
 
 const port: Port | null = (globalThis as any).DitherAndroid ?? null;
 
-export interface AudioRoute {
+interface AudioRoute {
   id: number;
   /** speaker, earpiece, bluetooth, wired, usb, other */
   kind: string;
   name: string;
 }
 
-export interface NativePush {
+interface NativePush {
   endpoint: string;
   p256dh: string;
   auth: string;
@@ -34,7 +34,7 @@ export interface NativePush {
  * A history upload the app runs itself, so it goes on with the app closed (apps/android Uploads.kt). `listing`: the
  * picked files are being listed; `running`, `paused`, `error`: the job; `done` and `failed` are said once.
  */
-export interface NativeUpload {
+interface NativeUpload {
   state: 'listing' | 'running' | 'paused' | 'error' | 'done' | 'failed';
   accountId: string;
   source?: string;
@@ -46,14 +46,14 @@ export interface NativeUpload {
 }
 
 /** A UnifiedPush distributor app on the phone, as the app sees it. Older builds of the app report package names only. */
-export interface Distributor {
+interface Distributor {
   pkg: string;
   label: string;
   /** Android does not restrict its battery use, so it can hold its connection. Unknown on older builds. */
   batteryOk?: boolean;
 }
 
-export interface AppInfo {
+interface AppInfo {
   version: string;
   distributors: Distributor[];
   /** The distributor this app registered with, if any. */

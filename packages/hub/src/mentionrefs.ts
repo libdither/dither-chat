@@ -20,7 +20,7 @@ const REF = /<@(person|identity):((?:per|idn)_[\w-]{1,64})>/g;
 const CODE = /```[\s\S]*?```|`[^`\n]+`/g;
 
 /** Holds a reference, so a body without one is passed on untouched. */
-export const hasRefs = (body: string) => body.includes('<@person:') || body.includes('<@identity:');
+const hasRefs = (body: string) => body.includes('<@person:') || body.includes('<@identity:');
 
 /**
  * A name as plain text that pings nobody and makes no token: every `<` and `@` in it is followed by a zero-width

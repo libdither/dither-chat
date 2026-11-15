@@ -9,7 +9,7 @@ import { signal } from '@preact/signals';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { addRows, isLink } from '../add.ts';
 import { convTitle, identityName, netName } from '../model.ts';
-import { backTo, entry, paletteHeld, paletteStack, pop, push, replaceTop, toRoot, update, type Entry, type PageRef } from '../palette.ts';
+import { backTo, entry, paletteHeld, paletteStack, pop, push, toRoot, update, type Entry, type PageRef } from '../palette.ts';
 import { dropLayer, phone, pushLayer, slideAway, useSheetDrag } from '../phone.ts';
 import { countKey } from '../clicklog.ts';
 import { db } from '../state.ts';
@@ -19,7 +19,7 @@ type Pages = typeof import('./PalettePages.tsx');
 const pages = signal<Pages | null>(null);
 let loading: Promise<Pages> | null = null;
 /** The pages' chunk: once the app is idle after it starts, or at once when the palette opens first. */
-export function preloadPalette(): Promise<Pages> {
+function preloadPalette(): Promise<Pages> {
   return (loading ??= import('./PalettePages.tsx').then(
     (m) => (pages.value = m),
     (e) => {
@@ -32,7 +32,7 @@ export function preloadPalette(): Promise<Pages> {
 const NEW_TITLE = { message: 'New message', join: 'Join a server or group', add: 'Add someone' } as const;
 
 /** What a page is called in the crumbs. */
-export function titleOf(ref: PageRef): string {
+function titleOf(ref: PageRef): string {
   switch (ref.kind) {
     case 'root':
       return 'Jump to';
@@ -161,11 +161,6 @@ export function scanned(text: string) {
   paletteStack.value = card ? push(base, card) : base;
 }
 
-/** Swap the page on top for another. */
-export function replacePage(ref: PageRef, q = '') {
-  const s = paletteStack.value;
-  if (s) paletteStack.value = replaceTop(s, make(ref, q));
-}
 
 // ------------------------------------------------------------------ the box
 

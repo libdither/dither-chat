@@ -7,9 +7,8 @@
  *   with no ↩ shows a faint one while hovered ("Reply needed"); a click holds the row (the hub says
  *   `replyMark: 'needs'`), and the ↩ it now shows, clicked, lets go. The button is reached with Tab. Neither the row's
  *   menu nor a message's has the marks any more.
- * - Phone: swiping a row with ↩ left shows "No reply needed" under it and marks it; a row without, "Reply needed". A
- *   short slow swipe does nothing, nor does a vertical one. With a page peeking at the edge, a left swipe on a row is
- *   the row's, and one from the peeking card still brings the page back.
+ * - Phone: a tap on a row's ↩ marks "No reply needed" without opening the chat; a row without one has no button in
+ *   sight. Rows are not swiped: with a page peeking at the edge, a left swipe on a row brings the page back.
  *
  *   bun scripts/verify-reply-marks.ts http://127.0.0.1:8491 [/tmp/shots]
  *
@@ -105,7 +104,7 @@ check(Math.abs(owedBox[0] - markBox[0]) <= 5 && Math.abs(owedBox[1] - markBox[1]
 await mouse('mouseMoved', mx, my);
 await Bun.sleep(200);
 st = await markState(owes);
-check(st && st.opacity === 1 && st.x && st.owedHidden && st.label === 'No reply needed' && st.title === 'No reply needed', 'hovering the ↩: it shows ✕, "No reply needed"', st);
+check(st && st.opacity === 1 && st.x && st.owedHidden && st.label === 'No reply needed' && /^(Likely needs|May need) a reply: \d+%\. Click: No reply needed$/.test(st.title), 'hovering the ↩: it shows ✕, "No reply needed", after the chance it needs one', st);
 if (shots) await p.shot(`${shots}/hover-owed.png`);
 const hash0 = await p.eval<string>('location.hash');
 await click(mx, my);
@@ -192,7 +191,7 @@ await p.until(`!!document.querySelector('.app.phone')`, 15000);
 await p.until(`[...document.querySelectorAll('.inbox-row.owes')].some((el) => el.dataset.rowKey.startsWith('cnv_'))`, 15000);
 await Bun.sleep(500);
 const phoneOwes = (await findRow('owes'))!;
-check(await p.eval(`getComputedStyle(document.querySelector(${JSON.stringify(mark(phoneOwes))})).clipPath !== 'none'`), 'phone: the ↩ button is out of sight (the swipe does it)');
+check(await p.eval(`getComputedStyle(document.querySelector(${JSON.stringify(mark(phoneOwes))})).clipPath === 'none'`), "phone: the ↩ button lies over the row's ↩, to be tapped");
 
 // A long-press sheet has no marks.
 const [px, py] = await at(`[data-row="${phoneOwes}"]`);
@@ -205,53 +204,35 @@ check(menu.length > 0 && noMarks(menu), "phone: a row's long-press sheet has no 
 await p.eval('history.back()');
 await Bun.sleep(400);
 
-// A short slow swipe does nothing; a vertical one neither.
-let [sx, sy] = await at(`[data-row="${phoneOwes}"]`);
-await swipe([sx + 60, sy], [sx + 30, sy], { steps: 10, ms: 40 });
-await Bun.sleep(800);
-check((await owedRow(phoneOwes)) && !(await toastNow('No reply needed')), 'a short slow swipe settles back, unmarked');
-[sx, sy] = await at(`[data-row="${phoneOwes}"]`);
-await swipe([sx, sy], [sx - 4, sy - 160], { steps: 10 });
-await Bun.sleep(800);
-check((await owedRow(phoneOwes)) && !(await p.eval(`!!document.querySelector('.inbox-row.swiping')`)) && !(await toastNow('No reply needed')), 'a vertical drag is the list\'s, not the row\'s');
-
-// Swipe left on a row with ↩: "No reply needed" under it, then marked.
-[sx, sy] = await at(`[data-row="${phoneOwes}"]`);
-type Under = { label: string; visible: boolean; moved: string };
-let under = null as Under | null;
-await swipe([sx + 100, sy], [sx - 60, sy], {
-  mid: async () => {
-    under = await p.eval<Under | null>(`(() => { const w = document.querySelector(${JSON.stringify(wrap(phoneOwes))}); const u = w?.querySelector('.row-swipe-under'); if (!u) return null; return { label: u.textContent.trim(), visible: getComputedStyle(u).visibility === 'visible', moved: w.querySelector(':scope > .row').style.transform }; })()`);
-    if (shots) await p.shot(`${shots}/phone-swipe-owed.png`);
-  },
-});
-check(under?.label === 'No reply needed' && under.visible && /translateX\(-/.test(under.moved), 'swiping a row with ↩: the row follows, "No reply needed" under it', under);
-check(!(await owedRow(phoneOwes)), '…let go past the line: the ↩ goes', await view(phoneOwes));
+// A tap on the ↩: marked, and the chat does not open.
+const tap = async (xy: [number, number]) => {
+  await touch('touchStart', [xy]);
+  await touch('touchEnd', []);
+};
+await tap(await at(mark(phoneOwes)));
+await Bun.sleep(400);
+check(!(await owedRow(phoneOwes)), 'phone: a tap on the ↩ takes it off', await view(phoneOwes));
 check(!(await p.eval<boolean>(`location.hash.includes('/c/')`)), '…and the chat did not open');
 check(await hasToast('No reply needed'), '…with Undo on the toast');
 check(await until(async () => (await view(phoneOwes))?.owedSince === null, 20000), '…and the hub agrees');
 await clearToasts();
 
-// A row without ↩: "Reply needed".
+// A row without ↩: its button is out of sight, and a left swipe does not mark it.
 const phoneFree = await findRow('can-need', free ? [free] : []);
-check(!!phoneFree, 'phone: a row with no ↩ that can be held', phoneFree);
+check(!!phoneFree, 'phone: a row with no ↩', phoneFree);
 if (phoneFree) {
-  [sx, sy] = await at(`[data-row="${phoneFree}"]`);
-  await swipe([sx + 100, sy], [sx - 60, sy], {
-    mid: async () => {
-      under = await p.eval<Under | null>(`(() => { const w = document.querySelector(${JSON.stringify(wrap(phoneFree))}); const u = w?.querySelector('.row-swipe-under'); if (!u) return null; return { label: u.textContent.trim(), visible: getComputedStyle(u).visibility === 'visible', moved: '' }; })()`);
-    },
-  });
-  check(under?.label === 'Reply needed' && under.visible, 'swiping a row without ↩: "Reply needed" under it', under);
-  check(await until(async () => (await view(phoneFree))?.replyMark === 'needs', 20000), '…and the hub holds it', await view(phoneFree));
+  check(await p.eval(`getComputedStyle(document.querySelector(${JSON.stringify(mark(phoneFree))})).clipPath !== 'none'`), '…its button is out of sight');
+  const [sx, sy] = await at(`[data-row="${phoneFree}"]`);
+  await swipe([sx + 100, sy], [sx - 60, sy]);
+  await Bun.sleep(400);
+  check(!(await toastNow('Reply needed')) && (await view(phoneFree))?.replyMark !== 'needs', '…and a left swipe on it does not mark it');
   await clearToasts();
 }
 
-// With a page peeking at the edge: a left swipe on a row is the row's; one from the card brings the page back.
+// With a page peeking at the edge: a left swipe on a row brings the page back, and marks nothing.
 await p.until(`[...document.querySelectorAll('.inbox-row.owes')].length > 0`, 10000);
 const open = (await p.eval<string>(`[...document.querySelectorAll('.inbox-row')].map((el) => el.dataset.rowKey).find((k) => k.startsWith('cnv_'))`))!;
-await touch('touchStart', [await at(`[data-row="${open}"]`)]);
-await touch('touchEnd', []);
+await tap(await at(`[data-row="${open}"]`));
 await p.until(`location.hash.includes('/c/')`, 5000);
 await Bun.sleep(700);
 const page = await p.eval<string>('location.hash');
@@ -263,15 +244,11 @@ const peekRow = await p.eval<string | null>(
   `[...document.querySelectorAll('.inbox-row.markable')].map((el) => [el.dataset.rowKey, el.getBoundingClientRect()]).find(([k, b]) => b.top > 140 && b.bottom < 760)?.[0] ?? null`,
 );
 if (peekRow) {
-  const wasOwed = await owedRow(peekRow);
   const b = await p.eval<number[]>(`(() => { const r = document.querySelector('[data-row="${peekRow}"]').getBoundingClientRect(); return [r.top + r.height / 2]; })()`);
   await swipe([300, b[0]], [60, b[0]]);
-  check(await p.eval(`document.querySelector('.app').classList.contains('rest-peek')`), 'a left swipe on a row beside the peeking chat: the chat stays where it is');
-  check(await hasToast(wasOwed ? 'No reply needed' : 'Reply needed'), '…and the row is marked', { wasOwed });
-  await clearToasts();
+  check((await p.eval<string>('location.hash')) === page && (await p.eval(`document.querySelector('.app').classList.contains('rest-open')`)), 'a left swipe on a row beside the peeking chat brings the chat back', await p.eval<string>('location.hash'));
+  check(!(await toastNow('No reply needed')) && !(await toastNow('Reply needed')), '…and marks nothing');
 }
-await swipe([370, 500], [60, 500]);
-check((await p.eval<string>('location.hash')) === page && (await p.eval(`document.querySelector('.app').classList.contains('rest-open')`)), 'a left swipe from the peeking card brings the chat back', await p.eval<string>('location.hash'));
 
 check(p.errors.length === 0, 'no page errors', p.errors.slice(0, 3));
 await close();

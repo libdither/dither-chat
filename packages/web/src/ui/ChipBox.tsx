@@ -17,7 +17,7 @@ const MIME = 'text/x-dither-chat-body';
 let editing = false;
 
 /** Replaces [a, b) as typing would: undoable, through the box's input event. */
-export function editBox(el: HTMLTextAreaElement, a: number, b: number, text: string) {
+function editBox(el: HTMLTextAreaElement, a: number, b: number, text: string) {
   editing = true;
   try {
     el.setSelectionRange(a, b);

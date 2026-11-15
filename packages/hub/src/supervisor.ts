@@ -51,7 +51,7 @@ export function adapterEnv(env: Record<string, string | undefined>): Record<stri
   return out;
 }
 
-export type InprocFactory = (acc: AccountRow, dir: string) => InprocAdapter | null;
+type InprocFactory = (acc: AccountRow, dir: string) => InprocAdapter | null;
 
 export interface AdapterSocketData {
   kind: 'adapter';
@@ -74,13 +74,13 @@ const BACKOFF = [1, 2, 5, 10, 30, 60];
 /** How often an account another process runs is looked at again. */
 const LOCK_RETRY_MS = 15_000;
 
-export interface CallSink {
+interface CallSink {
   onAdapterEvent(accountId: string, ev: Extract<P.AdapterEvent, { t: 'call' }>): void;
   onAdapterGone(accountId: string): void;
 }
 
 /** Another connection held the database past busy_timeout (SQLITE_BUSY). */
-export const isBusy = (e: unknown) => (e as { code?: string } | null)?.code === 'SQLITE_BUSY';
+const isBusy = (e: unknown) => (e as { code?: string } | null)?.code === 'SQLITE_BUSY';
 /** Adapter events applied in one transaction, and between turns of the event loop when a batch is long. */
 export const EVENTS_STEP = 32;
 /** How long held events wait before they are tried again, and how many times in a row. */

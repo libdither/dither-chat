@@ -11,6 +11,8 @@ import {
   directsOf,
   effectiveLevel,
   folderConvs,
+  folderLeaves,
+  parentFolder,
   heldByRequest,
   inboxKeyOf,
   placePref,
@@ -22,7 +24,6 @@ import {
   people,
   placeConv,
   plainBody,
-  resolveTokens,
   ruleIcon,
   spaceChildren,
   spaceUnread,
@@ -48,11 +49,13 @@ import { contextMenu, Menuable, onMenu, openMenu, useMenu, type MenuEntry } from
 import { chatMenu, conversationMenu, folderMenuSpec, openPlaceMenu, personMenu, spaceMenu, WhyHere } from './menus.tsx';
 import { accountMenu } from './accountMenu.tsx';
 import { MarkableRow } from './ReplyMark.tsx';
+import { needsReplyLabel, needsReplyOf } from '../replymarks.ts';
 import { pickedRoute } from './Pairs.tsx';
 import { chatKey } from '../chatroutes.ts';
 import { groups, type MenuSpec } from './ContextMenu.tsx';
 import { openAbout } from '../opening.ts';
 import { arrangeDrop, arrangedFolderItems, arrangedPeople, arrangedRail, snapshot } from '../arrange.ts';
+import { openShelves, shelve, toggleShelf } from '../quiet.ts';
 import { inboxSnap, shownInbox } from '../inbox.ts';
 import { linkAccounts, PeopleAccountPicker, PeopleLinks, RequestsRow, usePeopleLinks } from './Requests.tsx';
 import { FeedRows } from './FeedRow.tsx';
@@ -117,10 +120,15 @@ function Ago({ ts }: { ts: number | null | undefined }) {
   return <>{ago(ts)}</>;
 }
 
-function Owed({ at }: { at: number }) {
+/**
+ * A reply you owe: ↩ and how long, and the chance it needs one (`p`, docs/inbox.md "Needs a reply") as a faint
+ * percentage that styles.css draws from `data-p`, so the row has no more elements.
+ */
+function Owed({ at, p }: { at: number; p?: number | null }) {
   rev.value;
+  const chance = p != null ? needsReplyLabel(p) : null;
   return (
-    <span class="row-owed" aria-label={`Unanswered for ${since(at)}`}>
+    <span class="row-owed" aria-label={`Unanswered for ${since(at)}${chance ? `. ${chance}` : ''}`} title={chance ?? undefined} data-p={p != null ? `${Math.round(p * 100)}%` : undefined}>
       <Icon name="reply" size={11} />
       {since(at)}
     </span>
@@ -141,7 +149,25 @@ function opener(key: string, open: () => void): () => void {
  * inbox's one row for a person reached by several routes (model.ts), drawn as a DM row of the route with the latest
  * message (`c`), its unread summed over every route and its menu acting on them all.
  */
-export const ConvRow = memo(function ConvRow({ c, active, onClick, showPlace = true, why, owedSince, chat }: { c: P.ConversationView; active: boolean; onClick: () => void; showPlace?: boolean; why?: string[]; owedSince?: number | null; chat?: { person: P.PersonView; routes: P.ConversationView[] } }) {
+const ConvRow = memo(function ConvRow({
+  c,
+  active,
+  onClick,
+  showPlace = true,
+  why,
+  owedSince,
+  needsP,
+  chat,
+}: {
+  c: P.ConversationView;
+  active: boolean;
+  onClick: () => void;
+  showPlace?: boolean;
+  why?: string[];
+  owedSince?: number | null;
+  needsP?: number | null;
+  chat?: { person: P.PersonView; routes: P.ConversationView[] };
+}) {
   metaRev.value;
   const u = chat ? chatUnread(chat.routes) : unreadOf(c);
   const lvl = effectiveLevel(c);
@@ -193,7 +219,7 @@ export const ConvRow = memo(function ConvRow({ c, active, onClick, showPlace = t
           <span class="row-preview">{preview(c)}</span>
           {u.muted && <Icon name={ruleIcon(lvl.level)} size={12} class="row-muted" />}
           {u.badge ? <Count n={u.badge} /> : u.unread && !u.muted ? <span class="unread-dot" /> : null}
-          {owedSince ? <Owed at={owedSince} /> : null}
+          {owedSince ? <Owed at={owedSince} p={needsP} /> : null}
         </span>
       </span>
     </button>
@@ -231,7 +257,7 @@ function mailRowMenu(t: P.MailThreadView, why?: string[]): MenuSpec {
  * a chat's network badge goes, the subject before the start of the last message, the same ↩ and reasons as a chat.
  * Opening it opens the reader beside the inbox.
  */
-export const MailRow = memo(function MailRow({ id, active, why, owedSince }: { id: string; active: boolean; why?: string[]; owedSince?: number | null }) {
+const MailRow = memo(function MailRow({ id, active, why, owedSince, needsP }: { id: string; active: boolean; why?: string[]; owedSince?: number | null; needsP?: number | null }) {
   mailRev.value;
   metaRev.value;
   const t = db.mail.threads.get(id);
@@ -265,7 +291,7 @@ export const MailRow = memo(function MailRow({ id, active, why, owedSince }: { i
             {t.preview ? ` — ${t.preview}` : ''}
           </span>
           <Count n={t.unread} />
-          {owedSince ? <Owed at={owedSince} /> : null}
+          {owedSince ? <Owed at={owedSince} p={needsP} /> : null}
         </span>
       </span>
     </button>
@@ -364,19 +390,20 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
   const activeKey = activeConv ? inboxKeyOf(activeConv) : undefined;
   const row = (r: InboxRow) => {
     const owedSince = r.needs ? r.owedSince : null;
+    const needsP = owedSince !== null ? needsReplyOf(r.kind === 'mail' ? [r.key] : r.chat ? r.chat.routes.map((c) => c.id) : [r.conv.id]) : null;
     if (r.kind === 'mail')
       return (
-        <MarkableRow key={r.key} rowKey={r.key} kind="mail" ids={[r.key]} owedSince={owedSince} canNeed={false}>
-          <MailRow id={r.key} active={r.key === activeConv} why={r.reasons} owedSince={owedSince} />
+        <MarkableRow key={r.key} rowKey={r.key} kind="mail" ids={[r.key]} owedSince={owedSince} needsP={needsP} canNeed={false}>
+          <MailRow id={r.key} active={r.key === activeConv} why={r.reasons} owedSince={owedSince} needsP={needsP} />
         </MarkableRow>
       );
     const latest = needsTarget(r.conv);
     return (
-      <MarkableRow key={r.key} rowKey={r.key} kind="conversation" ids={r.chat ? r.chat.routes.map((c) => c.id) : [r.conv.id]} owedSince={owedSince} canNeed={!!latest} latest={latest}>
+      <MarkableRow key={r.key} rowKey={r.key} kind="conversation" ids={r.chat ? r.chat.routes.map((c) => c.id) : [r.conv.id]} owedSince={owedSince} needsP={needsP} canNeed={!!latest} latest={latest}>
         {r.chat ? (
-          <ConvRow c={r.conv} chat={r.chat} active={r.key === activeKey} onClick={opener(`inbox:${r.key}`, () => go({ view: 'inbox', conv: chatOpens(r.chat!.person.id) ?? r.conv.id }))} why={r.reasons} owedSince={owedSince} />
+          <ConvRow c={r.conv} chat={r.chat} active={r.key === activeKey} onClick={opener(`inbox:${r.key}`, () => go({ view: 'inbox', conv: chatOpens(r.chat!.person.id) ?? r.conv.id }))} why={r.reasons} owedSince={owedSince} needsP={needsP} />
         ) : (
-          <ConvRow c={r.conv} active={r.conv.id === activeConv} onClick={opener(`inbox:${r.conv.id}`, () => go({ view: 'inbox', conv: r.conv.id }))} why={r.reasons} owedSince={owedSince} />
+          <ConvRow c={r.conv} active={r.conv.id === activeConv} onClick={opener(`inbox:${r.conv.id}`, () => go({ view: 'inbox', conv: r.conv.id }))} why={r.reasons} owedSince={owedSince} needsP={needsP} />
         )}
       </MarkableRow>
     );
@@ -439,7 +466,7 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
 // ------------------------------------------------------------------ people
 
 /** `directs`: the person's direct conversations (directsOf), which change with each message where the person does not. */
-export const PersonRow = memo(function PersonRow({ person, directs, active, onClick }: { person: P.PersonView; directs: P.ConversationView[]; active: boolean; onClick: () => void }) {
+const PersonRow = memo(function PersonRow({ person, directs, active, onClick }: { person: P.PersonView; directs: P.ConversationView[]; active: boolean; onClick: () => void }) {
   metaRev.value;
   const last = directs.reduce<P.ConversationView | null>((a, c) => (!a || (c.lastMessageAt ?? 0) > (a.lastMessageAt ?? 0) ? c : a), null);
   const u = sumUnread(directs);
@@ -634,7 +661,7 @@ function ChannelRow({ c, active, depth, onOpen, alsoIn, dots = true }: { c: P.Co
   );
 }
 
-export function SpaceTree({ spaceId, active, onOpen, depth = 0, seen = new Set<string>(), dots }: { spaceId: string; active?: string; onOpen: (c: P.ConversationView) => void; depth?: number; seen?: Set<string>; dots?: boolean }) {
+function SpaceTree({ spaceId, active, onOpen, depth = 0, seen = new Set<string>(), dots }: { spaceId: string; active?: string; onOpen: (c: P.ConversationView) => void; depth?: number; seen?: Set<string>; dots?: boolean }) {
   if (seen.has(spaceId)) return null;
   const nextSeen = new Set(seen).add(spaceId);
   const kids = spaceChildren(spaceId);
@@ -723,10 +750,12 @@ export function SpaceSidebar({ spaceId, activeConv }: { spaceId: string; activeC
 
 export function FolderSidebar({ folderId, activeConv, activePerson }: { folderId: string; activeConv?: string; activePerson?: string }) {
   rev.value;
-  const f = db.folders.find((x) => x.id === folderId);
-  if (!f) return <div class="sidebar-inner" />;
+  const found = db.folders.find((x) => x.id === folderId);
+  if (!found) return <div class="sidebar-inner" />;
+  const f = found;
   const nets = new Set<string>();
-  for (const it of f.items) {
+  const outer = parentFolder(f.id);
+  for (const it of folderLeaves(f)) {
     if (it.kind === 'space') nets.add(db.spaces.get(it.id)?.network ?? '');
     if (it.kind === 'conversation') nets.add(db.conversations.get(it.id)?.network ?? '');
     if (it.kind === 'person') directsOf(it.id).forEach((d) => nets.add(d.network));
@@ -741,11 +770,57 @@ export function FolderSidebar({ folderId, activeConv, activePerson }: { folderId
           {f.name}
         </h1>
         <span class="side-sub">
-          Folder across {[...nets].map((n) => netName(n as P.Network)).join(', ')}
+          {outer ? (
+            <>
+              In{' '}
+              <button class="link-btn" onClick={() => go({ view: 'folder', folder: outer.id })}>
+                {outer.name}
+              </button>
+              {' · '}
+            </>
+          ) : (
+            'Folder '
+          )}
+          across {[...nets].map((n) => netName(n as P.Network)).join(', ')}
         </span>
       </header>
       <div class="side-scroll tree">
-        {arrangedFolderItems(f).map((it) => {
+        {(() => {
+          const all = arrangedFolderItems(f);
+          const { shown, quiet } = shelve(all, (it) => `${it.kind}:${it.id}`);
+          const list = `folder:${f.id}`;
+          const on = openShelves.value.has(list);
+          return [...shown, ...(on ? quiet : [])].map(row).concat(quiet.length ? [<ShelfRow list={list} n={quiet.length} open={on} />] : []);
+        })()}
+      </div>
+    </div>
+  );
+
+  function row(it: P.FolderView['items'][number]) {
+          if (it.kind === 'folder') {
+            const c = db.folders.find((x) => x.id === it.id);
+            if (!c) return null;
+            const u = sumUnread(folderConvs(c));
+            const n = folderLeaves(c).length;
+            return (
+              <button class="row conv-row place-row" onClick={() => go({ view: 'folder', folder: c.id })} onContextMenu={onMenu(() => folderMenuSpec(c.id))}>
+                <span class="row-avatar">
+                  <span class="folder-row-icon" style={{ '--folder': c.color ?? '#8b93a7' } as any}>
+                    {c.icon ?? <Icon name="folder" />}
+                  </span>
+                </span>
+                <span class="row-main">
+                  <span class="row-top">
+                    <span class="row-title">{c.name}</span>
+                  </span>
+                  <span class="row-bottom">
+                    <span class="row-preview">Folder · {n} {n === 1 ? 'place' : 'places'}</span>
+                    <Count n={u.badge} />
+                  </span>
+                </span>
+              </button>
+            );
+          }
           if (it.kind === 'space') {
             const s = db.spaces.get(it.id);
             if (!s) return null;
@@ -771,9 +846,16 @@ export function FolderSidebar({ folderId, activeConv, activePerson }: { folderId
           }
           const c = db.conversations.get(it.id);
           return c && visibleConv(c) ? <ConvRow c={c} active={c.id === activeConv} onClick={() => open(c)} /> : null;
-        })}
-      </div>
-    </div>
+  }
+}
+
+/** A list's quiet servers, closed: one row with their count (quiet.ts). */
+function ShelfRow({ list, n, open }: { list: string; n: number; open: boolean }) {
+  return (
+    <button class="row shelf-row" aria-expanded={open} onClick={() => toggleShelf(list)} title="Never opened here and nothing new in 6 months">
+      <Icon name={open ? 'chevronUp' : 'chevronDown'} size={14} />
+      <span>{open ? 'Put quiet servers away' : `${n} quiet ${n === 1 ? 'server' : 'servers'}`}</span>
+    </button>
   );
 }
 
@@ -805,7 +887,7 @@ function SpacesEntry({ entry: e, hidden }: { entry: RailEntry; hidden?: boolean 
   const u = e.kind === 'folder' ? sumUnread(folderConvs(e.folder)) : e.kind === 'space' ? spaceUnread(e.space.id) : unreadOf(e.conv);
   const sub =
     e.kind === 'folder'
-      ? `Folder · ${e.folder.items.length} items`
+      ? `Folder · ${folderLeaves(e.folder).length} ${folderLeaves(e.folder).length === 1 ? 'place' : 'places'}`
       : e.kind === 'space'
         ? `${netName(e.space.network)} ${NETWORK_META[e.space.network].spaceNoun}`
         : kindLabel(e.conv);
@@ -859,9 +941,19 @@ export function SpacesSidebar() {
             </span>
           </span>
         </button>
-        {arrangedRail().map((e) => (
-          <SpacesEntry entry={e} />
-        ))}
+        {(() => {
+          const { shown, quiet } = shelve(arrangedRail(), (e) => e.key);
+          const on = openShelves.value.has('rail');
+          return (
+            <>
+              {shown.map((e) => (
+                <SpacesEntry entry={e} />
+              ))}
+              {on && quiet.map((e) => <SpacesEntry entry={e} />)}
+              {quiet.length > 0 && <ShelfRow list="rail" n={quiet.length} open={on} />}
+            </>
+          );
+        })()}
         {hidden.length > 0 && <SectionHead id="spaces-h" label="Hidden" count={hidden.length} />}
         {!isCollapsed('spaces-h') && hidden.map((e) => <SpacesEntry entry={e} hidden />)}
       </div>

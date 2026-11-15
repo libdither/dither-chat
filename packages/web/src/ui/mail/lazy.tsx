@@ -91,13 +91,23 @@ export function openCompose(o: Omit<ComposeOpen, 'seq'>) {
   void preloadMail();
 }
 
+/** A draft thrown away, its Undo in the strip until `until` (Composer.tsx discardLater). */
+export interface MailDiscarded {
+  key: string;
+  kind: P.MailComposeKind;
+  threadId?: string;
+  subject: string;
+  until: number;
+}
+export const mailDiscarded = signal<MailDiscarded[]>([]);
+
 /** Something of the outbox to show: a send held for Undo, on its way, or failed. */
 const outboxShows = () => [...db.mail.outbox.values()].some((o) => o.state !== 'sent' || (o.createdAt ?? 0) > Date.now() - 60_000);
 
 /** The composer and the outbox's strip, over everything; loaded with Mail's screens when first needed. */
 export function MailComposerLazy() {
   mailRev.value;
-  const want = !!mailCompose.value || outboxShows();
+  const want = !!mailCompose.value || outboxShows() || mailDiscarded.value.length > 0;
   const [m, setM] = useState(screens);
   useEffect(() => {
     if (want && !m) preloadMail().then(setM, () => {});

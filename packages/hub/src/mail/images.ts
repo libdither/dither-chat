@@ -19,8 +19,8 @@ import { fetchPublicToFile, type Lookup } from '../fetchsafe.ts';
 import { SANDBOX_CSP } from '../mediaheaders.ts';
 import { isPrivateAddress } from '../webpush.ts';
 
-export const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
-export const IMAGE_KEEP_MS = 7 * 86_400_000;
+const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+const IMAGE_KEEP_MS = 7 * 86_400_000;
 /** What the proxy says it is: a browser, not this hub. */
 export const PROXY_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
 
@@ -62,7 +62,7 @@ async function defaultLookup(h: string): Promise<string[]> {
 }
 
 /** Thrown when a name points anywhere but the public internet. */
-export class PrivateAddressError extends Error {
+class PrivateAddressError extends Error {
   status = 403;
 }
 
@@ -98,7 +98,7 @@ export function pinnedFetch(o: { lookup?: Lookup; fetch?: typeof fetch; headers?
   }) as typeof fetch;
 }
 
-export interface ImageProxyOpts {
+interface ImageProxyOpts {
   /** The media cache (DATA/media-cache): kept images go there, under keys of their own. */
   dir: string;
   lookup?: Lookup;

@@ -58,7 +58,7 @@ declare module './index.ts' {
   }
 }
 
-export type MailAction = 'read' | 'unread' | 'star' | 'unstar' | 'archive' | 'inbox' | 'trash' | 'junk' | 'move';
+type MailAction = 'read' | 'unread' | 'star' | 'unstar' | 'archive' | 'inbox' | 'trash' | 'junk' | 'move';
 
 type Row = Record<string, any>;
 type Bit = 0 | 1;
@@ -67,7 +67,7 @@ type FlagKey = 'seen' | 'flagged';
 type Item = { mid: string; native: string; from: string; copy?: boolean; thread: string | null };
 
 /** mail_message.pending: changes made here the server has not confirmed. */
-export interface Pending {
+interface Pending {
   seen?: { v: Bit; was: Bit; op: string };
   flagged?: { v: Bit; was: Bit; op: string };
   /**
@@ -104,7 +104,7 @@ const instances = new WeakMap<MailHub, MailOps>();
 /** The hub's writes (the router below makes them, once per hub). */
 export const mailOps = (hub: MailHub): MailOps => instances.get(hub)!;
 
-export class MailOps {
+class MailOps {
   /** How long a change waits for others to join its call. */
   coalesceMs = 250;
   /**

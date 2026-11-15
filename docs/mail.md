@@ -72,11 +72,24 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
 
 - **Writing.** ✎ in Mail's header (or `c`) starts a new message. Reply, Reply all and Forward sit under each message; on
   a phone a bar under the thread answers the latest (`r`, `a`, `f` on a desktop). The composer is a full-screen card on
-  a phone and a panel docked at the bottom right on a desktop, so the list stays usable beside it. It has From (a
-  picker when the account sends as several addresses, its status's `self.addresses`), To, Cc and Bcc as chips that
-  complete from your mail and from people's email addresses, the subject and your text. A reply's quote can be left
-  off; a forward carries the original's text and its files, each of which can be taken off. Ctrl+Enter sends; ✕, Esc
-  or back closes it and keeps the draft.
+  a phone and a panel docked at the bottom right on a desktop, so the list stays usable beside it. Its header has ✕ and
+  the trash (discard); Attach, Aa (formatting) and Send are along the bottom, Send at the right. It has From (a picker
+  when the account sends as several addresses, its status's `self.addresses`), To, Cc and Bcc, the subject and your
+  text. A reply's quote is one quiet line under the text ("··· Quoting Sam ×": ··· shows it, × leaves it out, "Quote
+  Sam" puts it back); a forward carries the original's text and its files, each of which can be taken off. Ctrl+Enter
+  sends; ✕, Esc or back closes it and keeps the draft.
+- **Recipients** are text until they are chips: Enter, a comma or leaving the box makes them chips, and what is not an
+  address stays, marked. A chip opens back into text: Backspace at the start of the box opens the last one with its
+  last letter gone (as if it had been text all along), a click opens any one whole; Enter puts it back in its place,
+  with its name while the part before @ is the same. Ctrl+Backspace takes the last chip whole, × any one. Suggestions
+  come from people (their email addresses), your mail (those you wrote to first) and the account's own server: Gmail's
+  and Proton's completion, through dither-accounts' `mail.contacts` (`GET /api/mail/contacts?q=&account=`, the account
+  written from first, then any other whose status says `details.contacts`; 2.5 s at most, kept a minute), shown as they
+  arrive, each address once. Arrows pick; Enter takes the pick, or an address typed in full as typed.
+- **Undo** (Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y to redo; the browser's own Undo too) goes back through the whole composer,
+  not each box: typing (a step per word or pause), a chip made, opened or taken off, a file attached or taken off, the
+  quote, From. Discard leaves "Discarded … Undo" in the strip for 8 s; Undo opens the draft again, and only then do
+  the draft and its files go (a draft discarded as the page closes stays, rather than being lost).
 - **Who a reply goes to** (`hub/src/mail/compose.ts`): the original's Reply-To, else its From; to your own message, its
   To again. Reply all adds its To and Cc without your addresses. `Re: ` once (`Fwd: ` for a forward), whatever markers
   the subject had. From is the address the original came to. The quote is "On Tue, Nov 3, 2026 at 10:42 AM, Sam Lee
@@ -86,7 +99,19 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
   once, so a draft written without the hub, or cut off by a reload, is still there. One per thread (`t:<thread>`:
   answering a thread that has one opens it) or `new:<uuid>`. "N drafts" under the views opens them. A draft's files
   stay on the hub an hour after it was last saved or opened (the uploads' own limit).
-- **Undo.** Send gives the message to the hub's outbox (`hub/src/mail/outbox.ts`), once per `clientId`, after checking
+- **Formatting** is Markdown, as in chat (`protocol/src/mail-markdown.ts`): the text part goes as you wrote it, which
+  reads well as text, and the HTML part is it made into HTML, on the hub, the same whichever account sends (Gmail on
+  the web, Proton and IMAP all send the HTML they are given). **bold**, _italic_, ~~struck~~, `code` and fenced code,
+  [links](https://example.com) and bare addresses, lists, `>` quotes and `#` headings; a line break is a line break.
+  Not taken as Markdown: a signature's `--` under a line (no setext headings), a line indented four spaces (no
+  indented code), HTML you type (it is text), links other than http(s) and mailto, pictures (a link to them). Aa shows
+  the format bar: B, I, S, code, link, bullets, numbers, quote (each takes itself off again), and Preview, the HTML part
+  as it will arrive, in a frame without scripts. Keys: Ctrl+B, Ctrl+I, Ctrl+K (link), Ctrl+Shift+7, 8 and 9 (numbers,
+  bullets, quote), Ctrl+Shift+X (struck), as Gmail's are where it has them. Enter goes on with a list (Enter on an empty
+  item ends it). A web address pasted over selected text links it; rich text pasted from a page or a document keeps
+  its bold, italic, links, headings, lists, quotes and code as Markdown (`web/src/mail/paste.ts`, read from the
+  clipboard's HTML in an inert document; colours, fonts and pictures stay behind); Ctrl+Shift+V pastes it plain.
+- **Undo a send.** Send gives the message to the hub's outbox (`hub/src/mail/outbox.ts`), once per `clientId`, after checking
   it: someone to send to (To, Cc and Bcc together at most the account's `details.maxRecipients`, else 500, 100 on
   Proton), From one of the account's addresses (422 otherwise), 25 MB a file and the files together at most its
   `details.sendCap` (else 35 MB, 25 MB on Proton; over it is 413, and the composer's count says the same cap). It is
@@ -126,7 +151,8 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
 Routes (`sendRoutes` in outbox.ts): `GET /api/mail/compose?kind=new|reply|replyAll|forward&message=&account=&tz=` fills a
 message in; `POST /api/mail/send` (a `MailSendRequest`); `GET /api/mail/outbox`; `DELETE /api/mail/outbox/:id` is Undo; `POST /api/mail/outbox/:id/send` is Send now;
 `POST /api/mail/outbox/:id/dismiss`; `GET /api/mail/drafts[?key=]`, `GET/PUT/DELETE /api/mail/drafts/:key`;
-`GET /api/mail/addresses?q=` completes recipients; `POST /api/mail/accounts/:id/sending` is "Try sending again". The
+`GET /api/mail/addresses?q=` completes recipients from the hub's mail, `GET /api/mail/contacts?q=&account=` from the
+accounts' servers; `POST /api/mail/accounts/:id/sending` is "Try sending again". The
 `mail.outbox` event carries the outbox's whole list each time (it is not journaled: a sync answer carries it too).
 
 For later slices: MailHub's `sent` event (`{ accountId, outboxId, messageId, replyTo, threadId, dryRun }`) says you
@@ -140,11 +166,14 @@ files made without the hub surviving a reload of the page (its draft does).
 
 - **The HTML** shows in a frame on a white sheet, in every theme, scaled down to the width when the mail is wider than
   the screen. Plain HTML is the exception: when the sanitiser finds only text, paragraphs, line breaks, links, lists,
-  quotes, bold and italic (no images, tables, headings, colours, backgrounds, fonts, alignment or style sheets; margins
-  and a quote's bar are fine) and the mail has a text part of its own, the body view says `html.plain` and the reader
-  shows the text part, with its quote fold, in the app's theme (a reply sent from here, say). The frame, its sandbox,
-  the CSP and the allowlist are unchanged; this only picks the part. `sanitize.ts` `plain`, `parts.ts` `hasTextPart`,
-  tested in `mail-sanitize.test.ts` and `mail-parts.test.ts`. The hub sanitises it first (`hub/src/mail/sanitize.ts`, an allowlist on Bun's HTMLRewriter): no script,
+  quotes and what Markdown makes (bold, italic, underline, struck-through text, headings, code, rules; no images,
+  tables, colours, backgrounds, fonts, alignment or style sheets; margins and a quote's bar are fine), it is drawn in
+  the app's theme. Without formatting, and with a text part of its own, the body view says `html.plain` and the reader
+  shows the text part, with its quote fold. With formatting its text part would lose (bold, headings, code: mail
+  written here in Markdown, say), it says `html.formatted` too and the reader shows the HTML in the frame with the
+  app's colours and font instead of the sheet (`HtmlBody.tsx` `themeFrame`, again when the theme changes). The frame,
+  its sandbox, the CSP and the allowlist are unchanged; this only picks the part and the colours. `sanitize.ts`
+  `plain` and `formatted`, `parts.ts` `hasTextPart`, tested in `mail-sanitize.test.ts` and `mail-parts.test.ts`. The hub sanitises it first (`hub/src/mail/sanitize.ts`, an allowlist on Bun's HTMLRewriter): no script,
   frame, object, form, svg, math, meta or base survives; no `on…` attribute; links are http(s), mailto or a place in
   the mail; style keeps its looks but loses `url()`, `@import`, `expression()` and `behavior`. Every kept attribute is
   written again from its decoded value, so `jav&#x61;script:` is read as the browser would read it, and a tag left
@@ -412,10 +441,9 @@ How: `mail_triage` (`schema-triage.sql`) keeps each decision with its facts, wor
 your mark (`feedback`: `drop` for "Less like this", else a vote from before the tiers); a message the server no longer
 has keeps its row only if you marked it, and an account's mail going (§14 Q6) takes its rows, marked ones keeping
 their facts but not their words. `GET /api/mail/triage?since=` is How it sorts' mail (`MailTriageItem`: the last week,
-and the last two days of what fell below the list), and Catch up's tier for a mail card; each thread's view carries
+and the last two days of what fell below the list), and the tier for a mail row; each thread's view carries
 its newest decision (`MailThreadView.triage`) and each message's its own (`MailMessageView.triage`), so both follow
-new mail and reads live. Mail threads from people are cards in Catch up too ([inbox.md](inbox.md#catch-up)), with Open
-and Done.
+new mail and reads live.
 
 Decisions from before the tiers were converted once, as chat's ([notifications.md](notifications.md#the-migration)):
 Important and Active mail became rows on the list, Digest went below it, each keeping what it was (`was`), and the
@@ -929,12 +957,17 @@ others were asked, because an IMAP move is a removal there and an addition elsew
 - Slice 3: `mail-sanitize.test.ts` (a hostile corpus, each output parsed again against the allowlist),
   `mail-images.test.ts` (the token, private addresses in every spelling, DNS rebinding, redirects, not-an-image, size,
   headers) and `mail-parts.test.ts` (the routes on the fake).
-- Sending: `hub/test/mail-compose.test.ts` (recipients, subjects, quotes, the HTML part) and `mail-send.test.ts` (the
+- Writing: `web/test/mail-edits.test.ts` (the format bar's edits, lists going on, undo's steps, chips back to text,
+  suggestions merged, rich text pasted as Markdown).
+- Sending: `hub/test/mail-compose.test.ts` (recipients, subjects, quotes, the HTML part and its Markdown) and `mail-send.test.ts` (the
   fake: held and undone, 501 turning sending off with the message kept, a read grant, a dry run, retries and a timeout,
   files by path and by their bytes, a forward's files, From, a recipient or settings refused (422), a clientId sent
-  once, a restart mid-send).
+  once, a restart mid-send, the server's recipient suggestions).
   `mail-remote.test.ts` sends a reply through the SMTP sink and checks its headers and its copy in the thread.
-  `verify-mail.ts` writes, undoes and sends on a phone and docks a new message on a desktop, last, since it sends.
+  `verify-mail.ts` writes, undoes and sends on a phone (a chip opened and undone, a Markdown reply drawn in the
+  theme) and docks a new message on a desktop (the server's suggestions, a chip edited in place, B, Preview, Ctrl+Z,
+  discard and its Undo), last, since it sends. Start it a few seconds after the demo hub: the demo's two live notices
+  arrive 4 s in, and their toasts would take its taps on a phone.
 - `hub/test/mail-remote.test.ts` runs against a real manager with an `imap` account on dither-accounts' Dovecot and
   SMTP sink (ports 18580–18589). It needs the dither-accounts checkout (beside this repo, or `DITHER_ACCOUNTS_REPO`)
   and Dovecot (`DOVECOT_BIN`, or the binary dither-accounts' own imap tests found), and skips without them:

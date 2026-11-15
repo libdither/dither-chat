@@ -35,7 +35,7 @@ export function applyUpdate() {
 }
 
 /** What a reload would lose now (update.ts). */
-export function busy(): string[] {
+function busy(): string[] {
   const typed = [...document.querySelectorAll<HTMLTextAreaElement | HTMLInputElement>('textarea, input[type=text], input[type=password], input[type=search], input:not([type])')].some(
     (el) => el.value.trim() !== '' && !el.readOnly,
   );

@@ -25,7 +25,6 @@ const boot = await bootstrap();
 if (!boot.accounts.length || !boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub');
 const DMAIN = 'acc_demo-discord-main';
 const DALT = 'acc_demo-discord-alt';
-const TG = 'acc_demo-telegram';
 
 let failures = 0;
 const check = (ok: unknown, what: string, detail: unknown = '') => {

@@ -7,7 +7,7 @@ import type * as P from '@dither-chat/protocol';
 /** The ranges the chart offers, in days. */
 export const RANGES = [7, 30, 90] as const;
 /** Hours per bar the chart picks from. */
-export const STEPS = [1, 2, 3, 4, 6, 8, 12, 24];
+const STEPS = [1, 2, 3, 4, 6, 8, 12, 24];
 const MIN_BAR = 4;
 
 /** Series added hour by hour. */
@@ -64,7 +64,7 @@ export function hourLabel(h: number): string {
 export const spanLabel = (start: number, len: number) => `${hourLabel(start)}–${hourLabel(start + len)}`;
 
 /** Their messages by hour of the day, from the weekday-by-hour grid. */
-export function byHourOfDay(week: number[]): number[] {
+function byHourOfDay(week: number[]): number[] {
   const out = new Array(24).fill(0) as number[];
   week.forEach((n, i) => (out[i % 24] += n));
   return out;
@@ -88,7 +88,7 @@ export function whereWords(series: P.ActivitySeries[]): string {
 }
 
 /** Share of the logged time they showed as online or do not disturb, or null when none was logged. */
-export function onlineShare(v: P.ActivityChartView): number | null {
+function onlineShare(v: P.ActivityChartView): number | null {
   const known = v.week.known?.reduce((a, b) => a + b, 0) ?? 0;
   if (!known) return null;
   return (v.week.online ?? []).reduce((a, b) => a + b, 0) / known;

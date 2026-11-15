@@ -22,6 +22,7 @@ import { noteWork } from './stalls.ts';
 import { foldMark, NEEDS_HOLD } from './replymarks.ts';
 import { emptyTally, FEATURE_HALF_LIFE, medianLatency, record, recordDismissed, REPLY_WINDOW, replyRate, sumTallies, tallyAt, toward, type Tally } from './tally.ts';
 import { DEFAULT_OWED_TABLE, fitOwedTable, OWED_SHOWN, owedChance, rateBucket, turnRate, validTable, type OwedTable, type OwedTurn } from './owed.ts';
+import { calibrationReport, fitNeedsModelSteps, needsChance, needsOutcomes, RECORD_AGES, turnMessagesQuery, validNeedsModel, type CalibrationReport, type MessageFacts, type NeedsModel, type TurnMessages } from './needsreply.ts';
 import { jobFailed } from './errors.ts';
 
 type Row = Record<string, any>;
@@ -31,22 +32,22 @@ const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
 /** In a small group, the first message from someone else this soon after yours answers you. */
-export const FOLLOW_UP = HOUR;
+const FOLLOW_UP = HOUR;
 /** A group this size or smaller (you included) is talking to you. */
-export const SMALL_GROUP = 6;
+const SMALL_GROUP = 6;
 /** Bumped when the fold changes meaning: every conversation folds again, in the background. 4: turns kept (owed_turn). */
-export const FEATURE_VERSION = 4;
+const FEATURE_VERSION = 4;
 /** A conversation that got older messages folds again once none have arrived for this long. */
 const QUIET = 5_000;
 /** Scores move with time (an unanswered message ages, recency fades): all are recomputed this often. */
-export const RESCORE_EVERY = 5 * MIN;
+const RESCORE_EVERY = 5 * MIN;
 /** Conversations scored between turns of the event loop when all are. */
 export const RESCORE_STEP = 64;
 
 // ------------------------------------------------------------------ features
 
 // The tallies of reply habits are in tally.ts.
-export { emptyTally, FEATURE_HALF_LIFE, LATENCY_EDGES, medianLatency, record, recordDismissed, REPLY_WINDOW, replyRate, sumTallies, tallyAt, type Tally } from './tally.ts';
+export { emptyTally,   medianLatency, record,    sumTallies,  type Tally } from './tally.ts';
 
 
 /** How a turn came to be owed; `marked`: you marked one of its messages "Reply needed". */
@@ -166,7 +167,7 @@ export interface Settled {
   /** You marked it "No reply needed". */
   dismissed?: boolean;
 }
-export type OnSettle = (t: Settled) => void;
+type OnSettle = (t: Settled) => void;
 
 /** The open turn is over: answered at `answeredAt`, or (null) it ran out. `timed`: whether that is when you answered. */
 function settle(s: ConvState, tallyOf: (key: string) => Tally, answeredAt: number | null, timed = true, onSettle?: OnSettle) {
@@ -244,7 +245,7 @@ function dismiss(s: ConvState, tallyOf: (key: string) => Tally, m: FoldMessage, 
 }
 
 /** Triage decided after the message was folded: a push counts, and a question in a small group opens what you owe. */
-export function lateTriage(s: ConvState, place: Place, m: Pick<FoldMessage, 'id' | 'ts' | 'author' | 'authorKey'>, d: { pushed: boolean; question: boolean }): boolean {
+function lateTriage(s: ConvState, place: Place, m: Pick<FoldMessage, 'id' | 'ts' | 'author' | 'authorKey'>, d: { pushed: boolean; question: boolean }): boolean {
   let changed = false;
   if (d.pushed) {
     s.pushed += m.ts >= s.at ? 1 : toward(m.ts, s.at);
@@ -350,6 +351,10 @@ export interface ScoreInput {
   votes?: { up: number; down: number } | null;
   /** The owed table to weigh an unanswered turn by (owed.ts); the default one when not given. */
   owedTable?: OwedTable | null;
+  /** The needs-reply model (needsreply.ts) over the table; the table's chance alone when not given. */
+  needsModel?: NeedsModel | null;
+  /** The open turn's messages from others, as facts (needsreply.ts), for the needs-reply model. */
+  turnMessages?: readonly MessageFacts[] | null;
 }
 
 /** Added to the score of a conversation with an alert you have not seen: above any score the formula or the model gives. */
@@ -405,11 +410,21 @@ export interface Scored {
   relationship: number;
   /** When the turn you owe began, while its chance is worth showing (OWED_SHOWN); null otherwise. */
   owedSince: number | null;
-  /** The open turn as weighed: its age, your reply rate there, and the chance you still answer it in time (1 while held). */
-  owed: { age: number; rate: number; chance: number; held?: boolean } | null;
+  /**
+   * The open turn as weighed: its age, your reply rate there, and the chance it needs a reply (needsreply.ts: that you
+   * still answer it in time; 1 while held), with the owed table's chance alone (`table`).
+   */
+  owed: { age: number; rate: number; chance: number; table: number; held?: boolean } | null;
+  /** The chance it needs a reply as shown (to 5 points), while the turn is shown as owed and not held; else null. */
+  needsReply: number | null;
 }
 
-export function noiseOf(s: ConvState, usage: ScoreInput['usage'], now: number): Noise {
+/** "Likely needs a reply: 70%", or "May need a reply: 30%" below even odds. */
+const needsReplyText = (p: number) => `${p >= 0.5 ? 'Likely needs a reply' : 'May need a reply'}: ${Math.round(p * 100)}%`;
+/** A chance as shown: to 5 points, so a row is not sent again for every point it moves. */
+const shownChance = (p: number) => Math.round(p * 20) / 20;
+
+function noiseOf(s: ConvState, usage: ScoreInput['usage'], now: number): Noise {
   const receivedPerDay = perDay(decayed(s.received, s.at, now, FEATURE_HALF_LIFE), FEATURE_HALF_LIFE);
   const pushedPerDay = perDay(decayed(s.pushed, s.at, now, FEATURE_HALF_LIFE), FEATURE_HALF_LIFE);
   const sentPerDay = perDay(decayed(s.sent, s.at, now, FEATURE_HALF_LIFE), FEATURE_HALF_LIFE);
@@ -420,7 +435,7 @@ export function noiseOf(s: ConvState, usage: ScoreInput['usage'], now: number): 
 }
 
 /** 0..1, and which part says the most. */
-export function relationshipOf(s: ConvState, usage: ScoreInput['usage'], now: number): { strength: number; top: string; parts: Record<string, number> } {
+function relationshipOf(s: ConvState, usage: ScoreInput['usage'], now: number): { strength: number; top: string; parts: Record<string, number> } {
   const sent = decayed(s.sent, s.at, now, FEATURE_HALF_LIFE);
   const received = decayed(s.received, s.at, now, FEATURE_HALF_LIFE);
   const tally = tallyAt(s.tally, now);
@@ -444,7 +459,7 @@ export function lastThere(usage: ScoreInput['usage']): number | null {
 }
 
 /** "a minute", "5 minutes", "an hour", "3 days", "2 weeks". */
-export function duration(ms: number): string {
+function duration(ms: number): string {
   const n = (x: number, one: string, many: string) => (Math.round(x) <= 1 ? one : `${Math.round(x)} ${many}`);
   if (ms < 45_000) return 'a moment';
   if (ms < 50 * MIN) return n(ms / MIN, 'a minute', 'minutes');
@@ -478,15 +493,18 @@ export function scoreConversation(x: ScoreInput): Scored {
     const age = Math.max(0, now - turn.addressed!);
     // Marked "Reply needed": owed in full, at any age, for a week from the mark.
     const held = turn.held != null && now - turn.held < NEEDS_HOLD;
-    owed = { age, rate, chance: held ? 1 : owedChance(x.owedTable ?? DEFAULT_OWED_TABLE, x.shape, rate, age), ...(held ? { held: true } : {}) };
+    const table = owedChance(x.owedTable ?? DEFAULT_OWED_TABLE, x.shape, rate, age);
+    const chance = held ? 1 : needsChance(x.needsModel, { shape: x.shape, kind: turn.kind, age, tableChance: table, conv, person, messages: x.turnMessages ?? [], authorKey: turn.authorKey });
+    owed = { age, rate, chance, table, ...(held ? { held: true } : {}) };
   }
   const owedSince = turn && owed && owed.chance >= OWED_SHOWN ? turn.addressed : null;
+  const needsReply = owedSince !== null && owed && !owed.held ? shownChance(owed.chance) : null;
 
   if (x.muted) {
     const score = W.mutedFloor + parts.recency;
     const why = [`Muted: ${x.muted}`];
     if (x.unread) why.push(`${plural(x.unread, 'unread message')}`);
-    return { score: round(score), needs: false, reasons: why, parts, noise, relationship: rel.strength, owedSince, owed };
+    return { score: round(score), needs: false, reasons: why, parts, noise, relationship: rel.strength, owedSince, owed, needsReply };
   }
 
   if (turn && owed) {
@@ -506,6 +524,7 @@ export function scoreConversation(x: ScoreInput): Scored {
       const did = { direct: 'wrote to you', mention: 'mentioned you', reply: 'replied to you', question: 'asked the group something', answer: 'answered you', marked: 'wrote' }[turn.kind ?? 'direct'];
       text = `${who} ${did} ${since} ago; not answered yet`;
     }
+    if (needsReply !== null) text += `. ${needsReplyText(needsReply)}`;
     reasons.push({ w: parts.owed, text });
   }
 
@@ -589,6 +608,7 @@ export function scoreConversation(x: ScoreInput): Scored {
     relationship: rel.strength,
     owedSince,
     owed,
+    needsReply,
   };
 }
 
@@ -643,7 +663,12 @@ const LISTED = `(c.shape IN ('direct', 'group', 'self') OR (c.shape = 'channel' 
   SELECT 1 FROM space_edge e WHERE e.child_kind = 'conversation' AND e.child_id = c.id)))`;
 
 const sameView = (a: P.AttentionView, b: P.AttentionView) =>
-  Math.abs(a.score - b.score) < 0.5 && a.needs === b.needs && a.owedSince === b.owedSince && a.replyMark === b.replyMark && a.reasons.join('\n') === b.reasons.join('\n');
+  Math.abs(a.score - b.score) < 0.5 &&
+  a.needs === b.needs &&
+  a.owedSince === b.owedSince &&
+  a.replyMark === b.replyMark &&
+  a.needsReply === b.needsReply &&
+  a.reasons.join('\n') === b.reasons.join('\n');
 
 export class Attention {
   /** What the inbox lists, as last computed. */
@@ -673,6 +698,16 @@ export class Attention {
   owedTable: OwedTable = DEFAULT_OWED_TABLE;
   /** The pump had nothing left to fold last time: the turns are all in, and the table may be fitted. */
   private caughtUp = false;
+  /** The chance a turn needs a reply (needsreply.ts): fitted here once a day after the table; null until the first fit. */
+  needsModel: NeedsModel | null = null;
+  private needsFitting: Promise<NeedsModel | null> | null = null;
+  /** When a fit last began: one that failed is tried again an hour later, not at every rescore. */
+  private needsTriedAt = 0;
+  /** Open turns' messages as facts, by conversation, while its turn and newest message stay the same. */
+  private turnFacts = new Map<string, { key: string; messages: MessageFacts[] }>();
+  private readTurn: ((cid: string, shape: P.Shape, from: number, to: number) => TurnMessages) | null = null;
+  /** Predictions kept for the calibration record this run (needs_prediction), so each is written once. */
+  private recorded = new Set<string>();
 
   constructor(
     private store: Store,
@@ -691,6 +726,12 @@ export class Attention {
       if (validTable(t)) this.owedTable = t;
     } catch {
       // A table from another shape of the code: the default until the next fit.
+    }
+    try {
+      const m = JSON.parse((db.query(`SELECT value FROM meta WHERE key = 'needs_model'`).get() as Row | null)?.value ?? 'null');
+      if (validNeedsModel(m)) this.needsModel = m;
+    } catch {
+      // A model of other features: the table alone until the next fit.
     }
   }
 
@@ -724,6 +765,80 @@ export class Attention {
   /** A fit is due: none yet, or a day old, and the fold has caught up (after a version bump it refolds everything). */
   private owedDue(now: number) {
     return this.caughtUp && (this.owedTable.fittedAt === null || now - this.owedTable.fittedAt >= DAY);
+  }
+
+  // ---------------------------------------------------------------- needs a reply (needsreply.ts)
+
+  /**
+   * Fit the needs-reply model on this hub's turns, a slice at a time (it reads each turn's messages, one indexed read
+   * each), keep it and use it. One at a time; a second call while one runs gets its answer.
+   */
+  fitNeeds(now = this.now(), o: SliceOptions = this.slices): Promise<NeedsModel | null> {
+    if (!this.needsFitting) this.needsTriedAt = now;
+    this.needsFitting ??= sliced('needs reply: fit', this.fitNeedsSteps(now), o)
+      .catch((e) => {
+        console.error('attention: needs-reply fit failed', e);
+        jobFailed('attention: needs-reply fit', e);
+        return null;
+      })
+      .finally(() => (this.needsFitting = null));
+    return this.needsFitting;
+  }
+
+  private *fitNeedsSteps(now: number): Generator<number, NeedsModel> {
+    this.refreshSelf();
+    const turns = this.owedTurns();
+    yield turns.length;
+    const m = yield* fitNeedsModelSteps(this.store.db, turns, { now, table: this.owedTable, mine: (i, p) => this.mine(i, p) });
+    this.needsModel = m;
+    this.turnFacts.clear();
+    this.store.db.query(`INSERT OR REPLACE INTO meta (key, value) VALUES ('needs_model', ?)`).run(JSON.stringify(m));
+    // The calibration record keeps a year.
+    this.store.db.query('DELETE FROM needs_prediction WHERE addressed < ?').run(now - 365 * DAY);
+    return m;
+  }
+
+  /** A fit is due: none yet, or a day old, after the owed table it builds on. */
+  private needsDue(now: number) {
+    return this.caughtUp && this.owedTable.fittedAt !== null && now - this.needsTriedAt >= HOUR && (!this.needsModel || now - this.needsModel.fittedAt >= DAY);
+  }
+
+  /** The open turn's messages as facts: read once while the turn and the conversation's newest message stay the same. */
+  private turnMessages(cid: string, shape: P.Shape, turn: Turn, lastMessageAt: number | null, now: number): MessageFacts[] {
+    const key = `${turn.addressed}:${lastMessageAt}`;
+    const had = this.turnFacts.get(cid);
+    if (had?.key === key) return had.messages;
+    this.readTurn ??= turnMessagesQuery(this.store.db, (i, p) => this.mine(i, p));
+    // As the model learned them: up to two days from its first message for you.
+    const messages = this.readTurn(cid, shape, turn.addressed!, Math.min(now, turn.addressed! + 2 * DAY)).messages;
+    this.turnFacts.set(cid, { key, messages });
+    return messages;
+  }
+
+  /**
+   * Keep the chance shown for the calibration record, once per open turn at each of RECORD_AGES: the first scoring
+   * after it reaches that age (within 20 minutes; a hub that was down then keeps none).
+   */
+  private recordNeeds(cid: string, turn: Turn, owed: NonNullable<Scored['owed']>, now: number) {
+    if (owed.held || owed.table <= 0) return;
+    for (const age of RECORD_AGES) {
+      if (owed.age < age || owed.age >= age + 20 * MIN) continue;
+      const k = `${cid}:${turn.addressed}:${age}`;
+      if (this.recorded.has(k)) continue;
+      this.recorded.add(k);
+      this.store.db
+        .query('INSERT OR IGNORE INTO needs_prediction (conversation_id, addressed, age, p, table_p, at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(cid, turn.addressed, age, Math.round(owed.chance * 1000) / 1000, Math.round(owed.table * 1000) / 1000, now);
+    }
+  }
+
+  /**
+   * How well the chances shown matched what you did (docs/inbox.md, "Needs a reply"): the predictions kept over the
+   * last `days`, against whether you answered within the window, by day and in bins. Turns whose window is still
+   * running are left out.
+   */
+  needsCalibration(now = this.now(), days = 60): CalibrationReport {
+    return calibrationReport(needsOutcomes(this.store.db, now - days * DAY, now, now), this.needsModel);
   }
 
   // ---------------------------------------------------------------- folding
@@ -963,6 +1078,9 @@ export class Attention {
       usage: u ? { score: u.score, visitScore: u.visit_score, at: u.score_at, lastVisit: u.last_visit } : null,
       judged: this.judged.get(cid) ?? null,
       owedTable: this.owedTable,
+      needsModel: this.needsModel,
+      // Only a turn that can still be owed: past the window it weighs nothing whatever its messages.
+      turnMessages: turn && this.needsModel && now - turn.addressed! < REPLY_WINDOW ? this.turnMessages(cid, c.shape, turn, c.last_message_at, now) : null,
     };
   }
 
@@ -1001,7 +1119,8 @@ export class Attention {
         points: s.parts.owed ?? 0,
         // What the formula before the owed table gave (rate × owedCurve), to compare.
         before: Math.round(WEIGHTS.owed * s.owed.rate * owedCurve(s.owed.age) * 10) / 10,
-        table: { fittedAt: this.owedTable.fittedAt, turns: this.owedTable.turns },
+        table: { fittedAt: this.owedTable.fittedAt, turns: this.owedTable.turns, chance: s.owed.table },
+        needs: { chance: s.owed.chance, fittedAt: this.needsModel?.fittedAt ?? null },
       },
       activity: this.activity?.features(cid, now) ?? null,
       learned: this.judge?.explain?.(cid) ?? null,
@@ -1023,8 +1142,19 @@ export class Attention {
     const r = this.judge?.rank?.(cid, x, s) ?? null;
     // Lifted to learn about it: that comes first, since it is why the row is where it is.
     const reasons = !r?.reason ? s.reasons : r.reason === EXPLORE_REASON ? [r.reason, ...s.reasons.slice(0, 3)] : [...s.reasons.slice(0, 3), r.reason];
+    const turn = x.state.turn;
+    if (s.owed && turn?.addressed != null) this.recordNeeds(cid, turn, s.owed, now);
     // An alert you have not seen comes before everything, whatever the order learned.
-    return { id: cid, score: (r ? r.score : s.score) + (x.alerted ? ALERT_PIN : 0), needs: s.needs, reasons, owedSince: s.owedSince, ...(s.owed?.held ? { replyMark: 'needs' as const } : {}), at: now };
+    return {
+      id: cid,
+      score: (r ? r.score : s.score) + (x.alerted ? ALERT_PIN : 0),
+      needs: s.needs,
+      reasons,
+      owedSince: s.owedSince,
+      ...(s.owed?.held ? { replyMark: 'needs' as const } : {}),
+      ...(s.needsReply !== null ? { needsReply: s.needsReply } : {}),
+      at: now,
+    };
   }
 
   /** The view if it changed, 'removed' if the inbox no longer lists it, null if nothing changed. */
@@ -1213,6 +1343,8 @@ export class Attention {
             jobFailed('attention: owed table fit', e);
           }
         }
+        // Then the needs-reply model over it, in slices: the next rescore uses it.
+        if (this.needsDue(this.now())) void this.fitNeeds();
         void this.rescoreAllSliced()
           .then(send)
           .catch((e) => (console.error('attention: rescore failed', e), jobFailed('attention: rescore', e)));

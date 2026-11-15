@@ -11,7 +11,7 @@
  */
 import type { Database } from 'bun:sqlite';
 
-export interface Checkpointer {
+interface Checkpointer {
   /** Checkpoints done, and the longest one (ms, on the worker's thread). */
   readonly stats: { done: number; longestMs: number; failed: number };
   stop(): void;

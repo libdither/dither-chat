@@ -21,16 +21,16 @@ const BATCH = 200;
 const MAX_TRIES = 3;
 const RETRY_MS = 6 * 3_600_000;
 /** Links in one refresh-urls request, as Discord's client sends them. */
-export const REFRESH_BATCH = 50;
+const REFRESH_BATCH = 50;
 /** Attachments read between looks at the slice's time, in the scans for a link by its key. */
 const SCAN_ROWS = 256;
 /** After the account could not refresh (offline, an older extractor), wait this long before asking again. */
 const REFRESH_PAUSE_MS = 10 * 60_000;
 
 /** New links for old ones, keyed by the old link; empty when the account knows none. Throws when it can't ask. */
-export type Refresh = (accountId: string, urls: string[]) => Promise<Map<string, string>>;
+type Refresh = (accountId: string, urls: string[]) => Promise<Map<string, string>>;
 /** A file now in the cache, with what its attachment says about it (mediainfo.ts looks at it). */
-export type Kept = (a: { url: string; name: string | null; mime: string | null; messageId: string }) => Promise<void>;
+type Kept = (a: { url: string; name: string | null; mime: string | null; messageId: string }) => Promise<void>;
 
 /** The part of a Discord link its signature leaves alone: where the file is. */
 export const linkPath = (url: string) => {

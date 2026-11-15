@@ -12,7 +12,7 @@ import type { Attempt } from './attempts.ts';
 import type { Store } from './store.ts';
 import { currentSpan } from './trace.ts';
 
-export interface GroupDeps {
+interface GroupDeps {
   store: Store;
   online: (accountId: string) => boolean;
   command: <T>(accountId: string, cmd: { t: 'createGroup'; name?: string; people: string[] }, timeoutMs?: number) => Promise<T>;
@@ -22,7 +22,7 @@ export interface GroupDeps {
 }
 
 /** How long the hub waits for a group to be made: on some networks each person is a request of its own. */
-export const CREATE_GROUP_TIMEOUT = 90_000;
+const CREATE_GROUP_TIMEOUT = 90_000;
 
 export class Groups {
   constructor(private d: GroupDeps) {}

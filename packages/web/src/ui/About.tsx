@@ -5,10 +5,9 @@
  * (PlaceProfile.tsx, docs/profile.md).
  */
 import type * as P from '@dither-chat/protocol';
-import { ABOUT_LABEL, ABOUT_RULES, durationLabel, HISTORY_LABEL, JOIN_RULE_LABEL, NETWORK_META, WHO_LABEL } from '@dither-chat/protocol';
+import { ABOUT_LABEL, ABOUT_RULES, durationLabel, HISTORY_LABEL, JOIN_RULE_LABEL, WHO_LABEL } from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
-import { fullTime } from '../format.ts';
-import { authorName, convTitle, identityName, netName, plainBody } from '../model.ts';
+import { authorName, identityName, plainBody } from '../model.ts';
 import { api, db, isSelfIdentity, openProfile, toast } from '../state.ts';
 import { Avatar } from './bits.tsx';
 import { groups, Menuable, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';

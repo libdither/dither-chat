@@ -1,112 +1,221 @@
 # dither-chat
 
-One self-hosted hub that aggregates **Discord, Signal, Matrix and WhatsApp** into a single
-ontology — people, groups and communities — and serves every device as a PWA
-over Tailscale. No bridge, no hosted middleman: the clients run on your own
-machine and relay normalized facts to a local hub.
+**All your chats in one app, run on your own computer.** Discord, Signal, WhatsApp, Matrix, Telegram, X and email
+arrive in one inbox that you can open on your phone and your computer. Someone you talk to on three networks shows up
+as one person. The app learns which messages are worth interrupting you for.
 
-![Catch up: the conversations that need you](docs/screenshots/01-inbox-catchup.png)
+![Alice Chen's chat: messages from Signal, Telegram and WhatsApp in one timeline, each marked with its network](docs/screenshots/readme/person-alice.webp)
 
-## Why
+## Why it exists
 
-Replace Element desktop + two Discord accounts + Signal with one low-resource
-app, with detailed (optionally AI-assisted) notification management, reachable
-from every device. Everything runs on hardware you control.
+- **Too many apps.** Most people have Discord for one group of friends, Signal for another, WhatsApp for family,
+  and a work Matrix room. Each app has its own unread badge and its own notification settings, and each wants your
+  attention. dither-chat puts them all in one list.
+- **One person, one chat.** If a friend writes to you on Signal today and on Discord tomorrow, that is still one
+  conversation. dither-chat merges their accounts into one person, with one page and one history.
+- **Notifications that learn.** Every message lands in one of three tiers:
+  - **Alert**: what can't wait.
+  - **Conversation**: people talking with you.
+  - **List**: everything else worth seeing.
 
-## Architecture
+  The app learns from what you open and what you answer. It also shows why it sorted each message the way it did.
+- **Your data stays at home.** The hub (dither-chat's server, which keeps your messages) runs on a machine you own.
+  Each network's own client runs there too, either in a sandbox or as a linked device, the way Signal or WhatsApp
+  link a desktop app. There is no bridge server and no hosted service in the middle. The models that rank and sort
+  run locally, so no message is ever sent to anyone else for that.
+- **It's fast on a phone.** The app is an installable web app (PWA) with a small Android wrapper. It opens from a
+  local snapshot in about a second. After hours away it fetches only what changed.
+
+## What it looks like
+
+### For you: the channel messages worth a look
+
+The inbox keeps what needs you: DMs, small groups, replies you owe. **For you** is for the rest: single messages from
+busy channels and big groups that you'd otherwise scroll past, ranked by how much they matter to you, with a burst of
+messages folded into one. Looking at an item doesn't mark anything read. On a keyboard: `j`/`k` to move, `Enter` to
+open, `x` to hide ([for you](docs/foryou.md)).
+
+![For you: ranked messages from Discord and Matrix channels, beside the inbox](docs/screenshots/readme/foryou.webp)
+
+### How it sorts, in plain words
+
+Every message gets a tier, and the app says why: a rule you set, a direct message, a chat where you usually answer.
+You can look through this week's decisions and correct the wrong ones ([notifications](docs/notifications.md),
+[inbox](docs/inbox.md)).
+
+![How it sorts: this week's alerts and conversations, each with a Why button](docs/screenshots/readme/model.webp)
+
+### Discord servers, Matrix spaces and WhatsApp communities
+
+Servers keep their channels, categories, threads and forums. Bots work too, with their buttons, menus, slash commands
+and forms ([apps](docs/apps.md), [threads](docs/threads.md), [servers](docs/servers.md)).
+
+![A Discord server's channel with a bot message that has buttons and menus](docs/screenshots/readme/discord-rust-general.webp)
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/readme/signal-group.webp" alt="A Signal group with a poll and a shared image"></td>
+<td width="50%"><img src="docs/screenshots/readme/about-signal-group.webp" alt="A Signal group's About page: members, disappearing messages, who may change what"></td>
+</tr>
+<tr>
+<td>Polls, pictures, reactions, replies and edits look the same whichever network they came from.</td>
+<td>One About page for every group, channel and server. You can change a setting wherever your account is allowed to.</td>
+</tr>
+</table>
+
+### People, not accounts
+
+A person's page lists every account they have, the servers and groups you share, and your recent messages with
+them. The people graph shows who is in which servers and groups, across all your accounts
+([profile](docs/profile.md), [people graph](docs/people-graph.md), [chats](docs/chats.md)).
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/readme/profile-alice.webp" alt="Alice Chen's profile: five accounts on four networks, mutual friends, a safety number"></td>
+<td width="50%"><img src="docs/screenshots/readme/folder-graph.webp" alt="The people graph: people linked to the groups and servers they share"></td>
+</tr>
+</table>
+
+### Find anything
+
+One search covers every network, with filters like Discord's. `Ctrl+K` opens a switcher that jumps to any person,
+chat or server. It can also start a new message or group ([search](docs/search.md), [palette](docs/palette.md)).
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/readme/search.webp" alt="Search results for 'lifetime' across servers, with highlighted matches"></td>
+<td width="50%"><img src="docs/screenshots/readme/palette.webp" alt="The Ctrl+K switcher over the app"></td>
+</tr>
+</table>
+
+### Email and the X feed, beside your chats
+
+Email from Gmail, Proton or any IMAP server shows up as threads that you can read, file and answer
+([mail](docs/mail.md)). X's notifications (replies, mentions, likes and follows) arrive as a feed, and you can
+answer from it ([feed](docs/feed.md)).
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/readme/mail-thread.webp" alt="A mail thread with an image and two attachments"></td>
+<td width="50%"><img src="docs/screenshots/readme/x-feed.webp" alt="The X notifications feed: a reply thread, likes and a mention"></td>
+</tr>
+</table>
+
+### On your phone
+
+The same app, laid out like Discord's mobile app. Swipe between the list, the chat and its details. Swipe a message
+to reply. Long-press for anything a mouse hover would give you ([phone](docs/phone.md), [Android](docs/android.md)).
+
+![Five phone screens: home, For you, a Signal chat, a Discord channel and a profile](docs/screenshots/readme/phone.webp)
+
+### And the rest
+
+| | |
+|---|---|
+| **Calls** | Voice and video, with camera and screen sharing. Discord calls are the most complete. Other networks' calls go through the account's own client. The network normally sees your hub's address, not your phone's ([calls](docs/calls.md)) |
+| **Notifications per device** | Each device has its own settings. For example: Signal off on the phone that already has the Signal app, and everything on the laptop. Quiet hours hold notifications back and send one summary when they end ([devices](docs/devices.md)) |
+| **Reactions, stickers, voice messages** | Custom emoji, Discord super reactions, stickers, voice messages and view-once media ([reactions](docs/reactions.md), [media kinds](docs/media-kinds.md)) |
+| **Files** | Text, code, Markdown, JSON, CSV, PDF and archives open in the app. A file's type is checked from its contents, not from what the network says. Uploads resume after a restart ([files](docs/files.md), [uploads](docs/uploads.md)) |
+| **Sending options** | `@` mentions, replies that don't ping, silent messages, scheduled messages, forwarding to several chats at once ([mentions](docs/mentions.md), [sending](docs/sending.md), [menus](docs/menus.md)) |
+| **Kept history** | The app can keep edits, deletions and disappearing messages. Each of the three is switched on or off per network ([history](docs/history.md)). Old history can be imported from Signal backups and Discord exports ([import](docs/import.md)) |
+| **Moderation** | Remove or ban people, change roles and delete others' messages, wherever your account is allowed to ([moderation](docs/moderation.md)) |
+| **Translation** | Posts in other languages are translated, either by the network itself or by a translation server you run ([translate](docs/translate.md)) |
+| **Notices** | Things your services tell you, like a GitHub review request or an account that stopped, ranked with your chats ([notices](docs/notices.md)) |
+| **Calendar** | Plans found in your chats, and reminders that arrive as messages ([calendar](docs/calendar.md)) |
+| **Themes** | 16 themes, all checked for readable contrast. On desktop the app draws its own title bar ([desktop](docs/desktop.md)) |
+| **Organizing** | Drag servers into folders that mix networks. Pin, hide, or sort by how much you use each place ([organize](docs/organize.md)) |
+
+## How it works
 
 ```
-adapter (1 per account) ──native-id facts over WS──▶ hub ──▶ PWA / MCP / ntfy
-   discord | signal | matrix | whatsapp         dedupe, store,
-                                                 social graph, triage
+ your accounts                            your machine                                your devices
+ ─────────────                            ────────────                                ────────────
+ Discord  ─┐                                                                      ┌─▶ phone (PWA / Android)
+ Signal   ─┤      dither-accounts                      dither-chat hub            ├─▶ laptop (PWA)
+ WhatsApp ─┼──▶  one sandboxed client  ──events──▶  stores, merges people,  ──────┼─▶ push (Web Push, ntfy)
+ Matrix   ─┤     or linked device per  ◀─commands──  ranks and sorts, search      └─▶ other apps (calendar …)
+ Telegram ─┤     account
+ X, mail …─┘
 ```
 
-- **`packages/protocol`** — the ontology and the adapter↔hub / hub↔client wire types.
-- **`packages/hub`** — Bun + SQLite. Idempotent ingest, cross-account dedup,
-  person-merge, notification triage, media proxy, live WebSocket, HTTP API,
-  adapter supervisor. Entry: `packages/hub/src/main.ts`.
-- **`packages/web`** — Preact PWA. One ranked inbox, Catch up, per-person merged DM
-  timelines, Discord/Matrix space trees with threads, folders, notification
-  rules, sandbox live-view (noVNC), and a phone layout with Discord's panels and gestures.
-- **`packages/adapter-{discord,signal,matrix,whatsapp}`** — one adapter per network.
+Three parts, all on your own machine:
 
-The ontology has three independent axes — **Shape** (direct / group / channel /
-thread / self), **Variant** (text / announcement / forum / voice / …) and
-**Vantage** (which of your accounts sees it) — plus a graph (not tree) for
-containment and a hub-only **Person** that merges identities across networks.
-See `docs/DESIGN.md`.
+- **[dither-accounts](https://github.com/libdither/dither-accounts)** is a separate program that keeps your accounts
+  signed in. For each account it runs either the network's own web client in a sandboxed browser, or a linked
+  device like the one Signal or WhatsApp give a desktop app. You approve what dither-chat may do with each account.
+  It is optional: dither-chat can also run the Discord, Signal, Matrix and WhatsApp clients itself
+  ([accounts](docs/accounts.md)).
+- **The hub** (`packages/hub`: Bun and SQLite) is the server. It receives each network's messages, removes
+  duplicates, merges people across networks and decides each message's tier. It serves the app over HTTP and a live
+  WebSocket.
+- **The app** (`packages/web`: Preact) is one installable web app for phones and desktops. `apps/android` is a small
+  Android wrapper that adds push, permissions and calls that keep going with the screen off.
 
-## Run
+Underneath, **`packages/protocol`** describes chats in a way that fits every network. Each conversation has three
+properties: its shape (direct, group, channel, thread, notes to self), its kind (text, announcements, forum, voice…)
+and which of your accounts can see it. People are kept separately from their accounts, so one person can have many.
+
+## Try it
+
+You need [Bun](https://bun.sh). These commands start a hub with a made-up demo world: an account on each network
+and a few dozen chats. None of it is connected to a real network.
 
 ```sh
-nix develop            # bun, signal-cli, chromium, xvfb, x11vnc, a Matrix homeserver
 bun install
 bun run web:build
-bun run hub -- --demo  # http://localhost:8460 with a seeded demo world
+bun run hub -- --demo --data "$(mktemp -d)"     # then open http://localhost:8460
 ```
 
-Browsers only install a PWA over HTTPS. To serve other devices that way, see [docs/deploy.md](docs/deploy.md).
+For real accounts, run [dither-accounts](https://github.com/libdither/dither-accounts) next to the hub and add them
+there ([docs/accounts.md](docs/accounts.md)). Or let the hub run them itself:
 
-A demo world runs without a login. A real hub (no `--demo`) stays shut until it has a password; set one, then sign in
-on each device as `admin` ([docs/login.md](docs/login.md)):
+```sh
+bun packages/hub/src/cli.ts add signal   --label personal   # then scan the QR code on its page
+bun packages/hub/src/cli.ts add whatsapp --label personal   # QR code or pairing code
+bun packages/hub/src/cli.ts add discord  --label main       # then sign in through the live view
+bun packages/hub/src/cli.ts add matrix   --label main \
+  --config '{"homeserver":"https://matrix.org"}' --secret '{"userId":"@you:matrix.org","password":"…"}'
+```
+
+The sandboxed clients need a few tools: signal-cli, Chromium, Xvfb, x11vnc, and a Matrix homeserver for tests.
+`nix develop` gives you all of them.
+
+**Phones and other computers.** Run one hub on a machine that is always on, and connect your devices to it over
+[Tailscale](https://tailscale.com). Browsers only install a web app over HTTPS, so put Caddy in front of the hub
+([docs/deploy.md](docs/deploy.md)).
+
+**Who can read it.** The hub only answers your own machine and your tailnet (your private Tailscale network), and
+past that only devices signed in with its password, or programs holding its service token. A demo world runs without
+a login. A real hub (no `--demo`) stays shut until it has a password: set one, then sign in on each device as `admin`
+([docs/login.md](docs/login.md)).
 
 ```sh
 bun packages/hub/src/cli.ts set-password   # --data <dir> for a data dir other than the usual one
 ```
 
-Then add real accounts from the **Accounts** page, or with the CLI:
-
-```sh
-bun packages/hub/src/cli.ts add matrix --label main \
-  --config '{"homeserver":"https://matrix.org"}' --secret '{"userId":"@you:matrix.org","password":"…"}'
-bun packages/hub/src/cli.ts add signal  --label personal     # then scan the QR on its page
-bun packages/hub/src/cli.ts add whatsapp --label personal    # then scan the QR, or ask for a pairing code
-bun packages/hub/src/cli.ts add discord --label alt          # then sign in via the live view
-```
-
-Secrets live under `$DITHER_DATA/accounts/<id>/secret.json` (0600) and never
-leave the hub. Run one hub on an always-on machine and use your phone and laptops as
-clients over Tailscale (bind is `0.0.0.0`; the server only answers loopback + tailnet ranges, and only signed-in
-devices or programs with its service token past that: [docs/login.md](docs/login.md)).
+Account secrets live in the hub's data folder (`--data`), in `accounts/<id>/secret.json` (mode 0600), and never leave
+the machine.
 
 ## Status
 
-| Piece | State |
-|---|---|
-| Hub, PWA, demo world | done |
-| Matrix adapter | done — verified end-to-end against a local homeserver |
-| Matrix end-to-end encryption | done, opt-in per account: read, write, media, old messages through the key backup, emoji verification. Verified on a local homeserver only, never with Element or on matrix.org ([details](packages/adapter-matrix/README.md#end-to-end-encryption)) |
-| Signal adapter | done — QR device-link + messaging via signal-cli; a live link needs your phone |
-| WhatsApp adapter | built, not yet linked to a real account: a linked device through whatsmeow, the library Beeper uses (why not the web client in a sandbox: [docs/whatsapp.md](docs/whatsapp.md)). QR or pairing-code linking, history sync, DMs, groups, communities as spaces, media, reactions, replies, edits, deletes, read state, native forwards. Verified against fixtures, a fake bridge, and the real bridge up to a fresh link code |
-| Reactions across networks | done: custom emoji, Discord super reactions, Signal's one-per-person, Matrix image packs ([docs/reactions.md](docs/reactions.md)). Sending a super reaction is untested for lack of Nitro |
-| @ mentions | done: an @ list in the composer of who the conversation can ping, the network asked for who the hub does not store (a Discord server's members, its roles, @everyone where you may), ranked by name then how much you talk with them ([docs/mentions.md](docs/mentions.md)). Verified on the demo world; not yet used on a real Discord account |
-| Installable PWA | done: HTTPS through Caddy with a Let's Encrypt wildcard, no per-device step ([docs/deploy.md](docs/deploy.md)), updates reach installed apps. Verified in headless Chromium, not yet on a phone |
-| On a phone | done: the same app, laid out like Discord's: swipe between the lists, the page and its details, swipe to reply, long-press for everything a hover offers, sheets that drag away, back that closes them first, an image viewer, the keyboard and the notch handled. Everything the desktop does is reachable ([docs/phone.md](docs/phone.md)). Verified with touch input in headless Chromium, not yet on a real phone |
-| Themes and the title bar | done: 16 themes (Dither, Discord, AMOLED, Nord, Dracula, Catppuccin, Gruvbox, Rosé Pine, Tokyo Night, Solarized, high contrast), all checked at WCAG AA by a test, with live preview and a follow-the-system pair; the installed app can draw its own title bar (window controls overlay) ([docs/desktop.md](docs/desktop.md)). The overlay is untested in a real installed window |
-| One ranked inbox | done: DMs, group chats, rooms outside a space and notes to self in one list with filter chips, ranked on the hub by how much each needs you (an unanswered message weighted by how often you answer that person, how much you talk there, noise against engagement) and where you were just now, then reordered by a model learned on the hub from what you open (beat the formula on held-out days of a real hub's activity log), with the reasons on hover; Ctrl+K ranks by the same score ([docs/inbox.md](docs/inbox.md)). Metadata only, never message text. Verified on the demo world and the score distribution on a copy of a real hub |
-| Arranging the sidebar | done: drag by mouse or touch, folders, pin, hide, stored on the hub |
-| All communities | done: full-screen list with seven orderings, categories by yes/no question (keywords, or a local Ollama model) |
-| Profiles | done: merged identities, shared places, recent messages. Bio and roles are not fetched, and starting a new DM needs an adapter command |
-| Search | done: FTS5, filters, snippets, jump to message, Ctrl+K switcher. Searches what the hub has stored, not the network |
-| Web Push | done: opt-in per device, verified through Google's and Mozilla's relays and, for the Android app, through ntfy (ntfy.sh or your own server, allowed from the app) |
-| Android app | done: a 250 KB WebView shell with native permissions, calls that survive the screen going off, and push through UnifiedPush ([docs/android.md](docs/android.md)). The web app now starts from a local snapshot and a cached shell: about 1 s to content instead of 4.5 s on a big hub. Verified on the emulator, not yet on a phone |
-| Coming back to the app | done: a reconnect asks the hub only for what changed since (a change journal; about a kilobyte when little did, 60-140 KB after hours away, against 800 KB before), with no banner for short drops and sends that wait for the hub, kept on the device across a reload ([docs/sync.md](docs/sync.md)). Verified in headless Chromium and against a copy of a real database, not yet on a phone |
-| Speed on a big hub | measured: `scripts/verify-perf.ts` times load, chat switching, long timelines and arriving messages on a demo hub grown to the live hub's size, against a committed baseline ([docs/perf.md](docs/perf.md)). A long timeline reopens in 0.5 s instead of 7 s, and an arriving message costs 0.2 s of main thread instead of 11 s. Measured in headless Chromium; CI runs it on a world a tenth the size and fails when a count of renders, DOM nodes or bytes goes up, printing the times without judging them |
-| Edit and delete | done in hub and PWA; verified on the demo adapter only |
-| Right-click menus and forwarding | done: Discord's menus on messages, channels, servers, folders, people, accounts, files and links, as sheets on a phone; forwarding to several places at once, natively on Discord (verified on the throwaway account) and as a copy across networks ([docs/menus.md](docs/menus.md)) |
-| About and settings | done: one panel for every group, channel, server, room, space and community: name, description, members with their roles, who may change what, invite link, disappearing messages, slow mode, age flag, announcement-only, join rules and pins, each editable only where your account may, with the network's reason where it may not ([docs/group-settings.md](docs/group-settings.md)). Verified on the demo world, Matrix also on a local homeserver; Discord, Signal and WhatsApp changes are untested on a live account |
-| Typing indicators | done: both ways on every network, shown as Discord shows them, never stored, with a privacy switch ([docs/typing.md](docs/typing.md)). Discord's sending verified live on the throwaway account, Matrix both ways on a local homeserver; Signal and WhatsApp against fixtures. WhatsApp mostly does not deliver others' typing, because the adapter never marks you online |
-| Notifications per device | done: each device leaves out what the shared rules let through, per network, account, community or chat (Signal off on the phone, which has the Signal app; everything on the laptop), without touching the inbox. Notifications show the sender's picture with the network's badge, and the network's mark as the small icon ([docs/devices.md](docs/devices.md)). Verified in headless Chromium and on the emulator, not yet on a phone |
-| Mark all read | done: everywhere, or per server, folder or person, through a paced queue on the hub. Verified on the demo adapter only |
-| Quiet hours | done: a daily schedule that holds pushes, with one summary when it ends. Verified on the demo adapter only |
-| Sending files | done: paste, drop or pick, with progress; uploads resume and survive a hub restart ([docs/uploads.md](docs/uploads.md)). Live on Discord, on a local homeserver for Matrix (encrypted rooms too, once encryption is set up), not yet live on Signal |
-| Files | done: a file's card says what it really is (by its bytes, not the network's label) with pages, lines or entries; text and code, Markdown, JSON, CSV, PDF and archives open in viewers in the app, and other types in your own apps ([docs/files.md](docs/files.md)). Verified on the demo world in headless Chromium |
-| Email | slice 1 built: Inbox and Sent of any IMAP or Proton account in dither-accounts, kept up through its events, threaded by Message-ID, read as text with quotes folded, read state kept on the hub, on a phone and a desktop ([docs/mail.md](docs/mail.md), design in [docs/mail-design.md](docs/mail-design.md)). Verified against dither-accounts' Dovecot and a fake server; no real mailbox yet. HTML, filing, sending, search and mail in the inbox are the next slices |
-| Calendar | built: [dither-calendar](../dither-calendar) beside the chats, as a Calendar pane (its web app through the hub at `/calendar/`), chips under the messages that made a plan (add, dismiss, moved, called off) and its reminders as alerts, held quiet in quiet hours, off a device by a Calendar rule ([docs/calendar.md](docs/calendar.md)). Verified against a fake calendar in tests; not yet against the calendar's side of the contract, which is being built |
-| Accounts in dither-accounts | built: the adapters moved to [dither-accounts](../dither-accounts), whose manager can run any account for this hub while the hub runs the rest, one account at a time, with a lock so none runs twice and a one-line rollback ([docs/accounts.md](docs/accounts.md)). Verified with the Matrix testbed and a fake chat account, not yet on a live account |
-| Discord adapter (sandboxed real web client) | works on a live account: login through the live view, snapshot, history, send, reply, react. DMs and group DMs arrive live. Server channels do not: while the client sits idle, Discord pushes nothing for them, so they update when opened |
+One person uses this as their everyday messenger, on a phone and a desktop, with real accounts on most of the
+networks above. It's still young. Some newer features have only run against the demo world, a local Matrix server
+or fake networks. Each doc says how far its feature has been tested. For what is missing, and why, see
+[docs/ROADMAP.md](docs/ROADMAP.md).
 
-What is missing and why: [docs/ROADMAP.md](docs/ROADMAP.md).
+## Working on it
+
+```sh
+bun run typecheck
+bun run test          # every package's tests (scripts/test-all.ts)
+bun run web:build
+```
+
+CI runs those three, plus checks for import cycles, unused files and bundle size ([docs/testing.md](docs/testing.md)).
+Most features have a `scripts/verify-*.ts` script that drives the app in headless Chromium against a fresh demo hub.
+
+Read [AGENTS.md](AGENTS.md) before opening a pull request. The main rule: nothing personal goes in the repo. No real
+names, ids, message content or hostnames, whether in code, tests or commit messages.
 
 ## License
 

@@ -36,7 +36,7 @@ import { Loading } from './Loader.tsx';
 
 import { viewer, type ViewerImage } from '../viewer.ts';
 
-export { viewer, type ViewerImage };
+;
 
 export function Viewer() {
   const v = viewer.value;

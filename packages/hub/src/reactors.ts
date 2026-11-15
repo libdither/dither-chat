@@ -22,7 +22,7 @@ const DAY = 86_400_000;
 const TALK_WINDOW = 180 * DAY;
 
 /** Weights of the score's parts; they add to 1. */
-export const REACTOR_WEIGHTS = { talk: 0.32, engage: 0.18, bond: 0.2, reach: 0.22, order: 0.08 } as const;
+const REACTOR_WEIGHTS = { talk: 0.32, engage: 0.18, bond: 0.2, reach: 0.22, order: 0.08 } as const;
 
 /** "12K followers" */
 const short = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(n < 1e7 ? 1 : 0).replace(/\.0$/, '')}M` : n >= 1e3 ? `${(n / 1e3).toFixed(n < 1e4 ? 1 : 0).replace(/\.0$/, '')}K` : String(n));

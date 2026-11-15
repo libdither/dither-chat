@@ -37,7 +37,7 @@ const lc = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
 const MOVED_OUT = `(json_type(m.pending, '$.move') IS 'object' AND (json_type(m.pending, '$.move.hide') IS NOT 'array' OR l.mailbox_id IN (SELECT value FROM json_each(m.pending, '$.move.hide'))))`;
 
 /** Inbox, Sent, and All mail where there is one, else Archive: kept up by the hub on its own (§3.3). */
-export function followedRoles(mailboxes: { role: string | null }[]): Set<string> {
+function followedRoles(mailboxes: { role: string | null }[]): Set<string> {
   const roles = new Set(['inbox', 'sent']);
   roles.add(mailboxes.some((b) => b.role === 'all') ? 'all' : 'archive');
   return roles;
@@ -47,7 +47,7 @@ export function followedRoles(mailboxes: { role: string | null }[]): Set<string>
  * Labels for the views: Gmail's own (`\Inbox`, `\Important`, `\Starred`, `\Sent`) say where a message is, its importance
  * and its star, which the views show otherwise. Those a person gave stay.
  */
-export const shownLabels = (labels: string[]) => labels.filter((l) => !l.startsWith('\\'));
+const shownLabels = (labels: string[]) => labels.filter((l) => !l.startsWith('\\'));
 
 /** Text from HTML when a message has no text part (the extractors make it themselves; this is for when one did not). */
 export function htmlText(html: string): string {
@@ -82,7 +82,7 @@ export function htmlText(html: string): string {
     .trim();
 }
 
-export interface MailDirty {
+interface MailDirty {
   access: boolean;
   accounts: Set<string>;
   /** Accounts whose mailboxes changed. */
@@ -93,7 +93,7 @@ export interface MailDirty {
   progress: Set<string>;
 }
 
-export interface MailAccountInput {
+interface MailAccountInput {
   id: string;
   kind: string;
   label: string;
@@ -246,7 +246,7 @@ export class MailStore {
   /**
    * The extractor's `status` event: online or not, what is wrong, its own addresses, how it syncs, whether it can
    * send (details.canSend, else a failed layer named like sending), and what its server is (idPerMessage, sendCap,
-   * maxRecipients, provider, writes: a status without one keeps what an earlier one said). Returns whether its
+   * maxRecipients, provider, writes, contacts: a status without one keeps what an earlier one said). Returns whether its
    * addresses changed.
    */
   setStatus(id: string, st: Record<string, any>): boolean {
@@ -310,11 +310,13 @@ export class MailStore {
     const listed = writesOf(details[DETAILS.writes]);
     const writes = listed ? JSON.stringify(listed) : (was.writes ?? null);
     if (listed?.length && this.run(`DELETE FROM mail_unsupported WHERE account_id = ? AND op IN (SELECT value FROM json_each(?))`, id, JSON.stringify(listed.map(unsupportedOp))).changes) this.dirty.accounts.add(id);
-    const next = [JSON.stringify(problem), JSON.stringify(send), address, name, addresses, online, syncMode, headers, perMessage, sendCap, maxRecipients, provider, lane, searchIds, stopped, storage, writes];
-    const prev = [was.problem, was.send, was.address, was.display_name, was.addresses, was.online, was.sync_mode, was.summary_headers ?? null, was.id_per_message ?? null, was.send_cap ?? null, was.max_recipients ?? null, was.provider ?? null, was.background_lane ?? null, was.search_ids ?? null, was.background_stopped ?? null, was.storage ?? null, was.writes ?? null];
+    // Recipient suggestions from the server (outbox.ts contacts): while it says it answers them.
+    const contacts = bit(details[DETAILS.contacts], was.contacts);
+    const next = [JSON.stringify(problem), JSON.stringify(send), address, name, addresses, online, syncMode, headers, perMessage, sendCap, maxRecipients, provider, lane, searchIds, stopped, storage, writes, contacts];
+    const prev = [was.problem, was.send, was.address, was.display_name, was.addresses, was.online, was.sync_mode, was.summary_headers ?? null, was.id_per_message ?? null, was.send_cap ?? null, was.max_recipients ?? null, was.provider ?? null, was.background_lane ?? null, was.search_ids ?? null, was.background_stopped ?? null, was.storage ?? null, was.writes ?? null, was.contacts ?? null];
     if (next.every((v, i) => v === prev[i])) return false;
     this.run(
-      'UPDATE mail_account SET problem = ?, send = ?, address = ?, display_name = ?, addresses = ?, online = ?, sync_mode = ?, summary_headers = ?, id_per_message = ?, send_cap = ?, max_recipients = ?, provider = ?, background_lane = ?, search_ids = ?, background_stopped = ?, storage = ?, writes = ? WHERE id = ?',
+      'UPDATE mail_account SET problem = ?, send = ?, address = ?, display_name = ?, addresses = ?, online = ?, sync_mode = ?, summary_headers = ?, id_per_message = ?, send_cap = ?, max_recipients = ?, provider = ?, background_lane = ?, search_ids = ?, background_stopped = ?, storage = ?, writes = ?, contacts = ? WHERE id = ?',
       ...next,
       id,
     );
@@ -1300,7 +1302,7 @@ export const maxRecipientsOf = (a: Row | null | undefined): number => a?.max_rec
 const whoView = (w: { identityId: string; personId: string | null } | undefined) => (w ? { identityId: w.identityId, ...(w.personId ? { personId: w.personId } : {}) } : {});
 
 /** How a message reached you: you sent it, you are in To or Cc, or neither (Bcc, a list). */
-export function addressedOf(self: Set<string>, from: string | null, to: M.MailAddress[], cc: M.MailAddress[]): 'to' | 'cc' | 'hidden' | 'self' {
+function addressedOf(self: Set<string>, from: string | null, to: M.MailAddress[], cc: M.MailAddress[]): 'to' | 'cc' | 'hidden' | 'self' {
   if (from && self.has(lc(from))) return 'self';
   if (to.some((a) => self.has(lc(a.email)))) return 'to';
   if (cc.some((a) => self.has(lc(a.email)))) return 'cc';
@@ -1312,7 +1314,7 @@ export function addressedOf(self: Set<string>, from: string | null, to: M.MailAd
  * background reads, an ids-only paged mail.search, why background reads stopped, and the account's storage. And
  * `writes`: the writes the account makes now (ops.ts).
  */
-export const DETAILS = {
+const DETAILS = {
   backgroundLane: 'backgroundLane',
   searchIds: 'searchIds',
   backgroundStopped: 'backgroundStopped',
@@ -1320,12 +1322,13 @@ export const DETAILS = {
   storageUsed: 'storageUsed',
   storageTotal: 'storageTotal',
   writes: 'writes',
+  contacts: 'contacts',
 } as const;
 
 const WRITE_KINDS: readonly M.MailWriteKind[] = ['seen', 'flagged', 'move', 'trash', 'junk'];
 
 /** A status's `details.writes` as the kinds the hub knows, once each in their order; null when it is not a list (not said). */
-export function writesOf(v: unknown): M.MailWriteKind[] | null {
+function writesOf(v: unknown): M.MailWriteKind[] | null {
   if (!Array.isArray(v)) return null;
   return WRITE_KINDS.filter((k) => v.includes(k));
 }
@@ -1369,7 +1372,7 @@ export const MAIL_COLUMNS: Record<string, Record<string, string>> = {
   // summary_headers, headers_seen: what the status says of summaries' headers, and whether any summary had some.
   // id_per_message … provider: what the extractor's status says of the account (setStatus).
   // background_lane … storage: keeping all mail (keep.ts), what the status says of background reads and storage.
-  // writes: what the status says the account writes now (ops.ts).
+  // writes: what the status says the account writes now (ops.ts); contacts: whether mail.contacts answers (outbox.ts).
   mail_account: {
     summary_headers: 'INTEGER',
     headers_seen: 'INTEGER',
@@ -1382,6 +1385,7 @@ export const MAIL_COLUMNS: Record<string, Record<string, string>> = {
     background_stopped: 'TEXT',
     storage: 'TEXT',
     writes: 'TEXT',
+    contacts: 'INTEGER',
   },
   // The server's emailId (Gmail's X-GM-MSGID): empty on rows from before it, and on Proton's, which have none.
   mail_message: { email_id: 'TEXT' },

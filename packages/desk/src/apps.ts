@@ -5,7 +5,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-export interface App {
+interface App {
   id: string;
   name: string;
 }
@@ -47,7 +47,7 @@ export function desktopFile(id: string, dirs: string[]): string | null {
 }
 
 /** Name= from the [Desktop Entry] group; null for a hidden entry. */
-export function desktopName(text: string): string | null {
+function desktopName(text: string): string | null {
   let inEntry = false;
   let name: string | null = null;
   for (const raw of text.split('\n')) {

@@ -11,7 +11,7 @@ import { postProblem, threadNameProblem } from '@dither-chat/protocol';
 export const DEMO_THREAD_CAPS: P.Capability[] = ['followThreads', 'createThreads', 'forumPosts', 'threadState', 'myThreads', 'crosspost', 'removeMembers', 'transferOwner', 'groupPicture'];
 
 /** What this needs of a demo account. */
-export interface DemoThreadHost {
+interface DemoThreadHost {
   selfId: string;
   emit: (ev: P.AdapterEvent) => void;
   /** The account's conversation fact for a native id, as demo.ts keeps it. */
@@ -25,7 +25,7 @@ export interface DemoThreadHost {
 }
 
 /** The demo's forum and what is in it, for one account. */
-export interface DemoThreadWorld {
+interface DemoThreadWorld {
   /** Forums with their tags. */
   forums: Record<string, P.ForumFact>;
   /** Threads with their starting facts (tags, owner, joined). */

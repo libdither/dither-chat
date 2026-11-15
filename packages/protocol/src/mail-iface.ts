@@ -146,6 +146,13 @@ export interface OutgoingMail {
   attachments?: OutgoingFile[];
 }
 
+/** One person `mail.contacts` suggests: an address to write to, and the name the service shows with it. */
+export interface MailContact {
+  email: string;
+  /** Null when the service has no name for it, or the name is only the address again. */
+  name: string | null;
+}
+
 /** A kind of write an account makes (`details.writes`). */
 export type MailWriteKind = 'seen' | 'flagged' | 'move' | 'trash' | 'junk';
 

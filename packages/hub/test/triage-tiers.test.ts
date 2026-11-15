@@ -310,6 +310,23 @@ describe('your rules', () => {
     expect((await say(d, 'general', 'bob', 'the deploy is done')).decision).toBe('drop');
   });
 
+  test("a keyword matches what people typed, never a bot's message or an agent's turn in a T3 thread", async () => {
+    const t3 = store.createAccount({ network: 't3', label: 't', color: '#222', adapter: 't3' });
+    store.ingest(t3, { t: 'status', status: 'online', self: { nativeId: 't3me', isSelf: true, displayName: 'Me' } });
+    store.ingest(t3, { t: 'identity', identity: { nativeId: 'agent', displayName: 'Agent' } });
+    store.ingest(t3, { t: 'conversation', conversation: { nativeId: 'thread', shape: 'direct', participants: ['agent', 't3me'] } });
+    store.setRule('keyword', 'deploy', 'all');
+    const agent = await say(store.account(t3.id)!, 'thread', 'agent', 'the deploy script is fixed');
+    expect(agent.keyword).toBeUndefined();
+    expect(agent.reasons).not.toContain('Matches keyword “deploy”');
+    const bot = await say(d, 'dm-bot', 'helper', 'deploy finished');
+    expect(bot.keyword).toBeUndefined();
+    expect(bot.reasons).not.toContain('Matches keyword “deploy”');
+    // A person on the same account still matches.
+    expect(await say(d, 'general', 'bob', 'the deploy is done')).toMatchObject({ decision: 'push', keyword: true });
+    store.setRule('keyword', 'deploy', null);
+  });
+
   test('Mute is absolute: silent, with nothing kept to mark or learn from', async () => {
     store.setRule('conversation', conv('dm'), 'none');
     const m = await say(d, 'dm', 'ann', 'the stove is on, come now');

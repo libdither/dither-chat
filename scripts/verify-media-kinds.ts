@@ -158,11 +158,12 @@ try {
     const r = (sel) => document.querySelector(sel)?.getBoundingClientRect();
     return { sticker: !!r('.composer .composer-sticker'), mic: !!r('.composer .composer-mic'), right: Math.round(Math.max(r('.composer .composer-mic')?.right ?? 0, r('.composer-box')?.right ?? 0)), width: innerWidth };
   })()`);
-  check('on a phone: sticker and microphone in the box, nothing past the edge', fit.sticker && fit.mic && fit.right <= fit.width, fit);
+  check('on a phone: microphone in the row, no sticker button in the box, nothing past the edge', !fit.sticker && fit.mic && fit.right <= fit.width, fit);
   if (shots) await page.shot(join(shots, 'phone-composer.png'));
   await click('.composer-plus');
   await page.until(`!!document.querySelector('.attach-sheet')`, 5000);
   check("the phone's attach sheet offers View once on Signal", await page.eval(`!!document.querySelector('.attach-sheet [data-track="view once"]')`));
+  check("and Stickers", await page.eval(`!!document.querySelector('.attach-sheet [data-track="stickers"]')`));
 
   const errors = page.errors.filter((e) => !/WebSocket connection|Failed to load resource/.test(e));
   check('no script errors', !errors.length, errors);

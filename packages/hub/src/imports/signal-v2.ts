@@ -58,12 +58,12 @@ export function snapshots(dir: string): string[] {
 }
 
 /** The shared `files` folder beside a snapshot. */
-export const filesDir = (snapshot: string) => join(snapshot, '..', 'files');
+const filesDir = (snapshot: string) => join(snapshot, '..', 'files');
 
 const MAGIC = Buffer.from('SBACKUP\x01', 'latin1');
 
 /** The frames of a snapshot, decrypted and checked. Throws BadBackupKey when the key is not this backup's. */
-export function openSnapshot(snapshot: string, backupKey: Uint8Array): Uint8Array {
+function openSnapshot(snapshot: string, backupKey: Uint8Array): Uint8Array {
   const meta = fields(readFileSync(join(snapshot, 'metadata')));
   const enc = sub(meta, 2);
   const iv = bytes(enc, 1);
@@ -91,7 +91,7 @@ export function openSnapshot(snapshot: string, backupKey: Uint8Array): Uint8Arra
 }
 
 /** Each varint-delimited record of a decrypted stream, the BackupInfo first. */
-export function* records(b: Uint8Array): Generator<Uint8Array> {
+function* records(b: Uint8Array): Generator<Uint8Array> {
   let i = 0;
   while (i < b.length) {
     let n = 0;
@@ -108,7 +108,7 @@ export function* records(b: Uint8Array): Generator<Uint8Array> {
 }
 
 /** An attachment from the shared files folder, decrypted and checked against its plaintext hash. Null if absent. */
-export function readAttachment(files: string, plaintextHash: Uint8Array, localKey: Uint8Array, size: number): Buffer | null {
+function readAttachment(files: string, plaintextHash: Uint8Array, localKey: Uint8Array, size: number): Buffer | null {
   if (localKey.length !== 64) return null;
   const name = createHash('sha256').update(plaintextHash).update(localKey).digest('hex');
   const path = join(files, name.slice(0, 2), name);
@@ -133,7 +133,7 @@ export function readAttachment(files: string, plaintextHash: Uint8Array, localKe
 
 // ------------------------------------------------------------------ census
 
-export interface V2Count {
+interface V2Count {
   format: 'signal-v2';
   snapshot: string;
   writtenMonth: string | null;
@@ -180,7 +180,7 @@ export function countSnapshot(snapshot: string, backupKey: Uint8Array): V2Count 
 
 // ------------------------------------------------------------------ mapping
 
-export interface V2ReadStats {
+interface V2ReadStats {
   conversations: number;
   messages: number;
   duplicates: number;
@@ -222,7 +222,7 @@ function describeTimer(seconds: number): string {
   return `${seconds} seconds`;
 }
 
-export interface ReadV2Options {
+interface ReadV2Options {
   /** The folder holding SignalBackups (or the snapshot's parent). */
   dir: string;
   backupKey: Uint8Array;
@@ -242,7 +242,7 @@ export function readSignalV2(o: ReadV2Options, emit: (line: unknown) => void): V
 }
 
 /** The mapping itself, over a decrypted stream (BackupInfo, then frames); attachments come from `files`. */
-export function mapFrames(b: Uint8Array, files: string, o: Omit<ReadV2Options, 'dir' | 'backupKey'>, emit: (line: unknown) => void): V2ReadStats {
+function mapFrames(b: Uint8Array, files: string, o: Omit<ReadV2Options, 'dir' | 'backupKey'>, emit: (line: unknown) => void): V2ReadStats {
   const self = o.selfId.toLowerCase();
   const stats: V2ReadStats = { conversations: 0, messages: 0, duplicates: 0, selfMessages: 0, files: { linked: 0, missing: 0 }, skipped: {} };
   const skip = (why: string) => (stats.skipped[why] = (stats.skipped[why] ?? 0) + 1);

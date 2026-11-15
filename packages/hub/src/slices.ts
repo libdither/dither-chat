@@ -22,7 +22,7 @@ export interface SliceOptions {
 }
 
 /** A slice's length: short enough that a request waits at most about this long behind background work. */
-export const SLICE_MS = 20;
+const SLICE_MS = 20;
 /** Rows a generator works through between yields, at most: a few milliseconds of the hub's heaviest kind. */
 export const SLICE_ROWS = 4096;
 

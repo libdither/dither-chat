@@ -25,7 +25,7 @@ export function needLogin(setup = false) {
 }
 
 /** What this device kept of the hub's answers: gone, so nothing of it outlives a session. */
-export async function forgetLocal(): Promise<void> {
+async function forgetLocal(): Promise<void> {
   try {
     // An open connection holds the deletion until the page goes; signing in reloads it.
     indexedDB.deleteDatabase(DB_NAME);

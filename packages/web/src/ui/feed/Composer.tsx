@@ -66,7 +66,7 @@ function Ring({ st, rules }: { st: ReturnType<typeof composeState>; rules: PostR
   );
 }
 
-export interface ComposeTarget {
+interface ComposeTarget {
   /** Answering this post. */
   replyTo?: P.PostFact;
   /** Quoting this post. */

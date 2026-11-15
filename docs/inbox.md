@@ -18,8 +18,7 @@ is muted only if every route is; its reasons are the top route's. It looks like 
 the badge of the route that has the latest message, that message as the preview, the summed count. A click opens the
 conversation of the latest message, so a reply goes where they last wrote, unless a route was picked on their page
 this session. It is active whichever of their DMs is open, and its menu acts on the whole chat: Mark As Read reads
-every route, Mute and the rule go on each, and search looks in every chat with them. Catch up makes it one card the
-same way, with every route's messages.
+every route, Mute and the rule go on each, and search looks in every chat with them.
 
 What needs you shows on the row, not in a section. A reply you owe that the hub still counts (they wrote last, the
 row's `owedSince`, and it needs you, `needs`) has ↩ and how long it has waited, in the accent colour, beside the
@@ -74,7 +73,7 @@ lately moves a row, it does not make it need you.
 score = max(owed, unread + pinged, live) + importance + relationship + noise + recency + visited
                                                                        (muted: −50 + recency)
 
-owed         = 60 × chance(shape, p, age)                              the owed table (owed.ts)
+owed         = 60 × P(needs a reply)                                  needsreply.ts, over the owed table (owed.ts)
 unread       = 8 + 12 × min(addressed, 3) + 3 × min(other, 3)         when anything is unread
 pinged       = 15, and 40 more for an alert                            an alert or Conversation message, unread, unseen
 importance   = 25 × triage's importance, 0..1                          of the newest message in a tier, unread, unseen
@@ -146,6 +145,65 @@ their owed points alone in 2025-26 were on turns you never answered; with the ta
 turns you did answer, with the same order among open turns (AUC 0.75 at 1 h and 6 h against 0.76) and a far better
 log loss (0.50 against 0.66 at 1 h). In the hub era: 53% to 25%, keeping 86%.
 
+### Needs a reply
+
+The owed points are `60 × P(needs a reply)`: the chance you answer this turn within the 3 days, given that it is still
+open at its age. The owner's definition of "needs a reply" is "I'll want to answer it, on reflection"; whether you
+did answer is the label it learns from, and your marks overrule it. `needsreply.ts` works it out with a logistic
+model per shape (DMs, and everything else) over:
+
+- the owed table's chance (above), and the age;
+- how you answer this person (everywhere) and this conversation **once a turn is that old**: from the latency
+  histogram of the tallies the fold keeps, the share of turns still open at that age that you answered, pulled
+  toward the table's chance and then the person's (`lateRate`), and how many turns each has;
+- for a group, how the turn came to be owed: a mention, a reply, or a small group's question;
+- the turn's messages so far, as flags and counts worked out in SQLite (`FACTS_SQL`): whether the newest asks a
+  question (a "?") and whether any did, whether any mentions or replies to you, the newest's length, whether it is a
+  link, media or sticker, or a short closer ("ok", "thanks", "lol", an emoji), how many messages, how many in a row
+  from the same person, and whether someone other than who opened the turn wrote last. No text reaches JavaScript
+  except a closer's few characters, and none is kept.
+
+**Fitted on your turns, then calibrated.** Once a day, after the owed table, the hub fits it a slice at a time
+(`Attention.fitNeeds`, slices.ts): the 20,000 most recent turns that are over, each at the ages it was still open
+(15 and 30 minutes, 1, 2, 3, 6 and 12 hours, 1, 1.5 and 2 days), with the tallies as they stood at that moment and
+the turn's first 60 messages from others over two days (one read on `message_conv_ts` per turn). Older turns count
+less (half after a year). Then a Platt step fitted on the last 90 days, pulled toward leaving the chances as they are,
+keeps "70%" meaning about 70 in 100. It is kept in `meta` (`needs_model`); a fit that fails is tried again an hour later. A shape with fewer than 300 turns keeps the
+table's chance. While scoring, an open turn younger than 3 days reads its messages once (again when a message
+arrives). "Reply needed" holds the chance at 1, "No reply needed" settles the turn (below); mail uses the table alone.
+
+**Shown.** Each inbox row that owes a reply carries the chance (`needsReply`, to 5 points) beside its ↩: faint after
+the age, and as the ↩'s tooltip, "Likely needs a reply: 70%" (from 50%) or "May need a reply: 30%". The owed reason
+ends with the same words, so the row's tooltip and its menu's "Why it's here" say it too. A held "Reply needed" shows
+no percentage.
+
+**Calibration over time.** The chance shown is kept once per open turn at 15 minutes, 1 hour, 6 hours and 1 day of age
+(`needs_prediction`, with the table's chance beside it; a year), and checked against what you did once the 3 days are
+over. `GET /api/attention/needs-reply` gives, by the day each turn began, how many, how many answered, the mean
+chance, the Brier score and log loss (and the table's Brier on the same turns), and all of them together in ten bins
+with AUC. How it sorts shows the bins under "Needs a reply", and the scorecard ([scorecard.md](scorecard.md)) has it day
+by day: the mean chance shown against the share answered, and the Brier score of the chance and of the table alone.
+
+**Why, from the backtest** (`scripts/needs-reply-backtest.ts`: every turn folded with the hub's own fold, each model
+fitted only on turns over before the year it is tested on, 2022 to the hub era). Turns still open at 15 minutes, 1
+hour, 6 hours and 1 day; answered within 3 days:
+
+| 2022 to the hub era | DMs (18,457): AUC | log loss | Brier | groups (5,634): AUC | log loss | Brier |
+|---|---|---|---|---|---|---|
+| the owed table | 0.768 | 0.523 | 0.176 | 0.726 | 0.443 | 0.140 |
+| needs a reply (as the hub fits it) | 0.813 | 0.487 | 0.162 | 0.762 | 0.430 | 0.137 |
+
+Answered within 1 day instead, DMs: AUC 0.725 to 0.754, log loss 0.617 to 0.586. Most of the gain is the per-person
+and per-conversation rates at the turn's age; the message flags add a little in DMs (0.810 to 0.813) and nothing in
+groups. In the hub era (276 DM turn-ages, 81% answered) AUC 0.926 against 0.914, with the model a little low (more of
+your turns were answered than before). Tried and left out: the local model jev asked "Is this a question or request
+the reader is expected to answer?" on the newest message (AUC 0.53 alone; 0.819 to 0.822 with it in DMs, worse in
+groups), and stays you left without answering (lowered the chance as expected in DMs, 60% answered after one such
+stay against 82% with none, but made the model worse out of sample on the 338 turn-ages the visit log covers). The
+calibration step is about neutral over the years and helps when your habits move. The inbox replay
+(`scripts/inbox-replay.ts --needs`) puts the learned order about even: held-out MRR 0.479 to 0.463, R@5 0.675 to
+0.686; on the choosing days MRR 0.396 both, R@5 0.584 to 0.596.
+
 ### Marks: "No reply needed" and "Reply needed"
 
 What the table learns from is whether you answered. That stands in for what matters, whether you will want to answer.
@@ -171,26 +229,22 @@ the chat are things a model may learn from later, not rules a mark sets.
   needed"; a click marks the row without opening the chat. A row with no ↩ shows a faint ↩ in the same place while the
   pointer is on it, "Reply needed". A held row shows its ↩, so a click on it lets the hold go ("No reply needed"). The
   button sits beside the row's own button, so Tab reaches it from the row and a screen reader names it.
-- **On a phone**, swipe a row left: "No reply needed" on a row with ↩, "Reply needed" on any other. As the row slides,
-  what it will do shows in the strip it uncovers; past 72 px (`SWIPE_AT`), or on a flick of at least 24 px, letting go
-  marks it, with a haptic tick when it crosses the line. The axis locks first (gesture.ts `lockAxis`), so a vertical
-  drag scrolls the list as before and a right swipe is the pager's. The button is still there for a screen reader,
-  out of sight.
+- **On a phone**, the same button lies unseen over the ↩ the row draws, so a tap on the ↩ is "No reply needed". A row
+  with no ↩ has no Reply needed on a phone; its button is there for a screen reader, out of sight. Rows are not swiped
+  (from 2026-11-13 to 11-14 a left swipe marked them): a left swipe on the list is the pager's, bringing back the page
+  peeking at the edge.
 
 On a row, No reply needed marks the newest message from them in each route's open turn; Reply needed the newest of them
 all. Where the open turn was not meant for you (a group's chatter, so the row API has nothing to mark), Reply needed goes
 on the row's newest message through the message endpoint, which makes a turn of its own. Reply needed is offered only
 where someone else wrote last and not in notes to self: where you wrote last nothing waits on you. The ↩ goes, or
 comes, at once; the hub folds the conversation again a few seconds later, as for your reactions. A toast offers Undo for
-10 s. Mail threads in the inbox have No reply needed the same way (hover or swipe, on the thread's newest message from
+10 s. Mail threads in the inbox have No reply needed the same way (hover or a tap on the ↩, on the thread's newest message from
 them since the reply you owe began); a thread with no ↩ has no Reply needed, since the mail row's mark needs a reply
 owed. Mail's own list (ui/mail/Filing.tsx) keeps its swipes: right archives, left marks read or unread.
 
-**The pager.** With a page peeking at the edge (`rest-peek`), a left swipe on the lists used to bring the page back
-from anywhere. A row that can be marked claims a left swipe (`data-claims-swipe="left"`), and the pager's check for
-"something under the finger scrolls sideways" (Pager.ts `scrollsSideways`) gives it the swipe; a left swipe from the
-peeking card itself, from a row that cannot be marked (notes to self, a chat where you wrote last), or from the list's heads still brings the page
-back, and tapping the card does too.
+**The pager.** With a page peeking at the edge (`rest-peek`), a left swipe anywhere on the lists brings the page back,
+and tapping the card does too. Inbox rows take no swipe of their own.
 
 **Kept.** `reply_mark` (one row per message: `target_kind` message or mail, its conversation or thread, the mark,
 when, where it was made, the device, `undone_at`). A change goes out with the message's view (`MessageView.replyMark`)
@@ -298,6 +352,7 @@ the row's tooltip and at the top of its right-click menu (a sheet on a phone):
 | owed, known only for the place | You usually reply here within 15 minutes; unanswered for a day |
 | owed, reply rate known (3+ turns) | You reply to Sam most of the time / about half the time / rarely; unanswered for 2 days |
 | owed, otherwise | Sam wrote to you / mentioned you / replied to you / asked the group something / answered you 3 hours ago; not answered yet |
+| owed, the chance (after any of the four above) | . Likely needs a reply: 70% · . May need a reply: 30% |
 | unread | 2 unread messages · 1 unread mention, 4 more unread |
 | an alert you have not seen | Alerted you: (triage's first reason) |
 | an unread Conversation message | triage's first reason as it stands: A direct message · You wrote here in the last day |
@@ -309,7 +364,7 @@ the row's tooltip and at the top of its right-click menu (a sheet on a phone):
 | none of the above | Last message 3 days ago |
 
 A row that needs you with a turn you owe shows a small ↩ with how long it has waited, beside its unread count if it
-has one (until 2026-11-10 only with nothing unread).
+has one (until 2026-11-10 only with nothing unread), and faintly the chance it needs a reply ("Needs a reply" above).
 
 ## Features, kept incrementally
 
@@ -365,65 +420,17 @@ Between snapshots rows keep their places. A new conversation goes at the end unt
 places when the order changes (`useFlip`). Before the hub has scored a conversation, or with
 a hub that predates scores, it ranks unread first, then by recency.
 
-The inbox button and the phone's Catch up tab count the alerts and the Conversation messages of the last week that
+The inbox button counts the alerts and the Conversation messages of the last week that
 you have not read, plus accounts that need you (`inboxBadge` in `packages/web/src/model.ts`). The list does not
 count. How it sorts shows the same two numbers beside its Alerts and Conversations, from the same lists
 (`packages/web/src/board.ts`). A turn you owe does not raise a badge you cannot clear by reading.
 
-## Catch up
+## For you
 
-What the right pane shows with no conversation open, and the phone's Catch up tab (`#/triage`, so old links land
-here): the conversations that need you, to answer or read one after another without leaving the list
-(`packages/web/src/ui/CatchUp.tsx`, the queue in `catchup.ts`).
-
-**The queue.** The inbox's rows that need you (`needs`) with a reply you owe (`owedSince`) or something unread, in the
-inbox's own order (the snapshot the list shows): one learned order, so a reply you owe sits where the list has it.
-From 2026-11-09 to 11-10 replies you owed came first, as the list's sections did (above). Mail threads from people are
-rows like any other. It is taken when the pane opens and then stays steady while you work through it: nothing reorders when scores
-change, and a card that no longer needs you (read on another device, answered) stays where it is until the pane opens
-again. Something that newly needs you joins the end, with a small "N new" note that jumps to it. For the first 3
-seconds after opening, before you act, late arrivals (mail views, scores) are still part of the first queue, in order.
-
-**A session.** Closing the pane and coming back within 30 minutes carries on: Later stays where you put it, what was
-handled goes, what is new joins the end. Closed longer (or after a reload) the queue is taken afresh. Done is kept on
-the device (`localStorage`, `dither-chat:catch-up-done`) with the conversation's latest message then: Done on a reply
-you owe marks it read but leaves it owed, so it comes back only once a newer message arrives. Later keeps no state
-anywhere.
-
-**A card**, one per conversation: the picture with the network badge and account dots, the name (and community),
-"waiting 3h" when you owe a reply, and the tier its messages landed in since you last read it (Alert, Conversation or
-List: the highest). Under it the messages since you last read it (or since the message you owe an answer, whichever
-came first), the last 5 with "and N earlier" to show the rest, pictures as thumbnails that open the viewer. Then a
-one-line reply box that grows, and Done, Later and Open. A mail card shows the subject and the newest snippet, with
-Open and Done, and no reply box.
-
-- **Done** marks it read (a mail thread too) and takes it off the queue.
-- **Later** moves it to the end of the queue.
-- **Open** opens the conversation (or the thread in the reader).
-- **A reply** goes out through the conversation's own send path (`state.ts` `send`, as the composer's: the account
-  the conversation sends as, the outbox, the same `clientId` and echo matching), and marks the conversation read. Its
-  draft is the composer's, so a half-written reply is there when you open the conversation. The card stays, marked
-  Replied, with the message in it (pending until it is sent, then the message, once), and focus moves to the next card.
-  Where the composer cannot send (an open message request, an encrypted room without keys) the card says why in
-  place of the box.
-
-Opening the pane or looking at a card marks nothing read: only Done, a reply, or opening the conversation does. The
-messages load lazily, for the cards on screen or near it and the 3 after the focused one, into the conversation's own
-timeline (`loadTimeline` with `glance`): what the hub stored, without asking the network for newer history and
-without taking a place in the device's start-up snapshot. Opening the conversation then shows them at once and asks
-the network as a first open does.
-
-**Keys** (desktop, with a hint line under the cards): `j` and `k` move between cards, `Enter` opens the focused one,
-`e` is Done, `l` is Later, `r` puts you in its reply box, and `Esc` leaves the box. No key does anything while you type,
-or with a menu, sheet or dialog open.
-
-**The header**: "Catch up · N waiting" (cards not yet answered), Mark all read (with its confirm; for 10 seconds after
-it, the cards that no longer need you leave as the reads come in, and replies you owe stay), and How it sorts
-([notifications.md](notifications.md#marks)). Accounts that need you (a sign-in, a QR) are one line under it, each
-name a link to its page. With nothing waiting: "All caught up", when the last message came, and How it sorts.
-
-`scripts/verify-catchup.ts` drives it on a fresh demo hub: the queue and its order, j/k/e/l, a reply from a card
-(exactly one message in the conversation), Done marking read, a new arrival, the empty state and the phone's tab.
+With no conversation open the right pane is For you, and a phone has a For you tab: single messages from channels,
+threads and big groups that triage rated, one per burst, in an order that stays put while you read
+([foryou.md](foryou.md)). It replaced Catch up (a queue of the rows that need you, with a reply box on each card) on
+2026-11-15: what needs you is the inbox's own rows, ↩ and all. `#/triage`, Catch up's address, opens For you.
 
 ## Jump to (Ctrl+K)
 
@@ -438,10 +445,11 @@ in the order on screen, a DM as its person, then the rest by the latest message.
 
 | | |
 |---|---|
-| bootstrap `attention` | `AttentionView[]`: `{ id, score, needs, reasons, owedSince, replyMark?, at }` for every listed conversation, and `kind: 'mail'` with a mail thread's id for each listed thread |
+| bootstrap `attention` | `AttentionView[]`: `{ id, score, needs, reasons, owedSince, replyMark?, needsReply?, at }` for every listed conversation, and `kind: 'mail'` with a mail thread's id for each listed thread |
 | event `{ t: 'attention', items, removed }` | changed scores, and conversations no longer listed |
 | `GET /api/attention` | `{ now, items }` |
 | `GET /api/attention/:conversationId` | everything about one score: the formula's parts, noise, relationship, reply rate, usual reply time; `learned`: the model's open and send chances and points, and the sampled points the inbox sorts by while exploring |
+| `GET /api/attention/needs-reply` | `?days=60`: how the "needs a reply" chances held up (`NeedsReplyCalibration`): by day, in bins, against the table's |
 | `GET /api/attention/model` | the learned order: its mode, when it last learned and from how many opens, its prior, what it learned as changes to weights on named features, the examination curve (fitted, the guess, and how often the list was on screen down to each row), and exploring (`explore`) |
 | `POST /api/attention/rebuild` | `{ conversations?: string[] }`: fold these, or all, again from the start |
 | `POST /api/messages/:id/reply-mark` | `{ mark: 'none' \| 'needs' \| null, surface?, device? }` on a message from someone else: set, change or take back a mark (null) → `{ mark, marked }`, the messages it touched (other routes included) |
@@ -606,6 +614,11 @@ is seldom opened from the inbox, so it stays low. So the order is a Thompson sam
   snapshot rules ([When the list moves](#when-the-list-moves)) still decide when the order on screen changes. A row
   the model is sure of barely moves, so a reply you owe someone close stays where it was; one it knows little about
   sometimes rises into view.
+- **A floor.** Each spread is at least 0.4 in log-odds (`EXPLORE_FLOOR`). As opens piled up the fit grew sure of
+  nearly every row, and the sample all but stopped straying: by 2026-11-14 a row lifted 10 points or more came into
+  the first ten at 0.3% of held-out opens, against 7% to 26% when exploring began. The order you see is then the mean,
+  and what sits lower down stays there. With the floor every row moves a little, a sure one included (with the draw's
+  clip, at most 0.8 in log-odds, about 12 points), so something from further down comes into view now and then.
 - **Why.** A row the sample lifted by 10 points or more says so, first: "Shown higher to learn: not much history with
   this one yet", in its tooltip and menu, and on How it sorts' *Why* for that conversation.
 - **Still learning without bias.** The visit log keeps the position the row had on screen when you opened it, which
@@ -614,7 +627,7 @@ is seldom opened from the inbox, so it stays low. So the order is a Thompson sam
 
 `GET /api/attention/:id`'s `learned` has the mean (`points`) and the sample the inbox sorts by (`sampled`);
 `GET /api/attention/model` has `explore`: on or off, whether the model has a covariance yet (a fresh hub, on the
-prior, does not explore), the epoch and the clip.
+prior, does not explore), the epoch, the clip and the floor.
 
 **What it costs.** In the replay (`--explore`: the learned order sorted by 20 seeds' samples against its mean; 7 days,
 the last 3 held out): MRR 0.436 against 0.447 on the held-out days (−0.011, 95% interval −0.020 to 0.003; across seeds
@@ -622,6 +635,21 @@ the last 3 held out): MRR 0.436 against 0.447 on the held-out days (−0.011, 95
 on the first days, it explores more and costs more: −0.025 (−0.042 to −0.002). A row lifted 10 points or more came
 into the first ten at 7% of held-out opens and 26% over every day after the first. The median row's spread was
 0.20 in log-odds, the largest 1.25. The rule was to keep the cost under about 0.02; it is.
+
+**The floor's cost** (2026-11-14; 12 days, 757 opens, the last 3 days and 274 opens held out; `--explore-floor`).
+Without a floor the sample cost −0.013 on the held-out days (95% interval −0.022 to −0.003) and lifted a row into
+the first ten at 0.3% of them; the median spread had fallen to 0.13. By floor, held out:
+
+| floor | MRR, sampled minus mean (95% interval) | a row lifted into the first ten |
+|---|---|---|
+| none, 0.2 | −0.013 (−0.022 to −0.003) | 0.3% of opens |
+| 0.3 | −0.016 (−0.025 to −0.004) | 1.6% |
+| **0.4** | −0.019 (−0.029 to −0.007) | 21% |
+| 0.5 | −0.023 (−0.035 to −0.010) | 42% |
+
+0.4 brings the lifts back to about where they were when exploring began, for −0.006 more than no floor, and keeps
+inside the 0.02 rule; 0.5 does not. Over every day after the first: −0.018 (−0.023 to −0.013), lifts at 29% of
+opens.
 
 **What it buys cannot be measured here.** The replay can only score orders against what you opened from the orders
 you were shown; what exploring is for, opens of conversations the mean order would have kept out of view, and the
@@ -672,6 +700,9 @@ What it learned on the real hub, in short: the time since the latest message cou
 30 points.
 
 ## The replay
+
+Day by day, live, the scorecard follows the order too: the mean of 1 ÷ row and the share of opens from the first
+8 rows, for opens from an inbox row ([scorecard.md](scorecard.md)).
 
 `scripts/inbox-replay.ts` replays the activity log against a copy of a hub (made read-only with `VACUUM INTO`) and
 asks, at every moment you opened a conversation, at which position each ordering would have shown it. It rebuilds
@@ -736,7 +767,8 @@ afterwards. Import in transactions of a few thousand messages so the hub keeps a
 
 ### A local model for "needs a reply from me?"
 
-`AttentionJudge` in `attention.ts` is the interface. Its `rank` is the learned order's way in (above). Its `judge`:
+The backtest above asked jev this on the newest message of each turn and found almost nothing over the per-person
+rates ("Needs a reply"), so nothing asks it. `AttentionJudge` in `attention.ts` is the interface. Its `rank` is the learned order's way in (above). Its `judge`:
 given a few candidate conversations (the top of the ranking with an open turn, say) and their latest message ids,
 it answers per conversation
 `{ needsReply: 0..1, importance: 0..1, reason }`. Answers go in `Attention.judged`, and `scoreConversation`

@@ -72,7 +72,7 @@ export function vapidHeader(keys: VapidKeys, endpoint: string, subject: string, 
   return `vapid t=${header}.${claims}.${b64u(sig)}, k=${keys.publicKey}`;
 }
 
-export type PushOutcome = 'ok' | 'gone' | 'failed';
+type PushOutcome = 'ok' | 'gone' | 'failed';
 
 /** The relays browsers actually use. Anything else is refused, so the hub cannot be aimed at arbitrary hosts. */
 const RELAYS = [/^fcm\.googleapis\.com$/, /^android\.googleapis\.com$/, /^jmt\d+\.google\.com$/, /\.push\.services\.mozilla\.com$/, /^updates\.push\.services\.mozilla\.com$/, /(^|\.)push\.apple\.com$/, /\.notify\.windows\.com$/];

@@ -12,7 +12,7 @@ export const BURST_MS = 5 * 60_000;
 /** A chat's row in the phone's list is brought up to date at most this often: a busy channel is one row, not a stream of pushes. */
 export const LIST_EVERY = 10 * 60_000;
 /** Someone using a page on a computer this recently: a phone buzz adds nothing. */
-export const ACTIVE_MS = 2 * 60_000;
+const ACTIVE_MS = 2 * 60_000;
 const LINES = 6;
 const BODY = 200;
 /** A push carries about 4 KB, encrypted; what goes in stays under this. */
@@ -61,7 +61,7 @@ interface Showing {
  * off the phones.
  */
 /** Threads that are not chat conversations (mail/triage.ts): their lines, and when they were read. */
-export interface OtherThreads {
+interface OtherThreads {
   gather(id: string, messageId: string): Omit<Grouped, 'alert'> | null;
   /** Read up to this time (the newest shown at or before it counts as read); null: not one of its own. */
   readTs(id: string): number | null;

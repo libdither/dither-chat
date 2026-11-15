@@ -110,6 +110,8 @@ export interface FakeOpts {
    * elsewhere; null says none of them (an extractor from before them).
    */
   details?: Record<string, unknown> | null;
+  /** The server's address book for `mail.contacts` (its status then says `details.contacts`); none by default. */
+  contacts?: M.MailContact[] | null;
 }
 
 const MB = 1024 * 1024;
@@ -129,7 +131,7 @@ export interface FakeMessage extends Omit<M.MailMessage, 'mailboxId' | 'id'> {
 }
 
 /** A message the fake sent (slice 5): what it was given, and its files' bytes. */
-export interface FakeSent {
+interface FakeSent {
   account: string;
   mail: M.OutgoingMail;
   files: { filename: string; mime: string; bytes: Uint8Array; by: 'path' | 'base64' }[];
@@ -169,7 +171,7 @@ interface Account {
 export const gmailBoxId = (path: string) => Buffer.from(path, 'utf8').toString('base64url');
 
 /** A Gmail mailbox as the extractor lists it: its name is the last part of the path, its parent the path before. */
-export function gmailBox(path: string, role: M.MailboxRole | null = null): M.Mailbox {
+function gmailBox(path: string, role: M.MailboxRole | null = null): M.Mailbox {
   const cut = path.lastIndexOf('/');
   return { id: gmailBoxId(path), name: path.slice(cut + 1), path, parentId: cut > 0 ? gmailBoxId(path.slice(0, cut)) : null, role, unread: null, total: null };
 }
@@ -189,7 +191,7 @@ export const GMAIL = {
 };
 
 /** What mail.mailboxes answers for a Gmail account with no labels of its own (imapflow's LIST, imap.ts mailboxes). */
-export const GMAIL_MAILBOXES: M.Mailbox[] = [
+const GMAIL_MAILBOXES: M.Mailbox[] = [
   { ...gmailBox('INBOX', 'inbox'), name: 'INBOX' },
   gmailBox('[Gmail]'),
   gmailBox('[Gmail]/All Mail', 'all'),
@@ -216,7 +218,7 @@ export const GMAIL_WEB = { inbox: 'INBOX', all: 'ALL_MAIL', sent: 'SENT', drafts
 const webBox = (id: string, name: string, role: M.MailboxRole | null): M.Mailbox => ({ id, name, path: name, parentId: null, role, unread: null, total: null });
 
 /** What mail.mailboxes answers for Gmail on the web with no labels of its own. */
-export const GMAIL_WEB_MAILBOXES: M.Mailbox[] = [
+const GMAIL_WEB_MAILBOXES: M.Mailbox[] = [
   webBox(GMAIL_WEB.inbox, 'Inbox', 'inbox'),
   webBox(GMAIL_WEB.all, 'All Mail', 'all'),
   webBox(GMAIL_WEB.sent, 'Sent', 'sent'),
@@ -335,6 +337,7 @@ export class FakeMailBackend implements MailBackend {
       answer: 0,
       summaryHeaders: refs,
       details: ids === 'proton' ? PROTON_DETAILS : web ? GMAIL_WEB_DETAILS : {},
+      contacts: null,
       ...this.defaults,
       ...o.opts,
     };
@@ -596,6 +599,7 @@ export class FakeMailBackend implements MailBackend {
         canSend: sendOk,
         sendNote: sendOk ? null : 'Sending is not supported here (the extractor answered 501).',
         ...(a.opts.summaryHeaders === null ? {} : { summaryHeaders: a.opts.summaryHeaders }),
+        ...(a.opts.contacts ? { contacts: online } : {}),
         ...(a.opts.details ?? {}),
       },
       layers: [
@@ -1029,6 +1033,15 @@ export class FakeMailBackend implements MailBackend {
         return { messages: this.search(a, String(input.query ?? ''), input.mailboxId as string | undefined, Number(input.limit) || 50) };
       case 'mail.send':
         return this.send(a, input as M.OutgoingMail);
+      case 'mail.contacts': {
+        if (!a.opts.contacts) throw new MailCallError('the fake does not do mail.contacts', 501, 'unknown-op');
+        const q = String(input.query ?? '').trim().toLowerCase();
+        const limit = Math.max(1, Math.min(Number(input.limit) || 8, 20));
+        // As a server ranks them: a name or address that starts with it, then one with it inside.
+        const starts = (c: M.MailContact) => [c.email, ...(c.name ?? '').split(/\s+/)].some((w) => w.toLowerCase().startsWith(q));
+        const has = (c: M.MailContact) => `${c.name ?? ''} ${c.email}`.toLowerCase().includes(q);
+        return { contacts: q ? [...a.opts.contacts.filter(starts), ...a.opts.contacts.filter((c) => !starts(c) && has(c))].slice(0, limit) : [] };
+      }
       case 'mail.attachment': {
         const m = a.messages.get(String(input.id)) ?? a.messages.get(String(input.message));
         const att = m?.attachments.find((x) => x.id === input.attachmentId);
@@ -1310,7 +1323,7 @@ export class FakeMailBackend implements MailBackend {
  * them too: after: from then on, before: up to it). category: matches nothing: the fake has no Gmail categories. Other
  * operators are left to Gmail, so they match everything here.
  */
-export function gmailQuery(query: string, extra: (m: FakeMessage) => { text: string; labels: string[] }): (m: FakeMessage) => boolean {
+function gmailQuery(query: string, extra: (m: FakeMessage) => { text: string; labels: string[] }): (m: FakeMessage) => boolean {
   const tokens = query.match(/-?\{[^}]*\}|-?[\w.-]+:"[^"]*"|-?"[^"]*"|\S+/g) ?? [];
   const norm = (s: string) => s.toLowerCase().replace(/[\s/]+/g, '-');
   const day = (v: string) => {

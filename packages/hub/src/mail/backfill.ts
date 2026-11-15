@@ -340,7 +340,7 @@ export async function pageOnDemand(hub: MailHub, key: string, before: string | n
 const VIEWS: P.MailView[] = ['inbox', 'unread', 'starred', 'sent', 'people', 'updates'];
 
 /** Which changed threads go to the pages as they are, and which only make their lists stale. */
-export class LiveWindow {
+class LiveWindow {
   /** Per mailbox: the lastAt of its MAIL_LIMITS.liveWindow-th newest thread (what is older is outside). */
   private cuts = new Map<string, number>();
   private cutsAt = 0;
@@ -411,7 +411,7 @@ export class LiveWindow {
  * the last week. Each mailbox they leave goes back to the deepest point of its listing above them, so paging further
  * lists them again. Returns the messages deleted.
  */
-export function trimToCap(store: MailStore, accountId: string, now = Date.now(), max = MAIL_LIMITS.maxPerAccount): string[] {
+function trimToCap(store: MailStore, accountId: string, now = Date.now(), max = MAIL_LIMITS.maxPerAccount): string[] {
   const n = store.one<{ n: number }>('SELECT COUNT(*) AS n FROM mail_message WHERE account_id = ?', accountId)?.n ?? 0;
   if (n <= max) return [];
   const victims = store.all<{ id: string }>(
@@ -450,7 +450,7 @@ export function trimToCap(store: MailStore, accountId: string, now = Date.now(),
 // ---------------------------------------------------------------- per hub
 
 /** What slice 2 keeps per hub (bigRoutes makes it). */
-export interface BigMail {
+interface BigMail {
   window: LiveWindow;
   /** A list's first rows: their bodies, ahead. */
   rows(threads: P.MailThreadView[]): void;
@@ -462,7 +462,7 @@ export interface BigMail {
 
 const BIG = new WeakMap<MailHub, BigMail>();
 export const bigOf = (hub: MailHub) => BIG.get(hub);
-export const setBig = (hub: MailHub, b: BigMail) => BIG.set(hub, b);
+const setBig = (hub: MailHub, b: BigMail) => BIG.set(hub, b);
 
 /**
  * Slice 2's router (routes.ts ROUTERS): no routes of its own (GET /api/mail/threads goes through pageOnDemand), but it

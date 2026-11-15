@@ -8,9 +8,10 @@
  *   bun scripts/inbox-replay.ts ... --model-grid   (also: the learned order's regularisation, position correction and its cap, horizon and window)
  *   bun scripts/inbox-replay.ts ... --curve        (also: the examination curve fitted to your opens; --model-grid has it too)
  *   bun scripts/inbox-replay.ts ... --triage       (also: the learned order with triage's level and your votes as features)
- *   bun scripts/inbox-replay.ts ... --explore [--explore-scale 1]   (also: what exploring costs, over 20 seeds)
+ *   bun scripts/inbox-replay.ts ... --explore [--explore-scale 1] [--explore-floor 0.4]   (also: what exploring costs, over 20 seeds)
  *   bun scripts/inbox-replay.ts ... --calibrate    (the learned order's prior: open chance against the formula alone)
  *   bun scripts/inbox-replay.ts ... --prefetch     (pages kept on the device and fetched ahead: how many opens they serve, at what cost)
+ *   bun scripts/inbox-replay.ts ... --needs        (owed replies weighed by the needs-reply model, fitted on the turns over before the log began)
  *
  * It never opens the live database for writing: it copies it with VACUUM INTO (read-only) and works on the copy. It
  * writes `inbox-replay.md` and `inbox-replay.json` to --out: counts, ranks and rates, never message text, names or ids.
@@ -29,9 +30,13 @@ import { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { scoreConversation, WEIGHTS } from '../packages/hub/src/attention.ts';
-import { drawZ, epochOf, EXAM_AT, EXAMINATION_ETA, EXPLORE_SCALE, FEATURES, FIT, fitRank, FLOORED, GUESSED_CURVE, logit, pointsOf, SEND_VALUE, sigmoid, spread, TRIAGE_FEATURES, HORIZON, LAMBDA, MAX_IPW, predict, PRIOR, rankFeatures, type Feature, type Features, type FitOptions, type Moment, type RankModel } from '../packages/hub/src/rank.ts';
+import { drawZ, epochOf, EXAM_AT, EXAMINATION_ETA, EXPLORE_FLOOR, EXPLORE_SCALE, FEATURES, FIT, fitRank, FLOORED, GUESSED_CURVE, logit, pointsOf, SEND_VALUE, sigmoid, spread, TRIAGE_FEATURES, HORIZON, LAMBDA, MAX_IPW, predict, PRIOR, rankFeatures, type Feature, type Features, type FitOptions, type Moment, type RankModel } from '../packages/hub/src/rank.ts';
 import { isChoice, loadWorld, momentOf, mutedBy, Rebuild, seenAt, type Seen, type World } from '../packages/hub/src/rankhistory.ts';
 import { Store } from '../packages/hub/src/store.ts';
+import { fitNeedsModelSteps } from '../packages/hub/src/needsreply.ts';
+import { DEFAULT_OWED_TABLE, type OwedTurn } from '../packages/hub/src/owed.ts';
+import { REPLY_WINDOW } from '../packages/hub/src/tally.ts';
+import { SELF_SQL } from '../packages/hub/src/rankhistory.ts';
 import { Triage } from '../packages/hub/src/triage.ts';
 
 type Row = Record<string, any>;
@@ -70,7 +75,23 @@ function copyLive(): string {
 
 function load(path: string): World & { db: Database; store: Store } {
   const store = new Store(path, () => null);
-  return { ...loadWorld(store.db, mutedBy(new Triage(store))), db: store.db, store };
+  const w = loadWorld(store.db, mutedBy(new Triage(store)));
+  if (flag('needs')) w.needsModel = fitNeeds(store.db, w.logStart);
+  return { ...w, db: store.db, store };
+}
+
+/** The needs-reply model as the hub fits it (needsreply.ts), on the copy's turns that were over before `before`. */
+function fitNeeds(db: Database, before: number) {
+  const self = new Set((db.query(`SELECT * FROM ${SELF_SQL}`).all() as Record<string, any>[]).map((r) => Object.values(r)[0] as string));
+  const selfPerson = (db.query('SELECT id FROM person WHERE is_self = 1').get() as Record<string, any> | null)?.id ?? null;
+  const turns = (db.query('SELECT conversation_id, shape, author_key, addressed, answered_at, timed, dismissed FROM owed_turn WHERE addressed <= ?').all(before - REPLY_WINDOW) as Record<string, any>[]).map(
+    (r): OwedTurn => ({ conversationId: r.conversation_id, shape: r.shape, authorKey: r.author_key, addressed: r.addressed, answeredAt: r.answered_at, timed: !!r.timed, ...(r.dismissed ? { dismissed: true } : {}) }),
+  );
+  const g = fitNeedsModelSteps(db, turns, { now: before, table: DEFAULT_OWED_TABLE, mine: (i, p) => (!!i && self.has(i)) || (!!p && p === selfPerson) });
+  for (;;) {
+    const r = g.next();
+    if (r.done) return r.value;
+  }
 }
 
 // ------------------------------------------------------------------ orderings
@@ -351,7 +372,7 @@ function prefetchReport(l: ReturnType<typeof load>, opens: Open[], snaps: Snap[]
  * its mean. Per open, the reciprocal rank averaged over the seeds minus the mean order's, with a 95% interval from
  * resampling the opens; and how often a row the sample lifted 10 points or more came into the first ten.
  */
-function explore(models: Record<number, RankModel>, opens: Open[], snaps: Snap[], scale: number, val: Open[], hold: Open[], later: Open[], seeds = 20): string[] {
+function explore(models: Record<number, RankModel>, opens: Open[], snaps: Snap[], scale: number, floor: number, val: Open[], hold: Open[], later: Open[], seeds = 20): string[] {
   const rr = new Map<Open, { mean: number; seeds: number[]; lifted: number[] }>();
   const spreads: number[] = [];
   opens.forEach((o, i) => {
@@ -363,6 +384,7 @@ function explore(models: Record<number, RankModel>, opens: Open[], snaps: Snap[]
       return { id: c.id, muted: c.muted, lo: logit(p.open), ls: logit(p.send), so: spread(m.cov!.features, m.cov!.open, c.x), ss: spread(m.cov!.features, m.cov!.send, c.x), value: p.value };
     });
     for (const c of parts) spreads.push(c.so);
+    for (const c of parts) (c.so = Math.max(floor, c.so)), (c.ss = Math.max(floor, c.ss));
     const rankOf = (v: (c: (typeof parts)[number]) => number) => {
       const order = parts.map((c) => ({ c, v: v(c) })).sort((a, b) => Number(a.c.muted) - Number(b.c.muted) || b.v - a.v || (a.c.id < b.c.id ? -1 : 1));
       return { order, rank: Math.min(...s.targets.map((x) => order.findIndex((e) => e.c.id === x)).filter((r) => r >= 0)) };
@@ -396,7 +418,7 @@ function explore(models: Record<number, RankModel>, opens: Open[], snaps: Snap[]
   };
   const q = (p: number) => [...spreads].sort((a, b) => a - b)[Math.floor(p * (spreads.length - 1))] ?? 0;
   return [
-    `Exploring: the learned order sorted by a Thompson sample (scale ${scale}, draws clipped to ±2), MRR against its mean:`,
+    `Exploring: the learned order sorted by a Thompson sample (scale ${scale}, spread at least ${floor}, draws clipped to ±2), MRR against its mean:`,
     '',
     line('choosing days', val),
     line('held-out days', hold),
@@ -505,7 +527,7 @@ if (import.meta.main) {
   const hold = opens.filter((o) => holdout.has(o.day));
   const fromInbox = (o: Open) => o.source === 'inbox';
   const later = opens.filter((o) => o.day > days[0]);
-  const exploring = flag('explore') ? explore(models, opens, snaps, Number(opt('explore-scale', String(EXPLORE_SCALE))), val, hold, later) : [];
+  const exploring = flag('explore') ? explore(models, opens, snaps, Number(opt('explore-scale', String(EXPLORE_SCALE))), Number(opt('explore-floor', String(EXPLORE_FLOOR))), val, hold, later) : [];
   const gridGaps = gridIds.length
     ? [
         'Each setting minus the learned order as shipped, MRR on the same opens (choosing days; held-out days; every day after the first; held out, opened from elsewhere):',

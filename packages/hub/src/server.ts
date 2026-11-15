@@ -15,6 +15,7 @@ import { setNativeMute } from './nativemute.ts';
 import { markUnreadFrom } from './unread.ts';
 import { validQuietHours, type Triage } from './triage.ts';
 import type { TriageVotes } from './votes.ts';
+import type { Scorecard } from './scorecard.ts';
 import { cleanFileName, Uploads } from './uploads.ts';
 import { ImportRunner } from './imports/engine.ts';
 import { GapFill } from './imports/gapfill.ts';
@@ -37,6 +38,7 @@ import { UsageStore } from './usage.ts';
 import { ClickCounts } from './clicks.ts';
 import type { Attention } from './attention.ts';
 import type { ActivityStore } from './activity.ts';
+import type { ForYou } from './foryou.ts';
 import { Devices } from './devices.ts';
 import { changesOf } from './journal.ts';
 import { syncResponse } from './sync.ts';
@@ -115,7 +117,7 @@ function ownSocket(path: string): boolean {
 }
 type WsData = ClientData | LiveViewData | AdapterSocketData | CallSocketData | VoiceSocketData | CallRoomSocketData;
 
-export interface ServerOpts {
+interface ServerOpts {
   port: number;
   /**
    * No login: every route answers without a session (auth.ts, docs/login.md). For a demo world (main.ts --demo) and
@@ -142,10 +144,14 @@ export interface ServerOpts {
   attention?: Attention;
   /** The activity log (activity.ts, docs/activity.md). */
   activity?: ActivityStore;
+  /** For you (foryou.ts, docs/foryou.md): its pages, the "N new" count and what devices say of its items. */
+  foryou?: ForYou;
   /** Per-device notification rules (devices.ts, docs/devices.md). */
   devices?: Devices;
   /** Your votes on triage and the rules learned from them (votes.ts, docs/notifications.md). */
   votes?: TriageVotes;
+  /** How the models did, day by day (scorecard.ts, docs/scorecard.md): GET /api/model/scores. */
+  scorecard?: Scorecard;
   /** Fetch every remote attachment into the media cache soon after it arrives (mediaarchive.ts). A real hub, not a demo. */
   archiveMedia?: boolean;
   /** How index jobs and the gap fill read (readingpace.ts): a person's pace unless told otherwise. */
@@ -172,7 +178,7 @@ const threshold = (t: unknown): number | null => (typeof t === 'number' && t > 0
 /** A person has no nickname of their own since 2026-11-11: each account of theirs has (docs/chats.md, Names). */
 const NICKNAME_MOVED = 'A nickname belongs to one account of theirs now, not to the person: PATCH /api/identities/:id with { nickname }';
 const v4 = (ip: string) => ip.replace(/^::ffff:/, '');
-export function isLoopback(ip: string) {
+function isLoopback(ip: string) {
   return ip === '::1' || v4(ip).startsWith('127.');
 }
 export function isTailnet(ip: string) {
@@ -195,7 +201,7 @@ export function sameOrigin(req: Request): boolean {
  * The same on an open hub (a demo world, a test: `open`): programs there send no Origin, and the vite dev server
  * proxies from localhost. Never on a hub behind the login.
  */
-export function sameOriginOpen(req: Request): boolean {
+function sameOriginOpen(req: Request): boolean {
   const origin = req.headers.get('origin');
   if (!origin) return true;
   try {
@@ -1071,6 +1077,8 @@ export class HubServer {
       if (path === '/api/attention' && method === 'GET') return ok({ now: Date.now(), items: a.list() });
       // The learned order (ranker.ts): its mode and what it learned, as weights on named features.
       if (path === '/api/attention/model' && method === 'GET') return ok((a.judge as { view?: () => unknown } | undefined)?.view?.() ?? { mode: 'off' });
+      // How well "needs a reply" chances matched what you did (needsreply.ts): by day, and in bins.
+      if (path === '/api/attention/needs-reply' && method === 'GET') return ok(a.needsCalibration(Date.now(), Math.min(365, Math.max(1, num('days') ?? 60))));
       if ((m = path.match(/^\/api\/attention\/([\w-]+)$/)) && method === 'GET') {
         const x = a.explain(m[1]);
         return x ? ok(x) : bad('not in the inbox', 404);
@@ -1083,6 +1091,17 @@ export class HubServer {
       }
     }
     if (path === '/api/inbox') return ok(s.inbox(num('since') ?? Date.now() - 7 * 86_400_000));
+    // For you (foryou.ts, docs/foryou.md): a page of a snapshot, how many a fresh one would add, and its events.
+    if (path.startsWith('/api/foryou') && this.opts.foryou) {
+      const f = this.opts.foryou;
+      if (path === '/api/foryou' && method === 'GET') return ok(await f.page(url.searchParams.get('epoch') || null, num('from') ?? 0, num('limit') ?? 20));
+      if (path === '/api/foryou/fresh' && method === 'GET') return ok(await f.fresh(url.searchParams.get('epoch') ?? ''));
+      if (path === '/api/foryou/stats' && method === 'GET') return ok(f.stats(num('since') ?? Date.now() - 7 * 86_400_000));
+      if (path === '/api/foryou/events' && method === 'POST') {
+        const b = await body<{ events?: Partial<P.ForYouEvent>[] }>();
+        return ok({ applied: f.events(Array.isArray(b.events) ? b.events : []) });
+      }
+    }
     // People and the places they share (graph.ts, docs/people-graph.md).
     if (path === '/api/graph' && method === 'GET') return ok(peopleGraph(s));
     // The networks' own search, a few places at a time in jev's order (netsearch.ts).
@@ -1848,6 +1867,12 @@ export class HubServer {
       // The list's preview is worked out in the background (votes.ts): the first answer waits for it.
       await this.opts.votes.previewReady();
       return ok(this.opts.votes.view());
+    }
+    // The scorecard (scorecard.ts, docs/scorecard.md): each scored day's metrics, for the last ?days= days (60).
+    if (path === '/api/model/scores' && method === 'GET') {
+      if (!this.opts.scorecard) return bad('No scorecard here', 404);
+      const days = Math.max(1, Math.min(400, Math.floor(Number(url.searchParams.get('days') ?? 60)) || 60));
+      return ok(this.opts.scorecard.view(days));
     }
     // What the shadow model would have done lately (shadow.ts): counts only.
     if (path === '/api/triage/shadow' && method === 'GET') return this.opts.votes ? ok(this.opts.votes.shadow()) : bad('No triage here', 404);

@@ -36,10 +36,15 @@ type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa' | 'tg';
  * accounts by their usernames. Off by default: the default world's counts
  * are what the tests and perf baselines expect.
  */
-export const MULTI_ACCOUNT = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('multiaccount');
-const named = (plain: string, username: string) => (MULTI_ACCOUNT ? username : plain);
+const MULTI_ACCOUNT = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('multiaccount');
+/**
+ * DITHER_DEMO_SCENARIO=servers adds 35 servers across your two Discord accounts, with Discord's own folders for each,
+ * two schools whose names share a word, and servers gone quiet a year ago: a sidebar to organize (docs/organize.md).
+ */
+const SERVERS = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('servers');
+const named = (plain: string, username: string) => (MULTI_ACCOUNT || SERVERS ? username : plain);
 
-export const DEMO_ACCOUNTS: { key: AccKey; id: string; network: P.Network; label: string; color: string }[] = [
+const DEMO_ACCOUNTS: { key: AccKey; id: string; network: P.Network; label: string; color: string }[] = [
   { key: 'dmain', id: 'acc_demo-discord-main', network: 'discord', label: named('main', 'zyansheep'), color: '#F2A541' },
   { key: 'dalt', id: 'acc_demo-discord-alt', network: 'discord', label: named('alt', 'zyn.alt'), color: '#E86A92' },
   { key: 'sig', id: 'acc_demo-signal', network: 'signal', label: named('personal', 'zyan.01'), color: '#B794F6' },
@@ -507,6 +512,67 @@ const g = {
 const cat = (k: string) => snow('cat-' + k);
 const ch = (k: string) => snow('ch-' + k);
 
+// ---------------- DITHER_DEMO_SCENARIO=servers: [key, name, account, channels, minutes since its last message]
+const YEAR = 365 * DAY;
+const SERVER_LIST: [string, string, AccKey, string[], number][] = [
+  ['bevy', 'Bevy Engine', 'dmain', ['help', 'ecs', 'rendering', 'showcase'], 3 * H],
+  ['tokio', 'Tokio Runtime', 'dmain', ['tokio-users', 'async', 'tracing'], 2 * DAY],
+  ['zig', 'Zig Programming', 'dmain', ['help', 'compiler', 'build-system'], 6 * DAY],
+  ['lean', 'Lean Prover', 'dmain', ['mathlib', 'tactics', 'new-members'], 9 * DAY],
+  ['helix', 'Helix Editor', 'dmain', ['help', 'plugins', 'lsp'], 20 * DAY],
+  ['compilers', 'Compiler Hangout', 'dmain', ['parsing', 'type-systems', 'llvm', 'codegen'], 4 * DAY],
+  ['nixpkgs', 'Nixpkgs Contributors', 'dmain', ['flakes', 'packaging', 'nixos-modules'], 12 * DAY],
+  ['kestrel', 'Kestrel Talks', 'dmain', ['videos', 'patreon', 'memes'], DAY],
+  ['tinker', 'Tinker Lab Fans', 'dmain', ['builds', 'videos', 'off-topic'], 15 * DAY],
+  ['pixelws', 'Pixel Workshop', 'dmain', ['streams', 'art-share', 'palettes'], 30 * DAY],
+  ['synth', 'Synth Diaries', 'dmain', ['patches', 'modular', 'videos'], 40 * DAY],
+  ['wb-robotics', 'Westbrook Robotics', 'dmain', ['build-season', 'cad', 'general'], YEAR + 30 * DAY],
+  ['wb-math', 'Westbrook Math Club', 'dmain', ['problems', 'contests'], YEAR + 60 * DAY],
+  ['wb-games', 'Westbrook Game Night', 'dmain', ['lfg', 'general'], YEAR + 90 * DAY],
+  ['wb-seniors', 'Westbrook Seniors 2022', 'dmain', ['announcements', 'general'], 2 * YEAR],
+  ['million', 'Count to a Million', 'dmain', ['million'], 2 * YEAR],
+  ['realm', 'Minecraft Realm 2019', 'dmain', ['builds', 'general'], 3 * YEAR],
+  ['guild', 'The Old Guild', 'dmain', ['general'], 2 * YEAR + 100 * DAY],
+  ['harbor', 'Harbor Neighbours', 'dmain', ['events', 'free-stuff', 'lost-and-found'], 2 * DAY],
+  ['cityclimb', 'City Climbing Meetup', 'dmain', ['plans', 'gear', 'beta'], 5 * DAY],
+  ['lk-cs', 'Lakeside CS Society', 'dalt', ['announcements', 'projects', 'internships'], 6 * H],
+  ['lk-chess', 'Lakeside Chess Club', 'dalt', ['games', 'puzzles', 'events'], 2 * DAY],
+  ['lk-anime', 'Lakeside Anime Club', 'dalt', ['watch-party', 'recs'], 3 * DAY],
+  ['lk-hack', 'HackLakeside 2026', 'dalt', ['teams', 'help-desk', 'announcements'], 10 * DAY],
+  ['lk-dorms', 'Lakeside Dorms', 'dalt', ['north-hall', 'laundry', 'marketplace'], DAY],
+  ['lk-film', 'Lakeside Film Society', 'dalt', ['screenings'], YEAR + 20 * DAY],
+  ['ash', 'Ashford College', 'dalt', ['announcements', 'class-of-2027', 'general'], 4 * DAY],
+  ['ash-climb', 'Ashford Climbing', 'dalt', ['sessions', 'gear'], 8 * DAY],
+  ['ash-hang', 'Ashford Hangout', 'dalt', ['general', 'memes', 'vc-chat'], 2 * H],
+  ['ash-gazette', 'Ashford Gazette', 'dalt', ['pitches', 'edits'], YEAR + 100 * DAY],
+  ['mossy', 'Mossy Board Games', 'dalt', ['game-nights', 'rules-questions'], 11 * DAY],
+  ['reading', 'Tuesday Reading Circle', 'dalt', ['meetups', 'reading-group'], 13 * DAY],
+  ['riverside', 'Riverside Meetups', 'dalt', ['events', 'carpool'], 25 * DAY],
+  ['owls', 'Night Owls Chess', 'dalt', ['blitz', 'arena'], 3 * DAY],
+  ['corner', 'Quiet Corner', 'dalt', ['general'], YEAR + 200 * DAY],
+];
+const sg = (k: string) => snow('srv-' + k);
+const SERVER_SPACES: DemoSpace[] = SERVERS ? SERVER_LIST.map(([k, name, acc]) => ({ acc: [acc], fact: { nativeId: sg(k), kind: 'community', name } })) : [];
+/** Discord's own folders in this scenario, by account: named ones, unnamed ones, and the loose rest in order. */
+const SERVER_FOLDERS: Partial<Record<AccKey, { name?: string; color?: string; keys: string[] }[]>> = {
+  dmain: [
+    { name: 'Coding', color: '#5865f2', keys: ['@rust', '@dither', 'bevy', 'tokio', 'zig', 'lean', 'helix'] },
+    { name: 'Creators', color: '#eb459e', keys: ['kestrel', 'tinker', 'pixelws'] },
+    { keys: ['wb-robotics', 'wb-math'] },
+  ],
+  dalt: [
+    { keys: ['ash-gazette', 'mossy', 'ash-climb'] },
+    { keys: ['reading', 'riverside'] },
+    { keys: ['lk-cs', 'lk-chess'] },
+  ],
+};
+const serverFolderSpaces = (acc: AccKey, mine: string[]): P.NetworkFolder[] => {
+  const ids = (keys: string[]) => keys.map((k) => (k === '@rust' ? g.rust : k === '@dither' ? g.dither : sg(k)));
+  const listed = (SERVER_FOLDERS[acc] ?? []).map((f, i) => ({ ...(f.name ? { id: String(i + 1), name: f.name } : { id: String(i + 1) }), ...(f.color ? { color: f.color } : {}), spaces: ids(f.keys).filter((x) => mine.includes(x)) }));
+  const inOne = new Set(listed.flatMap((f) => f.spaces));
+  return [...listed, ...mine.filter((s) => !inOne.has(s)).map((s) => ({ spaces: [s] }))];
+};
+
 const SPACES: DemoSpace[] = [
   { acc: ['dmain'], fact: { nativeId: g.rust, kind: 'community', name: 'Rust Programming Language', topic: 'The unofficial community server for Rust' } },
   ...(
@@ -538,6 +604,7 @@ const SPACES: DemoSpace[] = [
   { acc: ['mx'], fact: { nativeId: room('rust-space', 'matrix.org'), kind: 'community', name: 'Rust Community', topic: 'Rust rooms on Matrix' } },
   // WhatsApp: a community is its parent group; its groups are channels in it.
   { acc: ['wa'], fact: { nativeId: wgroup('nbh'), kind: 'community', name: 'Maple Street', topic: 'Neighbours on Maple Street' } },
+  ...SERVER_SPACES,
 ];
 
 const dch = (acc: AccKey[], k: string, name: string, section: string, i: number, x: Partial<P.ConversationFact> = {}): P.ConversationFact & { _acc?: AccKey[] } => ({
@@ -1081,6 +1148,18 @@ const CONVS: DemoConv[] = [
     ],
     unread: 1,
   },
+  // DITHER_DEMO_SCENARIO=servers: each server's channels, its first with one message at its age.
+  ...(SERVERS
+    ? SERVER_LIST.flatMap(([k, , acc, chans, age]) =>
+        chans.map(
+          (c, i): DemoConv => ({
+            acc: [acc],
+            fact: { nativeId: snow(`srv-${k}-${c}`), shape: 'channel', name: c, spaces: [{ nativeId: sg(k), position: pos(i) }] },
+            msgs: i === 0 ? [[age, [D.alice, D.ravi, D.quinn, D.theo][k.length % 4], `${c}: anyone around?`]] : [],
+          }),
+        ),
+      )
+    : []),
 ];
 
 /**
@@ -2036,7 +2115,6 @@ class DemoAdapter implements InprocAdapter {
     };
     const rules: P.AboutRule[] = [];
     const members: P.AboutMember[] = [];
-    const pool = Object.values(POOLS[net] ?? M);
     const ids = new Set<string>([...(conv?.fact.participants ?? []), ...(this.addedTo.get(target.nativeId) ?? [])]);
     if (!ids.size) {
       ids.add(this.self.nativeId);
@@ -2374,7 +2452,7 @@ class DemoAdapter implements InprocAdapter {
     if (this.key === 'sig') this.media.start([S.alice.nativeId, S.sam.nativeId], CONVS.find((c) => c.fact.name === 'Climbing crew 🧗')?.fact.nativeId);
     if (this.network === 'discord') {
       const mine = SPACES.filter((x) => x.acc.includes(this.key) && x.fact.kind === 'community').map((x) => x.fact.nativeId);
-      this.selfDemo = new DemoSelf(this.network, this.self, this.dir, emit, mine, (who, blocked) => this.adds.relate(who, blocked ? 'blocked' : 'stranger'));
+      this.selfDemo = new DemoSelf(this.network, this.self, this.dir, emit, mine, (who, blocked) => this.adds.relate(who, blocked ? 'blocked' : 'stranger'), SERVERS ? serverFolderSpaces(this.key, mine) : undefined);
       this.selfDemo.start();
     }
 
@@ -3231,9 +3309,9 @@ export function applyDemoOverlay(store: Store) {
 /** The demo world's mail account: plain IMAP with the threading headers on summaries (dither-accounts' §13). */
 export const DEMO_MAIL_ACCOUNT = 'acc_demo-mail';
 /** A second mail account like Proton's (DITHER_DEMO_MAIL_PROTON=1, scripts/verify-mail.ts --proton). */
-export const DEMO_PROTON_ACCOUNT = 'acc_demo-proton';
+const DEMO_PROTON_ACCOUNT = 'acc_demo-proton';
 /** A Gmail account as dither-accounts' imap extractor gives one (DITHER_DEMO_MAIL_GMAIL=1, scripts/verify-mail.ts --gmail). */
-export const DEMO_GMAIL_ACCOUNT = 'acc_demo-gmail';
+const DEMO_GMAIL_ACCOUNT = 'acc_demo-gmail';
 const ME = { name: 'Zyan', email: 'zyan@dither.example' };
 
 /**
@@ -3241,7 +3319,14 @@ const ME = { name: 'Zyan', email: 'zyan@dither.example' };
  * (list headers), and an HTML-only message carrying a tracker and a script (which must never show or run).
  */
 export function seedDemoMail(fake: FakeMailBackend, now = Date.now()) {
-  fake.addAccount(DEMO_MAIL_ACCOUNT, { kind: 'imap', label: 'Personal mail', email: ME.email, name: ME.name, opts: { ids: 'imap', threadIds: false, refs: true, answer: 3_000 } });
+  // Its server's address book (mail.contacts): people the composer suggests though no mail here names them.
+  const contacts = [
+    { name: 'Dana Okafor', email: 'dana@okafor.example' },
+    { name: 'Priya Natarajan', email: 'priya@studio.example' },
+    { name: 'Sam Rivera', email: 'sam@rivera.example' },
+    { name: null, email: 'bookings@ramen.example' },
+  ];
+  fake.addAccount(DEMO_MAIL_ACCOUNT, { kind: 'imap', label: 'Personal mail', email: ME.email, name: ME.name, opts: { ids: 'imap', threadIds: false, refs: true, answer: 3_000, contacts } });
   const H = 3_600_000;
   const D = 24 * H;
   const sam = { name: 'Sam Rivera', email: 'sam@rivera.example' };

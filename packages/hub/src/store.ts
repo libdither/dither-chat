@@ -51,10 +51,10 @@ export interface AccountRow {
   created_at: number;
 }
 
-export type MediaSigner = (raw: string | null | undefined, accountId: string | null | undefined) => string | null;
+type MediaSigner = (raw: string | null | undefined, accountId: string | null | undefined) => string | null;
 
 /** Objects touched since the last flush; the server turns these into ClientEvents. */
-export class Dirty {
+class Dirty {
   accounts = new Set<string>();
   identities = new Set<string>();
   persons = new Set<string>();
@@ -90,7 +90,7 @@ const json = <T>(s: string | null | undefined, fallback: T): T => {
 const PREVIEW_LEN = 140;
 
 /** A stored decision as the app sees it. Chances from before the tiers (three of them) are not the two it reads. */
-export function triageView(t: Row): P.TriageView {
+function triageView(t: Row): P.TriageView {
   const probs = json<Partial<P.TriageProbs> | null>(t.probs, null);
   const marks: P.TriageMarks = { ...(t.alert_mark != null ? { alert: !!t.alert_mark } : {}), ...(t.less_mark ? { less: true } : {}) };
   // The local model's answer is kept with the facts, which also say which bar it was held to.
@@ -127,7 +127,7 @@ export function previewText(body: string, kind: string): string {
  * An account's name as you see it: your nickname for it, else its display name, else its handle, else its id. A
  * person's name is made of these (docs/chats.md, Names); `SHOWN` is the same in SQL, on a table aliased `i`.
  */
-export const shownName = (r: Row): string =>
+const shownName = (r: Row): string =>
   r.nickname || r.display_name || r.handle || r.native_id;
 export const SHOWN = `COALESCE(NULLIF(i.nickname, ''), i.display_name, i.handle, i.native_id)`;
 
@@ -140,7 +140,7 @@ const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hang
  * Two renderings of one message compared for an import: an export's body was rebuilt from HTML, so mentions,
  * emoji, links and Markdown marks may be written differently while the words are the same.
  */
-export function normalizeForCompare(s: string): string {
+function normalizeForCompare(s: string): string {
   return s
     .replace(/<a?:(\w+):\d+>/g, '$1')
     .replace(/<@[!&]?\d+>|<#\d+>|@\S+|#\S+/g, '')
@@ -162,7 +162,7 @@ export function markSnippet(body: string, terms: string[], before = 60, len = 20
 const fold = (s: string) => s.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase();
 
 /** How well a folded word matches a name: all of it, its start, the start of a word in it, or the middle of one. */
-export function nameScore(name: string | null | undefined, word: string): number {
+function nameScore(name: string | null | undefined, word: string): number {
   if (!name) return 0;
   const n = fold(name);
   if (n === word) return 1;
@@ -290,6 +290,7 @@ export class Store {
       this.addColumns('attachment', { alt: 'TEXT', extra: 'TEXT' });
       this.addColumns('notice', { caught: 'INTEGER NOT NULL DEFAULT 0', shown_ts: 'INTEGER', held_at: 'INTEGER' });
       this.addColumns('place_pref', { mention_scope: 'TEXT', mention_same: 'INTEGER' });
+      this.addColumns('folder', { parent_id: 'TEXT', parent_pos: 'REAL' });
       const oldTriage = this.setAsideTriage();
       const oldLog = this.setAside('change_log', 'actor_id', ['change_log_target']);
       this.db.exec(schema);
@@ -970,7 +971,10 @@ export class Store {
       }
       this.selfIdentities.add(id);
     } else if (f.contact) {
-      this.ensurePerson(id);
+      // A contact always has a person; one first heard without a name (Signal before its profile arrives) is named by
+      // its id, so a later name or picture reaches the person too (the person keeps a name you gave it: manual).
+      const pid = this.ensurePerson(id);
+      if (changed && after.person_id) this.syncAutoPerson(pid);
     } else if (changed && after.person_id) {
       this.syncAutoPerson(after.person_id);
     }
@@ -1660,15 +1664,33 @@ export class Store {
     for (const r of rows) this.dirty.conversations.add(r.id);
   }
 
+  /**
+   * Replaces every folder. A `folder` item puts that folder inside this one (folder.parent_id), one level deep: a
+   * folder that holds folders cannot itself be inside one, so a deeper or circular nesting keeps only the first link
+   * read, and a folder listed in two keeps the first.
+   */
   setFolders(folders: P.FolderView[]) {
     const tx = this.db.transaction(() => {
       const kept = new Set(folders.map((f) => f.id));
       for (const r of this.db.query('SELECT id FROM folder').all() as Row[]) if (!kept.has(r.id)) this.db.query(`DELETE FROM place_pref WHERE kind = 'folder' AND id = ?`).run(r.id);
       this.db.query('DELETE FROM folder').run();
-      folders.forEach((f, i) => {
-        const id = f.id || randomId('fld');
-        this.db.query('INSERT INTO folder (id, name, icon, color, position) VALUES (?, ?, ?, ?, ?)').run(id, f.name, f.icon, f.color, i);
+      const ids = folders.map((f) => f.id || randomId('fld'));
+      const known = new Set(ids);
+      const parent = new Map<string, { id: string; pos: number }>();
+      folders.forEach((f, i) =>
         f.items.forEach((it, j) => {
+          if (it.kind !== 'folder' || !known.has(it.id) || it.id === ids[i] || parent.has(it.id) || parent.has(ids[i])) return;
+          // A folder that already holds folders stays at the top.
+          if ([...parent.values()].some((p) => p.id === it.id)) return;
+          parent.set(it.id, { id: ids[i], pos: j });
+        }),
+      );
+      folders.forEach((f, i) => {
+        const id = ids[i];
+        const p = parent.get(id);
+        this.db.query('INSERT INTO folder (id, name, icon, color, position, parent_id, parent_pos) VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, f.name, f.icon, f.color, i, p?.id ?? null, p?.pos ?? null);
+        f.items.forEach((it, j) => {
+          if (it.kind === 'folder') return;
           this.db.query('INSERT OR IGNORE INTO folder_item (folder_id, item_kind, item_id, position) VALUES (?, ?, ?, ?)').run(id, it.kind, it.id, j);
         });
       });
@@ -3405,7 +3427,13 @@ export class Store {
       name: f.name,
       icon: f.icon,
       color: f.color,
-      items: items.filter((i) => i.folder_id === f.id).map((i) => ({ kind: i.item_kind, id: i.item_id })),
+      // Folders inside it and what it holds share one order.
+      items: [
+        ...items.filter((i) => i.folder_id === f.id).map((i) => ({ kind: i.item_kind as P.FolderItemKind, id: i.item_id as string, pos: i.position as number })),
+        ...fs.filter((c) => c.parent_id === f.id).map((c) => ({ kind: 'folder' as const, id: c.id as string, pos: (c.parent_pos ?? -1) as number })),
+      ]
+        .sort((a, b) => a.pos - b.pos)
+        .map(({ kind, id }) => ({ kind, id })),
     }));
   }
 

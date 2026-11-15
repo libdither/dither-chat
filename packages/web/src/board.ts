@@ -9,7 +9,7 @@
 import type * as P from '@dither-chat/protocol';
 
 /** Alerts, Conversations and the list cover the last week, as the hub's inbox does. */
-export const BOARD_DAYS = 7;
+const BOARD_DAYS = 7;
 /** Below the list covers the last two days (the hub sends those only), the most important first. */
 export const BELOW_DAYS = 2;
 export const BELOW_SHOWN = 40;

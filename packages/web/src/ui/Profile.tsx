@@ -83,7 +83,7 @@ const dedupe = (rows: [string, string][]) => rows.filter((r, i) => rows.findInde
 const normalized = (s: string | null | undefined) => (s ?? '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 
 /** A conversation's picture: its own, else its server's. */
-export function PlaceIcon({ c, size = 22 }: { c: P.ConversationView; size?: number }) {
+function PlaceIcon({ c, size = 22 }: { c: P.ConversationView; size?: number }) {
   const com = c.spaceIds.length ? rootCommunity(c.spaceIds[0]) : null;
   if (com) return <Avatar id={com.id} name={com.name} url={com.icon} size={size} square network={c.network} />;
   const person = c.peerPersonId ? db.persons.get(c.peerPersonId) : null;

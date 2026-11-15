@@ -9,7 +9,6 @@ import { whole } from './slices.ts';
 import { jobFailed } from './errors.ts';
 
 const HOUR = 3_600_000;
-const DAY = 24 * HOUR;
 
 /**
  * Everything the hub keeps is private to its user: the database holds every message. Files other users could read
@@ -43,7 +42,7 @@ export function tightenPermissions(dataDir: string): string[] {
   return fixed;
 }
 
-export interface BackupOpts {
+interface BackupOpts {
   dataDir: string;
   /** The database to copy. */
   db: string;
@@ -229,4 +228,4 @@ export function rotateAdapterLogs(accountsDir: string, maxBytes = 10 * 1024 * 10
   return n;
 }
 
-export { DAY, HOUR };
+;

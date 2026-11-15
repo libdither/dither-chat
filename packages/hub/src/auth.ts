@@ -22,20 +22,20 @@ import { join } from 'node:path';
 
 export const USER = 'admin';
 export const COOKIE = 'dchat_session';
-export const LOGIN_FILE = 'login.json';
+const LOGIN_FILE = 'login.json';
 export const TOKEN_FILE = 'api.token';
-export const AUTH_DB = 'auth.sqlite';
+const AUTH_DB = 'auth.sqlite';
 const DAY = 86_400_000;
 /** A session ends this long after its last use… */
-export const SLIDING_MS = 90 * DAY;
+const SLIDING_MS = 90 * DAY;
 /** …and never later than this after its login. */
-export const ABSOLUTE_MS = 365 * DAY;
+const ABSOLUTE_MS = 365 * DAY;
 /** last_used is written at most this often; the cookie's Max-Age is renewed at most once a day. */
 const TOUCH_MS = 60_000;
 const REFRESH_MS = DAY;
 export const MIN_PASSWORD = 10;
 /** How long a file ticket (a /media link a program without the cookie may fetch once it is given it) holds. */
-export const TICKET_MS = 5 * 60_000;
+const TICKET_MS = 5 * 60_000;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS session (
@@ -50,8 +50,8 @@ CREATE TABLE IF NOT EXISTS session (
 );
 `;
 
-export const newToken = () => randomBytes(32).toString('base64url');
-export const hashToken = (t: string) => createHash('sha256').update(t).digest('hex');
+const newToken = () => randomBytes(32).toString('base64url');
+const hashToken = (t: string) => createHash('sha256').update(t).digest('hex');
 
 /** <data>/auth.sqlite, made private to this user. */
 export function openAuthDb(dataDir: string): Database {
@@ -65,7 +65,7 @@ export function openAuthDb(dataDir: string): Database {
   return db;
 }
 
-export interface PasswordFile {
+interface PasswordFile {
   user: string;
   hash: string;
   setAt: number;
@@ -118,7 +118,7 @@ export function ensureToken(dataDir: string, rotate = false): string {
 }
 
 /** Waits that double after a few free failures, per key. */
-export class Backoff {
+class Backoff {
   private m = new Map<string, { fails: number; last: number; until: number }>();
   constructor(
     private free: number,
@@ -143,7 +143,7 @@ export class Backoff {
   }
 }
 
-export interface SessionInfo {
+interface SessionInfo {
   id: string;
   createdAt: number;
   lastUsed: number;
@@ -154,7 +154,7 @@ export interface SessionInfo {
   current: boolean;
 }
 
-export type LoginResult = { ok: true; token: string; maxAge: number } | { ok: false; status: 401 | 429 | 503; retryAfter?: number; error: string };
+type LoginResult = { ok: true; token: string; maxAge: number } | { ok: false; status: 401 | 429 | 503; retryAfter?: number; error: string };
 
 /** Who a request is: a browser's session (its id), the service token, or nobody. */
 export type Who = { kind: 'session'; id: string; refresh: number | null } | { kind: 'token' } | { kind: 'open' };
@@ -367,7 +367,7 @@ export function fromOwnPage(req: Request): boolean {
 const v4 = (ip: string) => ip.replace(/^::ffff:/, '');
 let own: { at: number; ips: Set<string> } | null = null;
 /** An address of this machine: loopback, or one of its interfaces' (the proxy here may reach us from the tailnet address). */
-export function isThisMachine(ip: string): boolean {
+function isThisMachine(ip: string): boolean {
   if (ip === '::1' || v4(ip).startsWith('127.')) return true;
   if (!own || Date.now() - own.at > 60_000) own = { at: Date.now(), ips: new Set(Object.values(networkInterfaces()).flatMap((l) => (l ?? []).map((a) => a.address.toLowerCase()))) };
   return own.ips.has(v4(ip).toLowerCase());

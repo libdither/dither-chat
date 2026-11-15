@@ -15,9 +15,9 @@ import { THREAD_ACTIONS } from './slots.tsx';
 import { Loading } from '../Loader.tsx';
 
 /** How long a thread is on screen before it counts as read (§14 Q3). */
-export const READ_AFTER_MS = 1000;
+const READ_AFTER_MS = 1000;
 /** Folded messages whose bodies a thread asks for when it opens, newest first. */
-export const FOLDED_BODIES = 20;
+const FOLDED_BODIES = 20;
 
 export function Reader({ threadId, onBack }: { threadId: string; onBack: () => void }) {
   mailRev.value;

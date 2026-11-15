@@ -10,7 +10,7 @@
 import type * as P from '@dither-chat/protocol';
 import { parseMailList, parseWithList, viewList } from '@dither-chat/protocol';
 
-export interface MailList {
+interface MailList {
   key: string;
   ids: string[];
   next: string | null;
@@ -27,7 +27,7 @@ export interface MailList {
   dry: boolean;
 }
 
-export interface MailState {
+interface MailState {
   access: P.MailAccess;
   accounts: Map<string, P.MailAccountView>;
   mailboxes: Map<string, P.MailboxView>;
@@ -37,14 +37,14 @@ export interface MailState {
   outbox: Map<string, P.MailOutboxView>;
 }
 
-export const OFF: P.MailAccess = { state: 'off', managerUrl: null };
+const OFF: P.MailAccess = { state: 'off', managerUrl: null };
 
 export function emptyMail(): MailState {
   return { access: OFF, accounts: new Map(), mailboxes: new Map(), threads: new Map(), lists: new Map(), outbox: new Map() };
 }
 
 /** Newest first; ties by id, as the hub pages them. */
-export const threadOrder = (a: P.MailThreadView, b: P.MailThreadView) => b.lastAt - a.lastAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
+const threadOrder = (a: P.MailThreadView, b: P.MailThreadView) => b.lastAt - a.lastAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 
 /** Whether a thread belongs in a list. */
 export function inList(key: string, t: P.MailThreadView): boolean {
@@ -75,7 +75,7 @@ export function inList(key: string, t: P.MailThreadView): boolean {
 }
 
 /** A mail thread the one-list inbox lists, with the hub's say on it (slice 8; model.ts InboxRow). */
-export interface MailInboxScore {
+interface MailInboxScore {
   key: string;
   thread: P.MailThreadView;
   score: number;

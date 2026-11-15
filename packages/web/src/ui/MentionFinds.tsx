@@ -46,6 +46,11 @@ function above(kind: P.PlaceKind, id: string): [P.PlaceKind, string][] {
   for (const [k, i] of held) {
     if (k !== 'folder') for (const f of db.folders.filter((f) => f.items.some((x) => x.kind === k && x.id === i)).sort((a, b) => a.id.localeCompare(b.id))) out.push(['folder', f.id]);
   }
+  // A folder inside a folder: the outer one after it, as the hub reads them.
+  for (const [k, i] of [...out]) {
+    const outer = k === 'folder' ? db.folders.find((f) => f.items.some((x) => x.kind === 'folder' && x.id === i)) : undefined;
+    if (outer) out.push(['folder', outer.id]);
+  }
   return out;
 }
 

@@ -19,7 +19,7 @@ type Row = Record<string, any>;
 
 const made = new WeakSet<Database>();
 
-export function pollTables(db: Database) {
+function pollTables(db: Database) {
   if (made.has(db)) return;
   db.exec(`CREATE TABLE IF NOT EXISTS poll_state (
     message_id TEXT PRIMARY KEY REFERENCES message(id) ON DELETE CASCADE,
@@ -165,7 +165,7 @@ export function pollViews(db: Database, rows: Row[], isSelf: (identityId: string
 }
 
 /** One poll: by its voters where they are known (Signal), else by the counts the network said. */
-export function pollView(f: P.PollFact, state: Row | null, votes: Row[], isSelf: (identityId: string) => boolean, now = Date.now()): P.PollView {
+function pollView(f: P.PollFact, state: Row | null, votes: Row[], isSelf: (identityId: string) => boolean, now = Date.now()): P.PollView {
   const ended = !!f.ended || !!state?.ended || (typeof f.expires === 'number' && f.expires <= now);
   const base = { question: f.question, multi: !!f.multi, expires: f.expires ?? null, ended };
   if (votes.length) {
@@ -203,7 +203,7 @@ export function pollView(f: P.PollFact, state: Row | null, votes: Row[], isSelf:
 
 // ------------------------------------------------------------------ routes
 
-export interface PollRouteDeps {
+interface PollRouteDeps {
   store: Store;
   online: (accountId: string) => boolean;
   command: <T = unknown>(accountId: string, cmd: any, timeoutMs?: number) => Promise<T>;

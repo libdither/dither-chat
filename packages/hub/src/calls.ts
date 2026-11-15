@@ -50,7 +50,7 @@ interface Live {
   bytes: { up: number; down: number };
 }
 
-export interface CallStats {
+interface CallStats {
   id: string;
   accountId: string;
   conversation: string;
