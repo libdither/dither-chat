@@ -1590,7 +1590,9 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
             {sendAsMenu}
             {box}
             {emojiBtn}
-            {attaching && (
+            {/* Once you type, the text has the camera's width (as in Signal and WhatsApp): the box takes a second line
+                only when the words need one. The panel's camera tile is still there. */}
+            {attaching && !text && (
               <button class="icon-btn composer-camera" data-track="camera" onClick={openCamera} aria-label="Take a photo or video">
                 <Icon name="camera" size={20} />
               </button>

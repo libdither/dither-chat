@@ -10,13 +10,12 @@
  */
 import { createPortal, type ComponentChildren } from 'preact';
 import type * as P from '@dither-chat/protocol';
-import { useEffect, useRef, useState } from 'preact/hooks';
-import { closePanel, imeHeight, panelHeight, panelOpen, panelShown, useLayer } from '../../phone.ts';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { appKeyboard, closePanel, imeHeight, panelHeight, panelLift, panelOpen, panelShown, useLayer } from '../../phone.ts';
 import { toast } from '../../state.ts';
 import type { Attached } from '../ComposerFiles.tsx';
 import { Icon } from '../icons.tsx';
 import { FilesTab } from './Files.tsx';
-import { PanelHead } from './parts.tsx';
 import { PhotosTab } from './Photos.tsx';
 import './panel.css';
 
@@ -112,29 +111,50 @@ export function Panel({ ctx, tab, setTab }: { ctx: PanelCtx; tab: PanelTab; setT
     return () => document.removeEventListener('pointerdown', h, true);
   }, []);
   useEffect(() => setFull(false), [tab]);
+  // A field of its own has the keyboard up: the panel sits on the keyboard at its own height (at most a little over
+  // half of what the keyboard leaves), and the chat keeps the rest, rather than the panel covering it all.
+  const [lifted, setLifted] = useState(false);
+  const editable = (t: EventTarget | null) => {
+    const el = t as HTMLInputElement | null;
+    return !!el && ((el.tagName === 'INPUT' && !/^(checkbox|radio|button|submit)$/.test(el.type)) || el.tagName === 'TEXTAREA');
+  };
+  const focusIn = (e: FocusEvent) => editable(e.target) && setLifted(true);
+  const focusOut = () =>
+    setTimeout(() => {
+      const a = document.activeElement;
+      if (!(a && box.current?.contains(a) && editable(a))) setLifted(false);
+    }, 0);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!lifted || !el) return void (panelLift.value = 0);
+    const ro = new ResizeObserver(() => (panelLift.value = el.offsetHeight));
+    ro.observe(el);
+    panelLift.value = el.offsetHeight;
+    return () => {
+      ro.disconnect();
+      panelLift.value = 0;
+    };
+  }, [lifted]);
+  useEffect(() => () => void (panelLift.value = 0), []);
   const own = { stickers: ctx.stickers, emoji: ctx.emoji, poll: ctx.poll } as Partial<Record<PanelTab, () => ComponentChildren>>;
   const tabs = TABS.filter((t) => (t.id === 'photos' || t.id === 'files' ? ctx.canAttach : !!own[t.id]));
-  // A field of the panel's own (a search, the poll's lines) has the keyboard up: the panel opens to the whole screen
-  // above it, so what is typed stays in sight.
-  const focusIn = (e: FocusEvent) => {
-    const t = e.target as HTMLInputElement;
-    if ((t.tagName === 'INPUT' && !/^(checkbox|radio|button|submit)$/.test(t.type)) || t.tagName === 'TEXTAREA') setFull(true);
-  };
   const h = panelHeight();
   const shown = panelShown.value;
-  // Open to the whole screen: above the keyboard where the app keeps its room (a search field has the keyboard up).
-  const style = full ? { top: 'var(--app-top, 0px)', bottom: `${imeHeight.value}px`, height: 'auto' } : { height: `${h}px`, transform: shown < 1 ? `translateY(${Math.round((1 - shown) * h)}px)` : undefined };
+  // Where the app keeps the keyboard's room the keyboard covers the page's bottom, so the panel sits that far up.
+  const kb = appKeyboard.value ? imeHeight.value : 0;
+  const style = lifted
+    ? { bottom: `${kb}px`, height: 'auto', maxHeight: `${Math.round((innerHeight - kb) * 0.55)}px` }
+    : full
+      ? { top: 'var(--app-top, 0px)', bottom: '0px', height: 'auto' }
+      : { height: `${h}px`, transform: shown < 1 ? `translateY(${Math.round((1 - shown) * h)}px)` : undefined };
   return createPortal(
-    <div class={`kp ${full ? 'full' : ''}`} ref={box} style={style} data-track-area="panel" data-open={panelOpen.value ? '' : undefined} onFocusIn={focusIn}>
+    <div class={`kp ${full ? 'full' : ''} ${lifted ? 'lifted' : ''}`} ref={box} style={style} data-track-area="panel" data-open={panelOpen.value ? '' : undefined} onFocusIn={focusIn} onFocusOut={focusOut}>
       <div class={`kp-body kp-${tab}`}>
         {tab === 'photos' && ctx.canAttach && <PhotosTab ctx={ctx} picks={picks} full={full} setFull={setFull} />}
         {tab === 'files' && ctx.canAttach && <FilesTab ctx={ctx} picks={picks} full={full} setFull={setFull} />}
-        {tab !== 'photos' && tab !== 'files' && full && (
-          <PanelHead full setFull={(f) => (setFull(f), (document.activeElement as HTMLElement | null)?.blur())} />
-        )}
         {tab !== 'photos' && tab !== 'files' && own[tab]?.()}
       </div>
-      {!full && (
+      {!full && !lifted && (
         <nav class="kp-tabs" role="tablist">
           {tabs.map((t) => (
             <button class={`kp-tab ${t.id === tab ? 'on' : ''}`} role="tab" aria-selected={t.id === tab} data-track={t.id} onClick={() => setTab(t.id)}>

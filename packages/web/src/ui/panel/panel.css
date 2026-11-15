@@ -19,6 +19,10 @@
   border-top: none;
   z-index: 60;
 }
+/* On the keyboard, at its own height: what it holds sizes it, up to a little over half of what the keyboard leaves. */
+.kp.lifted {
+  padding-bottom: 0;
+}
 .kp-body {
   flex: 1;
   min-height: 0;

@@ -70,25 +70,25 @@ function HubRow({ f, picks }: { f: HubFile; picks: Picks }) {
 }
 
 export function FilesTab(p: Props) {
-  const { ctx, picks, full, setFull } = p;
+  const { ctx, picks, setFull } = p;
   const d = device();
   const [folder, setFolder] = useState<string | null>(null);
   const [q, setQ] = useState('');
-  const searching = full && folder === null;
+  const [searching, setSearching] = useState(false);
   useEffect(() => {
-    if (!full) setQ('');
-  }, [full]);
+    if (!searching) setQ('');
+  }, [searching]);
   return (
     <>
       {folder !== null ? (
         <Folder path={folder} picks={picks} open={setFolder} close={() => setFolder(null)} />
       ) : searching ? (
-        <Search q={q} setQ={setQ} picks={picks} back={() => setFull(false)} phone={!!d?.files} />
+        <Search q={q} setQ={setQ} picks={picks} back={() => setSearching(false)} phone={!!d?.files} />
       ) : (
         <>
           <PanelHead full={false} setFull={setFull} title="Files">
             <span class="kp-grow" />
-            <button class="icon-btn" data-track="search files" aria-label="Search files" onClick={() => setFull(true)}>
+            <button class="icon-btn" data-track="search files" aria-label="Search files" onClick={() => setSearching(true)}>
               <Icon name="search" size={18} />
             </button>
           </PanelHead>

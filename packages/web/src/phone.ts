@@ -123,12 +123,17 @@ export function useLayer(onClose: () => void) {
  * frame of its slide (android.ts, apps/android MainActivity.edgeToEdge): the message box rides on the keyboard, and a
  * panel can take the keyboard's place without the box moving (docs/phone.md "The keyboard and the panel").
  */
-const appKeyboard = signal(false);
+export const appKeyboard = signal(false);
 /** The keyboard's height as the app reports it, in CSS pixels; 0 while it is down. */
 export const imeHeight = signal(0);
 /** A panel in the keyboard's place (ui/panel/Panel.tsx): open, and how far it has slid in (0 to 1). */
 export const panelOpen = signal(false);
 export const panelShown = signal(0);
+/**
+ * While a field of the panel's own has the keyboard up (a search, a poll's lines): the panel sits on the keyboard at
+ * its own height, this, and the chat keeps what is left above the box (Panel.tsx). 0 otherwise.
+ */
+export const panelLift = signal(0);
 
 const KB_KEY = 'dither-chat:keyboard-height';
 const orientation = () => (innerWidth > innerHeight ? 'wide' : 'tall');
@@ -253,7 +258,10 @@ export function trackViewport() {
         if (panelOpen.value && !inPanel()) closePanel(true);
       }
     }
-    const a = appHeight({ inner: innerHeight, visible: h, typing: typing(), app: appKeyboard.value, ime: imeHeight.value, panel: Math.round(panelHeight() * panelShown.value) });
+    // The panel's room: its slide in, or, lifted onto the keyboard, the keyboard and the panel both.
+    const lift = panelLift.value;
+    const panel = lift > 0 ? (appKeyboard.value ? imeHeight.value + lift : lift) : Math.round(panelHeight() * panelShown.value);
+    const a = appHeight({ inner: innerHeight, visible: h, typing: typing(), app: appKeyboard.value, ime: imeHeight.value, panel });
     root.classList.toggle('kb-open', browserKb || a.kb);
     const top = !appKeyboard.value && vv && typing() ? Math.round(vv.offsetTop) : 0;
     if (a.h !== null || top > 0) {
@@ -284,6 +292,7 @@ export function trackViewport() {
   document.addEventListener('focusout', () => setTimeout(update, 50));
   effect(() => {
     void panelShown.value;
+    void panelLift.value;
     update();
   });
 }
