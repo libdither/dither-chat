@@ -188,7 +188,7 @@ describe('the hub sends X nothing for it', () => {
   const post = (path: string, body: unknown = {}) => fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST', body: JSON.stringify(body) });
   beforeAll(() => {
     const sup = { authorize: () => null, online: () => true, command: async (_: string, c: P.AdapterCommand) => (hubSent.push(c), {}) } as any;
-    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
     port = hub.start().port!;
   });
   afterAll(() => hub.stop());

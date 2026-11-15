@@ -48,7 +48,7 @@ beforeAll(() => {
     stop: async () => {},
     command: async (account: string, cmd: any) => (commands.push({ account, cmd }), answer(cmd)),
   } as any;
-  hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+  hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
   base = `http://127.0.0.1:${hub.start().port}`;
   sig = store.createAccount({ network: 'signal', label: 'sig', color: '#111', adapter: 'signal' });
   caps(['send', 'viewed', 'resetSession']);

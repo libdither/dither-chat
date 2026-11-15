@@ -19,6 +19,7 @@ import { IndexingSettings } from './Indexing.tsx';
 import { AdversarialSettings } from './Adversarial.tsx';
 import { UsageSettings } from './ButtonCounts.tsx';
 import { DeskSettings } from './DeskSettings.tsx';
+import { SessionSettings } from './Login.tsx';
 import { MailAccessNote, MailAccountRows } from './mail/MailAccounts.tsx';
 import { MailReadSetting } from './mail/MailReadSetting.tsx';
 import { phone } from '../phone.ts';
@@ -48,6 +49,7 @@ export const SECTIONS: [title: string, icon: string, id: string][] = [
   ['Mail', 'mail', 'set-mail'],
   // The phone app opens links and files in the phone's apps by itself.
   ...(android ? [] : ([['Desktop helper', 'monitor', 'set-desk']] as [string, string, string][])),
+  ['Signed-in devices', 'lock', 'set-sessions'],
 ];
 
 /** A phone's way to any section without scrolling past the rest: a button in the header, and the sections in a sheet. */
@@ -410,6 +412,7 @@ export function SettingsPane() {
           <TranslateSettings />
 
           <DeskSettings />
+          <SessionSettings />
 
           <MailSettings />
         </Later>

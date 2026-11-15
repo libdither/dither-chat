@@ -12,6 +12,7 @@ import { href, parseHash, type Route } from './routes.ts';
 import { inboxFilterOf, type InboxFilter } from './ordering.ts';
 import { applyPlanEvent, calendarAt, calendarFromBootstrap, loadPlans } from './plans.ts';
 import { api } from './api.ts';
+import { isLoginRefusal, login, needLogin } from './login.ts';
 import { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines, type Timeline } from './store.ts';
 import { applyCalls, applyVoice, loadCalls } from './ringing.ts';
 
@@ -1208,6 +1209,13 @@ function bootstrap() {
       // As text too: the snapshot keeps the hub's answer as it came, without serializing it again.
       const res = await fetch('/api/bootstrap');
       const text = await res.text();
+      if (res.status === 401) {
+        let body: { setup?: boolean } | null = null;
+        try {
+          body = JSON.parse(text);
+        } catch {}
+        if (isLoginRefusal(res.status, body)) return void needLogin(!!body?.setup);
+      }
       if (!res.ok) throw new Error(text.slice(0, 200) || `${res.status}`);
       const b = JSON.parse(text) as P.Bootstrap;
       applyBootstrap(b);
@@ -1299,9 +1307,12 @@ export function afterSync(): Promise<void> {
 
 export function connect() {
   clearTimeout(retry);
+  // Signed out: nothing to connect to until the sign-in screen has reloaded the page (login.ts).
+  if (login.value) return;
   if (!connected.value) setConnected(false);
   const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live`;
   const sock = new WebSocket(url);
+  socketStartedAt = Date.now();
   ws = sock;
   synced = false;
   socketGen++;
@@ -1334,8 +1345,23 @@ export function connect() {
     }
   };
   sock.onclose = () => {
-    if (ws === sock) dropped();
+    if (ws !== sock) return;
+    // Refused before it opened: maybe this device is not signed in (the hub answers the upgrade with 401, which a
+    // socket cannot read). /api/login says.
+    if (sock.readyState === WebSocket.CLOSED && openedAt < socketStartedAt) void checkSignedIn();
+    dropped();
   };
+}
+
+let socketStartedAt = 0;
+/** Whether this device still has a session; the sign-in screen when not (login.ts). */
+async function checkSignedIn() {
+  try {
+    const r = await fetch('/api/login', { cache: 'no-store' });
+    if (!r.ok) return;
+    const b = (await r.json()) as { signedIn?: boolean; passwordSet?: boolean };
+    if (b.signedIn === false) needLogin(!b.passwordSet);
+  } catch {}
 }
 
 /** The socket is gone, or as good as: forget it now rather than wait for its close to time out. */

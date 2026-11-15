@@ -18,6 +18,7 @@ import { encodeRecoveryKey, encryptSecret, secretKeyInfo } from '../packages/ada
 import { FlakyProxy } from '../packages/adapter-matrix/testbed/flaky.ts';
 import { testbedImage } from '../packages/adapter-matrix/testbed/png.ts';
 import { launch } from './browser.ts';
+import { bearer, prepareLogin, signInPage } from './hub-login.ts';
 
 const REPO = resolve(import.meta.dir, '..');
 const shots = process.argv[2] ?? mkdtempSync(join(tmpdir(), 'dither-e2ee-shots-'));
@@ -32,10 +33,12 @@ const check = (ok: boolean, what: string, detail?: unknown) => {
 };
 
 const web = process.env.DITHER_WEB_DIST ? ['--web', process.env.DITHER_WEB_DIST] : [];
+// Not a demo world, so behind the login (docs/login.md): a password and a token in its throwaway data dir.
+await prepareLogin(data);
 const hub = Bun.spawn(['bun', 'packages/hub/src/main.ts', '--data', data, '--port', String(PORT), '--host', '127.0.0.1', ...web], { cwd: REPO, env: { ...process.env, DITHER_CALENDAR_URL: 'off' }, stdout: 'ignore', stderr: 'inherit' });
 const proxy = new FlakyProxy(tb.baseUrl).start();
 const api = async (path: string, body?: unknown) => {
-  const r = await fetch(url + path, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const r = await fetch(url + path, body === undefined ? { headers: bearer(data) } : { method: 'POST', headers: { 'content-type': 'application/json', ...bearer(data) }, body: JSON.stringify(body) });
   const text = await r.text();
   if (!r.ok) throw new Error(`${path}: ${r.status} ${text}`);
   return text ? JSON.parse(text) : null;
@@ -55,6 +58,7 @@ await zyanOther.request('POST', `/_matrix/client/v3/join/${enc(room)}`, { body: 
 
 const account = await api('/api/accounts', { network: 'matrix', adapter: 'matrix', label: 'testbed', config: { homeserver: proxy.url }, secret: { userId: tb.users.zyan.userId, password: tb.users.zyan.password } });
 const { page, close } = await launch();
+await signInPage(page, url);
 let other: Peer | null = null;
 /** Actions the script makes fail on purpose (a mistyped recovery key): the hub answers those with a 500. */
 let refusals = 0;

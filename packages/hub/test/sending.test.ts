@@ -179,7 +179,7 @@ describe('the send passes silent and no-ping only where the account can', () => 
   beforeAll(() => {
     store = new Store(join(dir, 'flags.sqlite'), mediaSigner('s'));
     const sup = { authorize: () => null, online: () => true, command: async (_: string, c: any) => (sent.push(c), { nativeId: 'x' }) } as any;
-    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: join(dir, 'flags'), webDist: dir, secret: 's' });
+    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: join(dir, 'flags'), webDist: dir, open: true, secret: 's' });
     port = hub.start().port!;
     const a = store.createAccount({ network: 'discord', label: 'dc', color: '#000', adapter: 'discord' });
     store.ingest(a, { t: 'hello', network: 'discord', version: '1', capabilities: ['send'] });

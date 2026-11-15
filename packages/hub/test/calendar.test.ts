@@ -121,7 +121,7 @@ function hub(opts: { calendar?: CalendarLink; accounts?: (store: Store) => { lin
   const store = new Store(':memory:', mediaSigner('s'));
   const link = opts.calendar;
   const calendar = opts.accounts ? opts.accounts(store) : link ? { link: () => link, sync() {} } : undefined;
-  const h = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's', calendar });
+  const h = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's', calendar });
   const port = h.start().port!;
   return { h, store, base: `http://127.0.0.1:${port}`, host: `127.0.0.1:${port}` };
 }

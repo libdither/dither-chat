@@ -33,7 +33,7 @@ beforeAll(() => {
   view('acc_port00000001', { vncPort: 1, width: 800, height: 600 }); // an older adapter's port (nothing there)
   view('acc_notSocket0001', { vncSocket: join(dir, 'not-a-socket'), width: 800, height: 600 });
   const sup = { authorize: () => null, online: () => true, command: async () => ({}), note() {}, liveViewUrl: () => null } as any;
-  hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+  hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
   port = hub.start().port;
 });
 

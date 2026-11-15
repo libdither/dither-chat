@@ -109,7 +109,7 @@ describe('a Molly folder over HTTP', () => {
     // Live sync already has Alice's first message, worded the same.
     store.ingest(store.account('acc_sig')!, { t: 'message', message: { nativeId: `${ALICE}:${T + 1000}`, conversation: `dm:${SELF}:${ALICE}`, author: ALICE, ts: T + 1000, body: `**hey** <@${SELF}>, look` }, live: false });
     const sup = { authorize: () => null, online: () => false } as any;
-    server = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: hubDir, webDist: hubDir, secret: 's' });
+    server = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: hubDir, webDist: hubDir, open: true, secret: 's' });
     port = server.start().port!;
     base = `http://127.0.0.1:${port}`;
   });

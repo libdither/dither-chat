@@ -26,6 +26,7 @@ import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.inputmethod.EditorInfo
 import android.webkit.ConsoleMessage
+import android.webkit.CookieManager
 import android.webkit.PermissionRequest
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.ValueCallback
@@ -444,6 +445,8 @@ class MainActivity : Activity() {
     override fun onPause() {
         super.onPause()
         resumed = null
+        // The hub's session cookie to disk now, so the app's own requests (Hub.authorize) and the next start have it.
+        runCatching { CookieManager.getInstance().flush() }
         // A call keeps the page running. Otherwise pause what can be (animations, sensors); JS and the socket go on.
         if (!callActive) web?.onPause()
     }

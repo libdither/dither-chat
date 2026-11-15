@@ -29,6 +29,7 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { launch } from './browser.ts';
+import { bearer, signInWithToken } from './hub-login.ts';
 
 const cfg = JSON.parse(readFileSync(process.argv[2]!, 'utf8')) as {
   hub: string;
@@ -52,7 +53,8 @@ const PROBE = readFileSync(probeAt.find((p) => existsSync(p)) ?? probeAt[1], 'ut
 const SPEECH_B64 = readFileSync(cfg.speech).toString('base64');
 
 async function lab<T = any>(account: string, body: Record<string, unknown>): Promise<T> {
-  const r = (await fetch(`${HUB}/api/lab/${account}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json())) as any;
+  // The lab hub is behind its login (docs/login.md): its service token, from its data dir. It needs a password set.
+  const r = (await fetch(`${HUB}/api/lab/${account}`, { method: 'POST', headers: { 'content-type': 'application/json', ...bearer(cfg.dataDir) }, body: JSON.stringify(body) }).then((r) => r.json())) as any;
   if (!r.ok) throw new Error(`lab ${account} ${body.op}: ${r.error}`);
   return r.result as T;
 }
@@ -315,7 +317,9 @@ async function deviceScenario(mode: 'bridge' | 'direct') {
       source: `${PROBE};window.__probe=installDitherProbe('device');window.__probe.patchMedia();
         const _send=WebSocket.prototype.send;WebSocket.prototype.send=function(d){try{if(typeof d==='string'&&this.url.includes('/api/call')&&d.includes('"op":"join"')){const m=JSON.parse(d);m.account=${JSON.stringify(cfg.device)};d=JSON.stringify(m);}}catch{}return _send.call(this,d);};`,
     });
-    await page.goto(HUB);
+    await signInWithToken(page, HUB, cfg.dataDir);
+    await signInWithToken(page, HUB, cfg.dataDir);
+  await page.goto(HUB);
     await page.eval(`localStorage.setItem('dither-chat:prefs', JSON.stringify({ ...JSON.parse(localStorage.getItem('dither-chat:prefs') || '{}'), callMode: ${JSON.stringify(mode)}, sendAs: { ${JSON.stringify(cfg.conversation)}: ${JSON.stringify(cfg.device)} } }))`);
     await page.goto(`${HUB}/?mode=${mode}#/inbox/c/${cfg.conversation}`);
     await page.until(`!!document.querySelector('.call-join')`, 30_000);
@@ -406,6 +410,7 @@ async function deviceInCall() {
     source: `${PROBE};window.__probe=installDitherProbe('device');window.__probe.patchMedia();
       const _send=WebSocket.prototype.send;WebSocket.prototype.send=function(d){try{if(typeof d==='string'&&this.url.includes('/api/call')&&d.includes('"op":"join"')){const m=JSON.parse(d);m.account=${JSON.stringify(cfg.device)};d=JSON.stringify(m);}}catch{}return _send.call(this,d);};`,
   });
+  await signInWithToken(page, HUB, cfg.dataDir);
   await page.goto(HUB);
   // The call goes out as `device`, and the page knows it is (the chat's send-as account picks the call's account).
   await page.eval(`localStorage.setItem('dither-chat:prefs', JSON.stringify({ ...JSON.parse(localStorage.getItem('dither-chat:prefs') || '{}'), callMode: 'bridge', sendAs: { ${JSON.stringify(cfg.conversation)}: ${JSON.stringify(cfg.device)} } }))`);

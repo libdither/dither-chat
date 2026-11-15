@@ -86,7 +86,7 @@ describe('the store and the routes', () => {
   beforeAll(() => {
     store = new Store(join(dir, 'refs.sqlite'), mediaSigner('s'));
     const sup = { authorize: () => null, online: () => true, command: async (_: string, c: any) => (sent.push(c), { nativeId: `n${sent.length}` }) } as any;
-    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: join(dir, 'hub'), webDist: dir, secret: 's' });
+    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: join(dir, 'hub'), webDist: dir, open: true, secret: 's' });
     port = hub.start().port!;
     const a = store.createAccount({ network: 'discord', label: 'dc', color: '#000', adapter: 'discord' });
     dcAcc = a.id;
