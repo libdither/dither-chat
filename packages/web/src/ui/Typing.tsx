@@ -20,7 +20,7 @@ function useTypers(convIds: string[]): Typer[] {
   return typersIn(typing.value, convIds, Date.now());
 }
 
-export function TypingDots() {
+function TypingDots() {
   return (
     <span class="typing-dots" aria-hidden="true">
       <i />

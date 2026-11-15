@@ -13,7 +13,7 @@ import type { HubServer } from './server.ts';
 import type { Store } from './store.ts';
 import { jobFailed } from './errors.ts';
 
-export interface NotifierDeps {
+interface NotifierDeps {
   store: Pick<Store, 'notifyLook' | 'one'>;
   activity: Pick<ActivityStore, 'notification' | 'sent'>;
   devices: Pick<Devices, 'addressed' | 'quietOn'>;

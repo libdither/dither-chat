@@ -14,7 +14,7 @@ import type { MenuEntry } from './ContextMenu.tsx';
 export const ownName = (i: P.IdentityView) => accountName({ ...i, nickname: null });
 
 /** Gives one account a nickname, or takes it away (null or empty). */
-export async function saveNickname(identityId: string, nickname: string | null) {
+async function saveNickname(identityId: string, nickname: string | null) {
   await api(`/api/identities/${identityId}`, { method: 'PATCH', body: { nickname: nickname?.trim() || null } }).catch((e) =>
     toast({ kind: 'error', title: 'Could not save that', body: e.message }),
   );

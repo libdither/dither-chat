@@ -24,15 +24,15 @@ declare const __SNAPSHOT_SCHEMA__: string;
 const SCHEMA = typeof __SNAPSHOT_SCHEMA__ === 'string' ? __SNAPSHOT_SCHEMA__ : 'dev';
 
 /** Past this the bootstrap is not kept at all: reading it back would cost about what the network does. */
-export const MAX_BOOTSTRAP_CHARS = 12_000_000;
-export const MAX_REST_CHARS = 1_500_000;
-export const MAX_INBOX = 100;
+const MAX_BOOTSTRAP_CHARS = 12_000_000;
+const MAX_REST_CHARS = 1_500_000;
+const MAX_INBOX = 100;
 /** Mail the reader opened last (docs/mail.md): its threads and bodies, so they open offline too. */
-export const MAX_MAIL_THREADS = 20;
+const MAX_MAIL_THREADS = 20;
 export const MAX_MAIL_BODIES = 50;
 export const MAX_MAIL_CHARS = 600_000;
 /** Threads the bootstrap keeps of mail, newest first. */
-export const MAX_MAIL_WINDOW = 300;
+const MAX_MAIL_WINDOW = 300;
 
 /** A kept page as a snapshot from before the page store held it (keptpages.ts). */
 interface LegacyTimeline {
@@ -43,7 +43,7 @@ interface LegacyTimeline {
 }
 
 /** Everything but the bootstrap. */
-export interface SnapshotRest {
+interface SnapshotRest {
   inbox: P.MessageView[];
   /** Only in a snapshot of an older build: kept pages are records of their own now (keptpages.ts). */
   timelines?: LegacyTimeline[];
@@ -57,7 +57,7 @@ export interface SnapshotRest {
   mailTriage?: P.MailTriageItem[];
 }
 
-export interface Snapshot {
+interface Snapshot {
   schema: string;
   savedAt: number;
   /** JSON text. Parsing text is faster than structured clone for this many small objects. */
@@ -117,7 +117,7 @@ export function mailRest(m: { details: P.MailThreadDetail[]; bodies: P.MailBodyV
 }
 
 /** The bootstrap again, from what the client holds now: newer than the one it started from. */
-export function currentBootstrap(): P.Bootstrap {
+function currentBootstrap(): P.Bootstrap {
   return {
     selfPersonId: db.selfPersonId,
     accounts: [...db.accounts.values()],
@@ -353,7 +353,7 @@ export function persistSoon(bootstrapText?: string, ms = 1500) {
  * main thread (docs/perf.md). The stored bootstrap carries its own sync position, so an older one is caught up as
  * any snapshot is.
  */
-export async function persistNow(full = true) {
+async function persistNow(full = true) {
   clearTimeout(timer);
   if (!loaded.value || fromSnapshot) return;
   let text: string | null = null;

@@ -27,9 +27,9 @@ import { storeResolve } from './mentionrefs.ts';
 import type { Store } from './store.ts';
 
 /** How long the hub waits for the network's answer before it answers with what it knows. */
-export const NETWORK_WAIT = 1500;
+const NETWORK_WAIT = 1500;
 /** At most this many people in a section, and asked of the network. */
-export const PEOPLE_MAX = 20;
+const PEOPLE_MAX = 20;
 /** The stored messages read for who wrote here lately, newest first. */
 const RECENT_MESSAGES = 3000;
 /** Everyone you know with nothing typed: who wrote anywhere in this many of the newest messages, and your friends. */
@@ -73,7 +73,7 @@ export function matchTier(names: (string | null | undefined)[], q: string): numb
 type Row = Record<string, any>;
 
 /** Whom the picker offers in a conversation, and where that was set. */
-export interface MentionSetting {
+interface MentionSetting {
   scope: P.MentionScope;
   same: boolean;
   /** 'default', or the place that set the scope: 'conversation', 'space' or 'folder' and its id. */
@@ -86,7 +86,7 @@ export interface MentionSetting {
  * and same-network each come from the nearest place that sets them. Unset everywhere: 'here' on a messaging network,
  * 'everyone' where the account keeps references (`refs`: the Calendar chat), and every network.
  */
-export function mentionSetting(store: Store, conversationId: string, refs: boolean): MentionSetting {
+function mentionSetting(store: Store, conversationId: string, refs: boolean): MentionSetting {
   const c = store.one<Row>('SELECT id, shape, parent_id FROM conversation WHERE id = ?', conversationId);
   const chain: [P.PlaceKind, string][] = [];
   if (c) {

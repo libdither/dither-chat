@@ -37,13 +37,13 @@ import { jobFailed } from '../errors.ts';
 type Row = Record<string, any>;
 
 /** The hub's uploads (uploads.ts), as the outbox uses them. */
-export interface MailFiles {
+interface MailFiles {
   get(ids: string[]): { path: string; name: string; mime: string; size: number }[] | null;
   put(bytes: Uint8Array, name: string, mime: string): P.UploadView;
   remove(ids: string[]): void;
 }
 
-export interface OutboxOpts {
+interface OutboxOpts {
   /** Where accepted files wait until they are sent (`<data>/mail-outbox`). Without it, no files. */
   dir?: string | null;
   holdMs?: number;
@@ -56,12 +56,12 @@ const MB = 1024 * 1024;
  * dither-accounts' limits: 25 MB a file; the files together and the recipients as the account's extractor says
  * (store.ts sendCapOf, maxRecipientsOf: 35 MB and 500 on IMAP, 25 MB and 100 on Proton until it says).
  */
-export const FILE_CAP = 25 * MB;
+const FILE_CAP = 25 * MB;
 const mbText = (n: number) => `${Number.isInteger(n / MB) ? n / MB : (n / MB).toFixed(1)} MB`;
 /** A sent item stays in the list this long. */
-export const SHOW_SENT_MS = 10 * 60_000;
+const SHOW_SENT_MS = 10 * 60_000;
 /** Waiting for the account is given up after this long. */
-export const GIVE_UP_MS = 24 * 3_600_000;
+const GIVE_UP_MS = 24 * 3_600_000;
 export const RETRY_MS = [2_000, 5_000, 15_000, 60_000, 300_000, 900_000];
 
 export const READ_ONLY = 'dither-accounts lets dither-chat read this account, not send from it.';
@@ -71,7 +71,7 @@ export const STOPPED_SENDING = 'The hub stopped while sending this: it may have 
 
 const KINDS = new Set<P.MailComposeKind>(['new', 'reply', 'replyAll', 'forward']);
 const DRAFT_KEY = /^(?:t:mth_[\w-]{4,40}|new:[\w-]{8,64})$/;
-export const validDraftKey = (k: string) => DRAFT_KEY.test(k);
+const validDraftKey = (k: string) => DRAFT_KEY.test(k);
 
 const json = <T>(s: string | null | undefined, fallback: T): T => {
   if (!s) return fallback;
@@ -125,7 +125,7 @@ function cleanList(list: unknown, what: string): M.MailAddress[] {
 }
 
 /** A draft as the page gave it, in its shape (lenient: it is your text being kept). */
-export function cleanDraft(d: any): P.MailDraft {
+function cleanDraft(d: any): P.MailDraft {
   const addrs = (l: unknown) => (Array.isArray(l) ? l : []).filter((a: any) => a && typeof a.email === 'string').slice(0, 500).map((a: any) => ({ name: typeof a.name === 'string' ? a.name.slice(0, 200) : null, email: a.email.slice(0, 320) }));
   return {
     accountId: String(d?.accountId ?? ''),

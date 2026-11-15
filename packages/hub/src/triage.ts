@@ -76,14 +76,14 @@ export interface Decision {
 export type Judge = (text: string) => Promise<number | null>;
 /** The one question the local model is asked. A fixed string: jev caches by it. */
 export const STOP_QUESTION = 'Does this message need the reader to stop what they are doing and act or reply within the next hour or two?';
-export const JUDGE_INSTRUCT = 'Given a chat message someone received, judge whether it meets the description';
+const JUDGE_INSTRUCT = 'Given a chat message someone received, judge whether it meets the description';
 /** At most this much of a message is read. */
 export const JUDGE_CHARS = 500;
 /** A place or person you marked "should have alerted" may alert for this long, Conversation or not. */
 export const MARKED_FOR = 90 * 86_400_000;
 
 /** What the networks do where nothing is set: DMs and group chats notify on every message, channels on mentions. */
-export const NATIVE_DEFAULT: Record<P.Shape, 'all' | 'mentions' | 'none'> = { direct: 'all', group: 'all', channel: 'mentions', thread: 'mentions', self: 'none' };
+const NATIVE_DEFAULT: Record<P.Shape, 'all' | 'mentions' | 'none'> = { direct: 'all', group: 'all', channel: 'mentions', thread: 'mentions', self: 'none' };
 
 // Quiet hours (inQuietHours, validQuietHours) are in quiethours.ts.
 export { inQuietHours, validQuietHours } from './quiethours.ts';
@@ -610,4 +610,4 @@ function rank(l: P.NotifyLevel): number {
   return { none: 0, digest: 1, mentions: 2, smart: 3, all: 4 }[l];
 }
 
-export { ALERT_BAR };
+;

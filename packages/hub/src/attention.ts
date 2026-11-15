@@ -31,22 +31,22 @@ const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
 /** In a small group, the first message from someone else this soon after yours answers you. */
-export const FOLLOW_UP = HOUR;
+const FOLLOW_UP = HOUR;
 /** A group this size or smaller (you included) is talking to you. */
-export const SMALL_GROUP = 6;
+const SMALL_GROUP = 6;
 /** Bumped when the fold changes meaning: every conversation folds again, in the background. 4: turns kept (owed_turn). */
-export const FEATURE_VERSION = 4;
+const FEATURE_VERSION = 4;
 /** A conversation that got older messages folds again once none have arrived for this long. */
 const QUIET = 5_000;
 /** Scores move with time (an unanswered message ages, recency fades): all are recomputed this often. */
-export const RESCORE_EVERY = 5 * MIN;
+const RESCORE_EVERY = 5 * MIN;
 /** Conversations scored between turns of the event loop when all are. */
 export const RESCORE_STEP = 64;
 
 // ------------------------------------------------------------------ features
 
 // The tallies of reply habits are in tally.ts.
-export { emptyTally, FEATURE_HALF_LIFE, LATENCY_EDGES, medianLatency, record, recordDismissed, REPLY_WINDOW, replyRate, sumTallies, tallyAt, type Tally } from './tally.ts';
+export { emptyTally,   medianLatency, record,    sumTallies,  type Tally } from './tally.ts';
 
 
 /** How a turn came to be owed; `marked`: you marked one of its messages "Reply needed". */
@@ -166,7 +166,7 @@ export interface Settled {
   /** You marked it "No reply needed". */
   dismissed?: boolean;
 }
-export type OnSettle = (t: Settled) => void;
+type OnSettle = (t: Settled) => void;
 
 /** The open turn is over: answered at `answeredAt`, or (null) it ran out. `timed`: whether that is when you answered. */
 function settle(s: ConvState, tallyOf: (key: string) => Tally, answeredAt: number | null, timed = true, onSettle?: OnSettle) {
@@ -244,7 +244,7 @@ function dismiss(s: ConvState, tallyOf: (key: string) => Tally, m: FoldMessage, 
 }
 
 /** Triage decided after the message was folded: a push counts, and a question in a small group opens what you owe. */
-export function lateTriage(s: ConvState, place: Place, m: Pick<FoldMessage, 'id' | 'ts' | 'author' | 'authorKey'>, d: { pushed: boolean; question: boolean }): boolean {
+function lateTriage(s: ConvState, place: Place, m: Pick<FoldMessage, 'id' | 'ts' | 'author' | 'authorKey'>, d: { pushed: boolean; question: boolean }): boolean {
   let changed = false;
   if (d.pushed) {
     s.pushed += m.ts >= s.at ? 1 : toward(m.ts, s.at);
@@ -409,7 +409,7 @@ export interface Scored {
   owed: { age: number; rate: number; chance: number; held?: boolean } | null;
 }
 
-export function noiseOf(s: ConvState, usage: ScoreInput['usage'], now: number): Noise {
+function noiseOf(s: ConvState, usage: ScoreInput['usage'], now: number): Noise {
   const receivedPerDay = perDay(decayed(s.received, s.at, now, FEATURE_HALF_LIFE), FEATURE_HALF_LIFE);
   const pushedPerDay = perDay(decayed(s.pushed, s.at, now, FEATURE_HALF_LIFE), FEATURE_HALF_LIFE);
   const sentPerDay = perDay(decayed(s.sent, s.at, now, FEATURE_HALF_LIFE), FEATURE_HALF_LIFE);
@@ -420,7 +420,7 @@ export function noiseOf(s: ConvState, usage: ScoreInput['usage'], now: number): 
 }
 
 /** 0..1, and which part says the most. */
-export function relationshipOf(s: ConvState, usage: ScoreInput['usage'], now: number): { strength: number; top: string; parts: Record<string, number> } {
+function relationshipOf(s: ConvState, usage: ScoreInput['usage'], now: number): { strength: number; top: string; parts: Record<string, number> } {
   const sent = decayed(s.sent, s.at, now, FEATURE_HALF_LIFE);
   const received = decayed(s.received, s.at, now, FEATURE_HALF_LIFE);
   const tally = tallyAt(s.tally, now);
@@ -444,7 +444,7 @@ export function lastThere(usage: ScoreInput['usage']): number | null {
 }
 
 /** "a minute", "5 minutes", "an hour", "3 days", "2 weeks". */
-export function duration(ms: number): string {
+function duration(ms: number): string {
   const n = (x: number, one: string, many: string) => (Math.round(x) <= 1 ? one : `${Math.round(x)} ${many}`);
   if (ms < 45_000) return 'a moment';
   if (ms < 50 * MIN) return n(ms / MIN, 'a minute', 'minutes');

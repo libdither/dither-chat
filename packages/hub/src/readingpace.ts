@@ -72,7 +72,7 @@ export function paceFromEnv(env: Record<string, string | undefined> = process.en
   return c;
 }
 
-export type RestReason = 'hours' | 'cap' | 'break';
+type RestReason = 'hours' | 'cap' | 'break';
 
 interface State {
   /** The reading day (its start's local date) the count is for. */

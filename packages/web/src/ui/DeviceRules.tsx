@@ -14,7 +14,7 @@ import { AccountChip, NetBadge } from './bits.tsx';
 import { Icon } from './icons.tsx';
 
 export const DEVICE_LEVELS: P.DeviceLevel[] = ['hub', 'mentions', 'none'];
-export const DEVICE_LEVEL_LABEL: Record<P.DeviceLevel, string> = { hub: 'Notify', mentions: 'Mentions only', none: 'Off' };
+const DEVICE_LEVEL_LABEL: Record<P.DeviceLevel, string> = { hub: 'Notify', mentions: 'Mentions only', none: 'Off' };
 
 function DevicePicker({ value, inherited, onChange }: { value: P.DeviceLevel | null; inherited?: P.DeviceLevel; onChange: (l: P.DeviceLevel | null) => void }) {
   const shown = value ?? inherited ?? 'hub';

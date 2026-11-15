@@ -14,7 +14,7 @@ import { Icon } from '../icons.tsx';
 import { viewer } from '../../viewer.ts';
 
 /** A part as the viewers take it. */
-export function partSource(a: P.MailAttachmentView): FileSource {
+function partSource(a: P.MailAttachmentView): FileSource {
   const mime = a.info?.mime ?? a.mime;
   const kind: P.AttachmentKind = /^image\/(?!svg)/i.test(mime) ? 'image' : /^video\//i.test(mime) ? 'video' : /^audio\//i.test(mime) ? 'audio' : 'file';
   return { url: a.url, infoUrl: a.infoUrl, name: a.name, mime: a.mime, size: a.size, kind, ...(a.info ? { info: a.info } : {}) };
@@ -22,7 +22,7 @@ export function partSource(a: P.MailAttachmentView): FileSource {
 
 /** Names and types that run when opened: the card says so before you do. */
 const RUNS = /^(exe|scr|com|bat|cmd|msi|ps1|vbs|vbe|js|jse|wsf|hta|jar|apk|app|dmg|pkg|sh|lnk|reg|iso|img)$/i;
-export function runsCode(f: FileSource): boolean {
+function runsCode(f: FileSource): boolean {
   const m = (f.info?.mime ?? '').toLowerCase();
   return /executable|x-mach-binary|x-msdownload|java-archive|android\.package|x-sh\b|x-shellscript|javascript/.test(m) || RUNS.test(extOf(f.name) ?? '');
 }

@@ -26,7 +26,7 @@ export interface Queue {
  * Cards you marked Done, with the latest message each had then. Done on a reply you owe leaves it owed (reading is not
  * answering), so such a card comes back only once something newer arrives.
  */
-export type DoneMarks = ReadonlyMap<string, number>;
+type DoneMarks = ReadonlyMap<string, number>;
 
 const none: DoneMarks = new Map();
 

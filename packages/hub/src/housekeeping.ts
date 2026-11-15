@@ -43,7 +43,7 @@ export function tightenPermissions(dataDir: string): string[] {
   return fixed;
 }
 
-export interface BackupOpts {
+interface BackupOpts {
   dataDir: string;
   /** The database to copy. */
   db: string;
@@ -229,4 +229,4 @@ export function rotateAdapterLogs(accountsDir: string, maxBytes = 10 * 1024 * 10
   return n;
 }
 
-export { DAY, HOUR };
+;

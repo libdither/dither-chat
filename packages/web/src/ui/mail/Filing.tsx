@@ -50,7 +50,7 @@ let pointAt = { x: innerWidth / 2, y: 80 };
 addEventListener('pointerdown', (e) => (pointAt = { x: e.clientX, y: e.clientY }), true);
 
 /** The menu for one thread or a selection: the same in a row's right-click, the reader's ⋯ and the selection bar. */
-export function threadMenu(ts: P.MailThreadView[], from: 'row' | 'reader' | 'selection'): MenuSpec | null {
+function threadMenu(ts: P.MailThreadView[], from: 'row' | 'reader' | 'selection'): MenuSpec | null {
   if (!ts.length) return null;
   const write = ts.every((t) => canWrite(acc(t)));
   const ids = ts.map((t) => t.id);

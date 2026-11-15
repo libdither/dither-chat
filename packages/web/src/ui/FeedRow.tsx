@@ -12,7 +12,7 @@ import { db, go, loadTimeline, route, timelineKey, timelineRev, timelines } from
 import { Avatar, NetBadge } from './bits.tsx';
 
 /** The feeds, one per account that has one. */
-export const feedConvs = (): P.ConversationView[] => [...db.conversations.values()].filter(isFeedConv);
+const feedConvs = (): P.ConversationView[] => [...db.conversations.values()].filter(isFeedConv);
 
 function FeedRow({ c }: { c: P.ConversationView }) {
   const tkey = timelineKey('c', c.id);

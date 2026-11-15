@@ -24,15 +24,15 @@ export const ANSWER_WINDOW = 30 * MIN;
 /** You wrote there this recently: you are already in the conversation. */
 export const ENGAGED = 15 * MIN;
 /** Alternations (your message right after someone else's) are counted over this long. */
-export const ALTERNATION_WINDOW = 30 * MIN;
+const ALTERNATION_WINDOW = 30 * MIN;
 /** Rates lose half their weight in a month, as in attention.ts. */
 export const RATE_HALF_LIFE = 30 * DAY;
 /** A visit on any device that was in use this recently: you are at a screen. */
-export const DEVICE_ACTIVE = 2 * MIN;
+const DEVICE_ACTIVE = 2 * MIN;
 /** Rates start from this many messages' worth of a prior: a new conversation sits at the prior. */
 const PRIOR_WEIGHT = 2;
 /** The prior chance you answer a message from someone else: logit 0 for a rate of it. */
-export const ANSWER_PRIOR = 0.05;
+const ANSWER_PRIOR = 0.05;
 /** An opening: someone else's message after this long without one in its conversation. */
 export const OPENING_LULL = 5 * MIN;
 /** An opening counts as answered when you write there within this long. */
@@ -40,14 +40,14 @@ export const OPENING_ANSWER = 3 * HOUR;
 /** Openings' worth of "not answered" every conversation starts with: a new one sits at 0. */
 export const OPENING_PRIOR = 5;
 /** The prior chance you open a push, and its weight. */
-export const OPEN_PRIOR = 0.3;
+const OPEN_PRIOR = 0.3;
 /** Longest gap that still counts for time since you last looked: 30 days. */
 const SINCE_CAP = 30 * 24;
 
 /** The numeric features, by name. Names are `kind:detail`; learn.ts gives each kind its own regularisation. */
 export type NumericFeatures = Record<string, number>;
 
-export interface InteractMessage {
+interface InteractMessage {
   conv: string;
   ts: number;
   /** The author's person, else identity. */
@@ -269,7 +269,7 @@ export const SELF_SQL = `(SELECT self_identity FROM account WHERE self_identity 
  * - `device:active`: a visit on any device was in use in the last two minutes;
  * - `open:rate`: how often you opened its pushes within an hour (log-odds against 30%), from pushes at least an hour old.
  */
-export function logFeatures(db: Database, conv: string, person: string | null, t: number, lastOwn: number | null): NumericFeatures {
+function logFeatures(db: Database, conv: string, person: string | null, t: number, lastOwn: number | null): NumericFeatures {
   const v = db
     .query(
       `SELECT MAX(start_at) AS at FROM visit WHERE start_at <= ? AND view IN ('conversation', 'person')
@@ -294,7 +294,7 @@ export function logFeatures(db: Database, conv: string, person: string | null, t
 }
 
 /** The peer person of a DM, else null. */
-export function dmPeer(db: Database, conv: string): string | null {
+function dmPeer(db: Database, conv: string): string | null {
   const r = db
     .query(
       `SELECT i.person_id FROM conversation c JOIN participant pa ON pa.conversation_id = c.id JOIN identity i ON i.id = pa.identity_id

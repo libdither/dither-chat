@@ -15,7 +15,7 @@ import { BODY_RENDERERS, MESSAGE_ACTIONS } from './slots.tsx';
 import { Loading } from '../Loader.tsx';
 
 /** In the reader: "10:42" today, "Yesterday 18:02", a day and a time before. */
-export function mailTime(ts: number, now = Date.now()): string {
+function mailTime(ts: number, now = Date.now()): string {
   return sameDay(ts, now) ? clock(ts) : `${dayLabel(ts, now)} ${clock(ts)}`;
 }
 

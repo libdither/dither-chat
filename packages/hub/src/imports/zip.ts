@@ -10,7 +10,7 @@ import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createInflateRaw, crc32 } from 'node:zlib';
 
-export interface ZipEntry {
+interface ZipEntry {
   name: string;
   method: number;
   flags: number;

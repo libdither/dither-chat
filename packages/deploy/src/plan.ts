@@ -12,7 +12,7 @@ export interface Candidate {
   held?: number;
 }
 
-export type Pick = { ship: string } | { wait: string } | { none: string; held?: number };
+type Pick = { ship: string } | { wait: string } | { none: string; held?: number };
 
 /**
  * The commit to ship: the newest one whose `check` passed, if it is newer than what runs and has not failed here

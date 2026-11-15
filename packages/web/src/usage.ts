@@ -11,7 +11,7 @@ import { afterSync, api, db, eventHooks, route, type Route } from './state.ts';
 import { applyUsageEvent } from './syncmodel.ts';
 
 /** The usage keys a conversation counts for: the person for a DM; else the conversation and its community. */
-export function keysOfConv(convId: string): string[] {
+function keysOfConv(convId: string): string[] {
   const c0 = db.conversations.get(convId);
   if (!c0) return [];
   const c = placeConv(c0);
@@ -22,7 +22,7 @@ export function keysOfConv(convId: string): string[] {
   return out;
 }
 
-export function keysOfRoute(r: Route): string[] {
+function keysOfRoute(r: Route): string[] {
   const out = new Set<string>();
   if ('conv' in r && r.conv) keysOfConv(r.conv).forEach((k) => out.add(k));
   if (r.view === 'space') out.add(`space:${rootCommunity(r.space)?.id ?? r.space}`);

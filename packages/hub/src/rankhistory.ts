@@ -80,7 +80,7 @@ export interface World {
 }
 
 /** Where you had been by `t`: per usage key, decayed seconds and visits and when you were last there. */
-export function usageAt(stays: Stay[], t: number): Map<string, NonNullable<ScoreInput['usage']>> {
+function usageAt(stays: Stay[], t: number): Map<string, NonNullable<ScoreInput['usage']>> {
   const out = new Map<string, NonNullable<ScoreInput['usage']>>();
   for (const s of stays) {
     if (s.start >= t) break;
@@ -344,7 +344,7 @@ export class Rebuild {
 // ------------------------------------------------------------------ moments to learn from
 
 /** What you opened within the horizon after `t`, each with how you first got there and how soon. */
-export function openedAfter(stays: Stay[], t: number, horizon = HORIZON): Map<string, Opened> {
+function openedAfter(stays: Stay[], t: number, horizon = HORIZON): Map<string, Opened> {
   const out = new Map<string, Opened>();
   for (const s of stays) {
     if (s.start < t) continue;

@@ -63,7 +63,7 @@ export function visibleAccount(id: string) {
 export function visibleConv(c: P.ConversationView) {
   return c.vantages.some((v) => visibleAccount(v.accountId));
 }
-export function visibleSpace(s: P.SpaceView) {
+function visibleSpace(s: P.SpaceView) {
   return s.accountIds.some(visibleAccount);
 }
 
@@ -243,7 +243,7 @@ export function communitiesOf(c: P.ConversationView): P.SpaceView[] {
   return out;
 }
 
-export interface Crumb {
+interface Crumb {
   label: string;
   kind: 'network' | 'space' | 'section' | 'conversation';
   id?: string;
@@ -274,7 +274,7 @@ export function crumbs(c: P.ConversationView, within?: string): Crumb[] {
   return out;
 }
 
-export interface TreeNode {
+interface TreeNode {
   kind: 'section' | 'subspace' | 'conversation';
   id: string;
   position: string | null;
@@ -375,7 +375,7 @@ export function railEntries(which: 'shown' | 'hidden' = 'shown'): RailEntry[] {
 }
 
 /** Communities that should get a rail icon. */
-export function railCommunities(): P.SpaceView[] {
+function railCommunities(): P.SpaceView[] {
   return railEntries().flatMap((e) => (e.kind === 'space' ? [e.space] : []));
 }
 
@@ -455,7 +455,7 @@ const ruleMap = () => memo('rules', () => new Map(liveRules().map((r) => [`${r.s
 /** The rule set on this very place, person or keyword; null with none. */
 export const ruleOn = (scope: P.NotifyScope, target: string | null): Level | null => ruleMap().get(`${scope}:${target ?? ''}`) ?? null;
 
-export interface Effective {
+interface Effective {
   /**
    * What holds here. With a rule, its level: `all` always alerts, `digest` keeps the place to the list, `none` mutes
    * it. With none, what the network itself does: `digest` where it is muted there (kept to the list too).
@@ -584,7 +584,7 @@ export const heldHere = (e: Effective): string => (e.rule === null ? e.source : 
 
 // ------------------------------------------------------------------ unread
 
-export interface Unread {
+interface Unread {
   unread: number;
   mentions: number;
   /** Shown as a red count: mentions, or any message in a DM/group you listen to. */
@@ -686,7 +686,7 @@ export function people(): { person: P.PersonView; directs: P.ConversationView[];
   );
 }
 
-export function accountsOf(network: P.Network): P.AccountView[] {
+function accountsOf(network: P.Network): P.AccountView[] {
   return [...db.accounts.values()].filter((a) => a.network === network && visibleAccount(a.id));
 }
 
@@ -736,7 +736,7 @@ export const rowDirect = (r: InboxRow) => (r.kind === 'conv' ? r.conv.shape === 
 export const rowMuted = (r: InboxRow) => (r.kind === 'conv' ? r.conv.shape !== 'self' && rowConvs(r).every((c) => unreadOf(c).muted) : r.thread.muted);
 
 /** DMs, group chats, notes to self and rooms outside a space are always in the inbox; anything else only while the hub lists it. */
-export const inboxShape = (c: P.ConversationView) => c.shape === 'direct' || c.shape === 'group' || c.shape === 'self' || (c.shape === 'channel' && !c.spaceIds.length);
+const inboxShape = (c: P.ConversationView) => c.shape === 'direct' || c.shape === 'group' || c.shape === 'self' || (c.shape === 'channel' && !c.spaceIds.length);
 
 /**
  * Before the hub has scored a conversation (a fresh one, or a hub that predates scores): unread first, then the
@@ -830,7 +830,7 @@ export function accountsNeedingYou(): P.AccountView[] {
 }
 
 /** A triaged message you have not read: its conversation has unread messages, and you last read it before this one. */
-export function messageUnread(m: P.MessageView): boolean {
+function messageUnread(m: P.MessageView): boolean {
   const c = db.conversations.get(m.conversationId);
   return !!c && c.vantages.some((v) => (v.lastReadTs ?? 0) < m.ts) && unreadOf(c).unread > 0;
 }

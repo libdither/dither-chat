@@ -8,14 +8,14 @@ import { MAX_TICK, VISIT_AFTER } from './tracker.ts';
 export type Place = { view: VisitView; conversationId?: string | null; spaceId?: string | null; personId?: string | null };
 export type Arrival = { source: VisitSource; pushId?: string | null; rank?: number | null; score?: number | null; needs?: boolean | null };
 /** The reply you owe at a place as a stay there begins, and whether its inbox row shows it (↩). */
-export type Owed = { since: number | null; shown: boolean };
-export type Action = 'sent' | 'reactions' | 'history' | 'threads' | 'attachments';
+type Owed = { since: number | null; shown: boolean };
+type Action = 'sent' | 'reactions' | 'history' | 'threads' | 'attachments';
 
 export const samePlace = (a: Place, b: Place) =>
   a.view === b.view && (a.conversationId ?? null) === (b.conversationId ?? null) && (a.spaceId ?? null) === (b.spaceId ?? null) && (a.personId ?? null) === (b.personId ?? null);
 
 /** Worth keeping: in use long enough to be a visit, reached from a notification, or something was done there. */
-export const worthKeeping = (v: VisitRecord) =>
+const worthKeeping = (v: VisitRecord) =>
   v.active >= VISIT_AFTER || v.source === 'notification' || v.source === 'toast' || v.sent > 0 || v.reactions > 0 || v.history > 0 || v.threads > 0 || v.attachments > 0;
 
 /** How many tapped push ids a device remembers. */

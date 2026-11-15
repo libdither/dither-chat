@@ -72,7 +72,7 @@ export interface MailTriageFacts {
   reason?: string | null;
 }
 
-export class MailAttention implements AttentionSource {
+class MailAttention implements AttentionSource {
   private views = new Map<string, P.AttentionView>();
   /** Threads whose messages changed: fold again, then score. */
   private refold = new Set<string>();

@@ -12,7 +12,7 @@
  */
 import { mailId } from '@dither-chat/protocol/ids';
 
-export const SUBJECT_GAP_MS = 14 * 86_400_000;
+const SUBJECT_GAP_MS = 14 * 86_400_000;
 
 /** Reply and forward markers in the languages mail clients write them, and `[list]` tags. */
 const PREFIX = /^\s*(?:(?:re|fwd?|aw|wg|sv|vs|antw|tr|rif|r|enc|odp)\s*(?:\[\d+\]|\(\d+\))?\s*[:：]\s*|\[[^\]]{1,40}\]\s*)/i;
@@ -68,7 +68,7 @@ export interface ThreadLookup {
   bySubject(subjectKey: string, at: number, gap: number): ThreadInfo[];
 }
 
-export interface ThreadPlace {
+interface ThreadPlace {
   threadId: string;
   by: 'native' | 'ref' | 'subject' | 'new';
   /** Other threads the message links to this one: they merge into it. */

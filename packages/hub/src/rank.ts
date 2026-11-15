@@ -99,7 +99,7 @@ export function rankFeatures(x: ScoreInput, s: Scored): Features {
   };
 }
 
-export const vector = (f: Features): number[] => FEATURES.map((k) => f[k]);
+const vector = (f: Features): number[] => FEATURES.map((k) => f[k]);
 
 // ------------------------------------------------------------------ the model
 

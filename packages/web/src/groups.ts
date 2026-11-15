@@ -18,7 +18,7 @@ export interface MakerAccount {
 }
 
 /** What the page knows of an identity: the person it belongs to, if any, and how to name it. */
-export interface IdentityInfo {
+interface IdentityInfo {
   personId?: string | null;
   name: string;
   handle?: string | null;
@@ -79,7 +79,7 @@ export function fewNames(xs: readonly string[]): string {
 }
 
 /** Of the picked, whom this account reaches, in the picked order. */
-export const reached = (a: MakerAccount, picked: readonly GroupPerson[]) => picked.filter((p) => p.via.some((v) => v.accountId === a.accountId));
+const reached = (a: MakerAccount, picked: readonly GroupPerson[]) => picked.filter((p) => p.via.some((v) => v.accountId === a.accountId));
 
 /** The account could make a group of everyone it reaches here: enough of them, and not too many. */
 const holds = (a: MakerAccount, n: number) => n >= a.rule.min && n <= a.rule.max;
@@ -123,7 +123,7 @@ export function fitLine(accounts: readonly MakerAccount[], picked: readonly Grou
 }
 
 /** An account that could hold some of the picked: whom, who is left out, and what it would make. */
-export interface WhereOption {
+interface WhereOption {
   account: MakerAccount;
   people: GroupPerson[];
   left: GroupPerson[];

@@ -42,13 +42,13 @@ const TICK_MS = 5000;
 const WALK_LIMIT = 100;
 const WALK_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
 /** A name walk: every one-character prefix. */
-export const WALK_PREFIXES = [...WALK_ALPHABET];
+const WALK_PREFIXES = [...WALK_ALPHABET];
 /** A walk's queue item for a page of recent members, then the page's start ('' for the first). Never a prefix: no '@' in WALK_ALPHABET. */
 const RECENT = '@recent:';
 /** How a walk starts: the recent members' first page. */
-export const WALK_START = [RECENT];
+const WALK_START = [RECENT];
 /** The most recent members a network lists (Discord's op 35): a server bigger than this is listed that far. */
-export const RECENT_MAX = 10_000;
+const RECENT_MAX = 10_000;
 /** Members a recent page holds at most. */
 const RECENT_PAGE = 1000;
 /** A prefix longer than this is not widened again: what is left is people with the same long name start. */
@@ -66,7 +66,7 @@ const PRIORITY: Record<P.JobPriority, number> = { low: 0, normal: 1, high: 2 };
 
 type Command = (accountId: string, cmd: any, timeoutMs?: number) => Promise<any>;
 
-export interface JobsOptions {
+interface JobsOptions {
   command: Command;
   /** The account's adapter is connected. */
   online: (accountId: string) => boolean;

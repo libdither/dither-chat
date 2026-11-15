@@ -120,7 +120,7 @@ export function Count({ n, muted }: { n: number; muted?: boolean }) {
 }
 
 /** Dialogs on a phone are bottom sheets: same content, a grabber, and drag down or press back to close. */
-export function useDialog(onClose: () => void) {
+function useDialog(onClose: () => void) {
   const box = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
   close.current = onClose;

@@ -4,8 +4,8 @@
  */
 
 /** Slider position 0…100 ↔ threshold 1 … 0.001. */
-export const toThreshold = (v: number) => Math.round(10 ** (-3 * (v / 100)) * 10000) / 10000;
-export const toSlider = (t: number) => Math.round((-Math.log10(Math.max(0.001, Math.min(1, t))) / 3) * 100);
+const toThreshold = (v: number) => Math.round(10 ** (-3 * (v / 100)) * 10000) / 10000;
+const toSlider = (t: number) => Math.round((-Math.log10(Math.max(0.001, Math.min(1, t))) / 3) * 100);
 export const pct = (p: number) => (p >= 0.1 ? `${Math.round(p * 100)}%` : p >= 0.01 ? `${(p * 100).toFixed(1)}%` : `${(p * 100).toFixed(2)}%`);
 
 export function Sensitivity({ threshold, onInput, onChange, count, label = 'Sensitivity' }: { threshold: number; onInput: (t: number) => void; onChange?: (t: number) => void; count?: string; label?: string }) {

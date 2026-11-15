@@ -17,14 +17,14 @@ import { requestViews } from './add.ts';
 
 type Row = Record<string, any>;
 
-export const PAGE = 60;
+const PAGE = 60;
 /** Timelines a client may ask about at once. */
-export const MAX_TIMELINES = 100;
+const MAX_TIMELINES = 100;
 /** The inbox's own limits (Store.inbox). */
 const INBOX_DAYS = 7;
 const INBOX_MAX = 300;
 
-export interface SyncContext {
+interface SyncContext {
   store: Store;
   attention?: Attention;
   usage: UsageStore;

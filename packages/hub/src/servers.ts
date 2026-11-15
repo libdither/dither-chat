@@ -19,7 +19,7 @@ type Cmd =
   | { t: 'answerGate'; space: string; answer: P.GateAnswer }
   | { t: 'setNick'; space: string; nick: string };
 
-export interface ServersDeps {
+interface ServersDeps {
   store: Store;
   online: (accountId: string) => boolean;
   command: <T>(accountId: string, cmd: Cmd, timeoutMs?: number) => Promise<T>;
@@ -44,7 +44,7 @@ export class ServersError extends Error {
 const made = new WeakSet<Database>();
 
 /** The tables: each account's events and gates as it last said them. */
-export function serverTables(db: Database) {
+function serverTables(db: Database) {
   if (made.has(db)) return;
   db.exec(`CREATE TABLE IF NOT EXISTS scheduled_event (
     id          TEXT NOT NULL,
@@ -113,7 +113,7 @@ function eventUrl(network: P.Network, spaceNative: string, eventNative: string):
 }
 
 /** An event in hub ids, as one account sees it. */
-export function eventView(store: Store, accountId: string, network: P.Network, e: P.ScheduledEventFact, updatedAt: number): P.ScheduledEventView {
+function eventView(store: Store, accountId: string, network: P.Network, e: P.ScheduledEventFact, updatedAt: number): P.ScheduledEventView {
   const place: P.ScheduledEventView['place'] =
     e.place?.kind === 'external' ? { kind: 'external', location: String(e.place.location ?? '') } : e.place && (e.place.kind === 'voice' || e.place.kind === 'stage') ? { kind: e.place.kind, conversationId: hubId('cnv', network, e.place.conversation) } : null;
   return {
@@ -140,7 +140,7 @@ export function eventView(store: Store, accountId: string, network: P.Network, e
 }
 
 /** Still to come (or on now) first, soonest first; then the rest, latest first. */
-export function eventOrder(now: number) {
+function eventOrder(now: number) {
   const ahead = (v: P.ScheduledEventView) => v.status === 'active' || (v.status === 'scheduled' && (v.end ?? v.start) >= now) || (!!v.rrule && v.status !== 'cancelled');
   return (a: P.ScheduledEventView, b: P.ScheduledEventView) => {
     const x = ahead(a);
@@ -151,7 +151,7 @@ export function eventOrder(now: number) {
 }
 
 /** One event to the calendar's terms (protocol calendar.ts NetworkEventEntry). */
-export function calendarEntry(store: Store, v: P.ScheduledEventView): P.NetworkEventEntry {
+function calendarEntry(store: Store, v: P.ScheduledEventView): P.NetworkEventEntry {
   const space = store.one<{ name: string }>('SELECT name FROM space WHERE id = ?', v.spaceId)?.name ?? NETWORK_META[v.network].name;
   const where =
     v.place?.kind === 'external'

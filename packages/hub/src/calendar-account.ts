@@ -31,9 +31,9 @@ const parse = (config: string) => {
   }
 };
 /** A calendar account's service address, or null when its config has none that works. */
-export const accountUrl = (acc: Pick<AccountRow, 'config'>) => calendarAccountUrl(parse(acc.config));
+const accountUrl = (acc: Pick<AccountRow, 'config'>) => calendarAccountUrl(parse(acc.config));
 
-export interface BridgeOpts {
+interface BridgeOpts {
   url: string;
   /** A WebSocket constructor (tests). */
   WebSocket?: typeof WebSocket;
@@ -185,7 +185,7 @@ class NoAddress implements InprocAdapter {
   stop() {}
 }
 
-export interface CalendarAccountsOpts {
+interface CalendarAccountsOpts {
   /** To open pages (server.broadcast). */
   broadcast: (evs: P.ClientEvent[]) => void;
   /** A demo hub never has a calendar. */

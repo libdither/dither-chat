@@ -9,7 +9,7 @@ import type { FromWorker, ToWorker } from './layout.worker.ts';
 import { neighbours, type Index, type Visible } from './model.ts';
 import { cssColor, drawLabels, MIN_PX, renderer, type Label, type Palette, type Renderer, type RGBA, type Scene, type View } from './render.ts';
 
-export interface EngineEvents {
+interface EngineEvents {
   hover(node: number | null, x: number, y: number): void;
   pick(node: number | null): void;
   open(node: number): void;

@@ -18,7 +18,7 @@ import { Loading } from './Loader.tsx';
 import { MailKeepLazy } from './mail/lazy.tsx';
 
 /** What the index dialog is open for. */
-export const indexing = signal<{ kind: P.JobTargetKind; id: string } | null>(null);
+const indexing = signal<{ kind: P.JobTargetKind; id: string } | null>(null);
 /** Bumped when a job is made here, so the list shows it without waiting for its next look. */
 const jobsChanged = signal(0);
 
@@ -26,7 +26,7 @@ const PRIORITY_LABEL: Record<P.JobPriority, string> = { low: 'Low', normal: 'Nor
 const STATE_LABEL: Record<P.JobState, string> = { queued: 'Queued', running: 'Running', paused: 'Paused', done: 'Done', failed: 'Failed' };
 
 /** Opens Settings at Indexing. */
-export function openIndexing() {
+function openIndexing() {
   go({ view: 'settings' });
   setTimeout(() => showSection('set-indexing', 'auto'), 120);
 }

@@ -129,7 +129,7 @@ export interface FakeMessage extends Omit<M.MailMessage, 'mailboxId' | 'id'> {
 }
 
 /** A message the fake sent (slice 5): what it was given, and its files' bytes. */
-export interface FakeSent {
+interface FakeSent {
   account: string;
   mail: M.OutgoingMail;
   files: { filename: string; mime: string; bytes: Uint8Array; by: 'path' | 'base64' }[];
@@ -169,7 +169,7 @@ interface Account {
 export const gmailBoxId = (path: string) => Buffer.from(path, 'utf8').toString('base64url');
 
 /** A Gmail mailbox as the extractor lists it: its name is the last part of the path, its parent the path before. */
-export function gmailBox(path: string, role: M.MailboxRole | null = null): M.Mailbox {
+function gmailBox(path: string, role: M.MailboxRole | null = null): M.Mailbox {
   const cut = path.lastIndexOf('/');
   return { id: gmailBoxId(path), name: path.slice(cut + 1), path, parentId: cut > 0 ? gmailBoxId(path.slice(0, cut)) : null, role, unread: null, total: null };
 }
@@ -189,7 +189,7 @@ export const GMAIL = {
 };
 
 /** What mail.mailboxes answers for a Gmail account with no labels of its own (imapflow's LIST, imap.ts mailboxes). */
-export const GMAIL_MAILBOXES: M.Mailbox[] = [
+const GMAIL_MAILBOXES: M.Mailbox[] = [
   { ...gmailBox('INBOX', 'inbox'), name: 'INBOX' },
   gmailBox('[Gmail]'),
   gmailBox('[Gmail]/All Mail', 'all'),
@@ -216,7 +216,7 @@ export const GMAIL_WEB = { inbox: 'INBOX', all: 'ALL_MAIL', sent: 'SENT', drafts
 const webBox = (id: string, name: string, role: M.MailboxRole | null): M.Mailbox => ({ id, name, path: name, parentId: null, role, unread: null, total: null });
 
 /** What mail.mailboxes answers for Gmail on the web with no labels of its own. */
-export const GMAIL_WEB_MAILBOXES: M.Mailbox[] = [
+const GMAIL_WEB_MAILBOXES: M.Mailbox[] = [
   webBox(GMAIL_WEB.inbox, 'Inbox', 'inbox'),
   webBox(GMAIL_WEB.all, 'All Mail', 'all'),
   webBox(GMAIL_WEB.sent, 'Sent', 'sent'),
@@ -1310,7 +1310,7 @@ export class FakeMailBackend implements MailBackend {
  * them too: after: from then on, before: up to it). category: matches nothing: the fake has no Gmail categories. Other
  * operators are left to Gmail, so they match everything here.
  */
-export function gmailQuery(query: string, extra: (m: FakeMessage) => { text: string; labels: string[] }): (m: FakeMessage) => boolean {
+function gmailQuery(query: string, extra: (m: FakeMessage) => { text: string; labels: string[] }): (m: FakeMessage) => boolean {
   const tokens = query.match(/-?\{[^}]*\}|-?[\w.-]+:"[^"]*"|-?"[^"]*"|\S+/g) ?? [];
   const norm = (s: string) => s.toLowerCase().replace(/[\s/]+/g, '-');
   const day = (v: string) => {

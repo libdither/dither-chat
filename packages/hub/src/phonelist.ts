@@ -48,12 +48,12 @@ export type PhoneListMode = 'off' | 'shadow' | 'on';
 export const phoneListMode = (v: string | undefined): PhoneListMode => (v === 'off' || v === 'shadow' ? v : 'on');
 
 /** Why an episode is on the phones (or, `gated`, is not). */
-export type Arm = 'prior' | 'keep' | 'trial' | 'gated';
-export type Outcome = 'tapped' | 'dismissed' | 'cleared' | 'read' | 'expired' | 'superseded';
+type Arm = 'prior' | 'keep' | 'trial' | 'gated';
+type Outcome = 'tapped' | 'dismissed' | 'cleared' | 'read' | 'expired' | 'superseded';
 /** What kept a row off the phones. */
-export type Held = 'gated' | 'snoozed' | 'cap';
+type Held = 'gated' | 'snoozed' | 'cap';
 
-export interface Verdict {
+interface Verdict {
   /** Its row goes to the phones (in shadow, always). */
   send: boolean;
   arm: Arm | null;
@@ -82,7 +82,7 @@ export function dayOf(t: number): string {
 /** Local midnight at the start of `t`'s day. */
 const midnight = (t: number) => new Date(new Date(t).setHours(0, 0, 0, 0)).getTime();
 
-export interface PhoneListOptions {
+interface PhoneListOptions {
   mode: PhoneListMode;
   /** Chats with a "keep" mark (triage.ts `marked`: "should have alerted" in the last 90 days). */
   kept: (now: number) => Set<string>;

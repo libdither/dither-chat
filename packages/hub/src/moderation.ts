@@ -21,7 +21,7 @@ type Cmd =
   | { t: 'redact'; conversation: string; message: string; moderator: true }
   | ({ t: 'clearReactions'; conversation: string; message: string } & P.ReactionClear);
 
-export interface ModerationDeps {
+interface ModerationDeps {
   store: Store;
   online: (accountId: string) => boolean;
   command: <T>(accountId: string, cmd: Cmd, timeoutMs?: number) => Promise<T>;
@@ -298,7 +298,7 @@ export class Moderation {
 }
 
 /** The account log's words for an action: "kicked Ana", "timed out Ana for an hour", "gave Ana the Helper role". */
-export function logLine(network: P.Network, a: P.ModAction, who: string, roles?: P.AboutRole[]): string {
+function logLine(network: P.Network, a: P.ModAction, who: string, roles?: P.AboutRole[]): string {
   switch (a.op) {
     case 'remove':
       return `${network === 'discord' ? 'kicked' : 'removed'} ${who}`;

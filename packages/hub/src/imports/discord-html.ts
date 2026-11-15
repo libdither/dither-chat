@@ -15,7 +15,7 @@ import { type El, classes, find, findAll, findOwn, hasClass, parseFragment, text
 export const DCE_HTML_READER = 'dce-html@1';
 
 const DISCORD_EPOCH = 1420070400000n;
-export function snowflakeToMs(id: string): number {
+function snowflakeToMs(id: string): number {
   try {
     return Number((BigInt(id) >> 22n) + DISCORD_EPOCH);
   } catch {
@@ -30,7 +30,7 @@ export function parseDceTime(s: string | undefined): number | undefined {
   return Number.isNaN(t) ? undefined : t;
 }
 
-export interface ChannelBatch {
+interface ChannelBatch {
   /** The HTML file, relative to raw/. */
   file: string;
   guild: string | null;
@@ -42,7 +42,7 @@ export interface ChannelBatch {
   missingFiles: number;
 }
 
-export interface ReadOptions {
+interface ReadOptions {
   rawDir: string;
   /** The importing account's own user id: decides direct vs group, and mentions of you. */
   selfId: string;
@@ -76,7 +76,7 @@ export function* readDceHtml(o: ReadOptions): Generator<ChannelBatch> {
  * file:///home/<anyone>/X -> <raw>/X; null for anything else. DCE writes some names still percent-encoded, so the
  * name as written is tried before the decoded one.
  */
-export function localPath(rawDir: string, url: string | undefined): string | null {
+function localPath(rawDir: string, url: string | undefined): string | null {
   const m = url?.match(/^file:\/\/\/home\/[^/]+\/(.+)$/);
   if (!m) return null;
   let decoded = m[1];
@@ -245,7 +245,7 @@ const VID = /\.(mp4|mov|webm|mkv|avi)$/i;
 const AUD = /\.(mp3|ogg|wav|flac|m4a|opus)$/i;
 
 /** DCE's legacy media names are "<stem>-<5 hex>.<ext>"; the original name is the stem. */
-export function originalName(path: string): string {
+function originalName(path: string): string {
   const base = decodeURIComponent(path.split(/[\\/]/).pop()!.split('?')[0]);
   return base.replace(/-[0-9a-f]{5}(\.[^.]+)?$/i, '$1');
 }

@@ -15,9 +15,9 @@ const HOP_BACK = new Set(['connection', 'keep-alive', 'transfer-encoding', 'te',
 const hopByHop = (name: string, set: Set<string>) => set.has(name) || name.startsWith('proxy-');
 
 /** Plans kept: past this many, the oldest by updatedAt go. */
-export const MAX_PLANS = 2000;
+const MAX_PLANS = 2000;
 /** The calendar writes a keepalive every 25 s: this long without a byte, the stream is dead. */
-export const WATCHDOG_MS = 70_000;
+const WATCHDOG_MS = 70_000;
 const BACKOFF_MIN = 1000;
 const BACKOFF_MAX = 60_000;
 /** A delta asks from a little before the last answer's `now`, for writes that raced it. */
@@ -48,7 +48,7 @@ export function calendarUrl(env: Record<string, string | undefined>, demo: boole
   return v.replace(/\/+$/, '');
 }
 
-export interface CalendarLinkOpts {
+interface CalendarLinkOpts {
   url: string;
   broadcast: (evs: P.ClientEvent[]) => void;
   fetch?: typeof fetch;

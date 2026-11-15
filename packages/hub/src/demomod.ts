@@ -8,7 +8,7 @@
 import type * as P from '@dither-chat/protocol';
 import { BAN_DELETE_CHOICES, MEMBER_LABEL_MAX, memberLabelProblem, modRefusal, TIMEOUT_DURATIONS } from '@dither-chat/protocol';
 
-export interface DemoModHost {
+interface DemoModHost {
   network: P.Network;
   selfId: string;
   emit: (ev: P.AdapterEvent) => void;

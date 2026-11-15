@@ -8,7 +8,7 @@ import type * as P from '@dither-chat/protocol';
 
 export const DEMO_SEND_CAPS: P.Capability[] = ['silentSend', 'replyMention', 'suppressEmbeds', 'savedMessages', 'nativeScheduled'];
 
-export interface DemoSendHost {
+interface DemoSendHost {
   emit: (ev: P.AdapterEvent) => void;
   /** A direct conversation of this account, for the scheduled message it starts with. */
   someDirect: () => string | null;

@@ -26,7 +26,7 @@ export function rememberSearch(q: string) {
   if (q) localStorage.setItem(RECENT_KEY, JSON.stringify([q, ...recentSearches().filter((r) => r !== q)].slice(0, 8)));
 }
 
-export function forgetSearches() {
+function forgetSearches() {
   localStorage.removeItem(RECENT_KEY);
 }
 

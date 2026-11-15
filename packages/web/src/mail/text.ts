@@ -11,7 +11,7 @@ export function splitQuote(text: string, quoteAt?: number | null): { shown: stri
   return { shown: text.slice(0, at).replace(/\s+$/, ''), quoted: text.slice(at).replace(/\s+$/, '') };
 }
 
-export type TextPiece = { text: string } | { url: string; text: string };
+type TextPiece = { text: string } | { url: string; text: string };
 
 const URL = /\b(?:https?:\/\/|www\.)[^\s<>"]+|\bmailto:[^\s<>"]+/gi;
 

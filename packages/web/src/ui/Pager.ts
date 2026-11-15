@@ -16,7 +16,7 @@ import { countKey } from '../clicklog.ts';
 export type Rest = 'open' | 'details' | 'peek' | 'away';
 export const PEEK = 56;
 
-export interface PagerModel {
+interface PagerModel {
   /** The app is on screen (not the loading screen), so there is something to listen on. */
   ready: boolean;
   rest: Rest;
@@ -38,7 +38,7 @@ export const swipeReply = new WeakMap<Element, () => void>();
  * are the app's (the frame's offset added); `target` is the frame, `sideways` says whether something inside it
  * scrolls sideways that way, and `prevent` stops the frame from scrolling once the swipe is the pager's.
  */
-export interface ForwardedTouch {
+interface ForwardedTouch {
   x: number;
   y: number;
   count: number;

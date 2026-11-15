@@ -200,7 +200,7 @@ export function words(body: string, max = 40): string[] {
  * Numeric features, by kind (the part of the name before ':'): how firmly each is held at zero, and what it means in
  * words. Kinds not listed get `NUMERIC_LAMBDA`. Content features (embeddings, local-model answers) add theirs here.
  */
-export const NUMERIC: Record<string, { lambda: number; text: string }> = {
+const NUMERIC: Record<string, { lambda: number; text: string }> = {
   rr: { lambda: 10, text: 'how often you answer' },
   engaged: { lambda: 10, text: "you're talking there now" },
   alt: { lambda: 10, text: 'back-and-forth there now' },
@@ -212,9 +212,9 @@ export const NUMERIC: Record<string, { lambda: number; text: string }> = {
   knn: { lambda: 5, text: 'like ones you answered before' },
   jev: { lambda: 5, text: "the local model's reading of it" },
 };
-export const NUMERIC_LAMBDA = 10;
+const NUMERIC_LAMBDA = 10;
 /** Numeric feature names carry this prefix inside the model, so they never collide with the rest. */
-export const NUM = '#';
+const NUM = '#';
 
 /**
  * Every feature of a message, with its value: 1, or for words a share that adds up to one feature's worth; numeric
@@ -287,7 +287,7 @@ function logit(p: number) {
   return Math.log(p / (1 - p));
 }
 
-export interface Prediction {
+interface Prediction {
   probs: P.TriageProbs;
   /** The features that moved it most, strongest first. */
   why: { feature: string; head: Head; by: number }[];
@@ -363,7 +363,7 @@ export function train(examples: readonly Example[], rejected: ReadonlySet<string
   return model;
 }
 
-export interface Backtest {
+interface Backtest {
   votes: number;
   /** Marks the model gets wrong; and without what it learned, its starting chances. */
   errors: number;

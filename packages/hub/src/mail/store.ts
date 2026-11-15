@@ -37,7 +37,7 @@ const lc = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
 const MOVED_OUT = `(json_type(m.pending, '$.move') IS 'object' AND (json_type(m.pending, '$.move.hide') IS NOT 'array' OR l.mailbox_id IN (SELECT value FROM json_each(m.pending, '$.move.hide'))))`;
 
 /** Inbox, Sent, and All mail where there is one, else Archive: kept up by the hub on its own (§3.3). */
-export function followedRoles(mailboxes: { role: string | null }[]): Set<string> {
+function followedRoles(mailboxes: { role: string | null }[]): Set<string> {
   const roles = new Set(['inbox', 'sent']);
   roles.add(mailboxes.some((b) => b.role === 'all') ? 'all' : 'archive');
   return roles;
@@ -47,7 +47,7 @@ export function followedRoles(mailboxes: { role: string | null }[]): Set<string>
  * Labels for the views: Gmail's own (`\Inbox`, `\Important`, `\Starred`, `\Sent`) say where a message is, its importance
  * and its star, which the views show otherwise. Those a person gave stay.
  */
-export const shownLabels = (labels: string[]) => labels.filter((l) => !l.startsWith('\\'));
+const shownLabels = (labels: string[]) => labels.filter((l) => !l.startsWith('\\'));
 
 /** Text from HTML when a message has no text part (the extractors make it themselves; this is for when one did not). */
 export function htmlText(html: string): string {
@@ -82,7 +82,7 @@ export function htmlText(html: string): string {
     .trim();
 }
 
-export interface MailDirty {
+interface MailDirty {
   access: boolean;
   accounts: Set<string>;
   /** Accounts whose mailboxes changed. */
@@ -93,7 +93,7 @@ export interface MailDirty {
   progress: Set<string>;
 }
 
-export interface MailAccountInput {
+interface MailAccountInput {
   id: string;
   kind: string;
   label: string;
@@ -1300,7 +1300,7 @@ export const maxRecipientsOf = (a: Row | null | undefined): number => a?.max_rec
 const whoView = (w: { identityId: string; personId: string | null } | undefined) => (w ? { identityId: w.identityId, ...(w.personId ? { personId: w.personId } : {}) } : {});
 
 /** How a message reached you: you sent it, you are in To or Cc, or neither (Bcc, a list). */
-export function addressedOf(self: Set<string>, from: string | null, to: M.MailAddress[], cc: M.MailAddress[]): 'to' | 'cc' | 'hidden' | 'self' {
+function addressedOf(self: Set<string>, from: string | null, to: M.MailAddress[], cc: M.MailAddress[]): 'to' | 'cc' | 'hidden' | 'self' {
   if (from && self.has(lc(from))) return 'self';
   if (to.some((a) => self.has(lc(a.email)))) return 'to';
   if (cc.some((a) => self.has(lc(a.email)))) return 'cc';
@@ -1312,7 +1312,7 @@ export function addressedOf(self: Set<string>, from: string | null, to: M.MailAd
  * background reads, an ids-only paged mail.search, why background reads stopped, and the account's storage. And
  * `writes`: the writes the account makes now (ops.ts).
  */
-export const DETAILS = {
+const DETAILS = {
   backgroundLane: 'backgroundLane',
   searchIds: 'searchIds',
   backgroundStopped: 'backgroundStopped',
@@ -1325,7 +1325,7 @@ export const DETAILS = {
 const WRITE_KINDS: readonly M.MailWriteKind[] = ['seen', 'flagged', 'move', 'trash', 'junk'];
 
 /** A status's `details.writes` as the kinds the hub knows, once each in their order; null when it is not a list (not said). */
-export function writesOf(v: unknown): M.MailWriteKind[] | null {
+function writesOf(v: unknown): M.MailWriteKind[] | null {
   if (!Array.isArray(v)) return null;
   return WRITE_KINDS.filter((k) => v.includes(k));
 }

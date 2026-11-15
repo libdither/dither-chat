@@ -29,7 +29,7 @@ import { BadPassphrase, type Field, fields, normalizePassphrase, streamKeys } fr
 
 export const SIGNAL_LEGACY_READER = 'signal-legacy@2';
 /** The unpacked database's own version: a new one unpacks again, a new mapping alone does not. */
-export const LEGACY_UNPACK = 1;
+const LEGACY_UNPACK = 1;
 
 /** How a message left: deleted by its sender or an admin, or its disappearing timer ran out. */
 export interface Gone {
@@ -118,7 +118,7 @@ const MIME_EXT: Record<string, string> = {
 const extOf = (name: string | null | undefined, mime: string | null | undefined) => (name?.match(/\.[A-Za-z0-9]{1,8}$/)?.[0] ?? MIME_EXT[mime ?? ''] ?? '').toLowerCase();
 const mediaPath = (mediaDir: string, sha: string, ext: string) => join(mediaDir, sha.slice(0, 2), sha + ext);
 
-export interface UnpackStats {
+interface UnpackStats {
   statements: number;
   rows: Record<string, number>;
   attachments: { count: number; bytes: number; stored: number };
@@ -325,7 +325,7 @@ const aciText = (s: unknown): string | null => {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v) ? v : null;
 };
 
-export interface LegacyReadStats {
+interface LegacyReadStats {
   conversations: number;
   messages: number;
   duplicates: number;
@@ -663,7 +663,7 @@ function sharedContact(json: string): string {
   }
 }
 
-export interface ReadLegacyOptions {
+interface ReadLegacyOptions {
   /** The .backup file. */
   file: string;
   passphrase: string;

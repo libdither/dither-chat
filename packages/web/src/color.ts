@@ -3,16 +3,16 @@
  * so a theme can pick its own readable colours and the tests can check them the way the browser draws them.
  */
 
-export type RGB = [number, number, number];
+type RGB = [number, number, number];
 
-export function hex(c: string): RGB {
+function hex(c: string): RGB {
   let h = c.trim().replace(/^#/, '');
   if (h.length === 3 || h.length === 4) h = h.slice(0, 3).split('').map((x) => x + x).join('');
   const n = parseInt(h.slice(0, 6), 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
-export const toHex = ([r, g, b]: RGB) => '#' + [r, g, b].map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0')).join('');
+const toHex = ([r, g, b]: RGB) => '#' + [r, g, b].map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0')).join('');
 
 const lin = (v: number) => {
   v /= 255;
@@ -20,7 +20,7 @@ const lin = (v: number) => {
 };
 const gam = (v: number) => 255 * (v <= 0.0031308 ? 12.92 * v : 1.055 * v ** (1 / 2.4) - 0.055);
 
-export function luminance(c: string | RGB): number {
+function luminance(c: string | RGB): number {
   const [r, g, b] = typeof c === 'string' ? hex(c) : c;
   return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
 }

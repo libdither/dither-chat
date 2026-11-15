@@ -175,7 +175,7 @@ export function decodeEntities(s: string): string {
 const attr = (v: string) => v.replace(/&/g, '&amp;');
 
 /** HTML text, for markup made here. */
-export const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 // ------------------------------------------------------------------ URLs
 
@@ -188,7 +188,7 @@ function cleanUrl(raw: string): string {
 const scheme = (u: string) => u.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/)?.[1].toLowerCase() ?? null;
 
 /** http(s) as a normalised absolute URL, `//host/…` as https; null for anything else. */
-export function webUrl(raw: string): string | null {
+function webUrl(raw: string): string | null {
   let u = cleanUrl(raw);
   if (u.startsWith('//')) u = 'https:' + u;
   const s = scheme(u);
@@ -452,7 +452,7 @@ const RAW_TEXT = new Set(['style', 'script', 'textarea', 'title', 'xmp', 'iframe
  * everything closes. Comments are gone already and the style sheets hold no `<`, so this only follows tags,
  * their quoted values, and the raw text of the elements a browser reads that way.
  */
-export function danglingTag(html: string): number | null {
+function danglingTag(html: string): number | null {
   const n = html.length;
   let i = 0;
   while (i < n) {

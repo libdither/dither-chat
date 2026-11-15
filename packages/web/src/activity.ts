@@ -42,7 +42,7 @@ export function deviceId(): string {
 }
 
 /** "Firefox on Linux", "Android app": enough to tell devices apart in an export. */
-export function deviceLabel(ua = navigator.userAgent): string {
+function deviceLabel(ua = navigator.userAgent): string {
   if (isAndroid()) return 'Android app';
   const browser = /Firefox\//.test(ua) ? 'Firefox' : /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
   const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Mac OS X/.test(ua) ? 'macOS' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : 'unknown';
@@ -58,7 +58,7 @@ function convPlace(id: string): Place {
   return { view: 'conversation', conversationId: id, personId: c?.shape === 'direct' ? (c.peerPersonId ?? null) : null, spaceId: root?.id ?? c?.spaceIds[0] ?? null };
 }
 
-export function placeOf(r: Route): Place {
+function placeOf(r: Route): Place {
   switch (r.view) {
     case 'inbox':
       return r.conv ? convPlace(r.conv) : { view: 'inbox' };
@@ -81,7 +81,7 @@ export function placeOf(r: Route): Place {
 }
 
 /** How a click got the user somewhere, from where it landed. */
-export function arrivalOf(el: Element | null): Arrival {
+function arrivalOf(el: Element | null): Arrival {
   if (!el) return { source: 'other' };
   if (el.closest('.toast')) return { source: 'toast' };
   if (el.closest('.rail, .tabbar')) return { source: 'rail' };
@@ -104,7 +104,7 @@ export function arrivalOf(el: Element | null): Arrival {
  * The deepest inbox row on screen now (0 = top, counted as an inbox row's `rank` is), or null when the inbox's list
  * is not on screen. Numbers only: no row is named.
  */
-export function inboxDepth(): number | null {
+function inboxDepth(): number | null {
   if (document.visibilityState !== 'visible') return null;
   const list = document.querySelector('.sidebar-inner.inbox-side');
   const scroll = list?.querySelector('.side-scroll');
@@ -210,7 +210,7 @@ function collect() {
 }
 
 /** A tap's id from a notification's hash (`…?n=<id>`). */
-export const pushIdOf = (hash: string): string | null => new URLSearchParams(hash.split('?')[1] ?? '').get('n');
+const pushIdOf = (hash: string): string | null => new URLSearchParams(hash.split('?')[1] ?? '').get('n');
 
 /** A tap's id, if this device has not opened from that push before; a replayed launch intent gives null. */
 function freshTap(id: string | null): string | null {

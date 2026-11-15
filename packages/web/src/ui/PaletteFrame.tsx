@@ -38,7 +38,7 @@ export interface Multi {
   goOn: () => void;
 }
 
-export interface FrameProps {
+interface FrameProps {
   e: Entry;
   /** In place of the entry's own title (the picker learns whether it adds or invites). */
   title?: string;

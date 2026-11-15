@@ -14,7 +14,7 @@ const JSQR_SIDE = 800;
 
 let decoder: Promise<Decoder> | null = null;
 
-export function qrDecoder(): Promise<Decoder> {
+function qrDecoder(): Promise<Decoder> {
   return (decoder ??= makeDecoder().catch((e) => {
     decoder = null;
     throw e;
@@ -73,7 +73,7 @@ export const CAMERA_TEXT: Partial<Record<CameraState, string>> = {
   error: 'The camera did not start. Paste the link below, or choose a picture of the code.',
 };
 
-export function cameraError(e: unknown): CameraState {
+function cameraError(e: unknown): CameraState {
   const name = (e as { name?: string })?.name;
   if (name === 'NotAllowedError' || name === 'SecurityError') return 'denied';
   if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'none';

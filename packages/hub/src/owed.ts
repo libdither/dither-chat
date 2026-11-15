@@ -133,7 +133,7 @@ export interface OwedTurn {
   dismissed?: boolean;
 }
 
-export interface FitOptions {
+interface FitOptions {
   /** Turns from before this are fitted on; later ones still count toward the reply rates. Default: all. */
   until?: number;
   /** The time it is: a turn not answered and younger than the window is still open, and says nothing yet. */

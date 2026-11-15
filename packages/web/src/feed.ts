@@ -14,7 +14,7 @@ export const isFeedConv = (c: Pick<P.ConversationView, 'variant'> | null | undef
 export const isQuietConv = (c: Pick<P.ConversationView, 'variant'> | null | undefined) => c?.variant === 'feed' || c?.variant === 'posts';
 
 /** One card: what was done, by whom (newest first, each once), to which post, and when the newest was. */
-export interface FeedCard {
+interface FeedCard {
   key: string;
   type: P.FeedItemType;
   /** Its messages, newest first. */
@@ -208,7 +208,7 @@ export function cardSentence(c: Pick<FeedCard, 'type' | 'actors' | 'text' | 'mes
 }
 
 /** The inbox row of a feed: how many new, who (newest first), what the newest card says, and when. */
-export interface FeedRowView {
+interface FeedRowView {
   count: number;
   who: string[];
   what: string;
@@ -219,7 +219,7 @@ export interface FeedRowView {
  * The row while there is something to show: anything unread, or something in the last day (`RECENT`). Its words
  * come from the cards when the feed's page is held, else from the conversation's last message.
  */
-export const RECENT = 24 * 60 * 60_000;
+const RECENT = 24 * 60 * 60_000;
 export function feedRow(c: P.ConversationView, messages: readonly P.MessageView[] | null, nameOf: (identityId: string) => string, now = Date.now()): FeedRowView | null {
   const count = c.vantages.reduce((n, v) => n + v.unread, 0);
   const lastAt = c.lastMessageAt ?? 0;

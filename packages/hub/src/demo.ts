@@ -36,10 +36,10 @@ type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa' | 'tg';
  * accounts by their usernames. Off by default: the default world's counts
  * are what the tests and perf baselines expect.
  */
-export const MULTI_ACCOUNT = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('multiaccount');
+const MULTI_ACCOUNT = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('multiaccount');
 const named = (plain: string, username: string) => (MULTI_ACCOUNT ? username : plain);
 
-export const DEMO_ACCOUNTS: { key: AccKey; id: string; network: P.Network; label: string; color: string }[] = [
+const DEMO_ACCOUNTS: { key: AccKey; id: string; network: P.Network; label: string; color: string }[] = [
   { key: 'dmain', id: 'acc_demo-discord-main', network: 'discord', label: named('main', 'zyansheep'), color: '#F2A541' },
   { key: 'dalt', id: 'acc_demo-discord-alt', network: 'discord', label: named('alt', 'zyn.alt'), color: '#E86A92' },
   { key: 'sig', id: 'acc_demo-signal', network: 'signal', label: named('personal', 'zyan.01'), color: '#B794F6' },
@@ -3231,9 +3231,9 @@ export function applyDemoOverlay(store: Store) {
 /** The demo world's mail account: plain IMAP with the threading headers on summaries (dither-accounts' §13). */
 export const DEMO_MAIL_ACCOUNT = 'acc_demo-mail';
 /** A second mail account like Proton's (DITHER_DEMO_MAIL_PROTON=1, scripts/verify-mail.ts --proton). */
-export const DEMO_PROTON_ACCOUNT = 'acc_demo-proton';
+const DEMO_PROTON_ACCOUNT = 'acc_demo-proton';
 /** A Gmail account as dither-accounts' imap extractor gives one (DITHER_DEMO_MAIL_GMAIL=1, scripts/verify-mail.ts --gmail). */
-export const DEMO_GMAIL_ACCOUNT = 'acc_demo-gmail';
+const DEMO_GMAIL_ACCOUNT = 'acc_demo-gmail';
 const ME = { name: 'Zyan', email: 'zyan@dither.example' };
 
 /**

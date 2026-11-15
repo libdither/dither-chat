@@ -12,7 +12,7 @@ import { api, db } from '../state.ts';
 import { mailChanged } from '../versions.ts';
 
 /** How long after the last change a draft goes to the hub. */
-export const SAVE_AFTER_MS = 2000;
+const SAVE_AFTER_MS = 2000;
 const LOCAL = 'dither-chat:mail-draft:';
 
 export const emptyDraft = (accountId: string, kind: P.MailComposeKind = 'new'): P.MailDraft => ({ accountId, kind, replyTo: null, from: null, to: [], cc: [], bcc: [], subject: '', text: '', quote: true, files: [], forwardParts: [] });
@@ -21,7 +21,7 @@ export const emptyDraft = (accountId: string, kind: P.MailComposeKind = 'new'): 
 export const isBlank = (d: P.MailDraft) => !d.to.length && !d.cc.length && !d.bcc.length && !d.subject.trim() && !d.text.trim() && !d.files.length && d.kind === 'new';
 
 /** The page's time zone, for the quote's date. */
-export const timeZone = () => {
+const timeZone = () => {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
   } catch {
@@ -49,7 +49,7 @@ function writeLocal(key: string, draft: P.MailDraft) {
     localStorage.setItem(LOCAL + key, JSON.stringify({ draft, at: Date.now() }));
   } catch {}
 }
-export function dropLocal(key: string) {
+function dropLocal(key: string) {
   try {
     localStorage.removeItem(LOCAL + key);
   } catch {}
@@ -71,7 +71,7 @@ function localDrafts(): P.MailDraftView[] {
 
 // ------------------------------------------------------------------ opening
 
-export interface Opened {
+interface Opened {
   key: string;
   draft: P.MailDraft;
   start: P.MailComposeStart | null;
@@ -177,7 +177,7 @@ export async function loadDrafts() {
 
 // ------------------------------------------------------------------ sending
 
-export type SendResult = { ok: true; item: P.MailOutboxView | null } | { ok: false; offline: boolean; error: string; status?: number };
+type SendResult = { ok: true; item: P.MailOutboxView | null } | { ok: false; offline: boolean; error: string; status?: number };
 
 /** One press of Send: the same clientId however often it is tried. */
 export async function send(key: string, d: P.MailDraft, clientId: string): Promise<SendResult> {
