@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { ActivityStore } from '../src/activity.ts';
 import { LABEL_WEIGHTS } from '../src/labels.ts';
 import { Notifier, type Tier } from '../src/notify.ts';
-import { BULK_MS, dayOf, EXPIRE_MS, LIST_CAP, listByPrior, PhoneList, phoneListMode, SNOOZE_MS, TRIALS_PER_DAY, type PhoneListMode } from '../src/phonelist.ts';
+import { BULK_MS, DAILY_BUDGET, dayOf, EXPIRE_MS, LIST_CAP, listByPrior, PhoneList, phoneListBudget, phoneListMode, SNOOZE_MS, TRIALS_PER_DAY, type PhoneListMode } from '../src/phonelist.ts';
 import { Store } from '../src/store.ts';
 
 const MIN = 60_000;
@@ -25,8 +25,9 @@ let activity: ActivityStore;
 const kept = new Set<string>();
 const reads = new Map<string, number>();
 
-function phoneList(mode: PhoneListMode, random: () => number = () => 0.99): PhoneList {
-  return new PhoneList(store.db, { mode, kept: () => kept, readTs: (cid) => reads.get(cid) ?? 0, random });
+/** Without a daily budget unless one is given: the budget has tests of its own. */
+function phoneList(mode: PhoneListMode, random: () => number = () => 0.99, budget = Infinity): PhoneList {
+  return new PhoneList(store.db, { mode, kept: () => kept, readTs: (cid) => reads.get(cid) ?? 0, random, budget });
 }
 const episodes = () => store.db.query('SELECT * FROM phone_episode ORDER BY id').all() as Record<string, any>[];
 /** A push that went to the phone about a chat, and the phone's word on it, as the activity log hears it. */
@@ -50,7 +51,7 @@ afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 beforeEach(() => {
-  store.db.exec('DELETE FROM phone_episode; DELETE FROM phone_snooze; DELETE FROM notification; DELETE FROM notification_event;');
+  store.db.exec('DELETE FROM phone_episode; DELETE FROM phone_snooze; DELETE FROM phone_push; DELETE FROM notification; DELETE FROM notification_event;');
   kept.clear();
   reads.clear();
 });
@@ -128,6 +129,67 @@ describe('the gate', () => {
     // One read: room again.
     p.read('c-0', T0 + 2 * MIN);
     expect(p.list('c-ninth', true, T0, T0 + 3 * MIN).send).toBe(true);
+  });
+});
+
+describe('the daily budget', () => {
+  const pushes = () => store.db.query('SELECT day, conversation_id AS cid, importance, sent FROM phone_push ORDER BY id').all() as Record<string, any>[];
+
+  test('DITHER_PHONE_LIST_BUDGET: five a day unless a whole number or off says otherwise', () => {
+    expect(DAILY_BUDGET).toBe(5);
+    expect(phoneListBudget(undefined)).toBe(5);
+    expect(phoneListBudget('')).toBe(5);
+    expect(phoneListBudget('12')).toBe(12);
+    expect(phoneListBudget('0')).toBe(0);
+    expect(phoneListBudget('off')).toBe(Infinity);
+    expect(phoneListBudget('2.5')).toBe(5);
+    expect(phoneListBudget('-1')).toBe(5);
+    expect(phoneListBudget('lots')).toBe(5);
+  });
+
+  test('every push spends one, a new row or an open one brought up to date; spent, the rest wait for tomorrow', () => {
+    const p = phoneList('on', () => 0.99, 3);
+    expect(p.list('c-a', true, T0, T0, 0.5).send).toBe(true);
+    expect(p.list('c-a', true, T0, T0 + 20 * MIN, 0.5).send).toBe(true);
+    expect(p.list('c-b', true, T0, T0 + 30 * MIN, 0.5).send).toBe(true);
+    expect(p.spent(dayOf(T0))).toBe(3);
+    // An open row is not brought up to date, and a new chat gets no row.
+    expect(p.list('c-a', true, T0, T0 + 40 * MIN, 0.9)).toEqual({ send: false, arm: 'prior', held: 'budget' });
+    expect(p.list('c-c', true, T0, T0 + 50 * MIN, 0.9)).toEqual({ send: false, arm: 'prior', held: 'budget' });
+    // Held by the budget, a chat has no episode: it asks again with its next message.
+    expect(episodes().map((e) => e.conversation_id)).toEqual(['c-a', 'c-b']);
+    expect(pushes().map((r) => r.sent)).toEqual([1, 1, 1, 0, 0]);
+    expect(p.list('c-c', true, T0, T0 + DAY, 0.9).send).toBe(true);
+  });
+
+  test("the day's bar: the budget-th most important push of the last days, the median of them; a trial needs only the budget", () => {
+    // Three earlier days, each asked for ten pushes; their third most important were 0.7, 0.5 and 0.6.
+    const ins = store.db.query(`INSERT INTO phone_push (at, day, mode, conversation_id, importance, sent) VALUES (?, ?, 'on', ?, ?, 0)`);
+    for (const [d, third] of [[1, 0.7], [2, 0.5], [3, 0.6]] as const)
+      for (let i = 0; i < 10; i++) ins.run(T0 - d * DAY, dayOf(T0 - d * DAY), `old-${i}`, i < 2 ? 0.95 : i === 2 ? third : 0.1);
+    const p = phoneList('on', () => 0, 3);
+    expect(p.bar(dayOf(T0), T0)).toBeCloseTo(0.6);
+    expect(p.list('c-low', true, T0, T0, 0.4)).toEqual({ send: false, arm: 'prior', held: 'budget' });
+    expect(p.list('c-high', true, T0, T0 + MIN, 0.65).send).toBe(true);
+    // Unknown importance passes the bar.
+    expect(p.list('c-unknown', true, T0, T0 + 2 * MIN, null).send).toBe(true);
+    // A chat the gate holds may still win a trial, whatever its importance; that spends the last push.
+    seedHistory(1);
+    expect(p.list('c-learned', false, T0, T0 + 3 * MIN, 0.1)).toMatchObject({ send: true, arm: 'trial' });
+    expect(p.spent(dayOf(T0))).toBe(3);
+    // Spent: no more coins, so a trial's chance stays exact.
+    expect(p.list('c-learned-2', false, T0, T0 + 4 * MIN, 0.1)).toMatchObject({ send: false, arm: 'gated', propensity: 0 });
+    expect(p.list('c-top', true, T0, T0 + 5 * MIN, 0.99)).toMatchObject({ send: false, held: 'budget' });
+  });
+
+  test('one earlier day is not enough for a bar; shadow counts what would have gone and still sends', () => {
+    store.db.query(`INSERT INTO phone_push (at, day, mode, conversation_id, importance, sent) VALUES (?, ?, 'on', 'old', 0.9, 1)`).run(T0 - DAY, dayOf(T0 - DAY));
+    const p = phoneList('on', () => 0.99, 2);
+    expect(p.bar(dayOf(T0), T0)).toBe(0);
+    const s = phoneList('shadow', () => 0.99, 1);
+    expect(s.list('c-a', true, T0, T0, 0.2).send).toBe(true);
+    expect(s.list('c-b', true, T0, T0 + MIN, 0.2)).toMatchObject({ send: true, held: 'budget' });
+    expect(s.spent(dayOf(T0))).toBe(1);
   });
 });
 
