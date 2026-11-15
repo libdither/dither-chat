@@ -13,7 +13,7 @@ the demo world only (2026-11-12, net-gaps): no live account has run any of it.
 
 The protocol is `packages/protocol/src/moderation.ts`; the hub side `packages/hub/src/moderation.ts`; the page
 `packages/web/src/ui/Moderation.tsx` (a chunk of its own, loaded only where the About says the account may moderate,
-set a label, change the picture or must name who takes over) and `src/moderate.ts` for the message menu. The adapters
+set a label or must name who takes over; a new picture is the picture editor's, [profile.md](profile.md#changing-a-picture)) and `src/moderate.ts` for the message menu. The adapters
 are dither-accounts' `extractors/signal/src/groups.ts` and `extractors/discord/src/moderation.ts` with the hook's
 "moderation" section.
 

@@ -401,7 +401,7 @@ export function ThreadCard({ c, view, onDone }: { c: P.ConversationView; view: P
   );
 }
 
-/** A group's owner card: who owns it, taking someone out or handing it over, its picture. */
+/** A group's owner card: who owns it, taking someone out or handing it over (its picture is the page's big picture, PictureEditor.tsx). */
 export function GroupCard({ c, view, onDone }: { c: P.ConversationView; view: P.AboutView; onDone: (v: P.AboutView) => void }) {
   rev.value;
   const o = view.ownership!;
@@ -419,19 +419,6 @@ export function GroupCard({ c, view, onDone }: { c: P.ConversationView; view: P.
     }
   };
   const others = (view.members?.list ?? []).filter((m) => !isSelfIdentity(m.identityId) && m.identityId !== o.owner);
-  const picture = !!view.fields.avatar?.canEdit && !!ableAccount(c, 'groupPicture');
-  const pickPicture = async (f: File | undefined) => {
-    if (!f) return;
-    setBusy(true);
-    try {
-      const up = await uploadFile(f, f.name, f.type);
-      setBusy(false);
-      await run(`/api/conversations/${c.id}/picture`, { upload: up.id }, 'Picture changed');
-    } catch (e) {
-      setBusy(false);
-      toast({ kind: 'error', title: 'Could not change the picture', body: (e as Error).message });
-    }
-  };
   return (
     <Card title="Group" icon="users">
       <p class="pf-hint">{o.youOwn ? 'You own this group.' : o.owner ? `${authorName(o.owner)} owns this group.` : 'Its owner left.'}</p>
@@ -452,19 +439,6 @@ export function GroupCard({ c, view, onDone }: { c: P.ConversationView; view: P.
           </div>
         ))}
       {!o.youOwn && o.reason && <small class="about-reason">{o.reason} Removing people and handing it over are the owner's.</small>}
-      {picture && (
-        <div class="pf-actions-row">
-          <label class="btn ghost small">
-            <Icon name="image" size={13} /> Change picture
-            <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden onChange={(e) => void pickPicture((e.target as HTMLInputElement).files?.[0])} />
-          </label>
-          {c.avatar && (
-            <button class="btn ghost small" disabled={busy} onClick={() => void run(`/api/conversations/${c.id}/picture`, { upload: null }, 'Picture removed')}>
-              Remove picture
-            </button>
-          )}
-        </div>
-      )}
     </Card>
   );
 }

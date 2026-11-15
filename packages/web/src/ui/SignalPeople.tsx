@@ -9,7 +9,6 @@ import { renderSVG } from 'uqr';
 import { ago } from '../format.ts';
 import { netName } from '../model.ts';
 import { api, db, toast } from '../state.ts';
-import { uploadFile } from '../upload.ts';
 import type { MenuEntry } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
 import { Card, Tag } from './ProfileShell.tsx';
@@ -170,7 +169,7 @@ export function GroupBlock({ conversationId, network, blocked, onDone }: { conve
 
 /**
  * Your own profile beyond the bio, where the network's adapter can change it (PersonAbout.editable): your name, the
- * emoji by your bio, your picture, and your username with its link.
+ * emoji by your bio, and your username with its link. Your picture is the page's big picture (PictureEditor.tsx).
  */
 export function OwnProfileExtras({ identity, about, onSaved }: { identity: P.IdentityView; about?: P.PersonAboutView; onSaved: (a: P.PersonAboutView) => void }) {
   const editable = about?.editable ?? [];
@@ -178,7 +177,8 @@ export function OwnProfileExtras({ identity, about, onSaved }: { identity: P.Ide
   const [name, setName] = useState<string | null>(null);
   const [emoji, setEmoji] = useState<string | null>(null);
   const [username, setUsername] = useState<string | null>(null);
-  if (!editable.some((f) => f !== 'bio')) return null;
+  // Your picture is the page's big picture (PictureEditor.tsx).
+  if (!editable.some((f) => f !== 'bio' && f !== 'avatar')) return null;
   const net = netName(identity.network);
   const put = async (what: string, body: Record<string, unknown>) => {
     setBusy(what);
@@ -188,18 +188,6 @@ export function OwnProfileExtras({ identity, about, onSaved }: { identity: P.Ide
     } catch (e) {
       toast({ kind: 'error', title: `${net} did not take it`, body: (e as Error).message });
       return false;
-    } finally {
-      setBusy(null);
-    }
-  };
-  const picture = async (file: File | undefined) => {
-    if (!file) return;
-    setBusy('avatar');
-    try {
-      const up = await uploadFile(file, file.name, file.type || 'application/octet-stream');
-      await put('avatar', { avatar: up.id });
-    } catch (e) {
-      toast({ kind: 'error', title: 'Could not upload the picture', body: (e as Error).message });
     } finally {
       setBusy(null);
     }
@@ -228,20 +216,6 @@ export function OwnProfileExtras({ identity, about, onSaved }: { identity: P.Ide
             </button>
           )}
         </label>
-      )}
-      {editable.includes('avatar') && (
-        <div class="pf-own-row">
-          <span>Picture on {net}</span>
-          <label class="btn small ghost">
-            {busy === 'avatar' ? 'Uploading…' : 'Choose…'}
-            <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden disabled={!!busy} onChange={(e) => void picture((e.target as HTMLInputElement).files?.[0])} />
-          </label>
-          {about?.avatar && (
-            <button class="btn small ghost" disabled={!!busy} onClick={() => confirm(`Remove your picture on ${net}?`) && void put('avatar', { avatar: null })}>
-              Remove
-            </button>
-          )}
-        </div>
       )}
       {editable.includes('username') && (
         <div class="pf-own-row pf-own-username">
