@@ -9,6 +9,7 @@ import { effect, signal } from '@preact/signals';
 import { activeCall, leaveCall, setMuted } from './call.ts';
 import { noteOpen } from './activity.ts';
 import { db, go, parseHash, prefs } from './state.ts';
+import { onIme, keepKeyboardRoom } from './phone.ts';
 
 interface Port {
   postMessage(msg: string): void;
@@ -133,7 +134,15 @@ function receive(d: any) {
     w(t.endsWith('.error') ? { ...d, error: d.error ?? 'Failed' } : d);
   }
   switch (t) {
+    case 'ime':
+      onIme(Number(d.h) || 0, !!d.done);
+      break;
     case 'info':
+      // This app leaves the keyboard's room to the page, which says it will keep it (phone.ts).
+      if ((d.opens ?? []).includes('keyboard') && !android!.info.value?.opens.includes('keyboard')) {
+        android!.send({ t: 'keyboard', page: true });
+        keepKeyboardRoom();
+      }
       android!.info.value = {
         version: d.version,
         distributors: (d.distributors ?? []).map((x: string | Distributor) => (typeof x === 'string' ? { pkg: x, label: x === 'io.heckel.ntfy' ? 'ntfy' : x } : x)),

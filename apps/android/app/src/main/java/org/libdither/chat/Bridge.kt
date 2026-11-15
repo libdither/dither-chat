@@ -24,8 +24,10 @@ class Bridge(private val activity: MainActivity, private val origin: Uri) : WebV
         val m = runCatching { JSONObject(message.data ?: return) }.getOrNull() ?: return
         when (m.optString("t")) {
             "hello" -> {
-                // A new page (first load, or a reload for an update): it replaces the old one's channel.
+                // A new page (first load, or a reload for an update): it replaces the old one's channel, and says again
+                // whether it keeps the keyboard's room itself.
                 proxy = replyProxy
+                activity.pageKeyboard = false
                 send(info())
                 send(Push.status(activity))
                 send(Uploads.state(activity))
@@ -52,6 +54,7 @@ class Bridge(private val activity: MainActivity, private val origin: Uri) : WebV
             "upload.resume" -> activity.resumeUpload()
             "upload.forget" -> activity.forgetUpload()
             "upload.status" -> send(Uploads.state(activity))
+            "keyboard" -> activity.pageKeyboard = m.optBoolean("page") && android.os.Build.VERSION.SDK_INT >= 30
             "file" -> activity.openFileForPage(m.optString("url"), m.optString("name").ifEmpty { null }, m.optString("mime").ifEmpty { null })
         }
     }
@@ -74,7 +77,12 @@ class Bridge(private val activity: MainActivity, private val origin: Uri) : WebV
             .put("distributors", distributors)
             .put("current", UnifiedPush.getAckDistributor(activity) ?: UnifiedPush.getSavedDistributor(activity) ?: JSONObject.NULL)
             .put("notifications", activity.getSystemService(NotificationManager::class.java).areNotificationsEnabled())
-            .put("opens", JSONArray(listOf("app", "appInfo", "notifications", "file", "upload")))
+            .put("opens", JSONArray(listOf("app", "appInfo", "notifications", "file", "upload") + (if (android.os.Build.VERSION.SDK_INT >= 30) listOf("keyboard") else emptyList())))
+    }
+
+    /** To the page if one is listening, else dropped: for what is stale a moment later (the keyboard's height). */
+    fun sendLive(o: JSONObject) {
+        proxy?.postMessage(o.toString())
     }
 
     /** To the page, or held until it says hello. */

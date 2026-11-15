@@ -23,6 +23,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewTreeObserver
 import android.view.WindowInsets
+import android.view.WindowInsetsAnimation
 import android.view.WindowInsetsController
 import android.view.inputmethod.EditorInfo
 import android.webkit.ConsoleMessage
@@ -146,16 +147,58 @@ class MainActivity : Activity() {
 
     // ---------------------------------------------------------------- layout
 
-    /** Content between the system bars and above the keyboard; the bars themselves show the page's colour. */
+    /**
+     * Content between the system bars and above the keyboard; the bars themselves show the page's colour. A page that
+     * keeps the keyboard's room itself (it says so: Bridge "keyboard") gets the whole height instead, and is told the
+     * keyboard's height on every frame of its slide, so the message box rides on the keyboard and a panel can take
+     * the keyboard's place without the box moving (docs/android.md "The keyboard").
+     */
     private fun edgeToEdge() {
         if (Build.VERSION.SDK_INT < 30) return
         // Android 15 does this by itself for apps targeting it; 11 to 14 need asking.
         @Suppress("DEPRECATION") window.setDecorFitsSystemWindows(false)
         root.setOnApplyWindowInsetsListener { v, insets ->
-            val i = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.ime() or WindowInsets.Type.displayCutout())
+            val page = pageKeyboard
+            val i = insets.getInsets(WindowInsets.Type.systemBars() or (if (page) 0 else WindowInsets.Type.ime()) or WindowInsets.Type.displayCutout())
             v.setPadding(i.left, i.top, i.right, i.bottom)
+            // While the keyboard slides, its final height arrives here first: the page hears the frames instead.
+            if (page && !imeMoving) sendIme(insets, true)
             WindowInsets.CONSUMED
         }
+        root.setWindowInsetsAnimationCallback(object : WindowInsetsAnimation.Callback(DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
+            override fun onPrepare(animation: WindowInsetsAnimation) {
+                if (animation.typeMask and WindowInsets.Type.ime() != 0) imeMoving = true
+            }
+
+            override fun onProgress(insets: WindowInsets, running: MutableList<WindowInsetsAnimation>): WindowInsets {
+                if (pageKeyboard && imeMoving) sendIme(insets, false)
+                return insets
+            }
+
+            override fun onEnd(animation: WindowInsetsAnimation) {
+                if (animation.typeMask and WindowInsets.Type.ime() == 0) return
+                imeMoving = false
+                val w = root.rootWindowInsets ?: return
+                if (pageKeyboard) sendIme(w, true)
+            }
+        })
+    }
+
+    /** The page keeps the keyboard's room itself. Each new page says so again; until then the app makes room. */
+    var pageKeyboard = false
+        set(v) {
+            if (field == v) return
+            field = v
+            root.requestApplyInsets()
+        }
+    private var imeMoving = false
+
+    /** The keyboard's height over the navigation bar, in the page's pixels; `done` once it stopped moving. */
+    private fun sendIme(insets: WindowInsets, done: Boolean) {
+        val ime = insets.getInsets(WindowInsets.Type.ime()).bottom
+        val nav = insets.getInsets(WindowInsets.Type.systemBars()).bottom
+        val css = Math.max(0, ime - nav) / resources.displayMetrics.density
+        bridge?.sendLive(JSONObject().put("t", "ime").put("h", Math.round(css * 10) / 10.0).put("done", done))
     }
 
     private fun lightBars(light: Boolean) {

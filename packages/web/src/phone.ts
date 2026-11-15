@@ -2,8 +2,9 @@
  * What the phone layout needs beyond CSS: the width that switches it on, layers that the back button
  * closes before it leaves a page, the keyboard, and a haptic tick.
  */
-import { signal } from '@preact/signals';
+import { effect, signal } from '@preact/signals';
 import { useLayoutEffect, useRef } from 'preact/hooks';
+import { appHeight, clampPanel } from './keyboardroom.ts';
 
 const PHONE = '(max-width: 820px)';
 const phoneQuery = typeof matchMedia === 'function' ? matchMedia(PHONE) : null;
@@ -118,9 +119,74 @@ export function useLayer(onClose: () => void) {
 // ------------------------------------------------------------------ keyboard
 
 /**
+ * The Android app (4.x and later) leaves the keyboard's room to the page and reports the keyboard's height on every
+ * frame of its slide (android.ts, apps/android MainActivity.edgeToEdge): the message box rides on the keyboard, and a
+ * panel can take the keyboard's place without the box moving (docs/phone.md "The keyboard and the panel").
+ */
+const appKeyboard = signal(false);
+/** The keyboard's height as the app reports it, in CSS pixels; 0 while it is down. */
+const imeHeight = signal(0);
+/** A panel in the keyboard's place (ui/Panel.tsx). */
+const panelOpen = signal(false);
+
+const KB_KEY = 'dither-chat:keyboard-height';
+const orientation = () => (innerWidth > innerHeight ? 'wide' : 'tall');
+function remembered(): number {
+  try {
+    const v = Number(JSON.parse(localStorage.getItem(KB_KEY) ?? '{}')[orientation()]);
+    if (v > 0) return v;
+  } catch {}
+  return 0;
+}
+/** The keyboard's last height in this orientation, which the panel takes; 40% of the screen before it was ever seen. */
+const keyboardHeight = signal(remembered());
+const panelHeight = () => clampPanel(keyboardHeight.value, innerHeight);
+function remember(h: number) {
+  h = Math.round(h);
+  if (h < 120 || Math.abs(h - keyboardHeight.value) < 2) return;
+  keyboardHeight.value = h;
+  try {
+    const all = JSON.parse(localStorage.getItem(KB_KEY) ?? '{}');
+    all[orientation()] = h;
+    localStorage.setItem(KB_KEY, JSON.stringify(all));
+  } catch {}
+}
+
+let relayout = () => {};
+
+/** The app's keyboard report: its height now, and `done` once it stopped moving (android.ts). */
+export function onIme(h: number, done: boolean) {
+  imeHeight.value = h;
+  if (done && h > 0) {
+    remember(h);
+    // The keyboard is up over the panel: the panel goes, and the room stays the keyboard's.
+    panelOpen.value = false;
+    revealFocused();
+  }
+  relayout();
+}
+
+/** The page now keeps the keyboard's room itself. */
+export function keepKeyboardRoom() {
+  appKeyboard.value = true;
+  relayout();
+}
+
+/** A field the keyboard now covers is scrolled into what is left (the browser did this while it resized the page). */
+function revealFocused() {
+  requestAnimationFrame(() => {
+    const el = document.activeElement as HTMLElement | null;
+    if (!el || el === document.body) return;
+    const r = el.getBoundingClientRect();
+    if (r.bottom > innerHeight - imeHeight.value) el.scrollIntoView({ block: 'nearest' });
+  });
+}
+
+/**
  * Keep the app the size of what is visible. Chromium resizes the layout for the keyboard
- * (interactive-widget=resizes-content); iOS Safari only shrinks the visual viewport, and scrolls it.
- * Only while a field has focus, so pinch zoom on a desktop never shrinks the app.
+ * (interactive-widget=resizes-content); iOS Safari only shrinks the visual viewport, and scrolls it; the Android app
+ * leaves the keyboard's room to the page (above). An open panel takes the keyboard's room too. iOS's shrinking only
+ * counts while a field has focus, so pinch zoom on a desktop never shrinks the app.
  */
 export function trackViewport() {
   const vv = window.visualViewport;
@@ -133,11 +199,21 @@ export function trackViewport() {
   const update = () => {
     const h = vv?.height ?? innerHeight;
     tallest = Math.max(tallest, innerHeight, h);
-    const kb = typing() && tallest - h > 120;
-    root.classList.toggle('kb-open', kb);
-    if (vv && typing() && (vv.height < innerHeight - 1 || vv.offsetTop > 0)) {
-      root.style.setProperty('--app-h', `${Math.round(vv.height)}px`);
-      root.style.setProperty('--app-top', `${Math.round(vv.offsetTop)}px`);
+    let browserKb = false;
+    if (!appKeyboard.value) {
+      browserKb = typing() && tallest - h > 120;
+      if (browserKb) {
+        remember(tallest - h);
+        // The keyboard came up over the panel (a tap in the box): the panel goes.
+        if (panelOpen.value) panelOpen.value = false;
+      }
+    }
+    const a = appHeight({ inner: innerHeight, visible: h, typing: typing(), app: appKeyboard.value, ime: imeHeight.value, panel: panelOpen.value ? panelHeight() : 0 });
+    root.classList.toggle('kb-open', browserKb || a.kb);
+    const top = !appKeyboard.value && vv && typing() ? Math.round(vv.offsetTop) : 0;
+    if (a.h !== null || top > 0) {
+      root.style.setProperty('--app-h', `${a.h ?? Math.round(h)}px`);
+      root.style.setProperty('--app-top', `${top}px`);
     } else {
       root.style.removeProperty('--app-h');
       root.style.removeProperty('--app-top');
@@ -145,18 +221,25 @@ export function trackViewport() {
       if (window.scrollY) window.scrollTo(0, 0);
     }
   };
+  relayout = update;
   vv?.addEventListener('resize', update);
   vv?.addEventListener('scroll', update);
   let wide = innerWidth;
   window.addEventListener('resize', () => {
-    // A rotation changes what "full height" means; a keyboard only changes the height.
-    if (innerWidth !== wide) tallest = 0;
+    // A rotation changes what "full height" means, and the keyboard's height; a keyboard only changes the height.
+    if (innerWidth !== wide) {
+      tallest = 0;
+      keyboardHeight.value = remembered();
+    }
     wide = innerWidth;
     update();
   });
   document.addEventListener('focusin', update);
   document.addEventListener('focusout', () => setTimeout(update, 50));
-  update();
+  effect(() => {
+    void panelOpen.value;
+    update();
+  });
 }
 
 // ------------------------------------------------------------------ dragging a sheet down
