@@ -7,7 +7,7 @@
 | Job | What it runs | The same locally |
 |---|---|---|
 | `changes` | decides what the pull request needs (scripts/ci-changes.ts) | `git diff --name-only origin/main... \| bun scripts/ci-changes.ts` |
-| `typecheck` | tsc on every project at once (scripts/typecheck.ts), then the checks below: test hygiene, import cycles, unused files and dependencies | `bun run typecheck`, `bun run check:tests`, `bun run check:cycles`, `bun run knip` |
+| `typecheck` | tsc on every project at once (scripts/typecheck.ts), then the checks below: test hygiene, stylesheets, import cycles, unused files and dependencies | `bun run typecheck`, `bun run check:tests`, `bun run check:css`, `bun run check:cycles`, `bun run knip` |
 | `test-hub` | the hub's tests but mail-load's, its files on 4 workers (`bun test --parallel=4`) | `bun scripts/test-all.ts hub -- --path-ignore-patterns=test/mail-load.test.ts` |
 | `test-hub-mail` | the hub's mail-load tests (60k messages; 20 to 30 s, as long as the rest of the hub's) | `bun scripts/test-all.ts hub -- test/mail-load.test.ts` |
 | `test-packages` | every other package's tests, all at once | `bun scripts/test-all.ts --except hub` |
@@ -201,3 +201,27 @@ settings from those variables, and a test that starts a hub passes its environme
 demo hub, a lab, a replay) ran the tests on other settings than CI's: with DITHER_MEDIA_ALLOW_PRIVATE=1 three of the
 media fetcher's address-guard tests failed. A test that needs a setting sets it. `DITHER_TEST_KEEP_ENV=1` keeps them,
 to try a test on a setting on purpose.
+
+## Stylesheets
+
+A component's own stylesheet (any `.css` under packages/web/src but styles.css, imported by the component: ui/feed/feed.css,
+ui/mentions.css…) is global once it loads. A rule in it applies to every element on the page, so a rule that names
+only classes the rest of the app uses too changes the rest of the app, and only after that component has been shown
+once in the session: a bug that comes and goes. On 2026-11-14 the X feed's `.composer { … }` (its post box) drew a
+second frame around the chat's message box once the feed had been opened, and the @ picker's `.mc-note` and `.mc-more`
+restyled the mail composer's own (the picker's classes are `mp-` now).
+
+`bun run check:css` (scripts/check-css.ts) runs in CI's typecheck job and takes about a second. Each such stylesheet
+is owned by the files that import it and the files only they import; one in a directory of its own under ui/ by every
+file in that directory. A class is the sheet's own when it is written in those files and in no other (as a word in a
+string or template literal whose words could all be classes). Then:
+
+- every selector in it names at least one class of its own (`.thread-focal .post-composer`, not `.composer`, `.on`,
+  `button` or `textarea:focus` alone);
+- a class it styles as a whole selector (`.x`, `.x:hover`) is not styled that way in styles.css or another
+  component's sheet too.
+
+The fix is a class of the component's own: rename the shared one, prefix it (`post-`, `mp-`), or put the component's
+root class in front. A box the rest of the app draws for the component (the feed's `.feed-pane`) is styled in
+styles.css, so it holds before the component loads. A rule that must reach out says why, in the comment right before
+it: `/* css-scope: <reason> */`.

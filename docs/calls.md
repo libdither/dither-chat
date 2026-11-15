@@ -1,7 +1,16 @@
 # Calls
 
-Voice calls on Discord accounts, in two modes you can switch between in Settings → Calls. Both keep the account's
-login token on the hub and both make Discord see the hub's address, never the device's.
+Voice and video calls, in two modes you can switch between in Settings → Calls. Both keep the account's login token on
+the hub and both make the network see the hub's address, never the device's.
+
+Bridge mode is the same for every network: the account's own client, in its sandbox, is in the call, and the device
+talks to it over one WebRTC connection whose slots are fixed (`BRIDGE_MIDS`: microphone in and the call's mix out,
+camera, screen, screen audio, and four slots of others' video). Nothing in the hub or the web app knows how the client
+gets its media; that is the adapter's. Discord's client is the first (below); any adapter that advertises `calls` and
+answers the `call` command's ops the same way gets the same call view, ringing, video and sounds. Direct mode is the
+device speaking the network's own voice protocol, which only exists for Discord: asked for elsewhere, the hub carries
+the call in bridge mode and its `joined` says so, and the device follows. In a call that is not Discord's, the device
+plays its own chimes rather than Discord's recordings.
 
 | | Bridge (default) | Direct |
 |---|---|---|

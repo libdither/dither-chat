@@ -212,10 +212,10 @@ export function MentionPicker({
   // Headers only when there is more than the people here.
   const sections = !person && rows.some((r) => r.section !== 'here');
   return (
-    <div class="ec-pop mc-pop" role="listbox" aria-label={person ? `Accounts of ${person.name}` : `People matching @${trig!.query}`} ref={list} onMouseDown={(e) => e.preventDefault()}>
+    <div class="ec-pop mp-pop" role="listbox" aria-label={person ? `Accounts of ${person.name}` : `People matching @${trig!.query}`} ref={list} onMouseDown={(e) => e.preventDefault()}>
       <div class="ec-head">
         {person ? (
-          <button class="mc-back" onClick={back} aria-label="Back to the list">
+          <button class="mp-back" onClick={back} aria-label="Back to the list">
             <Icon name="back" size={13} /> <b>{person.name}</b>
           </button>
         ) : trig!.query ? (
@@ -225,8 +225,8 @@ export function MentionPicker({
         ) : (
           'Mention'
         )}
-        {state === 'asking' && <span class="mc-state">asking {net}…</span>}
-        {state === 'partial' && <span class="mc-state">{net} did not answer: people this hub knows</span>}
+        {state === 'asking' && <span class="mp-state">asking {net}…</span>}
+        {state === 'partial' && <span class="mp-state">{net} did not answer: people this hub knows</span>}
       </div>
       {shownRows.map((r, i) => {
         const note = person ? (lead && !i ? 'the person' : null) : noteOf(r, network);
@@ -234,12 +234,12 @@ export function MentionPicker({
         const who = r.kind === 'identity' || r.kind === 'person';
         return [
           sections && r.section !== shownRows[i - 1]?.section && (
-            <div class="mc-sec" role="presentation">
+            <div class="mp-sec" role="presentation">
               {SECTION[r.section]}
             </div>
           ),
           <button
-            class={`ec-opt mc-opt ${i === sel ? 'on' : ''}`}
+            class={`ec-opt mp-opt ${i === sel ? 'on' : ''}`}
             role="option"
             aria-selected={i === sel}
             tabIndex={-1}
@@ -249,21 +249,21 @@ export function MentionPicker({
             {who ? (
               <Avatar id={r.identityId ?? r.personId ?? r.insert} name={r.name} url={r.avatar} size={24} network={r.network as P.Network | undefined} />
             ) : (
-              <span class="mc-glyph" style={tint}>
+              <span class="mp-glyph" style={tint}>
                 <Icon name={r.kind === 'role' ? 'users' : 'at'} size={15} />
               </span>
             )}
-            <span class="mc-name" style={tint}>
+            <span class="mp-name" style={tint}>
               {!who ? `@${r.name}` : person && (i || !lead) ? `${r.name} · ${netName(r.network as P.Network)}` : r.name}
             </span>
-            {r.handle && <span class="mc-handle">{r.handle}</span>}
-            {note && <span class="mc-note">{note}</span>}
-            <span class={`mc-ping ${r.pings ? '' : 'off'}`} title={r.pings ? `${net} notifies ${who ? 'them' : 'everyone it names'}` : 'Text only: nobody is notified'}>
+            {r.handle && <span class="mp-handle">{r.handle}</span>}
+            {note && <span class="mp-note">{note}</span>}
+            <span class={`mp-ping ${r.pings ? '' : 'off'}`} title={r.pings ? `${net} notifies ${who ? 'them' : 'everyone it names'}` : 'Text only: nobody is notified'}>
               <Icon name={r.pings ? 'bell' : 'bellOff'} size={13} />
             </span>
             {!person && opens(r) && (
               <span
-                class="mc-more"
+                class="mp-more"
                 title="Their accounts (→)"
                 onClick={(e) => {
                   e.stopPropagation();

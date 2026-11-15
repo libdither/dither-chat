@@ -123,6 +123,11 @@ const patch = (p: Partial<ActiveCall>) => {
   if (activeCall.value) activeCall.value = { ...activeCall.value, ...p };
 };
 
+/** The network a call goes over, from its account. */
+export function callNetwork(call: Pick<ActiveCall, 'accountId'>): P.Network {
+  return db.accounts.get(call.accountId)?.network ?? 'discord';
+}
+
 /** A voice channel's account to call from: the one chosen to send as in this chat, else the first online one that can. */
 export function canCall(c: P.ConversationView): string | null {
   const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && a.capabilities.includes('calls') && a.status === 'online');
@@ -165,7 +170,7 @@ export async function startCall(conversationId: string, accountId: string, mode:
   try {
     ctx = new AudioContext();
     void ctx.resume().catch(() => {});
-    preloadCallSounds(ctx);
+    preloadCallSounds(ctx, callNetwork({ accountId }));
   } catch {
     ctx = null;
   }
@@ -210,7 +215,8 @@ function mark(step: keyof ActiveCall['timing']) {
 /** A call sound, if this device plays them (Settings → Calls). */
 function sound(name: P.CallSoundName) {
   if (prefs.value.callSounds === false) return;
-  void playCallSound(ctx, name).then((as) => {
+  const net = activeCall.value ? callNetwork(activeCall.value) : 'discord';
+  void playCallSound(ctx, name, 0.6, net).then((as) => {
     if (as !== 'skipped') soundLog.push({ name, as, at: Date.now() });
   });
 }
@@ -223,6 +229,8 @@ async function onServer(m: P.CallServerMessage) {
   switch (m.t) {
     case 'joined': {
       mark('joined');
+      // The hub carries a call in bridge mode where the network has no direct mode (every network but Discord).
+      if (m.mode !== cur.mode) patch({ mode: m.mode });
       await pendingMic;
       if (!activeCall.value || activeCall.value.phase === 'ended') return;
       const host: TransportHost = {

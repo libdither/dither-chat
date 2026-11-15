@@ -16,6 +16,7 @@
     "check:boot": "bun scripts/check-boot.ts",
     "check:tests": "bun scripts/check-tests.ts",
     "accounts:check": "bun scripts/accounts-sync.ts --check",
+    "check:css": "bun scripts/check-css.ts",
     "check:cycles": "bun scripts/check-cycles.ts",
     "knip": "knip --include files,dependencies,unlisted,unresolved,binaries --no-progress --treat-config-hints-as-errors"
   },

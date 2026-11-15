@@ -1108,6 +1108,10 @@ code {
   height: 100%;
   min-height: 0;
 }
+/* A network's feed (ui/feed/): its box is here, not in feed.css, so it holds before the feed's chunk loads. */
+.feed-pane {
+  overflow: hidden;
+}
 .conv-head {
   display: flex;
   align-items: center;
@@ -8436,6 +8440,11 @@ body.dragging * {
   color: var(--danger);
   background: var(--bg-raised);
   border-radius: 50%;
+}
+/* Muted or deafened by the server, not by them. */
+.call-flag.server {
+  color: var(--bg-raised);
+  background: var(--danger);
 }
 .call-empty {
   grid-column: 1 / -1;

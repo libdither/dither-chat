@@ -1,7 +1,4 @@
 /* A network's notifications by post, threads and a person's recent posts (docs/feed.md). Loaded with the feed's chunk. */
-.feed-pane {
-  overflow: hidden;
-}
 .feed-scroll {
   flex: 1;
   min-height: 0;
