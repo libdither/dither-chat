@@ -11,7 +11,7 @@ against a demo hub (`scripts/verify-media-kinds.ts`).
 
 ## Stickers
 
-Stickers are **Sticker** in the + menu on a computer ([sending.md](sending.md) "The box on a computer") and a button beside the emoji button on a phone. The picker is a chunk of its own (`MediaParts.tsx`), and
+Stickers are **Sticker** in the + menu on a computer ([sending.md](sending.md) "The box on a computer") and in the + sheet on a phone, after Photos & videos and File (until 2026-11-14 a button in the phone's box, beside the emoji button). The picker is a chunk of its own (`MediaParts.tsx`), and
 nothing is asked of the network until it opens: then `GET /api/conversations/:id/stickers` asks the sending account
 for one page of packs (the `stickers` command, `StickerPage`, up to `STICKER_PAGE_PACKS` packs), and the next page only
 when the owner presses More. Picking a sticker sends it at once, as a reply when one is open (`send`'s `sticker`).

@@ -220,13 +220,13 @@ What it adds to a conversation's page:
   nickname is set on its tile there (Names, above).
 - **The message box's line** says where a message goes, by the same rule and no more (`leadTells`), in the words of
   the line under the name: "To Kit on Signal", "To Kit on Discord · to kit.work", and "· via zyn.alt" only when the
-  account of theirs it goes to can be reached from several of yours. On a computer it is a quiet line just over the
-  box, and the box's placeholder is only "Message": nothing moves as you type. The parts that can change switch: two
-  options toggle (⟳), more open a menu (⌄), each tinted on hover. Until 2026-11-14 it took the placeholder's place on a
-  computer too, as a dashed link, and jumped to the box's top edge once typed in. On a phone it still takes the
-  placeholder's place, exactly where the box's own text will be (its top padding and line height), and moves to the
-  box's edge once typed in; it only says where the message goes ("To Kit on Signal", or "Kit on Discord · to
-  kit.work" where a "to" follows) and can't be tapped. Tapping the box is for typing, so the route is switched from the list or a tag.
+  account of theirs it goes to can be reached from several of yours. It is a quiet line at the start of the row the
+  typing line keeps over the box ([typing.md](typing.md)), so it takes no room of its own, and who is typing shows at
+  that row's other end; the box's placeholder is only "Message", and nothing moves as you type. The same on a computer
+  and a phone, where it ends in … when it is too long ("To kit.work" where a "to" follows, a phone having room for one
+  name). The parts that can change switch: two options toggle (⟳), more open a menu (⌄, a sheet on a phone), each
+  tinted on hover. Until 2026-11-14 it took the placeholder's place, as a dashed link, and jumped to the box's top
+  edge once typed in; then, on a computer, it was a row of its own over the box, under the typing line's.
 - **The header's buttons** are a conversation's: profile, call, search, notifications, details. With all chats shown
   they act on every route: search is `in:<person id>` (the hub reads a person's id as every direct conversation with
   them), and a notification rule is set on each. With one route picked, search is `in:<conversation>`. A call goes

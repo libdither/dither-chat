@@ -37,32 +37,10 @@ export function mediaOffer(acc: P.AccountView | undefined, canAttach: boolean) {
   return { stickers: has('sendStickers'), record: canAttach, voice: canAttach && has('sendVoice'), viewOnce: canAttach && has('sendViewOnce') };
 }
 
-/** The sticker button and its picker (a phone's box). `onSend` gets the sticker the owner picked. */
-export function StickerButton({ conversationId, accountId, onPhone, onSend }: { conversationId: string; accountId?: string; onPhone: boolean; onSend: (sticker: P.StickerView) => void }) {
-  const [at, setAt] = useState<DOMRect | null>(null);
-  useEffect(() => setAt(null), [conversationId]);
-  return (
-    <>
-      <button
-        class="icon-btn composer-sticker"
-        data-track="stickers"
-        title="Stickers"
-        aria-label="Stickers"
-        aria-expanded={!!at}
-        onPointerEnter={preloadStickers}
-        onClick={(e) => setAt(at ? null : (e.currentTarget as HTMLElement).getBoundingClientRect())}
-      >
-        <Icon name="sticker" size={onPhone ? 20 : 18} />
-      </button>
-      {at && <StickerPicker conversationId={conversationId} accountId={accountId} anchor={at} onSend={onSend} onClose={() => setAt(null)} />}
-    </>
-  );
-}
-
 /** Starts loading the picker's chunk, so it opens whole (on the way to a button that opens it). */
 export const preloadStickers = () => void load().catch(() => {});
 
-/** The sticker picker beside `anchor` (the + menu's Sticker on a computer, or the phone's sticker button). */
+/** The sticker picker beside `anchor` (the + menu's Sticker on a computer, the + sheet's on a phone). */
 export function StickerPicker({ conversationId, accountId, anchor, onSend, onClose }: { conversationId: string; accountId?: string; anchor: DOMRect; onSend: (sticker: P.StickerView) => void; onClose: () => void }) {
   const m = useParts(true);
   if (!m) return null;

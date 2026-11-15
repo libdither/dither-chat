@@ -6,6 +6,7 @@
  */
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
+import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { canReplyQuietly, canSaveOnNetwork, canSendSilently, knowSaved, rememberReplyMentions, replyMentions, scheduled, scheduleSend, waitingIn, watchScheduled, whenWords } from '../sending.ts';
 import { db } from '../state.ts';
@@ -116,16 +117,9 @@ export function useSendExtras(o: ExtrasInput) {
     };
   };
 
-  const button = o.conv && !o.blocked && (
-    <Menu
-      up
-      align="right"
-      trigger={(toggle) => (
-        <button class={`icon-btn send-more ${silent ? 'on' : ''}`} data-track="send options" onClick={toggle} title={silent ? 'Sends silently' : 'More ways to send'} aria-label="More ways to send">
-          <Icon name={silent ? 'bellOff' : 'chevronUp'} size={14} />
-        </button>
-      )}
-    >
+  // The send menu, opened by `trigger`'s button: a computer's arrow beside send (`button`), a phone's send button held.
+  const menu = (trigger: (toggle: () => void) => ComponentChildren) => (
+    <Menu up align="right" trigger={trigger}>
       {(close) => (
         <div class="level-menu">
           {quiet && (
@@ -155,6 +149,14 @@ export function useSendExtras(o: ExtrasInput) {
       )}
     </Menu>
   );
+  const on = !!o.conv && !o.blocked;
+  const button =
+    on &&
+    menu((toggle) => (
+      <button class={`icon-btn send-more ${silent ? 'on' : ''}`} data-track="send options" onClick={toggle} title={silent ? 'Sends silently' : 'More ways to send'} aria-label="More ways to send">
+        <Icon name={silent ? 'bellOff' : 'chevronUp'} size={14} />
+      </button>
+    ));
 
   return {
     /** Goes with the send (state.ts send). */
@@ -163,6 +165,9 @@ export function useSendExtras(o: ExtrasInput) {
     sent: () => setSilent(false),
     replyToggle,
     button,
+    menu: on ? menu : null,
+    /** The next message goes silently: a phone's send button shows it. */
+    silent: silent && quiet,
   };
 }
 

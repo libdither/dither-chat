@@ -2668,6 +2668,20 @@ textarea.chip-box {
   background: var(--bg-hover);
   color: var(--text-faint);
 }
+/* A phone's send button, set to send silently from its held menu: a small bell, struck through, on its corner. */
+.send-btn.silent {
+  position: relative;
+}
+.send-badge {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  padding: 2px;
+  box-sizing: content-box;
+  border-radius: 50%;
+  background: var(--bg-input);
+  color: var(--text);
+}
 /* A computer's box: every control is as tall as send and sits on the last line, whatever the text's height; one
    line of text is that tall too (docs/sending.md "The box"). */
 .composer > .composer-box {
@@ -5894,16 +5908,16 @@ textarea.chip-box {
     padding: 2px 2px 2px 14px;
     border-radius: 22px;
   }
-  .composer-row .pair-lead:not(.raised) .pair-lead-slot {
-    top: 8px;
-    font-size: 16px; /* a phone's fields are 16px (below), so the line is the size of what you will type */
-  }
   .composer-row .composer-box textarea {
     padding: 8px 0;
     max-height: min(calc(5lh + 16px), var(--app-h, 100dvh) * 0.4);
   }
+  .composer-row > .menu-anchor {
+    flex: none;
+  }
   .composer-row > .composer-plus,
-  .composer-row > .send-btn {
+  .composer-row > .send-btn,
+  .composer-row > .menu-anchor > .send-btn {
     flex: none;
     width: 42px;
     height: 42px;
@@ -14432,76 +14446,60 @@ html.kb-open .ss-foot {
 /* ---------------------------------------------------------------- a person on several accounts (ui/Pairs.tsx) */
 
 
-/* The message box's line. On a computer, a quiet line over the box ("To Kit on Signal ⌄"), where it never covers
-   what you type; its names that switch are buttons with a hover tint and a hint (⌄ opens a list, ⟳ swaps two). */
-/* Not clipped: a list of routes opens up out of it. A long line wraps between its parts instead. */
-.pair-lead-above {
-  margin: 0 0 5px 4px;
+/* The message box's line: where the message goes ("To Kit on Signal ⌄"), at the start of the typing line's row over the
+   box (ui/Typing.tsx), so it takes no room of its own; its names that switch are buttons with a hover tint and a hint
+   (⌄ opens a list, ⟳ swaps two). Not clipped: a list of routes opens up out of it. Who is typing goes to the row's end. */
+.typing-bar.with-lead {
+  overflow: visible;
+}
+.typing-lead {
+  pointer-events: auto;
+  flex: none;
+  max-width: 100%;
+  margin-left: -6px;
   font-size: 12px;
-  line-height: 20px;
   color: var(--text-faint);
 }
-.pair-lead-above .pair-token,
-.pair-lead-above .pair-last {
+.typing-now {
+  margin-left: auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+.typing-lead .pair-token,
+.typing-lead .pair-last {
   white-space: nowrap;
 }
-.pair-lead-above .pair-token {
+.typing-lead .pair-token {
   border-bottom: none;
   border-radius: 5px;
   padding: 0 4px;
   margin: 0 -1px 0 -3px;
   align-items: center;
 }
-.pair-lead-above .pair-token.fixed {
+.typing-lead .pair-token.fixed {
   padding: 0;
   margin: 0;
 }
-.pair-lead-above button.pair-token:hover {
+.typing-lead button.pair-token:hover {
   background: var(--bg-hover);
 }
 .pair-token-hint {
   opacity: 0.7;
 }
-.pair-lead-above .pair-last {
+.typing-lead .pair-last {
   font-size: 11px;
 }
-.pair-lead-above .menu-anchor {
+.typing-lead .menu-anchor {
   display: inline-block;
 }
-/* On a phone: in place of the placeholder while empty, on the box's top edge once typed in. */
-.pair-lead {
-  flex: 1;
-  min-width: 0;
-  position: relative;
-  display: flex;
-}
-.pair-lead > textarea {
-  flex: 1;
-}
-.pair-lead-slot {
-  position: absolute;
-  left: 0;
-  /* On the line the box's own text takes: its top padding, its line height (and a phone's, below). */
-  top: 6px;
-  line-height: 1.45;
-  right: 0;
-  pointer-events: none;
-  color: var(--text-faint);
-  white-space: nowrap;
+/* A phone's row is narrow: the line ends in … rather than running off the screen (its lists open as sheets, unclipped). */
+.app.phone .typing-lead {
   overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: inherit;
-  transition: top 0.12s, font-size 0.12s, left 0.12s;
-}
-.pair-lead.raised .pair-lead-slot {
-  top: -21px;
-  left: -6px;
-  right: auto;
-  max-width: 100%;
-  font-size: 11.5px;
-  padding: 0 6px;
-  background: var(--bg-input);
-  border-radius: 6px;
 }
 .pair-lead-line {
   display: inline;
@@ -14550,10 +14548,6 @@ button.pair-last:hover {
 .pair-token .avatar-net {
   display: none;
 }
-.pair-lead-slot .menu-anchor {
-  display: inline-block;
-  pointer-events: auto;
-}
 .pair-menu .menu-item {
   display: flex;
   align-items: center;
@@ -14562,10 +14556,6 @@ button.pair-last:hover {
 .pair-menu .menu-item .avatar-net {
   width: 10px !important;
   height: 10px !important;
-}
-.pair-lead-slot .menu {
-  pointer-events: auto;
-  white-space: normal;
 }
 /* Nickname (ui/Nickname.tsx): a one-route chat's name, or a one-account profile's, with a pencil that shows on hover
    for your nickname for their account. */

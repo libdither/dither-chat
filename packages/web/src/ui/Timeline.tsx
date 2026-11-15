@@ -90,7 +90,7 @@ import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
 import { TypingBar } from './Typing.tsx';
 import { useGrow } from './grow.ts';
 import { AttachSheet, CameraView, SendScreen } from './Attach.tsx';
-import { mediaOffer, preloadStickers, StickerButton, StickerPicker, stickerInstaller, ViewOnceChip, VoiceButton } from './ComposerMedia.tsx';
+import { mediaOffer, preloadStickers, StickerPicker, stickerInstaller, ViewOnceChip, VoiceButton } from './ComposerMedia.tsx';
 import { CAPTURE_ACCEPT, MEDIA_ACCEPT, opensSendScreen } from '../camera.ts';
 import { phone, touchOnly } from '../phone.ts';
 import { composerDone, composerTyped } from '../typing.ts';
@@ -1113,15 +1113,11 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
 
 // ------------------------------------------------------------------ composer
 
-function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledReason, lead }: {
+function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledReason, routed }: {
   targets: { convId: string; accountId?: string };
   placeholder: string;
-  /**
-   * A person page (ui/Pairs.tsx): where the message goes. On a computer a line over the box whose names can be clicked,
-   * the box's placeholder just "Message"; on a phone it takes the placeholder's place and moves to the box's edge once
-   * typed in.
-   */
-  lead?: ComponentChildren;
+  /** A person page: the line over the box says where the message goes (ui/Pairs.tsx), so the placeholder is just "Message". */
+  routed?: boolean;
   sendAs?: { options: { id: string; label: any }[]; value: string; onChange: (v: string) => void; label: string };
   onSendAs?: never;
   reply: P.MessageView | null;
@@ -1349,7 +1345,7 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
       data-track="text box"
       rows={1}
       value={chips.shown}
-      placeholder={disabledReason ?? (!lead ? placeholder : onPhone ? '' : 'Message')}
+      placeholder={disabledReason ?? (routed ? 'Message' : placeholder)}
       disabled={!!disabledReason}
       onInput={chips.onInput}
       onBlur={composerDone}
@@ -1395,17 +1391,39 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
       <Icon name="smile" size={onPhone ? 20 : 18} />
     </button>
   );
-  const sendBtn =
-    attaching && offer.record && !text.trim() && !files.length ? (
+  const recording = attaching && offer.record && !text.trim() && !files.length;
+  const sendBtn = recording ? (
       <VoiceButton conversationId={targets.convId} onPhone={onPhone} voice={offer.voice} onSend={(f, voice) => sendMedia({ files: [f], ...(voice ? { media: { voice } } : {}) })} />
-    ) : (
-      <button class="send-btn" data-track="send" disabled={!canSend} onClick={submit} aria-label="Send" title={sendTitle}>
+  ) : (
+    <button class="send-btn" data-track="send" disabled={!canSend} onClick={submit} aria-label="Send" title={sendTitle}>
+      <Icon name="send" size={17} />
+    </button>
+  );
+  // On a phone, holding send opens the send menu (Send silently, Send later…); a right-click does with a mouse.
+  const sendMenuOpen = useRef<(() => void) | null>(null);
+  const sendHold = useLongPress(() => sendMenuOpen.current?.());
+  const phoneSend = (toggle: () => void) => {
+    sendMenuOpen.current = toggle;
+    return (
+      <button
+        class={`send-btn ${extras.silent ? 'silent' : ''}`}
+        data-track="send"
+        disabled={!canSend}
+        onClick={submit}
+        {...sendHold}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          if (!matchMedia('(pointer: coarse)').matches) toggle();
+        }}
+        aria-label="Send"
+        aria-haspopup="menu"
+        title={`${sendTitle ?? 'Send'}${extras.silent ? ', silently' : ''} (hold for more ways to send)`}
+      >
         <Icon name="send" size={17} />
+        {extras.silent && <Icon name="bellOff" size={10} class="send-badge" />}
       </button>
     );
-  const stickerBtn = conv && !disabledReason && !edit && offer.stickers && (
-    <StickerButton conversationId={targets.convId} accountId={targets.accountId ?? sender?.id} onPhone={onPhone} onSend={(st) => sendMedia({ media: { sticker: st.id } })} />
-  );
+  };
   const viewOnceChip = offer.viewOnce && files.length > 0 && !edit && <ViewOnceChip on={viewOnce} set={setViewOnce} />;
   return (
     <div
@@ -1425,8 +1443,6 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
       }}
     >
       <ScheduledStrip conversationId={targets.convId} />
-      {/* A computer's route line sits over the box, out of the text's way; a phone's is in the box (below). */}
-      {lead && !onPhone && !polling && <div class="pair-lead-above">{lead}</div>}
       {edit && (
         <div class="composer-reply">
           <Icon name="pencil" size={13} /> Editing your message
@@ -1510,31 +1526,23 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
         />
       ) : onPhone ? (
         <div class="composer-row">
-          {attaching && (
-            <button class="icon-btn composer-plus" data-track="plus" onClick={() => setSheet(true)} aria-label="Attach photos, videos or files">
+          {(attaching || canSticker) && (
+            <button ref={plusRef} class="icon-btn composer-plus" data-track="plus" onClick={() => setSheet(true)} aria-label={attaching ? 'Attach photos, videos or files' : 'Stickers'}>
               <Icon name="plus" size={22} />
             </button>
           )}
           <div class={`composer-box ${disabledReason ? 'disabled' : ''}`}>
             {sendAsMenu}
-            {lead ? (
-              <div class={`pair-lead ${text ? 'raised' : ''}`}>
-                <div class="pair-lead-slot">{lead}</div>
-                {box}
-              </div>
-            ) : (
-              box
-            )}
+            {box}
             {emojiBtn}
-            {stickerBtn}
             {attaching && (
               <button class="icon-btn composer-camera" data-track="camera" onClick={openCamera} aria-label="Take a photo or video">
                 <Icon name="camera" size={20} />
               </button>
             )}
           </div>
-          {extras.button}
-          {sendBtn}
+          {/* A phone has no room for the send menu's arrow: holding the send button opens it. */}
+          {extras.menu && !recording ? extras.menu(phoneSend) : sendBtn}
         </div>
       ) : (
         <div class={`composer-box ${disabledReason ? 'disabled' : ''}`}>
@@ -1570,9 +1578,9 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
         <AttachSheet
           limit={limit}
           onClose={() => setSheet(false)}
-          onPhotos={() => photos.current?.click()}
-          onFile={() => picker.current?.click()}
+          {...(attaching ? { onPhotos: () => photos.current?.click(), onFile: () => picker.current?.click() } : {})}
           onPoll={pollAccount ? () => setPolling(true) : undefined}
+          {...(canSticker ? { onSticker: () => plusRef.current && setStickerAt(plusRef.current.getBoundingClientRect()), onStickerHover: preloadStickers } : {})}
           {...(offer.viewOnce ? { onViewOnce: () => (setViewOnce(true), photos.current?.click()) } : {})}
         />
       )}
@@ -1766,7 +1774,8 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
         focus={msg}
         chat={{ badge: view === 'all' && badgeShows(directs), onFocus, onMissing }}
       />
-      <TypingBar convIds={shown.map((d) => d.id)} />
+      {/* The route line shares the typing line's row, over the box (docs/chats.md "The message box"). */}
+      <TypingBar convIds={shown.map((d) => d.id)} lead={!held && <PairLead person={person} directs={directs} focus={focus} onFocus={onFocus} />} />
       {held ? (
         <RequestBar r={held} />
       ) : (
@@ -1776,7 +1785,7 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
           reply={reply}
           clearReply={() => setReply(null)}
           disabledReason={composerBlocker(focus)}
-          lead={<PairLead person={person} directs={directs} focus={focus} onFocus={onFocus} />}
+          routed
         />
       )}
     </section>

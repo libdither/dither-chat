@@ -43,9 +43,11 @@ the default. The send command's field is `mentionReplied: false`; the hub passes
 
 ## Send silently
 
-The send button's menu (its narrow right half on a computer, an arrow beside it on a phone) has **Send silently** where the account can (capability
+The send button's menu (its narrow right half on a computer; on a phone, hold the send button, as in Signal and
+Telegram, or right-click it with a mouse) has **Send silently** where the account can (capability
 `silentSend`): Discord's @silent, flag `SUPPRESS_NOTIFICATIONS` (4096) in the client's own send options. It is for one
-message, as @silent is: the next send is loud again. The bell-off icon on the arrow says it is on. A message sent
+message, as @silent is: the next send is loud again. A bell-off icon says it is on: on the arrow on a computer, on the
+send button's corner on a phone. A message sent
 silently by anyone never alerts here either ([rich-messages.md](rich-messages.md)).
 
 Signal's `send --no-urgent` is not the same thing and is not offered: it only leaves out the push that wakes the

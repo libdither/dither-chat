@@ -174,7 +174,9 @@ export function Menu({ trigger, children, align = 'left', up }: { trigger: (open
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!open) return;
+    // A phone's menu is a sheet on the body, outside this anchor, and closes itself on a tap past it (Sheet.tsx); a
+    // press inside it, or the one a finger lifting from a long-press makes, must not close it here.
+    if (!open || phone.value) return;
     const h = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && setOpen(false);
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
