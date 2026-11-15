@@ -47,7 +47,8 @@ The row is Signal's and Discord's: **+** on the left, the message box with a **c
 right, and send (`ui/Attach.tsx`, pure parts in `camera.ts`). The desktop keeps paste and drop, and files are **Upload a file** in its + menu, or a plain paperclip where files are all the network takes ([sending.md](sending.md)).
 
 - **+** opens the panel in the keyboard's place (below, "The panel").
-- **The camera button** opens a full-screen camera in the app (`getUserMedia`), the rear camera first: tap the
+- **The camera button** (in the box while it is empty; once you type, the text has its width, as in Signal and
+  WhatsApp, and the panel's camera tile is still there) opens a full-screen camera in the app (`getUserMedia`), the rear camera first: tap the
   shutter for a photo (a JPEG from the preview's frame, 1920×1080 where the camera gives it), hold it for a video
   (`MediaRecorder`, MP4 where the browser records it, else WebM; with sound once the microphone is allowed, asked
   the first time you hold), flip where there is another camera (to the one facing the other way, not the next one
@@ -96,7 +97,8 @@ is the caption. **Open large** is the send screen.
   file sent or received on any network (`has:file`, newest first), sent again with no picker and no permission.
   **Other apps…** at the end is the system's file picker, for a file that lives in another app (a cloud drive); in a
   browser it is **Choose a file…**, the only way to the phone's files there.
-- **The search** opens the panel to the whole screen, above the keyboard.
+- **The search** puts the panel on the keyboard at its own height (at most a little over half of what the keyboard
+  leaves), so the chat stays in sight above the box; the same for any field of the panel's own (phone.ts `panelLift`).
 
 How the app does it (`apps/android` `Device.kt`): lists go over the bridge (`device.media`, `device.files`,
 answered by request id), from MediaStore (the gallery, by `DATE_MODIFIED` and id, so pictures taken in the same
