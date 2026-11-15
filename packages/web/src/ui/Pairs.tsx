@@ -239,8 +239,7 @@ function MyPicture({ p, size }: { p: Pair; size: number }) {
 /** A name in the message box's line that changes the pair: cycles between two, lists more. */
 function Token({ label, options, onPick, picture }: { label: string; options: { id: string; label: string; picture?: ComponentChildren }[]; onPick: (id: string) => void; picture?: ComponentChildren }) {
   const cur = options.findIndex((o) => o.label === label);
-  // On a phone the line only says where it goes: a tap in the box is for typing, not for switching accounts.
-  if (options.length < 2 || phone.value)
+  if (options.length < 2)
     return (
       <span class="pair-token fixed">
         {picture}
@@ -290,8 +289,8 @@ function Token({ label, options, onPick, picture }: { label: string; options: { 
 /**
  * Where a message goes, by the same rule as the tags and no more: "Message Kit on Signal", "Message Kit on Discord
  * (kit.work)", and "from zyn.alt" only when the account of theirs it goes to can be reached from several of yours
- * (chatroutes.ts leadTells). The parts that can change switch. On a computer it is a line over the box ("To Kit on
- * Signal"); on a phone it is in the box while it is empty, on its edge once typed in.
+ * (chatroutes.ts leadTells). The parts that can change switch. It sits at the start of the typing line's row, over the
+ * box (ui/Typing.tsx): "To Kit on Signal".
  */
 export function PairLead({ person, directs, focus, onFocus }: { person: P.PersonView; directs: P.ConversationView[]; focus: P.ConversationView; onFocus: (convId: string) => void }) {
   const keys = directs.map(routeKey);
@@ -337,7 +336,7 @@ export function PairLead({ person, directs, focus, onFocus }: { person: P.Person
 /**
  * A quiet hint at the end of the message box's line when the message would go another way than the chat's latest
  * message came: "last message on Signal" (else "with kit.work", "via zyn.alt": chatroutes.ts lastRouteTells). A
- * click sends through that route; on a phone it only says so, as the line's names do.
+ * click or tap sends through that route.
  */
 function LastRoute({ directs, focus, onFocus }: { directs: P.ConversationView[]; focus: P.ConversationView; onFocus: (convId: string) => void }) {
   const last = directs.reduce<P.ConversationView | null>((a, d) => (!a || (d.lastMessageAt ?? 0) > (a.lastMessageAt ?? 0) ? d : a), null);
@@ -353,12 +352,6 @@ function LastRoute({ directs, focus, onFocus }: { directs: P.ConversationView[];
       last message {where}
     </>
   );
-  if (phone.value)
-    return (
-      <span class="pair-last" title={title}>
-        {body}
-      </span>
-    );
   return (
     <button class="pair-last" data-track="last route" title={`${title}. Click to send there.`} onClick={() => onFocus(last.id)}>
       {body}
