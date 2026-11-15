@@ -95,7 +95,7 @@
 .rich-linked::before {
   display: none;
 }
-.voice {
+.voice-msg {
   display: flex;
   align-items: center;
   gap: 10px;
