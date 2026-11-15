@@ -6,9 +6,9 @@
  * topic and your own hand, and the soundboard where the account may play sounds.
  */
 import type * as P from '@dither-chat/protocol';
-import { modVerb, VOLUME_MAX } from '@dither-chat/protocol';
+import { modVerb, NETWORK_META, VOLUME_MAX } from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
-import { type ActiveCall, askSounds, callCan, isCallSelf, playSound, setPersonVolume, stageAction, watchStream } from '../call.ts';
+import { type ActiveCall, askSounds, callCan, callNetwork, isCallSelf, playSound, setPersonVolume, stageAction, watchStream } from '../call.ts';
 import { convTitle } from '../model.ts';
 import { api, db, go, isSelfIdentity, toast } from '../state.ts';
 import { Avatar } from './bits.tsx';
@@ -52,7 +52,7 @@ async function moderate(call: ActiveCall, action: P.ModAction, question: string,
     setView(await api<P.AboutView>(`/api/conversations/${call.conversationId}/moderate`, { body: { action, accountId: call.accountId } satisfies P.ModerateRequest }));
     toast({ kind: 'info', title: done, body: '' }, 2500);
   } catch (e) {
-    toast({ kind: 'error', title: `Could not ${modVerb('discord', action).toLowerCase()}`, body: (e as Error).message });
+    toast({ kind: 'error', title: `Could not ${modVerb(callNetwork(call), action).toLowerCase()}`, body: (e as Error).message });
   }
 }
 
@@ -148,7 +148,7 @@ function Person({ call, p, about, setAbout }: { call: ActiveCall; p: P.CallParti
     <li class={`${p.speaking ? 'speaking' : ''} ${p.localMute ? 'local-mute' : ''}`}>
       <button class="call-person" onClick={open} disabled={isCallSelf(call, p.id)} title={states.length ? `${who}: ${states.join(', ')}` : who} aria-label={states.length ? `${who}, ${states.join(', ')}` : who}>
         <span class="call-avatar">
-          <Avatar id={idn?.personId ?? p.id} name={who} url={idn?.avatar ?? null} size={40} network="discord" />
+          <Avatar id={idn?.personId ?? p.id} name={who} url={idn?.avatar ?? null} size={40} network={callNetwork(call)} />
         </span>
         <span class="call-name">{who}</span>
         {(p.muted || p.deafened || p.localMute) && <Icon name={p.deafened ? 'headphonesOff' : 'micOff'} size={14} class={`call-flag ${p.serverMuted || p.serverDeafened ? 'server' : ''}`} />}
@@ -221,7 +221,7 @@ function Sounds({ call }: { call: ActiveCall }) {
       >
         🔊 Soundboard
       </button>
-      {open && s === null && <p class="call-sounds-note">Asking Discord…</p>}
+      {open && s === null && <p class="call-sounds-note">Asking {NETWORK_META[callNetwork(call)].name}…</p>}
       {open && s && !s.list.length && <p class="call-sounds-note">{s.reason ?? 'No sounds here.'}</p>}
       {open && s && s.list.length > 0 && (
         <div class="call-sounds-grid">
