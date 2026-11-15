@@ -144,13 +144,12 @@ export function useSendExtras(o: ExtrasInput) {
             class="menu-item"
             data-track="send later"
             disabled={!o.canSend}
-            title={o.canSend ? undefined : 'Write something first'}
             onClick={() => {
               close();
               void later();
             }}
           >
-            <Icon name="clock" size={14} /> Send later…
+            <Icon name="clock" size={14} /> Send later…{!o.canSend && <span class="plus-note">Write something first</span>}
           </button>
         </div>
       )}
