@@ -160,6 +160,15 @@ export class Engine {
     this.dirty();
   }
 
+  /** Move the view by this much, as a drag does. */
+  panBy(dx: number, dy: number) {
+    if (!dx && !dy) return;
+    this.autoFit = false;
+    this.follow = null;
+    this.view = { ...this.view, x: this.view.x + dx, y: this.view.y + dy };
+    this.dirty();
+  }
+
   refit() {
     this.autoFit = true;
     this.follow = null;
@@ -370,6 +379,8 @@ export class Engine {
     const pts = new Map<number, { x: number; y: number }>();
     let moved = 0;
     let pinch = 0;
+    /** The point between two fingers at the last move: the graph moves with it as well as zooming about it. */
+    let mid: { x: number; y: number } | null = null;
     let hoverAt: { x: number; y: number } | null = null;
     let hoverFrame = 0;
     const local = (e: { clientX: number; clientY: number }) => {
@@ -399,6 +410,7 @@ export class Engine {
       if (pts.size === 2) {
         const [a, b] = [...pts.values()];
         pinch = Math.hypot(a.x - b.x, a.y - b.y);
+        mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
       }
     });
     on('pointermove', (e) => {
@@ -413,27 +425,27 @@ export class Engine {
         pts.set(e.pointerId, p);
         const [a, b] = [...pts.values()];
         const d = Math.hypot(a.x - b.x, a.y - b.y);
-        if (pinch) this.zoom(d / pinch, (a.x + b.x) / 2, (a.y + b.y) / 2);
+        const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        if (mid) this.panBy(m.x - mid.x, m.y - mid.y);
+        if (pinch) this.zoom(d / pinch, m.x, m.y);
         pinch = d;
+        mid = m;
         moved = 99;
         return;
       }
       moved += Math.abs(p.x - was.x) + Math.abs(p.y - was.y);
       pts.set(e.pointerId, p);
       if (moved > 4) {
-        this.autoFit = false;
-        this.follow = null;
-        this.view.x += p.x - was.x;
-        this.view.y += p.y - was.y;
+        this.panBy(p.x - was.x, p.y - was.y);
         h.style.cursor = 'grabbing';
         this.ev.hover(null, 0, 0);
-        this.dirty();
       }
     });
     const up = (e: PointerEvent) => {
       if (!pts.has(e.pointerId)) return;
       pts.delete(e.pointerId);
       pinch = 0;
+      mid = null;
       if (moved <= 4 && e.type === 'pointerup') {
         const p = local(e);
         this.ev.pick(this.pick(p.x, p.y));
@@ -456,16 +468,44 @@ export class Engine {
       const g = this.pick(p.x, p.y);
       if (g !== null) this.ev.open(g);
     });
+    /** Wheel events from a touchpad until then: a stream keeps its kind, momentum and all. */
+    let padUntil = 0;
     on(
       'wheel',
       (e) => {
         e.preventDefault();
         const p = local(e);
-        const d = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
-        this.zoom(Math.exp(-d * 0.0015), p.x, p.y);
+        const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.h : 1;
+        const dx = e.deltaX * unit;
+        const dy = e.deltaY * unit;
+        // A touchpad pinch comes as the wheel with Ctrl held, deltaY = -100·ln(the fingers' scale) in Chrome and
+        // about the same in Firefox: zoom by exactly that, so the graph stays under the fingers.
+        if (e.ctrlKey) return this.zoom(Math.exp(-dy / 100), p.x, p.y);
+        // Two fingers moving on a touchpad: fine steps in pixels, often sideways too. They pan, as in a map. A mouse
+        // wheel's notches (whole lines, or whole and large in pixels) still zoom.
+        const now = performance.now();
+        if (e.deltaMode === 0 && (dx !== 0 || !Number.isInteger(dy) || Math.abs(dy) < 50)) padUntil = now + 400;
+        if (now < padUntil) {
+          padUntil = now + 400;
+          return this.panBy(-dx, -dy);
+        }
+        this.zoom(Math.exp(-dy * 0.0015), p.x, p.y);
       },
       { passive: false },
     );
+    // Safari's touchpad pinch: gesture events with the scale since the pinch began.
+    let gestureK = 1;
+    on('gesturestart' as keyof HTMLElementEventMap, (e) => {
+      e.preventDefault();
+      gestureK = 1;
+    });
+    on('gesturechange' as keyof HTMLElementEventMap, (e) => {
+      e.preventDefault();
+      const ge = e as Event as Event & { scale: number; clientX: number; clientY: number };
+      const p = local(ge);
+      this.zoom(ge.scale / gestureK, p.x, p.y);
+      gestureK = ge.scale;
+    });
     on('keydown', (e) => {
       if (e.key === '+' || e.key === '=') this.zoom(1.25);
       else if (e.key === '-') this.zoom(0.8);

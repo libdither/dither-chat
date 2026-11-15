@@ -175,6 +175,33 @@ export function useSheetDrag(panel: { current: HTMLElement | null }, onDismiss: 
     let start: { x: number; y: number; t: number } | null = null;
     let dragging = false;
     let samples: { y: number; t: number }[] = [];
+    /** The sheet's height, read once when a drag starts rather than on every move. */
+    let h = 0;
+    /**
+     * While a finger drags, the shade behind lightens through a paused animation of the layer's ::before alone.
+     * Setting --sheet-fade on the layer instead restyled the whole sheet under it on every move, since custom
+     * properties are inherited.
+     */
+    let shade: Animation | null = null;
+    const fade = (f: number, live: boolean) => {
+      const back = el.parentElement;
+      if (!back) return;
+      if (live) {
+        if (!shade) {
+          try {
+            shade = back.animate([{ opacity: 0 }, { opacity: 0.5 }], { duration: 1000, fill: 'both', pseudoElement: '::before' });
+            shade.pause();
+          } catch {
+            shade = null;
+          }
+        }
+        if (shade) return void (shade.currentTime = f * 1000);
+      } else if (shade) {
+        shade.cancel();
+        shade = null;
+      }
+      back.style.setProperty('--sheet-fade', String(f));
+    };
     const scrolledAway = (t: EventTarget | null) => {
       for (let n = t as HTMLElement | null; n && n !== el; n = n.parentElement) {
         if (n.scrollTop > 0) return true;
@@ -185,8 +212,7 @@ export function useSheetDrag(panel: { current: HTMLElement | null }, onDismiss: 
     const set = (y: number, ms = 0) => {
       el.style.transition = ms ? `transform ${ms}ms cubic-bezier(.2,.8,.2,1)` : 'none';
       el.style.transform = y ? `translateY(${y}px)` : '';
-      const back = el.parentElement;
-      if (back) back.style.setProperty('--sheet-fade', String(Math.max(0, 1 - y / Math.max(1, el.offsetHeight))));
+      fade(Math.max(0, 1 - y / Math.max(1, h)), !ms && dragging);
     };
     const begin = (x: number, y: number, target: EventTarget | null, fromGrip: boolean) => {
       if (!fromGrip && scrolledAway(target)) return false;
@@ -206,6 +232,7 @@ export function useSheetDrag(panel: { current: HTMLElement | null }, onDismiss: 
           return false;
         }
         dragging = true;
+        h = el.offsetHeight;
       }
       const t = performance.now();
       samples.push({ y, t });
@@ -223,7 +250,6 @@ export function useSheetDrag(panel: { current: HTMLElement | null }, onDismiss: 
       start = null;
       dragging = false;
       if (!was) return;
-      const h = el.offsetHeight;
       if (dy > h * 0.3 || v > 0.5) {
         const ms = reducedMotion() ? 0 : Math.max(90, Math.min(240, (h - dy) / Math.max(v, 1)));
         set(h + 24, ms);
