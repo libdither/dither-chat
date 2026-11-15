@@ -59,6 +59,7 @@ import {
   jumpTo,
   startEditing,
   loadNewer,
+  openMessage,
   openProfile,
   toLatest,
   timelineKey,
@@ -815,7 +816,10 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   const t = timelines.get(tkey);
   const [flash, setFlash] = useState<string | null>(null);
   const scrolledTo = useRef<string | null>(null);
+  /** A quoted message on its way to the screen (onQuote below). */
+  const revealing = useRef<string | null>(null);
   useEffect(() => {
+    revealing.current = null;
     // A person's chat pages back through every route to the message; one too far back shows its route alone.
     if (focus && tkey.startsWith('p:')) void jumpInChat(tkey, focus).then((found) => !found && chat?.onMissing());
     else if (focus) void jumpTo(convIds[0], focus);
@@ -866,6 +870,17 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     const b = bounds();
     if (i !== undefined && (i < b.start || i >= b.end)) {
       const [from, to] = around(i);
+      drawn.current = { key: tkey, from, to };
+    }
+    slices.whole();
+  }
+  // And a quoted message that has just come in (onQuote below), likewise.
+  const shown = revealing.current;
+  const si = shown ? at.get(shown) : undefined;
+  if (si !== undefined) {
+    const b = bounds();
+    if (si < b.start || si >= b.end) {
+      const [from, to] = around(si);
       drawn.current = { key: tkey, from, to };
     }
     slices.whole();
@@ -978,16 +993,24 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     if (el && Math.abs(moved) >= 1) el.scrollTop += moved;
   });
 
-  // A reply's quote shows the message it quotes: drawn first if it is held but not drawn.
-  const revealing = useRef<string | null>(null);
+  // A reply's quote shows the message it quotes: drawn first if it is held but not drawn. One further back than the
+  // timeline holds is fetched with the page around it, in place, as a link to a message is (jumpTo, jumpInChat); one
+  // in another chat, or too far back in a person's chat, opens its own chat at it.
   const quote = useRef((_: string) => {});
   quote.current = (id: string) => {
     const el = document.getElementById(`m-${id}`);
     if (el) return el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    const i = at.get(id);
-    if (i === undefined) return;
     revealing.current = id;
-    draw(...around(i));
+    const i = at.get(id);
+    if (i !== undefined) return draw(...around(i));
+    const q = quoted.get(id);
+    const away = () => {
+      if (revealing.current === id) revealing.current = null;
+      if (q) openMessage(q.conversationId, id);
+    };
+    if (tkey.startsWith('p:')) void jumpInChat(tkey, id).then((found) => !found && away());
+    else if (q?.conversationId === convIds[0]) void jumpTo(convIds[0], id);
+    else away();
   };
   const onQuote = useMemo(() => (id: string) => quote.current(id), []);
   // The same function from one render to the next, so a message is not drawn again for a new one (memo.ts).
@@ -1000,6 +1023,8 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     if (!el) return;
     revealing.current = null;
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setFlash(id);
+    setTimeout(() => setFlash((f) => (f === id ? null : f)), 2500);
   });
 
   // A switch is done once the newest message is on screen, or the hub has answered (docs/perf.md).
