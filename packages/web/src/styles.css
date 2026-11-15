@@ -10317,6 +10317,60 @@ html[data-theme='light'] .acc-dot {
 .pf-avatar .avatar-net {
   display: none;
 }
+/* A picture you may change (PictureEditor.tsx): a button, with a camera at rest and "Change" over it on hover. */
+.pf-avatar-edit {
+  position: relative;
+  display: block;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.pf-avatar-edit:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.pf-avatar-over {
+  position: absolute;
+  inset: 5px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.5);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.pf-avatar-edit.square .pf-avatar-over {
+  border-radius: 27px;
+}
+.pf-avatar-edit:focus-visible .pf-avatar-over {
+  opacity: 1;
+}
+/* A phone has no hover: a tap would leave "Change" stuck over the picture; the camera says it already. */
+@media (hover: hover) {
+  .pf-avatar-edit:hover .pf-avatar-over {
+    opacity: 1;
+  }
+}
+.pf-avatar-badge {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid var(--bg-center);
+  background: var(--accent);
+  color: var(--on-accent);
+}
 .pf-names {
   min-width: 0;
   flex: 1;
