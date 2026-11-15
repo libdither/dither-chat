@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { clock, dayLabel, fullTime } from '../src/format.ts';
+import { clock, dayLabel, fullTime, stamp } from '../src/format.ts';
 
 // The formatters are made once (format.ts); they must say exactly what the per-call toLocale*String did.
 describe('dates and times', () => {
@@ -18,5 +18,15 @@ describe('dates and times', () => {
     expect(dayLabel(day(2026, 10, 4), now)).toBe(new Date(day(2026, 10, 4)).toLocaleDateString(undefined, { weekday: 'long' }));
     expect(dayLabel(day(2026, 9, 1), now)).toBe(new Date(day(2026, 9, 1)).toLocaleDateString(undefined, { weekday: 'short', month: 'long', day: 'numeric' }));
     expect(dayLabel(day(2025, 9, 1), now)).toBe(new Date(day(2025, 9, 1)).toLocaleDateString(undefined, { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' }));
+  });
+  test('a time to the minute that says which day (reaction times, docs/reactions.md "When")', () => {
+    const now = new Date(2026, 10, 7, 15, 0).getTime();
+    const at = (y: number, m: number, d: number) => new Date(y, m, d, 10, 5).getTime();
+    const t = clock(at(2026, 10, 7));
+    expect(stamp(at(2026, 10, 7), now)).toBe(t);
+    expect(stamp(at(2026, 10, 6), now)).toBe(`Yesterday ${t}`);
+    expect(stamp(at(2026, 10, 4), now)).toBe(`${new Date(at(2026, 10, 4)).toLocaleDateString(undefined, { weekday: 'short' })} ${t}`);
+    expect(stamp(at(2026, 9, 1), now)).toBe(`${new Date(at(2026, 9, 1)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${t}`);
+    expect(stamp(at(2025, 9, 1), now)).toBe(`${new Date(at(2025, 9, 1)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}, ${t}`);
   });
 });

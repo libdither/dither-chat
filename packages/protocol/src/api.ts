@@ -415,8 +415,41 @@ export interface ReactionView {
   /** The total. Can exceed identityIds: Discord reports totals without naming everyone. */
   count: number;
   identityIds: string[];
+  /**
+   * When each of identityIds reacted, by identity, as the network says (docs/reactions.md "When"). Those the network
+   * gives no time for are in seenAt instead, and those nobody knows a time for (already there when the hub first saw
+   * the message) are in neither. Keyed by identity, so a reaction shown before the network confirms it needs no entry.
+   */
+  at?: Record<string, number>;
+  /** When the hub first heard of the reaction, where the network gives no time (Discord): it was made no later. */
+  seenAt?: Record<string, number>;
   emoji?: CustomEmojiView;
   colors?: string[];
+}
+
+/** One reaction taken back, for its emoji's list of who reacted (MessageReactorsView). */
+export interface ReactionTakenBack {
+  identityId: string;
+  /** When it was taken back. */
+  at: number;
+  /** `at` is when the hub heard, not the network's own time. */
+  seen?: true;
+  /** When it had been added, where known. */
+  added?: number;
+  addedSeen?: true;
+  /** A moderator took it off. */
+  cleared?: true;
+}
+
+/** GET /api/messages/:id/reactors?key&style: who reacted with one emoji, when, and who took theirs back. */
+export interface MessageReactorsView {
+  count: number;
+  identityIds: string[];
+  at?: Record<string, number>;
+  seenAt?: Record<string, number>;
+  /** Taken back, oldest first, while Message history keeps reactions taken back (docs/history.md). Never your own. */
+  takenBack: ReactionTakenBack[];
+  identities: IdentityView[];
 }
 
 /**
@@ -603,7 +636,7 @@ export interface MessageView {
   gone?: { how: 'deleted' | 'disappeared'; at: number; kept: boolean };
   /** Earlier versions the hub kept: GET /api/messages/:id/history. */
   edits?: number;
-  /** Other things that happened to it the hub kept: reactions taken back, pins (docs/history.md). */
+  /** Other things that happened to it the hub kept: reactions taken back, pins (docs/history.md). Reaction times are on `reactions`. */
   events?: number;
   /** Pinned, as the last pin or unpin the hub saw says. */
   pinned?: boolean;
@@ -1551,10 +1584,21 @@ export interface ChangeView {
 /** Something that happened to one message, besides its text changing. */
 export interface MessageEventView {
   kind: 'edit' | 'unreact' | 'pin' | 'unpin';
-  /** edit: the text it had before; unreact: { key, style }. */
+  /** edit: the text it had before; unreact: UnreactData. */
   data: unknown;
   actorId?: string;
   at: number;
+  /** `at` is when the hub heard, not the network's own time. */
+  seen?: true;
+}
+
+/** What an unreact event says: which reaction, and when it had been added where known. */
+export interface UnreactData {
+  key: string;
+  style: ReactionStyle;
+  cleared?: true;
+  added?: number;
+  addedSeen?: true;
 }
 
 /** GET /api/messages/:id/history */
@@ -1562,6 +1606,8 @@ export interface MessageHistoryView {
   /** Every version, oldest first, the last as it reads now. */
   versions: { body: string; at: number | null }[];
   events: MessageEventView[];
+  /** Reactions on it now whose time is known, oldest first. Those taken back are in events, with when they were added. */
+  reactions: { identityId: string; key: string; style: ReactionStyle; at: number; seen?: true }[];
   /** Your message: who got it, read it, played it, and when. */
   receipts: { identityId: string; state: ReceiptState; at: number }[];
   identities: IdentityView[];

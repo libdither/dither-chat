@@ -686,7 +686,7 @@ const CONVS: DemoConv[] = [
     acc: ['dmain'],
     fact: { nativeId: snow('gdm-raid'), shape: 'group', name: 'weekend raid', participants: [D.zyan.nativeId, D.ravi.nativeId, D.theo.nativeId] },
     msgs: [
-      [2 * DAY + 40, D.ravi, "ok who's in for saturday"],
+      [2 * DAY + 40, D.ravi, "ok who's in for saturday", { react: { '🙋': [D.theo] } }],
       [2 * DAY + 38, D.theo, 'me'],
       [2 * DAY + 30, D.zyan, 'me (on the alt lol)'],
       [31, D.theo, 'can we push it to 9? dinner thing'],
@@ -912,7 +912,7 @@ const CONVS: DemoConv[] = [
       [DAY + 70, S.alice, 'me + zyan'],
       [DAY + 60, S.self, '👍'],
       [50, S.priya, "anyone have a spare harness? mine's being retired"],
-      [45, S.sam, 'I have one, three sizes too big though'],
+      [45, S.sam, 'I have one, three sizes too big though', { react: { '😂': [S.priya, S.alice, S.theo] } }],
       [20, S.priya, 'ok here is the purple V4, look at this heel hook', { att: [img(ART.wall, 'v4.jpg', 640, 420)] }],
     ],
     unread: 3,
@@ -2525,7 +2525,7 @@ class DemoAdapter implements InprocAdapter {
             mentionsSelf: body.includes(`<@${this.self.nativeId}>`),
             attachments: o.att,
             ...(o.fwd ? { forward: o.fwd } : {}),
-            reactions: o.react || o.fancy ? [...(o.fancy ?? []), ...Object.entries(o.react ?? {}).map(([key, who]) => ({ key, authors: who.map((w) => w.nativeId) }))] : undefined,
+            reactions: o.react || o.fancy ? [...(o.fancy ?? []), ...Object.entries(o.react ?? {}).map(([key, who]) => ({ key, authors: who.map((w) => w.nativeId), ...this.reactedAt(ago(min), who, epoch) }))] : undefined,
           },
         });
       });
@@ -2533,6 +2533,7 @@ class DemoAdapter implements InprocAdapter {
       if (readUpTo >= 0) emit({ t: 'read', conversation: c.fact.nativeId, upToTs: ago(msgs[readUpTo][0]) });
     }
     if (firstRun) this.seedHistory(ago);
+    if (firstRun) this.seedHeardReactions();
     if (firstRun) writeFileSync(marker, String(Date.now()));
     if (this.network === 'discord') this.startThreads();
     scheduleChatter();
@@ -2678,6 +2679,25 @@ class DemoAdapter implements InprocAdapter {
     return { people, ...(roles.length ? { roles } : {}), everyone: !!guild && ADMIN_IN[this.key].includes(guild) };
   }
 
+  /**
+   * When each reacted, for reactions in the seeded chats: a few minutes apart after the message, as every network but
+   * Discord says (docs/reactions.md "When"). Discord gives no time, so its seeded ones have none.
+   */
+  private reactedAt(sent: number, who: P.IdentityFact[], now: number): { at?: Record<string, number> } {
+    if (this.network === 'discord') return {};
+    return { at: Object.fromEntries(who.map((w, j) => [w.nativeId, Math.min(now - 60_000, sent + (j + 1) * 7 * 60_000)])) };
+  }
+
+  /** Discord reactions the hub hears as they happen, so it keeps when it heard them ("by"): one made, taken back, and made again. */
+  private seedHeardReactions() {
+    if (this.key !== 'dmain') return;
+    const raid = snow('gdm-raid');
+    const at = { conversation: raid, message: `${raid}~0`, key: '🙋' };
+    this.emit({ t: 'reaction', ...at, author: D.ravi.nativeId });
+    this.emit({ t: 'reaction', ...at, author: D.ravi.nativeId, remove: true });
+    this.emit({ t: 'reaction', ...at, author: D.ravi.nativeId });
+  }
+
   private seedHistory(ago: (min: number) => number) {
     if (this.key !== 'sig') return;
     const climb = CONVS.find((c) => c.fact.nativeId === sgroup('climb', '', []).nativeId)!.fact;
@@ -2703,8 +2723,14 @@ class DemoAdapter implements InprocAdapter {
     voted(S.priya, ['0'], 1, 53);
     voted(S.alice, ['2'], 1, 52);
     voted(S.priya, ['1'], 2, 50);
-    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, author: S.sam.nativeId, key: '😢' });
-    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, author: S.sam.nativeId, key: '😢', remove: true });
+    // Signal says when: Sam's 😢, taken back a minute later, and made again (docs/reactions.md "When").
+    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, author: S.sam.nativeId, key: '😢', ts: ago(57) });
+    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, author: S.sam.nativeId, key: '😢', remove: true, ts: ago(56) });
+    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, author: S.sam.nativeId, key: '😢', ts: ago(44) });
+    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, author: S.alice.nativeId, key: '😢', ts: ago(52) });
+    // Mei laughed at Sam's harness, then thought better of it.
+    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~7`, author: S.mei.nativeId, key: '😂', ts: ago(43) });
+    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~7`, author: S.mei.nativeId, key: '😂', remove: true, ts: ago(42) });
     emit({ t: 'role', target: { kind: 'conversation', nativeId: climb.nativeId }, member: S.sam.nativeId, role: 'Admin', given: true, by: S.priya.nativeId, ts: ago(56) });
     emit({ t: 'customStatus', who: S.alice.nativeId, text: 'out climbing', emoji: '🧗', ts: ago(200) });
     emit({ t: 'customStatus', who: S.alice.nativeId, text: 'on the wall, back at 8', emoji: '🧗', ts: ago(55) });
@@ -2743,8 +2769,9 @@ class DemoAdapter implements InprocAdapter {
         const mine = rnd() < 0.35;
         const nativeId = `${dm}~a${k++}`;
         const body = mine ? yours[Math.floor(rnd() * yours.length)] : theirs[Math.floor(rnd() * theirs.length)];
-        emit({ t: 'message', live: false, message: { nativeId, conversation: dm, author: (mine ? S.self : S.sam).nativeId, ts: local(d, 19 + Math.floor(rnd() * 6), Math.floor(rnd() * 60)), body } });
-        if (mine && rnd() < 0.4) emit({ t: 'reaction', conversation: dm, message: nativeId, author: S.sam.nativeId, key: '👍' });
+        const ts = local(d, 19 + Math.floor(rnd() * 6), Math.floor(rnd() * 60));
+        emit({ t: 'message', live: false, message: { nativeId, conversation: dm, author: (mine ? S.self : S.sam).nativeId, ts, body } });
+        if (mine && rnd() < 0.4) emit({ t: 'reaction', conversation: dm, message: nativeId, author: S.sam.nativeId, key: '👍', ts: ts + 12 * 60_000 });
       }
     }
     // Presence each day of the last three weeks: on in the evening, idle or busy some days, off at night.
@@ -2831,6 +2858,11 @@ class DemoAdapter implements InprocAdapter {
     });
   }
 
+  /** A live reaction's time: now, on every network but Discord, which gives none (docs/reactions.md "When"). */
+  private now(): { ts?: number } {
+    return this.network === 'discord' ? {} : { ts: Date.now() };
+  }
+
   private later(ms: number, fn: () => void) {
     const t = setTimeout(() => {
       this.timers.delete(t);
@@ -2890,7 +2922,7 @@ class DemoAdapter implements InprocAdapter {
           this.later(3500 + Math.random() * 3000, () => this.say(cmd.conversation, author, lines[Math.floor(Math.random() * lines.length)]));
         } else if (others.length) {
           const who = others[Math.floor(Math.random() * others.length)];
-          this.later(2500, () => this.emit({ t: 'reaction', conversation: cmd.conversation, message: nativeId, author: who, key: '👍' }));
+          this.later(2500, () => this.emit({ t: 'reaction', conversation: cmd.conversation, message: nativeId, author: who, key: '👍', ...this.now() }));
           // A group stirs: a few people start typing, then think better of it.
           const typers = [...others].sort(() => Math.random() - 0.5).slice(0, Math.min(4, others.length));
           typers.forEach((who, i) => {
@@ -2941,7 +2973,7 @@ class DemoAdapter implements InprocAdapter {
         }
         break;
       case 'react':
-        this.emit({ t: 'reaction', conversation: cmd.conversation, message: cmd.message, author: this.self.nativeId, key: cmd.key, remove: cmd.remove, style: cmd.style, ...(cmd.style === 'super' ? { colors: SUPER_COLORS } : {}), emoji: cmd.emoji });
+        this.emit({ t: 'reaction', conversation: cmd.conversation, message: cmd.message, author: this.self.nativeId, key: cmd.key, remove: cmd.remove, style: cmd.style, ...(cmd.style === 'super' ? { colors: SUPER_COLORS } : {}), emoji: cmd.emoji, ...this.now() });
         reply();
         break;
       case 'edit':

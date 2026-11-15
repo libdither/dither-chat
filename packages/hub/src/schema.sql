@@ -227,6 +227,8 @@ CREATE TABLE IF NOT EXISTS reaction (
   identity_id TEXT NOT NULL REFERENCES identity(id) ON DELETE CASCADE,
   key         TEXT NOT NULL,
   style       TEXT NOT NULL DEFAULT 'normal' CHECK (style IN ('normal', 'super')),
+  at          INTEGER,                          -- when it was added; NULL: already there when the hub first saw it
+  at_exact    INTEGER NOT NULL DEFAULT 0,       -- 1: the network's own time; 0: when the hub heard (Discord gives none)
   PRIMARY KEY (message_id, identity_id, key, style)
 );
 
@@ -736,7 +738,7 @@ CREATE TABLE IF NOT EXISTS message_event (
   id         INTEGER PRIMARY KEY,
   message_id TEXT NOT NULL REFERENCES message(id) ON DELETE CASCADE,
   kind       TEXT NOT NULL CHECK (kind IN ('edit', 'unreact', 'pin', 'unpin')),
-  data       TEXT,                        -- JSON: edit { body } (the version before); unreact { key, style }
+  data       TEXT,                        -- JSON: edit { body } (the version before); unreact { key, style, cleared?, exact?, added?, addedExact? }
   actor_id   TEXT,
   at         INTEGER NOT NULL,
   account_id TEXT
