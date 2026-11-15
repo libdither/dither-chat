@@ -223,6 +223,8 @@ describe('mail through dither-accounts', () => {
       return byHdr('<again@example.test>');
     }, 30_000, 'the relisted Archive');
     await until(() => !byHdr('<live-1@example.test>'), 20_000, 'the message the rebuild dropped');
+    // The relisted Archive is backfilled after the drop can land: wait for the sync itself to settle.
+    await until(() => hub.sync(acc)!.phase === 'idle', 20_000, 'the sync idle again');
     expect(hub.sync(acc)!.phase).toBe('idle');
   }, 60_000);
 });
