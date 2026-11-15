@@ -82,6 +82,19 @@ export class Abouts {
     return this.fallback(kind, id, t.network, accountId, why);
   }
 
+  /**
+   * The About this hub kept from the last time it asked, without asking the network again: cheap enough for the message
+   * box's disappearing-messages button (docs/group-settings.md). null: none kept yet.
+   */
+  keptView(kind: Kind, id: string, requested?: string): P.AboutView | null {
+    const t = this.target(kind, id);
+    if (!t) throw new AboutError(`no such ${kind}`, 404);
+    const k = this.kept(id, this.account(kind, id, requested));
+    if (!k) return null;
+    const live = this.d.online(k.accountId) && caps(this.d.store, k.accountId).includes('configure');
+    return this.view(kind, id, t.network, k.accountId, k.about, k.at, undefined, live);
+  }
+
   /** Change one thing, through the account whose view this is. Answers with the About as it now stands. */
   async configure(kind: Kind, id: string, change: P.AboutChange, requested?: string): Promise<P.AboutView> {
     const t = this.target(kind, id);

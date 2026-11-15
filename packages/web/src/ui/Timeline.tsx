@@ -90,6 +90,7 @@ import { isPicture, onlyPictures, pictureRuns, picturesOf } from '../pictures.ts
 import { pictureLayout } from '../arrange.ts';
 import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
 import { TypingBar } from './Typing.tsx';
+import { DisappearingButton, hasTimer } from './Disappearing.tsx';
 import { useGrow } from './grow.ts';
 import { AttachSheet, CameraView, SendScreen } from './Attach.tsx';
 import { mediaOffer, preloadStickers, StickerPicker, stickerInstaller, ViewOnceChip, VoiceButton } from './ComposerMedia.tsx';
@@ -1724,7 +1725,7 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
           <Timeline tkey={timelineKey('c', c.id)} convIds={[c.id]} onReply={setReply} firstUnreadTs={unreadAt} focus={focus} />
         </>
       )}
-      <TypingBar convIds={[c.id]} />
+      <TypingBar convIds={[c.id]} lead={!held && hasTimer(c.network) && <DisappearingButton convId={c.id} network={c.network} accountId={sendAsValue} />} />
       {held ? (
         <RequestBar r={held} />
       ) : c.variant === 'forum' || c.variant === 'media' ? null : (

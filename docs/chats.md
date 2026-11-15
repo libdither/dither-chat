@@ -225,7 +225,8 @@ What it adds to a conversation's page:
   that row's other end; the box's placeholder is only "Message", and nothing moves as you type. The same on a computer
   and a phone, where it ends in … when it is too long ("To kit.work" where a "to" follows, a phone having room for one
   name). The parts that can change switch: two options toggle (⟳), more open a menu (⌄, a sheet on a phone), each
-  tinted on hover. Until 2026-11-14 it took the placeholder's place, as a dashed link, and jumped to the box's top
+  tinted on hover. On Signal and WhatsApp the line ends in the chat's disappearing timer, a clock that opens the
+  network's timers ([group-settings.md](group-settings.md), "In the message box"). Until 2026-11-14 it took the placeholder's place, as a dashed link, and jumped to the box's top
   edge once typed in; then, on a computer, it was a row of its own over the box, under the typing line's.
 - **The header's buttons** are a conversation's: profile, call, search, notifications, details. With all chats shown
   they act on every route: search is `in:<person id>` (the hub reads a person's id as every direct conversation with

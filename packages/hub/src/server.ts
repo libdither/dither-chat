@@ -1490,6 +1490,8 @@ export class HubServer {
           this.flush();
           return ok(v);
         }
+        // ?kept=1: what was kept, without asking the network (null when nothing was).
+        if (url.searchParams.get('kept') === '1') return ok(this.abouts.keptView(kind, m[2], url.searchParams.get('account') ?? undefined));
         const v = await this.abouts.get(kind, m[2], url.searchParams.get('account') ?? undefined);
         this.flush();
         return ok(v);
