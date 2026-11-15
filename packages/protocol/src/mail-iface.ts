@@ -146,14 +146,15 @@ export interface OutgoingMail {
   attachments?: OutgoingFile[];
 }
 
-/** A kind of write an account makes (`details.writes`). */
-export type MailWriteKind = 'seen' | 'flagged' | 'move' | 'trash' | 'junk';
-
-/** `mail.contacts`: someone the server suggests as a recipient for what is typed (its own completion). */
+/** One person `mail.contacts` suggests: an address to write to, and the name the service shows with it. */
 export interface MailContact {
   email: string;
+  /** Null when the service has no name for it, or the name is only the address again. */
   name: string | null;
 }
+
+/** A kind of write an account makes (`details.writes`). */
+export type MailWriteKind = 'seen' | 'flagged' | 'move' | 'trash' | 'junk';
 
 /** `mail.flag` and `mail.trash`: `{}` when every change applied, else the ids that did not change (header). */
 export interface MailWriteAnswer {
