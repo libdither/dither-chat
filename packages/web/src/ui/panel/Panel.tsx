@@ -119,9 +119,11 @@ export function Panel({ ctx, tab, setTab }: { ctx: PanelCtx; tab: PanelTab; setT
       const a = document.activeElement;
       if (!(a && box.current?.contains(a) && editable(a))) setLifted(false);
     }, 0);
+  // Only while the keyboard is up: back drops the keyboard and leaves the field focused, and the panel is a panel again.
+  const up = lifted && (!appKeyboard.value || imeHeight.value > 0);
   useLayoutEffect(() => {
     const el = box.current;
-    if (!lifted || !el) return void (panelLift.value = 0);
+    if (!up || !el) return void (panelLift.value = 0);
     const ro = new ResizeObserver(() => (panelLift.value = el.offsetHeight));
     ro.observe(el);
     panelLift.value = el.offsetHeight;
@@ -129,7 +131,7 @@ export function Panel({ ctx, tab, setTab }: { ctx: PanelCtx; tab: PanelTab; setT
       ro.disconnect();
       panelLift.value = 0;
     };
-  }, [lifted]);
+  }, [up]);
   useEffect(() => () => void (panelLift.value = 0), []);
   const tabs = TABS.filter((t) => (t.id === 'photos' || t.id === 'files' ? ctx.canAttach : t.id === 'stickers' ? !!ctx.stickers : !!ctx.poll));
   const pick = (t: PanelTab) => {
@@ -142,18 +144,18 @@ export function Panel({ ctx, tab, setTab }: { ctx: PanelCtx; tab: PanelTab; setT
   const shown = panelShown.value;
   // Where the app keeps the keyboard's room the keyboard covers the page's bottom, so the panel sits that far up.
   const kb = appKeyboard.value ? imeHeight.value : 0;
-  const style = lifted
-    ? { bottom: `${kb}px`, height: 'auto', maxHeight: `${Math.round((innerHeight - kb) * 0.55)}px` }
+  const style = up
+    ? { bottom: `${kb}px`, height: 'auto', maxHeight: `${Math.round((innerHeight - kb) * 0.5)}px` }
     : full
       ? { top: 'var(--app-top, 0px)', bottom: '0px', height: 'auto' }
       : { height: `${h}px`, transform: shown < 1 ? `translateY(${Math.round((1 - shown) * h)}px)` : undefined };
   return createPortal(
-    <div class={`kp ${full ? 'full' : ''} ${lifted ? 'lifted' : ''}`} ref={box} style={style} data-track-area="panel" data-open={panelOpen.value ? '' : undefined} onFocusIn={focusIn} onFocusOut={focusOut}>
+    <div class={`kp ${full ? 'full' : ''} ${up ? 'lifted' : ''}`} ref={box} style={style} data-track-area="panel" data-open={panelOpen.value ? '' : undefined} onFocusIn={focusIn} onFocusOut={focusOut}>
       <div class="kp-body">
         {tab === 'photos' && ctx.canAttach && <PhotosTab ctx={ctx} picks={picks} full={full} setFull={setFull} />}
         {tab === 'files' && ctx.canAttach && <FilesTab ctx={ctx} picks={picks} full={full} setFull={setFull} />}
       </div>
-      {!full && !lifted && (
+      {!full && !up && (
         <nav class="kp-tabs" role="tablist">
           {tabs.map((t) => (
             <button class={`kp-tab ${t.id === tab ? 'on' : ''}`} role="tab" aria-selected={t.id === tab} data-track={t.id} onClick={() => pick(t.id)}>
