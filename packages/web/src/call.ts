@@ -440,9 +440,15 @@ export function canVideo(): boolean {
 }
 
 /** This device's camera into the call, as the account's camera; or off. */
+/** The call a camera or screen was asked for is still the one going on, after waiting on the browser's prompt. */
+function sameCall(t: Transport): boolean {
+  return transport === t && activeCall.value?.phase !== 'ended';
+}
+
 export async function setCamera(on: boolean) {
   const a = activeCall.value;
-  if (!a || !transport?.setCamera) return;
+  const t = transport;
+  if (!a || !t?.setCamera) return;
   if (on) {
     let cam: MediaStream;
     try {
@@ -452,16 +458,18 @@ export async function setCamera(on: boolean) {
       toast({ kind: 'error', title: 'No camera', body: String(e?.message ?? e) });
       return;
     }
+    // The call ended (or another began) while the browser asked for the camera.
+    if (!sameCall(t)) return cam.getTracks().forEach((x) => x.stop());
     const track = cam.getVideoTracks()[0]!;
     track.contentHint = 'motion';
     track.addEventListener('ended', () => void setCamera(false));
-    await transport.setCamera(track);
+    await t.setCamera(track);
     callMedia.value = { ...callMedia.value, camera: cam };
     patch({ camera: true });
     sound('camera_on');
   } else {
-    callMedia.value.camera?.getTracks().forEach((t) => t.stop());
-    await transport.setCamera(null);
+    callMedia.value.camera?.getTracks().forEach((x) => x.stop());
+    await t.setCamera(null);
     callMedia.value = { ...callMedia.value, camera: null };
     if (a.camera) sound('camera_off');
     patch({ camera: false });
@@ -475,7 +483,8 @@ export const canShareScreen = () => typeof navigator.mediaDevices?.getDisplayMed
 /** This device's screen, a window or a tab into the call, as the account's Go Live; or off. */
 export async function setScreen(on: boolean) {
   const a = activeCall.value;
-  if (!a || !transport?.setScreen) return;
+  const t = transport;
+  if (!a || !t?.setScreen) return;
   if (on) {
     let scr: MediaStream;
     try {
@@ -484,17 +493,19 @@ export async function setScreen(on: boolean) {
       if (e?.name !== 'NotAllowedError') toast({ kind: 'error', title: 'Could not share', body: String(e?.message ?? e) });
       return;
     }
+    // The call ended (or another began) while the browser asked what to share.
+    if (!sameCall(t)) return scr.getTracks().forEach((x) => x.stop());
     const video = scr.getVideoTracks()[0]!;
     video.contentHint = 'detail';
     // The browser's own Stop sharing ends it here too.
     video.addEventListener('ended', () => void setScreen(false));
-    await transport.setScreen(video, scr.getAudioTracks()[0] ?? null);
+    await t.setScreen(video, scr.getAudioTracks()[0] ?? null);
     callMedia.value = { ...callMedia.value, screen: scr };
     patch({ screen: true });
     sound('stream_started');
   } else {
-    callMedia.value.screen?.getTracks().forEach((t) => t.stop());
-    await transport.setScreen(null, null);
+    callMedia.value.screen?.getTracks().forEach((x) => x.stop());
+    await t.setScreen(null, null);
     callMedia.value = { ...callMedia.value, screen: null };
     if (a.screen) sound('stream_ended');
     patch({ screen: false });
