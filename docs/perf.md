@@ -860,6 +860,11 @@ What changed:
 - **Mail's chunk loads while the app is idle**, three seconds after it starts (Rail.tsx), as the palette's does: a
   phone has no pointer to hover the rail with. Mail opening on its first chip no longer measures the chip row before
   it is painted (a ResizeObserver sets its edges once it is laid out).
+- **The emoji picker draws 200 emoji first** (2026-11-14, ui/Reactions.tsx `FIRST_DRAWN`): the rest of its 1,900 stand
+  in as empty boxes of their own height, so the scrollbar and the rail's jumps hold still, and are drawn just after
+  that first frame is on screen. Drawing only what scrolls in (`content-visibility`) was tried before and made emoji
+  flash in late. Desktop size, demo world, opening it from the hover bar: its first frame 64–84 ms → 12–14 ms, and
+  ~320 ms → 49–62 ms at 4× CPU; the whole picker's work is the same, after that frame.
 
 Phone size, 4× CPU, the phone pass of `verify-perf --cpu 0 --phone-cpu 4`, five runs each on the same machine, the
 branch first (load 7–11), then `main` (11–27): medians, and the spread of the longest task.
