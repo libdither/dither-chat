@@ -11,7 +11,7 @@ import { desk } from '../../desk.ts';
 import { fileFacts, fileIcon, fileKind, openFileSource, VIEWABLE, type FileSource } from '../../files.ts';
 import { openAttachment } from '../fileopen.tsx';
 import { Icon } from '../icons.tsx';
-import { viewer } from '../Viewer.tsx';
+import { viewer } from '../../viewer.ts';
 
 /** A part as the viewers take it. */
 export function partSource(a: P.MailAttachmentView): FileSource {

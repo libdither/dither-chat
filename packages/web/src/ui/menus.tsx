@@ -16,7 +16,7 @@ import { mark } from '../triage.ts';
 import { desk, openLink } from '../desk.ts';
 import { pickerFor, quickReactions, reactionScope, reactorsFor, replacing, toggleReaction } from '../reactions.ts';
 import { clearReactions, moderatorDelete, modOf } from '../moderate.ts';
-import { api, canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
+import { canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
 import { messageSomeone, openPalette } from './Palette.tsx';
 import { hasHistory, historyOf } from './MessageHistory.tsx';
 import { MarkToggles, tierHeading, tierIcon } from './Marks.tsx';
@@ -28,11 +28,11 @@ import { appsFor, can } from '../apps.ts';
 import { addLook } from './Reactions.tsx';
 import { Icon } from './icons.tsx';
 import { nicknameEntries } from './Nickname.tsx';
-import { openAbout } from './About.tsx';
+import { openAbout } from '../opening.ts';
 import { canIndex, startIndexing } from './Indexing.tsx';
 import { arrangeEntries, folderEntries, placeConvs } from './Organize.tsx';
-import { openConv } from './Sidebar.tsx';
-import { viewer, type ViewerImage } from './Viewer.tsx';
+import { openConv } from '../opening.ts';
+import { viewer, type ViewerImage } from '../viewer.ts';
 import { canMarkUnread, markUnreadFrom } from '../unread.ts';
 import { openAttachment, openWith, save } from './fileopen.tsx';
 import { fileKind, fileMime, openFileViewer, VIEWABLE } from '../files.ts';
@@ -41,6 +41,7 @@ import { installStickerLink, stickerInstaller } from './ComposerMedia.tsx';
 import { canEndPoll, endPoll, pin, pinChoices, pinnable } from '../polls.ts';
 import { threadConvEntries, threadMessageEntries } from '../threads.ts';
 import { sendingEntries } from './sendingMenu.tsx';
+import { accountEntries } from './accountMenu.tsx';
 
 export { openAttachment };
 
@@ -498,6 +499,9 @@ export function placeMenu(key: string, _folder?: string): MenuSpec | null {
   return null;
 }
 
+/** Opens what a right-click or a held finger opens on a place: dnd.tsx calls this. Here, not in Organize.tsx, which this file imports. */
+export const openPlaceMenu = (key: string, _label: string, x: number, y: number, folder?: string) => openMenu({ x, y }, placeMenu(key, folder));
+
 export function folderMenuSpec(id: string): MenuSpec | null {
   const f = db.folders.find((x) => x.id === id);
   return f ? { label: `${f.name} actions`, head: <div class="cm-sheet-title">{f.name}</div>, items: groups(...folderEntries(id)) } : null;
@@ -577,22 +581,7 @@ export function identityMenu(identityId: string | null | undefined): MenuSpec | 
 
 // ------------------------------------------------------------------ accounts
 
-function accountEntries(a: P.AccountView): MenuEntry[] {
-  const disabled = a.status === 'disabled';
-  const fail = (e: Error) => toast({ kind: 'error', title: 'That did not work', body: e.message });
-  return groups(
-    [
-      { label: 'Open Account Page', icon: 'settings', run: () => go({ view: 'accounts', account: a.id }) },
-      !disabled && { label: 'Reconnect', icon: 'refresh', run: () => api(`/api/accounts/${a.id}/action`, { body: { action: 'restart' } }).catch(fail) },
-      { label: disabled ? 'Enable' : 'Disable', icon: 'power', run: () => api(`/api/accounts/${a.id}`, { method: 'PATCH', body: { enabled: disabled } }).catch(fail) },
-    ],
-    [{ label: 'Copy Account ID', icon: 'idBadge', run: () => copy(a.id, 'ID copied') }],
-  );
-}
-
-export function accountMenu(a: P.AccountView): MenuSpec {
-  return { label: `${a.label} actions`, head: <div class="cm-sheet-title">{netName(a.network)} · {a.label}</div>, items: accountEntries(a) };
-}
+// One account's menu (accountMenu, accountEntries) is in accountMenu.tsx.
 
 /** The accounts button in the rail: every account, each with its own actions. */
 export function accountsMenu(): MenuSpec {

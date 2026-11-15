@@ -58,6 +58,10 @@ jobs:
       - run: bun run check:tests
       # A component's stylesheet styles only its own classes (scripts/check-css.ts, docs/testing.md "Stylesheets").
       - run: bun run check:css
+      # No import cycles in a package (scripts/check-cycles.ts), no unused files or dependencies and no unlisted
+      # imports (knip.json); docs/testing.md "Checks across the code".
+      - run: bun run check:cycles
+      - run: bun run knip
 
   # The hub's suite is the longest; its files run on --parallel workers (scripts/test-all.ts). All but mail-load's,
   # which runs beside it in test-hub-mail.

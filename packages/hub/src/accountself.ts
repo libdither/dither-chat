@@ -10,7 +10,7 @@ import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
 import { bioLength, NETWORK_META, OWN_PRESENCE_STATES, SELF_LIMITS } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
-import { inQuietHours } from './triage.ts';
+import { inQuietHours } from './quiethours.ts';
 import type { AccountRow, Store } from './store.ts';
 
 type Row = Record<string, any>;

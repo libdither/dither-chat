@@ -8,7 +8,8 @@ import { api, db, go, prefs, rev, setPrefs, toast, type DirectorySort } from '..
 import { AccountChip, Avatar, Count, Empty, Modal, NetBadge } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
-import { dropPlace, openPlaceMenu } from './Organize.tsx';
+import { dropPlace } from './Organize.tsx';
+import { openPlaceMenu } from './menus.tsx';
 import { saveThreshold, thresholdOf } from './Reorganize.tsx';
 import { pct, Sensitivity } from './Sensitivity.tsx';
 

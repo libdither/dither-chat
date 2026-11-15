@@ -9,7 +9,7 @@ import { stateMock } from './fixtures/state.ts';
 // What the menu module draws with needs a browser; none of it is used here.
 mock.module('../src/state.ts', stateMock);
 mock.module('../src/phone.ts', () => ({ phone: signal(false), useLayer: () => {} }));
-mock.module('../src/ui/Reactions.tsx', () => ({ useLongPress: () => ({}) }));
+mock.module('../src/ui/longpress.ts', () => ({ useLongPress: () => ({}) }));
 mock.module('../src/ui/Sheet.tsx', () => ({ Sheet: () => null }));
 mock.module('../src/clicklog.ts', () => ({ countKey: () => {} }));
 const { closeMenu, contextMenu, openMenu } = await import('../src/ui/ContextMenu.tsx');

@@ -22,7 +22,7 @@ import { contextMenu, groups, openMenu, useMenu, type MenuEntry, type MenuSpec }
 import { identityMenu, personMenu } from './menus.tsx';
 import { CheckFirst, ConfirmFirst } from './NewMessage.tsx';
 import { Action } from './ProfileShell.tsx';
-import { homeRoute } from './Sidebar.tsx';
+import { homeRoute } from '../opening.ts';
 import { Loading } from './Loader.tsx';
 
 /**

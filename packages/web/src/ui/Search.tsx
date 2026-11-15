@@ -8,7 +8,7 @@ import { api, back, db, go, mailRev, openMessage, openProfile, rev, route } from
 import { retention } from '../history.ts';
 import { Avatar, Empty, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
-import { homeRoute } from './Sidebar.tsx';
+import { homeRoute } from '../opening.ts';
 import { Menuable } from './ContextMenu.tsx';
 import { conversationMenu, identityMenu, messageMenu, personMenu, spaceMenu } from './menus.tsx';
 import { readableSearch, recentSearches, rememberSearch, SearchBox } from './SearchBox.tsx';

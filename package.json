@@ -15,12 +15,16 @@
     "budgets": "bun scripts/budgets.ts",
     "check:boot": "bun scripts/check-boot.ts",
     "check:tests": "bun scripts/check-tests.ts",
+    "accounts:check": "bun scripts/accounts-sync.ts --check",
     "check:css": "bun scripts/check-css.ts",
-    "accounts:check": "bun scripts/accounts-sync.ts --check"
+    "check:cycles": "bun scripts/check-cycles.ts",
+    "knip": "knip --include files,dependencies,unlisted,unresolved,binaries --no-progress --treat-config-hints-as-errors"
   },
   "devDependencies": {
+    "@dither-chat/protocol": "workspace:*",
     "@types/bun": "latest",
     "acorn": "^8.19.0",
+    "knip": "^5.88.1",
     "typescript": "^5.9.0"
   },
   "overrides": {

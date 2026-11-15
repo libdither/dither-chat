@@ -15,7 +15,7 @@ import { NEW_VISIT_AFTER } from './tracker.ts';
 import { typedHooks } from './typing.ts';
 import { inUse } from './usage.ts';
 import { VisitLog, firstTap, samePlace, type Arrival, type Place } from './visits.ts';
-import { viewer } from './ui/Viewer.tsx';
+import { viewer } from './viewer.ts';
 
 const DEVICE_KEY = 'dither-chat:device';
 const OUTBOX_KEY = 'dither-chat:activity-outbox';

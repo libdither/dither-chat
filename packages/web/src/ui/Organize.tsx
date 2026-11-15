@@ -3,8 +3,7 @@ import type * as P from '@dither-chat/protocol';
 import { applyDrop, moveStep, type DropTarget, type Layout } from '../layout.ts';
 import { convsUnder, convTitle, directsOf, folderConvs, placePref, railEntries, sumUnread } from '../model.ts';
 import { db, go, markAllRead, patchPlaces, route, saveFolders } from '../state.ts';
-import { openMenu, type MenuEntry } from './ContextMenu.tsx';
-import { placeMenu } from './menus.tsx';
+import { type MenuEntry } from './ContextMenu.tsx';
 import { arrangedRail, freezeOrder, organizing, sortOf } from '../arrange.ts';
 import { canIndex, startIndexing } from './Indexing.tsx';
 import { FINDS_LABEL } from './MentionFinds.tsx';
@@ -51,9 +50,6 @@ export function dropPlace(key: string, target: DropTarget) {
   const pinned = anchor && target.where !== 'into' ? { key, pinned: placePref(anchor.kind as P.PlaceKind, anchor.id).pinned } : undefined;
   save(next, pinned);
 }
-
-/** Opens what a right-click or a held finger opens on a place: dnd.tsx calls this. */
-export const openPlaceMenu = (key: string, _label: string, x: number, y: number, folder?: string) => openMenu({ x, y }, placeMenu(key, folder));
 
 function moveToFolder(key: string, folderId: string | null) {
   const l = currentLayout();

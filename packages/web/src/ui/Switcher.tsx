@@ -17,7 +17,7 @@ import { Avatar, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { closePalette, pushPage } from './Palette.tsx';
 import { Frame, type Row } from './PaletteFrame.tsx';
-import { homeRoute } from './Sidebar.tsx';
+import { homeRoute } from '../opening.ts';
 
 interface Item {
   key: string;

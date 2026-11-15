@@ -1,0 +1,45 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/**/*.ts"],
+      "project": ["scripts/**/*.ts"]
+    },
+    "packages/hub": {
+      "entry": ["src/cli.ts", "src/**/*-worker.ts", "test/**/*.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    },
+    "packages/web": {
+      "entry": ["index.html", "test/**/*.{ts,tsx}", "public/sw.js"],
+      "project": ["src/**/*.{ts,tsx}", "test/**/*.{ts,tsx}"]
+    },
+    "packages/protocol": {
+      "entry": ["test/**/*.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    },
+    "packages/adapter-discord": {
+      "entry": ["src/main.ts", "src/lab/*.{ts,js}", "src/extension/**/*.{ts,js}", "test/**/*.ts"],
+      "project": ["src/**/*.{ts,js}", "test/**/*.ts"]
+    },
+    "packages/adapter-matrix": {
+      "entry": ["src/main.ts", "testbed/*.ts", "test/**/*.ts"],
+      "project": ["src/**/*.ts", "testbed/**/*.ts", "test/**/*.ts"]
+    },
+    "packages/adapter-signal": {
+      "entry": ["test/**/*.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    },
+    "packages/adapter-whatsapp": {
+      "entry": ["test/**/*.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    },
+    "packages/deploy": {
+      "entry": ["test/**/*.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    },
+    "packages/desk": {
+      "entry": ["test/**/*.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    }
+  }
+}

@@ -5,7 +5,7 @@
  */
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { api } from './state.ts';
+import { api } from './api.ts';
 
 /** Calls the hub told this page about, by id. */
 export const calls = signal<Map<string, P.CallView>>(new Map());

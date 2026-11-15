@@ -337,7 +337,7 @@ dir, then measures bytes and gzip bytes (level 6, as vite prints them) of every 
 and of the startup set: what index.html loads before the app runs (its script, its modulepreloads and the stylesheet),
 added up, and how many files that is. Chunks are named by what they stand for, not their hashed file names: `js/entry`,
 a lazy chunk by its module (`js/src/ui/files/PdfView.tsx`, `js/jsqr/dist/jsQR.js`), a shared chunk by the name rolldown
-gave it (`js/shared/Accounts`).
+gave it (`js/shared/startup`).
 
 **Passing.** A value over its budget fails. Bytes have 2% of headroom; counts and fields none. A value well under its
 budget, a measure with no budget yet (a new chunk), or a budget nothing measures any more prints a hint; only the
@@ -365,6 +365,17 @@ whenever a hint says so: a budget that sits well above its value lets a regressi
 On GitHub Actions both tests add a table of measured against budget to the job summary. Two pull requests that each
 stay inside a budget can, merged together, go over it; main's next run then fails, and the next change there lowers
 something or raises the budget with a reason.
+
+### The startup chunk (2026-11-14)
+
+Everything the entry imports statically, however deep, is one chunk, `shared/startup` (vite.config.ts, a
+`codeSplitting` group on rolldown's `$initial` tag), with the stylesheet beside it: the startup set is four files (the
+entry, rolldown's runtime, that chunk, its stylesheet). Before, a 34-file import cycle among the components (menus,
+bits, Sidebar, ContextMenu…) made rolldown keep them in one shared chunk; once the cycles were gone
+(docs/testing.md "Import cycles") it split the startup modules by which lazy chunks share them, into 34 files, every
+one of them loaded at startup anyway. The group puts them back together: 1,072 KB (326 KB gzip) in 4 files, against
+1,079 KB (335 KB gzip) in 10 on main the day before. A lazy chunk imports what it shares with startup from that chunk,
+already loaded. A module only lazy chunks use is not in it.
 
 ### The startup set (2026-11-10)
 

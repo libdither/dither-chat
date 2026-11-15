@@ -20,7 +20,7 @@ import { Icon } from './icons.tsx';
 import { conversationMenu, spaceMenu } from './menus.tsx';
 import { placeConvs } from './Organize.tsx';
 import { Action, Card, Columns, Facts, Hero, ProfilePage, Tag } from './ProfileShell.tsx';
-import { openConv } from './Sidebar.tsx';
+import { openConv } from '../opening.ts';
 import { Loading } from './Loader.tsx';
 import { peopleExtras } from './peopleExtras.ts';
 import { ResetSessionCard } from './ResetSession.tsx';

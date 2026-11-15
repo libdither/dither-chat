@@ -10,7 +10,7 @@ import { phone, slideAway, useLayer, useSheetDrag } from '../phone.ts';
 import { Icon } from './icons.tsx';
 import { Sheet } from './Sheet.tsx';
 import { onMenu } from './ContextMenu.tsx';
-import { accountMenu } from './menus.tsx';
+import { accountMenu } from './accountMenu.tsx';
 import { drawLater } from './Later.tsx';
 
 /** `decorative`: hidden from screen readers, for where the network is already said in words around it. */
