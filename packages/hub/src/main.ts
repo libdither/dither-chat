@@ -39,6 +39,7 @@ import { inQuietHours } from './triage.ts';
 import { onRing, ringMuted, ringWords, sweepCalls } from './callstate.ts';
 import { CalendarAccounts, seedCalendarAccount } from './calendar-account.ts';
 import { ErrorLog, jobFailed, reportError, setErrorLog } from './errors.ts';
+import { readPassword } from './auth.ts';
 
 // Each part of the start, logged in one line once requests are answered (startup.ts).
 const startup = new StartupTrace();
@@ -435,6 +436,9 @@ const manager: ManagerLink | null = sup instanceof RoutedSupervisor ? sup : demo
 
 const server = new HubServer(store, sup, triage, {
   port,
+  // A demo world (invented data, its own data dir) answers without the login; a hub with real accounts never does
+  // (docs/login.md).
+  open: demo && !store.accounts().some((a) => !a.demo),
   manager: manager ?? undefined,
   hostname,
   dataDir,
@@ -553,6 +557,7 @@ if (leftover.length) {
 void categorizer.refresh();
 setInterval(() => void span('categories', {}, () => categorizer.refresh()), 5 * 60_000);
 console.log(`dither-chat hub on ${tls ? 'https' : 'http'}://${hostname}:${port}${tls ? ` (plain http on ${plainPort}: adapters, CA download)` : ''}  data=${dataDir}${calendars.url() ? `  calendar=${calendars.url()}` : ''}`);
+if (!demo && !readPassword(dataDir)) console.log(`login: no password is set, so the page and the API stay shut. Set one with: bun packages/hub/src/cli.ts set-password --data ${dataDir}  (docs/login.md)`);
 startup.mark('the rest');
 // Ready once the event loop is free to answer: what the start queued (adapters starting, the first refresh) runs first.
 setTimeout(() => {

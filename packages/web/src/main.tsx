@@ -1,6 +1,8 @@
 import { effect } from '@preact/signals';
 import { render } from 'preact';
 import { App } from './ui/App.tsx';
+import { LoginScreen } from './ui/Login.tsx';
+import { login } from './login.ts';
 import { reportContent, reportFresh, startAndroid } from './android.ts';
 import { startActivity } from './activity.ts';
 import { startClickLog } from './clicklog.ts';
@@ -66,7 +68,9 @@ new PerformanceObserver((list, obs) => {
 }).observe({ type: 'mark', buffered: true });
 
 try {
-  render(<App />, document.getElementById('app')!);
+  // Without a session the sign-in screen stands in for the whole app (login.ts, docs/login.md).
+  const Root = () => (login.value ? <LoginScreen /> : <App />);
+  render(<Root />, document.getElementById('app')!);
 } catch (e) {
   // A snapshot the code cannot render is dropped, once, and the app starts from the hub.
   if (source !== 'snapshot') throw e;

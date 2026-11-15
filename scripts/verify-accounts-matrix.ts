@@ -16,6 +16,7 @@
 import type { Subprocess } from 'bun';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { bearer, prepareLogin } from './hub-login.ts';
 
 const REPO = resolve(import.meta.dir, '..');
 const ACC = process.env.DITHER_ACCOUNTS_REPO ?? resolve(REPO, '../dither-accounts');
@@ -48,8 +49,10 @@ const until = async (f: () => Promise<boolean> | boolean, ms: number, what: stri
   console.log(`     (gave up waiting for ${what})`);
   return false;
 };
-const get = async (base: string, path: string) => (await fetch(base + path)).json() as Promise<any>;
-const post = (base: string, path: string, body: unknown) => fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: JSON.stringify(body) });
+// The hub is behind the login (docs/login.md): its calls carry the service token of its throwaway data dir.
+const auth = (base: string) => (base === HUB ? bearer(HUB_DATA) : {});
+const get = async (base: string, path: string) => (await fetch(base + path, { headers: auth(base) })).json() as Promise<any>;
+const post = (base: string, path: string, body: unknown) => fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json', origin: base, ...auth(base) }, body: JSON.stringify(body) });
 const testbed = (...args: string[]) => {
   const r = Bun.spawnSync(['bun', join(ACC, 'extractors/matrix/testbed/testbed.ts'), ...args], { env: tbEnv, stdout: 'pipe', stderr: 'pipe' });
   if (r.exitCode !== 0) throw new Error(`testbed ${args[0]}: ${r.stderr.toString().slice(-400)}`);
@@ -72,6 +75,7 @@ const hubEnv = (remote: boolean) => {
   return e;
 };
 const startHub = async (remote: boolean) => {
+  await prepareLogin(HUB_DATA);
   const p = spawn(['bun', 'packages/hub/src/main.ts', '--data', HUB_DATA, '--port', '8494', '--host', '127.0.0.1', '--web', WEB], hubEnv(remote), `hub-${Date.now()}.log`);
   await until(async () => (await fetch(`${HUB}/api/health`)).ok, 20_000, 'the hub');
   return p;

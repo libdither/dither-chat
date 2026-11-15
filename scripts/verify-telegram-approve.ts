@@ -26,6 +26,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { launch, type Page } from './browser.ts';
+import { bearer, prepareLogin, signInPage } from './hub-login.ts';
 
 const REPO = resolve(import.meta.dir, '..');
 const argv = process.argv.slice(2);
@@ -74,8 +75,10 @@ const until = async (f: () => unknown, ms: number, what: string) => {
   console.log(`     (gave up waiting for ${what})`);
   return false;
 };
+// The hub is behind the login (docs/login.md): its calls carry the service token of its throwaway data dir.
+const auth = (base: string) => (base === HUB ? bearer(join(T, 'hub')) : {});
 const json = (base: string, path: string, body?: unknown) =>
-  fetch(base + path, body === undefined ? undefined : { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: JSON.stringify(body) }).then((r) => r.json() as Promise<any>);
+  fetch(base + path, body === undefined ? { headers: auth(base) } : { method: 'POST', headers: { 'content-type': 'application/json', origin: base, ...auth(base) }, body: JSON.stringify(body) }).then((r) => r.json() as Promise<any>);
 const stopProc = async (p: Subprocess | null) => {
   if (!p || p.exitCode !== null) return;
   p.kill('SIGTERM');
@@ -140,6 +143,7 @@ try {
   });
   check(await until(async () => (await fetch(`${MGR}/api/health`)).ok, 20_000, 'the manager'), `a throwaway manager with the fake Telegram on ${MGR_PORT}`);
   const hubEnv: Record<string, string | undefined> = { ...process.env, DITHER_DATA: undefined, DITHER_PORT: undefined, DITHER_PUBLIC_URL: undefined, DITHER_ACCOUNTS_URL: MGR, DITHER_ACCOUNTS_CLIENT: join(ACC, 'packages/client/src/index.ts'), DITHER_CALENDAR_URL: 'off' };
+  await prepareLogin(join(T, 'hub'));
   hub = Bun.spawn(['bun', 'packages/hub/src/main.ts', '--data', join(T, 'hub'), '--port', String(HUB_PORT), '--host', '127.0.0.1', '--web', WEB], {
     cwd: REPO,
     env: hubEnv as Record<string, string>,
@@ -167,6 +171,7 @@ try {
   showOnCamera('https://example.com/not-a-sign-in');
   browser = await launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-video-capture=${CAMERA}`] });
   let p: Page = browser.page;
+  await signInPage(p, HUB);
   await p.size(1280, 860);
   await p.goto(`${HUB}/#/accounts/${id}`);
   await p.until(`!!document.querySelector('.tg-signins')`, 20_000);
@@ -382,6 +387,7 @@ try {
   await browser.close();
   browser = await launch({ args: ['--use-fake-device-for-media-stream'] });
   p = browser.page;
+  await signInPage(p, HUB);
   await p.size(390, 844, true);
   await browserSend(browser.port, 'Browser.setPermission', { permission: { name: 'camera' }, setting: 'denied', origin: HUB });
   await p.goto(`${HUB}/#/accounts/${id}`);

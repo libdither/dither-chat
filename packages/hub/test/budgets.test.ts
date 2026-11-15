@@ -107,7 +107,7 @@ beforeAll(async () => {
   while (attention.pump() > 0);
   attention.rescoreAll();
   const sup = { authorize: () => null, online: () => false, command: async () => ({}) } as any;
-  hub = new HubServer(store, sup, triage, { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 'budgets', attention, activity, devices, mail, readQueue: new ReadQueue(store, sup) });
+  hub = new HubServer(store, sup, triage, { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 'budgets', attention, activity, devices, mail, readQueue: new ReadQueue(store, sup) });
   hub.start();
   base = `http://127.0.0.1:${hub.server.port}`;
 }, 60_000);

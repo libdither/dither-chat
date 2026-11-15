@@ -76,6 +76,9 @@ says), files to the app registered for their type, or one you pick with **Open W
 
 Without the helper, or with it switched off or not answering, everything opens as it did before.
 
+The helper has no session with the hub, so before handing it a file the page asks the hub for a ticket
+(`POST /api/ticket`): the file's link with `?ticket=…`, good for 5 minutes and for that path only ([login.md](login.md)).
+
 A file the app has a viewer for (text and code, Markdown, JSON, CSV, PDF, archives: [files.md](files.md)) opens in
 that viewer on a click even with the helper on; the viewer's header has Open File and Open With…, which go to the
 helper. A file with no viewer goes straight to the helper, as before.

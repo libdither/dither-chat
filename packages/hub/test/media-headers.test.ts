@@ -111,7 +111,7 @@ describe('the media route', () => {
       created: async () => {},
       log: async () => '<script>alert(1)</script>',
     } as any;
-    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: join(dir, 'data'), webDist: dir, secret: 's' });
+    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: join(dir, 'data'), webDist: dir, open: true, secret: 's' });
     port = hub.start().port!;
     url = `http://127.0.0.1:${port}`;
     acc = store.createAccount({ network: 'matrix', label: 'x', color: '#000', adapter: 'matrix' }).id;

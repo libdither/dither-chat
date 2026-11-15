@@ -28,6 +28,7 @@ beforeAll(() => {
     hostname: '127.0.0.1',
     dataDir: dir,
     webDist: dir,
+    open: true,
     secret: 's',
     tls: { cert: join(dir, 'tls/server.crt'), key: join(dir, 'tls/server.key'), ca: join(dir, 'tls/ca.crt') },
   });
@@ -82,7 +83,8 @@ test('other sites cannot drive the hub', async () => {
   expect(res.status).toBe(403);
   const mk = (origin: string | null, host: string) => new Request('https://x/', { headers: { host, ...(origin ? { origin } : {}) } });
   expect(sameOrigin(mk('https://hub:8460', 'hub:8460'))).toBe(true);
-  expect(sameOrigin(mk(null, 'hub:8460'))).toBe(true);
+  // No Origin is no browser's write: refused (docs/login.md "Cross-site requests"); programs send the service token.
+  expect(sameOrigin(mk(null, 'hub:8460'))).toBe(false);
   expect(sameOrigin(mk('https://hub:1', 'hub:8460'))).toBe(false);
   expect(sameOrigin(mk('null', 'hub:8460'))).toBe(false);
 });
@@ -130,7 +132,7 @@ describe('starting a direct conversation', () => {
   const open = (body: unknown, headers: Record<string, string> = {}) => fetch(`http://127.0.0.1:${p3}/api/directs`, { method: 'POST', body: JSON.stringify(body), headers });
   beforeAll(() => {
     const sup = { authorize: () => null, online: () => online, command: async (id: string, c: any) => (sent.push([id, c]), answer(c)) } as any;
-    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
     p3 = hub.start().port!;
     acc = store.createAccount({ network: 'matrix', label: 'mx', color: '#000', adapter: 'matrix' });
     bare = store.createAccount({ network: 'matrix', label: 'old', color: '#111', adapter: 'matrix' });
@@ -183,7 +185,7 @@ describe('what a reply from outside the composer may do', () => {
   const send = (cnv: string, body: unknown, headers: Record<string, string> = {}) => fetch(`http://127.0.0.1:${p4}/api/conversations/${hubId('cnv', 'matrix', cnv)}/send`, { method: 'POST', body: JSON.stringify(body), headers });
   beforeAll(() => {
     const sup = { authorize: () => null, online: () => true, command: async (_: string, c: any) => (sent.push(c), { nativeId: 'x' }) } as any;
-    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
     p4 = hub.start().port!;
     mx = store.createAccount({ network: 'matrix', label: 'mxr', color: '#000', adapter: 'matrix' });
     store.ingest(mx, { t: 'hello', network: 'matrix', version: '1', capabilities: ['send'] });
@@ -234,7 +236,7 @@ describe('what a reply from outside the composer may do', () => {
 test('edit and delete go through the account that wrote it, where the network allows', async () => {
   const sent: any[] = [];
   const sup = { authorize: () => null, online: () => true, command: async (id: string, c: any) => (sent.push([id, c]), undefined) } as any;
-  const hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+  const hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
   const p2 = hub.start().port;
   const a = store.createAccount({ network: 'discord', label: 'mine', color: '#000', adapter: 'discord' });
   const n = store.createAccount({ network: 'signal', label: 'noedit', color: '#111', adapter: 'signal' });
@@ -272,7 +274,7 @@ test('your own bio: only yours, only where the adapter can, within the network l
       return { bio: c.change.bio, pronouns: 'they/them' };
     },
   } as any;
-  const hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+  const hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
   const p6 = hub.start().port;
   const d = store.createAccount({ network: 'discord', label: 'bio', color: '#000', adapter: 'discord' });
   const w = store.createAccount({ network: 'whatsapp', label: 'wa', color: '#000', adapter: 'whatsapp' });
@@ -337,7 +339,7 @@ describe('sending files', () => {
         return { nativeId: 'x' };
       },
     };
-    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: join(dir, 'files'), webDist: dir, secret: 's' });
+    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: join(dir, 'files'), webDist: dir, open: true, secret: 's' });
     url = `http://127.0.0.1:${hub.start().port}`;
     d = store.createAccount({ network: 'discord', label: 'files', color: '#000', adapter: 'discord' });
     store.ingest(d, { t: 'hello', network: 'discord', version: '1', capabilities: ['send', 'sendMedia'] });
@@ -445,7 +447,7 @@ describe('sending files', () => {
   test('a restart keeps what was uploaded: the send still goes', async () => {
     const u = await (await up('survives')).json();
     hub.stop();
-    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: join(dir, 'files'), webDist: dir, secret: 's' });
+    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: join(dir, 'files'), webDist: dir, open: true, secret: 's' });
     url = `http://127.0.0.1:${hub.start().port}`;
     expect((await send(cid('ff'), { body: 'after', attachments: [u.id] })).status).toBe(200);
     expect(sent.at(-1).seen).toEqual(['survives']);

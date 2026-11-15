@@ -15460,3 +15460,80 @@ h1:hover > .pair-nick-edit,
 .notice-actions a.chip-btn {
   text-decoration: none;
 }
+
+/* The sign-in screen (ui/Login.tsx, docs/login.md): the whole window while this device has no session. */
+.login-screen {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  overflow: auto;
+  background: var(--bg);
+}
+.login-card {
+  width: 100%;
+  max-width: 360px;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+}
+.login-card form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.login-card h1 {
+  font-size: 19px;
+  margin: 0 0 10px;
+}
+.login-card input {
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text);
+}
+.login-card .btn {
+  margin-top: 16px;
+  justify-content: center;
+}
+.login-help {
+  margin: 0 0 8px;
+  color: var(--text-dim);
+}
+.login-error {
+  margin: 0 0 6px;
+  color: var(--danger);
+}
+.login-cmd {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  font: 12.5px var(--mono);
+}
+.session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.session-row span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.session-row b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.session-row small {
+  color: var(--text-faint);
+}

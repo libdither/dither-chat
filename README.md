@@ -47,6 +47,13 @@ bun run hub -- --demo  # http://localhost:8460 with a seeded demo world
 
 Browsers only install a PWA over HTTPS. To serve other devices that way, see [docs/deploy.md](docs/deploy.md).
 
+A demo world runs without a login. A real hub (no `--demo`) stays shut until it has a password; set one, then sign in
+on each device as `admin` ([docs/login.md](docs/login.md)):
+
+```sh
+bun packages/hub/src/cli.ts set-password   # --data <dir> for a data dir other than the usual one
+```
+
 Then add real accounts from the **Accounts** page, or with the CLI:
 
 ```sh
@@ -59,7 +66,8 @@ bun packages/hub/src/cli.ts add discord --label alt          # then sign in via 
 
 Secrets live under `$DITHER_DATA/accounts/<id>/secret.json` (0600) and never
 leave the hub. Run one hub on an always-on machine and use your phone and laptops as
-clients over Tailscale (bind is `0.0.0.0`; the server only answers loopback + tailnet ranges).
+clients over Tailscale (bind is `0.0.0.0`; the server only answers loopback + tailnet ranges, and only signed-in
+devices or programs with its service token past that: [docs/login.md](docs/login.md)).
 
 ## Status
 

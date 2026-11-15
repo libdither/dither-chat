@@ -198,7 +198,7 @@ describe('the store and the endpoint', () => {
       for (let i = 0; i < 30; i++) store.ingest(m, { t: 'message', message: { nativeId: `$e${i}`, conversation: ROOM, author: i < 3 ? '@ann:x.org' : '@bob:x.org', ts: now - i * DAY, body: 'y' } });
     })();
     store.flush();
-    hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
     port = hub.start().port!;
   });
   afterAll(() => {

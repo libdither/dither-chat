@@ -4,6 +4,7 @@
  */
 import { signal } from '@preact/signals';
 import { toast } from './state.ts';
+import { api } from './api.ts';
 
 const KEY = 'dither.desk';
 export const DESK_PORT = 8475;
@@ -104,7 +105,9 @@ export async function openFile(f: { url: string; name: string | null; mime: stri
   if (!desk.value || (!app && !on('files'))) return false;
   const label = f.name ?? 'the file';
   try {
-    const r = await call<{ saved?: string }>('/open-file', { body: { url: new URL(f.url, location.href).href, name: f.name, mime: f.mime?.split(';')[0].trim(), ...(app ? { app } : {}) }, timeout: 130_000 });
+    // The helper has no session: the hub gives this link a ticket it may fetch it with for a few minutes (docs/login.md).
+    const { url } = await api<{ url: string }>('/api/ticket', { body: { url: f.url } });
+    const r = await call<{ saved?: string }>('/open-file', { body: { url: new URL(url, location.href).href, name: f.name, mime: f.mime?.split(';')[0].trim(), ...(app ? { app } : {}) }, timeout: 130_000 });
     if (r.status === 401) setDesk(null);
     if (r.ok) return true;
     // Saved but not opened (a kind that runs code): say so instead of opening it here.
