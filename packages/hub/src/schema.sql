@@ -271,7 +271,7 @@ CREATE TABLE IF NOT EXISTS folder_item (
 );
 
 -- How you arranged your sidebar: order, pins, hidden places, closed folders. And whom the @ picker offers there
--- (docs/mentions.md): NULL inherits from the place it is in.
+-- (docs/mentions.md) and how pictures are shown there (docs/pictures.md): NULL inherits from the place it is in.
 CREATE TABLE IF NOT EXISTS place_pref (
   kind      TEXT NOT NULL CHECK (kind IN ('folder', 'space', 'conversation')),
   id        TEXT NOT NULL,
@@ -282,6 +282,7 @@ CREATE TABLE IF NOT EXISTS place_pref (
   railed    INTEGER NOT NULL DEFAULT 0,
   mention_scope TEXT,                         -- here | friends | everyone
   mention_same  INTEGER,                      -- 1: friends and everyone only on the chat's network
+  pictures      TEXT,                         -- mosaic | rows | six | fold | small
   PRIMARY KEY (kind, id)
 );
 

@@ -5,11 +5,11 @@
  */
 import { effect, signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { DEFAULT_ARRANGE, smartScore, type ArrangeSettings, type SortMode, type SortScope, type UsageKind } from '@dither-chat/protocol';
+import { DEFAULT_ARRANGE, DEFAULT_PICTURE_LAYOUT, smartScore, type ArrangeSettings, type PictureLayout, type SortMode, type SortScope, type UsageKind } from '@dither-chat/protocol';
 import type { DropTarget } from './layout.ts';
-import { activityOfSpace, convTitle, directsOf, folderConvs, people, placePref, railEntries, spaceUnread, sumUnread, unreadOf, type RailEntry } from './model.ts';
+import { activityOfSpace, convTitle, directsOf, folderConvs, people, placePref, placesAbove, railEntries, spaceUnread, sumUnread, unreadOf, type RailEntry } from './model.ts';
 import { sameSnapshot, shouldResort, sortKeys, stabilize, type ResortReason, type Sortable } from './ordering.ts';
-import { api, db, loaded, patchPlaces, rev, saveFolders, toast } from './state.ts';
+import { api, db, loaded, metaRev, patchPlaces, rev, saveFolders, toast } from './state.ts';
 import { fetchUsage, onForeground, startUsage, usageLoaded, usageOf, usageState } from './usage.ts';
 
 const ARRANGE_KEY = 'dither-chat:arrange';
@@ -57,6 +57,37 @@ export function setFollowArchive(on: boolean) {
     .then(setArrange)
     .catch((e) => toast({ kind: 'error', title: 'Could not save that', body: e.message }));
 }
+
+// ------------------------------------------------------------------ how chats show pictures (docs/pictures.md)
+
+export const PICTURE_LABELS: Record<PictureLayout, string> = { six: 'Mosaic, six and +N', mosaic: 'Mosaic, all of them', rows: 'Rows, uncropped', fold: 'Folded after the first', small: 'Small' };
+
+/** The way for chats that don't say. */
+export const globalPictures = (): PictureLayout => arrange.value.pictures ?? DEFAULT_PICTURE_LAYOUT;
+export function setGlobalPictures(pictures: PictureLayout) {
+  setArrange({ ...arrange.value, pictures });
+  api<ArrangeSettings>('/api/arrange', { method: 'PATCH', body: { pictures } })
+    .then(setArrange)
+    .catch((e) => toast({ kind: 'error', title: 'Could not save that', body: e.message }));
+}
+
+/** What a place inherits: from the nearest place above it that says, with that place, else the global way. */
+export function inheritedPictures(kind: P.PlaceKind, id: string): { layout: PictureLayout; from: { kind: P.PlaceKind; id: string } | null } {
+  for (const [k, i] of placesAbove(kind, id)) {
+    const v = db.placePrefs.get(`${k}:${i}`)?.pictures;
+    if (v) return { layout: v, from: { kind: k, id: i } };
+  }
+  return { layout: globalPictures(), from: null };
+}
+
+/** How a chat shows pictures: its own way, else its channel's, server's or folder's, else the global way. */
+export function pictureLayout(convId: string): PictureLayout {
+  metaRev.value;
+  return db.placePrefs.get(`conversation:${convId}`)?.pictures ?? inheritedPictures('conversation', convId).layout;
+}
+
+/** null: back to what it inherits. */
+export const setPlacePictures = (kind: P.PlaceKind, id: string, pictures: PictureLayout | null) => patchPlaces([{ kind, id, pictures }]);
 
 export function patchDismissed(dismissed: Record<string, string[] | null>) {
   const next = { ...arrange.value.dismissed };

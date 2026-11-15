@@ -1,5 +1,5 @@
 import type * as P from '@dither-chat/protocol';
-import { ATTACHMENT_LIMITS, NETWORK_META, RULE_LABEL, RULE_LEVELS, sendBlocker, showsGone, showsInline } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, NETWORK_META, RULE_LABEL, RULE_LEVELS, sendBlocker, showsGone, showsInline, type PictureLayout } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import { ago, clock, dayLabel, fullTime, sameDay } from '../format.ts';
@@ -77,7 +77,6 @@ import { TriageWhy, tierIcon, tierName } from './Marks.tsx';
 import { MessageHistory, Ticks } from './MessageHistory.tsx';
 import { detailsShown, showDetails, swipeReply } from './Pager.ts';
 import { openConv } from '../opening.ts';
-import { viewer, type ViewerImage } from '../viewer.ts';
 import { JoinCallButton } from './Call.tsx';
 import { EmojiComplete, insertAtCaret } from './EmojiComplete.tsx';
 import { SlashCommandsLazy } from './apps/lazy.tsx';
@@ -85,7 +84,10 @@ import { claimSend } from '../apps.ts';
 import { MentionComplete } from './MentionComplete.tsx';
 import { useChipBox } from './ChipBox.tsx';
 import { loadEmoji } from '../emoji.ts';
-import { isLottie, isSticker, Sticker } from './Sticker.tsx';
+import { isSticker, Sticker } from './Sticker.tsx';
+import { openViewer, Pictures } from './Pictures.tsx';
+import { isPicture, onlyPictures, pictureRuns, picturesOf } from '../pictures.ts';
+import { pictureLayout } from '../arrange.ts';
 import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
 import { TypingBar } from './Typing.tsx';
 import { useGrow } from './grow.ts';
@@ -116,7 +118,7 @@ import { Loading } from './Loader.tsx';
 import { Slices, whenIdle } from '../slices.ts';
 import { calendarOn } from '../plans.ts';
 import { PlanChipLazy } from './calendar/lazy.tsx';
-import { AltBadge, EmbedVideo, RichFoot, RichHead, RichMarks, Veil, veiled, Voice } from './rich/parts.tsx';
+import { EmbedVideo, RichFoot, RichHead, RichMarks, Veil, veiled, Voice } from './rich/parts.tsx';
 import { VoicePeople } from './Ringing.tsx';
 import { ForumLazy } from './ThreadsLazy.tsx';
 import { ScheduledStrip, useSendExtras } from './SendExtras.tsx';
@@ -409,18 +411,11 @@ function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
   return <div class={`msg-body ${isJumbo(m.body) ? 'jumbo' : ''}`} dangerouslySetInnerHTML={{ __html: html }} onClick={click} />;
 }
 
-/** A plain click opens the viewer; a middle or modified click still opens the file in a tab. */
-function openViewer(e: MouseEvent, images: ViewerImage[], index: number) {
-  if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
-  e.preventDefault();
-  viewer.value = { images, index };
-}
-
 /**
  * A deleted or disappeared message the hub kept (docs/history.md): shown in full, as it was, with a quiet mark of
  * how and when it went.
  */
-function Gone({ m }: { m: P.MessageView }) {
+function Gone({ m, layout }: { m: P.MessageView; layout: PictureLayout }) {
   // Its "5m ago" moves on with the list, as it did when every change drew every message.
   rev.value;
   const how = m.gone!.how === 'disappeared' ? 'Disappeared' : 'Deleted';
@@ -428,7 +423,7 @@ function Gone({ m }: { m: P.MessageView }) {
   return (
     <div class="msg-gone open">
       <Body m={shown} />
-      <Attachments m={shown} />
+      <Attachments m={shown} layout={layout} />
       <span class="msg-gone-mark" title={`${how} ${fullTime(m.gone!.at)}`}>
         <Icon name={m.gone!.how === 'disappeared' ? 'clock' : 'trash'} size={11} />
         {how} <span class="msg-gone-when">· {ago(m.gone!.at)}</span>
@@ -466,28 +461,23 @@ function Marks({ m }: { m: P.MessageView }) {
   );
 }
 
-function Attachments({ m }: { m: P.MessageView }) {
+/**
+ * A message's files. Its pictures are drawn as one block the way the chat says (ui/Pictures.tsx): with the pictures
+ * of the run it ends (`run`, docs/pictures.md), or not at all when a later message of its run draws them (`absorbed`).
+ */
+function Attachments({ m, run, absorbed, layout }: { m: P.MessageView; run?: P.MessageView[]; absorbed?: boolean; layout: PictureLayout }) {
   if (!m.attachments.length) return null;
   // A file the network called just a file whose bytes are a picture, a video or a sound shows as one (files.ts).
   const media = (a: P.AttachmentView) => (a.kind === 'file' && a.info && /^(image|video|audio)$/.test(a.info.kind) ? (a.info.kind as P.AttachmentKind) : a.kind);
-  const images = m.attachments.filter((a) => media(a) === 'image' && !isSticker(m, a));
+  const pics = absorbed ? [] : (run ?? [m]).flatMap(picturesOf);
+  const rest = m.attachments.map((a, i) => [a, i] as const).filter(([a]) => !isPicture(m, a));
+  if (!pics.length && !rest.length) return null;
   return (
     <div class="atts">
-      {m.attachments.map((a, i) => {
+      {pics.length > 0 && <Pictures pics={pics} layout={layout} runKey={(run ?? [m])[0].id} anchors={run?.slice(0, -1).filter(onlyPictures).map((x) => x.id)} />}
+      {rest.map(([a, i]) => {
         const kind = media(a);
         if (isSticker(m, a)) return <Sticker a={a} index={i} />;
-        if (kind === 'image') {
-          const w = a.width ?? a.info?.width ?? 400;
-          const h = a.height ?? a.info?.height ?? 300;
-          const scale = Math.min(1, 400 / w, 300 / h);
-          const img = (
-            <a class="att-img" data-att={i} href={a.url} target="_blank" rel="noreferrer" onClick={(e) => openViewer(e, images, images.indexOf(a))} style={{ width: `${Math.round(w * scale)}px`, aspectRatio: `${w} / ${h}` }}>
-              <img src={a.url} alt={a.alt ?? a.name ?? ''} loading="lazy" />
-              <AltBadge alt={a.alt} />
-            </a>
-          );
-          return withNote(a, veiled(a) ? <Veil a={a}>{img}</Veil> : img);
-        }
         if (kind === 'video') {
           const video = <video class="att-video" data-att={i} src={a.url} controls preload="metadata" onPlay={() => played(m)} />;
           return withNote(a, veiled(a) ? <Veil a={a}>{video}</Veil> : video);
@@ -603,9 +593,11 @@ function TriageNote({ m }: { m: P.MessageView }) {
  * `who`, the author's account's own name (theirs or yours; their picture is the account's too), and `whoIdent`, the
  * account's identifier where another account on the same side shares that name; `net`, the network's badge on the
  * picture, where it would differ between the routes; `tag`, where the route changes, what of the route the head does
- * not say, after the time, which `onTag` sends through.
+ * not say, after the time, which `onTag` sends through. Pictures (docs/pictures.md): `pictures`, how this chat
+ * draws them; `run`, the messages whose pictures this one draws after its own, when it ends a run of them; `absorbed`,
+ * a message of a run whose pictures the run's last message draws.
  */
-const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, highlight, target, thread, who, whoIdent, net, tag, onTag }: { m: P.MessageView; grouped: boolean; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; who?: string; whoIdent?: string; net?: boolean; tag?: boolean; onTag?: (convId: string) => void }) {
+const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, highlight, target, thread, who, whoIdent, net, tag, onTag, pictures, run, absorbed }: { m: P.MessageView; grouped: boolean; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; who?: string; whoIdent?: string; net?: boolean; tag?: boolean; onTag?: (convId: string) => void; pictures: PictureLayout; run?: P.MessageView[]; absorbed?: boolean }) {
   if (counting) rendered('MessageItem');
   metaRev.value;
   // On a touch screen the action bar (it shows on hover) and the tooltips are not drawn: a long-press opens the same
@@ -625,8 +617,11 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
     const el = target as HTMLElement | null;
     const att = el?.closest<HTMLElement>('[data-att]');
     if (att) {
-      const a = m.attachments[Number(att.dataset.att)];
-      if (a) return attachmentMenu(a, m, m.attachments.filter((x) => x.kind === 'image' && !isLottie(x)).map((x) => ({ url: x.url, name: x.name, width: x.width, height: x.height })), reply);
+      // A picture of the run this message draws is its own message's (ui/Pictures.tsx data-msg).
+      const owner = (att.dataset.msg && run?.find((x) => x.id === att.dataset.msg)) || m;
+      const a = owner.attachments[Number(att.dataset.att)];
+      const pics = (run ?? [m]).flatMap(picturesOf).map(({ a: x }) => ({ url: x.url, name: x.name, width: x.width, height: x.height }));
+      if (a) return attachmentMenu(a, owner, pics, owner === m ? reply : () => onReply(owner));
     }
     const img = el?.closest<HTMLImageElement>('img.embed-image');
     if (img) return imageMenu(img.src, null, m, reply);
@@ -707,12 +702,12 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           </div>
         )}
         {m.deleted && m.gone?.kept ? (
-          <Gone m={m} />
+          <Gone m={m} layout={pictures} />
         ) : m.forward && !m.deleted ? (
           <ForwardCard m={m}>
             <RichHead m={m} />
             <Body m={m.forward.text !== undefined ? { ...m, body: m.forward.text } : m} tail={ticks} />
-            <Attachments m={m} />
+            <Attachments m={m} layout={pictures} />
             <Embeds m={m} />
             <InviteCards m={m} body={m.forward.text ?? m.body} />
             <RichFoot m={m} />
@@ -722,7 +717,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
             <RichHead m={m} />
             <StoryReplyLine m={m} />
             {m.poll ? <PollCardLazy m={m} fallback={<Body m={m} />} /> : <Body m={m.contacts ? withoutCardLines(m) : m} tail={ticks} />}
-            <Attachments m={m} />
+            <Attachments m={m} run={run} absorbed={absorbed} layout={pictures} />
             <MissingFiles m={m} />
             <ContactCards m={m} />
             <Embeds m={m} />
@@ -1043,18 +1038,52 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   // A person's chat: how each account in it is named (the routes shown; a bot in a DM is not among them).
   const heads = chat ? headNames(convIds) : null;
   const unreadFrom = firstUnreadTs === null ? -1 : all.findIndex((m) => m.ts > firstUnreadTs && !isSelfIdentity(m.authorId));
+  const groups = (prev: P.MessageView | null, m: P.MessageView) =>
+    !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId;
+  // One person's pictures one after another are one run, drawn by its last message (docs/pictures.md); a message of
+  // it that is nothing but pictures has no row of its own. How each chat draws them, once per chat.
+  const runs = pictureRuns(all, start, end, (p, m, i) => groups(p, m) && i !== unreadFrom);
+  const layouts = new Map<string, PictureLayout>();
+  const layoutOf = (cid: string) => layouts.get(cid) ?? layouts.set(cid, pictureLayout(cid)).get(cid)!;
+  // The row above, for grouping: a left-out row isn't one.
+  let above: P.MessageView | null = null;
   for (let i = start; i < end; i++) {
     const m = all[i];
     if (!prev || !sameDay(prev.ts, m.ts)) items.push(<div class="day-sep"><span>{dayLabel(m.ts)}</span></div>);
     if (i === unreadFrom) items.push(<div class="new-sep"><span>New</span></div>);
-    const grouped = !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId;
+    const run = runs.get(m.id);
+    const ends = !!run && run[run.length - 1] === m;
+    if (run && !ends && onlyPictures(m)) {
+      prev = m;
+      continue;
+    }
+    const grouped = groups(above, m);
     const target = m.replyToId ? (byId.get(m.replyToId) ?? quoted.get(m.replyToId) ?? null) : null;
     const thread = m.threadId ? (db.conversations.get(m.threadId) ?? null) : null;
     // All chats together: where the route changes, grouping breaks (above) and the head line says which route.
     const tag = !!chat && convIds.length > 1 && !grouped && (!prev || prev.conversationId !== m.conversationId);
     const head = heads && m.authorId ? heads.get(m.authorId) : undefined;
-    items.push(<MessageItem key={m.id} m={m} grouped={grouped} onReply={onReply} onQuote={onQuote} highlight={m.id === flash} target={target} thread={thread} who={head?.name} whoIdent={head?.ident} net={!!chat?.badge} tag={tag} onTag={chat ? onTag : undefined} />);
-    prev = m;
+    items.push(
+      <MessageItem
+        key={m.id}
+        m={m}
+        grouped={grouped}
+        onReply={onReply}
+        onQuote={onQuote}
+        highlight={m.id === flash}
+        target={target}
+        thread={thread}
+        who={head?.name}
+        whoIdent={head?.ident}
+        net={!!chat?.badge}
+        tag={tag}
+        onTag={chat ? onTag : undefined}
+        pictures={layoutOf(m.conversationId)}
+        run={ends ? run : undefined}
+        absorbed={!!run && !ends}
+      />,
+    );
+    prev = above = m;
   }
 
   return (

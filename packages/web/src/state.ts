@@ -1098,9 +1098,10 @@ export function patchPlaces(items: P.PlacePrefPatch[]) {
     const k = prefKey(i.kind, i.id);
     const cur = db.placePrefs.get(k) ?? { kind: i.kind, id: i.id, position: null, pinned: false, hidden: false, open: false, railed: false };
     const next: P.PlacePrefView = { ...cur, ...(i as Partial<P.PlacePrefView>) };
-    // null takes a mention setting away: inherited again.
+    // null takes a mention or pictures setting away: inherited again.
     if (i.mentionScope === null) delete next.mentionScope;
     if (i.mentionSameNetwork === null) delete next.mentionSameNetwork;
+    if (i.pictures === null) delete next.pictures;
     db.placePrefs.set(k, next);
   }
   changed('meta');

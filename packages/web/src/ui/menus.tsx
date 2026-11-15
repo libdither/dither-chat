@@ -4,10 +4,11 @@
  */
 import { isLottie } from './Sticker.tsx';
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META, RULE_LABEL, RULE_LEVELS, showsInline } from '@dither-chat/protocol';
+import { NETWORK_META, PICTURE_LAYOUTS, RULE_LABEL, RULE_LEVELS, showsInline } from '@dither-chat/protocol';
 import { fullTime } from '../format.ts';
 import { noteRowRead } from '../activity.ts';
-import { AUTOMATIC, OLDER_RULE, authorName, convTitle, deepLink, directsOf, effectiveLevel, externalProfile, heldHere, netName, plainBody, ruleOn, sumUnread, unreadOf, type Level } from '../model.ts';
+import { AUTOMATIC, OLDER_RULE, authorName, convTitle, deepLink, directsOf, effectiveLevel, externalProfile, heldHere, netName, placePref, plainBody, ruleOn, sumUnread, unreadOf, type Level } from '../model.ts';
+import { inheritedPictures, PICTURE_LABELS, setPlacePictures } from '../arrange.ts';
 import { deviceRule, myDevice, setDeviceRule } from '../devices.ts';
 import { android } from '../android.ts';
 import { alertToggle, isTier, lessToggle } from '../marks.ts';
@@ -375,6 +376,20 @@ export function WhyHere({ reasons }: { reasons: string[] }) {
   );
 }
 
+/**
+ * How a chat or a server shows pictures (docs/pictures.md): as the place it is in says, else as Settings say; or a
+ * way of its own.
+ */
+function pictureEntries(kind: P.PlaceKind, id: string): MenuEntry[] {
+  const own = placePref(kind, id).pictures ?? null;
+  const up = inheritedPictures(kind, id);
+  const from = up.from && (up.from.kind === 'space' ? db.spaces.get(up.from.id)?.name : up.from.kind === 'folder' ? db.folders.find((f) => f.id === up.from!.id)?.name : convTitle(db.conversations.get(up.from.id)));
+  return [
+    { label: `As ${from ? `in ${from}` : 'in Settings'}: ${PICTURE_LABELS[up.layout]}`, radio: true, checked: own === null, run: () => void setPlacePictures(kind, id, null) },
+    ...PICTURE_LAYOUTS.map((l): MenuEntry => ({ label: PICTURE_LABELS[l], radio: true, checked: own === l, run: () => void setPlacePictures(kind, id, l) })),
+  ];
+}
+
 /** `why`: the inbox's reasons for where this row sits (docs/inbox.md), shown first. */
 export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpec {
   const eff = effectiveLevel(c);
@@ -402,6 +417,7 @@ export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpe
         { label: muted ? `Unmute ${noun}` : `Mute ${noun}`, icon: muted ? 'bell' : 'bellOff', run: () => setRule('conversation', c.id, muted ? null : 'none') },
         { label: 'Notification Settings', icon: 'bell', sub: notifyEntries('conversation', c.id, own, heldHere(eff)) },
         deviceEntries('conversation', c.id),
+        { label: 'Pictures', icon: 'image', sub: pictureEntries('conversation', c.id) },
       ],
       c.shape !== 'thread' ? arrangeEntries(placeKey) : [],
       // Follow a thread and how it notifies; start, post, browse threads (threads.ts).
@@ -466,6 +482,7 @@ export function spaceMenu(s: P.SpaceView): MenuSpec {
         { label: muted ? `Unmute ${noun}` : `Mute ${noun}`, icon: muted ? 'bell' : 'bellOff', run: () => setRule('space', s.id, muted ? null : 'none') },
         { label: 'Notification Settings', icon: 'bell', sub: notifyEntries('space', s.id, own) },
         deviceEntries('space', s.id),
+        { label: 'Pictures', icon: 'image', sub: pictureEntries('space', s.id) },
       ],
       section ? [] : arrangeEntries(`space:${s.id}`),
       [

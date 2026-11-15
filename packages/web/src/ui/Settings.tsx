@@ -26,7 +26,8 @@ import { android } from '../android.ts';
 import { Sheet } from './Sheet.tsx';
 import { chosenTheme, followsSystem, Swatch, ThemeList } from './Themes.tsx';
 import { themeById } from '../themes.ts';
-import { followsArchive, setFollowArchive } from '../arrange.ts';
+import { followsArchive, globalPictures, PICTURE_LABELS, setFollowArchive, setGlobalPictures } from '../arrange.ts';
+import { PICTURE_LAYOUTS, type PictureLayout } from '@dither-chat/protocol';
 import { applyCallInput, myInput } from '../call.ts';
 import { TranslateSettings } from './TranslateSettings.tsx';
 
@@ -395,6 +396,15 @@ export function SettingsPane() {
                 <small>A chat you archive or unarchive on a network (Signal) is hidden or shown in the sidebar here too, when that changes. Something that needs you still shows.</small>
               </span>
             </label>
+            <div class="set-rule">
+              <span class="set-rule-label">Pictures in chats</span>
+              <select class="select" data-track="settings: pictures" value={globalPictures()} onChange={(e) => setGlobalPictures((e.target as HTMLSelectElement).value as PictureLayout)}>
+                {PICTURE_LAYOUTS.map((l) => (
+                  <option value={l}>{PICTURE_LABELS[l]}</option>
+                ))}
+              </select>
+            </div>
+            <p class="set-help">One person's pictures sent one after another, in one message or several, show as one block, drawn this way. A chat or a server can have its own: Pictures in its menu.</p>
           </section>
 
           <TranslateSettings />
