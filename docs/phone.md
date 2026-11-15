@@ -120,7 +120,7 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Make a group (pick people across your accounts, where, a name) | New group in the palette's New and Ctrl+K ([group-settings.md](group-settings.md), "Making a group") | **Unreachable** | The palette's New group pages as a bottom sheet; a back arrow and the whole title in place of the crumbs; the keyboard only on the name |
 | Quick switcher | Ctrl+K, the title bar's button | **Keyboard only** | Search tab: searching a name lists people, communities and channels to jump to; the palette's root is the crumb before New |
 | Search with filters, scope to one conversation, jump to a message | Sidebar box, header button | Reachable | Search tab; searching a conversation is a page with a way back to it |
-| Hover bar on a message: three reactions, picker, edit, delete, reply | Hover | Long-press: reactions, reply, copy, edit, delete | Long-press: also the author's profile, the thread, the message it replies to |
+| Hover bar on a message: four reactions, picker, edit, delete, reply | Hover | Long-press: reactions, reply, copy, edit, delete | Long-press: also the author's profile, the thread, the message it replies to |
 | Exact time of a grouped message | Hover | **Hidden** | Sheet header |
 | Which account a message came through, its encryption warning, the author's handle | Tooltips | **Hidden** | Sheet header; profile |
 | Which tier a message landed in and why, and the two marks | The bell among its hover actions; its menu | **Invisible pill** for silent and digest | Sheet: the reasons and both marks |
