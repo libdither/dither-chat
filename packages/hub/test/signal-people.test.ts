@@ -140,3 +140,17 @@ test("a network's archive hides and shows the chat when it changes, unless turne
   expect(hidden()).toBe(false);
   expect(usage.patchArrange({ followArchive: true }).followArchive).toBeUndefined(); // on: the default, left out
 });
+
+test('a contact first heard without a name is renamed on its person once its profile name arrives', () => {
+  const BOB = 'b0b00000-3333-4eee-8fff-000000000003';
+  const bob = hubId('idn', 'signal', BOB);
+  ingest({ t: 'identity', identity: { nativeId: BOB, contact: true } });
+  const pid = row('SELECT person_id FROM identity WHERE id = ?', bob)!.person_id;
+  expect(row('SELECT name FROM person WHERE id = ?', pid)!.name).toBe(BOB);
+  ingest({ t: 'identity', identity: { nativeId: BOB, displayName: 'Bob Diaz', contact: true } });
+  expect(row('SELECT name FROM person WHERE id = ?', pid)!.name).toBe('Bob Diaz');
+  // A name you gave the person stays.
+  store.db.query('UPDATE person SET name = ?, manual = 1 WHERE id = ?').run('Bobby', pid);
+  ingest({ t: 'identity', identity: { nativeId: BOB, displayName: 'Robert Diaz', contact: true } });
+  expect(row('SELECT name FROM person WHERE id = ?', pid)!.name).toBe('Bobby');
+});

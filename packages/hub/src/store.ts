@@ -970,7 +970,10 @@ export class Store {
       }
       this.selfIdentities.add(id);
     } else if (f.contact) {
-      this.ensurePerson(id);
+      // A contact always has a person; one first heard without a name (Signal before its profile arrives) is named by
+      // its id, so a later name or picture reaches the person too (the person keeps a name you gave it: manual).
+      const pid = this.ensurePerson(id);
+      if (changed && after.person_id) this.syncAutoPerson(pid);
     } else if (changed && after.person_id) {
       this.syncAutoPerson(after.person_id);
     }
