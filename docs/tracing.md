@@ -156,7 +156,9 @@ not a second line when something inside it was reported already (an attempt). Th
 ends.
 
 **The page** sends `POST /api/errors` with `{ name, message, stack, where, status?, version }` and `keepalive`,
-at most 20 reports a minute and the same one at most once a minute, never while offline, never throwing. The hub
+at most 20 reports a minute and the same one at most once a minute, never while offline, never throwing. A fetch
+that did not reach the hub is sent 1.5 s later, and not at all if the page started leaving (`beforeunload`,
+`pagehide`) by then: a reload, for a new build or by hand, ends the page's fetches in flight with "Failed to fetch". The hub
 answers 204, 400 for a body that is not a report (a `where` that is not a route template, `#` or `/` then words, `:`
 and `/`), 413 over 16 KB, and 429 past 60 a minute from one address; it is authorised like every owner route (this
 machine or the tailnet, the page's own origin).
