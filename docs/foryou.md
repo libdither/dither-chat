@@ -100,4 +100,9 @@ item's weight is divided by its propensity, at most 10.
 - A learned head, `P(engage | on screen)`, as a residual on importance, fitted in slices from `foryouLabel`; shadow
   scores logged in `foryou_item.score` before it sorts.
 - Scroll-pasts as "no" labels for importance (behind a switch, checked in the replay first).
-- The scorecard on How it sorts: the click rate on shown items (`ForYou.stats`, `/api/foryou/stats`) is its measure.
+
+## On the scorecard
+
+How it sorts' scorecard ([scorecard.md](scorecard.md)) charts, day by day, the share of items on screen that you
+opened, for all items and for exploration slots alone (`foryou.clicked`, `foryou.clicked_explore`).
+`GET /api/foryou/stats` gives the same over any span.

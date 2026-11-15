@@ -1,13 +1,15 @@
 /**
  * How it sorts (docs/notifications.md): which tier triage put each conversation's messages in this week, one line per
  * conversation under Alerts, Conversations, List and Below the list, with why, its importance, and the two marks that
- * teach the models. Under them, what was learned. Reached from Catch up, the inbox's menu and Settings → Notifications.
+ * teach the models. Under them, what was learned, and how well it is doing day by day (Scorecard.tsx). Reached from
+ * Catch up, the inbox's menu and Settings → Notifications.
  */
 import type * as P from '@dither-chat/protocol';
 import { EXPLORE_REASON } from '@dither-chat/protocol';
 import { ago, fullTime } from '../format.ts';
 import { BELOW_DAYS, isMailItem, lineKey, linesOf, listPreview, reasonsOf, topImportance, type BoardItem, type BoardLine } from '../board.ts';
 import { authorName, board, boardUnread, communitiesOf, convLabel, convTitle, plainBody } from '../model.ts';
+import type { FunctionComponent } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { db, go, loadMailTriage, rev } from '../state.ts';
 import { forgetFactor, loadPolicy, loadShadow, relearn, triagePolicy, triageShadow } from '../triage.ts';
@@ -273,9 +275,24 @@ export function HowItSorts({ onBack }: { onBack?: () => void }) {
           </details>
         )}
         <Learned />
+        <ScorecardLazy />
       </div>
     </section>
   );
+}
+
+/** The scorecard (Scorecard.tsx, docs/scorecard.md): a chunk of its own, loaded once How it sorts is open. */
+let scorecard: FunctionComponent | null = null;
+function ScorecardLazy() {
+  const [View, setView] = useState<FunctionComponent | null>(() => scorecard);
+  useEffect(() => {
+    if (scorecard) return;
+    import('./Scorecard.tsx').then(
+      (m) => setView(() => (scorecard = m.Scorecard)),
+      () => {},
+    );
+  }, []);
+  return View ? <View /> : null;
 }
 
 /** What the candidate model, which learns from what you do and only watches, would have put on the list lately. */

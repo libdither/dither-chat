@@ -557,6 +557,11 @@ is seldom opened from the inbox, so it stays low. So the order is a Thompson sam
   snapshot rules ([When the list moves](#when-the-list-moves)) still decide when the order on screen changes. A row
   the model is sure of barely moves, so a reply you owe someone close stays where it was; one it knows little about
   sometimes rises into view.
+- **A floor.** Each spread is at least 0.4 in log-odds (`EXPLORE_FLOOR`). As opens piled up the fit grew sure of
+  nearly every row, and the sample all but stopped straying: by 2026-11-14 a row lifted 10 points or more came into
+  the first ten at 0.3% of held-out opens, against 7% to 26% when exploring began. The order you see is then the mean,
+  and what sits lower down stays there. With the floor every row moves a little, a sure one included (with the draw's
+  clip, at most 0.8 in log-odds, about 12 points), so something from further down comes into view now and then.
 - **Why.** A row the sample lifted by 10 points or more says so, first: "Shown higher to learn: not much history with
   this one yet", in its tooltip and menu, and on How it sorts' *Why* for that conversation.
 - **Still learning without bias.** The visit log keeps the position the row had on screen when you opened it, which
@@ -565,7 +570,7 @@ is seldom opened from the inbox, so it stays low. So the order is a Thompson sam
 
 `GET /api/attention/:id`'s `learned` has the mean (`points`) and the sample the inbox sorts by (`sampled`);
 `GET /api/attention/model` has `explore`: on or off, whether the model has a covariance yet (a fresh hub, on the
-prior, does not explore), the epoch and the clip.
+prior, does not explore), the epoch, the clip and the floor.
 
 **What it costs.** In the replay (`--explore`: the learned order sorted by 20 seeds' samples against its mean; 7 days,
 the last 3 held out): MRR 0.436 against 0.447 on the held-out days (−0.011, 95% interval −0.020 to 0.003; across seeds
@@ -573,6 +578,21 @@ the last 3 held out): MRR 0.436 against 0.447 on the held-out days (−0.011, 95
 on the first days, it explores more and costs more: −0.025 (−0.042 to −0.002). A row lifted 10 points or more came
 into the first ten at 7% of held-out opens and 26% over every day after the first. The median row's spread was
 0.20 in log-odds, the largest 1.25. The rule was to keep the cost under about 0.02; it is.
+
+**The floor's cost** (2026-11-14; 12 days, 757 opens, the last 3 days and 274 opens held out; `--explore-floor`).
+Without a floor the sample cost −0.013 on the held-out days (95% interval −0.022 to −0.003) and lifted a row into
+the first ten at 0.3% of them; the median spread had fallen to 0.13. By floor, held out:
+
+| floor | MRR, sampled minus mean (95% interval) | a row lifted into the first ten |
+|---|---|---|
+| none, 0.2 | −0.013 (−0.022 to −0.003) | 0.3% of opens |
+| 0.3 | −0.016 (−0.025 to −0.004) | 1.6% |
+| **0.4** | −0.019 (−0.029 to −0.007) | 21% |
+| 0.5 | −0.023 (−0.035 to −0.010) | 42% |
+
+0.4 brings the lifts back to about where they were when exploring began, for −0.006 more than no floor, and keeps
+inside the 0.02 rule; 0.5 does not. Over every day after the first: −0.018 (−0.023 to −0.013), lifts at 29% of
+opens.
 
 **What it buys cannot be measured here.** The replay can only score orders against what you opened from the orders
 you were shown; what exploring is for, opens of conversations the mean order would have kept out of view, and the
@@ -623,6 +643,9 @@ What it learned on the real hub, in short: the time since the latest message cou
 30 points.
 
 ## The replay
+
+Day by day, live, the scorecard follows the order too: the mean of 1 ÷ row and the share of opens from the first
+8 rows, for opens from an inbox row ([scorecard.md](scorecard.md)).
 
 `scripts/inbox-replay.ts` replays the activity log against a copy of a hub (made read-only with `VACUUM INTO`) and
 asks, at every moment you opened a conversation, at which position each ordering would have shown it. It rebuilds
