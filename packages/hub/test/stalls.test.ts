@@ -459,7 +459,7 @@ describe('a flush', () => {
       store.ingest(acc, { t: 'conversation', conversation: { nativeId: 'room', shape: 'group', name: 'Room' } });
       const seen: boolean[] = [];
       const attention = { sync: () => (seen.push(store.db.inTransaction), []) };
-      const hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's', attention: attention as any });
+      const hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's', attention: attention as any });
       const sent: { inTx: boolean; frame: string }[] = [];
       (hub as unknown as { clients: Set<{ send(f: string): void }> }).clients.add({ send: (frame) => void sent.push({ inTx: store.db.inTransaction, frame }) });
       hub.flush();
@@ -494,7 +494,7 @@ describe('a bootstrap just after a start', () => {
       },
       sync: () => [],
     };
-    const hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's', attention: attention as any });
+    const hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's', attention: attention as any });
     const port = hub.start().port!;
     try {
       const answer = fetch(`http://127.0.0.1:${port}/api/bootstrap`).then((r) => r.json());

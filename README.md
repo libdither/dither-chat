@@ -184,9 +184,14 @@ The sandboxed clients need a few tools: signal-cli, Chromium, Xvfb, x11vnc, and 
 [Tailscale](https://tailscale.com). Browsers only install a web app over HTTPS, so put Caddy in front of the hub
 ([docs/deploy.md](docs/deploy.md)).
 
-**Who can read it.** The hub only answers your own machine and your tailnet (your private Tailscale network).
-**Anyone on your tailnet can read everything**, so don't share the tailnet with people who shouldn't see your
-messages.
+**Who can read it.** The hub only answers your own machine and your tailnet (your private Tailscale network), and
+past that only devices signed in with its password, or programs holding its service token. A demo world runs without
+a login. A real hub (no `--demo`) stays shut until it has a password: set one, then sign in on each device as `admin`
+([docs/login.md](docs/login.md)).
+
+```sh
+bun packages/hub/src/cli.ts set-password   # --data <dir> for a data dir other than the usual one
+```
 
 Account secrets live in the hub's data folder (`--data`), in `accounts/<id>/secret.json` (mode 0600), and never leave
 the machine.

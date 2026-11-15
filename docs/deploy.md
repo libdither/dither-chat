@@ -41,7 +41,9 @@ The same holds for dither-calendar's `/api/chat-adapter` ([calendar.md](calendar
 through its tailnet address too, so only the hub, on this machine, gets a socket there.
 
 The upstream must also see the client's Host, or the hub's same-origin check refuses every write and the live socket.
-Caddy does this by default for an HTTP upstream.
+Caddy does this by default for an HTTP upstream. It also sets `X-Forwarded-Proto: https` and `X-Forwarded-For`,
+which the hub believes only from this machine's own addresses: the session cookie is then marked Secure, and failed
+sign-ins back off per client rather than per proxy ([login.md](login.md)).
 
 ### The service
 
@@ -60,6 +62,10 @@ WantedBy=default.target
 ```
 
 Without `loginctl enable-linger $USER` a user service stops when you log out and does not start at boot.
+
+**Set a password before the first start** (or the hub stays shut and says so): on the machine, from this repo,
+`bun packages/hub/src/cli.ts set-password --data <the service's DITHER_DATA>`. Each device then signs in once with the
+username `admin` ([login.md](login.md)).
 
 ### Deploying itself
 
@@ -87,7 +93,8 @@ release they started in until their own code changes (dither-accounts docs/super
 4. For the hub, copy the database to `backups/pre-deploy.sqlite` (at most every 6 hours: a schema change is copied by
    the hub itself, and a rollback changes the code, not the database).
 5. Point `current` at the release and restart the service.
-6. Check it. The hub must log `startup: ready`, answer `/api/health` and connect to the manager (its notices' access
+6. Check it. The hub's checks send its service token (`<DITHER_DEPLOY_HUB_DATA>/api.token`, [login.md](login.md)).
+   The hub must log `startup: ready`, answer `/api/health` and connect to the manager (its notices' access
    leaves `unreachable`); the manager must answer its `/api/health`. Both must stay up without systemd restarting
    them, and get the hub's accounts back to as many online as before (less those still restarting, below). For the
    manager, its extractors whose code changed restart after it is up (one per kind at a time: its `/api/health`
@@ -172,7 +179,9 @@ push the private remote.
 
 ### Who can reach it
 
-The hub answers loopback and tailnet addresses only. Two more settings narrow that:
+The hub answers loopback and tailnet addresses only, and past that only a signed-in device or a program with its
+service token ([login.md](login.md)): an address on this machine is no way in, since the proxy here reaches the hub
+from one. Two more settings narrow who can knock:
 
 - `DITHER_HOST` takes several addresses, comma-separated, and opens one listener on each:
   `DITHER_HOST=127.0.0.1,100.64.0.10` (this machine's tailnet address) keeps the hub off the LAN entirely. The
@@ -378,6 +387,10 @@ devices.
 
 Screenshots, `scripts/verify-*.ts` and the call lab (`scripts/call-lab.ts`, see docs/calls.md) each run their
 own hub on another port with its own data dir.
+
+A demo hub runs without the login (its data is invented); any other hub is behind it, a throwaway one too. Scripts
+that run a throwaway hub that is not a demo world set a password and a service token in its data dir first and sign
+their browser in (`scripts/hub-login.ts`, [login.md](login.md)).
 
 `bun run check:boot` (`scripts/check-boot.ts`, run by CI) builds the web app, starts a demo hub on a fresh data dir
 and a free port (`--port` to choose one), and loads it in headless Chromium at a desktop's size and then a phone's:

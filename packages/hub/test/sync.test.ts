@@ -240,7 +240,7 @@ beforeAll(async () => {
       return { nativeId: 'x' };
     },
   } as any;
-  hub = new HubServer(store, sup, triage, { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's', attention });
+  hub = new HubServer(store, sup, triage, { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's', attention });
   port = hub.start().port!;
   base = `http://127.0.0.1:${port}`;
   hub.broadcast([{ t: 'attention', items: attention.list(), removed: [], replace: true }]);

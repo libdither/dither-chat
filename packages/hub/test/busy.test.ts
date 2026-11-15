@@ -135,7 +135,7 @@ test("a flush whose attention part fails still sends what the store gave up", ()
       throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
     },
   };
-  const hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's', attention: attention as any });
+  const hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's', attention: attention as any });
   // A device on the live socket: what it is sent.
   (hub as unknown as { clients: Set<{ send(f: string): void }> }).clients.add({ send: (f) => void sent.push(JSON.parse(f)) });
   store.flush();

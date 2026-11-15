@@ -273,8 +273,8 @@ describe('scoring a day', () => {
   test('the endpoint: the scored days, each metric aligned with them; a hub without a scorecard says so', async () => {
     const sc = new Scorecard(store.db);
     whole(sc.steps(now));
-    const hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's', scorecard: sc });
-    const bare = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    const hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's', scorecard: sc });
+    const bare = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
     const port = hub.start().port!;
     const barePort = bare.start().port!;
     try {

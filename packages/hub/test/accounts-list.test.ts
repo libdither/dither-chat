@@ -245,7 +245,7 @@ describe('the routes, on a demo world’s manager', () => {
   const manager = new DemoManager({ store, mail: fake, notices });
   manager.publish();
   const sup = { authorize: () => null, online: () => true, command: async () => ({}), restart: async () => {}, log: async () => '' } as any;
-  const hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's', mail, manager });
+  const hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's', mail, manager });
   const url = `http://127.0.0.1:${hub.start().port}`;
   afterAll(() => {
     hub.stop();

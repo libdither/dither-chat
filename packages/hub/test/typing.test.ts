@@ -94,7 +94,7 @@ beforeAll(async () => {
       return {};
     },
   } as any;
-  hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+  hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
   port = hub.start().port!;
   base = `http://127.0.0.1:${port}`;
   d1 = store.createAccount({ network: 'discord', label: 'one', color: '#111', adapter: 'discord' });

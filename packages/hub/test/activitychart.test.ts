@@ -175,7 +175,7 @@ describe('the store and the endpoint', () => {
       store.ingest(dc, { t: 'customStatus', who: 'ann-d', text: 'back', emoji: '🧗', ts: Date.UTC(2026, 10, 3, 12) });
     })();
     store.flush();
-    hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
     port = hub.start().port!;
   });
   afterAll(() => {
