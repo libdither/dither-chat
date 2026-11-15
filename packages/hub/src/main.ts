@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { join, resolve } from 'node:path';
 import { Categorizer, JevProvider, KeywordProvider, OllamaProvider, type CategoryProvider } from './categorize.ts';
 import { ActivityStore } from './activity.ts';
+import { ForYou } from './foryou.ts';
 import { Attention } from './attention.ts';
 import { exploreOn, InboxRanker, rankMode } from './ranker.ts';
 import { DemoManager, type ManagerLink } from './accounts-manager.ts';
@@ -127,6 +128,8 @@ activity.prune(Date.now(), true);
 startup.mark('activity log');
 const triage = new Triage(store, activity);
 const votes = new TriageVotes(store, triage);
+// For you (docs/foryou.md): served items and their events are logged only while the activity log is on.
+const foryou = new ForYou(store, { logging: () => activity.enabled, levelOf: (id) => triage.effectiveLevel(id).level });
 // How the models did, day by day (scorecard.ts, docs/scorecard.md): each day scored once its outcomes are in. A demo
 // world has three invented weeks of it.
 const scorecard = new Scorecard(store.db);
@@ -462,6 +465,7 @@ const server = new HubServer(store, sup, triage, {
   probeCategory: (question) => categorizer.probe(question),
   attention,
   activity,
+  foryou,
   devices,
   votes,
   scorecard,

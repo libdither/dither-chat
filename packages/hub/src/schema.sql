@@ -618,6 +618,38 @@ CREATE TABLE IF NOT EXISTS phone_episode (
 CREATE INDEX IF NOT EXISTS phone_episode_open ON phone_episode(conversation_id) WHERE ended_at IS NULL;
 CREATE INDEX IF NOT EXISTS phone_episode_day ON phone_episode(day, conversation_id);
 CREATE INDEX IF NOT EXISTS phone_episode_ended ON phone_episode(outcome_at) WHERE outcome = 'dismissed';
+-- For you (foryou.ts, docs/foryou.md): each item a page was served, with the exact chance of its slot, and what each
+-- device said happened to it. Ids and numbers only: never what was said. Part of the activity log: written only while
+-- it is on, pruned with its retention, deleted with it.
+CREATE TABLE IF NOT EXISTS foryou_item (
+  id              TEXT PRIMARY KEY,
+  epoch           TEXT NOT NULL,             -- the snapshot it was served from
+  message_id      TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  author_id       TEXT,
+  position        INTEGER NOT NULL,          -- from 0, in the snapshot
+  slot            TEXT NOT NULL,             -- 'rank' or 'explore'
+  propensity      REAL NOT NULL,             -- the exact chance of this item in this slot: 1 for 'rank'
+  score           REAL,                      -- what ordered it: importance times freshness
+  prior           REAL,                      -- triage's importance
+  age_ms          INTEGER,                   -- how old the message was when the snapshot was taken
+  burst_n         INTEGER,                   -- messages in its burst, it included
+  chars           INTEGER,                   -- its text's length: how long reading it takes
+  reply           INTEGER NOT NULL DEFAULT 0, -- it replies to a message (shown quoted)
+  created_at      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS foryou_item_created ON foryou_item(created_at);
+CREATE INDEX IF NOT EXISTS foryou_item_conv ON foryou_item(conversation_id, created_at);
+CREATE TABLE IF NOT EXISTS foryou_event (
+  item_id TEXT NOT NULL,
+  device  TEXT NOT NULL,
+  kind    TEXT NOT NULL,                     -- ForYouEventKind: shown, clicked, more, less, hidden
+  at      INTEGER NOT NULL,                  -- when it first happened
+  ms      INTEGER,                           -- shown: milliseconds on screen, summed
+  PRIMARY KEY (item_id, device, kind)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS foryou_event_at ON foryou_event(at);
+
 -- Each list push the phone's list was asked for that passed the gate, the snoozes and the cap: whether the day's
 -- budget sent it, and its importance, for the day's bar (phonelist.ts `bar`) and a later replay. Ids, times, numbers.
 CREATE TABLE IF NOT EXISTS phone_push (

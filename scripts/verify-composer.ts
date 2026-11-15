@@ -195,9 +195,9 @@ try {
   await phoneSize(844);
   await Bun.sleep(200);
 
-  // ------------------------------------------------------------------ a long draft restored, and Catch up's box
+  // ------------------------------------------------------------------ a long draft restored
 
-  // The draft is shared with Catch up's reply box and kept across a reload.
+  // The draft is kept across a reload.
   await page.eval(`location.reload()`);
   await page.until(`!!document.querySelector('.app.phone .composer textarea')`, 20000);
   await Bun.sleep(800);

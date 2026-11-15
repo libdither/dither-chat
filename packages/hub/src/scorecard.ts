@@ -71,8 +71,8 @@ interface DayContext {
 
 /**
  * A metric's scorer: yields how many rows it read since it last yielded (slices.ts), returns its rows for the day.
- * To score something new, add a scorer here and its chart to the protocol's SCORE_CHARTS. Two are waiting on work in
- * progress (docs/scorecard.md, "Seams"): the needs-reply chance's calibration, and the feed's click-through rate.
+ * To score something new, add a scorer here and its chart to the protocol's SCORE_CHARTS. One is waiting on work in
+ * progress (docs/scorecard.md, "Seams"): the needs-reply chance's calibration.
  */
 type DayScorer = (c: DayContext) => Generator<number, ScoreRow[]>;
 
@@ -364,7 +364,27 @@ function* inbox(c: DayContext): Generator<number, ScoreRow[]> {
   ];
 }
 
-const SCORERS: DayScorer[] = [notified, decisions, unprompted, inbox];
+/**
+ * For you (foryou.ts, docs/foryou.md): of the items on screen that day (a `shown` event on any device), the share
+ * opened from it (`clicked`); and the same for exploration slots alone, whose items no order chose.
+ */
+function* foryou(c: DayContext): Generator<number, ScoreRow[]> {
+  // A copy from before For you has no tables for it: nothing to score.
+  if (!c.db.query(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'foryou_event'`).get()) return [row(c.day, 'foryou.clicked', null, 0), row(c.day, 'foryou.clicked_explore', null, 0)];
+  const rows = c.db
+    .query(
+      `SELECT i.slot AS slot, EXISTS (SELECT 1 FROM foryou_event k WHERE k.item_id = e.item_id AND k.kind = 'clicked') AS clicked
+       FROM foryou_event e JOIN foryou_item i ON i.id = e.item_id WHERE e.kind = 'shown' AND e.at >= ? AND e.at < ? GROUP BY e.item_id LIMIT 50000`,
+    )
+    .all(c.from, c.to) as Row[];
+  yield rows.length;
+  const clicked = rows.filter((r) => r.clicked).length;
+  const explore = rows.filter((r) => r.slot === 'explore');
+  const exploreClicked = explore.filter((r) => r.clicked).length;
+  return [row(c.day, 'foryou.clicked', share(clicked, rows.length), rows.length, { clicked }), row(c.day, 'foryou.clicked_explore', share(exploreClicked, explore.length), explore.length, { clicked: exploreClicked })];
+}
+
+const SCORERS: DayScorer[] = [notified, decisions, unprompted, inbox, foryou];
 
 /**
  * Your identities: what you wrote is by one of these. As interact.ts SELF_SQL, but on identity's person index: SQLite
@@ -514,6 +534,8 @@ export function seedDemoScores(db: Database, now: number) {
         ['inbox.mrr', clamp(0.3 + 0.22 * t + 0.05 * wob(i, 12)), 20 + (i % 15)],
         ['inbox.top8', clamp(0.55 + 0.25 * t + 0.06 * wob(i, 13)), 20 + (i % 15)],
         ['inbox.deep', clamp(0.15 - 0.1 * t + 0.03 * wob(i, 14)), 20 + (i % 15)],
+        ['foryou.clicked', i < 10 ? null : clamp(0.08 + 0.06 * t + 0.03 * wob(i, 18)), i < 10 ? 0 : 30 + ((i * 5) % 25)],
+        ['foryou.clicked_explore', i < 10 ? null : clamp(0.05 + 0.04 * t + 0.04 * wob(i, 19)), i < 10 ? 0 : 6 + (i % 5)],
       ];
       for (const [m, value, n] of v) put.run(day, m, value, n, now);
     }

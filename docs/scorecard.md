@@ -41,6 +41,7 @@ Opens are visits to the chat of 5 s or more in use (`labels.ts` `OPEN_DWELL`), o
 | `unprompted.list` | of the chats you opened that day with no notification about them in the day before, the share with a message at the list or above in that day | those chats |
 | `inbox.mrr` | for opens from an inbox row (`visit.source = 'inbox'`, `visit.rank`), the mean of 1 ÷ row | those opens |
 | `inbox.top8`, `inbox.deep` | the share of them from the first 8 rows, and from below row 20 | those opens |
+| `foryou.clicked`, `foryou.clicked_explore` | of the For you items on screen that day (a `shown` event, [foryou.md](foryou.md)), the share opened from it; and the same for exploration slots alone, which no order chose | items shown, and those from exploration slots |
 
 Why each:
 
@@ -95,8 +96,6 @@ The loop, for an agent once a week:
 - **Needs reply.** A reply-needed probability is being added to the owed table. Once it is logged with each owed
   turn, add a scorer (`DayScorer` in scorecard.ts) for its calibration against whether you answered (`owed_turn.answered_at`),
   and a chart in `SCORE_CHARTS`.
-- **The feed.** A feed to replace Catch up, with impressions logged, is being built. Once it logs them, add its
-  click-through rate the same way.
 - **Replay headlines** are not recorded: a replay's numbers go in its pull request and its doc.
 
 A new scorer is a generator over one day (`DayContext`: the day's bounds, your identities, opens by chat) that yields

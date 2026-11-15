@@ -102,7 +102,7 @@ with Open and Remove, and More while Discord has more.
   account was away is not notified late; it shows as overdue in the list.
 - The hub keeps what it last heard (`saved_message`), so the menu knows Save from Remove without asking Discord.
 - **Not mapped onto the hub's own marks.** A saved message is not "Reply needed" ([inbox.md](inbox.md), "Marks"), a
-  reminder is not Catch up's Later (which lasts a session), and "kept messages" are history kept when deleted
+  reminder is not a Later of the app's own, and "kept messages" are history kept when deleted
   ([history.md](history.md)): none of them means what Discord's save means, so each side keeps its own and nothing here
   changes the other.
 

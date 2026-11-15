@@ -1421,7 +1421,8 @@ code {
 /* Each paragraph takes its direction from its own first letter, so Hebrew or Arabic reads right to left, as in Discord. */
 .msg-body,
 .row-preview,
-.cu-msg-text,
+.fy-text,
+.fy-quote,
 .model-msg-text {
   unicode-bidi: plaintext;
 }
@@ -2625,8 +2626,7 @@ code {
 textarea.chip-box {
   position: relative;
 }
-.composer-box textarea::placeholder,
-.cu-reply textarea::placeholder {
+.composer-box textarea::placeholder {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3769,12 +3769,12 @@ textarea.chip-box {
   border-radius: 10px;
 }
 
-/* ---------------------------------------------------------------- Catch up (ui/CatchUp.tsx, docs/inbox.md#catch-up) */
+/* ---------------------------------------------------------------- For you (ui/ForYou.tsx, docs/foryou.md) */
 
-.catchup {
+.foryou {
   overflow: hidden;
 }
-.catchup-head {
+.foryou-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -3783,14 +3783,10 @@ textarea.chip-box {
   border-bottom: 1px solid var(--border);
   flex: none;
 }
-.catchup-head h2 {
+.foryou-head h2 {
   font-size: 18px;
 }
-.catchup-count {
-  color: var(--text-faint);
-  font-weight: 500;
-}
-.catchup-new {
+.foryou-new {
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -3801,32 +3797,13 @@ textarea.chip-box {
   padding: 2px 8px;
   border-radius: 10px;
 }
-.catchup-actions {
+.foryou-actions {
   margin-left: auto;
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 4px;
 }
-.catchup-accounts {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 24px;
-  font-size: 12.5px;
-  color: var(--text-dim);
-  background: color-mix(in oklab, var(--warn) 9%, var(--bg-center, var(--bg)));
-  border-bottom: 1px solid color-mix(in oklab, var(--warn) 30%, var(--border));
-  flex: none;
-}
-.catchup-accounts > svg {
-  color: var(--warn);
-  flex: none;
-}
-.catchup-accounts .link-btn {
-  color: var(--warn);
-  font-weight: 600;
-}
-.catchup-scroll {
+.foryou-scroll {
   flex: 1;
   overflow-y: auto;
   padding: 14px 24px 32px;
@@ -3834,18 +3811,18 @@ textarea.chip-box {
   flex-direction: column;
   gap: 10px;
 }
-.catchup-scroll > * {
+.foryou-scroll > * {
   width: 100%;
-  max-width: 780px;
+  max-width: 720px;
 }
-.catchup-keys {
+.foryou-keys {
   flex: none;
   padding: 6px 24px;
   border-top: 1px solid var(--border-soft);
   font-size: 11.5px;
   color: var(--text-faint);
 }
-.catchup-keys kbd {
+.foryou-keys kbd {
   font: inherit;
   font-family: var(--mono);
   font-size: 10.5px;
@@ -3855,7 +3832,7 @@ textarea.chip-box {
   border-radius: 4px;
   background: var(--bg-raised);
 }
-.catchup-empty {
+.foryou-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -3864,255 +3841,178 @@ textarea.chip-box {
   padding: 48px 16px 28px;
   color: var(--text-faint);
 }
-.catchup-empty > svg {
-  color: var(--good);
+.foryou-empty > svg {
+  color: var(--accent);
 }
-.catchup-empty h3 {
+.foryou-empty h3 {
   color: var(--text);
   font-size: 17px;
 }
-.catchup-empty p {
+.foryou-empty p {
+  font-size: 13px;
+  max-width: 420px;
+}
+.foryou-loading {
+  padding: 24px 0;
+  color: var(--text-faint);
   font-size: 13px;
 }
+.foryou-scroll > .foryou-more {
+  width: auto;
+  align-self: center;
+}
 
-.cu-card {
+.fy-item {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 6px;
   padding: 10px 12px;
   border: 1px solid var(--border-soft);
   border-radius: 12px;
   background: var(--bg-raised);
   scroll-margin: 12px;
+  cursor: pointer;
 }
-.cu-card.focused {
+.fy-item:hover {
+  border-color: var(--border);
+}
+.fy-item.focused {
   border-color: color-mix(in oklab, var(--accent) 60%, var(--border));
   box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 35%, transparent);
 }
-.cu-card.replied:not(.focused) {
-  opacity: 0.72;
-}
-.cu-head {
+.fy-place {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
   min-width: 0;
-}
-.cu-head .avatar {
-  flex: none;
-}
-.cu-who {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-.cu-top,
-.cu-tags {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.cu-tags:empty {
-  display: none;
-}
-.cu-name {
-  font-weight: 600;
-  color: var(--text);
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.cu-where {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  color: var(--text-faint);
   font-size: 12px;
+  color: var(--text-faint);
+}
+.fy-crumbs {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fy-time {
+  flex: none;
+}
+.fy-trying {
+  flex: none;
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 1px 7px;
+  border-radius: 9px;
+}
+.fy-body {
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+}
+.fy-body > .avatar {
+  flex: none;
+}
+.fy-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+.fy-author {
+  font-size: 13.5px;
+}
+.fy-quote {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+  font-size: 12.5px;
+  color: var(--text-faint);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.fy-quote > svg {
+  flex: none;
+  align-self: center;
+}
+.fy-quote > span {
   min-width: 0;
-  flex-shrink: 2;
-}
-.cu-owed,
-.cu-replied {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 11.5px;
-  white-space: nowrap;
-  flex: none;
-}
-.cu-owed {
-  color: var(--warn);
-}
-.cu-replied {
-  color: var(--good);
-  font-weight: 600;
-}
-.cu-head .tier-chip {
-  flex: none;
-}
-.cu-time {
-  align-self: flex-start;
-  padding: 2px 0 0 6px;
-  color: var(--text-faint);
-  font-size: 11px;
-  flex: none;
-}
-.cu-msgs {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 3px;
-  padding-left: 40px;
-  min-width: 0;
-}
-.cu-msg {
-  max-width: 100%;
-  font-size: 13.5px;
-  color: var(--text-dim);
-}
-.cu-msg.muted,
-.cu-msg .muted {
-  color: var(--text-faint);
-}
-.cu-msg.loading {
-  opacity: 0.6;
-}
-.cu-msg-line {
-  display: block;
   overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+}
+.fy-text {
+  font-size: 14px;
   line-height: 1.45;
-}
-.cu-msg-line > b {
-  color: var(--text);
-  font-weight: 600;
-  margin-right: 6px;
-}
-.cu-msg.self .cu-msg-line > b {
-  color: var(--text-dim);
-}
-.cu-msg-text {
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  line-clamp: 6;
+  overflow: hidden;
 }
-.cu-subject + .cu-msg-text::before {
-  content: ' — ';
+.fy-text.all {
+  display: block;
 }
-.cu-msg-time {
-  margin-left: 6px;
-  font-size: 10.5px;
+.fy-text.muted {
   color: var(--text-faint);
-}
-.cu-msg.pending .cu-msg-time {
   font-style: italic;
 }
-.cu-msg.failed .cu-msg-time {
-  color: var(--danger);
-  font-style: normal;
-}
-.cu-pending-actions {
-  display: flex;
-  gap: 4px;
-}
-.cu-earlier {
-  font-size: 12px;
-}
-.catchup-scroll > .cu-more {
-  width: auto;
+.fy-more-text {
   align-self: flex-start;
+  font-size: 12.5px;
 }
-.cu-thumbs {
+.fy-thumbs {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 4px;
+  margin-top: 3px;
 }
-.cu-thumb img {
+.fy-thumb img {
   display: block;
-  height: 72px;
-  max-width: 160px;
-  object-fit: cover;
+  max-height: 120px;
+  max-width: 200px;
   border-radius: 8px;
-  border: 1px solid var(--border-soft);
+  object-fit: cover;
 }
-.cu-file {
+.fy-file {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.fy-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding-left: 42px;
+  min-height: 24px;
   font-size: 12px;
   color: var(--text-faint);
 }
-.cu-foot {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 6px 8px;
-  padding-left: 40px;
-}
-.cu-reply {
-  flex: 1 1 240px;
-  min-width: 0;
-  display: flex;
-  align-items: flex-end;
-  gap: 6px;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 3px 3px 3px 10px;
-}
-.cu-reply:focus-within {
-  border-color: var(--accent);
-}
-.cu-reply.disabled {
-  align-items: center;
-  gap: 7px;
-  padding: 7px 10px;
-  color: var(--text-faint);
-  font-size: 12.5px;
-}
-.cu-blocked {
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.cu-reply textarea {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  background: none;
-  outline: none;
-  resize: none;
-  padding: 5px 0;
-  line-height: 1.4;
-  font-size: 13.5px;
-  field-sizing: content;
-  overflow-y: auto;
-  max-height: 160px;
-  max-height: min(160px, var(--app-h, 100dvh) * 0.4);
-}
-.cu-reply .send-btn {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-}
-.cu-actions {
+.fy-actions {
+  margin-left: auto;
   display: flex;
   gap: 2px;
-  margin-left: auto;
-  flex: none;
+  opacity: 0.55;
 }
-.cu-mail .cu-foot {
-  padding-top: 0;
+.fy-item:hover .fy-actions,
+.fy-item.focused .fy-actions,
+.fy-actions:focus-within {
+  opacity: 1;
+}
+.fy-actions .icon-btn.on {
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
 /* ---------------------------------------------------------------- How it sorts (ui/HowItSorts.tsx) */
@@ -5968,14 +5868,14 @@ textarea.chip-box {
     bottom: 0;
   }
   .board-scroll,
-  .catchup-scroll,
+  .foryou-scroll,
   .account-scroll,
   .settings-scroll {
     padding-left: 14px;
     padding-right: 14px;
   }
   .board-scroll,
-  .catchup-scroll {
+  .foryou-scroll {
     overscroll-behavior-y: contain;
   }
   .board-head {
@@ -5987,39 +5887,24 @@ textarea.chip-box {
   .board-head > div:first-child {
     flex: 1 1 100%;
   }
-  .catchup-head {
+  .foryou-head {
     padding: 12px 14px 10px;
   }
-  .catchup-head .btn.small {
-    padding: 6px 8px;
-  }
-  .catchup-accounts {
-    padding: 7px 14px;
-  }
-  .catchup-scroll {
+  .foryou-scroll {
     padding-top: 10px;
   }
-  .cu-card {
+  .fy-item {
     padding: 10px;
   }
-  .cu-msgs,
-  .cu-foot {
+  .fy-foot {
     padding-left: 0;
   }
-  .cu-reply {
-    flex-basis: 100%;
+  .fy-actions {
+    opacity: 1;
   }
-  .cu-reply textarea {
-    font-size: 16px;
-    max-height: min(calc(5lh + 10px), var(--app-h, 100dvh) * 0.4);
-  }
-  .cu-actions {
-    margin-left: 0;
-    width: 100%;
-    justify-content: flex-end;
-  }
-  .cu-actions .btn.small {
-    padding: 8px 12px;
+  .fy-actions .icon-btn {
+    width: 32px;
+    height: 30px;
   }
   /* A line's Why and votes go under its name, so the name keeps the width. */
   .model-line-row {

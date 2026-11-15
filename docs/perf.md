@@ -68,7 +68,7 @@ a phone does that the desktop run does not:
 | `open.*` | the biggest channel opened: time, longest task, layouts, message renders |
 | `tlScroll.*` | a flick up its timeline: slow frames, message renders, longest task |
 | `typing.*` | 28 keys into the composer, two seconds after the open settled, then taken back (nothing is sent): each key to the frame after it (`keyP90`, `keyMax`), and renders of App, the list and messages (none) and layouts (about one a key) |
-| `home`, `catchUp`, `search`, `you`, `homeTab` | back to the list, then each tab: DOM nodes, App or list renders (and the Home tab's message renders: it brings back the conversation that was open), longest task, main-thread time (`busy`) |
+| `home`, `forYou` (`catchUp` before 2026-11-15), `search`, `you`, `homeTab` | back to the list, then each tab: DOM nodes, App or list renders (and the Home tab's message renders: it brings back the conversation that was open), longest task, main-thread time (`busy`) |
 | `people`, `person`, `mail` | People from the rail, a person's page (the biggest direct conversation's), Mail's list: DOM nodes, App and message renders, longest task, main-thread time |
 
 Slow frames are a time in all but name (kind `frames`): judged locally like a time, never in CI.
@@ -769,7 +769,7 @@ reconnect; and nothing measured how often an open came from the device.
   catch-up that got no answer tries again by itself.
 - **Fetching ahead** (`prefetch.ts`, `ahead.ts`): the first 12 rows of the inbox (conversations, and a person's chat
   of several routes as the one timeline it opens) in its own (learned) order,
-  once the hub's data is in and again as the order changes. Those not held are fetched as Catch up's cards are (what
+  once the hub's data is in and again as the order changes. Those not held are fetched as a glance (what
   the hub stored, no network history); those kept on the device are caught up with a delta, so the open shows what is
   there now. One page at a time, 1.5 s after the last touch or key and when the page is idle, never while out of
   sight, on Save-Data, a cellular network or 2G, at most 30 pages in ten minutes; then the avatars and small images of

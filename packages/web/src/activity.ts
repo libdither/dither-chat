@@ -86,7 +86,11 @@ function arrivalOf(el: Element | null): Arrival {
   if (el.closest('.toast')) return { source: 'toast' };
   if (el.closest('.rail, .tabbar')) return { source: 'rail' };
   if (el.closest('.switcher, .search-pane, .search-place')) return { source: 'search' };
-  if (el.closest('.board, .catchup')) return { source: 'triage' };
+  if (el.closest('.board')) return { source: 'triage' };
+  // An item of For you: its position in the snapshot rides as the rank.
+  const item = el.closest('.foryou [data-pos]');
+  if (item) return { source: 'foryou', rank: Number(item.getAttribute('data-pos')) };
+  if (el.closest('.foryou')) return { source: 'foryou' };
   const row = el.closest('[data-row]');
   const list = row?.closest('.sidebar-inner');
   // The inbox's list: its rank counts across the sections, top to bottom.

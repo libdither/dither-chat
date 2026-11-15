@@ -52,7 +52,7 @@ Mark As Read on an inbox row that showed ↩ (a reply you owe) sends `{ id, devi
 turn it was. A resent one is kept once. Deleted with the log, and kept for its retention.
 
 **Sources.** `notification` (a tap on a push: sw.js or the Android app), `toast` (the in-app notification),
-`inbox` (a row of the ranked inbox), `triage` (Catch up or How it sorts), `rail` (the rail or the phone's tab bar), `list`
+`inbox` (a row of the ranked inbox), `triage` (How it sorts, and Catch up before 2026-11-15), `foryou` (an item of For you, its position as the rank; also the view), `rail` (the rail or the phone's tab bar), `list`
 (another sidebar list: a space's channels, People), `search` (a result, or the Ctrl+K switcher), `link` (a link,
 mention, reply or thread chip in a timeline), `back`/`forward` (history), `start` (the app opened here), `resume`
 (back after 30 minutes away, still here), `other`.
