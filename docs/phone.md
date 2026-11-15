@@ -19,7 +19,10 @@ slides in over them. A tab bar along the bottom shows whenever the lists do:
 | You | Settings, with your accounts first and Add account |
 
 The card and the panels are moved by `src/ui/Pager.ts`; `src/gesture.ts` holds the arithmetic (axis lock,
-release velocity, when a swipe commits, rubber banding) and is unit tested. `src/phone.ts` has the layers the
+release velocity, when a swipe commits, rubber banding, a settle that starts at the finger's speed) and is unit
+tested. A swipe that commits starts the card settling first and changes the route a frame later, so the render the
+new route brings never holds the card still at the moment it is let go; a card caught while still settling is
+picked up where it is on screen. `src/phone.ts` has the layers the
 back button closes, the keyboard handling and the sheet drag. Wider than 820px nothing of this applies, and
 the desktop is unchanged apart from the fixes listed below.
 
