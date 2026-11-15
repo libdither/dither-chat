@@ -51,6 +51,8 @@ export interface ArrangeSettings {
    * here too, when that changes. Off: the network's archive is not followed. Absent: on.
    */
   followArchive?: boolean;
+  /** Quiet servers (never opened, nothing new in half a year) sit on a shelf at the end of each list. Absent: on. */
+  quietShelf?: boolean;
 }
 export const DEFAULT_ARRANGE: ArrangeSettings = { sort: { rail: 'manual', people: 'recent' }, dismissed: {} };
 
