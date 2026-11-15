@@ -155,6 +155,10 @@ function remember(h: number) {
 
 let relayout = () => {};
 const inPanel = () => !!(document.activeElement as HTMLElement | null)?.closest?.('.kp');
+const editing = () => {
+  const el = document.activeElement as HTMLElement | null;
+  return !!el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.isContentEditable);
+};
 /** The keyboard is up now (the app's report, or the browser's resize). */
 let keyboardUp = () => imeHeight.value > 0;
 let sliding = 0;
@@ -197,9 +201,11 @@ export function onIme(h: number, done: boolean) {
   imeHeight.value = h;
   if (done && h > 0) {
     remember(h);
-    // The keyboard is up over the panel: the panel goes, and the room stays the keyboard's. Not for a field of the
-    // panel's own (its search), which has it open to the whole screen above the keyboard.
-    if (panelOpen.value && !inPanel()) closePanel(true);
+    // The keyboard is up over the panel for a field outside it (the box): the panel goes, and the room stays the
+    // keyboard's. Not for a field of the panel's own (its search), which has it open to the whole screen above the
+    // keyboard; and not for a last report from the keyboard that is on its way down for the panel (its suggestion
+    // strip can change as it goes), when no field has focus at all.
+    if (panelOpen.value && editing() && !inPanel()) closePanel(true);
     revealFocused();
   }
   relayout();
