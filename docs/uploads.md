@@ -108,8 +108,8 @@ is the caption. **Open large** is the send screen.
   file sent or received on any network (`has:file`, newest first), sent again with no picker and no permission.
   **Other apps…** at the end is the system's file picker, for a file that lives in another app (a cloud drive); in a
   browser it is **Choose a file…**, the only way to the phone's files there.
-- **The search** puts the panel on the keyboard at its own height (at most a little over half of what the keyboard
-  leaves), so the chat stays in sight above the box; the same for any field of the panel's own (phone.ts `panelLift`).
+- **The search** puts the panel on the keyboard at its own height (at most half of what the keyboard leaves, and only
+  while the keyboard is up), so the chat stays in sight above the box; the same for any field of the panel's own (phone.ts `panelLift`).
 
 How the app does it (`apps/android` `Device.kt`): lists go over the bridge (`device.media`, `device.files`,
 answered by request id), from MediaStore (the gallery, by `DATE_MODIFIED` and id, so pictures taken in the same
