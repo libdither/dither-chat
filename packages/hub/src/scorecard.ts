@@ -17,6 +17,8 @@ import { prior, type Facts } from './learn.ts';
 import { OPEN_DWELL } from './labels.ts';
 import { sliced } from './slices.ts';
 import { jobFailed } from './errors.ts';
+import { needsOutcomes } from './needsreply.ts';
+import { REPLY_WINDOW } from './tally.ts';
 
 type Row = Record<string, any>;
 const MIN = 60_000;
@@ -28,7 +30,8 @@ const DAY = 24 * HOUR;
  * decisions or visits have since been let go then scores with less (housekeeping.ts keeps triage 90 days, the log for
  * its retention).
  */
-export const SCORE_VERSION = 1;
+/** 2: the needs-reply chance's calibration (needsReply) and For you's opens, scored back over the days already kept. */
+export const SCORE_VERSION = 2;
 /** A notification was followed when you opened its chat within this long. */
 const FOLLOW_WITHIN = 3 * HOUR;
 /** A chat-day was opened when you opened the chat within this long of one of its messages. */
@@ -71,8 +74,7 @@ interface DayContext {
 
 /**
  * A metric's scorer: yields how many rows it read since it last yielded (slices.ts), returns its rows for the day.
- * To score something new, add a scorer here and its chart to the protocol's SCORE_CHARTS. One is waiting on work in
- * progress (docs/scorecard.md, "Seams"): the needs-reply chance's calibration.
+ * To score something new, add a scorer here and its chart to the protocol's SCORE_CHARTS (docs/scorecard.md, "Seams").
  */
 type DayScorer = (c: DayContext) => Generator<number, ScoreRow[]>;
 
@@ -365,6 +367,25 @@ function* inbox(c: DayContext): Generator<number, ScoreRow[]> {
 }
 
 /**
+ * The needs-reply chance (needsreply.ts, docs/inbox.md "Needs a reply"): for owed replies whose three days ended that
+ * day, the mean chance shown (as kept at each age) and the share answered, and the Brier score of the chance and of the
+ * owed table's alone. A turn's window ends by the day's end, so the day is matured for it as for the rest.
+ */
+function* needsReply(c: DayContext): Generator<number, ScoreRow[]> {
+  const rows = needsOutcomes(c.db, c.from - REPLY_WINDOW, c.to - REPLY_WINDOW, c.to).filter((r): r is typeof r & { y: boolean } => r.y !== null);
+  yield rows.length;
+  const n = rows.length;
+  const answered = rows.filter((r) => r.y).length;
+  const mean = (f: (r: (typeof rows)[number]) => number) => (n ? rows.reduce((a, r) => a + f(r), 0) / n : null);
+  return [
+    row(c.day, 'needs.predicted', mean((r) => r.p), n),
+    row(c.day, 'needs.answered', share(answered, n), n, { answered }),
+    row(c.day, 'needs.brier', mean((r) => (r.p - (r.y ? 1 : 0)) ** 2), n),
+    row(c.day, 'needs.brier_table', mean((r) => (r.table - (r.y ? 1 : 0)) ** 2), n),
+  ];
+}
+
+/**
  * For you (foryou.ts, docs/foryou.md): of the items on screen that day (a `shown` event on any device), the share
  * opened from it (`clicked`); and the same for exploration slots alone, whose items no order chose.
  */
@@ -384,7 +405,7 @@ function* foryou(c: DayContext): Generator<number, ScoreRow[]> {
   return [row(c.day, 'foryou.clicked', share(clicked, rows.length), rows.length, { clicked }), row(c.day, 'foryou.clicked_explore', share(exploreClicked, explore.length), explore.length, { clicked: exploreClicked })];
 }
 
-const SCORERS: DayScorer[] = [notified, decisions, unprompted, inbox, foryou];
+const SCORERS: DayScorer[] = [notified, decisions, unprompted, inbox, needsReply, foryou];
 
 /**
  * Your identities: what you wrote is by one of these. As interact.ts SELF_SQL, but on identity's person index: SQLite
@@ -534,6 +555,10 @@ export function seedDemoScores(db: Database, now: number) {
         ['inbox.mrr', clamp(0.3 + 0.22 * t + 0.05 * wob(i, 12)), 20 + (i % 15)],
         ['inbox.top8', clamp(0.55 + 0.25 * t + 0.06 * wob(i, 13)), 20 + (i % 15)],
         ['inbox.deep', clamp(0.15 - 0.1 * t + 0.03 * wob(i, 14)), 20 + (i % 15)],
+        ['needs.predicted', clamp(0.7 + 0.04 * wob(i, 18)), 30 + (i % 12)],
+        ['needs.answered', clamp(0.74 - 0.03 * t + 0.08 * wob(i, 19)), 30 + (i % 12)],
+        ['needs.brier', clamp(0.17 - 0.03 * t + 0.02 * wob(i, 20)), 30 + (i % 12)],
+        ['needs.brier_table', clamp(0.19 + 0.02 * wob(i, 21)), 30 + (i % 12)],
         ['foryou.clicked', i < 10 ? null : clamp(0.08 + 0.06 * t + 0.03 * wob(i, 18)), i < 10 ? 0 : 30 + ((i * 5) % 25)],
         ['foryou.clicked_explore', i < 10 ? null : clamp(0.05 + 0.04 * t + 0.04 * wob(i, 19)), i < 10 ? 0 : 6 + (i % 5)],
       ];

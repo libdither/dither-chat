@@ -73,7 +73,7 @@ lately moves a row, it does not make it need you.
 score = max(owed, unread + pinged, live) + importance + relationship + noise + recency + visited
                                                                        (muted: −50 + recency)
 
-owed         = 60 × chance(shape, p, age)                              the owed table (owed.ts)
+owed         = 60 × P(needs a reply)                                  needsreply.ts, over the owed table (owed.ts)
 unread       = 8 + 12 × min(addressed, 3) + 3 × min(other, 3)         when anything is unread
 pinged       = 15, and 40 more for an alert                            an alert or Conversation message, unread, unseen
 importance   = 25 × triage's importance, 0..1                          of the newest message in a tier, unread, unseen
@@ -144,6 +144,65 @@ halving every 2 days: a turn kept almost all its weight for a day whatever its a
 their owed points alone in 2025-26 were on turns you never answered; with the table 42%, keeping 83% of the hours on
 turns you did answer, with the same order among open turns (AUC 0.75 at 1 h and 6 h against 0.76) and a far better
 log loss (0.50 against 0.66 at 1 h). In the hub era: 53% to 25%, keeping 86%.
+
+### Needs a reply
+
+The owed points are `60 × P(needs a reply)`: the chance you answer this turn within the 3 days, given that it is still
+open at its age. The owner's definition of "needs a reply" is "I'll want to answer it, on reflection"; whether you
+did answer is the label it learns from, and your marks overrule it. `needsreply.ts` works it out with a logistic
+model per shape (DMs, and everything else) over:
+
+- the owed table's chance (above), and the age;
+- how you answer this person (everywhere) and this conversation **once a turn is that old**: from the latency
+  histogram of the tallies the fold keeps, the share of turns still open at that age that you answered, pulled
+  toward the table's chance and then the person's (`lateRate`), and how many turns each has;
+- for a group, how the turn came to be owed: a mention, a reply, or a small group's question;
+- the turn's messages so far, as flags and counts worked out in SQLite (`FACTS_SQL`): whether the newest asks a
+  question (a "?") and whether any did, whether any mentions or replies to you, the newest's length, whether it is a
+  link, media or sticker, or a short closer ("ok", "thanks", "lol", an emoji), how many messages, how many in a row
+  from the same person, and whether someone other than who opened the turn wrote last. No text reaches JavaScript
+  except a closer's few characters, and none is kept.
+
+**Fitted on your turns, then calibrated.** Once a day, after the owed table, the hub fits it a slice at a time
+(`Attention.fitNeeds`, slices.ts): the 20,000 most recent turns that are over, each at the ages it was still open
+(15 and 30 minutes, 1, 2, 3, 6 and 12 hours, 1, 1.5 and 2 days), with the tallies as they stood at that moment and
+the turn's first 60 messages from others over two days (one read on `message_conv_ts` per turn). Older turns count
+less (half after a year). Then a Platt step fitted on the last 90 days, pulled toward leaving the chances as they are,
+keeps "70%" meaning about 70 in 100. It is kept in `meta` (`needs_model`); a fit that fails is tried again an hour later. A shape with fewer than 300 turns keeps the
+table's chance. While scoring, an open turn younger than 3 days reads its messages once (again when a message
+arrives). "Reply needed" holds the chance at 1, "No reply needed" settles the turn (below); mail uses the table alone.
+
+**Shown.** Each inbox row that owes a reply carries the chance (`needsReply`, to 5 points) beside its ↩: faint after
+the age, and as the ↩'s tooltip, "Likely needs a reply: 70%" (from 50%) or "May need a reply: 30%". The owed reason
+ends with the same words, so the row's tooltip and its menu's "Why it's here" say it too. A held "Reply needed" shows
+no percentage.
+
+**Calibration over time.** The chance shown is kept once per open turn at 15 minutes, 1 hour, 6 hours and 1 day of age
+(`needs_prediction`, with the table's chance beside it; a year), and checked against what you did once the 3 days are
+over. `GET /api/attention/needs-reply` gives, by the day each turn began, how many, how many answered, the mean
+chance, the Brier score and log loss (and the table's Brier on the same turns), and all of them together in ten bins
+with AUC. How it sorts shows the bins under "Needs a reply", and the scorecard ([scorecard.md](scorecard.md)) has it day
+by day: the mean chance shown against the share answered, and the Brier score of the chance and of the table alone.
+
+**Why, from the backtest** (`scripts/needs-reply-backtest.ts`: every turn folded with the hub's own fold, each model
+fitted only on turns over before the year it is tested on, 2022 to the hub era). Turns still open at 15 minutes, 1
+hour, 6 hours and 1 day; answered within 3 days:
+
+| 2022 to the hub era | DMs (18,457): AUC | log loss | Brier | groups (5,634): AUC | log loss | Brier |
+|---|---|---|---|---|---|---|
+| the owed table | 0.768 | 0.523 | 0.176 | 0.726 | 0.443 | 0.140 |
+| needs a reply (as the hub fits it) | 0.813 | 0.487 | 0.162 | 0.762 | 0.430 | 0.137 |
+
+Answered within 1 day instead, DMs: AUC 0.725 to 0.754, log loss 0.617 to 0.586. Most of the gain is the per-person
+and per-conversation rates at the turn's age; the message flags add a little in DMs (0.810 to 0.813) and nothing in
+groups. In the hub era (276 DM turn-ages, 81% answered) AUC 0.926 against 0.914, with the model a little low (more of
+your turns were answered than before). Tried and left out: the local model jev asked "Is this a question or request
+the reader is expected to answer?" on the newest message (AUC 0.53 alone; 0.819 to 0.822 with it in DMs, worse in
+groups), and stays you left without answering (lowered the chance as expected in DMs, 60% answered after one such
+stay against 82% with none, but made the model worse out of sample on the 338 turn-ages the visit log covers). The
+calibration step is about neutral over the years and helps when your habits move. The inbox replay
+(`scripts/inbox-replay.ts --needs`) puts the learned order about even: held-out MRR 0.479 to 0.463, R@5 0.675 to
+0.686; on the choosing days MRR 0.396 both, R@5 0.584 to 0.596.
 
 ### Marks: "No reply needed" and "Reply needed"
 
@@ -297,6 +356,7 @@ the row's tooltip and at the top of its right-click menu (a sheet on a phone):
 | owed, known only for the place | You usually reply here within 15 minutes; unanswered for a day |
 | owed, reply rate known (3+ turns) | You reply to Sam most of the time / about half the time / rarely; unanswered for 2 days |
 | owed, otherwise | Sam wrote to you / mentioned you / replied to you / asked the group something / answered you 3 hours ago; not answered yet |
+| owed, the chance (after any of the four above) | . Likely needs a reply: 70% · . May need a reply: 30% |
 | unread | 2 unread messages · 1 unread mention, 4 more unread |
 | an alert you have not seen | Alerted you: (triage's first reason) |
 | an unread Conversation message | triage's first reason as it stands: A direct message · You wrote here in the last day |
@@ -308,7 +368,7 @@ the row's tooltip and at the top of its right-click menu (a sheet on a phone):
 | none of the above | Last message 3 days ago |
 
 A row that needs you with a turn you owe shows a small ↩ with how long it has waited, beside its unread count if it
-has one (until 2026-11-10 only with nothing unread).
+has one (until 2026-11-10 only with nothing unread), and faintly the chance it needs a reply ("Needs a reply" above).
 
 ## Features, kept incrementally
 
@@ -389,10 +449,11 @@ in the order on screen, a DM as its person, then the rest by the latest message.
 
 | | |
 |---|---|
-| bootstrap `attention` | `AttentionView[]`: `{ id, score, needs, reasons, owedSince, replyMark?, at }` for every listed conversation, and `kind: 'mail'` with a mail thread's id for each listed thread |
+| bootstrap `attention` | `AttentionView[]`: `{ id, score, needs, reasons, owedSince, replyMark?, needsReply?, at }` for every listed conversation, and `kind: 'mail'` with a mail thread's id for each listed thread |
 | event `{ t: 'attention', items, removed }` | changed scores, and conversations no longer listed |
 | `GET /api/attention` | `{ now, items }` |
 | `GET /api/attention/:conversationId` | everything about one score: the formula's parts, noise, relationship, reply rate, usual reply time; `learned`: the model's open and send chances and points, and the sampled points the inbox sorts by while exploring |
+| `GET /api/attention/needs-reply` | `?days=60`: how the "needs a reply" chances held up (`NeedsReplyCalibration`): by day, in bins, against the table's |
 | `GET /api/attention/model` | the learned order: its mode, when it last learned and from how many opens, its prior, what it learned as changes to weights on named features, the examination curve (fitted, the guess, and how often the list was on screen down to each row), and exploring (`explore`) |
 | `POST /api/attention/rebuild` | `{ conversations?: string[] }`: fold these, or all, again from the start |
 | `POST /api/messages/:id/reply-mark` | `{ mark: 'none' \| 'needs' \| null, surface?, device? }` on a message from someone else: set, change or take back a mark (null) → `{ mark, marked }`, the messages it touched (other routes included) |
@@ -710,7 +771,8 @@ afterwards. Import in transactions of a few thousand messages so the hub keeps a
 
 ### A local model for "needs a reply from me?"
 
-`AttentionJudge` in `attention.ts` is the interface. Its `rank` is the learned order's way in (above). Its `judge`:
+The backtest above asked jev this on the newest message of each turn and found almost nothing over the per-person
+rates ("Needs a reply"), so nothing asks it. `AttentionJudge` in `attention.ts` is the interface. Its `rank` is the learned order's way in (above). Its `judge`:
 given a few candidate conversations (the top of the ranking with an open turn, say) and their latest message ids,
 it answers per conversation
 `{ needsReply: 0..1, importance: 0..1, reason }`. Answers go in `Attention.judged`, and `scoreConversation`

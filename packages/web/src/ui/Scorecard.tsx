@@ -36,6 +36,8 @@ function domain(c: ScoreChart, v: ModelScoresView): [number, number] {
   const vals = c.metrics.flatMap((m) => v.metrics[m.key]?.v ?? []).filter((x): x is number => x !== null);
   if (kind === 'count') return [0, Math.max(2, ...vals)];
   if (kind === 'auc') return [Math.min(0.5, ...vals.map((x) => Math.floor(x * 10) / 10)), 1];
+  // A Brier score: from 0 (perfect) to a coin toss's 0.25, or higher if a day was worse.
+  if (kind === 'brier') return [0, Math.max(0.25, ...vals.map((x) => Math.ceil(x * 20) / 20))];
   return [0, 1];
 }
 
@@ -46,6 +48,7 @@ function ticks(kind: ScoreKind, lo: number, hi: number): number[] {
     for (let t = 0; t <= hi; t += step) out.push(t);
     return out;
   }
+  if (kind === 'brier') return [0, hi / 2, hi];
   return kind === 'auc' ? [lo, (lo + 1) / 2, 1] : [0, 0.5, 1];
 }
 

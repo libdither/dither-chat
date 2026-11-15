@@ -6,7 +6,7 @@
  */
 
 /** How a metric's value reads. */
-export type ScoreKind = 'share' | 'count' | 'rank' | 'auc';
+export type ScoreKind = 'share' | 'count' | 'rank' | 'auc' | 'brier';
 
 export interface ScoreMetric {
   key: string;
@@ -99,6 +99,24 @@ export const SCORE_CHARTS: ScoreChart[] = [
     metrics: [{ key: 'inbox.mrr', label: 'Mean 1 ÷ row', kind: 'rank', better: true }],
   },
   {
+    id: 'needs-reply',
+    title: 'Needs a reply: shown against answered',
+    about: 'For owed replies whose three days ended that day: the mean chance shown that they needed a reply, and the share you answered. Close together is well calibrated.',
+    metrics: [
+      { key: 'needs.predicted', label: 'Chance shown', kind: 'share', better: null },
+      { key: 'needs.answered', label: 'Answered', kind: 'share', better: null },
+    ],
+  },
+  {
+    id: 'needs-reply-brier',
+    title: 'Needs a reply: how far off',
+    about: 'The same replies: the Brier score of the chance shown, and of the reply table alone. 0 is perfect, 0.25 a coin toss.',
+    metrics: [
+      { key: 'needs.brier', label: 'Chance shown', kind: 'brier', better: false },
+      { key: 'needs.brier_table', label: 'Reply table alone', kind: 'brier', better: false },
+    ],
+  },
+  {
     id: 'foryou',
     title: 'For you: items you opened',
     about: 'Of the For you items that were on your screen that day, the share you opened; and the same for the items it was trying out (exploration), which no order chose.',
@@ -162,5 +180,6 @@ export function formatScore(kind: ScoreKind, v: number | null): string {
   if (v === null || !Number.isFinite(v)) return '–';
   if (kind === 'share') return `${Math.round(v * 100)}%`;
   if (kind === 'count') return Number.isInteger(v) ? String(v) : v.toFixed(1);
+  if (kind === 'brier') return v.toFixed(3);
   return v.toFixed(2);
 }

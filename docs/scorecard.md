@@ -41,6 +41,8 @@ Opens are visits to the chat of 5 s or more in use (`labels.ts` `OPEN_DWELL`), o
 | `unprompted.list` | of the chats you opened that day with no notification about them in the day before, the share with a message at the list or above in that day | those chats |
 | `inbox.mrr` | for opens from an inbox row (`visit.source = 'inbox'`, `visit.rank`), the mean of 1 ÷ row | those opens |
 | `inbox.top8`, `inbox.deep` | the share of them from the first 8 rows, and from below row 20 | those opens |
+| `needs.predicted`, `needs.answered` | for owed replies whose 3 days ended that day, the mean "needs a reply" chance shown (`needs_prediction`, kept at 15 min, 1 h, 6 h and a day of age) and the share answered within the 3 days ([inbox.md](inbox.md#needs-a-reply)) | chances kept |
+| `needs.brier`, `needs.brier_table` | the same: the Brier score of the chance shown, and of the owed table's chance alone | chances kept |
 | `foryou.clicked`, `foryou.clicked_explore` | of the For you items on screen that day (a `shown` event, [foryou.md](foryou.md)), the share opened from it; and the same for exploration slots alone, which no order chose | items shown, and those from exploration slots |
 
 Why each:
@@ -55,6 +57,9 @@ Why each:
   Answering within 3 hours is the nearest thing to "it could not wait" that the log has.
 - **Unprompted opens** are the chats you go to by yourself: the list should hold them, and the triage replay found it
   rarely does.
+- **Needs a reply** is a chance shown on the row, so it should mean what it says: the two lines of the first chart
+  close together, and the chance's Brier under the table's. A turn is scored on the day its window ends, which a day
+  has always passed by the time it matures; "No reply needed" counts as not answered.
 
 ## On How it sorts
 
@@ -85,17 +90,14 @@ The loop, for an agent once a week:
 2. Pick the weakest place: a tier whose notifications are rarely followed, learned importance no better than the
    start, a falling inbox order, unprompted opens the list misses.
 3. Try a change in a replay on the same copy: `scripts/triage-replay.ts` for triage ([triage-replay.md](triage-replay.md)),
-   `scripts/inbox-replay.ts` for the inbox order ([inbox.md](inbox.md#the-replay)), `scripts/owed-replay.ts` for
-   needs reply.
+   `scripts/inbox-replay.ts` for the inbox order ([inbox.md](inbox.md#the-replay)), `scripts/needs-reply-backtest.ts`
+   (and `scripts/owed-replay.ts`) for needs reply.
 4. Open a pull request only if the change wins in the replay at the same size of list (or fewer notifications), and
    say so in its description with the replay's numbers. After it deploys, the scorecard's next days say whether it
    held live.
 
 ## Seams
 
-- **Needs reply.** A reply-needed probability is being added to the owed table. Once it is logged with each owed
-  turn, add a scorer (`DayScorer` in scorecard.ts) for its calibration against whether you answered (`owed_turn.answered_at`),
-  and a chart in `SCORE_CHARTS`.
 - **Replay headlines** are not recorded: a replay's numbers go in its pull request and its doc.
 
 A new scorer is a generator over one day (`DayContext`: the day's bounds, your identities, opens by chat) that yields

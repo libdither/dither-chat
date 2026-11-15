@@ -18,7 +18,7 @@ import { since } from '../format.ts';
 import { commits, lockAxis, rubber, settleMs, velocity } from '../gesture.ts';
 import { haptic, layerCount, reducedMotion } from '../phone.ts';
 import { countKey } from '../clicklog.ts';
-import { markRow, REPLY_MARK_LABEL } from '../replymarks.ts';
+import { markRow, needsReplyLabel, REPLY_MARK_LABEL } from '../replymarks.ts';
 import { rev } from '../state.ts';
 import { drag } from './dnd.tsx';
 
@@ -51,7 +51,26 @@ interface Swipe {
  * newest message from someone else, when "Reply needed" can go on the row at all (not notes to self, not where you
  * wrote last, not mail without a reply owed).
  */
-export function MarkableRow({ rowKey, kind, ids, owedSince, canNeed, latest, children }: { rowKey: string; kind: 'conversation' | 'mail'; ids: string[]; owedSince: number | null | undefined; canNeed: boolean; latest?: string; children: ComponentChildren }) {
+export function MarkableRow({
+  rowKey,
+  kind,
+  ids,
+  owedSince,
+  needsP,
+  canNeed,
+  latest,
+  children,
+}: {
+  rowKey: string;
+  kind: 'conversation' | 'mail';
+  ids: string[];
+  owedSince: number | null | undefined;
+  /** The chance the reply owed is needed (docs/inbox.md, "Needs a reply"), for the ↩ button's tooltip. */
+  needsP?: number | null;
+  canNeed: boolean;
+  latest?: string;
+  children: ComponentChildren;
+}) {
   const box = useRef<HTMLDivElement>(null);
   const g = useRef<Swipe | null>(null);
   const owes = owedSince != null;
@@ -160,7 +179,7 @@ export function MarkableRow({ rowKey, kind, ids, owedSince, canNeed, latest, chi
     >
       {children}
       {/* Its ↩ and ✕ are drawn by styles.css: one element per row, as the perf budget counts them. */}
-      <button type="button" class="row-mark" aria-label={label} title={label} data-track={mark === 'none' ? 'mark no reply needed' : 'mark reply needed'} onClick={run}>
+      <button type="button" class="row-mark" aria-label={label} title={needsP != null ? `${needsReplyLabel(needsP)}. Click: ${label}` : label} data-track={mark === 'none' ? 'mark no reply needed' : 'mark reply needed'} onClick={run}>
         {owes ? <Age at={owedSince!} /> : null}
       </button>
     </div>

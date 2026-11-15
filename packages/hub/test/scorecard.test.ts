@@ -132,6 +132,18 @@ describe('scoring a day', () => {
     say('w', at(17), 'digest', { live: 0.65 });
     visit('w', at(19), 40);
 
+    // Needs a reply: chances kept for three turns whose three days ended that day. You answered the first (60%) in two
+    // hours; the second (20%) ran out; the third (90%) you marked "No reply needed".
+    const owed = (c: string, addressed: number, p: number, table: number, answeredAt: number | null, dismissed = 0) => {
+      store.db.query('INSERT INTO needs_prediction (conversation_id, addressed, age, p, table_p, at) VALUES (?, ?, ?, ?, ?, ?)').run(conv(c), addressed, HOUR, p, table, addressed + HOUR);
+      store.db.query('INSERT INTO owed_turn (conversation_id, addressed, shape, author_key, answered_at, timed, dismissed) VALUES (?, ?, ?, ?, ?, 1, ?)').run(conv(c), addressed, 'group', 'ann', answeredAt, dismissed);
+    };
+    owed('x', at(10) - 3 * DAY, 0.6, 0.8, at(12) - 3 * DAY);
+    owed('y', at(11) - 3 * DAY, 0.2, 0.5, null);
+    owed('z', at(12) - 3 * DAY, 0.9, 0.9, null, 1);
+    // A turn whose window ended the day after: not this day's.
+    owed('w', at(30) - 3 * DAY, 0.5, 0.5, null);
+
     // Inbox rows opened: the top row, the tenth, the 26th.
     visit('y', at(21), 2, 'inbox', 0);
     visit('z', at(21.5), 2, 'inbox', 9);
@@ -200,6 +212,15 @@ describe('scoring a day', () => {
     expect(s['inbox.mrr'].value).toBeCloseTo((1 + 1 / 10 + 1 / 26) / 3, 6);
     expect(s['inbox.top8'].value).toBeCloseTo(1 / 3, 6);
     expect(s['inbox.deep'].value).toBeCloseTo(1 / 3, 6);
+  });
+
+  test('needs a reply: the mean chance shown against the share answered, and Brier for the chance and the table alone', () => {
+    const s = score();
+    expect(s['needs.predicted'].n).toBe(3);
+    expect(s['needs.predicted'].value).toBeCloseTo((0.6 + 0.2 + 0.9) / 3, 6);
+    expect(s['needs.answered'].value).toBeCloseTo(1 / 3, 6);
+    expect(s['needs.brier'].value).toBeCloseTo((0.4 ** 2 + 0.2 ** 2 + 0.9 ** 2) / 3, 6);
+    expect(s['needs.brier_table'].value).toBeCloseTo((0.2 ** 2 + 0.5 ** 2 + 0.9 ** 2) / 3, 6);
   });
 
   test('For you: the share of shown items opened, and of exploration slots alone', () => {

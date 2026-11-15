@@ -941,6 +941,8 @@ export class HubServer {
       if (path === '/api/attention' && method === 'GET') return ok({ now: Date.now(), items: a.list() });
       // The learned order (ranker.ts): its mode and what it learned, as weights on named features.
       if (path === '/api/attention/model' && method === 'GET') return ok((a.judge as { view?: () => unknown } | undefined)?.view?.() ?? { mode: 'off' });
+      // How well "needs a reply" chances matched what you did (needsreply.ts): by day, and in bins.
+      if (path === '/api/attention/needs-reply' && method === 'GET') return ok(a.needsCalibration(Date.now(), Math.min(365, Math.max(1, num('days') ?? 60))));
       if ((m = path.match(/^\/api\/attention\/([\w-]+)$/)) && method === 'GET') {
         const x = a.explain(m[1]);
         return x ? ok(x) : bad('not in the inbox', 404);
