@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
-import { activeCall, callMedia, canCall, canRing, canShareScreen, canVideo, leaveCall, micLevel, setCamera, setDeafened, setMuted, setScreen, startCall } from '../call.ts';
+import { NETWORK_META } from '@dither-chat/protocol';
+import { activeCall, callMedia, callNetwork, canCall, canRing, canShareScreen, canVideo, leaveCall, micLevel, setCamera, setDeafened, setMuted, setScreen, startCall } from '../call.ts';
 import { callIn } from '../ringing.ts';
 import { db, isSelfIdentity, prefs, rev } from '../state.ts';
 import { convTitle } from '../model.ts';
@@ -82,7 +83,7 @@ export function CallDock() {
   const effect = call.effects.at(-1)?.effect;
   // Bridge mode: live once the bridge is, but people hear you only once the account's own client has connected.
   const reaching = call.phase === 'live' && call.mode === 'bridge' && call.self && !call.self.connected;
-  const status = call.phase === 'connecting' ? 'Connecting…' : call.phase === 'ended' ? (call.note ?? 'Call ended') : reaching ? 'Connecting to Discord…' : elapsed(call.since, now);
+  const status = call.phase === 'connecting' ? 'Connecting…' : call.phase === 'ended' ? (call.note ?? 'Call ended') : reaching ? `Connecting to ${NETWORK_META[callNetwork(call)].name}…` : elapsed(call.since, now);
   const video = canVideo();
   return (
     <section

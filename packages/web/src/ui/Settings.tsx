@@ -424,7 +424,7 @@ export function SettingsPane() {
             <p class="set-help">
               {p.callMode === 'bridge'
                 ? "The account's own client on the hub joins the call, and its audio is passed to this device. Works the way the network's app does, at the cost of the hub's CPU."
-                : 'This device joins the call itself, with a one-call token from the account. Its connection still goes through the hub. Lighter on the hub, a little more work for the device.'}
+                : 'This device joins the call itself, with a one-call token from the account. Its connection still goes through the hub. Lighter on the hub, a little more work for the device. Discord only: calls on other networks still go through the account.'}
             </p>
             <CallInputSettings />
           </section>

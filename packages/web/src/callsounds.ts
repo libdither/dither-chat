@@ -1,10 +1,11 @@
 /**
  * The sounds a call makes on this device (docs/calls.md "Sounds"): someone joins or leaves, you mute or deafen, a camera
- * or a stream starts. They are named as Discord names its own; the hub serves Discord's recordings when its updater
- * copied them (/voice/sounds/<name>.mp3), and the device makes a short chime of its own otherwise. Played through the
+ * or a stream starts. They are named as Discord names its own; in a Discord call the hub serves Discord's recordings when
+ * its updater copied them (/voice/sounds/<name>.mp3), and the device makes a short chime of its own otherwise (and always
+ * on other networks: Discord's sounds don't belong in a Signal call). Played through the
  * call's AudioContext (started by the click that started the call, so it may play), never sent to anyone.
  */
-import type { CallSoundName } from '@dither-chat/protocol';
+import type { CallSoundName, Network } from '@dither-chat/protocol';
 
 /** Which of Discord's recordings the hub has: asked once per page. */
 let available: Promise<Set<string>> | null = null;
@@ -37,7 +38,8 @@ function buffer(ctx: AudioContext, name: string): Promise<AudioBuffer | null> {
 }
 
 /** Fetch and decode the common ones ahead, so the first join or mute plays at once. */
-export function preloadCallSounds(ctx: AudioContext) {
+export function preloadCallSounds(ctx: AudioContext, network: Network = 'discord') {
+  if (network !== 'discord') return;
   for (const n of ['user_join', 'user_leave', 'mute', 'unmute', 'disconnect'] as const) void buffer(ctx, n);
 }
 
@@ -86,13 +88,13 @@ function chime(ctx: AudioContext, notes: number[], volume: number) {
 const lastPlayed = new Map<string, number>();
 
 /** Play one call sound, unless it played in the last 400 ms. Resolves once it started (or was skipped). */
-export async function playCallSound(ctx: AudioContext | null, name: CallSoundName, volume = 0.6): Promise<'recording' | 'chime' | 'skipped'> {
+export async function playCallSound(ctx: AudioContext | null, name: CallSoundName, volume = 0.6, network: Network = 'discord'): Promise<'recording' | 'chime' | 'skipped'> {
   if (!ctx || ctx.state === 'closed') return 'skipped';
   const now = performance.now();
   if (now - (lastPlayed.get(name) ?? -1e9) < 400) return 'skipped';
   lastPlayed.set(name, now);
   if (ctx.state !== 'running') await ctx.resume().catch(() => {});
-  const buf = await buffer(ctx, name);
+  const buf = network === 'discord' ? await buffer(ctx, name) : null;
   if ((ctx.state as string) === 'closed') return 'skipped';
   if (!buf) {
     chime(ctx, CHIMES[name], volume);

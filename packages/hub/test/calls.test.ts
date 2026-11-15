@@ -8,10 +8,10 @@ import { Calls } from '../src/calls.ts';
 
 type Sent = any[];
 
-function setup(reply: (cmd: any) => unknown = () => ({}), caps: string[] = ['calls']) {
+function setup(reply: (cmd: any) => unknown = () => ({}), caps: string[] = ['calls'], network = 'discord') {
   const commands: any[] = [];
   const store = {
-    account: (id: string) => ({ id, network: 'discord', capabilities: JSON.stringify(caps) }),
+    account: (id: string) => ({ id, network, capabilities: JSON.stringify(caps) }),
     nativeOf: (kind: string, id: string) => ({ network: id.startsWith('idn_signal_') ? 'signal' : 'discord', nativeId: kind === 'identity' ? id.replace(/^idn_[a-z]+_/, '') : '1100000000000000001' }),
     identitiesByIds: () => [],
   } as any;
@@ -52,6 +52,18 @@ describe('calls', () => {
     const ice = joined.iceServers[0];
     expect(ice.credential).toBe(createHmac('sha1', 'shh').update(ice.username).digest('base64'));
     expect(Number(ice.username.split(':')[0])).toBeGreaterThan(Date.now() / 1000);
+  });
+
+  test('direct mode where the network has none: the call goes through the account (bridge), and the device is told', async () => {
+    const { calls, commands, socket } = setup((c) => (c.op === 'join' ? { direct } : {}), ['calls'], 'signal');
+    const ws = socket();
+    calls.message(ws as any, join('direct'));
+    await tick();
+    expect(commands[0]).toMatchObject({ t: 'call', op: 'join', mode: 'bridge' });
+    const joined = ws.sent.find((m) => m.t === 'joined');
+    expect(joined.mode).toBe('bridge');
+    expect(joined.direct).toBeUndefined();
+    expect(calls.stats()[0]!.mode).toBe('bridge');
   });
 
   test('a voice endpoint outside the network is refused', async () => {
