@@ -22,7 +22,6 @@ export class Peer {
   private since: string | undefined;
   private running = true;
   private waiters: { pred: (e: ClearEvent) => boolean; res: (e: ClearEvent) => void }[] = [];
-  private tracked = new Set<string>();
   readonly loop: Promise<void>;
 
   private constructor(

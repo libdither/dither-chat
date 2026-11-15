@@ -21,7 +21,6 @@ const DAY = 24 * 60 * 60_000;
 export const NEEDS_HOLD = 7 * DAY;
 
 export type ReplyMark = P.ReplyMark;
-const REPLY_MARKS: readonly ReplyMark[] = ['none', 'needs'];
 /** Where the mark was made: an inbox row's menu, a message's menu, or (later) a notification. */
 type MarkSurface = 'row' | 'message' | 'notification';
 const SURFACES: readonly MarkSurface[] = ['row', 'message', 'notification'];

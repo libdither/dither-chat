@@ -140,7 +140,6 @@ export function setTraceSink(s: ((r: SpanRecord) => void) | null) {
   recentHead = 0;
 }
 
-const tracing = () => sink !== null;
 
 /** A W3C traceparent header's ids, if it is one. */
 export function parseTraceparent(h: string | null | undefined): { traceId: string; spanId: string } | undefined {

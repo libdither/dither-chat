@@ -22,8 +22,6 @@ const DAY = 24 * HOUR;
 
 /** You wrote there this recently before it: you were already in the conversation. */
 const ENGAGED_BEFORE = 15 * MIN;
-/** A quick answer. */
-const QUICK = 15 * MIN;
 /** An answer at all: worth seeing. */
 export const LATE = 3 * HOUR;
 /** Opened within this long. */

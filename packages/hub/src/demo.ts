@@ -2036,7 +2036,6 @@ class DemoAdapter implements InprocAdapter {
     };
     const rules: P.AboutRule[] = [];
     const members: P.AboutMember[] = [];
-    const pool = Object.values(POOLS[net] ?? M);
     const ids = new Set<string>([...(conv?.fact.participants ?? []), ...(this.addedTo.get(target.nativeId) ?? [])]);
     if (!ids.size) {
       ids.add(this.self.nativeId);

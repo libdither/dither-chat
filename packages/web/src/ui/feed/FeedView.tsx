@@ -16,7 +16,7 @@ import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { FeedTalk, FeedUnit } from '../../feed.ts';
-import { api, db, loadTimeline, markRead, openProfile, timelineKey, timelines } from '../../state.ts';
+import { loadTimeline, markRead, openProfile, timelineKey, timelines } from '../../state.ts';
 import { timelineRev } from '../../versions.ts';
 import type { Kit } from './lazy.tsx';
 import { ReactorsList } from './Actions.tsx';

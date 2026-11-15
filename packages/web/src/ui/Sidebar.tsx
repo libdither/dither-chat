@@ -22,7 +22,6 @@ import {
   people,
   placeConv,
   plainBody,
-  resolveTokens,
   ruleIcon,
   spaceChildren,
   spaceUnread,

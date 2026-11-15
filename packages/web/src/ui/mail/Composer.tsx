@@ -20,7 +20,6 @@ import {
   dismissSend,
   drafts,
   draftState,
-  emptyDraft,
   findAddresses,
   flushDraft,
   isBlank,

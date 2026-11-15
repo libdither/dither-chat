@@ -2,7 +2,7 @@ import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, NETWORK_META, RULE_LABEL, RULE_LEVELS, sendBlocker, showsGone, showsInline } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
-import { ago, bytes, clock, dayLabel, fullTime, sameDay } from '../format.ts';
+import { ago, clock, dayLabel, fullTime, sameDay } from '../format.ts';
 import { retention } from '../history.ts';
 import { isJumbo, renderMarkdown } from '../markdown.ts';
 import { inviteRef } from '../invites.ts';
@@ -29,11 +29,9 @@ import {
   ruleIcon,
   ruleName,
   ruleOn,
-  threadsOf,
   visibleAccount,
 } from '../model.ts';
 import {
-  api,
   db,
   go,
   isSelfIdentity,
@@ -1090,7 +1088,7 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
 
 // ------------------------------------------------------------------ composer
 
-function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, disabledReason, lead }: {
+function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledReason, lead }: {
   targets: { convId: string; accountId?: string };
   placeholder: string;
   /**

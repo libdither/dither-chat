@@ -1,4 +1,4 @@
-import { createPortal, type ComponentChildren, type JSX } from 'preact';
+import { createPortal, type ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
 import { GLYPH } from '../brand.ts';

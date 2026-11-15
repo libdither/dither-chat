@@ -34,7 +34,7 @@ import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, reminderOf } from '@dither-chat/protocol';
 import { previewText, type Store } from './store.ts';
 import { describeActivity, type ActivityStore, type Features } from './activity.ts';
-import { ALERT_BAR, alertBar, describeWeight, emptyModel, importance, learnedFrom, predict, prior, THRESHOLDS, tierFrom, TIER_NAME, words, type Facts, type Level, type Model, type Namer, type TierContext } from './learn.ts';
+import { alertBar, describeWeight, emptyModel, importance, learnedFrom, predict, prior, THRESHOLDS, tierFrom, TIER_NAME, words, type Facts, type Level, type Model, type Namer, type TierContext } from './learn.ts';
 import { InteractionLog } from './interact.ts';
 import { conversing, CONVERSING_REASON } from './tiers.ts';
 import { blockedByYou, requestHeld } from './add.ts';
@@ -76,7 +76,6 @@ export interface Decision {
 export type Judge = (text: string) => Promise<number | null>;
 /** The one question the local model is asked. A fixed string: jev caches by it. */
 export const STOP_QUESTION = 'Does this message need the reader to stop what they are doing and act or reply within the next hour or two?';
-const JUDGE_INSTRUCT = 'Given a chat message someone received, judge whether it meets the description';
 /** At most this much of a message is read. */
 export const JUDGE_CHARS = 500;
 /** A place or person you marked "should have alerted" may alert for this long, Conversation or not. */

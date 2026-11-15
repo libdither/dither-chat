@@ -6,7 +6,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { categoryThreshold, NETWORK_META, RULE_LABEL } from '@dither-chat/protocol';
-import { dataVersion, db, inbox, isSelfIdentity, mailTriage, prefs } from './state.ts';
+import { dataVersion, db, inbox, isSelfIdentity, mailTriage } from './state.ts';
 import { mailDataVersion, metaDataVersion } from './versions.ts';
 import { isMailItem, triageBoard, type Board, type BoardItem } from './board.ts';
 import { mailInboxRows, mailNames } from './mail/model.ts';
@@ -374,10 +374,6 @@ export function railEntries(which: 'shown' | 'hidden' = 'shown'): RailEntry[] {
   });
 }
 
-/** Communities that should get a rail icon. */
-function railCommunities(): P.SpaceView[] {
-  return railEntries().flatMap((e) => (e.kind === 'space' ? [e.space] : []));
-}
 
 export function allCommunities(): P.SpaceView[] {
   return memo('allCommunities', () => {

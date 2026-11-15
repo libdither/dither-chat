@@ -2,7 +2,6 @@
  * Saving a file and opening it outside the app: the desktop helper's apps (desk.ts), the phone's (android.ts), or a
  * tab. Shared by the file menus (menus.tsx) and the file viewer's header (Viewer.tsx).
  */
-import type * as P from '@dither-chat/protocol';
 import { showsInline } from '@dither-chat/protocol';
 import { android } from '../android.ts';
 import { appsFor, openFile } from '../desk.ts';

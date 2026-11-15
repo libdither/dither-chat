@@ -53,7 +53,7 @@ export class Engine {
 
   constructor(
     private host: HTMLElement,
-    private gl: HTMLCanvasElement,
+    gl: HTMLCanvasElement,
     private text: HTMLCanvasElement,
     private ev: EngineEvents,
     opts: { prefer2d?: boolean } = {},

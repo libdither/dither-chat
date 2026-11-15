@@ -25,7 +25,7 @@ import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { fromSignal } from '../../../adapter-signal/src/markdown.ts';
 import { groupIdFromMasterKey } from './signal-keys.ts';
-import { BadPassphrase, type Field, fields, normalizePassphrase, streamKeys } from './signal-backup.ts';
+import { BadPassphrase, fields, normalizePassphrase, streamKeys } from './signal-backup.ts';
 
 export const SIGNAL_LEGACY_READER = 'signal-legacy@2';
 /** The unpacked database's own version: a new one unpacks again, a new mapping alone does not. */
@@ -289,7 +289,6 @@ const KEY_EXCHANGE_MASK = 0xff00;
 const GROUP_UPDATE = 0x10000;
 const TIMER_UPDATE = 0x40000;
 const ENCRYPTION_FAILED = 0x10000000 | 0x08000000 | 0x04000000 | 0x02000000;
-const SPECIAL_MASK = 0xf00000000;
 const SPECIAL: Record<number, string> = {
   0x1: 'story reaction', 0x2: 'gift badge', 0x3: 'payment', 0x4: 'payments request', 0x5: 'reported spam', 0x6: 'message request accepted',
   0x8: 'payments activated', 0x9: 'payment tombstone', 0xa: 'blocked', 0xb: 'unblocked', 0xc: 'poll ended', 0xd: 'pin',

@@ -1,4 +1,3 @@
-import type * as P from '@dither-chat/protocol';
 import { NETWORKS, SEARCH_HAS, SEARCH_IS, SEARCH_OPS, SEARCH_SORT, searchValue } from '@dither-chat/protocol';
 import type { ComponentChildren, Ref } from 'preact';
 import { useState } from 'preact/hooks';

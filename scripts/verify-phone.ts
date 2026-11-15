@@ -9,7 +9,7 @@
  * With a directory, it also saves the phone screenshots numbered from 36.
  * Headless Chromium is not a phone: no real keyboard, no iOS Safari, and frame timing means little here.
  */
-import { launch, type Page } from './browser.ts';
+import { launch } from './browser.ts';
 
 const [base, shots] = process.argv.slice(2);
 if (!base) throw new Error('usage: bun scripts/verify-phone.ts <hub url> [screenshot dir]');

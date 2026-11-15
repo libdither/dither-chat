@@ -25,7 +25,6 @@ const SCHEMA = typeof __SNAPSHOT_SCHEMA__ === 'string' ? __SNAPSHOT_SCHEMA__ : '
 
 /** Past this the bootstrap is not kept at all: reading it back would cost about what the network does. */
 const MAX_BOOTSTRAP_CHARS = 12_000_000;
-const MAX_REST_CHARS = 1_500_000;
 const MAX_INBOX = 100;
 /** Mail the reader opened last (docs/mail.md): its threads and bodies, so they open offline too. */
 const MAX_MAIL_THREADS = 20;

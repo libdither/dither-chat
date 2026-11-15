@@ -3,7 +3,7 @@ import type * as P from '@dither-chat/protocol';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { accountRows, kindName, type AccountRow } from '../accountrows.ts';
 import { netName } from '../model.ts';
-import { api, db, go, mailRev, rev } from '../state.ts';
+import { db, go, mailRev, rev } from '../state.ts';
 import { useLayer } from '../phone.ts';
 import { AccountChip, Modal } from './bits.tsx';
 import { FeatureIcons, KindBadge } from './AccountFeatures.tsx';

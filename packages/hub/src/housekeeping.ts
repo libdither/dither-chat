@@ -9,7 +9,6 @@ import { whole } from './slices.ts';
 import { jobFailed } from './errors.ts';
 
 const HOUR = 3_600_000;
-const DAY = 24 * HOUR;
 
 /**
  * Everything the hub keeps is private to its user: the database holds every message. Files other users could read

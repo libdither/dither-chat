@@ -9,7 +9,7 @@ import { signal } from '@preact/signals';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { addRows, isLink } from '../add.ts';
 import { convTitle, identityName, netName } from '../model.ts';
-import { backTo, entry, paletteHeld, paletteStack, pop, push, replaceTop, toRoot, update, type Entry, type PageRef } from '../palette.ts';
+import { backTo, entry, paletteHeld, paletteStack, pop, push, toRoot, update, type Entry, type PageRef } from '../palette.ts';
 import { dropLayer, phone, pushLayer, slideAway, useSheetDrag } from '../phone.ts';
 import { countKey } from '../clicklog.ts';
 import { db } from '../state.ts';
@@ -161,11 +161,6 @@ export function scanned(text: string) {
   paletteStack.value = card ? push(base, card) : base;
 }
 
-/** Swap the page on top for another. */
-function replacePage(ref: PageRef, q = '') {
-  const s = paletteStack.value;
-  if (s) paletteStack.value = replaceTop(s, make(ref, q));
-}
 
 // ------------------------------------------------------------------ the box
 

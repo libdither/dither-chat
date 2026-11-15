@@ -18,7 +18,7 @@ import { badgeDiffers, cameFromThem, headIdents, lastRouteTells, leadTells, pick
 import { ago, hueOf, initials } from '../format.ts';
 import { identityName, netColor, netName, visibleAccount } from '../model.ts';
 import { phone } from '../phone.ts';
-import { api, db, go, isSelfIdentity, prefs, route, setPrefs, timelineKey, timelines, toast } from '../state.ts';
+import { api, db, go, isSelfIdentity, prefs, route, setPrefs, timelineKey, timelines } from '../state.ts';
 import { AccountChip, Avatar, Count, Menu, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
 

@@ -15,7 +15,6 @@ import { mailChanged } from '../versions.ts';
 const SAVE_AFTER_MS = 2000;
 const LOCAL = 'dither-chat:mail-draft:';
 
-export const emptyDraft = (accountId: string, kind: P.MailComposeKind = 'new'): P.MailDraft => ({ accountId, kind, replyTo: null, from: null, to: [], cc: [], bcc: [], subject: '', text: '', quote: true, files: [], forwardParts: [] });
 
 /** Nothing written: closing it keeps no draft. */
 export const isBlank = (d: P.MailDraft) => !d.to.length && !d.cc.length && !d.bcc.length && !d.subject.trim() && !d.text.trim() && !d.files.length && d.kind === 'new';
