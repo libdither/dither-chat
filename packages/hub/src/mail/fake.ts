@@ -110,6 +110,8 @@ export interface FakeOpts {
    * elsewhere; null says none of them (an extractor from before them).
    */
   details?: Record<string, unknown> | null;
+  /** The server's address book for `mail.contacts` (its status then says `details.contacts`); none by default. */
+  contacts?: M.MailContact[] | null;
 }
 
 const MB = 1024 * 1024;
@@ -335,6 +337,7 @@ export class FakeMailBackend implements MailBackend {
       answer: 0,
       summaryHeaders: refs,
       details: ids === 'proton' ? PROTON_DETAILS : web ? GMAIL_WEB_DETAILS : {},
+      contacts: null,
       ...this.defaults,
       ...o.opts,
     };
@@ -596,6 +599,7 @@ export class FakeMailBackend implements MailBackend {
         canSend: sendOk,
         sendNote: sendOk ? null : 'Sending is not supported here (the extractor answered 501).',
         ...(a.opts.summaryHeaders === null ? {} : { summaryHeaders: a.opts.summaryHeaders }),
+        ...(a.opts.contacts ? { contacts: online } : {}),
         ...(a.opts.details ?? {}),
       },
       layers: [
@@ -1029,6 +1033,15 @@ export class FakeMailBackend implements MailBackend {
         return { messages: this.search(a, String(input.query ?? ''), input.mailboxId as string | undefined, Number(input.limit) || 50) };
       case 'mail.send':
         return this.send(a, input as M.OutgoingMail);
+      case 'mail.contacts': {
+        if (!a.opts.contacts) throw new MailCallError('the fake does not do mail.contacts', 501, 'unknown-op');
+        const q = String(input.query ?? '').trim().toLowerCase();
+        const limit = Math.max(1, Math.min(Number(input.limit) || 8, 20));
+        // As a server ranks them: a name or address that starts with it, then one with it inside.
+        const starts = (c: M.MailContact) => [c.email, ...(c.name ?? '').split(/\s+/)].some((w) => w.toLowerCase().startsWith(q));
+        const has = (c: M.MailContact) => `${c.name ?? ''} ${c.email}`.toLowerCase().includes(q);
+        return { contacts: q ? [...a.opts.contacts.filter(starts), ...a.opts.contacts.filter((c) => !starts(c) && has(c))].slice(0, limit) : [] };
+      }
       case 'mail.attachment': {
         const m = a.messages.get(String(input.id)) ?? a.messages.get(String(input.message));
         const att = m?.attachments.find((x) => x.id === input.attachmentId);

@@ -20,9 +20,11 @@
  *     results and back to them, the filter chips; the search page's Mail group and its way into Mail.
  *   - writing (slice 5), last, since it sends: on a phone, Reply from the reader's bar fills in To, the subject and the
  *     quote; a Cc typed in, a file attached; Send, "Sending… Undo", Undo brings the draft back, Send again, and the
- *     reply joins the thread with its file and reads as text in the app's theme (its plain HTML part is not put on a
- *     white sheet); on a desktop, ✎ docks a new message whose To completes from your mail, and closing it keeps a
- *     draft that opens again from the Drafts line.
+ *     reply joins the thread with its file and its Markdown bold, drawn in the app's theme (its plain, formatted HTML
+ *     part is not put on a white sheet); a chip opens back into text with Backspace and Ctrl+Z makes it a chip again.
+ *     On a desktop, ✎ docks a new message whose To completes from your mail and from the account's server; a clicked
+ *     chip opens to edit and goes back in its place; B and Preview; Ctrl+Z; closing keeps a draft that opens again
+ *     from the Drafts line; discarding offers Undo, then the draft is gone.
  *
  * With --html (slice 3, htmlChecks below), the HTML frame in Chromium: no script runs in it, even put there by hand;
  * no request leaves for anywhere but the hub; a link click goes through the app's opener and never moves the frame,
@@ -314,7 +316,9 @@ async function desktop(themeName: string) {
 /** Text typed into a field, as a person would (the input event the page listens for). */
 const type = (sel: string, text: string) =>
   page.eval(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); el.focus(); el.value = ${JSON.stringify(text)}; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-const key = (sel: string, k: string) => page.eval(`document.querySelector(${JSON.stringify(sel)}).dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true }))`);
+const key = (sel: string, k: string, mods: { ctrlKey?: boolean; shiftKey?: boolean } = {}) =>
+  page.eval(`document.querySelector(${JSON.stringify(sel)}).dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, ...${JSON.stringify(mods)}, bubbles: true, cancelable: true }))`);
+const chipped = (email: string) => page.eval<boolean>(`[...document.querySelectorAll('.mc-chip')].some((c) => c.textContent.includes(${JSON.stringify(email)}))`);
 const outbox = async () => ((await fetch(`${base}/api/mail/outbox`).then((r) => r.json())) as any).items as any[];
 const threadNow = async (id: string) => (await fetch(`${base}/api/mail/threads/${id}`).then((r) => r.json())) as any;
 /** A file for the file picker, through the browser's own protocol. */
@@ -348,8 +352,16 @@ async function composer(themeName: string, full: boolean) {
   await type('#mc-cc', 'jo@park.example');
   await key('#mc-cc', 'Enter');
   await Bun.sleep(150);
-  check(`${tag}: a typed Cc becomes a chip`, await page.eval(`[...document.querySelectorAll('.mc-chip')].some((c) => c.textContent.includes('jo@park.example'))`));
-  await type('.mc-body', 'See you at 7:30!');
+  check(`${tag}: a typed Cc becomes a chip`, await chipped('jo@park.example'));
+  // Backspace at the start of the box opens the chip back into text, its last letter gone; Ctrl+Z puts it back.
+  await key('#mc-cc', 'Backspace');
+  await Bun.sleep(150);
+  check(`${tag}: Backspace opens the chip back into text, a letter gone`, (await page.eval(`document.querySelector('#mc-cc').value`)) === 'jo@park.exampl' && !(await chipped('jo@park')));
+  await key('#mc-cc', 'z', { ctrlKey: true });
+  await Bun.sleep(150);
+  check(`${tag}: Ctrl+Z makes it a chip again`, (await page.eval(`document.querySelector('#mc-cc').value`)) === '' && (await chipped('jo@park.example')));
+  // Markdown, as in chat: the reply goes with its bold.
+  await type('.mc-body', 'See you at **7:30**!');
   const file = join(tmpdir(), `verify-mail-ticket-${process.pid}.txt`);
   writeFileSync(file, 'Table for two, 7:30, under Rivera.');
   await pickFile('.mc-foot input[type=file]', file);
@@ -362,8 +374,8 @@ async function composer(themeName: string, full: boolean) {
   check(`${tag}: no sideways overflow: the strip`, !(await overflow()).length, await overflow());
   await shot(`mail-${tag.replace(/ /g, '-')}-held`);
   await tap(await at('.mc-strip .mc-undo'));
-  await page.until(`document.querySelector('.mc-body')?.value === 'See you at 7:30!'`, 10000);
-  check(`${tag}: Undo brings the draft back, file and all`, (await has('.mc-files .composer-file')) && (await page.eval(`[...document.querySelectorAll('.mc-chip')].some((c) => c.textContent.includes('jo@park.example'))`)));
+  await page.until(`document.querySelector('.mc-body')?.value === 'See you at **7:30**!'`, 10000);
+  check(`${tag}: Undo brings the draft back, file and all`, (await has('.mc-files .composer-file')) && (await chipped('jo@park.example')));
   check(`${tag}: nothing went`, !(await outbox()).some((o: any) => o.state === 'sent' && o.threadId === dinner.id));
   // Send again, and let it go.
   await tap(await at('.mc-send'));
@@ -382,24 +394,24 @@ async function composer(themeName: string, full: boolean) {
   check(`${tag}: the reply joins the thread, with its Cc and its file`, after.messages.length === before + 1 && mine.addressed === 'self' && mine.cc.some((a: any) => a.email === 'jo@park.example') && mine.hasAttachments, { n: after.messages.length, cc: mine?.cc, files: mine?.hasAttachments });
   await page.until(`document.querySelectorAll('.mail-reader .mail-msg').length >= ${before + 1}`, 10000).catch(() => {});
   check(`${tag}: the reader shows it`, (await page.eval<number>(`document.querySelectorAll('.mail-reader .mail-msg').length`)) >= before + 1);
-  // Its HTML part is plain (text, a quote, a link): it reads as text in the app's theme, not on a white sheet.
+  // Its HTML part is plain (no colours or fonts) but formatted (bold): it reads as its HTML in the app's theme, not on a white sheet.
   const body = (await fetch(`${base}/api/mail/messages/${mine.id}/body`).then((r) => r.json())) as any;
-  check(`${tag}: the hub calls its HTML plain`, !!body.html && body.html.plain === true, body.html);
+  check(`${tag}: the hub calls its HTML plain and formatted`, !!body.html && body.html.plain === true && body.html.formatted === true, body.html);
   for (const t of [themeName, themeName === 'dither-dark' ? 'dither-light' : 'dither-dark']) {
     await theme(t, `#/mail/t/${dinner.id}`);
     const card = `.mail-reader .mail-msg[data-message="${mine.id}"]`;
     await page.until(`!!document.querySelector(${JSON.stringify(card)})`, 10000);
     if (await has(`${card}.folded`)) {
-      check(`composer phone ${t}: folded, your reply has its snippet`, (await page.eval<string>(`document.querySelector('${card} .mail-msg-line').textContent`)).startsWith('See you at 7:30!'));
+      check(`composer phone ${t}: folded, your reply has its snippet`, (await page.eval<string>(`document.querySelector('${card} .mail-msg-line').textContent`)).startsWith('See you at'));
       await tap(await at(card));
     }
-    await page.until(`!!document.querySelector('${card}.open .mail-text')`, 10000).catch(() => {});
-    const shown = await page.eval<{ text: string; sheet: boolean; color: string }>(
-      `(() => { const c = document.querySelector('${card}.open'); return { text: c?.querySelector('.mail-text')?.textContent ?? '', sheet: !!c?.querySelector('.mail-html, .mail-sheet'), color: c ? getComputedStyle(c.querySelector('.mail-msg-body')).backgroundColor : '' }; })()`,
+    await page.until(`!!document.querySelector('${card}.open .mail-html.ready')`, 10000).catch(() => {});
+    const shown = await page.eval<{ bold: string; bg: string; fold: boolean; text: string; app: string }>(
+      `(() => { const c = document.querySelector('${card}.open'); const d = c?.querySelector('.mail-sheet.themed iframe')?.contentDocument; const rgb = (v) => { const e = document.createElement('i'); e.style.color = v; document.body.append(e); const x = getComputedStyle(e).color; e.remove(); return x; }; return { bold: d?.querySelector('strong')?.textContent ?? '', bg: d ? getComputedStyle(d.body).backgroundColor : '', fold: !!d?.querySelector('.dc-fold'), text: d ? getComputedStyle(d.querySelector('.dc-mail')).color : '', app: rgb(getComputedStyle(document.documentElement).getPropertyValue('--text')) }; })()`,
     );
-    check(`composer phone ${t}: a plain reply shows as text, with its quote folded, no white sheet`, shown.text.startsWith('See you at 7:30!') && !shown.sheet && (await has(`${card} .mail-quote-toggle`)), shown);
+    check(`composer phone ${t}: a formatted reply shows its bold in the app's theme (its colours, no white sheet), its quote folded`, shown.bold === '7:30' && shown.bg === 'rgba(0, 0, 0, 0)' && shown.text === shown.app && shown.fold, shown);
     await page.eval(`document.querySelector('${card}').scrollIntoView({ block: 'center' })`);
-    await shot(`mail-composer-phone-${t}-plain-reply`);
+    await shot(`mail-composer-phone-${t}-formatted-reply`);
   }
 }
 
@@ -427,9 +439,38 @@ async function composerDesktop(themeName: string, full: boolean) {
   check(`${tag}: To completes from your mail`, (await page.eval<string>(`document.querySelector('.mc-hits')?.textContent ?? ''`)).includes('sam@rivera.example'));
   await page.eval(`document.querySelector('.mc-hits li').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`);
   await Bun.sleep(150);
-  check(`${tag}: picking one makes a chip`, await page.eval(`[...document.querySelectorAll('.mc-chip')].some((c) => c.textContent.includes('Sam'))`));
+  check(`${tag}: picking one makes a chip`, await chipped('Sam'));
+  // And from the account's own server (mail.contacts; the demo's address book): someone no mail here names.
+  await type('#mc-to', 'dana');
+  await page.until(`[...document.querySelectorAll('.mc-hits li')].some((l) => l.textContent.includes('dana@okafor.example'))`, 6000).catch(() => {});
+  check(`${tag}: To completes from the account's server too`, (await page.eval<string>(`document.querySelector('.mc-hits')?.textContent ?? ''`)).includes('Dana Okafor'));
+  await key('#mc-to', 'Enter');
+  await Bun.sleep(150);
+  check(`${tag}: Enter takes the suggestion`, await chipped('Dana Okafor'));
+  // A click on a chip opens it to edit, whole; Enter puts it back where it was.
+  await click(await at('.mc-chip-name', `el => el.textContent.includes('Sam')`));
+  await Bun.sleep(150);
+  check(`${tag}: a click opens a chip to edit, whole`, (await page.eval(`document.querySelector('#mc-to').value`)) === 'sam@rivera.example');
+  await key('#mc-to', 'Enter');
+  await Bun.sleep(150);
+  check(`${tag}: Enter puts it back where it was, with its name`, (await page.eval<string[]>(`[...document.querySelectorAll('.mc-chip-name')].map((c) => c.textContent)`)).join(',') === 'Sam Rivera,Dana Okafor');
   await type('#mc-subject', 'Photos from Friday');
   await type('.mc-body', 'Here they are.');
+  // Formatting: Aa shows the bar; B makes the selection bold; Preview shows it as it will arrive; Ctrl+Z takes it back.
+  await click(await at('.mc-fmt-toggle'));
+  await page.eval(`(() => { const t = document.querySelector('.mc-body'); t.focus(); t.setSelectionRange(5, 9); })()`);
+  await click(await at('.mc-fmt-bold'));
+  await Bun.sleep(150);
+  check(`${tag}: B makes the selection bold (Markdown)`, (await page.eval(`document.querySelector('.mc-body').value`)) === 'Here **they** are.');
+  await click(await at('.mc-preview-btn'));
+  await page.until(`document.querySelector('.mc-preview-frame')?.contentDocument?.querySelector('strong')?.textContent === 'they'`, 6000).catch(() => {});
+  check(`${tag}: Preview shows it as it will arrive`, (await page.eval(`document.querySelector('.mc-preview-frame')?.contentDocument?.querySelector('strong')?.textContent ?? ''`)) === 'they');
+  check(`${tag}: no sideways overflow: the format bar and preview`, !(await overflow()).length, await overflow());
+  await shot(`mail-${tag.replace(/ /g, '-')}-preview`);
+  await click(await at('.mc-preview-btn'));
+  await key('.mc-body', 'z', { ctrlKey: true });
+  await Bun.sleep(150);
+  check(`${tag}: Ctrl+Z takes the bold back`, (await page.eval(`document.querySelector('.mc-body').value`)) === 'Here they are.');
   // Closed: kept as a draft, which the Drafts line opens again.
   await Bun.sleep(300);
   await click(await at('.mc-head .icon-btn'));
@@ -439,9 +480,17 @@ async function composerDesktop(themeName: string, full: boolean) {
   await click(await at('.cm-item, .context-menu button, [role=menuitem]', `el => el.textContent.includes('Photos from Friday')`));
   await page.until(`document.querySelector('.mc-body')?.value === 'Here they are.'`, 8000).catch(() => {});
   check(`${tag}: the draft opens again as it was`, (await page.eval(`document.querySelector('.mc-subject')?.value`)) === 'Photos from Friday');
+  // Discarded: Undo in the strip brings it back; once that is over, the draft is gone.
   await click(await at('.mc-discard'));
-  await page.until(`!document.querySelector('.mail-drafts-line')`, 8000).catch(() => {});
-  check(`${tag}: discarding it removes the draft`, !(await has('.mail-drafts-line')));
+  await page.until(`!document.querySelector('.mc-layer') && !!document.querySelector('.mc-out.discarded .mc-undo')`, 8000).catch(() => {});
+  check(`${tag}: discarding offers Undo, and the Drafts line leaves it out`, (await has('.mc-out.discarded .mc-undo')) && !(await has('.mail-drafts-line')));
+  await click(await at('.mc-out.discarded .mc-undo'));
+  await page.until(`document.querySelector('.mc-subject')?.value === 'Photos from Friday'`, 8000).catch(() => {});
+  check(`${tag}: Undo brings the discarded draft back`, (await page.eval(`document.querySelector('.mc-body')?.value`)) === 'Here they are.');
+  await click(await at('.mc-discard'));
+  await Bun.sleep(9_500);
+  const left = ((await fetch(`${base}/api/mail/drafts`).then((r) => r.json())) as any).drafts as any[];
+  check(`${tag}: after its Undo, the draft is gone`, !(await has('.mail-drafts-line')) && !(await has('.mc-out.discarded')) && !left.length, left.length);
 }
 
 // ------------------------------------------------------------------ summaries without headers (--proton)

@@ -288,7 +288,7 @@ describe('plain or styled (which part the reader shows)', () => {
       expect(clean(html).plain, html.slice(0, 60)).toBe(true);
   });
 
-  test('styled: images, tables, colours, backgrounds, fonts, headings, alignment, style sheets', () => {
+  test('styled: images, tables, colours, backgrounds, fonts, alignment, style sheets', () => {
     for (const html of [
       '<p>Hi</p><img src="https://e.example/banner.png" width="600" height="200">',
       '<p>Hi</p><img src="cid:logo@x">',
@@ -300,12 +300,8 @@ describe('plain or styled (which part the reader shows)', () => {
       '<div style="font-family:Arial, sans-serif; font-size:14px">Hi</div>',
       '<span style="font-weight:bold">Hi</span>',
       '<font face="Arial" color="red">Hi</font>',
-      '<h1>Hi</h1>',
       '<p align="center">Hi</p>',
       '<center>Hi</center>',
-      '<hr><p>Hi</p>',
-      '<pre>Hi</pre>',
-      '<u>Hi</u>',
       '<style>p{color:red}</style><p>Hi</p>',
       '<html><head><link rel="stylesheet" href="https://e.example/s.css"></head><body><p>Hi</p></body></html>',
       '<body bgcolor="#eeeeee"><p>Hi</p></body>',
@@ -314,6 +310,19 @@ describe('plain or styled (which part the reader shows)', () => {
       '<div style="border-left:3px solid red">not a quote</div>',
     ])
       expect(clean(html).plain, html.slice(0, 60)).toBe(false);
+  });
+
+  test('formatted: plain, with what its text part would lose (Markdown sent from here; a heading, a rule, code)', () => {
+    for (const html of ['<h1>Hi</h1>', '<hr><p>Hi</p>', '<pre>Hi</pre>', '<u>Hi</u>', '<p><b>Hi</b> there</p>', '<p>run <code>ls</code></p>', '<p><del>no</del> yes</p>']) {
+      const c = clean(html);
+      expect([c.plain, c.formatted], html).toEqual([true, true]);
+    }
+    const md = messageHtml('reply', 'See you at **7:30**!\n\n- bring the map\n- and `cash`', sam, true, 'UTC');
+    expect([clean(md).plain, clean(md).formatted]).toEqual([true, true]);
+    // Only text, links, lists and quotes: plain, and its text part says it all.
+    for (const html of ['<p>Hi</p>', '<ul><li>a</li></ul>', '<blockquote type="cite">q</blockquote>', messageHtml('reply', 'See you at 7:30!', sam, true, 'UTC')]) expect(clean(html).formatted, html.slice(0, 60)).toBe(false);
+    // Styled stays styled, whatever formatting it has.
+    expect(clean('<p style="color:red"><b>Hi</b></p>').formatted).toBe(false);
   });
 
   test('plainStyle: spacing and wrapping, and a quote’s bar only on a blockquote', () => {
