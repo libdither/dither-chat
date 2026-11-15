@@ -4,8 +4,8 @@
  * going back from it (a swipe, its back button, the phone's) always shows that list with the page peeking at its
  * edge, never whatever was open before it. A profile, a place's About page, a search in one conversation, an
  * account page and All communities instead open on top of the page you were on, as Discord opens a profile or a
- * search over the channel; back closes them onto that page. A post's thread, and a thread or forum post opened from
- * its channel, stack on the page they were opened from the same way (`stacksOn`). Pure: what it needs of the hub's
+ * search over the channel; back closes them onto that page. A post's thread, a thread or forum post opened from
+ * its channel, and a chat opened from For you's tab stack on the page they were opened from the same way (`stacksOn`). Pure: what it needs of the hub's
  * data comes in as `Places`.
  */
 import { searchOp } from '@dither-chat/protocol';
@@ -36,6 +36,8 @@ export function stacksOn(to: Route, from: Route | null, places: Places): boolean
   const conv = convOf(to);
   if (!conv) return false;
   if (isPostKey(conv)) return true;
+  // A chat opened from an item of For you's tab: back goes to the tab, where you were in it.
+  if (from.view === 'foryou') return true;
   const parent = places.parent(conv);
   return !!parent && convOf(from) === parent;
 }
@@ -69,7 +71,7 @@ export function isPage(r: Route): boolean {
 }
 
 /** A tab's own page: full screen, with the tab bar under it. */
-export const isTabRoot = (r: Route) => r.view === 'triage' || r.view === 'settings' || r.view === 'calendar' || (r.view === 'search' && !isPage(r));
+export const isTabRoot = (r: Route) => r.view === 'foryou' || r.view === 'settings' || r.view === 'calendar' || (r.view === 'search' && !isPage(r));
 
 /** A page opened on top of the page you were on, rather than one of a list's own. */
 export function opensOver(r: Route): boolean {
@@ -107,9 +109,9 @@ export function ownList(r: Route, places: Places): Route {
       return r.list ? { view: 'mail', list: r.list } : { view: 'mail' };
     case 'directory':
       return { view: 'spaces' };
-    // How it sorts is reached from Catch up, Settings or the inbox's menu; opened directly, back goes to Catch up.
+    // How it sorts is reached from For you, Settings or the inbox's menu; opened directly, back goes to For you.
     case 'model':
-      return { view: 'triage' };
+      return { view: 'foryou' };
     case 'profile':
       return places.placeHome(r) ?? { view: 'people' };
     case 'search': {

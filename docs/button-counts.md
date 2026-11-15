@@ -1,6 +1,6 @@
 # Button counts
 
-Which of the app's buttons you actually press, counted per day, so a redesign of the Inbox, Catch up and
+Which of the app's buttons you actually press, counted per day, so a redesign of the Inbox, For you and
 the People list can follow real use. Off unless you switch it on, on each device. Everything stays on your hub:
 no analytics service, nothing sent anywhere else.
 
@@ -18,7 +18,7 @@ device that has it on. **Forget…** deletes every count on the hub.
 One number per day, key, page and kind of device:
 
 - **day**: the device's own date (YYYY-MM-DD). Nothing finer.
-- **key**: a string written in the app's code, such as `inbox: row (DM, unread)`, `catch up: done` or
+- **key**: a string written in the app's code, such as `inbox: row (DM, unread)`, `for you: hide` or
   `keys: Ctrl+K (switcher)`. Never a name, a message, an id or an address.
 - **page**: the kind of screen it was pressed on (`inbox`, `conversation`, `triage`, `model`, `people`, `settings`, …), from
   the route: never which conversation or person.
@@ -29,7 +29,7 @@ One number per day, key, page and kind of device:
 `packages/web/src/clicks.ts`, from one capture listener on the document (`clicklog.ts`):
 
 - A control says what it is with `data-track="done"`. A key without `: ` takes the name of the nearest
-  `data-track-area` around it (`<section class="pane catchup" data-track-area="catch up">` makes it `catch up: done`),
+  `data-track-area` around it (`<section class="pane foryou" data-track-area="for you">` makes it `for you: hide`),
   else the page's. A key with `: ` is complete.
 - The nearest control to the click decides: a `button`, link, form field, `summary` or an element with a button-like
   role. If it has no key, the click counts as `<page>: other`, so what is not tagged yet still shows, and an untagged
@@ -39,7 +39,7 @@ One number per day, key, page and kind of device:
 - Shortcuts and gestures that are not clicks are counted where they are handled, with `countKey`: Ctrl+K, Ctrl+F,
   Enter and Esc in the composer, a context menu's letter keys, mail's keys, Enter in a search box, and on a phone
   the swipes (back, to and from the details, forward, to reply, and an inbox row's swipe left for a reply mark) and
-  pull to refresh, and Catch up's keys.
+  pull to refresh, and For you's keys.
 
 Context menu items carry their key in the menu's spec (`track` on an item, the area as `track` on the spec), never
 their label, which can hold a name ("Message Ann").
@@ -62,7 +62,7 @@ their label, which can hold a name ("Message Ann").
 | `send screen` | `send`, `back`, `caption`, `thumbnail`, `remove`, `add more` |
 | `rail` | `inbox`, `people`, `mail`, `community`, `chat`, `folder (open\|close)`, `all communities`, `order`, `accounts`, `settings` |
 | `inbox menu` (the inbox button's) | `mark everything read`, `how it sorts` |
-| `tabs` (phone) | `Home`, `Catch up`, `Search`, `You` |
+| `tabs` (phone) | `Home`, `For you`, `Search`, `You` |
 | `settings` | `section <name>` for each section, from the side list or the phone's Sections sheet; `how it sorts` |
 | `pager` | `back button`, `swipe back`, `swipe to details`, `swipe from details`, `swipe forward`, `swipe to reply`, `pull to refresh`, `back to the page`, `close details` |
 | `palette` (Ctrl+K and New, from 2026-11-11; [palette.md](palette.md)) | `crumb (jump to)`, `crumb`, `close`; the root's `row (view\|action\|mailbox\|person\|community\|folder\|place\|join\|search\|new)`; New's `menu (add\|add-here\|group\|scan\|mine)`, `reading`, `reading (message)`, `row (person)`; `row (network)`, `open conversation`; `row (group)`; the picker's `pick`, `pick (off)`, `chip (un-pick)`, `add`, `invite`; New group's `menu (group\|group-with)`, `next`, `row (where)`, `make group`; on a phone `back` (the arrow in place of the crumbs). Until then the switcher's rows and the New box counted as `<page>: other`; the + is still `new message` |

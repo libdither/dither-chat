@@ -177,7 +177,7 @@ async function main() {
       if (ahead)
         console.log(`ahead ${cpu}× run ${i + 1}: ${m['ahead.pages'].v} pages and ${m['ahead.pictures'].v} pictures fetched ahead, ${m['ahead.requests'].v} requests, ${m['ahead.bytes'].v} B; the first five rows open in ${m['ahead.open'].v} ms (${m['ahead.served'].v} of 5 from it), ${m['noahead.open']?.v ?? '-'} ms without; right after a relaunch ${m['ahead.relaunch'].v} ms (${m['ahead.relaunchServed'].v} of 3 kept), ${m['noahead.relaunch']?.v ?? '-'} ms without`);
       else if (phone)
-        console.log(`phone ${cpu}× run ${i + 1}: cold ${m['cold.list'].v} ms, ${m['cold.nodes'].v} nodes; open ${m['open.ms'].v} ms; keystroke to frame p90 ${m['typing.keyP90'].v} ms; slow frames: list ${m['listScroll.slowFrames'].v}, timeline ${m['tlScroll.slowFrames'].v}; longest task: open ${m['open.longest'].v}, Home ${m['homeTab.longest'].v}, Catch up ${m['catchUp.longest'].v}, You ${m['you.longest'].v}, person ${m['person.longest'].v}, Mail ${m['mail.longest'].v} ms`);
+        console.log(`phone ${cpu}× run ${i + 1}: cold ${m['cold.list'].v} ms, ${m['cold.nodes'].v} nodes; open ${m['open.ms'].v} ms; keystroke to frame p90 ${m['typing.keyP90'].v} ms; slow frames: list ${m['listScroll.slowFrames'].v}, timeline ${m['tlScroll.slowFrames'].v}; longest task: open ${m['open.longest'].v}, Home ${m['homeTab.longest'].v}, For you ${m['forYou.longest'].v}, You ${m['you.longest'].v}, person ${m['person.longest'].v}, Mail ${m['mail.longest'].v} ms`);
       else
         console.log(`${cpu}× run ${i + 1}: cold ${m['cold.list'].v} ms, first open ${m['open.first'].v} ms, reopen ${m['open.again'].v} ms, older page ${m['older.page'].v} ms, long reopen ${m['long.reopen'].v} ms, arrival ${m['arrival.busy'].v} ms busy, relaunch ${m['relaunch.list'].v} ms, open after ${m['relaunch.open'].v} ms`);
     }
@@ -332,7 +332,7 @@ async function run(cpu: number, world: World): Promise<Metrics> {
 
 /**
  * A phone (390 × 844, touch): a cold load, then what the desktop run does not cover: flicking the inbox list and a long
- * timeline, typing in the composer, the tabs (Catch up, Search, You, Home), People and a person's page, and Mail's list.
+ * timeline, typing in the composer, the tabs (For you, Search, You, Home), People and a person's page, and Mail's list.
  * Each step's DOM nodes, renders and layouts, its longest task, and for a flick its frames slower than 50 ms.
  */
 async function phoneRun(cpu: number, world: World): Promise<Metrics> {
@@ -426,7 +426,7 @@ async function phoneRun(cpu: number, world: World): Promise<Metrics> {
     await step('typing', typing, ['renders', 'sidebarRenders', 'messageRenders', 'layouts']);
     // Each first open: its longest task and main-thread time (`busy`), and what it drew.
     await step('home', hash('#/inbox'), ['nodes', 'sidebarRenders', 'longest', 'busy']);
-    await step('catchUp', tab('Catch up'), ['nodes', 'renders', 'longest', 'busy']);
+    await step('forYou', tab('For you'), ['nodes', 'renders', 'longest', 'busy']);
     await step('search', tab('Search'), ['nodes', 'renders', 'longest', 'busy']);
     await step('you', tab('You'), ['nodes', 'renders', 'longest', 'busy']);
     // The Home tab brings back the conversation that was open, under the list: its messages are drawn again.

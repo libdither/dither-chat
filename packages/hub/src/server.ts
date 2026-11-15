@@ -37,6 +37,7 @@ import { UsageStore } from './usage.ts';
 import { ClickCounts } from './clicks.ts';
 import type { Attention } from './attention.ts';
 import type { ActivityStore } from './activity.ts';
+import type { ForYou } from './foryou.ts';
 import { Devices } from './devices.ts';
 import { changesOf } from './journal.ts';
 import { syncResponse } from './sync.ts';
@@ -136,6 +137,8 @@ interface ServerOpts {
   attention?: Attention;
   /** The activity log (activity.ts, docs/activity.md). */
   activity?: ActivityStore;
+  /** For you (foryou.ts, docs/foryou.md): its pages, the "N new" count and what devices say of its items. */
+  foryou?: ForYou;
   /** Per-device notification rules (devices.ts, docs/devices.md). */
   devices?: Devices;
   /** Your votes on triage and the rules learned from them (votes.ts, docs/notifications.md). */
@@ -947,6 +950,17 @@ export class HubServer {
       }
     }
     if (path === '/api/inbox') return ok(s.inbox(num('since') ?? Date.now() - 7 * 86_400_000));
+    // For you (foryou.ts, docs/foryou.md): a page of a snapshot, how many a fresh one would add, and its events.
+    if (path.startsWith('/api/foryou') && this.opts.foryou) {
+      const f = this.opts.foryou;
+      if (path === '/api/foryou' && method === 'GET') return ok(await f.page(url.searchParams.get('epoch') || null, num('from') ?? 0, num('limit') ?? 20));
+      if (path === '/api/foryou/fresh' && method === 'GET') return ok(await f.fresh(url.searchParams.get('epoch') ?? ''));
+      if (path === '/api/foryou/stats' && method === 'GET') return ok(f.stats(num('since') ?? Date.now() - 7 * 86_400_000));
+      if (path === '/api/foryou/events' && method === 'POST') {
+        const b = await body<{ events?: Partial<P.ForYouEvent>[] }>();
+        return ok({ applied: f.events(Array.isArray(b.events) ? b.events : []) });
+      }
+    }
     // People and the places they share (graph.ts, docs/people-graph.md).
     if (path === '/api/graph' && method === 'GET') return ok(peopleGraph(s));
     // The networks' own search, a few places at a time in jev's order (netsearch.ts).

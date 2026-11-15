@@ -196,7 +196,7 @@ function RailEntryView({ entry: e, route: r }: { entry: RailEntry; route: Route 
 }
 
 /** Discord's home button has no menu; this inbox spans every account, so reading all of it is worth one. */
-function inboxMenu(): MenuSpec {
+export function inboxMenu(): MenuSpec {
   const all = [...db.conversations.values()].filter(visibleConv);
   return {
     label: 'Inbox',
@@ -269,7 +269,7 @@ export function Rail() {
 
   return (
     <nav class="rail" aria-label="Places" data-track-area="rail">
-      <RailItem active={is((r) => r.view === 'inbox' || r.view === 'triage' || r.view === 'model')} title="Inbox" track="inbox" badge={priorityCount} onClick={() => go({ view: 'inbox' })} menu={inboxMenu}>
+      <RailItem active={is((r) => r.view === 'inbox' || r.view === 'foryou' || r.view === 'model')} title="Inbox" track="inbox" badge={priorityCount} onClick={() => go({ view: 'inbox' })} menu={inboxMenu}>
         <span class="rail-logo">
           <DitherMark size={26} />
         </span>

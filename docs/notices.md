@@ -158,7 +158,7 @@ the start, "Proton Mail stopped" (high) and an assignment (normal) arrive live a
 - A Mute button. A hub rule mutes (`PUT /api/rules` on the account, or on the group as a conversation), but nothing on
   the page sets one, and the service's own `notify.mute` is not used.
 - Asking the local model again when it was slow, as chat's late check does.
-- A notice's row in Catch up or How it sorts; a feed of its own beyond the list.
+- A notice's row in How it sorts; a feed of its own beyond the list.
 - Android grouping beyond one notification per group.
 
 Checked by `packages/hub/test/notices.test.ts` (the tiers, ingest and reads both ways, a gap, marks, the push, the

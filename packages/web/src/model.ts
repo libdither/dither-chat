@@ -721,11 +721,9 @@ export interface MailInboxRow extends InboxScore {
 }
 
 /** A conversation row's conversations: its one, or every route of a chat. */
-export const rowConvs = (r: ConvInboxRow) => r.chat?.routes ?? [r.conv];
+const rowConvs = (r: ConvInboxRow) => r.chat?.routes ?? [r.conv];
 /** The latest message of a row, anyone's. */
 export const rowLast = (r: InboxRow) => (r.kind === 'conv' ? (r.conv.lastMessageAt ?? 0) : r.thread.lastAt);
-/** Something in it you have not read. */
-export const rowUnread = (r: InboxRow) => (r.kind === 'conv' ? rowConvs(r).some((c) => unreadOf(c).unread > 0) : r.thread.unread > 0);
 /** One other person: a DM, or a mail thread between you and one other. */
 export const rowDirect = (r: InboxRow) => (r.kind === 'conv' ? r.conv.shape === 'direct' : r.thread.participants <= 2);
 /** Muted here or on its network: below everything else. Notes to self notify nobody, which is not the same. */
