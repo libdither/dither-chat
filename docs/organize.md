@@ -56,6 +56,8 @@ Per scope, shared by your devices (`arrange_setting` table):
 | Rail (and the phone's Spaces list, the same arrangement; folder contents too) | Manual, Smart, Recent activity, A–Z | **Manual**: today's order, unchanged for existing users |
 | People list | Recent, Smart, A–Z | Recent (today's) |
 
+The same setting holds how chats show pictures (`pictures`, [pictures.md](pictures.md)).
+
 People have no manual order to keep, so "Manual" there is not offered. Group chats used to have a list and a
 scope of their own; they are in the inbox now, which has one order, by how much each conversation needs you
 ([inbox.md](inbox.md)). A `groups` scope an older hub stored is ignored.

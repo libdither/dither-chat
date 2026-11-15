@@ -1610,6 +1610,198 @@ code {
   object-fit: cover;
   display: block;
 }
+/* ---- pictures: one person's run of them, drawn as the chat says (ui/Pictures.tsx, docs/pictures.md) ---- */
+.pics {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+.pics.wide {
+  width: 100%;
+  max-width: 560px;
+}
+/* Where a jump to a message drawn only by this block lands; out of the flow, so it adds no gap. */
+.pic-anchor {
+  position: absolute;
+  top: 0;
+}
+.pic {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  background: var(--bg-raised);
+  cursor: zoom-in;
+}
+.pic img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.pic img.top {
+  object-position: top;
+}
+.pic .veil {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+}
+/* On its own, in its own shape (the box from pictures.ts fitPicture). */
+.pic-one {
+  max-width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--border-soft);
+}
+/* No size yet: a box to load into, then its own shape. Never cropped. */
+.pic-one.pic-wait {
+  min-width: 160px;
+  min-height: 120px;
+}
+.pic-one.pic-wait img {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 480px;
+  object-fit: contain;
+}
+.pic-long::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 56px;
+  background: linear-gradient(transparent, rgb(0 0 0 / 0.55));
+  pointer-events: none;
+}
+.pic-pill {
+  position: absolute;
+  z-index: 1;
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.65);
+  color: #fff;
+  font-size: 11.5px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.pics-mosaic {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.pics-row {
+  display: flex;
+  gap: 3px;
+}
+.pic-tile {
+  min-width: 0;
+}
+.pic-more {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 0.55);
+  color: #fff;
+  font-size: 24px;
+  font-weight: 600;
+  pointer-events: none;
+}
+/* Rows, uncropped: each picture as wide as its shape at the row's height, each row stretched to the width. */
+.pics-rows {
+  --row-h: 150px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.pics-rows::after {
+  content: '';
+  flex-grow: 1000000;
+}
+.pics-rows > .pic {
+  flex: var(--a) var(--a) calc(var(--a) * var(--row-h));
+  aspect-ratio: var(--a);
+}
+.pics-small {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.pic-small {
+  height: 88px;
+  border-radius: 6px;
+}
+.pics-fold {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 4px 10px 4px 4px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.pics-fold:hover {
+  color: var(--text);
+}
+.pics-fold > span:last-child {
+  white-space: nowrap;
+}
+.pics-fold-thumbs {
+  display: flex;
+  gap: 3px;
+  min-width: 0;
+  overflow: hidden;
+}
+.pics-fold-thumbs img {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 5px;
+  object-fit: cover;
+}
+.pics-fold-thumbs img.veiled {
+  filter: blur(6px);
+}
+.pics-unfold {
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.pics-unfold:hover {
+  color: var(--text);
+}
+@media (max-width: 820px) {
+  .pics-rows {
+    --row-h: 110px;
+  }
+  .pic-small {
+    height: 72px;
+  }
+}
 /* A sticker stands on its own, at the 160 px its network draws it: no frame, no crop (ui/Sticker.tsx). */
 .sticker {
   display: block;

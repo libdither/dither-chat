@@ -6,53 +6,12 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { MENTION_SCOPES } from '@dither-chat/protocol';
-import { convTitle, netName, placeConv, placePref, spaceParents } from '../model.ts';
+import { convTitle, netName, placePref, placesAbove } from '../model.ts';
 import { db, patchPlaces } from '../state.ts';
 import { Card } from './ProfileShell.tsx';
 
 export const FINDS_LABEL: Record<P.MentionScope, string> = { here: 'People here', friends: 'Here and friends', everyone: 'Everyone you know' };
 const LABEL = FINDS_LABEL;
-
-/** The places a place inherits from, nearest first (not itself). */
-function above(kind: P.PlaceKind, id: string): [P.PlaceKind, string][] {
-  const out: [P.PlaceKind, string][] = [];
-  const held: [string, string][] = [[kind, id]];
-  let spaces: string[] = [];
-  let peer: string | null | undefined;
-  if (kind === 'conversation') {
-    const c = db.conversations.get(id);
-    const base = c ? placeConv(c) : undefined;
-    if (base && base.id !== id) held.push(['conversation', base.id]);
-    spaces = base?.spaceIds ?? [];
-    if (c?.shape === 'direct') peer = c.peerPersonId;
-  } else if (kind === 'space') spaces = spaceParents(id).map((s) => s.id);
-  const seen = new Set<string>();
-  while (spaces.length) {
-    const next: string[] = [];
-    for (const s of spaces) {
-      if (seen.has(s)) continue;
-      seen.add(s);
-      held.push(['space', s]);
-      next.push(...spaceParents(s).map((p) => p.id));
-    }
-    spaces = next;
-  }
-  // A direct chat is in a folder through its person.
-  if (peer) held.push(['person', peer]);
-  for (const [k, i] of held) {
-    if ((k !== kind || i !== id) && k !== 'person') out.push([k as P.PlaceKind, i]);
-  }
-  // Folders after every channel and space, as the hub reads them.
-  for (const [k, i] of held) {
-    if (k !== 'folder') for (const f of db.folders.filter((f) => f.items.some((x) => x.kind === k && x.id === i)).sort((a, b) => a.id.localeCompare(b.id))) out.push(['folder', f.id]);
-  }
-  // A folder inside a folder: the outer one after it, as the hub reads them.
-  for (const [k, i] of [...out]) {
-    const outer = k === 'folder' ? db.folders.find((f) => f.items.some((x) => x.kind === 'folder' && x.id === i)) : undefined;
-    if (outer) out.push(['folder', outer.id]);
-  }
-  return out;
-}
 
 const placeName = (kind: P.PlaceKind, id: string) =>
   kind === 'folder' ? db.folders.find((f) => f.id === id)?.name : kind === 'space' ? db.spaces.get(id)?.name : convTitle(db.conversations.get(id));
@@ -61,7 +20,7 @@ const placeName = (kind: P.PlaceKind, id: string) =>
 export function MentionFinds({ kind, id, network, refs }: { kind: P.PlaceKind; id: string; network?: P.Network; refs?: boolean }) {
   const own = placePref(kind, id);
   const up = <K extends 'mentionScope' | 'mentionSameNetwork'>(f: K) => {
-    for (const [k, i] of above(kind, id)) {
+    for (const [k, i] of placesAbove(kind, id)) {
       const v = db.placePrefs.get(`${k}:${i}`)?.[f];
       if (v !== undefined) return { v: v as NonNullable<P.PlacePrefView[K]>, name: placeName(k, i) };
     }

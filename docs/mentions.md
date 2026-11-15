@@ -137,7 +137,8 @@ Each of the two is inherited on its own from the nearest place that sets it: the
 spaces, nearest first (a channel's category, then its server); then a folder that holds any of those, or for a direct
 chat its person. `null` in a patch takes a setting away. Set nowhere, it is `here` on a messaging network and
 `everyone` in a chat whose account has `personRefs` (the Calendar chat), and every network. Hub `mentionSetting`
-works it out; the web app's About shows what it inherits and from where (`ui/MentionFinds.tsx`).
+works it out; the web app's About shows what it inherits and from where (`ui/MentionFinds.tsx`, along `model.ts`
+`placesAbove`, which how a chat shows pictures follows too: [pictures.md](pictures.md)).
 
 Where it is set: a chat's or a space's About has an "@ finds" card (a space's sets it for all its channels), with the
 switch hidden where there is no one network to keep to (a Calendar chat). A folder's menu has "@ Finds". The schema

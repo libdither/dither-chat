@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } f
 import { dirname, join } from 'node:path';
 import { hubId, randomId } from '@dither-chat/protocol/ids';
 import type * as P from '@dither-chat/protocol';
-import { calendarAccountUrl, canonicalReactionKey, DEFAULT_RETENTION, MENTION_SCOPES, parseSearch, PROTOCOL_VERSION, REACTION_RULES } from '@dither-chat/protocol';
+import { calendarAccountUrl, canonicalReactionKey, DEFAULT_RETENTION, isPictureLayout, MENTION_SCOPES, parseSearch, PROTOCOL_VERSION, REACTION_RULES } from '@dither-chat/protocol';
 import { activityChart, type Zone } from './activitychart.ts';
 import { binsFor, estimateMessages, snowflakeTime, type ChannelInput } from './msgcount.ts';
 import { Journal } from './journal.ts';
@@ -223,6 +223,9 @@ function mailSchemaText(): string {
     .join('\n');
 }
 
+/** Some picture came without its size (Store.sizelessPictures). */
+const sizeless = (atts: P.AttachmentFact[]) => atts.some((a) => a.kind === 'image' && (!a.width || !a.height));
+
 export class Store {
   readonly db: Database;
   readonly dirty = new Dirty();
@@ -289,7 +292,7 @@ export class Store {
       this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'" });
       this.addColumns('attachment', { alt: 'TEXT', extra: 'TEXT' });
       this.addColumns('notice', { caught: 'INTEGER NOT NULL DEFAULT 0', shown_ts: 'INTEGER', held_at: 'INTEGER' });
-      this.addColumns('place_pref', { mention_scope: 'TEXT', mention_same: 'INTEGER' });
+      this.addColumns('place_pref', { mention_scope: 'TEXT', mention_same: 'INTEGER', pictures: 'TEXT' });
       this.addColumns('folder', { parent_id: 'TEXT', parent_pos: 'REAL' });
       const oldTriage = this.setAsideTriage();
       const oldLog = this.setAside('change_log', 'actor_id', ['change_log_target']);
@@ -1308,6 +1311,7 @@ export class Store {
       );
     if (f.attachments && !(old?.deleted && !f.attachments.length)) {
       this.db.query('DELETE FROM attachment WHERE message_id = ?').run(id);
+      if (sizeless(f.attachments)) this.sizelessPictures = true;
       f.attachments.forEach((a, i) => {
         this.db
           .query(`INSERT INTO attachment (id, message_id, kind, mime, name, size, width, height, url, position, alt, extra) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -1500,7 +1504,15 @@ export class Store {
     return counts;
   }
 
+  /**
+   * A picture came without its size (Signal leaves it out at times): set until the server asks the media archive to
+   * keep the new files now rather than at its next turn, so the hub reads the size from the file within seconds and
+   * the app draws the picture in its own shape (docs/pictures.md).
+   */
+  sizelessPictures = false;
+
   private insertAttachments(acc: AccountRow, mid: string, nativeId: string, atts: P.AttachmentFact[]) {
+    if (sizeless(atts)) this.sizelessPictures = true;
     atts.forEach((a, i) => {
       this.db
         .query(`INSERT OR REPLACE INTO attachment (id, message_id, kind, mime, name, size, width, height, url, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -1716,6 +1728,7 @@ export class Store {
       railed: !!r.railed,
       ...(MENTION_SCOPES.includes(r.mention_scope) ? { mentionScope: r.mention_scope } : {}),
       ...(r.mention_same !== null && r.mention_same !== undefined ? { mentionSameNetwork: !!r.mention_same } : {}),
+      ...(isPictureLayout(r.pictures) ? { pictures: r.pictures } : {}),
     }));
   }
 
@@ -1736,6 +1749,8 @@ export class Store {
         if (i.mentionScope === null || MENTION_SCOPES.includes(i.mentionScope!)) this.db.query('UPDATE place_pref SET mention_scope = ? WHERE kind = ? AND id = ?').run(i.mentionScope ?? null, i.kind, i.id);
         if (i.mentionSameNetwork === null || typeof i.mentionSameNetwork === 'boolean')
           this.db.query('UPDATE place_pref SET mention_same = ? WHERE kind = ? AND id = ?').run(i.mentionSameNetwork === null ? null : i.mentionSameNetwork ? 1 : 0, i.kind, i.id);
+        // How pictures are shown here: null inherits again; anything else unknown is left as it is.
+        if (i.pictures === null || isPictureLayout(i.pictures)) this.db.query('UPDATE place_pref SET pictures = ? WHERE kind = ? AND id = ?').run(i.pictures ?? null, i.kind, i.id);
       }
     })();
     this.dirty.extra.push({ t: 'placePrefs', prefs: this.placePrefs() });

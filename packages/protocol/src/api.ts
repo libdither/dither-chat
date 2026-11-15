@@ -24,6 +24,7 @@ import type {
 } from './ontology.ts';
 import type { ArrangeSettings, UsageKind, UsageView } from './usage.ts';
 import type { FileInfo } from './files.ts';
+import type { PictureLayout } from './pictures.ts';
 import type { AboutModerationView, MemberMod, MessageModeration } from './moderation.ts';
 import type { RichView, VoiceFact } from './rich.ts';
 import type { PollView } from './poll.ts';
@@ -766,11 +767,14 @@ export interface PlacePrefView {
   mentionScope?: MentionScope;
   /** The @ picker's friends and everyone only on this chat's network. Absent: inherited, else false. */
   mentionSameNetwork?: boolean;
+  /** How pictures are shown here (docs/pictures.md). Absent: as the place it is in says, else the global setting. */
+  pictures?: PictureLayout;
 }
-/** The fields present change; null takes a mention setting away, so the place inherits it again. */
-export type PlacePrefPatch = { kind: PlaceKind; id: string } & Partial<Omit<PlacePrefView, 'kind' | 'id' | 'mentionScope' | 'mentionSameNetwork'>> & {
+/** The fields present change; null takes a mention or pictures setting away, so the place inherits it again. */
+export type PlacePrefPatch = { kind: PlaceKind; id: string } & Partial<Omit<PlacePrefView, 'kind' | 'id' | 'mentionScope' | 'mentionSameNetwork' | 'pictures'>> & {
   mentionScope?: MentionScope | null;
   mentionSameNetwork?: boolean | null;
+  pictures?: PictureLayout | null;
 };
 
 /** A category is a yes/no question asked of each place (hub categorize.ts). */

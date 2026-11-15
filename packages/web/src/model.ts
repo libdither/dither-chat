@@ -200,7 +200,7 @@ export function kindLabel(c: P.ConversationView): string {
 
 // ------------------------------------------------------------------ hierarchy
 
-export function spaceParents(id: string): P.SpaceView[] {
+function spaceParents(id: string): P.SpaceView[] {
   return (db.parents.get(id) ?? []).map((e) => db.spaces.get(e.parentId)).filter((s): s is P.SpaceView => !!s);
 }
 
@@ -328,6 +328,51 @@ export function threadsOf(convId: string): P.ConversationView[] {
 }
 
 const NO_PREF: Omit<P.PlacePrefView, 'kind' | 'id'> = { position: null, pinned: false, hidden: false, open: false, railed: false };
+/**
+ * The places a place inherits a setting from, nearest first (not itself): a thread's channel, a channel's server and
+ * its parents, then the folders holding any of them (a direct chat through its person). The @ list's setting
+ * (ui/MentionFinds.tsx) and how pictures are shown (pictures.ts) are read along it.
+ */
+export function placesAbove(kind: P.PlaceKind, id: string): [P.PlaceKind, string][] {
+  const out: [P.PlaceKind, string][] = [];
+  const held: [string, string][] = [[kind, id]];
+  let spaces: string[] = [];
+  let peer: string | null | undefined;
+  if (kind === 'conversation') {
+    const c = db.conversations.get(id);
+    const base = c ? placeConv(c) : undefined;
+    if (base && base.id !== id) held.push(['conversation', base.id]);
+    spaces = base?.spaceIds ?? [];
+    if (c?.shape === 'direct') peer = c.peerPersonId;
+  } else if (kind === 'space') spaces = spaceParents(id).map((s) => s.id);
+  const seen = new Set<string>();
+  while (spaces.length) {
+    const next: string[] = [];
+    for (const s of spaces) {
+      if (seen.has(s)) continue;
+      seen.add(s);
+      held.push(['space', s]);
+      next.push(...spaceParents(s).map((p) => p.id));
+    }
+    spaces = next;
+  }
+  // A direct chat is in a folder through its person.
+  if (peer) held.push(['person', peer]);
+  for (const [k, i] of held) {
+    if ((k !== kind || i !== id) && k !== 'person') out.push([k as P.PlaceKind, i]);
+  }
+  // Folders after every channel and space, as the hub reads them.
+  for (const [k, i] of held) {
+    if (k !== 'folder') for (const f of db.folders.filter((f) => f.items.some((x) => x.kind === k && x.id === i)).sort((a, b) => a.id.localeCompare(b.id))) out.push(['folder', f.id]);
+  }
+  // A folder inside a folder: the outer one after it, as the hub reads them.
+  for (const [k, i] of [...out]) {
+    const outer = k === 'folder' ? db.folders.find((f) => f.items.some((x) => x.kind === 'folder' && x.id === i)) : undefined;
+    if (outer) out.push(['folder', outer.id]);
+  }
+  return out;
+}
+
 export function placePref(kind: P.PlaceKind, id: string) {
   return db.placePrefs.get(`${kind}:${id}`) ?? { kind, id, ...NO_PREF };
 }

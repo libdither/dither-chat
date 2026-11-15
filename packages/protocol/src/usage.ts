@@ -4,6 +4,8 @@
  * measures them and sorts by them.
  */
 
+import type { PictureLayout } from './pictures.ts';
+
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 /** Time spent and visits lose half their weight each week, so the order follows current habits. */
@@ -53,6 +55,8 @@ export interface ArrangeSettings {
   followArchive?: boolean;
   /** Quiet servers (never opened, nothing new in half a year) sit on a shelf at the end of each list. Absent: on. */
   quietShelf?: boolean;
+  /** How chats show pictures, where a chat or its server doesn't say (docs/pictures.md). Absent: DEFAULT_PICTURE_LAYOUT. */
+  pictures?: PictureLayout;
 }
 export const DEFAULT_ARRANGE: ArrangeSettings = { sort: { rail: 'manual', people: 'recent' }, dismissed: {} };
 

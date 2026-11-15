@@ -561,7 +561,7 @@ export class HubServer {
     this.imports.resume();
     this.gapfill.resume();
     this.jobs.start();
-    this.archiver?.start();
+    void this.archiver?.start();
     this.mediaInfo.start();
     this.store.journal.prune();
     this.pruneTimer = setInterval(() => this.store.journal.prune(), 3_600_000);
@@ -621,6 +621,12 @@ export class HubServer {
     // locked database), or devices would miss it until their next bootstrap.
     const events = this.store.flush();
     if (events.length) noteWork('flush');
+    // A picture came without its size: the archive keeps the new files now, and the hub reads their sizes as it does
+    // (mediainfo.ts kept), instead of up to a minute later. A walk already under way gets to them by itself.
+    if (this.store.sizelessPictures) {
+      this.store.sizelessPictures = false;
+      void this.archiver?.nudge();
+    }
     try {
       if (this.opts.mail) events.push(...this.opts.mail.flush());
     } catch (e) {
