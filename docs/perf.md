@@ -286,7 +286,8 @@ What changed:
   was, and only at the oldest held does it ask the hub for an older page, which is then drawn whole with everything
   above it. Back at the newest, it draws only the newest 150 again (what goes is above the view). A link to a held
   message (`?m=`) or a click on a reply's quote draws the 100 around that message and shows it; scrolling down from
-  there draws more until the newest. The first message drawn gets its day line and is not grouped, as the first
+  there draws more until the newest. A quoted message not held is fetched with the page around it, in the same view
+  (`jumpTo`; `jumpInChat` in a person's chat), as a link to it is: the chat's address does not change. The first message drawn gets its day line and is not grouped, as the first
   loaded one always was; the New line is placed over everything held and drawn when it is in the window; copies not
   yet sent show only while the newest is drawn. The DOM keeps the messages' order.
 - **`content-visibility` on desktop**, tried again with the window (`--css '.msg{content-visibility:auto;contain-intrinsic-size:auto 64px}'`,

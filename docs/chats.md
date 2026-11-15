@@ -239,7 +239,7 @@ banners and held requests show as they do on a DM.
 **Opened at a message** (`?m=`: a search hit, a link): the page pages back through the interleaved timeline until it
 holds the message (up to 10 pages of 60, `jumpInChat` in `state.ts`), then shows it there like any other. The hub has
 no page around a message across conversations, so one further back opens in its route alone, as if picked from the
-list (which then says so; one pick returns to all). A quoted reply's jump works within what the timeline holds.
+list (which then says so; one pick returns to all). A click on a reply's quote does the same for the quoted message.
 
 ## Not yet
 
