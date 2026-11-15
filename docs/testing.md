@@ -7,7 +7,7 @@
 | Job | What it runs | The same locally |
 |---|---|---|
 | `changes` | decides what the pull request needs (scripts/ci-changes.ts) | `git diff --name-only origin/main... \| bun scripts/ci-changes.ts` |
-| `typecheck` | tsc on every project at once (scripts/typecheck.ts) | `bun run typecheck` |
+| `typecheck` | tsc on every project at once (scripts/typecheck.ts), then the checks below: test hygiene, stylesheets, import cycles, unused code | `bun run typecheck`, `bun run check:tests`, `bun run check:css`, `bun run check:cycles`, `bun run knip` |
 | `test-hub` | the hub's tests but mail-load's, its files on 4 workers (`bun test --parallel=4`) | `bun scripts/test-all.ts hub -- --path-ignore-patterns=test/mail-load.test.ts` |
 | `test-hub-mail` | the hub's mail-load tests (60k messages; 20 to 30 s, as long as the rest of the hub's) | `bun scripts/test-all.ts hub -- test/mail-load.test.ts` |
 | `test-packages` | every other package's tests, all at once | `bun scripts/test-all.ts --except hub` |
@@ -157,3 +157,87 @@ failed. Nothing else happens: no issue, no message beyond GitHub's own.
 
 The same locally: `bun scripts/stress.ts --rerun-each=3`, and after `--`, files or `-t` for bun test. What it finds
 gets fixed. If that can't happen at once, the test is quarantined with a note naming the issue.
+
+## Checks across the code
+
+Three checks look at the whole code base rather than one feature, cheap enough for every run (CI's typecheck job). The
+first two follow checks T3 Code has (apps/mobile/src/dependency-graph.test.ts, its `knip:check`, apps/web's
+chunk-cycle guard), the third its test environment (packages/shared/src/testing/providerEnv.ts).
+
+### Import cycles
+
+`bun run check:cycles` (scripts/check-cycles.ts, under a second) fails on any static import cycle among the files of
+one package's src/: a imports b, and b imports a, through any number of files. In a cycle the order modules run in
+depends on which is loaded first, so a value one reads while it loads (a constant, a signal, a class it extends) can
+be read before it exists: a TDZ error, or `undefined`, that shows in one load order and not another, or only after the
+bundler moves code between chunks. Type-only imports, `import()` and tests do not count.
+
+The way out is a module of its own for what both sides need, that imports neither. On 2026-11-14 there were four:
+- the web app's state.ts, snapshot.ts and ringing.ts: the client's data is in store.ts and the HTTP call in api.ts now,
+  and state.ts re-exports both;
+- 34 components through menus.tsx and bits.tsx: one account's menu is in ui/accountMenu.tsx, opening a conversation
+  (openConv, homeRoute, openAbout) in opening.ts, the long-press in ui/longpress.ts, the picture viewer's signal in
+  viewer.ts, and openPlaceMenu in menus.tsx;
+- the hub's attention.ts and owed.ts: the reply tallies are in tally.ts;
+- the hub's store.ts, accountself.ts and triage.ts: quiet hours are in quiethours.ts.
+
+The web build fails on a cycle between its output chunks too (vite.config.ts `chunkCycleGuard`): rolldown can make one
+from modules that have none, and a chunk that runs before one it imports from blanks the app at load, in a production
+build only.
+
+### Unused code
+
+`bun run knip` ([knip](https://knip.dev), config in knip.json) runs two passes, as T3 Code's `knip:check` does:
+- over every package: a file nothing imports, a dependency no file uses, and an import of a package its package.json
+  does not list (one that resolves here only because the workspace hoists it, and breaks on a clean install);
+- over the hub, the web app, the protocol, desk, deploy and the scripts: an export nothing imports, an exported type,
+  class member or enum member nothing uses, and a thing exported twice. The adapters are left out: dither-accounts'
+  extractors are where they are written (scripts/accounts-sync.ts), and these copies only fall further behind.
+
+knip follows static imports from each package's entry points in knip.json: its main, the workers, the tests, the
+Discord lab's scripts (the sandbox reads them by path), and in the web app every module it loads with `import()`. A
+module loaded that way is kept in a variable and read later (`typeof import('./CallPanel.tsx')`, `p?.CallPanel`), which
+knip cannot follow, so its exports would all look unused: a new lazily loaded module goes into the web app's `entry`
+list.
+
+The compiler reports the rest: tsconfig.base.json has `noUnusedLocals`, so an unused import, variable, function or
+private member fails `bun run typecheck` (the adapters' tsconfigs turn it off, for the same reason as above). An export
+knip finds unused loses its `export`; if nothing in its file uses it either, the compiler then says so and it goes.
+
+On 2026-11-14 that was 552 exports nothing outside their file used, in about 220 files: 536 lost their `export`, and
+16 went with their code, nothing using them at all. The compiler then found the unused imports, constants and functions
+(`quietHere`, `replacePage`, `railCommunities`, `emptyDraft`, a script's thread reader among them), deleted too. Seven
+scripts imported `@dither-chat/protocol` with the root package.json not listing it.
+
+### The environment
+
+Each package's bunfig.toml preloads scripts/test-env.ts, which clears every DITHER_* variable before the tests run
+(but DITHER_CHROMIUM and DITHER_DAVE_DIR, paths to tools tests skip without). The hub and the adapters read their
+settings from those variables, and a test that starts a hub passes its environment on, so a shell with one set (for a
+demo hub, a lab, a replay) ran the tests on other settings than CI's: with DITHER_MEDIA_ALLOW_PRIVATE=1 three of the
+media fetcher's address-guard tests failed. A test that needs a setting sets it. `DITHER_TEST_KEEP_ENV=1` keeps them,
+to try a test on a setting on purpose.
+
+## Stylesheets
+
+A component's own stylesheet (any `.css` under packages/web/src but styles.css, imported by the component: ui/feed/feed.css,
+ui/mentions.css…) is global once it loads. A rule in it applies to every element on the page, so a rule that names
+only classes the rest of the app uses too changes the rest of the app, and only after that component has been shown
+once in the session: a bug that comes and goes. On 2026-11-14 the X feed's `.composer { … }` (its post box) drew a
+second frame around the chat's message box once the feed had been opened, and the @ picker's `.mc-note` and `.mc-more`
+restyled the mail composer's own (the picker's classes are `mp-` now).
+
+`bun run check:css` (scripts/check-css.ts) runs in CI's typecheck job and takes about a second. Each such stylesheet
+is owned by the files that import it and the files only they import; one in a directory of its own under ui/ by every
+file in that directory. A class is the sheet's own when it is written in those files and in no other (as a word in a
+string or template literal whose words could all be classes). Then:
+
+- every selector in it names at least one class of its own (`.thread-focal .post-composer`, not `.composer`, `.on`,
+  `button` or `textarea:focus` alone);
+- a class it styles as a whole selector (`.x`, `.x:hover`) is not styled that way in styles.css or another
+  component's sheet too.
+
+The fix is a class of the component's own: rename the shared one, prefix it (`post-`, `mp-`), or put the component's
+root class in front. A box the rest of the app draws for the component (the feed's `.feed-pane`) is styled in
+styles.css, so it holds before the component loads. A rule that must reach out says why, in the comment right before
+it: `/* css-scope: <reason> */`.

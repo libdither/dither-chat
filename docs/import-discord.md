@@ -132,7 +132,8 @@ exported from the other account.
 **Gaps:** the exports end 2026-05-03, and live sync starts whenever each account was added. For each conversation,
 if the newest imported snowflake is older than the oldest live one, queue the adapter's existing `history` command with
 `beforeTs` = the oldest live `ts`, until the two ranges meet. That uses the existing paced backfill, with no new
-network code.
+network code. Since 2026-11 it goes at the reading pace shared with index jobs (indexing.md "Reading pace"): pages of
+50, in your hours, a few thousand messages a day.
 
 ## Media
 

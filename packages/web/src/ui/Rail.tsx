@@ -1,7 +1,7 @@
 import { loadRetention } from '../history.ts';
 import type * as P from '@dither-chat/protocol';
 import { Fragment } from 'preact';
-import { accountsNeedingYou, convTitle, directsOf, folderConvs, folderLeaves, people, inboxBadge, placePref, railEntries, spaceUnread, sumUnread, netName, unreadOf, visibleConv, type RailEntry } from '../model.ts';
+import { accountsNeedingYou, convTitle, directsOf, folderConvs, folderLeaves, people, inboxBadge, placePref, spaceUnread, sumUnread, netName, unreadOf, visibleConv, type RailEntry } from '../model.ts';
 import { db, go, mailRev, markAllRead, patchPlaces, rev, route, type Route } from '../state.ts';
 import { unreadInbox } from '../mail/model.ts';
 import { preloadMail } from './mail/lazy.tsx';
@@ -9,7 +9,8 @@ import { calendarLink, calendarOn } from '../plans.ts';
 import { AccountDots, Avatar, Count, NetBadge } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { DitherMark, Icon } from './icons.tsx';
-import { dropPlace, openPlaceMenu, placeLabel } from './Organize.tsx';
+import { dropPlace, placeLabel } from './Organize.tsx';
+import { openPlaceMenu } from './menus.tsx';
 import { groups, useMenu, type MenuSpec } from './ContextMenu.tsx';
 import { accountsMenu } from './menus.tsx';
 import { useEffect, useRef } from 'preact/hooks';
@@ -244,7 +245,7 @@ function QuietShelf({ list, n, open }: { list: string; n: number; open: boolean 
 }
 
 /** Discord's home button has no menu; this inbox spans every account, so reading all of it is worth one. */
-function inboxMenu(): MenuSpec {
+export function inboxMenu(): MenuSpec {
   const all = [...db.conversations.values()].filter(visibleConv);
   return {
     label: 'Inbox',
@@ -320,7 +321,7 @@ export function Rail() {
 
   return (
     <nav class="rail" aria-label="Places" data-track-area="rail">
-      <RailItem active={is((r) => r.view === 'inbox' || r.view === 'triage' || r.view === 'model')} title="Inbox" track="inbox" badge={priorityCount} onClick={() => go({ view: 'inbox' })} menu={inboxMenu}>
+      <RailItem active={is((r) => r.view === 'inbox' || r.view === 'foryou' || r.view === 'model')} title="Inbox" track="inbox" badge={priorityCount} onClick={() => go({ view: 'inbox' })} menu={inboxMenu}>
         <span class="rail-logo">
           <DitherMark size={26} />
         </span>

@@ -52,7 +52,7 @@ const month = (ms: number) => new Date(ms).toISOString().slice(0, 7);
 // ------------------------------------------------------------------ keys
 
 /** FullBackupBase.getBackupKey: SHA-512 over salt, then 250 000 rounds of (hash || passphrase), first 32 bytes. */
-export function backupKey(passphrase: string, salt?: Uint8Array): Buffer {
+function backupKey(passphrase: string, salt?: Uint8Array): Buffer {
   const input = Buffer.from(passphrase.replace(/ /g, ''));
   let hash: Buffer = input;
   for (let i = 0; i < 250_000; i++) {
@@ -99,7 +99,7 @@ class Reader {
   }
 }
 
-export interface LegacyHeader {
+interface LegacyHeader {
   version: number;
   salt: boolean;
   ivBytes: number;
@@ -137,7 +137,7 @@ const FRAME_KINDS: Record<number, string> = { 1: 'header', 2: 'statement', 3: 'p
 /** Tables an import reads; their CREATE TABLE column names are reported. */
 const SCHEMA_TABLES = new Set(['message', 'recipient', 'thread', 'attachment', 'reaction', 'mention', 'groups', 'sticker', 'poll', 'poll_option', 'poll_vote']);
 
-export interface LegacyCensus {
+interface LegacyCensus {
   format: 'signal-legacy';
   version: number;
   bytes: number;
@@ -157,7 +157,7 @@ export class BadPassphrase extends Error {
 }
 
 /** Parse "CREATE TABLE name (a INTEGER, b TEXT, UNIQUE(...))" into its column names. Rough: schema only. */
-export function createColumns(sql: string): { table: string; columns: string[] } | null {
+function createColumns(sql: string): { table: string; columns: string[] } | null {
   const m = sql.match(/^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["`]?(\w+)["`]?\s*\(([\s\S]*)\)\s*$/i);
   if (!m) return null;
   const parts: string[] = [];
@@ -294,7 +294,7 @@ const V2_FRAMES: Record<number, string> = { 1: 'account', 2: 'recipient', 3: 'ch
 const V2_RECIPIENTS: Record<number, string> = { 2: 'contact', 3: 'group', 4: 'distributionList', 5: 'self', 6: 'releaseNotes', 7: 'callLink' };
 const V2_ITEMS: Record<number, string> = { 11: 'standard', 12: 'contact', 13: 'sticker', 14: 'remoteDeleted', 15: 'update', 16: 'payment', 17: 'giftBadge', 18: 'viewOnce', 19: 'storyReply', 20: 'poll', 22: 'adminDeleted' };
 
-export interface V2Census {
+interface V2Census {
   format: 'signal-v2-frames';
   version: number | null;
   writtenMonth: string | null;

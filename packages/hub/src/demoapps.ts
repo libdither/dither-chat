@@ -6,7 +6,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 
-export interface DemoAppsHost {
+interface DemoAppsHost {
   key: string;
   selfId: string;
   emit: (ev: P.AdapterEvent) => void;

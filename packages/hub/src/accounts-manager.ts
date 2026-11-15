@@ -52,7 +52,7 @@ export function publishManager(store: Store, view: P.AccountsManagerView) {
 }
 
 /** The kinds a demo world offers, shaped as dither-accounts' manifests say them. */
-export const DEMO_KINDS: P.ManagedKindView[] = [
+const DEMO_KINDS: P.ManagedKindView[] = [
   {
     kind: 'proton',
     name: 'Proton Mail',

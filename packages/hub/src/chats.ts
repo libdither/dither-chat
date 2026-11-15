@@ -12,7 +12,7 @@ import type { Store } from './store.ts';
 
 type Row = Record<string, any>;
 
-export type ChatRef = { kind: 'person'; personId: string } | { kind: 'conversation'; conversationId: string };
+type ChatRef = { kind: 'person'; personId: string } | { kind: 'conversation'; conversationId: string };
 
 /** `person:<id>` or a conversation id, as the address has it; null when neither exists. */
 export function chatRef(store: Store, id: string): ChatRef | null {

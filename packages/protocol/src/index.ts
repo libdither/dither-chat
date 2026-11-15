@@ -32,3 +32,4 @@ export * from './translate.ts';
 export * from './notices.ts';
 export * from './mentions.ts';
 export * from './accounts.ts';
+export * from './foryou.ts';

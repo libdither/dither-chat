@@ -16,7 +16,7 @@ let loading: Promise<unknown> | null = null;
 export const loadPlanner = () => (loading ??= import('@dither-chat/protocol/folderplan').then((m) => (planner.value = m)));
 
 /** What the planner reads, from what this device has. */
-export function planInput(): PlanInput {
+function planInput(): PlanInput {
   const spaces = allCommunities().map((s) => ({
     id: s.id,
     network: s.network,

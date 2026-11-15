@@ -20,7 +20,7 @@ import type { Store } from './store.ts';
 
 type Row = Record<string, any>;
 
-export interface SendExtrasDeps {
+interface SendExtrasDeps {
   store: Store;
   online: (accountId: string) => boolean;
   command: <T = unknown>(accountId: string, cmd: any, timeoutMs?: number) => Promise<T>;

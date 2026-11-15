@@ -21,19 +21,17 @@ const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
 /** You wrote there this recently before it: you were already in the conversation. */
-export const ENGAGED_BEFORE = 15 * MIN;
-/** A quick answer. */
-export const QUICK = 15 * MIN;
+const ENGAGED_BEFORE = 15 * MIN;
 /** An answer at all: worth seeing. */
 export const LATE = 3 * HOUR;
 /** Opened within this long. */
-export const OPEN_WITHIN = HOUR;
+const OPEN_WITHIN = HOUR;
 /** A push not opened in this long was ignored. */
 export const IGNORED_AFTER = DAY;
 /** Messages from others closer together than this are one burst. */
-export const BURST = 30 * MIN;
+const BURST = 30 * MIN;
 /** The coalescing lull: a message after this long without one starts a new alert (design §7). */
-export const LULL = 5 * MIN;
+const LULL = 5 * MIN;
 
 /** What happened after one message from someone else. Times are ms after the message. */
 export interface Outcome {
@@ -134,7 +132,7 @@ export function implicitLabel(o: Outcome, w: LabelWeights = LABEL_WEIGHTS): Labe
   return null;
 }
 
-export interface GatherOptions {
+interface GatherOptions {
   /** Only these messages get an outcome (default: every triaged message from someone else in the span). */
   only?: Set<string>;
   /** The time the data ends: `observed` is measured to it. */
@@ -289,4 +287,60 @@ export function gatherOutcomes(db: Database, from: number, to: number, opts: Gat
       });
     }
   }
+}
+
+// ------------------------------------------------------------------ For you (docs/foryou.md)
+
+/**
+ * What became of one served For you item on one device, as foryou_item and foryou_event hold it (plus what the fold
+ * knows of answers). Ids, times and counts only.
+ */
+export interface ForYouOutcome {
+  slot: 'rank' | 'explore';
+  /** The exact chance of its slot: 1 for a ranked slot. */
+  propensity: number;
+  /** Its text's length, for how long reading it takes. */
+  chars: number;
+  /** First at least half on screen with the page visible and in use, and the milliseconds it stayed so, summed. */
+  shownAt: number | null;
+  shownMs: number;
+  /** A later item was shown after it on the same device: you moved past it rather than leaving. */
+  passed: boolean;
+  clicked: boolean;
+  more: boolean;
+  less: boolean;
+  hidden: boolean;
+  /** You answered or reacted to it (or its burst) within three hours. */
+  answered?: boolean;
+  /** You were already in its chat when it was shown (seenLive): it says nothing. */
+  wasThere?: boolean;
+}
+
+/** Shown for less than this is a fling: it says nothing. */
+const FORYOU_EXPOSED_MS = 1000;
+/** Passed quicker than this (plus per character) is a "no": shorter than reading it. */
+const FORYOU_READ_MS = 800;
+const FORYOU_READ_PER_CHAR = 25;
+/** An exploration slot's label weighs 1/propensity, at most this. */
+const FORYOU_IPS_CAP = 10;
+
+/**
+ * The feed head's label for one item (docs/foryou.md "Labels"), or null when it says nothing. Not trained on yet:
+ * this is the shape a later ranker learns from and a replay scores with.
+ * - opened, answered or reacted: 1, weight 1; "More like this": 1, weight 2;
+ * - hidden or "Less like this": 0, weight 2;
+ * - on screen at least a second, then passed in less time than reading it takes: 0, weight 1;
+ * - anything else (a fling, the last item when the page was left, read in place without a word, in its chat already):
+ *   censored.
+ * An exploration slot's weight is multiplied by 1/propensity (capped), so a replay of another order is unbiased.
+ */
+export function foryouLabel(o: ForYouOutcome): { y: 0 | 1; weight: number; why: string } | null {
+  const ips = o.slot === 'explore' && o.propensity > 0 ? Math.min(1 / o.propensity, FORYOU_IPS_CAP) : 1;
+  const out = (y: 0 | 1, w: number, why: string) => ({ y, weight: w * ips, why });
+  if (o.more) return out(1, 2, 'more like this');
+  if (o.hidden || o.less) return out(0, 2, o.hidden ? 'hidden' : 'less like this');
+  if (o.clicked || o.answered) return out(1, 1, o.clicked ? 'opened' : 'answered');
+  if (o.wasThere || o.shownAt === null || o.shownMs < FORYOU_EXPOSED_MS || !o.passed) return null;
+  if (o.shownMs < FORYOU_READ_MS + FORYOU_READ_PER_CHAR * o.chars) return out(0, 1, 'passed');
+  return null;
 }

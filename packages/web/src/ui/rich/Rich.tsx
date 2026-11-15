@@ -206,7 +206,7 @@ export function VoicePlayer({ a, index, kit }: { a: P.AttachmentView; index: num
     el.currentTime = Math.max(0, Math.min(1, (e.clientX - box.left) / box.width)) * length;
   };
   return (
-    <div class="voice" data-att={index}>
+    <div class="voice-msg" data-att={index}>
       <audio ref={audio} src={a.url} preload="none" />
       <button class="icon-btn voice-play" onClick={toggle} aria-label={playing ? 'Pause' : 'Play voice message'}>
         {playing ? (

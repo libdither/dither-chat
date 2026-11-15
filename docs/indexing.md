@@ -4,7 +4,8 @@ Two ways to find what the hub has not stored. Each one fetches through your own 
 
 - **Index jobs** fetch a server, a folder of servers or a conversation whole. You can fetch every channel's history
   back to its start, its member list, or both. It is DiscordChatExporter's job done inside the hub, so what it fetches
-  is searchable here and kept like any backfill.
+  is searchable here and kept like any backfill. Unlike an exporter, it reads at a person's pace: see
+  [Reading pace](#reading-pace).
 - **Network search** asks the networks' own search (Discord's, Matrix's) for one query. It asks a few places at a time,
   in the order jev ranks them, and keeps what it finds.
 
@@ -12,7 +13,7 @@ Mail has its own: every message of each mail account and its whole text kept on 
 with a row per account under Settings → Indexing → Mail. It runs on mail's own machinery, not as an index job:
 [mail.md "Keeping all mail"](mail.md#keeping-all-mail).
 
-Hub: `packages/hub/src/jobs.ts`, `packages/hub/src/netsearch.ts`. Types: `packages/protocol/src/jobs.ts`. Adapter
+Hub: `packages/hub/src/jobs.ts`, `packages/hub/src/readingpace.ts`, `packages/hub/src/netsearch.ts`. Types: `packages/protocol/src/jobs.ts`. Adapter
 commands: `history` (now with `oldest`), `search`, `walkMembers` (`packages/protocol/src/adapter.ts`). The adapters
 live in dither-accounts (`extractors/discord`, `extractors/matrix`). The web UI is `ui/Indexing.tsx` and the "On the
 networks" part of `ui/Search.tsx`.
@@ -42,14 +43,21 @@ channels added since the last run.
 **Running.**
 
 - Each account works through its tasks one at a time. The highest-priority job goes first, then the oldest.
-- The hub waits `PAUSE_MS` (1.5 s) between requests, on top of the adapter's own pacing. The Discord extractor already
-  spaces requests 1.5–3 s apart and waits out a 429.
+- It goes at the [reading pace](#reading-pace), on top of the adapter's own pacing. The Discord extractor spaces
+  requests 1.5–3 s apart and waits out a 429.
 - A rate limit is never counted as a failure: the task waits 30 s and asks again.
+- An adapter can answer a page with `deferMs` instead: it can't read that way just now (on Discord, you are using the
+  account's live view, or a call is on). Nothing is counted, and the page is asked again after that long.
 - Progress lives in `job_task`, with a cursor per conversation, so a restart carries on where it stopped.
 
 **History, and why a repeat is cheap.**
 
-- A conversation is paged backwards from now, 100 messages per request.
+- A conversation is paged backwards from now, 50 messages per request: what Discord's client loads each time you
+  scroll up.
+- Each request says `pace: 'read'`, and after the first it carries `cursor`: the last page's `next`, the network's own
+  name for where it ended (on Discord, the oldest message's id). So each page goes back from a real message, as
+  scrolling does, not from a made-up id at a time. The cursor is kept with the task (`job_task.walk`), so a restart
+  keeps it, and it is dropped whenever the walk jumps over a span.
 - Each page is recorded in `history_span` as a stretch known to be whole. Spans that touch are merged, and a span
   reaching the start has `from_ts` 0.
 - Before each request, the walk jumps over any span the cursor is in. A span that reaches the start ends the walk.
@@ -60,18 +68,45 @@ channels added since the last run.
 
 **Members.**
 
-- A walk first lists the most recently joined members, 1,000 a page, each page starting after the one before
-  (Discord's op 35, the list behind a server's Members page). Discord lists the 10,000 newest this way, to an
-  ordinary member too, so a server up to that size is listed whole in a few requests: one of 2,390 took three.
-- A bigger server, or an adapter without that list, is walked by name prefix: a to z, 0 to 9, never `''` (a user
-  account may not ask for everyone). A prefix that came back full (100) is asked again one character longer (and with
-  a space, `_` or `.`), up to four characters. Names starting with anything else (accents, other scripts, emoji) are
-  not reached this way.
-- On Discord a prefix is the client's own member search (gateway op 8), the same one the @mention picker makes. It
-  matches the start of the username, the display name or the server nick.
+- A walk lists the most recently joined members, 1,000 a page, each page starting after the one before (Discord's op
+  35, the list behind a server's Members page). Discord lists the 10,000 newest this way, to an ordinary member too,
+  so a server up to that size is listed whole in a few requests: one of 2,390 took three.
+- A bigger server is listed as far as that list goes, the newest 10,000, and no further. Until 2026-11 the rest was
+  walked by name prefix through the member search (gateway op 8), "a", "b", "c" and on, which no person does; that is
+  gone for Discord.
+- Only an adapter without a recent list is walked by name prefix: a to z, 0 to 9, never `''`. A prefix that came back
+  full (100) is asked again one character longer (and with a space, `_` or `.`), up to four characters.
 - What a walk lists is stored with `source = 'walk'`, even when the passive "members seen" setting is off: you asked
   for it by starting the job. The job counts them as it goes. The About's "seen N of M" shows them only while that
   setting is on, as it does any member list.
+
+## Reading pace
+
+Index jobs and the [gap fill](import-discord.md) fetch through your own accounts, so they go the way you would read
+back through a chat, not the way an exporter pages it (`readingpace.ts`):
+
+- **Your hours only:** 9:00 to 1:00 local time by default. Reading starts up to 40 minutes after the hour, not on it.
+- **Sessions:** 5 to 20 minutes of reading, then a break of 10 to 45.
+- **A pause per page:** 2.5 to 5 s, plus a quarter to 0.7 s for each message on it, so a page of 50 is 15 to 40 s.
+  Moving on to another channel adds 3 to 10 s.
+- **A daily cap:** 3,000 messages per account a day. A day runs from the start of the hours to the next start, so
+  reading past midnight counts toward the day it started in.
+- **One reader per account:** a job and the gap fill never read through one account at the same time.
+- Each draw is the mean of two random ones, so values sit around the middle more often than at the ends.
+
+The state lives in `meta` (`pace:<account>`), so a restart neither resets the day's count nor cuts a break short. A
+job waiting on the pace shows why in Settings → Indexing ("Taking a break, reading again today at 14:05").
+
+So a big server takes days: 3,000 messages a day is 60 pages. That is the point.
+
+Settings, in the hub's environment: `DITHER_INDEX_HOURS=9-1` (start and end hour; `0-0` is all day),
+`DITHER_INDEX_DAILY=3000`, and `DITHER_INDEX_PACE=brisk` for the old pace: 1.5 s between pages, at any hour, with no
+cap. A demo hub (`--demo`) always runs brisk.
+
+On Discord, the extractor also reads each page the way the client does: it opens the channel in its page and loads
+older messages with the client's own scroll-up loader, so the requests, the page address and the gateway's channel
+subscriptions match a person reading there (dither-accounts `docs/chat.md` "Reading like a person"). It never marks
+anything read.
 
 **Left out.**
 

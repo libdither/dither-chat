@@ -9,12 +9,13 @@
  *   quote      "On <date>, <name> wrote:" and the original's text with `> ` before each line
  *   forward    a "Forwarded message" block with its headers, then its text; its attachments go along
  *
- * The HTML part is the text made into HTML, with the original's own HTML quoted when it has some (`quotedHtml`,
- * slice 3's sanitiser).
+ * The HTML part is your text's Markdown made into HTML (protocol mail-markdown.ts, as the composer's preview shows it),
+ * then the original's own HTML quoted when it has some (`quotedHtml`, slice 3's sanitiser), else its text.
  */
 import type * as P from '@dither-chat/protocol';
 import { parseMailAddress, validMailAddress } from '@dither-chat/protocol';
 import type * as M from '@dither-chat/protocol/mail-iface';
+import { markdownHtml, QUOTE_STYLE } from '@dither-chat/protocol/mail-markdown';
 import { quoteFragment } from './sanitize.ts';
 
 /** The message answered or forwarded, as compose needs it. */
@@ -123,7 +124,7 @@ export function replyFrom(o: ComposeOriginal, addresses: { email: string }[]): s
 // ------------------------------------------------------------------ quotes
 
 /** "Tue, Nov 3, 2026 at 10:42 AM", in `tz` (the page's time zone) when it is a real one. */
-export function quoteDate(ts: number, tz?: string): string {
+function quoteDate(ts: number, tz?: string): string {
   const zone = tz && validZone(tz) ? tz : undefined;
   const d = new Date(ts);
   const day = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: zone }).format(d);
@@ -140,7 +141,7 @@ function validZone(tz: string): boolean {
   }
 }
 
-export const addressText = (a: M.MailAddress) => (a.name && a.name !== a.email ? `${a.name} <${a.email}>` : a.email);
+const addressText = (a: M.MailAddress) => (a.name && a.name !== a.email ? `${a.name} <${a.email}>` : a.email);
 
 /** "On Tue, Nov 3, 2026 at 10:42 AM, Sam Lee <sam@lee.example> wrote:" (thread readers fold from this line). */
 export function attribution(o: ComposeOriginal, tz?: string): string {
@@ -148,7 +149,7 @@ export function attribution(o: ComposeOriginal, tz?: string): string {
 }
 
 /** Quoted text is cut here: a quote longer than this ends in a line saying so. */
-export const QUOTE_MAX = 64 * 1024;
+const QUOTE_MAX = 64 * 1024;
 
 /** The original's text with `> ` before each line (`>` before one already quoted, and alone on an empty one). */
 export function quoteLines(text: string | null): string {
@@ -196,7 +197,7 @@ export function messageText(own: string, t: { head: string; text: string } | nul
 // ------------------------------------------------------------------ HTML
 
 const ESC: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-export const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ESC[c]);
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ESC[c]);
 
 const LINK = /\bhttps?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]/g;
 
@@ -209,7 +210,7 @@ export function textHtml(text: string): string {
     if (/^>/.test(lines[i])) {
       const block: string[] = [];
       while (i < lines.length && /^>/.test(lines[i])) block.push(lines[i++].replace(/^> ?/, ''));
-      out.push(`<blockquote type="cite" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex">${textHtml(block.join('\n'))}</blockquote>`);
+      out.push(`<blockquote type="cite" style="${QUOTE_STYLE}">${textHtml(block.join('\n'))}</blockquote>`);
       continue;
     }
     out.push(`${line(lines[i])}${i < lines.length - 1 && !/^>/.test(lines[i + 1]) ? '<br>' : ''}`);
@@ -228,16 +229,16 @@ export function quotedHtml(html: string | null | undefined): string | null {
   return q.trim() && q.length <= 2 * QUOTE_MAX ? q : null;
 }
 
-/** The HTML part: your text, then the quote in a `blockquote type=cite`, or the forwarded block. */
+/** The HTML part: your text (Markdown), then the quote in a `blockquote type=cite`, or the forwarded block. */
 export function messageHtml(kind: P.MailComposeKind, own: string, o: ComposeOriginal | null, quote: boolean, tz?: string): string {
   const mine = own.replace(/\r\n?/g, '\n').replace(/\s+$/, '');
-  const parts = [`<div dir="auto">${textHtml(mine)}</div>`];
+  const parts = [`<div dir="auto">${markdownHtml(mine)}</div>`];
   if (o && kind === 'forward') {
     const f = forwardBlock(o, tz);
     parts.push(`<br><div class="dc-forward">${textHtml(f.head)}<br><br>${quotedHtml(o.html) ?? textHtml(f.text)}</div>`);
   } else if (o && quote && (kind === 'reply' || kind === 'replyAll')) {
     const body = quotedHtml(o.html) ?? textHtml((o.text ?? '').replace(/\s+$/, '').slice(0, QUOTE_MAX));
-    parts.push(`<br><div class="dc-quote-head">${escapeHtml(attribution(o, tz))}</div><blockquote type="cite" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex">${body}</blockquote>`);
+    parts.push(`<br><div class="dc-quote-head">${escapeHtml(attribution(o, tz))}</div><blockquote type="cite" style="${QUOTE_STYLE}">${body}</blockquote>`);
   }
   return parts.join('');
 }

@@ -3,8 +3,7 @@ import type * as P from '@dither-chat/protocol';
 import { applyDrop, mayHold, moveStep, type DropTarget, type Layout } from '../layout.ts';
 import { convsUnder, convTitle, directsOf, folderConvs, placePref, railEntries, sumUnread } from '../model.ts';
 import { db, go, markAllRead, patchPlaces, route, saveFolders } from '../state.ts';
-import { openMenu, type MenuEntry } from './ContextMenu.tsx';
-import { placeMenu } from './menus.tsx';
+import { type MenuEntry } from './ContextMenu.tsx';
 import { arrangedRail, freezeOrder, organizing, sortOf } from '../arrange.ts';
 import { canIndex, startIndexing } from './Indexing.tsx';
 import { FINDS_LABEL } from './MentionFinds.tsx';
@@ -16,7 +15,7 @@ const splitKey = (key: string) => {
 };
 const toKey = (it: P.FolderView['items'][number]) => `${it.kind}:${it.id}`;
 
-export function currentLayout(): Layout {
+function currentLayout(): Layout {
   return { order: railEntries().map((e) => e.key), folders: db.folders.map((f) => ({ id: f.id, items: f.items.map(toKey) })) };
 }
 
@@ -52,9 +51,6 @@ export function dropPlace(key: string, target: DropTarget) {
   save(next, pinned);
 }
 
-/** Opens what a right-click or a held finger opens on a place: dnd.tsx calls this. */
-export const openPlaceMenu = (key: string, _label: string, x: number, y: number, folder?: string) => openMenu({ x, y }, placeMenu(key, folder));
-
 function moveToFolder(key: string, folderId: string | null) {
   const l = currentLayout();
   const folders = l.folders.map((f) => ({ ...f, items: f.items.filter((k) => k !== key) }));
@@ -67,7 +63,7 @@ function moveToFolder(key: string, folderId: string | null) {
   save({ order: folderId || up ? order : [...order, key], folders });
 }
 
-export function newFolderWith(key: string) {
+function newFolderWith(key: string) {
   const { kind, id } = splitKey(key);
   const name = prompt('Folder name', 'New folder')?.trim();
   if (!name) return;

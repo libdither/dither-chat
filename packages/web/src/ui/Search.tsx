@@ -8,7 +8,7 @@ import { api, back, db, go, mailRev, openMessage, openProfile, rev, route } from
 import { retention } from '../history.ts';
 import { Avatar, Empty, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
-import { homeRoute } from './Sidebar.tsx';
+import { homeRoute } from '../opening.ts';
 import { Menuable } from './ContextMenu.tsx';
 import { conversationMenu, identityMenu, messageMenu, personMenu, spaceMenu } from './menus.tsx';
 import { readableSearch, recentSearches, rememberSearch, SearchBox } from './SearchBox.tsx';
@@ -248,7 +248,7 @@ const RANKED: Record<P.NetSearchView['ranked'], string> = { jev: 'Ordered by jev
 const andList = (xs: string[]) => (xs.length > 1 ? `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}` : (xs[0] ?? ''));
 
 /** The networks some account of yours can search on its own servers. */
-export function searchableNetworks(): P.Network[] {
+function searchableNetworks(): P.Network[] {
   return [...new Set([...db.accounts.values()].filter((a) => a.status !== 'disabled' && a.capabilities.includes('search')).map((a) => a.network))];
 }
 

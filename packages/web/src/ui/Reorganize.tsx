@@ -169,7 +169,7 @@ function commit(folders: P.FolderView[]) {
 }
 
 /** Moves places into a folder (or out of every folder, with null), keeping the folder's order. */
-export function moveToFolder(keys: string[], folderId: string | null) {
+function moveToFolder(keys: string[], folderId: string | null) {
   const ks = new Set(movable(keys, folderId));
   if (!ks.size) return;
   const folders = db.folders.map((f) => ({ ...f, items: f.items.filter((it) => !ks.has(toKey(it))) }));
@@ -179,7 +179,7 @@ export function moveToFolder(keys: string[], folderId: string | null) {
 }
 
 /** A new folder of these places, where the first of them was in the rail. */
-export function newFolder(keys: string[], name: string, color: string | null = null): string | null {
+function newFolder(keys: string[], name: string, color: string | null = null): string | null {
   // Into a new folder, a folder goes whole unless it holds folders itself.
   const ks = [...new Set(keys.flatMap((k) => (k.startsWith('folder:') && db.folders.find((f) => f.id === split(k).id)?.items.some((i) => i.kind === 'folder') ? (db.folders.find((f) => f.id === split(k).id)?.items.map(toKey) ?? []) : [k])))];
   if (!ks.length) return null;
@@ -213,7 +213,7 @@ const topLevel = () => new Set([...railEntries(), ...railEntries('hidden')].map(
 
 // ------------------------------------------------------------------ suggestions from categories
 
-export interface Suggestion {
+interface Suggestion {
   category: P.CategoryView;
   keys: string[];
   /** A folder of that name already exists: add to it. */
@@ -224,7 +224,7 @@ export interface Suggestion {
  * For each category, the places in the rail (not already in a folder) that belong to it, unless dismissed. `at` holds
  * thresholds being dragged: those categories stay listed however few they match, so the card does not vanish mid-drag.
  */
-export function suggestions(at: Record<string, number> = {}): Suggestion[] {
+function suggestions(at: Record<string, number> = {}): Suggestion[] {
   const loose = railEntries().filter((e) => e.kind !== 'folder' && !placePref(e.kind, split(e.key).id).pinned);
   const out: Suggestion[] = [];
   for (const c of db.categories) {
@@ -238,7 +238,7 @@ export function suggestions(at: Record<string, number> = {}): Suggestion[] {
   return out.sort((a, b) => b.keys.length - a.keys.length);
 }
 
-export function acceptSuggestion(s: Suggestion, keys = s.keys, name = s.category.name) {
+function acceptSuggestion(s: Suggestion, keys = s.keys, name = s.category.name) {
   if (s.folder && name === s.category.name) moveToFolder(keys, s.folder.id);
   else newFolder(keys, name, s.category.color);
 }
@@ -336,7 +336,7 @@ function moveTargets(key: string, inFolder: string | undefined, suggest: { folde
 }
 
 /** What the filter asks the model when matching by meaning: a question as typed, else "about …". */
-export const probeQuestion = (text: string) => (/\?\s*$/.test(text) ? text.trim() : `Is this community about ${text.trim()}?`);
+const probeQuestion = (text: string) => (/\?\s*$/.test(text) ? text.trim() : `Is this community about ${text.trim()}?`);
 
 /** A category's threshold now: what its slider says, else what the hub has. */
 export const thresholdOf = (c: P.CategoryView, at: Record<string, number> = {}) => at[c.id] ?? categoryThreshold(c, db.categoryProvider);

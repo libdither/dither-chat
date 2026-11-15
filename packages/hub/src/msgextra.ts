@@ -6,7 +6,7 @@
 import type * as P from '@dither-chat/protocol';
 import { attachmentKind } from '@dither-chat/protocol';
 
-export interface ExtraDeps {
+interface ExtraDeps {
   /** A native identity id (or a phone number) as the hub's identity id, when it has one. */
   identity(native: string): string | null;
   /** The hub's identity for this account's own self on this network. */
@@ -17,7 +17,7 @@ export interface ExtraDeps {
   stored(messageId: string): boolean;
 }
 
-export type ExtraView = Pick<P.MessageView, 'quote' | 'contacts' | 'storyReply' | 'failed' | 'missingAttachments'> & {
+type ExtraView = Pick<P.MessageView, 'quote' | 'contacts' | 'storyReply' | 'failed' | 'missingAttachments'> & {
   /** One per attachment position. */
   notes?: (P.AttachmentNote | null)[];
 };

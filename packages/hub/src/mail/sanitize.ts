@@ -11,8 +11,8 @@
  * background are rewritten (a proxy token or a placeholder; cid: to the message's own part; data: for plain images);
  * srcset goes; style loses url(), @import, expression and behavior (sanitizeCss). Links open in a new context
  * (the page catches the click anyway). Quotes get the `dc-quote` class. A tracker (1–2 px, or hidden) always goes.
- * The pass also says whether the mail is plain (`plain`), which only chooses what the reader shows: the text part in
- * the app's theme, or this HTML on its white sheet.
+ * The pass also says whether the mail is plain (`plain`) and formatted (`formatted`), which only choose what the reader
+ * shows: the text part in the app's theme, this HTML in the app's theme, or this HTML on its white sheet.
  *
  * This is the first of three walls. The page loads the result in a frame sandboxed without scripts, and the hub
  * serves it with a CSP that also forbids script and loads nothing but its own images (routes in parts.ts).
@@ -53,11 +53,14 @@ export interface Sanitized {
   /** A quote was marked. */
   quotes: number;
   /**
-   * Plain: only text, paragraphs, line breaks, links, lists, quotes, bold and italic. No images, tables, headings,
-   * colours, backgrounds, fonts, alignment or style sheets (margins and a quote's bar are fine). The reader shows such
-   * a mail's text part in the app's theme instead of the white sheet (parts.ts).
+   * Plain: only text, paragraphs, line breaks, links, lists, quotes, bold, italic, underline, struck-through text,
+   * headings, code and rules (what Markdown makes, mail-markdown.ts). No images, tables, colours, backgrounds, fonts,
+   * alignment or style sheets (margins and a quote's bar are fine). The reader shows such a mail in the app's theme
+   * instead of on the white sheet (parts.ts): its text part, or this HTML when it is `formatted`.
    */
   plain: boolean;
+  /** Plain, with formatting its text part cannot show: bold, italic, headings, code and the like (FORMAT_TAGS). */
+  formatted: boolean;
 }
 
 // ------------------------------------------------------------------ the lists
@@ -118,7 +121,9 @@ const ATTRS: Record<string, string[]> = {
 };
 
 /** What a plain mail (Sanitized.plain) is made of. `meta` and `title` show nothing, so they do not count. */
-const PLAIN_TAGS = new Set('html head body meta title p div span br wbr a b strong i em ul ol li blockquote'.split(' '));
+const PLAIN_TAGS = new Set('html head body meta title p div span br wbr a b strong i em u s del strike code pre h1 h2 h3 h4 h5 h6 hr ul ol li blockquote'.split(' '));
+/** Plain tags whose looks a text part loses: a mail with one reads as its HTML, in the app's theme. */
+const FORMAT_TAGS = new Set('b strong i em u s del strike code pre h1 h2 h3 h4 h5 h6 hr'.split(' '));
 /** The attributes a plain mail's elements may keep; `style` only as plainStyle allows. */
 const PLAIN_ATTRS = new Set(['href', 'class', 'id', 'dir', 'lang', 'title', 'role', 'type', 'start', 'value', 'reversed']);
 /** Style that changes no looks: spacing, how lines wrap, the direction. */
@@ -175,7 +180,7 @@ export function decodeEntities(s: string): string {
 const attr = (v: string) => v.replace(/&/g, '&amp;');
 
 /** HTML text, for markup made here. */
-export const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 // ------------------------------------------------------------------ URLs
 
@@ -188,7 +193,7 @@ function cleanUrl(raw: string): string {
 const scheme = (u: string) => u.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/)?.[1].toLowerCase() ?? null;
 
 /** http(s) as a normalised absolute URL, `//host/…` as https; null for anything else. */
-export function webUrl(raw: string): string | null {
+function webUrl(raw: string): string | null {
   let u = cleanUrl(raw);
   if (u.startsWith('//')) u = 'https:' + u;
   const s = scheme(u);
@@ -291,7 +296,7 @@ export function isTracker(width: string | null, height: string | null, style: st
 // ------------------------------------------------------------------ the pass
 
 export function sanitizeMail(input: string, o: SanitizeOpts): Sanitized {
-  const out: Sanitized = { html: '', body: {}, remoteImages: 0, trackers: 0, cids: [], mismatched: [], quotes: 0, plain: true };
+  const out: Sanitized = { html: '', body: {}, remoteImages: 0, trackers: 0, cids: [], mismatched: [], quotes: 0, plain: true, formatted: false };
   const cids = new Set<string>();
   const keepStyles = o.styles !== false;
   const cssUrl = (raw: string): string | null => {
@@ -337,6 +342,7 @@ export function sanitizeMail(input: string, o: SanitizeOpts): Sanitized {
       element(el) {
         const tag = el.tagName.toLowerCase();
         if (!PLAIN_TAGS.has(tag)) out.plain = false;
+        else if (FORMAT_TAGS.has(tag)) out.formatted = true;
         if (DROP.has(tag) || (tag === 'style' && !keepStyles)) return void el.remove();
         const isDoc = DOCUMENT.has(tag);
         if (!ALLOW.has(tag) && !isDoc) return void el.removeAndKeepContent();
@@ -442,6 +448,7 @@ export function sanitizeMail(input: string, o: SanitizeOpts): Sanitized {
   const cut = danglingTag(html);
   out.html = cut === null ? html : html.slice(0, cut);
   out.cids = [...cids];
+  out.formatted &&= out.plain;
   return out;
 }
 
@@ -452,7 +459,7 @@ const RAW_TEXT = new Set(['style', 'script', 'textarea', 'title', 'xmp', 'iframe
  * everything closes. Comments are gone already and the style sheets hold no `<`, so this only follows tags,
  * their quoted values, and the raw text of the elements a browser reads that way.
  */
-export function danglingTag(html: string): number | null {
+function danglingTag(html: string): number | null {
   const n = html.length;
   let i = 0;
   while (i < n) {

@@ -11,7 +11,7 @@ declare const __BUILD_SHA__: string;
 const VERSION = typeof __BUILD_SHA__ === 'string' ? __BUILD_SHA__ : undefined;
 
 /** The words of the app's addresses (routes.ts); every other segment is an id, a name or something typed. */
-const WORDS = new Set(['inbox', 'c', 'people', 'graph', 'p', 'i', 'about', 's', 'groups', 'spaces', 'f', 'accounts', 'settings', 'triage', 'model', 'directory', 'search', 'requests', 'notices', 'mail', 'l', 't', 'calendar']);
+const WORDS = new Set(['inbox', 'c', 'people', 'graph', 'p', 'i', 'about', 's', 'groups', 'spaces', 'f', 'accounts', 'settings', 'triage', 'foryou', 'model', 'directory', 'search', 'requests', 'notices', 'mail', 'l', 't', 'calendar']);
 
 /** A hash as a route template: `#/inbox/c/dc_123?m=x` → `#/inbox/c/:id`. */
 export function routeTemplate(hash: string): string {
@@ -50,7 +50,7 @@ export class ReportLimiter {
   }
 }
 
-export interface PageError {
+interface PageError {
   name: string;
   message: string;
   stack?: string;
@@ -62,7 +62,7 @@ const limiter = new ReportLimiter();
 const sent = new WeakSet<object>();
 
 /** Send one report, if the limits allow. Never throws. */
-export function reportPageError(e: PageError, error?: unknown): void {
+function reportPageError(e: PageError, error?: unknown): void {
   try {
     if (error && typeof error === 'object') {
       if (sent.has(error)) return;

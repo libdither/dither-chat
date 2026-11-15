@@ -94,7 +94,8 @@ function chunkMap(runtime: string): Map<string, string> {
   return out;
 }
 
-const DAVE_LOADER = /Promise\.all\(\[((?:[\w$]+\.e\("[\w-]+"\),?)+)\]\)\.then\([\w$]+\.bind\([\w$]+,\d+\)\)/g;
+// Chunk ids are quoted strings in older builds (`n.e("123")`) and bare numbers since 2026-11 (`n.e(123)`).
+const DAVE_LOADER = /Promise\.all\(\[((?:[\w$]+\.e\((?:"[\w-]+"|\d+)\),?)+)\]\)\.then\([\w$]+\.bind\([\w$]+,\d+\)\)/g;
 
 /**
  * Fetch the current build into `cache`: the /app page, every initial script and the DAVE lazy
@@ -126,7 +127,7 @@ export async function fetchBuild(cache: string): Promise<{ build: Build; files: 
     if (!src.includes('DaveModuleFactory')) continue;
     for (const m of src.matchAll(DAVE_LOADER))
       if (src.slice(m.index!, m.index! + m[0].length + 400).includes('DaveModuleFactory'))
-        chunks = [...m[1].matchAll(/"([\w-]+)"/g)].map((x) => x[1]);
+        chunks = [...m[1].matchAll(/\.e\("?([\w-]+)"?\)/g)].map((x) => x[1]!);
   }
   if (!chunks) throw new AnchorError('DAVE lazy loader (Promise.all([..e(..)]).then(bind) followed by DaveModuleFactory) not found');
   if (cmap.size === 0) throw new AnchorError('rspack runtime chunk map (.u=e=>) not found');

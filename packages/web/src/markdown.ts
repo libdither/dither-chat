@@ -6,7 +6,7 @@
 import type { Network } from '@dither-chat/protocol';
 import { BARE_INVITE } from './invites.ts';
 
-export interface MdContext {
+interface MdContext {
   network: Network;
   user: (nativeId: string) => { name: string; self: boolean } | null;
   room: (nativeId: string) => string | null;
@@ -24,7 +24,7 @@ export interface MdContext {
 const SERVER_PAGES: Record<string, string> = { guide: 'Server Guide', customize: 'Channels & Roles', browse: 'Browse Channels', 'linked-roles': 'Linked Roles', home: 'Server Guide' };
 
 /** A <t:…> timestamp in one of Discord's styles: t T d D f F R (f when none is given). */
-export function timestampText(sec: number, style: string, now = Date.now()): string {
+function timestampText(sec: number, style: string, now = Date.now()): string {
   const d = new Date(sec * 1000);
   if (Number.isNaN(d.getTime())) return String(sec);
   const fmt = (o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat(undefined, o).format(d);

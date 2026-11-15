@@ -79,7 +79,7 @@ export function refusalOf(f: { size: number; readable: boolean }, index: number,
   return null;
 }
 
-export interface UploadOpts {
+interface UploadOpts {
   /** An upload the hub already has part of (from before a reload): carried on rather than begun again. */
   id?: string;
   /** The hub's id, once it has one, to keep with the send. */
@@ -151,8 +151,8 @@ export async function uploadFile(file: Blob, name: string, mime: string, o: Uplo
   }
 }
 
-export type UploadStatus = 'uploading' | 'done' | 'failed' | 'cancelled';
-export interface UploadProgress {
+type UploadStatus = 'uploading' | 'done' | 'failed' | 'cancelled';
+interface UploadProgress {
   sent: number;
   status: UploadStatus;
   /** Why it failed, in words for the person. */

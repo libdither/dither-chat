@@ -148,7 +148,7 @@ export interface FileSource {
 }
 
 /** A chat attachment as a viewer opens it. */
-export const attachmentSource = (a: P.AttachmentView): FileSource => ({
+const attachmentSource = (a: P.AttachmentView): FileSource => ({
   url: a.url,
   infoUrl: `/api/attachments/${encodeURIComponent(a.id)}/info`,
   name: a.name,

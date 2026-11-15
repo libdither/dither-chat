@@ -26,7 +26,7 @@ import { jobFailed } from '../errors.ts';
 
 type Row = Record<string, any>;
 
-export interface SyncContext {
+interface SyncContext {
   store: MailStore;
   backend: MailBackend;
   /** New messages stored: MailHub passes them on as its `ingested` event. */

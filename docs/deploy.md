@@ -71,12 +71,17 @@ runs it about once a minute. One run looks at both apps and ships what is new, d
 git worktree of the deployer's own clone, built once (`bun install --frozen-lockfile`, the web build). The service's
 `WorkingDirectory` is the app's `current` link, and `previous` is the release before it. Nobody edits a release, so
 what a service runs is always the commit it started on. Work happens in your own checkout or a worktree, which no
-service reads.
+service reads. After a deploy, old releases are pruned: the current one, the one before it and the newest three others
+stay, and so does every release a running process still uses (its working directory or command line is in it,
+`plan.ts` `releasesInUse`): dither-accounts' extractors outlive the manager's restarts and keep running from the
+release they started in until their own code changes (dither-accounts docs/supervisor.md).
 
 **One run, per app:**
 
 1. Fetch, and pick the newest commit since the deployed one whose CI `check` passed (`plan.ts` `pick`). A commit still
-   in CI is waited for only when nothing newer has passed.
+   in CI is waited for only when nothing newer has passed. GitHub's answer is remembered once the CI is done, a pass for
+   good. A failure is asked about again while passing would make it the commit to ship (`worthAsking`), so a rerun of
+   a flaky job that goes green deploys: after a tenth of the failure's age, from a minute up to an hour (`askAgain`).
 2. Build its release. A build that fails is told and never tried again.
 3. Wait while a call is on (`GET /api/calls`).
 4. For the hub, copy the database to `backups/pre-deploy.sqlite` (at most every 6 hours: a schema change is copied by
@@ -84,9 +89,35 @@ service reads.
 5. Point `current` at the release and restart the service.
 6. Check it. The hub must log `startup: ready`, answer `/api/health` and connect to the manager (its notices' access
    leaves `unreachable`); the manager must answer its `/api/health`. Both must stay up without systemd restarting
-   them, and get the hub's accounts back to as many online as before.
+   them, and get the hub's accounts back to as many online as before (less those still restarting, below). For the
+   manager, its extractors whose code changed restart after it is up (one per kind at a time: its `/api/health`
+   `codeRestarts`); the check waits for them while it has time, and a crash of one of them fails it (`plan.ts`
+   `codeRestartsProblem`, asked again for up to 90 s). When they all finished in time, each restarted one must also be
+   online a minute on (`codeRestartsOffline`: the manager stops restarting a kind whose restarted extractor does not
+   come up, so new code that does not run is caught here). Restarts still under way when its time is up are no failure:
+   the "Deployed" notice says how many (normal urgency), and later crashes reach you through the manager's own
+   notices. For the hub, the accounts it restarts after gaps (one per kind at a time; its `/api/health`
+   `gapRestarts`) are waited for the same way.
 7. If a check fails, `current` goes back to `previous` and the service restarts on it. The commit is marked failed and
    never tried again; the next commit that passes CI is.
+
+**Time.** The unit kills a run after `TimeoutStartSec` (40 minutes, below). A run therefore keeps to 32 minutes
+(`plan.ts` `RUN_BUDGET_MS`), every wait in a check ending by its deadline: a forward check must be done 12 minutes
+before the end (`ROLLBACK_MS`, kept for a rollback and its own lighter check, which does not wait for dither-accounts'
+restarts for changed code), and an app is not restarted when its check would have less than 6 minutes (it waits for
+the next run, its release already built; a release folder counts as built only once its build wrote `.deploy-built`.
+A folder without it that something runs from, `current`, `previous` or an extractor that outlived the manager, or that
+has its dependencies installed is a build from before the marker: it is marked, never removed).
+Before each restart the release is saved as pending in `state.json`, with how far it got; a run killed before its
+check ended leaves it there, and the next run treats it as failed: the release before comes back, checked as a
+rollback, with the "Rolled back" notice, and the commit is never tried again. One killed before `current` moved never
+ran: it is just forgotten. A killed check of dither-chat is the release the deployer itself runs from (the unit runs
+`chat/current`'s), so the next run hands itself to the release before's deployer to resolve it. If you raise or lower
+the unit's `TimeoutStartSec`, keep it at least 8 minutes above `RUN_BUDGET_MS`.
+
+**One run at a time.** `<root>/deploy.lock` names the run under way (pid and start time), made whole beside it and
+linked into place, so two runs never both take it; a second one, the timer's or a `ship` by hand, says so in the log
+and goes (a `ship` exits with 1). A lock whose run has ended is taken over. A `--dry` run takes none.
 
 Either way the manager's notices say what happened (dither-accounts `POST /api/notices/local`), so it reaches the
 inbox and the phone: "Deployed dither-chat a14daa9" with the pull requests it brought (low), "Rolled back …" (high),

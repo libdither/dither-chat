@@ -18,7 +18,7 @@ const isFolder = (key: string) => key.startsWith('folder:');
 const folderId = (key: string) => key.slice('folder:'.length);
 
 /** The folder whose items hold `key`. */
-export const holderOf = (folders: Layout['folders'], key: string) => folders.find((f) => f.items.includes(key));
+const holderOf = (folders: Layout['folders'], key: string) => folders.find((f) => f.items.includes(key));
 
 /**
  * Whether folder `parent` may take `drag`. A place always; a folder only one level deep: not into itself, not when it

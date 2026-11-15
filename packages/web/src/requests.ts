@@ -8,7 +8,7 @@ import { NETWORK_META, parseAdd } from '@dither-chat/protocol';
 type Kind = P.RequestView['kind'];
 
 /** The Requests view's groups, in this order. */
-export const REQUEST_GROUPS: { kind: Kind; title: string }[] = [
+const REQUEST_GROUPS: { kind: Kind; title: string }[] = [
   { kind: 'friend', title: 'Friend requests' },
   { kind: 'invite', title: 'Invites' },
   { kind: 'message', title: 'Message requests' },
@@ -99,7 +99,7 @@ export function heldRequest(rs: readonly P.RequestView[], conversationId: string
 // ------------------------------------------------------------------ profile buttons
 
 /** How a network lets you reach a stranger, where it has a way. */
-export const CONNECT_ACTION: Partial<Record<P.Network, 'friend' | 'follow' | 'contact'>> = { discord: 'friend', x: 'follow', instagram: 'follow', telegram: 'contact' };
+const CONNECT_ACTION: Partial<Record<P.Network, 'friend' | 'follow' | 'contact'>> = { discord: 'friend', x: 'follow', instagram: 'follow', telegram: 'contact' };
 
 /** A reading POST /api/add takes for someone known by their identity, or null when parseAdd would not give one. */
 export function identityRef(i: Pick<P.IdentityView, 'network' | 'nativeId' | 'handle'>): P.AddRef | null {
@@ -118,7 +118,7 @@ export function identityRef(i: Pick<P.IdentityView, 'network' | 'nativeId' | 'ha
   return null;
 }
 
-export type Relation =
+type Relation =
   /** A stranger you can reach: this action, through this account. */
   | { kind: 'connect'; action: 'friend' | 'follow' | 'contact'; accountId: string; ref: P.AddRef }
   /** They asked you: the open request to answer. */

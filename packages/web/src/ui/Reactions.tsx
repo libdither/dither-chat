@@ -4,16 +4,15 @@ import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, REACTION_RULES } from '@dither-chat/protocol';
 import { emojiNow, loadEmoji, searchEmoji, SKIN_TONES, skinOf } from '../emoji.ts';
 import { customMarkup } from '../emojiComplete.ts';
-import { fullTime } from '../format.ts';
-import { authorName, convTitle, netName, plainBody } from '../model.ts';
+import { authorName } from '../model.ts';
 import { clearReactions, modOf } from '../moderate.ts';
 import { hasMine, knownReactionContext, pickerFor, quickReactions, reactionContext, reactionScope, reactorsFor, reactorsLabel, replacing, toggleReaction, type Picked } from '../reactions.ts';
-import { canDelete, canEdit, deleteMessage, startEditing, api, db, isSelfIdentity, openProfile, prefs, rev, setPrefs, toast } from '../state.ts';
-import { haptic, useLayer } from '../phone.ts';
+import { api, db, isSelfIdentity, prefs, rev, setPrefs } from '../state.ts';
+import { useLayer } from '../phone.ts';
 import { Avatar } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { Sheet } from './Sheet.tsx';
-import { openConv } from './Sidebar.tsx';
+import { useLongPress } from './longpress.ts';
 import { Loading } from './Loader.tsx';
 
 const isSheet = () => matchMedia('(max-width: 820px), (pointer: coarse)').matches;
@@ -25,49 +24,6 @@ export function Glyph({ k, emoji, size = 18 }: { k: string; emoji?: P.CustomEmoj
   return <span class="emoji-text">{custom ? `:${custom[1]}:` : k}</span>;
 }
 
-/** Long-press, for touch. Scrolling or lifting the finger cancels it; once it fires, the click that lifting makes does not count. */
-export function useLongPress(onPress: (e: PointerEvent) => void, ms = 420) {
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const start = useRef<{ x: number; y: number } | null>(null);
-  const fired = useRef(false);
-  const cancel = () => {
-    clearTimeout(timer.current);
-    start.current = null;
-  };
-  const swallow = (e: Event) => {
-    e.stopPropagation();
-    e.preventDefault();
-  };
-  return {
-    onPointerDown: (e: PointerEvent & { longPressTaken?: boolean }) => {
-      // A reaction pill sits inside a message: the innermost long-press is the one meant.
-      if (e.pointerType !== 'touch' || e.longPressTaken) return;
-      e.longPressTaken = true;
-      start.current = { x: e.clientX, y: e.clientY };
-      fired.current = false;
-      timer.current = setTimeout(() => {
-        start.current = null;
-        fired.current = true;
-        haptic(10);
-        onPress(e);
-      }, ms);
-    },
-    onPointerMove: (e: PointerEvent) => {
-      if (start.current && Math.hypot(e.clientX - start.current.x, e.clientY - start.current.y) > 10) cancel();
-    },
-    onPointerUp: () => {
-      cancel();
-      if (!fired.current) return;
-      fired.current = false;
-      window.addEventListener('click', swallow, { capture: true, once: true });
-      setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 400);
-    },
-    onPointerCancel: cancel,
-    onContextMenu: (e: Event) => {
-      if (matchMedia('(pointer: coarse)').matches) e.preventDefault();
-    },
-  };
-}
 
 // ------------------------------------------------------------------ pills
 
@@ -131,13 +87,13 @@ export function ReactionBar({ m }: { m: P.MessageView }) {
   );
 }
 
-/** The row that appears over a message on hover. */
+/** The row that appears over a message on hover: four quick reactions, then the picker. */
 export function HoverReactions({ m }: { m: P.MessageView }) {
   if (reactionScope(m.conversationId) !== 'all') return null;
   const swap = replacing(m);
   return (
     <>
-      {quickReactions(m.network, 3).map((k) => (
+      {quickReactions(m.network, 4).map((k) => (
         <button class={`icon-btn small emoji ${swap?.key === k ? 'on' : ''}`} title={!swap ? `React ${k}` : swap.key === k ? `Take back your ${k}` : `Replace your ${keyText(swap)} with ${k}`} onClick={() => toggleReaction(m, { key: k })}>
           {k}
         </button>
@@ -230,6 +186,9 @@ const initials = (name: string) =>
     .join('')
     .slice(0, 3);
 
+/** How many emoji the picker's first frame draws: a few screens of it. */
+const FIRST_DRAWN = 200;
+
 /** The cells of a grid. Each one's index into `flat` is how a click or hover over the grid finds its emoji. */
 function cells(items: Item[], flat: Item[], mine: Set<string>) {
   return items.map((it) => (
@@ -277,6 +236,11 @@ function Picker({ target, anchor, onClose }: { target: Target; anchor: DOMRect |
   const box = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const flat = useRef<Item[]>([]);
+  // The first frame draws the sections that fill its first screens, and the rest stand in as empty boxes of their
+  // size; they are drawn just after that frame is on screen. All 1,900 at once made opening take 70-170 ms here, and
+  // most of it laying out emoji nobody could see yet.
+  const [whole, setWhole] = useState(false);
+  useEffect(() => setWhole(true), []);
   useEffect(() => {
     if (!catalog) loadEmoji().then(setCatalog);
     reactionContext(conversationId).then(setCtx);
@@ -339,26 +303,42 @@ function Picker({ target, anchor, onClose }: { target: Target; anchor: DOMRect |
     const items: Item[] = [];
     flat.current = items;
     if (query) return hits.length ? <div class="ep-grid">{cells(hits, items, mine)}</div> : null;
-    return sections.map((s) => (
-      <section class={`ep-section ${collapsed.has(s.id) ? 'collapsed' : ''}`} data-sec={s.id} key={s.id}>
-        <h4>
-          <button
-            aria-expanded={!collapsed.has(s.id)}
-            onClick={() => {
-              const next = new Set(collapsed);
-              next.has(s.id) ? next.delete(s.id) : next.add(s.id);
-              setCollapsed(next);
-            }}
-          >
-            {s.img ? <img src={s.img} alt="" /> : s.icon && <Icon name={s.icon} size={13} />}
-            <span>{s.title}</span>
-            <Icon name="chevronDown" size={13} class="ep-chevron" />
-          </button>
-        </h4>
-        {!collapsed.has(s.id) && <div class="ep-grid">{cells(s.items, items, mine)}</div>}
-      </section>
-    ));
-  }, [query, hits, sections, collapsed, mine]);
+    let drawn = 0;
+    return sections.map((s) => {
+      const n = whole ? s.items.length : Math.max(0, Math.min(s.items.length, FIRST_DRAWN - drawn));
+      drawn += n;
+      return (
+        <section class={`ep-section ${collapsed.has(s.id) ? 'collapsed' : ''}`} data-sec={s.id} key={s.id}>
+          <h4>
+            <button
+              aria-expanded={!collapsed.has(s.id)}
+              onClick={() => {
+                const next = new Set(collapsed);
+                next.has(s.id) ? next.delete(s.id) : next.add(s.id);
+                setCollapsed(next);
+              }}
+            >
+              {s.img ? <img src={s.img} alt="" /> : s.icon && <Icon name={s.icon} size={13} />}
+              <span>{s.title}</span>
+              <Icon name="chevronDown" size={13} class="ep-chevron" />
+            </button>
+          </h4>
+          {!collapsed.has(s.id) && <div class="ep-grid">{cells(n < s.items.length ? s.items.slice(0, n) : s.items, items, mine)}</div>}
+          {!collapsed.has(s.id) && n < s.items.length && <div class="ep-later" data-n={s.items.length} data-drawn={n} />}
+        </section>
+      );
+    });
+  }, [query, hits, sections, collapsed, mine, whole]);
+  // A section still to be drawn is as tall as it will be, so the scrollbar and the rail's jumps hold still.
+  useLayoutEffect(() => {
+    const later = scroller.current?.querySelectorAll<HTMLElement>('.ep-later');
+    const cell = scroller.current?.querySelector<HTMLElement>('.ep-emoji');
+    if (!later?.length || !cell) return;
+    const size = cell.getBoundingClientRect().width;
+    const cols = Math.max(1, Math.round((cell.parentElement as HTMLElement).getBoundingClientRect().width / size));
+    const rows = (n: number) => Math.ceil(n / cols);
+    for (const el of later) el.style.height = `${(rows(Number(el.dataset.n)) - rows(Number(el.dataset.drawn))) * size}px`;
+  }, [grid]);
 
   /** `keep`: Shift held, as in Discord, so several go in one after another. */
   const pick = (p: Picked, el: HTMLElement, keep = false) => {

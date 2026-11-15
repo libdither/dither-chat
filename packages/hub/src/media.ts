@@ -17,7 +17,7 @@ type Cmd =
   | { t: 'storyViewed'; story: string }
   | { t: 'storyReply'; story: string; conversation?: string; body?: string; emoji?: string };
 
-export interface MediaDeps {
+interface MediaDeps {
   store: Store;
   online: (accountId: string) => boolean;
   command: <T>(accountId: string, cmd: Cmd, timeoutMs?: number) => Promise<T>;
@@ -38,7 +38,7 @@ export class MediaError extends Error {
 const made = new WeakSet<Database>();
 
 /** Stories as each account heard them: a story two accounts both see is kept once per account. */
-export function mediaTables(db: Database) {
+function mediaTables(db: Database) {
   if (made.has(db)) return;
   db.exec(`CREATE TABLE IF NOT EXISTS story (
     id               TEXT NOT NULL,

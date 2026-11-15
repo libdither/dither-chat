@@ -3,7 +3,7 @@
  * what the notice says.
  */
 import { expect, test } from 'bun:test';
-import { type Candidate, deployedNotice, failedNotice, pick, pullsOf } from '../src/plan.ts';
+import { askAgain, type Candidate, codeRestartsOffline, codeRestartsProblem, codeRestartsSettled, codeRestartsUnfinished, deadlines, deployedNotice, failedNotice, interrupted, lockHeld, MIN_CHECK_MS, pick, pullsOf, recheckAfter, reexecFrom, releasesInUse, ROLLBACK_MS, RUN_BUDGET_MS, timeToShip, unmarkedRelease, worthAsking } from '../src/plan.ts';
 
 const c = (sha: string, check: Candidate['check']): Candidate => ({ sha, check });
 
@@ -34,6 +34,32 @@ test('a pull request labelled hold-deploy holds itself and everything after it; 
   expect(pick(list.slice(0, 2), new Set())).toEqual({ none: '#170 has the hold-deploy label', held: 170 });
 });
 
+test('a CI failure is asked about again only when passing would make it the one to ship', () => {
+  // The newest commit failed CI (a flaky job): a rerun could pass it, so it is worth asking about again.
+  expect(worthAsking([c('ddd', 'failure'), c('ccc', 'failure')], new Set())).toEqual(['ddd', 'ccc']);
+  // An older failure under a newer pass would not ship even if it passed.
+  expect(worthAsking([c('eee', 'failure'), c('ddd', 'success'), c('ccc', 'failure')], new Set())).toEqual(['eee']);
+  // A newer pass that failed here does not count: the one under it would ship.
+  expect(worthAsking([c('ddd', 'success'), c('ccc', 'failure')], new Set(['ddd']))).toEqual(['ccc']);
+  // One that failed here is never tried again, whatever its CI says; nor is a held one or what came after it.
+  expect(worthAsking([c('ddd', 'failure')], new Set(['ddd']))).toEqual([]);
+  expect(worthAsking([c('eee', 'failure'), { ...c('ddd', 'failure'), held: 170 }, c('ccc', 'failure')], new Set())).toEqual(['ccc']);
+});
+
+test('a CI failure is asked again after a tenth of its age, a minute to an hour; a pass never', () => {
+  const min = 60_000;
+  expect(recheckAfter(0)).toBe(min);
+  expect(recheckAfter(30 * min)).toBe(3 * min);
+  expect(recheckAfter(48 * 60 * min)).toBe(60 * min);
+  const t = 1_000 * min;
+  expect(askAgain({ check: 'success', held: 0 }, t)).toBe(false);
+  // Older state, with no times: asked now.
+  expect(askAgain({ check: 'failure', held: 0 }, t)).toBe(true);
+  // Failed 30 minutes ago, asked 2 minutes ago: not yet (3 minutes); asked 3 minutes ago: yes.
+  expect(askAgain({ check: 'failure', held: 0, first: t - 30 * min, asked: t - 2 * min }, t)).toBe(false);
+  expect(askAgain({ check: 'failure', held: 0, first: t - 30 * min, asked: t - 3 * min }, t)).toBe(true);
+});
+
 test("the notice names each pull request that came with a deploy, oldest first, and counts the rest", () => {
   const subjects = [
     'Chats: a quiet "last message on Signal" at the end of the message box\'s line when a message would go another way; a click sends through that route (#163)',
@@ -60,4 +86,91 @@ test('a failed deploy says what was tried, why, what runs now, and that it will 
   expect(n.body).toContain('will not try f4190cc again');
   expect(failedNotice('dither-accounts', 'aaaaaaa', 'bun install failed', 'bbbbbbb', false).title).toBe('Did not deploy dither-accounts aaaaaaa');
   expect(failedNotice('dither-chat', 'aaaaaaa', 'x', null, true).body).toContain('may be down');
+});
+
+test("a release a running process uses is kept: its working directory or a path on its command line is in it", () => {
+  const rel = '/srv/deploy/accounts/releases';
+  const used = releasesInUse(rel + '/', [
+    // The manager, run from the current release.
+    { cwd: `${rel}/ccc`, cmdline: ['bun', 'packages/manager/src/main.ts'] },
+    // An extractor that outlived the manager's restarts: started many deploys ago, from its own release.
+    { cwd: `${rel}/aaa`, cmdline: ['bun', `${rel}/aaa/extractors/telegram/src/main.ts`] },
+    { cwd: '/tmp', cmdline: ['bun', `${rel}/bbb/extractors/discord/src/main.ts`] },
+    // Not a release: the folder itself, a release being built, another app's, nothing.
+    { cwd: rel, cmdline: [] },
+    { cwd: `${rel}/.new-ddd`, cmdline: [] },
+    { cwd: '/srv/deploy/chat/releases/eee', cmdline: [`${rel}x/fff`] },
+    { cwd: null, cmdline: [] },
+  ]);
+  expect([...used].sort()).toEqual(['aaa', 'bbb', 'ccc']);
+});
+
+test("dither-accounts' restarts for changed code: waited for while there is time; only a crash rolls back, a slow restart is said", () => {
+  const c = (queued: number, active: number, restarted: number, online: number, crashed: number) => ({ queued, active, restarted, online, crashed });
+  // A manager from before them says nothing: nothing to wait for, nothing wrong.
+  expect(codeRestartsSettled(null)).toBe(true);
+  expect(codeRestartsProblem(null)).toBe(null);
+  expect(codeRestartsUnfinished(null)).toBe(0);
+  expect(codeRestartsSettled(c(2, 0, 0, 0, 0))).toBe(false);
+  expect(codeRestartsSettled(c(0, 2, 1, 0, 0))).toBe(false);
+  expect(codeRestartsSettled(c(0, 0, 3, 3, 0))).toBe(true);
+  expect(codeRestartsProblem(c(0, 0, 3, 3, 0))).toBe(null);
+  // Not back yet, or still queued: no failure, only counted for the notice and the online check.
+  expect(codeRestartsProblem(c(4, 2, 3, 2, 0))).toBe(null);
+  expect(codeRestartsUnfinished(c(4, 2, 3, 2, 0))).toBe(7);
+  expect(codeRestartsProblem(c(0, 0, 3, 3, 1))).toBe('1 of the 3 extractors restarted for changed code crashed since');
+});
+
+test("a run's time fits the unit's TimeoutStartSec (40 min) with room: a forward check, then a rollback's, then notices", () => {
+  expect(RUN_BUDGET_MS).toBeLessThanOrEqual(35 * 60_000);
+  const d = deadlines(0);
+  expect(d).toEqual({ check: RUN_BUDGET_MS - ROLLBACK_MS, end: RUN_BUDGET_MS });
+  expect(timeToShip(0, d)).toBe(true);
+  // Too little left for a check (a long build, the first app's deploy): it waits for the next run.
+  expect(timeToShip(d.check - MIN_CHECK_MS + 1, d)).toBe(false);
+});
+
+test('a check a killed run left unfinished is failed and rolled back; one never started is forgotten; a rollback is done again', () => {
+  expect(interrupted(undefined, 'bbb')).toBe(null);
+  const p = { rel: 'bbb', previous: 'aaa', target: 'ttt', at: '2026-11-14T03:04:05.000Z' };
+  expect(interrupted({ ...p, phase: 'checking' }, 'bbb')).toEqual({ drop: false, relink: true, why: 'its check did not finish (the deployer stopped at 03:04 UTC)' });
+  // Killed before `current` moved: the release never ran, and its commit is not failed.
+  expect(interrupted({ ...p, phase: 'restarting' }, 'aaa')).toEqual({ drop: true });
+  // ... but if `current` did move, it ran.
+  expect(interrupted({ ...p, phase: 'restarting' }, 'bbb')).toMatchObject({ drop: false, relink: true });
+  // Killed during its rollback: done again (current already back).
+  expect(interrupted({ ...p, phase: 'rolling-back' }, 'aaa')).toMatchObject({ drop: false, relink: false });
+});
+
+test("a killed chat check is judged by the release before's deployer, not by the release it left", () => {
+  const p = { rel: 'bbb', previous: 'aaa', target: 'ttt', at: '2026-11-14T03:04:05.000Z', phase: 'checking' as const };
+  expect(reexecFrom(p, 'bbb', true, false)).toBe('aaa');
+  expect(reexecFrom(p, 'aaa', true, false)).toBe(null);
+  expect(reexecFrom(p, 'bbb', true, true)).toBe(null); // already handed over once
+  expect(reexecFrom(p, 'bbb', false, false)).toBe(null); // the one before cannot resolve it: this one does
+  expect(reexecFrom(undefined, 'bbb', true, false)).toBe(null);
+});
+
+test('one deployer run at a time: a lock held by a run still going (pid and start time) stops a second', () => {
+  const alive = (pid: number, start: string | undefined) => pid === 7 && start === 's7';
+  expect(lockHeld({ pid: 7, start: 's7' }, 9, alive)).toBe(7);
+  expect(lockHeld({ pid: 7, start: 'other' }, 9, alive)).toBe(null); // the pid was handed on
+  expect(lockHeld({ pid: 8, start: 's8' }, 9, alive)).toBe(null); // that run ended
+  expect(lockHeld({ pid: 9, start: 's9' }, 9, alive)).toBe(null);
+  expect(lockHeld(null, 9, alive)).toBe(null);
+});
+
+test("restarts done in time: each restarted extractor must be online (new code that does not come up rolls back); not yet done: no verdict", () => {
+  const c = (queued: number, active: number, restarted: number, online: number) => ({ queued, active, restarted, online, crashed: 0 });
+  expect(codeRestartsOffline(null)).toBe(null);
+  expect(codeRestartsOffline(c(0, 0, 3, 3))).toBe(null);
+  expect(codeRestartsOffline(c(0, 0, 3, 2))).toBe('1 of the 3 extractors restarted for changed code did not come online');
+  // Still going (the budget ran out first): said in the notice, not failed.
+  expect(codeRestartsOffline(c(2, 1, 3, 2))).toBe(null);
+});
+
+test('a release folder without the built marker is marked when something runs from it or it is installed, else made again', () => {
+  expect(unmarkedRelease(true, false)).toBe('mark'); // current, previous, or an outlived extractor's
+  expect(unmarkedRelease(false, true)).toBe('mark'); // built before the marker existed
+  expect(unmarkedRelease(false, false)).toBe('rebuild'); // a half-built leftover nothing uses
 });

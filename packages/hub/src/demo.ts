@@ -18,6 +18,7 @@ import { hubId } from '@dither-chat/protocol/ids';
 import type { AccountRow, Store } from './store.ts';
 import { DEMO_SELF_CAPS, DemoSelf } from './demoself.ts';
 import type { InprocAdapter } from './supervisor.ts';
+import { DEMO_CALL_CAPS, demoCallRoom } from './democalls.ts';
 import { DEMO_X_ACCOUNT, DemoX } from './demo-x.ts';
 import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
@@ -35,15 +36,15 @@ type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa' | 'tg';
  * accounts by their usernames. Off by default: the default world's counts
  * are what the tests and perf baselines expect.
  */
-export const MULTI_ACCOUNT = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('multiaccount');
+const MULTI_ACCOUNT = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('multiaccount');
 /**
  * DITHER_DEMO_SCENARIO=servers adds 35 servers across your two Discord accounts, with Discord's own folders for each,
  * two schools whose names share a word, and servers gone quiet a year ago: a sidebar to organize (docs/organize.md).
  */
-export const SERVERS = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('servers');
+const SERVERS = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('servers');
 const named = (plain: string, username: string) => (MULTI_ACCOUNT || SERVERS ? username : plain);
 
-export const DEMO_ACCOUNTS: { key: AccKey; id: string; network: P.Network; label: string; color: string }[] = [
+const DEMO_ACCOUNTS: { key: AccKey; id: string; network: P.Network; label: string; color: string }[] = [
   { key: 'dmain', id: 'acc_demo-discord-main', network: 'discord', label: named('main', 'zyansheep'), color: '#F2A541' },
   { key: 'dalt', id: 'acc_demo-discord-alt', network: 'discord', label: named('alt', 'zyn.alt'), color: '#E86A92' },
   { key: 'sig', id: 'acc_demo-signal', network: 'signal', label: named('personal', 'zyan.01'), color: '#B794F6' },
@@ -553,7 +554,7 @@ const SERVER_LIST: [string, string, AccKey, string[], number][] = [
 const sg = (k: string) => snow('srv-' + k);
 const SERVER_SPACES: DemoSpace[] = SERVERS ? SERVER_LIST.map(([k, name, acc]) => ({ acc: [acc], fact: { nativeId: sg(k), kind: 'community', name } })) : [];
 /** Discord's own folders in this scenario, by account: named ones, unnamed ones, and the loose rest in order. */
-export const SERVER_FOLDERS: Partial<Record<AccKey, { name?: string; color?: string; keys: string[] }[]>> = {
+const SERVER_FOLDERS: Partial<Record<AccKey, { name?: string; color?: string; keys: string[] }[]>> = {
   dmain: [
     { name: 'Coding', color: '#5865f2', keys: ['@rust', '@dither', 'bevy', 'tokio', 'zig', 'lean', 'helix'] },
     { name: 'Creators', color: '#eb459e', keys: ['kestrel', 'tinker', 'pixelws'] },
@@ -565,7 +566,7 @@ export const SERVER_FOLDERS: Partial<Record<AccKey, { name?: string; color?: str
     { keys: ['lk-cs', 'lk-chess'] },
   ],
 };
-export const serverFolderSpaces = (acc: AccKey, mine: string[]): P.NetworkFolder[] => {
+const serverFolderSpaces = (acc: AccKey, mine: string[]): P.NetworkFolder[] => {
   const ids = (keys: string[]) => keys.map((k) => (k === '@rust' ? g.rust : k === '@dither' ? g.dither : sg(k)));
   const listed = (SERVER_FOLDERS[acc] ?? []).map((f, i) => ({ ...(f.name ? { id: String(i + 1), name: f.name } : { id: String(i + 1) }), ...(f.color ? { color: f.color } : {}), spaces: ids(f.keys).filter((x) => mine.includes(x)) }));
   const inOne = new Set(listed.flatMap((f) => f.spaces));
@@ -2114,7 +2115,6 @@ class DemoAdapter implements InprocAdapter {
     };
     const rules: P.AboutRule[] = [];
     const members: P.AboutMember[] = [];
-    const pool = Object.values(POOLS[net] ?? M);
     const ids = new Set<string>([...(conv?.fact.participants ?? []), ...(this.addedTo.get(target.nativeId) ?? [])]);
     if (!ids.size) {
       ids.add(this.self.nativeId);
@@ -2420,6 +2420,8 @@ class DemoAdapter implements InprocAdapter {
       ...(this.network === 'discord' ? DEMO_THREAD_CAPS : []),
       ...(DEMO_MOD_CAPS[this.network] ?? []),
       ...(this.network === 'discord' ? DEMO_SEND_CAPS : []),
+      // Voice calls, carried by the demo call room (democalls.ts).
+      ...(this.network === 'discord' ? DEMO_CALL_CAPS : []),
     ];
     this.emit({ t: 'hello', network: this.network, version: 'demo', capabilities: all.filter((c) => !this.without.has(c)) });
   }
@@ -2846,6 +2848,19 @@ class DemoAdapter implements InprocAdapter {
       return;
     }
     switch (cmd.t) {
+      case 'call':
+        // The far end of a demo call is the demo call room (democalls.ts), wherever it is open.
+        if (this.network !== 'discord') {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: 'Calls are on the demo Discord accounts.' });
+          return;
+        }
+        demoCallRoom
+          .command((ev) => this.emit(ev), { self: this.self.nativeId, bot: { id: D.lev.nativeId, name: D.lev.displayName ?? 'Lev' } }, cmd)
+          .then(
+            (result) => reply(result),
+            (e) => this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message }),
+          );
+        return;
       case 'send': {
         const nativeId = `${cmd.conversation}~sent-${Date.now()}`;
         // The file leaves the spool once this returns, and a demo has nowhere else to keep it.
@@ -3294,9 +3309,9 @@ export function applyDemoOverlay(store: Store) {
 /** The demo world's mail account: plain IMAP with the threading headers on summaries (dither-accounts' §13). */
 export const DEMO_MAIL_ACCOUNT = 'acc_demo-mail';
 /** A second mail account like Proton's (DITHER_DEMO_MAIL_PROTON=1, scripts/verify-mail.ts --proton). */
-export const DEMO_PROTON_ACCOUNT = 'acc_demo-proton';
+const DEMO_PROTON_ACCOUNT = 'acc_demo-proton';
 /** A Gmail account as dither-accounts' imap extractor gives one (DITHER_DEMO_MAIL_GMAIL=1, scripts/verify-mail.ts --gmail). */
-export const DEMO_GMAIL_ACCOUNT = 'acc_demo-gmail';
+const DEMO_GMAIL_ACCOUNT = 'acc_demo-gmail';
 const ME = { name: 'Zyan', email: 'zyan@dither.example' };
 
 /**
@@ -3304,7 +3319,14 @@ const ME = { name: 'Zyan', email: 'zyan@dither.example' };
  * (list headers), and an HTML-only message carrying a tracker and a script (which must never show or run).
  */
 export function seedDemoMail(fake: FakeMailBackend, now = Date.now()) {
-  fake.addAccount(DEMO_MAIL_ACCOUNT, { kind: 'imap', label: 'Personal mail', email: ME.email, name: ME.name, opts: { ids: 'imap', threadIds: false, refs: true, answer: 3_000 } });
+  // Its server's address book (mail.contacts): people the composer suggests though no mail here names them.
+  const contacts = [
+    { name: 'Dana Okafor', email: 'dana@okafor.example' },
+    { name: 'Priya Natarajan', email: 'priya@studio.example' },
+    { name: 'Sam Rivera', email: 'sam@rivera.example' },
+    { name: null, email: 'bookings@ramen.example' },
+  ];
+  fake.addAccount(DEMO_MAIL_ACCOUNT, { kind: 'imap', label: 'Personal mail', email: ME.email, name: ME.name, opts: { ids: 'imap', threadIds: false, refs: true, answer: 3_000, contacts } });
   const H = 3_600_000;
   const D = 24 * H;
   const sam = { name: 'Sam Rivera', email: 'sam@rivera.example' };

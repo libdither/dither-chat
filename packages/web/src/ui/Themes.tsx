@@ -14,7 +14,7 @@ import { Icon } from './icons.tsx';
 import { Sheet } from './Sheet.tsx';
 
 /** A theme shown for a moment, while the pointer is over it in a picker. */
-export const previewTheme = signal<string | null>(null);
+const previewTheme = signal<string | null>(null);
 
 const lightQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: light)') : null;
 const systemLight = signal(!!lightQuery?.matches);
@@ -60,7 +60,7 @@ if (typeof document !== 'undefined') {
 }
 
 /** Choosing a theme: with "system" on, it replaces the dark or the light one, whichever it is. */
-export function chooseTheme(t: Theme) {
+function chooseTheme(t: Theme) {
   previewTheme.value = null;
   if (followsSystem()) setPrefs(t.scheme === 'dark' ? { themeDark: t.id } : { themeLight: t.id });
   else setPrefs({ theme: t.id });

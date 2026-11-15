@@ -5,7 +5,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 
-export interface SelfOffer {
+interface SelfOffer {
   identity: P.IdentityView;
   /** Ignore or Stop Ignoring: which. */
   ignored: boolean;

@@ -8,7 +8,6 @@ import {
   communityOfSpace,
   convLabel,
   convTitle,
-  convsUnder,
   directsOf,
   effectiveLevel,
   folderConvs,
@@ -25,8 +24,6 @@ import {
   people,
   placeConv,
   plainBody,
-  resolveTokens,
-  rootCommunity,
   ruleIcon,
   spaceChildren,
   spaceUnread,
@@ -37,7 +34,7 @@ import {
   type InboxRow,
   type RailEntry,
 } from '../model.ts';
-import { db, go, isSelfIdentity, mailRev, metaRev, prefs, rev, route, setPrefs, type InboxFilter, type Route } from '../state.ts';
+import { db, go, isSelfIdentity, mailRev, metaRev, prefs, rev, route, setPrefs, type InboxFilter } from '../state.ts';
 import { openPalette } from './Palette.tsx';
 import { INBOX_FILTERS } from '../ordering.ts';
 import { senderLine } from '../mail/model.ts';
@@ -47,14 +44,16 @@ import { AccountChip, AccountDots, Avatar, Count, NetBadge, NetGlyph, SourceChip
 import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
 import { phone } from '../phone.ts';
-import { dropPlace, openPlaceMenu, placeLabel } from './Organize.tsx';
+import { dropPlace, placeLabel } from './Organize.tsx';
 import { contextMenu, Menuable, onMenu, openMenu, useMenu, type MenuEntry } from './ContextMenu.tsx';
-import { accountMenu, chatMenu, conversationMenu, folderMenuSpec, personMenu, spaceMenu, WhyHere } from './menus.tsx';
+import { chatMenu, conversationMenu, folderMenuSpec, openPlaceMenu, personMenu, spaceMenu, WhyHere } from './menus.tsx';
+import { accountMenu } from './accountMenu.tsx';
 import { MarkableRow } from './ReplyMark.tsx';
+import { needsReplyLabel, needsReplyOf } from '../replymarks.ts';
 import { pickedRoute } from './Pairs.tsx';
 import { chatKey } from '../chatroutes.ts';
 import { groups, type MenuSpec } from './ContextMenu.tsx';
-import { openAbout } from './About.tsx';
+import { openAbout } from '../opening.ts';
 import { arrangeDrop, arrangedFolderItems, arrangedPeople, arrangedRail, snapshot } from '../arrange.ts';
 import { openShelves, shelve, toggleShelf } from '../quiet.ts';
 import { inboxSnap, shownInbox } from '../inbox.ts';
@@ -72,25 +71,7 @@ import { VoicePeople } from './Ringing.tsx';
 
 // ------------------------------------------------------------------ navigation helpers
 
-/** Open a conversation, keeping the current sidebar context when it contains it. */
-export function openConv(c: P.ConversationView, ctx: Route = route.value) {
-  if (ctx.view === 'folder') return go({ view: 'folder', folder: ctx.folder, conv: c.id });
-  if (ctx.view === 'inbox') return go({ view: 'inbox', conv: c.id });
-  if (ctx.view === 'search') return go({ view: 'search', q: ctx.q, conv: c.id });
-  if (ctx.view === 'space' && convsUnder(ctx.space).some((x) => x.id === c.id)) return go({ view: 'space', space: ctx.space, conv: c.id });
-  return go(homeRoute(c));
-}
-
-export function homeRoute(c: P.ConversationView): Route {
-  if (c.shape === 'direct' && c.peerPersonId) return { view: 'people', person: c.peerPersonId };
-  const base = placeConv(c);
-  if (base.spaceIds.length) {
-    const root = rootCommunity(base.spaceIds[0]);
-    if (root) return { view: 'space', space: root.id, conv: c.id };
-  }
-  // Group chats, rooms outside a space and notes to self live in the inbox.
-  return { view: 'inbox', conv: c.id };
-}
+// Opening a conversation (openConv, homeRoute) is in opening.ts.
 
 /** Only there if some connected account can actually start a conversation, or join or add (docs/add.md). */
 function NewMessageButton() {
@@ -139,10 +120,15 @@ function Ago({ ts }: { ts: number | null | undefined }) {
   return <>{ago(ts)}</>;
 }
 
-function Owed({ at }: { at: number }) {
+/**
+ * A reply you owe: ↩ and how long, and the chance it needs one (`p`, docs/inbox.md "Needs a reply") as a faint
+ * percentage that styles.css draws from `data-p`, so the row has no more elements.
+ */
+function Owed({ at, p }: { at: number; p?: number | null }) {
   rev.value;
+  const chance = p != null ? needsReplyLabel(p) : null;
   return (
-    <span class="row-owed" aria-label={`Unanswered for ${since(at)}`}>
+    <span class="row-owed" aria-label={`Unanswered for ${since(at)}${chance ? `. ${chance}` : ''}`} title={chance ?? undefined} data-p={p != null ? `${Math.round(p * 100)}%` : undefined}>
       <Icon name="reply" size={11} />
       {since(at)}
     </span>
@@ -163,7 +149,25 @@ function opener(key: string, open: () => void): () => void {
  * inbox's one row for a person reached by several routes (model.ts), drawn as a DM row of the route with the latest
  * message (`c`), its unread summed over every route and its menu acting on them all.
  */
-export const ConvRow = memo(function ConvRow({ c, active, onClick, showPlace = true, why, owedSince, chat }: { c: P.ConversationView; active: boolean; onClick: () => void; showPlace?: boolean; why?: string[]; owedSince?: number | null; chat?: { person: P.PersonView; routes: P.ConversationView[] } }) {
+const ConvRow = memo(function ConvRow({
+  c,
+  active,
+  onClick,
+  showPlace = true,
+  why,
+  owedSince,
+  needsP,
+  chat,
+}: {
+  c: P.ConversationView;
+  active: boolean;
+  onClick: () => void;
+  showPlace?: boolean;
+  why?: string[];
+  owedSince?: number | null;
+  needsP?: number | null;
+  chat?: { person: P.PersonView; routes: P.ConversationView[] };
+}) {
   metaRev.value;
   const u = chat ? chatUnread(chat.routes) : unreadOf(c);
   const lvl = effectiveLevel(c);
@@ -215,7 +219,7 @@ export const ConvRow = memo(function ConvRow({ c, active, onClick, showPlace = t
           <span class="row-preview">{preview(c)}</span>
           {u.muted && <Icon name={ruleIcon(lvl.level)} size={12} class="row-muted" />}
           {u.badge ? <Count n={u.badge} /> : u.unread && !u.muted ? <span class="unread-dot" /> : null}
-          {owedSince ? <Owed at={owedSince} /> : null}
+          {owedSince ? <Owed at={owedSince} p={needsP} /> : null}
         </span>
       </span>
     </button>
@@ -253,7 +257,7 @@ function mailRowMenu(t: P.MailThreadView, why?: string[]): MenuSpec {
  * a chat's network badge goes, the subject before the start of the last message, the same ↩ and reasons as a chat.
  * Opening it opens the reader beside the inbox.
  */
-export const MailRow = memo(function MailRow({ id, active, why, owedSince }: { id: string; active: boolean; why?: string[]; owedSince?: number | null }) {
+const MailRow = memo(function MailRow({ id, active, why, owedSince, needsP }: { id: string; active: boolean; why?: string[]; owedSince?: number | null; needsP?: number | null }) {
   mailRev.value;
   metaRev.value;
   const t = db.mail.threads.get(id);
@@ -287,7 +291,7 @@ export const MailRow = memo(function MailRow({ id, active, why, owedSince }: { i
             {t.preview ? ` — ${t.preview}` : ''}
           </span>
           <Count n={t.unread} />
-          {owedSince ? <Owed at={owedSince} /> : null}
+          {owedSince ? <Owed at={owedSince} p={needsP} /> : null}
         </span>
       </span>
     </button>
@@ -386,19 +390,20 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
   const activeKey = activeConv ? inboxKeyOf(activeConv) : undefined;
   const row = (r: InboxRow) => {
     const owedSince = r.needs ? r.owedSince : null;
+    const needsP = owedSince !== null ? needsReplyOf(r.kind === 'mail' ? [r.key] : r.chat ? r.chat.routes.map((c) => c.id) : [r.conv.id]) : null;
     if (r.kind === 'mail')
       return (
-        <MarkableRow key={r.key} rowKey={r.key} kind="mail" ids={[r.key]} owedSince={owedSince} canNeed={false}>
-          <MailRow id={r.key} active={r.key === activeConv} why={r.reasons} owedSince={owedSince} />
+        <MarkableRow key={r.key} rowKey={r.key} kind="mail" ids={[r.key]} owedSince={owedSince} needsP={needsP} canNeed={false}>
+          <MailRow id={r.key} active={r.key === activeConv} why={r.reasons} owedSince={owedSince} needsP={needsP} />
         </MarkableRow>
       );
     const latest = needsTarget(r.conv);
     return (
-      <MarkableRow key={r.key} rowKey={r.key} kind="conversation" ids={r.chat ? r.chat.routes.map((c) => c.id) : [r.conv.id]} owedSince={owedSince} canNeed={!!latest} latest={latest}>
+      <MarkableRow key={r.key} rowKey={r.key} kind="conversation" ids={r.chat ? r.chat.routes.map((c) => c.id) : [r.conv.id]} owedSince={owedSince} needsP={needsP} canNeed={!!latest} latest={latest}>
         {r.chat ? (
-          <ConvRow c={r.conv} chat={r.chat} active={r.key === activeKey} onClick={opener(`inbox:${r.key}`, () => go({ view: 'inbox', conv: chatOpens(r.chat!.person.id) ?? r.conv.id }))} why={r.reasons} owedSince={owedSince} />
+          <ConvRow c={r.conv} chat={r.chat} active={r.key === activeKey} onClick={opener(`inbox:${r.key}`, () => go({ view: 'inbox', conv: chatOpens(r.chat!.person.id) ?? r.conv.id }))} why={r.reasons} owedSince={owedSince} needsP={needsP} />
         ) : (
-          <ConvRow c={r.conv} active={r.conv.id === activeConv} onClick={opener(`inbox:${r.conv.id}`, () => go({ view: 'inbox', conv: r.conv.id }))} why={r.reasons} owedSince={owedSince} />
+          <ConvRow c={r.conv} active={r.conv.id === activeConv} onClick={opener(`inbox:${r.conv.id}`, () => go({ view: 'inbox', conv: r.conv.id }))} why={r.reasons} owedSince={owedSince} needsP={needsP} />
         )}
       </MarkableRow>
     );
@@ -461,7 +466,7 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
 // ------------------------------------------------------------------ people
 
 /** `directs`: the person's direct conversations (directsOf), which change with each message where the person does not. */
-export const PersonRow = memo(function PersonRow({ person, directs, active, onClick }: { person: P.PersonView; directs: P.ConversationView[]; active: boolean; onClick: () => void }) {
+const PersonRow = memo(function PersonRow({ person, directs, active, onClick }: { person: P.PersonView; directs: P.ConversationView[]; active: boolean; onClick: () => void }) {
   metaRev.value;
   const last = directs.reduce<P.ConversationView | null>((a, c) => (!a || (c.lastMessageAt ?? 0) > (a.lastMessageAt ?? 0) ? c : a), null);
   const u = sumUnread(directs);
@@ -656,7 +661,7 @@ function ChannelRow({ c, active, depth, onOpen, alsoIn, dots = true }: { c: P.Co
   );
 }
 
-export function SpaceTree({ spaceId, active, onOpen, depth = 0, seen = new Set<string>(), dots }: { spaceId: string; active?: string; onOpen: (c: P.ConversationView) => void; depth?: number; seen?: Set<string>; dots?: boolean }) {
+function SpaceTree({ spaceId, active, onOpen, depth = 0, seen = new Set<string>(), dots }: { spaceId: string; active?: string; onOpen: (c: P.ConversationView) => void; depth?: number; seen?: Set<string>; dots?: boolean }) {
   if (seen.has(spaceId)) return null;
   const nextSeen = new Set(seen).add(spaceId);
   const kids = spaceChildren(spaceId);

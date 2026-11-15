@@ -22,6 +22,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, s
 import { join, resolve } from 'node:path';
 import { AnchorError, extract, fetchBuild, type Build } from './extract.ts';
 import { diffFingerprints, fingerprint, type Diff, type Fingerprint } from './fingerprint.ts';
+import { updateSounds } from './sounds.ts';
 
 const argv = process.argv.slice(2);
 const opt = (n: string) => {
@@ -95,6 +96,12 @@ try {
   // 1. fetch + extract
   const fetched = await fetchBuild(CACHE);
   build = fetched.build;
+  // Discord's call sounds (sounds.ts): a failure here is a warning, never a reason to keep an old libdave.
+  try {
+    log(`call sounds: ${await updateSounds(fetched.files, CACHE, join(ROOT, 'sounds'), build.number)}`);
+  } catch (e) {
+    warnings.push(`call sounds: ${(e as Error).message}`);
+  }
   stage = 'extract';
   const ex = await extract({ files: fetched.files, cache: CACHE, out: staging, build, allowFetch: true });
 

@@ -67,7 +67,7 @@ export interface MailSink {
 }
 
 /** remote.ts's side: the call path, and asking for the grant again. */
-export interface ManagerLink {
+interface ManagerLink {
   callRaw(account: string, op: string, input: Record<string, unknown>, timeoutMs: number): Promise<unknown>;
   askMailAgain(): Promise<void>;
 }

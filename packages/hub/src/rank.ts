@@ -99,7 +99,7 @@ export function rankFeatures(x: ScoreInput, s: Scored): Features {
   };
 }
 
-export const vector = (f: Features): number[] => FEATURES.map((k) => f[k]);
+const vector = (f: Features): number[] => FEATURES.map((k) => f[k]);
 
 // ------------------------------------------------------------------ the model
 
@@ -169,14 +169,14 @@ export interface Prediction {
 
 /**
  * The chances and the value. With `z` (drawZ) and a model that knows its uncertainty, a Thompson sample: each logit
- * moved by `scale` × its spread × its draw.
+ * moved by `scale` × its spread (never less than `floor`, EXPLORE_FLOOR) × its draw.
  */
-export function predict(m: RankModel, f: Features, z?: { open: number; send: number } | null, scale = EXPLORE_SCALE): Prediction {
+export function predict(m: RankModel, f: Features, z?: { open: number; send: number } | null, scale = EXPLORE_SCALE, floor = EXPLORE_FLOOR): Prediction {
   let lo = dot(m.open, f);
   let ls = dot(m.send, f);
   if (z && m.cov) {
-    lo += scale * spread(m.cov.features, m.cov.open, f) * z.open;
-    ls += scale * spread(m.cov.features, m.cov.send, f) * z.send;
+    lo += scale * Math.max(floor, spread(m.cov.features, m.cov.open, f)) * z.open;
+    ls += scale * Math.max(floor, spread(m.cov.features, m.cov.send, f)) * z.send;
   }
   const open = sigmoid(lo);
   const send = sigmoid(ls);
@@ -454,6 +454,12 @@ export const Z_CLIP = 2;
 export const EXPLORE_EPOCH = 30 * 60_000;
 /** How far the sample may stray, as a share of the uncertainty: the replay's cost rule sets it (docs/inbox.md). */
 export const EXPLORE_SCALE = 1;
+/**
+ * The least spread a sample moves a row's log-odds by. As opens pile up the fit grows sure of every row and the
+ * sample stops straying, so the order would settle into the mean; the floor keeps some movement in it, so rows from
+ * further down still come into view now and then (docs/inbox.md, "Exploring"). The replay's cost rule sets it.
+ */
+export const EXPLORE_FLOOR = 0.4;
 
 /** Which draw holds now: changes at a refit and every EXPLORE_EPOCH. */
 export const epochOf = (m: Pick<RankModel, 'fitAt'>, now: number) => `${m.fitAt ?? 0}:${Math.floor(now / EXPLORE_EPOCH)}`;

@@ -40,10 +40,10 @@ const json = <T>(s: string | null | undefined, fallback: T): T => {
 const hash = (...xs: string[]) => createHash('sha256').update(xs.join('\0')).digest('base64url');
 
 /** A part's id in URLs: its extractor id hashed, so any id the extractor uses fits in a path. */
-export const partId = (messageId: string, attachmentId: string) => hash('part', messageId, attachmentId).slice(0, 16);
+const partId = (messageId: string, attachmentId: string) => hash('part', messageId, attachmentId).slice(0, 16);
 
 /** The frame's CSP: no script, nothing loaded but this hub's mail images and data: images, and only in our frames. */
-export function htmlCsp(origin: string, messageId: string): string {
+function htmlCsp(origin: string, messageId: string): string {
   return [
     'sandbox allow-same-origin',
     "default-src 'none'",
@@ -141,6 +141,7 @@ class Parts {
         trackers: held.trackers,
         imagesShown: shown,
         plain: held.plain && hasTextPart(b),
+        ...(held.formatted ? { formatted: true } : {}),
       };
       for (const x of dedupe(held.mismatched).slice(0, 3)) warnings.push(`A link that shows ${x.shown} goes to ${x.goes}.`);
     }
@@ -236,7 +237,7 @@ const dedupe = (xs: { shown: string; goes: string }[]) => [...new Map(xs.map((x)
 const domain = (e: string) => e.toLowerCase().split('@').pop() ?? '';
 
 /** A name that is itself another address, and replies that go to another domain than the sender's. */
-export function senderWarnings(m: { from_addr?: string | null; from_name?: string | null }, replyTo: M.MailAddress[]): string[] {
+function senderWarnings(m: { from_addr?: string | null; from_name?: string | null }, replyTo: M.MailAddress[]): string[] {
   const out: string[] = [];
   const from = String(m.from_addr ?? '').toLowerCase();
   const named = String(m.from_name ?? '').match(/[^\s<>"'()]+@[^\s<>"'()]+\.[a-z]{2,}/i)?.[0].toLowerCase();

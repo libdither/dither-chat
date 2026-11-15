@@ -17,7 +17,7 @@
 
 import type * as P from '@dither-chat/protocol';
 import { VOLUME_MAX } from '@dither-chat/protocol';
-import { peerStats, type Transport, type TransportHost } from '../call.ts';
+import { peerStats, sentAudioLevel, type Transport, type TransportHost } from '../call.ts';
 import { daveWorkerSource } from './dave-worker.ts';
 import { answer, codecPt, firstSsrc, offerForServer } from './sdp.ts';
 
@@ -251,6 +251,7 @@ export function discordTransport(host: TransportHost): Transport {
       host.speaker.srcObject = remote;
       outputs();
       host.speaker.play().catch(() => {});
+      e.track.addEventListener('unmute', () => host.heard?.(), { once: true });
     };
     pc.onconnectionstatechange = () => {
       if (pc?.connectionState === 'failed') {
@@ -421,6 +422,7 @@ export function discordTransport(host: TransportHost): Transport {
       const s = await peerStats(pc);
       return { ...s, dave: { version: secureVersion, ...counts, sandboxed: workerOrigin === 'null' } } as any;
     },
+    micLevel: () => (pc ? sentAudioLevel(pc, host.mic.getAudioTracks()[0]) : Promise.resolve(null)),
     stop() {
       teardown(true);
     },

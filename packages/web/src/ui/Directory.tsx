@@ -8,11 +8,12 @@ import { api, db, go, prefs, rev, setPrefs, toast, type DirectorySort } from '..
 import { AccountChip, Avatar, Count, Empty, Modal, NetBadge } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
-import { dropPlace, openPlaceMenu } from './Organize.tsx';
+import { dropPlace } from './Organize.tsx';
+import { openPlaceMenu } from './menus.tsx';
 import { saveThreshold, thresholdOf } from './Reorganize.tsx';
 import { pct, Sensitivity } from './Sensitivity.tsx';
 
-export interface Place {
+interface Place {
   key: string;
   kind: 'space' | 'conversation' | 'folder';
   id: string;
@@ -44,7 +45,7 @@ const fromEntry = (e: RailEntry): Place => {
   return { key: e.key, kind: 'folder', id: e.folder.id, name: e.folder.name, topic: null, icon: null, network: null, noun: `folder, ${e.folder.items.length} items`, accountIds: [], convs, badge: u.badge, unread: u.unread, last: Math.max(0, ...convs.map((c) => c.lastMessageAt ?? 0)) };
 };
 
-export function allPlaces(): Place[] {
+function allPlaces(): Place[] {
   const convs = [...db.conversations.values()].filter((c) => visibleConv(c) && (c.shape === 'group' || (c.shape === 'channel' && !c.spaceIds.length)));
   return [...allCommunities().map(fromSpace), ...convs.map(fromConv)];
 }

@@ -194,7 +194,9 @@ docs/translate.md.
 the post, a toast's View) remembers the one it was opened from: a line under the header says where Back goes ("Back
 to Maya's post"), and so does the header's Back. Back brings that thread as it was left, with nothing read again: its
 branches, folds and what you did, scrolled where it was, the reply you went into lit for a moment. Each step back
-goes one thread up; opening a thread from anywhere else (the feed, a profile, a search) starts afresh.
+goes one thread up; opening a thread from anywhere else (the feed, a profile, a search) starts afresh. These are steps
+back through history, so the phone's back button, the swipe and the header's Back all agree, and a post's thread
+opened from the feed, a profile or search results goes back there rather than to the inbox (docs/phone.md "Back").
 
 **Replies as a tree** (`ui/feed/tree.ts`, `Comments.tsx`). Every post known under the post goes under the one it
 answers: X's chains (a reply and the first answers under it), the branches the hub logged before (`logged`, below),

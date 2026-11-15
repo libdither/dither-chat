@@ -93,7 +93,7 @@ export type Step =
   | { at: 'approved'; session: ApprovedSession; ending?: boolean; ended?: boolean; error?: string }
   | { at: 'failed'; error: string };
 
-export type StepEvent =
+type StepEvent =
   /** Text from the camera, a picture or the paste field. */
   | { t: 'read'; text: string; now: number }
   /** The approve button, pressed. */

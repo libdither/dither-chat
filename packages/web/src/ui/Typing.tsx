@@ -3,6 +3,7 @@
  * dots on the avatar of a DM or group row while someone there types.
  */
 import { typingLine } from '@dither-chat/protocol';
+import type { ComponentChildren } from 'preact';
 import { authorName, personOf } from '../model.ts';
 import { db, typing } from '../state.ts';
 import { typersIn, type Typer } from '../typers.ts';
@@ -20,7 +21,7 @@ function useTypers(convIds: string[]): Typer[] {
   return typersIn(typing.value, convIds, Date.now());
 }
 
-export function TypingDots() {
+function TypingDots() {
   return (
     <span class="typing-dots" aria-hidden="true">
       <i />
@@ -30,17 +31,23 @@ export function TypingDots() {
   );
 }
 
-/** Always there, empty or not, so someone starting to type never moves the timeline. */
-export function TypingBar({ convIds }: { convIds: string[] }) {
+/**
+ * Always there, empty or not, so someone starting to type never moves the timeline. A person's chat puts its route line
+ * ("To Sam on Signal", ui/Pairs.tsx) at the start of this row, and who is typing goes to its end (docs/chats.md).
+ */
+export function TypingBar({ convIds, lead }: { convIds: string[]; lead?: ComponentChildren }) {
   const line = typingLine(useTypers(convIds).map(typerName));
+  const now = line.length > 0 && (
+    <>
+      <TypingDots />
+      <span class="typing-text">{line.map((r) => (r.bold ? <b>{r.text}</b> : r.text))}</span>
+    </>
+  );
+  if (!lead) return <div class={`typing-bar ${line.length ? 'on' : ''}`}>{now}</div>;
   return (
-    <div class={`typing-bar ${line.length ? 'on' : ''}`}>
-      {line.length > 0 && (
-        <>
-          <TypingDots />
-          <span class="typing-text">{line.map((r) => (r.bold ? <b>{r.text}</b> : r.text))}</span>
-        </>
-      )}
+    <div class={`typing-bar with-lead ${line.length ? 'on' : ''}`}>
+      <div class="typing-lead">{lead}</div>
+      {now && <div class="typing-now">{now}</div>}
     </div>
   );
 }

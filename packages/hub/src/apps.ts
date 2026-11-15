@@ -22,7 +22,7 @@ type Cmd =
   | { t: 'appAutocomplete'; conversation: string; command: string; app: string; options: P.AppOptionValue[]; focused: string; query: string }
   | { t: 'interact'; conversation: string; interaction: P.InteractRequest };
 
-export interface AppsDeps {
+interface AppsDeps {
   store: Store;
   online: (accountId: string) => boolean;
   command: <T>(accountId: string, cmd: Cmd, timeoutMs?: number) => Promise<T>;

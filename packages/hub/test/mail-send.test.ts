@@ -470,6 +470,37 @@ describe('composing', () => {
     expect(hits.map((h) => h.email)).toContain('sam@lee.example');
     expect(w.hub.outbox.addresses('me@')).toEqual([]);
   });
+
+  test("the server's own suggestions (mail.contacts): once each, named, never yours; kept a minute; a slow server adds nothing", async () => {
+    const contacts = [
+      { name: 'Dana Okafor', email: 'dana@okafor.example' },
+      { name: null, email: 'Sam@Lee.example' },
+      { name: 'Sam Lee', email: 'sam@lee.example' },
+      { name: 'Me', email: ME },
+      { name: 'Broken', email: 'not an address' },
+    ];
+    const w = await world({ opts: { contacts } });
+    expect(w.hub.store.account(ACC)?.contacts).toBe(1);
+    expect(await clock.wait(w.hub.outbox.contacts('dana', ACC))).toEqual([{ name: 'Dana Okafor', email: 'dana@okafor.example', wroteTo: false, count: 0 }]);
+    expect(await clock.wait(w.hub.outbox.contacts('lee', ACC))).toEqual([{ name: 'Sam Lee', email: 'sam@lee.example', wroteTo: false, count: 0 }]);
+    expect(await clock.wait(w.hub.outbox.contacts('me', ACC))).toEqual([]);
+    expect(await clock.wait(w.hub.outbox.contacts('broken', ACC))).toEqual([]);
+    const asked = () => w.fake.calls.filter((c) => c.op === 'mail.contacts').length;
+    const before = asked();
+    await clock.wait(w.hub.outbox.contacts('DANA', ACC));
+    expect(asked()).toBe(before);
+    await clock.advance(61_000);
+    await clock.wait(w.hub.outbox.contacts('dana', ACC));
+    expect(asked()).toBe(before + 1);
+    // Past CONTACTS_WAIT_MS: nothing from it, and the page keeps the hub's own suggestions.
+    w.fake.setOpts(ACC, { latencyMs: 10_000 });
+    expect(await clock.wait(w.hub.outbox.contacts('priya', ACC), 4000)).toEqual([]);
+    // An account whose status does not say it answers is not asked.
+    const w2 = await world();
+    expect(w2.hub.store.account(ACC)?.contacts ?? null).toBeNull();
+    expect(await clock.wait(w2.hub.outbox.contacts('dana', ACC))).toEqual([]);
+    expect(w2.fake.calls.some((c) => c.op === 'mail.contacts')).toBe(false);
+  });
 });
 
 describe('once, and across a restart', () => {

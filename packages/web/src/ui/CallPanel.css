@@ -18,10 +18,6 @@
 .call-people li.local-mute .call-avatar {
   opacity: 0.5;
 }
-.call-flag.server {
-  color: var(--bg-raised);
-  background: var(--danger);
-}
 .call-tags {
   display: flex;
   gap: 4px;

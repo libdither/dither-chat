@@ -11,7 +11,7 @@ import { rev, route, toast } from '../state.ts';
 import { countKey } from '../clicklog.ts';
 import { fullKey, pageOf } from '../clicks.ts';
 import { Icon } from './icons.tsx';
-import { useLongPress } from './Reactions.tsx';
+import { useLongPress } from './longpress.ts';
 import { Sheet } from './Sheet.tsx';
 
 export type MenuEntry =
@@ -126,7 +126,7 @@ export async function copy(text: string, what = 'Copied') {
 const PAD = 8;
 
 /** Where a box of this size goes: at the point, flipped or pushed back inside the window. */
-export function place(x: number, y: number, w: number, h: number, vw: number, vh: number, flipX?: number): { left: number; top: number } {
+function place(x: number, y: number, w: number, h: number, vw: number, vh: number, flipX?: number): { left: number; top: number } {
   let left = x;
   if (left + w > vw - PAD) left = flipX !== undefined ? flipX - w : x - w;
   left = Math.max(PAD, Math.min(left, vw - w - PAD));

@@ -20,7 +20,7 @@ import { Icon } from './icons.tsx';
 import { conversationMenu, spaceMenu } from './menus.tsx';
 import { placeConvs } from './Organize.tsx';
 import { Action, Card, Columns, Facts, Hero, ProfilePage, Tag } from './ProfileShell.tsx';
-import { openConv } from './Sidebar.tsx';
+import { openConv } from '../opening.ts';
 import { Loading } from './Loader.tsx';
 import { peopleExtras } from './peopleExtras.ts';
 import { ResetSessionCard } from './ResetSession.tsx';
@@ -34,7 +34,7 @@ import { useModeration } from './ModerationLazy.tsx';
 import { MentionFinds } from './MentionFinds.tsx';
 
 /** "Seen 12 of 1,287 listed (1%) · 214 online": honest about how little that may be. */
-export function coverageText(c: P.MemberCoverageView): string {
+function coverageText(c: P.MemberCoverageView): string {
   const seen = c.seen.toLocaleString();
   if (!c.total) return c.seen ? `Seen ${seen}; no member count from the network yet` : 'None seen yet';
   const f = c.fraction ?? 0;

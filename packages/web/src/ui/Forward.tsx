@@ -14,7 +14,7 @@ import { authorName, communitiesOf, convLabel, convTitle, identityName, kindLabe
 import { api, db, go, isSelfIdentity, openProfile, prefs, rev, toast } from '../state.ts';
 import { Avatar, Modal, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
-import { openConv } from './Sidebar.tsx';
+import { openConv } from '../opening.ts';
 import { isQuietConv } from '../feed.ts';
 
 export const forwarding = signal<P.MessageView | null>(null);

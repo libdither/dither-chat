@@ -2,7 +2,7 @@ import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, NETWORK_META, RULE_LABEL, RULE_LEVELS, sendBlocker, showsGone, showsInline } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
-import { ago, bytes, clock, dayLabel, fullTime, sameDay } from '../format.ts';
+import { ago, clock, dayLabel, fullTime, sameDay } from '../format.ts';
 import { retention } from '../history.ts';
 import { isJumbo, renderMarkdown } from '../markdown.ts';
 import { inviteRef } from '../invites.ts';
@@ -29,11 +29,9 @@ import {
   ruleIcon,
   ruleName,
   ruleOn,
-  threadsOf,
   visibleAccount,
 } from '../model.ts';
 import {
-  api,
   db,
   go,
   isSelfIdentity,
@@ -61,6 +59,7 @@ import {
   jumpTo,
   startEditing,
   loadNewer,
+  openMessage,
   openProfile,
   toLatest,
   timelineKey,
@@ -69,15 +68,16 @@ import {
 } from '../state.ts';
 import { openPalette } from './Palette.tsx';
 import { reactionContext } from '../reactions.ts';
-import { openAbout } from './About.tsx';
+import { openAbout } from '../opening.ts';
 import { AccountChip, Avatar, Empty, Menu, NetGlyph, variantIcon } from './bits.tsx';
-import { HoverReactions, InsertPicker, ReactionBar, useLongPress } from './Reactions.tsx';
+import { HoverReactions, InsertPicker, ReactionBar } from './Reactions.tsx';
+import { useLongPress } from './longpress.ts';
 import { Icon } from './icons.tsx';
 import { TriageWhy, tierIcon, tierName } from './Marks.tsx';
 import { MessageHistory, Ticks } from './MessageHistory.tsx';
 import { detailsShown, showDetails, swipeReply } from './Pager.ts';
-import { openConv } from './Sidebar.tsx';
-import { viewer, type ViewerImage } from './Viewer.tsx';
+import { openConv } from '../opening.ts';
+import { viewer, type ViewerImage } from '../viewer.ts';
 import { JoinCallButton } from './Call.tsx';
 import { EmojiComplete, insertAtCaret } from './EmojiComplete.tsx';
 import { SlashCommandsLazy } from './apps/lazy.tsx';
@@ -90,7 +90,7 @@ import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
 import { TypingBar } from './Typing.tsx';
 import { useGrow } from './grow.ts';
 import { AttachSheet, CameraView, SendScreen } from './Attach.tsx';
-import { mediaOffer, preloadStickers, StickerButton, StickerPicker, stickerInstaller, ViewOnceChip, VoiceButton } from './ComposerMedia.tsx';
+import { mediaOffer, preloadStickers, StickerPicker, stickerInstaller, ViewOnceChip, VoiceButton } from './ComposerMedia.tsx';
 import { CAPTURE_ACCEPT, MEDIA_ACCEPT, opensSendScreen } from '../camera.ts';
 import { phone, touchOnly } from '../phone.ts';
 import { composerDone, composerTyped } from '../typing.ts';
@@ -161,7 +161,7 @@ function Crumbs({ c }: { c: P.ConversationView }) {
  * A conversation's notification rule, from its header: Automatic (no rule), Always alert, List only or Mute. With no
  * rule of its own, the line under Automatic says what holds: a rule above it, or what the network does here.
  */
-export function LevelMenu({ c, also }: { c: P.ConversationView; /** A person's other chats, which take the same rule (all chats together). */ also?: P.ConversationView[] }) {
+function LevelMenu({ c, also }: { c: P.ConversationView; /** A person's other chats, which take the same rule (all chats together). */ also?: P.ConversationView[] }) {
   const eff = effectiveLevel(c);
   const own = ruleOn('conversation', c.id);
   const com = c.spaceIds[0] ?? (c.parentId ? db.conversations.get(c.parentId)?.spaceIds[0] : undefined);
@@ -655,7 +655,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
   const ticks = m.receipts && isSelfIdentity(m.authorId) ? <Ticks m={m} /> : null;
   return (
     <div
-      class={`msg ${grouped ? 'grouped' : ''} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''}`}
+      class={`msg ${grouped ? 'grouped' : target || m.quote ? '' : 'head'} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''}`}
       id={`m-${m.id}`}
       ref={(el) => void (el && swipeReply.set(el, () => onReply(m)))}
       {...menuProps}
@@ -792,7 +792,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
 // ------------------------------------------------------------------ timeline
 
 /** Messages drawn at the newest end of a timeline. The rest stay in memory and are drawn as the view nears them. */
-export const WINDOW = 150;
+const WINDOW = 150;
 /** How many more are drawn each time the view nears an end of what is drawn. */
 const STEP = 100;
 
@@ -816,7 +816,10 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   const t = timelines.get(tkey);
   const [flash, setFlash] = useState<string | null>(null);
   const scrolledTo = useRef<string | null>(null);
+  /** A quoted message on its way to the screen (onQuote below). */
+  const revealing = useRef<string | null>(null);
   useEffect(() => {
+    revealing.current = null;
     // A person's chat pages back through every route to the message; one too far back shows its route alone.
     if (focus && tkey.startsWith('p:')) void jumpInChat(tkey, focus).then((found) => !found && chat?.onMissing());
     else if (focus) void jumpTo(convIds[0], focus);
@@ -867,6 +870,17 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     const b = bounds();
     if (i !== undefined && (i < b.start || i >= b.end)) {
       const [from, to] = around(i);
+      drawn.current = { key: tkey, from, to };
+    }
+    slices.whole();
+  }
+  // And a quoted message that has just come in (onQuote below), likewise.
+  const shown = revealing.current;
+  const si = shown ? at.get(shown) : undefined;
+  if (si !== undefined) {
+    const b = bounds();
+    if (si < b.start || si >= b.end) {
+      const [from, to] = around(si);
       drawn.current = { key: tkey, from, to };
     }
     slices.whole();
@@ -979,16 +993,24 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     if (el && Math.abs(moved) >= 1) el.scrollTop += moved;
   });
 
-  // A reply's quote shows the message it quotes: drawn first if it is held but not drawn.
-  const revealing = useRef<string | null>(null);
+  // A reply's quote shows the message it quotes: drawn first if it is held but not drawn. One further back than the
+  // timeline holds is fetched with the page around it, in place, as a link to a message is (jumpTo, jumpInChat); one
+  // in another chat, or too far back in a person's chat, opens its own chat at it.
   const quote = useRef((_: string) => {});
   quote.current = (id: string) => {
     const el = document.getElementById(`m-${id}`);
     if (el) return el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    const i = at.get(id);
-    if (i === undefined) return;
     revealing.current = id;
-    draw(...around(i));
+    const i = at.get(id);
+    if (i !== undefined) return draw(...around(i));
+    const q = quoted.get(id);
+    const away = () => {
+      if (revealing.current === id) revealing.current = null;
+      if (q) openMessage(q.conversationId, id);
+    };
+    if (tkey.startsWith('p:')) void jumpInChat(tkey, id).then((found) => !found && away());
+    else if (q?.conversationId === convIds[0]) void jumpTo(convIds[0], id);
+    else away();
   };
   const onQuote = useMemo(() => (id: string) => quote.current(id), []);
   // The same function from one render to the next, so a message is not drawn again for a new one (memo.ts).
@@ -1001,6 +1023,8 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     if (!el) return;
     revealing.current = null;
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setFlash(id);
+    setTimeout(() => setFlash((f) => (f === id ? null : f)), 2500);
   });
 
   // A switch is done once the newest message is on screen, or the hub has answered (docs/perf.md).
@@ -1089,11 +1113,11 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
 
 // ------------------------------------------------------------------ composer
 
-function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, disabledReason, lead }: {
+function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledReason, routed }: {
   targets: { convId: string; accountId?: string };
   placeholder: string;
-  /** A person page (ui/Pairs.tsx): a line in place of the placeholder that can be clicked; it moves to the box's edge once typed in. */
-  lead?: ComponentChildren;
+  /** A person page: the line over the box says where the message goes (ui/Pairs.tsx), so the placeholder is just "Message". */
+  routed?: boolean;
   sendAs?: { options: { id: string; label: any }[]; value: string; onChange: (v: string) => void; label: string };
   onSendAs?: never;
   reply: P.MessageView | null;
@@ -1321,7 +1345,7 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       data-track="text box"
       rows={1}
       value={chips.shown}
-      placeholder={disabledReason ?? (lead ? '' : placeholder)}
+      placeholder={disabledReason ?? (routed ? 'Message' : placeholder)}
       disabled={!!disabledReason}
       onInput={chips.onInput}
       onBlur={composerDone}
@@ -1367,17 +1391,39 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
       <Icon name="smile" size={onPhone ? 20 : 18} />
     </button>
   );
-  const sendBtn =
-    attaching && offer.record && !text.trim() && !files.length ? (
+  const recording = attaching && offer.record && !text.trim() && !files.length;
+  const sendBtn = recording ? (
       <VoiceButton conversationId={targets.convId} onPhone={onPhone} voice={offer.voice} onSend={(f, voice) => sendMedia({ files: [f], ...(voice ? { media: { voice } } : {}) })} />
-    ) : (
-      <button class="send-btn" data-track="send" disabled={!canSend} onClick={submit} aria-label="Send" title={sendTitle}>
+  ) : (
+    <button class="send-btn" data-track="send" disabled={!canSend} onClick={submit} aria-label="Send" title={sendTitle}>
+      <Icon name="send" size={17} />
+    </button>
+  );
+  // On a phone, holding send opens the send menu (Send silently, Send later…); a right-click does with a mouse.
+  const sendMenuOpen = useRef<(() => void) | null>(null);
+  const sendHold = useLongPress(() => sendMenuOpen.current?.());
+  const phoneSend = (toggle: () => void) => {
+    sendMenuOpen.current = toggle;
+    return (
+      <button
+        class={`send-btn ${extras.silent ? 'silent' : ''}`}
+        data-track="send"
+        disabled={!canSend}
+        onClick={submit}
+        {...sendHold}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          if (!matchMedia('(pointer: coarse)').matches) toggle();
+        }}
+        aria-label="Send"
+        aria-haspopup="menu"
+        title={`${sendTitle ?? 'Send'}${extras.silent ? ', silently' : ''} (hold for more ways to send)`}
+      >
         <Icon name="send" size={17} />
+        {extras.silent && <Icon name="bellOff" size={10} class="send-badge" />}
       </button>
     );
-  const stickerBtn = conv && !disabledReason && !edit && offer.stickers && (
-    <StickerButton conversationId={targets.convId} accountId={targets.accountId ?? sender?.id} onPhone={onPhone} onSend={(st) => sendMedia({ media: { sticker: st.id } })} />
-  );
+  };
   const viewOnceChip = offer.viewOnce && files.length > 0 && !edit && <ViewOnceChip on={viewOnce} set={setViewOnce} />;
   return (
     <div
@@ -1480,44 +1526,29 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
         />
       ) : onPhone ? (
         <div class="composer-row">
-          {attaching && (
-            <button class="icon-btn composer-plus" data-track="plus" onClick={() => setSheet(true)} aria-label="Attach photos, videos or files">
+          {(attaching || canSticker) && (
+            <button ref={plusRef} class="icon-btn composer-plus" data-track="plus" onClick={() => setSheet(true)} aria-label={attaching ? 'Attach photos, videos or files' : 'Stickers'}>
               <Icon name="plus" size={22} />
             </button>
           )}
           <div class={`composer-box ${disabledReason ? 'disabled' : ''}`}>
             {sendAsMenu}
-            {lead ? (
-              <div class={`pair-lead ${text ? 'raised' : ''}`}>
-                <div class="pair-lead-slot">{lead}</div>
-                {box}
-              </div>
-            ) : (
-              box
-            )}
+            {box}
             {emojiBtn}
-            {stickerBtn}
             {attaching && (
               <button class="icon-btn composer-camera" data-track="camera" onClick={openCamera} aria-label="Take a photo or video">
                 <Icon name="camera" size={20} />
               </button>
             )}
           </div>
-          {extras.button}
-          {sendBtn}
+          {/* A phone has no room for the send menu's arrow: holding the send button opens it. */}
+          {extras.menu && !recording ? extras.menu(phoneSend) : sendBtn}
         </div>
       ) : (
         <div class={`composer-box ${disabledReason ? 'disabled' : ''}`}>
           {plus}
           {sendAsMenu}
-          {lead ? (
-            <div class={`pair-lead ${text ? 'raised' : ''}`}>
-              <div class="pair-lead-slot">{lead}</div>
-              {box}
-            </div>
-          ) : (
-            box
-          )}
+          {box}
           {emojiBtn}
           <div class={`send-split ${extras.button ? 'two' : ''}`}>
             {sendBtn}
@@ -1547,9 +1578,9 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
         <AttachSheet
           limit={limit}
           onClose={() => setSheet(false)}
-          onPhotos={() => photos.current?.click()}
-          onFile={() => picker.current?.click()}
+          {...(attaching ? { onPhotos: () => photos.current?.click(), onFile: () => picker.current?.click() } : {})}
           onPoll={pollAccount ? () => setPolling(true) : undefined}
+          {...(canSticker ? { onSticker: () => plusRef.current && setStickerAt(plusRef.current.getBoundingClientRect()), onStickerHover: preloadStickers } : {})}
           {...(offer.viewOnce ? { onViewOnce: () => (setViewOnce(true), photos.current?.click()) } : {})}
         />
       )}
@@ -1586,8 +1617,8 @@ function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, d
 
 const touchKeyboard = () => matchMedia('(pointer: coarse)').matches;
 
-/** Why the composer cannot send here, or null. Catch up's reply box asks the same (ui/CatchUp.tsx). */
-export function composerBlocker(c: P.ConversationView, accountId?: string): string | null {
+/** Why the composer cannot send here, or null. */
+function composerBlocker(c: P.ConversationView, accountId?: string): string | null {
   // An open message request is read-only until accepted (docs/add.md).
   if (heldRequest(db.requests, c.id)) return 'Accept the message request first, under Requests';
   const vs = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a);
@@ -1743,7 +1774,8 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
         focus={msg}
         chat={{ badge: view === 'all' && badgeShows(directs), onFocus, onMissing }}
       />
-      <TypingBar convIds={shown.map((d) => d.id)} />
+      {/* The route line shares the typing line's row, over the box (docs/chats.md "The message box"). */}
+      <TypingBar convIds={shown.map((d) => d.id)} lead={!held && <PairLead person={person} directs={directs} focus={focus} onFocus={onFocus} />} />
       {held ? (
         <RequestBar r={held} />
       ) : (
@@ -1753,7 +1785,7 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
           reply={reply}
           clearReply={() => setReply(null)}
           disabledReason={composerBlocker(focus)}
-          lead={<PairLead person={person} directs={directs} focus={focus} onFocus={onFocus} />}
+          routed
         />
       )}
     </section>

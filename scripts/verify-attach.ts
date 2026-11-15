@@ -187,7 +187,8 @@ try {
 
   // ------------------------------------------------------------------ the row
 
-  const row = await page.eval<string[]>(`[...document.querySelector('.composer-row').children].map((e) => e.className.split(' ').filter(Boolean)[e.classList.contains('composer-box') ? 0 : e.classList.length - 1])`);
+  const row = await page.eval<string[]>(`[...document.querySelector('.composer-row').children].map((e) => (e.classList.contains('menu-anchor') ? e.firstElementChild : e)).map((e) => (e.classList.contains('send-btn') ? 'send-btn' : e.className.split(' ').filter(Boolean)[e.classList.contains('composer-box') ? 0 : e.classList.length - 1]))`);
+  // Send, or the microphone in its place while the box is empty.
   check('the row reads [+] [box] [send]', row.join() === 'composer-plus,composer-box,send-btn', row);
   check('…with the camera inside the box, on its right', await page.eval(`document.querySelector('.composer-box').lastElementChild.classList.contains('composer-camera')`));
   check('counted as composer: plus and composer: camera', (await track('.composer-plus')) === 'plus' && (await track('.composer-camera')) === 'camera' && (await page.eval(`document.querySelector('.composer').dataset.trackArea`)) === 'composer');
@@ -198,6 +199,12 @@ try {
   const capped = await page.eval<{ h: number; line: number }>(`(() => { const t = document.querySelector('.composer textarea'); return { h: t.getBoundingClientRect().height, line: parseFloat(getComputedStyle(t).lineHeight) }; })()`);
   check('a long draft stops at five lines in the new row', Math.abs((capped.h - 16) / capped.line - 5) < 0.3, capped);
   if (shots) await page.shot(join(shots, 'composer-long-text-at-cap.png'));
+  // Holding send opens the send menu (a phone has no arrow beside it); lifting the finger neither sends nor closes it.
+  await tap('.composer-row .send-btn', 650);
+  check('holding send opens the send menu, and sends nothing', (await has('.sheet-menu [data-track="send later"]')) && (await page.eval<string>(`document.querySelector('.composer textarea').value`)).length > 100);
+  if (shots) await page.shot(join(shots, 'send-held.png'));
+  await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await page.until(`!document.querySelector('.sheet-menu')`, 3000);
   await page.eval(`(() => { const t = document.querySelector('.composer textarea'); t.select(); document.execCommand('delete'); t.blur(); })()`);
   await Bun.sleep(200);
 
@@ -206,7 +213,8 @@ try {
   await tap('.composer-plus');
   await page.until(`!!document.querySelector('.attach-sheet')`, 3000);
   const items = await page.eval<string[]>(`[...document.querySelectorAll('.attach-sheet [data-track]')].map((e) => e.closest('[data-track-area]').dataset.trackArea + ': ' + e.dataset.track)`);
-  check('+ opens the sheet: Photos & videos, File', items.join() === 'attach: photos,attach: file', items);
+  // Then what else the network takes (Stickers, Poll): a phone's box has no sticker button of its own.
+  check('+ opens the sheet: Photos & videos, File, then Stickers', items.slice(0, 2).join() === 'attach: photos,attach: file' && items.includes('attach: stickers'), items);
   if (shots) await page.shot(join(shots, 'plus-sheet.png'));
   uploads.length = 0;
   await tap('.attach-sheet [data-track=photos]');
@@ -255,7 +263,7 @@ try {
   await tap('.send-screen [data-track=back]');
   check('× goes back to the composer with the files and the text', !(await has('.send-screen')) && (await count('.composer-file')) === 2 && (await page.eval<string>(`document.querySelector('.composer textarea').value`)) === kept);
   await page.until(`[...document.querySelectorAll('.composer-file')].every((e) => e.dataset.status === 'done')`, 10_000).catch(() => {});
-  await tap('.composer-row > .send-btn');
+  await tap('.composer-row .send-btn');
   await until(async () => (await sentWith(kept)).length > 0, 15_000, 'the message on the hub').catch(() => {});
   await Bun.sleep(800);
   mine = await sentWith(kept);

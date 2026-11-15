@@ -47,13 +47,13 @@ export function emptyDb() {
 }
 export type Db = ReturnType<typeof emptyDb>;
 
-export function indexEdges(db: Db, edges: P.SpaceEdgeView[]) {
+function indexEdges(db: Db, edges: P.SpaceEdgeView[]) {
   db.children.clear();
   db.parents.clear();
   for (const e of edges) addEdge(db, e);
 }
 
-export function addEdge(db: Db, e: P.SpaceEdgeView) {
+function addEdge(db: Db, e: P.SpaceEdgeView) {
   const c = db.children.get(e.parentId) ?? [];
   if (!c.some((x) => x.childId === e.childId && x.childKind === e.childKind)) c.push(e);
   else c.splice(c.findIndex((x) => x.childId === e.childId && x.childKind === e.childKind), 1, e);
@@ -65,7 +65,7 @@ export function addEdge(db: Db, e: P.SpaceEdgeView) {
   db.parents.set(e.childId, p);
 }
 
-export function removeEdge(db: Db, parentId: string, childId: string) {
+function removeEdge(db: Db, parentId: string, childId: string) {
   const c = (db.children.get(parentId) ?? []).filter((e) => e.childId !== childId);
   if (c.length) db.children.set(parentId, c);
   else db.children.delete(parentId);
@@ -122,11 +122,11 @@ export function conversationMetaChanged(prev: P.ConversationView | undefined, ne
 
 export const prefKey = (kind: P.PlaceKind, id: string) => `${kind}:${id}`;
 
-export function setPlacePrefs(db: Db, prefs: P.PlacePrefView[]) {
+function setPlacePrefs(db: Db, prefs: P.PlacePrefView[]) {
   db.placePrefs = new Map(prefs.map((x) => [prefKey(x.kind, x.id), x]));
 }
 
-export function setCategories(db: Db, cats: P.CategoryView[], place: P.PlaceCategoryView[]) {
+function setCategories(db: Db, cats: P.CategoryView[], place: P.PlaceCategoryView[]) {
   db.categories = cats;
   db.placeCategories = new Map();
   for (const x of place) {
@@ -285,7 +285,7 @@ export function applyTimelineDelta(t: TimelineCopy, tl: P.SyncTimeline) {
   if (tl.conversationIds) t.conversationIds = tl.conversationIds;
 }
 
-export const INBOX_MAX = 300;
+const INBOX_MAX = 300;
 
 /** The inbox list, newest first, with these messages in it; a deleted or silenced one leaves. */
 export function mergeInbox(list: P.MessageView[], ms: P.MessageView[]): P.MessageView[] {

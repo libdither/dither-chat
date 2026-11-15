@@ -31,6 +31,7 @@ import type { MailSink } from './mail/backend.ts';
 import { ASK_LEVEL, ASK_REASON, type ManagerLink, publishManager } from './accounts-manager.ts';
 import type { NoticeSink } from './notices/index.ts';
 import { jobFailed } from './errors.ts';
+import { Stagger } from './stagger.ts';
 
 /** A batch's event kinds with how many of each, for its span: `message×3,typing`. */
 function kindsOf(events: { t: string }[]): string {
@@ -40,7 +41,7 @@ function kindsOf(events: { t: string }[]): string {
 }
 
 /** The kinds this hub hands to the manager when they are new. */
-export const MANAGED_KINDS = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x', 't3'];
+const MANAGED_KINDS = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x', 't3'];
 
 /**
  * The kinds this hub asks to add and run: its chat kinds, and Proton Mail, which Add account adds through the manager
@@ -53,7 +54,7 @@ const NOT_RUNNING = 'Not running in dither-accounts: ';
 const GONE = 'Removed from dither-accounts, and its session is not on this hub. Remove it here too, or add it again.';
 
 /** What this file uses of dither-accounts' AccountsClient and its spec (packages/client, packages/spec). */
-export interface AccountView {
+interface AccountView {
   id: string;
   kind: string;
   label: string;
@@ -111,7 +112,7 @@ export function asksOf(info: AppSelf | null | undefined): P.AccessAsk[] {
 }
 
 /** The manager's account, as the page reads it (accounts.ts ManagedAccountView). */
-export function managedViewOf(a: AccountView): P.ManagedAccountView {
+function managedViewOf(a: AccountView): P.ManagedAccountView {
   return {
     id: a.id,
     kind: a.kind,
@@ -129,10 +130,10 @@ export function managedViewOf(a: AccountView): P.ManagedAccountView {
 }
 
 /** The hub's request for mail (docs/mail.md): read and write, every account, added on the manager's page (§14 Q5). */
-export const MAIL_REQUEST = { interface: 'mail', level: 'write', accounts: '*', reason: 'Show your email beside your chats; mark, file and send mail as you ask' } as const;
+const MAIL_REQUEST = { interface: 'mail', level: 'write', accounts: '*', reason: 'Show your email beside your chats; mark, file and send mail as you ask' } as const;
 
 /** Whether the hub may read mail: a grant, a request waiting for you, or your no. */
-export function mailAccessOf(info: AppSelf | null | undefined): 'granted' | 'pending' | 'denied' | null {
+function mailAccessOf(info: AppSelf | null | undefined): 'granted' | 'pending' | 'denied' | null {
   if (info?.grants?.some((g) => g.interface === 'mail')) return 'granted';
   const asked = (info?.requests ?? []).filter((r) => r.interface === 'mail');
   if (asked.some((r) => r.state === 'pending')) return 'pending';
@@ -141,7 +142,7 @@ export function mailAccessOf(info: AppSelf | null | undefined): 'granted' | 'pen
 }
 
 /** Ask for mail once: not when it has a grant, or a request is waiting or was declined. */
-export const mailToAsk = (info: AppSelf | null | undefined): boolean => mailAccessOf(info) === null;
+const mailToAsk = (info: AppSelf | null | undefined): boolean => mailAccessOf(info) === null;
 
 /**
  * The hub's request for notices (docs/notices.md): what your accounts and services tell you, on every account that
@@ -173,7 +174,7 @@ export function kindsToAsk(info: AppSelf | null | undefined, kinds: readonly str
   return kinds.filter((k) => !covered.has(k));
 }
 
-export interface RemoteOpts {
+interface RemoteOpts {
   /** The manager: http://127.0.0.1:8486 */
   url: string;
   /** Where accounts-app.json is kept (the hub's data dir). */
@@ -186,7 +187,7 @@ export interface RemoteOpts {
 }
 
 /** POST /api/accounts answers this status when the error from created() carries it. */
-export const UNREACHABLE = 'dither-accounts is not reachable, so the account was not added. Try again once it is running.';
+const UNREACHABLE = 'dither-accounts is not reachable, so the account was not added. Try again once it is running.';
 
 type SupOpts = ConstructorParameters<typeof Supervisor>[1];
 
@@ -200,6 +201,23 @@ interface Saved {
 
 export class RoutedSupervisor extends Supervisor implements ManagerLink {
   private client: Client | null = null;
+  /**
+   * Restarts after a gap, one at a time per kind (stagger.ts): a manager that went without handing over gaps every
+   * account. One removed meanwhile is dropped without a word.
+   */
+  private gapRestarts = new Stagger((account) => {
+    if (!this.remote.has(account) || !this.client) return Promise.resolve();
+    return this.client.admin({ do: 'restart', account }).catch((e) => {
+      if (!this.remote.has(account)) return;
+      console.error(`[${account}] restart after a gap failed:`, e);
+      jobFailed('dither-accounts: restart after a gap', e, { account });
+    });
+  });
+
+  /** Restarts after a gap waiting or under way (the hub's /api/health; the deployer waits for them). */
+  gapRestartsWaiting(): number {
+    return this.gapRestarts.size;
+  }
   /** The chat accounts the manager lists for this hub (the ones it runs for the chat side). */
   private remote = new Map<string, AccountView>();
   /** Every account the manager lists for this hub, chat or not: the page's one list (accounts-manager.ts). */
@@ -374,8 +392,8 @@ export class RoutedSupervisor extends Supervisor implements ManagerLink {
         const notices = this.notices?.gap(account) ?? false;
         if (this.mail?.gap(account)) return;
         if (notices && !this.remote.has(account)) return;
-        console.warn(`[${account}] the manager dropped ${dropped} events while the hub was away; restarting the adapter for a fresh snapshot`);
-        this.client?.admin({ do: 'restart', account }).catch((e) => (console.error(`[${account}] restart after a gap failed:`, e), jobFailed('dither-accounts: restart after a gap', e, { account })));
+        console.warn(`[${account}] the manager dropped ${dropped} events while the hub was away; restarting the adapter for a fresh snapshot (one of a kind at a time: ${this.gapRestarts.size} waiting)`);
+        this.gapRestarts.add(account, this.remote.get(account)?.kind ?? '');
       },
       onConnection: (up) => {
         this.mail?.connection(up);
@@ -627,6 +645,7 @@ export class RoutedSupervisor extends Supervisor implements ManagerLink {
   /** Local adapters stop with the hub; the manager's keep running, and their events wait for the hub to return. */
   override async stopAll() {
     await super.stopAll();
+    this.gapRestarts.stop();
     if (this.mailTimer) clearInterval(this.mailTimer);
     this.mailTimer = null;
     this.client?.close();

@@ -88,7 +88,7 @@ export function SourceTable({ kinds }: { kinds: Kind[] }) {
   );
 }
 
-export const forget = (what: P.KeptKind, label: string) => () => confirm(`Forget all ${label}? This cannot be undone.`) && void eraseKept(what);
+const forget = (what: P.KeptKind, label: string) => () => confirm(`Forget all ${label}? This cannot be undone.`) && void eraseKept(what);
 
 /** Each kind Forget erases: its button, and what the confirmation calls it. */
 const FORGET: [P.KeptKind, string, string][] = [

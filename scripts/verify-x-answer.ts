@@ -59,8 +59,6 @@ let boot = await json('/api/bootstrap');
 if (!boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub');
 await until(async () => (boot = await json('/api/bootstrap')).conversations.some((c: any) => c.variant === 'feed'), 15_000, 'no feed conversation');
 const feed = boot.conversations.find((c: any) => c.variant === 'feed');
-const alice = boot.identities.find((i: any) => i.network === 'x' && i.handle === 'alicechen_dev');
-const quinn = boot.identities.find((i: any) => i.network === 'x' && i.handle === 'quinnwrites');
 
 const { page, close } = await launch();
 const load = async (hash: string) => {
@@ -68,25 +66,6 @@ const load = async (hash: string) => {
   await page.goto(`${base}/${hash}`);
 };
 const overflow = (sel: string) => page.eval<number>(`(() => { const s = document.querySelector(${JSON.stringify(sel)}); return s ? s.scrollWidth - s.clientWidth : -1; })()`);
-const thread = () =>
-  page.eval<any>(`(() => {
-    const f = document.querySelector('.thread-focal');
-    return {
-      hash: location.hash,
-      focal: f?.querySelector('.thread-focal-text')?.textContent ?? null,
-      focalWho: f?.querySelector('.post-who b')?.textContent ?? null,
-      ancestors: [...document.querySelectorAll('.thread-list > .thread-post')].map((p) => p.querySelector('.post-who b')?.textContent),
-      chains: [...document.querySelectorAll('.thread-chain')].map((c) => [...c.querySelectorAll('.thread-post')].map((p) => p.querySelector('.post-who b')?.textContent)),
-      // The comment tree: each reply's depth and who wrote it, in page order ("2:Nora").
-      tree: [...document.querySelectorAll('.ct-node')].map((n) => n.dataset.depth + ':' + (n.querySelector(':scope > .ct-main .post-who b')?.textContent ?? '')),
-      flat: [...document.querySelectorAll('.ct-flat')].map((f) => [f.querySelector('.ct-flat-top .post-who b')?.textContent, f.querySelectorAll('.ct-flat-reply').length]),
-      style: document.querySelector('.thread-style [aria-pressed="true"]')?.textContent ?? null,
-      lines: document.querySelectorAll('.thread-post.line').length,
-      more: !!document.querySelector('.thread-more'),
-      openOnX: f?.querySelector('.post-open')?.href ?? null,
-      stored: document.querySelector('.thread-stored')?.textContent ?? null,
-    };
-  })()`);
 
 
 const center = (sel: string) => page.eval<{ x: number; y: number } | null>(`(() => { const r = document.querySelector(${JSON.stringify(sel)})?.getBoundingClientRect(); return r ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null; })()`);
@@ -176,7 +155,7 @@ try {
   );
   await page.eval(`document.querySelector('.thread-focal .compose-closed')?.click()`);
   await page.until(`!!document.querySelector('.thread-focal .compose-text')`, 3000);
-  const ring = () => page.eval<any>(`(() => { const c = document.querySelector('.thread-focal .composer'); return { level: [...c.classList].find((x) => ['ok', 'warn', 'over'].includes(x)), n: c.querySelector('.ring-n')?.textContent ?? null, svg: !!c.querySelector('.compose-ring svg'), mark: c.querySelector('.compose-back mark')?.textContent ?? null, send: !c.querySelector('.compose-send').disabled, to: c.querySelector('.compose-to')?.textContent ?? null }; })()`);
+  const ring = () => page.eval<any>(`(() => { const c = document.querySelector('.thread-focal .post-composer'); return { level: [...c.classList].find((x) => ['ok', 'warn', 'over'].includes(x)), n: c.querySelector('.ring-n')?.textContent ?? null, svg: !!c.querySelector('.compose-ring svg'), mark: c.querySelector('.compose-back mark')?.textContent ?? null, send: !c.querySelector('.compose-send').disabled, to: c.querySelector('.compose-to')?.textContent ?? null }; })()`);
   await type('.thread-focal .compose-text', 'a'.repeat(100));
   let r = await ring();
   check('a reply box under the post, "Replying to @zyan_demo"; a ring and no number at 100', r.level === 'ok' && r.svg && r.n === null && r.send && /Replying to @zyan_demo/.test(r.to), r);
@@ -216,22 +195,22 @@ try {
 
   // ------------------------------------------------------------------ a reply to a reply; a quote
   await page.eval(`[...document.querySelectorAll('.ct-node')].find((n) => n.querySelector(':scope > .ct-main .post-who b')?.textContent === 'Ravi').querySelector(':scope > .ct-main .pa-btn.reply').click()`);
-  await page.until(`!!document.querySelector('.ct-node .composer')`, 3000);
-  r = await page.eval<any>(`({ to: document.querySelector('.ct-node .composer .compose-to')?.textContent, focused: document.activeElement?.classList.contains('compose-text') })`);
+  await page.until(`!!document.querySelector('.ct-node .post-composer')`, 3000);
+  r = await page.eval<any>(`({ to: document.querySelector('.ct-node .post-composer .compose-to')?.textContent, focused: document.activeElement?.classList.contains('compose-text') })`);
   check('Reply under a reply opens a box there, focused, "Replying to @ravi_routes"', /@ravi_routes/.test(r.to) && r.focused, r);
   if (shots) await page.shot(join(shots, 'answer-reply-to-reply.png'));
   await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
-  await page.until(`!document.querySelector('.ct-node .composer')`, 3000);
+  await page.until(`!document.querySelector('.ct-node .post-composer')`, 3000);
   check('Escape closes it', true);
   await page.eval(`[...document.querySelectorAll('.ct-node')].find((n) => n.querySelector(':scope > .ct-main .post-who b')?.textContent === 'Alice Chen').querySelector(':scope > .ct-main .pa-btn.repost').click()`);
   await page.until(`!!document.querySelector('.pa-float.pa-menu')`, 3000);
   await page.eval(`[...document.querySelectorAll('.pa-float.pa-menu button')].find((b) => /Quote/.test(b.textContent)).click()`);
-  await page.until(`!!document.querySelector('.composer[data-composer="quote"] .post-quoted')`, 3000);
+  await page.until(`!!document.querySelector('.post-composer[data-composer="quote"] .post-quoted')`, 3000);
   w0 = (await writes())!.length;
-  await type('.composer[data-composer="quote"] .compose-text', 'The best question in the thread.');
+  await type('.post-composer[data-composer="quote"] .compose-text', 'The best question in the thread.');
   if (shots) await page.shot(join(shots, 'answer-quote.png'));
   await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, modifiers: 2 });
-  await page.until(`!document.querySelector('.composer[data-composer="quote"]')`, 10000);
+  await page.until(`!document.querySelector('.post-composer[data-composer="quote"]')`, 10000);
   check('Quote: the post quoted under a box of your own; Ctrl+Enter posts it, once', (await writes())!.slice(w0).join() === 'publish', (await writes())!.slice(w0));
 
   // ------------------------------------------------------------------ someone else's post: likers are theirs to see

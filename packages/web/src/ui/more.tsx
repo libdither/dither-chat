@@ -13,9 +13,9 @@ import { whenIdle } from '../slices.ts';
  */
 const screenRows = () => Math.min(FIRST_ROWS, Math.ceil((typeof screen === 'object' ? Math.max(screen.height, screen.width) : 900) / 44) + 2);
 /** Rows drawn once the page is idle after that: more than the tallest screen holds. */
-export const FIRST_ROWS = 60;
+const FIRST_ROWS = 60;
 /** Rows added each time the view comes within MARGIN of the last one drawn. */
-export const MORE_ROWS = 100;
+const MORE_ROWS = 100;
 const MARGIN = '0px 0px 1200px 0px';
 
 /**

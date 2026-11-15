@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { join, resolve } from 'node:path';
 import { Categorizer, JevProvider, KeywordProvider, OllamaProvider, type CategoryProvider } from './categorize.ts';
 import { ActivityStore } from './activity.ts';
+import { ForYou } from './foryou.ts';
 import { Attention } from './attention.ts';
 import { exploreOn, InboxRanker, rankMode } from './ranker.ts';
 import { DemoManager, type ManagerLink } from './accounts-manager.ts';
@@ -15,18 +16,20 @@ import { Notices, type NoticeDelivery } from './notices/index.ts';
 import { FakeNoticeSource, seedDemoNotices } from './notices/fake.ts';
 import { Delivery } from './delivery.ts';
 import { Notifier } from './notify.ts';
-import { listByPrior, PhoneList, phoneListMode } from './phonelist.ts';
+import { listByPrior, PhoneList, phoneListBudget, phoneListMode } from './phonelist.ts';
 import { RequestNotifier, requestChain, type RequestNotice } from './requestnotify.ts';
 import { Devices } from './devices.ts';
 import { Embeddings, Jev } from './embeddings.ts';
 import { PushService } from './push.ts';
 import { ReadQueue } from './readqueue.ts';
 import { HubServer, mediaSigner } from './server.ts';
+import { BRISK, paceFromEnv } from './readingpace.ts';
 import { Store } from './store.ts';
 import { RoutedSupervisor } from './remote.ts';
 import { Supervisor } from './supervisor.ts';
 import { STOP_QUESTION, Triage, URGENT, type Judge } from './triage.ts';
 import { TriageVotes } from './votes.ts';
+import { Scorecard, seedDemoScores } from './scorecard.ts';
 import { loadVapidKeys } from './webpush.ts';
 import { NightlyBackup, pruneMediaCacheSteps, rotateAdapterLogs, tightenPermissions } from './housekeeping.ts';
 import { StartupTrace } from './startup.ts';
@@ -125,6 +128,12 @@ activity.prune(Date.now(), true);
 startup.mark('activity log');
 const triage = new Triage(store, activity);
 const votes = new TriageVotes(store, triage);
+// For you (docs/foryou.md): served items and their events are logged only while the activity log is on.
+const foryou = new ForYou(store, { logging: () => activity.enabled, levelOf: (id) => triage.effectiveLevel(id).level });
+// How the models did, day by day (scorecard.ts, docs/scorecard.md): each day scored once its outcomes are in. A demo
+// world has three invented weeks of it.
+const scorecard = new Scorecard(store.db);
+if (demo) seedDemoScores(store.db, Date.now());
 const attention = new Attention(store, triage);
 // The inbox's learned order (ranker.ts, docs/inbox.md). DITHER_INBOX_RANK=shadow works it out without sorting by it; off.
 // DITHER_INBOX_EXPLORE=0 sorts by its mean instead of a Thompson sample.
@@ -132,6 +141,7 @@ const ranker = new InboxRanker(store, triage, rankMode(process.env.DITHER_INBOX_
 attention.judge = ranker;
 // The learned order learns from rows weighed as the inbox weighs them now.
 ranker.owedTable = () => attention.owedTable;
+ranker.needsModel = () => attention.needsModel;
 // Per-device notification rules (docs/devices.md).
 const devices = new Devices(store, triage);
 // One notification per conversation, buzzing once a burst (docs/notifications.md).
@@ -332,6 +342,10 @@ const upkeepNow = async () => {
 };
 setTimeout(() => void upkeep(), 60_000);
 setInterval(() => void upkeep(), 6 * 3_600_000);
+// The scorecard, in slices (slices.ts): a few minutes after the start (backfilling every day the data covers, the
+// first time), then every hour, which finds the day that matured since.
+setTimeout(() => void scorecard.run(), 3 * 60_000);
+setInterval(() => void scorecard.run(), 3_600_000);
 
 setInterval(
   () =>
@@ -346,8 +360,13 @@ setInterval(
 
 const push = new PushService(store, loadVapidKeys(dataDir), process.env.DITHER_PUSH_SUBJECT ?? process.env.DITHER_PUBLIC_URL ?? 'https://github.com/libdither/dither-chat');
 // Which list rows reach the phones (docs/notifications.md, "The phone's list"). DITHER_PHONE_LIST=shadow sends them all
-// and logs what it would have held; off, as before it.
-const phone = new PhoneList(store.db, { mode: phoneListMode(process.env.DITHER_PHONE_LIST), kept: (now) => triage.marked(now).convs, readTs: (cid) => delivery.readAllTs(cid) });
+// and logs what it would have held; off, as before it. DITHER_PHONE_LIST_BUDGET: list pushes a day (5), or off.
+const phone = new PhoneList(store.db, {
+  mode: phoneListMode(process.env.DITHER_PHONE_LIST),
+  budget: phoneListBudget(process.env.DITHER_PHONE_LIST_BUDGET),
+  kept: (now) => triage.marked(now).convs,
+  readTs: (cid) => delivery.readAllTs(cid),
+});
 activity.noted = (w) => phone.noted(w);
 if (phone.mode !== 'on') console.log(`phone list: ${phone.mode} (DITHER_PHONE_LIST)`);
 
@@ -447,9 +466,13 @@ const server = new HubServer(store, sup, triage, {
   probeCategory: (question) => categorizer.probe(question),
   attention,
   activity,
+  foryou,
   devices,
   votes,
+  scorecard,
   archiveMedia: !demo,
+  // Index jobs and the gap fill read like a person (readingpace.ts); a demo's networks are fake, so no need there.
+  pace: demo ? BRISK : paceFromEnv(),
   mail,
   notices: notices ?? undefined,
   calendar: calendars,

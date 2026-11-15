@@ -81,6 +81,13 @@ export type Capability =
   | 'stage'
   /** In a call: the sounds this account may play (the call's `sounds` and `sound` ops), and effects others send (the call event's `effect`). */
   | 'soundboard'
+  /**
+   * In a bridge call: this device's camera and screen go to the account's client, which sends them as its own camera and
+   * Go Live (the call's `video` op), and others' cameras come back on the bridge's video slots (CallState.video).
+   */
+  | 'callVideo'
+  /** In a bridge call: watching someone's Go Live (the call's `watch` op); their screen comes back on a video slot. */
+  | 'watchStreams'
   /** Forwarding a message it can read into another conversation, the network's own way (the `forward` command). */
   | 'forward'
   /** Reads a conversation's or space's settings, members and permissions (the `about` command, about.ts). */
@@ -590,6 +597,13 @@ export interface HistoryResult {
   done: boolean;
   /** The ts of the page's oldest message, when there was one. */
   oldest?: number;
+  /** Where the next page starts, in the network's own terms (Discord: the oldest message's id): sent back as `cursor`. */
+  next?: string;
+  /**
+   * Nothing was fetched: the adapter cannot read this way just now (on Discord: the owner is using the live view, or a
+   * call is on). Ask again after this many ms; not a failure.
+   */
+  deferMs?: number;
 }
 
 /** The `walkMembers` command's reply. */
@@ -676,8 +690,13 @@ export type AdapterCommand =
   /**
    * Backfill older messages as message facts with live=false; reply.result: HistoryResult. `oldest`, the ts of the
    * page's oldest message, lets the hub's index jobs (jobs.ts) know exactly what a page covered.
+   * - `cursor`: the last page's `next`, when the page asked for ends where that one did; it names the message the
+   *   page goes back from, as the network's own client would (beforeTs is the same place as a time).
+   * - `pace: 'read'`: a bulk fetch the hub paces like a person reading back (docs/indexing.md "Reading pace"); an
+   *   adapter that can, fetches the page the way its client's scrolling would (Discord: opens the conversation in its
+   *   page and loads older messages there). Others ignore it.
    */
-  | { t: 'history'; id: string; conversation: string; beforeTs?: number; limit: number }
+  | { t: 'history'; id: string; conversation: string; beforeTs?: number; limit: number; cursor?: string; pace?: 'read' }
   /**
    * Search the network's own servers, one request (capability 'search'): Discord's guild or channel search,
    * Matrix's /search. `scope` is a space (a guild) or a conversation, native ids, or everything the account sees
@@ -815,6 +834,10 @@ export type AdapterCommand =
   /** reply.result: { sounds: CallSound[]; reason?: string } (capability 'soundboard'). */
   | { t: 'call'; id: string; call: string; op: 'sounds' }
   | { t: 'call'; id: string; call: string; op: 'sound'; sound: string; guild: string }
+  /** Bridge mode (capability 'callVideo'): the device's camera and screen, as the bridge's slots carry them, on or off. */
+  | { t: 'call'; id: string; call: string; op: 'video'; camera: boolean; screen: boolean; screenAudio?: boolean }
+  /** Bridge mode (capability 'watchStreams'): watch someone's Go Live, or stop. `user` native. */
+  | { t: 'call'; id: string; call: string; op: 'watch'; user: string; on: boolean }
   /**
    * What an invite, address, name or handle is, without joining, following or telling anyone (capability 'resolve').
    * Identity facts it names first, then reply.result: AddPreview. Not found or expired: an error sentence.

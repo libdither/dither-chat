@@ -3,7 +3,8 @@
  */
 import { describe, expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
-import { Jobs, PAUSE_MS } from '../src/jobs.ts';
+import { Jobs, PAGE } from '../src/jobs.ts';
+import { BRISK, ReadingPace } from '../src/readingpace.ts';
 import { BATCH, GAP_MS, HOURLY_CAP, NetSearch } from '../src/netsearch.ts';
 import { mediaSigner } from '../src/server.ts';
 import { Store } from '../src/store.ts';
@@ -41,6 +42,9 @@ function guild(store: Store, acc: any, id: string, name: string, channels: strin
   return all;
 }
 
+/** No reading pace: these tests are about what is fetched, readingpace.test.ts about how fast. */
+const brisk = (store: Store, clock: FakeClock) => new ReadingPace(store, BRISK, clock);
+
 const hub = (store: Store, network: P.Network, kind: 'conversation' | 'space', native: string) => (store.db.query(`SELECT id FROM ${kind} WHERE network = ? AND native_id = ?`).get(network, native) as any).id as string;
 
 describe('index jobs', () => {
@@ -50,17 +54,19 @@ describe('index jobs', () => {
     // The hub has the newest 10 of c1 already, from live sync.
     for (const m of net.c1.slice(-10)) store.ingest(acc, { t: 'message', message: m, live: false });
     const clock = new FakeClock(T0 + 1000 * minute);
-    const asked: { conversation: string; beforeTs: number }[] = [];
+    const asked: { conversation: string; beforeTs: number; cursor?: string; pace?: string; limit: number }[] = [];
     const jobs = new Jobs(store, {
       online: () => true,
       clock,
+      pace: brisk(store, clock),
       command: async (_a, cmd) => {
         expect(cmd.t).toBe('history');
-        asked.push({ conversation: cmd.conversation, beforeTs: cmd.beforeTs });
+        asked.push({ conversation: cmd.conversation, beforeTs: cmd.beforeTs, cursor: cmd.cursor, pace: cmd.pace, limit: cmd.limit });
         const below = net[cmd.conversation].filter((m) => m.ts < cmd.beforeTs);
         const page = below.slice(-cmd.limit);
         for (const m of page) store.ingest(acc, { t: 'message', message: m, live: false });
-        return { count: page.length, done: page.length === below.length, oldest: page[0]?.ts };
+        // `next`: the oldest message's own id, as Discord's extractor answers.
+        return { count: page.length, done: page.length === below.length, oldest: page[0]?.ts, next: page[0]?.nativeId };
       },
     });
     const v = jobs.create({ target: { kind: 'space', id: hub(store, 'discord', 'space', 'g1') }, history: true, members: false, repeatHours: 24 });
@@ -69,12 +75,17 @@ describe('index jobs', () => {
     jobs.start();
     await clock.until(() => jobs.get(v.id)!.state === 'done', 600_000, 'the job');
     const done = jobs.get(v.id)!;
-    expect(done).toMatchObject({ tasks: 2, done: 2, failed: 0, fetched: 490, pages: 6, nextRunAt: done.finishedAt! + 24 * 3_600_000 });
+    expect(done).toMatchObject({ tasks: 2, done: 2, failed: 0, fetched: 490, pages: 10, nextRunAt: done.finishedAt! + 24 * 3_600_000 });
     expect(n(store, 'SELECT COUNT(*) AS n FROM message')).toBe(500);
     // Each channel is one span back to its start.
     expect(store.db.query('SELECT from_ts FROM history_span ORDER BY conversation_id').all()).toEqual([{ from_ts: 0 }, { from_ts: 0 }]);
-    // A page every PAUSE_MS at most, on top of the adapter's pacing.
-    expect(PAUSE_MS).toBe(1500);
+    // Pages of 50, as the client scrolls, asked to be read like a person; each after the first goes back from the
+    // message the one before ended on, by its own id.
+    expect(PAGE).toBe(50);
+    expect(asked.every((a) => a.limit === 50 && a.pace === 'read')).toBe(true);
+    const c1 = asked.filter((a) => a.conversation === 'c1');
+    expect(c1[0].cursor).toBeUndefined();
+    expect(c1.slice(1).map((a) => a.cursor)).toEqual(['c1-200', 'c1-150', 'c1-100', 'c1-50']);
 
     // A day later, three new messages in c1: the next run asks one page per channel and stops at the span.
     net.c1.push(...[0, 1, 2].map((i) => ({ nativeId: `c1-new${i}`, conversation: 'c1', author: PEER, ts: clock.now() + i, body: 'new' })));
@@ -138,6 +149,7 @@ describe('index jobs', () => {
     const jobs = new Jobs(store, {
       online: () => true,
       clock,
+      pace: brisk(store, clock),
       command: async (_a, cmd) => {
         if (cmd.t === 'threads') {
           asked.push(`threads ${cmd.archived ? 'archived' : 'active'} ${cmd.offset}`);
@@ -176,6 +188,7 @@ describe('index jobs', () => {
     const jobs = new Jobs(store, {
       online: () => true,
       clock,
+      pace: brisk(store, clock),
       command: async (_a, cmd) => {
         expect(cmd.t).toBe('walkMembers');
         // No list of recent members here: answered without `next`, so the walk goes by name.
@@ -201,7 +214,7 @@ describe('index jobs', () => {
     expect(n(store, `SELECT COUNT(*) AS n FROM membership WHERE source = 'walk'`)).toBe(180);
   });
 
-  test('a member walk pages the recent members to the end, and walks a server too big for them by name', async () => {
+  test('a member walk pages the recent members to the end, and a server too big for them as far as the list goes, never by name', async () => {
     const { store, acc } = world();
     guild(store, acc, 'g1', 'Mid', [], 0);
     guild(store, acc, 'g2', 'Huge', [], 0);
@@ -212,11 +225,12 @@ describe('index jobs', () => {
     const jobs = new Jobs(store, {
       online: () => true,
       clock,
+      pace: brisk(store, clock),
       command: async (_a, cmd) => {
         expect(cmd.t).toBe('walkMembers');
         if (cmd.space === 'g2') {
           asked.push(`g2 ${cmd.recent ? `recent ${cmd.after ?? ''}` : cmd.query}`);
-          if (cmd.recent) return { count: 1000, total: 50_000, next: 'x999' };
+          if (cmd.recent) return { count: 1000, total: 50_000, next: `x${asked.length}` };
           return { count: 3, total: 50_000 };
         }
         expect(cmd.recent).toBe(true);
@@ -233,13 +247,14 @@ describe('index jobs', () => {
     expect(asked).toEqual(['g1 recent ', 'g1 recent m999', 'g1 recent m1999']);
     expect(jobs.get(a.id)).toMatchObject({ membersListed: 2390 });
     expect(n(store, `SELECT COUNT(*) AS n FROM membership WHERE source = 'walk'`)).toBe(2390);
-    // Over 10,000: one recent page shows the size, then by name from a to 9, never an empty query.
+    // Over 10,000: the newest 10,000, a page at a time, and no member search for "a", "b", "c" after them.
     asked.length = 0;
     const b = jobs.create({ target: { kind: 'space', id: hub(store, 'discord', 'space', 'g2') }, history: false, members: true });
-    await clock.until(() => jobs.get(b.id)!.state === 'done', 3_600_000, 'the name walk');
+    await clock.until(() => jobs.get(b.id)!.state === 'done', 3_600_000, 'the walk');
     jobs.stop();
-    expect(asked[0]).toBe('g2 recent ');
-    expect(asked.slice(1)).toEqual([...'abcdefghijklmnopqrstuvwxyz0123456789'].map((c) => `g2 ${c}`));
+    expect(asked.length).toBe(10);
+    expect(asked.every((a) => a.startsWith('g2 recent'))).toBe(true);
+    expect(jobs.get(b.id)).toMatchObject({ membersListed: 10_000 });
   });
 
   test('pausing holds a job; a restart carries on from the cursor', async () => {
@@ -254,7 +269,7 @@ describe('index jobs', () => {
       for (const m of page) store.ingest(acc, { t: 'message', message: m, live: false });
       return { count: page.length, done: page.length === below.length, oldest: page[0]?.ts };
     };
-    const jobs = new Jobs(store, { online: () => true, clock, command });
+    const jobs = new Jobs(store, { online: () => true, clock, command, pace: brisk(store, clock) });
     const v = jobs.create({ target: { kind: 'space', id: hub(store, 'discord', 'space', 'g1') }, history: true, members: false });
     await clock.until(() => pages >= 2, 60_000, 'two pages');
     jobs.pause(v.id);
@@ -265,12 +280,12 @@ describe('index jobs', () => {
     expect(jobs.get(v.id)!.state).toBe('paused');
     jobs.stop();
     // A new hub over the same database.
-    const again = new Jobs(store, { online: () => true, clock, command });
+    const again = new Jobs(store, { online: () => true, clock, command, pace: brisk(store, clock) });
     again.resume(v.id);
     await clock.until(() => again.get(v.id)!.state === 'done', 600_000, 'the rest');
     again.stop();
     expect(n(store, 'SELECT COUNT(*) AS n FROM message')).toBe(500);
-    expect(pages).toBe(5);
+    expect(pages).toBe(10);
   });
 });
 

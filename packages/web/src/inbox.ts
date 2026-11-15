@@ -39,7 +39,7 @@ const ranked = (rows: InboxRow[]): Ranked[] => rows.map((r) => ({ key: r.key, sc
 
 let waiting: ReturnType<typeof setTimeout> | undefined;
 /** Take a new snapshot if now is a good moment; otherwise as soon as it is. */
-export function resortInbox(reason: ResortReason) {
+function resortInbox(reason: ResortReason) {
   clearTimeout(waiting);
   const now = Date.now();
   if (!shouldResort({ reason, now, last: inboxSnap.value.at, interacting: isInteracting() })) {

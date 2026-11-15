@@ -18,6 +18,8 @@
  *   direct   the same in direct mode
  *   video    both clients with a camera on, each watching the other
  *   golive   `peer` shares its screen (Go Live) and `device` watches it
+ *   bridgeVideo   `device` in a bridge call through dither-chat's UI, camera on; `peer`'s camera on: each sees the other
+ *   bridgeGoLive  `device` shares its screen through the UI and `peer` watches; then `peer` goes live and `device` presses Watch
  *
  * Every sender loops the same speech recording (Discord's default noise cancellation and VAD pass only
  * speech) or draws a time-coded test card; every receiver records what arrives. Both ends run on this
@@ -314,7 +316,7 @@ async function deviceScenario(mode: 'bridge' | 'direct') {
         const _send=WebSocket.prototype.send;WebSocket.prototype.send=function(d){try{if(typeof d==='string'&&this.url.includes('/api/call')&&d.includes('"op":"join"')){const m=JSON.parse(d);m.account=${JSON.stringify(cfg.device)};d=JSON.stringify(m);}}catch{}return _send.call(this,d);};`,
     });
     await page.goto(HUB);
-    await page.eval(`localStorage.setItem('dither-chat:prefs', JSON.stringify({ ...JSON.parse(localStorage.getItem('dither-chat:prefs') || '{}'), callMode: ${JSON.stringify(mode)} }))`);
+    await page.eval(`localStorage.setItem('dither-chat:prefs', JSON.stringify({ ...JSON.parse(localStorage.getItem('dither-chat:prefs') || '{}'), callMode: ${JSON.stringify(mode)}, sendAs: { ${JSON.stringify(cfg.conversation)}: ${JSON.stringify(cfg.device)} } }))`);
     await page.goto(`${HUB}/?mode=${mode}#/inbox/c/${cfg.conversation}`);
     await page.until(`!!document.querySelector('.call-join')`, 30_000);
     await page.eval(`document.querySelector('.call-join').click()`);
@@ -334,10 +336,17 @@ async function deviceScenario(mode: 'bridge' | 'direct') {
     const p = await lab(cfg.peer, { op: 'report', since: from - 3000 });
     keepRaw(mode, { from, to, devSpeech, peerSpeech, d, ds, p });
     const callStats = await page.eval(`document.querySelector('[data-call-stats]')?.dataset.callStats`);
+    // Each step of joining, ms after the click, and the sounds the call played (and whether as Discord's recordings).
+    const timing = await page.eval(`JSON.parse(document.querySelector('[data-call-timing]')?.dataset.callTiming || 'null')`);
+    const sounds = await page.eval(`(window.__callSounds || []).map((s) => s.name + ':' + s.as)`);
+    const self = await page.eval(`window.__activeCall?.value?.self ?? null`);
     await page.eval(`document.querySelector('.call-btn.leave')?.click()`);
     await Bun.sleep(2000);
     return {
       joinMs,
+      timing,
+      sounds,
+      self,
       cost,
       peerToDevice: bestSpeech(d, peerSpeech, from, to),
       peerToDeviceSandbox: mode === 'bridge' ? bestSpeech(ds, peerSpeech, from, to) : undefined,
@@ -390,7 +399,96 @@ async function goLiveScenario() {
   return { cost, streamToViewer: videoLatency(d, from), viewerRtp: rtpSummary(d, from), streamerRtp: rtpSummary(p, from) };
 }
 
-const RUN: Record<string, () => Promise<unknown>> = { native: nativeScenario, bridge: () => deviceScenario('bridge'), direct: () => deviceScenario('direct'), video: videoScenario, golive: goLiveScenario };
+/** The device page in a bridge call, through dither-chat's own UI (deviceScenario's setup), for the video scenarios. */
+async function deviceInCall() {
+  const { page, close, profileDir } = await launch({ args: ['--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required'] });
+  await page.send('Page.addScriptToEvaluateOnNewDocument', {
+    source: `${PROBE};window.__probe=installDitherProbe('device');window.__probe.patchMedia();
+      const _send=WebSocket.prototype.send;WebSocket.prototype.send=function(d){try{if(typeof d==='string'&&this.url.includes('/api/call')&&d.includes('"op":"join"')){const m=JSON.parse(d);m.account=${JSON.stringify(cfg.device)};d=JSON.stringify(m);}}catch{}return _send.call(this,d);};`,
+  });
+  await page.goto(HUB);
+  // The call goes out as `device`, and the page knows it is (the chat's send-as account picks the call's account).
+  await page.eval(`localStorage.setItem('dither-chat:prefs', JSON.stringify({ ...JSON.parse(localStorage.getItem('dither-chat:prefs') || '{}'), callMode: 'bridge', sendAs: { ${JSON.stringify(cfg.conversation)}: ${JSON.stringify(cfg.device)} } }))`);
+  await page.goto(`${HUB}/?mode=bridge#/inbox/c/${cfg.conversation}`);
+  await page.until(`!!document.querySelector('.call-join')`, 30_000);
+  await page.eval(`document.querySelector('.call-join').click()`);
+  await page.until(`document.querySelector('[data-call-phase]')?.dataset.callPhase === 'live' && !!document.querySelector('[data-call-connected]')`, 60_000);
+  return { page, close, profileDir };
+}
+const viewChannel = (a: string) => evalIn(a, `await labFind((x) => typeof x.transitionToGuildSync === 'function').transitionToGuildSync(${JSON.stringify(cfg.guildId)}, {}, ${JSON.stringify(cfg.channelId)}); return true`);
+
+/** Camera both ways through the bridge: the device's camera reaches the peer's client, the peer's reaches the device. */
+async function bridgeVideoScenario() {
+  await peerJoin();
+  await viewChannel(cfg.peer);
+  const { page, close, profileDir } = await deviceInCall();
+  try {
+    await lab(cfg.peer, { op: 'video', on: true });
+    await page.eval(`document.querySelector('[data-track="call camera"]').click()`);
+    await page.until(`!!document.querySelector('.call-video[data-video-slot] video')`, 30_000).catch(() => {});
+    await Bun.sleep(10000);
+    const from = Date.now();
+    const cost = await hold(profileDir, SECS * 1000);
+    const d = await page.eval(`window.__probe.report(${from - 3000})`);
+    const p = await lab(cfg.peer, { op: 'report', since: from - 3000 });
+    const slots = await page.eval(`[...document.querySelectorAll('.call-video')].map(f => ({ slot: f.dataset.videoSlot ?? null, label: f.querySelector('figcaption')?.textContent, w: f.querySelector('video')?.videoWidth }))`);
+    const stats = await page.eval(`document.querySelector('[data-call-stats]')?.dataset.callStats`);
+    await page.eval(`document.querySelector('[data-track="call camera"]').click()`);
+    await lab(cfg.peer, { op: 'video', on: false });
+    await page.eval(`document.querySelector('.call-btn.leave')?.click()`);
+    await Bun.sleep(2000);
+    return { cost, slots, appStats: stats ? JSON.parse(stats) : null, peerToDevice: videoLatency(d, from), deviceToPeer: videoLatency(p, from), deviceRtp: rtpSummary(d, from), peerRtp: rtpSummary(p, from) };
+  } finally {
+    await close();
+    await leaveAll();
+  }
+}
+
+/** Go Live both ways through the bridge: the device shares its screen and the peer watches; the peer goes live and the device watches. */
+async function bridgeGoLiveScenario() {
+  await peerJoin();
+  await viewChannel(cfg.peer);
+  const { page, close, profileDir } = await deviceInCall();
+  const g = JSON.stringify(cfg.guildId),
+    c = JSON.stringify(cfg.channelId);
+  const watchFn = `const m = labFind(x => Object.values(x).some(f => typeof f === 'function' && /type:"STREAM_WATCH"/.test(Function.prototype.toString.call(f)))); const f = Object.values(m).find(f => typeof f === 'function' && /type:"STREAM_WATCH"/.test(Function.prototype.toString.call(f)));`;
+  try {
+    // The device shares its screen; the peer watches it.
+    await page.eval(`document.querySelector('[data-track="call screen"]').click()`);
+    await Bun.sleep(6000);
+    const deviceUser = await evalIn(cfg.device, `return mod.UserStore.getCurrentUser().id`);
+    await evalIn(cfg.peer, `${watchFn} f({streamType: 'guild', guildId: ${g}, channelId: ${c}, ownerId: ${JSON.stringify(deviceUser)}}); return true`);
+    await Bun.sleep(10000);
+    let from = Date.now();
+    const costShare = await hold(profileDir, SECS * 1000);
+    const p = await lab(cfg.peer, { op: 'report', since: from - 3000 });
+    const deviceToPeer = videoLatency(p, from);
+    const peerRtpShare = rtpSummary(p, from);
+    await page.eval(`document.querySelector('[data-track="call screen"]').click()`);
+    await Bun.sleep(3000);
+    // The peer goes live; the device presses Watch in its call panel.
+    await evalIn(cfg.peer, `const m = labFind(x => typeof x.A === 'function' && /getDesktopSource\\(/.test(Function.prototype.toString.call(x.A)) && /PRESET_CUSTOM/.test(Function.prototype.toString.call(x.A))); if (!m) throw new Error('no go-live action'); m.A(${g}, ${c}, []); return true`);
+    await Bun.sleep(5000);
+    await page.eval(`document.querySelector('.call-dock-title').click()`);
+    const found = await page.until(`!!document.querySelector('[data-track="watch stream"]')`, 20_000).then(() => true, () => false);
+    if (!found) return { error: 'no Watch button', costShare, deviceToPeer, peerRtpShare, call: await page.eval(`JSON.stringify(window.__activeCall.value && { p: window.__activeCall.value.participants, self: window.__activeCall.value.self, video: window.__activeCall.value.video })`) };
+    await page.eval(`document.querySelector('[data-track="watch stream"]').click()`);
+    await page.until(`[...document.querySelectorAll('.call-video figcaption')].some(e => /screen/.test(e.textContent))`, 30_000).catch(() => {});
+    await Bun.sleep(10000);
+    from = Date.now();
+    const costWatch = await hold(profileDir, SECS * 1000);
+    const d = await page.eval(`window.__probe.report(${from - 3000})`);
+    const slots = await page.eval(`[...document.querySelectorAll('.call-video')].map(f => ({ slot: f.dataset.videoSlot ?? null, label: f.querySelector('figcaption')?.textContent, w: f.querySelector('video')?.videoWidth }))`);
+    await page.eval(`document.querySelector('.call-btn.leave')?.click()`);
+    await Bun.sleep(2000);
+    return { costShare, deviceToPeer, peerRtpShare, costWatch, slots, peerToDevice: videoLatency(d, from), deviceRtp: rtpSummary(d, from) };
+  } finally {
+    await close();
+    await leaveAll();
+  }
+}
+
+const RUN: Record<string, () => Promise<unknown>> = { native: nativeScenario, bridge: () => deviceScenario('bridge'), direct: () => deviceScenario('direct'), video: videoScenario, golive: goLiveScenario, bridgeVideo: bridgeVideoScenario, bridgeGoLive: bridgeGoLiveScenario };
 const results: Record<string, unknown> = {};
 /** Raw probe reports, for re-analysis (cfg.out + '.raw.json'). */
 const raw: Record<string, unknown> = {};

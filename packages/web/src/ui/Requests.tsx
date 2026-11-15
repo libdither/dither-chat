@@ -22,14 +22,14 @@ import { contextMenu, groups, openMenu, useMenu, type MenuEntry, type MenuSpec }
 import { identityMenu, personMenu } from './menus.tsx';
 import { CheckFirst, ConfirmFirst } from './NewMessage.tsx';
 import { Action } from './ProfileShell.tsx';
-import { homeRoute } from './Sidebar.tsx';
+import { homeRoute } from '../opening.ts';
 import { Loading } from './Loader.tsx';
 
 /**
  * Answer one: the hub asks the network. Answered, it is gone here at once; the hub's requests event says the same.
  * `confirm`: the owner pressed "Accept anyway" after the network's words. A check or a confirm leaves it waiting.
  */
-export async function answerRequest(r: P.RequestView, answer: P.RequestAnswer, confirm = false): Promise<P.AddResultView> {
+async function answerRequest(r: P.RequestView, answer: P.RequestAnswer, confirm = false): Promise<P.AddResultView> {
   const res = await api<P.AddResultView>(`/api/requests/${encodeURIComponent(r.id)}`, { body: { answer, ...(confirm ? { confirm: true } : {}) } });
   const events: P.ClientEvent[] = res.conversation ? [{ t: 'conversation', conversation: res.conversation }] : [];
   if (!res.check && !res.confirm) events.push({ t: 'requests', requests: db.requests.filter((x) => x.id !== r.id) });
@@ -48,7 +48,7 @@ function canMessage(accountId: string, identityId: string | null): boolean {
  * The DM with someone on one account: the one there is, else one opened through the hub (POST /api/directs, as the
  * New box does). A network that will not open it throws its own words.
  */
-export async function messageOn(accountId: string, identityId: string): Promise<string> {
+async function messageOn(accountId: string, identityId: string): Promise<string> {
   const i = db.identities.get(identityId);
   if (!i) throw new Error('Nobody by that id here');
   const have = [...db.conversations.values()].find((c) => c.shape === 'direct' && c.network === i.network && c.participantIds.includes(identityId) && c.vantages.some((v) => v.accountId === accountId));
@@ -466,7 +466,7 @@ export function ConnectActions({ identities, abouts, onChanged }: { identities: 
  * Ends how one account stands with someone, after asking (POST /api/people/:id/remove): Remove friend, Cancel request,
  * Unblock, Remove contact, Unfollow. `onDone`: the hub's answer, once it went through.
  */
-export function RemoveDialog({ identityId, accountId, relationship, onClose, onDone }: { identityId: string; accountId: string; relationship: P.LinkRelationship; onClose: () => void; onDone: (res: P.AddResultView) => void }) {
+function RemoveDialog({ identityId, accountId, relationship, onClose, onDone }: { identityId: string; accountId: string; relationship: P.LinkRelationship; onClose: () => void; onDone: (res: P.AddResultView) => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const i = db.identities.get(identityId);

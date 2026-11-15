@@ -34,11 +34,12 @@ import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, reminderOf } from '@dither-chat/protocol';
 import { previewText, type Store } from './store.ts';
 import { describeActivity, type ActivityStore, type Features } from './activity.ts';
-import { ALERT_BAR, alertBar, describeWeight, emptyModel, importance, learnedFrom, predict, prior, THRESHOLDS, tierFrom, TIER_NAME, words, type Facts, type Level, type Model, type Namer, type TierContext } from './learn.ts';
+import { alertBar, describeWeight, emptyModel, importance, learnedFrom, predict, prior, THRESHOLDS, tierFrom, TIER_NAME, words, type Facts, type Level, type Model, type Namer, type TierContext } from './learn.ts';
 import { InteractionLog } from './interact.ts';
 import { conversing, CONVERSING_REASON } from './tiers.ts';
 import { blockedByYou, requestHeld } from './add.ts';
 import { quietAuthor } from './accountself.ts';
+import { inQuietHours } from './quiethours.ts';
 import { FEED_REASON, feedItemOf, QUIET_FEED } from './feed.ts';
 
 type Row = Record<string, any>;
@@ -75,47 +76,21 @@ export interface Decision {
 export type Judge = (text: string) => Promise<number | null>;
 /** The one question the local model is asked. A fixed string: jev caches by it. */
 export const STOP_QUESTION = 'Does this message need the reader to stop what they are doing and act or reply within the next hour or two?';
-export const JUDGE_INSTRUCT = 'Given a chat message someone received, judge whether it meets the description';
 /** At most this much of a message is read. */
 export const JUDGE_CHARS = 500;
 /** A place or person you marked "should have alerted" may alert for this long, Conversation or not. */
 export const MARKED_FOR = 90 * 86_400_000;
+/**
+ * Networks whose messages a machine writes: T3 Code's coding threads (an agent's turns name the repository and its
+ * files) and calendars (events and reminders). Your keywords never match there, nor in a bot's message or a feed's.
+ */
+const MACHINE_WRITTEN: ReadonlySet<string> = new Set<P.Network>(['t3', 'calendar']);
 
 /** What the networks do where nothing is set: DMs and group chats notify on every message, channels on mentions. */
-export const NATIVE_DEFAULT: Record<P.Shape, 'all' | 'mentions' | 'none'> = { direct: 'all', group: 'all', channel: 'mentions', thread: 'mentions', self: 'none' };
+const NATIVE_DEFAULT: Record<P.Shape, 'all' | 'mentions' | 'none'> = { direct: 'all', group: 'all', channel: 'mentions', thread: 'mentions', self: 'none' };
 
-/** Local weekday and minutes since midnight in a time zone. */
-function localTime(tz: string, now: number): { day: number; minutes: number } {
-  const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' }).formatToParts(now);
-  const get = (t: string) => parts.find((p) => p.type === t)!.value;
-  return { day: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(get('weekday')), minutes: +get('hour') * 60 + +get('minute') };
-}
-
-const toMinutes = (hhmm: string) => +hhmm.slice(0, 2) * 60 + +hhmm.slice(3, 5);
-
-/** Are these quiet hours on right now? A window past midnight belongs to the day it started on. */
-export function inQuietHours(q: P.QuietHours | null, now: number): boolean {
-  if (!q?.enabled) return false;
-  const start = toMinutes(q.start);
-  const end = toMinutes(q.end);
-  if (start === end) return false;
-  const { day, minutes } = localTime(q.timezone, now);
-  const startedOn = (d: number) => !q.days?.length || q.days.includes(d);
-  if (start < end) return minutes >= start && minutes < end && startedOn(day);
-  if (minutes >= start) return startedOn(day);
-  return minutes < end && startedOn((day + 6) % 7);
-}
-
-export function validQuietHours(q: Partial<P.QuietHours>): q is P.QuietHours {
-  const time = (s: unknown) => typeof s === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(s);
-  if (!time(q.start) || !time(q.end) || typeof q.timezone !== 'string') return false;
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: q.timezone });
-    return true;
-  } catch {
-    return false;
-  }
-}
+// Quiet hours (inQuietHours, validQuietHours) are in quiethours.ts.
+export { inQuietHours, validQuietHours } from './quiethours.ts';
 
 export const URGENT = /\b(urgent|asap|emergency|right now|call me|help!|deadline|today|tonight|are you (around|there|free))\b/i;
 export class Triage {
@@ -588,12 +563,16 @@ export class Triage {
     const notify = feedType ? true : mentionsOnly ? about : native === 'all' || (native === 'mentions' && about);
     // Kept to the list: your rule (List only), or muted on its network; a feed's replies, mentions and quotes always.
     const cap = eff.level === 'digest' || !!feedType;
-    // Keywords match what people typed, not mention tokens like <@123>.
+    // Keywords match what people typed, not mention tokens like <@123>, and not what a machine wrote: a bot's
+    // message, an agent's turn in a T3 thread, a calendar's event (MACHINE_WRITTEN), a feed's item.
     const plain = m.body.replace(/<[@#][^>]+>/g, ' ');
-    const keyword = s
-      .rules()
-      .filter((r) => r.scope === 'keyword' && r.target && r.level === 'all')
-      .find((r) => new RegExp(`\\b${r.target!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(plain));
+    const typed = !author?.is_bot && !MACHINE_WRITTEN.has(c.network) && !feedType;
+    const keyword = typed
+      ? s
+          .rules()
+          .filter((r) => r.scope === 'keyword' && r.target && r.level === 'all')
+          .find((r) => new RegExp(`\\b${r.target!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(plain))
+      : undefined;
     // Nothing in a feed alerts, not even from someone set to Always alert (docs/feed.md): answering happens on the network.
     const personRule = person && !feedType ? s.rules().find((r) => r.scope === 'person' && r.target === person.id) : null;
     const always = eff.level === 'all' && !eff.native && !feedType;
@@ -611,7 +590,7 @@ export class Triage {
       reasons.push(reminder.late ? `A reminder from ${net}, sent late` : `A reminder from ${net}`);
       return done('push', { forced: true, reminder: true });
     }
-    if (keyword && !feedType) {
+    if (keyword) {
       reasons.push(`Matches keyword “${keyword.target}”`);
       return done('push', { keyword: true, forced: true });
     }
@@ -639,4 +618,4 @@ function rank(l: P.NotifyLevel): number {
   return { none: 0, digest: 1, mentions: 2, smart: 3, all: 4 }[l];
 }
 
-export { ALERT_BAR };
+;

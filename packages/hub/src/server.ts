@@ -15,10 +15,13 @@ import { setNativeMute } from './nativemute.ts';
 import { markUnreadFrom } from './unread.ts';
 import { validQuietHours, type Triage } from './triage.ts';
 import type { TriageVotes } from './votes.ts';
+import type { Scorecard } from './scorecard.ts';
 import { cleanFileName, Uploads } from './uploads.ts';
 import { ImportRunner } from './imports/engine.ts';
 import { GapFill } from './imports/gapfill.ts';
 import { Jobs } from './jobs.ts';
+import { type PaceConfig, READING, ReadingPace } from './readingpace.ts';
+import { realClock } from './clock.ts';
 import { NetSearch } from './netsearch.ts';
 import { linkPath, MediaArchiver } from './mediaarchive.ts';
 import { infoFor, MediaInfo } from './mediainfo.ts';
@@ -26,6 +29,7 @@ import { genericType } from './fileinfo.ts';
 import { mediaHeaders, SAFE_HEADERS, sniffMime } from './mediaheaders.ts';
 import { ImportSources } from './imports/sources.ts';
 import { Calls, type CallSocketData, type TurnConfig, type VoiceSocketData } from './calls.ts';
+import { type CallRoomSocketData, demoCallRoom } from './democalls.ts';
 import { clampDays, parseZone } from './activitychart.ts';
 import { compress } from './compress.ts';
 import { forwardMessage } from './forward.ts';
@@ -34,6 +38,7 @@ import { UsageStore } from './usage.ts';
 import { ClickCounts } from './clicks.ts';
 import type { Attention } from './attention.ts';
 import type { ActivityStore } from './activity.ts';
+import type { ForYou } from './foryou.ts';
 import { Devices } from './devices.ts';
 import { changesOf } from './journal.ts';
 import { syncResponse } from './sync.ts';
@@ -109,9 +114,9 @@ function ownSocket(path: string): boolean {
     return false;
   }
 }
-type WsData = ClientData | LiveViewData | AdapterSocketData | CallSocketData | VoiceSocketData;
+type WsData = ClientData | LiveViewData | AdapterSocketData | CallSocketData | VoiceSocketData | CallRoomSocketData;
 
-export interface ServerOpts {
+interface ServerOpts {
   port: number;
   hostname: string;
   dataDir: string;
@@ -133,12 +138,18 @@ export interface ServerOpts {
   attention?: Attention;
   /** The activity log (activity.ts, docs/activity.md). */
   activity?: ActivityStore;
+  /** For you (foryou.ts, docs/foryou.md): its pages, the "N new" count and what devices say of its items. */
+  foryou?: ForYou;
   /** Per-device notification rules (devices.ts, docs/devices.md). */
   devices?: Devices;
   /** Your votes on triage and the rules learned from them (votes.ts, docs/notifications.md). */
   votes?: TriageVotes;
+  /** How the models did, day by day (scorecard.ts, docs/scorecard.md): GET /api/model/scores. */
+  scorecard?: Scorecard;
   /** Fetch every remote attachment into the media cache soon after it arrives (mediaarchive.ts). A real hub, not a demo. */
   archiveMedia?: boolean;
+  /** How index jobs and the gap fill read (readingpace.ts): a person's pace unless told otherwise. */
+  pace?: PaceConfig;
   /** Mail (mail/index.ts, docs/mail.md): its routes, its part of the bootstrap and of each flush. */
   mail?: MailHub;
   /** Notices (notices/, docs/notices.md): /api/notices, the bootstrap's `notices`. */
@@ -161,7 +172,7 @@ const threshold = (t: unknown): number | null => (typeof t === 'number' && t > 0
 /** A person has no nickname of their own since 2026-11-11: each account of theirs has (docs/chats.md, Names). */
 const NICKNAME_MOVED = 'A nickname belongs to one account of theirs now, not to the person: PATCH /api/identities/:id with { nickname }';
 const v4 = (ip: string) => ip.replace(/^::ffff:/, '');
-export function isLoopback(ip: string) {
+function isLoopback(ip: string) {
   return ip === '::1' || v4(ip).startsWith('127.');
 }
 export function isTailnet(ip: string) {
@@ -327,8 +338,10 @@ export class HubServer {
     this.imports = new ImportSources(opts.dataDir, (msg) => console.warn(msg));
     // An import fills and adds messages behind the journal's back: every device reloads its chats (a resync).
     this.importer = new ImportRunner(store, this.imports, opts.dataDir, (msg) => console.warn(msg), () => this.resync());
-    this.gapfill = new GapFill(store, (acc, cmd) => this.sup.command(acc, cmd, 180_000), (msg) => console.warn(msg));
-    this.jobs = new Jobs(store, { command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 180_000), online: (a) => sup.online(a), log: (msg) => console.warn(msg) });
+    // One pace for both, so the gap fill and a job never read through one account at once.
+    const pace = new ReadingPace(store, opts.pace ?? READING, realClock);
+    this.gapfill = new GapFill(store, (acc, cmd) => this.sup.command(acc, cmd, 180_000), (msg) => console.warn(msg), realClock, pace);
+    this.jobs = new Jobs(store, { command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 180_000), online: (a) => sup.online(a), log: (msg) => console.warn(msg), pace });
     this.netsearch = new NetSearch(store, {
       command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 60_000),
       online: (a) => sup.online(a),
@@ -457,6 +470,7 @@ export class HubServer {
           else if (d.kind === 'adapter') self.sup.attach(ws as ServerWebSocket<AdapterSocketData>);
           else if (d.kind === 'call') return;
           else if (d.kind === 'voice') self.calls.voiceOpen(ws as ServerWebSocket<VoiceSocketData>);
+          else if (d.kind === 'callroom') demoCallRoom.attach(ws as ServerWebSocket<CallRoomSocketData>);
           else self.openLiveView(ws as ServerWebSocket<LiveViewData>);
         },
         message(ws, msg) {
@@ -467,6 +481,7 @@ export class HubServer {
           } else if (d.kind === 'adapter') self.sup.receive(ws as ServerWebSocket<AdapterSocketData>, msg);
           else if (d.kind === 'call') self.calls.message(ws as ServerWebSocket<CallSocketData>, msg);
           else if (d.kind === 'voice') self.calls.voiceMessage(ws as ServerWebSocket<VoiceSocketData>, msg);
+          else if (d.kind === 'callroom') demoCallRoom.message(msg);
           else if (d.kind === 'liveview') {
             const buf = typeof msg === 'string' ? new TextEncoder().encode(msg) : new Uint8Array(msg);
             if (d.vnc) d.vnc.write(buf);
@@ -480,6 +495,7 @@ export class HubServer {
           else if (d.kind === 'adapter') self.sup.detach(ws as ServerWebSocket<AdapterSocketData>);
           else if (d.kind === 'call') self.calls.close(ws as ServerWebSocket<CallSocketData>);
           else if (d.kind === 'voice') self.calls.voiceClose(ws as ServerWebSocket<VoiceSocketData>);
+          else if (d.kind === 'callroom') demoCallRoom.detach(ws as ServerWebSocket<CallRoomSocketData>);
           else {
             d.closed = true;
             d.vnc?.end();
@@ -746,6 +762,13 @@ export class HubServer {
       return new Response('upgrade failed', { status: 400 });
     }
     if (path === '/api/calls') return Response.json(this.calls.stats());
+    // The demo call room (democalls.ts): the far end of demo calls, on demo hubs only.
+    if (path === '/api/demo/callroom' || path === '/demo/callroom.html') {
+      if (!this.store.accounts().some((a) => a.demo)) return new Response('not a demo hub', { status: 404 });
+      if (path === '/demo/callroom.html') return new Response(Bun.file(join(import.meta.dir, 'demo-callroom.html')), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' } });
+      if (server.upgrade(req, { data: { kind: 'callroom' } satisfies CallRoomSocketData })) return undefined;
+      return new Response('upgrade failed', { status: 400 });
+    }
     let m: RegExpMatchArray | null;
     // Call lab (scripts/call-lab.ts): only on a hub started with DITHER_LAB=1, from loopback, never from a browser.
     if (process.env.DITHER_LAB === '1' && req.method === 'POST' && !req.headers.get('origin') && /^(127\.|::1$|::ffff:127\.)/.test(server.requestIP(req)?.address ?? '') && (m = path.match(/^\/api\/lab\/([\w-]+)$/))) {
@@ -772,6 +795,8 @@ export class HubServer {
     }
     if (path === '/api/voice/dave') return this.daveCurrent();
     if ((m = path.match(/^\/voice\/dave\/([0-9a-f]{16})\/(libdave\.mjs|libdave\.wasm)$/))) return this.daveFile(m[1], m[2]);
+    if (path === '/api/voice/sounds') return this.callSounds();
+    if ((m = path.match(/^\/voice\/sounds\/([a-z0-9_]{1,40})\.mp3$/))) return this.callSound(m[1]);
     if ((m = path.match(/^\/media\/([\w-]+)\/([\w-]+)$/))) return this.media(m[1], m[2], url.searchParams.get('a'));
     // Custom emoji inside message bodies: the id is all a body has, and it can only reach Discord's CDN.
     if ((m = path.match(/^\/emoji\/discord\/(\d+)(\.animated)?$/))) return this.fetchMedia(discordEmojiUrl(m[1], !!m[2]), null);
@@ -811,7 +836,8 @@ export class HubServer {
     let m: RegExpMatchArray | null;
     const num = (k: string) => (url.searchParams.get(k) ? Number(url.searchParams.get(k)) : null);
 
-    if (path === '/api/health') return ok({ ok: true, now: Date.now() });
+    // gapRestarts: accounts the hub still has to restart after a gap (remote.ts), which the deployer waits for.
+    if (path === '/api/health') return ok({ ok: true, now: Date.now(), gapRestarts: (this.sup as { gapRestartsWaiting?: () => number }).gapRestartsWaiting?.() ?? 0 });
     if (path === '/api/demo/reset' && method === 'POST') {
       if (!this.opts.onDemoReset) return bad('demo is not enabled', 404);
       await this.opts.onDemoReset();
@@ -915,6 +941,8 @@ export class HubServer {
       if (path === '/api/attention' && method === 'GET') return ok({ now: Date.now(), items: a.list() });
       // The learned order (ranker.ts): its mode and what it learned, as weights on named features.
       if (path === '/api/attention/model' && method === 'GET') return ok((a.judge as { view?: () => unknown } | undefined)?.view?.() ?? { mode: 'off' });
+      // How well "needs a reply" chances matched what you did (needsreply.ts): by day, and in bins.
+      if (path === '/api/attention/needs-reply' && method === 'GET') return ok(a.needsCalibration(Date.now(), Math.min(365, Math.max(1, num('days') ?? 60))));
       if ((m = path.match(/^\/api\/attention\/([\w-]+)$/)) && method === 'GET') {
         const x = a.explain(m[1]);
         return x ? ok(x) : bad('not in the inbox', 404);
@@ -927,6 +955,17 @@ export class HubServer {
       }
     }
     if (path === '/api/inbox') return ok(s.inbox(num('since') ?? Date.now() - 7 * 86_400_000));
+    // For you (foryou.ts, docs/foryou.md): a page of a snapshot, how many a fresh one would add, and its events.
+    if (path.startsWith('/api/foryou') && this.opts.foryou) {
+      const f = this.opts.foryou;
+      if (path === '/api/foryou' && method === 'GET') return ok(await f.page(url.searchParams.get('epoch') || null, num('from') ?? 0, num('limit') ?? 20));
+      if (path === '/api/foryou/fresh' && method === 'GET') return ok(await f.fresh(url.searchParams.get('epoch') ?? ''));
+      if (path === '/api/foryou/stats' && method === 'GET') return ok(f.stats(num('since') ?? Date.now() - 7 * 86_400_000));
+      if (path === '/api/foryou/events' && method === 'POST') {
+        const b = await body<{ events?: Partial<P.ForYouEvent>[] }>();
+        return ok({ applied: f.events(Array.isArray(b.events) ? b.events : []) });
+      }
+    }
     // People and the places they share (graph.ts, docs/people-graph.md).
     if (path === '/api/graph' && method === 'GET') return ok(peopleGraph(s));
     // The networks' own search, a few places at a time in jev's order (netsearch.ts).
@@ -1693,6 +1732,12 @@ export class HubServer {
       await this.opts.votes.previewReady();
       return ok(this.opts.votes.view());
     }
+    // The scorecard (scorecard.ts, docs/scorecard.md): each scored day's metrics, for the last ?days= days (60).
+    if (path === '/api/model/scores' && method === 'GET') {
+      if (!this.opts.scorecard) return bad('No scorecard here', 404);
+      const days = Math.max(1, Math.min(400, Math.floor(Number(url.searchParams.get('days') ?? 60)) || 60));
+      return ok(this.opts.scorecard.view(days));
+    }
     // What the shadow model would have done lately (shadow.ts): counts only.
     if (path === '/api/triage/shadow' && method === 'GET') return this.opts.votes ? ok(this.opts.votes.shadow()) : bad('No triage here', 404);
     // The importance at which a message reaches the phone's list: { level: 0.01 to 0.99 }.
@@ -2397,6 +2442,22 @@ export class HubServer {
         'cache-control': 'public, max-age=31536000, immutable',
       },
     });
+  }
+
+  /**
+   * Discord's own call sounds (join, leave, mute and the rest), as scripts/dave/update.ts copied them from the public web
+   * client next to libdave: never part of this repo. Which ones there are; the device makes its own for the rest.
+   */
+  private callSounds(): Response {
+    const file = join(this.daveRoot(), 'sounds', 'sounds.json');
+    const names = existsSync(file) ? ((JSON.parse(readFileSync(file, 'utf8')) as { sounds?: Record<string, unknown> }).sounds ?? {}) : {};
+    return Response.json({ sounds: Object.keys(names).filter((n) => /^[a-z0-9_]{1,40}$/.test(n)) }, { headers: { 'cache-control': 'no-cache' } });
+  }
+
+  private callSound(name: string): Response {
+    const file = join(this.daveRoot(), 'sounds', `${name}.mp3`);
+    if (!existsSync(file)) return new Response('not found', { status: 404 });
+    return new Response(Bun.file(file), { headers: { 'content-type': 'audio/mpeg', 'cache-control': 'public, max-age=86400' } });
   }
 
   // ---------------------------------------------------------------- media

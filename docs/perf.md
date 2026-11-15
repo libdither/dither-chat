@@ -68,7 +68,7 @@ a phone does that the desktop run does not:
 | `open.*` | the biggest channel opened: time, longest task, layouts, message renders |
 | `tlScroll.*` | a flick up its timeline: slow frames, message renders, longest task |
 | `typing.*` | 28 keys into the composer, two seconds after the open settled, then taken back (nothing is sent): each key to the frame after it (`keyP90`, `keyMax`), and renders of App, the list and messages (none) and layouts (about one a key) |
-| `home`, `catchUp`, `search`, `you`, `homeTab` | back to the list, then each tab: DOM nodes, App or list renders (and the Home tab's message renders: it brings back the conversation that was open), longest task, main-thread time (`busy`) |
+| `home`, `forYou` (`catchUp` before 2026-11-15), `search`, `you`, `homeTab` | back to the list, then each tab: DOM nodes, App or list renders (and the Home tab's message renders: it brings back the conversation that was open), longest task, main-thread time (`busy`) |
 | `people`, `person`, `mail` | People from the rail, a person's page (the biggest direct conversation's), Mail's list: DOM nodes, App and message renders, longest task, main-thread time |
 
 Slow frames are a time in all but name (kind `frames`): judged locally like a time, never in CI.
@@ -286,7 +286,8 @@ What changed:
   was, and only at the oldest held does it ask the hub for an older page, which is then drawn whole with everything
   above it. Back at the newest, it draws only the newest 150 again (what goes is above the view). A link to a held
   message (`?m=`) or a click on a reply's quote draws the 100 around that message and shows it; scrolling down from
-  there draws more until the newest. The first message drawn gets its day line and is not grouped, as the first
+  there draws more until the newest. A quoted message not held is fetched with the page around it, in the same view
+  (`jumpTo`; `jumpInChat` in a person's chat), as a link to it is: the chat's address does not change. The first message drawn gets its day line and is not grouped, as the first
   loaded one always was; the New line is placed over everything held and drawn when it is in the window; copies not
   yet sent show only while the newest is drawn. The DOM keeps the messages' order.
 - **`content-visibility` on desktop**, tried again with the window (`--css '.msg{content-visibility:auto;contain-intrinsic-size:auto 64px}'`,
@@ -337,7 +338,7 @@ dir, then measures bytes and gzip bytes (level 6, as vite prints them) of every 
 and of the startup set: what index.html loads before the app runs (its script, its modulepreloads and the stylesheet),
 added up, and how many files that is. Chunks are named by what they stand for, not their hashed file names: `js/entry`,
 a lazy chunk by its module (`js/src/ui/files/PdfView.tsx`, `js/jsqr/dist/jsQR.js`), a shared chunk by the name rolldown
-gave it (`js/shared/Accounts`).
+gave it (`js/shared/startup`).
 
 **Passing.** A value over its budget fails. Bytes have 2% of headroom; counts and fields none. A value well under its
 budget, a measure with no budget yet (a new chunk), or a budget nothing measures any more prints a hint; only the
@@ -365,6 +366,17 @@ whenever a hint says so: a budget that sits well above its value lets a regressi
 On GitHub Actions both tests add a table of measured against budget to the job summary. Two pull requests that each
 stay inside a budget can, merged together, go over it; main's next run then fails, and the next change there lowers
 something or raises the budget with a reason.
+
+### The startup chunk (2026-11-14)
+
+Everything the entry imports statically, however deep, is one chunk, `shared/startup` (vite.config.ts, a
+`codeSplitting` group on rolldown's `$initial` tag), with the stylesheet beside it: the startup set is four files (the
+entry, rolldown's runtime, that chunk, its stylesheet). Before, a 34-file import cycle among the components (menus,
+bits, Sidebar, ContextMenu…) made rolldown keep them in one shared chunk; once the cycles were gone
+(docs/testing.md "Import cycles") it split the startup modules by which lazy chunks share them, into 34 files, every
+one of them loaded at startup anyway. The group puts them back together: 1,072 KB (326 KB gzip) in 4 files, against
+1,079 KB (335 KB gzip) in 10 on main the day before. A lazy chunk imports what it shares with startup from that chunk,
+already loaded. A module only lazy chunks use is not in it.
 
 ### The startup set (2026-11-10)
 
@@ -757,7 +769,7 @@ reconnect; and nothing measured how often an open came from the device.
   catch-up that got no answer tries again by itself.
 - **Fetching ahead** (`prefetch.ts`, `ahead.ts`): the first 12 rows of the inbox (conversations, and a person's chat
   of several routes as the one timeline it opens) in its own (learned) order,
-  once the hub's data is in and again as the order changes. Those not held are fetched as Catch up's cards are (what
+  once the hub's data is in and again as the order changes. Those not held are fetched as a glance (what
   the hub stored, no network history); those kept on the device are caught up with a delta, so the open shows what is
   there now. One page at a time, 1.5 s after the last touch or key and when the page is idle, never while out of
   sight, on Save-Data, a cellular network or 2G, at most 30 pages in ten minutes; then the avatars and small images of
@@ -848,6 +860,11 @@ What changed:
 - **Mail's chunk loads while the app is idle**, three seconds after it starts (Rail.tsx), as the palette's does: a
   phone has no pointer to hover the rail with. Mail opening on its first chip no longer measures the chip row before
   it is painted (a ResizeObserver sets its edges once it is laid out).
+- **The emoji picker draws 200 emoji first** (2026-11-14, ui/Reactions.tsx `FIRST_DRAWN`): the rest of its 1,900 stand
+  in as empty boxes of their own height, so the scrollbar and the rail's jumps hold still, and are drawn just after
+  that first frame is on screen. Drawing only what scrolls in (`content-visibility`) was tried before and made emoji
+  flash in late. Desktop size, demo world, opening it from the hover bar: its first frame 64–84 ms → 12–14 ms, and
+  ~320 ms → 49–62 ms at 4× CPU; the whole picker's work is the same, after that frame.
 
 Phone size, 4× CPU, the phone pass of `verify-perf --cpu 0 --phone-cpu 4`, five runs each on the same machine, the
 branch first (load 7–11), then `main` (11–27): medians, and the spread of the longest task.

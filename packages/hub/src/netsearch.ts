@@ -39,7 +39,7 @@ const DAY = 86_400_000;
 type Command = (accountId: string, cmd: any, timeoutMs?: number) => Promise<any>;
 type Probe = (question: string) => Promise<P.CategoryProbe>;
 
-export interface NetSearchOptions {
+interface NetSearchOptions {
   command: Command;
   online: (accountId: string) => boolean;
   /** The categorizer's probe (categorize.ts); absent: ordered by the hub's own signals alone. */

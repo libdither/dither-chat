@@ -10,7 +10,7 @@ import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
 import { bioLength, NETWORK_META, OWN_PRESENCE_STATES, SELF_LIMITS } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
-import { inQuietHours } from './triage.ts';
+import { inQuietHours } from './quiethours.ts';
 import type { AccountRow, Store } from './store.ts';
 
 type Row = Record<string, any>;
@@ -18,7 +18,7 @@ type Row = Record<string, any>;
 // ------------------------------------------------------------------ tables
 
 const made = new WeakSet<Database>();
-export function selfTables(db: Database) {
+function selfTables(db: Database) {
   if (made.has(db)) return;
   db.exec(`CREATE TABLE IF NOT EXISTS account_self (
     account_id          TEXT PRIMARY KEY REFERENCES account(id) ON DELETE CASCADE,
@@ -163,7 +163,7 @@ export function ignoredOf(db: Database, identityIds: string[]): { accountId: str
 
 // ------------------------------------------------------------------ actions
 
-export interface SelfDeps {
+interface SelfDeps {
   store: Store;
   online: (accountId: string) => boolean;
   command: <T>(accountId: string, cmd: any, timeoutMs?: number) => Promise<T>;
@@ -173,7 +173,7 @@ export interface SelfDeps {
   quietHours: () => P.QuietHours | null;
 }
 
-export class SelfError extends Error {
+class SelfError extends Error {
   constructor(
     message: string,
     public status = 400,
@@ -191,7 +191,7 @@ const caps = (acc: AccountRow): P.Capability[] => {
 };
 
 /** How often the quiet-hours opt-in looks. A failed change waits this long times ten before it is tried again. */
-export const DND_TICK_MS = 60_000;
+const DND_TICK_MS = 60_000;
 
 export class AccountSelf {
   private timer: ReturnType<typeof setInterval> | null = null;

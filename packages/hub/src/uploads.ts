@@ -17,8 +17,6 @@ import { attachmentKind, MAX_UPLOAD } from '@dither-chat/protocol';
 /** How long an upload waits unused. */
 export const KEEP = 60 * 60_000;
 
-/** An upload's id: also its file name here. */
-export const UPLOAD_ID = /^[0-9a-f]{24}$/;
 
 interface Meta {
   v: 1;

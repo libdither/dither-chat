@@ -9,16 +9,14 @@ import { activityOfSpace, placePref, spaceUnread } from './model.ts';
 import { route } from './state.ts';
 import { usageOf } from './usage.ts';
 
-export const QUIET_AFTER = 180 * 86_400_000;
+const QUIET_AFTER = 180 * 86_400_000;
 /** Fewer than this many quiet places in a list are shown where they are: a shelf of one hides more than it saves. */
-export const SHELF_MIN = 2;
+const SHELF_MIN = 2;
 
 export const quietShelfOn = () => arrange.value.quietShelf !== false;
 
-export { setQuietShelf } from './arrange.ts';
-
 /** A place key ("space:…") is quiet now. Only servers are: a chat or a folder never is. */
-export function isQuiet(key: string, now = Date.now()): boolean {
+function isQuiet(key: string, now = Date.now()): boolean {
   if (!key.startsWith('space:')) return false;
   const id = key.slice('space:'.length);
   const r = route.value;

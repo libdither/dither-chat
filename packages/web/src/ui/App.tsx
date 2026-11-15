@@ -1,7 +1,7 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { effect, untracked } from '@preact/signals';
-import { accountsNeedingYou, chatPersonOf, convsUnder, firstChannel, inboxBadge, rootCommunity, totalUnread } from '../model.ts';
+import { chatPersonOf, convsUnder, firstChannel, rootCommunity, totalUnread } from '../model.ts';
 import { adoptEntry, api, connected, db, go, loaded, pending, prefs, previousRoute, readProgress, refresh, rev, route, setListUnder, setRouteFill, unreachable, type Route } from '../state.ts';
 import { isPage, isTabRoot, listKey, listToWrite, ownList, restAfter, wayBack, type Places } from '../pages.ts';
 import { dropLayer, phone, pushLayer } from '../phone.ts';
@@ -16,7 +16,7 @@ import { ForwardLayer } from './Forward.tsx';
 import { AppsHostLazy } from './apps/lazy.tsx';
 import { SendingLayer } from './SendExtras.tsx';
 import { IndexLayer } from './Indexing.tsx';
-import { CatchUp } from './CatchUp.tsx';
+import { ForYou, refreshForYou } from './ForYou.tsx';
 import { HowItSorts } from './HowItSorts.tsx';
 import { Palette } from './Palette.tsx';
 import { ReactionLayer } from './Reactions.tsx';
@@ -30,7 +30,8 @@ import { TitleBar } from './TitleBar.tsx';
 import { FindShortcut, SearchPane } from './Search.tsx';
 import { SECTIONS, SettingsPane } from './Settings.tsx';
 import { showSection } from './bits.tsx';
-import { FolderSidebar, homeRoute, InboxSidebar, PeopleSidebar, SpaceSidebar, SpacesSidebar } from './Sidebar.tsx';
+import { FolderSidebar, InboxSidebar, PeopleSidebar, SpaceSidebar, SpacesSidebar } from './Sidebar.tsx';
+import { homeRoute } from '../opening.ts';
 import { ConversationPane, PersonPane } from './Timeline.tsx';
 import { Toasts } from './Toasts.tsx';
 import { CallDock } from './Call.tsx';
@@ -59,8 +60,8 @@ function convDetail(id: string): { kind: 'conv' | 'person'; id: string } {
 /** What the center pane shows, and whether a details pane is available. */
 function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'conv' | 'person'; id: string } } {
   switch (r.view) {
-    case 'triage':
-      return { pane: <CatchUp /> };
+    case 'foryou':
+      return { pane: <ForYou /> };
     case 'model':
       return { pane: <HowItSorts onBack={back} /> };
     case 'inbox':
@@ -70,7 +71,7 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
       if (isPostKey(r.conv)) return { pane: <ThreadLazy key={r.conv} postKey={r.conv!} onBack={back} /> };
       // A group of notices (a notification's conversation, quiet hours' summary) opens under Notices.
       if (r.conv?.startsWith('ntg_')) return { pane: <NoticesPaneLazy onBack={back} /> };
-      return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: convDetail(r.conv) } : { pane: <CatchUp /> };
+      return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: convDetail(r.conv) } : { pane: <ForYou /> };
     case 'people':
       if (r.graph) return { pane: <GraphPane onBack={back} /> };
       return r.person ? { pane: <PersonPane personId={r.person} onBack={back} />, detail: { kind: 'person', id: r.person } } : { pane: <WelcomePane view="people" /> };
@@ -108,7 +109,7 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
 
 function sidebarFor(r: Route, onAdd: () => void): ComponentChildren {
   switch (r.view) {
-    case 'triage':
+    case 'foryou':
     case 'model':
       return <InboxSidebar />;
     case 'inbox':
@@ -210,6 +211,7 @@ const places: Places = {
     return c ? homeRoute(c) : { view: 'inbox', conv: id };
   },
   placeHome,
+  parent: (id) => db.conversations.get(id)?.parentId ?? null,
 };
 // A list's page keeps its list under it in history, so the phone's back button shows the list as the swipe does.
 setListUnder((to, from) => (phone.value ? listToWrite(to, from, places) : null));
@@ -238,8 +240,8 @@ function leave(r: Route) {
   else go(way.to, true);
 }
 
-type Tab = 'home' | 'triage' | 'search' | 'calendar' | 'you';
-const tabOf = (r: Route): Tab => (r.view === 'triage' || r.view === 'model' ? 'triage' : r.view === 'search' ? 'search' : r.view === 'calendar' ? 'calendar' : r.view === 'settings' || r.view === 'accounts' ? 'you' : 'home');
+type Tab = 'home' | 'foryou' | 'search' | 'calendar' | 'you';
+const tabOf = (r: Route): Tab => (r.view === 'foryou' || r.view === 'model' ? 'foryou' : r.view === 'search' ? 'search' : r.view === 'calendar' ? 'calendar' : r.view === 'settings' || r.view === 'accounts' ? 'you' : 'home');
 
 /** The last page and the last list on the Home tab, which a phone keeps while you look elsewhere. */
 let lastDetail: Route | null = null;
@@ -254,8 +256,8 @@ function TabBar({ r }: { r: Route }) {
   const attention = [...db.accounts.values()].some((a) => a.attention);
   const tabs: { id: Tab; label: string; icon: string; to: () => Route; badge?: number; dot?: boolean }[] = [
     { id: 'home', label: 'Home', icon: 'home', to: () => lastHome, badge: all },
-    // Its badge is the unread alerts and Conversation messages, and accounts that need you.
-    { id: 'triage', label: 'Catch up', icon: 'checks', to: () => ({ view: 'triage' }), badge: inboxBadge() + accountsNeedingYou().length },
+    // No badge: nothing in it is urgent. What needs you is on Home (docs/foryou.md).
+    { id: 'foryou', label: 'For you', icon: 'sparkles', to: () => ({ view: 'foryou' }) },
     { id: 'search', label: 'Search', icon: 'search', to: () => ({ view: 'search', q: '' }) },
     // A hub with dither-calendar beside it (docs/calendar.md).
     ...(calendarOn ? [{ id: 'calendar' as const, label: 'Calendar', icon: 'calendar', to: (): Route => ({ view: 'calendar' }) }] : []),
@@ -339,7 +341,8 @@ export function App() {
     onBack: () => (countKey('pager: swipe back'), leave(r)),
     onDetails: (open) => (countKey(open ? 'pager: swipe to details' : 'pager: swipe from details'), (panel.value = open ? 'details' : 'main')),
     onForward: () => (countKey('pager: swipe forward'), lastDetail && go(lastDetail)),
-    onRefresh: refresh,
+    // On For you's tab a pull takes a fresh snapshot too.
+    onRefresh: () => (route.value.view === 'foryou' ? Promise.all([refresh(), refreshForYou()]) : refresh()),
   });
 
   if (!loaded.value)

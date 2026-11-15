@@ -3,7 +3,7 @@ import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, fileBatches, splitsFiles, SYNC_VERSION } from '@dither-chat/protocol';
 import { leaveLayerEntry, takeOverLayers } from './phone.ts';
 import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snapshot.ts';
-import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, emptyDb, identityVersion, indexThreads, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
+import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, identityVersion, indexThreads, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
 import { changed, mailChanged, timelineChanged, timelineRev } from './versions.ts';
 import { applyTyping, type TypingState } from './typers.ts';
 import { ECHO_SKEW, mayBeOut, openOutbox, settled, type Echo, type OutboxEntry, type SendMedia } from './outbox.ts';
@@ -11,44 +11,18 @@ import { hubTransport, UploadJob } from './upload.ts';
 import { href, parseHash, type Route } from './routes.ts';
 import { inboxFilterOf, type InboxFilter } from './ordering.ts';
 import { applyPlanEvent, calendarAt, calendarFromBootstrap, loadPlans } from './plans.ts';
-import { reportApiFailure } from './errors.ts';
+import { api } from './api.ts';
+import { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines, type Timeline } from './store.ts';
 import { applyCalls, applyVoice, loadCalls } from './ringing.ts';
 
 // ------------------------------------------------------------------ data
 
 /** What components read to re-render: `rev` for the lists, `metaRev` for names and settings, one per timeline (versions.ts). */
-export { changed, dataVersion, mailRev, metaRev, rev, timelineChanged, timelineRev } from './versions.ts';
+export { changed, dataVersion, mailRev, metaRev, rev,  timelineRev } from './versions.ts';
+export { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines,  } from './store.ts';
 export const connected = signal(false);
 /** Notices on this hub (docs/notices.md): whether it may read them; null when it has none. */
 export const noticesBoot = signal<P.NoticesBoot | null>(null);
-export const loaded = signal(false);
-
-/** The hub's state as this client knows it; syncmodel.ts says how bootstraps and events change it. */
-export const db = emptyDb();
-
-export interface Timeline {
-  key: string;
-  messages: P.MessageView[];
-  hasMore: boolean;
-  loading: boolean;
-  /** person timelines: the direct conversations merged into it */
-  conversationIds?: string[];
-  /** Jumped to an old message: this window does not reach the latest ones. */
-  detached?: boolean;
-  /** When its first page was asked of the hub. A reconnect catches up the ones that have it. */
-  fetchedAt?: number;
-  /** A copy kept on this device: the journal position it is current to, until the hub has caught it up. */
-  from?: P.SyncPosition;
-  /** Loaded for a glance (Catch up's cards) from what the hub stored: opening it asks the network, as a first open does. */
-  glance?: boolean;
-}
-export const timelines = new Map<string, Timeline>();
-/** Messages referenced by replies that are outside the loaded page. */
-export const quoted = new Map<string, P.MessageView>();
-export const inbox = signal<P.MessageView[]>([]);
-/** How it sorts' mail (docs/mail.md): what triage decided on new mail this week, newest first. */
-export const mailTriage = signal<P.MailTriageItem[]>([]);
-
 /** The week's mail decisions afresh (asked when Catch up or How it sorts opens: a page resumed from its snapshot holds an older list). */
 export async function loadMailTriage() {
   if (db.mail.access.state === 'off') return;
@@ -75,7 +49,7 @@ function mergeMailTriage(threads: P.MailThreadView[]) {
   changed('list');
 }
 
-export interface PendingSend {
+interface PendingSend {
   tempId: string;
   conversationId: string;
   body: string;
@@ -127,7 +101,7 @@ export function toast(t: Omit<Toast, 'id'>, ms = 6000) {
 
 export type DirectorySort = 'recency' | 'activity' | 'unread' | 'name' | 'network' | 'manual' | 'category';
 
-export interface Prefs {
+interface Prefs {
   /** A theme id from themes.ts, or 'system' to follow the device with themeDark and themeLight. ('dark' and 'light' are older names for the Dither ones.) */
   theme: string;
   themeDark: string;
@@ -147,6 +121,11 @@ export interface Prefs {
   callMode: 'bridge' | 'direct';
   /** This device's microphone in calls: noise suppression and sensitivity (Settings → Calls). Absent: CALL_INPUT_DEFAULT. */
   callInput?: import('@dither-chat/protocol').CallInput;
+  /** This device's microphone and camera for calls (a deviceId; absent: the browser's default). */
+  callMicId?: string;
+  callCameraId?: string;
+  /** Call sounds on this device: someone joins or leaves, you mute (default on). */
+  callSounds?: boolean;
   /** The inbox's filter (its menu beside the search box). */
   inboxFilter: InboxFilter;
   /** People's filter chip: chats, or one kind of list (docs/add.md "Relationships"). */
@@ -250,39 +229,14 @@ export const previousRoute = (): Route | null => (history.state?.prev ? parseHas
 
 // ------------------------------------------------------------------ http
 
-/** Told of every call before it goes out: the activity log counts sends, reactions and reads from these (activity.ts). */
-export const apiHooks = new Set<(path: string, init?: { method?: string; body?: unknown }) => void>();
-
-export async function api<T = any>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
-  for (const h of apiHooks) h(path, init);
-  const method = init?.method ?? (init?.body !== undefined ? 'POST' : 'GET');
-  let res: Response;
-  try {
-    res = await fetch(path, {
-      method,
-      body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
-      headers: init?.body !== undefined ? { 'content-type': 'application/json' } : undefined,
-    });
-  } catch (e) {
-    // The hub not reached (not an abort, not while offline): to traces/errors.ndjson (errors.ts).
-    reportApiFailure(method, path, e);
-    throw e;
-  }
-  const text = await res.text();
-  // Not everything here is JSON: the account log and the access gate's refusals are plain text.
-  const json = res.headers.get('content-type')?.includes('json');
-  const data = json && text ? JSON.parse(text) : text || null;
-  if (!res.ok) {
-    const e = Object.assign(new Error(data?.error ?? (text.slice(0, 200) || `${res.status}`)), { status: res.status });
-    if (res.status >= 500) reportApiFailure(method, path, e, res.status);
-    throw e;
-  }
-  return data as T;
-}
+// api() and apiHooks live in api.ts (no import of this file), so modules this file imports can call the hub.
+export { api, apiHooks } from './api.ts';
 
 // ------------------------------------------------------------------ applying hub data
 
 const putIdentity = (i: P.IdentityView) => void (put(db, i) && changed('shown'));
+/** People a page brought that the client may not know yet (For you's items). */
+export const adoptIdentities = (list: P.IdentityView[]) => list.forEach(putIdentity);
 
 export function applyBootstrap(b: P.Bootstrap) {
   applyBootstrapTo(db, b);
@@ -316,9 +270,6 @@ const NOT_DB = new Set<P.ClientEvent['t']>(['typing', 'notify', 'sync', 'readPro
 const LIST_ONLY = new Set<P.ClientEvent['t']>(['message', 'message.deleted', 'identity', 'attention', 'usage', 'arrange', 'requests', 'accountsManager']);
 /** Events that change names (`metaRev` moves) but not what is where (versions.ts `changed('shown')`): people. */
 const SHOWN_ONLY = new Set<P.ClientEvent['t']>(['person', 'person.removed']);
-
-/** Others react to events too (usage.ts: time spent in places, sort settings), without state.ts knowing them. */
-export const eventHooks = new Set<(ev: P.ClientEvent) => void>();
 
 export function applyEvents(events: P.ClientEvent[]) {
   let threadsDirty = false;
@@ -449,7 +400,7 @@ export function isSelfIdentity(id: string | null | undefined): boolean {
 // ------------------------------------------------------------------ notifications
 
 /** Kept off this device by its own rules (docs/devices.md). The id is activity.ts's deviceId(), read here without importing it. */
-export function quietHere(ev: { quiet?: string[] }): boolean {
+function quietHere(ev: { quiet?: string[] }): boolean {
   if (!ev.quiet?.length) return false;
   try {
     return ev.quiet.includes(localStorage.getItem('dither-chat:device') ?? '');
@@ -507,7 +458,7 @@ const glancing = new Map<string, Promise<void>>();
  * Where a timeline opened came from (prefetch.ts counts them): already in memory, a glance (Catch up's, or one fetched
  * ahead), a page kept on this device (keptpages.ts), or nothing until the hub answers.
  */
-export type OpenedFrom = 'memory' | 'glance' | 'kept' | 'hub';
+type OpenedFrom = 'memory' | 'glance' | 'kept' | 'hub';
 export const openHooks = new Set<(key: string, from: OpenedFrom) => void>();
 const servedFrom = (key: string, from: OpenedFrom) => {
   for (const h of openHooks) h(key, from);
@@ -805,7 +756,7 @@ async function syncTimelines(list: Timeline[], posOf: (t: Timeline) => P.SyncPos
   return 'ok';
 }
 
-export async function loadInbox() {
+async function loadInbox() {
   const [page] = await Promise.all([api<P.InboxPage>('/api/inbox'), loadMailTriage()]);
   page.identities.forEach(putIdentity);
   inbox.value = page.items.map((i) => i.message);
