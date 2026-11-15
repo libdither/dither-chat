@@ -141,6 +141,7 @@ class Parts {
         trackers: held.trackers,
         imagesShown: shown,
         plain: held.plain && hasTextPart(b),
+        ...(held.formatted ? { formatted: true } : {}),
       };
       for (const x of dedupe(held.mismatched).slice(0, 3)) warnings.push(`A link that shows ${x.shown} goes to ${x.goes}.`);
     }

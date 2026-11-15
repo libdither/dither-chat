@@ -727,7 +727,63 @@ export class MailOutbox {
       .slice(0, limit)
       .map((r) => ({ name: r.n ?? null, email: r.e, wroteTo: r.w > 0, count: r.c }));
   }
+
+  /** Answers of `mail.contacts` by account and query, for a minute: typing back over a word asks nothing again. */
+  private contactsSeen = new Map<string, { at: number; list: M.MailContact[] }>();
+
+  /**
+   * Recipients as the server suggests them (`mail.contacts`: Gmail's own completion, Proton's contacts), from the
+   * account written from first, then any other that answers them; each address once, none of yours. An account that
+   * does not answer in CONTACTS_WAIT_MS, or fails, adds nothing: the page has the hub's own suggestions meanwhile.
+   */
+  async contacts(q: string, accountId: string | null, limit = 8): Promise<P.MailAddressHit[]> {
+    const query = q.trim().slice(0, 200);
+    const backend = this.hub.backend;
+    if (!query || !backend) return [];
+    const accs = this.store
+      .accounts()
+      .filter((a) => a.level && !a.hidden && !a.gone_at && a.online && a.contacts === 1)
+      .sort((a, b) => Number(b.id === accountId) - Number(a.id === accountId));
+    const lists = await Promise.all(accs.map((a) => this.askContacts(backend, a.id, query, limit)));
+    const self = new Set(this.store.accounts().flatMap((a) => [...this.store.selfAddresses(a.id)]));
+    const out = new Map<string, P.MailAddressHit>();
+    for (const c of lists.flat()) {
+      const email = c.email.trim().toLowerCase();
+      if (self.has(email) || !validEmail(email)) continue;
+      const had = out.get(email);
+      if (!had) out.set(email, { name: c.name?.trim() || null, email, wroteTo: false, count: 0 });
+      else if (!had.name && c.name?.trim()) had.name = c.name.trim();
+    }
+    return [...out.values()].slice(0, limit);
+  }
+
+  private async askContacts(backend: NonNullable<MailHub['backend']>, accountId: string, query: string, limit: number): Promise<M.MailContact[]> {
+    const k = `${accountId}\n${limit}\n${query.toLowerCase()}`;
+    const now = this.hub.clock.now();
+    const seen = this.contactsSeen.get(k);
+    if (seen && now - seen.at < CONTACTS_KEEP_MS) return seen.list;
+    let timer: unknown;
+    try {
+      const r = await Promise.race([
+        backend.call<{ contacts?: unknown }>(accountId, 'mail.contacts', { query, limit }, CONTACTS_WAIT_MS + 1_000),
+        new Promise<null>((ok) => (timer = this.hub.clock.setTimeout(() => ok(null), CONTACTS_WAIT_MS))),
+      ]);
+      if (!r) return [];
+      const list = (Array.isArray(r.contacts) ? r.contacts : []).filter((c): c is M.MailContact => !!c && typeof c.email === 'string' && (c.name === null || c.name === undefined || typeof c.name === 'string')).slice(0, 20);
+      this.contactsSeen.set(k, { at: now, list });
+      while (this.contactsSeen.size > 500) this.contactsSeen.delete(this.contactsSeen.keys().next().value!);
+      return list;
+    } catch {
+      return [];
+    } finally {
+      this.hub.clock.clearTimeout(timer);
+    }
+  }
 }
+
+/** How long recipient suggestions wait for an account's server, and keep its answer. */
+const CONTACTS_WAIT_MS = 2_500;
+const CONTACTS_KEEP_MS = 60_000;
 
 // ------------------------------------------------------------------ routes
 
@@ -809,6 +865,12 @@ export const sendRoutes: MailRouter = (hub) => {
       method: 'GET',
       path: /^\/api\/mail\/addresses$/,
       handle: ({ url }) => ok({ addresses: box.addresses(url.searchParams.get('q') ?? '', Math.min(20, Number(url.searchParams.get('limit')) || 8)) }),
+    },
+    {
+      // The account's own server's suggestions (Gmail's, Proton's), the one written from first: ?q=&account=.
+      method: 'GET',
+      path: /^\/api\/mail\/contacts$/,
+      handle: async ({ url }) => ok({ addresses: await box.contacts(url.searchParams.get('q') ?? '', url.searchParams.get('account'), Math.min(20, Number(url.searchParams.get('limit')) || 8)) }),
     },
     {
       // "Try again" after the account answered 501: sending is offered again.

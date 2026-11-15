@@ -149,6 +149,12 @@ export interface OutgoingMail {
 /** A kind of write an account makes (`details.writes`). */
 export type MailWriteKind = 'seen' | 'flagged' | 'move' | 'trash' | 'junk';
 
+/** `mail.contacts`: someone the server suggests as a recipient for what is typed (its own completion). */
+export interface MailContact {
+  email: string;
+  name: string | null;
+}
+
 /** `mail.flag` and `mail.trash`: `{}` when every change applied, else the ids that did not change (header). */
 export interface MailWriteAnswer {
   refused?: string[];
