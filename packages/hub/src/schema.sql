@@ -491,6 +491,19 @@ CREATE TABLE IF NOT EXISTS owed_turn (
   PRIMARY KEY (conversation_id, addressed)
 ) WITHOUT ROWID;
 
+-- The chance a turn needs a reply as shown (needsreply.ts), kept once per open turn at 15 min, 1 h, 6 h and 1 day of
+-- age, to check against what you did (owed_turn): the calibration record (docs/inbox.md, "Needs a reply"). A year.
+CREATE TABLE IF NOT EXISTS needs_prediction (
+  conversation_id TEXT NOT NULL,
+  addressed       INTEGER NOT NULL,            -- the turn (owed_turn's key)
+  age             INTEGER NOT NULL,            -- the age it was kept at, ms
+  p               REAL NOT NULL,               -- the chance shown
+  table_p         REAL NOT NULL,               -- the owed table's chance alone, to compare
+  at              INTEGER NOT NULL,
+  PRIMARY KEY (conversation_id, addressed, age)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS needs_prediction_addressed ON needs_prediction(addressed);
+
 -- ------------------------------------------------------------------ the change journal (journal.ts, docs/sync.md)
 -- What changed, by object, at which position, so a client that comes back asks only for that. Compacted: one row
 -- per object, at its latest change. Holds ids only; what an object is now is read from its own table at sync time.

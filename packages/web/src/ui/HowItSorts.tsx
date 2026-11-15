@@ -10,7 +10,7 @@ import { BELOW_DAYS, isMailItem, lineKey, linesOf, listPreview, reasonsOf, topIm
 import { authorName, board, boardUnread, communitiesOf, convLabel, convTitle, plainBody } from '../model.ts';
 import { useEffect, useState } from 'preact/hooks';
 import { db, go, loadMailTriage, rev } from '../state.ts';
-import { forgetFactor, loadPolicy, loadShadow, relearn, triagePolicy, triageShadow } from '../triage.ts';
+import { forgetFactor, loadNeedsCalibration, loadPolicy, loadShadow, needsCalibration, relearn, triagePolicy, triageShadow } from '../triage.ts';
 import { MarkToggles, percent, TIER_ICON } from './Marks.tsx';
 import { Avatar } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -273,8 +273,60 @@ export function HowItSorts({ onBack }: { onBack?: () => void }) {
           </details>
         )}
         <Learned />
+        <NeedsReply />
       </div>
     </section>
+  );
+}
+
+/**
+ * How well "needs a reply" chances held up (docs/inbox.md, "Needs a reply"): the chance each owed reply was shown with,
+ * against whether you answered within three days. The scorecard of model accuracy by day can take it as one of its
+ * metrics (GET /api/attention/needs-reply has the days); until then it is its own block here.
+ */
+function NeedsReply() {
+  const c = needsCalibration.value;
+  useEffect(() => void loadNeedsCalibration(), []);
+  if (!c) return null;
+  const bins = c.bins.filter((b) => b.n > 0);
+  return (
+    <div class="board-block needs-calibration" data-needs="calibration">
+      <h3>
+        <Icon name="reply" size={15} /> Needs a reply
+      </h3>
+      <p class="muted">
+        An owed reply shows the chance you will want to give it, learned from what you answered before{c.model.fittedAt ? ` (last learned ${ago(c.model.fittedAt)})` : ''}. Here is how those chances held up: of the replies
+        shown at 70%, about 70 in 100 should have been answered.
+      </p>
+      {c.n === 0 ? (
+        <p class="muted">Nothing to check yet: a chance is checked three days after the message it was about.</p>
+      ) : (
+        <>
+          <p class="muted" data-needs="score">
+            {plural(c.n, 'chance')} checked over {plural(c.days.length, 'day')}: Brier score {c.brier.toFixed(3)} (0 is perfect, 0.25 a coin toss), {c.brier <= c.tableBrier ? 'better than' : 'worse than'} {c.tableBrier.toFixed(3)} for the
+            reply table alone.
+          </p>
+          <table class="needs-bins">
+            <thead>
+              <tr>
+                <th>Shown</th>
+                <th>Replies</th>
+                <th>Answered</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bins.map((b) => (
+                <tr key={b.lo}>
+                  <td>{percent(b.predicted)}</td>
+                  <td>{b.n}</td>
+                  <td>{percent(b.actual)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
   );
 }
 

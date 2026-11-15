@@ -582,6 +582,12 @@ code {
   font-weight: 600;
   color: var(--accent);
 }
+/* The chance it needs a reply (docs/inbox.md "Needs a reply"), faint after the age: from data-p, no element. */
+.row-owed[data-p]::after {
+  content: attr(data-p);
+  font-weight: 400;
+  opacity: 0.7;
+}
 /* Reply marks on a row (ui/ReplyMark.tsx, docs/inbox.md "Marks"): the ↩ is a button beside the row's own, laid
    exactly over the ↩ the row draws at the end of its bottom line. Hovered, it shows ✕ ("No reply needed"); on a row
    without one, a faint ↩ shows there while the pointer is on the row ("Reply needed"). On a phone the row swipes left
@@ -9930,6 +9936,22 @@ html[data-theme='light'] .acc-dot {
   align-items: flex-start;
   gap: 10px;
   margin-top: 8px;
+}
+/* How the "needs a reply" chances held up (HowItSorts.tsx NeedsReply): shown against answered, a small table. */
+.needs-bins {
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  margin-top: 4px;
+}
+.needs-bins th,
+.needs-bins td {
+  padding: 2px 14px 2px 0;
+  text-align: right;
+  color: var(--text-dim);
+}
+.needs-bins th {
+  font-weight: 600;
 }
 
 /* ---------------------------------------------------------------- about and settings (About.tsx) */

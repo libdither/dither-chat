@@ -11,6 +11,7 @@
  *   bun scripts/inbox-replay.ts ... --explore [--explore-scale 1]   (also: what exploring costs, over 20 seeds)
  *   bun scripts/inbox-replay.ts ... --calibrate    (the learned order's prior: open chance against the formula alone)
  *   bun scripts/inbox-replay.ts ... --prefetch     (pages kept on the device and fetched ahead: how many opens they serve, at what cost)
+ *   bun scripts/inbox-replay.ts ... --needs        (owed replies weighed by the needs-reply model, fitted on the turns over before the log began)
  *
  * It never opens the live database for writing: it copies it with VACUUM INTO (read-only) and works on the copy. It
  * writes `inbox-replay.md` and `inbox-replay.json` to --out: counts, ranks and rates, never message text, names or ids.
@@ -32,6 +33,10 @@ import { scoreConversation, WEIGHTS } from '../packages/hub/src/attention.ts';
 import { drawZ, epochOf, EXAM_AT, EXAMINATION_ETA, EXPLORE_SCALE, FEATURES, FIT, fitRank, FLOORED, GUESSED_CURVE, logit, pointsOf, SEND_VALUE, sigmoid, spread, TRIAGE_FEATURES, HORIZON, LAMBDA, MAX_IPW, predict, PRIOR, rankFeatures, type Feature, type Features, type FitOptions, type Moment, type RankModel } from '../packages/hub/src/rank.ts';
 import { isChoice, loadWorld, momentOf, mutedBy, Rebuild, seenAt, type Seen, type World } from '../packages/hub/src/rankhistory.ts';
 import { Store } from '../packages/hub/src/store.ts';
+import { fitNeedsModelSteps } from '../packages/hub/src/needsreply.ts';
+import { DEFAULT_OWED_TABLE, type OwedTurn } from '../packages/hub/src/owed.ts';
+import { REPLY_WINDOW } from '../packages/hub/src/tally.ts';
+import { SELF_SQL } from '../packages/hub/src/rankhistory.ts';
 import { Triage } from '../packages/hub/src/triage.ts';
 
 type Row = Record<string, any>;
@@ -70,7 +75,23 @@ function copyLive(): string {
 
 function load(path: string): World & { db: Database; store: Store } {
   const store = new Store(path, () => null);
-  return { ...loadWorld(store.db, mutedBy(new Triage(store))), db: store.db, store };
+  const w = loadWorld(store.db, mutedBy(new Triage(store)));
+  if (flag('needs')) w.needsModel = fitNeeds(store.db, w.logStart);
+  return { ...w, db: store.db, store };
+}
+
+/** The needs-reply model as the hub fits it (needsreply.ts), on the copy's turns that were over before `before`. */
+function fitNeeds(db: Database, before: number) {
+  const self = new Set((db.query(`SELECT * FROM ${SELF_SQL}`).all() as Record<string, any>[]).map((r) => Object.values(r)[0] as string));
+  const selfPerson = (db.query('SELECT id FROM person WHERE is_self = 1').get() as Record<string, any> | null)?.id ?? null;
+  const turns = (db.query('SELECT conversation_id, shape, author_key, addressed, answered_at, timed, dismissed FROM owed_turn WHERE addressed <= ?').all(before - REPLY_WINDOW) as Record<string, any>[]).map(
+    (r): OwedTurn => ({ conversationId: r.conversation_id, shape: r.shape, authorKey: r.author_key, addressed: r.addressed, answeredAt: r.answered_at, timed: !!r.timed, ...(r.dismissed ? { dismissed: true } : {}) }),
+  );
+  const g = fitNeedsModelSteps(db, turns, { now: before, table: DEFAULT_OWED_TABLE, mine: (i, p) => (!!i && self.has(i)) || (!!p && p === selfPerson) });
+  for (;;) {
+    const r = g.next();
+    if (r.done) return r.value;
+  }
 }
 
 // ------------------------------------------------------------------ orderings

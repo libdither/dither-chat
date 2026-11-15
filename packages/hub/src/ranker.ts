@@ -17,6 +17,7 @@
 import { Database } from 'bun:sqlite';
 import type { AttentionJudge, ScoreInput, Scored } from './attention.ts';
 import type { OwedTable } from './owed.ts';
+import type { NeedsModel } from './needsreply.ts';
 import { EXPLORE_REASON } from '@dither-chat/protocol';
 import { drawZ, epochOf, EXAM_AT, EXPLORE_EPOCH, EXPLORE_SCALE, FEATURES, FIT, fitRankSteps, GUESSED_CURVE, HORIZON, predict, PRIOR, rankFeatures, Z_CLIP, type Moment, type Prediction, type RankModel } from './rank.ts';
 import { flagged, isChoice, loadWorld, momentOf, mutedBy, Rebuild } from './rankhistory.ts';
@@ -55,6 +56,8 @@ export class InboxRanker implements AttentionJudge {
   onFit?: () => void;
   /** The inbox's owed table (owed.ts, attention.ts): history is scored with it, as the live rows are. */
   owedTable?: () => OwedTable;
+  /** The needs-reply model the live scores use (needsreply.ts), so the replays score as the hub does. */
+  needsModel?: () => NeedsModel | null;
 
   constructor(
     private store: Store,
@@ -191,6 +194,7 @@ export class InboxRanker implements AttentionJudge {
       // Two more weeks of stays before the window, for where you had been by its first open.
       const w = loadWorld(db, mutedBy(this.triage), since - 14 * DAY, await run(flagged(db)));
       w.owedTable = this.owedTable?.();
+      w.needsModel = this.needsModel?.() ?? null;
       const opens = w.stays.filter((s) => isChoice(s) && s.targets.length && s.start >= since && s.start + HORIZON <= now).slice(-MAX_MOMENTS);
       const moments: Moment[] = [];
       let i = 0;

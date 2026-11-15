@@ -105,7 +105,7 @@ check(Math.abs(owedBox[0] - markBox[0]) <= 5 && Math.abs(owedBox[1] - markBox[1]
 await mouse('mouseMoved', mx, my);
 await Bun.sleep(200);
 st = await markState(owes);
-check(st && st.opacity === 1 && st.x && st.owedHidden && st.label === 'No reply needed' && st.title === 'No reply needed', 'hovering the ↩: it shows ✕, "No reply needed"', st);
+check(st && st.opacity === 1 && st.x && st.owedHidden && st.label === 'No reply needed' && /^(Likely needs|May need) a reply: \d+%\. Click: No reply needed$/.test(st.title), 'hovering the ↩: it shows ✕, "No reply needed", after the chance it needs one', st);
 if (shots) await p.shot(`${shots}/hover-owed.png`);
 const hash0 = await p.eval<string>('location.hash');
 await click(mx, my);

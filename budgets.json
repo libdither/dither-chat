@@ -3,7 +3,7 @@
   "hub": {
     "bootstrap.bytes": { "measured": 430545, "budget": 437693 },
     "bootstrap.zstd": { "measured": 43921, "budget": 44782 },
-    "bootstrap.fields": { "measured": 19199, "budget": 19199, "reason": "The bootstrap names the hub process (boot), so a page that reconnects by bootstrap checks for a new build after a deploy" },
+    "bootstrap.fields": { "measured": 19200, "budget": 19200, "reason": "An inbox row that owes a reply carries the chance it needs one (needsReply, docs/inbox.md \"Needs a reply\"): one owed row in the perf world" },
     "bootstrap.conversations": { "measured": 574, "budget": 574 },
     "bootstrap.identities": { "measured": 146, "budget": 146 },
     "bootstrap.persons": { "measured": 51, "budget": 51 },

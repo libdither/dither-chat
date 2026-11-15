@@ -1238,8 +1238,33 @@ export interface AttentionView {
   owedSince: number | null;
   /** You marked what you owe here "Reply needed": it is held up until you answer (docs/inbox.md, "Marks"). */
   replyMark?: 'needs';
+  /**
+   * The chance the reply you owe is one you will want to give (docs/inbox.md, "Needs a reply"), 0..1 to 5 points: with
+   * `owedSince`, unless you marked it "Reply needed".
+   */
+  needsReply?: number;
   /** When the hub computed it. */
   at: number;
+}
+
+/**
+ * How well the "needs a reply" chances matched what you did (GET /api/attention/needs-reply, docs/inbox.md "Needs a
+ * reply"): each open turn's chance kept at 15 minutes, an hour, 6 hours and a day, against whether you answered within
+ * the reply window. By the day the turn began, and all together in bins. Counts and rates only.
+ */
+export interface NeedsReplyCalibration {
+  days: { day: string; n: number; answered: number; predicted: number; brier: number; logLoss: number; tableBrier: number }[];
+  n: number;
+  brier: number;
+  logLoss: number;
+  auc: number;
+  /** The owed table's chance alone, on the same turns, to compare. */
+  tableBrier: number;
+  tableAuc: number;
+  /** Ten bins of the chance given: how many, the mean chance, and the share answered. */
+  bins: { lo: number; hi: number; n: number; predicted: number; actual: number }[];
+  /** When the model was fitted, and on how many turns of each shape (none: the table alone). */
+  model: { fittedAt: number | null; turns: { direct?: number; group?: number } };
 }
 
 /**
