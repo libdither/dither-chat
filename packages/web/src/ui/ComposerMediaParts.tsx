@@ -72,6 +72,24 @@ export function StickerPicker({ conversationId, accountId, anchor, onPick, onClo
   };
   const packs = page?.packs ?? [];
   const pack = packs[Math.min(tab, packs.length - 1)];
+  // In the panel every pack is one scroll, as Telegram's: the strip jumps to a pack and follows the scroll.
+  const sections = useRef<HTMLDivElement>(null);
+  const jump = (i: number) => {
+    setTab(i);
+    sections.current?.querySelector<HTMLElement>(`[data-pack="${i}"]`)?.scrollIntoView({ block: 'start' });
+  };
+  const follow = () => {
+    const el = sections.current;
+    if (!el) return;
+    let at = 0;
+    el.querySelectorAll<HTMLElement>('[data-pack]').forEach((s, i) => s.offsetTop - el.offsetTop <= el.scrollTop + 8 && (at = i));
+    if (at !== tab) setTab(at);
+  };
+  const choice = (s: P.StickerView) => (
+    <button class="sticker-choice" data-track="send sticker" title={s.name} aria-label={`Send ${s.name}`} onClick={() => onPick(s)}>
+      {draw(s)}
+    </button>
+  );
   const body = (
     <div class="sticker-picker-body" data-track-area="sticker picker">
       {packs.length > 0 && (
@@ -116,7 +134,53 @@ export function StickerPicker({ conversationId, accountId, anchor, onPick, onClo
       )}
     </div>
   );
-  if (inline) return <div class="sticker-picker">{body}</div>;
+  if (inline)
+    return (
+      <div class="sticker-picker">
+        <div class="sticker-picker-body" data-track-area="sticker picker">
+          {packs.length > 0 && (
+            <div class="sticker-tabs" role="tablist">
+              {packs.map((p, i) => (
+                <button role="tab" aria-selected={p === pack} class={`sticker-tab ${p === pack ? 'on' : ''}`} title={p.name} aria-label={p.name} onClick={() => jump(i)}>
+                  {p.cover ? <img src={p.cover} alt="" width={24} height={24} /> : <Icon name="sticker" size={16} />}
+                </button>
+              ))}
+              {page?.next && (
+                <button class="sticker-tab more" disabled={busy} data-track="more sticker packs" title="More packs" aria-label="More packs" onClick={() => void fetchPage(page.next!)}>
+                  <Icon name="plus" size={14} />
+                </button>
+              )}
+            </div>
+          )}
+          <div class="sticker-sections" ref={sections} onScroll={follow}>
+            {packs.map((p, i) => (
+              <section data-pack={i}>
+                <div class="sticker-pack-name">{p.name}</div>
+                <div class="sticker-grid">{p.stickers.map(choice)}</div>
+              </section>
+            ))}
+            {busy && !packs.length && <div class="sticker-note">Asking for your stickers…</div>}
+            {!busy && page && !packs.length && <div class="sticker-note">{page.note ?? 'No stickers you can send here.'}</div>}
+            {packs.length > 0 && page?.note && <div class="sticker-note small">{page.note}</div>}
+            {error && <div class="sticker-note error">{error}</div>}
+          </div>
+          {page?.canInstall && (
+            <form
+              class="sticker-install"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void install();
+              }}
+            >
+              <input type="url" inputMode="url" placeholder="Paste a signal.art sticker link" value={link} onInput={(e) => setLink((e.target as HTMLInputElement).value)} aria-label="Sticker pack link" />
+              <button class="btn" type="submit" disabled={busy || !link.trim()} data-track="install sticker pack">
+                Install
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
+    );
   if (sheet)
     return (
       <Sheet onClose={onClose} label="Stickers" class="sticker-picker" tall>

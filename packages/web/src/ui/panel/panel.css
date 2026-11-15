@@ -333,3 +333,37 @@
 .kp-poll .poll-draft {
   margin: 8px;
 }
+
+/* Stickers in the panel: every pack in one scroll, small tiles, four or five to a row (ComposerMediaParts.tsx). */
+.kp .sticker-tabs {
+  padding: 4px 6px;
+  gap: 2px;
+}
+.kp .sticker-tab {
+  width: 32px;
+  height: 32px;
+}
+.kp .sticker-sections {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.kp .sticker-pack-name {
+  padding: 8px 10px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.kp .sticker-grid {
+  overflow: visible;
+  grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));
+  gap: 0;
+  padding: 0 4px;
+}
+.kp .sticker-choice img,
+.kp .sticker-choice .sticker {
+  width: 60px;
+  height: 60px;
+}

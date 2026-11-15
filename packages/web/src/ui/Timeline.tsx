@@ -1334,12 +1334,16 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
     insertAtCaret(el, t, false);
     caret.current = at + t.length;
   };
-  // + : the panel in the keyboard's place, on Photos (or the first tab this chat has); while it is open the + is the
-  // keyboard's button. The box's emoji button opens it on Emoji.
-  const togglePanel = (at?: PanelTab) => {
-    if (panelOpen.value && (!at || at === panelTab)) return ta.current?.focus();
-    if (at) setPanelTab(at);
-    else if (!attaching && (panelTab === 'photos' || panelTab === 'files')) setPanelTab(canSticker ? 'stickers' : 'emoji');
+  // + opens the panel in the keyboard's place on the last of its tabs (Photos first, or Stickers or Poll where files
+  // can't go); the box's emoji button opens it on Emoji. The button whose tab is showing becomes the keyboard's.
+  const lastPlusTab = useRef<PanelTab>('photos');
+  if (panelTab !== 'emoji') lastPlusTab.current = panelTab;
+  const plusTab: PanelTab = attaching ? lastPlusTab.current : lastPlusTab.current === 'stickers' || lastPlusTab.current === 'poll' ? lastPlusTab.current : canSticker ? 'stickers' : pollAccount ? 'poll' : 'emoji';
+  const onEmojiTab = panelOpen.value && panelTab === 'emoji';
+  const onPlusTab = panelOpen.value && !onEmojiTab;
+  const togglePanel = (at: PanelTab) => {
+    if (panelOpen.value && at === panelTab) return ta.current?.focus();
+    setPanelTab(at);
     if (panelOpen.value) return;
     void loadPanels().then((m) => {
       setPanelMod(m);
@@ -1427,7 +1431,7 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
       class="icon-btn composer-emoji"
       data-track="emoji"
       title="Emoji"
-      aria-label="Emoji"
+      aria-label={onEmojiTab ? 'Back to the keyboard' : 'Emoji'}
       aria-expanded={!!emojiAt}
       // The catalog loads while the pointer is on its way, so the picker opens whole.
       onPointerEnter={() => void loadEmoji()}
@@ -1435,7 +1439,7 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
       onPointerDown={(e) => onPhone && e.preventDefault()}
       onClick={(e) => (onPhone ? togglePanel('emoji') : setEmojiAt(emojiAt ? null : (e.currentTarget as HTMLElement).getBoundingClientRect()))}
     >
-      <Icon name="smile" size={onPhone ? 20 : 18} />
+      <Icon name={onEmojiTab ? 'keyboard' : 'smile'} size={onPhone ? 20 : 18} />
     </button>
   );
   const recording = attaching && offer.record && !text.trim() && !files.length;
@@ -1576,14 +1580,14 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
           {!!conv && !disabledReason && (
             <button
               ref={plusRef}
-              class={`icon-btn composer-plus ${panelOpen.value ? 'on' : ''}`}
-              data-track={panelOpen.value ? 'keyboard' : 'plus'}
+              class={`icon-btn composer-plus ${onPlusTab ? 'on' : ''}`}
+              data-track={onPlusTab ? 'keyboard' : 'plus'}
               // Keeps the box focused, so the panel takes the keyboard's room before the keyboard goes.
               onPointerDown={(e) => e.preventDefault()}
-              onClick={() => togglePanel()}
-              aria-label={panelOpen.value ? 'Back to the keyboard' : 'Photos, files, stickers and polls'}
+              onClick={() => togglePanel(onPlusTab ? panelTab : plusTab)}
+              aria-label={onPlusTab ? 'Back to the keyboard' : 'Photos, files, stickers and polls'}
             >
-              <Icon name={panelOpen.value ? 'keyboard' : 'plus'} size={22} />
+              <Icon name={onPlusTab ? 'keyboard' : 'plus'} size={22} />
             </button>
           )}
           <div class={`composer-box ${disabledReason ? 'disabled' : ''}`}>
@@ -1651,7 +1655,7 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
             ...(canSticker ? { stickers: () => <StickerPicker inline conversationId={targets.convId} accountId={targets.accountId ?? sender?.id} onSend={(st) => sendMedia({ media: { sticker: st.id } })} onClose={() => closePanel()} /> } : {}),
             emoji: () => <InsertPicker inline conversationId={targets.convId} network={conv.network} anchor={null} onInsert={insertFromPanel} onClose={() => closePanel()} />,
             ...(pollAccount
-              ? { poll: () => <PollMakerLazy conversationId={targets.convId} network={conv.network} accountId={pollAccount.id} question={text.trim()} onClose={() => closePanel()} onSent={() => type('')} /> }
+              ? { poll: () => <PollMakerLazy conversationId={targets.convId} network={conv.network} accountId={pollAccount.id} question={text.trim()} focus={false} onClose={() => closePanel()} onSent={() => type('')} /> }
               : {}),
           }}
         />
