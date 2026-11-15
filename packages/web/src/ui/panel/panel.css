@@ -288,3 +288,44 @@
   padding: 0 12px;
   font-size: 16px;
 }
+
+/* The composer's own pickers, drawn in the panel (Stickers, Emoji, Poll): no frame or place of their own. */
+.kp .emoji-picker,
+.kp .sticker-picker {
+  position: static;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: none;
+  height: auto;
+  max-height: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+/* The emoji categories along the bottom, under the thumb, as in the phone's sheet. */
+.kp .emoji-picker .ep-body {
+  flex-direction: column-reverse;
+}
+.kp .emoji-picker .ep-rail {
+  width: auto;
+  flex-direction: row;
+  padding: 4px 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-top: 1px solid var(--border-soft);
+}
+.kp .emoji-picker .ep-rail hr {
+  width: 0;
+  height: 22px;
+  margin: 0 4px;
+  border-top: 0;
+  border-left: 1px solid var(--border);
+}
+.kp-poll {
+  overflow-y: auto;
+}
+.kp-poll .poll-draft {
+  margin: 8px;
+}

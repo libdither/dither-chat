@@ -1324,11 +1324,23 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
         )}
       </Menu>
     ) : null;
-  // + : the panel in the keyboard's place; while it is open the + is the keyboard's button.
-  const togglePanel = () => {
-    if (panelOpen.value) return ta.current?.focus();
-    // Nothing to attach here: what + offers is a sticker or a poll, as before.
-    if (!attaching) return canSticker ? plusRef.current && setStickerAt(plusRef.current.getBoundingClientRect()) : setPolling(true);
+  // The box re-renders as each emoji goes in and, unfocused, loses its caret: the panel keeps it here.
+  const caret = useRef<number | null>(null);
+  const insertFromPanel = (t: string) => {
+    const el = ta.current;
+    if (!el) return;
+    const at = Math.min(caret.current ?? el.value.length, el.value.length);
+    el.setSelectionRange(at, at);
+    insertAtCaret(el, t, false);
+    caret.current = at + t.length;
+  };
+  // + : the panel in the keyboard's place, on Photos (or the first tab this chat has); while it is open the + is the
+  // keyboard's button. The box's emoji button opens it on Emoji.
+  const togglePanel = (at?: PanelTab) => {
+    if (panelOpen.value && (!at || at === panelTab)) return ta.current?.focus();
+    if (at) setPanelTab(at);
+    else if (!attaching && (panelTab === 'photos' || panelTab === 'files')) setPanelTab(canSticker ? 'stickers' : 'emoji');
+    if (panelOpen.value) return;
     void loadPanels().then((m) => {
       setPanelMod(m);
       openPanel();
@@ -1377,7 +1389,11 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
       placeholder={disabledReason ?? (routed ? 'Message' : placeholder)}
       disabled={!!disabledReason}
       onInput={chips.onInput}
-      onBlur={composerDone}
+      onBlur={(e) => {
+        // Where the caret was: the panel's emoji go there while the box is not focused.
+        caret.current = (e.currentTarget as HTMLTextAreaElement).selectionEnd;
+        composerDone();
+      }}
       onPaste={(e) => {
         const pasted = [...(e.clipboardData?.files ?? [])];
         if (!pasted.length) return void chips.onPaste(e);
@@ -1415,7 +1431,9 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
       aria-expanded={!!emojiAt}
       // The catalog loads while the pointer is on its way, so the picker opens whole.
       onPointerEnter={() => void loadEmoji()}
-      onClick={(e) => setEmojiAt(emojiAt ? null : (e.currentTarget as HTMLElement).getBoundingClientRect())}
+      // On a phone the panel's Emoji tab, in the keyboard's place; it keeps the box focused until then.
+      onPointerDown={(e) => onPhone && e.preventDefault()}
+      onClick={(e) => (onPhone ? togglePanel('emoji') : setEmojiAt(emojiAt ? null : (e.currentTarget as HTMLElement).getBoundingClientRect()))}
     >
       <Icon name="smile" size={onPhone ? 20 : 18} />
     </button>
@@ -1555,14 +1573,14 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
         />
       ) : onPhone ? (
         <div class="composer-row">
-          {(attaching || canSticker || !!pollAccount) && (
+          {!!conv && !disabledReason && (
             <button
               ref={plusRef}
               class={`icon-btn composer-plus ${panelOpen.value ? 'on' : ''}`}
               data-track={panelOpen.value ? 'keyboard' : 'plus'}
               // Keeps the box focused, so the panel takes the keyboard's room before the keyboard goes.
               onPointerDown={(e) => e.preventDefault()}
-              onClick={togglePanel}
+              onClick={() => togglePanel()}
               aria-label={panelOpen.value ? 'Back to the keyboard' : 'Photos, files, stickers and polls'}
             >
               <Icon name={panelOpen.value ? 'keyboard' : 'plus'} size={22} />
@@ -1628,8 +1646,11 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
             pickFiles: () => picker.current?.click(),
             openLarge: () => setReview(true),
             ...(offer.viewOnce ? { viewOnce: { on: viewOnce, set: setViewOnce } } : {}),
-            ...(canSticker ? { stickers: () => plusRef.current && setStickerAt(plusRef.current.getBoundingClientRect()) } : {}),
-            ...(pollAccount ? { poll: () => setPolling(true) } : {}),
+            ...(canSticker ? { stickers: () => <StickerPicker inline conversationId={targets.convId} accountId={targets.accountId ?? sender?.id} onSend={(st) => sendMedia({ media: { sticker: st.id } })} onClose={() => closePanel()} /> } : {}),
+            emoji: () => <InsertPicker inline conversationId={targets.convId} network={conv.network} anchor={null} onInsert={insertFromPanel} onClose={() => closePanel()} />,
+            ...(pollAccount
+              ? { poll: () => <PollMakerLazy conversationId={targets.convId} network={conv.network} accountId={pollAccount.id} question={text.trim()} onClose={() => closePanel()} onSent={() => type('')} /> }
+              : {}),
           }}
         />
       )}

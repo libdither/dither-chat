@@ -16,10 +16,12 @@ const isSheet = () => matchMedia('(max-width: 820px), (pointer: coarse)').matche
 
 // ------------------------------------------------------------------ stickers
 
-export function StickerPicker({ conversationId, accountId, anchor, onPick, onClose, draw }: {
+export function StickerPicker({ conversationId, accountId, anchor, onPick, onClose, draw, inline }: {
   conversationId: string;
   accountId?: string;
-  anchor: DOMRect;
+  anchor?: DOMRect;
+  /** In the phone's panel (ui/panel/): drawn where it is put, no sheet or popover of its own. */
+  inline?: boolean;
   onPick: (s: P.StickerView) => void;
   onClose: () => void;
   /** Draws one sticker (Sticker.tsx, passed in so this chunk does not pull the timeline's sticker code apart). */
@@ -48,7 +50,7 @@ export function StickerPicker({ conversationId, accountId, anchor, onPick, onClo
   useEffect(() => void fetchPage(), [conversationId, accountId]);
   useLayoutEffect(() => {
     const el = box.current;
-    if (!el || sheet) return;
+    if (!el || sheet || !anchor) return;
     const { width: w, height: h } = el.getBoundingClientRect();
     el.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, anchor.right - w))}px`;
     el.style.top = `${anchor.top - 8 >= h ? anchor.top - h - 6 : Math.min(innerHeight - h - 8, anchor.bottom + 6)}px`;
@@ -114,6 +116,7 @@ export function StickerPicker({ conversationId, accountId, anchor, onPick, onClo
       )}
     </div>
   );
+  if (inline) return <div class="sticker-picker">{body}</div>;
   if (sheet)
     return (
       <Sheet onClose={onClose} label="Stickers" class="sticker-picker" tall>

@@ -1,13 +1,14 @@
 /**
  * The message box's panel on a phone (docs/uploads.md "The panel"): in the keyboard's place and at its height, so
  * swapping one for the other never moves the box (phone.ts openPanel). Tabs along its bottom for what this chat's
- * network takes: Photos and Files (the phone's own, through the Android app, and what your chats already hold), and
- * Stickers and Poll. A chunk of its own, loaded when + is first pressed.
+ * network takes: Photos and Files (the phone's own, through the Android app, and what your chats already hold),
+ * Stickers, Emoji (the box's emoji button opens it here too) and Poll. A chunk of its own, loaded when + is first
+ * pressed.
  *
  * What is picked is attached at once, into the row over the box, and uploads while you pick more or write the
  * caption; picking it again takes it back. It can open to the whole screen (a search, every photo).
  */
-import { createPortal } from 'preact';
+import { createPortal, type ComponentChildren } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { closePanel, imeHeight, panelHeight, panelOpen, panelShown, useLayer } from '../../phone.ts';
@@ -15,10 +16,11 @@ import { toast } from '../../state.ts';
 import type { Attached } from '../ComposerFiles.tsx';
 import { Icon } from '../icons.tsx';
 import { FilesTab } from './Files.tsx';
+import { PanelHead } from './parts.tsx';
 import { PhotosTab } from './Photos.tsx';
 import './panel.css';
 
-export type PanelTab = 'photos' | 'files' | 'stickers' | 'poll';
+export type PanelTab = 'photos' | 'files' | 'stickers' | 'emoji' | 'poll';
 
 /** What the composer lends the panel. */
 export interface PanelCtx {
@@ -38,8 +40,11 @@ export interface PanelCtx {
   /** The send screen: what is picked, large. */
   openLarge: () => void;
   viewOnce?: { on: boolean; set: (on: boolean) => void };
-  stickers?: () => void;
-  poll?: () => void;
+  /** The tabs the composer draws itself, where the chat has them: the sticker picker, the emoji picker (typing into
+   * the box), the poll maker (the box's text as its question). */
+  stickers?: () => ComponentChildren;
+  emoji?: () => ComponentChildren;
+  poll?: () => ComponentChildren;
 }
 
 /** The picks: by where they came from (`dev:i12`, `hub:<attachment>`, `file:<path>`), and the row's key they got. */
@@ -87,6 +92,7 @@ const TABS: { id: PanelTab; icon: string; label: string }[] = [
   { id: 'photos', icon: 'image', label: 'Photos' },
   { id: 'files', icon: 'file', label: 'Files' },
   { id: 'stickers', icon: 'sticker', label: 'Stickers' },
+  { id: 'emoji', icon: 'smile', label: 'Emoji' },
   { id: 'poll', icon: 'list', label: 'Poll' },
 ];
 
@@ -106,27 +112,32 @@ export function Panel({ ctx, tab, setTab }: { ctx: PanelCtx; tab: PanelTab; setT
     return () => document.removeEventListener('pointerdown', h, true);
   }, []);
   useEffect(() => setFull(false), [tab]);
-  const tabs = TABS.filter((t) => (t.id === 'photos' || t.id === 'files' ? ctx.canAttach : t.id === 'stickers' ? !!ctx.stickers : !!ctx.poll));
-  const pick = (t: PanelTab) => {
-    // Stickers and Poll open what they always did (the sticker picker, the poll maker in the box's place).
-    if (t === 'stickers') return void (closePanel(), ctx.stickers?.());
-    if (t === 'poll') return void (closePanel(), ctx.poll?.());
-    setTab(t);
+  const own = { stickers: ctx.stickers, emoji: ctx.emoji, poll: ctx.poll } as Partial<Record<PanelTab, () => ComponentChildren>>;
+  const tabs = TABS.filter((t) => (t.id === 'photos' || t.id === 'files' ? ctx.canAttach : !!own[t.id]));
+  // A field of the panel's own (a search, the poll's lines) has the keyboard up: the panel opens to the whole screen
+  // above it, so what is typed stays in sight.
+  const focusIn = (e: FocusEvent) => {
+    const t = e.target as HTMLInputElement;
+    if ((t.tagName === 'INPUT' && !/^(checkbox|radio|button|submit)$/.test(t.type)) || t.tagName === 'TEXTAREA') setFull(true);
   };
   const h = panelHeight();
   const shown = panelShown.value;
   // Open to the whole screen: above the keyboard where the app keeps its room (a search field has the keyboard up).
   const style = full ? { top: 'var(--app-top, 0px)', bottom: `${imeHeight.value}px`, height: 'auto' } : { height: `${h}px`, transform: shown < 1 ? `translateY(${Math.round((1 - shown) * h)}px)` : undefined };
   return createPortal(
-    <div class={`kp ${full ? 'full' : ''}`} ref={box} style={style} data-track-area="panel" data-open={panelOpen.value ? '' : undefined}>
-      <div class="kp-body">
+    <div class={`kp ${full ? 'full' : ''}`} ref={box} style={style} data-track-area="panel" data-open={panelOpen.value ? '' : undefined} onFocusIn={focusIn}>
+      <div class={`kp-body kp-${tab}`}>
         {tab === 'photos' && ctx.canAttach && <PhotosTab ctx={ctx} picks={picks} full={full} setFull={setFull} />}
         {tab === 'files' && ctx.canAttach && <FilesTab ctx={ctx} picks={picks} full={full} setFull={setFull} />}
+        {tab !== 'photos' && tab !== 'files' && full && (
+          <PanelHead full setFull={(f) => (setFull(f), (document.activeElement as HTMLElement | null)?.blur())} />
+        )}
+        {tab !== 'photos' && tab !== 'files' && own[tab]?.()}
       </div>
       {!full && (
         <nav class="kp-tabs" role="tablist">
           {tabs.map((t) => (
-            <button class={`kp-tab ${t.id === tab ? 'on' : ''}`} role="tab" aria-selected={t.id === tab} data-track={t.id} onClick={() => pick(t.id)}>
+            <button class={`kp-tab ${t.id === tab ? 'on' : ''}`} role="tab" aria-selected={t.id === tab} data-track={t.id} onClick={() => setTab(t.id)}>
               <Icon name={t.icon} size={19} />
               {t.label}
             </button>

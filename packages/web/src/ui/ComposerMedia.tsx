@@ -41,7 +41,7 @@ export function mediaOffer(acc: P.AccountView | undefined, canAttach: boolean) {
 export const preloadStickers = () => void load().catch(() => {});
 
 /** The sticker picker beside `anchor` (the + menu's Sticker on a computer, the + sheet's on a phone). */
-export function StickerPicker({ conversationId, accountId, anchor, onSend, onClose }: { conversationId: string; accountId?: string; anchor: DOMRect; onSend: (sticker: P.StickerView) => void; onClose: () => void }) {
+export function StickerPicker({ conversationId, accountId, anchor, onSend, onClose, inline }: { conversationId: string; accountId?: string; anchor?: DOMRect; onSend: (sticker: P.StickerView) => void; onClose: () => void; inline?: boolean }) {
   const m = useParts(true);
   if (!m) return null;
   return (
@@ -49,8 +49,10 @@ export function StickerPicker({ conversationId, accountId, anchor, onSend, onClo
       conversationId={conversationId}
       accountId={accountId}
       anchor={anchor}
+      inline={inline}
       onPick={(s) => {
-        onClose();
+        // In the panel it stays, as Telegram's does, for another.
+        if (!inline) onClose();
         onSend(s);
       }}
       onClose={onClose}

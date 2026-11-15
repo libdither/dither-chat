@@ -78,7 +78,15 @@ On a phone, **+** swaps the keyboard for a panel of exactly its height (`ui/pane
 box never moves, and a tap in the box brings the keyboard back up over the panel, which goes once the keyboard is up
 (phone.ts `openPanel`, [phone.md](phone.md) "Keyboard"). While it is open the + is a keyboard button. A tap on the
 chat above, back, or a send with what it picked closes it. Tabs along its bottom show only what the chat's network
-takes: **Photos**, **Files**, **Stickers** and **Poll** (the last two open the sticker picker and the poll maker).
+takes: **Photos**, **Files**, **Stickers**, **Emoji** and **Poll**. The box's emoji button opens it on Emoji. Its
+own fields (a search, the poll's lines) open it to the whole screen above the keyboard, and it closes for the keyboard
+only when the box (or another field outside it) has focus.
+
+- **Stickers** is the sticker picker, drawn in the panel; a sticker sends at once and the panel stays for another.
+- **Emoji** is the emoji picker, the categories along its bottom; each one goes into the box where the caret was, and
+  the panel stays, so you can add several.
+- **Poll** is the poll maker ([polls.md](polls.md), "Making one"), with what the box held as its question; once sent
+  the box empties and the panel closes.
 
 What is picked is attached at once, into the row over the box, and starts uploading while you pick more or write
 the caption; it is numbered in the order picked, and picking it again (or its × in the row) takes it back. The box

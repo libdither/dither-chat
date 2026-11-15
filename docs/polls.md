@@ -68,8 +68,9 @@ no account here can vote. A poll can also be ended from the message menu (**End 
 
 ### Making one
 
-**Poll** in the + menu on a computer ([sending.md](sending.md) "The box on a computer"), or in the + sheet on a phone,
-turns the message box into the poll's draft, shaped like the poll it becomes (`PollMaker` in `ui/Poll.tsx`). Its header
+**Poll** in the + menu on a computer ([sending.md](sending.md) "The box on a computer") turns the message box into
+the poll's draft; on a phone the + panel's **Poll** tab holds it, open to the whole screen above the keyboard while
+you type in it ([uploads.md](uploads.md), "The panel"). The draft is shaped like the poll it becomes (`PollMaker` in `ui/Poll.tsx`). Its header
 names the network and its limits ("2 to 10 options"). What the box held becomes the question, its lines joined. An
 option row is added as the last is used, up to the network's most; the marks are round for one choice and square for
 several. The pills choose **One choice** or **Several**, and on Discord how long it stays **Open** (Signal has no
