@@ -1118,9 +1118,12 @@ export class Store {
     const before = this.placeSig('space', id);
     const parentsBefore = this.parentsOf('space', id);
     const was = this.db.query('SELECT name, topic, icon_url FROM space WHERE id = ?').get(id) as Row | null;
+    // A fact without a name (Discord's client sends some servers with theirs only under `properties`) keeps the
+    // name the hub has; a new place without one is named '' until a fact names it, rather than failing the event.
+    const name: string = typeof f.name === 'string' ? f.name : (was?.name ?? '');
     if (was)
       this.logChanges('space', id, acc.id, [
-        ['name', was.name, f.name],
+        ['name', was.name, name],
         ['topic', was.topic, f.topic],
         ['avatar', was.icon_url, f.iconUrl],
       ]);
@@ -1130,7 +1133,7 @@ export class Store {
          ON CONFLICT (network, native_id) DO UPDATE SET kind = excluded.kind, name = excluded.name,
            topic = COALESCE(excluded.topic, topic), icon_url = COALESCE(excluded.icon_url, icon_url), updated_at = excluded.updated_at`,
       )
-      .run(id, acc.network, f.nativeId, f.kind, f.name, f.topic ?? null, f.iconUrl ?? null, Date.now());
+      .run(id, acc.network, f.nativeId, f.kind, name, f.topic ?? null, f.iconUrl ?? null, Date.now());
     this.ensureVantage(acc.id, 'space', id, f.mute);
     if (f.parents) {
       this.db.query(`DELETE FROM space_edge WHERE child_kind = 'space' AND child_id = ?`).run(id);
