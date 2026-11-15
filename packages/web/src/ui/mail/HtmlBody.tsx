@@ -21,7 +21,7 @@ import type { BodyProps } from './slots.tsx';
 import { TextBody } from './TextBody.tsx';
 
 /** A link out of a mail, opened as chat's links are: the desktop helper, else a new tab (Android: its browser). */
-export function openOut(url: string) {
+function openOut(url: string) {
   void openLink(url).then((ok) => {
     if (ok) return;
     if (/^mailto:/i.test(url)) window.location.assign(url);

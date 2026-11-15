@@ -44,12 +44,12 @@ declare module './index.ts' {
   }
 }
 
-export type MailClass = 'personal' | 'bulk' | 'self';
-export type ClassWhy = 'thread' | 'sender' | 'self' | 'mine' | 'wrote' | 'merged' | 'junk' | 'list' | 'category' | 'automated' | 'crowd' | 'unknown';
+type MailClass = 'personal' | 'bulk' | 'self';
+type ClassWhy = 'thread' | 'sender' | 'self' | 'mine' | 'wrote' | 'merged' | 'junk' | 'list' | 'category' | 'automated' | 'crowd' | 'unknown';
 export type Override = 'personal' | 'bulk';
 
 /** The rules whose answer a sender you come to know overturns (rules 4 and 5 come before them). */
-export const SENDER_MAY_CHANGE: ClassWhy[] = ['junk', 'list', 'category', 'automated', 'crowd', 'unknown'];
+const SENDER_MAY_CHANGE: ClassWhy[] = ['junk', 'list', 'category', 'automated', 'crowd', 'unknown'];
 
 /** What one message's class is decided from. */
 export interface ClassifyFacts {
@@ -78,12 +78,12 @@ const AUTOMATED = /^(?:no[-_.]?reply|do[-_.]?not[-_.]?reply|notifications?|notif
 const CATEGORY = /^\\?(?:category[_/ :-]?)(?:promotions|social|updates|forums|newsletters?|transactions?)$/i;
 const PRECEDENCE = /^(?:bulk|list|junk)$/i;
 
-export function automatedAddress(address: string | null | undefined): boolean {
+function automatedAddress(address: string | null | undefined): boolean {
   const local = (address ?? '').split('@')[0] ?? '';
   return !!local && AUTOMATED.test(local);
 }
 
-export function bulkHeaders(b: M.MailBulk | null | undefined): boolean {
+function bulkHeaders(b: M.MailBulk | null | undefined): boolean {
   if (!b) return false;
   if (b.listId || b.unsubscribe) return true;
   if (b.precedence && PRECEDENCE.test(b.precedence.trim())) return true;
@@ -127,13 +127,13 @@ const lc = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
 /** Threads per background step. */
 const STEP = 300;
 
-export interface ClassChange {
+interface ClassChange {
   threadId: string;
   class: MailClass | null;
   unknown: boolean;
 }
 
-export class MailClassifier {
+class MailClassifier {
   /** Senders as mailPeople says, for one synchronous run of ingest (cleared after it). */
   private senders = new Map<string, MailSender>();
   private clearing = false;

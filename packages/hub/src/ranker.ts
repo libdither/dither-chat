@@ -30,15 +30,15 @@ const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
-export type RankMode = 'model' | 'shadow' | 'off';
+type RankMode = 'model' | 'shadow' | 'off';
 export const rankMode = (v: string | undefined): RankMode => (v === 'shadow' || v === 'off' ? v : 'model');
 export const exploreOn = (v: string | undefined): boolean => v !== '0';
 
 /** It learns from the opens of the last two months, at most this many of the latest. */
-export const TRAIN_WINDOW = 60 * DAY;
-export const MAX_MOMENTS = 1500;
+const TRAIN_WINDOW = 60 * DAY;
+const MAX_MOMENTS = 1500;
 /** Refit after this many more opens, or a day after the last refit. */
-export const REFIT_AFTER = 10;
+const REFIT_AFTER = 10;
 const CHECK_EVERY = 30 * MIN;
 /** A score moved this far from the formula's says so in the reasons. */
 const SAY_AFTER = 10;

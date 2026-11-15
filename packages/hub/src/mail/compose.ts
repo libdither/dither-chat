@@ -123,7 +123,7 @@ export function replyFrom(o: ComposeOriginal, addresses: { email: string }[]): s
 // ------------------------------------------------------------------ quotes
 
 /** "Tue, Nov 3, 2026 at 10:42 AM", in `tz` (the page's time zone) when it is a real one. */
-export function quoteDate(ts: number, tz?: string): string {
+function quoteDate(ts: number, tz?: string): string {
   const zone = tz && validZone(tz) ? tz : undefined;
   const d = new Date(ts);
   const day = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: zone }).format(d);
@@ -140,7 +140,7 @@ function validZone(tz: string): boolean {
   }
 }
 
-export const addressText = (a: M.MailAddress) => (a.name && a.name !== a.email ? `${a.name} <${a.email}>` : a.email);
+const addressText = (a: M.MailAddress) => (a.name && a.name !== a.email ? `${a.name} <${a.email}>` : a.email);
 
 /** "On Tue, Nov 3, 2026 at 10:42 AM, Sam Lee <sam@lee.example> wrote:" (thread readers fold from this line). */
 export function attribution(o: ComposeOriginal, tz?: string): string {
@@ -148,7 +148,7 @@ export function attribution(o: ComposeOriginal, tz?: string): string {
 }
 
 /** Quoted text is cut here: a quote longer than this ends in a line saying so. */
-export const QUOTE_MAX = 64 * 1024;
+const QUOTE_MAX = 64 * 1024;
 
 /** The original's text with `> ` before each line (`>` before one already quoted, and alone on an empty one). */
 export function quoteLines(text: string | null): string {
@@ -196,7 +196,7 @@ export function messageText(own: string, t: { head: string; text: string } | nul
 // ------------------------------------------------------------------ HTML
 
 const ESC: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-export const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ESC[c]);
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ESC[c]);
 
 const LINK = /\bhttps?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]/g;
 

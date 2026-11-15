@@ -52,7 +52,6 @@ export function messageBackupKeys(backupKey: Uint8Array, backupId: Uint8Array): 
 /** poksho's ShoHmacSha256, as far as zkgroup's Sho::new + squeeze use it. */
 class Sho {
   private cv = Buffer.alloc(32);
-  private parts: Buffer[] = [];
   constructor(label: string, data: Uint8Array) {
     this.absorbAndRatchet(Buffer.from(label));
     this.absorbAndRatchet(Buffer.from(data));

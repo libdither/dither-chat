@@ -18,10 +18,10 @@ import type * as P from '@dither-chat/protocol';
 import { SYNC_VERSION } from '@dither-chat/protocol';
 
 /** Positions older than this, or behind this many changed objects, start over. */
-export const KEEP_MS = 14 * 86_400_000;
-export const KEEP_ROWS = 250_000;
+const KEEP_MS = 14 * 86_400_000;
+const KEEP_ROWS = 250_000;
 
-export interface Change {
+interface Change {
   kind: string;
   id: string;
   /** A message's conversation. */

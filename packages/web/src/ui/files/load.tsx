@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { Loading } from '../Loader.tsx';
 
-export const TEXT_CAP = 2 * 1024 * 1024;
+const TEXT_CAP = 2 * 1024 * 1024;
 
 /**
  * Bytes for people, as format.ts says them. The viewers import nothing from the app's own modules but Preact, so the
@@ -19,13 +19,13 @@ export function size(n: number | null | undefined): string {
   return `${(n / 1024 ** 2).toFixed(1)} MB`;
 }
 
-export interface Fetched {
+interface Fetched {
   bytes: Uint8Array;
   /** Stopped at the cap: there is more. */
   truncated: boolean;
 }
 
-export async function fetchHead(url: string, cap = TEXT_CAP, signal?: AbortSignal): Promise<Fetched> {
+async function fetchHead(url: string, cap = TEXT_CAP, signal?: AbortSignal): Promise<Fetched> {
   const r = await fetch(url, { signal });
   if (!r.ok) throw new Error(r.status === 404 ? 'The hub no longer has this file.' : `The hub answered ${r.status}.`);
   const reader = r.body!.getReader();
@@ -54,7 +54,7 @@ export async function fetchHead(url: string, cap = TEXT_CAP, signal?: AbortSigna
 }
 
 /** Text from bytes: the encoding the hub found, else by byte-order mark, else UTF-8 if it is, else Windows-1252. */
-export function decode(b: Uint8Array, encoding?: string): string {
+function decode(b: Uint8Array, encoding?: string): string {
   let enc = encoding;
   if (!enc) {
     if (b[0] === 0xff && b[1] === 0xfe) enc = 'utf-16le';
@@ -78,7 +78,7 @@ export function decode(b: Uint8Array, encoding?: string): string {
   return d.decode(b).replace(/^\ufeff/, '');
 }
 
-export type Load<T> = { state: 'loading' } | { state: 'error'; error: string } | { state: 'ok'; value: T; truncated: boolean };
+type Load<T> = { state: 'loading' } | { state: 'error'; error: string } | { state: 'ok'; value: T; truncated: boolean };
 
 /** The first part of `url` as text, decoded. */
 export function useText(url: string, encoding?: string, cap = TEXT_CAP): Load<string> {

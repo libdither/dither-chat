@@ -22,7 +22,6 @@ import {
   people,
   placeConv,
   plainBody,
-  resolveTokens,
   ruleIcon,
   spaceChildren,
   spaceUnread,
@@ -141,7 +140,7 @@ function opener(key: string, open: () => void): () => void {
  * inbox's one row for a person reached by several routes (model.ts), drawn as a DM row of the route with the latest
  * message (`c`), its unread summed over every route and its menu acting on them all.
  */
-export const ConvRow = memo(function ConvRow({ c, active, onClick, showPlace = true, why, owedSince, chat }: { c: P.ConversationView; active: boolean; onClick: () => void; showPlace?: boolean; why?: string[]; owedSince?: number | null; chat?: { person: P.PersonView; routes: P.ConversationView[] } }) {
+const ConvRow = memo(function ConvRow({ c, active, onClick, showPlace = true, why, owedSince, chat }: { c: P.ConversationView; active: boolean; onClick: () => void; showPlace?: boolean; why?: string[]; owedSince?: number | null; chat?: { person: P.PersonView; routes: P.ConversationView[] } }) {
   metaRev.value;
   const u = chat ? chatUnread(chat.routes) : unreadOf(c);
   const lvl = effectiveLevel(c);
@@ -231,7 +230,7 @@ function mailRowMenu(t: P.MailThreadView, why?: string[]): MenuSpec {
  * a chat's network badge goes, the subject before the start of the last message, the same ↩ and reasons as a chat.
  * Opening it opens the reader beside the inbox.
  */
-export const MailRow = memo(function MailRow({ id, active, why, owedSince }: { id: string; active: boolean; why?: string[]; owedSince?: number | null }) {
+const MailRow = memo(function MailRow({ id, active, why, owedSince }: { id: string; active: boolean; why?: string[]; owedSince?: number | null }) {
   mailRev.value;
   metaRev.value;
   const t = db.mail.threads.get(id);
@@ -439,7 +438,7 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
 // ------------------------------------------------------------------ people
 
 /** `directs`: the person's direct conversations (directsOf), which change with each message where the person does not. */
-export const PersonRow = memo(function PersonRow({ person, directs, active, onClick }: { person: P.PersonView; directs: P.ConversationView[]; active: boolean; onClick: () => void }) {
+const PersonRow = memo(function PersonRow({ person, directs, active, onClick }: { person: P.PersonView; directs: P.ConversationView[]; active: boolean; onClick: () => void }) {
   metaRev.value;
   const last = directs.reduce<P.ConversationView | null>((a, c) => (!a || (c.lastMessageAt ?? 0) > (a.lastMessageAt ?? 0) ? c : a), null);
   const u = sumUnread(directs);
@@ -634,7 +633,7 @@ function ChannelRow({ c, active, depth, onOpen, alsoIn, dots = true }: { c: P.Co
   );
 }
 
-export function SpaceTree({ spaceId, active, onOpen, depth = 0, seen = new Set<string>(), dots }: { spaceId: string; active?: string; onOpen: (c: P.ConversationView) => void; depth?: number; seen?: Set<string>; dots?: boolean }) {
+function SpaceTree({ spaceId, active, onOpen, depth = 0, seen = new Set<string>(), dots }: { spaceId: string; active?: string; onOpen: (c: P.ConversationView) => void; depth?: number; seen?: Set<string>; dots?: boolean }) {
   if (seen.has(spaceId)) return null;
   const nextSeen = new Set(seen).add(spaceId);
   const kids = spaceChildren(spaceId);

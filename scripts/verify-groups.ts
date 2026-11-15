@@ -44,7 +44,6 @@ const click = async (sel: string, text?: string) => {
   await Bun.sleep(120);
 };
 const text = (sel: string) => p.eval<string>(`[...document.querySelectorAll(${JSON.stringify(sel)})].map((e) => e.innerText).join(' | ')`);
-const has = (sel: string) => p.eval<boolean>(`!!document.querySelector(${JSON.stringify(sel)})`);
 const CODES: Record<string, number> = { Enter: 13, Escape: 27, Backspace: 8, Tab: 9, ArrowDown: 40, ArrowUp: 38 };
 const key = async (k: string, modifiers = 0) => {
   const code = CODES[k] ?? k.toUpperCase().charCodeAt(0);

@@ -2,7 +2,7 @@ import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, NETWORK_META, RULE_LABEL, RULE_LEVELS, sendBlocker, showsGone, showsInline } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
-import { ago, bytes, clock, dayLabel, fullTime, sameDay } from '../format.ts';
+import { ago, clock, dayLabel, fullTime, sameDay } from '../format.ts';
 import { retention } from '../history.ts';
 import { isJumbo, renderMarkdown } from '../markdown.ts';
 import { inviteRef } from '../invites.ts';
@@ -29,11 +29,9 @@ import {
   ruleIcon,
   ruleName,
   ruleOn,
-  threadsOf,
   visibleAccount,
 } from '../model.ts';
 import {
-  api,
   db,
   go,
   isSelfIdentity,
@@ -162,7 +160,7 @@ function Crumbs({ c }: { c: P.ConversationView }) {
  * A conversation's notification rule, from its header: Automatic (no rule), Always alert, List only or Mute. With no
  * rule of its own, the line under Automatic says what holds: a rule above it, or what the network does here.
  */
-export function LevelMenu({ c, also }: { c: P.ConversationView; /** A person's other chats, which take the same rule (all chats together). */ also?: P.ConversationView[] }) {
+function LevelMenu({ c, also }: { c: P.ConversationView; /** A person's other chats, which take the same rule (all chats together). */ also?: P.ConversationView[] }) {
   const eff = effectiveLevel(c);
   const own = ruleOn('conversation', c.id);
   const com = c.spaceIds[0] ?? (c.parentId ? db.conversations.get(c.parentId)?.spaceIds[0] : undefined);
@@ -793,7 +791,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
 // ------------------------------------------------------------------ timeline
 
 /** Messages drawn at the newest end of a timeline. The rest stay in memory and are drawn as the view nears them. */
-export const WINDOW = 150;
+const WINDOW = 150;
 /** How many more are drawn each time the view nears an end of what is drawn. */
 const STEP = 100;
 
@@ -1090,7 +1088,7 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
 
 // ------------------------------------------------------------------ composer
 
-function Composer({ targets, placeholder, sendAs, onSendAs, reply, clearReply, disabledReason, lead }: {
+function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledReason, lead }: {
   targets: { convId: string; accountId?: string };
   placeholder: string;
   /**

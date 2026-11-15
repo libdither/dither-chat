@@ -15,7 +15,7 @@ import type { AccountRow, Store } from './store.ts';
 
 type Row = Record<string, any>;
 
-export interface PostsDeps {
+interface PostsDeps {
   store: Store;
   online: (accountId: string) => boolean;
   command: <T>(
@@ -42,7 +42,7 @@ const LOGGED_DEPTH = 10;
 const LOGGED_MAX = 500;
 
 /** The posts conversation's native id for an account: one per account, as its feed is. */
-export function postsConvNative(store: Store, acc: AccountRow): string {
+function postsConvNative(store: Store, acc: AccountRow): string {
   const self = acc.self_identity ? store.nativeOf('identity', acc.self_identity)?.nativeId : null;
   return self ? `posts:${self}` : 'posts';
 }
@@ -89,7 +89,7 @@ export class PostsError extends Error {
 }
 
 /** A post as its message: its words, the post it answers, its pictures as attachments, the post itself in `extra`. */
-export function postMessage(p: P.PostFact, conversation: string): P.MessageFact | null {
+function postMessage(p: P.PostFact, conversation: string): P.MessageFact | null {
   if (!p.author) return null;
   return {
     nativeId: postNativeId(p.id),

@@ -7,7 +7,7 @@
 const TEXT = /^(application\/(json|javascript|manifest\+json|xml)|text\/|image\/svg\+xml)/;
 const MIN_BYTES = 1024;
 
-export type Encoding = 'zstd' | 'gzip';
+type Encoding = 'zstd' | 'gzip';
 
 /** The first of zstd, gzip that the client accepts. Order of preference is ours, not the header's. */
 export function pickEncoding(accept: string | null): Encoding | null {

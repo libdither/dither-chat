@@ -12,7 +12,7 @@ import type { Store } from './store.ts';
 
 type Row = Record<string, any>;
 
-export interface PeopleDeps {
+interface PeopleDeps {
   store: Store;
   online: (accountId: string) => boolean;
   command: <T>(accountId: string, cmd: PeopleCommand, timeoutMs?: number) => Promise<T>;

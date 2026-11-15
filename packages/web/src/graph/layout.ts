@@ -4,7 +4,7 @@
  * (layout.worker.ts); one tick() is one step, and it cools to a stop.
  */
 
-export interface LayoutInput {
+interface LayoutInput {
   n: number;
   /** Pairs of node indexes. */
   edges: Uint32Array;

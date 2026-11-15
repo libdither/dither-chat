@@ -8,7 +8,7 @@ import { toast } from './state.ts';
 const KEY = 'dither.desk';
 export const DESK_PORT = 8475;
 
-export interface DeskState {
+interface DeskState {
   port: number;
   token: string;
   /** Open links in the default browser. */
@@ -17,7 +17,7 @@ export interface DeskState {
   files: boolean;
 }
 
-export interface DeskApp {
+interface DeskApp {
   id: string;
   name: string;
 }

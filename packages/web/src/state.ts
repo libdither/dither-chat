@@ -18,8 +18,8 @@ import { applyCalls, applyVoice, loadCalls } from './ringing.ts';
 // ------------------------------------------------------------------ data
 
 /** What components read to re-render: `rev` for the lists, `metaRev` for names and settings, one per timeline (versions.ts). */
-export { changed, dataVersion, mailRev, metaRev, rev, timelineChanged, timelineRev } from './versions.ts';
-export { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines, type Timeline } from './store.ts';
+export { changed, dataVersion, mailRev, metaRev, rev,  timelineRev } from './versions.ts';
+export { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines,  } from './store.ts';
 export const connected = signal(false);
 /** Notices on this hub (docs/notices.md): whether it may read them; null when it has none. */
 export const noticesBoot = signal<P.NoticesBoot | null>(null);
@@ -49,7 +49,7 @@ function mergeMailTriage(threads: P.MailThreadView[]) {
   changed('list');
 }
 
-export interface PendingSend {
+interface PendingSend {
   tempId: string;
   conversationId: string;
   body: string;
@@ -101,7 +101,7 @@ export function toast(t: Omit<Toast, 'id'>, ms = 6000) {
 
 export type DirectorySort = 'recency' | 'activity' | 'unread' | 'name' | 'network' | 'manual' | 'category';
 
-export interface Prefs {
+interface Prefs {
   /** A theme id from themes.ts, or 'system' to follow the device with themeDark and themeLight. ('dark' and 'light' are older names for the Dither ones.) */
   theme: string;
   themeDark: string;
@@ -398,7 +398,7 @@ export function isSelfIdentity(id: string | null | undefined): boolean {
 // ------------------------------------------------------------------ notifications
 
 /** Kept off this device by its own rules (docs/devices.md). The id is activity.ts's deviceId(), read here without importing it. */
-export function quietHere(ev: { quiet?: string[] }): boolean {
+function quietHere(ev: { quiet?: string[] }): boolean {
   if (!ev.quiet?.length) return false;
   try {
     return ev.quiet.includes(localStorage.getItem('dither-chat:device') ?? '');
@@ -456,7 +456,7 @@ const glancing = new Map<string, Promise<void>>();
  * Where a timeline opened came from (prefetch.ts counts them): already in memory, a glance (Catch up's, or one fetched
  * ahead), a page kept on this device (keptpages.ts), or nothing until the hub answers.
  */
-export type OpenedFrom = 'memory' | 'glance' | 'kept' | 'hub';
+type OpenedFrom = 'memory' | 'glance' | 'kept' | 'hub';
 export const openHooks = new Set<(key: string, from: OpenedFrom) => void>();
 const servedFrom = (key: string, from: OpenedFrom) => {
   for (const h of openHooks) h(key, from);
@@ -754,7 +754,7 @@ async function syncTimelines(list: Timeline[], posOf: (t: Timeline) => P.SyncPos
   return 'ok';
 }
 
-export async function loadInbox() {
+async function loadInbox() {
   const [page] = await Promise.all([api<P.InboxPage>('/api/inbox'), loadMailTriage()]);
   page.identities.forEach(putIdentity);
   inbox.value = page.items.map((i) => i.message);

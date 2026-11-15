@@ -55,7 +55,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { launch, type Page } from './browser.ts';
+import { launch } from './browser.ts';
 
 const args = process.argv.slice(2);
 const withHtml = args.includes('--html');

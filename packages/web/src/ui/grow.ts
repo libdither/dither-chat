@@ -9,7 +9,7 @@
  */
 import { useLayoutEffect } from 'preact/hooks';
 
-export const fieldSizing = typeof CSS !== 'undefined' && !!CSS.supports?.('field-sizing', 'content');
+const fieldSizing = typeof CSS !== 'undefined' && !!CSS.supports?.('field-sizing', 'content');
 
 export function useGrow(ta: { current: HTMLTextAreaElement | null }, text: string) {
   useLayoutEffect(() => {

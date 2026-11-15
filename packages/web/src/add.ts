@@ -21,7 +21,7 @@ export interface AddRow {
 const online = (accounts: Iterable<P.AccountView>, network: P.Network) => [...accounts].filter((a) => a.network === network && a.status === 'online');
 
 /** The address openDirect takes for a reading, when it is one. */
-export function readingPeer(ref: P.AddRef): string | null {
+function readingPeer(ref: P.AddRef): string | null {
   const raw = ref.kind === 'person' ? ref.handle : ref.kind === 'name' ? `@${ref.name}` : null;
   if (!raw) return null;
   const t = directTarget(ref.network, raw);

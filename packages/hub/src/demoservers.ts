@@ -8,7 +8,7 @@ import type * as P from '@dither-chat/protocol';
 import { DISCORD_INVITE_OPTIONS, gateAnswerProblem, NICK_MAX, nickProblem } from '@dither-chat/protocol';
 
 /** What this needs of a demo account. */
-export interface DemoServerHost {
+interface DemoServerHost {
   key: string;
   selfId: string;
   emit: (ev: P.AdapterEvent) => void;
@@ -35,7 +35,7 @@ function nextWeekday(t: number, day: number, hh: number): number {
   return base + add * DAY;
 }
 
-export interface DemoServerIds {
+interface DemoServerIds {
   rust: string;
   dither: string;
   hk: string;

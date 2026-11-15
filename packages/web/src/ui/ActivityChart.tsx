@@ -20,8 +20,6 @@ const STATE_LABEL: Record<P.PresenceState, string> = { online: 'Online', idle: '
 /** The band's height per state, so the states differ by shape as well as colour. */
 const BAND_H: Record<P.PresenceState, number> = { online: 10, dnd: 10, idle: 6, offline: 2 };
 const WHERE_LABEL: Record<P.ActivityWhere, [string, string]> = { dm: ['DM', 'DMs'], group: ['group', 'groups'], server: ['server', 'servers'] };
-/** Heat steps: the hue's share over the card. */
-const HEAT = [0, 24, 42, 60, 80, 100];
 
 function savedDays(): number {
   try {

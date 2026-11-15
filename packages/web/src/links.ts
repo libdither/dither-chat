@@ -5,7 +5,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 
-export type LinkPart = string | { href: string; label: string };
+type LinkPart = string | { href: string; label: string };
 
 // Endings of a bare address ("nachotype.com", "dither.link/talk"). Lowercase only, and none that is also a common
 // word or file ending ("do.it", "build.sh", "lib.so", "Nice.It"): a word with a dot is not a link without one.

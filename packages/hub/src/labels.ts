@@ -21,19 +21,17 @@ const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
 /** You wrote there this recently before it: you were already in the conversation. */
-export const ENGAGED_BEFORE = 15 * MIN;
-/** A quick answer. */
-export const QUICK = 15 * MIN;
+const ENGAGED_BEFORE = 15 * MIN;
 /** An answer at all: worth seeing. */
 export const LATE = 3 * HOUR;
 /** Opened within this long. */
-export const OPEN_WITHIN = HOUR;
+const OPEN_WITHIN = HOUR;
 /** A push not opened in this long was ignored. */
 export const IGNORED_AFTER = DAY;
 /** Messages from others closer together than this are one burst. */
-export const BURST = 30 * MIN;
+const BURST = 30 * MIN;
 /** The coalescing lull: a message after this long without one starts a new alert (design §7). */
-export const LULL = 5 * MIN;
+const LULL = 5 * MIN;
 
 /** What happened after one message from someone else. Times are ms after the message. */
 export interface Outcome {
@@ -134,7 +132,7 @@ export function implicitLabel(o: Outcome, w: LabelWeights = LABEL_WEIGHTS): Labe
   return null;
 }
 
-export interface GatherOptions {
+interface GatherOptions {
   /** Only these messages get an outcome (default: every triaged message from someone else in the span). */
   only?: Set<string>;
   /** The time the data ends: `observed` is measured to it. */

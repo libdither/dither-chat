@@ -18,7 +18,7 @@ import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync } f
 import { dirname } from 'node:path';
 import { noteWork } from './stalls.ts';
 
-export type Attr = string | number | boolean | null;
+type Attr = string | number | boolean | null;
 export type Attrs = Record<string, Attr>;
 
 /** One finished span, as written: one line of the trace file. The names follow OpenTelemetry's where they can. */
@@ -140,7 +140,6 @@ export function setTraceSink(s: ((r: SpanRecord) => void) | null) {
   recentHead = 0;
 }
 
-export const tracing = () => sink !== null;
 
 /** A W3C traceparent header's ids, if it is one. */
 export function parseTraceparent(h: string | null | undefined): { traceId: string; spanId: string } | undefined {
@@ -149,7 +148,7 @@ export function parseTraceparent(h: string | null | undefined): { traceId: strin
   return { traceId: m[1]!, spanId: m[2]! };
 }
 
-export interface SpanOptions {
+interface SpanOptions {
   /** A parent from outside this process (a request's traceparent). Without it, the current span is the parent. */
   parent?: { traceId: string; spanId: string };
   /** What the stall log calls it, if not the span's name. */
@@ -251,7 +250,7 @@ export function spansBetween(from: number, to: number, max = 8): { name: string;
 
 // ------------------------------------------------------------------ files
 
-export interface NdjsonFileOptions {
+interface NdjsonFileOptions {
   /** Rotate when the file reaches this size... */
   maxBytes?: number;
   /** ...keeping this many older files (name.1 the newest). */

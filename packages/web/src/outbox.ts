@@ -54,7 +54,7 @@ export interface SendMedia {
   viewOnce?: boolean;
 }
 
-export interface Outbox {
+interface Outbox {
   put(e: OutboxEntry): Promise<void>;
   remove(tempId: string): Promise<void>;
   all(): Promise<OutboxEntry[]>;

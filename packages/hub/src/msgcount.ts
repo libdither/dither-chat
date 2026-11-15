@@ -31,11 +31,11 @@ import type * as P from '@dither-chat/protocol';
 const DAY = 86_400_000;
 /** Discord's epoch: a snowflake's top 42 bits are milliseconds since 2015-01-01. */
 export const DISCORD_EPOCH = 1_420_070_400_000;
-export const MIN_MESSAGES = 20;
-export const MIN_WINDOW_MS = 7 * DAY;
+const MIN_MESSAGES = 20;
+const MIN_WINDOW_MS = 7 * DAY;
 /** The window held must be at least this part of the channel's life, so the unseen part is at most four times it. */
-export const MIN_COVER = 0.2;
-export const MAX_BINS = 24;
+const MIN_COVER = 0.2;
+const MAX_BINS = 24;
 /** Their messages in channels with no estimate may be at most this part of what was seen of them. */
 const MAX_UNESTIMATED = 0.1;
 
@@ -80,7 +80,7 @@ export interface ChannelInput {
 }
 
 /** Messages before the oldest one held, estimated, or why not. */
-export type Unseen = { unseen: number; low: number; high: number; created: number; complete: boolean } | { reason: string };
+type Unseen = { unseen: number; low: number; high: number; created: number; complete: boolean } | { reason: string };
 
 export function unseenOf(c: ChannelInput, now = Date.now()): Unseen {
   if (c.network !== 'discord') return { reason: 'not dated' };
@@ -107,7 +107,7 @@ export function unseenOf(c: ChannelInput, now = Date.now()): Unseen {
   };
 }
 
-export interface Estimate {
+interface Estimate {
   observed: number;
   captured: number;
   shareLow: number;

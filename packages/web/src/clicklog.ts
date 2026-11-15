@@ -63,7 +63,7 @@ const batchId = () => `${Date.now().toString(36)}-${Math.random().toString(36).s
 
 let sending = false;
 /** Everything waiting, to the hub. Resolves once it is there or could not be sent. */
-export async function flushClicks(leaving = false) {
+async function flushClicks(leaving = false) {
   if (!countingClicks()) return dropPending();
   if (sending) return;
   sending = true;

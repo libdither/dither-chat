@@ -27,7 +27,7 @@ export interface BodyProps {
   account: P.MailAccountView | undefined;
 }
 /** Null: not this renderer's message; the next one in the table gets it. */
-export type BodyRenderer = (p: BodyProps) => ComponentChildren | null;
+type BodyRenderer = (p: BodyProps) => ComponentChildren | null;
 
 export interface MessageAction {
   id: string;
@@ -48,7 +48,7 @@ export interface ThreadAction {
 }
 
 export type RowWrapper = ComponentType<{ thread: P.MailThreadView; children: ComponentChildren }>;
-export type ListBar = ComponentType<{ list: string }>;
+type ListBar = ComponentType<{ list: string }>;
 
 // A plain HTML part (only text, links, lists, quotes, bold, italic) with a text part beside it reads as the text does,
 // in the app's theme; anything styled keeps its white sheet.

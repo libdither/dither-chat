@@ -17,7 +17,7 @@ interface Link {
   command<T = unknown>(accountId: string, cmd: { t: 'mute'; target: P.AboutTarget; muted: boolean; until?: number }, timeoutMs?: number): Promise<T>;
 }
 
-export interface NativeMuteResult {
+interface NativeMuteResult {
   /** Accounts whose network took it, and its mute as it now stands there. */
   done: { accountId: string; mute: P.NativeMute }[];
   /** Accounts that could not, with the network's sentence. */
@@ -25,7 +25,7 @@ export interface NativeMuteResult {
 }
 
 /** The accounts that see this place, are connected, and can mute on their network. */
-export function muteAccounts(store: Store, link: Pick<Link, 'online'>, kind: 'space' | 'conversation', id: string): string[] {
+function muteAccounts(store: Store, link: Pick<Link, 'online'>, kind: 'space' | 'conversation', id: string): string[] {
   return store.vantageAccounts(kind, id).filter((a) => {
     const acc = store.account(a);
     if (!acc || !link.online(a)) return false;

@@ -23,7 +23,7 @@ import { rev } from '../state.ts';
 import { drag } from './dnd.tsx';
 
 /** How far left a row goes before letting go marks it. */
-export const SWIPE_AT = 72;
+const SWIPE_AT = 72;
 /** A flick shorter than this is not taken for a swipe. */
 const FLICK_MIN = 24;
 

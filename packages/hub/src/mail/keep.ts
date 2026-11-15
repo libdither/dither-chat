@@ -75,9 +75,9 @@ const TICK_MS = 30_000;
 /** mail.search answers at most this many today: a window that comes back with as many is split. */
 export const AUDIT_LIMIT = 50;
 /** An ids-only search's page (details.searchIds). */
-export const AUDIT_IDS_PAGE = 500;
+const AUDIT_IDS_PAGE = 500;
 /** The smallest window a full one is split to: an hour (after: and before: take epoch seconds). */
-export const AUDIT_MIN_MS = 3_600_000;
+const AUDIT_MIN_MS = 3_600_000;
 /** Searched locally once at least this many server searches, the last this many, found nothing the hub lacked. */
 export const LOCAL_SEARCHES = 20;
 /** The search measure the page shows: this many days. */
@@ -136,7 +136,7 @@ const nextMonth = (t: number) => {
   return new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime();
 };
 
-export class Keeper {
+class Keeper {
   private feeds = new Map<string, Feed>();
   private audits = new Map<string, Promise<void>>();
   /** When each account's last audit search started (the hourly pace). */
@@ -614,7 +614,7 @@ export class Keeper {
  * How many messages the server holds, from its mailboxes' counts: All mail (else Archive) with Trash and Junk where
  * there is one (a label is a view of All mail), else every mailbox walked. Null when it gives no counts.
  */
-export function serverTotal(boxes: P.MailKeepBox[]): number | null {
+function serverTotal(boxes: P.MailKeepBox[]): number | null {
   const all = boxes.find((b) => b.role === 'all');
   const pick = all ? [all, ...boxes.filter((b) => b.role === 'trash' || b.role === 'junk')] : boxes;
   const counted = pick.filter((b) => b.total !== null);

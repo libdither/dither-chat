@@ -8,10 +8,10 @@
 import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-export const LOCK = 'extractor.lock';
+const LOCK = 'extractor.lock';
 
 /** Live processes, other than this one and `except`, that run this account. */
-export function accountProcesses(accountId: string, except: number[] = []): number[] {
+function accountProcesses(accountId: string, except: number[] = []): number[] {
   const out: number[] = [];
   let pids: string[] = [];
   try {

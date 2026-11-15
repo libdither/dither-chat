@@ -50,7 +50,7 @@ const appLink = (r: Parameters<typeof href>[0]) => `${location.origin}${location
 // ------------------------------------------------------------------ messages
 
 /** A link to a message the network's own apps open; this app's own link where the network has none (Signal). */
-export function messageLink(m: P.MessageView): string {
+function messageLink(m: P.MessageView): string {
   const c = db.conversations.get(m.conversationId);
   if (c?.network === 'discord') return `${deepLink(c)}/${m.nativeId}`;
   if (c?.network === 'matrix') return `https://matrix.to/#/${encodeURIComponent(c.nativeId.split('|')[0])}/${encodeURIComponent(m.nativeId)}`;
@@ -478,7 +478,7 @@ export function spaceMenu(s: P.SpaceView): MenuSpec {
 }
 
 /** Whatever sits in the sidebar or the directory, by its place key ("space:…", "conversation:…", "folder:…", "person:…"). */
-export function placeMenu(key: string, _folder?: string): MenuSpec | null {
+function placeMenu(key: string, _folder?: string): MenuSpec | null {
   rev.value;
   const i = key.indexOf(':');
   const kind = key.slice(0, i);

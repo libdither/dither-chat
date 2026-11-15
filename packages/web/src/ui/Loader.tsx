@@ -89,7 +89,7 @@ export function DitherOrb({ size = 88, class: cls, appear = true }: { size?: num
 }
 
 /** How long a load goes before its orb starts: a quick one never draws a frame (styles.css fades it in from here). */
-export const LOADING_DELAY_MS = 180;
+const LOADING_DELAY_MS = 180;
 
 /**
  * Something about to land: the orb, small, with what it is waiting for. Inline sits in a row or a line of text;
@@ -112,7 +112,7 @@ export function Loading({ label, size, inline, fill }: { label?: string; size?: 
 }
 
 /** The whole-screen start: the orb, what it is waiting for, and after a while what to try. */
-export function BootScreen({ status, slow }: { status: string; slow?: string | null }) {
+function BootScreen({ status, slow }: { status: string; slow?: string | null }) {
   return (
     <div class="boot-screen" role="status" aria-live="polite">
       <DitherOrb size={88} appear={!drawnByPage} />

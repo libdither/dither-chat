@@ -12,7 +12,7 @@ export const FEATURE_HALF_LIFE = 30 * DAY;
 /** A reply later than this did not answer the message; it counts as unanswered. */
 export const REPLY_WINDOW = 3 * DAY;
 /** Reply latency histogram: bucket i counts replies within LATENCY_EDGES[i] and after the edge before it. */
-export const LATENCY_EDGES = [5 * MIN, 15 * MIN, 30 * MIN, HOUR, 2 * HOUR, 4 * HOUR, 8 * HOUR, 16 * HOUR, DAY, 2 * DAY, REPLY_WINDOW];
+const LATENCY_EDGES = [5 * MIN, 15 * MIN, 30 * MIN, HOUR, 2 * HOUR, 4 * HOUR, 8 * HOUR, 16 * HOUR, DAY, 2 * DAY, REPLY_WINDOW];
 
 /** Turns addressed to you, how many you answered in time, and how fast. Decayed sums as of `at`. */
 export interface Tally {

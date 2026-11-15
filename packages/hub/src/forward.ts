@@ -11,8 +11,8 @@ import type { Store } from './store.ts';
 import type { Uploads } from './uploads.ts';
 
 /** At most this many destinations per forward, as Discord allows. */
-export const MAX_TARGETS = 5;
-export const MAX_NOTE = 2000;
+const MAX_TARGETS = 5;
+const MAX_NOTE = 2000;
 
 /**
  * Which account sends into a destination, and how. `picked` is the hub's usual choice for the destination
@@ -56,7 +56,7 @@ export function forwardText(o: { note?: string; text: string; author: string | n
   return [note, [line, quoted].filter(Boolean).join('\n')].filter(Boolean).join('\n\n');
 }
 
-export interface ForwardDeps {
+interface ForwardDeps {
   store: Store;
   uploads: Uploads;
   online(accountId: string): boolean;

@@ -18,13 +18,13 @@ import { badgeDiffers, cameFromThem, headIdents, lastRouteTells, leadTells, pick
 import { ago, hueOf, initials } from '../format.ts';
 import { identityName, netColor, netName, visibleAccount } from '../model.ts';
 import { phone } from '../phone.ts';
-import { api, db, go, isSelfIdentity, prefs, route, setPrefs, timelineKey, timelines, toast } from '../state.ts';
+import { api, db, go, isSelfIdentity, prefs, route, setPrefs, timelineKey, timelines } from '../state.ts';
 import { AccountChip, Avatar, Count, Menu, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
 
 // ------------------------------------------------------------------ pairs
 
-export interface Pair {
+interface Pair {
   conv: P.ConversationView;
   acc: P.AccountView | null;
   /** Your identity on that account. */
@@ -33,7 +33,7 @@ export interface Pair {
   theirs: P.IdentityView | null;
 }
 
-export function pairOf(conv: P.ConversationView): Pair {
+function pairOf(conv: P.ConversationView): Pair {
   const acc = conv.vantages.map((v) => db.accounts.get(v.accountId)).find((a): a is P.AccountView => !!a) ?? null;
   const mine = acc?.selfIdentityId ? (db.identities.get(acc.selfIdentityId) ?? null) : null;
   const peer = conv.participantIds.find((p) => !isSelfIdentity(p));
@@ -45,15 +45,15 @@ export function pairOf(conv: P.ConversationView): Pair {
 const PHONE = /^\+?[\d\s()-]{6,}$/;
 
 /** Their name on the network: the username, or the profile name where the handle is a phone number (Signal, WhatsApp). */
-export const theirName = (p: Pair) => {
+const theirName = (p: Pair) => {
   const h = p.theirs?.handle;
   if (h && PHONE.test(h) && p.theirs?.displayName) return p.theirs.displayName;
   return h ?? p.theirs?.displayName ?? netName(p.conv.network);
 };
-export const myName = (p: Pair) => p.acc?.label || identityName(p.mine?.id) || 'you';
+const myName = (p: Pair) => p.acc?.label || identityName(p.mine?.id) || 'you';
 
 /** A route as chatroutes.ts sees it. */
-export function routeKey(c: P.ConversationView): RouteKey {
+function routeKey(c: P.ConversationView): RouteKey {
   const p = pairOf(c);
   return { id: c.id, network: c.network, theirs: p.theirs?.id ?? null, mine: p.acc?.id ?? null };
 }
@@ -63,7 +63,7 @@ export function routeKey(c: P.ConversationView): RouteKey {
 export const badgeShows = (directs: P.ConversationView[]) => badgeDiffers(directs.map(routeKey));
 
 /** A route said in full, for a title: "Send as zyn.alt to kit.work on Discord". */
-export function routeTitle(c: P.ConversationView): string {
+function routeTitle(c: P.ConversationView): string {
   const p = pairOf(c);
   return `Send as ${myName(p)} to ${theirName(p)} on ${netName(c.network)}`;
 }
@@ -138,7 +138,7 @@ export function pickedRoute(personId: string, directs: P.ConversationView[]): st
 }
 
 /** What the hub says of each person's chat (GET /api/chats/person:<id>): the route chosen last time, if any. */
-export const chats = signal<Record<string, P.ChatView>>({});
+const chats = signal<Record<string, P.ChatView>>({});
 
 /** Ask the hub for a person's chat again: on opening their page, so a route chosen on another device counts. */
 export async function loadChat(personId: string) {

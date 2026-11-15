@@ -7,7 +7,7 @@
 | Job | What it runs | The same locally |
 |---|---|---|
 | `changes` | decides what the pull request needs (scripts/ci-changes.ts) | `git diff --name-only origin/main... \| bun scripts/ci-changes.ts` |
-| `typecheck` | tsc on every project at once (scripts/typecheck.ts), then the checks below: test hygiene, stylesheets, import cycles, unused files and dependencies | `bun run typecheck`, `bun run check:tests`, `bun run check:css`, `bun run check:cycles`, `bun run knip` |
+| `typecheck` | tsc on every project at once (scripts/typecheck.ts), then the checks below: test hygiene, stylesheets, import cycles, unused code | `bun run typecheck`, `bun run check:tests`, `bun run check:css`, `bun run check:cycles`, `bun run knip` |
 | `test-hub` | the hub's tests but mail-load's, its files on 4 workers (`bun test --parallel=4`) | `bun scripts/test-all.ts hub -- --path-ignore-patterns=test/mail-load.test.ts` |
 | `test-hub-mail` | the hub's mail-load tests (60k messages; 20 to 30 s, as long as the rest of the hub's) | `bun scripts/test-all.ts hub -- test/mail-load.test.ts` |
 | `test-packages` | every other package's tests, all at once | `bun scripts/test-all.ts --except hub` |
@@ -185,13 +185,29 @@ The web build fails on a cycle between its output chunks too (vite.config.ts `ch
 from modules that have none, and a chunk that runs before one it imports from blanks the app at load, in a production
 build only.
 
-### Unused files and dependencies
+### Unused code
 
-`bun run knip` ([knip](https://knip.dev), config in knip.json) fails on a file nothing imports, a dependency no file
-uses, and an import of a package its package.json does not list: one that resolves here only because the workspace
-hoists it, and breaks on a clean install. Each package's entry points are in knip.json (its main, the workers, the
-tests, the Discord lab's scripts, which the sandbox reads by path); a new entry point goes there. On 2026-11-14 it found
-seven scripts importing `@dither-chat/protocol` with the root package.json not listing it.
+`bun run knip` ([knip](https://knip.dev), config in knip.json) runs two passes, as T3 Code's `knip:check` does:
+- over every package: a file nothing imports, a dependency no file uses, and an import of a package its package.json
+  does not list (one that resolves here only because the workspace hoists it, and breaks on a clean install);
+- over the hub, the web app, the protocol, desk, deploy and the scripts: an export nothing imports, an exported type,
+  class member or enum member nothing uses, and a thing exported twice. The adapters are left out: dither-accounts'
+  extractors are where they are written (scripts/accounts-sync.ts), and these copies only fall further behind.
+
+knip follows static imports from each package's entry points in knip.json: its main, the workers, the tests, the
+Discord lab's scripts (the sandbox reads them by path), and in the web app every module it loads with `import()`. A
+module loaded that way is kept in a variable and read later (`typeof import('./CallPanel.tsx')`, `p?.CallPanel`), which
+knip cannot follow, so its exports would all look unused: a new lazily loaded module goes into the web app's `entry`
+list.
+
+The compiler reports the rest: tsconfig.base.json has `noUnusedLocals`, so an unused import, variable, function or
+private member fails `bun run typecheck` (the adapters' tsconfigs turn it off, for the same reason as above). An export
+knip finds unused loses its `export`; if nothing in its file uses it either, the compiler then says so and it goes.
+
+On 2026-11-14 that was 552 exports nothing outside their file used, in about 220 files: 536 lost their `export`, and
+16 went with their code, nothing using them at all. The compiler then found the unused imports, constants and functions
+(`quietHere`, `replacePage`, `railCommunities`, `emptyDraft`, a script's thread reader among them), deleted too. Seven
+scripts imported `@dither-chat/protocol` with the root package.json not listing it.
 
 ### The environment
 

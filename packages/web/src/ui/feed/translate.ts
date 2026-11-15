@@ -6,7 +6,7 @@ import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { api } from '../../state.ts';
 
-export type TrState = { s: 'loading' } | { s: 'done'; t: P.Translation } | { s: 'failed'; why: string };
+type TrState = { s: 'loading' } | { s: 'done'; t: P.Translation } | { s: 'failed'; why: string };
 
 const states = new Map<string, TrState>();
 /** Bumped when any translation arrives: a text reading one re-renders. */

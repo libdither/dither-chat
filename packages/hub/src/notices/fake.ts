@@ -107,8 +107,8 @@ export class FakeNoticeSource implements NoticeLink {
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
-export const DEMO_NOTICE_GITHUB = 'acc_demo-github';
-export const DEMO_NOTICE_MANAGER = 'acc_demo-notices';
+const DEMO_NOTICE_GITHUB = 'acc_demo-github';
+const DEMO_NOTICE_MANAGER = 'acc_demo-notices';
 
 const gh = (n: Partial<FakeNotification> & Pick<FakeNotification, 'id' | 'title' | 'at'>): FakeNotification => ({
   source: 'github',

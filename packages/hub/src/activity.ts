@@ -23,16 +23,16 @@ const DAY = 24 * HOUR;
 /** Opened within this long of a push (or of the last message of a burst nobody was pushed for) counts as opened. */
 export const OPEN_WINDOW = HOUR;
 /** A message from you within this long of opening counts as a reply. */
-export const REPLY_AFTER = 10 * MIN;
+const REPLY_AFTER = 10 * MIN;
 /** Unpushed messages closer together than this are one burst: one chance to open the chat anyway. */
-export const BURST_GAP = 30 * MIN;
+const BURST_GAP = 30 * MIN;
 /** Features look back this far. */
-export const FEATURE_WINDOW = 90 * DAY;
+const FEATURE_WINDOW = 90 * DAY;
 /** Features are worked out again after this long. */
 const FEATURE_TTL = 5 * MIN;
 /** Hard caps, whatever the retention: the oldest rows go first. */
-export const MAX_VISITS = 200_000;
-export const MAX_NOTIFICATIONS = 100_000;
+const MAX_VISITS = 200_000;
+const MAX_NOTIFICATIONS = 100_000;
 const PRUNE_EVERY = 10 * MIN;
 
 const EVENT_COLUMN: Partial<Record<P.NotificationEventKind, string>> = {
@@ -97,7 +97,7 @@ export function cleanVisit(v: Partial<P.VisitRecord>, now: number): P.VisitRecor
 }
 
 /** Hub-side sanity for one inbox action from a device, or null to drop it. */
-export function cleanAction(a: Partial<P.InboxAction>, now: number): P.InboxAction | null {
+function cleanAction(a: Partial<P.InboxAction>, now: number): P.InboxAction | null {
   const id = str(a?.id, 64);
   const device = str(a?.device, 64);
   const targetId = str(a?.targetId, 200);
@@ -226,7 +226,7 @@ export function describeActivity(f: P.PlaceActivity): string | null {
 // ------------------------------------------------------------------ the store
 
 /** `reminder`: a calendar reminder from before calendar accounts, with no message or conversation (old rows; now a reminder is a message). */
-export type NotificationKind = 'message' | 'held' | 'digest' | 'request' | 'reminder';
+type NotificationKind = 'message' | 'held' | 'digest' | 'request' | 'reminder';
 
 export interface Features {
   conversation: P.PlaceActivity;

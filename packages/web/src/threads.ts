@@ -51,7 +51,7 @@ export async function threadNotify(c: P.ConversationView, change: { notify?: P.T
 }
 
 /** Publish your message to the channels that follow this announcement channel, after a confirm. */
-export async function publish(m: P.MessageView) {
+async function publish(m: P.MessageView) {
   if (!confirm('Publish this message?\n\nIt goes out to every server that follows this channel, and cannot be taken back from there.')) return;
   try {
     await api(`/api/messages/${m.id}/crosspost`, { body: {} });

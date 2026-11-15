@@ -99,7 +99,7 @@ export const toRoot = (s: Entry[], root: () => Entry): Entry[] => (s[0]?.kind ==
 /** Where a key was pressed: the palette's input, the box itself (a page with no input), or a button or field in a page. */
 export type KeyTarget = 'input' | 'box' | 'control';
 
-export type KeyAct = 'back' | 'down' | 'up' | 'take' | 'toggle' | 'goOn' | 'unpick' | null;
+type KeyAct = 'back' | 'down' | 'up' | 'take' | 'toggle' | 'goOn' | 'unpick' | null;
 
 /**
  * What a key does. Escape backs out a page; Backspace in an empty input too, but first un-picks the last person
@@ -131,7 +131,7 @@ export const moveSel = (sel: number, n: number, by: 1 | -1): number => (n ? (((M
 // ------------------------------------------------------------------ the root
 
 /** What the root ranks: its name, its latest message, the inbox's score where it has one. */
-export interface RootItem {
+interface RootItem {
   key: string;
   label: string;
   last: number;
@@ -213,7 +213,7 @@ export function rankPeople<T extends Reachable>(rows: readonly T[], needle: stri
 // ------------------------------------------------------------------ groups
 
 /** A group one of your accounts might add people to. */
-export interface GroupItem {
+interface GroupItem {
   key: string;
   name: string;
   last: number;

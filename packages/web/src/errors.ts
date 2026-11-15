@@ -50,7 +50,7 @@ export class ReportLimiter {
   }
 }
 
-export interface PageError {
+interface PageError {
   name: string;
   message: string;
   stack?: string;
@@ -62,7 +62,7 @@ const limiter = new ReportLimiter();
 const sent = new WeakSet<object>();
 
 /** Send one report, if the limits allow. Never throws. */
-export function reportPageError(e: PageError, error?: unknown): void {
+function reportPageError(e: PageError, error?: unknown): void {
   try {
     if (error && typeof error === 'object') {
       if (sent.has(error)) return;

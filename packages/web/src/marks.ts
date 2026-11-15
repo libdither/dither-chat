@@ -5,7 +5,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 
-export const TIERS: P.NotifyTier[] = ['drop', 'digest', 'quiet', 'push'];
+const TIERS: P.NotifyTier[] = ['drop', 'digest', 'quiet', 'push'];
 /** A decision that can be marked: any tier, never a silenced place. */
 export const isTier = (d: P.TriageDecision | null | undefined): d is P.NotifyTier => TIERS.includes(d as P.NotifyTier);
 
@@ -18,7 +18,7 @@ export interface Markable {
 /** Mail has no alert marks: only "Less like this" (docs/mail.md). */
 export const isMailId = (id: string) => id.startsWith('mml_');
 
-export const LESS_LABEL = 'Less like this';
+const LESS_LABEL = 'Less like this';
 
 /**
  * The alert toggle on a decision: what it says, whether it is ticked, and what a click sends. On an alert it is
@@ -85,7 +85,7 @@ export async function sendMark(m: Markable, change: P.TriageMarks, d: MarkDeps):
 }
 
 /** A vote from before the tiers, by the level's old name: shown as history only. */
-export const OLD_LEVEL: Record<P.NotifyTier, string> = { push: 'Important', quiet: 'Active', digest: 'Digest', drop: 'Not interesting' };
+const OLD_LEVEL: Record<P.NotifyTier, string> = { push: 'Important', quiet: 'Active', digest: 'Digest', drop: 'Not interesting' };
 
 /**
  * "Voted Active before the tiers", or null with no such vote. Mail keeps "Less like this" in the same field as an old

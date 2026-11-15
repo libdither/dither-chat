@@ -114,7 +114,7 @@ function ownSocket(path: string): boolean {
 }
 type WsData = ClientData | LiveViewData | AdapterSocketData | CallSocketData | VoiceSocketData | CallRoomSocketData;
 
-export interface ServerOpts {
+interface ServerOpts {
   port: number;
   hostname: string;
   dataDir: string;
@@ -166,7 +166,7 @@ const threshold = (t: unknown): number | null => (typeof t === 'number' && t > 0
 /** A person has no nickname of their own since 2026-11-11: each account of theirs has (docs/chats.md, Names). */
 const NICKNAME_MOVED = 'A nickname belongs to one account of theirs now, not to the person: PATCH /api/identities/:id with { nickname }';
 const v4 = (ip: string) => ip.replace(/^::ffff:/, '');
-export function isLoopback(ip: string) {
+function isLoopback(ip: string) {
   return ip === '::1' || v4(ip).startsWith('127.');
 }
 export function isTailnet(ip: string) {

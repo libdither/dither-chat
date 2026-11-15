@@ -35,7 +35,7 @@ type Row = Record<string, any>;
 
 const DAY = 86_400_000;
 /** How long a notice is kept. */
-export const KEEP_MS = 30 * DAY;
+const KEEP_MS = 30 * DAY;
 /** A catch-up reads at most this many pages of this many. */
 const PAGES = 10;
 const PER_PAGE = 50;
@@ -85,7 +85,7 @@ export interface NoticeDelivery {
   look: { network: 'notice' };
 }
 
-export interface NoticesOpts {
+interface NoticesOpts {
   store: Store;
   triage: Triage;
   votes?: TriageVotes | null;
@@ -654,7 +654,7 @@ export class Notices implements NoticeSink {
 }
 
 /** "GitHub · owner/repo" */
-export const groupTitle = (source: string, context: string | null) => (context ? `${sourceName(source)} · ${context}` : sourceName(source));
+const groupTitle = (source: string, context: string | null) => (context ? `${sourceName(source)} · ${context}` : sourceName(source));
 
 function lineOf(r: Row): Line {
   const actor = json<{ name: string }[]>(r.actors, [])[0];

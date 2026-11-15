@@ -24,14 +24,14 @@ import type { Store } from './store.ts';
 type Row = Record<string, any>;
 
 /** How often waiting messages are looked at. */
-export const TICK_MS = 10_000;
+const TICK_MS = 10_000;
 /** How long a sent one stays on the list. */
-export const SENT_KEEP_MS = 10 * 60_000;
+const SENT_KEEP_MS = 10 * 60_000;
 /** The longest a message may be. Matches what a send takes in practice; the network still has its own limit. */
 const BODY_MAX = 20_000;
 
 const made = new WeakSet<Database>();
-export function sendLaterTables(db: Database) {
+function sendLaterTables(db: Database) {
   if (made.has(db)) return;
   db.run(`CREATE TABLE IF NOT EXISTS send_later (
     id              TEXT PRIMARY KEY,
@@ -65,7 +65,7 @@ export interface LaterSend {
   mentionReplied?: boolean;
 }
 
-export interface SendLaterDeps {
+interface SendLaterDeps {
   /** The hub's own send (server.ts sendOnce): its answer as the app would get it. */
   send: (conversationId: string, b: LaterSend) => Promise<Response>;
   online: (accountId: string) => boolean;
@@ -78,7 +78,7 @@ export interface SendLaterDeps {
 }
 
 /** Where it goes and what it says, once the app's route is resolved (server.ts). */
-export interface LaterInput {
+interface LaterInput {
   conversationId: string;
   accountId: string;
   body: string;
@@ -313,7 +313,7 @@ function view(r: Row): P.ScheduledSendView {
 }
 
 /** "40 minutes", "3 hours", "2 days". */
-export function late(ms: number): string {
+function late(ms: number): string {
   const m = Math.round(ms / 60_000);
   if (m < 90) return `${m} minute${m === 1 ? '' : 's'}`;
   const h = Math.round(m / 60);
