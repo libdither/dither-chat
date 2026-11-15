@@ -49,7 +49,7 @@ With no sink set (tests, scripts, `DITHER_TRACE=0`) a span is a function call: n
 | `triage` | main.ts, each message decided | `decision`, `unjudged` |
 | `flush` | server.ts, when it had events to send | `events` |
 | a sliced job (`embeddings refit`, `activity features` inside a `triage`) | slices.ts `sliced` | `slices`, `busyMs` (the slices' time on the thread in all) |
-| `upkeep`, `categories`, `votes and held alerts`, `notifications: read and requests`, `attention: first scoring`, `attention: rescore all` | main.ts timers | |
+| `upkeep`, `categories`, `votes and held alerts`, `notifications: read and requests`, `attention: first scoring`, `attention: rescore all`, `scorecard` | main.ts timers | |
 
 Making a group adds `network`, `people`, `named`, then `added`, `invited`, `failed`, and the events `paced` and
 `adapter answered`, to its `POST /api/groups` span, whose child is `command createGroup`.

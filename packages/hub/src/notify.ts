@@ -53,7 +53,7 @@ export class Notifier {
     // A chat's row in the list is brought up to date now and then, not with every message.
     if (tier === 'digest' && !delivery.listDue(conversationId)) return;
     if (kind === 'message' && tier === 'digest') {
-      if (!phone.list(conversationId, prior, store.one<{ ts: number }>('SELECT ts FROM message WHERE id = ?', messageId)?.ts ?? Date.now()).send) return;
+      if (!phone.list(conversationId, prior, store.one<{ ts: number }>('SELECT ts FROM message WHERE id = ?', messageId)?.ts ?? Date.now(), Date.now(), importance).send) return;
     } else if (kind === 'message') phone.higher(conversationId);
     const nid = activity.notification({ kind, messageId, conversationId });
     // Devices whose own rules keep this off them: their push is not sent, and their open pages show no toast.
@@ -84,7 +84,7 @@ export class Notifier {
     const { activity, devices, push, delivery, server, phone } = this.d;
     if (n.level === 'digest' && !delivery.listDue(n.threadId)) return;
     if (n.level !== 'digest') phone.higher(n.threadId);
-    else if (!phone.list(n.threadId, n.prior ?? true, Date.now()).send) return;
+    else if (!phone.list(n.threadId, n.prior ?? true, Date.now(), Date.now(), n.importance).send) return;
     const nid = activity.notification({ kind: 'message', messageId: n.messageId, conversationId: n.threadId });
     const quiet = devices.quietOn(n.threadId, n.addressed);
     const level = n.level === 'push' ? 'push' : 'quiet';
@@ -109,7 +109,7 @@ export class Notifier {
     const { activity, devices, push, delivery, server, phone } = this.d;
     if (n.level === 'digest' && !delivery.listDue(n.group)) return false;
     if (n.level !== 'digest') phone.higher(n.group);
-    else if (!phone.list(n.group, n.prior, Date.now()).send) return false;
+    else if (!phone.list(n.group, n.prior, Date.now(), Date.now(), n.importance).send) return false;
     const nid = activity.notification({ kind: 'message', messageId: n.id, conversationId: n.group });
     const quiet = devices.quietOn(n.group, n.addressed);
     const level = n.level === 'push' ? 'push' : 'quiet';

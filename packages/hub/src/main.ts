@@ -15,7 +15,7 @@ import { Notices, type NoticeDelivery } from './notices/index.ts';
 import { FakeNoticeSource, seedDemoNotices } from './notices/fake.ts';
 import { Delivery } from './delivery.ts';
 import { Notifier } from './notify.ts';
-import { listByPrior, PhoneList, phoneListMode } from './phonelist.ts';
+import { listByPrior, PhoneList, phoneListBudget, phoneListMode } from './phonelist.ts';
 import { RequestNotifier, requestChain, type RequestNotice } from './requestnotify.ts';
 import { Devices } from './devices.ts';
 import { Embeddings, Jev } from './embeddings.ts';
@@ -28,6 +28,7 @@ import { RoutedSupervisor } from './remote.ts';
 import { Supervisor } from './supervisor.ts';
 import { STOP_QUESTION, Triage, URGENT, type Judge } from './triage.ts';
 import { TriageVotes } from './votes.ts';
+import { Scorecard, seedDemoScores } from './scorecard.ts';
 import { loadVapidKeys } from './webpush.ts';
 import { NightlyBackup, pruneMediaCacheSteps, rotateAdapterLogs, tightenPermissions } from './housekeeping.ts';
 import { StartupTrace } from './startup.ts';
@@ -126,6 +127,10 @@ activity.prune(Date.now(), true);
 startup.mark('activity log');
 const triage = new Triage(store, activity);
 const votes = new TriageVotes(store, triage);
+// How the models did, day by day (scorecard.ts, docs/scorecard.md): each day scored once its outcomes are in. A demo
+// world has three invented weeks of it.
+const scorecard = new Scorecard(store.db);
+if (demo) seedDemoScores(store.db, Date.now());
 const attention = new Attention(store, triage);
 // The inbox's learned order (ranker.ts, docs/inbox.md). DITHER_INBOX_RANK=shadow works it out without sorting by it; off.
 // DITHER_INBOX_EXPLORE=0 sorts by its mean instead of a Thompson sample.
@@ -334,6 +339,10 @@ const upkeepNow = async () => {
 };
 setTimeout(() => void upkeep(), 60_000);
 setInterval(() => void upkeep(), 6 * 3_600_000);
+// The scorecard, in slices (slices.ts): a few minutes after the start (backfilling every day the data covers, the
+// first time), then every hour, which finds the day that matured since.
+setTimeout(() => void scorecard.run(), 3 * 60_000);
+setInterval(() => void scorecard.run(), 3_600_000);
 
 setInterval(
   () =>
@@ -348,8 +357,13 @@ setInterval(
 
 const push = new PushService(store, loadVapidKeys(dataDir), process.env.DITHER_PUSH_SUBJECT ?? process.env.DITHER_PUBLIC_URL ?? 'https://github.com/libdither/dither-chat');
 // Which list rows reach the phones (docs/notifications.md, "The phone's list"). DITHER_PHONE_LIST=shadow sends them all
-// and logs what it would have held; off, as before it.
-const phone = new PhoneList(store.db, { mode: phoneListMode(process.env.DITHER_PHONE_LIST), kept: (now) => triage.marked(now).convs, readTs: (cid) => delivery.readAllTs(cid) });
+// and logs what it would have held; off, as before it. DITHER_PHONE_LIST_BUDGET: list pushes a day (5), or off.
+const phone = new PhoneList(store.db, {
+  mode: phoneListMode(process.env.DITHER_PHONE_LIST),
+  budget: phoneListBudget(process.env.DITHER_PHONE_LIST_BUDGET),
+  kept: (now) => triage.marked(now).convs,
+  readTs: (cid) => delivery.readAllTs(cid),
+});
 activity.noted = (w) => phone.noted(w);
 if (phone.mode !== 'on') console.log(`phone list: ${phone.mode} (DITHER_PHONE_LIST)`);
 
@@ -451,6 +465,7 @@ const server = new HubServer(store, sup, triage, {
   activity,
   devices,
   votes,
+  scorecard,
   archiveMedia: !demo,
   // Index jobs and the gap fill read like a person (readingpace.ts); a demo's networks are fake, so no need there.
   pace: demo ? BRISK : paceFromEnv(),

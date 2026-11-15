@@ -525,6 +525,30 @@ export const RECORD_AGES: readonly number[] = [15 * MIN, HOUR, 6 * HOUR, DAY];
 /** The calibration record as the API sends it (protocol NeedsReplyCalibration). */
 export type CalibrationReport = P.NeedsReplyCalibration;
 
+/**
+ * The chances kept for turns that began in [from, to), with what came of each: answered within the window (your
+ * message or a reaction), not (marked "No reply needed", ran out, or still open past it), or null while the window is
+ * still running at `now` or the fold no longer has that turn (it folded again since). Indexed reads only.
+ */
+export function needsOutcomes(db: Database, from: number, to: number, now: number): { addressed: number; p: number; table: number; y: boolean | null }[] {
+  const rows = db
+    .query(
+      `SELECT p.addressed, p.p, p.table_p, o.answered_at, o.addressed AS settled, json_extract(f.state, '$.turn.addressed') AS open
+       FROM needs_prediction p
+       LEFT JOIN owed_turn o ON o.conversation_id = p.conversation_id AND o.addressed = p.addressed
+       LEFT JOIN conv_feature f ON f.conversation_id = p.conversation_id
+       WHERE p.addressed >= ? AND p.addressed < ? ORDER BY p.addressed LIMIT 100000`,
+    )
+    .all(from, to) as Record<string, any>[];
+  const outcome = (r: Record<string, any>): boolean | null => {
+    if (r.answered_at != null && r.answered_at - r.addressed <= REPLY_WINDOW) return true;
+    if (r.settled != null) return false;
+    if (now - r.addressed < REPLY_WINDOW) return null;
+    return r.open === r.addressed ? false : null;
+  };
+  return rows.map((r) => ({ addressed: r.addressed, p: r.p, table: r.table_p, y: outcome(r) }));
+}
+
 /** Score kept predictions against outcomes: `outcome` is null while a turn's window is still running. */
 export function calibrationReport(rows: { addressed: number; p: number; table: number; y: boolean | null }[], model: NeedsModel | null): CalibrationReport {
   const done = rows.filter((r): r is typeof r & { y: boolean } => r.y !== null);

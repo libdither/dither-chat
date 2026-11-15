@@ -15,6 +15,7 @@ import { setNativeMute } from './nativemute.ts';
 import { markUnreadFrom } from './unread.ts';
 import { validQuietHours, type Triage } from './triage.ts';
 import type { TriageVotes } from './votes.ts';
+import type { Scorecard } from './scorecard.ts';
 import { cleanFileName, Uploads } from './uploads.ts';
 import { ImportRunner } from './imports/engine.ts';
 import { GapFill } from './imports/gapfill.ts';
@@ -140,6 +141,8 @@ interface ServerOpts {
   devices?: Devices;
   /** Your votes on triage and the rules learned from them (votes.ts, docs/notifications.md). */
   votes?: TriageVotes;
+  /** How the models did, day by day (scorecard.ts, docs/scorecard.md): GET /api/model/scores. */
+  scorecard?: Scorecard;
   /** Fetch every remote attachment into the media cache soon after it arrives (mediaarchive.ts). A real hub, not a demo. */
   archiveMedia?: boolean;
   /** How index jobs and the gap fill read (readingpace.ts): a person's pace unless told otherwise. */
@@ -1714,6 +1717,12 @@ export class HubServer {
       // The list's preview is worked out in the background (votes.ts): the first answer waits for it.
       await this.opts.votes.previewReady();
       return ok(this.opts.votes.view());
+    }
+    // The scorecard (scorecard.ts, docs/scorecard.md): each scored day's metrics, for the last ?days= days (60).
+    if (path === '/api/model/scores' && method === 'GET') {
+      if (!this.opts.scorecard) return bad('No scorecard here', 404);
+      const days = Math.max(1, Math.min(400, Math.floor(Number(url.searchParams.get('days') ?? 60)) || 60));
+      return ok(this.opts.scorecard.view(days));
     }
     // What the shadow model would have done lately (shadow.ts): counts only.
     if (path === '/api/triage/shadow' && method === 'GET') return this.opts.votes ? ok(this.opts.votes.shadow()) : bad('No triage here', 404);

@@ -21,6 +21,7 @@ import {
   EXAM_FLOOR,
   examination,
   EXPLORE_EPOCH,
+  EXPLORE_FLOOR,
   FEATURES,
   FIT,
   fitLogistic,
@@ -403,6 +404,22 @@ describe('exploring: a Thompson sample of the model', () => {
     expect(predict(m, x, { open: 1, send: 0 }, 0)).toEqual(mean);
   });
 
+  test('a model sure of a row still moves it by the floor, so exploring never settles into the mean', () => {
+    const x = feats({ unread: 2 });
+    const free = FEATURES.filter((f) => LAMBDA[f] !== Infinity);
+    const sure = free.map((_, i) => free.map((_, j) => (i === j ? 1e-8 : 0)));
+    const m: RankModel = { ...PRIOR, cov: { features: free, open: sure, send: sure } };
+    const mean = predict(m, x);
+    expect(spread(free, sure, x)).toBeLessThan(0.01);
+    const up = predict(m, x, { open: 1, send: 0 });
+    expect(logit(up.open) - logit(mean.open)).toBeCloseTo(EXPLORE_FLOOR, 6);
+    // Down as far, and with no floor, as before it: hardly at all.
+    expect(logit(predict(m, x, { open: -1, send: 0 }).open) - logit(mean.open)).toBeCloseTo(-EXPLORE_FLOOR, 6);
+    expect(Math.abs(logit(predict(m, x, { open: 1, send: 0 }, 1, 0).open) - logit(mean.open))).toBeLessThan(0.01);
+    // A fresh hub, on the prior with no covariance, does not explore at all.
+    expect(predict(PRIOR, x, { open: 2, send: 2 })).toEqual(predict(PRIOR, x));
+  });
+
   test('DITHER_INBOX_EXPLORE: on unless 0', () => {
     expect(exploreOn(undefined)).toBe(true);
     expect(exploreOn('1')).toBe(true);
@@ -546,7 +563,7 @@ describe('the hub learns from your opens', () => {
     off.judge = new InboxRanker(store, triage, 'model', undefined, () => NOW, false);
     off.rescoreAll(NOW);
     for (const id of ids) expect(off.view(id)!.score).toBe((off.explain(id)!.learned as any).points);
-    expect(r.view().explore).toMatchObject({ on: true, sampling: true, epochMinutes: 30, zClip: Z_CLIP });
+    expect(r.view().explore).toMatchObject({ on: true, sampling: true, epochMinutes: 30, zClip: Z_CLIP, floor: EXPLORE_FLOOR });
     // A model saved before the curve and the covariance: due at once, so the first check after start fits them.
     const soon = new InboxRanker(store, triage, 'model', undefined, () => saved.fitAt! + MIN);
     expect(soon.due()).toBe(false);

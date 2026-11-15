@@ -22,7 +22,7 @@ import { noteWork } from './stalls.ts';
 import { foldMark, NEEDS_HOLD } from './replymarks.ts';
 import { emptyTally, FEATURE_HALF_LIFE, medianLatency, record, recordDismissed, REPLY_WINDOW, replyRate, sumTallies, tallyAt, toward, type Tally } from './tally.ts';
 import { DEFAULT_OWED_TABLE, fitOwedTable, OWED_SHOWN, owedChance, rateBucket, turnRate, validTable, type OwedTable, type OwedTurn } from './owed.ts';
-import { calibrationReport, fitNeedsModelSteps, needsChance, RECORD_AGES, turnMessagesQuery, validNeedsModel, type CalibrationReport, type MessageFacts, type NeedsModel, type TurnMessages } from './needsreply.ts';
+import { calibrationReport, fitNeedsModelSteps, needsChance, needsOutcomes, RECORD_AGES, turnMessagesQuery, validNeedsModel, type CalibrationReport, type MessageFacts, type NeedsModel, type TurnMessages } from './needsreply.ts';
 import { jobFailed } from './errors.ts';
 
 type Row = Record<string, any>;
@@ -838,27 +838,7 @@ export class Attention {
    * running are left out.
    */
   needsCalibration(now = this.now(), days = 60): CalibrationReport {
-    const rows = this.store.db
-      .query(
-        `SELECT p.conversation_id AS cid, p.addressed, p.p, p.table_p, o.answered_at, o.dismissed, o.addressed AS settled,
-                json_extract(f.state, '$.turn.addressed') AS open
-         FROM needs_prediction p
-         LEFT JOIN owed_turn o ON o.conversation_id = p.conversation_id AND o.addressed = p.addressed
-         LEFT JOIN conv_feature f ON f.conversation_id = p.conversation_id
-         WHERE p.addressed >= ? ORDER BY p.addressed`,
-      )
-      .all(now - days * DAY) as Row[];
-    const outcome = (r: Row): boolean | null => {
-      if (r.answered_at != null && r.answered_at - r.addressed <= REPLY_WINDOW) return true;
-      if (r.settled != null) return false;
-      if (now - r.addressed < REPLY_WINDOW) return null;
-      // Still open past the window: not answered. Otherwise the fold no longer has that turn (folded again since).
-      return r.open === r.addressed ? false : null;
-    };
-    return calibrationReport(
-      rows.map((r) => ({ addressed: r.addressed, p: r.p, table: r.table_p, y: outcome(r) })),
-      this.needsModel,
-    );
+    return calibrationReport(needsOutcomes(this.store.db, now - days * DAY, now, now), this.needsModel);
   }
 
   // ---------------------------------------------------------------- folding
