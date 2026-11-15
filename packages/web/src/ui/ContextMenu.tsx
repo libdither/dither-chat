@@ -11,7 +11,7 @@ import { rev, route, toast } from '../state.ts';
 import { countKey } from '../clicklog.ts';
 import { fullKey, pageOf } from '../clicks.ts';
 import { Icon } from './icons.tsx';
-import { useLongPress } from './Reactions.tsx';
+import { useLongPress } from './longpress.ts';
 import { Sheet } from './Sheet.tsx';
 
 export type MenuEntry =

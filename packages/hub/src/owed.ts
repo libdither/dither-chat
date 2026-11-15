@@ -13,7 +13,7 @@
  * Metadata only: who, when and whether you answered, never what was said.
  */
 import type * as P from '@dither-chat/protocol';
-import { emptyTally, record, replyRate, tallyAt, type Tally } from './attention.ts';
+import { emptyTally, record, replyRate, tallyAt, type Tally } from './tally.ts';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;

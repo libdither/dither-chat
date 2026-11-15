@@ -26,7 +26,7 @@ import { HistoryCard } from './HistoryCard.tsx';
 import { copyEntries, identityMenu, personMenu } from './menus.tsx';
 import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, Tag } from './ProfileShell.tsx';
 import { ConnectActions, ProfileConnections } from './Requests.tsx';
-import { openConv } from './Sidebar.tsx';
+import { openConv } from '../opening.ts';
 import { Loading } from './Loader.tsx';
 import { peopleExtras } from './peopleExtras.ts';
 import { Stories } from './StoriesLazy.tsx';

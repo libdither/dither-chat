@@ -19,7 +19,7 @@ import { Loading } from './Loader.tsx';
 import { multiOf, PickChips, PickFooter, pickRows, usePicked, type Pickable } from './MultiPick.tsx';
 import { backPage, pushPage, releasePalette, setEntry } from './Palette.tsx';
 import { Frame, type Row } from './PaletteFrame.tsx';
-import { homeRoute } from './Sidebar.tsx';
+import { homeRoute } from '../opening.ts';
 
 interface Loaded {
   view: P.GroupCandidatesView;

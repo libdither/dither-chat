@@ -13,7 +13,7 @@ import { api, applyEvents, db, go, openDirect, toast } from '../state.ts';
 import { LiveView } from './Accounts.tsx';
 import { AccountChip, Avatar } from './bits.tsx';
 import { Icon } from './icons.tsx';
-import { homeRoute } from './Sidebar.tsx';
+import { homeRoute } from '../opening.ts';
 import { Loading } from './Loader.tsx';
 
 /** A reading being looked up, its preview, and what acting on it did. */

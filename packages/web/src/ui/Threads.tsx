@@ -15,7 +15,7 @@ import { uploadFile } from '../upload.ts';
 import { Empty, Modal } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { Card } from './ProfileShell.tsx';
-import { openConv } from './Sidebar.tsx';
+import { openConv } from '../opening.ts';
 
 // ---------------------------------------------------------------- posts
 

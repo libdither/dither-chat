@@ -7,7 +7,7 @@
 | Job | What it runs | The same locally |
 |---|---|---|
 | `changes` | decides what the pull request needs (scripts/ci-changes.ts) | `git diff --name-only origin/main... \| bun scripts/ci-changes.ts` |
-| `typecheck` | tsc on every project at once (scripts/typecheck.ts) | `bun run typecheck` |
+| `typecheck` | tsc on every project at once (scripts/typecheck.ts), then the checks below: test hygiene, import cycles, unused files and dependencies | `bun run typecheck`, `bun run check:tests`, `bun run check:cycles`, `bun run knip` |
 | `test-hub` | the hub's tests but mail-load's, its files on 4 workers (`bun test --parallel=4`) | `bun scripts/test-all.ts hub -- --path-ignore-patterns=test/mail-load.test.ts` |
 | `test-hub-mail` | the hub's mail-load tests (60k messages; 20 to 30 s, as long as the rest of the hub's) | `bun scripts/test-all.ts hub -- test/mail-load.test.ts` |
 | `test-packages` | every other package's tests, all at once | `bun scripts/test-all.ts --except hub` |
@@ -157,3 +157,47 @@ failed. Nothing else happens: no issue, no message beyond GitHub's own.
 
 The same locally: `bun scripts/stress.ts --rerun-each=3`, and after `--`, files or `-t` for bun test. What it finds
 gets fixed. If that can't happen at once, the test is quarantined with a note naming the issue.
+
+## Checks across the code
+
+Three checks look at the whole code base rather than one feature, cheap enough for every run (CI's typecheck job). The
+first two follow checks T3 Code has (apps/mobile/src/dependency-graph.test.ts, its `knip:check`, apps/web's
+chunk-cycle guard), the third its test environment (packages/shared/src/testing/providerEnv.ts).
+
+### Import cycles
+
+`bun run check:cycles` (scripts/check-cycles.ts, under a second) fails on any static import cycle among the files of
+one package's src/: a imports b, and b imports a, through any number of files. In a cycle the order modules run in
+depends on which is loaded first, so a value one reads while it loads (a constant, a signal, a class it extends) can
+be read before it exists: a TDZ error, or `undefined`, that shows in one load order and not another, or only after the
+bundler moves code between chunks. Type-only imports, `import()` and tests do not count.
+
+The way out is a module of its own for what both sides need, that imports neither. On 2026-11-14 there were four:
+- the web app's state.ts, snapshot.ts and ringing.ts: the client's data is in store.ts and the HTTP call in api.ts now,
+  and state.ts re-exports both;
+- 34 components through menus.tsx and bits.tsx: one account's menu is in ui/accountMenu.tsx, opening a conversation
+  (openConv, homeRoute, openAbout) in opening.ts, the long-press in ui/longpress.ts, the picture viewer's signal in
+  viewer.ts, and openPlaceMenu in menus.tsx;
+- the hub's attention.ts and owed.ts: the reply tallies are in tally.ts;
+- the hub's store.ts, accountself.ts and triage.ts: quiet hours are in quiethours.ts.
+
+The web build fails on a cycle between its output chunks too (vite.config.ts `chunkCycleGuard`): rolldown can make one
+from modules that have none, and a chunk that runs before one it imports from blanks the app at load, in a production
+build only.
+
+### Unused files and dependencies
+
+`bun run knip` ([knip](https://knip.dev), config in knip.json) fails on a file nothing imports, a dependency no file
+uses, and an import of a package its package.json does not list: one that resolves here only because the workspace
+hoists it, and breaks on a clean install. Each package's entry points are in knip.json (its main, the workers, the
+tests, the Discord lab's scripts, which the sandbox reads by path); a new entry point goes there. On 2026-11-14 it found
+seven scripts importing `@dither-chat/protocol` with the root package.json not listing it.
+
+### The environment
+
+Each package's bunfig.toml preloads scripts/test-env.ts, which clears every DITHER_* variable before the tests run
+(but DITHER_CHROMIUM and DITHER_DAVE_DIR, paths to tools tests skip without). The hub and the adapters read their
+settings from those variables, and a test that starts a hub passes its environment on, so a shell with one set (for a
+demo hub, a lab, a replay) ran the tests on other settings than CI's: with DITHER_MEDIA_ALLOW_PRIVATE=1 three of the
+media fetcher's address-guard tests failed. A test that needs a setting sets it. `DITHER_TEST_KEEP_ENV=1` keeps them,
+to try a test on a setting on purpose.

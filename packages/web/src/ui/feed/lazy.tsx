@@ -10,7 +10,7 @@ import { fullTime, ago } from '../../format.ts';
 import { authorName } from '../../model.ts';
 import { db, go, isSelfIdentity, previousRoute, toast } from '../../state.ts';
 import { Avatar, Empty, Linked } from '../bits.tsx';
-import { useLongPress } from '../Reactions.tsx';
+import { useLongPress } from '../longpress.ts';
 import { Sheet } from '../Sheet.tsx';
 import { Icon } from '../icons.tsx';
 import { languageName, needsTranslation } from '@dither-chat/protocol';

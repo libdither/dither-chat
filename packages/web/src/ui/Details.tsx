@@ -6,10 +6,10 @@ import { api, db, go, isSelfIdentity, openProfile, prefs, rev, setRule } from '.
 import { AccountChip, Avatar, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { showDetails } from './Pager.ts';
-import { openConv } from './Sidebar.tsx';
+import { openConv } from '../opening.ts';
 import { Menuable } from './ContextMenu.tsx';
 import { identityMenu } from './menus.tsx';
-import { openAbout } from './About.tsx';
+import { openAbout } from '../opening.ts';
 import { ableAccount, threadDialog } from '../threads.ts';
 
 function Section({ title, children }: { title: string; children: any }) {

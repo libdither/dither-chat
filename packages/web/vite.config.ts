@@ -25,6 +25,31 @@ function serviceWorkerBuild(): Plugin {
   };
 }
 
+/**
+ * Fails the build on a static import cycle between output chunks: such a cycle can run a chunk before the values it
+ * imports exist, which blanks the app at load, and only in a production build (docs/testing.md "Import cycles").
+ * After T3 Code's chunkCycleGuardPlugin (apps/web/vite.config.ts).
+ */
+function chunkCycleGuard(): Plugin {
+  return {
+    name: 'dither-chunk-cycle-guard',
+    apply: 'build',
+    generateBundle(_opts, bundle) {
+      const done = new Set<string>();
+      const visit = (fileName: string, path: string[]) => {
+        if (done.has(fileName)) return;
+        const start = path.indexOf(fileName);
+        if (start !== -1) this.error(`chunk import cycle: ${[...path.slice(start), fileName].join(' -> ')}`);
+        const chunk = bundle[fileName];
+        if (chunk?.type !== 'chunk') return;
+        for (const imported of chunk.imports) visit(imported, [...path, fileName]);
+        done.add(fileName);
+      };
+      for (const fileName of Object.keys(bundle)) visit(fileName, []);
+    },
+  };
+}
+
 /** Changes whenever the wire types do, so a snapshot (src/snapshot.ts) is only read back by code that expects its shape. */
 function protocolHash() {
   const dir = join(import.meta.dirname, '../protocol/src');
@@ -43,7 +68,7 @@ function buildSha() {
 }
 
 export default defineConfig({
-  plugins: [preact(), serviceWorkerBuild()],
+  plugins: [preact(), serviceWorkerBuild(), chunkCycleGuard()],
   define: { __SNAPSHOT_SCHEMA__: JSON.stringify(protocolHash()), __BUILD_SHA__: JSON.stringify(buildSha()) },
   server: {
     port: 5319,
@@ -54,5 +79,9 @@ export default defineConfig({
       '/calendar': { target: 'http://127.0.0.1:8460' },
     },
   },
-  build: { target: 'es2022', sourcemap: true },
+  build: {
+    target: 'es2022',
+    sourcemap: true,
+    rolldownOptions: { output: { codeSplitting: { groups: [{ name: 'startup', tags: ['$initial'], test: (id) => !/(\.html|[\\/]src[\\/]main\.tsx)$/.test(id) }] } } },
+  },
 });

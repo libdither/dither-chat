@@ -8,7 +8,6 @@ import {
   communityOfSpace,
   convLabel,
   convTitle,
-  convsUnder,
   directsOf,
   effectiveLevel,
   folderConvs,
@@ -24,7 +23,6 @@ import {
   placeConv,
   plainBody,
   resolveTokens,
-  rootCommunity,
   ruleIcon,
   spaceChildren,
   spaceUnread,
@@ -35,7 +33,7 @@ import {
   type InboxRow,
   type RailEntry,
 } from '../model.ts';
-import { db, go, isSelfIdentity, mailRev, metaRev, prefs, rev, route, setPrefs, type InboxFilter, type Route } from '../state.ts';
+import { db, go, isSelfIdentity, mailRev, metaRev, prefs, rev, route, setPrefs, type InboxFilter } from '../state.ts';
 import { openPalette } from './Palette.tsx';
 import { INBOX_FILTERS } from '../ordering.ts';
 import { senderLine } from '../mail/model.ts';
@@ -45,14 +43,15 @@ import { AccountChip, AccountDots, Avatar, Count, NetBadge, NetGlyph, SourceChip
 import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
 import { phone } from '../phone.ts';
-import { dropPlace, openPlaceMenu, placeLabel } from './Organize.tsx';
+import { dropPlace, placeLabel } from './Organize.tsx';
 import { contextMenu, Menuable, onMenu, openMenu, useMenu, type MenuEntry } from './ContextMenu.tsx';
-import { accountMenu, chatMenu, conversationMenu, folderMenuSpec, personMenu, spaceMenu, WhyHere } from './menus.tsx';
+import { chatMenu, conversationMenu, folderMenuSpec, openPlaceMenu, personMenu, spaceMenu, WhyHere } from './menus.tsx';
+import { accountMenu } from './accountMenu.tsx';
 import { MarkableRow } from './ReplyMark.tsx';
 import { pickedRoute } from './Pairs.tsx';
 import { chatKey } from '../chatroutes.ts';
 import { groups, type MenuSpec } from './ContextMenu.tsx';
-import { openAbout } from './About.tsx';
+import { openAbout } from '../opening.ts';
 import { arrangeDrop, arrangedFolderItems, arrangedPeople, arrangedRail, snapshot } from '../arrange.ts';
 import { inboxSnap, shownInbox } from '../inbox.ts';
 import { linkAccounts, PeopleAccountPicker, PeopleLinks, RequestsRow, usePeopleLinks } from './Requests.tsx';
@@ -69,25 +68,7 @@ import { VoicePeople } from './Ringing.tsx';
 
 // ------------------------------------------------------------------ navigation helpers
 
-/** Open a conversation, keeping the current sidebar context when it contains it. */
-export function openConv(c: P.ConversationView, ctx: Route = route.value) {
-  if (ctx.view === 'folder') return go({ view: 'folder', folder: ctx.folder, conv: c.id });
-  if (ctx.view === 'inbox') return go({ view: 'inbox', conv: c.id });
-  if (ctx.view === 'search') return go({ view: 'search', q: ctx.q, conv: c.id });
-  if (ctx.view === 'space' && convsUnder(ctx.space).some((x) => x.id === c.id)) return go({ view: 'space', space: ctx.space, conv: c.id });
-  return go(homeRoute(c));
-}
-
-export function homeRoute(c: P.ConversationView): Route {
-  if (c.shape === 'direct' && c.peerPersonId) return { view: 'people', person: c.peerPersonId };
-  const base = placeConv(c);
-  if (base.spaceIds.length) {
-    const root = rootCommunity(base.spaceIds[0]);
-    if (root) return { view: 'space', space: root.id, conv: c.id };
-  }
-  // Group chats, rooms outside a space and notes to self live in the inbox.
-  return { view: 'inbox', conv: c.id };
-}
+// Opening a conversation (openConv, homeRoute) is in opening.ts.
 
 /** Only there if some connected account can actually start a conversation, or join or add (docs/add.md). */
 function NewMessageButton() {

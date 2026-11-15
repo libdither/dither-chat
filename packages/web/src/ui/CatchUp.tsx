@@ -24,7 +24,7 @@ import { isLottie } from './Sticker.tsx';
 import { Icon } from './icons.tsx';
 import { composerBlocker } from './Timeline.tsx';
 import { TIER_ICON } from './Marks.tsx';
-import { viewer, type ViewerImage } from './Viewer.tsx';
+import { viewer, type ViewerImage } from '../viewer.ts';
 
 // ------------------------------------------------------------------ the session's queue
 

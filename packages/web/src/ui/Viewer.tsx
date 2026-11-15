@@ -20,7 +20,6 @@
  * wider screen they open in a box over the app, which a click beside it closes. The header always has Download; with
  * the desktop helper or the Android app it can open the file in an app as well.
  */
-import { signal } from '@preact/signals';
 import type { FunctionComponent } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { languageOf } from '@dither-chat/protocol';
@@ -35,13 +34,9 @@ import { openAttachment, openWith } from './fileopen.tsx';
 import { Icon } from './icons.tsx';
 import { Loading } from './Loader.tsx';
 
-export interface ViewerImage {
-  url: string;
-  name?: string | null;
-  width?: number | null;
-  height?: number | null;
-}
-export const viewer = signal<{ images: ViewerImage[]; index: number } | null>(null);
+import { viewer, type ViewerImage } from '../viewer.ts';
+
+export { viewer, type ViewerImage };
 
 export function Viewer() {
   const v = viewer.value;

@@ -56,6 +56,10 @@ jobs:
       - run: bun run typecheck
       # No .only, retries or bare skips, and no new real-time waits in tests (scripts/check-tests.ts, docs/testing.md).
       - run: bun run check:tests
+      # No import cycles in a package (scripts/check-cycles.ts), no unused files or dependencies and no unlisted
+      # imports (knip.json); docs/testing.md "Checks across the code".
+      - run: bun run check:cycles
+      - run: bun run knip
 
   # The hub's suite is the longest; its files run on --parallel workers (scripts/test-all.ts). All but mail-load's,
   # which runs beside it in test-hub-mail.

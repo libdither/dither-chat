@@ -9,7 +9,7 @@ import { ABOUT_LABEL, ABOUT_RULES, durationLabel, HISTORY_LABEL, JOIN_RULE_LABEL
 import { useEffect, useState } from 'preact/hooks';
 import { fullTime } from '../format.ts';
 import { authorName, convTitle, identityName, netName, plainBody } from '../model.ts';
-import { api, db, go, isSelfIdentity, openProfile, toast } from '../state.ts';
+import { api, db, isSelfIdentity, openProfile, toast } from '../state.ts';
 import { Avatar } from './bits.tsx';
 import { groups, Menuable, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
@@ -18,10 +18,6 @@ import { QrImage } from './QrCodes.tsx';
 
 export type AboutTarget = { kind: 'conversation' | 'space'; id: string };
 
-/** About lives on the place's profile page now (PlaceProfile.tsx). */
-export function openAbout(kind: AboutTarget['kind'], id: string) {
-  go(kind === 'space' ? { view: 'profile', space: id } : { view: 'profile', conv: id });
-}
 
 const BOOL_ON: Partial<Record<P.AboutKey, string>> = { nsfw: 'Age-restricted', announceOnly: 'Only admins', joinApproval: 'Admins approve', encrypted: 'On' };
 const BOOL_OFF: Partial<Record<P.AboutKey, string>> = { nsfw: 'No', announceOnly: 'Everyone', joinApproval: 'No', encrypted: 'Off' };

@@ -3,7 +3,7 @@ import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, fileBatches, splitsFiles, SYNC_VERSION } from '@dither-chat/protocol';
 import { leaveLayerEntry, takeOverLayers } from './phone.ts';
 import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snapshot.ts';
-import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, emptyDb, identityVersion, indexThreads, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
+import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, identityVersion, indexThreads, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
 import { changed, mailChanged, timelineChanged, timelineRev } from './versions.ts';
 import { applyTyping, type TypingState } from './typers.ts';
 import { ECHO_SKEW, mayBeOut, openOutbox, settled, type Echo, type OutboxEntry, type SendMedia } from './outbox.ts';
@@ -11,44 +11,18 @@ import { hubTransport, UploadJob } from './upload.ts';
 import { href, parseHash, type Route } from './routes.ts';
 import { inboxFilterOf, type InboxFilter } from './ordering.ts';
 import { applyPlanEvent, calendarAt, calendarFromBootstrap, loadPlans } from './plans.ts';
-import { reportApiFailure } from './errors.ts';
+import { api } from './api.ts';
+import { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines, type Timeline } from './store.ts';
 import { applyCalls, applyVoice, loadCalls } from './ringing.ts';
 
 // ------------------------------------------------------------------ data
 
 /** What components read to re-render: `rev` for the lists, `metaRev` for names and settings, one per timeline (versions.ts). */
 export { changed, dataVersion, mailRev, metaRev, rev, timelineChanged, timelineRev } from './versions.ts';
+export { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines, type Timeline } from './store.ts';
 export const connected = signal(false);
 /** Notices on this hub (docs/notices.md): whether it may read them; null when it has none. */
 export const noticesBoot = signal<P.NoticesBoot | null>(null);
-export const loaded = signal(false);
-
-/** The hub's state as this client knows it; syncmodel.ts says how bootstraps and events change it. */
-export const db = emptyDb();
-
-export interface Timeline {
-  key: string;
-  messages: P.MessageView[];
-  hasMore: boolean;
-  loading: boolean;
-  /** person timelines: the direct conversations merged into it */
-  conversationIds?: string[];
-  /** Jumped to an old message: this window does not reach the latest ones. */
-  detached?: boolean;
-  /** When its first page was asked of the hub. A reconnect catches up the ones that have it. */
-  fetchedAt?: number;
-  /** A copy kept on this device: the journal position it is current to, until the hub has caught it up. */
-  from?: P.SyncPosition;
-  /** Loaded for a glance (Catch up's cards) from what the hub stored: opening it asks the network, as a first open does. */
-  glance?: boolean;
-}
-export const timelines = new Map<string, Timeline>();
-/** Messages referenced by replies that are outside the loaded page. */
-export const quoted = new Map<string, P.MessageView>();
-export const inbox = signal<P.MessageView[]>([]);
-/** How it sorts' mail (docs/mail.md): what triage decided on new mail this week, newest first. */
-export const mailTriage = signal<P.MailTriageItem[]>([]);
-
 /** The week's mail decisions afresh (asked when Catch up or How it sorts opens: a page resumed from its snapshot holds an older list). */
 export async function loadMailTriage() {
   if (db.mail.access.state === 'off') return;
@@ -255,35 +229,8 @@ export const previousRoute = (): Route | null => (history.state?.prev ? parseHas
 
 // ------------------------------------------------------------------ http
 
-/** Told of every call before it goes out: the activity log counts sends, reactions and reads from these (activity.ts). */
-export const apiHooks = new Set<(path: string, init?: { method?: string; body?: unknown }) => void>();
-
-export async function api<T = any>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
-  for (const h of apiHooks) h(path, init);
-  const method = init?.method ?? (init?.body !== undefined ? 'POST' : 'GET');
-  let res: Response;
-  try {
-    res = await fetch(path, {
-      method,
-      body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
-      headers: init?.body !== undefined ? { 'content-type': 'application/json' } : undefined,
-    });
-  } catch (e) {
-    // The hub not reached (not an abort, not while offline): to traces/errors.ndjson (errors.ts).
-    reportApiFailure(method, path, e);
-    throw e;
-  }
-  const text = await res.text();
-  // Not everything here is JSON: the account log and the access gate's refusals are plain text.
-  const json = res.headers.get('content-type')?.includes('json');
-  const data = json && text ? JSON.parse(text) : text || null;
-  if (!res.ok) {
-    const e = Object.assign(new Error(data?.error ?? (text.slice(0, 200) || `${res.status}`)), { status: res.status });
-    if (res.status >= 500) reportApiFailure(method, path, e, res.status);
-    throw e;
-  }
-  return data as T;
-}
+// api() and apiHooks live in api.ts (no import of this file), so modules this file imports can call the hub.
+export { api, apiHooks } from './api.ts';
 
 // ------------------------------------------------------------------ applying hub data
 
@@ -321,9 +268,6 @@ const NOT_DB = new Set<P.ClientEvent['t']>(['typing', 'notify', 'sync', 'readPro
 const LIST_ONLY = new Set<P.ClientEvent['t']>(['message', 'message.deleted', 'identity', 'attention', 'usage', 'arrange', 'requests', 'accountsManager']);
 /** Events that change names (`metaRev` moves) but not what is where (versions.ts `changed('shown')`): people. */
 const SHOWN_ONLY = new Set<P.ClientEvent['t']>(['person', 'person.removed']);
-
-/** Others react to events too (usage.ts: time spent in places, sort settings), without state.ts knowing them. */
-export const eventHooks = new Set<(ev: P.ClientEvent) => void>();
 
 export function applyEvents(events: P.ClientEvent[]) {
   let threadsDirty = false;

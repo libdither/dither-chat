@@ -1,0 +1,3 @@
+# The shell's DITHER_* settings do not reach the tests (scripts/test-env.ts, docs/testing.md "The environment").
+[test]
+preload = ["../../scripts/test-env.ts"]
