@@ -4,7 +4,8 @@
  */
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { canonicalReactionKey, REACTION_RULES } from '@dither-chat/protocol';
+import { canonicalReactionKey, NETWORK_META, REACTION_RULES } from '@dither-chat/protocol';
+import { stamp } from './format.ts';
 import { api, changed, db, isSelfIdentity, patchMessage, prefs, toast } from './state.ts';
 
 export interface Picked {
@@ -144,8 +145,58 @@ export function replacing(m: P.MessageView): P.ReactionView | undefined {
   return REACTION_RULES[m.network].exclusive ? m.reactions.find(hasMine) : undefined;
 }
 
+// ------------------------------------------------------------------ when (docs/reactions.md "When")
+
+/** A reaction's time as far as is known: the network's own, or (`seen`) when the hub first heard of it. */
+interface ReactedAt {
+  at: number;
+  seen: boolean;
+}
+
+export function reactedAt(r: { at?: Record<string, number>; seenAt?: Record<string, number> }, id: string): ReactedAt | null {
+  const at = r.at?.[id];
+  if (at != null) return { at, seen: false };
+  const seen = r.seenAt?.[id];
+  return seen != null ? { at: seen, seen: true } : null;
+}
+
+/** "3:41 PM"; "by 3:41 PM" where it is only when the hub first heard (the reaction was made then or before). */
+export const whenText = (w: ReactedAt, now = Date.now()) => `${w.seen ? 'by ' : ''}${stamp(w.at, now)}`;
+
+/** Under a list with a "by" time in it: why. */
+/** Networks that give no time for any reaction (docs/reactions.md, "When"); the others leave one out only now and then. */
+const UNTIMED: ReadonlySet<P.Network> = new Set(['discord', 'x', 'messenger', 'instagram', 'gmessages']);
+
+/** Why a time says "by": the network never says when (Discord), or did not for these (Telegram, taking one back). */
+export const seenNote = (network: P.Network) =>
+  UNTIMED.has(network)
+    ? `${NETWORK_META[network].name} doesn't say when people react: "by" is when the hub first heard.`
+    : `${NETWORK_META[network].name} didn't say when for these: "by" is when the hub first heard.`;
+
+const TIP_NAMES = 8;
+
+/**
+ * A pill's tooltip: who reacted in a line ("You, Alice and 3 others"), then, where any time is known, when: just the
+ * time for one person, else a line each, earliest first ("Alice · 3:41 PM", "Bob · by 3:45 PM"), at most eight, then
+ * how many more. `note` says why a time says "by".
+ */
+export function reactionTip(r: P.ReactionView, network: P.Network, nameOf: (id: string) => string, now = Date.now()): { text: string; lines: string[]; note: string | null } {
+  const text = reactorsLabel(r, nameOf);
+  const timed = r.identityIds.map((id) => ({ id, when: reactedAt(r, id) }));
+  if (!timed.some((t) => t.when)) return { text, lines: [], note: null };
+  // Those with no time were there before the hub saw the message, so they come first.
+  timed.sort((a, b) => (a.when?.at ?? -Infinity) - (b.when?.at ?? -Infinity));
+  const shown = timed.slice(0, TIP_NAMES);
+  const note = shown.some((t) => t.when?.seen) ? seenNote(network) : null;
+  if (r.count === 1) return { text, lines: [whenText(timed[0].when!, now)], note };
+  const lines = shown.map(({ id, when }) => `${isSelfIdentity(id) ? 'You' : nameOf(id)}${when ? ` · ${whenText(when, now)}` : ''}`);
+  const rest = r.count - shown.length;
+  if (rest > 0) lines.push(`and ${rest} ${rest === 1 ? 'other' : 'others'}`);
+  return { text, lines, note };
+}
+
 /** "You, Alice and 3 others" */
-export function reactorsLabel(r: P.ReactionView, nameOf: (id: string) => string): string {
+function reactorsLabel(r: P.ReactionView, nameOf: (id: string) => string): string {
   const mine = hasMine(r);
   const others = r.identityIds.filter((i) => !isSelfIdentity(i));
   const names = [...(mine ? ['You'] : []), ...others.slice(0, 3).map(nameOf)];

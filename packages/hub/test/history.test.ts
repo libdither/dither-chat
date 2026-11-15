@@ -256,9 +256,10 @@ describe('pins, roles, statuses, receipts, reactions taken back', () => {
     react('ann');
     store.ingest(dc, { t: 'reactionsCleared', conversation: 'c1', message: `m${n}` });
     const ev = store.messageHistory(id)!.events;
-    expect(ev.map((e) => [e.kind, e.data])).toEqual([
-      ['unreact', { key: '👍', style: 'normal' }],
-      ['unreact', { key: '👍', style: 'normal', cleared: true }],
+    // Discord gives no times: each is when the hub heard, and says when the reaction had been added.
+    expect(ev.map((e) => [e.kind, e.data, e.seen])).toEqual([
+      ['unreact', { key: '👍', style: 'normal', added: expect.any(Number), addedSeen: true }, true],
+      ['unreact', { key: '👍', style: 'normal', cleared: true, added: expect.any(Number), addedSeen: true }, true],
     ]);
   });
 

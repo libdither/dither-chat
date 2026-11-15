@@ -1807,21 +1807,20 @@ export class HubServer {
       const style = (url.searchParams.get('style') ?? 'normal') as P.ReactionStyle;
       const msg = s.one<{ conversation_id: string; native_id: string }>('SELECT conversation_id, native_id FROM message WHERE id = ?', m[1]);
       if (!msg) return bad('no such message', 404);
-      const shown = () => s.messageView(m![1])?.reactions.find((r) => r.key === key && r.style === style);
-      const before = shown();
+      const before = s.messageView(m[1])?.reactions.find((r) => r.key === key && r.style === style);
       // Only ask the network when it has not told us everyone already.
       if (before && before.count > before.identityIds.length) {
         const conv = s.nativeOf('conversation', msg.conversation_id)!;
         const accountId = this.pickAccount(msg.conversation_id);
         const acc = accountId ? s.account(accountId) : null;
         if (acc && this.sup.online(acc.id)) {
-          const r = await this.sup.command<{ authors?: string[] }>(acc.id, { t: 'reactors', conversation: conv.nativeId, message: msg.native_id, key, style }, 20_000).catch(() => null);
-          if (r?.authors?.length) s.addKnownReactors(acc, m[1], key, style, r.authors);
+          const r = await this.sup.command<{ authors?: string[]; at?: Record<string, number> }>(acc.id, { t: 'reactors', conversation: conv.nativeId, message: msg.native_id, key, style }, 20_000).catch(() => null);
+          if (r?.authors?.length) s.addKnownReactors(acc, m[1], key, style, r.authors, r.at);
           this.flush();
         }
       }
-      const after = shown();
-      return ok({ count: after?.count ?? 0, identityIds: after?.identityIds ?? [], identities: s.identitiesByIds(after?.identityIds ?? []) });
+      // With when each reacted, and who took theirs back (docs/reactions.md "When").
+      return ok(s.reactorsView(m[1], key, style));
     }
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/(edit|delete)$/)) && method === 'POST') {
       const edit = m[2] === 'edit';

@@ -2379,8 +2379,8 @@ code {
 /* Who reacted */
 .reactors {
   position: fixed;
-  width: 240px;
-  max-height: 320px;
+  width: 290px;
+  max-height: 360px;
   display: flex;
   flex-direction: column;
   background: var(--bg-sidebar);
@@ -2415,6 +2415,46 @@ code {
   padding: 6px 7px;
   color: var(--text-faint);
   font-size: 12px;
+}
+/* When each reacted (docs/reactions.md "When"), and earlier turns under the name. */
+.reactor-who {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.reactor-who > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reactor-past {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.reactor-when {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.reactor.gone > :is(.avatar, .reactor-who) {
+  opacity: 0.6;
+}
+.reactors-sub {
+  padding: 8px 7px 2px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-faint);
+}
+.reactors-note {
+  margin: 0;
+  padding: 7px 12px 9px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-faint);
 }
 
 /* Long-press on a message */
@@ -11663,6 +11703,12 @@ button.msg-edited.link:hover {
   margin-left: auto;
   font-size: 11px;
   color: var(--text-faint);
+  white-space: nowrap;
+}
+.msg-history-note {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: var(--text-faint);
 }
 .edit-history .msg-history,
 .menu .msg-history {
@@ -11874,6 +11920,8 @@ button.msg-edited.link:hover {
   font-size: 12px;
   color: #b5bac1;
   overflow-wrap: anywhere;
+  /* A reaction's tooltip has a line per person (docs/reactions.md "When"). */
+  white-space: pre-line;
 }
 .tooltip::before {
   content: '';
@@ -15489,7 +15537,7 @@ h1:hover > .pair-nick-edit,
   margin: 6px 0;
 }
 .reactor .reactor-remove {
-  margin-left: auto;
+  margin-left: -4px;
 }
 
 /* ---------------------------------------------------------------- sending extras (docs/sending.md) */
