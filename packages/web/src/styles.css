@@ -2699,6 +2699,16 @@ textarea.chip-box {
   color: var(--text-faint);
   font-size: 12px;
 }
+/* A menu that opens up from a control in the message box opens above the box, clear of its border, not 6 px above
+   the control (which sits 8 px inside the box). */
+.composer-box .menu.up {
+  bottom: calc(100% + 15px);
+}
+/* The send button's menu is one or two short lines: as wide as they are. */
+.send-split .menu {
+  min-width: 0;
+  white-space: nowrap;
+}
 /* Send and its ways (silently, later) as one button with a narrow half. */
 .send-split {
   display: flex;
@@ -3277,9 +3287,24 @@ textarea.chip-box {
   text-align: left;
   color: var(--text-dim);
 }
+/* An item's icon on its first line's middle, whatever the icon's size: the icon's box is a line tall, and the SVG draws
+   its glyph in the middle of it. Items align to the top, so a second line of words starts under the first. */
+.menu-item > svg.icon:first-child {
+  flex: none;
+  height: 1lh;
+}
 .menu-item:hover {
   background: var(--bg-hover);
   color: var(--text);
+}
+/* Not available now: faint, and no hover; its note says why (SendExtras.tsx "Write something first"). */
+.menu-item:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.menu-item:disabled:hover {
+  background: none;
+  color: var(--text-dim);
 }
 .menu-item.on {
   color: var(--accent);
