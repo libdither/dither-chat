@@ -46,10 +46,7 @@ the network takes; the words and the reply go with the first, silent with all of
 The row is Signal's and Discord's: **+** on the left, the message box with a **camera** button inside it on the
 right, and send (`ui/Attach.tsx`, pure parts in `camera.ts`). The desktop keeps paste and drop, and files are **Upload a file** in its + menu, or a plain paperclip where files are all the network takes ([sending.md](sending.md)).
 
-- **+** opens a sheet with **Photos & videos** (`accept="image/*,video/*"`, several at once) and **File** (any kind,
-  several). On Android 13 and later the app opens the system photo picker for the first, which needs no permission
-  to read photos. Signal's sheet also has a grid of recent photos; that would need the app to read every photo on
-  the phone, so the system picker stands in for it.
+- **+** opens the panel in the keyboard's place (below, "The panel").
 - **The camera button** opens a full-screen camera in the app (`getUserMedia`), the rear camera first: tap the
   shutter for a photo (a JPEG from the preview's frame, 1920×1080 where the camera gives it), hold it for a video
   (`MediaRecorder`, MP4 where the browser records it, else WebM; with sound once the microphone is allowed, asked
@@ -74,6 +71,42 @@ app (`ACTION_IMAGE_CAPTURE`) writing to a file in the app's cache, served to it 
 that declares `CAMERA` without holding it, and the page asks for it after the camera was refused, so then it is the
 photo picker. `getUserMedia` gets the camera through `onPermissionRequest`, which asks for `CAMERA` (and
 `RECORD_AUDIO` for a video's sound) when the page first asks.
+
+## The panel
+
+On a phone, **+** swaps the keyboard for a panel of exactly its height (`ui/panel/`, a chunk of its own): the message
+box never moves, and a tap in the box brings the keyboard back up over the panel, which goes once the keyboard is up
+(phone.ts `openPanel`, [phone.md](phone.md) "Keyboard"). While it is open the + is a keyboard button. A tap on the
+chat above, back, or a send with what it picked closes it. Tabs along its bottom show only what the chat's network
+takes: **Photos**, **Files**, **Stickers** and **Poll** (the last two open the sticker picker and the poll maker).
+
+What is picked is attached at once, into the row over the box, and starts uploading while you pick more or write
+the caption; it is numbered in the order picked, and picking it again (or its × in the row) takes it back. The box
+is the caption. **Open large** is the send screen.
+
+- **Photos.** In the Android app, the phone's gallery itself, newest first, 60 at a time, the camera first; an album
+  menu (Camera, Screenshots…, largest first, each with its newest picture); **View once** where the network has it.
+  The first time it asks in place, and Android asks "all photos or selected ones" (Android 14+); with selected ones
+  it shows only those, with **Change** to pick again. Elsewhere (a browser, an older app, or not allowed): the
+  camera, **Gallery…** (the system's photo picker), and the pictures your chats already hold (`has:image`).
+- **Files.** In the Android app, the phone's own storage: **On this phone** lists what changed lately, **Browse
+  folders** walks every folder (Downloads, Documents…; hidden files and `Android/` left out), and the search finds
+  files by name there and in your chats. Android shows an app other folders than its own only with **All files
+  access**, a switch in Settings the panel opens (the storage permission on Android 10). **In your chats** is every
+  file sent or received on any network (`has:file`, newest first), sent again with no picker and no permission.
+  **Other apps…** at the end is the system's file picker, for a file that lives in another app (a cloud drive); in a
+  browser it is **Choose a file…**, the only way to the phone's files there.
+- **The search** opens the panel to the whole screen, above the keyboard.
+
+How the app does it (`apps/android` `Device.kt`): lists go over the bridge (`device.media`, `device.files`,
+answered by request id), from MediaStore (the gallery, by `DATE_MODIFIED` and id, so pictures taken in the same
+second are neither lost nor repeated) and the shared storage's folders. The bytes (a 360px thumbnail, a whole photo
+or file) are served at `<hub origin>/__device/<token>/…`, intercepted by the WebView before any request leaves the
+phone; the service worker leaves that path alone. The token is new each time the app starts and only the hub's page
+hears it (`info.device`), and a path outside the shared storage is refused. The permissions: `READ_MEDIA_IMAGES`,
+`READ_MEDIA_VIDEO` and `READ_MEDIA_VISUAL_USER_SELECTED` (`READ_EXTERNAL_STORAGE` before Android 13), and
+`MANAGE_EXTERNAL_STORAGE`, each asked for only when its tab asks. Google Play limits that last one to file managers
+and the like; the app is installed from its own APK.
 
 ## Uploading in pieces
 

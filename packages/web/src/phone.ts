@@ -125,9 +125,10 @@ export function useLayer(onClose: () => void) {
  */
 const appKeyboard = signal(false);
 /** The keyboard's height as the app reports it, in CSS pixels; 0 while it is down. */
-const imeHeight = signal(0);
-/** A panel in the keyboard's place (ui/Panel.tsx). */
-const panelOpen = signal(false);
+export const imeHeight = signal(0);
+/** A panel in the keyboard's place (ui/panel/Panel.tsx): open, and how far it has slid in (0 to 1). */
+export const panelOpen = signal(false);
+export const panelShown = signal(0);
 
 const KB_KEY = 'dither-chat:keyboard-height';
 const orientation = () => (innerWidth > innerHeight ? 'wide' : 'tall');
@@ -140,7 +141,7 @@ function remembered(): number {
 }
 /** The keyboard's last height in this orientation, which the panel takes; 40% of the screen before it was ever seen. */
 const keyboardHeight = signal(remembered());
-const panelHeight = () => clampPanel(keyboardHeight.value, innerHeight);
+export const panelHeight = () => clampPanel(keyboardHeight.value, innerHeight);
 function remember(h: number) {
   h = Math.round(h);
   if (h < 120 || Math.abs(h - keyboardHeight.value) < 2) return;
@@ -153,14 +154,52 @@ function remember(h: number) {
 }
 
 let relayout = () => {};
+const inPanel = () => !!(document.activeElement as HTMLElement | null)?.closest?.('.kp');
+/** The keyboard is up now (the app's report, or the browser's resize). */
+let keyboardUp = () => imeHeight.value > 0;
+let sliding = 0;
+
+/** Slide the panel to `to` (0 or 1), or jump there: where the keyboard is (or is about to be) it takes the same room. */
+function slide(to: number, jump: boolean) {
+  cancelAnimationFrame(sliding);
+  if (jump || reducedMotion()) {
+    panelShown.value = to;
+    return;
+  }
+  const from = panelShown.value;
+  const t0 = performance.now();
+  const step = (t: number) => {
+    const k = Math.min(1, (t - t0) / 180);
+    const e = 1 - (1 - k) ** 3;
+    panelShown.value = from + (to - from) * e;
+    if (k < 1) sliding = requestAnimationFrame(step);
+  };
+  sliding = requestAnimationFrame(step);
+}
+
+/** The panel in the keyboard's place: where the keyboard is up it takes its room at once, then the keyboard goes. */
+export function openPanel() {
+  const swap = keyboardUp();
+  panelOpen.value = true;
+  slide(1, swap);
+  if (swap) (document.activeElement as HTMLElement | null)?.blur();
+}
+
+/** `forKeyboard`: the keyboard is coming up over it, so it goes at once. */
+export function closePanel(forKeyboard = false) {
+  if (!panelOpen.value && !panelShown.value) return;
+  panelOpen.value = false;
+  slide(0, forKeyboard);
+}
 
 /** The app's keyboard report: its height now, and `done` once it stopped moving (android.ts). */
 export function onIme(h: number, done: boolean) {
   imeHeight.value = h;
   if (done && h > 0) {
     remember(h);
-    // The keyboard is up over the panel: the panel goes, and the room stays the keyboard's.
-    panelOpen.value = false;
+    // The keyboard is up over the panel: the panel goes, and the room stays the keyboard's. Not for a field of the
+    // panel's own (its search), which has it open to the whole screen above the keyboard.
+    if (panelOpen.value && !inPanel()) closePanel(true);
     revealFocused();
   }
   relayout();
@@ -205,10 +244,10 @@ export function trackViewport() {
       if (browserKb) {
         remember(tallest - h);
         // The keyboard came up over the panel (a tap in the box): the panel goes.
-        if (panelOpen.value) panelOpen.value = false;
+        if (panelOpen.value && !inPanel()) closePanel(true);
       }
     }
-    const a = appHeight({ inner: innerHeight, visible: h, typing: typing(), app: appKeyboard.value, ime: imeHeight.value, panel: panelOpen.value ? panelHeight() : 0 });
+    const a = appHeight({ inner: innerHeight, visible: h, typing: typing(), app: appKeyboard.value, ime: imeHeight.value, panel: Math.round(panelHeight() * panelShown.value) });
     root.classList.toggle('kb-open', browserKb || a.kb);
     const top = !appKeyboard.value && vv && typing() ? Math.round(vv.offsetTop) : 0;
     if (a.h !== null || top > 0) {
@@ -222,6 +261,7 @@ export function trackViewport() {
     }
   };
   relayout = update;
+  keyboardUp = () => (appKeyboard.value ? imeHeight.value > 0 : typing() && tallest - (vv?.height ?? innerHeight) > 120);
   vv?.addEventListener('resize', update);
   vv?.addEventListener('scroll', update);
   let wide = innerWidth;
@@ -237,7 +277,7 @@ export function trackViewport() {
   document.addEventListener('focusin', update);
   document.addEventListener('focusout', () => setTimeout(update, 50));
   effect(() => {
-    void panelOpen.value;
+    void panelShown.value;
     update();
   });
 }

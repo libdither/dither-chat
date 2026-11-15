@@ -54,15 +54,29 @@ class Bridge(private val activity: MainActivity, private val origin: Uri) : WebV
             "upload.resume" -> activity.resumeUpload()
             "upload.forget" -> activity.forgetUpload()
             "upload.status" -> send(Uploads.state(activity))
+            // The panel's photos and files (Device.kt): answered with the same `t` and the page's `rid`.
+            "device.media" -> {
+                val rid = m.opt("rid")
+                Device.run(activity, { Device.media(activity, m.optString("album").ifEmpty { null }, m.optString("before").ifEmpty { null }, m.optInt("limit", 60).coerceIn(1, 300)) }) { send(it.put("t", "device.media").put("rid", rid)) }
+            }
+            "device.files" -> {
+                val rid = m.opt("rid")
+                Device.run(activity, { Device.files(activity, m.optString("path"), m.optString("q").ifEmpty { null }, m.optBoolean("recent")) }) { send(it.put("t", "device.files").put("rid", rid)) }
+            }
+            "device.mediaAccess" -> activity.askMediaAccess()
+            "device.filesAccess" -> activity.askFilesAccess()
             "keyboard" -> activity.pageKeyboard = m.optBoolean("page") && android.os.Build.VERSION.SDK_INT >= 30
             "file" -> activity.openFileForPage(m.optString("url"), m.optString("name").ifEmpty { null }, m.optString("mime").ifEmpty { null })
         }
     }
 
-    /** A distributor may have been installed meanwhile: the page hears again on every return to the app. */
+    /** A distributor may have been installed meanwhile, or access to photos and files given: the page hears again on every return to the app. */
     fun resumed() {
         if (proxy != null) send(info())
     }
+
+    /** After Android answered a permission request. */
+    fun refresh() = resumed()
 
     /** Version, the UnifiedPush distributors and whether Android lets them run in the background, and what can be opened. */
     private fun info(): JSONObject {
@@ -77,7 +91,8 @@ class Bridge(private val activity: MainActivity, private val origin: Uri) : WebV
             .put("distributors", distributors)
             .put("current", UnifiedPush.getAckDistributor(activity) ?: UnifiedPush.getSavedDistributor(activity) ?: JSONObject.NULL)
             .put("notifications", activity.getSystemService(NotificationManager::class.java).areNotificationsEnabled())
-            .put("opens", JSONArray(listOf("app", "appInfo", "notifications", "file", "upload") + (if (android.os.Build.VERSION.SDK_INT >= 30) listOf("keyboard") else emptyList())))
+            .put("opens", JSONArray(listOf("app", "appInfo", "notifications", "file", "upload", "device") + (if (android.os.Build.VERSION.SDK_INT >= 30) listOf("keyboard") else emptyList())))
+            .put("device", Device.access(activity))
     }
 
     /** To the page if one is listening, else dropped: for what is stale a moment later (the keyboard's height). */

@@ -14051,21 +14051,6 @@ button.msg-edited.link:hover {
 
 /* ================================================================== attaching on a phone (ui/Attach.tsx) */
 
-.attach-action {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  text-align: left;
-}
-.attach-action > svg {
-  color: var(--accent);
-}
-.attach-action small {
-  display: block;
-  color: var(--text-faint);
-  font-size: 12.5px;
-}
-
 /* The camera: black and full screen, the preview filling it, controls over it. */
 .cam {
   position: fixed;

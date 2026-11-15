@@ -33,6 +33,7 @@ import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
@@ -60,6 +61,7 @@ class MainActivity : Activity() {
         private const val REQ_MEDIA = 2
         private const val REQ_NOTIFY = 3
         private const val REQ_UPLOAD = 4
+        private const val REQ_DEVICE = 5
 
         /** The activity on screen, if any: a push for what the page is showing needs no notification. */
         @Volatile
@@ -268,6 +270,9 @@ class MainActivity : Activity() {
     private fun isAppPath(path: String?) = path.isNullOrEmpty() || path == "/" || path == "/index.html"
 
     private inner class Client : WebViewClient() {
+        // The phone's photos and files for the panel, at the hub's origin under a private path (Device.kt).
+        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? = Device.serve(this@MainActivity, hub, request.url)
+
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val u = request.url
             if (Hub.sameOrigin(u, hub) && isAppPath(u.path)) return false
@@ -409,7 +414,21 @@ class MainActivity : Activity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         when (requestCode) {
             REQ_MEDIA -> mediaRequest?.let(::grantGranted).also { mediaRequest = null }
+            REQ_DEVICE -> bridge?.refresh()
             REQ_NOTIFY -> afterNotify?.invoke(grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED).also { afterNotify = null }
+        }
+    }
+
+    /** The gallery for the panel (Device.kt): Android's own question, all photos or the ones picked. Asking again changes the pick. */
+    fun askMediaAccess() = requestPermissions(Device.mediaPermissions(), REQ_DEVICE)
+
+    /** Folders for the panel: "All files access" is a switch in Settings (Android 11+); the page hears on return. */
+    fun askFilesAccess() {
+        if (Build.VERSION.SDK_INT < 30) return requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), REQ_DEVICE)
+        try {
+            startActivity(Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")))
+        } catch (e: ActivityNotFoundException) {
+            startActivity(Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
         }
     }
 

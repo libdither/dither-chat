@@ -53,6 +53,7 @@
         "src/ui/ProfileSelf.tsx",
         "src/ui/rich/Rich.tsx",
         "src/ui/SendLists.tsx",
+        "src/ui/panel/Panel.tsx",
         "src/ui/ServerParts.tsx",
         "src/ui/SignalPeople.tsx",
         "src/ui/Threads.tsx",
