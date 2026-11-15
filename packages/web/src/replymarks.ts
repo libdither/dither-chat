@@ -1,7 +1,7 @@
 /**
  * Your marks on whether a message needs a reply (docs/inbox.md, "Marks"): "No reply needed" settles what you owed up to
  * the message, "Reply needed" holds the chat near the top until you answer (it never notifies). Made on an inbox row,
- * by its ↩ on a computer or a swipe left on a phone (ui/ReplyMark.tsx). The ↩ goes, or comes, at once; the hub's fold
+ * by its ↩ (ui/ReplyMark.tsx). The ↩ goes, or comes, at once; the hub's fold
  * catches up a few seconds later. A toast offers Undo.
  */
 import type * as P from '@dither-chat/protocol';
@@ -34,7 +34,7 @@ function hideOwed(ids: string[]): P.AttentionView[] {
 }
 
 /**
- * The ↩ on these rows now, held, as the hub will have it once it has folded a "Reply needed": so a second swipe
+ * The ↩ on these rows now, held, as the hub will have it once it has folded a "Reply needed": so a second click
  * takes it off rather than marking it again. Returns the views as they were, as hideOwed does.
  */
 function showHeld(ids: string[]): P.AttentionView[] {

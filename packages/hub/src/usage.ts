@@ -114,14 +114,21 @@ export class UsageStore {
     const sort = { ...DEFAULT_ARRANGE.sort };
     for (const scope of SCOPES) if (SORT_MODES.includes(stored[scope])) sort[scope] = stored[scope];
     const pictures = get('pictures');
-    return { sort, dismissed: get('dismissed') ?? {}, ...(get('followArchive') === false ? { followArchive: false } : {}), ...(isPictureLayout(pictures) ? { pictures } : {}) };
+    return {
+      sort,
+      dismissed: get('dismissed') ?? {},
+      ...(get('followArchive') === false ? { followArchive: false } : {}),
+      ...(get('quietShelf') === false ? { quietShelf: false } : {}),
+      ...(isPictureLayout(pictures) ? { pictures } : {}),
+    };
   }
 
   /** Only what is given changes: a sort mode per scope, dismissals per category (null brings one back), pictures. */
-  patchArrange(p: { sort?: Partial<Record<string, string>>; dismissed?: Record<string, string[] | null>; followArchive?: unknown; pictures?: unknown }): P.ArrangeSettings {
+  patchArrange(p: { sort?: Partial<Record<string, string>>; dismissed?: Record<string, string[] | null>; followArchive?: unknown; quietShelf?: unknown; pictures?: unknown }): P.ArrangeSettings {
     const cur = this.arrange();
     const put = (k: string, v: unknown) => this.db.query('INSERT OR REPLACE INTO arrange_setting (key, value) VALUES (?, ?)').run(k, JSON.stringify(v));
     if (typeof p.followArchive === 'boolean') put('followArchive', p.followArchive);
+    if (typeof p.quietShelf === 'boolean') put('quietShelf', p.quietShelf);
     if (isPictureLayout(p.pictures)) put('pictures', p.pictures);
     if (p.sort) {
       const sort = { ...cur.sort };

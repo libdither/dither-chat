@@ -53,6 +53,8 @@ export interface ArrangeSettings {
    * here too, when that changes. Off: the network's archive is not followed. Absent: on.
    */
   followArchive?: boolean;
+  /** Quiet servers (never opened, nothing new in half a year) sit on a shelf at the end of each list. Absent: on. */
+  quietShelf?: boolean;
   /** How chats show pictures, where a chat or its server doesn't say (docs/pictures.md). Absent: DEFAULT_PICTURE_LAYOUT. */
   pictures?: PictureLayout;
 }

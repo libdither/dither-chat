@@ -229,26 +229,22 @@ the chat are things a model may learn from later, not rules a mark sets.
   needed"; a click marks the row without opening the chat. A row with no ↩ shows a faint ↩ in the same place while the
   pointer is on it, "Reply needed". A held row shows its ↩, so a click on it lets the hold go ("No reply needed"). The
   button sits beside the row's own button, so Tab reaches it from the row and a screen reader names it.
-- **On a phone**, swipe a row left: "No reply needed" on a row with ↩, "Reply needed" on any other. As the row slides,
-  what it will do shows in the strip it uncovers; past 72 px (`SWIPE_AT`), or on a flick of at least 24 px, letting go
-  marks it, with a haptic tick when it crosses the line. The axis locks first (gesture.ts `lockAxis`), so a vertical
-  drag scrolls the list as before and a right swipe is the pager's. The button is still there for a screen reader,
-  out of sight.
+- **On a phone**, the same button lies unseen over the ↩ the row draws, so a tap on the ↩ is "No reply needed". A row
+  with no ↩ has no Reply needed on a phone; its button is there for a screen reader, out of sight. Rows are not swiped
+  (from 2026-11-13 to 11-14 a left swipe marked them): a left swipe on the list is the pager's, bringing back the page
+  peeking at the edge.
 
 On a row, No reply needed marks the newest message from them in each route's open turn; Reply needed the newest of them
 all. Where the open turn was not meant for you (a group's chatter, so the row API has nothing to mark), Reply needed goes
 on the row's newest message through the message endpoint, which makes a turn of its own. Reply needed is offered only
 where someone else wrote last and not in notes to self: where you wrote last nothing waits on you. The ↩ goes, or
 comes, at once; the hub folds the conversation again a few seconds later, as for your reactions. A toast offers Undo for
-10 s. Mail threads in the inbox have No reply needed the same way (hover or swipe, on the thread's newest message from
+10 s. Mail threads in the inbox have No reply needed the same way (hover or a tap on the ↩, on the thread's newest message from
 them since the reply you owe began); a thread with no ↩ has no Reply needed, since the mail row's mark needs a reply
 owed. Mail's own list (ui/mail/Filing.tsx) keeps its swipes: right archives, left marks read or unread.
 
-**The pager.** With a page peeking at the edge (`rest-peek`), a left swipe on the lists used to bring the page back
-from anywhere. A row that can be marked claims a left swipe (`data-claims-swipe="left"`), and the pager's check for
-"something under the finger scrolls sideways" (Pager.ts `scrollsSideways`) gives it the swipe; a left swipe from the
-peeking card itself, from a row that cannot be marked (notes to self, a chat where you wrote last), or from the list's heads still brings the page
-back, and tapping the card does too.
+**The pager.** With a page peeking at the edge (`rest-peek`), a left swipe anywhere on the lists brings the page back,
+and tapping the card does too. Inbox rows take no swipe of their own.
 
 **Kept.** `reply_mark` (one row per message: `target_kind` message or mail, its conversation or thread, the mark,
 when, where it was made, the device, `undone_at`). A change goes out with the message's view (`MessageView.replyMark`)
