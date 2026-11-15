@@ -618,6 +618,18 @@ CREATE TABLE IF NOT EXISTS phone_episode (
 CREATE INDEX IF NOT EXISTS phone_episode_open ON phone_episode(conversation_id) WHERE ended_at IS NULL;
 CREATE INDEX IF NOT EXISTS phone_episode_day ON phone_episode(day, conversation_id);
 CREATE INDEX IF NOT EXISTS phone_episode_ended ON phone_episode(outcome_at) WHERE outcome = 'dismissed';
+-- Each list push the phone's list was asked for that passed the gate, the snoozes and the cap: whether the day's
+-- budget sent it, and its importance, for the day's bar (phonelist.ts `bar`) and a later replay. Ids, times, numbers.
+CREATE TABLE IF NOT EXISTS phone_push (
+  id              INTEGER PRIMARY KEY,
+  at              INTEGER NOT NULL,
+  day             TEXT NOT NULL,             -- the hub's local day, YYYY-MM-DD
+  mode            TEXT NOT NULL,             -- 'on' or 'shadow'
+  conversation_id TEXT NOT NULL,
+  importance      REAL,                      -- triage's, 0 to 1; null when not known
+  sent            INTEGER NOT NULL           -- 1 when the budget let it go (in shadow: would have)
+);
+CREATE INDEX IF NOT EXISTS phone_push_day ON phone_push(day);
 -- A chat whose row the phone swiped away: its list rows wait until this, or until something above the list comes.
 CREATE TABLE IF NOT EXISTS phone_snooze (
   conversation_id TEXT PRIMARY KEY,

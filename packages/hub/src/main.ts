@@ -15,7 +15,7 @@ import { Notices, type NoticeDelivery } from './notices/index.ts';
 import { FakeNoticeSource, seedDemoNotices } from './notices/fake.ts';
 import { Delivery } from './delivery.ts';
 import { Notifier } from './notify.ts';
-import { listByPrior, PhoneList, phoneListMode } from './phonelist.ts';
+import { listByPrior, PhoneList, phoneListBudget, phoneListMode } from './phonelist.ts';
 import { RequestNotifier, requestChain, type RequestNotice } from './requestnotify.ts';
 import { Devices } from './devices.ts';
 import { Embeddings, Jev } from './embeddings.ts';
@@ -347,8 +347,13 @@ setInterval(
 
 const push = new PushService(store, loadVapidKeys(dataDir), process.env.DITHER_PUSH_SUBJECT ?? process.env.DITHER_PUBLIC_URL ?? 'https://github.com/libdither/dither-chat');
 // Which list rows reach the phones (docs/notifications.md, "The phone's list"). DITHER_PHONE_LIST=shadow sends them all
-// and logs what it would have held; off, as before it.
-const phone = new PhoneList(store.db, { mode: phoneListMode(process.env.DITHER_PHONE_LIST), kept: (now) => triage.marked(now).convs, readTs: (cid) => delivery.readAllTs(cid) });
+// and logs what it would have held; off, as before it. DITHER_PHONE_LIST_BUDGET: list pushes a day (5), or off.
+const phone = new PhoneList(store.db, {
+  mode: phoneListMode(process.env.DITHER_PHONE_LIST),
+  budget: phoneListBudget(process.env.DITHER_PHONE_LIST_BUDGET),
+  kept: (now) => triage.marked(now).convs,
+  readTs: (cid) => delivery.readAllTs(cid),
+});
 activity.noted = (w) => phone.noted(w);
 if (phone.mode !== 'on') console.log(`phone list: ${phone.mode} (DITHER_PHONE_LIST)`);
 

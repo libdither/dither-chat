@@ -80,6 +80,11 @@ export const STOP_QUESTION = 'Does this message need the reader to stop what the
 export const JUDGE_CHARS = 500;
 /** A place or person you marked "should have alerted" may alert for this long, Conversation or not. */
 export const MARKED_FOR = 90 * 86_400_000;
+/**
+ * Networks whose messages a machine writes: T3 Code's coding threads (an agent's turns name the repository and its
+ * files) and calendars (events and reminders). Your keywords never match there, nor in a bot's message or a feed's.
+ */
+const MACHINE_WRITTEN: ReadonlySet<string> = new Set<P.Network>(['t3', 'calendar']);
 
 /** What the networks do where nothing is set: DMs and group chats notify on every message, channels on mentions. */
 const NATIVE_DEFAULT: Record<P.Shape, 'all' | 'mentions' | 'none'> = { direct: 'all', group: 'all', channel: 'mentions', thread: 'mentions', self: 'none' };
@@ -558,12 +563,16 @@ export class Triage {
     const notify = feedType ? true : mentionsOnly ? about : native === 'all' || (native === 'mentions' && about);
     // Kept to the list: your rule (List only), or muted on its network; a feed's replies, mentions and quotes always.
     const cap = eff.level === 'digest' || !!feedType;
-    // Keywords match what people typed, not mention tokens like <@123>.
+    // Keywords match what people typed, not mention tokens like <@123>, and not what a machine wrote: a bot's
+    // message, an agent's turn in a T3 thread, a calendar's event (MACHINE_WRITTEN), a feed's item.
     const plain = m.body.replace(/<[@#][^>]+>/g, ' ');
-    const keyword = s
-      .rules()
-      .filter((r) => r.scope === 'keyword' && r.target && r.level === 'all')
-      .find((r) => new RegExp(`\\b${r.target!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(plain));
+    const typed = !author?.is_bot && !MACHINE_WRITTEN.has(c.network) && !feedType;
+    const keyword = typed
+      ? s
+          .rules()
+          .filter((r) => r.scope === 'keyword' && r.target && r.level === 'all')
+          .find((r) => new RegExp(`\\b${r.target!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(plain))
+      : undefined;
     // Nothing in a feed alerts, not even from someone set to Always alert (docs/feed.md): answering happens on the network.
     const personRule = person && !feedType ? s.rules().find((r) => r.scope === 'person' && r.target === person.id) : null;
     const always = eff.level === 'all' && !eff.native && !feedType;
@@ -581,7 +590,7 @@ export class Triage {
       reasons.push(reminder.late ? `A reminder from ${net}, sent late` : `A reminder from ${net}`);
       return done('push', { forced: true, reminder: true });
     }
-    if (keyword && !feedType) {
+    if (keyword) {
       reasons.push(`Matches keyword “${keyword.target}”`);
       return done('push', { keyword: true, forced: true });
     }

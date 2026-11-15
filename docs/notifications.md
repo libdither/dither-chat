@@ -334,7 +334,10 @@ on a chat and on a server; there is no picker for a whole network or for everyth
   `PUT /api/rules` refuses any other level on a person or a keyword. People set so can also pass quiet hours, where
   you allow it.
 - **Keywords** (`scope: 'keyword'`, level `all`): a message that has the word, whole and in any case, in what was
-  typed (mention tokens aside) is an alert.
+  typed (mention tokens aside) is an alert. Only what a person typed: never a bot's message, a feed's item, or a
+  message on a network a machine writes (`MACHINE_WRITTEN` in `triage.ts`: T3 Code's threads, whose agents name the
+  repository and its files in every other turn, and calendars, whose reminders alert on their own). Notices
+  ([notices.md](notices.md)) keep them: a comment there was typed by someone.
 - **An older rule of `mentions`** may still be stored from before the tiers. It reads as "the network notifies only
   mentions here": in that place importance starts at 0.8 only for a mention of you, a reply to you or `@everyone`.
   Where a place's rule is shown it says "Mentions only (older setting)", and it cannot be chosen any more.
@@ -456,6 +459,16 @@ about nor to you: learning alone had lifted them. The decision, its tier, How it
 - **Twelve hours.** A list row twelve hours old (`EXPIRE_MS`) leaves the phones: a `{ clear }` push to the
   registrations that take one, so the shade matches the hub's count. The Android app's own cap of 20 rows stays, above
   the hub's eight.
+- **Five pushes a day.** With the gate alone the phones still had 60 to 200 list pushes a day, and about 1% of them
+  were followed by opening the chat within three hours, so the list has a daily budget (`DAILY_BUDGET`, the hub's
+  local day). Every list push spends one: a new row, or an open row brought up to date. Spent, the rest of the day's
+  list rows wait (an open row stays as it was; a new chat gets none until tomorrow). So the budget goes to the day's
+  most important rows rather than its first, a push also needs its importance (triage's, the list's own order) at the
+  day's **bar**: on each of the last seven days, the importance of the fifth most important push the list was asked
+  for (0 on a day with fewer), and the median of those. On a day like the last ones about five clear it, early or
+  late; a busy day spends the budget sooner, a quiet one may leave some. With fewer than two days kept the bar is 0,
+  first come first served. A push of unknown importance passes the bar. A trial needs only the budget, and once the
+  budget is spent the day's coins are 0, so their chances stay exact.
 
 **Episodes** (`phone_episode`): a chat's run on the list, from its first list message that asked for the phone until
 it ended, with its day, why it went (`arm`: `prior`, `keep`, `trial`) or was held (`gated`), the coin's chance
@@ -463,12 +476,16 @@ it ended, with its day, why it went (`arm`: `prior`, `keep`, `trial`) or was hel
 `cleared`, `read`, `expired`, `superseded`). A held episode ends when its chat is read anywhere past its first message,
 or at twelve hours. Snoozes are in `phone_snooze`. Both are kept whether or not the activity log is on, so a restart
 keeps the count, the snoozes and the day's coins; taps and swipes come through the activity log, so with it off only
-reading and expiry end an episode. Episodes go after 90 days. Once an hour the log has a line: what was sent and held,
-and how many rows are open.
+reading and expiry end an episode. Each push the list was asked for that passed the gate, the snoozes and the cap is
+kept in `phone_push`, with its importance and whether the budget sent it: the bar is read from it, and a replay can
+be. Episodes and pushes go after 90 days. Once an hour the log has a line: what was sent and held (`held budget` for
+the budget or the bar), how many rows are open, and how much of the day's budget is spent and at what bar.
 
 **`DITHER_PHONE_LIST`**: `on` (the default); `shadow`, every list row goes out as before and the episodes and the
 hourly line say what the gate would have done (`sent` is what it would have sent; nothing is cleared at twelve hours);
 `off`, as before this, nothing kept. Turning it off is the rollback: no app change was needed for any of it.
+**`DITHER_PHONE_LIST_BUDGET`**: list pushes a day, a whole number (5 by default; 0 sends none), or `off` for no
+budget and no bar.
 
 Alerts and Conversations are not touched: their pushes are the same byte for byte with the gate on
 (`test/phonelist.test.ts`). They end a chat's list episode and lift its snooze. Requests (a row on the list) and
