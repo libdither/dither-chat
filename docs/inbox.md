@@ -693,6 +693,9 @@ What it learned on the real hub, in short: the time since the latest message cou
 
 ## The replay
 
+Day by day, live, the scorecard follows the order too: the mean of 1 ÷ row and the share of opens from the first
+8 rows, for opens from an inbox row ([scorecard.md](scorecard.md)).
+
 `scripts/inbox-replay.ts` replays the activity log against a copy of a hub (made read-only with `VACUUM INTO`) and
 asks, at every moment you opened a conversation, at which position each ordering would have shown it. It rebuilds
 the world at that moment: every candidate's features folded up to then (the same fold as the hub), what was unread

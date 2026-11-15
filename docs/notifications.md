@@ -277,6 +277,10 @@ wrong, against how many the starts alone would (`backtest`); when and why it las
 feature out of training for good (`POST /api/triage/factors/:key { rejected }`), and *Learn again* undoes it.
 `POST /api/triage/policy/relearn` fits again at once.
 
+**How well it is doing** is under it, day by day: the scorecard ([scorecard.md](scorecard.md)) scores each day's
+logged chances, the candidate's and the start's against what you did next (notifications followed within 3 hours,
+chats opened within a day, quick answers), once the day's outcomes are in.
+
 ## Marks
 
 What you tell triage about a decision. Any decision that is not silent can be marked, from wherever it shows:
@@ -680,7 +684,7 @@ dry run.
 
 `POST /api/messages/:id/feedback` (marks), `GET /api/triage/policy`, `PUT /api/triage/level`,
 `POST /api/triage/policy/relearn`, `POST /api/triage/factors/:key { rejected }`, `GET /api/triage/shadow`,
-`PUT /api/rules`, `GET`/`PUT /api/quiet-hours`, `GET /api/inbox`.
+`PUT /api/rules`, `GET`/`PUT /api/quiet-hours`, `GET /api/inbox`, `GET /api/model/scores` ([scorecard.md](scorecard.md)).
 
 A message's `triage` (`P.TriageView`): `decision`, `score` (its importance), `reasons`, `decidedBy`, `probs`
 (`{ alert, important }`), `judge` (the local model's answer, when it was asked) with `bar` (the bar it was held to), `marks`, and `feedback` (a vote from
@@ -689,5 +693,5 @@ before the tiers).
 Storage: `triage` (`decision`, `score`, `reasons`, `decided_by`, `facts` as JSON, `probs` and `shadow` as JSON
 chances, `alert_mark`, `less_mark`, `marked_at`, `was`, and from before the tiers `feedback`, `explore`,
 `propensity`); the models in `meta` (`triage_policy`: `model`, `rejected`, and `candidate` for the shadow);
-`list_level`, `quiet_hours` and `tiers_at` in `meta` too; the phone's list in `phone_episode` and `phone_snooze`. Triage rows older than 90 days go when nothing can be
+`list_level`, `quiet_hours` and `tiers_at` in `meta` too; the phone's list in `phone_episode` and `phone_snooze`; the scorecard in `model_score`. Triage rows older than 90 days go when nothing can be
 learned from them ([deploy.md](deploy.md#backups-and-upkeep)).

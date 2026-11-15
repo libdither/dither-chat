@@ -636,6 +636,18 @@ CREATE TABLE IF NOT EXISTS phone_snooze (
   until           INTEGER NOT NULL
 ) WITHOUT ROWID;
 
+-- The scorecard (scorecard.ts, docs/scorecard.md): how the notification and inbox models did on each local day, scored
+-- once the day's outcomes are in. One row per day and metric (protocol SCORE_CHARTS). Numbers only: no ids, no text.
+CREATE TABLE IF NOT EXISTS model_score (
+  day    TEXT NOT NULL,                      -- the hub's local day, YYYY-MM-DD
+  metric TEXT NOT NULL,                      -- e.g. alert.opened, importance.auc_start, inbox.mrr
+  value  REAL,                               -- NULL: nothing to score that day
+  n      INTEGER NOT NULL,                   -- how many it is of
+  extra  TEXT,                               -- JSON of more counts, e.g. {"opened": 19}
+  at     INTEGER NOT NULL,                   -- when it was scored
+  PRIMARY KEY (day, metric)
+) WITHOUT ROWID;
+
 -- What triage knew from the log when it decided (DITHER_ACTIVITY_FEATURES), so training sees no later outcomes.
 CREATE TABLE IF NOT EXISTS triage_input (
   message_id TEXT PRIMARY KEY,
