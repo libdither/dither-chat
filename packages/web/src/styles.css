@@ -5936,6 +5936,17 @@ textarea.chip-box {
     content-visibility: auto;
     contain-intrinsic-size: auto 64px;
   }
+  /* A narrow window with a mouse is a phone layout too, and draws the hover bar above its message: the message under
+     the pointer is drawn whole, or the bar is cut to its box and only its bottom edge shows, over the message's line. */
+  .msg:hover,
+  .msg:focus-within {
+    content-visibility: visible;
+  }
+  /* Its buttons are bigger here, so it is placed by its bottom edge: 2px into its message, as on a computer. */
+  .msg:not(.head) > .msg-actions {
+    top: auto;
+    bottom: calc(100% - 2px);
+  }
   /* The same for the list beside it: hundreds of conversations, a screenful on show. It halves the first
      paint's layout on a big hub (docs/android.md). Not the rail, whose unread pills sit outside its items. */
   .side-scroll > .row,
