@@ -1,9 +1,9 @@
 /**
  * Disappearing messages in the message box (docs/group-settings.md, "In the message box"), end to end against a demo
- * hub in headless Chromium, on a computer and a phone: a Signal group with a week's timer has a stopwatch on send, and
- * a message sent there shows "1w"; the send menu's Disappearing messages line opens Signal's timers and a pick reaches
- * the network; a 1:1 chat with no timer has no stopwatch until one is turned on, and none again once it is off; Discord
- * has neither the line nor the stopwatch.
+ * hub in headless Chromium, on a computer and a phone: a Signal group with a week's timer says so at the end of the line
+ * above the box, and a message sent there shows "1w"; the send menu's Disappearing messages line opens Signal's timers
+ * and a pick reaches the network; a 1:1 chat with no timer has no label until one is turned on, and a press on the
+ * label turns it off again; Discord has neither the line nor the label.
  *
  *   bun scripts/verify-disappearing.ts http://127.0.0.1:8497 [/tmp/shots]
  * The hub must be a fresh demo hub (--demo) with its own data dir: this changes timers and sends demo messages.
@@ -41,7 +41,8 @@ const click = async (sel: string, text?: string, button: 'left' | 'right' = 'lef
   if (!r) throw new Error(`nothing matches ${sel}${text ? ` "${text}"` : ''}`);
   for (const type of ['mousePressed', 'mouseReleased']) await p.send('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button, clickCount: 1 });
 };
-const badge = () => p.eval<boolean>(`!!document.querySelector('.composer .send-btn .send-badge.timer')`);
+const label = () => p.eval<string | null>(`document.querySelector('.typing-lead .timer-label')?.textContent.trim() ?? null`);
+const badge = async () => (await label()) !== null;
 const write = async (text: string) => {
   await click('.composer textarea');
   await p.send('Input.insertText', { text });
@@ -76,10 +77,9 @@ try {
     await p.goto(`${hub}/#/c/${climb}`);
     await p.until(`document.querySelectorAll('.msg').length > 1`, 15000);
     const week = phone ? '1 day' : '1 week';
-    await p.until(`!!document.querySelector('.composer .send-btn .send-badge.timer')`, 8000).catch(() => {});
-    check(await badge(), `${name}: a stopwatch on send (the microphone, in an empty box) while the group's timer is on`);
+    await p.until(`!!document.querySelector('.typing-lead .timer-label')`, 8000).catch(() => {});
+    check((await label()) === `Disappears after ${week}`, `${name}: the line above the box says the group's timer`, await label());
     await write(`on my way (${name})`);
-    check(await badge(), `${name}: and on send once there is text`);
     await click('.composer .send-btn');
     await p.until(`[...document.querySelectorAll('.msg')].some((m) => m.textContent.includes('on my way (${name})') && m.querySelector('.msg-disappears'))`, 8000);
     const mark = await p.eval<{ text: string; title: string }>(`(() => { const m = [...document.querySelectorAll('.msg')].filter((m) => m.textContent.includes('on my way (${name})') && m.querySelector('.msg-disappears')).pop().querySelector('.msg-disappears'); return { text: m.textContent.trim(), title: m.title }; })()`);
@@ -100,23 +100,27 @@ try {
     await p.goto(`${hub}/#/c/${dm}`);
     await p.until(`document.querySelectorAll('.msg').length > 1`, 15000);
     await Bun.sleep(400);
-    check(!(await badge()), `${name}: no stopwatch on send while off`);
+    check(!(await badge()), `${name}: no label while off`);
     await pick(phone, '30 seconds');
-    await p.until(`!!document.querySelector('.composer .send-btn .send-badge.timer')`, 6000);
+    await p.until(`!!document.querySelector('.typing-lead .timer-label')`, 6000);
     check((await timer(dm)) === 30, `${name}: a 1:1 timer turned on reaches the network`);
-    check(await badge(), `${name}: the stopwatch shows once it is on`);
+    check((await label())?.endsWith('30s') || (await label()) === 'Disappears after 30 seconds', `${name}: the line above the box shows it once it is on`, await label());
     if (shots) await p.shot(`${shots}/${name}-dm-on.png`);
     await clearBox();
-    await pick(phone, 'Off');
-    await p.until(`!document.querySelector('.composer .send-btn .send-badge.timer')`, 6000);
-    check((await timer(dm)) === 0, `${name}: and off again`);
+    // Off from the label itself: its press opens the timers.
+    await click('.typing-lead .timer-label');
+    await p.until(`[...document.querySelectorAll('.level-menu .menu-item')].some((e) => e.textContent.trim() === 'Off')`, 4000);
+    if (phone) await p.until(`(document.querySelector('.sheet-layer')?.getAnimations({ subtree: true }) ?? []).every((a) => a.playState !== 'running')`, 4000);
+    await click('.level-menu .menu-item', 'Off');
+    await p.until(`!document.querySelector('.typing-lead .timer-label')`, 6000);
+    check((await timer(dm)) === 0, `${name}: and off again from the label`);
     await clearBox();
 
     // Discord: no timer at all.
     await p.goto(`${hub}/#/c/${general}`);
     await p.until(`document.querySelectorAll('.msg').length > 1`, 15000);
     await openMenu(phone);
-    check((await line()) === null && !(await badge()), `${name}: Discord has no Disappearing line and no stopwatch`);
+    check((await line()) === null && !(await badge()), `${name}: Discord has no Disappearing line and no label`);
     if (shots) await p.shot(`${shots}/${name}-discord-menu.png`);
     await clearBox();
   }
