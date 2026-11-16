@@ -3118,35 +3118,6 @@ textarea.chip-box {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.send-as {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  align-self: center;
-  background: var(--bg-raised);
-  border-radius: 8px;
-  padding: 5px 8px;
-  font-size: 12px;
-  color: var(--text-dim);
-  white-space: nowrap;
-}
-/* On a phone the names would squeeze the message field into a column: the network's mark and the account's dot say
-   the same, and the menu it opens spells them out. */
-@media (max-width: 820px) {
-  .send-as > .acc-chip {
-    font-size: 0;
-    gap: 3px;
-  }
-  .send-as > .acc-chip {
-    padding: 0;
-    background: none;
-    border: none;
-  }
-  .send-as > .acc-chip .acc-dot {
-    width: 10px;
-    height: 10px;
-  }
-}
 .send-btn {
   width: 36px;
   height: 36px;
@@ -6359,14 +6330,6 @@ textarea.chip-box {
     height: 40px;
     border-radius: 50%;
   }
-  .composer-row .send-as {
-    align-self: flex-end;
-    min-height: 40px;
-    margin-left: -10px;
-    padding: 0 6px 0 8px;
-    border-radius: 20px;
-    background: none;
-  }
   /* What it replies to or edits sits over the whole row, not joined to the box. */
   .composer-reply {
     border-bottom: 1px solid var(--border);
@@ -6490,8 +6453,7 @@ textarea.chip-box {
     font-size: 15px;
   }
   .btn,
-  .chip-btn,
-  .send-as {
+  .chip-btn {
     min-height: 40px;
   }
   .chip-btn {

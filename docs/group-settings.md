@@ -406,8 +406,9 @@ opening About:
   with the timer at its end. It opens the network's own timers (`ABOUT_RULES[network].disappearing`, plus the current
   one when it is not among them), and a pick is the same `POST …/about` change as the panel's. Where the account may
   not change it, the line is greyed out and says why on hover.
-- **Send** wears a small stopwatch on its top corner while a timer is on (the silent bell keeps the bottom one). Off
-  shows nothing.
+- **The line above the box** ends in the timer while one is on (`TimerLabel`): "To Kit on Signal · 1w", or "Disappears
+  after 1 week" in a group whose line has nothing else. A press opens the same timers, Off among them. Off shows
+  nothing.
 - **Each message** that will disappear shows a stopwatch and its timer ("1w") after its time; on hover, when: for
   your own, the time it goes (its timer counts from sending); for others', how long after you read it. It comes from
   the message's own `extra.expiresInSeconds` (MessageView `disappears`), which Signal gives; WhatsApp's adapter does
@@ -415,7 +416,8 @@ opening About:
 
 The timer is the kept About at first (`?kept=1`), then the network is asked once per chat while the app is open, so a
 timer the other side changed shows up; the panel's answers update it too. (From #225 until this, a clock sat at the end
-of the route line over the box.)
+of the route line over the box, shown while off too; a draft of this had a stopwatch on send's corner instead, which
+was cramped at phone size.)
 
 ## What was checked, and what needs a live check
 

@@ -747,6 +747,22 @@ export function annotateAccounts(network: P.Network): boolean {
   return accountsOf(network).length > 1;
 }
 
+let usual: { convs: number; accounts: number; by: Map<P.Network, string | null> } | null = null;
+/**
+ * The account most of a network's chats come through: the one its dots leave out, so a second account (a test one, an
+ * alt) marks only the chats it is in. Counted again when chats or accounts come or go.
+ */
+export function usualAccount(network: P.Network): string | null {
+  if (!usual || usual.convs !== db.conversations.size || usual.accounts !== db.accounts.size) usual = { convs: db.conversations.size, accounts: db.accounts.size, by: new Map() };
+  if (usual.by.has(network)) return usual.by.get(network)!;
+  const counts = new Map<string, number>();
+  for (const c of db.conversations.values()) if (c.network === network) for (const v of c.vantages) counts.set(v.accountId, (counts.get(v.accountId) ?? 0) + 1);
+  let best: string | null = null;
+  for (const a of accountsOf(network)) if (best === null || (counts.get(a.id) ?? 0) > (counts.get(best) ?? 0)) best = a.id;
+  usual.by.set(network, best);
+  return best;
+}
+
 // ------------------------------------------------------------------ inbox
 
 /** What the hub says about how much a row of the inbox needs you (docs/inbox.md). */

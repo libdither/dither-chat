@@ -91,7 +91,7 @@ import { isPicture, onlyPictures, pictureRuns, picturesOf } from '../pictures.ts
 import { pictureLayout } from '../arrange.ts';
 import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
 import { TypingBar } from './Typing.tsx';
-import { DisappearsMark } from './Disappearing.tsx';
+import { DisappearsMark, TimerLabel } from './Disappearing.tsx';
 import { useGrow } from './grow.ts';
 import { AttachSheet, CameraView, SendScreen } from './Attach.tsx';
 import { mediaOffer, preloadStickers, StickerPicker, stickerInstaller, ViewOnceChip, VoiceButton } from './ComposerMedia.tsx';
@@ -114,7 +114,7 @@ import { memo } from './memo.ts';
 import { heldRequest } from '../requests.ts';
 import { LinkBanner, RequestBar } from './Requests.tsx';
 import { countKey } from '../clicklog.ts';
-import { badgeShows, focusedPair, focusPair, headNames, loadChat, PairDropdown, PairLead, RouteTag, SendLine, setView, viewOf } from './Pairs.tsx';
+import { badgeShows, focusedPair, focusPair, headNames, loadChat, PairDropdown, PairLead, RouteTag, SendAsLead, SendLine, setView, viewOf } from './Pairs.tsx';
 import { nicknamable, NicknamedName, ownName } from './Nickname.tsx';
 import { Loading } from './Loader.tsx';
 import { Slices, whenIdle } from '../slices.ts';
@@ -1155,13 +1155,11 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
 
 // ------------------------------------------------------------------ composer
 
-function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledReason, routed }: {
+function Composer({ targets, placeholder, reply, clearReply, disabledReason, routed }: {
   targets: { convId: string; accountId?: string };
   placeholder: string;
   /** A person page: the line over the box says where the message goes (ui/Pairs.tsx), so the placeholder is just "Message". */
   routed?: boolean;
-  sendAs?: { options: { id: string; label: any }[]; value: string; onChange: (v: string) => void; label: string };
-  onSendAs?: never;
   reply: P.MessageView | null;
   clearReply: () => void;
   disabledReason?: string | null;
@@ -1352,35 +1350,6 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
     if (!navigator.mediaDevices?.getUserMedia) return capture.current?.click();
     setCamera(true);
   };
-  const sendAsMenu = sendAs && sendAs.options.length > 1 && (
-    <Menu
-      up
-      trigger={(toggle) => (
-        <button class="send-as" data-track="send as" onClick={toggle} title={sendAs.label} aria-label={sendAs.label}>
-          {sendAs.options.find((o) => o.id === sendAs.value)?.label ?? sendAs.options[0].label}
-          <Icon name="chevronDown" size={12} />
-        </button>
-      )}
-    >
-      {(close) => (
-        <div class="level-menu">
-          <div class="menu-title">{sendAs.label}</div>
-          {sendAs.options.map((o) => (
-            <button
-              class={`menu-item ${o.id === sendAs.value ? 'on' : ''}`}
-              data-track="send as (pick)"
-              onClick={() => {
-                sendAs.onChange(o.id);
-                close();
-              }}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </Menu>
-  );
   const field = (
     <textarea
       ref={ta}
@@ -1575,7 +1544,6 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
             </button>
           )}
           <div class={`composer-box ${disabledReason ? 'disabled' : ''}`}>
-            {sendAsMenu}
             {box}
             {emojiBtn}
             {attaching && (
@@ -1590,7 +1558,6 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
       ) : (
         <div class={`composer-box ${disabledReason ? 'disabled' : ''}`}>
           {plus}
-          {sendAsMenu}
           {box}
           {emojiBtn}
           <div class={`send-split ${extras.button ? 'two' : ''}`}>
@@ -1738,7 +1705,20 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
           <Timeline tkey={timelineKey('c', c.id)} convIds={[c.id]} onReply={setReply} firstUnreadTs={unreadAt} focus={focus} />
         </>
       )}
-      <TypingBar convIds={[c.id]} />
+      <TypingBar
+        convIds={[c.id]}
+        lead={
+          !held &&
+          (accounts.length > 1 ? (
+            <>
+              <SendAsLead c={c} accounts={accounts} value={sendAsValue!} onPick={(v) => setPrefs({ sendAs: { ...prefs.value.sendAs, [c.id]: v } })} />
+              <TimerLabel conv={c} accountId={sendAsValue} />
+            </>
+          ) : (
+            <TimerLabel conv={c} accountId={sendAsValue} alone />
+          ))
+        }
+      />
       {held ? (
         <RequestBar r={held} />
       ) : c.variant === 'forum' || c.variant === 'media' ? null : (
@@ -1748,16 +1728,6 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
           reply={reply}
           clearReply={() => setReply(null)}
           disabledReason={composerBlocker(c, sendAsValue)}
-          sendAs={
-            accounts.length > 1
-              ? {
-                  label: `Send as which ${netName(c.network)} account?`,
-                  value: sendAsValue!,
-                  onChange: (v) => setPrefs({ sendAs: { ...prefs.value.sendAs, [c.id]: v } }),
-                  options: accounts.map((a) => ({ id: a.id, label: <AccountChip account={a} small /> })),
-                }
-              : undefined
-          }
         />
       )}
     </section>

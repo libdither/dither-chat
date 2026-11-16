@@ -24,10 +24,12 @@ controls rather than splitting them (`styles.css`, "A computer's box"). From lef
   picker opens beside the +. Where files are all the network takes (Matrix, Telegram, WhatsApp and the rest), the + is
   a paperclip that opens the file picker at once. Nothing that does not work here is shown, disabled or not.
   Dropping or pasting files still attaches them without it.
-- The account the message goes from, where there is a choice.
 - The text, then the emoji picker.
 - **Send, with its menu as the narrow right half** of the same button (Send silently, Send later, Disappearing messages). An empty box shows
   the microphone in send's place ([media-kinds.md](media-kinds.md)).
+
+Which of your accounts sends, where two or more are in the chat, is on the line above the box ("To #general · via
+main", [chats.md](chats.md)); until 2026-11-16 it was a chip at the box's start.
 
 A phone keeps its own row: + outside the box opening the attach sheet, sticker and camera inside it.
 
@@ -58,8 +60,8 @@ recipient's phone, so the message arrives late and still notifies when their app
 
 On Signal and WhatsApp the same menu has **Disappearing messages**, with the chat's timer at its end ("Off", "1 week").
 It opens the network's own timers under it; a pick changes the chat's timer for everyone in it, as the About panel
-does ([group-settings.md](group-settings.md), "In the message box"). While a timer is on, a small stopwatch sits on
-send's top corner, and each message that will disappear shows its timer after its time.
+does ([group-settings.md](group-settings.md), "In the message box"). While a timer is on, the line above the box ends in
+it ("· 1w"), and each message that will disappear shows its timer after its time.
 
 ## Send later
 
