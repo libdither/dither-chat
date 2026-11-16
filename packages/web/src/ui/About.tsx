@@ -11,6 +11,7 @@ import { authorName, identityName, plainBody } from '../model.ts';
 import { api, db, isSelfIdentity, openProfile, toast } from '../state.ts';
 import { Avatar } from './bits.tsx';
 import { groups, Menuable, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
+import { noteTimer } from './Disappearing.tsx';
 import { Icon } from './icons.tsx';
 import { identityMenu } from './menus.tsx';
 import { QrImage } from './QrCodes.tsx';
@@ -91,6 +92,7 @@ export function useAbout(target: AboutTarget) {
 
   const show = (v: P.AboutView) => {
     for (const i of v.identities ?? []) db.identities.set(i.id, i);
+    if (!v.stale) noteTimer(v);
     setView(v);
   };
   useEffect(() => {

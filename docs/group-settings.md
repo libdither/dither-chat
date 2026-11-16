@@ -376,7 +376,8 @@ still gets a panel: the hub builds it from what it stores (name, topic, picture,
 
 - `GET /api/conversations/:id/about` and `GET /api/spaces/:id/about` (`?account=` to see it as one of several
   accounts) ask the adapter and keep the answer in the `about` table, per target and account. When the account
-  is offline the last answer comes back with `stale` set and nothing editable.
+  is offline the last answer comes back with `stale` set and nothing editable. `?kept=1` answers with the kept
+  About alone, without asking the network (`null` when none was kept): the message box's timer reads it first.
 - `POST` to the same path with an `AboutChange`: the hub checks it against `ABOUT_RULES`, asks the adapter for a
   fresh About, refuses (403, with the network's reason) unless that says this account may, then sends
   `configure` and keeps the answer. Every refusal is in words, shown under the control.
@@ -395,6 +396,16 @@ top (with a pencil where you may change them), then Settings (a switch, a choice
 value and a lock with the reason where you may not), Invite link, Pinned, Members (with roles, as Discord's member
 list groups them), Who can do what, and Details. With more than one of your accounts in a place, a chooser says
 whose view it is.
+
+### In the message box
+
+On Signal and WhatsApp the chat's disappearing timer sits at the end of the line over the message box, after where a
+message goes ("To Sam on Signal ⏱ 1 week"; in a group, where there is no such line, alone at its start): a quiet clock
+while it is off, the clock and the timer in the accent colour while it is on. A click opens the network's own timers
+(`ABOUT_RULES[network].disappearing`, plus the current one when it is not among them), and a pick is the same
+`POST …/about` change as the panel's. Where the account may not change it, the clock only says the timer and why on
+hover. It shows the kept About at once (`?kept=1`), then asks the network once per chat while the app is open, so a
+timer the other side changed shows up; the panel's answers update it too (ui/Disappearing.tsx).
 
 ## What was checked, and what needs a live check
 
