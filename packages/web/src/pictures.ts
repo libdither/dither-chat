@@ -118,3 +118,27 @@ export function mosaicRows(n: number): number[] {
 
 /** A tile's shape in a mosaic row of `k`: the picture's own, kept within bounds so no tile is a sliver. */
 export const tileAspect = (aspect: number, k: number) => (k === 1 ? Math.min(2.4, Math.max(1.25, aspect)) : Math.min(1.8, Math.max(0.6, aspect)));
+
+// ------------------------------------------------------------------ sliding between the ways (ui/PictureSwitch.tsx)
+
+/** The ways from smallest to biggest: a slide on the phone's switch or a pinch on a run goes through them in turn. */
+export const PICTURE_ORDER: readonly P.PictureLayout[] = ['small', 'fold', 'six', 'mosaic', 'rows'];
+const LAST = PICTURE_ORDER.length - 1;
+/** How far past either end a slide can be pulled before it stops giving. */
+export const SLIDE_GIVE = 0.35;
+
+/**
+ * Where the drawing stands for a slide whose fingers are at `raw` (0 is Small, 4 Rows, fractions between). Near each
+ * way it barely moves, so a small slip changes nothing; past halfway it lets go towards the next. Past either end it
+ * follows the fingers a little, up to SLIDE_GIVE, and springs back when let go.
+ */
+export function slidePosition(raw: number): number {
+  const r = Math.max(-SLIDE_GIVE, Math.min(LAST + SLIDE_GIVE, raw));
+  if (r < 0 || r > LAST) return r;
+  const n = Math.floor(r);
+  const x = r - n;
+  return n + x - (0.85 * Math.sin(2 * Math.PI * x)) / (2 * Math.PI);
+}
+
+/** The way a slide that is let go at `g` settles on: the nearest. */
+export const settleAt = (g: number): P.PictureLayout => PICTURE_ORDER[Math.max(0, Math.min(LAST, Math.round(g)))];

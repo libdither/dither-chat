@@ -1,8 +1,9 @@
 /**
  * The demo world's side of sending with more than words (docs/sending.md): silent sends and replies without a ping
- * (demo.ts's send keeps them on the echo), previews taken off your own message, messages saved on the network with
- * reminders, and one message scheduled with the network's own Send later. Answers the way the Discord adapter does
- * (dither-accounts extractors/discord/src/sending.ts), so the hub and pages read the same against either. In memory.
+ * (demo.ts's send keeps them on the echo), previews taken off a message (yours, or another's as a moderator), messages
+ * saved on the network with reminders, and one message scheduled with the network's own Send later. Answers the way
+ * the Discord adapter does (dither-accounts extractors/discord/src/sending.ts), so the hub and pages read the same
+ * against either. In memory.
  */
 import type * as P from '@dither-chat/protocol';
 
@@ -35,6 +36,8 @@ export class DemoSending {
   constructor(
     private h: DemoSendHost,
     now = Date.now(),
+    /** Previews come off with an edit, as on Signal: the message again with its words and no extra. */
+    private o: { asEdit?: boolean } = {},
   ) {
     const dm = h.someDirect();
     if (dm) this.scheduled.set('9001', { nativeId: '9001', conversation: dm, body: 'Happy birthday! 🎂', dueAt: now + 20 * HOUR });
@@ -46,7 +49,10 @@ export class DemoSending {
       case 'suppressEmbeds': {
         const m = this.message(cmd.conversation, cmd.message);
         if (!m) throw new Error('Unknown Message');
-        this.h.emit({ t: 'message', live: false, message: { ...m, extra: { ...(m.extra ?? {}), embeds: [] } } });
+        if (this.o.asEdit) {
+          const { extra: _extra, ...edited } = m;
+          this.h.emit({ t: 'message', live: true, message: { ...edited, body: cmd.body ?? m.body, editedTs: Date.now() } });
+        } else this.h.emit({ t: 'message', live: false, message: { ...m, extra: { ...(m.extra ?? {}), embeds: [] } } });
         return { value: {} };
       }
       case 'save': {

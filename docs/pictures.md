@@ -54,7 +54,31 @@ A run of one picture is drawn on its own in every way but Small.
 For every chat: Settings → Appearance → "Pictures in chats". It is `ArrangeSettings.pictures`, shared by your
 devices with the sort modes (`PATCH /api/arrange`, the `arrange` event; docs/organize.md). Absent means `six`.
 
-For one chat or server: Pictures in its menu. It is a place pref (`place_pref.pictures`, PlacePrefView `pictures`,
+For one chat or server: Pictures in its menu. A person's chat (all their routes in one) has it too, in its own menu
+and the person's, and sets every route at once. It is a place pref (`place_pref.pictures`, PlacePrefView `pictures`,
 `PATCH /api/place-prefs`), inherited like the @ list's setting (docs/mentions.md): the chat's own; a thread's
 channel's; its spaces', nearest first; a folder's that holds any of them; else the one for every chat. `null` in a
 patch takes it away. The menu's first entry is what the chat would inherit, and where from.
+
+## Switching in the chat
+
+A run of two or more pictures can be switched where it is (`ui/PictureSwitch.tsx`). The way chosen is saved for
+that chat, as its Pictures menu would (`place_pref.pictures`), with no toast: the run redrawn says it.
+
+- **A computer**: a rail of the five ways stands to the right of the run, in the room the chat leaves there (the
+  run is drawn 40 px narrower for it). It can't be seen until you point at the message, is faint while you do, and
+  shows in full when you point at it; each way says its name beside it. A right-click on a picture of a run has the
+  same choice, as "Show Pictures As".
+- **A phone**: a chip at the top right of the run's first row, its words wrapping round it, says the way in use. It
+  is one line of a wheel of the five, in order from smallest to biggest: Small, Fold, Six, All, Rows
+  (`PICTURE_ORDER`). Drag it up or down, scroll on it, or pinch the pictures with two fingers, and the run slides
+  between the ways: every picture moves part of the way from where one draws it to where the next does, while the
+  chip opens up and down to show the names on either side (only as far as there are names). Near each way the slide
+  barely moves, so a small slip changes nothing; past halfway it lets go towards the next (`slidePosition`). Until
+  you let go nothing is decided, and going back goes back; letting go settles on the nearest way (`settleAt`) and
+  saves it if it is a new one. A tap opens the list of the five, with the one in use where the chip was.
+
+While a slide is under way the timeline is scrolled to keep the chip (or, for a pinch, the run's top) under the
+finger: the timeline keeps its bottom still, and the run grows or shrinks below it. A second finger on a message
+is a pinch, so it never opens the message's long-press menu.
+

@@ -86,6 +86,7 @@ import { useChipBox } from './ChipBox.tsx';
 import { loadEmoji } from '../emoji.ts';
 import { isSticker, Sticker } from './Sticker.tsx';
 import { openViewer, Pictures } from './Pictures.tsx';
+import { PictureChip } from './PictureSwitch.tsx';
 import { isPicture, onlyPictures, pictureRuns, picturesOf } from '../pictures.ts';
 import { pictureLayout } from '../arrange.ts';
 import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
@@ -466,7 +467,7 @@ function Marks({ m }: { m: P.MessageView }) {
  * A message's files. Its pictures are drawn as one block the way the chat says (ui/Pictures.tsx): with the pictures
  * of the run it ends (`run`, docs/pictures.md), or not at all when a later message of its run draws them (`absorbed`).
  */
-function Attachments({ m, run, absorbed, layout }: { m: P.MessageView; run?: P.MessageView[]; absorbed?: boolean; layout: PictureLayout }) {
+function Attachments({ m, run, absorbed, layout, switchable }: { m: P.MessageView; run?: P.MessageView[]; absorbed?: boolean; layout: PictureLayout; switchable?: boolean }) {
   if (!m.attachments.length) return null;
   // A file the network called just a file whose bytes are a picture, a video or a sound shows as one (files.ts).
   const media = (a: P.AttachmentView) => (a.kind === 'file' && a.info && /^(image|video|audio)$/.test(a.info.kind) ? (a.info.kind as P.AttachmentKind) : a.kind);
@@ -475,7 +476,7 @@ function Attachments({ m, run, absorbed, layout }: { m: P.MessageView; run?: P.M
   if (!pics.length && !rest.length) return null;
   return (
     <div class="atts">
-      {pics.length > 0 && <Pictures pics={pics} layout={layout} runKey={(run ?? [m])[0].id} anchors={run?.slice(0, -1).filter(onlyPictures).map((x) => x.id)} />}
+      {pics.length > 0 && <Pictures pics={pics} layout={layout} runKey={(run ?? [m])[0].id} anchors={run?.slice(0, -1).filter(onlyPictures).map((x) => x.id)} convId={switchable ? m.conversationId : undefined} rail={!touchOnly.value} />}
       {rest.map(([a, i]) => {
         const kind = media(a);
         if (isSticker(m, a)) return <Sticker a={a} index={i} />;
@@ -598,7 +599,7 @@ function TriageNote({ m }: { m: P.MessageView }) {
  * draws them; `run`, the messages whose pictures this one draws after its own, when it ends a run of them; `absorbed`,
  * a message of a run whose pictures the run's last message draws.
  */
-const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, highlight, target, thread, who, whoIdent, net, tag, onTag, pictures, run, absorbed }: { m: P.MessageView; grouped: boolean; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; who?: string; whoIdent?: string; net?: boolean; tag?: boolean; onTag?: (convId: string) => void; pictures: PictureLayout; run?: P.MessageView[]; absorbed?: boolean }) {
+const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, highlight, target, thread, who, whoIdent, net, tag, onTag, pictures, run, absorbed, chipRun }: { m: P.MessageView; grouped: boolean; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; who?: string; whoIdent?: string; net?: boolean; tag?: boolean; onTag?: (convId: string) => void; pictures: PictureLayout; run?: P.MessageView[]; absorbed?: boolean; chipRun?: P.MessageView[] }) {
   if (counting) rendered('MessageItem');
   metaRev.value;
   // On a touch screen the action bar (it shows on hover) and the tooltips are not drawn: a long-press opens the same
@@ -647,6 +648,10 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
       </div>
     );
 
+  // On a touch screen, the chip that switches a run of two or more pictures: on the run's first row (`chipRun`), or on
+  // a message with several pictures of its own.
+  const chipOn = chipRun ?? (!run && !absorbed && m.attachments.length > 1 ? [m] : undefined);
+  const chip = !hover && !!chipOn && !m.deleted && !m.forward && chipOn.reduce((k, x) => k + picturesOf(x).length, 0) > 1;
   // Your message's ticks, after its text.
   const ticks = m.receipts && isSelfIdentity(m.authorId) ? <Ticks m={m} /> : null;
   return (
@@ -676,7 +681,9 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           </button>
         )}
       </div>
-      <div class="msg-main">
+      <div class={chip ? 'msg-main has-pchip' : 'msg-main'}>
+        {/* A phone's switch for a run of pictures: top right, the words wrap round it (ui/PictureSwitch.tsx). */}
+        {chip && <PictureChip runKey={chipOn![0].id} convId={m.conversationId} layout={pictures} />}
         {!grouped && (
           <div class="msg-head">
             <span class={`msg-author ${self ? 'self' : ''}`} data-identity={m.authorId ?? undefined} role="link" tabindex={0} onClick={() => openProfile(m.authorId)} onKeyDown={(e) => e.key === 'Enter' && openProfile(m.authorId)} title={author ? `${author.nickname ? `${author.nickname} (your nickname; their name: ${author.displayName ?? author.handle ?? author.nativeId})` : (author.displayName ?? '')} ${author.handle ? '· ' + author.handle : ''} on ${netName(author.network)}` : ''}>
@@ -719,7 +726,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
             <RichHead m={m} />
             <StoryReplyLine m={m} />
             {m.poll ? <PollCardLazy m={m} fallback={<Body m={m} />} /> : <Body m={m.contacts ? withoutCardLines(m) : m} tail={ticks} />}
-            <Attachments m={m} run={run} absorbed={absorbed} layout={pictures} />
+            <Attachments m={m} run={run} absorbed={absorbed} layout={pictures} switchable />
             <MissingFiles m={m} />
             <ContactCards m={m} />
             <Embeds m={m} />
@@ -1048,6 +1055,8 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   const runs = pictureRuns(all, start, end, (p, m, i) => groups(p, m) && i !== unreadFrom);
   const layouts = new Map<string, PictureLayout>();
   const layoutOf = (cid: string) => layouts.get(cid) ?? layouts.set(cid, pictureLayout(cid)).get(cid)!;
+  // A phone's switch for a run sits on its first row, with that row's words (ui/PictureSwitch.tsx).
+  const chipped = new Set<P.MessageView[]>();
   // The row above, for grouping: a left-out row isn't one.
   let above: P.MessageView | null = null;
   for (let i = start; i < end; i++) {
@@ -1084,6 +1093,7 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
         pictures={layoutOf(m.conversationId)}
         run={ends ? run : undefined}
         absorbed={!!run && !ends}
+        chipRun={run && !chipped.has(run) ? (chipped.add(run), run) : undefined}
       />,
     );
     prev = above = m;

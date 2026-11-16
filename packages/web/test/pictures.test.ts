@@ -4,7 +4,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
-import { fitPicture, isPicture, mosaicRows, onlyPictures, pictureRuns, picturesOf, tileAspect } from '../src/pictures.ts';
+import { fitPicture, isPicture, mosaicRows, onlyPictures, PICTURE_ORDER, pictureRuns, picturesOf, settleAt, slidePosition, SLIDE_GIVE, tileAspect } from '../src/pictures.ts';
 
 describe('a picture on its own', () => {
   test('fits 560 x 480 whole, never enlarged', () => {
@@ -111,5 +111,34 @@ describe('runs', () => {
     expect(onlyPictures(msg('ann', 0, { attachments: [att({ caption: 'the view' })] }))).toBe(false);
     expect(onlyPictures(msg('ann', 0, { attachments: [att(), att({ kind: 'file', name: 'a.pdf' })] }))).toBe(false);
     expect(onlyPictures(msg('ann', 0, { pinned: true }))).toBe(false);
+  });
+});
+
+describe('sliding between the ways', () => {
+  test('goes from smallest to biggest', () => {
+    expect(PICTURE_ORDER).toEqual(['small', 'fold', 'six', 'mosaic', 'rows']);
+  });
+  test('sticks near each way and lets go past halfway', () => {
+    for (let n = 0; n < PICTURE_ORDER.length; n++) expect(slidePosition(n)).toBeCloseTo(n, 9);
+    // A quarter of the way moves the drawing much less than a quarter; three quarters, much more than three.
+    expect(slidePosition(2.25) - 2).toBeLessThan(0.15);
+    expect(slidePosition(2.75) - 2).toBeGreaterThan(0.85);
+    expect(slidePosition(2.5)).toBeCloseTo(2.5, 9);
+    expect(settleAt(slidePosition(2.4))).toBe('six');
+    expect(settleAt(slidePosition(2.6))).toBe('mosaic');
+  });
+  test('only ever moves the way the fingers do', () => {
+    let last = slidePosition(-1);
+    for (let r = -1; r <= 5; r += 0.01) {
+      const g = slidePosition(r);
+      expect(g).toBeGreaterThanOrEqual(last - 1e-12);
+      last = g;
+    }
+  });
+  test('gives a little past either end, and settles back on it', () => {
+    expect(slidePosition(-3)).toBe(-SLIDE_GIVE);
+    expect(slidePosition(9)).toBe(4 + SLIDE_GIVE);
+    expect(settleAt(slidePosition(-3))).toBe('small');
+    expect(settleAt(slidePosition(9))).toBe('rows');
   });
 });
