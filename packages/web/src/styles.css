@@ -2448,14 +2448,6 @@ code {
   font-weight: 600;
   color: var(--text-faint);
 }
-.reactors-note {
-  margin: 0;
-  padding: 7px 12px 9px;
-  border-top: 1px solid var(--border-soft);
-  font-size: 11.5px;
-  line-height: 1.4;
-  color: var(--text-faint);
-}
 
 /* Long-press on a message */
 .sheet-quick {
@@ -11704,11 +11696,6 @@ button.msg-edited.link:hover {
   font-size: 11px;
   color: var(--text-faint);
   white-space: nowrap;
-}
-.msg-history-note {
-  margin: 6px 0 0;
-  font-size: 11.5px;
-  color: var(--text-faint);
 }
 .edit-history .msg-history,
 .menu .msg-history {

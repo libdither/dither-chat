@@ -2688,7 +2688,7 @@ class DemoAdapter implements InprocAdapter {
     return { at: Object.fromEntries(who.map((w, j) => [w.nativeId, Math.min(now - 60_000, sent + (j + 1) * 7 * 60_000)])) };
   }
 
-  /** Discord reactions the hub hears as they happen, so it keeps when it heard them ("by"): one made, taken back, and made again. */
+  /** Discord reactions the hub hears as they happen, so it keeps when it heard them ("~"): one made, taken back, and made again. */
   private seedHeardReactions() {
     if (this.key !== 'dmain') return;
     const raid = snow('gdm-raid');

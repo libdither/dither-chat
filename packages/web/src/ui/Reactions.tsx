@@ -6,8 +6,7 @@ import { emojiNow, loadEmoji, searchEmoji, SKIN_TONES, skinOf } from '../emoji.t
 import { customMarkup } from '../emojiComplete.ts';
 import { authorName } from '../model.ts';
 import { clearReactions, modOf } from '../moderate.ts';
-import { hasMine, knownReactionContext, pickerFor, quickReactions, reactedAt, reactionContext, reactionScope, reactionTip, reactorsFor, replacing, seenNote, toggleReaction, whenText, type Picked } from '../reactions.ts';
-import { fullTime } from '../format.ts';
+import { hasMine, knownReactionContext, pickerFor, quickReactions, reactedAt, reactionContext, reactionScope, reactionTip, reactorsFor, replacing, toggleReaction, whenText, whenTitle, type Picked } from '../reactions.ts';
 import { api, db, isSelfIdentity, prefs, rev, setPrefs } from '../state.ts';
 import { useLayer } from '../phone.ts';
 import { Avatar } from './bits.tsx';
@@ -68,9 +67,9 @@ function Pill({ m, r }: { m: P.MessageView; r: P.ReactionView }) {
  * then what a click would do that is not obvious.
  */
 function pillTip(m: P.MessageView, r: P.ReactionView, mine: boolean) {
-  const { text, lines, note } = reactionTip(r, m.network, authorName);
+  const { text, lines } = reactionTip(r, authorName);
   const swap = !mine ? replacing(m) : undefined;
-  const sub = [...lines, ...(r.style === 'super' ? ['Super reaction'] : []), ...(swap ? [`Joining replaces your ${keyText(swap)}`] : []), ...(note ? [note] : [])];
+  const sub = [...lines, ...(r.style === 'super' ? ['Super reaction'] : []), ...(swap ? [`Joining replaces your ${keyText(swap)}`] : [])];
   return tipProps(text, sub.join('\n'), 'top');
 }
 
@@ -637,9 +636,6 @@ function Reactors({ m, reactionKey, style, anchor, onClose }: { m: P.MessageView
   const pastOf = new Map<string, P.ReactionTakenBack[]>();
   for (const t of takenBack) pastOf.set(t.identityId, [...(pastOf.get(t.identityId) ?? []), t]);
   const gone = [...pastOf.keys()].filter((id) => !ids.includes(id));
-  const anySeen = ids.some((id) => when.get(id)?.seen) || takenBack.some((t) => t.seen || t.addedSeen);
-  const anyTime = ids.some((id) => when.get(id)) || takenBack.length > 0;
-  const untimed = anyTime && ids.some((id) => !when.get(id));
   const body = (
     <>
       <h4>
@@ -659,7 +655,7 @@ function Reactors({ m, reactionKey, style, anchor, onClose }: { m: P.MessageView
                 <span>{name}</span>
                 {past.length > 0 && <small class="reactor-past">{past.join(' · ')}</small>}
               </span>
-              {w && <time class="reactor-when" title={fullTime(w.at)}>{whenText(w)}</time>}
+              {w && <time class="reactor-when" title={whenTitle(w)}>{whenText(w)}</time>}
               {/* A moderator takes someone's reaction off (docs/moderation.md). */}
               {style === 'normal' && !isSelfIdentity(id) && modOf(m)?.reactions && (
                 <button class="icon-btn small reactor-remove" title={`Remove ${name}'s reaction`} aria-label={`Remove ${name}'s reaction`} onClick={() => clearReactions(m, reactionKey, id)}>
@@ -687,13 +683,6 @@ function Reactors({ m, reactionKey, style, anchor, onClose }: { m: P.MessageView
           );
         })}
       </div>
-      {(anySeen || untimed) && (
-        <p class="reactors-note">
-          {anySeen && seenNote(m.network)}
-          {anySeen && untimed && ' '}
-          {untimed && 'No time for those already there when the hub first saw the message.'}
-        </p>
-      )}
     </>
   );
   if (sheet)

@@ -33,8 +33,8 @@ Each person's reaction keeps when it was made: `reaction.at`, with `at_exact` sa
 | Signal | the reaction's own timestamp, a taken-back one's too; the backup's `sentTimestamp` (v2) or `date_sent` (legacy) | `3:41 PM` |
 | WhatsApp | the reaction's own time (`senderTimestampMS`), else its message's; history's too | `3:41 PM` |
 | Matrix | the `m.reaction` event's server time, old ones included; a taken-back one, the redaction's | `3:41 PM` |
-| Telegram | the date it gives for the people it names on a message; none for one taken back | `3:41 PM`; taken back `by 3:41 PM` |
-| Discord, X, Messenger, Instagram, Google Messages | none: the hub keeps when it heard (live events, or a new name in a snapshot of a message it had) | `by 3:41 PM` |
+| Telegram | the date it gives for the people it names on a message; none for one taken back | `3:41 PM`; taken back `~3:41 PM` |
+| Discord, X, Messenger, Instagram, Google Messages | none: the hub keeps when it heard (live events, or a new name in a snapshot of a message it had) | `~3:41 PM` |
 | any | a reaction already there when the hub first saw the message, or from before times were kept | no time |
 
 An adapter puts the network's time on the `reaction` event as `ts` (and on a snapshot's `ReactionFact.at`, by
@@ -46,12 +46,12 @@ confirms it needs no entry.
 What shows:
 
 - **A pill's tooltip** (the app's own, shown at once above it): who reacted, then a line each with when, earliest
-  first (just the time for one person), at most eight. Where a time says "by", a line says why: "Discord doesn't say
-  when people react" (or X, and so on).
+  first (just the time for one person), at most eight. A time the hub heard, not the network's own, starts with "~",
+  and nothing more is said about it.
 - **Who reacted** (right-click or long-press a pill; `GET /api/messages/:id/reactors`): each person with their time,
   and under their name their earlier turns ("added 2:10 PM · took back 2:12 PM"); then **Taken back**: those who took
-  theirs back and did not react again, with when. A note says why some times say "by", and that reactions already there
-  have none.
+  theirs back and did not react again, with when. A "~" time's title says it is when the hub heard; reactions already
+  there have no time.
 - **Message history** lists reactions made and taken back with the pins, in order, each with its time. A message with
   a timed reaction offers Message History in its menu.
 
