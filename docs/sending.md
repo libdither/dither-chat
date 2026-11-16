@@ -108,10 +108,27 @@ with Open and Remove, and More while Discord has more.
 
 ## Remove Embeds, Report
 
-- **Remove Embeds** on your own Discord message with link previews (capability `suppressEmbeds`): the patch the
-  client's own button sends (`flags` with `SUPPRESS_EMBEDS` added to the flags the message has; a message the client
-  has not loaded is read first, as jumping to it does). The message comes again without its previews. There is no
-  way back, as in Discord.
+Taking the link previews off a message, where the network lets you (capability `suppressEmbeds`,
+`POST /api/messages/:id/remove-previews`). The hub's copy keeps none once the network said yes: it drops them from
+the stored message itself, since an edit can come back with no extra at all and would leave them (`dropPreviews`).
+
+- **Remove Embeds** on your own Discord message with link previews: the patch the client's own button sends (`flags`
+  with `SUPPRESS_EMBEDS` added to the flags the message has; a message the client has not loaded is read first, as
+  jumping to it does). The message comes again without its previews. There is no way back, as in Discord. A moderator
+  can do the same to someone else's ([moderation.md](moderation.md)).
+- **Remove Link Preview** on your own Signal or Telegram message with one. Neither network has a way to take a preview
+  off on its own: their apps do it by editing the message and closing the preview, so this does that, after a confirm
+  that says it will show as edited. Signal: `send --edit-timestamp` with the same words (the hub sends them along as
+  the command's `body`; signal-cli keeps no copy) and the same quote, and no preview. Telegram: `messages.editMessage`
+  with the message's own text and entities and `no_webpage`. Only while the message can still be edited, as their
+  apps allow (`previewsRemovable` in the protocol): Signal 24 hours (Note to Self always), Telegram 48 (Saved
+  Messages and a channel's posts always). Signal's apps offer no edit after that, so the adapter refuses one too.
+- Matrix and WhatsApp: not offered. A Matrix room's previews are made by each reader's own app from the link, so there
+  is nothing on the message to take off; WhatsApp's adapter reads no previews.
+
+The demo world has a message with previews of each kind (libdither's #general, yours and Lev's; yours to Alice on
+Signal), and `bun scripts/verify-previews.ts <demo hub> [screenshot dir]` clicks through all three in headless
+Chromium. Not run against a live account.
 - **Report on Discord** on someone else's Discord message opens it in Discord's own app, where reporting is done. No
   report request is made from here.
 

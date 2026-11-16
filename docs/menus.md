@@ -40,7 +40,9 @@ One component draws them all (`packages/web/src/ui/ContextMenu.tsx`); what each 
 | Going places | Go to Replied Message, Go to Original Message (forwards), Profile |
 | Marks | Should have alerted (on a message that alerted it reads Alert was wrong), Less like this |
 | Red | Delete Message **Del** (own, where the network allows) |
+| Previews | Remove Link Preview (own, with a preview, on Signal and Telegram while the message can still be edited; asks first, as it goes as an edit) ([sending.md](sending.md#remove-embeds-report)) |
 | On Discord | Save Message or Remove From Saved, Remind Me (times, or Pick a Time…), Saved Messages; Remove Embeds (own, with previews); Report on Discord (others': opens it in Discord). Each where the account can ([sending.md](sending.md)) |
+| Moderator | Delete Message (Moderator), Remove Embeds (Moderator), Remove Reactions ›, on others' messages where the account moderates ([moderation.md](moderation.md)) |
 | Developer | Copy Message ID (the network's), Copy dither-chat ID |
 
 Copy Message Link gives the network's own link where there is one (`discord.com/channels/…/…/…`,

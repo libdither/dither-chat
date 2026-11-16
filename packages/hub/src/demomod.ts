@@ -146,7 +146,7 @@ export class DemoModeration {
       return undefined;
     }
     if (!this.moderated(target, about) || !this.h.admin(target) || this.place(this.key(target)).ended) return undefined;
-    return this.h.network === 'discord' ? { delete: true, reactions: true } : { delete: true };
+    return this.h.network === 'discord' ? { delete: true, reactions: true, embeds: true } : { delete: true };
   }
 
   /** The moderating commands; null for anything else. Throws the network's refusal in words. */
