@@ -20,6 +20,7 @@ import { identityName, netColor, netName, visibleAccount } from '../model.ts';
 import { phone } from '../phone.ts';
 import { api, db, go, isSelfIdentity, prefs, route, setPrefs, timelineKey, timelines } from '../state.ts';
 import { AccountChip, Avatar, Count, Menu, NetBadge, NetGlyph } from './bits.tsx';
+import { TimerLabel } from './Disappearing.tsx';
 import { Icon } from './icons.tsx';
 
 // ------------------------------------------------------------------ pairs
@@ -328,6 +329,7 @@ export function PairLead({ person, directs, focus, onFocus }: { person: P.Person
           <Token label={myName(cur)} picture={<MyPicture p={cur} size={16} />} options={mine.map((p) => ({ id: p.conv.id, label: myName(p), picture: <MyPicture p={p} size={16} /> }))} onPick={onFocus} />
         </>
       )}
+      <TimerLabel conv={focus} />
       <LastRoute directs={directs} focus={focus} onFocus={onFocus} />
     </span>
   );

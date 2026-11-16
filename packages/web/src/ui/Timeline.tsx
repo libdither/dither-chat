@@ -1425,13 +1425,11 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
   );
   const recording = attaching && offer.record && !text.trim() && !files.length;
   // The chat's disappearing timer is on: a stopwatch on whatever sits in send's place (Disappearing.tsx).
-  const timerBadge = extras.timer ? <Icon name="timer" size={10} class="send-badge timer" /> : null;
   const sendBtn = recording ? (
-      <VoiceButton conversationId={targets.convId} onPhone={onPhone} voice={offer.voice} onSend={(f, voice) => sendMedia({ files: [f], ...(voice ? { media: { voice } } : {}) })} badge={timerBadge} />
+      <VoiceButton conversationId={targets.convId} onPhone={onPhone} voice={offer.voice} onSend={(f, voice) => sendMedia({ files: [f], ...(voice ? { media: { voice } } : {}) })} />
   ) : (
-    <button class={`send-btn ${extras.timer ? 'timed' : ''}`} data-track="send" disabled={!canSend} onClick={submit} aria-label="Send" title={`${sendTitle ?? 'Send'}${extras.timer ? `, disappears after ${durationLabel(extras.timer).toLowerCase()}` : ''}`}>
+    <button class={"send-btn"} data-track="send" disabled={!canSend} onClick={submit} aria-label="Send" title={`${sendTitle ?? 'Send'}${extras.timer ? `, disappears after ${durationLabel(extras.timer).toLowerCase()}` : ''}`}>
       <Icon name="send" size={17} />
-      {timerBadge}
     </button>
   );
   // On a phone, holding send opens the send menu (Send silently, Send later…); a right-click does with a mouse.
@@ -1441,7 +1439,7 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
     sendMenuOpen.current = toggle;
     return (
       <button
-        class={`send-btn ${extras.silent ? 'silent' : ''} ${extras.timer ? 'timed' : ''}`}
+        class={`send-btn ${extras.silent ? 'silent' : ''}`}
         data-track="send"
         disabled={!canSend}
         onClick={submit}
@@ -1456,8 +1454,7 @@ function Composer({ targets, placeholder, sendAs, reply, clearReply, disabledRea
       >
         <Icon name="send" size={17} />
         {extras.silent && <Icon name="bellOff" size={10} class="send-badge" />}
-        {timerBadge}
-      </button>
+        </button>
     );
   };
   const viewOnceChip = offer.viewOnce && files.length > 0 && !edit && <ViewOnceChip on={viewOnce} set={setViewOnce} />;

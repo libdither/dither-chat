@@ -1,7 +1,7 @@
 /**
  * A chat's disappearing-messages timer in the message box (docs/group-settings.md, "In the message box"): the send
- * menu's "Disappearing messages" line and its timers, the clock on send while one is on, and the clock on each message
- * that will disappear. The timer comes from the About the hub kept (no wait on the network), then the network is asked
+ * menu's "Disappearing messages" line and its timers, the timer at the end of the line above the box while one is on
+ * ("· 1w"), and the stopwatch on each message that will disappear. The timer comes from the About the hub kept (no wait on the network), then the network is asked
  * once per chat while the app is open, so a timer the other side changed shows up. A pick goes through the chat's
  * About, as the About panel's does.
  */
@@ -11,6 +11,7 @@ import { signal } from '@preact/signals';
 import { useEffect, useState } from 'preact/hooks';
 import { fullTime } from '../format.ts';
 import { api, toast } from '../state.ts';
+import { Menu } from './bits.tsx';
 import { Icon } from './icons.tsx';
 
 type Timer = { value: number; canEdit: boolean; reason?: string; accountId: string | null };
@@ -116,6 +117,57 @@ function shortTimer(seconds: number): string {
   for (const [n, u] of units) if (seconds >= n && seconds % n === 0) return `${seconds / n}${u}`;
   for (const [n, u] of units) if (seconds >= n) return `${Math.round(seconds / n)}${u}`;
   return `${seconds}s`;
+}
+
+/**
+ * While a timer is on, the end of the line above the box says it: "· 1w" after the route, or "Disappears after 1 week"
+ * where the line has nothing else. A press opens the network's timers, Off among them; nothing shows while it is off.
+ */
+export function TimerLabel({ conv, accountId, alone }: { conv: P.ConversationView | undefined; accountId?: string; alone?: boolean }) {
+  const timer = useTimer(conv, accountId);
+  if (!timer?.value) return null;
+  const full = durationLabel(timer.value);
+  const title = `Disappearing messages: ${full}${timer.canEdit ? '' : timer.reason ? `. ${timer.reason}` : ''}`;
+  const face = alone ? `Disappears after ${full.toLowerCase()}` : shortTimer(timer.value);
+  if (!timer.canEdit)
+    return (
+      <span class="timer-label fixed" title={title}>
+        {!alone && ' · '}
+        {face}
+      </span>
+    );
+  return (
+    <>
+      {!alone && ' · '}
+      <Menu
+        up
+        trigger={(toggle) => (
+          <button class="timer-label" data-track="disappearing timer" title={title} aria-label={title} aria-haspopup="menu" disabled={timer.busy} onClick={toggle}>
+            {face}
+          </button>
+        )}
+      >
+        {(close) => (
+          <div class="level-menu pair-menu">
+            <div class="menu-title">Disappearing messages</div>
+            {timer.offered.map((s) => (
+              <button
+                class={`menu-item ${s === timer.value ? 'on' : ''}`}
+                data-track="disappearing timer (choice)"
+                onClick={() => {
+                  close();
+                  void timer.set(s);
+                }}
+              >
+                {durationLabel(s)}
+                {s === timer.value && <Icon name="check" size={12} />}
+              </button>
+            ))}
+          </div>
+        )}
+      </Menu>
+    </>
+  );
 }
 
 /** On a message that will disappear: a small clock and its timer, the details on hover. */
