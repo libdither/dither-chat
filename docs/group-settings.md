@@ -399,13 +399,23 @@ whose view it is.
 
 ### In the message box
 
-On Signal and WhatsApp the chat's disappearing timer sits at the end of the line over the message box, after where a
-message goes ("To Sam on Signal ⏱ 1 week"; in a group, where there is no such line, alone at its start): a quiet clock
-while it is off, the clock and the timer in the accent colour while it is on. A click opens the network's own timers
-(`ABOUT_RULES[network].disappearing`, plus the current one when it is not among them), and a pick is the same
-`POST …/about` change as the panel's. Where the account may not change it, the clock only says the timer and why on
-hover. It shows the kept About at once (`?kept=1`), then asks the network once per chat while the app is open, so a
-timer the other side changed shows up; the panel's answers update it too (ui/Disappearing.tsx).
+On Signal and WhatsApp the chat's timer is also in the message box (ui/Disappearing.tsx), so it can be changed without
+opening About:
+
+- **The send menu** (hold send on a phone, the arrow beside send on a computer) has a **Disappearing messages** line
+  with the timer at its end. It opens the network's own timers (`ABOUT_RULES[network].disappearing`, plus the current
+  one when it is not among them), and a pick is the same `POST …/about` change as the panel's. Where the account may
+  not change it, the line is greyed out and says why on hover.
+- **Send** wears a small stopwatch on its top corner while a timer is on (the silent bell keeps the bottom one). Off
+  shows nothing.
+- **Each message** that will disappear shows a stopwatch and its timer ("1w") after its time; on hover, when: for
+  your own, the time it goes (its timer counts from sending); for others', how long after you read it. It comes from
+  the message's own `extra.expiresInSeconds` (MessageView `disappears`), which Signal gives; WhatsApp's adapter does
+  not pass its messages' timers yet.
+
+The timer is the kept About at first (`?kept=1`), then the network is asked once per chat while the app is open, so a
+timer the other side changed shows up; the panel's answers update it too. (From #225 until this, a clock sat at the end
+of the route line over the box.)
 
 ## What was checked, and what needs a live check
 

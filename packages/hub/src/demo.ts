@@ -2908,7 +2908,10 @@ class DemoAdapter implements InprocAdapter {
         if (sticker) attachments = [{ nativeId: `sticker:${sticker.id}`, kind: 'image', mime: sticker.mime, name: sticker.name, width: 160, height: 160, url: sticker.url }];
         const kind: P.MessageKind = sticker ? 'sticker' : (attachments?.length || cmd.viewOnce) && !cmd.body ? 'media' : 'text';
         const body = cmd.viewOnce ? cmd.body || '📷 View-once media' : cmd.body;
-        this.emit({ t: 'message', live: true, message: { nativeId, conversation: cmd.conversation, author: this.self.nativeId, ts: Date.now(), body, replyTo: cmd.replyTo, kind, attachments, ...(cmd.viewOnce ? { extra: { viewOnce: true } } : {}), ...(cmd.silent ? { silent: true } : {}) } });
+        // A chat with a disappearing timer: the message carries it, as Signal's do.
+        const timer = (demoPlaces.get(cmd.conversation)?.values.disappearing ?? DEMO_VALUES[cmd.conversation]?.disappearing ?? 0) as number;
+        const extra = { ...(cmd.viewOnce ? { viewOnce: true } : {}), ...(timer > 0 ? { expiresInSeconds: timer } : {}) };
+        this.emit({ t: 'message', live: true, message: { nativeId, conversation: cmd.conversation, author: this.self.nativeId, ts: Date.now(), body, replyTo: cmd.replyTo, kind, attachments, ...(Object.keys(extra).length ? { extra } : {}), ...(cmd.silent ? { silent: true } : {}) } });
         this.sent.set(nativeId, { body: cmd.body, att: attachments });
         reply({ nativeId });
         const conv = CONVS.find((c) => c.fact.nativeId === cmd.conversation);

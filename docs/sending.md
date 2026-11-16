@@ -26,7 +26,7 @@ controls rather than splitting them (`styles.css`, "A computer's box"). From lef
   Dropping or pasting files still attaches them without it.
 - The account the message goes from, where there is a choice.
 - The text, then the emoji picker.
-- **Send, with its menu as the narrow right half** of the same button (Send silently, Send later). An empty box shows
+- **Send, with its menu as the narrow right half** of the same button (Send silently, Send later, Disappearing messages). An empty box shows
   the microphone in send's place ([media-kinds.md](media-kinds.md)).
 
 A phone keeps its own row: + outside the box opening the attach sheet, sticker and camera inside it.
@@ -53,6 +53,13 @@ silently by anyone never alerts here either ([rich-messages.md](rich-messages.md
 Signal's `send --no-urgent` is not the same thing and is not offered: it only leaves out the push that wakes the
 recipient's phone, so the message arrives late and still notifies when their app next connects
 ([research/signal-gaps.md](research/signal-gaps.md)).
+
+## Disappearing messages
+
+On Signal and WhatsApp the same menu has **Disappearing messages**, with the chat's timer at its end ("Off", "1 week").
+It opens the network's own timers under it; a pick changes the chat's timer for everyone in it, as the About panel
+does ([group-settings.md](group-settings.md), "In the message box"). While a timer is on, a small stopwatch sits on
+send's top corner, and each message that will disappear shows its timer after its time.
 
 ## Send later
 

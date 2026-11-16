@@ -2852,8 +2852,29 @@ textarea.chip-box {
   color: var(--text-faint);
 }
 /* A phone's send button, set to send silently from its held menu: a small bell, struck through, on its corner. */
-.send-btn.silent {
+.send-btn.silent,
+.send-btn.timed {
   position: relative;
+}
+/* The chat's disappearing timer is on (ui/Disappearing.tsx): a small stopwatch on send's other corner. */
+.send-badge.timer {
+  top: 3px;
+  bottom: auto;
+  color: var(--accent);
+}
+/* The send menu's timers, opened from its Disappearing messages line: indented under it. */
+.send-timers .menu-item {
+  padding-left: 30px;
+}
+/* A message that will disappear: its timer, small, after its time. */
+.msg-disappears {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+  vertical-align: middle;
 }
 .send-badge {
   position: absolute;
@@ -14641,36 +14662,6 @@ html.kb-open .ss-foot {
 }
 .typing-lead .menu-anchor {
   display: inline-block;
-}
-/* The chat's disappearing timer at the end of the route line (ui/Disappearing.tsx): a quiet clock while off, the clock
-   and the timer in the accent colour while on. */
-.disappearing-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  margin-left: 6px;
-  padding: 0 4px;
-  border: none;
-  border-radius: 5px;
-  background: none;
-  color: var(--text-faint);
-  font: inherit;
-  white-space: nowrap;
-  vertical-align: middle;
-  cursor: pointer;
-}
-.disappearing-btn.on {
-  color: var(--accent);
-}
-.disappearing-btn.fixed {
-  cursor: default;
-}
-button.disappearing-btn:hover {
-  background: var(--bg-hover);
-}
-.typing-lead > .menu-anchor:first-child .disappearing-btn,
-.typing-lead > .disappearing-btn:first-child {
-  margin-left: 0;
 }
 /* A phone's row is narrow: the line ends in … rather than running off the screen (its lists open as sheets, unclipped). */
 .app.phone .typing-lead {

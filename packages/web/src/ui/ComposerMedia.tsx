@@ -5,6 +5,7 @@
  * 'sendViewOnce').
  */
 import { useEffect, useState } from 'preact/hooks';
+import type { ComponentChildren } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { signalStickerLink } from '@dither-chat/protocol';
 import { db, toast } from '../state.ts';
@@ -66,14 +67,15 @@ const drawSticker = (s: P.StickerView) =>
  * The microphone: the first press asks for the microphone (not before), records, and shows the recording to play,
  * throw away or send. `voice`: send it as the network's voice message; otherwise it goes as an audio file.
  */
-export function VoiceButton({ conversationId, onPhone, voice, onSend }: { conversationId: string; onPhone: boolean; voice: boolean; onSend: (file: File, out: P.VoiceOut | null) => void }) {
+export function VoiceButton({ conversationId, onPhone, voice, onSend, badge }: { conversationId: string; onPhone: boolean; voice: boolean; onSend: (file: File, out: P.VoiceOut | null) => void; badge?: ComponentChildren }) {
   const [open, setOpen] = useState(false);
   const m = useParts(open);
   useEffect(() => setOpen(false), [conversationId]);
   return (
     <>
-      <button class="send-btn composer-mic" data-track="record voice" aria-label="Record a voice message" title="Record a voice message" onPointerEnter={() => void load().catch(() => {})} onClick={() => setOpen(true)}>
+      <button class={`send-btn composer-mic ${badge ? 'timed' : ''}`} data-track="record voice" aria-label="Record a voice message" title="Record a voice message" onPointerEnter={() => void load().catch(() => {})} onClick={() => setOpen(true)}>
         <Icon name="mic" size={onPhone ? 19 : 17} />
+        {badge}
       </button>
       {open && m && (
         <m.VoiceRecorder
