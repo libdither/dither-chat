@@ -229,7 +229,7 @@ What it adds to a conversation's page:
   that row's other end; the box's placeholder is only "Message", and nothing moves as you type. The same on a computer
   and a phone, where it ends in … when it is too long ("To kit.work" where a "to" follows, a phone having room for one
   name). The parts that can change switch: two options toggle (⟳), more open a menu (⌄, a sheet on a phone), each
-  tinted on hover. On Signal and WhatsApp the line ends in the chat's disappearing timer, a clock that opens the
+  tinted on hover. While a chat's disappearing timer is on, the line ends in it ("· 1w"), and a press opens the
   network's timers ([group-settings.md](group-settings.md), "In the message box"). A channel or group where two or
   more of your accounts sit has the same line for the one choice it has: "To #general · via main" (`SendAsLead`), the
   account a token that switches or opens a menu; until 2026-11-16 that was a chip at the box's start. Until 2026-11-14 it took the placeholder's place, as a dashed link, and jumped to the box's top

@@ -1,5 +1,5 @@
 import type * as P from '@dither-chat/protocol';
-import { ATTACHMENT_LIMITS, NETWORK_META, RULE_LABEL, RULE_LEVELS, sendBlocker, showsGone, showsInline, type PictureLayout } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, durationLabel, NETWORK_META, RULE_LABEL, RULE_LEVELS, sendBlocker, showsGone, showsInline, type PictureLayout } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import { ago, clock, dayLabel, fullTime, sameDay } from '../format.ts';
@@ -91,7 +91,7 @@ import { isPicture, onlyPictures, pictureRuns, picturesOf } from '../pictures.ts
 import { pictureLayout } from '../arrange.ts';
 import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
 import { TypingBar } from './Typing.tsx';
-import { DisappearingButton, hasTimer } from './Disappearing.tsx';
+import { DisappearsMark, TimerLabel } from './Disappearing.tsx';
 import { useGrow } from './grow.ts';
 import { AttachSheet, CameraView, SendScreen } from './Attach.tsx';
 import { mediaOffer, preloadStickers, StickerPicker, stickerInstaller, ViewOnceChip, VoiceButton } from './ComposerMedia.tsx';
@@ -701,6 +701,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
             {/* A person's chat (ui/Pairs.tsx): where the route changes, which one, quietly. A click sends through it. */}
             {conv && chatPerson && onTag && <RouteTag c={conv} directs={directsOf(chatPerson.id)} side={self ? 'mine' : who !== undefined ? 'theirs' : 'other'} onPick={() => onTag(conv.id)} />}
             {(m.editedTs || m.edits) && <Edited m={m} />}
+            <DisappearsMark m={m} self={self} />
             <Marks m={m} />
             {m.encryptionWarning && (
               <span class="msg-e2ee-warning" title={m.encryptionWarning} aria-label={m.encryptionWarning}>
@@ -736,6 +737,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
         <SendFailures m={m} />
         {ticks && (!m.body || m.deleted || (m.poll && !m.forward)) && <span class="msg-marks">{ticks}</span>}
         {grouped && (m.editedTs || m.edits) && <Edited m={m} />}
+        {grouped && <DisappearsMark m={m} self={self} />}
         {grouped && (m.pinned || m.rich?.silent || m.rich?.marks) && (
           <span class="msg-marks">
             <Marks m={m} />
@@ -1401,10 +1403,11 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
     </button>
   );
   const recording = attaching && offer.record && !text.trim() && !files.length;
+  // The chat's disappearing timer is on: a stopwatch on whatever sits in send's place (Disappearing.tsx).
   const sendBtn = recording ? (
       <VoiceButton conversationId={targets.convId} onPhone={onPhone} voice={offer.voice} onSend={(f, voice) => sendMedia({ files: [f], ...(voice ? { media: { voice } } : {}) })} />
   ) : (
-    <button class="send-btn" data-track="send" disabled={!canSend} onClick={submit} aria-label="Send" title={sendTitle}>
+    <button class={"send-btn"} data-track="send" disabled={!canSend} onClick={submit} aria-label="Send" title={`${sendTitle ?? 'Send'}${extras.timer ? `, disappears after ${durationLabel(extras.timer).toLowerCase()}` : ''}`}>
       <Icon name="send" size={17} />
     </button>
   );
@@ -1426,11 +1429,11 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
         }}
         aria-label="Send"
         aria-haspopup="menu"
-        title={`${sendTitle ?? 'Send'}${extras.silent ? ', silently' : ''} (hold for more ways to send)`}
+        title={`${sendTitle ?? 'Send'}${extras.silent ? ', silently' : ''}${extras.timer ? `, disappears after ${durationLabel(extras.timer).toLowerCase()}` : ''} (hold for more ways to send)`}
       >
         <Icon name="send" size={17} />
         {extras.silent && <Icon name="bellOff" size={10} class="send-badge" />}
-      </button>
+        </button>
     );
   };
   const viewOnceChip = offer.viewOnce && files.length > 0 && !edit && <ViewOnceChip on={viewOnce} set={setViewOnce} />;
@@ -1709,10 +1712,10 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
           (accounts.length > 1 ? (
             <>
               <SendAsLead c={c} accounts={accounts} value={sendAsValue!} onPick={(v) => setPrefs({ sendAs: { ...prefs.value.sendAs, [c.id]: v } })} />
-              {hasTimer(c.network) && <DisappearingButton convId={c.id} network={c.network} accountId={sendAsValue} />}
+              <TimerLabel conv={c} accountId={sendAsValue} />
             </>
           ) : (
-            hasTimer(c.network) && <DisappearingButton convId={c.id} network={c.network} accountId={sendAsValue} />
+            <TimerLabel conv={c} accountId={sendAsValue} alone />
           ))
         }
       />

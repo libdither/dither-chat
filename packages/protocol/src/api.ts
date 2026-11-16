@@ -665,6 +665,8 @@ export interface MessageView {
   failed?: SendFailureView[];
   /** Files it had that the account could not download. */
   missingAttachments?: MissingAttachmentFact[];
+  /** A disappearing message: its timer in seconds, from when it is read (your own: from when it is sent). */
+  disappears?: number;
   /** A poll, with its votes as the hub has them (poll.ts). */
   poll?: PollView;
   /**

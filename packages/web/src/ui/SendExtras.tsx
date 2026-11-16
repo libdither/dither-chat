@@ -1,7 +1,7 @@
 /**
  * The composer's part of sending with more than words (docs/sending.md), kept out of the composer itself: the reply
  * bar's @ toggle (ping the author or not, remembered per account), the send button's menu (Send silently, Send
- * later…), the line above the box saying what waits to go out here, and the layer the lists open in. The lists and
+ * later…, and the chat's disappearing timer where the network has one: Disappearing.tsx), the line above the box saying what waits to go out here, and the layer the lists open in. The lists and
  * the time picker are a chunk of their own (SendLists.tsx), loaded when first opened.
  */
 import { signal } from '@preact/signals';
@@ -11,6 +11,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { canReplyQuietly, canSaveOnNetwork, canSendSilently, knowSaved, rememberReplyMentions, replyMentions, scheduled, scheduleSend, waitingIn, watchScheduled, whenWords } from '../sending.ts';
 import { db } from '../state.ts';
 import { Menu } from './bits.tsx';
+import { TimerLines, useTimer } from './Disappearing.tsx';
 import { Icon } from './icons.tsx';
 
 /** What the lists' layer shows: the Send later picker, a list of what waits, or what you saved on the network. */
@@ -62,6 +63,7 @@ export function useSendExtras(o: ExtrasInput) {
   const accountId = o.sender?.id;
   const [silent, setSilent] = useState(false);
   const [mention, setMention] = useState(() => replyMentions(accountId));
+  const timer = useTimer(o.conv, accountId);
   useEffect(() => setMention(replyMentions(accountId)), [accountId]);
   useEffect(() => setSilent(false), [o.conv?.id]);
   useEffect(watchScheduled, []);
@@ -145,6 +147,7 @@ export function useSendExtras(o: ExtrasInput) {
           >
             <Icon name="clock" size={14} /> Send later…{!o.canSend && <span class="plus-note">Write something first</span>}
           </button>
+          {timer && <TimerLines timer={timer} close={close} />}
         </div>
       )}
     </Menu>
@@ -168,6 +171,8 @@ export function useSendExtras(o: ExtrasInput) {
     menu: on ? menu : null,
     /** The next message goes silently: a phone's send button shows it. */
     silent: silent && quiet,
+    /** The chat's disappearing timer when one is on (seconds): send shows a clock. */
+    timer: timer?.value || 0,
   };
 }
 

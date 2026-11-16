@@ -17,7 +17,7 @@ interface ExtraDeps {
   stored(messageId: string): boolean;
 }
 
-type ExtraView = Pick<P.MessageView, 'quote' | 'contacts' | 'storyReply' | 'failed' | 'missingAttachments'> & {
+type ExtraView = Pick<P.MessageView, 'quote' | 'contacts' | 'storyReply' | 'failed' | 'missingAttachments' | 'disappears'> & {
   /** One per attachment position. */
   notes?: (P.AttachmentNote | null)[];
 };
@@ -79,6 +79,8 @@ export function extraView(extra: Record<string, unknown> | null, replyToId: stri
       ...(str(m.mime) ? { mime: m.mime } : {}),
       ...(typeof m.size === 'number' ? { size: m.size } : {}),
     }));
+
+  if (typeof e.expiresInSeconds === 'number' && e.expiresInSeconds > 0) out.disappears = e.expiresInSeconds;
 
   const notes = arr<P.AttachmentNote | null>(e.attachmentNotes);
   if (notes.some((n) => n && typeof n === 'object')) out.notes = notes.map((n) => (n && typeof n === 'object' ? n : null));
