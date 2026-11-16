@@ -73,7 +73,7 @@ new line. A pick replaces the `@query` with the row's `insert` (`<@nativeId> `, 
 a role goes in as a chip, which the box shows as its name ([In the message box](#in-the-message-box)); `@everyone` and
 `@here` go in as the text they are.
 
-The account asked is the one the composer sends from (the send-as chip, else the connected one).
+The account asked is the one the composer sends from (the account on the line above the box, else the connected one).
 
 ## In the message box
 

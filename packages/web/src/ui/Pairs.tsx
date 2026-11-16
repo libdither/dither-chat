@@ -16,7 +16,7 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { badgeDiffers, cameFromThem, headIdents, lastRouteTells, leadTells, pickHolds, tagTells, tagText, tells, type HeadName, type RouteKey, type Side } from '../chatroutes.ts';
 import { ago, hueOf, initials } from '../format.ts';
-import { identityName, netColor, netName, visibleAccount } from '../model.ts';
+import { convLabel, identityName, netColor, netName, visibleAccount } from '../model.ts';
 import { phone } from '../phone.ts';
 import { api, db, go, isSelfIdentity, prefs, route, setPrefs, timelineKey, timelines } from '../state.ts';
 import { AccountChip, Avatar, Count, Menu, NetBadge, NetGlyph } from './bits.tsx';
@@ -284,6 +284,23 @@ function Token({ label, options, onPick, picture }: { label: string; options: { 
         </div>
       )}
     </Menu>
+  );
+}
+
+/**
+ * A channel's or group's route line where two or more of your accounts are in it: "To #general · via main", the
+ * account a token like a person chat's (two switch with a press, more open a menu). It was a chip in the box.
+ */
+export function SendAsLead({ c, accounts, value, onPick }: { c: P.ConversationView; accounts: P.AccountView[]; value: string; onPick: (accountId: string) => void }) {
+  const cur = accounts.find((a) => a.id === value) ?? accounts[0];
+  const dot = (a: P.AccountView) => <span class="acc-dot" style={{ width: '8px', height: '8px', background: a.color }} />;
+  return (
+    <span class="pair-lead-line">
+      {'To '}
+      <span class="pair-token fixed">{convLabel(c)}</span>
+      {' · via '}
+      <Token label={cur.label} picture={dot(cur)} options={accounts.map((a) => ({ id: a.id, label: a.label, picture: dot(a) }))} onPick={onPick} />
+    </span>
   );
 }
 
