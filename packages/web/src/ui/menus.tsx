@@ -16,7 +16,7 @@ import { phone } from '../phone.ts';
 import { mark } from '../triage.ts';
 import { desk, openLink } from '../desk.ts';
 import { pickerFor, quickReactions, reactionScope, reactorsFor, replacing, toggleReaction } from '../reactions.ts';
-import { clearReactions, moderatorDelete, modOf } from '../moderate.ts';
+import { clearReactions, moderatorDelete, moderatorRemoveEmbeds, modOf } from '../moderate.ts';
 import { canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
 import { messageSomeone, openPalette } from './Palette.tsx';
 import { hasHistory, historyOf } from './MessageHistory.tsx';
@@ -228,13 +228,14 @@ function pinEntry(m: P.MessageView): MenuEntry {
   return { label: 'Pin Message', icon: 'pin', track: 'pin', sub: choices.map((c): MenuEntry => ({ label: c.label, track: 'pin (duration)', run: () => void pin(m, false, c.seconds) })) };
 }
 
-/** Someone else's message where this account moderates (docs/moderation.md): delete it, take reactions off. */
+/** Someone else's message where this account moderates (docs/moderation.md): delete it, take its embeds or reactions off. */
 function moderatorEntries(m: P.MessageView): MenuEntry[] {
   const mod = modOf(m);
   if (!mod) return [];
   const label = (r: P.ReactionView) => (r.emoji ? `:${r.emoji.name}:` : r.key.match(/^(.+):\d+$/) ? `:${r.key.split(':')[0]}:` : r.key);
   return [
     mod.delete && m.kind !== 'system' && { label: 'Delete Message (Moderator)', icon: 'trash', danger: true, track: 'mod delete', run: () => moderatorDelete(m) },
+    mod.embeds && m.embeds.length > 0 && { label: 'Remove Embeds (Moderator)', icon: 'eyeOff', danger: true, track: 'mod embeds', run: () => moderatorRemoveEmbeds(m) },
     mod.reactions &&
       m.reactions.length > 0 && {
         label: 'Remove Reactions',

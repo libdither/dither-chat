@@ -486,6 +486,8 @@ interface MsgOpts {
   thread?: string;
   /** A forward, as Discord marks one. */
   fwd?: P.ForwardFact;
+  /** Link previews, as Discord's embeds and Signal's previews come. */
+  embeds?: P.EmbedView[];
 }
 type Msg = [minutesAgo: number, author: P.IdentityFact, body: string, opts?: MsgOpts];
 interface DemoConv {
@@ -778,6 +780,8 @@ const CONVS: DemoConv[] = [
       [DAY + 490, D.pixelfox, 'is dither like libp2p?'],
       [DAY + 470, D.zyan, 'similar goals, but routing is coordinate-based instead of a Kademlia DHT. see #routing-research', { reply: 3 }],
       [DAY + 460, D.pixelfox, 'oh neat, reading now', { react: { '👍': [D.zyan] } }],
+      [DAY + 455, D.lev, 'the long version: https://example.com/dither/routing', { embeds: [{ url: 'https://example.com/dither/routing', provider: 'example.com', title: 'Coordinate routing in dither', description: 'How nodes find each other by position instead of by hash.' }] }],
+      [DAY + 450, D.zyan, 'and the simulator to try it in: https://example.com/dither/sim', { embeds: [{ url: 'https://example.com/dither/sim', provider: 'example.com', title: 'dither-sim', description: '10k-node simulations in the browser.' }] }],
     ],
   },
   {
@@ -866,6 +870,7 @@ const CONVS: DemoConv[] = [
       [26 * H, S.alice, 'are we still on for bouldering thursday?'],
       [26 * H - 4, S.self, 'yes! 7pm at Mesa?'],
       [25 * H, S.alice, "perfect. I'll bring the spare chalk bag"],
+      [20 * H, S.self, 'the gym moved its hours: https://example.com/mesa/hours', { embeds: [{ url: 'https://example.com/mesa/hours', provider: 'example.com', title: 'Mesa Climbing: hours', description: 'Open 6am to 11pm on weekdays.' }] }],
       [41, S.alice, "hey, can you grab my belay device from Theo's? I left it in his car"],
       [38, S.alice, 'no rush, just before thursday'],
     ],
@@ -2420,6 +2425,8 @@ class DemoAdapter implements InprocAdapter {
       ...(this.network === 'discord' ? DEMO_THREAD_CAPS : []),
       ...(DEMO_MOD_CAPS[this.network] ?? []),
       ...(this.network === 'discord' ? DEMO_SEND_CAPS : []),
+      // Signal takes a link preview off by an edit (demosending.ts).
+      ...(this.network === 'signal' ? (['suppressEmbeds'] as const) : []),
       // Voice calls, carried by the demo call room (democalls.ts).
       ...(this.network === 'discord' ? DEMO_CALL_CAPS : []),
     ];
@@ -2461,6 +2468,7 @@ class DemoAdapter implements InprocAdapter {
       this.startServers(epoch);
       this.sending = new DemoSending({ emit, someDirect: () => CONVS.find((c) => c.acc.includes(this.key) && c.fact.shape === 'direct')?.fact.nativeId ?? null }, epoch);
     }
+    if (this.network === 'signal') this.sending = new DemoSending({ emit, someDirect: () => null }, epoch, { asEdit: true });
     if (DEMO_MOD_CAPS[this.network]) {
       this.mod = new DemoModeration({
         network: this.network,
@@ -2525,6 +2533,7 @@ class DemoAdapter implements InprocAdapter {
             mentionsSelf: body.includes(`<@${this.self.nativeId}>`),
             attachments: o.att,
             ...(o.fwd ? { forward: o.fwd } : {}),
+            ...(o.embeds ? { extra: { embeds: o.embeds } } : {}),
             reactions: o.react || o.fancy ? [...(o.fancy ?? []), ...Object.entries(o.react ?? {}).map(([key, who]) => ({ key, authors: who.map((w) => w.nativeId), ...this.reactedAt(ago(min), who, epoch) }))] : undefined,
           },
         });

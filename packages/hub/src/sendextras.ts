@@ -1,7 +1,8 @@
 /**
  * The hub's routes for sending with more than words (docs/sending.md): Send later (sendlater.ts) with a network's own
  * scheduled messages beside it, saved messages and reminders on the network (saved.ts), and taking the previews off
- * your own message.
+ * your own message (Discord's Remove Embeds; on Signal and Telegram an edit without them). A moderator's on someone
+ * else's message is moderation.ts's.
  *
  *   GET    /api/scheduled                   the list: the hub's, and (?network=1) each account's own scheduled messages
  *   POST   /api/scheduled                   ScheduleBody -> ScheduledSendView
@@ -13,7 +14,7 @@
  *   POST   /api/messages/:id/remove-previews {}
  */
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META } from '@dither-chat/protocol';
+import { NETWORK_META, PREVIEW_EDIT_WINDOW_MS, previewsRemovable } from '@dither-chat/protocol';
 import { keepSaved, savedTables, savedViews } from './saved.ts';
 import { type LaterSend, nativeView, SendLater } from './sendlater.ts';
 import type { Store } from './store.ts';
@@ -47,6 +48,26 @@ class Refused extends Error {
 }
 
 const caps = (store: Store, accountId: string): P.Capability[] => JSON.parse(store.account(accountId)?.capabilities ?? '[]');
+
+/**
+ * The hub's copy of a message whose previews the network took off: it keeps none. The network's next word on it says
+ * the same (Discord's flag, or an edit without them), but an edit that comes back with no extra at all would leave the
+ * stored previews in place.
+ */
+export function dropPreviews(store: Store, messageId: string) {
+  const r = store.one<{ extra: string | null }>('SELECT extra FROM message WHERE id = ?', messageId);
+  if (!r?.extra) return;
+  let x: Record<string, unknown>;
+  try {
+    x = JSON.parse(r.extra);
+  } catch {
+    return;
+  }
+  if (!Array.isArray(x.embeds) || !x.embeds.length) return;
+  delete x.embeds;
+  store.db.query('UPDATE message SET extra = ? WHERE id = ?').run(Object.keys(x).length ? JSON.stringify(x) : null, messageId);
+  store.dirty.messages.set(messageId, store.dirty.messages.get(messageId) ?? false);
+}
 
 export class SendExtras {
   readonly later: SendLater;
@@ -214,19 +235,27 @@ export class SendExtras {
 
   private async removePreviews(messageId: string): Promise<{ ok: true }> {
     const s = this.d.store;
-    const row = s.db.query('SELECT conversation_id, native_id, network, author_id FROM message WHERE id = ?').get(messageId) as Row | null;
+    const row = s.db.query('SELECT conversation_id, native_id, network, author_id, ts, body FROM message WHERE id = ?').get(messageId) as Row | null;
     if (!row) throw new Refused('no such message', 404);
     if (!s.isSelf(row.author_id)) throw new Refused('Only your own messages', 403);
     const conv = s.nativeOf('conversation', row.conversation_id)!;
+    const network = row.network as P.Network;
+    const place = s.one<{ shape: P.Shape; variant: P.Variant }>('SELECT shape, variant FROM conversation WHERE id = ?', row.conversation_id);
+    if (place && !previewsRemovable(network, row.ts, place)) {
+      throw new Refused(`${NETWORK_META[network].name} lets you change a message only in its first ${Math.round(PREVIEW_EDIT_WINDOW_MS[network]! / 3_600_000)} hours`, 409);
+    }
     // The account that wrote it: its own identity on that network.
     const accountId = s.accounts().find((a) => a.self_identity === row.author_id)?.id ?? null;
     if (!accountId || !this.d.online(accountId)) throw new Refused('The account that wrote it is not connected', 409);
     if (!caps(s, accountId).includes('suppressEmbeds')) throw new Refused(`${this.label(accountId)} cannot remove previews`, 409);
     try {
-      await this.d.command(accountId, { t: 'suppressEmbeds', conversation: conv.nativeId, message: row.native_id }, 30_000);
+      // Its words go along for a network that does it with an edit and keeps no copy to send again (Signal).
+      await this.d.command(accountId, { t: 'suppressEmbeds', conversation: conv.nativeId, message: row.native_id, body: row.body ?? '' }, 30_000);
     } catch (e) {
-      throw new Refused(`${NETWORK_META[row.network as P.Network].name} refused it: ${(e as Error).message}`, 502);
+      throw new Refused(`${NETWORK_META[network].name} refused it: ${(e as Error).message}`, 502);
     }
+    dropPreviews(s, messageId);
+    this.d.flush();
     return { ok: true };
   }
 
