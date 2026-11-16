@@ -2,15 +2,18 @@
  * A run of pictures (docs/pictures.md): one person's pictures sent one after another, drawn the way its chat says
  * (arrange.ts pictureLayout). One picture is drawn in its own shape (pictures.ts fitPicture); several as a mosaic,
  * rows, six and +N, folded after the first, or small. A click opens the viewer on all of them. Each tile keeps its
- * message and place (data-msg, data-att), so its menu is its own message's (Timeline.tsx).
+ * message and place (data-msg, data-att), so its menu is its own message's (Timeline.tsx). A run of two or more can
+ * be switched to another way where it is (ui/PictureSwitch.tsx): the rail beside it, or a pinch on a phone.
  */
 import { signal } from '@preact/signals';
+import { useLayoutEffect, useRef } from 'preact/hooks';
 import type { PictureLayout } from '@dither-chat/protocol';
 import type { ComponentChildren } from 'preact';
 import { fitPicture, mosaicRows, tileAspect, type PictureRef } from '../pictures.ts';
 import { viewer, type ViewerImage } from '../viewer.ts';
 import { AttachmentNote } from './MessageExtras.tsx';
 import { AltBadge, Veil, veiled } from './rich/parts.tsx';
+import { measurers, Morph, PictureRail, pinchHandlers, setUnfolded, switchOf, unfolded } from './PictureSwitch.tsx';
 
 /** A plain click opens the viewer; a middle or modified click still opens the file in a tab. */
 export function openViewer(e: MouseEvent, images: ViewerImage[], index: number) {
@@ -49,18 +52,10 @@ const images = (pics: PictureRef[]): ViewerImage[] =>
     return { url: p.a.url, name: p.a.name, width: s?.[0] ?? null, height: s?.[1] ?? null };
   });
 
-/** Runs whose folded pictures were opened, by their first message's id. */
-const unfolded = signal<ReadonlySet<string>>(new Set());
-const setUnfolded = (key: string, open: boolean) => {
-  const next = new Set(unfolded.value);
-  open ? next.add(key) : next.delete(key);
-  unfolded.value = next;
-};
-
 function Tile({ p, all, index, cls, style, top, over, children }: { p: PictureRef; all: PictureRef[]; index: number; cls: string; style?: Record<string, string>; top?: boolean; over?: number; children?: ComponentChildren }) {
   const img = <img src={p.a.url} alt={p.a.alt ?? p.a.name ?? ''} loading="lazy" decoding="async" class={top ? 'top' : undefined} onLoad={(e) => measured(p, e)} />;
   return (
-    <a class={`pic ${cls}`} data-att={p.i} data-msg={p.m.id} href={p.a.url} target="_blank" rel="noreferrer" title={p.a.caption} style={style} onClick={(e) => openViewer(e, images(all), index)}>
+    <a class={`pic ${cls}`} data-i={index} data-att={p.i} data-msg={p.m.id} href={p.a.url} target="_blank" rel="noreferrer" title={p.a.caption} style={style} onClick={(e) => openViewer(e, images(all), index)}>
       {veiled(p.a) ? <Veil a={p.a}>{img}</Veil> : img}
       <AltBadge alt={p.a.alt} />
       {over ? <span class="pic-more">+{over}</span> : null}
@@ -128,42 +123,41 @@ function Small({ all }: { all: PictureRef[] }) {
   );
 }
 
-/**
- * The pictures of one message, or of a run of them (`runKey`: its first message's id), drawn as `layout` says.
- * `anchors`: messages of the run drawn only by this block, so a jump to one of them lands here.
- */
-export function Pictures({ pics, layout, runKey, anchors }: { pics: PictureRef[]; layout: PictureLayout; runKey: string; anchors?: string[] }) {
+/** A run drawn one way: what goes in its block, and whether the block takes the column's width. */
+function drawRun(pics: PictureRef[], layout: PictureLayout, runKey: string, open: boolean): { body: ComponentChildren; wide: boolean } {
   const n = pics.length;
-  const open = layout === 'fold' && unfolded.value.has(runKey);
-  let body: ComponentChildren;
-  let wide = false;
-  if (layout === 'small') body = <Small all={pics} />;
-  else if (n === 1)
-    body = (
-      <>
-        <One all={pics} index={0} />
-        <AttachmentNote a={pics[0].a} />
-      </>
-    );
-  else if (layout === 'rows') (body = <Rows all={pics} />), (wide = true);
-  else if (layout === 'fold' && !open)
-    body = (
-      <>
-        <One all={pics} index={0} />
-        <button class="pics-fold" data-track="pictures: unfold" onClick={() => setUnfolded(runKey, true)}>
-          <span class="pics-fold-thumbs">
-            {pics.slice(1, 9).map((p) => (
-              <img src={p.a.url} alt="" loading="lazy" decoding="async" class={veiled(p.a) ? 'veiled' : undefined} />
-            ))}
-          </span>
-          <span>Show {n - 1} more</span>
-        </button>
-      </>
-    );
-  else if (layout === 'six' && n > 6) (body = <Mosaic all={pics} count={6} over={n - 6} />), (wide = true);
-  else {
-    wide = true;
-    body = (
+  if (layout === 'small') return { body: <Small all={pics} />, wide: false };
+  if (n === 1)
+    return {
+      body: (
+        <>
+          <One all={pics} index={0} />
+          <AttachmentNote a={pics[0].a} />
+        </>
+      ),
+      wide: false,
+    };
+  if (layout === 'rows') return { body: <Rows all={pics} />, wide: true };
+  if (layout === 'fold' && !open)
+    return {
+      body: (
+        <>
+          <One all={pics} index={0} />
+          <button class="pics-fold" data-track="pictures: unfold" onClick={() => setUnfolded(runKey, true)}>
+            <span class="pics-fold-thumbs">
+              {pics.slice(1, 9).map((p, j) => (
+                <img src={p.a.url} alt="" loading="lazy" decoding="async" data-i={j + 1} class={veiled(p.a) ? 'veiled' : undefined} />
+              ))}
+            </span>
+            <span>Show {n - 1} more</span>
+          </button>
+        </>
+      ),
+      wide: false,
+    };
+  if (layout === 'six' && n > 6) return { body: <Mosaic all={pics} count={6} over={n - 6} />, wide: true };
+  return {
+    body: (
       <>
         <Mosaic all={pics} count={n} />
         {open && (
@@ -172,12 +166,39 @@ export function Pictures({ pics, layout, runKey, anchors }: { pics: PictureRef[]
           </button>
         )}
       </>
-    );
-  }
+    ),
+    wide: true,
+  };
+}
+
+/**
+ * The pictures of one message, or of a run of them (`runKey`: its first message's id), drawn as `layout` says.
+ * `anchors`: messages of the run drawn only by this block, so a jump to one of them lands here. `convId`: the chat a
+ * switch saves to; with `rail`, the computer's rail of ways stands beside a run of two or more. While a slide or a
+ * pinch is under way (switchOf), the run is drawn between two ways over it (Morph).
+ */
+export function Pictures({ pics, layout, runKey, anchors, convId, rail }: { pics: PictureRef[]; layout: PictureLayout; runKey: string; anchors?: string[]; convId?: string; rail?: boolean }) {
+  const host = useRef<HTMLDivElement>(null);
+  const n = pics.length;
+  const switchable = n > 1 && !!convId;
+  const sliding = switchable && !rail ? switchOf(runKey).value : null;
+  // The switch measures every way from here when a slide starts (PictureSwitch.tsx measureRun).
+  useLayoutEffect(() => {
+    if (!switchable) return;
+    measurers.set(runKey, { host: () => host.current, pics, runKey, draw: drawRun });
+    return () => void (measurers.get(runKey)?.pics === pics && measurers.delete(runKey));
+  });
+  const anchorEls = anchors?.map((id) => <span class="pic-anchor" id={`m-${id}`} />);
+  const pinch = switchable && !rail ? pinchHandlers(runKey, convId!, layout) : undefined;
+  const { body, wide } = drawRun(pics, layout, runKey, layout === 'fold' && unfolded.value.has(runKey));
+  // While sliding, the run as it is stays where it was, out of sight (the fingers' touches still go to its pictures),
+  // and the drawing between two ways takes its place.
   return (
-    <div class={`pics${wide ? ' wide' : ''}`}>
-      {anchors?.map((id) => <span class="pic-anchor" id={`m-${id}`} />)}
+    <div class={`pics${wide || sliding ? ' wide' : ''}${switchable && rail ? ' has-rail' : ''}${pinch ? ' pics-pinch' : ''}${sliding ? ' pics-sliding' : ''}`} ref={host} {...pinch}>
+      {anchorEls}
       {body}
+      {switchable && rail && <PictureRail layout={layout} convId={convId!} runKey={runKey} />}
+      {sliding && <Morph pics={pics} geo={sliding.geo} g={sliding.g} />}
     </div>
   );
 }
