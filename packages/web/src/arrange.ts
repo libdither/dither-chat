@@ -94,8 +94,8 @@ export function pictureLayout(convId: string): PictureLayout {
   return db.placePrefs.get(`conversation:${convId}`)?.pictures ?? inheritedPictures('conversation', convId).layout;
 }
 
-/** null: back to what it inherits. */
-export const setPlacePictures = (kind: P.PlaceKind, id: string, pictures: PictureLayout | null) => patchPlaces([{ kind, id, pictures }]);
+/** null: back to what it inherits. Several ids: each of them (a person's chat, one per route). */
+export const setPlacePictures = (kind: P.PlaceKind, id: string | string[], pictures: PictureLayout | null) => patchPlaces((Array.isArray(id) ? id : [id]).map((i) => ({ kind, id: i, pictures })));
 
 export function patchDismissed(dismissed: Record<string, string[] | null>) {
   const next = { ...arrange.value.dismissed };
