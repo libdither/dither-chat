@@ -2794,7 +2794,7 @@ export class Store {
 
   /**
    * One person's reaction, known to be there. New: at the network's time `ts`, else at `heard` (when the hub heard,
-   * shown as "by" then), else at no known time. Already there: the network's time fills in one less sure.
+   * shown as "~" then), else at no known time. Already there: the network's time fills in one less sure.
    */
   private putReactor(mid: string, iid: string, key: string, style: string, ts: number | null, heard: number | null) {
     const added = this.db.query('INSERT OR IGNORE INTO reaction (message_id, identity_id, key, style, at, at_exact) VALUES (?, ?, ?, ?, ?, ?)').run(mid, iid, key, style, ts ?? heard, ts !== null ? 1 : 0).changes > 0;

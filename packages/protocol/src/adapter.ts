@@ -491,7 +491,7 @@ export type AdapterEvent =
   | { t: 'delete'; conversation: string; nativeId: string; reason?: 'expired' }
   /**
    * One person added or took back one reaction. `ts`: when, as the network says (ms). Leave it out where the network
-   * gives no time (Discord): the hub then keeps when it heard, and shows it as "by" that time (docs/reactions.md "When").
+   * gives no time (Discord): the hub then keeps when it heard, and shows it as "~" that time (docs/reactions.md "When").
    */
   | { t: 'reaction'; conversation: string; message: string; author: string; key: string; remove?: boolean; style?: ReactionStyle; colors?: string[]; emoji?: CustomEmojiFact; ts?: number }
   /** A moderator removed every reaction on a message, or every one with this key. */

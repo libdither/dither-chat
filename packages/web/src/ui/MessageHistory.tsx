@@ -8,7 +8,7 @@ import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { fullTime } from '../format.ts';
 import { identityName, plainBody } from '../model.ts';
-import { seenNote } from '../reactions.ts';
+import { whenTitle } from '../reactions.ts';
 import { api, db, isSelfIdentity, rev } from '../state.ts';
 import { Avatar, Modal } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -101,14 +101,13 @@ export function MessageHistory({ m }: { m: P.MessageView }) {
                   <b>{name(e.actorId)}</b>{' '}
                   {e.what === 'pinned' ? 'pinned it' : e.what === 'unpinned' ? 'unpinned it' : e.what === 'cleared' ? <>had {glyph} removed by a moderator</> : e.what === 'reacted' ? <>reacted {glyph}</> : <>took back {glyph}</>}
                 </span>
-                <time>
-                  {e.seen ? 'by ' : ''}
+                <time title={e.seen ? whenTitle({ at: e.at, seen: true }) : undefined}>
+                  {e.seen ? '~' : ''}
                   {fullTime(e.at)}
                 </time>
               </div>
             );
           })}
-          {happened.some((e) => e.seen) && <p class="msg-history-note">{seenNote(m.network)}</p>}
         </section>
       )}
       {(['played', 'read', 'delivered'] as P.ReceiptState[]).map((s) => {

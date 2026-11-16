@@ -4,7 +4,7 @@
  * scrolling leaving the grid untouched, and on Signal, where one reaction per person is kept, the add button and the
  * picker saying a pick replaces yours, and a pick doing so. Then when each reacted (docs/reactions.md "When"): a pill's
  * tooltip with a line per person, the list of who reacted with each time and who took theirs back, Message history's
- * reactions made and taken back, and on Discord, times marked "by" with a note saying why.
+ * reactions made and taken back, and on Discord, times marked "~" (when the hub heard) with no note.
  *
  *   bun scripts/verify-reactions.ts http://127.0.0.1:8482 [/tmp/shots]
  * The hub must be a fresh demo hub (--demo) with its own data dir: this reacts to messages.
@@ -151,12 +151,12 @@ try {
     await p.eval(`(() => { const r = document.querySelector('[data-vr]'); const b = r.getBoundingClientRect(); r.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.x + 5, clientY: b.y + 5 })); })()`);
     await p.until(`!!document.querySelector('.reactors .reactor')`, 5000);
     await Bun.sleep(600);
-    return p.eval<{ rows: { name: string; when: string; past: string; gone: boolean }[]; sub: string; note: string }>(`(() => {
+    return p.eval<{ rows: { name: string; when: string; title: string; past: string; gone: boolean }[]; sub: string; notes: number }>(`(() => {
       const box = document.querySelector('.reactors');
       return {
-        rows: [...box.querySelectorAll('.reactor')].map((r) => ({ name: r.querySelector('.reactor-who > span')?.textContent ?? '', when: r.querySelector('.reactor-when')?.textContent ?? '', past: r.querySelector('.reactor-past')?.textContent ?? '', gone: r.classList.contains('gone') })),
+        rows: [...box.querySelectorAll('.reactor')].map((r) => ({ name: r.querySelector('.reactor-who > span')?.textContent ?? '', when: r.querySelector('.reactor-when')?.textContent ?? '', title: r.querySelector('.reactor-when')?.title ?? '', past: r.querySelector('.reactor-past')?.textContent ?? '', gone: r.classList.contains('gone') })),
         sub: box.querySelector('.reactors-sub')?.textContent ?? '',
-        note: box.querySelector('.reactors-note')?.textContent ?? '',
+        notes: box.querySelectorAll('p').length,
       };
     })()`);
   };
@@ -169,7 +169,7 @@ try {
   await move('[data-vr]');
   const tip = await tooltip();
   const tipLines = tip.split('\n').filter(Boolean);
-  check(tipLines.length >= 4 && ['Priya', 'Alice', 'Theo'].every((n) => tipLines.some((l) => l.startsWith(n) && time.test(l))) && !/by /.test(tip), "hovering a pill shows who reacted and each one's time, Signal's own", tipLines);
+  check(tipLines.length >= 4 && ['Priya', 'Alice', 'Theo'].every((n) => tipLines.some((l) => l.startsWith(n) && time.test(l))) && !/~/.test(tip), "hovering a pill shows who reacted and each one's time, Signal's own", tipLines);
   if (shots) await p.shot(`${shots}/when-tooltip-signal.png`);
   await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
   const laughs = await openWho();
@@ -185,7 +185,7 @@ try {
   const sam = who.rows.find((r) => r.name.startsWith('Sam'));
   check(sam && time.test(sam.when) && /^added .*· took back /.test(sam.past), "the list of who reacted: Sam's time now, and under it when they added and took it back", who.rows);
   check(who.rows.some((r) => r.name.startsWith('Alice') && time.test(r.when) && !r.past), "…and Alice's time, with nothing before it", who.rows);
-  check(!who.note, 'no note: Signal says when', who.note);
+  check(!who.notes && who.rows.every((r) => !r.when.startsWith('~')), 'no note and no "~": Signal says when', who);
   if (shots) await p.shot(`${shots}/when-who-signal.png`);
   await escape();
   await Bun.sleep(200);
@@ -203,20 +203,20 @@ try {
   await escape();
   await Bun.sleep(300);
 
-  // Discord gives no times: "by" when the hub heard, a note saying so; Theo's, there before the hub saw it, has none.
+  // Discord gives no times: "~" when the hub heard, and no note; Theo's, there before the hub saw it, has none.
   await p.goto(`${hub}/#/c/${raid}`);
   await p.until(`[...document.querySelectorAll('.msg')].some((m) => m.textContent.includes("who's in for saturday"))`, 15000);
   await Bun.sleep(500);
   check(await pillOf("who's in for saturday", '🙋'), "Ravi's message has a 🙋");
   await move('[data-vr]');
   const dtip = (await tooltip()).split('\n').filter(Boolean);
-  check(dtip.some((l) => /^Ravi · by /.test(l)) && dtip.includes('Theo') && dtip.some((l) => l.startsWith("Discord doesn't say when")), 'on Discord the tooltip says "by" and why', dtip);
+  check(dtip.some((l) => /^Ravi · ~\d/.test(l)) && dtip.includes('Theo') && !dtip.some((l) => /doesn't say|hub/.test(l)), 'on Discord the tooltip marks the time "~", with no note', dtip);
   if (shots) await p.shot(`${shots}/when-tooltip-discord.png`);
   await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
   const dwho = await openWho();
-  check(dwho.rows.some((r) => r.name === 'Ravi' && r.when.startsWith('by ') && /^added by .*took back by /.test(r.past)), "the list: Ravi's time is by when the hub heard, after they took one back", dwho.rows);
+  check(dwho.rows.some((r) => r.name === 'Ravi' && /^~\d/.test(r.when) && /when the hub heard/.test(r.title) && /^added ~\d.*took back ~\d/.test(r.past)), "the list: Ravi's time is ~ when the hub heard (its title says so), after they took one back", dwho.rows);
   check(dwho.rows.some((r) => r.name === 'Theo' && !r.when), "…Theo's has no time", dwho.rows);
-  check(/Discord doesn't say when/.test(dwho.note) && /No time for those already there/.test(dwho.note), 'a note says why "by", and why none', dwho.note);
+  check(!dwho.notes, 'no note under the list', dwho);
   if (shots) await p.shot(`${shots}/when-who-discord.png`);
   await escape();
   check(!p.errors.length, 'no page errors', p.errors);
