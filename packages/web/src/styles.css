@@ -105,6 +105,49 @@ code {
 .app.with-details {
   grid-template-columns: var(--rail-w) var(--sidebar-w) 1fr var(--details-w);
 }
+/* The list's and the details' edges, dragged to resize them (ui/PaneEdge.tsx): a thin strip over the border, lit
+   while hovered or dragged. A computer only; the phone lays out its own way. */
+.pane-edge {
+  position: fixed;
+  top: var(--titlebar-h);
+  bottom: 0;
+  z-index: 45;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.pane-edge-sidebar {
+  left: calc(var(--rail-w) + var(--sidebar-w) - 5px);
+}
+.pane-edge-details {
+  right: calc(var(--details-w) - 5px);
+}
+.pane-edge::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 3px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 0.12s 0.15s;
+}
+.pane-edge:hover::after,
+.pane-edge:focus-visible::after,
+.pane-dragging .pane-edge::after {
+  opacity: 0.8;
+  transition-delay: 0s;
+}
+.pane-edge:focus-visible {
+  outline: none;
+}
+/* While dragging, the whole window shows the resize cursor and nothing under it selects. */
+.pane-dragging,
+.pane-dragging * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -5614,9 +5657,14 @@ textarea.chip-box {
     right: 0;
     top: 0;
     bottom: 0;
-    width: min(340px, 90vw);
+    width: min(var(--details-w), 90vw);
     z-index: 60;
     box-shadow: var(--shadow);
+  }
+  .app.with-details .pane-edge-details {
+    top: 0;
+    right: calc(min(var(--details-w), 90vw) - 5px);
+    z-index: 61;
   }
 }
 

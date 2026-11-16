@@ -34,6 +34,7 @@ import { FolderSidebar, InboxSidebar, PeopleSidebar, SpaceSidebar, SpacesSidebar
 import { homeRoute } from '../opening.ts';
 import { ConversationPane, PersonPane } from './Timeline.tsx';
 import { Toasts } from './Toasts.tsx';
+import { PaneEdge, usePaneWidths } from './PaneEdge.tsx';
 import { CallDock } from './Call.tsx';
 import { RingCards } from './Ringing.tsx';
 import { Viewer } from './Viewer.tsx';
@@ -345,6 +346,8 @@ export function App() {
     onRefresh: () => (route.value.view === 'foryou' ? Promise.all([refresh(), refreshForYou()]) : refresh()),
   });
 
+  usePaneWidths(!p, details);
+
   if (!loaded.value)
     return (
       <Boot connected={connected.value} />
@@ -384,6 +387,7 @@ export function App() {
       {!p && <TitleBar />}
       <Rail />
       <aside class="sidebar">{sidebarFor(r, () => (addingAccount.value = true))}</aside>
+      {!p && !full && <PaneEdge pane="sidebar" detailsOpen={details} />}
       <main class="center" ref={card} inert={rest === 'away'}>
         {pane}
         {p && (rest === 'peek' || rest === 'details') && (
@@ -396,6 +400,7 @@ export function App() {
         )}
       </main>
       {(p ? !!detail : details) && <>{detail!.kind === 'conv' ? <ConversationDetails convId={detail!.id} /> : <PersonDetails personId={detail!.id} />}</>}
+      {!p && details && <PaneEdge pane="details" detailsOpen />}
       {p && <TabBar r={r} />}
       {p && (
         <div class="ptr" ref={pull} aria-hidden="true">
