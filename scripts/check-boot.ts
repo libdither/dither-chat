@@ -71,13 +71,9 @@ function watch(page: Page, base: string) {
 }
 
 /**
- * A click as the page would get it from a person: on the middle of the first match that is on screen and not under
- * anything else there.
- */
-/**
  * Click the first `sel` in sight, as a mouse would. A list still drawing (rows arriving, the order settling) can move
- * under the pointer between finding the element and pressing it, so: wait until it stays in one place for two looks in
- * a row, and check where the click landed. One that landed on something else (pressed on the list around a row that
+ * under the pointer between finding the element and pressing it, so: wait until it stays in one place for two looks a
+ * frame apart, and check where the click landed. One that landed on something else (pressed on the list around a row that
  * moved, released on the row: the click goes to what holds both) did not reach the element, and is made again. A click
  * that reached it and did nothing is the page's fault, and its caller's next wait fails.
  */
@@ -91,25 +87,20 @@ async function click(page: Page, sel: string, what: string) {
     }
     return null;
   })()`;
-  // Where the next click lands: true on the element, false elsewhere, null while none came.
+  // A page still sliding in (the phone's pages, docs/phone.md) moves its buttons too, which is why the two looks are
+  // a frame apart. Where the click then lands: true on the element, false elsewhere, null while none came.
   const arm = `(() => {
     window.__bootHit = null;
     document.addEventListener('click', (e) => (window.__bootHit = !!(e.target instanceof Element && e.target.closest(${s}))), { capture: true, once: true });
   })()`;
-  let last: { x: number; y: number } | null = null;
-  let at: { x: number; y: number } | null = null;
   await until(`${what} (${sel})`, async () => {
-    const now = await page.eval<{ x: number; y: number } | null>(find);
-    const still = !!now && !!last && now.x === last.x && now.y === last.y;
-    last = now;
-    if (!still) return false;
-    at = now;
+    const a = await page.eval<{ x: number; y: number } | null>(find);
+    const b = a && (await page.eval<{ x: number; y: number } | null>(`new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(${find}))))`));
+    if (!a || !b || a.x !== b.x || a.y !== b.y) return false;
     await page.eval(arm);
-    for (const type of ['mousePressed', 'mouseReleased']) await page.send('Input.dispatchMouseEvent', { type, x: at!.x, y: at!.y, button: 'left', clickCount: 1 });
+    for (const type of ['mousePressed', 'mouseReleased']) await page.send('Input.dispatchMouseEvent', { type, x: b.x, y: b.y, button: 'left', clickCount: 1 });
     // A click on the element can take the page away from it (a new hash): it landed, whatever is there now.
-    const hit = await page.eval<boolean | null>('window.__bootHit');
-    if (hit === false) last = null;
-    return hit === true;
+    return (await page.eval<boolean | null>('window.__bootHit')) === true;
   });
 }
 
