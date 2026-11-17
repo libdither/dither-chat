@@ -96,11 +96,15 @@ computer's + menu **GIF**, offered on Discord and wherever files go. It has a se
   hub's media path, so the phone and the browser never load the provider's servers; the hub fetches them as it fetches
   any embed's picture. No account with it connected: Trending says so, and Yours still works.
 
-**Sending one** (ComposerMedia.tsx `gifSend`). A tap sends at once. On Discord, a GIF that has a link goes as that link,
-as Discord's own picker sends it, and Discord draws it back as the GIF. Anywhere else, or one with no link, goes as a
-file (the .gif where the provider has one, else its video), with the send's `gif`: an account with `sendGifs` sends
-it as its network's own GIF (Telegram's animation, WhatsApp's GIF playback, in dither-accounts); others send the file
-as it is (Signal: signal-cli has no flag for its GIFs; Matrix: an `image/gif` picture).
+**Sending one** (ComposerMedia.tsx `gifSend`). A tap sends at once. On Discord, a GIF that has a link goes as that
+link, as Discord's own picker sends it, and Discord draws it back as the GIF. Anywhere else, or one with no link, goes
+as a file named for what it is: the provider's animated picture (`gif`) where it has one, else its video. Discord's
+search gives only a WebM and an animated WebP (whatever `media_format` asks for, checked 2026-11-17), so a found GIF
+goes as the WebP; one from Yours goes as the file it was. Only an mp4 or a .gif goes with the send's `gif`, which an
+account with `sendGifs` sends as its network's own GIF (Telegram's animation, WhatsApp's GIF playback, in
+dither-accounts); a WebP goes as a picture. Signal (no GIF flag in signal-cli) shows the WebP as a moving picture
+(seen in Signal Desktop). Telegram and WhatsApp take only an mp4 (or, on Telegram, a .gif) as a GIF, and nothing here
+converts a WebP or WebM to one yet, so a found GIF goes to them as a WebP picture, not as their GIF.
 
 **Showing them.** Settings → Appearance → **Show GIFs as plain GIFs**, on unless switched off on the device (gifs.ts):
 

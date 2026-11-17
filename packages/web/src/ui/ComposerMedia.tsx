@@ -84,14 +84,18 @@ export function GifPicker({ conversationId, anchor, onSend, onClose, inline }: {
  * A picked GIF, as the chat's network takes one: on Discord its link where it has one (Discord draws it back as the
  * GIF, as its own picker sends it); elsewhere its file, marked as a GIF so a network with its own GIFs sends one.
  */
-export async function gifSend(g: GifPick, network: P.Network): Promise<{ body: string } | { file: File }> {
+export async function gifSend(g: GifPick, network: P.Network): Promise<{ body: string } | { file: File; gif: boolean }> {
   if (network === 'discord' && g.url) return { body: g.url };
   const r = await fetch(g.file);
   if (!r.ok) throw new Error(`The GIF did not load (${r.status})`);
   const blob = await r.blob();
-  const ext = blob.type === 'video/mp4' ? 'mp4' : blob.type === 'video/webm' ? 'webm' : blob.type === 'image/svg+xml' ? 'svg' : 'gif';
+  // Named for what it is: Discord's GIF search gives a WebM and an animated WebP, never a .gif.
+  const type = blob.type.split(';')[0];
+  const ext = ({ 'video/mp4': 'mp4', 'video/webm': 'webm', 'image/webp': 'webp', 'image/svg+xml': 'svg' } as Record<string, string>)[type] ?? 'gif';
   const base = (g.title ?? 'gif').replace(/[^\w-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'gif';
-  return { file: new File([blob], `${base}.${ext}`, { type: blob.type || 'image/gif' }) };
+  // Marked a GIF only when it is one the networks' GIF sends take (Telegram's animation, WhatsApp's GIF playback): an
+  // mp4 or a .gif. A WebP marked so would go as an animated document Telegram cannot play; unmarked, it is a picture.
+  return { file: new File([blob], `${base}.${ext}`, { type: blob.type || 'image/gif' }), gif: type === 'video/mp4' || type === 'image/gif' };
 }
 
 const drawSticker = (s: P.StickerView) =>

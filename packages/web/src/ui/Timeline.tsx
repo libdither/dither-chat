@@ -1316,7 +1316,7 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
       if ('body' in r) {
         send(targets.convId, r.body, { accountId: targets.accountId, replyTo: reply?.id });
         clearReply();
-      } else sendMedia({ files: [r.file], media: { gif: true } });
+      } else sendMedia({ files: [r.file], media: { gif: r.gif } });
     } catch (e) {
       toast({ kind: 'error', title: 'The GIF did not go', body: (e as Error).message });
     }
