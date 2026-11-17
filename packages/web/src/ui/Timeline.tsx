@@ -94,10 +94,11 @@ import { TypingBar } from './Typing.tsx';
 import { HeadOrb, offline } from './Offline.tsx';
 import { DisappearsMark, TimerLabel } from './Disappearing.tsx';
 import { useGrow } from './grow.ts';
-import { AttachSheet, CameraView, SendScreen } from './Attach.tsx';
+import { CameraView, SendScreen } from './Attach.tsx';
+import type { PanelTab } from './panel/Panel.tsx';
 import { mediaOffer, preloadStickers, StickerPicker, stickerInstaller, ViewOnceChip, VoiceButton } from './ComposerMedia.tsx';
 import { CAPTURE_ACCEPT, MEDIA_ACCEPT, opensSendScreen } from '../camera.ts';
-import { phone, touchOnly } from '../phone.ts';
+import { closePanel, openPanel, panelOpen, panelShown, phone, touchOnly } from '../phone.ts';
 import { composerDone, composerTyped } from '../typing.ts';
 import { noteSeen } from '../activity.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
@@ -1167,6 +1168,19 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
 
 // ------------------------------------------------------------------ composer
 
+// The phone's + panel is a chunk of its own, loaded at the first press of + (ui/panel/Panel.tsx).
+type Panels = typeof import('./panel/Panel.tsx');
+let panels: Panels | null = null;
+let loadingPanels: Promise<Panels> | null = null;
+const loadPanels = () =>
+  (loadingPanels ??= import('./panel/Panel.tsx').then(
+    (m) => (panels = m),
+    (e) => {
+      loadingPanels = null;
+      throw e;
+    },
+  ));
+
 function Composer({ targets, placeholder, reply, clearReply, disabledReason, routed }: {
   targets: { convId: string; accountId?: string };
   placeholder: string;
@@ -1184,11 +1198,14 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
   const att = useAttached(conv?.network, targets.convId);
   const [dropping, setDropping] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
-  // A phone's attaching (ui/Attach.tsx): the + sheet, the camera, the send screen, and their inputs.
+  // A phone's attaching: the + panel in the keyboard's place (ui/panel/), the camera and the send screen
+  // (ui/Attach.tsx), and the system pickers' inputs.
   const onPhone = phone.value;
   const photos = useRef<HTMLInputElement>(null);
   const capture = useRef<HTMLInputElement>(null);
-  const [sheet, setSheet] = useState(false);
+  const [panelTab, setPanelTab] = useState<PanelTab>('photos');
+  const [panelMod, setPanelMod] = useState(panels);
+  const panelUp = onPhone && !!panelMod && (panelOpen.value || panelShown.value > 0);
   const [camera, setCamera] = useState(false);
   const [review, setReview] = useState(false);
   // The emoji button's picker, beside what opened it (Reactions.tsx).
@@ -1197,9 +1214,9 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
   const offer = mediaOffer(sender, canAttach);
   const [viewOnce, setViewOnce] = useState(false);
   const addFiles = async (list: File[]) => {
-    if (!list.length || !conv) return;
-    if (!canAttach) return toast({ kind: 'error', title: 'Cannot send files here', body: conv.encrypted ? 'Set up encryption on the account\'s page to send files in encrypted Matrix rooms.' : `${netName(conv.network)} is not set up to send files.` });
-    await att.add(list);
+    if (!list.length || !conv) return [];
+    if (!canAttach) return (toast({ kind: 'error', title: 'Cannot send files here', body: conv.encrypted ? 'Set up encryption on the account\'s page to send files in encrypted Matrix rooms.' : `${netName(conv.network)} is not set up to send files.` }), []);
+    return att.add(list);
   };
   /** Photos and videos, picked or taken on a phone, go to the send screen; other files to the row. */
   const addMedia = async (list: File[]) => {
@@ -1207,7 +1224,7 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
     if (onPhone && canAttach && opensSendScreen(list)) setReview(true);
   };
   useEffect(() => {
-    setSheet(false);
+    closePanel(true);
     setCamera(false);
     setReview(false);
     setEmojiAt(null);
@@ -1273,6 +1290,8 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
     clearReply();
     setReview(false);
     setViewOnce(false);
+    // What the panel picked went: it goes too, as Telegram's does.
+    if (files.length) closePanel();
   };
   /** A sticker or a recording goes at once, on its own, as a reply when one is open. */
   const sendMedia = (opts: { files?: File[]; media?: { sticker?: string; voice?: P.VoiceOut } }) => {
@@ -1357,6 +1376,16 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
         )}
       </Menu>
     ) : null;
+  // + : the panel in the keyboard's place; while it is open the + is the keyboard's button.
+  const togglePanel = () => {
+    if (panelOpen.value) return ta.current?.focus();
+    // Nothing to attach here: what + offers is a sticker or a poll, as before.
+    if (!attaching) return canSticker ? plusRef.current && setStickerAt(plusRef.current.getBoundingClientRect()) : setPolling(true);
+    void loadPanels().then((m) => {
+      setPanelMod(m);
+      openPanel();
+    });
+  };
   const openCamera = () => {
     // No camera API at all: the system's camera, from this tap.
     if (!navigator.mediaDevices?.getUserMedia) return capture.current?.click();
@@ -1550,15 +1579,25 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
         />
       ) : onPhone ? (
         <div class="composer-row">
-          {(attaching || canSticker) && (
-            <button ref={plusRef} class="icon-btn composer-plus" data-track="plus" onClick={() => setSheet(true)} aria-label={attaching ? 'Attach photos, videos or files' : 'Stickers'}>
-              <Icon name="plus" size={22} />
+          {(attaching || canSticker || !!pollAccount) && (
+            <button
+              ref={plusRef}
+              class={`icon-btn composer-plus ${panelOpen.value ? 'on' : ''}`}
+              data-track={panelOpen.value ? 'keyboard' : 'plus'}
+              // Keeps the box focused, so the panel takes the keyboard's room before the keyboard goes.
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={togglePanel}
+              aria-label={panelOpen.value ? 'Back to the keyboard' : 'Photos, files, stickers and polls'}
+            >
+              <Icon name={panelOpen.value ? 'keyboard' : 'plus'} size={22} />
             </button>
           )}
           <div class={`composer-box ${disabledReason ? 'disabled' : ''}`}>
             {box}
             {emojiBtn}
-            {attaching && (
+            {/* Once you type, the text has the camera's width (as in Signal and WhatsApp): the box takes a second line
+                only when the words need one. The panel's camera tile is still there. */}
+            {attaching && !text && (
               <button class="icon-btn composer-camera" data-track="camera" onClick={openCamera} aria-label="Take a photo or video">
                 <Icon name="camera" size={20} />
               </button>
@@ -1596,14 +1635,26 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
           onClose={() => setEmojiAt(null)}
         />
       )}
-      {sheet && (
-        <AttachSheet
-          limit={limit}
-          onClose={() => setSheet(false)}
-          {...(attaching ? { onPhotos: () => photos.current?.click(), onFile: () => picker.current?.click() } : {})}
-          onPoll={pollAccount ? () => setPolling(true) : undefined}
-          {...(canSticker ? { onSticker: () => plusRef.current && setStickerAt(plusRef.current.getBoundingClientRect()), onStickerHover: preloadStickers } : {})}
-          {...(offer.viewOnce ? { onViewOnce: () => (setViewOnce(true), photos.current?.click()) } : {})}
+      {panelUp && conv && (
+        <panelMod.Panel
+          tab={panelTab}
+          setTab={setPanelTab}
+          ctx={{
+            convId: targets.convId,
+            network: conv.network,
+            limit,
+            attached: att.files,
+            add: addFiles,
+            remove: att.remove,
+            canAttach: attaching,
+            openCamera,
+            pickPhotos: () => photos.current?.click(),
+            pickFiles: () => picker.current?.click(),
+            openLarge: () => setReview(true),
+            ...(offer.viewOnce ? { viewOnce: { on: viewOnce, set: setViewOnce } } : {}),
+            ...(canSticker ? { stickers: () => plusRef.current && setStickerAt(plusRef.current.getBoundingClientRect()) } : {}),
+            ...(pollAccount ? { poll: () => setPolling(true) } : {}),
+          }}
         />
       )}
       {camera && (

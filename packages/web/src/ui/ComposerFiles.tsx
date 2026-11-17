@@ -30,8 +30,9 @@ export function useAttached(network: P.Network | undefined, convId: string) {
   const [files, setFiles] = useState<Attached[]>([]);
   const cur = useRef(files);
   cur.current = files;
-  const add = async (list: File[]) => {
-    if (!network || !list.length) return;
+  /** Returns what was added, refused ones too (the panel numbers and takes back its picks by key). */
+  const add = async (list: File[]): Promise<Attached[]> => {
+    if (!network || !list.length) return [];
     const net = { name: netName(network), ...ATTACHMENT_LIMITS[network] };
     const checked = await Promise.all(list.map(async (file) => ({ file, readable: file.size === 0 || (await readable(file)) })));
     // Counted against what is attached by now, refused ones aside, where a network's count is a hard one.
@@ -44,6 +45,8 @@ export function useAttached(network: P.Network | undefined, convId: string) {
       return { key: keys++, file, url: isMedia(file) ? URL.createObjectURL(file) : null, job: startUpload(file) };
     });
     setFiles((c) => [...c, ...added]);
+    cur.current = [...cur.current, ...added];
+    return added;
   };
   const remove = (key: number) => {
     const f = cur.current.find((x) => x.key === key);

@@ -161,9 +161,9 @@ try {
   check('on a phone: microphone in the row, no sticker button in the box, nothing past the edge', !fit.sticker && fit.mic && fit.right <= fit.width, fit);
   if (shots) await page.shot(join(shots, 'phone-composer.png'));
   await click('.composer-plus');
-  await page.until(`!!document.querySelector('.attach-sheet')`, 5000);
-  check("the phone's attach sheet offers View once on Signal", await page.eval(`!!document.querySelector('.attach-sheet [data-track="view once"]')`));
-  check("and Stickers", await page.eval(`!!document.querySelector('.attach-sheet [data-track="stickers"]')`));
+  await page.until(`!!document.querySelector('.kp')`, 5000);
+  check("the phone's panel offers View once on Signal", await page.eval(`!!document.querySelector('.kp [data-track="view once"]')`));
+  check('and Stickers', await page.eval(`!!document.querySelector('.kp .kp-tab[data-track="stickers"]')`));
 
   const errors = page.errors.filter((e) => !/WebSocket connection|Failed to load resource/.test(e));
   check('no script errors', !errors.length, errors);

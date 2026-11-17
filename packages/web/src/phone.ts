@@ -123,11 +123,17 @@ export function useLayer(onClose: () => void) {
  * frame of its slide (android.ts, apps/android MainActivity.edgeToEdge): the message box rides on the keyboard, and a
  * panel can take the keyboard's place without the box moving (docs/phone.md "The keyboard and the panel").
  */
-const appKeyboard = signal(false);
+export const appKeyboard = signal(false);
 /** The keyboard's height as the app reports it, in CSS pixels; 0 while it is down. */
-const imeHeight = signal(0);
-/** A panel in the keyboard's place (ui/Panel.tsx). */
-const panelOpen = signal(false);
+export const imeHeight = signal(0);
+/** A panel in the keyboard's place (ui/panel/Panel.tsx): open, and how far it has slid in (0 to 1). */
+export const panelOpen = signal(false);
+export const panelShown = signal(0);
+/**
+ * While a field of the panel's own has the keyboard up (a search, a poll's lines): the panel sits on the keyboard at
+ * its own height, this, and the chat keeps what is left above the box (Panel.tsx). 0 otherwise.
+ */
+export const panelLift = signal(0);
 
 const KB_KEY = 'dither-chat:keyboard-height';
 const orientation = () => (innerWidth > innerHeight ? 'wide' : 'tall');
@@ -140,7 +146,7 @@ function remembered(): number {
 }
 /** The keyboard's last height in this orientation, which the panel takes; 40% of the screen before it was ever seen. */
 const keyboardHeight = signal(remembered());
-const panelHeight = () => clampPanel(keyboardHeight.value, innerHeight);
+export const panelHeight = () => clampPanel(keyboardHeight.value, innerHeight);
 function remember(h: number) {
   h = Math.round(h);
   if (h < 120 || Math.abs(h - keyboardHeight.value) < 2) return;
@@ -153,14 +159,58 @@ function remember(h: number) {
 }
 
 let relayout = () => {};
+const inPanel = () => !!(document.activeElement as HTMLElement | null)?.closest?.('.kp');
+const editing = () => {
+  const el = document.activeElement as HTMLElement | null;
+  return !!el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.isContentEditable);
+};
+/** The keyboard is up now (the app's report, or the browser's resize). */
+let keyboardUp = () => imeHeight.value > 0;
+let sliding = 0;
+
+/** Slide the panel to `to` (0 or 1), or jump there: where the keyboard is (or is about to be) it takes the same room. */
+function slide(to: number, jump: boolean) {
+  cancelAnimationFrame(sliding);
+  if (jump || reducedMotion()) {
+    panelShown.value = to;
+    return;
+  }
+  const from = panelShown.value;
+  const t0 = performance.now();
+  const step = (t: number) => {
+    const k = Math.min(1, (t - t0) / 180);
+    const e = 1 - (1 - k) ** 3;
+    panelShown.value = from + (to - from) * e;
+    if (k < 1) sliding = requestAnimationFrame(step);
+  };
+  sliding = requestAnimationFrame(step);
+}
+
+/** The panel in the keyboard's place: where the keyboard is up it takes its room at once, then the keyboard goes. */
+export function openPanel() {
+  const swap = keyboardUp();
+  panelOpen.value = true;
+  slide(1, swap);
+  if (swap) (document.activeElement as HTMLElement | null)?.blur();
+}
+
+/** `forKeyboard`: the keyboard is coming up over it, so it goes at once. */
+export function closePanel(forKeyboard = false) {
+  if (!panelOpen.value && !panelShown.value) return;
+  panelOpen.value = false;
+  slide(0, forKeyboard);
+}
 
 /** The app's keyboard report: its height now, and `done` once it stopped moving (android.ts). */
 export function onIme(h: number, done: boolean) {
   imeHeight.value = h;
   if (done && h > 0) {
     remember(h);
-    // The keyboard is up over the panel: the panel goes, and the room stays the keyboard's.
-    panelOpen.value = false;
+    // The keyboard is up over the panel for a field outside it (the box): the panel goes, and the room stays the
+    // keyboard's. Not for a field of the panel's own (its search), which has it open to the whole screen above the
+    // keyboard; and not for a last report from the keyboard that is on its way down for the panel (its suggestion
+    // strip can change as it goes), when no field has focus at all.
+    if (panelOpen.value && editing() && !inPanel()) closePanel(true);
     revealFocused();
   }
   relayout();
@@ -205,10 +255,13 @@ export function trackViewport() {
       if (browserKb) {
         remember(tallest - h);
         // The keyboard came up over the panel (a tap in the box): the panel goes.
-        if (panelOpen.value) panelOpen.value = false;
+        if (panelOpen.value && !inPanel()) closePanel(true);
       }
     }
-    const a = appHeight({ inner: innerHeight, visible: h, typing: typing(), app: appKeyboard.value, ime: imeHeight.value, panel: panelOpen.value ? panelHeight() : 0 });
+    // The panel's room: its slide in, or, lifted onto the keyboard, the keyboard and the panel both.
+    const lift = panelLift.value;
+    const panel = lift > 0 ? (appKeyboard.value ? imeHeight.value + lift : lift) : Math.round(panelHeight() * panelShown.value);
+    const a = appHeight({ inner: innerHeight, visible: h, typing: typing(), app: appKeyboard.value, ime: imeHeight.value, panel });
     root.classList.toggle('kb-open', browserKb || a.kb);
     const top = !appKeyboard.value && vv && typing() ? Math.round(vv.offsetTop) : 0;
     if (a.h !== null || top > 0) {
@@ -222,6 +275,7 @@ export function trackViewport() {
     }
   };
   relayout = update;
+  keyboardUp = () => (appKeyboard.value ? imeHeight.value > 0 : typing() && tallest - (vv?.height ?? innerHeight) > 120);
   vv?.addEventListener('resize', update);
   vv?.addEventListener('scroll', update);
   let wide = innerWidth;
@@ -237,7 +291,8 @@ export function trackViewport() {
   document.addEventListener('focusin', update);
   document.addEventListener('focusout', () => setTimeout(update, 50));
   effect(() => {
-    void panelOpen.value;
+    void panelShown.value;
+    void panelLift.value;
     update();
   });
 }

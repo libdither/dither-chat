@@ -14564,19 +14564,12 @@ button.msg-edited.link:hover {
 
 /* ================================================================== attaching on a phone (ui/Attach.tsx) */
 
-.attach-action {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  text-align: left;
-}
-.attach-action > svg {
-  color: var(--accent);
-}
-.attach-action small {
-  display: block;
-  color: var(--text-faint);
-  font-size: 12.5px;
+/* A tap leaves :hover behind on a touch screen: the box's buttons keep no grey circle after one. */
+@media (hover: none) and (pointer: coarse) {
+  .composer-row .icon-btn:hover {
+    background: none;
+    color: var(--text-dim);
+  }
 }
 
 /* The camera: black and full screen, the preview filling it, controls over it. */

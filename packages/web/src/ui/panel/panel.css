@@ -1,0 +1,294 @@
+/* The message box's panel on a phone (ui/panel/Panel.tsx, docs/uploads.md "The panel"): in the keyboard's place, at
+   its height, the app above it shortened by the same (phone.ts). Opened to the whole screen for a search. */
+.kp {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--bg-sidebar);
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  touch-action: pan-y;
+}
+.kp.full {
+  border-top: none;
+  z-index: 60;
+}
+/* On the keyboard, at its own height: what it holds sizes it, up to a little over half of what the keyboard leaves. */
+.kp.lifted {
+  padding-bottom: 0;
+}
+.kp-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.kp-tabs {
+  flex: none;
+  display: flex;
+  border-top: 1px solid var(--border);
+}
+.kp-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 0 5px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.kp-tab.on {
+  color: var(--accent);
+  font-weight: 600;
+}
+.kp-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 6px 0 10px;
+}
+.kp-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+.kp-crumbs {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+.kp-grow {
+  flex: 1;
+}
+.kp-album {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  font-size: 14px;
+  padding: 4px 6px;
+  border-radius: 8px;
+}
+.kp-album-cover {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 5px;
+}
+.kp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.kp-chip.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.kp-link {
+  color: var(--accent);
+  font-size: 13px;
+  padding: 4px 6px;
+}
+.kp-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 8px;
+}
+.kp-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2px;
+  padding: 0 2px;
+}
+.kp-tile {
+  position: relative;
+  aspect-ratio: 1;
+  padding: 0;
+  overflow: hidden;
+  background: var(--bg-raised);
+  border-radius: 0;
+}
+.kp-tile > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.kp-tile.on > img {
+  transform: scale(0.88);
+  border-radius: 6px;
+  transition: transform 0.12s;
+}
+.kp-cam {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+.kp-dur {
+  position: absolute;
+  left: 5px;
+  bottom: 4px;
+  font-size: 11px;
+  color: #fff;
+  text-shadow: 0 0 3px #000;
+}
+.kp-pick {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-faint);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+.kp-tile .kp-pick {
+  position: absolute;
+  right: 5px;
+  top: 5px;
+  border-color: rgba(255, 255, 255, 0.95);
+  background: rgba(0, 0, 0, 0.18);
+}
+.kp-pick.on,
+.kp-tile .kp-pick.on {
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+  color: var(--on-accent);
+}
+.kp-pick.busy {
+  border-color: var(--accent);
+  border-top-color: transparent;
+  animation: kp-spin 0.7s linear infinite;
+}
+@keyframes kp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.kp-sec {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: 10px 12px 4px;
+}
+.kp-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  text-align: left;
+}
+.kp-row.on {
+  background: var(--bg-hover);
+}
+.kp-row-icon {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+}
+.kp-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.kp-row-name,
+.kp-row-meta {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.kp-row-name {
+  font-size: 14px;
+}
+.kp-row-meta {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.kp-ask {
+  margin: 8px 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--bg-raised);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+.kp-ask b {
+  color: var(--text);
+}
+.kp-btn {
+  margin-top: 2px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  font-weight: 600;
+  font-size: 13px;
+}
+.kp-note,
+.kp-empty {
+  padding: 8px 12px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.kp-more,
+.kp-other {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px auto;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: var(--accent);
+}
+.kp-other {
+  color: var(--text-dim);
+}
+.kp-search {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  border-radius: 17px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text);
+  padding: 0 12px;
+  font-size: 16px;
+}
