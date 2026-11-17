@@ -170,7 +170,8 @@ alert otherwise. Each tier has a channel, so Android's own settings can change o
   in a group that leaves alerting to the group's summary never alerts, and its group has none. That is what
   `setSilent(true)` does on Android 12+, and it also works on 10 and 11.
 - **Read elsewhere.** A `{ clear: <conversationId> }` push cancels that conversation's notification, whichever kind
-  it has, without any outcome event. Opening the conversation in the app does the same, and tells the system it is on
+  it has, without any outcome event. It also carries `upTo`, the newest message the hub notified about, which the app
+  does not read yet ([notifications.md](notifications.md#read-elsewhere-gone-here)). Opening the conversation in the app does the same, and tells the system it is on
   screen (`setLocusContext`).
 - **Reply** sends through the hub, then re-posts the notification (recovered from the one showing) with what you wrote
   as its newest message, quietly, and reports the shortcut as used. On failure it says why, with what you typed.

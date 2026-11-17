@@ -5,7 +5,8 @@
  */
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { api, eventHooks, noticesBoot } from './state.ts';
+import { closeNotifications, noticeReadIn, shownTags } from './shade.ts';
+import { api, eventHooks, freshHooks, noticesBoot } from './state.ts';
 
 export const noticesPage = signal<P.NoticesPage | null>(null);
 
@@ -41,11 +42,30 @@ function patch(id: string, f: (n: P.NoticeView) => P.NoticeView) {
   if (p) noticesPage.value = { ...p, items: p.items.map((n) => (n.id === id ? f(n) : n)) };
 }
 
-/** Read here, and on the service (the hub tells it, best effort). */
+/** Read here, and on the service (the hub tells it, best effort). Its group's notification goes once nothing in it is unread. */
 export async function readNotice(id: string): Promise<void> {
   patch(id, (n) => ({ ...n, unread: false }));
+  const group = noticesPage.value?.items.find((n) => n.id === id)?.group;
+  if (group && !unreadGroups().has(group)) void closeNotifications([group], noticeReadIn(noticesPage.value?.items ?? []));
   await api(`/api/notices/${encodeURIComponent(id)}/read`, { method: 'POST' });
 }
+
+const unreadGroups = () => new Set((noticesPage.value?.items ?? []).filter((n) => n.unread).map((n) => n.group));
+
+/**
+ * After a catch-up with the hub (state.ts `freshHooks`): a group's notification still showing here goes when nothing in
+ * it is unread any more, read on another device while this one was away. Only with the list fetched just now.
+ */
+freshHooks.add(() => {
+  if (!noticesBoot.value) return;
+  void shownTags('ntg_').then(async (groups) => {
+    if (!groups.length) return;
+    await loadNotices();
+    if (!noticesPage.value) return;
+    const unread = unreadGroups();
+    await closeNotifications(groups.filter((g) => !unread.has(g)), noticeReadIn(noticesPage.value.items));
+  });
+});
 
 /** A mark (POST /api/messages/:id/feedback, as a message's): it teaches chat's model too. */
 export async function markNotice(id: string, marks: P.TriageMarks): Promise<void> {
