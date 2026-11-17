@@ -251,6 +251,9 @@ menu, dialog or picture, an old message jumped to, a message not yet through to 
 is in sight keeps its build and shows the bar too: a tab out of sight lets the new worker in only while no other window
 of the app is in sight (`sw.js`), and a tab updated by another one reloads only when it is out of sight and idle.
 `bun scripts/verify-update.ts <demo hub> --dist <its --web dir>` checks all of this in a browser.
+The new worker keeps every file of the new build, taking those the old build's cache already holds from there, so
+the first start after a deploy works with the hub out of reach too (docs/android.md, "Starting fast";
+`bun run check:offline`).
 
 ### How long a start takes
 

@@ -24,6 +24,41 @@
         }
       } catch (e) {}
     </script>
+    <script>
+      // The app's script or one it imports did not load (the hub out of reach, the file not kept), so nothing else will
+      // run: ask the hub again when the network returns and on a backoff, then reload, a waiting build first (android.md).
+      (() => {
+        const K = 'dither-chat:boot-retries', R = () => location.reload();
+        let n = 0, failed = 0, ran = 0, busy = 0, timer;
+        try { n = +sessionStorage.getItem(K) || 0; } catch {}
+        let wait = Math.min(1e3 * 2 ** n, 3e4);
+        const back = async () => {
+          try { sessionStorage.setItem(K, n + 1); } catch {}
+          const sw = navigator.serviceWorker, r = sw?.controller && (await sw.getRegistration().catch(() => null));
+          if (!r?.waiting) return R();
+          sw.addEventListener('controllerchange', R);
+          r.waiting.postMessage('skipWaiting');
+        };
+        const retry = () => {
+          if (busy) return;
+          busy = 1;
+          clearTimeout(timer);
+          fetch('/api/health', { cache: 'no-store', signal: AbortSignal.timeout?.(1e4) })
+            .then((r) => { if (!r.ok) throw 0; back(); })
+            .catch(() => { busy = 0; timer = setTimeout(retry, (wait = Math.min(wait * 2, 3e4))); });
+        };
+        addEventListener('error', (e) => {
+          const s = e.target;
+          if (ran || failed || s?.tagName !== 'SCRIPT' || s.type !== 'module') return;
+          failed = 1;
+          performance.mark('dither:boot-failed');
+          addEventListener('online', retry);
+          timer = setTimeout(retry, wait);
+        }, true);
+        // Once the app's script ran, its later failures are its own (pwa.ts), and the backoff starts over.
+        addEventListener('load', () => { if (!failed) { ran = 1; try { sessionStorage.removeItem(K); } catch {} } });
+      })();
+    </script>
   </head>
   <body>
     <!-- The loader's first frame (ui/Loader.tsx), still, until the script replaces it: the same sphere in the same place. -->

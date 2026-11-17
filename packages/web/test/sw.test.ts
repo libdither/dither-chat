@@ -537,3 +537,109 @@ test('a call ringing you (docs/calls.md): one per call, kept up, Answer opens th
   expect(actions(sig)).toEqual([]);
   expect(sig.shown[0].o.tag).toBe('call:cll_2');
 });
+
+/**
+ * install and activate, with Cache Storage holding `stored` (cache name → path → body) and the network answering `net`.
+ * The worker is stamped as the build stamps it (vite.config.ts): build `new`, shell `precache`.
+ */
+function lifecycle(precache: string[], stored: Record<string, Record<string, string>>, net: (path: string) => Response | Promise<Response> = (p) => new Response(`net ${p}`)) {
+  const on: Record<string, (e: any) => void> = {};
+  const self: any = { addEventListener: (t: string, fn: (e: any) => void) => (on[t] = fn), clients: { claim: async () => {} } };
+  const store = new Map(Object.entries(stored).map(([k, v]) => [k, new Map(Object.entries(v))]));
+  const path = (r: any) => (typeof r === 'string' ? r : r.url);
+  const caches = {
+    keys: async () => [...store.keys()],
+    delete: async (name: string) => store.delete(name),
+    open: async (name: string) => {
+      if (!store.has(name)) store.set(name, new Map());
+      const m = store.get(name)!;
+      return {
+        match: async (r: any) => (m.has(path(r)) ? new Response(m.get(path(r))) : undefined),
+        put: async (r: any, res: Response) => void m.set(path(r), await res.text()),
+      };
+    },
+  };
+  const fetched: { path: string; cache: string }[] = [];
+  // Paths as the worker names them; a worker resolves them against its own address.
+  class Req {
+    constructor(
+      public url: string,
+      public init: { cache?: string } = {},
+    ) {}
+  }
+  const fetchStub = async (r: Req) => (fetched.push({ path: r.url, cache: r.init.cache ?? 'default' }), net(r.url));
+  const stamped = src.replace("'__BUILD__'", "'new'").replace("'__PRECACHE__'", `'${JSON.stringify(precache)}'`);
+  new Function('self', 'fetch', 'NotificationEvent', 'caches', 'Request', stamped)(self, fetchStub, function () {}, caches, Req);
+  const run = async (type: string) => {
+    let done: Promise<unknown> = Promise.resolve();
+    on[type]({ waitUntil: (p: Promise<unknown>) => (done = p) });
+    await done;
+  };
+  const contents = (name: string) => Object.fromEntries(store.get(name) ?? []);
+  return { fetched, store, contents, install: () => run('install'), activate: () => run('activate') };
+}
+
+const SHELL = ['/assets/entry-new1.js', '/assets/runtime-same.js', '/assets/emoji-same.js', '/assets/lazy-new2.js', '/assets/style-same.css', '/icon.svg', '/index.html', '/manifest.webmanifest'];
+
+test('a deploy downloads only what changed: hashed files an older build kept are copied, the rest fetched; index.html, the manifest and icons always fresh', async () => {
+  const w = lifecycle(SHELL, {
+    'dither-shell-old': { '/index.html': 'old page', '/manifest.webmanifest': 'old manifest', '/assets/entry-old1.js': 'old entry', '/assets/runtime-same.js': 'runtime', '/assets/style-same.css': 'style' },
+    // A cache from an install that never finished (a build skipped over) counts too.
+    'dither-shell-skipped': { '/assets/emoji-same.js': 'emoji' },
+    'dither-media-v1': { '/media/s/a': 'picture' },
+  });
+  await w.install();
+  expect(w.contents('dither-shell-new')).toEqual({
+    '/assets/entry-new1.js': 'net /assets/entry-new1.js',
+    '/assets/runtime-same.js': 'runtime',
+    '/assets/emoji-same.js': 'emoji',
+    '/assets/lazy-new2.js': 'net /assets/lazy-new2.js',
+    '/assets/style-same.css': 'style',
+    '/icon.svg': 'net /icon.svg',
+    '/index.html': 'net /index.html',
+    '/manifest.webmanifest': 'net /manifest.webmanifest',
+  });
+  // A hashed file may come from the HTTP cache; the others past it.
+  expect(w.fetched.sort((a, b) => a.path.localeCompare(b.path))).toEqual([
+    { path: '/assets/entry-new1.js', cache: 'default' },
+    { path: '/assets/lazy-new2.js', cache: 'default' },
+    { path: '/icon.svg', cache: 'reload' },
+    { path: '/index.html', cache: 'reload' },
+    { path: '/manifest.webmanifest', cache: 'reload' },
+  ]);
+  // The older builds' caches go only now, once the new one is whole; the pictures stay.
+  expect([...w.store.keys()].sort()).toEqual(['dither-media-v1', 'dither-shell-new', 'dither-shell-old', 'dither-shell-skipped']);
+  await w.activate();
+  expect([...w.store.keys()].sort()).toEqual(['dither-media-v1', 'dither-shell-new']);
+});
+
+test('a file it cannot have fails the install, and the build in use keeps its cache; trying again fetches only what is missing', async () => {
+  let down = true;
+  const w = lifecycle(SHELL, { 'dither-shell-old': { '/index.html': 'old page', '/assets/runtime-same.js': 'runtime' } }, (p) => {
+    if (down && p === '/assets/lazy-new2.js') return new Response('not found', { status: 404 });
+    if (down && p === '/assets/emoji-same.js') throw new TypeError('Failed to fetch');
+    return new Response(`net ${p}`);
+  });
+  await expect(w.install()).rejects.toThrow();
+  expect(w.contents('dither-shell-old')).toEqual({ '/index.html': 'old page', '/assets/runtime-same.js': 'runtime' });
+  expect(w.contents('dither-shell-new')['/assets/lazy-new2.js']).toBeUndefined();
+  down = false;
+  w.fetched.length = 0;
+  await w.install();
+  expect(w.fetched.map((f) => f.path).sort()).toEqual(['/assets/emoji-same.js', '/assets/lazy-new2.js', '/icon.svg', '/index.html', '/manifest.webmanifest']);
+  expect(Object.keys(w.contents('dither-shell-new')).sort()).toEqual([...SHELL].sort());
+});
+
+test('an unstamped worker (a dev server) still keeps index.html and the manifest', async () => {
+  const on: Record<string, (e: any) => void> = {};
+  const kept: string[] = [];
+  const caches = { keys: async () => [], open: async () => ({ match: async () => undefined, put: async (u: string) => void kept.push(u) }) };
+  const Req = class {
+    constructor(public url: string) {}
+  };
+  new Function('self', 'fetch', 'NotificationEvent', 'caches', 'Request', src)({ addEventListener: (t: string, fn: (e: any) => void) => (on[t] = fn) }, async () => new Response('x'), function () {}, caches, Req);
+  let done: Promise<unknown> = Promise.resolve();
+  on.install({ waitUntil: (p: Promise<unknown>) => (done = p) });
+  await done;
+  expect(kept.sort()).toEqual(['/index.html', '/manifest.webmanifest']);
+});
