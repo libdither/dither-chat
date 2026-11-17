@@ -24,6 +24,48 @@
         }
       } catch (e) {}
     </script>
+    <script>
+      // The app's script or one it imports did not load (the hub out of reach, the file not kept), so nothing else will
+      // run: ask the hub again when the network returns and on a backoff, then reload, a waiting build first (android.md).
+      (() => {
+        const K = 'dither-chat:boot-retries', R = () => location.reload();
+        let n = 0, failed = 0, ran = 0, busy = 0, timer;
+        try { n = +sessionStorage.getItem(K) || 0; } catch {}
+        // After a few reloads the hub answers but a file it lists is missing: ask less often (android.md).
+        const cap = n > 6 ? 3e5 : 3e4;
+        let wait = Math.min(1e3 * 2 ** n, cap);
+        const back = async () => {
+          try { sessionStorage.setItem(K, n + 1); } catch {}
+          const sw = navigator.serviceWorker, r = sw?.controller && (await sw.getRegistration().catch(() => null));
+          if (!r?.waiting) return R();
+          // Not unlessSeen: this page is in sight itself.
+          sw.addEventListener('controllerchange', R);
+          r.waiting.postMessage('skipWaiting');
+          setTimeout(R, 5e3);
+        };
+        const retry = () => {
+          if (busy) return;
+          busy = 1;
+          clearTimeout(timer);
+          // The hub's own answer, not a Wi-Fi sign-in page.
+          fetch('/api/health', { cache: 'no-store', signal: AbortSignal.timeout?.(1e4) })
+            .then((r) => r.json())
+            .then((j) => { if (j?.ok !== true) throw 0; back(); })
+            .catch(() => { busy = 0; timer = setTimeout(retry, (wait = Math.min(wait * 2, cap))); });
+        };
+        addEventListener('error', (e) => {
+          const s = e.target;
+          if (ran || failed || s?.tagName !== 'SCRIPT' || s.type !== 'module') return;
+          failed = 1;
+          performance.mark('dither:boot-failed');
+          if (n > 1) document.getElementById('boot-static')?.insertAdjacentHTML('beforeend', '<p style="position:absolute;top:calc(50% + 64px);font:14px sans-serif;color:#9a9cab">Part of the app didn\'t load. Trying again\u2026</p>');
+          addEventListener('online', retry);
+          timer = setTimeout(retry, wait);
+        }, true);
+        // Once the app's script ran, its later failures are its own (pwa.ts), and the backoff starts over.
+        addEventListener('load', () => { if (!failed) { ran = 1; try { sessionStorage.removeItem(K); } catch {} } });
+      })();
+    </script>
   </head>
   <body>
     <!-- The loader's first frame (ui/Loader.tsx), still, until the script replaces it: the same sphere in the same place. -->

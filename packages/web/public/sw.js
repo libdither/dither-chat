@@ -18,15 +18,46 @@ const MEDIA_COUNT = 4000;
 const TRIM_EVERY = 25;
 
 self.addEventListener('install', (e) => {
-  const assets = PRECACHE.startsWith('[') ? JSON.parse(PRECACHE) : [];
-  // Fetched fresh: an HTTP-cached index.html could name files from the previous build.
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['/index.html', '/manifest.webmanifest', ...assets].map((u) => new Request(u, { cache: 'reload' })))));
+  const listed = PRECACHE.startsWith('[') ? JSON.parse(PRECACHE) : [];
+  e.waitUntil(fillShell([...new Set(['/index.html', '/manifest.webmanifest', ...listed])]));
   // No skipWaiting: the page asks for it (pwa.ts), since old pages may still load old chunks.
 });
+// Only once this build's cache is whole (an install that could not fill it fails, and the build in use stays) do the
+// older builds' caches go.
 self.addEventListener('activate', (e) => {
   const old = (k) => (k.startsWith('dither-shell-') && k !== CACHE) || (k.startsWith('dither-media-') && k !== MEDIA);
   e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter(old).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
 });
+
+/**
+ * Every file of this build into its cache (vite.config.ts lists them). A hashed file (/assets/) never changes under its
+ * name, so one an older build's cache holds is copied from there, and a deploy downloads only what changed; one it
+ * lacks may come from the HTTP cache. The rest (index.html, the manifest, the icons) are fetched fresh: an HTTP-cached
+ * index.html could name the previous build's files. Any file it cannot have fails the install, once the others are in
+ * (the browser tries the install again later, and then needs only what is missing).
+ */
+async function fillShell(urls) {
+  const c = await caches.open(CACHE);
+  const older = await Promise.all((await caches.keys()).filter((k) => k.startsWith('dither-shell-') && k !== CACHE).map((k) => caches.open(k)));
+  const done = await Promise.allSettled(
+    urls.map(async (u) => {
+      const hashed = u.startsWith('/assets/');
+      if (hashed) {
+        // An install tried before and stopped may have this one already.
+        if (await c.match(u)) return;
+        for (const o of older) {
+          const kept = await o.match(u);
+          if (kept) return c.put(u, kept);
+        }
+      }
+      const res = await fetch(new Request(u, { cache: hashed ? 'default' : 'reload' }));
+      if (!res.ok) throw new Error(`${u}: ${res.status}`);
+      await c.put(u, res);
+    }),
+  );
+  const failed = done.find((d) => d.status === 'rejected');
+  if (failed) throw failed.reason;
+}
 // Typing into a notification is a Chromium extension, not in the Notifications standard. Elsewhere there is no way to
 // read what was typed, so it is not offered there at all and the notification opens the conversation as usual.
 const CAN_REPLY = typeof NotificationEvent !== 'undefined' && 'reply' in NotificationEvent.prototype;
