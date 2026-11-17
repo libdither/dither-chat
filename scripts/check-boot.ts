@@ -83,8 +83,14 @@ async function click(page: Page, sel: string, what: string) {
     }
     return null;
   })()`;
+  // Where it is twice running, a frame apart: a page still sliding in (the phone's pages, docs/phone.md) moves its
+  // buttons between finding one and pressing it, and a press where it was lands on something else.
   let at: { x: number; y: number } | null = null;
-  await until(`${what} (${sel})`, async () => (at = await page.eval(find)));
+  await until(`${what} (${sel})`, async () => {
+    const a = await page.eval<{ x: number; y: number } | null>(find);
+    const b = a && (await page.eval<{ x: number; y: number } | null>(`new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(${find}))))`));
+    return !!a && !!b && a.x === b.x && a.y === b.y && !!(at = b);
+  });
   for (const type of ['mousePressed', 'mouseReleased']) await page.send('Input.dispatchMouseEvent', { type, x: at!.x, y: at!.y, button: 'left', clickCount: 1 });
 }
 
