@@ -20,8 +20,8 @@ controls rather than splitting them (`styles.css`, "A computer's box"). From lef
 
 - **The + menu** (`Timeline.tsx`, `plusItems`): what this chat's network takes besides words, and only that. Today:
   **Upload a file** (with the network's size limit), **Poll** where an account here has `pollCreate`
-  ([polls.md](polls.md)), and **Sticker** where it has `sendStickers` ([media-kinds.md](media-kinds.md)); the sticker
-  picker opens beside the +. Where files are all the network takes (Matrix, Telegram, WhatsApp and the rest), the + is
+  ([polls.md](polls.md)), **Sticker** where it has `sendStickers` ([media-kinds.md](media-kinds.md)), and **GIF** on
+  Discord or wherever files go (media-kinds.md "GIFs"); the pickers open beside the +. Where files are all the network takes (Matrix, Telegram, WhatsApp and the rest), the + is
   a paperclip that opens the file picker at once. Nothing that does not work here is shown, disabled or not.
   Dropping or pasting files still attaches them without it.
 - The text, then the emoji picker.

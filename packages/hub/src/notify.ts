@@ -47,6 +47,9 @@ export class Notifier {
    * A list row reaches the phones only as the phone's list allows (phonelist.ts, `prior`: the start alone puts it on
    * the list); held, nothing is sent at all, as within the list's ten minutes (open pages show no list row anyway,
    * state.ts `showsHere`). A Conversation or an alert in a chat ends its list episode.
+   *
+   * A held one (a reminder you set on a network, the summary when quiet hours end) carries `keep`: it shows no
+   * message's time, and no read closes it, only a tap or a swipe (docs/notifications.md, "Read elsewhere, gone here").
    */
   message(title: string, body: string, conversationId: string, messageId: string, reasons: string[], pushExtra: Record<string, unknown> = {}, kind: 'message' | 'held' = 'held', tier: Tier = 'push', importance: number | null = null, prior = true) {
     const { store, activity, devices, push, delivery, server, phone } = this.d;
@@ -61,7 +64,8 @@ export class Notifier {
     const quiet = devices.quietOn(conversationId, addressed);
     const level = tier === 'push' ? 'push' : 'quiet';
     const look = store.notifyLook(conversationId, kind === 'message' ? messageId : undefined);
-    server.notify({ t: 'notify', messageId, conversationId, title, body, reasons, ...look, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}), ...(tier !== 'push' ? { level: tier } : {}) });
+    const keep = kind === 'held' ? { keep: true as const } : {};
+    server.notify({ t: 'notify', messageId, conversationId, title, body, reasons, ...look, ...keep, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}), ...(tier !== 'push' ? { level: tier } : {}) });
     const skip = tier === 'push' ? quiet : [...quiet, ...push.desktops()];
     const vote = kind === 'message' ? { messageId, level, tier, ...(importance !== null ? { importance } : {}) } : {};
     const grouped = kind === 'message' ? delivery.plan(conversationId, messageId, tier, addressed) : null;
@@ -69,7 +73,7 @@ export class Notifier {
     if (grouped?.tier && kind === 'message') Object.assign(vote, { tier: grouped.tier, level: grouped.tier === 'push' ? 'push' : 'quiet' });
     this.last = server
       .warm(pictures(look, grouped))
-      .then(() => push.notify(title, body, conversationId, { ...pushExtra, ...look, ...vote, ...grouped, ...(nid ? { nid } : {}) }, skip, level))
+      .then(() => push.notify(title, body, conversationId, { ...pushExtra, ...look, ...vote, ...grouped, ...keep, ...(nid ? { nid } : {}) }, skip, level))
       .then((r) => nid && activity.sent(nid, r))
       .catch((e) => (console.error('push failed', e), jobFailed('push: request', e)));
   }

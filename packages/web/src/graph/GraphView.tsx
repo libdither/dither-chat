@@ -10,6 +10,7 @@ import { convTitle, netName } from '../model.ts';
 import { api, db, go, toast, type Route } from '../state.ts';
 import { Empty, NetBadge, openAdversarial } from '../ui/bits.tsx';
 import { Icon } from '../ui/icons.tsx';
+import { HeadOrb } from '../ui/Offline.tsx';
 import { Engine } from './engine.ts';
 import { DEFAULT_FILTERS, index, neighbours, sharesWith, visible, type Filters, type Index } from './model.ts';
 import { Loading } from '../ui/Loader.tsx';
@@ -72,6 +73,7 @@ export default function GraphView({ onBack }: { onBack: () => void }) {
           <p>People and the servers and groups they are in, across your accounts</p>
         </div>
         <span class="pg-head-tools">
+          <HeadOrb />
           <button class="icon-btn small" title="Load again" aria-label="Load again" onClick={load}>
             <Icon name="refresh" size={16} />
           </button>

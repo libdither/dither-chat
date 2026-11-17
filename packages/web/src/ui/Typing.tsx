@@ -8,6 +8,7 @@ import { authorName, personOf } from '../model.ts';
 import { db, typing } from '../state.ts';
 import { typersIn, type Typer } from '../typers.ts';
 import { typingNow } from '../typing.ts';
+import { offline, OfflineNote } from './Offline.tsx';
 
 function typerName(t: Typer): string {
   const p = personOf(t.identityId);
@@ -33,21 +34,32 @@ function TypingDots() {
 
 /**
  * Always there, empty or not, so someone starting to type never moves the timeline. A person's chat puts its route line
- * ("To Sam on Signal", ui/Pairs.tsx) at the start of this row, and who is typing goes to its end (docs/chats.md).
+ * ("To Sam on Signal", ui/Pairs.tsx) at the start of this row, and who is typing goes to its end (docs/chats.md). With
+ * the hub out of reach its end says what happens to a send instead, and the route's "last message via" gives way.
  */
 export function TypingBar({ convIds, lead }: { convIds: string[]; lead?: ComponentChildren }) {
-  const line = typingLine(useTypers(convIds).map(typerName));
+  const typers = useTypers(convIds);
+  const off = offline.value;
+  const line = off ? [] : typingLine(typers.map(typerName));
   const now = line.length > 0 && (
     <>
       <TypingDots />
       <span class="typing-text">{line.map((r) => (r.bold ? <b>{r.text}</b> : r.text))}</span>
     </>
   );
-  if (!lead) return <div class={`typing-bar ${line.length ? 'on' : ''}`}>{now}</div>;
+  const cls = `${line.length ? 'on' : ''} ${off ? 'offline' : ''}`;
+  if (!lead)
+    return (
+      <div class={`typing-bar ${cls}`}>
+        {now}
+        {off && <OfflineNote />}
+      </div>
+    );
   return (
-    <div class={`typing-bar with-lead ${line.length ? 'on' : ''}`}>
+    <div class={`typing-bar with-lead ${cls}`}>
       <div class="typing-lead">{lead}</div>
       {now && <div class="typing-now">{now}</div>}
+      {off && <OfflineNote />}
     </div>
   );
 }

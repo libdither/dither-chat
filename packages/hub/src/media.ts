@@ -1,12 +1,13 @@
 /**
- * Kinds of message beyond text and files (docs/media-kinds.md): the sticker picker's pages and installing a pack, and
- * stories. Stories are kept apart from messages on purpose: they never reach the inbox, a count or a notification,
+ * Kinds of message beyond text and files (docs/media-kinds.md): the sticker picker's pages and installing a pack, GIF
+ * search and the GIFs already in your chats, and stories. Stories are kept apart from messages on purpose: they never reach the inbox, a count or a notification,
  * show only on their author's or group's page, and are gone once Signal would drop them (a day). Opening one tells its
  * author only where the adapter's rules say so; replying and reacting go through the adapter like a send.
  */
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
 import { STICKER_PAGE_PACKS, STORY_LIFETIME_MS, VOICE_MAX_SECONDS } from '@dither-chat/protocol';
+import type { StoredExtra } from './rich.ts';
 import { hubId } from '@dither-chat/protocol/ids';
 import { requestHeld } from './add.ts';
 import type { AccountRow, Store } from './store.ts';
@@ -14,6 +15,7 @@ import type { AccountRow, Store } from './store.ts';
 type Cmd =
   | { t: 'stickers'; conversation: string; cursor?: string }
   | { t: 'addStickerPack'; uri: string }
+  | { t: 'gifs'; query?: string; cursor?: string }
   | { t: 'storyViewed'; story: string }
   | { t: 'storyReply'; story: string; conversation?: string; body?: string; emoji?: string };
 
@@ -83,6 +85,21 @@ export function sendMediaProblem(
 }
 
 const caps = (store: Store, accountId: string): P.Capability[] => JSON.parse(store.account(accountId)?.capabilities ?? '[]');
+
+/** GIFs in one page of GET /api/gifs, at most. */
+const GIF_PAGE = 50;
+/** GIFs in one page of GET /api/gifs/yours. */
+const YOUR_GIFS_PAGE = 40;
+/** How far back one page of "Yours" looks for Discord's GIF links, which only a message's stored embeds show. */
+const YOUR_GIFS_WINDOW_MS = 120 * 24 * 60 * 60_000;
+
+/** A link that plays as a video rather than a picture: what the picker draws with <video>. */
+const videoLink = (u: string) => /\.(mp4|webm|mov)(\?|#|$)/i.test(u);
+
+function isGif(g: unknown): g is P.GifFact {
+  const x = g as P.GifFact;
+  return !!x && typeof x === 'object' && typeof x.id === 'string' && typeof x.url === 'string' && /^https:\/\//.test(x.url) && typeof x.src === 'string' && !!x.src;
+}
 
 function isStory(s: unknown): s is P.StoryFact {
   const x = s as P.StoryFact;
@@ -161,6 +178,92 @@ export class Media {
     const media = (u: string | undefined) => this.d.store.mediaUrl(u ?? null, accountId);
     const stickers = (p.stickers ?? []).filter((x) => typeof x?.id === 'string' && x.url).map((x) => ({ id: x.id, name: String(x.name ?? ''), ...(x.emoji ? { emoji: x.emoji } : {}), ...(x.mime ? { mime: x.mime } : {}), url: media(x.url) ?? '' }));
     return { id: String(p.id), name: String(p.name ?? ''), source: p.source, cover: media(p.cover) ?? stickers[0]?.url ?? null, stickers };
+  }
+
+  /**
+   * One page of GIFs (capability 'searchGifs'): trending without a query. Through the conversation's own account where
+   * it searches, else any connected account that does: the results can be sent anywhere (on Discord as their link,
+   * elsewhere as a file), and every picture comes through the hub, so the page never loads the provider's.
+   */
+  async gifs(conversationId: string | undefined, query: string | undefined, cursor: string | undefined): Promise<P.GifPageView> {
+    const s = this.d.store;
+    const searches = (id: string | null | undefined): id is string => !!id && this.d.online(id) && caps(s, id).includes('searchGifs');
+    let accountId: string | null = null;
+    if (conversationId) {
+      if (!s.nativeOf('conversation', conversationId)) throw new MediaError('no such conversation', 404);
+      const own = this.d.pickAccount(conversationId, undefined);
+      if (searches(own)) accountId = own;
+    }
+    accountId ??= s.accounts().find((a) => searches(a.id))?.id ?? null;
+    if (!accountId) return { accountId: null, gifs: [], next: null, note: 'GIF search goes through a connected Discord account, and none is connected.' };
+    const q = query?.trim().slice(0, 100);
+    const page = await this.d.command<P.GifPage>(accountId, { t: 'gifs', ...(q ? { query: q } : {}), ...(cursor ? { cursor: String(cursor).slice(0, 64) } : {}) }, 20_000);
+    const media = (u: string | undefined) => s.mediaUrl(u ?? null, accountId);
+    const gifs: P.GifView[] = [];
+    for (const g of (Array.isArray(page?.gifs) ? page.gifs : []).slice(0, GIF_PAGE)) {
+      if (!isGif(g)) continue;
+      const src = media(g.src);
+      if (!src) continue;
+      const w = Number(g.width) || 0;
+      const h = Number(g.height) || 0;
+      gifs.push({ id: g.id, url: g.url, src, gif: media(g.gif), video: videoLink(g.src), width: w, height: h, ...(g.title ? { title: String(g.title).slice(0, 200) } : {}) });
+    }
+    return { accountId, gifs, next: typeof page?.next === 'string' ? page.next : null, ...(page?.note ? { note: String(page.note) } : {}) };
+  }
+
+  /**
+   * The GIFs already in your chats, newest first, one each: GIF files and the networks' GIF videos (attachments marked
+   * `gif`), and Discord's GIF links (a gifv embed). Nothing outside the hub is asked.
+   */
+  yourGifs(before: number | undefined): P.YourGifsView {
+    const s = this.d.store;
+    const until = before && Number.isFinite(before) ? before : this.now() + 1;
+    const seenBy = '(SELECT ms.account_id FROM message_seen ms WHERE ms.message_id = m.id LIMIT 1)';
+    const files = s.db
+      .query<{ id: string; ts: number; url: string; mime: string | null; width: number | null; height: number | null; account: string | null }, [number, number]>(
+        `SELECT m.id, m.ts, a.url, a.mime, a.width, a.height, ${seenBy} AS account FROM attachment a JOIN message m ON m.id = a.message_id
+         WHERE m.ts < ? AND m.deleted = 0 AND (a.mime = 'image/gif' OR a.extra LIKE '%"gif":true%') ORDER BY m.ts DESC LIMIT ?`,
+      )
+      .all(until, YOUR_GIFS_PAGE * 2);
+    const links = s.db
+      .query<{ id: string; ts: number; body: string; extra: string; account: string | null }, [number, number, number]>(
+        `SELECT m.id, m.ts, m.body, m.extra, ${seenBy} AS account FROM message m
+         WHERE m.ts < ? AND m.ts > ? AND m.network = 'discord' AND m.deleted = 0 AND m.extra LIKE '%"gifv":true%' ORDER BY m.ts DESC LIMIT ?`,
+      )
+      .all(until, until - YOUR_GIFS_WINDOW_MS, YOUR_GIFS_PAGE * 2);
+    const all: (P.YourGif & { key: string })[] = [];
+    for (const r of files) {
+      const src = s.mediaUrl(r.url, r.account);
+      if (src) all.push({ key: r.url, messageId: r.id, ts: r.ts, url: null, src, mime: r.mime ?? 'image/gif', width: r.width, height: r.height });
+    }
+    for (const r of links) {
+      let x: StoredExtra;
+      try {
+        x = JSON.parse(r.extra) as StoredExtra;
+      } catch {
+        continue;
+      }
+      for (const e of x.embeds ?? []) {
+        if (!e.video?.gifv || !e.video.url) continue;
+        const src = s.mediaUrl(e.video.url, r.account);
+        const url = e.url && /^https:\/\//.test(e.url) ? e.url : null;
+        if (src) all.push({ key: url ?? e.video.url, messageId: r.id, ts: r.ts, url, src, mime: videoLink(e.video.url) ? 'video/mp4' : 'image/gif', width: e.video.width ?? null, height: e.video.height ?? null });
+      }
+    }
+    all.sort((a, b) => b.ts - a.ts);
+    const seen = new Set<string>();
+    const gifs: P.YourGif[] = [];
+    let last: number | null = null;
+    for (const { key, ...g } of all) {
+      if (gifs.length >= YOUR_GIFS_PAGE) break;
+      last = g.ts;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      gifs.push(g);
+    }
+    // More where a list was cut, or this page stopped before the end of what came.
+    const more = all.length > gifs.length || files.length === YOUR_GIFS_PAGE * 2 || links.length === YOUR_GIFS_PAGE * 2;
+    return { gifs, next: more ? last : null };
   }
 
   /** Install a pack from its link, on the owner's click (capability 'installStickers'). */

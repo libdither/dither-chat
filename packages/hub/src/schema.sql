@@ -217,7 +217,7 @@ CREATE TABLE IF NOT EXISTS attachment (
   url        TEXT NOT NULL,                  -- MediaUrl as the adapter gave it
   position   INTEGER NOT NULL DEFAULT 0,
   alt        TEXT,                           -- its description (alt text), searched (rich.ts)
-  extra      TEXT                            -- JSON: spoiler, explicit, voice (hub rich.ts attachmentExtra)
+  extra      TEXT                            -- JSON: spoiler, explicit, gif, voice (hub rich.ts attachmentExtra)
 );
 CREATE INDEX IF NOT EXISTS attachment_message ON attachment(message_id);
 
@@ -343,8 +343,29 @@ CREATE TABLE IF NOT EXISTS push_subscription (
   -- added later, so push.ts also adds them to older databases
   last_error_at   INTEGER,
   last_test_at    INTEGER,
-  last_arrived_at INTEGER                    -- the device said a test push reached it
+  last_arrived_at INTEGER,                   -- the device said a test push reached it
+  refilled_at     INTEGER                    -- a push reached it while its page was in use: Firefox's quota is full (clears.ts)
 );
+
+-- Pushes that only close a notification, to desktop browsers (clears.ts, docs/notifications.md "Read elsewhere, gone
+-- here"). What each browser registration was sent that a clear may close: one row per registration and notification
+-- tag, until it is cleared, tapped, swiped or three days old. Ids and times only.
+CREATE TABLE IF NOT EXISTS push_shown (
+  sub_id TEXT NOT NULL,                      -- push_subscription.id
+  tag    TEXT NOT NULL,                      -- the chat, mail thread or group of notices
+  ts     INTEGER NOT NULL,                   -- the newest message it showed
+  at     INTEGER NOT NULL,                   -- when it was sent
+  PRIMARY KEY (sub_id, tag)
+) WITHOUT ROWID;
+-- Each clear a browser registration was sent, for its cap, and for the next one within the push's ten minutes to
+-- carry again (it may take this one's place at the push service).
+CREATE TABLE IF NOT EXISTS push_clear (
+  sub_id TEXT NOT NULL,
+  at     INTEGER NOT NULL,
+  free   INTEGER NOT NULL,                   -- 1: another notification was still showing there, as far as the hub knew
+  tags   TEXT NOT NULL                       -- JSON [{ "id": tag, "upTo": ts }]: what it closes
+);
+CREATE INDEX IF NOT EXISTS push_clear_sub ON push_clear(sub_id, at);
 
 -- A rule of yours on a place or a person (docs/notifications.md): 'all' always alerts, 'digest' keeps a place to
 -- the list, 'none' mutes it; no rule is Automatic. Most specific scope wins: conversation > thread parent > section >
@@ -570,6 +591,8 @@ CREATE INDEX IF NOT EXISTS visit_start ON visit(start_at);
 CREATE INDEX IF NOT EXISTS visit_conv ON visit(conversation_id, start_at) WHERE conversation_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS visit_person ON visit(person_id, start_at) WHERE person_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS visit_push ON visit(push_id) WHERE push_id IS NOT NULL;
+-- A device's latest stay (clears.ts lastVisit): whether its page is in use, at once however long ago it last was.
+CREATE INDEX IF NOT EXISTS visit_device ON visit(device, start_at);
 
 -- What you did to an inbox row that says what you made of it (InboxAction): Mark As Read on a row showing a reply
 -- you owed. Ids and times only; part of the log (deleted with it, kept for its retention).

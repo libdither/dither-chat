@@ -10,6 +10,7 @@ import { accountRows } from '../accountrows.ts';
 import { NetBadge, showSection } from './bits.tsx';
 import { drawLater, Later } from './Later.tsx';
 import { Icon } from './icons.tsx';
+import { HeadOrb } from './Offline.tsx';
 import { DeviceRules } from './DeviceRules.tsx';
 import { percent } from './Marks.tsx';
 import { PushSettings } from './Push.tsx';
@@ -269,7 +270,10 @@ export function SettingsPane() {
         <div>
           <div class="set-title">
             <h2>Settings</h2>
-            {phone.value && <SectionsButton />}
+            <div class="set-title-acts">
+              {phone.value && <SectionsButton />}
+              <HeadOrb />
+            </div>
           </div>
           <p>Notification rules apply to every account at once. The most specific rule always wins.</p>
         </div>
@@ -396,6 +400,13 @@ export function SettingsPane() {
               <span>
                 <b>Follow your phone's archive</b>
                 <small>A chat you archive or unarchive on a network (Signal) is hidden or shown in the sidebar here too, when that changes. Something that needs you still shows.</small>
+              </span>
+            </label>
+            <label class="toggle-row">
+              <input type="checkbox" data-track="settings: plain gifs" checked={prefs.value.plainGifs !== false} onChange={(e) => setPrefs({ plainGifs: (e.target as HTMLInputElement).checked })} />
+              <span>
+                <b>Show GIFs as plain GIFs</b>
+                <small>A GIF sent as a link (Discord's picker sends them so) shows as just the GIF, with no link or card naming the site it came from, and the GIF videos of Telegram and WhatsApp loop silently with no player, as each app shows them. Off: the link, its card and a player. For this device.</small>
               </span>
             </label>
             <div class="set-rule">

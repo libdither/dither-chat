@@ -5,13 +5,14 @@
 import { useEffect, useState } from 'preact/hooks';
 import { clickTotals, countingClicks, forgetClicks, loadClickTotals, setCountingClicks } from '../clicklog.ts';
 import { phone } from '../phone.ts';
-import { toast } from '../state.ts';
+import { connected, toast } from '../state.ts';
 import { Icon } from './icons.tsx';
 import { Loading } from './Loader.tsx';
 
 /** Rows shown until asked for all. */
 const SHOWN = 25;
-const failed = (e: any) => toast({ kind: 'error', title: 'Button counts', body: String(e?.message ?? e) });
+// Without the hub, the orb already says so (Offline.tsx): no toast over the page's header as well.
+const failed = (e: any) => connected.value && toast({ kind: 'error', title: 'Button counts', body: String(e?.message ?? e) });
 
 export function UsageSettings() {
   const on = countingClicks();

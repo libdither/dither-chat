@@ -43,6 +43,7 @@ import { RowTyping } from './Typing.tsx';
 import { AccountChip, AccountDots, Avatar, Count, NetBadge, NetGlyph, SourceChip, variantIcon } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
+import { FolderIcon } from './Rail.tsx';
 import { phone } from '../phone.ts';
 import { dropPlace, placeLabel } from './Organize.tsx';
 import { contextMenu, Menuable, onMenu, openMenu, useMenu, type MenuEntry } from './ContextMenu.tsx';
@@ -815,9 +816,13 @@ export function FolderSidebar({ folderId, activeConv, activePerson }: { folderId
             return (
               <button class="row conv-row place-row" onClick={() => go({ view: 'folder', folder: c.id })} onContextMenu={onMenu(() => folderMenuSpec(c.id))}>
                 <span class="row-avatar">
-                  <span class="folder-row-icon" style={{ '--folder': c.color ?? '#8b93a7' } as any}>
-                    {c.icon ?? <Icon name="folder" />}
-                  </span>
+                  {c.icon ? (
+                    <span class="folder-row-icon" style={{ '--folder': c.color ?? '#8b93a7' } as any}>
+                      {c.icon}
+                    </span>
+                  ) : (
+                    <FolderIcon folder={c} small />
+                  )}
                 </span>
                 <span class="row-main">
                   <span class="row-top">
@@ -886,9 +891,13 @@ function SpacesEntry({ entry: e, hidden }: { entry: RailEntry; hidden?: boolean 
   const pinned = placePref(e.kind, e.key.slice(e.key.indexOf(':') + 1)).pinned;
   const icon =
     e.kind === 'folder' ? (
-      <span class="folder-row-icon" style={{ '--folder': e.folder.color ?? '#8b93a7' } as any}>
-        {e.folder.icon ?? <Icon name="folder" />}
-      </span>
+      e.folder.icon ? (
+        <span class="folder-row-icon" style={{ '--folder': e.folder.color ?? '#8b93a7' } as any}>
+          {e.folder.icon}
+        </span>
+      ) : (
+        <FolderIcon folder={e.folder} small />
+      )
     ) : e.kind === 'space' ? (
       <Avatar id={e.space.id} name={e.space.name} url={e.space.icon} size={36} square network={e.space.network} accountIds={e.space.accountIds} />
     ) : (
