@@ -138,6 +138,9 @@ jobs:
       - run: bun run check:boot
       # The sign-in screen on a cold start, clicked and typed into, against a hub behind the login (docs/login.md).
       - run: bun run web:build && bun scripts/verify-login.ts
+      # The hub out of reach (docs/sync.md, "Quiet"), on the same build: a demo hub stopped and started again, the amber
+      # orb and its popover on a phone and a computer, the line over the message box, a send that waits and goes out once.
+      - run: bun scripts/verify-offline.ts
 
   # Load and chat switching on a tenth-size world in the runner's browser, a warm-up and then one run: renders, DOM
   # nodes and bytes against scripts/perf-baseline-ci.json; its times go in the job's summary and are never judged

@@ -8,6 +8,7 @@ import { api, db, go, prefs, rev, setPrefs, toast, type DirectorySort } from '..
 import { AccountChip, Avatar, Count, Empty, Modal, NetBadge } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
+import { HeadOrb } from './Offline.tsx';
 import { dropPlace } from './Organize.tsx';
 import { openPlaceMenu } from './menus.tsx';
 import { saveThreshold, thresholdOf } from './Reorganize.tsx';
@@ -260,6 +261,7 @@ export function DirectoryPane({ onBack }: { onBack: () => void }) {
           <h2>All communities and groups</h2>
           <p>{shown.length} {shown.length === 1 ? 'place' : 'places'} across your accounts</p>
         </div>
+        <HeadOrb />
       </header>
       <div class="dir-controls">
         <div class="search dir-search">
