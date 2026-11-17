@@ -2,7 +2,7 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { effect, untracked } from '@preact/signals';
 import { chatPersonOf, convsUnder, firstChannel, rootCommunity, totalUnread } from '../model.ts';
-import { adoptEntry, api, connected, db, go, loaded, pending, prefs, previousRoute, readProgress, refresh, rev, route, setListUnder, setRouteFill, unreachable, type Route } from '../state.ts';
+import { adoptEntry, api, connected, db, go, loaded, prefs, previousRoute, readProgress, refresh, rev, route, setListUnder, setRouteFill, type Route } from '../state.ts';
 import { isPage, isTabRoot, listKey, listToWrite, ownList, restAfter, wayBack, type Places } from '../pages.ts';
 import { dropLayer, phone, pushLayer } from '../phone.ts';
 import { AccountPane, AccountsSidebar, AddAccount, addingAccount } from './Accounts.tsx';
@@ -34,6 +34,7 @@ import { FolderSidebar, InboxSidebar, PeopleSidebar, SpaceSidebar, SpacesSidebar
 import { homeRoute } from '../opening.ts';
 import { ConversationPane, PersonPane } from './Timeline.tsx';
 import { Toasts } from './Toasts.tsx';
+import { OfflineLayer } from './Offline.tsx';
 import { PaneEdge, usePaneWidths } from './PaneEdge.tsx';
 import { CallDock } from './Call.tsx';
 import { RingCards } from './Ringing.tsx';
@@ -390,12 +391,6 @@ export function App() {
       class={`app ${p ? `phone rest-${rest}` : ''} ${!p && details ? 'with-details' : ''} ${full ? 'full' : ''} ${tabs ? 'tabs' : ''} ${tabRoot ? 'tab-root' : ''} ${narrow ? 'narrow' : ''}`}
       style={{ '--peek': `${PEEK}px` } as any}
     >
-      {/* Short drops go unmentioned: the app shows what it has and catches up when the hub is back (docs/sync.md). */}
-      {(unreachable.value || (!connected.value && pending.value.some((x) => x.queued))) && (
-        <div class="reconnect" role="status">
-          <span class="dot" /> Can't reach the hub · showing what this device has
-        </div>
-      )}
       {updateReady.value && (
         <button class="update-bar" onClick={applyUpdate}>
           <Icon name="refresh" size={14} /> A new version is ready. Tap to reload.
@@ -441,6 +436,8 @@ export function App() {
       <MessageHistoryLayer />
       <ThreadsLayerLazy />
       <Toasts />
+      {/* The hub out of reach: the rail's orb or a phone page's says so, and opens this (docs/sync.md). */}
+      <OfflineLayer />
       <DragLayer />
       <ContextMenuLayer />
       <TooltipLayer />

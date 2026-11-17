@@ -34,6 +34,8 @@ android {
     }
 
     buildTypes {
+        // Its own app, beside a release build: the emulator tests (scripts/verify-android-call.ts) install and clear it.
+        debug { applicationIdSuffix = ".verify" }
         release {
             isMinifyEnabled = true
             isShrinkResources = true

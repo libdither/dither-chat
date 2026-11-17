@@ -3,7 +3,7 @@ import { expect, mock, test } from 'bun:test';
 import { stateMock } from './fixtures/state.ts';
 
 mock.module('../src/state.ts', stateMock);
-const { buildRest, mailRest, MAX_MAIL_BODIES, MAX_MAIL_CHARS } = await import('../src/snapshot.ts');
+const { buildRest, mailRest, MAX_MAIL_BODIES, MAX_MAIL_CHARS, saveDelay, SAVE_WITHIN_MS } = await import('../src/snapshot.ts');
 
 const msg = (id: string, ts: number, extra: Record<string, unknown> = {}): any => ({ id, conversationId: 'c', ts, authorId: `idn_${id}`, body: 'x', replyToId: null, reactions: [], attachments: [], embeds: [], ...extra });
 const tl = (key: string, n: number, extra: Record<string, unknown> = {}): any => ({ key, messages: Array.from({ length: n }, (_, i) => msg(`${key}-${i}`, i)), hasMore: true, loading: false, ...extra });
@@ -36,4 +36,14 @@ test('keeps the Triage board’s mail, newest first, as many as the inbox (slice
   expect(rest.mailTriage).toHaveLength(100);
   expect(rest.mailTriage[0].id).toBe('mml_150');
   expect(JSON.parse(buildRest({ inbox: [], identities: ids, quoted: new Map() })).mailTriage).toBeUndefined();
+});
+
+test('a save waits for things to settle, but never past SAVE_WITHIN_MS from the first ask, and the first bootstrap a device keeps goes at once', () => {
+  // Quiet: the usual wait after the last ask.
+  expect(saveDelay({ now: 1000, askedAt: 1000, ms: 1500, first: false })).toBe(1500);
+  // A run of chats fetched ahead keeps asking: each ask waits less, and the save is due SAVE_WITHIN_MS after the first.
+  expect(saveDelay({ now: 1000 + SAVE_WITHIN_MS - 400, askedAt: 1000, ms: 1500, first: false })).toBe(400);
+  expect(saveDelay({ now: 1000 + SAVE_WITHIN_MS + 50, askedAt: 1000, ms: 1500, first: false })).toBe(0);
+  // Nothing kept yet on this device: the hub's answer is written straight away.
+  expect(saveDelay({ now: 1000, askedAt: 1000, ms: 1500, first: true })).toBe(0);
 });

@@ -421,6 +421,7 @@ export function ThreadView({ src, kit: base, onBack }: { src: Src; kit: Kit; onB
             <span class="muted-label">{t?.stored ? `As the hub logged it · ${net}` : `On ${net}`}</span>
           </div>
         </div>
+        <kit.HeadOrb />
         {focal && (
           <a class="icon-btn" href={(focal.repostOf ?? focal).url} target="_blank" rel="noreferrer" title={`Open on ${net}`} aria-label={`Open on ${net}`}>
             <kit.Icon name="external" size={16} />

@@ -225,7 +225,8 @@ const inTextKey = (key: string) => /^\S+:\d+$/.test(key);
  * server's or pack's custom emoji, then Unicode's) down the side, and the emoji under the pointer named along the
  * bottom. On a network that keeps one reaction per person, that bottom line also says which of yours a pick replaces.
  */
-function Picker({ target, anchor, onClose }: { target: Target; anchor: DOMRect | null; onClose: () => void }) {
+/** `inline`: in the phone's panel (ui/panel/), where it stays open for another and draws no sheet of its own. */
+function Picker({ target, anchor, onClose, inline }: { target: Target; anchor: DOMRect | null; onClose: () => void; inline?: boolean }) {
   const m = target.kind === 'react' ? target.m : null;
   const network = m ? m.network : (target as Extract<Target, { kind: 'insert' }>).network;
   const conversationId = m ? m.conversationId : (target as Extract<Target, { kind: 'insert' }>).conversationId;
@@ -256,7 +257,7 @@ function Picker({ target, anchor, onClose }: { target: Target; anchor: DOMRect |
   useEffect(() => {
     if (!catalog) loadEmoji().then(setCatalog);
     reactionContext(conversationId).then(setCtx);
-    if (!sheet) search.current?.focus();
+    if (!sheet && !inline) search.current?.focus();
   }, [m?.id ?? conversationId]);
 
   // Place it next to whatever opened it, inside the window.
@@ -356,7 +357,7 @@ function Picker({ target, anchor, onClose }: { target: Target; anchor: DOMRect |
   const pick = (p: Picked, el: HTMLElement, keep = false) => {
     if (target.kind === 'insert') {
       target.insert(p.emoji ? (customMarkup(p.emoji) ?? `:${p.emoji.name}:`) : p.key);
-      if (!keep) onClose();
+      if (!keep && !inline) onClose();
       return;
     }
     if (style === 'super') burst(el, { key: p.key, emoji: p.emoji });
@@ -399,7 +400,7 @@ function Picker({ target, anchor, onClose }: { target: Target; anchor: DOMRect |
 
   if (!inserting && ctx && !ctx.canReact) {
     return (
-      <Shell sheet={sheet} box={box} onClose={onClose}>
+      <Shell sheet={sheet} inline={inline} box={box} onClose={onClose}>
         <div class="ep-blocked">
           <Icon name="info" size={18} />
           <span>{ctx.reason ?? `You can't react here on ${net}.`}</span>
@@ -424,7 +425,7 @@ function Picker({ target, anchor, onClose }: { target: Target; anchor: DOMRect |
   const rail = !query && sections.filter((s) => s.kind !== 'here');
 
   return (
-    <Shell sheet={sheet} box={box} onClose={onClose} label={inserting ? 'Emoji' : undefined}>
+    <Shell sheet={sheet} inline={inline} box={box} onClose={onClose} label={inserting ? 'Emoji' : undefined}>
       <div class="ep-head">
         {existingOnly ? (
           <span class="ep-head-title">Add to a reaction on this message</span>
@@ -563,7 +564,8 @@ function Inspector({ hovered, fallback, note, mine, swap, superOn, names }: { ho
   );
 }
 
-function Shell({ sheet, box, onClose, label = 'Add a reaction', children }: { sheet: boolean; box: { current: HTMLDivElement | null }; onClose: () => void; label?: string; children: any }) {
+function Shell({ sheet, inline, box, onClose, label = 'Add a reaction', children }: { sheet: boolean; inline?: boolean; box: { current: HTMLDivElement | null }; onClose: () => void; label?: string; children: any }) {
+  if (inline) return <div class="emoji-picker" ref={box}>{children}</div>;
   if (sheet)
     return (
       <Sheet onClose={onClose} label={label} class="emoji-picker" tall>
@@ -702,8 +704,8 @@ function Reactors({ m, reactionKey, style, anchor, onClose }: { m: P.MessageView
  * The composer's emoji button opens this: the same picker, putting what you pick into what you are writing. Shift
  * keeps it open for another.
  */
-export function InsertPicker({ conversationId, network, anchor, onInsert, onClose }: { conversationId: string; network: P.Network; anchor: DOMRect | null; onInsert: (text: string) => void; onClose: () => void }) {
-  return <Picker target={{ kind: 'insert', conversationId, network, insert: onInsert }} anchor={anchor} onClose={onClose} />;
+export function InsertPicker({ conversationId, network, anchor, onInsert, onClose, inline }: { conversationId: string; network: P.Network; anchor: DOMRect | null; onInsert: (text: string) => void; onClose: () => void; inline?: boolean }) {
+  return <Picker target={{ kind: 'insert', conversationId, network, insert: onInsert }} anchor={anchor} onClose={onClose} inline={inline} />;
 }
 
 /** Mounted once at the app root. */

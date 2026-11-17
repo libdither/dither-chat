@@ -5,7 +5,8 @@ import { AUTOMATIC, AUTOMATIC_HELP, RULE_HELP, communitiesOf, convLabel, convTit
 import { api, db, go, isSelfIdentity, openProfile, prefs, rev, setRule } from '../state.ts';
 import { AccountChip, Avatar, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
-import { showDetails } from './Pager.ts';
+import { HeadOrb } from './Offline.tsx';
+import { detailsShown, showDetails } from './Pager.ts';
 import { openConv } from '../opening.ts';
 import { Menuable } from './ContextMenu.tsx';
 import { identityMenu } from './menus.tsx';
@@ -62,6 +63,7 @@ export function ConversationDetails({ convId }: { convId: string }) {
           <h2>{convLabel(c)}</h2>
           <span class="det-kind">{kindLabel(c)}</span>
         </div>
+        {detailsShown() && <HeadOrb />}
         <button class="icon-btn" onClick={() => showDetails(false)} aria-label="Close details">
           <Icon name="x" />
         </button>
@@ -163,7 +165,7 @@ export function ConversationDetails({ convId }: { convId: string }) {
             </ol>
             <p>
               The most specific rule wins. With none it is Automatic: a DM, a message about you or a chat you take part in is a conversation, what reads as urgent there is an alert, and the rest reaches the list when it
-              is important enough. A place muted on its network is kept to the list. People set to always alert, and keywords, still alert anywhere but in a muted place.
+              is important enough. A place muted on its network is kept to the list. People set to always alert still alert anywhere but in a muted place; a keyword makes a message about you, like a mention.
             </p>
           </details>
         </Section>
@@ -233,6 +235,7 @@ export function PersonDetails({ personId }: { personId: string }) {
             Person · {ids.length} {ids.length === 1 ? 'identity' : 'identities'}
           </span>
         </div>
+        {detailsShown() && <HeadOrb />}
         <button class="icon-btn" onClick={() => showDetails(false)} aria-label="Close details">
           <Icon name="x" />
         </button>

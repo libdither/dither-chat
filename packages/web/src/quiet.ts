@@ -36,12 +36,16 @@ export function toggleShelf(list: string) {
   openShelves.value = next;
 }
 
-/** A list split into what shows and what sits on its shelf (empty when the shelf is off or would hold too few). */
-export function shelve<T>(items: T[], keyOf: (x: T) => string): { shown: T[]; quiet: T[] } {
-  if (!quietShelfOn()) return { shown: items, quiet: [] };
+/**
+ * A list split into what shows and what sits on its shelf (empty when the shelf is off or would hold too few), and
+ * `dim`: every quiet one, on the shelf or left in the list.
+ */
+export function shelve<T>(items: T[], keyOf: (x: T) => string): { shown: T[]; quiet: T[]; dim: ReadonlySet<T> } {
+  if (!quietShelfOn()) return { shown: items, quiet: [], dim: new Set() };
   const now = Date.now();
   const quiet = items.filter((x) => isQuiet(keyOf(x), now));
-  if (quiet.length < SHELF_MIN) return { shown: items, quiet: [] };
-  const q = new Set(quiet);
-  return { shown: items.filter((x) => !q.has(x)), quiet };
+  const dim = new Set(quiet);
+  // Too few to be worth a shelf, or all of them: a list that is only a shelf hides everything it holds.
+  if (quiet.length < SHELF_MIN || quiet.length === items.length) return { shown: items, quiet: [], dim };
+  return { shown: items.filter((x) => !dim.has(x)), quiet, dim };
 }

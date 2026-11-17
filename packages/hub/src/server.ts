@@ -72,7 +72,7 @@ import { calendarOff, type CalendarLink } from './calendar.ts';
 import { markCalendarAdded } from './calendar-account.ts';
 import { ReplyMarks, type ReplyMark } from './replymarks.ts';
 import { mailAttention } from './mail/attention.ts';
-import { clientReport, jobFailed, PerClientCap, reportedInRequest, reportError, withRequest } from './errors.ts';
+import { AnswerClock, clientReport, jobFailed, lossCovered, PerClientCap, reportedInRequest, reportError, withRequest } from './errors.ts';
 import { callRoute } from './callstate.ts';
 import { handlesPolls, pollRoute } from './polls.ts';
 import { SendExtras } from './sendextras.ts';
@@ -95,6 +95,11 @@ type SendBody = {
   voice?: P.VoiceOut;
   /** The files open once (Signal's view-once). */
   viewOnce?: boolean;
+  /**
+   * The one attached file is a GIF from the GIF picker: sent as the network's own GIF where it has one (capability
+   * 'sendGifs'), else as a file.
+   */
+  gif?: boolean;
   /** capability 'silentSend' (sending.ts) */
   silent?: boolean;
   /** capability 'replyMention' */
@@ -219,6 +224,12 @@ function sameOriginOpen(req: Request): boolean {
  * never answers without a session, because the router is never reached without one.
  */
 export const GATED = /^\/(api|media|emoji|voice|calendar|demo|adapter)(\/|$)/;
+/**
+ * Discord's DAVE library, as scripts/dave/update.ts extracted it from the public web client (docs/calls.md): public code,
+ * named by its hash. Direct mode loads it in a worker with an opaque origin, which sends no cookie, so it answers
+ * without a session.
+ */
+const DAVE_FILE = /^\/voice\/dave\/([0-9a-f]{16})\/(libdave\.mjs|libdave\.wasm)$/;
 /** The only gated paths open without a session: the login itself and a bare health check. */
 export const PUBLIC_API = new Set(['/api/health', '/api/login', '/api/logout']);
 
@@ -474,6 +485,7 @@ export class HubServer {
             withRequest(async () => {
               try {
                 const raw = await handler(req, server);
+                self.answers.answered();
                 // An answer of 5xx is an error for traces/errors.ndjson (errors.ts), unless something inside the request
                 // was reported already (an attempt, a job) or the client went away.
                 if (raw && raw.status >= 500 && !reportedInRequest() && !req.signal.aborted) await reportAnswer(req, route, raw, s.traceId);
@@ -793,6 +805,8 @@ export class HubServer {
     if (path === '/api/health' && !me) return Response.json({ ok: true, now: Date.now() }, { headers: { 'cache-control': 'no-store' } });
     if (!me) {
       const ticketed = (path.startsWith('/media/') || path.startsWith('/emoji/')) && (req.method === 'GET' || req.method === 'HEAD') && ticketGood(this.opts.secret, path, url.searchParams.get('ticket'));
+      const dave = (req.method === 'GET' || req.method === 'HEAD') && path.match(DAVE_FILE);
+      if (dave) return this.daveFile(dave[1]!, dave[2]!);
       if (!ticketed) {
         if (GATED.test(path)) return this.signIn();
         return this.static(path);
@@ -941,7 +955,7 @@ export class HubServer {
       return new Response('upgrade failed', { status: 400 });
     }
     if (path === '/api/voice/dave') return this.daveCurrent();
-    if ((m = path.match(/^\/voice\/dave\/([0-9a-f]{16})\/(libdave\.mjs|libdave\.wasm)$/))) return this.daveFile(m[1], m[2]);
+    if ((m = path.match(DAVE_FILE))) return this.daveFile(m[1]!, m[2]!);
     if (path === '/api/voice/sounds') return this.callSounds();
     if ((m = path.match(/^\/voice\/sounds\/([a-z0-9_]{1,40})\.mp3$/))) return this.callSound(m[1]);
     if ((m = path.match(/^\/media\/([\w-]+)\/([\w-]+)$/))) return this.media(m[1], m[2], url.searchParams.get('a'));
@@ -954,6 +968,8 @@ export class HubServer {
 
   /** At most 60 of the page's error reports a minute from one address. */
   private readonly errorCap = new PerClientCap(60, 60_000);
+  /** Answers given, per second, to judge the page's reports of a hub it could not reach (errors.ts lossCovered). */
+  readonly answers = new AnswerClock();
 
   /**
    * POST /api/errors: an error the page met (errors.ts `clientReport`), written to traces/errors.ndjson as app `web`,
@@ -970,6 +986,11 @@ export class HubServer {
     const r = clientReport(body);
     if (!r) return Response.json({ error: 'Send { name, message, stack, where, status?, version }, where a route template like #/chat/:id' }, { status: 400 });
     if (!this.errorCap.take(ip)) return Response.json({ error: 'too many reports' }, { status: 429 });
+    const covered = lossCovered(r.extra, this.answers, Date.now());
+    if (covered) {
+      console.log(`errors: a device lost the hub for ${Math.round(Number(r.extra?.lostMs) / 1000)} s, not written: ${covered === 'restarted' ? 'the hub restarted meanwhile' : 'the hub answered others meanwhile'}`);
+      return new Response(null, { status: 204 });
+    }
     reportError(r);
     return new Response(null, { status: 204 });
   }
@@ -1619,6 +1640,20 @@ export class HubServer {
         if (e instanceof MediaError) return bad(e.message, e.status);
         return bad(`The network did not list stickers: ${(e as Error).message}`, 502);
       }
+    }
+    // GIFs: search through an account that has it, and the ones already in your chats (docs/media-kinds.md "GIFs").
+    if (path === '/api/gifs' && method === 'GET') {
+      const q = url.searchParams;
+      try {
+        return ok(await this.kinds.gifs(q.get('conversation') ?? undefined, q.get('q') ?? undefined, q.get('cursor') ?? undefined));
+      } catch (e) {
+        if (e instanceof MediaError) return bad(e.message, e.status);
+        return bad(`The network did not find GIFs: ${(e as Error).message}`, 502);
+      }
+    }
+    if (path === '/api/gifs/yours' && method === 'GET') {
+      const before = Number(url.searchParams.get('before'));
+      return ok(this.kinds.yourGifs(before > 0 ? before : undefined));
     }
     if ((m = path.match(/^\/api\/accounts\/([\w-]+)\/stickers$/)) && method === 'POST') {
       // From the app itself, on the owner's click: installing a pack changes the account.
@@ -2490,6 +2525,7 @@ export class HubServer {
     const media = sendMediaProblem({ sticker, files: files.length, voice: b.voice, viewOnce: b.viewOnce === true }, accCaps, `${acc.label} on ${name}`);
     if (media.error) return bad(media.error, 409);
     if (media.voice) files = files.map((f, i) => (i === 0 ? { ...f, voice: media.voice } : f));
+    if (b.gif === true && files.length === 1 && !media.voice && can.includes('sendGifs')) files = [{ ...files[0], gif: true }];
     // Person and identity references become the network's mentions or plain names (mentionrefs.ts).
     const text = lowerForSend(s, conversationId, accCaps, b.body ?? '');
     const preview = files.length || sticker ? null : await this.linkPreview(accountId, text);
@@ -2760,10 +2796,11 @@ export class HubServer {
       if (!r.ok) return new Response(r.error, { status: r.status });
       writeFileSync(file + '.mime', r.mime, { mode: 0o600 });
       return new Response(Bun.file(file), { headers: headers(r.mime) });
-    } else if (raw.startsWith('file://')) {
+    } else if (raw.startsWith('file://') && resolve(normalize(decodeURIComponent(raw.slice('file://'.length)))).startsWith(resolve(this.opts.dataDir) + '/')) {
+      // A file under this hub's data (an import, an account whose session the hub keeps): read here. One elsewhere is
+      // the account's own (an account dither-accounts made keeps its files in its own folder): asked of it below.
       const p = normalize(decodeURIComponent(raw.slice('file://'.length)));
-      const root = resolve(this.opts.dataDir);
-      if (!resolve(p).startsWith(root + '/') || !existsSync(p) || !statSync(p).isFile()) return new Response('not found', { status: 404 });
+      if (!existsSync(p) || !statSync(p).isFile()) return new Response('not found', { status: 404 });
       // A file kept on disk (an import, Signal's own copy) has no type recorded: by its name, else by its first bytes.
       const f = Bun.file(p);
       const named = f.type.split(';')[0];

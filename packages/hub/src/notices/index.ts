@@ -352,7 +352,7 @@ export class Notices implements NoticeSink {
     const r = this.row(id);
     if (!r) return {};
     const n = inputOf(r);
-    if (!wantsJudge(n, { rule: this.ruleFor(r.grp, r.account), keyword: this.keywordIn(textOf(n)) })) return {};
+    if (!wantsJudge(n, { rule: this.ruleFor(r.grp, r.account) })) return {};
     const j = await this.ask(textOf(n));
     if (j === undefined) return { unjudged: true };
     return j === null ? {} : { judge: Math.round(j * 1000) / 1000 };

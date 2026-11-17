@@ -14,6 +14,7 @@ addresses, so "it came from here" says nothing about who sent it. Every request 
 | every `/api/*` route, including the live socket (`/api/live`), calls (`/api/call`, `/api/call/:id/voice`), the live view (`/api/liveview/:id`), `/api/errors` and `/api/sessions` | `GET /api/login`, `POST /api/login`, `POST /api/logout` |
 | `/media/*` and `/emoji/*` (pictures and files), `/voice/*`, `/calendar/*` (dither-calendar through the hub), `/demo/*` | `GET /api/health`: only `{ ok, now }` without a session (with one, also `gapRestarts`) |
 | | the web app's own files: anything else is a file of the build or its `index.html` (`static()`), whatever the path |
+| | `/voice/dave/<id>/libdave.mjs` and `libdave.wasm`: Discord's public DAVE library (docs/calls.md), which direct mode's worker fetches with no cookie |
 | | `/adapter` (local adapters, with their own per-account token, from loopback only, as before), `/ca.crt` |
 
 Without a session a gated path answers 401 `{ error, login: true }` (and `setup: true` while no password is set).

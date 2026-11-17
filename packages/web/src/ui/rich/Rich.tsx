@@ -253,7 +253,12 @@ export function EmbedVideo({ e, kit }: { e: P.EmbedView; kit: Kit }) {
   const ratio = v.width && v.height ? `${v.width} / ${v.height}` : '16 / 9';
   if (!v.player)
     return v.gifv ? (
-      <video class="embed-video" src={v.url} autoplay loop muted playsinline style={{ aspectRatio: ratio }} />
+      // A GIF (Discord's gifv) loops silently; the demo world's are pictures.
+      v.url.startsWith('data:image/') ? (
+        <img class="embed-video" src={v.url} alt="" style={{ aspectRatio: ratio }} />
+      ) : (
+        <video class="embed-video" src={v.url} autoplay loop muted playsinline style={{ aspectRatio: ratio }} />
+      )
     ) : (
       <video class="embed-video" src={v.url} controls preload="metadata" poster={e.image} style={{ aspectRatio: ratio }} />
     );

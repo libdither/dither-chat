@@ -105,5 +105,58 @@ export class DemoCallRoom {
 /** The one room of this hub process (a demo hub has one demo world). */
 export const demoCallRoom = new DemoCallRoom();
 
-/** What demo Discord accounts can do in a call: everything the bridge carries. */
-export const DEMO_CALL_CAPS = ['calls', 'callVideo', 'watchStreams'] as const satisfies readonly P.Capability[];
+/** What demo Discord accounts can do in a call: everything the bridge carries, and calls that ring them. */
+export const DEMO_CALL_CAPS = ['calls', 'callVideo', 'watchStreams', 'callStates', 'declineCall'] as const satisfies readonly P.Capability[];
+
+/**
+ * Calls that ring a demo account (docs/calls.md "Ringing"), told by a script (the account action `ring`) since a demo
+ * has nobody to call it: the `callState` facts a network's adapter gives, so the hub, the page's ring card and a
+ * phone's ring notification run as they do for a real call. Joining the ringing chat answers it, leaving ends it,
+ * Decline declines it, and `ringStop` is the caller giving up (missed).
+ */
+export class DemoRings {
+  /** By conversation: the call that rings or goes on there, and the device's call that answered it. */
+  private calls = new Map<string, { fact: P.CallFact; device: string | null }>();
+  private seq = 0;
+
+  constructor(private emit: Emit) {}
+
+  private say(conversation: string, fact: P.CallFact) {
+    if (fact.state === 'ended') this.calls.delete(conversation);
+    this.emit({ t: 'callState', call: fact });
+  }
+
+  ring(conversation: string, caller: string, video: boolean): string {
+    const at = Date.now();
+    const fact: P.CallFact = { nativeId: `demo-call-${at}-${++this.seq}`, conversation, caller, startedAt: at, state: 'ringing', ringsSelf: true, video, participants: [caller] };
+    this.calls.set(conversation, { fact, device: null });
+    this.say(conversation, fact);
+    return fact.nativeId;
+  }
+
+  answered(device: string, conversation: string) {
+    const c = this.calls.get(conversation);
+    if (!c || c.fact.state !== 'ringing') return;
+    c.device = device;
+    c.fact = { ...c.fact, state: 'ongoing', ringsSelf: false, answeredAt: Date.now() };
+    this.say(conversation, c.fact);
+  }
+
+  left(device: string) {
+    for (const [conversation, c] of this.calls) if (c.device === device) this.say(conversation, { ...c.fact, state: 'ended', outcome: 'answered', endedAt: Date.now() });
+  }
+
+  decline(conversation: string, nativeId: string): boolean {
+    const c = this.calls.get(conversation);
+    if (!c || c.fact.nativeId !== nativeId || c.fact.state !== 'ringing') return false;
+    this.say(conversation, { ...c.fact, state: 'ended', ringsSelf: false, outcome: 'declined', endedAt: Date.now() });
+    return true;
+  }
+
+  giveUp(conversation: string): boolean {
+    const c = this.calls.get(conversation);
+    if (!c || c.fact.state !== 'ringing') return false;
+    this.say(conversation, { ...c.fact, state: 'ended', ringsSelf: false, outcome: 'missed', endedAt: Date.now() });
+    return true;
+  }
+}

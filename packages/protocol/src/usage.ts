@@ -46,8 +46,6 @@ export type SortScope = 'rail' | 'people';
 
 export interface ArrangeSettings {
   sort: Record<SortScope, SortMode>;
-  /** Folder suggestions you dismissed: category id -> the places it suggested then. New places bring it back. */
-  dismissed: Record<string, string[]>;
   /**
    * A chat archived or unarchived on the network (Signal's archived 1:1s, ConversationFact.archived) is hidden or shown
    * here too, when that changes. Off: the network's archive is not followed. Absent: on.
@@ -58,7 +56,7 @@ export interface ArrangeSettings {
   /** How chats show pictures, where a chat or its server doesn't say (docs/pictures.md). Absent: DEFAULT_PICTURE_LAYOUT. */
   pictures?: PictureLayout;
 }
-export const DEFAULT_ARRANGE: ArrangeSettings = { sort: { rail: 'manual', people: 'recent' }, dismissed: {} };
+export const DEFAULT_ARRANGE: ArrangeSettings = { sort: { rail: 'manual', people: 'recent' } };
 
 export interface UsageState {
   now: number;

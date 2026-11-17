@@ -9,6 +9,7 @@
 import { effect, signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { api, connected, db, toast } from '../state.ts';
+import { closeNotifications } from '../shade.ts';
 import { mailChanged } from '../versions.ts';
 import { destinationIn, movedView, moveTargetsIn, undoTarget } from './filing.ts';
 import { details } from './held.ts';
@@ -138,6 +139,8 @@ const clientId = () => (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}
 
 /** Read or unread. Threads: read marks all of them read; unread marks the latest. */
 export function markRead(threadIds: string[], seen: boolean) {
+  // Read: their notifications here go, also those of threads already read elsewhere.
+  if (seen) void closeNotifications(threadIds);
   const before = patch(threadIds, (t) => (seen ? (t.unread ? { ...t, unread: 0 } : null) : t.unread ? null : { ...t, unread: 1 }));
   if (!before.size) return;
   void send({ path: '/api/mail/flag', body: { threadIds: [...before.keys()], seen, clientId: clientId() } }, before, seen ? 'mark it read' : 'mark it unread');

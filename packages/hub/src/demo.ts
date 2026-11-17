@@ -9,7 +9,7 @@
  * first seed and stored in the account config.
  */
 
-import { DEMO_MEDIA_CAPS, DemoMedia } from './demomedia.ts';
+import { DEMO_GIFS, DEMO_MEDIA_CAPS, DemoMedia } from './demomedia.ts';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
@@ -18,7 +18,7 @@ import { hubId } from '@dither-chat/protocol/ids';
 import type { AccountRow, Store } from './store.ts';
 import { DEMO_SELF_CAPS, DemoSelf } from './demoself.ts';
 import type { InprocAdapter } from './supervisor.ts';
-import { DEMO_CALL_CAPS, demoCallRoom } from './democalls.ts';
+import { DEMO_CALL_CAPS, DemoRings, demoCallRoom } from './democalls.ts';
 import { DEMO_X2_ACCOUNT, DEMO_X_ACCOUNT, DemoX } from './demo-x.ts';
 import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
@@ -650,6 +650,8 @@ const CONVS: DemoConv[] = [
       [2 * DAY + 79, D.alice, 'https://gamebanana.com/mods/celeste-dither'],
       [2 * DAY + 60, D.zyan, 'ok that is gorgeous', { react: { '💜': [D.alice] } }],
       [DAY + 200, D.alice, "also pls stop getting pinged by me on three apps, I'll use signal for real stuff 😅"],
+      // A GIF from Discord's picker: its link as the message, drawn back as a looping GIF (docs/media-kinds.md "GIFs").
+      [DAY + 190, D.alice, DEMO_GIFS[3].url, { embeds: [{ url: DEMO_GIFS[3].url, provider: 'Klipy', video: { url: DEMO_GIFS[3].src, width: DEMO_GIFS[3].width, height: DEMO_GIFS[3].height, gifv: true } }] }],
     ],
   },
   {
@@ -1945,6 +1947,8 @@ class DemoAdapter implements InprocAdapter {
   private mod: DemoModeration | null = null;
   /** Silent sends, previews off, saved messages and the network's scheduled ones (demosending.ts). */
   private sending: DemoSending | null = null;
+  /** Calls ringing this account (democalls.ts): Discord's demo accounts only. */
+  private rings = new DemoRings((ev) => this.emit(ev));
   /** Capabilities a verify script took away (action 'capabilities'), to see the page without them. */
   private without = new Set<P.Capability>();
   private network: P.Network;
@@ -2895,6 +2899,9 @@ class DemoAdapter implements InprocAdapter {
           this.emit({ t: 'reply', id: cmd.id, ok: false, error: 'Calls are on the demo Discord accounts.' });
           return;
         }
+        // Joining a chat that rings you answers its ring; leaving it ends that call.
+        if (cmd.op === 'join') this.rings.answered(cmd.call, cmd.conversation);
+        else if (cmd.op === 'leave') this.rings.left(cmd.call);
         demoCallRoom
           .command((ev) => this.emit(ev), { self: this.self.nativeId, bot: { id: D.lev.nativeId, name: D.lev.displayName ?? 'Lev' } }, cmd)
           .then(
@@ -2913,13 +2920,15 @@ class DemoAdapter implements InprocAdapter {
         // View-once: your own copy is not kept to look at, as Signal's apps show it.
         let attachments: P.AttachmentFact[] | undefined = cmd.viewOnce
           ? undefined
-          : cmd.attachments?.map((f) => ({ kind: f.kind, mime: f.mime, name: f.name, size: f.size, url: `data:${f.mime};base64,${readFileSync(f.path).toString('base64')}`, ...(f.voice ? { voice: f.voice } : {}) }));
+          : cmd.attachments?.map((f) => ({ kind: f.kind, mime: f.mime, name: f.name, size: f.size, url: `data:${f.mime};base64,${readFileSync(f.path).toString('base64')}`, ...(f.voice ? { voice: f.voice } : {}), ...(f.gif ? { gif: true as const } : {}) }));
         if (sticker) attachments = [{ nativeId: `sticker:${sticker.id}`, kind: 'image', mime: sticker.mime, name: sticker.name, width: 160, height: 160, url: sticker.url }];
         const kind: P.MessageKind = sticker ? 'sticker' : (attachments?.length || cmd.viewOnce) && !cmd.body ? 'media' : 'text';
         const body = cmd.viewOnce ? cmd.body || '📷 View-once media' : cmd.body;
         // A chat with a disappearing timer: the message carries it, as Signal's do.
         const timer = (demoPlaces.get(cmd.conversation)?.values.disappearing ?? DEMO_VALUES[cmd.conversation]?.disappearing ?? 0) as number;
-        const extra = { ...(cmd.viewOnce ? { viewOnce: true } : {}), ...(timer > 0 ? { expiresInSeconds: timer } : {}) };
+        // A GIF's link from Discord's picker comes back drawn as the GIF, as Discord does (docs/media-kinds.md "GIFs").
+        const gif = this.network === 'discord' ? DEMO_GIFS.find((g) => g.url === body?.trim()) : undefined;
+        const extra = { ...(cmd.viewOnce ? { viewOnce: true } : {}), ...(timer > 0 ? { expiresInSeconds: timer } : {}), ...(gif ? { embeds: [{ url: gif.url, provider: 'Klipy', video: { url: gif.src, width: gif.width, height: gif.height, gifv: true as const } }] } : {}) };
         this.emit({ t: 'message', live: true, message: { nativeId, conversation: cmd.conversation, author: this.self.nativeId, ts: Date.now(), body, replyTo: cmd.replyTo, kind, attachments, ...(Object.keys(extra).length ? { extra } : {}), ...(cmd.silent ? { silent: true } : {}) } });
         this.sent.set(nativeId, { body: cmd.body, att: attachments });
         reply({ nativeId });
@@ -3019,6 +3028,7 @@ class DemoAdapter implements InprocAdapter {
         }
         break;
       case 'stickers':
+      case 'gifs':
       case 'addStickerPack':
       case 'storyViewed':
       case 'storyReply':
@@ -3227,6 +3237,16 @@ class DemoAdapter implements InprocAdapter {
           reply({ ok: true });
           break;
         }
+        // ring / ringStop: a call rings this account, or the caller gives up (democalls.ts DemoRings).
+        if (cmd.action === 'ring' || cmd.action === 'ringStop') {
+          const a = (cmd.args ?? {}) as { conversation?: string; caller?: string; video?: boolean };
+          if (typeof a.conversation !== 'string') {
+            this.emit({ t: 'reply', id: cmd.id, ok: false, error: `${cmd.action}: { conversation, caller?, video? }` });
+            break;
+          }
+          reply(cmd.action === 'ring' ? { call: this.rings.ring(a.conversation, a.caller ?? D.lev.nativeId, !!a.video) } : { stopped: this.rings.giveUp(a.conversation) });
+          break;
+        }
         // capabilities: say hello again without these (scripts/verify-add.ts), or with everything when none are given.
         if (cmd.action === 'capabilities') {
           this.without = new Set(((cmd.args as { without?: P.Capability[] } | undefined)?.without ?? []).filter((c) => typeof c === 'string'));
@@ -3246,6 +3266,13 @@ class DemoAdapter implements InprocAdapter {
           break;
         }
         reply(cmd.action === 'typingLog' ? { typing: this.typingLog } : cmd.action === 'addLog' ? this.adds.counts : cmd.action === 'readLog' ? { reads: this.readLog } : { note: 'demo adapters have no actions' });
+        break;
+      case 'declineCall':
+        if (!this.rings.decline(cmd.conversation, cmd.call)) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: 'That call is not ringing you' });
+          break;
+        }
+        reply({});
         break;
       default:
         if ('id' in cmd) reply();

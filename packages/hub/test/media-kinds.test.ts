@@ -1,7 +1,7 @@
 /**
- * Stickers, voice messages, view-once and stories through the hub (media.ts, docs/media-kinds.md), against the demo
- * world's adapters run in process: the sticker picker's pages with the hub's picture addresses, installing a pack from
- * a link, what a send's sticker, recording and view-once come to, and stories kept apart from messages, gone after a
+ * Stickers, GIFs, voice messages, view-once and stories through the hub (media.ts, docs/media-kinds.md), against the
+ * demo world's adapters run in process: the sticker picker's pages with the hub's picture addresses, installing a pack
+ * from a link, GIF search through an account that has it and the GIFs already in your chats, what a send's sticker, recording and view-once come to, and stories kept apart from messages, gone after a
  * day, opened and answered through the account that heard them.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -13,6 +13,7 @@ import { STORY_LIFETIME_MS, waveformBase64 } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { createDemoAccounts, demoFactory } from '../src/demo.ts';
 import { ingestStories, Media, MediaError, pruneStories, sendMediaProblem } from '../src/media.ts';
+import { attachmentExtra, attachmentRich } from '../src/rich.ts';
 import { mediaSigner } from '../src/server.ts';
 import { Store } from '../src/store.ts';
 
@@ -167,6 +168,84 @@ describe('the sticker picker', () => {
     const page = await media.stickers(c, SIGNAL, '1');
     expect(page.packs.map((p) => p.id)).toEqual([id]);
     expect((await refused(media.install(DISCORD, 'x'))).status).toBe(409);
+  });
+});
+
+describe('GIFs', () => {
+  test("search goes through the chat's own account where it searches, a page at a time, the pictures through the hub", async () => {
+    const before = sent.length;
+    const page = await media.gifs(conv('discord', 'general'), undefined, undefined);
+    expect(sent.slice(before).map((s) => [s.cmd.t, s.cmd.query])).toEqual([['gifs', undefined]]);
+    expect(page.accountId).toStartWith('acc_demo-discord');
+    expect(page.gifs).toHaveLength(8);
+    expect(page.next).toBe('8');
+    expect(page.gifs[0]).toMatchObject({ id: 'demo-party', url: 'https://gifs.example.com/party', video: false });
+    const more = await media.gifs(conv('discord', 'general'), undefined, page.next!);
+    expect(more.gifs.map((g) => g.id)).toEqual(['demo-cat', 'demo-wave', 'demo-no', 'demo-love']);
+    expect(more.next).toBeNull();
+    const found = await media.gifs(undefined, '  cat ', undefined);
+    expect(sent[sent.length - 1].cmd.query).toBe('cat');
+    expect(found.gifs.map((g) => g.title)).toEqual(['cat meow']);
+  });
+
+  test("a chat whose own account has no GIF search uses any connected account that has, and none says so", async () => {
+    const page = await media.gifs(conv('signal', 'Climbing crew 🧗'), undefined, undefined);
+    expect(page.accountId).toStartWith('acc_demo-discord');
+    const before = sent.length;
+    const none = await new Media({ ...deps, online: () => false }).gifs(conv('signal', 'Climbing crew 🧗'), undefined, undefined);
+    expect(none).toMatchObject({ accountId: null, gifs: [], next: null });
+    expect(none.note).toContain('Discord');
+    expect(sent.length).toBe(before);
+    expect((await refused(media.gifs('cnv_nope', undefined, undefined))).status).toBe(404);
+  });
+
+  test("the network's answer is checked: a link that is not https is dropped, and every file goes through the hub", async () => {
+    const odd = new Media({
+      ...deps,
+      command: async <T,>() =>
+        ({
+          gifs: [
+            { id: '1', url: 'http://plain.example.com/1', src: 'https://media.example.com/1.mp4', width: 10, height: 10 },
+            { id: '2', url: 'https://gifs.example.com/2', src: 'https://media.example.com/2.webm', gif: 'https://media.example.com/2.gif', width: 40, height: 30, title: 'two' },
+            { id: '3', url: 'https://gifs.example.com/3' },
+          ],
+          next: null,
+        }) as T,
+    });
+    const page = await odd.gifs(undefined, 'x', undefined);
+    expect(page.gifs).toHaveLength(1);
+    expect(page.gifs[0]).toMatchObject({ id: '2', video: true, width: 40, height: 30, title: 'two' });
+    expect(page.gifs[0].src).toStartWith('/media/');
+    expect(page.gifs[0].gif).toStartWith('/media/');
+  });
+
+  test('Yours: GIF files, GIF videos and Discord GIF links already in your chats, newest first, one each', () => {
+    const acc = store.one<{ id: string }>(`SELECT id FROM account WHERE network = 'telegram' LIMIT 1`)!.id;
+    const tg = store.one<{ native_id: string }>(`SELECT native_id FROM conversation WHERE network = 'telegram' LIMIT 1`)!.native_id;
+    const self = store.one<{ native_id: string }>(`SELECT i.native_id FROM account a JOIN identity i ON i.id = a.self_identity WHERE a.id = ?`, acc)!.native_id;
+    const at = now - 60_000;
+    const put = (n: number, a: P.AttachmentFact) => store.ingest(store.account(acc)!, { t: 'message', live: false, message: { nativeId: `gif-test-${n}`, conversation: tg, author: self, ts: at + n, body: '', kind: 'media', attachments: [a] } });
+    put(1, { kind: 'video', mime: 'video/mp4', url: 'https://media.example.com/anim.mp4', width: 320, height: 240, gif: true });
+    put(2, { kind: 'image', mime: 'image/gif', url: 'https://media.example.com/plain.gif' });
+    put(3, { kind: 'image', mime: 'image/gif', url: 'https://media.example.com/plain.gif' });
+    put(4, { kind: 'video', mime: 'video/mp4', url: 'https://media.example.com/clip.mp4' });
+    store.flush();
+    const yours = media.yourGifs(undefined);
+    const mine = yours.gifs.filter((g) => g.ts >= at);
+    expect(mine.map((g) => [g.mime, g.url, g.width])).toEqual([
+      ['image/gif', null, null],
+      ['video/mp4', null, 320],
+    ]);
+    expect(mine.every((g) => g.src.startsWith('/media/'))).toBe(true);
+    // The demo's Discord GIF, sent as its link: the link kept, to send it again as Discord's picker would.
+    expect(yours.gifs.some((g) => g.url === 'https://gifs.example.com/dance')).toBe(true);
+    expect(media.yourGifs(at + 2).gifs.filter((g) => g.ts >= at).map((g) => g.mime)).toEqual(['video/mp4']);
+  });
+
+  test("an attachment's gif mark is kept with it", () => {
+    const x = attachmentExtra({ kind: 'video', url: 'https://media.example.com/a.mp4', gif: true });
+    expect(attachmentRich({ extra: x } as never)).toEqual({ gif: true });
+    expect(attachmentExtra({ kind: 'video', url: 'https://media.example.com/a.mp4' })).toBeNull();
   });
 });
 

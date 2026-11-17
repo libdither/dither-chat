@@ -14,6 +14,7 @@ import { mailAttention } from './mail/attention.ts';
 import { mailTriage, type MailNotice } from './mail/triage.ts';
 import { Notices, type NoticeDelivery } from './notices/index.ts';
 import { FakeNoticeSource, seedDemoNotices } from './notices/fake.ts';
+import { clearRead } from './clears.ts';
 import { Delivery } from './delivery.ts';
 import { Notifier } from './notify.ts';
 import { listByPrior, PhoneList, phoneListBudget, phoneListMode } from './phonelist.ts';
@@ -297,18 +298,16 @@ onRing(store, (n) => {
   if (ringMuted(store, c) || inQuietHours(store.quietHours(), Date.now())) return;
   const { title, body } = ringWords(store, c);
   const look = store.notifyLook(c.conversationId, undefined);
-  const call = { id: c.id, tag, canAnswer: c.canAnswer, canDecline: c.canDecline };
+  const call = { id: c.id, tag, accountId: c.accountId, canAnswer: c.canAnswer, canDecline: c.canDecline };
   push.notify(title, body, c.conversationId, { ...look, call, level: 'push', tier: 'push' }, devices.quietOn(c.conversationId, false), 'push').catch((e) => console.error('push failed', e));
 });
 
-// Read anywhere since its notification went out: off the phones. New requests that settled: judged, once each.
+// Read anywhere since its notification went out: off open pages, the phones and the computers (clears.ts). New
+// requests that settled: judged, once each.
 setInterval(
   () =>
     span('notifications: read and requests', {}, () => {
-      for (const cid of delivery.read()) {
-        phone.read(cid);
-        push.clear(cid).catch(pushClearFailed);
-      }
+      void clearRead({ delivery, phone, push, live: (ev) => store.dirty.extra.push(ev), failed: pushClearFailed });
       // List rows 12 hours old leave the phones; held ones whose chat was read are over (phonelist.ts).
       for (const cid of phone.sweep()) push.clear(cid).catch(pushClearFailed);
       for (const n of requestNotices.due()) deliverRequest(n);
@@ -368,7 +367,11 @@ const phone = new PhoneList(store.db, {
   kept: (now) => triage.marked(now).convs,
   readTs: (cid) => delivery.readAllTs(cid),
 });
-activity.noted = (w) => phone.noted(w);
+// A tap or a swipe: the phone's list counts it, and a browser no longer shows that notification (clears.ts).
+activity.noted = (w) => {
+  phone.noted(w);
+  push.browsers.noted(w);
+};
 if (phone.mode !== 'on') console.log(`phone list: ${phone.mode} (DITHER_PHONE_LIST)`);
 
 /**

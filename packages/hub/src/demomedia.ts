@@ -1,14 +1,40 @@
 /**
- * The demo world's stickers, voice messages, view-once and stories (media.ts, docs/media-kinds.md), so the picker, the
+ * The demo world's stickers, GIFs, voice messages, view-once and stories (media.ts, docs/media-kinds.md), so the picker, the
  * recorder and the stories strip can be tried with no network. Pictures are inline SVG, as the rest of the demo's are.
  */
 import type * as P from '@dither-chat/protocol';
 import { signalStickerLink, STORY_LIFETIME_MS } from '@dither-chat/protocol';
 
 export const DEMO_MEDIA_CAPS: Partial<Record<P.Network, P.Capability[]>> = {
-  discord: ['sendStickers', 'sendVoice'],
+  discord: ['sendStickers', 'sendVoice', 'searchGifs'],
   signal: ['sendStickers', 'installStickers', 'sendVoice', 'sendViewOnce', 'stories'],
+  telegram: ['sendGifs'],
+  whatsapp: ['sendGifs'],
 };
+
+/** An invented GIF: an animated SVG (a bouncing emoji on a gradient, with a word), so it moves as a GIF would. */
+const gifSvg = (emoji: string, word: string, a: string, b: string, w: number, h: number) =>
+  `data:image/svg+xml;base64,${Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${a}"/><stop offset="1" stop-color="${b}"/></linearGradient></defs><rect width="${w}" height="${h}" fill="url(#g)"/><text x="${w / 2}" y="${h / 2 + 10}" font-size="${Math.round(h / 2.6)}" text-anchor="middle">${emoji}<animateTransform attributeName="transform" type="translate" values="0 0;0 -${Math.round(h / 10)};0 0" dur="0.8s" repeatCount="indefinite"/></text><text x="${w / 2}" y="${h - 12}" font-family="Impact, sans-serif" font-size="${Math.round(h / 7)}" fill="#fff" stroke="#000" stroke-width="1.5" text-anchor="middle">${word}</text></svg>`,
+  ).toString('base64')}`;
+
+/** Discord's GIF search in the demo: invented GIFs, found by their words. */
+export const DEMO_GIFS: P.GifFact[] = (
+  [
+    ['party', 'PARTY', '🎉', '#7b5cff', '#ff6f91', 220, 160],
+    ['yes', 'YES!', '👍', '#2bb673', '#0e7c86', 200, 200],
+    ['congrats', 'CONGRATS', '🏆', '#f7971e', '#ffd200', 240, 150],
+    ['dance', 'DANCE', '🕺', '#a1c4fd', '#5c7cfa', 180, 220],
+    ['thinking', 'HMM', '🤔', '#f953c6', '#b91d73', 220, 170],
+    ['wow', 'WOW', '😮', '#43cea2', '#185a9d', 200, 150],
+    ['laugh', 'LOL', '😂', '#ff9966', '#ff5e62', 220, 200],
+    ['sleepy', 'ZZZ', '😴', '#8e2de2', '#4a00e0', 200, 160],
+    ['cat', 'MEOW', '😺', '#f2a541', '#e86a92', 210, 210],
+    ['wave', 'HI!', '👋', '#5cc8ff', '#7fd1ae', 220, 150],
+    ['no', 'NOPE', '🙅', '#ff6f61', '#c94b4b', 190, 190],
+    ['love', 'AWW', '💜', '#b794f6', '#e86a92', 220, 180],
+  ] as const
+).map(([id, word, emoji, a, b, w, h]) => ({ id: `demo-${id}`, url: `https://gifs.example.com/${id}`, src: gifSvg(emoji, word, a, b, w, h), gif: gifSvg(emoji, word, a, b, w, h), width: w, height: h, title: `${id} ${word.toLowerCase()}` }));
 
 const svg = (emoji: string, bg: string) =>
   `data:image/svg+xml;base64,${Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160"><circle cx="80" cy="80" r="76" fill="${bg}"/><text x="80" y="104" font-size="72" text-anchor="middle">${emoji}</text></svg>`).toString('base64')}`;
@@ -85,6 +111,14 @@ export class DemoMedia {
         const from = Number(cmd.cursor ?? 0) || 0;
         const page = all.slice(from, from + 1);
         return { packs: page, next: from + 1 < all.length ? String(from + 1) : null, ...(this.network === 'discord' ? { note: 'Stickers from other servers need Nitro' } : {}) } satisfies P.StickerPage;
+      }
+      case 'gifs': {
+        if (this.network !== 'discord') return undefined;
+        const q = cmd.query?.trim().toLowerCase();
+        const found = q ? DEMO_GIFS.filter((g) => q.split(/\s+/).some((w) => g.title!.includes(w))) : DEMO_GIFS;
+        const from = Number(cmd.cursor ?? 0) || 0;
+        const page = found.slice(from, from + 8);
+        return { gifs: page, next: from + 8 < found.length ? String(from + 8) : null } satisfies P.GifPage;
       }
       case 'addStickerPack': {
         const link = signalStickerLink(cmd.uri);

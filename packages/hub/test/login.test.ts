@@ -7,7 +7,7 @@
  * the router matches) is asked for, so a route added later is covered without touching this file.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { COOKIE, fileTicket, setPassword, TOKEN_FILE } from '../src/auth.ts';
@@ -163,6 +163,19 @@ describe('without a session', () => {
     expect(await (await fetch(`${base}/conversations`)).text()).toContain('<title>app</title>');
     const l = await (await fetch(`${base}/api/login`)).json();
     expect(l).toMatchObject({ signedIn: false, passwordSet: false, user: 'admin', open: false });
+  });
+
+  test("the DAVE library's files answer without a session, for direct mode's cookieless worker; nothing else under /voice", async () => {
+    const id = '0123456789abcdef';
+    mkdirSync(join(dir, 'data', 'dave', id), { recursive: true });
+    writeFileSync(join(dir, 'data', 'dave', id, 'libdave.mjs'), 'export {};');
+    const res = await fetch(`${base}/voice/dave/${id}/libdave.mjs`, { headers: { origin: 'null' } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+    expect(await res.text()).toBe('export {};');
+    expect((await fetch(`${base}/voice/dave/${id}/libdave.mjs`, { method: 'POST' })).status).toBe(401);
+    expect((await fetch(`${base}/voice/dave/${id}/manifest.json`)).status).toBe(401);
+    expect((await fetch(`${base}/api/voice/dave`)).status).toBe(401);
   });
 
   test('with no password set, nothing opens and the answer says how to set one', async () => {
