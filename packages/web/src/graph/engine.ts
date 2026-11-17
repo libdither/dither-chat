@@ -117,23 +117,36 @@ export class Engine {
     this.dirty();
   }
 
-  /** Bring a node to the middle, near enough to read, and keep it there while the layout settles. */
+  /**
+   * Bring a node to the middle, near enough to read, and keep it there while the layout settles. With Same person?
+   * links shown, the people it may be are kept in view with it.
+   */
   center(node: number) {
-    const i = this.local.get(node);
-    if (i === undefined) return;
+    if (!this.local.has(node)) return;
     this.autoFit = false;
     this.follow = node;
-    const k = Math.max(this.view.k, 1.4);
-    this.view = { k, x: this.w / 2 - this.scene.pos[2 * i] * k, y: this.h / 2 - this.scene.pos[2 * i + 1] * k };
+    this.aim(Math.max(this.view.k, 1.4));
     this.dirty();
+  }
+
+  /** The followed node and its Same person? partners in the middle, zoomed out as far as needed to show them all. */
+  private aim(most: number) {
+    const i = this.follow !== null ? this.local.get(this.follow) : undefined;
+    if (i === undefined) return;
+    const pts = [i, ...this.same.flatMap((s) => (s.a === this.follow ? [s.b] : s.b === this.follow ? [s.a] : [])).map((g) => this.local.get(g)).filter((j): j is number => j !== undefined)];
+    const xs = pts.map((j) => this.scene.pos[2 * j]);
+    const ys = pts.map((j) => this.scene.pos[2 * j + 1]);
+    const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+    const pad = 90;
+    const k = Math.min(most, (this.w - 2 * pad) / Math.max(x1 - x0, 1), (this.h - 2 * pad) / Math.max(y1 - y0, 1));
+    this.view = { k, x: this.w / 2 - ((x0 + x1) / 2) * k, y: this.h / 2 - ((y0 + y1) / 2) * k };
   }
 
   /** The layout moved things: keep what is followed in the middle, or everything in view. */
   private moved(done: boolean) {
     this.settled = done;
     this.host.dataset.settled = done ? '1' : '';
-    const i = this.follow !== null ? this.local.get(this.follow) : undefined;
-    if (i !== undefined) this.view = { k: this.view.k, x: this.w / 2 - this.scene.pos[2 * i] * this.view.k, y: this.h / 2 - this.scene.pos[2 * i + 1] * this.view.k };
+    if (this.follow !== null && this.local.has(this.follow)) this.aim(this.view.k);
     else if (this.autoFit) this.fit();
   }
 
@@ -318,6 +331,14 @@ export class Engine {
       x.moveTo(ax, ay);
       x.lineTo(bx, by);
       x.stroke();
+      // A ring round each end: these two may be one.
+      x.setLineDash([]);
+      for (const [cx, cy, at] of [[ax, ay, i], [bx, by, j]]) {
+        x.beginPath();
+        x.arc(cx, cy, Math.min(this.scene.size[at] * this.view.k, 30) + 4, 0, 2 * Math.PI);
+        x.stroke();
+      }
+      x.setLineDash([5, 4]);
     }
     x.restore();
   }
@@ -344,9 +365,15 @@ export class Engine {
     if (this.hovered !== null) add(this.hovered, true);
     if (this.selected !== null) {
       add(this.selected, true);
+      for (const s of this.same) if (s.a === this.selected || s.b === this.selected) add(s.a === this.selected ? s.b : s.a, true);
       let n = 0;
       for (const g of neighbours(ix, this.selected)) if (this.local.has(g) && n++ < 80) add(g);
       return out;
+    }
+    // Both ends of each Same person? link, by name.
+    for (const s of this.same.slice(0, 30)) {
+      add(s.a);
+      add(s.b);
     }
     // The busiest places in view; people too once close enough to tell them apart.
     let n = 0;

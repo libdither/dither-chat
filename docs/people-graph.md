@@ -49,8 +49,9 @@ be are drawn only when asked ("Same person?", below).
   the busiest".
 
 **Same person?** The chip of that name draws the hub's suggestions of who may be one person (docs/same-person.md) as
-dashed accent lines between the two, fainter the less likely, brighter by a picked or hovered node; it is remembered on
-this device. A person's card lists them under "Maybe the same person as", with the chance, Merge and Not the same,
+dashed accent lines between the two, fainter the less likely, brighter by a picked or hovered node, with a ring round
+each end and both named; it is remembered on this device. Picking one of them brings the people it may be into view
+with it. A person's card lists them under "Maybe the same person as", with the chance, Merge and Not the same,
 including those whose other side is not on the graph (a click opens their profile). The line at the bottom says how
 many are drawn and how many have a side off the graph, with a way to see them all.
 

@@ -4,7 +4,7 @@
  * from the People header; loaded only then (its own chunk). Nothing is merged without a click.
  */
 import type * as P from '@dither-chat/protocol';
-import { MATCH_STRONG } from '@dither-chat/protocol';
+import { MATCH_FAINT, MATCH_SHOWN, MATCH_STRONG } from '@dither-chat/protocol';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { netName } from '../model.ts';
 import { api, go, toast } from '../state.ts';
@@ -30,6 +30,48 @@ const KIND: Record<P.MatchEvidenceKind, { icon: string; label: string }> = {
 };
 
 const pct = (p: number) => `${Math.round(p * 100)}%`;
+
+/** The list's bands, likeliest first: a heading where each starts. */
+const BANDS: { min: number; title: string }[] = [
+  { min: MATCH_STRONG, title: 'Almost surely one person' },
+  { min: 0.6, title: 'Likely' },
+  { min: MATCH_SHOWN, title: 'Maybe' },
+  { min: MATCH_FAINT, title: 'Faint' },
+];
+const bandOf = (p: number) => BANDS.findIndex((b) => p >= b.min);
+const range = (i: number) => `${pct(BANDS[i].min)}${i ? ` to ${pct(BANDS[i - 1].min)}` : ' or more'}`;
+
+/** Pairs in bands, a heading where each band starts. */
+function Banded({ pairs, card }: { pairs: P.MatchSuggestion[]; card: (s: P.MatchSuggestion) => preact.ComponentChildren }) {
+  let at = -1;
+  return (
+    <>
+      {pairs.map((s) => {
+        const b = bandOf(s.p);
+        const head = b !== at;
+        at = b;
+        return (
+          <>
+            {head && (
+              <h3 class="sp-band">
+                {BANDS[b].title} <small>{range(b)}</small>
+              </h3>
+            )}
+            {card(s)}
+          </>
+        );
+      })}
+    </>
+  );
+}
+
+/** A bridge's stand-in on Matrix (@discord_123:server): what it stands for, not its id. */
+const BRIDGED: Record<string, P.Network> = { discord: 'discord', telegram: 'telegram', signal: 'signal', whatsapp: 'whatsapp', instagram: 'messenger', facebook: 'messenger', twitter: 'x' };
+function idLabel(i: P.MatchSide['identities'][number]): string {
+  const b = i.network === 'matrix' ? /^@([a-z]+)_[^:]+:(.+)$/.exec(i.handle ?? '') : null;
+  if (b && BRIDGED[b[1]]) return `${netName(BRIDGED[b[1]])}, through a bridge`;
+  return i.handle && i.network !== 'email' ? i.handle : (i.name ?? netName(i.network));
+}
 
 /** Merge sides into one person; reports and returns whether it worked. */
 async function mergeSides(sides: string[], names: string[]): Promise<boolean> {
@@ -73,6 +115,7 @@ export default function SamePerson({ onBack }: { onBack: () => void }) {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [hashing, setHashing] = useState<number | null>(null);
   const [review, setReview] = useState(false);
+  const [faintOpen, setFaintOpen] = useState(false);
   const alive = useRef(true);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -120,8 +163,10 @@ export default function SamePerson({ onBack }: { onBack: () => void }) {
   };
   const all = (view?.suggestions ?? []).filter((s) => !hidden.has(s.key));
   const needle = q.trim().toLowerCase();
-  const matching = needle ? all.filter((s) => [s.a, s.b].some((x) => x.name.toLowerCase().includes(needle) || x.identities.some((i) => (i.handle ?? '').toLowerCase().includes(needle)))) : all;
+  const hit = (s: P.MatchSuggestion) => !needle || [s.a, s.b].some((x) => x.name.toLowerCase().includes(needle) || x.identities.some((i) => (i.handle ?? '').toLowerCase().includes(needle)));
+  const matching = all.filter(hit);
   const strong = all.filter((s) => s.p >= MATCH_STRONG);
+  const faint = (view?.faint ?? []).filter((s) => !hidden.has(s.key) && hit(s));
   const groups = (view?.groups ?? []).filter((g) => g.keys.every((k) => !hidden.has(k)));
   const inGroup = new Set(groups.flatMap((g) => g.keys));
   const shown = filter === 'strong' ? matching.filter((s) => s.p >= MATCH_STRONG) : filter === 'groups' ? [] : matching.filter((s) => !inGroup.has(s.key) || filter === 'all');
@@ -189,11 +234,15 @@ export default function SamePerson({ onBack }: { onBack: () => void }) {
                 groups
                   .filter((g) => !needle || g.keys.some((k) => matching.some((m) => m.key === k)))
                   .map((g) => <GroupCard group={g} pairs={g.keys.map((k) => byKey.get(k)).filter((x): x is P.MatchSuggestion => !!x)} onDone={drop} onUndo={undrop} />)}
-              {shown
-                .filter((s) => filter !== 'all' || !inGroup.has(s.key))
-                .map((s) => (
-                  <PairCard s={s} onDone={() => drop([s.key])} onUndo={() => undrop([s.key])} />
-                ))}
+              <Banded pairs={shown.filter((s) => filter !== 'all' || !inGroup.has(s.key))} card={(s) => <PairCard s={s} onDone={() => drop([s.key])} onUndo={() => undrop([s.key])} />} />
+              {filter === 'all' && faint.length > 0 && (
+                <>
+                  {faintOpen && <Banded pairs={faint} card={(s) => <PairCard s={s} onDone={() => drop([s.key])} onUndo={() => undrop([s.key])} />} />}
+                  <button class="btn small ghost sp-faint" onClick={() => setFaintOpen(!faintOpen)} aria-expanded={faintOpen}>
+                    {faintOpen ? 'Hide the fainter pairs' : `${faint.length} fainter ${faint.length === 1 ? 'pair' : 'pairs'}, ${pct(MATCH_FAINT)} to ${pct(MATCH_SHOWN)}`}
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -245,7 +294,7 @@ function SideView({ side }: { side: P.MatchSide }) {
           {side.identities.slice(0, 3).map((i) => (
             <span class="sp-id">
               <NetBadge network={i.network} size={12} />
-              <span>{i.handle && i.network !== 'email' ? i.handle : (i.name ?? netName(i.network))}</span>
+              <span title={i.handle ?? undefined}>{idLabel(i)}</span>
             </span>
           ))}
           {side.identities.length > 3 && <span class="sp-id">+{side.identities.length - 3}</span>}
@@ -256,12 +305,22 @@ function SideView({ side }: { side: P.MatchSide }) {
   );
 }
 
+/** How much a piece of evidence counts, in three steps, for the meter beside it. */
+const STEPS = ['a little', 'some', 'a lot'];
+const stepOf = (w: number) => (Math.abs(w) >= 4.5 ? 2 : Math.abs(w) >= 2.5 ? 1 : 0);
+
 function Evidence({ e }: { e: P.MatchEvidence }) {
   const k = KIND[e.kind];
+  const n = stepOf(e.weight);
   return (
     <li class={`sp-ev ${e.weight < 0 ? 'against' : e.weight >= 4 ? 'strong' : ''}`}>
       <Icon name={k.icon} size={13} />
       <span>{e.text}</span>
+      <span class="sp-ev-w" title={`${k.label}: counts ${e.weight < 0 ? 'against, ' : 'for '}${STEPS[n]}`} aria-label={`counts ${e.weight < 0 ? 'against' : 'for'} ${STEPS[n]}`}>
+        {[0, 1, 2].map((i) => (
+          <i class={i <= n ? 'on' : ''} />
+        ))}
+      </span>
     </li>
   );
 }

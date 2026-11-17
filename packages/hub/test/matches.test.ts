@@ -247,3 +247,58 @@ describe('suggestions on a hub', () => {
     expect(await c.tick()).toEqual([]);
   });
 });
+
+describe('weaker leads', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dither-matches-weak-'));
+  let store: Store;
+  const wid = (n: string) => hubId('idn', 'whatsapp', n);
+
+  beforeAll(() => {
+    store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
+    const acc = (network: P.Network, self: string) => {
+      const a = store.createAccount({ network, label: network, color: '#111', adapter: network });
+      store.ingest(a, { t: 'status', status: 'online', self: { nativeId: self, displayName: 'Me', isSelf: true } });
+      return a;
+    };
+    const dc = acc('discord', 'me-d');
+    const sg = acc('signal', 'me-s');
+    const mx = acc('matrix', '@me:matrix.example');
+    const wa = acc('whatsapp', '15550100@s.whatsapp.net');
+    // Moth: one handle, the Matrix one inside its id.
+    store.ingest(dc, { t: 'identity', identity: { nativeId: 'moth', displayName: 'Moth', handle: 'mothlight' } });
+    store.ingest(mx, { t: 'identity', identity: { nativeId: '@mothlight:matrix.example', displayName: 'night moth', handle: '@mothlight:matrix.example' } });
+    // Pippa: a Discord handle with a number on the end, her Signal name.
+    store.ingest(dc, { t: 'identity', identity: { nativeId: 'pip', displayName: 'pip', handle: 'pippa22' } });
+    store.ingest(sg, { t: 'identity', identity: { nativeId: 'uuid-pippa', displayName: 'Pippa', handle: '+1 555 0139' } });
+    // Two strangers whose names are their numbers, a digit apart.
+    store.ingest(wa, { t: 'identity', identity: { nativeId: '15550121@s.whatsapp.net', handle: '+15550121' } });
+    store.ingest(sg, { t: 'identity', identity: { nativeId: 'uuid-other', displayName: '+1 555 0120', handle: '+1 555 0120' } });
+  });
+  afterAll(() => {
+    store.db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const all = (r: { suggestions: P.MatchSuggestion[]; faint: P.MatchSuggestion[] }) => [...r.suggestions, ...r.faint];
+  const find = (r: { suggestions: P.MatchSuggestion[]; faint: P.MatchSuggestion[] }, a: string, b: string) => all(r).find((s) => s.key === pairKey(a, b));
+
+  test("a Matrix id's own part is a handle like any other", () => {
+    const s = find(run(store.db), did('moth'), mid('@mothlight:matrix.example'));
+    expect(s?.evidence.find((e) => e.kind === 'name')?.text).toContain('The same handle, mothlight');
+  });
+
+  test('a handle less its number is the name on the other', () => {
+    const s = find(run(store.db), did('pip'), sid('uuid-pippa'));
+    expect(s?.evidence.find((e) => e.kind === 'name')?.text).toContain('less its number, is the name on the other: pippa');
+  });
+
+  test('a phone number is not a name: numbers a digit apart are no lead', () => {
+    expect(find(run(store.db), wid('15550121@s.whatsapp.net'), sid('uuid-other'))).toBeUndefined();
+  });
+
+  test('pairs under the shown mark are kept apart as faint, and never under the faint one', () => {
+    const r = run(store.db);
+    for (const s of r.faint) expect(s.p).toBeLessThan(0.35);
+    for (const s of r.faint) expect(s.p).toBeGreaterThanOrEqual(0.15);
+    for (const s of r.suggestions) expect(s.p).toBeGreaterThanOrEqual(0.35);
+  });
+});

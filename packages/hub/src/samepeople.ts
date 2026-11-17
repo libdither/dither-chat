@@ -47,10 +47,11 @@ export class SameMatches {
     const r = this.last;
     const decided = new Map<string, Row>((s.db.query('SELECT key, decision, until FROM match_decision').all() as Row[]).map((x) => [x.key, x]));
     const now = Date.now();
-    let suggestions = (r?.suggestions ?? []).filter((x) => {
+    const open = (x: P.MatchSuggestion) => {
       const d = decided.get(x.key);
-      return !d || (d.decision === 'later' && d.until && d.until < now);
-    });
+      return !d || (d.decision === 'later' && !!d.until && d.until < now);
+    };
+    let suggestions = (r?.suggestions ?? []).filter(open);
     if (opts.side) suggestions = suggestions.filter((x) => x.a.id === opts.side || x.b.id === opts.side);
     const ids = new Set(suggestions.flatMap((x) => [x.a.id, x.b.id]));
     const live = (r?.groups ?? []).filter((g) => g.sides.every((id) => ids.has(id)));
@@ -58,6 +59,7 @@ export class SameMatches {
     return {
       suggestions: suggestions.map((x) => ({ ...x, a: this.side(x.a), b: this.side(x.b) })),
       groups: opts.side ? live.filter((g) => g.sides.includes(opts.side!)) : live,
+      ...(opts.side ? {} : { faint: (r?.faint ?? []).filter(open).map((x) => ({ ...x, a: this.side(x.a), b: this.side(x.b) })) }),
       at: this.at,
       running: !!this.running,
       picturesWaiting: this.pictures(10_000).length,
@@ -165,7 +167,7 @@ export class SameMatches {
 
   /** Not the same (for good), or Later (a month). */
   decide(key: string, decision: P.MatchDecision) {
-    const sug = this.last?.suggestions.find((x) => x.key === key);
+    const sug = this.last?.suggestions.find((x) => x.key === key) ?? this.last?.faint.find((x) => x.key === key);
     const until = decision === 'later' ? Date.now() + 30 * 86_400_000 : null;
     this.d.store.db
       .query('INSERT INTO match_decision (key, decision, until, features, at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET decision = excluded.decision, until = excluded.until, features = excluded.features, at = excluded.at')
@@ -213,7 +215,7 @@ export class SameMatches {
     const put = s.db.query('INSERT INTO match_decision (key, decision, until, features, at) VALUES (?, ?, NULL, ?, ?) ON CONFLICT (key) DO UPDATE SET decision = excluded.decision, features = excluded.features, at = excluded.at');
     for (const x of this.last?.suggestions ?? []) if (set.has(x.a.id) && set.has(x.b.id)) put.run(x.key, 'yes', JSON.stringify(byKind(x)), Date.now());
     // What they were part of is out of date at once; the next run puts the merged person back in.
-    if (this.last) this.last = { ...this.last, suggestions: this.last.suggestions.filter((x) => !set.has(x.a.id) && !set.has(x.b.id)), groups: this.last.groups.filter((g) => !g.sides.some((id) => set.has(id))) };
+    if (this.last) this.last = { ...this.last, suggestions: this.last.suggestions.filter((x) => !set.has(x.a.id) && !set.has(x.b.id)), faint: this.last.faint.filter((x) => !set.has(x.a.id) && !set.has(x.b.id)), groups: this.last.groups.filter((g) => !g.sides.some((id) => set.has(id))) };
     this.d.flush?.();
     this.soon();
     return into;

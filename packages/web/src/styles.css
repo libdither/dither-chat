@@ -16487,6 +16487,7 @@ h1:hover > .pair-nick-edit,
   display: grid;
   gap: 2px;
   min-width: 0;
+  overflow: hidden;
 }
 .sp-side-text b {
   font-size: 14px;
@@ -16513,6 +16514,7 @@ h1:hover > .pair-nick-edit,
   max-width: 100%;
 }
 .sp-id span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -16570,6 +16572,58 @@ h1:hover > .pair-nick-edit,
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+/* Where a band of the list starts: "Likely, 60% to 90%". */
+.sp-band {
+  margin: 8px 2px 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.sp-band:first-child {
+  margin-top: 0;
+}
+.sp-band small {
+  margin-left: 6px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-faint);
+}
+/* How much a piece of evidence counts: three bars. */
+.sp-ev-w {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  flex: none;
+  height: 11px;
+  margin: 3px 0 0 auto;
+  padding-left: 8px;
+}
+.sp-ev-w i {
+  width: 3px;
+  border-radius: 1px;
+  background: var(--border-soft);
+}
+.sp-ev-w i:nth-child(1) {
+  height: 5px;
+}
+.sp-ev-w i:nth-child(2) {
+  height: 8px;
+}
+.sp-ev-w i:nth-child(3) {
+  height: 11px;
+}
+.sp-ev-w i.on {
+  background: var(--good);
+}
+.sp-ev.against .sp-ev-w i.on {
+  background: var(--danger);
+}
+.sp-faint {
+  justify-self: start;
 }
 .sp-group-head {
   display: flex;

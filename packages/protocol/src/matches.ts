@@ -72,6 +72,9 @@ export interface MatchGroup {
 
 export interface MatchesView {
   suggestions: MatchSuggestion[];
+  /** Fainter pairs, under MATCH_SHOWN and at least MATCH_FAINT, the likeliest first (at most 60): the page shows them
+   * when asked. Not on a side's list. */
+  faint?: MatchSuggestion[];
   groups: MatchGroup[];
   /** When the list was worked out, and whether a newer run is going. */
   at: number | null;
@@ -97,8 +100,10 @@ export interface PictureToHash {
 
 /** Odds at or over this are offered for "Merge all over…" (after a review). */
 export const MATCH_STRONG = 0.9;
-/** Under this a pair is not shown. */
+/** Under this a pair is not shown unless asked for ("fainter"). */
 export const MATCH_SHOWN = 0.35;
+/** Under this a pair is not kept at all. */
+export const MATCH_FAINT = 0.15;
 
 /** Collecting profiles (adversarial `profiles`): GET /api/profiles/collect. */
 export interface ProfileCollectStatus {

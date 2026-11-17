@@ -154,6 +154,15 @@ try {
   // server): those are counted as off the graph. One made-up pair between two people on it shows the dashed link.
   const g = (await fetch(`${hub}/api/graph`).then((r) => r.json())) as any;
   const [ga, gb] = ['Jules', 'Noor'].map((n) => g.people.find((x: any) => x.name === n));
+  // Pairs with a side the graph does not draw, as the hub has them now: the status line counts those.
+  const onGraph = new Set(g.people.map((x: any) => x.id));
+  await fetch(`${hub}/api/matches/refresh`, { method: 'POST' });
+  let now = await matches();
+  for (let i = 0; i < 40 && (now.running || !now.at); i++) {
+    await Bun.sleep(250);
+    now = await matches();
+  }
+  const offGraph = now.suggestions.filter((x: any) => !onGraph.has(x.a.id) || !onGraph.has(x.b.id)).length;
   await p.goto(`${hub}/#/people`);
   await p.until(`!!document.querySelector('.side-graph')`, 15000);
   await p.eval(`(() => {
@@ -173,7 +182,7 @@ try {
   await p.until(`/more off the graph/.test(document.querySelector('.pg-status')?.textContent ?? '')`, 10000).catch(() => {});
   const said = await p.eval<string>(`document.querySelector('.pg-status').textContent`);
   check(/[1-9]\d* possible same-person/.test(said), 'the graph says how many it draws', said);
-  check(/\(3 more off the graph/.test(said), 'pairs with a side off the graph are counted as such', said);
+  check(offGraph > 0 && new RegExp(`\\(${offGraph} more off the graph`).test(said), 'pairs with a side off the graph are counted as such', { said, offGraph });
   await p.eval(`(() => { const i = document.querySelector('.pg-find input'); i.value = 'Ravi'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   await p.until(`!!document.querySelector('.pg-hits .pg-row')`, 3000);
   await click('.pg-hits .pg-row');

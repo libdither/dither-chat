@@ -44,7 +44,7 @@ card). In rough order of strength:
 | `bridge` | a bridge's stand-in for the other | 9 |
 | `claims` | one side's profile names an account the other has; both ways or verified count more | 5.5 to 7 |
 | `contact` | the same phone number or email on both | 7 |
-| `name` | the same handle (3.8), a rare full name (up to 3.7), close names (Jaro-Winkler), shared words | to ~5 |
+| `name` | the same handle (3.8; a Matrix id's own part is its handle), a handle less its number that is the name on the other (`pippa22` and Pippa, 2.4), a rare full name (up to 3.7), close names (Jaro-Winkler), shared words; a phone number shown as a name is not one | to ~5 |
 | `picture` | the same picture (3.2), a similar one (1.6); a picture more than three sides have (a default) counts for nothing | 1.6 to 3.2 |
 | `friends` | people known to be one person around both, weighted down by how big the group is | up to 3.5 |
 | `bio` | bios alike | up to 1.4 |
@@ -52,8 +52,13 @@ card). In rough order of strength:
 | `model` | jev's reading (below) | ±2.2 |
 | `against` | both on the same network (one person seldom has two accounts you see there), or direct chats with both going on at once for over a month on one network | −2.6, −1.6 |
 
-The base is −3.1, so a shared name alone is not enough, and a claim alone nearly is. A pair under 35% is not shown;
-"Merge all over…" offers pairs at 90% or more.
+The base is −3.1, so a shared name alone is not enough, and a claim alone nearly is. A pair under 35% is not shown
+unless asked for: from 15% up to that the page keeps them as fainter pairs (`faint`, at most 60), shown by the button
+at the end of the list. "Merge all over…" offers pairs at 90% or more.
+
+Weak leads add up. The same picture alone is about even odds; a similar one (a few bits of the hash apart) needs
+another lead, such as names alike or friends in common; four friends in common in small groups, and nothing else, come
+to a little over a third.
 
 **Learning.** Once you have decided at least four pairs each way, a scale per kind is fitted to your decisions by
 logistic regression (merges are yes, including people you had already merged across networks; Not the same is no),
@@ -75,6 +80,18 @@ It runs when the list is first asked for, when it is older than 15 minutes, a fe
 hash (the sides of pairs first, then people you have direct chats or groups with), the page draws each to a 9×8 canvas
 and makes a 64-bit difference hash, and `POST /api/matches/pictures` stores them in `picture_hash` with the URL they
 came from, so a changed picture is hashed again. The status line says "Comparing pictures" while it works.
+
+## The page
+
+The list is in bands, each with a heading: almost surely one person (90% or more), likely (60%), maybe (35%), and,
+when asked, faint. Each piece of evidence has a three-bar meter for how much it counts (a little, some, a lot; red
+when it counts against). A bridge's stand-in shows as what it stands for ("Discord, through a bridge", its Matrix id on
+hover).
+
+To see it on a bigger world: `DITHER_DEMO_SCENARIO=crowd bun run hub -- --demo --adversarial --data <temp dir>
+--port <port>`, then `bun scripts/shots-same-person.ts http://127.0.0.1:<port> <dir>`, which hashes the pictures,
+prints every pair with its evidence and takes screenshots of the page and the graph (docs/deploy.md, "Demo and test
+hubs").
 
 ## Deciding
 
@@ -112,7 +129,7 @@ until you forget them under Message history ("Profile versions").
 
 ## API
 
-- `GET /api/matches` (`?side=` for one side's suggestions): `MatchesView`.
+- `GET /api/matches` (`?side=` for one side's suggestions, without `faint`): `MatchesView`.
 - `POST /api/matches/refresh`: work it out again.
 - `POST /api/matches/decide` `{ key, decision: 'no' | 'later' }`, or `{ key, undo: true }`.
 - `POST /api/matches/merge` `{ sides }`: returns `{ person }`.

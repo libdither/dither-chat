@@ -19,13 +19,15 @@
  */
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
-import { MATCH_SHOWN, NETWORK_META } from '@dither-chat/protocol';
+import { MATCH_FAINT, MATCH_SHOWN, NETWORK_META } from '@dither-chat/protocol';
 
 type Row = Record<string, any>;
 type Network = P.Network;
 
 export interface MatchRun {
   suggestions: P.MatchSuggestion[];
+  /** Under MATCH_SHOWN, at least MATCH_FAINT: shown when asked. */
+  faint: P.MatchSuggestion[];
   groups: P.MatchGroup[];
   learned: P.MatchesView['learned'];
   /** Pairs worth asking jev about: cards for both sides. */
@@ -252,6 +254,7 @@ const W = {
   pictureNear: 1.6,
   handle: 3.8,
   handleDigits: 1.4,
+  handleName: 2.4,
   nameRare: 3.7,
   nameJW: 1.1,
   token: 0.7,
@@ -361,6 +364,9 @@ function load(db: Database, now = Date.now()): Loaded {
     sideOf.set(i.id, sid);
     for (const n of [i.display_name, i.nickname, i.network === 'email' ? null : i.handle]) addName(s, n);
     if (i.handle && i.network !== 'email') s.handles.add(norm(i.handle));
+    // A Matrix id's own part is the handle people pick (@mothlight:matrix.org is mothlight); a bridge's stand-in is not.
+    const local = i.network === 'matrix' && !puppetOf(i.native_id) ? /^@([^:]+):/.exec(i.native_id)?.[1] : undefined;
+    if (local) s.handles.add(norm(local));
     for (const k of ownKeys(i)) s.keys.set(k.key, k.text);
     if (i.network === 'matrix') {
       const p = puppetOf(i.native_id);
@@ -448,8 +454,10 @@ function load(db: Database, now = Date.now()): Loaded {
 
 function addName(s: Side, n: string | null | undefined) {
   const k = norm(n);
+  // A phone number for a name (Signal and WhatsApp show the number) is a contact, not a name: keys compare those.
+  if (/^\d+$/.test(k)) return;
   if (k.length >= 3) s.names.add(k);
-  for (const t of tokens(n)) if (t.length >= 3) s.words.add(t);
+  for (const t of tokens(n)) if (t.length >= 3 && !/^\d+$/.test(t)) s.words.add(t);
 }
 
 function addProfile(s: Side, a: P.PersonAbout, identityId: string, sideOf: Map<string, string>) {
@@ -595,7 +603,8 @@ function compare(L: Loaded, a: Side, b: Side, df: Map<string, number>): Scored {
   else if (best <= 9) add('picture', 'A similar profile picture', W.pictureNear);
 
   // Names: a handle the same on both, then a name, the rarer the stronger, then close spellings, then a shared word.
-  const handle = [...a.handles].find((h) => h.length >= 4 && (b.handles.has(h) || b.names.has(h)));
+  // A handle all digits is a phone number: the contact line above says it already.
+  const handle = [...a.handles].find((h) => h.length >= 4 && !/^\d+$/.test(h) && (b.handles.has(h) || b.names.has(h)));
   const bareA = new Set([...a.handles].map((h) => h.replace(/\d+$/, '')).filter((h) => h.length >= 4));
   const bare = handle ? undefined : [...b.handles].map((h) => h.replace(/\d+$/, '')).find((h) => bareA.has(h));
   const name = [...a.names].filter((n) => b.names.has(n)).sort((x, y) => (df.get(x) ?? 1) - (df.get(y) ?? 1))[0];
@@ -605,6 +614,11 @@ function compare(L: Loaded, a: Side, b: Side, df: Map<string, number>): Scored {
     add('name', both ? `The same handle, ${handle}, on ${where}` : `A handle on one is the name on the other: ${handle} (${where})`, W.handle * rarity(df.get(handle) ?? 2) * (both ? 1 : 0.85));
   }
   else if (bare) add('name', `Handles alike: ${bare}…`, W.handleDigits);
+  else {
+    // A handle with a number on the end, the name on the other: pippa22 and Pippa.
+    const named = [...bareA].find((h) => !a.handles.has(h) && b.names.has(h)) ?? [...b.handles].map((h) => h.replace(/\d+$/, '')).find((h) => h.length >= 4 && !b.handles.has(h) && a.names.has(h));
+    if (named) add('name', `A handle on one, less its number, is the name on the other: ${named}`, W.handleName * rarity(df.get(named) ?? 2));
+  }
   if (name && name !== handle) {
     const r = rarity(df.get(name) ?? 2);
     // A short single word (a first name) says less than a full name.
@@ -790,13 +804,15 @@ export function run(db: Database, opts: { now?: number; limit?: number } = {}): 
     let z = W.base + (fit?.bias ?? 0);
     for (const [kind, w] of Object.entries(s.byKind)) z += w * (fit?.scales[kind] ?? 1);
     const p = sigmoid(z);
-    if (p >= MATCH_SHOWN * 0.5) scored.push({ ...s, p });
+    if (p >= MATCH_FAINT) scored.push({ ...s, p });
   }
   scored.sort((x, y) => y.p - x.p);
   const limit = opts.limit ?? 400;
   const shownPairs = scored.filter((s) => s.p >= MATCH_SHOWN).slice(0, limit);
 
-  const suggestions: P.MatchSuggestion[] = shownPairs.map((s) => ({ key: s.key, a: sideView(s.a), b: sideView(s.b), p: Math.round(s.p * 1000) / 1000, evidence: s.evidence }));
+  const view = (s: Scored & { p: number }): P.MatchSuggestion => ({ key: s.key, a: sideView(s.a), b: sideView(s.b), p: Math.round(s.p * 1000) / 1000, evidence: s.evidence });
+  const suggestions = shownPairs.map(view);
+  const faint = scored.filter((s) => s.p < MATCH_SHOWN).slice(0, 60).map(view);
 
   // Groups: suggestions joined by a side they share, held by links of at least even odds.
   const parent = new Map<string, string>();
@@ -853,6 +869,7 @@ export function run(db: Database, opts: { now?: number; limit?: number } = {}): 
   const decided = [...L.decisions.values()];
   return {
     suggestions,
+    faint,
     groups,
     learned: { yes: decided.filter((d) => d.decision === 'yes').length + yesBefore.length, no: decided.filter((d) => d.decision === 'no').length, fitted: !!fit },
     ask,
