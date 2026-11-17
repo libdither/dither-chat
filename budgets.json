@@ -96,7 +96,7 @@
     "js/shared/TextView.bytes": { "measured": 8500, "budget": 8670 },
     "js/shared/TextView.gzip": { "measured": 3868, "budget": 3943 },
     "js/src/graph/GraphView.tsx.bytes": { "measured": 34106, "budget": 34231 },
-    "js/src/graph/GraphView.tsx.gzip": { "measured": 12428, "budget": 12461 },
+    "js/src/graph/GraphView.tsx.gzip": { "measured": 12465, "budget": 12715, "reason": "The phone's + panel (docs/uploads.md \"The panel\"): the startup chunk exports the panel's keyboard-room signals, which renames GraphView's imports from it" },
     "js/src/prefetch.ts.bytes": { "measured": 3348, "budget": 3415 },
     "js/src/prefetch.ts.gzip": { "measured": 1597, "budget": 1629 },
     "js/src/ui/AccountPane.tsx.bytes": { "measured": 48217, "budget": 49177 },
