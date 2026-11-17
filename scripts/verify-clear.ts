@@ -112,14 +112,16 @@ try {
    */
   const away = async () => {
     await p.goto('about:blank');
+    let started = 0;
     await until('the worker to see no window of the app', async () => {
       if (!(await running())) {
+        started++;
         await p.send('ServiceWorker.startWorker', { scopeURL: reg.scopeURL });
         return false;
       }
       return (await windows()).length === 0;
     });
-    note('the worker runs and sees no window of the app');
+    note(`the worker runs${started ? ' (started it: it had stopped)' : ''} and sees no window of the app`);
   };
 
   // 1. An alert from the hub about a DM: Always alert on it, then the demo's person answers what is sent there.
