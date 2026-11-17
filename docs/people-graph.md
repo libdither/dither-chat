@@ -27,7 +27,8 @@ filters in `model.ts`, the force layout in `layout.ts` run by `layout.worker.ts`
 
 No message text, avatars or profile fields are sent: ids, names, networks, which of your accounts see each place and
 which have a direct chat with each person, and the network's member count of a server when members are recorded.
-Nothing is guessed: two identities are one person only if you (or a direct chat) made them one.
+Nothing is guessed: two identities are one person only if you (or a direct chat) made them one. Suggestions of who may
+be are drawn only when asked ("Same person?", below).
 
 ## Using it
 
@@ -46,6 +47,12 @@ Nothing is guessed: two identities are one person only if you (or a direct chat)
 - **Cap**: at most 2,000, 6,000 (the default) or 20,000 nodes. Over it, the busiest places are kept (up to a quarter
   of the cap) and then the people most connected to them; the line at the bottom says "Showing N of M people · … ,
   the busiest".
+
+**Same person?** The chip of that name draws the hub's suggestions of who may be one person (docs/same-person.md) as
+dashed accent lines between the two, fainter the less likely, brighter by a picked or hovered node; it is remembered on
+this device. A person's card lists them under "Maybe the same person as", with the chance, Merge and Not the same,
+including those whose other side is not on the graph (a click opens their profile). The line at the bottom says how
+many are drawn and how many have a side off the graph, with a way to see them all.
 
 With nothing linked yet, it says how the graph fills in, with a way to Adversarial features. Without recorded
 members, a note at the top says servers show only who profiles and channels named.

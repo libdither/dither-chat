@@ -48,6 +48,9 @@ export class Engine {
   /** Places, busiest first, for labels when nothing is picked. */
   private byDegree: number[] = [];
   private kept = new Map<string, [number, number]>();
+  /** Same person? suggestions, as pairs of global node ids and their odds: dashed lines (drawSame). */
+  private same: { a: number; b: number; p: number }[] = [];
+  private sameInk = '#58f';
   private ro: ResizeObserver;
   private off: (() => void)[] = [];
 
@@ -98,6 +101,12 @@ export class Engine {
     this.theme();
     this.start(pos);
     if (this.autoFit) this.fit();
+    this.dirty();
+  }
+
+  /** Show these suggested same-person links (none: hide them). */
+  setSame(pairs: { a: number; b: number; p: number }[]) {
+    this.same = pairs;
     this.dirty();
   }
 
@@ -186,6 +195,7 @@ export class Engine {
     this.ink = v('--text', '#ddd');
     this.halo = v('--bg-center', v('--bg', '#000'));
     this.font = cs.getPropertyValue('--font').trim() || 'sans-serif';
+    this.sameInk = v('--accent', '#58f');
     this.paint();
     this.dirty();
   }
@@ -287,7 +297,29 @@ export class Engine {
       this.frame = requestAnimationFrame(() => this.draw());
     }
     this.r.draw(this.scene, this.view, this.palette);
-    drawLabels(this.text, this.labels(), this.dpr, this.ink, this.halo, this.font);
+    drawLabels(this.text, this.labels(), this.dpr, this.ink, this.halo, this.font, this.same.length ? (x) => this.drawSame(x) : undefined);
+  }
+
+  /** Suggested same-person links, dashed, stronger the likelier; the picked person's in full. */
+  private drawSame(x: CanvasRenderingContext2D) {
+    x.save();
+    x.strokeStyle = this.sameInk;
+    x.setLineDash([5, 4]);
+    for (const s of this.same) {
+      const i = this.local.get(s.a);
+      const j = this.local.get(s.b);
+      if (i === undefined || j === undefined) continue;
+      const near = this.selected === s.a || this.selected === s.b || this.hovered === s.a || this.hovered === s.b;
+      x.globalAlpha = near ? 1 : this.selected !== null ? 0.15 : 0.25 + 0.6 * s.p;
+      x.lineWidth = near ? 2.2 : 1.4;
+      const [ax, ay] = this.screen(i);
+      const [bx, by] = this.screen(j);
+      x.beginPath();
+      x.moveTo(ax, ay);
+      x.lineTo(bx, by);
+      x.stroke();
+    }
+    x.restore();
   }
 
   private screen(i: number): [number, number] {

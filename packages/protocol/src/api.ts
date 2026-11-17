@@ -869,7 +869,7 @@ export interface PersonAboutView extends Omit<PersonAbout, 'avatar' | 'banner' |
   avatar?: string | null;
   banner?: string | null;
   /** Spaces you share; `spaceId` null for one the hub does not have. */
-  mutualSpaces?: { spaceId: string | null; nativeId: string; nick?: string; roles?: { name: string; color?: string }[]; joinedAt?: number }[];
+  mutualSpaces?: { spaceId: string | null; nativeId: string; nick?: string; roles?: { name: string; color?: string }[]; joinedAt?: number; bio?: string; pronouns?: string }[];
   mutualFriends?: string[];
   friends?: string[];
   /** Their recent posts (X), as PersonAbout's, with each `author` a hub identity id and pictures signed media paths. */
@@ -1506,6 +1506,11 @@ export interface RetentionSettings extends KeepSettings {
    */
   voice?: boolean;
   /**
+   * Profiles collected in the background, slowly, for everyone your accounts share a chat or a server with, and each
+   * version of a profile kept as it changes (docs/same-person.md). Adversarial. Absent (a hub from before it): off.
+   */
+  profiles?: boolean;
+  /**
    * Adversarial features shown, after the warning (docs/history.md): their switches, and what they kept, in sight.
    * Statuses, presence and members are logged only while shown. Deleted and disappearing messages are kept as their
    * switches say whether shown or not: hiding never loses a message, it only keeps what was kept out of sight.
@@ -1530,6 +1535,7 @@ export const DEFAULT_RETENTION: RetentionSettings = {
   presence: false,
   members: false,
   voice: false,
+  profiles: false,
   adversarial: false,
   show: 'shown',
   showIn: {},
@@ -1544,7 +1550,7 @@ export interface RetentionChange {
 }
 
 /** Switches whose turning off is confirmed (PUT /api/retention takes `confirm: true` for it). */
-export const RETENTION_GUARDED = ['deleted', 'disappearing', 'statuses', 'presence', 'members', 'voice', 'adversarial'] as const satisfies readonly (keyof RetentionSettings)[];
+export const RETENTION_GUARDED = ['deleted', 'disappearing', 'statuses', 'presence', 'members', 'voice', 'profiles', 'adversarial'] as const satisfies readonly (keyof RetentionSettings)[];
 
 /** Whether kept deleted and disappeared messages show in this chat. */
 export const showsGone = (r: RetentionSettings, conversationId: string | null | undefined): boolean =>
@@ -1561,7 +1567,7 @@ export interface PresenceView {
 export const ADVERSARIAL_KEEPS = ['deleted', 'disappearing'] as const satisfies readonly (keyof KeepSettings)[];
 
 /** What Forget erases, one kind at a time (POST /api/retention/erase); GET /api/retention/kept says which have anything kept. */
-export const KEPT_KINDS = ['deleted', 'disappeared', 'edits', 'reactions', 'receipts', 'changes', 'statuses', 'presence', 'members', 'voice'] as const;
+export const KEPT_KINDS = ['deleted', 'disappeared', 'edits', 'reactions', 'receipts', 'changes', 'statuses', 'presence', 'members', 'voice', 'profiles'] as const;
 export type KeptKind = (typeof KEPT_KINDS)[number];
 
 /**

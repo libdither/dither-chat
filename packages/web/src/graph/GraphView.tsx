@@ -7,7 +7,7 @@ import { NETWORK_META } from '@dither-chat/protocol';
 import { signal, type Signal } from '@preact/signals';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { convTitle, netName } from '../model.ts';
-import { api, db, go, type Route } from '../state.ts';
+import { api, db, go, toast, type Route } from '../state.ts';
 import { Empty, NetBadge, openAdversarial } from '../ui/bits.tsx';
 import { Icon } from '../ui/icons.tsx';
 import { Engine } from './engine.ts';
@@ -30,6 +30,20 @@ function saveFilters(f: Filters) {
     localStorage.setItem(KEY, JSON.stringify({ networks: f.networks, groups: f.groups, bots: f.bots, shared: f.shared, cap: f.cap }));
   } catch {}
 }
+
+const SAME_KEY = 'dither-chat:graph-same';
+const loadSameOn = () => {
+  try {
+    return localStorage.getItem(SAME_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+const saveSameOn = (on: boolean) => {
+  try {
+    localStorage.setItem(SAME_KEY, on ? '1' : '0');
+  } catch {}
+};
 
 const placeName = (p: P.GraphPlace) => p.name ?? (p.kind === 'group' ? convTitle(db.conversations.get(p.id)) || 'Group' : 'Server');
 
@@ -75,7 +89,7 @@ export default function GraphView({ onBack }: { onBack: () => void }) {
       ) : !graph.links.length ? (
         <Sparse graph={graph} />
       ) : (
-        <Stage key={gen} graph={graph} />
+        <Stage key={gen} graph={graph} reload={load} />
       )}
     </section>
   );
@@ -98,7 +112,7 @@ function Sparse({ graph }: { graph: P.PeopleGraph }) {
   );
 }
 
-function Stage({ graph }: { graph: P.PeopleGraph }) {
+function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) {
   const ix = useMemo(() => index(graph), [graph]);
   const [f, setF] = useState<Filters>(loadFilters);
   const vis = useMemo(() => visible(ix, f), [ix, f]);
@@ -137,6 +151,23 @@ function Stage({ graph }: { graph: P.PeopleGraph }) {
     };
   }, []);
   useEffect(() => engine.current?.setData(ix, vis), [ix, vis]);
+  // Same person? suggestions as dashed links (docs/same-person.md), when asked for.
+  const [sameOn, setSameOn] = useState(loadSameOn);
+  const [same, setSame] = useState<P.MatchSuggestion[]>([]);
+  useEffect(() => {
+    saveSameOn(sameOn);
+    if (!sameOn) return setSame([]);
+    api<P.MatchesView>('/api/matches')
+      .then((v) => setSame(v.suggestions))
+      .catch(() => setSame([]));
+  }, [sameOn]);
+  const byId = useMemo(() => new Map(graph.people.map((p, i) => [p.id, i])), [graph]);
+  const sameLinks = useMemo(
+    () => same.map((s) => ({ s, a: byId.get(s.a.id), b: byId.get(s.b.id) })).filter((x): x is { s: P.MatchSuggestion; a: number; b: number } => x.a !== undefined && x.b !== undefined),
+    [same, byId],
+  );
+  useEffect(() => engine.current?.setSame(sameLinks.map((x) => ({ a: x.a, b: x.b, p: x.s.p }))), [sameLinks]);
+  const shownSame = sameLinks.filter((x) => vis.nodes.includes(x.a) && vis.nodes.includes(x.b)).length;
   useEffect(() => engine.current?.select(picked), [picked]);
 
   /** Show a node, widening the filters if it is not shown. */
@@ -200,6 +231,9 @@ function Stage({ graph }: { graph: P.PeopleGraph }) {
           <button class={`chip-btn ${f.bots ? 'on' : ''}`} aria-pressed={f.bots} onClick={() => set({ bots: !f.bots })}>
             Bots
           </button>
+          <button class={`chip-btn ${sameOn ? 'on' : ''}`} aria-pressed={sameOn} title="People who may be one person on several accounts, as dashed links" onClick={() => setSameOn(!sameOn)}>
+            <Icon name="merge" size={13} /> Same person?
+          </button>
           <select class="input pg-select pg-cap" aria-label="At most" value={f.cap} onChange={(e) => set({ cap: Number((e.target as HTMLSelectElement).value) })}>
             {CAPS.map((c) => (
               <option value={c}>Up to {c.toLocaleString()}</option>
@@ -215,6 +249,21 @@ function Stage({ graph }: { graph: P.PeopleGraph }) {
         <div class="pg-status" aria-live="polite">
           <span class="pg-showing">{capped ? `Showing ${showing}, the busiest` : `Showing ${showing}`}</span>
           {kind === '2d' && <span> · simple drawing (no WebGL)</span>}
+          {sameOn && (
+            <span>
+              {' '}
+              · {shownSame.toLocaleString()} possible same-person {shownSame === 1 ? 'link' : 'links'} dashed
+              {same.length > shownSame && (
+                <>
+                  {` (${(same.length - shownSame).toLocaleString()} more off the graph: `}
+                  <button class="link-btn" onClick={() => go({ view: 'people', same: true })}>
+                    see all
+                  </button>
+                  )
+                </>
+              )}
+            </span>
+          )}
         </div>
         {!graph.members && (
           <div class="pg-note">
@@ -233,7 +282,26 @@ function Stage({ graph }: { graph: P.PeopleGraph }) {
           </button>
         </div>
         <Tip hover={hover} picked={picked} graph={graph} ix={ix} name={name} />
-        {picked !== null && <Card graph={graph} ix={ix} node={picked} name={name} onPick={reveal} onClose={() => setPicked(null)} onFocus={(q) => set({ place: q })} focused={f.place} bots={f.bots} />}
+        {picked !== null && (
+          <Card
+            graph={graph}
+            ix={ix}
+            node={picked}
+            name={name}
+            onPick={reveal}
+            onClose={() => setPicked(null)}
+            onFocus={(q) => set({ place: q })}
+            focused={f.place}
+            bots={f.bots}
+            same={same
+              .filter((x) => x.a.id === graph.people[picked]?.id || x.b.id === graph.people[picked]?.id)
+              .map((x) => {
+                const side = x.a.id === graph.people[picked]?.id ? x.b : x.a;
+                return { s: x, side, at: byId.get(side.id) };
+              })}
+            onSameDone={(key, merged) => (merged ? reload() : setSame(same.filter((x) => x.key !== key)))}
+          />
+        )}
       </div>
     </>
   );
@@ -281,7 +349,32 @@ function open(graph: P.PeopleGraph, g: number) {
   go(routeOf(graph, g).profile);
 }
 
-function Card({ graph, ix, node, name, onPick, onClose, onFocus, focused, bots }: { graph: P.PeopleGraph; ix: Index; node: number; name: (g: number) => string; onPick: (g: number) => void; onClose: () => void; onFocus: (q: number | null) => void; focused: number | null; bots: boolean }) {
+function Card({
+  graph,
+  ix,
+  node,
+  name,
+  onPick,
+  onClose,
+  onFocus,
+  focused,
+  bots,
+  same,
+  onSameDone,
+}: {
+  graph: P.PeopleGraph;
+  ix: Index;
+  node: number;
+  name: (g: number) => string;
+  onPick: (g: number) => void;
+  onClose: () => void;
+  onFocus: (q: number | null) => void;
+  focused: number | null;
+  bots: boolean;
+  /** Suggestions with this person in them: the other side, and its node when it is on the graph. */
+  same: { s: P.MatchSuggestion; side: P.MatchSide; at: number | undefined }[];
+  onSameDone: (key: string, merged: boolean) => void;
+}) {
   const np = graph.people.length;
   const isPerson = node < np;
   const r = routeOf(graph, node);
@@ -338,6 +431,43 @@ function Card({ graph, ix, node, name, onPick, onClose, onFocus, focused, bots }
           </button>
         )}
       </div>
+      {isPerson && same.length > 0 && (
+        <>
+          <h4>Maybe the same person as</h4>
+          <div class="pg-card-list">
+            {same.map(({ s, side, at }) => {
+              return (
+                <div class="pg-same">
+                  <button
+                    class="pg-row"
+                    onClick={() => (at !== undefined ? onPick(at) : go(side.id.startsWith('per_') ? { view: 'profile', person: side.id } : { view: 'profile', identity: side.id }))}
+                    title={s.evidence.map((e) => e.text).join('\n')}
+                  >
+                    {side.identities[0] && <NetBadge network={side.identities[0].network} size={13} />}
+                    <span class="pg-row-name">{side.name}</span>
+                    <span class="pg-n">{Math.round(s.p * 100)}%</span>
+                  </button>
+                  <span class="pg-same-actions">
+                    <button
+                      class="btn small"
+                      onClick={() =>
+                        void api('/api/matches/merge', { body: { sides: [s.a.id, s.b.id] } })
+                          .then(() => onSameDone(s.key, true))
+                          .catch((e) => toast({ kind: 'error', title: 'Could not merge', body: (e as Error).message }))
+                      }
+                    >
+                      Merge
+                    </button>
+                    <button class="btn small ghost" onClick={() => void api('/api/matches/decide', { body: { key: s.key, decision: 'no' } }).then(() => onSameDone(s.key, false))}>
+                      Not the same
+                    </button>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
       {isPerson && near.length > 0 && (
         <>
           <h4>In {near.length === 1 ? 'one place' : `${near.length} places`}</h4>

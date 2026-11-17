@@ -294,7 +294,7 @@ export class People {
     const spaces = mutualSpaces?.map((m) => {
       const id = hubId('spc', network, m.id);
       const known = s.one<Row>('SELECT id FROM space WHERE id = ?', id);
-      return { spaceId: known ? id : null, nativeId: m.id, ...(m.nick ? { nick: m.nick } : {}), ...(m.roles?.length ? { roles: m.roles } : {}), ...(m.joinedAt ? { joinedAt: m.joinedAt } : {}) };
+      return { spaceId: known ? id : null, nativeId: m.id, ...(m.nick ? { nick: m.nick } : {}), ...(m.roles?.length ? { roles: m.roles } : {}), ...(m.joinedAt ? { joinedAt: m.joinedAt } : {}), ...(m.bio ? { bio: m.bio } : {}), ...(m.pronouns ? { pronouns: m.pronouns } : {}) };
     });
     const mf = mutualFriends?.map(ident);
     const fr = friends?.map(ident);
@@ -374,5 +374,27 @@ export function keepAbout(store: Store, identityId: string, accountId: string, n
   s.db
     .query('INSERT INTO about (target_id, account_id, data, fetched_at) VALUES (?, ?, ?, ?) ON CONFLICT (target_id, account_id) DO UPDATE SET data = excluded.data, fetched_at = excluded.fetched_at')
     .run(identityId, accountId, JSON.stringify(about), at);
+  keepVersion(s, identityId, accountId, about, at, k);
   return true;
+}
+
+/** A profile as a version: without its posts or how it was seen. Adapters build answers in one order, so equal ones compare equal. */
+function versionOf(a: P.PersonAbout | Kept): string {
+  const { posts: _p, unasked: _u, ...rest } = a as Kept;
+  return JSON.stringify(rest);
+}
+
+/**
+ * Each version of a profile, while profiles are collected (adversarial `profiles`, docs/same-person.md): kept when it
+ * differs from the last kept one. The first time, the answer held from before goes in too, so the change shows.
+ */
+function keepVersion(s: Store, identityId: string, accountId: string, about: P.PersonAbout, at: number, before: { about: Kept; at: number; accountId: string } | null) {
+  const r = s.retention();
+  if (!r.adversarial || !r.profiles) return;
+  const last = s.one<Row>('SELECT data FROM profile_version WHERE identity_id = ? ORDER BY at DESC, id DESC LIMIT 1', identityId);
+  const now = versionOf(about);
+  if (last?.data === now) return;
+  const add = s.db.query('INSERT INTO profile_version (identity_id, account_id, data, at) VALUES (?, ?, ?, ?)');
+  if (!last && before && versionOf(before.about) !== now) add.run(identityId, before.accountId, versionOf(before.about), before.at);
+  add.run(identityId, accountId, now, at);
 }

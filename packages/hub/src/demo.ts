@@ -1434,10 +1434,10 @@ const DISCORD_PROFILES: Record<string, { bio?: string; pronouns?: string; status
     friends: ['alice', 'theo'],
     links: [{ label: 'GitHub', value: 'quinn-dev', url: 'https://github.com/quinn-dev', verified: true }, { label: 'Website', value: 'quinn.example', url: 'https://quinn.example' }],
   },
-  ravi: { bio: 'raid leader on tuesdays', accent: '#4B6CB7', servers: ['hk'], friends: ['alice'], status: { text: 'grinding', emoji: '⚔️' } },
+  ravi: { bio: 'raid leader on tuesdays', accent: '#4B6CB7', servers: ['hk'], friends: ['alice'], status: { text: 'grinding', emoji: '⚔️' }, links: [{ label: 'X', value: 'ravi_routes', url: 'https://x.com/ravi_routes', verified: true }] },
   jordan: { pronouns: 'he/him', servers: ['hk'], friends: ['alice'] },
   theo: { bio: 'has your belay device', servers: ['dither'], friends: ['alice', 'quinn'] },
-  lev: { bio: 'p2p, routing, coffee', servers: ['dither', 'rust'], roles: { dither: [{ name: 'Maintainer', color: '#E91E63' }] } },
+  lev: { bio: 'p2p, routing, coffee. signal me: +1 555 0118', servers: ['dither', 'rust'], roles: { dither: [{ name: 'Maintainer', color: '#E91E63' }] } },
   // Multi-account only (these accounts exist only there): each of someone's accounts says its own thing.
   kit: { bio: 'makes things, breaks things, fixes most of them', pronouns: 'they/them', friends: ['alice'] },
   kitWork: { bio: 'infra at a small co-op. work account, slow replies' },
@@ -3292,6 +3292,13 @@ export function applyDemoOverlay(store: Store) {
     store.updatePerson(first, { name });
     return first;
   };
+  // Same person? (docs/same-person.md): two Discord profiles kept as if opened, so the list has something to show
+  // from the start: Ravi links an X account, Lev gives a Signal number in a bio.
+  for (const [k, who] of [['ravi', D.ravi], ['lev', D.lev]] as const) {
+    const p = DISCORD_PROFILES[k];
+    const about: P.PersonAbout = { displayName: who.displayName, handle: who.handle, ...(p.bio ? { bio: p.bio } : {}), ...(p.links ? { links: p.links } : {}) };
+    store.db.query('INSERT OR IGNORE INTO about (target_id, account_id, data, fetched_at) VALUES (?, ?, ?, ?)').run(idn('discord', who), 'acc_demo-discord-main', JSON.stringify(about), Date.now() - 86_400_000);
+  }
   const alice = merge('Alice Chen', ['signal', S.alice], ['discord', D.alice], ['matrix', M.alice], ['whatsapp', W.alice], ['telegram', TG.alice]);
   const sam = merge('Sam Rivera', ['signal', S.sam], ['matrix', M.sam]);
   merge('Theo', ['signal', S.theo], ['discord', D.theo]);

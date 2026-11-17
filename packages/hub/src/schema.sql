@@ -944,3 +944,38 @@ CREATE TABLE IF NOT EXISTS notice (
 CREATE INDEX IF NOT EXISTS notice_at ON notice(at);
 CREATE INDEX IF NOT EXISTS notice_grp ON notice(grp, at);
 CREATE INDEX IF NOT EXISTS notice_marked ON notice(marked_at) WHERE marked_at IS NOT NULL;
+
+-- Same person? (matches.ts, docs/same-person.md). What you said about a suggested pair: 'no' for good, 'later' until
+-- `until`. key: the two sides' ids (per_… or idn_…), sorted, joined with '+'.
+CREATE TABLE IF NOT EXISTS match_decision (
+  key      TEXT PRIMARY KEY,
+  decision TEXT NOT NULL CHECK (decision IN ('no', 'later', 'yes')),
+  until    INTEGER,
+  features TEXT,                            -- JSON: the evidence weights by kind when decided, to learn from
+  at       INTEGER NOT NULL
+) WITHOUT ROWID;
+-- Profile pictures as a 64-bit difference hash (hex), made by the browser: the hub draws no pictures. url: the stored
+-- picture it was made from, so a new picture is hashed again.
+CREATE TABLE IF NOT EXISTS picture_hash (
+  identity_id TEXT PRIMARY KEY,
+  url         TEXT NOT NULL,
+  hash        TEXT,                         -- NULL: the picture would not load
+  at          INTEGER NOT NULL
+) WITHOUT ROWID;
+-- jev's answers on a pair's two profile cards, by the cards' hash: asked once per version of the cards.
+CREATE TABLE IF NOT EXISTS match_model (
+  key  TEXT PRIMARY KEY,
+  card TEXT NOT NULL,                       -- hash of the text jev read
+  p    REAL NOT NULL,
+  at   INTEGER NOT NULL
+) WITHOUT ROWID;
+-- Each version of a profile while profiles are collected (adversarial, docs/same-person.md): what the network said,
+-- without posts. The `about` table keeps the last answer either way; this keeps the ones before.
+CREATE TABLE IF NOT EXISTS profile_version (
+  id          INTEGER PRIMARY KEY,
+  identity_id TEXT NOT NULL,
+  account_id  TEXT NOT NULL,
+  data        TEXT NOT NULL,                -- JSON PersonAbout
+  at          INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS profile_version_identity ON profile_version(identity_id, at);

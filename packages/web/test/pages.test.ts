@@ -32,6 +32,7 @@ const ROUTES: [hash: string, kind: 'list' | 'tab' | 'page' | 'over', own: string
   ['#/people', 'list', '#/people'],
   ['#/people/pal', 'page', '#/people'],
   ['#/people/graph', 'page', '#/people'],
+  ['#/people/same', 'page', '#/people'],
   ['#/p/pal', 'over', '#/people'],
   ['#/i/ident', 'over', '#/people'],
   ['#/about/c/chan', 'over', '#/s/srv'],

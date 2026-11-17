@@ -295,13 +295,15 @@ export interface Label {
   strong?: boolean;
 }
 
-/** Labels at screen positions, skipping any that would overlap one already drawn. */
-export function drawLabels(c: HTMLCanvasElement, labels: Label[], dpr: number, ink: string, halo: string, font: string) {
+/** Labels at screen positions, skipping any that would overlap one already drawn; `under` draws first, below them. */
+export function drawLabels(c: HTMLCanvasElement, labels: Label[], dpr: number, ink: string, halo: string, font: string, under?: (x: CanvasRenderingContext2D) => void) {
   const x = c.getContext('2d');
   if (!x) return;
   x.setTransform(1, 0, 0, 1, 0, 0);
   x.clearRect(0, 0, c.width, c.height);
   x.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // Drawn in CSS pixels under the labels: Same person? links (engine.ts drawSame).
+  under?.(x);
   x.textBaseline = 'middle';
   x.lineJoin = 'round';
   const taken: [number, number, number, number][] = [];
