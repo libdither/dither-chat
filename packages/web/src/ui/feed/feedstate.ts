@@ -21,6 +21,19 @@ export function loadSources(again = false): Promise<void> {
   return sourcesAsked;
 }
 
+const FEED_CAPS: readonly P.Capability[] = ['home', 'publish', 'postMedia', 'unpublish'];
+/** What the Feed page takes from the accounts: the ones that can read or post here, whether each is connected, and
+ * what it can do. An account that comes back with its timelines after the page opened changes it (FeedPane asks for
+ * the sources again); one with nothing here (a chat account reconnecting) does not. */
+export function accountsKey(): string {
+  const parts: string[] = [];
+  for (const a of db.accounts.values()) {
+    const can = FEED_CAPS.filter((c) => a.capabilities.includes(c));
+    if (can.length) parts.push(`${a.id}:${a.status === 'online'}:${can.join('+')}`);
+  }
+  return parts.sort().join();
+}
+
 interface Line {
   entries: P.FeedEntryView[];
   /** The hub holds older entries: ask with `before`. */

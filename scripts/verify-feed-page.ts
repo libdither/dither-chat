@@ -6,7 +6,8 @@
  * account or both in one press, cuts a long text into a thread, limits who can reply, takes a picture, saves drafts
  * and schedules; a post of yours is deleted from the network, a cross-post's other copy staying; likes and replies go
  * as the account whose timeline showed the post; Activity is every account's notifications; an old link to the
- * notifications conversation lands there; and a phone has its feeds as tabs, the order under them, Activity behind the
+ * notifications conversation lands there; an account switched off and on again while the page is open is followed with
+ * no reload; and a phone has its feeds as tabs, the order under them, Activity behind the
  * bell, Your posts and Drafts behind ⋯, the composer in a sheet from the pencil button, and a thread in the list's
  * place.
  *
@@ -328,6 +329,22 @@ try {
   await page.eval(`(() => { const s = document.querySelector('.feed-filter'); s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
   await page.until(`location.hash === '#/feed/activity'`, 3000);
   check('…All accounts in its filter: every account’s Activity again', true);
+
+  // ---------------------------------------------------------------- an account that goes and comes back
+  // The page follows the accounts as they are, with no reload (FeedPane asks for the sources again when one changes):
+  // one switched off leaves Following or says it is not connected, and back on, its timelines are in Following again.
+  await tap('.feed-src[data-source="following"]');
+  const sub = `(document.querySelector('.feed-main .conv-head-sub')?.textContent ?? '')`;
+  const offline = `(document.querySelector('.feed-src-offline')?.textContent ?? '')`;
+  await page.until(`/2 timelines/.test(${sub})`, 10000);
+  await page.eval(`window.__samePage = 1`);
+  const enable = (enabled: boolean) => fetch(`${base}/api/accounts/${X2}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled }) }).then((r) => r.ok);
+  check('an account switched off while the Feed is open…', await enable(false));
+  await page.until(`/1 timeline\\b/.test(${sub}) || /work_demo/.test(${offline})`, 15000);
+  check('…the page says so: one timeline fewer, or that it is not connected', true, { sub: await page.eval(sub), offline: await page.eval(offline) });
+  check('…and back on…', await enable(true));
+  await page.until(`/2 timelines/.test(${sub}) && !/work_demo/.test(${offline})`, 20000);
+  check('…Following has both accounts’ timelines again, with no reload', (await page.eval<number | undefined>(`window.__samePage`)) === 1, await page.eval(sub));
 
   // ---------------------------------------------------------------- a phone
   // A phone opens the app afresh.

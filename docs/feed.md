@@ -180,7 +180,8 @@ and from every source; when it was posted to several accounts, the next copy tak
   (only those); "it may have posted" when no answer came. Each press has a key: pressed twice, posted once.
 
 **Hub.** `GET /api/feed/sources` (accounts and what each can do: `home`, `publish`, `postMedia`, `unpublish`, its
-notifications conversation; your feeds; the drafts count); `PUT /api/feed/mixes/:id { name?, order?, sources? }` (a
+notifications conversation; your feeds; the drafts count: asked again when an account connects, gains or loses one of
+those, is added or goes, so a feed opened while an account was still connecting fills in once it is); `PUT /api/feed/mixes/:id { name?, order?, sources? }` (a
 feed changed, or made), `DELETE /api/feed/mixes/:id`; `GET /api/feed/entries?source=…[&before=…]` (what the hub
 holds, in the source's order; for a feed or a timeline `before` is how many came before, and `next` says where the
 page after starts once older posts were read);

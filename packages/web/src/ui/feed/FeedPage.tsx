@@ -26,7 +26,7 @@ import { rev, timelineRev } from '../../versions.ts';
 import type { Kit } from './lazy.tsx';
 import { PostActions, type AnswerCtx } from './Actions.tsx';
 import { PostComposer, Ring } from './Composer.tsx';
-import { addMine, dropDraft, dropMix, dropPost, drafts, editing, line, loadDrafts, loadSources, more, newMix, openSource, refresh, saveDraft, saveMix, sources, tuning } from './feedstate.ts';
+import { accountsKey, addMine, dropDraft, dropMix, dropPost, drafts, editing, line, loadDrafts, loadSources, more, newMix, openSource, refresh, saveDraft, saveMix, sources, tuning } from './feedstate.ts';
 import { Row } from './Post.tsx';
 import { ThreadView } from './Thread.tsx';
 import { Unit } from './Units.tsx';
@@ -177,6 +177,18 @@ export function FeedPane({ source, post, kit, onBack }: { source?: string; post?
   sources.value;
   const at = normal(source ?? defaultSource());
   const s = parseSource(at);
+  // An account that connects, gains its timelines or goes after the page opened (a restart, a sign-in): the accounts
+  // again, and the feed shown with its timelines as they now are.
+  rev.value;
+  const accs = accountsKey();
+  const accsSeen = useRef(accs);
+  useEffect(() => {
+    if (accs === accsSeen.current) return;
+    accsSeen.current = accs;
+    void loadSources(true).then(() => {
+      if (s.kind === 'mix' || s.kind === 'line') void openSource(at);
+    });
+  }, [accs]);
   const fk = useMemo(() => feedKit(kit, at), [at]);
   const src = post ? kit.feed.parsePostKey(post) : null;
   const l = s.kind === 'mix' || s.kind === 'line' || s.kind === 'mine' ? line(at).value : null;
