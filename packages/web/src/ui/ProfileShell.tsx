@@ -9,6 +9,7 @@ import { NETWORK_META } from '@dither-chat/protocol';
 import { Avatar } from './bits.tsx';
 import { openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
+import { HeadOrb } from './Offline.tsx';
 
 export function ProfilePage({ title, onBack, children, label }: { title: string; onBack: () => void; children: ComponentChildren; label: string }) {
   return (
@@ -20,6 +21,7 @@ export function ProfilePage({ title, onBack, children, label }: { title: string;
         <div class="conv-head-text">
           <h2>{title}</h2>
         </div>
+        <HeadOrb />
       </header>
       <div class="pf-scroll">{children}</div>
     </section>

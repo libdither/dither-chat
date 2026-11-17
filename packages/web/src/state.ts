@@ -1151,6 +1151,8 @@ export const beforeSync = { wait: Promise.resolve() as Promise<unknown> };
 
 /** Since when the hub has not answered; null while it does. A start counts as not answering yet. */
 let downSince: number | null = Date.now();
+/** The same, for the notice's "Since 6:01 PM" (ui/Offline.tsx). */
+export const offlineSince = () => downSince;
 
 /** `since`: when the hub was last known to answer. Going down again while down keeps the first time. */
 function setConnected(v: boolean, since = Date.now()) {
@@ -1387,6 +1389,24 @@ function reconnectNow() {
   clearTimeout(retry);
   backoff = 500;
   connect();
+}
+
+/**
+ * The notice's Try now (ui/Offline.tsx): a new socket at once, even over one still trying, rather than at the end of
+ * the backoff. Says whether that socket opened, once it has opened or failed.
+ */
+export function tryNow(): Promise<boolean> {
+  if (ws && ws.readyState !== WebSocket.OPEN) dropped();
+  reconnectNow();
+  const sock = ws;
+  if (!sock) return Promise.resolve(false);
+  if (sock.readyState === WebSocket.OPEN) return Promise.resolve(true);
+  return new Promise((done) => {
+    sock.addEventListener('open', () => done(true), { once: true });
+    sock.addEventListener('close', () => done(false), { once: true });
+    // A network that drops packets without a word can hold a socket half-open for a long while: no answer yet, after 5 s.
+    setTimeout(() => done(false), 5000);
+  });
 }
 
 /**
