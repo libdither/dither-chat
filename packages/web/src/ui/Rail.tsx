@@ -1,4 +1,4 @@
-import { loadRetention } from '../history.ts';
+import { startRetention } from '../history.ts';
 import type * as P from '@dither-chat/protocol';
 import { Fragment } from 'preact';
 import { accountsNeedingYou, convTitle, directsOf, folderConvs, folderLeaves, people, inboxBadge, placePref, spaceUnread, sumUnread, netName, unreadOf, visibleConv, type RailEntry } from '../model.ts';
@@ -310,7 +310,7 @@ export function Rail() {
   useEffect(() => {
     startOrganize();
     startInbox();
-    void loadRetention();
+    startRetention();
   }, []);
   useFlip(scroll, snapshot.value.v);
   const all = arrangedRail();

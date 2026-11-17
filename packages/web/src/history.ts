@@ -2,20 +2,43 @@
  * What the hub keeps of what changes and what the networks take back (docs/history.md): the settings, shared by
  * every device, and reading a place's or person's change log.
  */
-import { signal } from '@preact/signals';
+import { effect, signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { DEFAULT_RETENTION } from '@dither-chat/protocol';
-import { api, changed, db, eventHooks, toast } from './state.ts';
+import { api, changed, connected, db, eventHooks, toast } from './state.ts';
 
 export const retention = signal<P.RetentionSettings>(DEFAULT_RETENTION);
+/** The load in flight, or the last one that worked; null after one that failed, so the next call asks again. */
 let loading: Promise<void> | null = null;
+let inFlight = false;
 
 export function loadRetention(): Promise<void> {
-  loading ??= api<P.RetentionSettings>('/api/retention').then(
-    (r) => void (retention.value = r),
-    () => void (loading = null),
-  );
+  if (!loading) {
+    inFlight = true;
+    loading = api<P.RetentionSettings>('/api/retention').then(
+      (r) => void (retention.value = r),
+      () => void (loading = null),
+    );
+    void loading.finally(() => (inFlight = false));
+  }
   return loading;
+}
+
+let started = false;
+/**
+ * Load the settings, and again on every (re)connect: a start that found the hub out of reach (the device between
+ * networks, as it woke) would otherwise show the defaults until the page reloaded, and a change made on another device
+ * while this one was away comes in too.
+ */
+export function startRetention(): void {
+  if (started) return;
+  started = true;
+  void loadRetention();
+  effect(() => {
+    if (!connected.value || inFlight) return;
+    loading = null;
+    void loadRetention();
+  });
 }
 
 eventHooks.add((ev) => {
