@@ -1,5 +1,7 @@
 /** Which devices get Web Push, which push servers the hub may send to, and keeping both honest. */
 import type * as P from '@dither-chat/protocol';
+import { BrowserClears, CLEAR_TOPIC, CLEAR_TTL } from './clears.ts';
+import type { Read } from './delivery.ts';
 import type { Store } from './store.ts';
 import { DEFAULT_SERVERS, extraRelays, fingerprint, isBrowserRelay, pushPayload, resolvesPrivate, sendPush, serverOrigin, type PushTarget, type VapidKeys } from './webpush.ts';
 
@@ -93,10 +95,13 @@ export class PushService {
   lookup?: (host: string) => Promise<string[]>;
   /** The old plain-text ntfy topic (DITHER_NTFY_URL), still sent to when set. */
   topic: { url: string; token?: string; click?: string; lastOkAt: number | null; lastError: string | null } | null;
+  /** What each desktop browser was sent, and the clears it may still take (clears.ts). */
+  readonly browsers: BrowserClears;
 
   constructor(private store: Store, private keys: VapidKeys, private subject: string, env = process.env) {
     const cols = (store.db.query('PRAGMA table_info(push_subscription)').all() as Row[]).map((c) => c.name);
-    for (const c of ['last_error_at', 'last_test_at', 'last_arrived_at', 'clears']) if (!cols.includes(c)) store.db.exec(`ALTER TABLE push_subscription ADD COLUMN ${c} INTEGER`);
+    for (const c of ['last_error_at', 'last_test_at', 'last_arrived_at', 'clears', 'refilled_at']) if (!cols.includes(c)) store.db.exec(`ALTER TABLE push_subscription ADD COLUMN ${c} INTEGER`);
+    this.browsers = new BrowserClears(store.db);
     this.relays = extraRelays(env.DITHER_PUSH_RELAYS);
     this.topic = env.DITHER_NTFY_URL ? { url: env.DITHER_NTFY_URL, token: env.DITHER_NTFY_TOKEN, click: env.DITHER_PUBLIC_URL, lastOkAt: null, lastError: null } : null;
   }
@@ -280,14 +285,15 @@ export class PushService {
     this.store.db.query('UPDATE push_subscription SET last_arrived_at = ? WHERE id = ?').run(Date.now(), id);
   }
 
-  private async deliver(r: Row, payload: unknown): Promise<{ ok: boolean; error?: string; code?: string }> {
+  private async deliver(r: Row, payload: unknown, opts: { ttl?: number; topic?: string } = {}): Promise<{ ok: boolean; error?: string; code?: string }> {
     const db = this.store.db;
     try {
       const refusal = await this.guard(r.endpoint);
       if (refusal) return this.failed(r, refusal);
-      const { outcome, status, detail } = await sendPush({ endpoint: r.endpoint, p256dh: r.p256dh, auth: r.auth }, payload, this.keys, this.subject, { fetch: this.transport });
+      const { outcome, status, detail } = await sendPush({ endpoint: r.endpoint, p256dh: r.p256dh, auth: r.auth }, payload, this.keys, this.subject, { ...opts, fetch: this.transport });
       if (outcome === 'ok') {
         db.query('UPDATE push_subscription SET last_ok_at = ?, last_error = NULL, last_error_at = NULL, failures = 0 WHERE id = ?').run(Date.now(), r.id);
+        this.browsers.reached(r);
         return { ok: true };
       }
       if (outcome === 'gone') {
@@ -328,17 +334,54 @@ export class PushService {
   async notify(title: string, body: string, conversationId: string | undefined, extra: Record<string, unknown>, quiet: string[] = [], level: 'push' | 'quiet' = 'push'): Promise<{ devices: number; accepted: number }> {
     const skip = new Set(quiet);
     const rows = (this.store.db.query('SELECT * FROM push_subscription').all() as Row[]).filter((r) => !skip.has(r.device || r.id));
-    const [results] = await Promise.all([Promise.all(rows.map((r) => this.deliver(r, pushPayload(title, body, conversationId, { ...extra, device: r.id })))), this.toTopic(title, body, conversationId, level, clickHash(extra))]);
+    // What a browser now shows under the conversation's tag, so reading it can take that away (clears.ts), noted as
+    // each push is taken: a tap or a swipe reported while a slow push server holds up another finds it. A calendar
+    // reminder or a ring has a tag of its own, which no read closes. One that is kept (a reminder, the quiet hours'
+    // summary) takes the place of what showed under its tag, and no read closes it: nothing there for a clear.
+    const lines = extra.lines as { ts?: number }[] | undefined;
+    const ts = typeof extra.ts === 'number' ? extra.ts : (lines?.at(-1)?.ts ?? Date.now());
+    const tag = conversationId && !extra.calendar && !extra.call ? conversationId : null;
+    const one = async (r: Row) => {
+      const res = await this.deliver(r, pushPayload(title, body, conversationId, { ...extra, device: r.id }));
+      if (res.ok && tag) {
+        if (extra.keep) this.browsers.replaced(r, tag);
+        else this.browsers.shown(r, tag, ts);
+      }
+      return res;
+    };
+    const [results] = await Promise.all([Promise.all(rows.map(one)), this.toTopic(title, body, conversationId, level, clickHash(extra))]);
     return { devices: rows.length, accepted: results.filter((r) => r.ok).length };
   }
 
   /**
-   * A conversation was read: its notification goes from the devices that said they can take that (docs/notifications.md):
-   * the Android app. Not browsers, which must show something for every push, nor older apps, which would show it.
+   * A conversation was read, or a list row or a ring is over: its notification goes from the devices that said they
+   * can take a push that shows nothing (docs/notifications.md): the Android app. Not older apps, which would show it.
+   * `upTo`: the newest message it may close (clears.ts), which the app does not read yet.
    */
-  async clear(conversationId: string): Promise<void> {
+  async clear(tag: string, upTo?: number): Promise<void> {
     const rows = this.store.db.query('SELECT * FROM push_subscription WHERE clears = 1').all() as Row[];
-    await Promise.all(rows.map((r) => this.deliver(r, { clear: conversationId, device: r.id })));
+    await Promise.all(rows.map((r) => this.deliver(r, { clear: tag, ...(upTo !== undefined ? { upTo } : {}), device: r.id })));
+  }
+
+  /**
+   * Conversations read anywhere, closed on the desktop browsers that were alerted about them: one push to each, for
+   * everything it shows that was read, while its browser's cap allows (clears.ts). It lives ten minutes at the push
+   * server, under one topic, so the next one takes its place.
+   */
+  async clearBrowsers(reads: Read[], now = Date.now()): Promise<void> {
+    this.browsers.prune(now);
+    const rows = this.store.db.query('SELECT * FROM push_subscription WHERE clears IS NOT 1').all() as Row[];
+    await Promise.all(
+      rows.map(async (r) => {
+        const plan = this.browsers.plan(r, reads, now);
+        if (!plan) return;
+        const [first, ...more] = plan.tags;
+        const sending = this.browsers.sending(r.id, plan, now);
+        const res = await this.deliver(r, { clear: first.id, upTo: first.upTo, ...(more.length ? { more: more.map((t) => ({ clear: t.id, upTo: t.upTo })) } : {}), device: r.id }, { ttl: CLEAR_TTL, topic: CLEAR_TOPIC });
+        if (res.ok) sending.done();
+        else sending.undo();
+      }),
+    );
   }
 
   /** Registrations that are not phones (by the label the page gave): only an alert reaches them. */

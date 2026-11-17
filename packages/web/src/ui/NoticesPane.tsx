@@ -11,6 +11,7 @@ import { askNoticesAgain, loadNotices, markNotice, noticesPage, readNotice, unre
 import { noticesBoot, toast } from '../state.ts';
 import { Empty } from './bits.tsx';
 import { Icon } from './icons.tsx';
+import { HeadOrb } from './Offline.tsx';
 import { accessLine } from './Notices.tsx';
 
 const SOURCES: Record<string, string> = { github: 'GitHub', telegram: 'Telegram' };
@@ -54,6 +55,7 @@ export function NoticesPane({ focus, onBack }: { focus?: string; onBack?: () => 
             <span class="muted-label">{unread ? `${unread} unread` : items.length ? 'All read' : 'Nothing yet'}</span>
           </div>
         </div>
+        <HeadOrb />
       </header>
       <div class="requests-scroll">
         {access !== 'granted' && <Access access={access} managerUrl={page?.managerUrl ?? null} />}

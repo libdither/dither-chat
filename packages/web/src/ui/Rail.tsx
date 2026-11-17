@@ -23,9 +23,10 @@ import { openMenu } from './ContextMenu.tsx';
 import { useShown } from './more.tsx';
 import { whenIdle } from '../slices.ts';
 import { openShelves, shelve, toggleShelf } from '../quiet.ts';
+import { offline, OfflineOrb, toggleOfflinePop } from './Offline.tsx';
 
 /** `track`: its key for button counts (clicks.ts), never the title, which may be a name. */
-function RailItem({ active, unread, badge, title, sub, onClick, children, dnd, menu, class: cls, track }: { active: boolean; unread?: boolean; badge?: number; title: string; sub?: string; onClick: () => void; children: any; dnd?: Record<string, unknown>; menu?: () => MenuSpec | null; class?: string; track: string }) {
+function RailItem({ active, unread, badge, title, sub, onClick, children, dnd, menu, class: cls, track }: { active: boolean; unread?: boolean; badge?: number; title: string; sub?: string; onClick: (e: { currentTarget: HTMLElement }) => void; children: any; dnd?: Record<string, unknown>; menu?: () => MenuSpec | null; class?: string; track: string }) {
   const ctx = useMenu(menu ?? (() => null));
   return (
     <div class={`rail-item ${active ? 'active' : ''} ${cls ?? ''}`} {...dnd}>
@@ -318,13 +319,26 @@ export function Rail() {
   const { shown: entries, quiet } = shelve(all, (e) => e.key);
   const shelfOpen = openShelves.value.has('rail');
   const [drawn, more] = useShown(entries.length);
+  const off = offline.value;
+  const inInbox = is((r) => r.view === 'inbox' || r.view === 'foryou' || r.view === 'model');
 
   return (
     <nav class="rail" aria-label="Places" data-track-area="rail">
-      <RailItem active={is((r) => r.view === 'inbox' || r.view === 'foryou' || r.view === 'model')} title="Inbox" track="inbox" badge={priorityCount} onClick={() => go({ view: 'inbox' })} menu={inboxMenu}>
-        <span class="rail-logo">
-          <DitherMark size={26} />
-        </span>
+      {/* Out of reach, the logo turns amber, and a click on it also says since when (Offline.tsx), without leaving the
+          inbox's chat you have open. */}
+      <RailItem
+        active={inInbox}
+        title="Inbox"
+        sub={off ? "Can't reach the hub" : undefined}
+        track="inbox"
+        badge={priorityCount}
+        onClick={(e) => {
+          if (off && r.view === 'inbox') toggleOfflinePop(e.currentTarget);
+          else go({ view: 'inbox' });
+        }}
+        menu={inboxMenu}
+      >
+        <span class="rail-logo">{off ? <OfflineOrb size={26} /> : <DitherMark size={26} />}</span>
       </RailItem>
       <RailItem active={is((r) => r.view === 'people')} title="People" track="people" sub="Every DM, merged per person" badge={peopleBadge} onClick={() => go({ view: 'people' })}>
         <Icon name="users" size={22} />

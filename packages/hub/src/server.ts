@@ -71,7 +71,7 @@ import { calendarOff, type CalendarLink } from './calendar.ts';
 import { markCalendarAdded } from './calendar-account.ts';
 import { ReplyMarks, type ReplyMark } from './replymarks.ts';
 import { mailAttention } from './mail/attention.ts';
-import { clientReport, jobFailed, PerClientCap, reportedInRequest, reportError, withRequest } from './errors.ts';
+import { AnswerClock, clientReport, jobFailed, lossCovered, PerClientCap, reportedInRequest, reportError, withRequest } from './errors.ts';
 import { callRoute } from './callstate.ts';
 import { handlesPolls, pollRoute } from './polls.ts';
 import { SendExtras } from './sendextras.ts';
@@ -476,6 +476,7 @@ export class HubServer {
             withRequest(async () => {
               try {
                 const raw = await handler(req, server);
+                self.answers.answered();
                 // An answer of 5xx is an error for traces/errors.ndjson (errors.ts), unless something inside the request
                 // was reported already (an attempt, a job) or the client went away.
                 if (raw && raw.status >= 500 && !reportedInRequest() && !req.signal.aborted) await reportAnswer(req, route, raw, s.traceId);
@@ -954,6 +955,8 @@ export class HubServer {
 
   /** At most 60 of the page's error reports a minute from one address. */
   private readonly errorCap = new PerClientCap(60, 60_000);
+  /** Answers given, per second, to judge the page's reports of a hub it could not reach (errors.ts lossCovered). */
+  readonly answers = new AnswerClock();
 
   /**
    * POST /api/errors: an error the page met (errors.ts `clientReport`), written to traces/errors.ndjson as app `web`,
@@ -970,6 +973,11 @@ export class HubServer {
     const r = clientReport(body);
     if (!r) return Response.json({ error: 'Send { name, message, stack, where, status?, version }, where a route template like #/chat/:id' }, { status: 400 });
     if (!this.errorCap.take(ip)) return Response.json({ error: 'too many reports' }, { status: 429 });
+    const covered = lossCovered(r.extra, this.answers, Date.now());
+    if (covered) {
+      console.log(`errors: a device lost the hub for ${Math.round(Number(r.extra?.lostMs) / 1000)} s, not written: ${covered === 'restarted' ? 'the hub restarted meanwhile' : 'the hub answered others meanwhile'}`);
+      return new Response(null, { status: 204 });
+    }
     reportError(r);
     return new Response(null, { status: 204 });
   }
@@ -2723,10 +2731,11 @@ export class HubServer {
       if (!r.ok) return new Response(r.error, { status: r.status });
       writeFileSync(file + '.mime', r.mime, { mode: 0o600 });
       return new Response(Bun.file(file), { headers: headers(r.mime) });
-    } else if (raw.startsWith('file://')) {
+    } else if (raw.startsWith('file://') && resolve(normalize(decodeURIComponent(raw.slice('file://'.length)))).startsWith(resolve(this.opts.dataDir) + '/')) {
+      // A file under this hub's data (an import, an account whose session the hub keeps): read here. One elsewhere is
+      // the account's own (an account dither-accounts made keeps its files in its own folder): asked of it below.
       const p = normalize(decodeURIComponent(raw.slice('file://'.length)));
-      const root = resolve(this.opts.dataDir);
-      if (!resolve(p).startsWith(root + '/') || !existsSync(p) || !statSync(p).isFile()) return new Response('not found', { status: 404 });
+      if (!existsSync(p) || !statSync(p).isFile()) return new Response('not found', { status: 404 });
       // A file kept on disk (an import, Signal's own copy) has no type recorded: by its name, else by its first bytes.
       const f = Bun.file(p);
       const named = f.type.split(';')[0];

@@ -117,7 +117,7 @@ optional ones; none is renamed or dropped.
 ```
 { "v": 1,
   "at": 1763000000000,            // ms epoch
-  "app": "hub" | "web",
+  "app": "hub" | "web" | "android",
   "source": "uncaught" | "rejection" | "request" | "job" | "attempt" | "client",
   "where": "POST /api/accounts/:id/action",   // route TEMPLATE (ids replaced by :id), span or job name, or the web page's route template
   "name": "SQLiteError",          // error class / name
@@ -141,7 +141,8 @@ else the checkout's `git rev-parse --short=8 HEAD`, for the hub; the page's is i
 | `request` | a request answered with 5xx (server.ts `guarded`): a throw in a handler (500), or a 500/502 the handler answered, its message the answer's `error` | method and route template, `GET /api/conversations/:id/messages` |
 | `job` | a span a throw ended (trace.ts's hook, but for requests and `command <op>` spans: a command's caller says what came of it); the hub's `console.error` / `console.warn` sites that mean something went wrong: triage, upkeep, push, flush, attention, the ranker, embeddings, categorizing, backups, checkpoints, adapter events that failed or met a locked database, the manager's admin calls, mail's sync/outbox/ops/classify/people/triage, notices, jobs (but rate limits) | the span's or the job's name: `triage`, `flush: mail`, `adapter events`, `mail: changes` |
 | `attempt` | attempts.ts: making a group or adding people failed (500, 502, 504), or went through with someone refused (`name` `Partial`); a candidates lookup that failed. The hub.log lines stay | `groups: create`, `members: add`, `groups: candidates`, `members: candidates`; `extra` { what, account, network, conversation, people, failed } |
-| `client` (app `web`) | `POST /api/errors` from the page (packages/web/src/errors.ts): `window.onerror`, `unhandledrejection`, and `api()` fetches that did not reach the hub (not answers with a status: the hub wrote its own `request` line for each 5xx) | the page's route template, `#/inbox/c/:id` |
+| `client` (app `web`) | `POST /api/errors` from the page (packages/web/src/errors.ts): `window.onerror`, `unhandledrejection`, and a time the hub could not be reached that nothing else explains (below; not answers with a status: the hub wrote its own `request` line for each 5xx) | the page's route template, `#/inbox/c/:id` |
+| `client` (app `android`) | the Android app's crashes, ANRs and caught failures, which its page posts on the next start (apps/android `Crashes.kt`, docs/android.md "Crashes"); `extra` { at: when it happened, sdk: Android's API level }, `version` the app's | `/android/uncaught`, `/android/exit`, `/android/renderer`, `/android/call-service` |
 
 **Left out:** 4xx answers, 429 and rate limits, captchas and terms prompts (refusals, 4xx), aborted requests and a
 client that went away, 503 (an account offline, the manager not reachable: a state the page shows), the hub stopping under a job (a closed database),
@@ -156,9 +157,31 @@ not a second line when something inside it was reported already (an attempt). Th
 ends.
 
 **The page** sends `POST /api/errors` with `{ name, message, stack, where, status?, version }` and `keepalive`,
-at most 20 reports a minute and the same one at most once a minute, never while offline, never throwing. A fetch
-that did not reach the hub is sent 1.5 s later, and not at all if the page started leaving (`beforeunload`,
-`pagehide`) by then: a reload, for a new build or by hand, ends the page's fetches in flight with "Failed to fetch". The hub
+at most 20 reports a minute and the same one at most once a minute, never while offline, never throwing, with an
+optional `extra` of at most 8 short keys of words and numbers.
+
+**A hub the page could not reach** ("Failed to fetch") is mostly not the hub's fault, and a report of it can only arrive
+once the hub answers again. So a failed `api()` call starts a *loss* (packages/web/src/errors.ts `HubLoss`): the page
+asks `GET /api/health` 1.5 s later, then every 3, 6, 12 … 30 s until it answers (giving up after 30 min), gathers the
+other calls that fail meanwhile, and judges the loss once:
+
+| verdict | when | sent |
+|---|---|---|
+| `leaving` | the page started leaving (`beforeunload`, `pagehide`): a reload cuts its fetches off | no |
+| `offline` | the device said it was offline (`navigator.onLine`, the `offline` event) | no |
+| `woke` | the first failure came within 15 s of the page coming into sight, back from the cache, resuming or the device changing network, or one of those happened during the loss: a phone's network waking, or a page asleep | no |
+| `blip` | the hub answered within 10 s | no |
+| `report` | none of the above | one report |
+
+The report is `FetchError` "the hub was not reached for 10 s or more" (or 1 min, or 5 min: steps, so it is one
+fingerprint), with `extra` { lostMs, lostAgo, calls }: how long, how long before the report it began (the page's own
+clock, so no skew), and the calls that failed as templates. The page's console says each verdict. The hub then checks
+it against its own record (`AnswerClock`, a count of answers for each second of the last hour; `lossCovered`): a hub
+that started during the loss (a deploy or a restart; a crash has lines of its own), or that answered anyone during it
+(but its first and last second), was up, and the path to that device failed (its network, the tailnet, the proxy). Then
+nothing is written, and hub.log says `errors: a device lost the hub for N s, not written: …`. The page cannot tell its
+internet being down from the hub being down without asking a server elsewhere, which it does not do; the hub's record
+is what tells them apart. The hub
 answers 204, 400 for a body that is not a report (a `where` that is not a route template, `#` or `/` then words, `:`
 and `/`), 413 over 16 KB, and 429 past 60 a minute from one address; it is authorised like every owner route (this
 machine or the tailnet, the page's own origin).

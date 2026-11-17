@@ -59,10 +59,8 @@ class MainActivity : Activity() {
         const val EXTRA_HASH = "hash"
         private const val TAG = "DitherStartup"
         private const val REQ_FILES = 1
-        private const val REQ_MEDIA = 2
-        private const val REQ_NOTIFY = 3
+        private const val REQ_ASK = 2
         private const val REQ_UPLOAD = 4
-        private const val REQ_DEVICE = 5
 
         /** The activity on screen, if any: a push for what the page is showing needs no notification. */
         @Volatile
@@ -99,13 +97,13 @@ class MainActivity : Activity() {
     /** Where the camera app is writing the photo a page's `capture` input asked for. */
     private var captured: Uri? = null
     private var mediaRequest: PermissionRequest? = null
-    private var afterNotify: ((Boolean) -> Unit)? = null
     private val createdAt = SystemClock.uptimeMillis()
     private val cold = firstInProcess.also { firstInProcess = false }
     private var drawnReported = false
     private var loadAt = 0L
     var callActive = false
         private set
+    private var notifyAsked = false
     private var backCallback: Any? = null
     /** The system splash stays up until the page has drawn its own sphere in the same place, or for 1.5 s at most. */
     private var splashHeld = false
@@ -113,6 +111,8 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         current = this
+        Crashes.install(this)
+        Crashes.collectExits(this)
         Notifications.channels(this)
         bg = Hub.prefs(this).getInt("bg", getColor(R.color.app_bg))
         window.setBackgroundDrawable(ColorDrawable(bg))
@@ -303,6 +303,7 @@ class MainActivity : Activity() {
 
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
             Log.w(TAG, "renderer gone (crashed: ${detail.didCrash()}), reloading")
+            if (detail.didCrash()) Crashes.rendererCrashed(this@MainActivity)
             if (view == web) {
                 web = null
                 bridge = null
@@ -316,6 +317,7 @@ class MainActivity : Activity() {
 
     private inner class Chrome : WebChromeClient() {
         override fun onPermissionRequest(request: PermissionRequest) {
+            Log.i(TAG, "page asks for ${request.resources.joinToString()}")
             runOnUiThread {
                 if (!Hub.sameOrigin(request.origin, hub)) return@runOnUiThread request.deny()
                 val needed = request.resources.mapNotNull(::permissionFor).filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
@@ -323,12 +325,20 @@ class MainActivity : Activity() {
                 else {
                     mediaRequest?.deny()
                     mediaRequest = request
-                    requestPermissions(needed.distinct().toTypedArray(), REQ_MEDIA)
+                    ask(needed.distinct().toTypedArray(), still = { mediaRequest == request }) {
+                        if (mediaRequest == request) {
+                            mediaRequest = null
+                            grantGranted(request)
+                        }
+                        // A call already running takes the microphone type now that it may.
+                        CallService.permissionsChanged()
+                    }
                 }
             }
         }
 
         override fun onPermissionRequestCanceled(request: PermissionRequest) {
+            Log.i(TAG, "page's request for ${request.resources.joinToString()} cancelled")
             if (mediaRequest == request) mediaRequest = null
         }
 
@@ -412,20 +422,51 @@ class MainActivity : Activity() {
         if (ok.isEmpty()) request.deny() else request.grant(ok.toTypedArray())
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        when (requestCode) {
-            REQ_MEDIA -> mediaRequest?.let(::grantGranted).also { mediaRequest = null }
-            REQ_DEVICE -> bridge?.refresh()
-            REQ_NOTIFY -> afterNotify?.invoke(grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED).also { afterNotify = null }
+    /**
+     * One permission prompt at a time. Android shows one request and answers a second made meanwhile at once, with
+     * nothing granted: a call asks for the microphone (the page) and for notifications (onCall) in the same moment, and
+     * the microphone's answer was lost that way.
+     */
+    private class Ask(val perms: Array<String>, val still: () -> Boolean, val then: () -> Unit)
+    private val asks = ArrayDeque<Ask>()
+    private var asking: (() -> Unit)? = null
+
+    /** `still`: whether the prompt is wanted when its turn comes (the page may have given up on its request). */
+    private fun ask(perms: Array<String>, still: () -> Boolean = { true }, then: () -> Unit) {
+        asks.addLast(Ask(perms, still, then))
+        if (asking == null) nextAsk()
+    }
+
+    private fun nextAsk() {
+        val a = asks.removeFirstOrNull() ?: return
+        val perms = a.perms
+        val then = a.then
+        if (!a.still()) return nextAsk()
+        // Granted while it waited (the same permission asked twice): no prompt.
+        if (perms.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) {
+            then()
+            return nextAsk()
         }
+        asking = then
+        Log.i(TAG, "asking for ${perms.joinToString()}")
+        requestPermissions(perms, REQ_ASK)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        if (requestCode != REQ_ASK) return
+        Log.i(TAG, "answered: ${permissions.zip(grantResults.toList()).joinToString { (p, r) -> "$p=${r == PackageManager.PERMISSION_GRANTED}" }.ifEmpty { "nothing (cancelled)" }}")
+        val then = asking
+        asking = null
+        then?.invoke()
+        nextAsk()
     }
 
     /** The gallery for the panel (Device.kt): Android's own question, all photos or the ones picked. Asking again changes the pick. */
-    fun askMediaAccess() = requestPermissions(Device.mediaPermissions(), REQ_DEVICE)
+    fun askMediaAccess() = runOnUiThread { ask(Device.mediaPermissions()) { bridge?.refresh() } }
 
     /** Folders for the panel: "All files access" is a switch in Settings (Android 11+); the page hears on return. */
     fun askFilesAccess() {
-        if (Build.VERSION.SDK_INT < 30) return requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), REQ_DEVICE)
+        if (Build.VERSION.SDK_INT < 30) return runOnUiThread { ask(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)) { bridge?.refresh() } }
         try {
             startActivity(Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")))
         } catch (e: ActivityNotFoundException) {
@@ -434,9 +475,9 @@ class MainActivity : Activity() {
     }
 
     fun ensureNotifications(then: (Boolean) -> Unit) {
-        if (Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return then(true)
-        afterNotify = then
-        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
+        val granted = { Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED }
+        if (granted()) return then(true)
+        ask(arrayOf(Manifest.permission.POST_NOTIFICATIONS)) { then(granted()) }
     }
 
     @Deprecated("Activity result API", level = DeprecationLevel.WARNING)
@@ -543,12 +584,19 @@ class MainActivity : Activity() {
     fun onCall(m: JSONObject) {
         val active = m.optBoolean("active")
         callActive = active
+        if (!active) notifyAsked = false
         // During a call the renderer keeps its priority with the screen off, so Android does not reclaim it first.
         web?.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, !active)
         CallService.update(this, m)
         // Android 13+ hides a foreground service's notification without this, and with it the hang-up button.
-        // A notification posted before the grant stays hidden, so post it again after.
-        if (active) ensureNotifications { granted -> if (granted && callActive) CallService.update(this, m) }
+        // A notification posted before the grant stays hidden, so post it again after. Asked once a call is live: by
+        // then the page has its microphone, and a prompt up while the page asks for it made the WebView cancel the
+        // page's request, which then never got an answer and held the call at Connecting. Once a call: a refusal is
+        // an answer, and the page tells every change of phase and mute.
+        if (active && m.optString("phase") == "live" && !notifyAsked) {
+            notifyAsked = true
+            ensureNotifications { granted -> if (granted && callActive) CallService.update(this, m) }
+        }
     }
 
     fun changeHub() = showSetup(hub?.toString(), null)

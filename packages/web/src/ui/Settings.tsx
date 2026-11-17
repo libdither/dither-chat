@@ -10,6 +10,7 @@ import { accountRows } from '../accountrows.ts';
 import { NetBadge, showSection } from './bits.tsx';
 import { drawLater, Later } from './Later.tsx';
 import { Icon } from './icons.tsx';
+import { HeadOrb } from './Offline.tsx';
 import { DeviceRules } from './DeviceRules.tsx';
 import { percent } from './Marks.tsx';
 import { PushSettings } from './Push.tsx';
@@ -269,7 +270,10 @@ export function SettingsPane() {
         <div>
           <div class="set-title">
             <h2>Settings</h2>
-            {phone.value && <SectionsButton />}
+            <div class="set-title-acts">
+              {phone.value && <SectionsButton />}
+              <HeadOrb />
+            </div>
           </div>
           <p>Notification rules apply to every account at once. The most specific rule always wins.</p>
         </div>

@@ -66,7 +66,7 @@ marks. Kept 30 days; a marked one while it is learned from.
 - **Read there** (`notify.read`): read here, never notified. Its notification leaves the phones once its group has
   no unread notice that a notification showed: `readTs` is just below the earliest `shown_ts` (a notice's time as
   its notification last showed it, set only when `Notifier.notice` really sent one, and kept when the notice is
-  updated, cleared when it is read) among unread notices; delivery.ts `read` then sends a `{ clear }` push. So a notice raised again inside
+  updated, cleared when it is read) among unread notices; delivery.ts `read` then closes it on every device ([notifications.md](notifications.md#read-elsewhere-gone-here)). So a notice raised again inside
   the list's ten minutes, the update held, keeps its notification until it is read. The phone list's held episodes
   ask another question, whether anything in the group is unread (`readAllTs`): a group with an unread notice is not
   read, whether or not it was shown.

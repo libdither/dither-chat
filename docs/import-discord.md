@@ -137,7 +137,8 @@ network code. Since 2026-11 it goes at the reading pace shared with index jobs (
 
 ## Media
 
-The hub serves `file://` only under its data dir (`server.ts` `fetchMedia`). So the importer copies the referenced
+The hub reads `file://` itself only under its data dir (`server.ts` `fetchMedia`); one elsewhere it asks of the
+message's account, which gives only files of its own. So the importer copies the referenced
 files to `<DITHER_DATA>/import/discord/<accountId>/<name>`, using a hardlink when on the same filesystem, and writes
 those paths as attachment URLs. Only referenced attachments, avatars and emoji are copied, not whole folders. The 14
 missing files and the expired CDN links (about 7k) become attachments with their original URL. The media archive
