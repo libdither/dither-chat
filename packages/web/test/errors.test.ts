@@ -1,6 +1,6 @@
 /** The page's error reports (src/errors.ts): route templates, the limits, and what is not reported. */
 import { expect, test } from 'bun:test';
-import { apiTemplate, BLIP_MS, HubLoss, type LossEnv, type LossVerdict, lossMessage, pageError, ReportLimiter, routeTemplate } from '../src/errors.ts';
+import { apiTemplate, BLIP_MS, HubLoss, type LossEnv, type LossVerdict, lossMessage, pageError, ReportLimiter, reportAppCrashes, routeTemplate } from '../src/errors.ts';
 
 test('a route is a template: ids, names and anything typed become :id, the query goes', () => {
   expect(routeTemplate('#/inbox/c/dc_123?m=msg_9')).toBe('#/inbox/c/:id');
@@ -158,4 +158,28 @@ test('a loss names its length in a few steps, one fingerprint per step', () => {
   expect(lossMessage(59_999)).toBe('the hub was not reached for 10 s or more');
   expect(lossMessage(90_000)).toBe('the hub was not reached for 1 min or more');
   expect(lossMessage(600_000)).toBe('the hub was not reached for 5 min or more');
+});
+
+test("the Android app's crash reports go to the hub as app android, one post each, malformed ones skipped", () => {
+  const posts: { url: string; body: any }[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = ((url: string, init: RequestInit) => {
+    posts.push({ url, body: JSON.parse(String(init.body)) });
+    return Promise.resolve(new Response(null, { status: 204 }));
+  }) as typeof fetch;
+  try {
+    reportAppCrashes(
+      [
+        { where: '/android/uncaught', name: 'SecurityException', message: 'Starting FGS with type microphone', stack: ['at CallService.refresh(CallService.kt:83)'], at: 5, sdk: 35 },
+        { where: '/android/exit', name: 'ANR', message: 'Input dispatching timed out' },
+        { name: 'nothing' } as never,
+      ],
+      '0.12.0',
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  expect(posts.map((p) => p.url)).toEqual(['/api/errors', '/api/errors']);
+  expect(posts[0].body).toEqual({ app: 'android', name: 'SecurityException', message: 'Starting FGS with type microphone', stack: ['at CallService.refresh(CallService.kt:83)'], where: '/android/uncaught', extra: { at: 5, sdk: 35 }, version: '0.12.0' });
+  expect(posts[1].body).toMatchObject({ app: 'android', name: 'ANR', stack: [], extra: {} });
 });

@@ -226,6 +226,23 @@ describe('the page', () => {
     expect(clock.between(now - 3_700_000, now - 3_590_000)).toBe(0);
   });
 
+  test("clientReport: the Android app's crash, passed on by its page, keeps app android and only its numbers", () => {
+    const r = clientReport({
+      app: 'android',
+      name: 'SecurityException',
+      message: 'Starting FGS with type microphone requires permissions',
+      stack: ['at org.libdither.chat.CallService.refresh(CallService.kt:83)'],
+      where: '/android/uncaught',
+      version: '0.12.0',
+      extra: { at: 1_700_000_000_000, sdk: 35, note: 'dropped', nan: Number.NaN },
+    });
+    expect(r).toMatchObject({ app: 'android', source: 'client', where: '/android/uncaught', name: 'SecurityException', version: '0.12.0', extra: { at: 1_700_000_000_000, sdk: 35 } });
+    expect(Object.keys(r!.extra!)).toEqual(['at', 'sdk']);
+    // Any other app is the page's, and a page's extra is its own (a lost hub's: see the test above).
+    expect(clientReport({ app: 'hub', message: 'x', where: '#/' })?.app).toBe('web');
+    expect(clientReport({ message: 'x', where: '#/', extra: { at: 1 } })?.extra).toEqual({ at: 1 });
+  });
+
   test('PerClientCap: 60 a minute from one client', () => {
     let t = 0;
     const cap = new PerClientCap(60, 60_000, () => t);

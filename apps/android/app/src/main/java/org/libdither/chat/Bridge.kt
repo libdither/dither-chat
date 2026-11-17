@@ -29,6 +29,8 @@ class Bridge(private val activity: MainActivity, private val origin: Uri) : WebV
                 send(info())
                 send(Push.status(activity))
                 send(Uploads.state(activity))
+                // What took the app down since a page last heard (Crashes.kt): the page posts it to the hub.
+                Crashes.take(activity).takeIf { it.length() > 0 }?.let { send(JSONObject().put("t", "crashes").put("list", it)) }
                 queue.forEach(replyProxy::postMessage)
                 queue.clear()
             }

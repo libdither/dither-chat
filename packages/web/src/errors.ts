@@ -251,6 +251,29 @@ export function reportApiFailure(method: string, path: string, e: unknown, statu
   loss.fail(`${method} ${apiTemplate(path)}`, (e as Error)?.stack);
 }
 
+/** What the Android app kept about something that took it down (apps/android Crashes.kt), to send for it. */
+interface AppCrash {
+  where: string;
+  name: string;
+  message: string;
+  stack?: string[];
+  /** ms epoch it happened; it is sent on the next start. */
+  at?: number;
+  sdk?: number;
+}
+
+/** The Android app's crash reports, as app `android`, outside the page's limits (the app keeps at most 20). Never throws. */
+export function reportAppCrashes(list: AppCrash[], version?: string): void {
+  for (const c of list.slice(0, 20)) {
+    try {
+      if (typeof c?.where !== 'string' || typeof c.message !== 'string') continue;
+      const extra = { ...(typeof c.at === 'number' ? { at: c.at } : {}), ...(typeof c.sdk === 'number' ? { sdk: c.sdk } : {}) };
+      const body = { app: 'android', name: String(c.name || 'Error'), message: c.message.slice(0, 600), stack: Array.isArray(c.stack) ? c.stack.slice(0, 20) : [], where: c.where, extra, ...(version ? { version } : {}) };
+      void fetch('/api/errors', { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' }, keepalive: true }).catch(() => {});
+    } catch {}
+  }
+}
+
 let installed = false;
 
 /** window.onerror and unhandledrejection, once. */

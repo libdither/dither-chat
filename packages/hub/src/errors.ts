@@ -19,7 +19,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { currentSpan } from './trace.ts';
 
-export type ErrorApp = 'hub' | 'web';
+/** `android`: the Android app's own crashes, which its page passes on (apps/android Crashes.kt). */
+export type ErrorApp = 'hub' | 'web' | 'android';
 export type ErrorSource = 'uncaught' | 'rejection' | 'request' | 'job' | 'attempt' | 'client';
 
 /** One line of errors.ndjson: the contract (docs/tracing.md "Errors"). */
@@ -313,15 +314,22 @@ export function clientReport(body: unknown): ErrorReport | null {
   if (b.version !== undefined && typeof b.version !== 'string') return null;
   const stack = Array.isArray(b.stack) ? b.stack.slice(0, STACK_FRAMES * 2).filter((f): f is string => typeof f === 'string') : (b.stack as string | undefined)?.slice(0, 8000);
   const version = typeof b.version === 'string' && /^[\w.\-+]{1,40}$/.test(b.version) ? b.version : undefined;
-  // extra: at most 8 short keys of strings, numbers and booleans (a loss's lostMs, lostAgo and calls); the rest dropped.
-  let extra: Record<string, string | number | boolean> | undefined;
-  if (b.extra !== undefined) {
-    if (!b.extra || typeof b.extra !== 'object' || Array.isArray(b.extra)) return null;
-    for (const [k, v] of Object.entries(b.extra).slice(0, 8))
-      if (/^\w{1,40}$/.test(k) && (typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)))) (extra ??= {})[k] = v;
+  const app: ErrorApp = b.app === 'android' ? 'android' : 'web';
+  // extra, with a body that is an object or nothing. The Android app's: when it happened (it is sent on the next start)
+  // and Android's version, numbers only. The page's: at most 8 short keys of strings, numbers and booleans (a lost hub's
+  // lostMs, lostAgo and calls); the rest dropped.
+  if (b.extra !== undefined && (!b.extra || typeof b.extra !== 'object' || Array.isArray(b.extra))) return null;
+  const ex = (b.extra ?? {}) as Record<string, unknown>;
+  const extra: Record<string, string | number | boolean> = {};
+  if (app === 'android') {
+    for (const k of ['at', 'sdk']) if (typeof ex[k] === 'number' && Number.isFinite(ex[k])) extra[k] = ex[k] as number;
+  } else {
+    for (const [k, v] of Object.entries(ex).slice(0, 8))
+      if (/^\w{1,40}$/.test(k) && (typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)))) extra[k] = v;
   }
   return {
-    app: 'web',
+    app,
+    ...(Object.keys(extra).length ? { extra } : {}),
     source: 'client',
     where,
     name: (b.name as string | undefined) || 'Error',
@@ -329,7 +337,6 @@ export function clientReport(body: unknown): ErrorReport | null {
     stack: stack ?? [],
     ...(typeof b.status === 'number' ? { status: b.status } : {}),
     ...(version ? { version } : {}),
-    ...(extra ? { extra } : {}),
     trace: '',
   };
 }
