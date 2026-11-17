@@ -35,6 +35,7 @@ import type { AccountSelfView } from './self.ts';
 import type { ContactCardView, MissingAttachmentFact, QuoteView, SendFailureView, StoryReplyView } from './extra.ts';
 import type { ForumView, ThreadView } from './threads.ts';
 import type { FeedItem, HomeFeed, HomeReason, PostFact, ReplyGate } from './feed.ts';
+import type { MixOrder } from './mix.ts';
 import type { NoticesBoot } from './notices.ts';
 
 export interface AccountView {
@@ -758,14 +759,31 @@ export interface FeedAccountView {
 
 export interface FeedSourcesView {
   accounts: FeedAccountView[];
+  /** Your feeds, Following and Discover first, then the ones you made. */
+  mixes: FeedMixView[];
   /** Drafts and scheduled posts waiting (the Drafts source's count). */
   drafts: number;
 }
 
 /**
- * Which posts a Feed source shows: `home` everyone your accounts follow, merged, newest first; `<accountId>:following`
+ * A feed of yours (docs/feed.md "Feeds", mix.ts): home timelines from any of your accounts in one list, each with its
+ * share, put in an order you can swap. PUT /api/feed/mixes/<id> with any of name, order and sources saves it (a new id
+ * makes one); DELETE removes one you made, or puts Following or Discover back as they were.
+ */
+export interface FeedMixView {
+  id: string;
+  name: string;
+  order: MixOrder;
+  /** Every timeline it could take, each with its share: a step of SHARE_WEIGHTS, 0 left out. */
+  sources: { accountId: string; feed: HomeFeed; share: number }[];
+  /** You made it; Following and Discover are always there. */
+  custom: boolean;
+}
+
+/**
+ * Which posts a Feed source shows: a feed's id (`following`, `discover`, or one you made); `<accountId>:following`
  * or `<accountId>:foryou` one account's own timeline in its network's order; `mine` what you posted, from every
- * account, your cross-posts as one.
+ * account, your cross-posts as one, or `<accountId>:mine` one account's.
  */
 export type FeedSource = string;
 
@@ -797,6 +815,8 @@ export interface FeedEntriesView {
   entries: FeedEntryView[];
   /** Older entries the hub holds: ask again with `before` this. Null when it holds no more. */
   before: number | null;
+  /** Where the page after this one starts, to ask with once older posts were read (`before` is null then). */
+  next: number | null;
   /** The networks have older posts than the hub holds: POST /api/feed/read with `older` brings them. */
   older: boolean;
   /** When the networks were last asked for this source (the oldest of its timelines), or null when never. */

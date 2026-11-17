@@ -1,7 +1,8 @@
 /**
  * The Feed page's posts (docs/feed.md "The Feed page", packages/hub/src/timelines.ts) with the demo's two X accounts:
- * home timelines read when looked at and kept in order, Home merging both accounts' Following with a post both follow
- * once, For you keeping X's reasons and order, older pages by cursor; one press of Post to both accounts, a thread's
+ * home timelines read when looked at and kept in order, Following merging both accounts' Following with a post both
+ * follow once, For you keeping X's reasons and order, older pages by cursor; feeds of your own with shares and orders
+ * swapped at once; one press of Post to both accounts, a thread's
  * parts as replies, the same press twice posted once; Your posts grouping a cross-post, a delete leaving the other
  * copy; drafts kept and scheduled ones posted at their time, or held when their account was not connected.
  */
@@ -77,6 +78,17 @@ describe('sources', () => {
     expect(v.accounts[0].feedConvId).not.toBe(v.accounts[1].feedConvId);
     expect(v.drafts).toBe(0);
   });
+  test('Following and Discover are there from the start, each with every timeline it could take', () => {
+    const [f, d, ...rest] = tl.sources().mixes;
+    expect(rest).toEqual([]);
+    expect(f).toMatchObject({ id: 'following', name: 'Following', order: 'newest', custom: false });
+    expect(d).toMatchObject({ id: 'discover', name: 'Discover', order: 'turns', custom: false });
+    expect(f.sources.filter((x) => x.share > 0)).toEqual([
+      { accountId: X1, feed: 'following', share: 2 },
+      { accountId: X2, feed: 'following', share: 2 },
+    ]);
+    expect(d.sources.filter((x) => x.share > 0).map((x) => x.feed)).toEqual(['foryou', 'foryou']);
+  });
   test('a source the hub does not know is refused', () => {
     expect(() => tl.entries('somewhere')).toThrow(/source/);
   });
@@ -85,11 +97,11 @@ describe('sources', () => {
 describe('home timelines', () => {
   test('nothing is read until a timeline is looked at', () => {
     expect(asked(X1, 'home').length + asked(X2, 'home').length).toBe(0);
-    expect(tl.entries('home')).toMatchObject({ entries: [], readAt: null });
+    expect(tl.entries('following')).toMatchObject({ entries: [], readAt: null });
   });
 
-  test('Home asks both accounts for their Following and merges them, a post both follow once, newest first', async () => {
-    const v = await tl.read('home');
+  test('Following asks both accounts for their Following and merges them, a post both follow once, newest first', async () => {
+    const v = await tl.read('following');
     expect(asked(X1, 'home').map((s) => s.cmd.feed)).toEqual(['following']);
     expect(asked(X2, 'home').map((s) => s.cmd.feed)).toEqual(['following']);
     const gossip = v.entries.filter((e) => /gossip layer/.test(e.post.text));
@@ -104,15 +116,19 @@ describe('home timelines', () => {
   });
 
   test('a conversation shown with a post keeps the posts above it', () => {
-    const v = tl.entries('home');
+    const v = tl.entries('following');
     const withAbove = v.entries.find((e) => e.above?.length);
     expect(withAbove?.above?.[0].text).toBeTruthy();
   });
 
   test('read again within a minute, the networks are not asked again', async () => {
     const n = asked(X1, 'home').length;
-    await tl.read('home');
+    await tl.read('following');
     expect(asked(X1, 'home').length).toBe(n);
+  });
+
+  test('home, the merged source of old links, is Following', () => {
+    expect(tl.entries('home').entries.map((e) => e.key)).toEqual(tl.entries('following').entries.map((e) => e.key));
   });
 
   test('For you keeps X’s order and says why each post is there', async () => {
@@ -132,6 +148,75 @@ describe('home timelines', () => {
     const v = await tl.read(`${X1}:following`, true);
     expect(asked(X1, 'home').at(-1)!.cmd.cursor).toBeTruthy();
     expect(v.entries.length).toBeGreaterThan(had.entries.length);
+  });
+});
+
+describe('feeds of your own', () => {
+  test('a feed made from one account’s Following and the other’s For you, taking turns by share', async () => {
+    const m = tl.saveMix('mixed', {
+      name: 'Mixed',
+      order: 'turns',
+      sources: [
+        { accountId: X1, feed: 'following', share: 3 },
+        { accountId: X2, feed: 'following', share: 0 },
+        { accountId: X2, feed: 'foryou', share: 2 },
+      ],
+    });
+    expect(m).toMatchObject({ id: 'mixed', name: 'Mixed', order: 'turns', custom: true });
+    expect(tl.sources().mixes.map((x) => x.id)).toEqual(['following', 'discover', 'mixed']);
+    const n = asked(X2, 'home').length;
+    const v = await tl.read('mixed');
+    // Only the timelines it takes are read: X2's For you, not its Following again.
+    expect(asked(X2, 'home').slice(n).map((s) => s.cmd.feed)).toEqual(['foryou']);
+    // Twice as much of X1's Following as of X2's For you, taking turns.
+    const from = v.entries.slice(0, 6).map((e) => (e.seenBy[0].accountId === X1 ? 'F' : 'Y'));
+    expect(from.join('')).toBe('FYFFYF');
+    expect(v.entries.slice(0, 6).every((e) => e.seenBy[0].feed === (e.seenBy[0].accountId === X1 ? 'following' : 'foryou'))).toBe(true);
+    expect(new Set(v.entries.map((e) => e.key)).size).toBe(v.entries.length);
+  });
+
+  test('a swapped order shows at once, the same posts, nothing asked of X', () => {
+    const turns = tl.entries('mixed');
+    const n = sent.length;
+    tl.saveMix('mixed', { order: 'newest' });
+    const newest = tl.entries('mixed');
+    expect(sent.length).toBe(n);
+    const ts = newest.entries.map((e) => e.post.ts);
+    expect(ts).toEqual([...ts].sort((a, b) => b - a));
+    expect(new Set(newest.entries.map((e) => e.key))).not.toEqual(new Set());
+    expect(newest.entries.map((e) => e.key)).not.toEqual(turns.entries.map((e) => e.key));
+    tl.saveMix('mixed', { order: 'liked' });
+    expect(tl.entries('mixed').entries.length).toBeGreaterThan(0);
+    tl.saveMix('mixed', { order: 'spread' });
+    expect(tl.entries('mixed').entries.length).toBeGreaterThan(0);
+  });
+
+  test('pages follow on from where the last one ended, each post once', () => {
+    tl.saveMix('mixed', { order: 'turns' });
+    const first = tl.entries('mixed');
+    expect(first.next).toBe(first.entries.length);
+    if (first.before !== null) {
+      const second = tl.entries('mixed', first.before);
+      const keys = [...first.entries, ...second.entries].map((e) => e.key);
+      expect(new Set(keys).size).toBe(keys.length);
+    }
+  });
+
+  test('a feed with nothing on shows nothing; a bad order or share is refused', () => {
+    tl.saveMix('empty', { name: 'Empty', sources: tl.sources().mixes[0].sources.map((x) => ({ ...x, share: 0 })) });
+    expect(tl.entries('empty').entries).toEqual([]);
+    expect(() => tl.saveMix('empty', { order: 'random' })).toThrow(/order/);
+    expect(() => tl.saveMix('empty', { sources: [{ accountId: X1, feed: 'following', share: 9 }] })).toThrow(/share/);
+    expect(() => tl.saveMix('mine', { name: 'x' })).toThrow(/feed id/);
+    tl.dropMix('empty');
+    expect(tl.sources().mixes.some((m) => m.id === 'empty')).toBe(false);
+  });
+
+  test('Following changed, then put back as it was', () => {
+    tl.saveMix('following', { order: 'spread', name: 'People' });
+    expect(tl.sources().mixes[0]).toMatchObject({ id: 'following', name: 'People', order: 'spread', custom: false });
+    tl.dropMix('following');
+    expect(tl.sources().mixes[0]).toMatchObject({ id: 'following', name: 'Following', order: 'newest' });
   });
 });
 

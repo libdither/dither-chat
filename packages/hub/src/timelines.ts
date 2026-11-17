@@ -8,14 +8,17 @@
  * in what order and why. Following is ordered by time (each post's own, a repost's when it was reposted), For you by
  * the network's ranking: each fresh read's batch goes on top, as the network's own Home tab shows it.
  *
- * Home, the merged source, is every account's Following, newest first, a post that two accounts follow shown once.
+ * A feed of yours (`feed_mix`, protocol mix.ts) puts timelines from any of your accounts in one list: each with its
+ * share, in an order you swap at will, a post that two timelines show once. Following (every account's Following,
+ * newest first) and Discover (every account's For you, taking turns) are always there; you change them or make more.
  * Your posts are the messages your own identities wrote in the posts conversations; posts made together in one press
  * of Post are one entry with copies (`post_group`).
  */
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META, postIdOf, postNativeId, postRulesFor, REPLY_GATES, splitThread } from '@dither-chat/protocol';
+import { HOME_FEEDS, NETWORK_META, postIdOf, postNativeId, postRulesFor, REPLY_GATES, splitThread } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
+import { engagement, MIX_ORDERS, orderMix, SHARE_WEIGHTS, type MixItem, type MixOrder } from '@dither-chat/protocol/mix';
 import { postAuthors, postView } from './feed.ts';
 import { type Posts, PostsError } from './posts.ts';
 import type { AccountRow, Store } from './store.ts';
@@ -48,6 +51,15 @@ const LATE_MS = 30 * 60_000;
 const TICK_MS = 15_000;
 /** At most this many drafts. */
 const DRAFTS_MAX = 200;
+/** At most this many feeds of your own. */
+const MIXES_MAX = 20;
+/** A share's step for an even share (SHARE_WEIGHTS). */
+const EVEN = 2;
+/** Feeds always there: as they are until changed, and put back by DELETE. */
+const BUILT_IN: Record<string, { name: string; order: MixOrder; on: P.HomeFeed }> = {
+  following: { name: 'Following', order: 'newest', on: 'following' },
+  discover: { name: 'Discover', order: 'turns', on: 'foryou' },
+};
 
 const made = new WeakSet<Database>();
 function tables(db: Database) {
@@ -79,6 +91,13 @@ function tables(db: Database) {
     at         INTEGER NOT NULL
   )`);
   db.run('CREATE INDEX IF NOT EXISTS post_group_grp ON post_group(grp)');
+  db.run(`CREATE TABLE IF NOT EXISTS feed_mix (
+    id      TEXT PRIMARY KEY,
+    name    TEXT NOT NULL,
+    ord     TEXT NOT NULL,
+    shares  TEXT NOT NULL,
+    made_at INTEGER NOT NULL
+  )`);
   db.run(`CREATE TABLE IF NOT EXISTS post_draft (
     id           TEXT PRIMARY KEY,
     body         TEXT NOT NULL,
@@ -100,8 +119,10 @@ const caps = (store: Store, accountId: string): P.Capability[] => {
 /** The post a timeline item shows (a repost's original). */
 const shownOf = (p: P.PostFact) => p.repostOf ?? p;
 
-/** A source's timelines: [account, feed] pairs. */
-type Lines = { accountId: string; feed: P.HomeFeed }[];
+/** A source's timelines: an account's Following or For you, each with its share's weight. */
+type Lines = { accountId: string; feed: P.HomeFeed; weight: number }[];
+/** What a source shows: timelines in an order, or your posts. */
+type Parsed = { lines: Lines; order: MixOrder; mine: false } | { lines: []; mine: true };
 
 export class Timelines {
   private asking = new Map<string, Promise<void>>();
@@ -152,19 +173,90 @@ export class Timelines {
       };
     });
     const drafts = (this.db.query('SELECT COUNT(*) n FROM post_draft').get() as Row).n as number;
-    return { accounts, drafts };
+    return { accounts, mixes: this.mixes(), drafts };
   }
 
-  /** The timelines a source reads, and whether it is Your posts. */
-  private parse(source: string): { lines: Lines; mine: boolean } {
+  // ------------------------------------------------------------------ your feeds
+
+  /** Following and Discover, then the feeds you made, each listing every timeline it could take. */
+  mixes(): P.FeedMixView[] {
+    const homes = this.accounts().filter((a) => caps(this.d.store, a.id).includes('home'));
+    const rows = new Map((this.db.query('SELECT * FROM feed_mix ORDER BY made_at').all() as Row[]).map((r) => [r.id as string, r]));
+    const view = (id: string, r: Row | undefined): P.FeedMixView => {
+      const built = BUILT_IN[id];
+      let shares: Record<string, number> = {};
+      try {
+        shares = r ? JSON.parse(r.shares) : {};
+      } catch {}
+      return {
+        id,
+        name: r?.name ?? built?.name ?? id,
+        order: (r?.ord as MixOrder) ?? built?.order ?? 'turns',
+        // A timeline it does not name (an account added since) is in Following's or Discover's own kind, else out.
+        sources: homes.flatMap((a) => HOME_FEEDS.map((feed) => ({ accountId: a.id, feed, share: shares[`${a.id}:${feed}`] ?? (built?.on === feed ? EVEN : 0) }))),
+        custom: !built,
+      };
+    };
+    return [...Object.keys(BUILT_IN).map((id) => view(id, rows.get(id))), ...[...rows.values()].filter((r) => !BUILT_IN[r.id]).map((r) => view(r.id, r))];
+  }
+
+  /** A feed saved: any of its name, order and shares; a new id makes one. */
+  saveMix(id: string, body: unknown): P.FeedMixView {
+    if (!/^[\w-]{1,40}$/.test(id) || /^(mine|activity|drafts|home)$/.test(id)) throw new PostsError('Not a feed id.', 400);
+    const b = (body ?? {}) as Partial<Omit<P.FeedMixView, 'id' | 'custom'>>;
+    const had = this.mixes().find((m) => m.id === id);
+    const row = this.db.query('SELECT * FROM feed_mix WHERE id = ?').get(id) as Row | null;
+    if (!had && (this.db.query(`SELECT COUNT(*) n FROM feed_mix WHERE id NOT IN (${Object.keys(BUILT_IN).map(() => '?').join(',')})`).get(...Object.keys(BUILT_IN)) as Row).n >= MIXES_MAX)
+      throw new PostsError(`At most ${MIXES_MAX} feeds of your own.`, 409);
+    if (b.name !== undefined && (typeof b.name !== 'string' || !b.name.trim() || b.name.length > 40)) throw new PostsError('name: up to 40 characters', 400);
+    if (b.order !== undefined && !MIX_ORDERS.includes(b.order)) throw new PostsError(`order: ${MIX_ORDERS.join(', ')}`, 400);
+    let shares: Record<string, number> = {};
+    try {
+      shares = row ? JSON.parse(row.shares) : {};
+    } catch {}
+    // A feed's timelines as they were (a new one starts with every Following, even), then what was sent.
+    if (!row) for (const x of had?.sources ?? this.mixes()[0].sources) shares[`${x.accountId}:${x.feed}`] = had ? x.share : x.feed === 'following' ? EVEN : 0;
+    if (b.sources !== undefined) {
+      if (!Array.isArray(b.sources)) throw new PostsError('sources: [{ accountId, feed, share }]', 400);
+      for (const x of b.sources) {
+        if (!x || typeof x.accountId !== 'string' || !HOME_FEEDS.includes(x.feed) || !Number.isInteger(x.share) || x.share < 0 || x.share >= SHARE_WEIGHTS.length)
+          throw new PostsError(`sources: [{ accountId, feed: following or foryou, share: 0 to ${SHARE_WEIGHTS.length - 1} }]`, 400);
+        shares[`${x.accountId}:${x.feed}`] = x.share;
+      }
+    }
+    const name = b.name?.trim() ?? had?.name ?? 'New feed';
+    const order = b.order ?? had?.order ?? 'turns';
+    this.db
+      .query(
+        `INSERT INTO feed_mix (id, name, ord, shares, made_at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET name = excluded.name, ord = excluded.ord, shares = excluded.shares`,
+      )
+      .run(id, name, order, JSON.stringify(shares), Date.now());
+    this.d.changed?.();
+    return this.mixes().find((m) => m.id === id)!;
+  }
+
+  /** A feed you made, gone; Following or Discover, back as they were. */
+  dropMix(id: string) {
+    this.db.query('DELETE FROM feed_mix WHERE id = ?').run(id);
+    this.d.changed?.();
+  }
+
+  /** The timelines a source reads, in what order, or Your posts. `home`, the merged source of old links, is Following. */
+  private parse(source: string): Parsed {
     if (source === 'mine') return { lines: [], mine: true };
-    if (source === 'home') return { lines: this.accounts().filter((a) => caps(this.d.store, a.id).includes('home')).map((a) => ({ accountId: a.id, feed: 'following' as const })), mine: false };
+    const mix = this.mixes().find((m) => m.id === (source === 'home' ? 'following' : source));
+    if (mix) {
+      const lines = mix.sources.filter((x) => x.share > 0).map((x) => ({ accountId: x.accountId, feed: x.feed, weight: SHARE_WEIGHTS[x.share] }));
+      return { lines, order: mix.order, mine: false };
+    }
     const m = source.match(/^([\w-]+):(following|foryou|mine)$/);
-    if (!m) throw new PostsError('source: home, mine, or <account>:following, :foryou or :mine', 400);
+    if (!m) throw new PostsError('source: a feed, mine, or <account>:following, :foryou or :mine', 400);
     const acc = this.d.store.account(m[1]);
     if (!acc || !postRulesFor(acc.network)) throw new PostsError('No such account.', 404);
-    if (m[2] === 'mine') return { lines: [{ accountId: acc.id, feed: 'following' }], mine: true };
-    return { lines: [{ accountId: acc.id, feed: m[2] as P.HomeFeed }], mine: false };
+    if (m[2] === 'mine') return { lines: [], mine: true };
+    // One timeline alone, in its own order.
+    return { lines: [{ accountId: acc.id, feed: m[2] as P.HomeFeed, weight: 1 }], order: 'turns', mine: false };
   }
 
   // ------------------------------------------------------------------ reading
@@ -174,9 +266,9 @@ export class Timelines {
    * the next page past what the hub holds. A timeline read in the last minute is not asked again (older pages are).
    */
   async read(source: string, older = false): Promise<P.FeedEntriesView> {
-    const { lines, mine } = this.parse(source);
-    if (mine) await Promise.all(this.mineAccounts(source).map((a) => this.readMine(a)));
-    else await Promise.all(lines.map((l) => this.readLine(l.accountId, l.feed, older)));
+    const p = this.parse(source);
+    if (p.mine) await Promise.all(this.mineAccounts(source).map((a) => this.readMine(a)));
+    else await Promise.all(p.lines.map((l) => this.readLine(l.accountId, l.feed, older)));
     return this.entries(source);
   }
 
@@ -279,12 +371,28 @@ export class Timelines {
 
   // ------------------------------------------------------------------ the view
 
-  /** What the hub holds for a source, newest (or highest) first; `before` for the page after. */
+  /**
+   * What the hub holds for a source, in its order. `before`: for Your posts, the time the page after starts below; for
+   * a feed or a timeline, how many entries came before (its order is worked out afresh each time, so a swapped order
+   * shows at once).
+   */
   entries(source: string, before?: number): P.FeedEntriesView {
-    const { lines, mine } = this.parse(source);
+    const p = this.parse(source);
+    const { lines, mine } = p;
     const named = new Set<string>();
-    const entries = mine ? this.mineEntries(source, before, named) : this.lineEntries(lines, before, named);
-    const lastAt = entries.length === VIEW_PAGE ? entries[entries.length - 1].at : null;
+    let entries: P.FeedEntryView[];
+    let held: number | null;
+    let next: number | null;
+    if (p.mine) {
+      entries = this.mineEntries(source, before, named);
+      next = entries.length ? entries[entries.length - 1].at : (before ?? null);
+      held = entries.length === VIEW_PAGE ? next : null;
+    } else {
+      const v = this.mixEntries(p.lines, p.order, before ?? 0, named);
+      entries = v.entries;
+      held = v.more ? v.next : null;
+      next = v.next;
+    }
     const reads = mine
       ? this.mineAccounts(source).map((a) => this.db.query(`SELECT read_at, NULL bottom FROM feed_read WHERE account_id = ? AND feed = 'mine'`).get(a) as Row | null)
       : lines.map((l) => this.db.query('SELECT read_at, bottom FROM feed_read WHERE account_id = ? AND feed = ?').get(l.accountId, l.feed) as Row | null);
@@ -299,7 +407,8 @@ export class Timelines {
     return {
       source,
       entries,
-      before: lastAt,
+      before: held,
+      next,
       older: !mine && reads.some((r) => !!r?.bottom),
       readAt,
       notes,
@@ -324,35 +433,56 @@ export class Timelines {
     return { ...postView(q, network, (u) => s.mediaUrl(u, accountId)), messageId: m && !m.deleted ? m.id : null };
   }
 
-  private lineEntries(lines: Lines, before: number | undefined, named: Set<string>): P.FeedEntryView[] {
-    if (!lines.length) return [];
+  /**
+   * A page of a feed's (or one timeline's) entries: what each timeline holds, put in the feed's order (mix.ts), a post
+   * shown through two timelines once, from `offset` on. Each timeline gives its newest held posts, enough to fill the
+   * page however its share falls; Most liked and Spread out look further back, as they rank by more than place.
+   */
+  private mixEntries(lines: Lines, order: MixOrder, offset: number, named: Set<string>): { entries: P.FeedEntryView[]; more: boolean; next: number } {
+    if (!lines.length) return { entries: [], more: false, next: offset };
     const s = this.d.store;
-    const where = lines.map(() => '(account_id = ? AND feed = ?)').join(' OR ');
-    const args = lines.flatMap((l) => [l.accountId, l.feed]);
-    // One entry per post shown: the same post followed through two accounts (or reposted by two people) once, at its
-    // highest place.
-    const rows = this.db
-      .query(
-        `SELECT message_id, MAX(pos) pos FROM feed_item fi WHERE (${where}) ${before !== undefined ? 'AND pos < ?' : ''}
-           AND NOT EXISTS (SELECT 1 FROM message m WHERE m.id = fi.message_id AND m.deleted = 1)
-         GROUP BY message_id ORDER BY pos DESC LIMIT ?`,
-      )
-      .all(...args, ...(before !== undefined ? [before] : []), VIEW_PAGE) as Row[];
+    const win = order === 'liked' || order === 'spread' ? Math.max(300, offset + 2 * VIEW_PAGE) : Math.max(60, offset + 2 * VIEW_PAGE);
+    const items: MixItem[] = [];
+    const more: boolean[] = [];
+    // Every place each post was held, for the card (which timeline's look at it) and its seenBy.
+    const at = new Map<string, { line: number; row: Row; it: P.HomeItem }[]>();
+    lines.forEach((l, source) => {
+      const rows = this.db
+        .query(
+          `SELECT message_id, pos, item FROM feed_item fi WHERE account_id = ? AND feed = ?
+             AND NOT EXISTS (SELECT 1 FROM message m WHERE m.id = fi.message_id AND m.deleted = 1)
+           ORDER BY pos DESC LIMIT ?`,
+        )
+        .all(l.accountId, l.feed, win + 1) as Row[];
+      const st = this.db.query('SELECT bottom FROM feed_read WHERE account_id = ? AND feed = ?').get(l.accountId, l.feed) as Row | null;
+      more[source] = rows.length > win || !!st?.bottom;
+      rows.slice(0, win).forEach((r, rank) => {
+        let it: P.HomeItem;
+        try {
+          it = JSON.parse(r.item);
+        } catch {
+          return;
+        }
+        const key = r.message_id as string;
+        items.push({ key, source, rank, ts: it.post.ts, ...(it.post.author ? { author: it.post.author } : {}), engagement: engagement(shownOf(it.post).counts) });
+        const had = at.get(key);
+        if (had) had.push({ line: source, row: r, it });
+        else at.set(key, [{ line: source, row: r, it }]);
+      });
+    });
+    const o = orderMix(items, order, lines.map((l) => l.weight), more, Date.now());
+    const page = o.keys.slice(offset, offset + VIEW_PAGE);
     const out: P.FeedEntryView[] = [];
-    for (const r of rows) {
-      const all = this.db.query(`SELECT * FROM feed_item WHERE message_id = ? AND (${where}) ORDER BY pos DESC`).all(r.message_id, ...args) as Row[];
-      const first = all[0];
-      if (!first) continue;
-      const acc = s.account(first.account_id);
-      if (!acc) continue;
-      let it: P.HomeItem;
-      try {
-        it = JSON.parse(first.item);
-      } catch {
-        continue;
-      }
+    page.forEach((key, i) => {
+      const all = at.get(key)!;
+      // The look of the timeline it came through; why it is there, from whichever look says (For you does).
+      const first = all.find((x) => x.line === o.from[offset + i]) ?? all[0];
+      const acc = s.account(lines[first.line].accountId);
+      if (!acc) return;
+      const it = first.it;
       const network = acc.network;
-      const reason = it.reason ? { ...it.reason, ...(it.reason.who ? { who: hubId('idn', network, it.reason.who) } : {}) } : undefined;
+      const why = it.reason ?? all.find((x) => x.it.reason && lines[x.line].accountId === acc.id)?.it.reason;
+      const reason = why ? { ...why, ...(why.who ? { who: hubId('idn', network, why.who) } : {}) } : undefined;
       if (reason?.who) named.add(reason.who);
       // What this account did to it, as it last read it (another account's like is not this one's).
       const post = this.view(it.post, network, acc.id, named);
@@ -362,11 +492,11 @@ export class Timelines {
         post,
         ...(it.above?.length ? { above: it.above.map((a) => this.view(a, network, acc.id, named)) } : {}),
         ...(reason ? { reason } : {}),
-        seenBy: [...new Map(all.map((x) => [`${x.account_id}:${x.feed}`, { accountId: x.account_id as string, feed: x.feed as P.HomeFeed }])).values()],
-        at: r.pos,
+        seenBy: [first, ...all.filter((x) => x !== first)].map((x) => ({ accountId: lines[x.line].accountId, feed: lines[x.line].feed })),
+        at: it.post.ts,
       });
-    }
-    return out;
+    });
+    return { entries: out, more: o.keys.length > offset + VIEW_PAGE, next: offset + page.length };
   }
 
   /** Your posts: what your own identities wrote, newest first; posts made in one press as one entry with copies. */

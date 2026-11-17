@@ -64,9 +64,9 @@ const ROUTES: [hash: string, kind: 'list' | 'tab' | 'page' | 'over', own: string
   ['#/calendar', 'tab', '#/calendar'],
   ['#/calendar/day/2026-11-14?x', 'tab', '#/calendar/day/2026-11-14?x'],
   ['#/feed', 'tab', '#/feed'],
-  ['#/feed/home', 'tab', '#/feed/home'],
+  ['#/feed/following', 'tab', '#/feed/following'],
   ['#/feed/acc_1:foryou', 'tab', '#/feed/acc_1:foryou'],
-  ['#/feed/home/p/pst_x_1', 'page', '#/feed/home'],
+  ['#/feed/following/p/pst_x_1', 'page', '#/feed/following'],
   ['#/feed/acc_1:activity/p/pst_x_2', 'page', '#/feed/acc_1:activity'],
 ];
 
@@ -93,10 +93,10 @@ test("the Feed's sources and posts, both ways, an account's colon readable", () 
   expect(R('#/feed')).toEqual({ view: 'feed' });
   expect(R('#/feed/acc_1:foryou')).toEqual({ view: 'feed', source: 'acc_1:foryou' });
   expect(R('#/feed/acc_1%3Aforyou')).toEqual({ view: 'feed', source: 'acc_1:foryou' });
-  expect(R('#/feed/home/p/pst_x_1')).toEqual({ view: 'feed', source: 'home', post: 'pst_x_1' });
-  for (const h of ['#/feed', '#/feed/drafts', '#/feed/acc_1:mine', '#/feed/home/p/pst_x_1']) expect(href(R(h))).toBe(h);
+  expect(R('#/feed/following/p/pst_x_1')).toEqual({ view: 'feed', source: 'following', post: 'pst_x_1' });
+  for (const h of ['#/feed', '#/feed/drafts', '#/feed/m-a1b2c3', '#/feed/acc_1:mine', '#/feed/following/p/pst_x_1']) expect(href(R(h))).toBe(h);
   // A post opened in the Feed stacks on the source it came from: back is to that source.
-  expect(stacksOn(R('#/feed/home/p/pst_x_1'), R('#/feed/home'), places)).toBe(true);
+  expect(stacksOn(R('#/feed/following/p/pst_x_1'), R('#/feed/following'), places)).toBe(true);
 });
 
 test('pages, tabs and lists are told apart', () => {

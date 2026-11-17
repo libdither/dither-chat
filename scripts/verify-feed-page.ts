@@ -1,11 +1,14 @@
 /**
  * The Feed page (docs/feed.md "The Feed page"), in a real browser against a demo hub of its own on a fresh data dir,
- * with the demo's two X accounts: Home merges both accounts' Following, a post both follow once; For you says why;
- * the composer posts as one account or both in one press, cuts a long text into a thread, limits who can reply, takes
- * a picture, saves drafts and schedules; a post of yours is deleted from the network, a cross-post's other copy
- * staying; likes and replies go as the account whose timeline showed the post; Activity is every account's
- * notifications; an old link to the notifications conversation lands there; and a phone has its sources in a row of
- * chips, the composer one line until tapped, and a post's thread in the list's place.
+ * with the demo's two X accounts: Following merges both accounts' Following, a post both follow once; Discover takes
+ * both accounts' For you in turns and says why each post is there; a feed's order swaps at once without asking X
+ * again; Tune changes how much each timeline gets; a new feed is made, named and deleted; the composer posts as one
+ * account or both in one press, cuts a long text into a thread, limits who can reply, takes a picture, saves drafts
+ * and schedules; a post of yours is deleted from the network, a cross-post's other copy staying; likes and replies go
+ * as the account whose timeline showed the post; Activity is every account's notifications; an old link to the
+ * notifications conversation lands there; and a phone has its feeds as tabs, the order under them, Activity behind the
+ * bell, Your posts and Drafts behind ⋯, the composer in a sheet from the pencil button, and a thread in the list's
+ * place.
  *
  *   bun scripts/verify-feed-page.ts [--port <port>] [--web <built dist>] [--work <empty dir>] [--keep] [--shots <dir>]
  *
@@ -79,12 +82,21 @@ writeFileSync(PNG, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA
 
 const { page, close } = await launch();
 const q = (s: string) => JSON.stringify(s);
-/** A real press at the middle of the first element matching. */
+/** A real press at the middle of the first element matching, once nothing on the page is moving (a sheet sliding in
+ * moves what it holds between finding it and pressing) and nothing else lies over that point (a toast stays six
+ * seconds). */
 async function tap(sel: string) {
-  const r = await page.eval<{ x: number; y: number } | null>(
-    `(() => { const e = document.querySelector(${q(sel)}); if (!e) return null; e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`,
-  );
+  let r: { x: number; y: number; over?: string } | null = null;
+  const end = Date.now() + 15_000;
+  do {
+    r = await page.eval<{ x: number; y: number; over?: string } | null>(
+      `(() => { const e = document.querySelector(${q(sel)}); if (!e) return null; const moving = document.getAnimations().find((a) => a.playState === 'running' && a.effect?.getTiming().iterations !== Infinity); if (moving) return { x: 0, y: 0, over: 'an animation still running' }; e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); const x = b.left + b.width / 2, y = b.top + b.height / 2; const at = document.elementFromPoint(x, y); return { x, y, ...(b.width && b.height && at && (at === e || e.contains(at)) ? {} : { over: at ? at.outerHTML.slice(0, 120) : 'nothing' }) }; })()`,
+    );
+    if (r && !r.over) break;
+    await Bun.sleep(50);
+  } while (Date.now() < end);
   if (!r) throw new Error(`nothing to press: ${sel}`);
+  if (r.over) throw new Error(`${sel} is covered or not drawn: ${r.over}`);
   for (const type of ['mousePressed', 'mouseReleased']) await page.send('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: 'left', clickCount: 1 });
 }
 const typeText = (text: string) => page.send('Input.insertText', { text });
@@ -92,6 +104,16 @@ const count = (sel: string) => page.eval<number>(`document.querySelectorAll(${q(
 const text = (sel: string) => page.eval<string>(`document.querySelector(${q(sel)})?.textContent ?? ''`);
 const overflow = (sel: string) => page.eval<number>(`(() => { const e = document.querySelector(${q(sel)}); return e ? e.scrollWidth - e.clientWidth : -1; })()`);
 const mine = () => json('/api/feed/entries?source=mine');
+const mixOf = async (id: string) => (await json('/api/feed/sources')).mixes.find((m: any) => m.id === id);
+const shownKeys = () => page.eval<string[]>(`[...document.querySelectorAll('.feed-main .feed-entry')].map((e) => e.dataset.entry)`);
+/** A sheet closed has given back its history entry (phone.ts dropLayer): a navigation before then is undone by it. */
+const settled = () =>
+  page.until(`!document.querySelector('.sheet') && history.state?.layer === undefined`, 5000).catch(async (e) => {
+    throw new Error(`${e.message}\n  state: ${await page.eval<string>(`JSON.stringify({ state: history.state, hash: location.hash, sheets: document.querySelectorAll('.sheet').length, len: history.length })`)}`);
+  });
+/** A range moved as a drag ends: its value, then input and change. */
+const slide = (sel: string, v: number) =>
+  page.eval(`(() => { const i = document.querySelector(${q(sel)}); i.value = ${v}; i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
 /** The composer done with its last press: the box enabled and empty, so what is typed next lands in it. */
 const idle = () => page.until(`(() => { const t = document.querySelector('.feed-composer textarea'); return !!t && !t.disabled && t.value === ''; })()`, 15000);
 
@@ -100,31 +122,88 @@ try {
   await page.goto(`${base}/#/feed`);
   await page.until(`document.querySelectorAll('.feed-entry').length >= 5`, 30000);
 
-  // ---------------------------------------------------------------- Home and the sources
-  const side = await page.eval<string[]>(`[...document.querySelectorAll('.feed-src')].map((b) => b.textContent.trim())`);
-  check('the sources: Home, Activity, Your posts, Drafts, then each account’s Following, For you, Activity and Posts', side.slice(0, 4).join() === 'Home,Activity,Your posts,Drafts' && side.filter((s) => s === 'For you').length === 2, side);
-  check('the rail’s Feed button is the page’s', (await count('.rail [data-track="feed"].active, .rail .active[title="Feed"]')) >= 0 && (await page.eval<string>(`location.hash`)) === '#/feed');
+  // ---------------------------------------------------------------- your feeds
+  const side = await page.eval<string[]>(`[...document.querySelectorAll('.feed-src')].map((b) => b.querySelector('.feed-src-label').textContent.trim())`);
+  check('the list: Following and Discover, New feed, then Activity, Your posts and Drafts, one of each', side.join() === 'Following,Discover,New feed,Activity,Your posts,Drafts', side);
+  check('the Feed opens on Following', (await page.eval<string>(`location.hash`)) === '#/feed' && /Following/.test(await text('.feed-main .conv-head h2')), await text('.feed-main .conv-head h2'));
+  check('…its head says how many timelines and in what order', /2 timelines · Newest first/.test(await text('.feed-main .conv-head-sub')), await text('.feed-main .conv-head-sub'));
   const gossip = await page.eval<any>(`(() => { const all = [...document.querySelectorAll('.feed-entry')].filter((e) => /gossip layer/.test(e.textContent)); return { n: all.length, via: all[0]?.querySelector('.feed-via')?.textContent }; })()`);
-  check('a post both accounts follow is in Home once, saying it came through both', gossip.n === 1 && /zyan_demo/.test(gossip.via) && /work_demo/.test(gossip.via), gossip);
+  check('a post both accounts follow is in Following once, saying which timeline it came through and that one more had it', gossip.n === 1 && /_demo · Following \(\+1\)/.test(gossip.via), gossip);
   const conv = await page.eval<any>(`(() => { const e = [...document.querySelectorAll('.feed-entry')].find((e) => e.querySelectorAll('.thread-post').length > 1); return e && { rows: e.querySelectorAll('.thread-post').length, line: e.querySelector('.thread-post').classList.contains('line') }; })()`);
-  check('a reply in Home shows the post above it, joined by a line', !!conv && conv.rows === 2 && conv.line, conv);
-  if (shots) await page.shot(join(shots, 'feed-home-desktop.png'));
+  check('a reply in Following shows the post above it, joined by a line', !!conv && conv.rows === 2 && conv.line, conv);
+  if (shots) await page.shot(join(shots, 'feed-following-desktop.png'));
 
-  // For you, and why a post is there
-  await tap(`.feed-src[data-source="${X1}:foryou"]`);
+  // Discover: both accounts' For you, taking turns, and why a post is there
+  await tap('.feed-src[data-source="discover"]');
   await page.until(`[...document.querySelectorAll('.feed-reason')].some((r) => /Alice Chen liked/.test(r.textContent))`, 20000);
   const reasons = await page.eval<string[]>(`[...document.querySelectorAll('.feed-reason')].map((r) => r.textContent.trim())`);
-  check('For you says why a post is there, in X’s words', reasons.includes('Alice Chen liked') && reasons.includes('Popular in Distributed systems'), reasons);
-  check('…and its header names the account', /zyan_demo/.test(await text('.feed-main .conv-head-sub')), await text('.feed-main .conv-head-sub'));
-  const homeLog = (await action(X1, 'homeLog')).result?.home ?? [];
-  check('X was asked for this account’s For you only when it was opened', homeLog.some((h: any) => h.feed === 'foryou') && homeLog.filter((h: any) => h.feed === 'foryou').length === 1, homeLog);
+  check('Discover says why a post is there, in X’s words', reasons.includes('Alice Chen liked') && reasons.includes('Popular in Distributed systems'), reasons);
+  check('…its head says it takes turns', /Taking turns/.test(await text('.feed-main .conv-head-sub')), await text('.feed-main .conv-head-sub'));
+  const homeLog = async () => [...((await action(X1, 'homeLog')).result?.home ?? []), ...((await action(X2, 'homeLog')).result?.home ?? [])];
+  const asked = await homeLog();
+  check('X was asked for each account’s For you once, when Discover opened', asked.filter((h: any) => h.feed === 'foryou').length === 2, asked);
+  const vias = await page.eval<string[]>(`[...document.querySelectorAll('.feed-main .feed-via')].slice(0, 4).map((v) => v.textContent.replace(/ \\(.*/, ''))`);
+  check('…the two accounts take turns', vias.length === 4 && vias[0] !== vias[1] && vias[0] === vias[2], vias);
+
+  // The order, swapped from the head's menu: the same posts, at once, nothing asked of X
+  const turns = await shownKeys();
+  await tap('.feed-main .feed-order-btn');
+  await page.until(`document.querySelectorAll('.feed-order-menu .feed-order').length === 4`, 3000);
+  check('the order menu: Newest first, Taking turns, Most liked, Spread out, the one in use ticked', (await page.eval<string>(`[...document.querySelectorAll('.feed-order-menu .feed-order b')].map((b) => b.textContent).join()`)) === 'Newest first,Taking turns,Most liked,Spread out' && (await count('.feed-order-menu .feed-order.on[data-order="turns"]')) === 1);
+  if (shots) await page.shot(join(shots, 'feed-order-menu.png'));
+  await tap('.feed-order-menu [data-order="newest"]');
+  await page.until(`/Newest first/.test(document.querySelector('.feed-main .conv-head-sub').textContent)`, 3000);
+  await until(async () => (await shownKeys()).join() !== turns.join(), 5000, 'the list in its new order');
+  const want = (await json('/api/feed/entries?source=discover')).entries.map((e: any) => e.key);
+  check('Newest first: the list put in the new order, as the hub orders it', (await shownKeys()).join() === want.join() && (await mixOf('discover')).order === 'newest', { shown: (await shownKeys()).slice(0, 3), want: want.slice(0, 3) });
+  check('…the same posts', [...(await shownKeys())].sort().join() === [...turns].sort().join());
+  check('…and X was not asked again', (await homeLog()).length === asked.length);
+  await tap('.feed-main .feed-order-btn');
+  await tap('.feed-order-menu [data-order="liked"]');
+  await until(async () => (await mixOf('discover')).order === 'liked', 5000, 'Most liked saved');
+  await until(async () => (await shownKeys()).join() === (await json('/api/feed/entries?source=discover')).entries.map((e: any) => e.key).join(), 5000, 'Most liked shown');
+  check('Most liked: swapped too', true);
+
+  // Tune: how much each timeline gets
+  await tap('.feed-main .feed-tune-btn');
+  await page.until(`!!document.querySelector('.feed-thread .feed-tune')`, 3000);
+  const rows = await page.eval<string[]>(`[...document.querySelectorAll('.feed-tune-src')].map((r) => r.dataset.src + '=' + r.querySelector('.feed-tune-share').textContent)`);
+  check('Tune, beside the posts: every timeline with how much it gets, For yous Even, Followings Off', rows.length === 4 && rows.filter((r) => r.endsWith(':foryou=Even')).length === 2 && rows.filter((r) => r.endsWith(':following=Off')).length === 2, rows);
+  const pcts = await page.eval<string[]>(`[...document.querySelectorAll('.feed-tune-pct')].map((p) => p.textContent).filter(Boolean)`);
+  check('…what the posts showing came from, as shares of the list', pcts.length === 2 && pcts.reduce((n, p) => n + parseInt(p), 0) >= 99, pcts);
+  if (shots) await page.shot(join(shots, 'feed-tune-desktop.png'));
+  await slide(`.feed-tune-src[data-src="${X2}:foryou"] input[type=range]`, 0);
+  await until(async () => (await mixOf('discover')).sources.find((x: any) => x.accountId === X2 && x.feed === 'foryou').share === 0, 5000, 'the share saved');
+  await page.until(`document.querySelectorAll('.feed-main .feed-via').length === 0 && document.querySelectorAll('.feed-main .feed-entry').length > 0`, 5000);
+  const only = (await json('/api/feed/entries?source=discover')).entries;
+  check('a timeline turned off leaves the feed: only the first account’s For you, no “which timeline” line', only.every((e: any) => e.seenBy[0].accountId === X1 && e.seenBy[0].feed === 'foryou'), only.map((e: any) => e.seenBy[0]));
+  await tap('.feed-tune-foot .link-btn');
+  await until(async () => (await mixOf('discover')).order === 'turns' && (await mixOf('discover')).sources.filter((x: any) => x.share === 2).length === 2, 5000, 'Discover put back');
+  check('Put back as it was: Discover taking turns between both For yous again', true);
+  await tap('.feed-tune-head .icon-btn');
+
+  // A feed of your own
+  await tap('.feed-src-new');
+  await page.until(`/^#\\/feed\\/m-/.test(location.hash) && !!document.querySelector('.feed-tune')`, 5000);
+  const made = decodeURIComponent((await page.eval<string>(`location.hash`)).slice('#/feed/'.length));
+  check('New feed: made, opened, and its tuning open to name it', made.startsWith('m-') && (await page.eval<string>(`document.querySelector('.feed-tune-name input').value`)) === 'New feed');
+  await page.eval(`(() => { const i = document.querySelector('.feed-tune-name input'); i.focus(); i.select(); })()`);
+  await typeText('Friends');
+  await page.eval(`document.querySelector('.feed-tune-name input').dispatchEvent(new Event('change', { bubbles: true }))`);
+  await page.until(`[...document.querySelectorAll('.feed-src .feed-src-label')].some((l) => l.textContent === 'Friends')`, 5000);
+  check('…named, and listed under Feeds', true);
+  await tap('.feed-tune-foot .danger');
+  await page.until(`![...document.querySelectorAll('.feed-src .feed-src-label')].some((l) => l.textContent === 'Friends') && location.hash === '#/feed/following'`, 5000);
+  check('…and deleted, back on Following', !(await json('/api/feed/sources')).mixes.some((m: any) => m.id === made));
 
   // ---------------------------------------------------------------- posting as both accounts
-  await tap('.feed-src[data-source="home"]');
+  await tap('.feed-src[data-source="following"]');
   await page.until(`!!document.querySelector('.feed-composer textarea')`, 10000);
-  const as = await page.eval<string[]>(`[...document.querySelectorAll('.feed-as-chip')].map((b) => b.textContent.trim() + (b.classList.contains('on') ? '*' : ''))`);
-  check('Post as: both accounts, the first picked', as.length === 2 && as[0].endsWith('*') && !as[1].endsWith('*'), as);
-  await tap(`.feed-as-chip[data-as="${X2}"]`);
+  const as = await page.eval<string[]>(`[...document.querySelectorAll('.feed-as-face')].map((b) => b.dataset.as + (b.classList.contains('on') ? '*' : ''))`);
+  check('Post as: both accounts’ pictures, the first pressed in', as.length === 2 && as[0].endsWith('*') && !as[1].endsWith('*'), as);
+  check('…and who posts it in words', /Posting as @zyan_demo$/.test(await text('.feed-as-names')), await text('.feed-as-names'));
+  await tap(`.feed-as-face[data-as="${X2}"]`);
+  check('a second picture pressed: both in words', /Posting as @zyan_demo and @work_demo/.test(await text('.feed-as-names')), await text('.feed-as-names'));
   await idle();
   await tap('.feed-composer textarea');
   await typeText('Two accounts, one press.');
@@ -135,10 +214,10 @@ try {
   check('one press made one post on each account, one entry in Your posts with the other as a copy', cross.copies?.length === 1 && cross.copies[0].accountId !== cross.seenBy[0].accountId, { seenBy: cross.seenBy, copies: cross.copies?.map((c: any) => c.accountId) });
   check('…each account was asked once', (await writes(X1)).filter((w) => w === 'publish').length === 1 && (await writes(X2)).filter((w) => w === 'publish').length === 1, { x1: await writes(X1), x2: await writes(X2) });
   await page.until(`(document.querySelector('.feed-composer textarea')?.value ?? 'x') === ''`, 5000);
-  check('the box empties after posting, and the new post is on top of Home', (await page.eval<string>(`document.querySelector('.feed-entry .post-text')?.textContent ?? ''`)).includes('Two accounts, one press.'), await page.eval(`document.querySelector('.feed-entry .post-text')?.textContent`));
+  check('the box empties after posting, and the new post is on top of Following', (await page.eval<string>(`document.querySelector('.feed-entry .post-text')?.textContent ?? ''`)).includes('Two accounts, one press.'), await page.eval(`document.querySelector('.feed-entry .post-text')?.textContent`));
 
   // A thread, as one account, only people it follows replying
-  await tap(`.feed-as-chip[data-as="${X2}"]`);
+  await tap(`.feed-as-face[data-as="${X2}"]`);
   const long = Array.from({ length: 3 }, (_, i) => `Paragraph ${i + 1}. ` + 'Routing on a sheaf keeps each hop local, and the global picture falls out of the gluing. '.repeat(2)).join('\n\n');
   await idle();
   await tap('.feed-composer textarea');
@@ -189,7 +268,7 @@ try {
   if (shots) await page.shot(join(shots, 'feed-drafts.png'));
   await tap('.feed-draft-foot .btn');
   await page.until(`document.querySelector('.feed-composer textarea')?.value === 'For later.' && !!document.querySelector('.feed-sched input')`, 10000);
-  check('Edit opens it in the composer on Home, still scheduled', true);
+  check('Edit opens it in the composer on Following, still scheduled', true);
   // Posted now, from the draft: it leaves Drafts.
   await tap('.feed-sched .link-btn');
   await tap('.feed-composer .compose-send');
@@ -209,7 +288,7 @@ try {
   const left = await page.eval<number>(`[...document.querySelectorAll('.feed-entry')].filter((e) => /Two accounts, one press/.test(e.textContent)).length`);
   check('Delete asks again, deletes it on X, and the other account’s copy stays', left === 1, left);
 
-  await tap('.feed-src[data-source="home"]');
+  await tap('.feed-src[data-source="following"]');
   await page.until(`[...document.querySelectorAll('.feed-entry')].some((e) => /repo-tools 2.0/.test(e.textContent))`, 10000);
   const likesBefore = { x1: (await writes(X1)).filter((w) => w === 'postAct:like').length, x2: (await writes(X2)).filter((w) => w === 'postAct:like').length };
   await page.eval(`[...document.querySelectorAll('.feed-entry')].find((e) => /repo-tools 2.0/.test(e.textContent)).setAttribute('data-test', 'release')`);
@@ -229,11 +308,11 @@ try {
   await tap('.feed-entry[data-test="release"] .post-text');
   await page.until(`!!document.querySelector('.feed-thread .thread-focal')`, 15000);
   const beside = await page.eval<any>(`({ hash: location.hash, list: !!document.querySelector('.feed-main') && getComputedStyle(document.querySelector('.feed-main')).display !== 'none', thread: document.querySelector('.feed-thread').getBoundingClientRect().width })`);
-  check('a post opens its thread beside the list on a computer', beside.hash.startsWith('#/feed/home/p/pst_x_') && beside.list && beside.thread > 300, beside);
+  check('a post opens its thread beside the list on a computer', beside.hash.startsWith('#/feed/following/p/pst_x_') && beside.list && beside.thread > 300, beside);
   if (shots) await page.shot(join(shots, 'feed-thread-beside.png'));
   await page.eval(`history.back()`);
   await page.until(`!document.querySelector('.feed-thread')`, 5000);
-  check('Back closes it', (await page.eval<string>(`location.hash`)) === '#/feed/home', await page.eval(`location.hash`));
+  check('Back closes it', (await page.eval<string>(`location.hash`)) === '#/feed/following', await page.eval(`location.hash`));
 
   // ---------------------------------------------------------------- Activity
   await tap('.feed-src[data-source="activity"]');
@@ -245,25 +324,81 @@ try {
   await page.until(`location.hash.startsWith('#/feed/')`, 10000);
   check('an old link to the notifications conversation lands on that account’s Activity', (await page.eval<string>(`decodeURIComponent(location.hash)`)) === `#/feed/${X1}:activity`, await page.eval(`location.hash`));
   check('the inbox has no notifications row any more', (await count('.feed-row')) === 0);
+  check('…and Activity’s row stays marked, filtered to that account', (await count('.feed-src.active[data-source="activity"]')) === 1 && (await page.eval<string>(`document.querySelector('.feed-filter')?.value ?? ''`)) === X1);
+  await page.eval(`(() => { const s = document.querySelector('.feed-filter'); s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  await page.until(`location.hash === '#/feed/activity'`, 3000);
+  check('…All accounts in its filter: every account’s Activity again', true);
 
   // ---------------------------------------------------------------- a phone
   // A phone opens the app afresh.
   await page.goto('about:blank');
   await page.size(390, 844, true);
   await page.goto(`${base}/#/feed`);
-  await page.until(`!!document.querySelector('.feed-strip') && document.querySelectorAll('.feed-entry').length > 2`, 20000);
-  check('on a phone, the sources are a row of chips', (await count('.feed-chip')) >= 6);
-  check('…the composer is one line until tapped', (await count('.feed-compose-closed')) === 1 && (await count('.feed-composer')) === 0);
-  if (shots) await page.shot(join(shots, 'feed-home-phone.png'));
-  await tap('.feed-compose-closed');
-  await page.until(`!!document.querySelector('.feed-composer textarea')`, 5000);
-  check('…and opens on a tap', true);
+  await page.until(`!!document.querySelector('.feed-tabs') && document.querySelectorAll('.feed-entry').length > 2`, 20000);
+  const tabs = await page.eval<string[]>(`[...document.querySelectorAll('.feed-tab')].map((t) => (t.textContent.trim() || t.getAttribute('aria-label')) + (t.getAttribute('aria-selected') === 'true' ? '*' : ''))`);
+  check('on a phone, the feeds are tabs across the top, Following open, then New feed', tabs.join() === 'Following*,Discover,New feed', tabs);
+  check('…the order under them, Activity behind the bell, the composer behind the pencil button, no box in the list', (await count('.feed-orderline .feed-order-btn')) === 1 && (await count('.feed-phone-head .feed-bell')) === 1 && (await count('.feed-fab')) === 1 && (await count('.feed-main .feed-composer, .feed-main .feed-compose-closed')) === 0);
   check('nothing sideways on a phone', (await overflow('.feed-main .feed-scroll')) === 0 && (await page.eval<number>(`document.documentElement.scrollWidth - innerWidth`)) <= 0, await overflow('.feed-main .feed-scroll'));
-  if (shots) await page.shot(join(shots, 'feed-composer-phone.png'));
+  if (shots) await page.shot(join(shots, 'feed-phone-following.png'));
+  await tap('.feed-tab[data-source="discover"]');
+  await page.until(`location.hash === '#/feed/discover' && [...document.querySelectorAll('.feed-reason')].length > 0`, 10000);
+  check('a tab opens its feed', true);
+  await tap('.feed-orderline .feed-order-btn');
+  await page.until(`document.querySelectorAll('.sheet .feed-order').length === 4`, 3000);
+  check('the order opens as a sheet', true);
+  if (shots) await page.shot(join(shots, 'feed-phone-order.png'));
+  await tap('.sheet .feed-order[data-order="spread"]');
+  await until(async () => (await mixOf('discover')).order === 'spread', 5000, 'Spread out saved');
+  await page.until(`!document.querySelector('.sheet') && /Spread out/.test(document.querySelector('.feed-orderline').textContent)`, 3000);
+  check('…a pick swaps it and closes the sheet', true);
+  await tap('.feed-orderline .feed-tune-btn');
+  await page.until(`!!document.querySelector('.feed-tune-sheet .feed-tune-src')`, 3000);
+  check('Tune is a tall sheet on a phone', (await count('.feed-tune-sheet .feed-tune-src')) === 4);
+  if (shots) await page.shot(join(shots, 'feed-phone-tune.png'));
+  await tap('.feed-tune-sheet .feed-tune-head .icon-btn');
+  await settled();
+  await tap('.feed-tab[data-source="following"]');
+  await page.until(`location.hash === '#/feed/following'`, 5000);
+
+  // The composer, in a sheet from the pencil button
+  await tap('.feed-fab');
+  await page.until(`!!document.querySelector('.feed-compose-sheet .feed-composer textarea')`, 5000);
+  check('the pencil button opens the composer in a sheet, who posts it as pictures on top', (await count('.feed-compose-sheet .feed-as-face')) === 2);
+  await page.until(`document.activeElement === document.querySelector('.feed-compose-sheet textarea')`, 3000);
+  await typeText('From a phone.');
+  if (shots) await page.shot(join(shots, 'feed-phone-compose.png'));
+  await tap('.feed-compose-sheet .compose-send');
+  await until(async () => (await mine()).entries.some((e: any) => e.post.text === 'From a phone.'), 15000, 'the phone post');
+  await page.until(`!document.querySelector('.feed-compose-sheet')`, 5000);
+  check('…Post posts it and closes the sheet', (await page.eval<string>(`document.querySelector('.feed-entry .post-text')?.textContent ?? ''`)).includes('From a phone.'));
+  await settled();
+
+  // Activity behind the bell, Your posts and Drafts behind ⋯, each a page with Back
+  await tap('.feed-phone-head .feed-bell');
+  await page.until(`location.hash === '#/feed/activity' && document.querySelectorAll('.feed-unit').length > 2`, 10000);
+  check('the bell opens Activity, a page with Back', (await count('.feed-head .feed-back')) === 1);
+  if (shots) await page.shot(join(shots, 'feed-phone-activity.png'));
+  await tap('.feed-head .feed-back');
+  await page.until(`location.hash === '#/feed/following' && !!document.querySelector('.feed-tabs')`, 5000);
+  check('…Back returns to the feed', true);
+  await tap('.feed-phone-head .icon-btn[aria-label="More"]');
+  await page.until(`!!document.querySelector('.sheet .sheet-action[data-source="drafts"]')`, 3000);
+  check('⋯ holds Your posts, Drafts, Tune and New feed', (await page.eval<string>(`[...document.querySelectorAll('.sheet .sheet-action')].map((b) => b.textContent.trim()).join()`)).startsWith('Your posts,Drafts'));
+  if (shots) await page.shot(join(shots, 'feed-phone-menu.png'));
+  // A navigation from inside a sheet takes its entry over (phone.ts takeOverLayers).
+  await tap('.sheet .sheet-action[data-source="mine"]');
+  await page.until(`location.hash === '#/feed/mine' && [...document.querySelectorAll('.feed-entry')].some((e) => /From a phone/.test(e.textContent))`, 10000);
+  check('…Your posts lists what you posted', true);
+  await tap('.feed-head .feed-back');
+  await page.until(`location.hash === '#/feed/following'`, 5000);
+
+  // A post's thread in the list's place
+  await page.until(`document.querySelectorAll('.feed-entry .post-text').length > 0`, 5000);
   await tap('.feed-entry .post-text');
   await page.until(`!!document.querySelector('.feed-thread .thread-focal')`, 15000);
   const ph = await page.eval<any>(`({ list: getComputedStyle(document.querySelector('.feed-main')).display, w: Math.round(document.querySelector('.feed-thread').getBoundingClientRect().width) })`);
   check('a post’s thread takes the list’s place on a phone', ph.list === 'none' && ph.w >= 380, ph);
+  if (shots) await page.shot(join(shots, 'feed-phone-thread.png'));
   await tap('.feed-thread .conv-head .back');
   await page.until(`!document.querySelector('.feed-thread') && getComputedStyle(document.querySelector('.feed-main')).display !== 'none'`, 5000);
   check('…and its Back returns to the list', true);

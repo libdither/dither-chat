@@ -180,10 +180,10 @@ try {
   // ------------------------------------------------------------------ a phone
   await page.size(390, 844, true);
   await load('#/feed/activity');
-  await page.until(`!!document.querySelector('.app.phone .feed-strip') && document.querySelectorAll('.feed-unit').length >= 4`, 20000);
+  await page.until(`!!document.querySelector('.app.phone .feed-head .feed-back') && document.querySelectorAll('.feed-unit').length >= 4`, 20000);
   await Bun.sleep(400);
-  const phone = await page.eval<any>(`(() => { const u = document.querySelector('.feed-unit').getBoundingClientRect(); return { w: Math.round(u.width), chips: document.querySelectorAll('.feed-chip').length, on: document.querySelector('.feed-chip.on')?.textContent }; })()`);
-  check('on a phone: Activity full width, the sources a row of chips over it', phone.w >= 360 && phone.chips >= 4 && phone.on === 'Activity', phone);
+  const phone = await page.eval<any>(`(() => { const u = document.querySelector('.feed-unit').getBoundingClientRect(); return { w: Math.round(u.width), title: document.querySelector('.feed-head h2')?.textContent }; })()`);
+  check('on a phone: Activity full width, a page of its own with Back to the feed', phone.w >= 360 && phone.title === 'Activity', phone);
   check('nothing sideways on a phone', (await overflow('.feed-scroll')) === 0, await overflow('.feed-scroll'));
   if (shots) await page.shot(join(shots, 'x-feed-phone.png'));
   await page.eval(`document.querySelector('.feed-talk .post-who').click()`);

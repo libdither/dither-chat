@@ -1372,17 +1372,18 @@ export class HubServer {
         return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
       }
     }
-    // The Feed page (timelines.ts, docs/feed.md "The Feed page"): sources, timelines, posting to several accounts, drafts.
+    // The Feed page (timelines.ts, docs/feed.md "The Feed page"): sources, your feeds, timelines, posting to several
+    // accounts, drafts.
     if (path.startsWith('/api/feed/')) {
       try {
         if (path === '/api/feed/sources' && method === 'GET') return ok(this.timelines.sources());
         if (path === '/api/feed/entries' && method === 'GET') {
           const before = url.searchParams.get('before');
-          return ok(this.timelines.entries(url.searchParams.get('source') ?? 'home', before !== null && before !== '' ? Number(before) : undefined));
+          return ok(this.timelines.entries(url.searchParams.get('source') ?? 'following', before !== null && before !== '' ? Number(before) : undefined));
         }
         if (path === '/api/feed/read' && method === 'POST') {
           const b = await body<{ source?: unknown; older?: unknown }>();
-          const v = await this.timelines.read(typeof b.source === 'string' ? b.source : 'home', b.older === true);
+          const v = await this.timelines.read(typeof b.source === 'string' ? b.source : 'following', b.older === true);
           this.flush();
           return ok(v);
         }
@@ -1390,6 +1391,12 @@ export class HubServer {
           const v = await this.timelines.publish(await body<unknown>());
           this.flush();
           return ok(v);
+        }
+        const mm = path.match(/^\/api\/feed\/mixes\/([\w-]{1,40})$/);
+        if (mm && method === 'PUT') return ok(this.timelines.saveMix(mm[1], await body<unknown>()));
+        if (mm && method === 'DELETE') {
+          this.timelines.dropMix(mm[1]);
+          return ok({ ok: true });
         }
         if (path === '/api/feed/drafts' && method === 'GET') return ok({ drafts: this.timelines.drafts() });
         const dm = path.match(/^\/api\/feed\/drafts\/([\w-]{6,64})$/);

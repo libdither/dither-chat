@@ -1,8 +1,8 @@
 /**
- * The Feed page's data (docs/feed.md "The Feed page"), in the feed's chunk: which accounts can read and post, and each
- * source's entries. A source shows what the hub holds at once, then asks the networks (POST /api/feed/read) when it
- * was not read in the last minute, as a person opening their Home tab would; scrolling past the end brings older
- * posts, the hub's first, then the network's.
+ * The Feed page's data (docs/feed.md "The Feed page"), in the feed's chunk: which accounts can read and post, your
+ * feeds, and each source's entries. A source shows what the hub holds at once, then asks the networks (POST
+ * /api/feed/read) when it was not read in the last minute, as a person opening their Home tab would; scrolling past
+ * the end brings older posts, the hub's first, then the network's. A feed's order swapped asks the hub only.
  */
 import type * as P from '@dither-chat/protocol';
 import { signal, type Signal } from '@preact/signals';
@@ -25,6 +25,8 @@ interface Line {
   entries: P.FeedEntryView[];
   /** The hub holds older entries: ask with `before`. */
   before: number | null;
+  /** Where the page after these starts, once older posts were read. */
+  next: number | null;
   /** The networks have older posts than the hub holds. */
   older: boolean;
   readAt: number | null;
@@ -36,7 +38,7 @@ interface Line {
   error: string | null;
 }
 
-const empty = (): Line => ({ entries: [], before: null, older: false, readAt: null, notes: [], loaded: false, reading: null, error: null });
+const empty = (): Line => ({ entries: [], before: null, next: null, older: false, readAt: null, notes: [], loaded: false, reading: null, error: null });
 const lines = new Map<string, Signal<Line>>();
 export function line(source: string): Signal<Line> {
   let s = lines.get(source);
@@ -49,12 +51,18 @@ function take(v: P.FeedEntriesView) {
   for (const i of v.identities) if (!db.identities.has(i.id)) db.identities.set(i.id, i);
 }
 
-/** Entries by key: a later page's copy of one replaces the earlier (its counts are newer). */
+/** Entries by key: on top, new ones first; below, a later page's copy of one shown takes its place (its counts are
+ * newer) and the rest follow. */
 function merge(have: readonly P.FeedEntryView[], add: readonly P.FeedEntryView[], atTop: boolean): P.FeedEntryView[] {
-  const keys = new Set(add.map((e) => e.key));
-  const kept = have.filter((e) => !keys.has(e.key));
-  return atTop ? [...add, ...kept].sort((a, b) => b.at - a.at) : [...kept, ...add];
+  if (atTop) {
+    const keys = new Set(add.map((e) => e.key));
+    return [...add, ...have.filter((e) => !keys.has(e.key))];
+  }
+  const byKey = new Map(add.map((e) => [e.key, e]));
+  const had = new Set(have.map((e) => e.key));
+  return [...have.map((e) => byKey.get(e.key) ?? e), ...add.filter((e) => !had.has(e.key))];
 }
+const page = (v: P.FeedEntriesView) => ({ before: v.before, next: v.next, older: v.older, readAt: v.readAt, notes: v.notes });
 
 const READ_AGAIN_MS = 60_000;
 
@@ -64,7 +72,7 @@ export async function openSource(source: string) {
   try {
     const v = await api<P.FeedEntriesView>(`/api/feed/entries?source=${encodeURIComponent(source)}`);
     take(v);
-    s.value = { ...s.value, entries: v.entries, before: v.before, older: v.older, readAt: v.readAt, notes: v.notes, loaded: true, error: null };
+    s.value = { ...s.value, entries: v.entries, ...page(v), loaded: true, error: null };
     if (!v.readAt || Date.now() - v.readAt > READ_AGAIN_MS || !v.entries.length) await refresh(source);
   } catch (e) {
     s.value = { ...s.value, loaded: true, error: (e as Error).message };
@@ -79,7 +87,7 @@ export async function refresh(source: string) {
   try {
     const v = await api<P.FeedEntriesView>('/api/feed/read', { method: 'POST', body: { source } });
     take(v);
-    s.value = { ...s.value, entries: v.entries, before: v.before, older: v.older, readAt: v.readAt, notes: v.notes, loaded: true, reading: null };
+    s.value = { ...s.value, entries: v.entries, ...page(v), loaded: true, reading: null };
   } catch (e) {
     s.value = { ...s.value, reading: null, error: (e as Error).message };
   }
@@ -95,7 +103,7 @@ export async function more(source: string) {
     try {
       const v = await api<P.FeedEntriesView>(`/api/feed/entries?source=${encodeURIComponent(source)}&before=${l.before}`);
       take(v);
-      s.value = { ...s.value, entries: merge(s.value.entries, v.entries, false), before: v.before, older: v.older, reading: null };
+      s.value = { ...s.value, entries: merge(s.value.entries, v.entries, false), ...page(v), reading: null };
     } catch (e) {
       s.value = { ...s.value, reading: null, error: (e as Error).message };
     }
@@ -105,19 +113,37 @@ export async function more(source: string) {
   s.value = { ...l, reading: 'older' };
   try {
     await api<P.FeedEntriesView>('/api/feed/read', { method: 'POST', body: { source, older: true } });
-    const last = s.value.entries[s.value.entries.length - 1]?.at;
-    const v = await api<P.FeedEntriesView>(`/api/feed/entries?source=${encodeURIComponent(source)}${last !== undefined ? `&before=${last}` : ''}`);
+    const next = s.value.next;
+    const v = await api<P.FeedEntriesView>(`/api/feed/entries?source=${encodeURIComponent(source)}${next !== null ? `&before=${next}` : ''}`);
     take(v);
-    s.value = { ...s.value, entries: merge(s.value.entries, v.entries, false), before: v.before, older: v.older, reading: null };
+    s.value = { ...s.value, entries: merge(s.value.entries, v.entries, false), ...page(v), reading: null };
   } catch (e) {
     s.value = { ...s.value, reading: null, error: (e as Error).message };
   }
 }
 
-/** Posts just made go on top of the sources that show them, before the next read brings them. */
+/** The same source's posts again from the hub, in its order as it is now (a feed's order swapped): nothing is asked of
+ * the networks. */
+async function reorder(source: string) {
+  const s = line(source);
+  try {
+    const v = await api<P.FeedEntriesView>(`/api/feed/entries?source=${encodeURIComponent(source)}`);
+    take(v);
+    s.value = { ...s.value, entries: v.entries, ...page(v), loaded: true, error: null };
+  } catch (e) {
+    s.value = { ...s.value, error: (e as Error).message };
+  }
+}
+
+/** Posts just made go on top of the sources that show them (Your posts, and feeds that take that account's
+ * Following), before the next read brings them. */
 export function addMine(made: P.FeedEntryView[]) {
+  const mixes = sources.value?.mixes ?? [];
   for (const [source, s] of lines) {
-    const shown = made.filter((e) => source === 'mine' || e.seenBy.some((x) => source === `${x.accountId}:mine` || source === 'home' || source === `${x.accountId}:following`));
+    const mix = mixes.find((m) => m.id === source);
+    const shown = made.filter((e) =>
+      e.seenBy.some((x) => source === 'mine' || source === `${x.accountId}:mine` || source === `${x.accountId}:following` || !!mix?.sources.some((y) => y.accountId === x.accountId && y.feed === 'following' && y.share > 0)),
+    );
     if (shown.length) s.value = { ...s.value, entries: merge(s.value.entries, shown, true) };
   }
 }
@@ -135,6 +161,47 @@ export function dropPost(network: P.Network, id: string) {
     });
     s.value = { ...s.value, entries: next };
   }
+}
+
+// ------------------------------------------------------------------ your feeds
+
+/** The feed's tuning is open (beside the posts, or a sheet on a phone). */
+export const tuning = signal(false);
+
+type MixPatch = Partial<Pick<P.FeedMixView, 'name' | 'order' | 'sources'>>;
+
+/** A feed changed: shown at once, saved on the hub, and its posts put in their new order (a timeline turned on that
+ * was never read is read). */
+export async function saveMix(id: string, patch: MixPatch): Promise<P.FeedMixView> {
+  const v = sources.value;
+  if (v)
+    sources.value = {
+      ...v,
+      mixes: v.mixes.map((m) =>
+        m.id !== id ? m : { ...m, ...patch, sources: patch.sources ? m.sources.map((x) => patch.sources!.find((y) => y.accountId === x.accountId && y.feed === x.feed) ?? x) : m.sources },
+      ),
+    };
+  const saved = await api<P.FeedMixView>(`/api/feed/mixes/${id}`, { method: 'PUT', body: patch });
+  const w = sources.value;
+  if (w) sources.value = { ...w, mixes: w.mixes.some((m) => m.id === id) ? w.mixes.map((m) => (m.id === id ? saved : m)) : [...w.mixes, saved] };
+  if (patch.sources) await openSource(id);
+  else if (patch.order) await reorder(id);
+  return saved;
+}
+
+/** A new feed: every account's Following, taking turns, named for you to change. */
+export function newMix(): Promise<P.FeedMixView> {
+  const id = `m-${Math.random().toString(36).slice(2, 10)}`;
+  return saveMix(id, { name: 'New feed', order: 'turns' });
+}
+
+/** A feed you made, gone; Following or Discover, put back as they were. */
+export async function dropMix(id: string) {
+  await api(`/api/feed/mixes/${id}`, { method: 'DELETE' });
+  await loadSources(true);
+  // Following or Discover as they were; a feed you made is gone with its posts.
+  if (sources.value?.mixes.some((m) => m.id === id)) await reorder(id);
+  else lines.delete(id);
 }
 
 // ------------------------------------------------------------------ drafts
