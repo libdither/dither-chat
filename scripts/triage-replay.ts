@@ -65,7 +65,7 @@ export interface ReplayExample {
   facts: Facts;
   /** Why it is a Conversation, or null. */
   why: Conversing;
-  /** A rule of yours makes it an alert whatever the model says (as the rules are now): a person or place set to always alert, a keyword. */
+  /** A rule of yours makes it an alert whatever the model says (as the rules are now): a person or place set to always alert. */
   forced: boolean;
   words: string[];
   x: NumericFeatures;
@@ -165,8 +165,8 @@ async function load(path: string) {
     .all(from) as Row[];
   console.error(`${rows.length} decisions from ${new Date(from).toISOString().slice(0, 10)} to ${new Date(end).toISOString().slice(0, 10)}; the copy opened (and migrated, if it needed it) in ${migrated} ms`);
 
-  // Facts: kept with the decision, else the rules' as of now. Whether a place is kept to the list, and what your
-  // rules make an alert, are as of now.
+  // Facts: kept with the decision, else the rules' as of now. Whether a place is kept to the list, what your rules
+  // make an alert, and which messages say one of your keywords (a Conversation, like a mention) are as of now.
   const facts = new Map<string, Facts>();
   const capped = new Map<string, boolean>();
   const always = new Map<string, boolean>();
@@ -189,7 +189,10 @@ async function load(path: string) {
       capped.set(r.conv, eff.level === 'digest');
       always.set(r.conv, eff.level === 'all' && !eff.native);
     }
-    if (always.get(r.conv) || (r.author && alwaysPeople.has(r.author)) || (keywords.length && keywords.some((k) => k.test((r.body ?? '').replace(/<[@#][^>]+>/g, ' '))))) forced.add(r.id);
+    if (always.get(r.conv) || (r.author && alwaysPeople.has(r.author))) forced.add(r.id);
+    // As triage.ts matches: what a person typed, never a bot's message or a machine-written network's.
+    if (keywords.length && !f.bot && f.network !== 't3' && f.network !== 'calendar' && keywords.some((k) => k.test((r.body ?? '').replace(/<[@#][^>]+>/g, ' ')))) f.keyword = true;
+    else delete f.keyword;
     delete f.judge;
     f.cap = capped.get(r.conv) || undefined;
     facts.set(r.id, f);

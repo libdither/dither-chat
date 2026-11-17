@@ -4,8 +4,8 @@ Triage puts every new message from someone else in one of three tiers, below the
 
 | Tier | `decision` | Decided by | Phone | Desktop | Inbox |
 | --- | --- | --- | --- | --- | --- |
-| **Alert** | `push` | the alert chance at 0.5 or more, or a rule of yours (a person or place set to Always alert, a keyword) | sounds, with a heads-up | a notification, and a toast in an open page | first in the list until you have seen it |
-| **Conversation** | `quiet` | a rule, no model: a DM, a mention of you or a reply to you, a chat you wrote in during the last day, or one where you usually answer | a silent row of its own, in Android's Conversations section | nothing | a boost while it is unread |
+| **Alert** | `push` | the alert chance at 0.5 or more, or a rule of yours (a person or place set to Always alert) | sounds, with a heads-up | a notification, and a toast in an open page | first in the list until you have seen it |
+| **Conversation** | `quiet` | a rule, no model: a DM, a mention of you, a reply to you or one of your keywords, a chat you wrote in during the last day, or one where you usually answer | a silent row of its own, in Android's Conversations section | nothing | a boost while it is unread |
 | **List** | `digest` | its importance is at or above your level (0.6 until you set it) | a silent row in one collapsed bundle, sorted by importance, when [the phone's list](#the-phones-list) lets it through | nothing | listed, and its importance counts toward its place |
 | **Below the list** | `drop` | its importance is under your level | nothing | nothing | unread in its chat, nowhere else |
 | silent | `silent` | a place you muted, a message request you have not accepted, a like, repost or follow in a [feed](#the-feed) | nothing | nothing | the unread badge only |
@@ -38,8 +38,9 @@ For every new live message from someone else, in this order (`triage.ts`, `Triag
 
 1. **Silent**, when its place is muted (a rule of Mute on the conversation or on anything above it) or it is in a
    message request you have not accepted. Nothing more is worked out, and such a decision cannot be marked.
-2. **An alert by rule**, when its author is a person set to Always alert, it matches one of your keywords, or its
-   place is set to Always alert. No chance decides, and the local model is not asked.
+2. **An alert by rule**, when its author is a person set to Always alert, or its place is set to Always alert. No
+   chance decides, and the local model is not asked. A keyword is not such a rule: it makes the message about you
+   ([Rules](#rules), Keywords).
 3. **Its importance**, a chance, for every message ([Importance](#importance)).
 4. **Is it a Conversation?** A rule over who wrote when ([Conversation](#conversation)).
 5. **Does it alert?** If it is a Conversation, or you marked this place or this person "should have alerted" in the
@@ -74,6 +75,7 @@ and not in your notes to self, and the first of these that holds:
 | --- | --- |
 | it is in a DM | A direct message |
 | it mentions you by name or replies to your message (`@everyone` does not count) | About you |
+| it says one of your keywords ([Rules](#rules)) | Says “…”, one of your keywords |
 | you wrote in its chat in the last 24 hours (`TOOK_PART`) | You wrote here in the last day |
 | you answer openings there at 10% or more (`ANSWER_RATE` 0.1) | You usually answer here |
 
@@ -161,6 +163,7 @@ alert, sorts the phone's list, and counts in the inbox's order. No language mode
 
 - **0.8** (`NOTIFIED`) where the network itself would have notified you: every message in a place it notifies on
   every message, and a mention of you, a reply to you or `@everyone` in a place it notifies on mentions.
+  A message that says one of your keywords starts here too, wherever it is.
 - **Otherwise** `0.05 + 0.75 × addressed`, at most 0.6, where `addressed` is triage's own sense of how much the
   message is about you (`Triage.addressed`): from 0.15, mentions you +0.5 (or `@everyone` +0.2), replies to you +0.4,
   a question to you or in a group chat +0.15, sounds urgent +0.3, a small group of six or fewer +0.1, you wrote there
@@ -333,12 +336,18 @@ parent, the spaces that contain it (nearest first), its account, its network, ev
 on a chat and on a server; there is no picker for a whole network or for everything.
 
 - **Mute is absolute.** Not even a keyword or a person set to Always alert gets through a muted place.
-- **List only is a cap, not a boost.** A keyword, or a person set to Always alert, still alerts there.
+- **List only is a cap, not a boost.** A person set to Always alert still alerts there; a keyword there only puts
+  the message on the list.
 - **On a person**, Always alert is the one rule there is: triage reads no other (`decideByRules`), and
   `PUT /api/rules` refuses any other level on a person or a keyword. People set so can also pass quiet hours, where
   you allow it.
-- **Keywords** (`scope: 'keyword'`, level `all`): a message that has the word, whole and in any case, in what was
-  typed (mention tokens aside) is an alert. Only what a person typed: never a bot's message, a feed's item, or a
+- **Keywords** (`scope: 'keyword'`, level `all`, stored so for older apps): a message that has the word, whole and
+  in any case, in what was typed (mention tokens aside) counts as **about you**, like a mention. It never alerts by
+  itself. It is a Conversation, its importance starts at 0.8 as if the network had notified you, and the local model
+  reads it for urgency like any Conversation, held to the bar of messages not to you (0.20), so a keyword alerts only
+  when what was said cannot wait. In a place kept to the list it is a row on the list. Matching is a feature the
+  model learns from (`keyword`, "says one of your keywords"), so your marks can move it either way. Keywords used to
+  alert outright; a common word or a project's name alerted on every message that said it. Only what a person typed: never a bot's message, a feed's item, or a
   message on a network a machine writes (`MACHINE_WRITTEN` in `triage.ts`: T3 Code's threads, whose agents name the
   repository and its files in every other turn, and calendars, whose reminders alert on their own). Notices
   ([notices.md](notices.md)) keep them: a comment there was typed by someone.
@@ -642,7 +651,7 @@ A network's notifications about you (X's likes, reposts, replies, mentions, quot
 arrive as messages in a feed conversation. Likes, reposts, follows and anything else X notifies about are **silent**.
 A reply, a mention or a quote is kept to the list as List only keeps a place: **at most a silent row on the List**,
 never a Conversation or an alert, and the local model is not asked. It starts at the importance of something the
-network notified you about. Always alert (on the person, a keyword or the feed) does not change that, while Mute
+network notified you about. Always alert (on the person or the feed), or a keyword, does not change that, while Mute
 silences it. [feed.md](feed.md#notifications) says why.
 
 ## Reminders

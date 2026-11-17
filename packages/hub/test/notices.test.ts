@@ -57,7 +57,9 @@ describe('triage of a notice', () => {
     ['muted: silent', { urgency: 'high' }, { rule: { level: 'none', source: 'account GitHub' } }, 'silent'],
     ['List only keeps a high one from alerting', { urgency: 'high' }, { rule: { level: 'digest', source: 'this group' } }, 'digest'],
     ['Always alert lifts a low one', { urgency: 'low' }, { rule: { level: 'all', source: 'this group' } }, 'push'],
-    ['a keyword lifts a low one', { urgency: 'low' }, { keyword: 'deploy' }, 'push'],
+    ['a keyword lifts a low one onto the list, never to an alert', { urgency: 'low' }, { keyword: 'deploy' }, 'digest'],
+    ['a keyword in one read as urgent: an alert, by the local model', {}, { keyword: 'deploy', judge: 0.6 }, 'push'],
+    ['a keyword in one that is not urgent: on the list', {}, { keyword: 'deploy', judge: 0.01 }, 'digest'],
     ['quiet hours hold an alert as a list row', { urgency: 'high' }, { quietHours: { enabled: true, start: '00:00', end: '23:59', timezone: 'UTC' } }, 'digest'],
   ];
   for (const [what, n, c, want] of table) test(what, () => expect(decideNotice(input(n), ctx(c)).decision).toBe(want));
