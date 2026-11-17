@@ -315,7 +315,7 @@ export function SettingsPane() {
               <b>Local model</b>
               <small>
                 Alerts start from a model on the hub's machine. It reads a message in a conversation and answers one question: does this need you within the next hour or two? Your marks move it from there. Without
-                a model only your rules alert: people and places set to Always alert, and keywords. No message ever leaves the hub's machine.
+                a model only your rules alert: people and places set to Always alert. No message ever leaves the hub's machine.
               </small>
             </div>
           </div>
@@ -330,8 +330,8 @@ export function SettingsPane() {
           <QuietHoursSettings />
 
           <section class="set-block" id="set-keywords">
-            <h3>Keywords that always alert</h3>
-            <p class="set-help">A message with one of these words is an alert, wherever it lands (unless that place is muted).</p>
+            <h3>Keywords</h3>
+            <p class="set-help">A message with one of these words counts as about you, like a mention: a conversation, high on the list, and an alert only when it reads as urgent. Not in a muted place.</p>
             <div class="keyword-list">
               {keywordRules.map((r) => (
                 <span class="keyword-chip">

@@ -87,7 +87,9 @@ unchanged. See `scripts/dave/README.md`.
 
 The output lives in `DITHER_DAVE_DIR` (default `<data>/dave`) and must never be committed. The hub serves it at
 `/voice/dave/<id>/libdave.mjs`. The device imports it inside a worker created from a `data:` URL, whose origin is
-opaque: it cannot read the app's storage or make credentialed requests to the hub.
+opaque: it cannot read the app's storage or make credentialed requests to the hub. So the library's two files answer
+without a session (docs/login.md): it is Discord's public code, named by its hash. Until 2026-11-17 they did not, the
+worker got a 401, and direct mode joined offering no DAVE, which a channel that requires it closes with 4017.
 
 Run it on a timer:
 
@@ -147,6 +149,11 @@ The script runs two devices as the two demo Discord accounts and the room, each 
 devices, and checks joining (and how fast), hearing and being heard, the join, leave, mute and camera sounds, mute
 reaching the far end and the other device, the camera both ways, sharing a screen and watching it from the other
 device, watching the bot's Go Live, leaving, and a device with no microphone joining to listen.
+
+A demo account can also be rung: the account action `ring` (`{conversation, caller?, video?}`, the conversation's
+native id) makes the caller ring it there, as a network's ring would, and `ringStop` is the caller giving up
+(`DemoRings`). Answering joins the room's call, and declining ends it as declined. The Android run uses it
+([android.md](android.md#testing-calls)).
 
 ## Call lab
 

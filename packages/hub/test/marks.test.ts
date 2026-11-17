@@ -283,9 +283,9 @@ describe('what stood', () => {
     const calm = await w.say('dm', 'ann', 'see you tomorrow');
     expect([alert.dec.decision, calm.dec.decision]).toEqual(['push', 'quiet']);
     // None of these says anything of the model: a rule's alert, a Conversation nobody read, a list row, a marked one.
-    w.store.setRule('keyword', 'stove', 'all');
+    w.store.setRule('conversation', w.conv('dm'), 'all');
     await w.say('dm', 'ann', 'the stove is on');
-    w.store.setRule('keyword', 'stove', null);
+    w.store.setRule('conversation', w.conv('dm'), null);
     w.triage.judge = null;
     await w.say('dm2', 'bob', 'hello there');
     w.triage.judge = judge;

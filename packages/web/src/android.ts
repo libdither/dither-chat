@@ -6,10 +6,13 @@
  * Messages are JSON both ways, `{ t: ... }`. Everywhere else `android` is null and nothing here runs.
  */
 import { effect, signal } from '@preact/signals';
-import { activeCall, leaveCall, setMuted } from './call.ts';
+import { activeCall, leaveCall, setMuted, startCall } from './call.ts';
 import { noteOpen } from './activity.ts';
 import { reportAppCrashes } from './errors.ts';
 import { db, go, parseHash, prefs } from './state.ts';
+import { rev } from './versions.ts';
+import { api } from './api.ts';
+import type * as P from '@dither-chat/protocol';
 import { onIme, keepKeyboardRoom } from './phone.ts';
 
 interface Port {
@@ -201,6 +204,9 @@ function receive(d: any) {
     case 'crashes':
       reportAppCrashes(Array.isArray(d.list) ? d.list : [], android!.info.value?.version);
       break;
+    case 'call.answer':
+      answer(d);
+      break;
     case 'call.hangup':
       if (activeCall.value) leaveCall();
       break;
@@ -245,5 +251,32 @@ export function startAndroid() {
   effect(() => {
     void [prefs.value.theme, prefs.value.themeDark, prefs.value.themeLight];
     requestAnimationFrame(() => android.send({ t: 'theme', bg: getComputedStyle(document.body).backgroundColor }));
+  });
+}
+
+/**
+ * Answer on a ring's notification (the app's Notifications.ring): join the call from here, as the ring card's Answer
+ * does. A page the tap started has no accounts yet: it waits for them, a minute at most. A hub that did not say which
+ * account the ring is for is asked by the call's id.
+ */
+async function answer(d: { call?: string; conversationId?: string; accountId?: string }) {
+  const conv = d.conversationId;
+  if (typeof conv !== 'string' || !conv) return;
+  if (activeCall.value?.conversationId === conv && activeCall.value.phase !== 'ended') return;
+  let account = d.accountId || '';
+  if (!account && d.call) {
+    const r = await api<{ calls: P.CallView[] }>(`/api/calls/ringing?conversation=${encodeURIComponent(conv)}`).catch(() => null);
+    account = r?.calls.find((c) => c.id === d.call)?.accountId ?? '';
+  }
+  if (!account) return;
+  const join = () => void startCall(conv, account, prefs.value.callMode);
+  if (db.accounts.has(account)) return join();
+  const giveUp = setTimeout(() => stop(), 60_000);
+  const stop = effect(() => {
+    rev.value;
+    if (!db.accounts.has(account)) return;
+    clearTimeout(giveUp);
+    queueMicrotask(() => stop());
+    join();
   });
 }

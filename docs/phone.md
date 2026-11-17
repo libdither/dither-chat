@@ -145,7 +145,7 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | The list's level, your rules, notifications while open | Settings | More tab | You tab; the section list on a desktop now scrolls to each section |
 | Web Push opt-in, devices | Settings | More tab | You tab |
 | Quiet hours | Settings | More tab | You tab; time fields at 16px |
-| Keywords that always alert | Settings | More tab | You tab |
+| Keywords (count as about you) | Settings | More tab | You tab |
 | Theme, demo accounts, reset demo | Settings | More tab | You tab |
 | Any one Settings section (Message history, Adversarial features) without scrolling past the rest | Section list beside Settings | More tab, scrolled | Sections in Settings' header: a sheet of the sections, two taps |
 | Adversarial features' warning and its Yes | Dialog | Not there yet | Bottom sheet whose words scroll, Yes pinned at its bottom |

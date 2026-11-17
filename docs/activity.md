@@ -170,7 +170,7 @@ get, per candidate message:
 3. **Evaluation before trusting it.** Run the model over the exported examples (decisions made before the model
    existed) and compare with the labels: how many pushes it would have dropped that you opened within minutes, and
    how many unprompted opens it would have pushed. Only then let its answers change decisions, and keep the rules'
-   floor (people set to Always alert, keywords, Mute).
+   floor (people set to Always alert, Mute).
 
 The simplest first use needs no model at all: a place with 20+ notifications and an open rate under 10% could be
 suggested for List only, as a suggestion in Settings, never a silent change.

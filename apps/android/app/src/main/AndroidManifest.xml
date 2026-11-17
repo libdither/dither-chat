@@ -25,6 +25,8 @@
     <!-- A history upload (a backup, an export) goes on with the app closed, in a dataSync foreground service. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- A call ringing you lights the screen and shows on the lock screen, as a phone call does. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
@@ -85,6 +87,9 @@
             android:exported="false" />
         <receiver
             android:name=".VoteReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".RingReceiver"
             android:exported="false" />
     </application>
 </manifest>

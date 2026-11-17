@@ -165,7 +165,7 @@ export function ConversationDetails({ convId }: { convId: string }) {
             </ol>
             <p>
               The most specific rule wins. With none it is Automatic: a DM, a message about you or a chat you take part in is a conversation, what reads as urgent there is an alert, and the rest reaches the list when it
-              is important enough. A place muted on its network is kept to the list. People set to always alert, and keywords, still alert anywhere but in a muted place.
+              is important enough. A place muted on its network is kept to the list. People set to always alert still alert anywhere but in a muted place; a keyword makes a message about you, like a mention.
             </p>
           </details>
         </Section>

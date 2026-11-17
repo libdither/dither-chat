@@ -25,6 +25,8 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.Icon
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
@@ -53,6 +55,8 @@ object Notifications {
     /** The ranked list's rows: silent too, with a channel of their own so they can be turned off alone. */
     const val LIST = "list"
     const val CALLS = "calls"
+    /** Calls ringing you: the one channel that rings, with the phone's ringtone. */
+    const val RINGS = "rings"
     const val UPLOADS = "uploads"
     const val REPLY = "reply"
     private const val ID = 1
@@ -81,6 +85,13 @@ object Notifications {
             NotificationChannel(QUIET, "Conversations (silent)", NotificationManager.IMPORTANCE_LOW),
             NotificationChannel(LIST, "Ranked list (silent)", NotificationManager.IMPORTANCE_LOW),
             NotificationChannel(CALLS, "Ongoing call", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) },
+            NotificationChannel(RINGS, "Incoming calls", NotificationManager.IMPORTANCE_HIGH).apply {
+                setShowBadge(false)
+                setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE), AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 800, 800)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            },
             NotificationChannel(UPLOADS, "History uploads", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) },
         ))
     }
@@ -101,6 +112,12 @@ object Notifications {
         // The page is on screen and raises its own toast from the live socket.
         if (!test && MainActivity.resumed != null) return outcome(c, nid, device, "suppressed")
         if (!nm(c).areNotificationsEnabled()) return outcome(c, nid, device, "blocked")
+        // A call ringing you (docs/calls.md "Ringing"): it rings, with Answer and Decline, until it stops ringing.
+        d.optJSONObject("call")?.takeIf { it.optString("id").isNotEmpty() }?.let { call ->
+            val app = c.applicationContext
+            Thread { if (runCatching { ring(app, d, call) }.onFailure { Crashes.note(app, "/android/ring", it) }.isSuccess) outcome(app, nid, device, "shown") }.start()
+            return
+        }
         // A request waiting on you (docs/add.md): a row of its own, opening it under Requests.
         val request = d.optString("requestId").ifEmpty { null }
         // A notice (docs/notices.md): its conversation is its group, and a tap opens it under Notices.
@@ -539,6 +556,63 @@ object Notifications {
         unlist(c, chat)
     }
 
+    /**
+     * A call ringing you: on the lock screen, ringing and vibrating until it is answered, declined, or the hub takes it
+     * back (`clear` with its tag: it stopped ringing for you anywhere). Answer opens the app, which joins the call
+     * (MainActivity EXTRA_ANSWER); Decline is the network's own, through the hub (RingReceiver). With full-screen
+     * intents allowed it is Android's call notification (CallStyle), whose full-screen intent opens the chat, where
+     * the ring card is; without them a plain one with the same buttons, since CallStyle needs one.
+     */
+    private fun ring(c: Context, d: JSONObject, call: JSONObject) {
+        val id = call.optString("id")
+        val tag = call.optString("tag").ifEmpty { "call:$id" }
+        val conv = d.optString("conversationId").ifEmpty { null }
+        val account = call.optString("accountId").ifEmpty { null }
+        val title = d.optString("title", "Incoming call")
+        val body = d.optString("body")
+        val chat = conv?.let { "/inbox/c/$it" }
+        val look = Looks.of(c, d.optString("network"), d.optString("icon").ifEmpty { null }, title)
+        val (small, color) = Looks.badge(c, d.optString("network"))
+        val decline = if (call.optBoolean("canDecline") && conv != null) {
+            val i = Intent(c, RingReceiver::class.java).putExtra("call", id).putExtra("tag", tag)
+            PendingIntent.getBroadcast(c, tag.hashCode() * 31 + 1, i, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        } else null
+        // A hub from before the ring said its account leaves it out: the page finds it by the call's id.
+        val answer = if (call.optBoolean("canAnswer") && conv != null) {
+            val i = Intent(c, MainActivity::class.java).setAction("answer:$id").putExtra(MainActivity.EXTRA_HASH, chat)
+                .putExtra(MainActivity.EXTRA_ANSWER, JSONObject().put("call", id).put("tag", tag).put("conversationId", conv).put("accountId", account ?: "").toString())
+            PendingIntent.getActivity(c, tag.hashCode() * 31 + 2, i, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        } else null
+        val open = open(c, chat, tag.hashCode())
+        val b = Notification.Builder(c, RINGS)
+            .setSmallIcon(small)
+            .setColor(color)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setCategory(Notification.CATEGORY_CALL)
+            .setContentIntent(open)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+            // The hub ends a ring left hanging this long as missed (RING.maxMs); the phone stops with it, offline too.
+            .setTimeoutAfter(3 * 60_000L)
+        look?.large?.let { b.setLargeIcon(Icon.createWithBitmap(it)) }
+        val fullScreen = Build.VERSION.SDK_INT < 34 || nm(c).canUseFullScreenIntent()
+        if (Build.VERSION.SDK_INT >= 31 && fullScreen && decline != null && answer != null) {
+            val who = Person.Builder().setName(title.removeSuffix(" is calling")).setImportant(true)
+            look?.large?.let { who.setIcon(Icon.createWithBitmap(it)) }
+            b.setStyle(Notification.CallStyle.forIncomingCall(who.build(), decline, answer)).setFullScreenIntent(open, true)
+        } else {
+            if (fullScreen) b.setFullScreenIntent(open, true)
+            decline?.let { b.addAction(Notification.Action.Builder(null, "Decline", it).build()) }
+            answer?.let { b.addAction(Notification.Action.Builder(null, "Answer", it).build()) }
+        }
+        val n = b.build()
+        // Rings again and again, as a phone call does, until it is cancelled.
+        n.flags = n.flags or Notification.FLAG_INSISTENT
+        nm(c).notify(tag, ID, n)
+    }
+
     /** One notification closed by its own button. */
     fun cancel(c: Context, tag: String) {
         nm(c).cancel(tag, ID)
@@ -727,6 +801,28 @@ class ReplyReceiver : BroadcastReceiver() {
                 } else {
                     val why = if (code == 0) "Could not reach the hub" else Hub.errorOf(res).ifEmpty { "The hub answered $code" }
                     Notifications.post(c, conv, "Reply not sent", "$why. You wrote: $text".take(1000), "/inbox/c/$conv", sticky = true)
+                }
+            } finally {
+                done.finish()
+            }
+        }.start()
+    }
+}
+
+/** Decline from a ring's notification: the network's own decline, through the hub, which stops it on every device. */
+class RingReceiver : BroadcastReceiver() {
+    override fun onReceive(c: Context, intent: Intent) {
+        val call = intent.getStringExtra("call") ?: return
+        val tag = intent.getStringExtra("tag") ?: "call:$call"
+        // Silent at once: the hub's answer can take a moment, and a ring that goes on after Decline is wrong.
+        Notifications.cancel(c, tag)
+        val done = goAsync()
+        Thread {
+            try {
+                val (code, res) = runCatching { Hub.request(c, "POST", "/api/calls/$call/decline", JSONObject(), 30_000) }.getOrElse { 0 to "" }
+                if (code !in 200..299) {
+                    val why = if (code == 0) "Could not reach the hub" else Hub.errorOf(res).ifEmpty { "The hub answered $code" }
+                    Notifications.post(c, tag, "Call not declined", "$why. It may still be ringing on your other devices.", null)
                 }
             } finally {
                 done.finish()
