@@ -9,8 +9,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
-import { CHROME_PER_DAY, CLEAR_TTL, clearRead, clearRelay, firefoxAllowance } from '../src/clears.ts';
+import { CHROME_COSTLY_PER_DAY, CHROME_PER_DAY, CLEAR_TTL, clearRead, clearRelay, firefoxAllowance, SHOWING_MS } from '../src/clears.ts';
 import { Delivery, FORGET_MS } from '../src/delivery.ts';
+import { Notifier } from '../src/notify.ts';
 import { PushService } from '../src/push.ts';
 import { Store } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
@@ -88,6 +89,12 @@ const row = (name: Name) => store.db.query('SELECT * FROM push_subscription WHER
 const alerted = (tag: string, ts: number, names: Name[], at = Date.now()) => names.forEach((n) => push.browsers.shown(row(n), tag, ts, at));
 const clears = (to?: Name) => sent.filter((s) => s.body.clear && (!to || s.to === to));
 const reset = () => void (sent.length = 0);
+const shownRow = (name: Name, tag: string) => store.db.query('SELECT ts FROM push_shown WHERE sub_id = ? AND tag = ?').get(ids[name], tag);
+/** A stay of the app on this registration's device (activity.ts visits); `closed` 0 and a recent end: in use. */
+const stay = (name: Name, device: string, id: string, start: number, end: number, closed: number) => {
+  store.db.query('UPDATE push_subscription SET device = ? WHERE id = ?').run(device, ids[name]);
+  store.db.query(`INSERT OR REPLACE INTO visit (id, device, device_label, view, start_at, end_at, source, closed, updated_at) VALUES (?, ?, 'Linux', 'inbox', ?, ?, 'rail', ?, ?)`).run(id, device, start, end, closed, end);
+};
 
 describe('who gets a clear', () => {
   test('the relay and the label decide: Chrome and Firefox on a computer; never Safari, Edge, a phone or another push server', () => {
@@ -158,13 +165,10 @@ describe('who gets a clear', () => {
 
   test('a browser whose page is open and in use gets none: the page closes it, and it no longer counts as showing', async () => {
     const t = Date.now();
-    store.db.query('UPDATE push_subscription SET device = ? WHERE id = ?').run('dev_ch', ids.chrome);
-    const stay = (id: string, start: number, end: number, closed: number) =>
-      store.db.query(`INSERT INTO visit (id, device, device_label, view, start_at, end_at, source, closed, updated_at) VALUES (?, 'dev_ch', 'Linux, Chrome', 'inbox', ?, ?, 'rail', ?, ?)`).run(id, start, end, closed, end);
     alerted('cnv_here', 10, ['chrome', 'firefox'], t);
     alerted('cnv_later', 20, ['chrome'], t);
     // In use a minute ago, the stay still going: read there (or `cleared` reaches it), so no push to it.
-    stay('v1', t - 10 * 60_000, t - 60_000, 0);
+    stay('chrome', 'dev_ch', 'v1', t - 10 * 60_000, t - 60_000, 0);
     await push.clearBrowsers([{ id: 'cnv_here', upTo: 10 }], t);
     expect(clears().map((s) => [s.to, s.body.clear])).toEqual([['firefox', 'cnv_here']]);
     // Last used three minutes ago, or its stay over: the push goes again. cnv_here no longer counts as showing on
@@ -174,6 +178,58 @@ describe('who gets a clear', () => {
     await push.clearBrowsers([{ id: 'cnv_later', upTo: 20 }], t);
     expect(clears().map((s) => [s.to, s.body.clear])).toEqual([['chrome', 'cnv_later']]);
     expect((store.db.query('SELECT free FROM push_clear WHERE sub_id = ?').get(ids.chrome) as { free: number }).free).toBe(0);
+  });
+
+  test('each browser notes what it shows as its own push is taken, not once every push server has answered', async () => {
+    let answer!: () => void;
+    const edgeWaits = new Promise<void>((done) => (answer = done));
+    const real = push.transport!;
+    push.transport = (async (url: string, init: RequestInit) => {
+      if (url === ENDPOINTS.edge[0]) await edgeWaits;
+      return real(url, init);
+    }) as unknown as typeof fetch;
+    const shown = push.browsers.shown.bind(push.browsers);
+    const chromeNoted = new Promise<void>((done) => {
+      push.browsers.shown = (r, tag, ts, now) => {
+        shown(r, tag, ts, now);
+        if (r.id === ids.chrome) done();
+      };
+    });
+    const sending = push.notify('Ann', 'hi', 'cnv_slow', { lines: [{ author: 'Ann', key: 'k', body: 'hi', ts: 5 }] });
+    await chromeNoted;
+    // Edge's push server has not answered yet: Chrome's notification is known to show, and a swipe there ends it.
+    expect(shownRow('chrome', 'cnv_slow')).toEqual({ ts: 5 });
+    push.browsers.noted({ event: 'dismissed', conversationId: 'cnv_slow', device: ids.chrome });
+    answer();
+    await sending;
+    expect(shownRow('chrome', 'cnv_slow')).toBeNull();
+    reset();
+    await push.clearBrowsers([{ id: 'cnv_slow', upTo: 5 }]);
+    expect(clears().map((s) => s.to)).toEqual(['firefox']);
+  });
+
+  test('a held push (a reminder you set, the summary when quiet hours end) says keep, to pages and pushes; a message does not', async () => {
+    const pages: P.ClientEvent[] = [];
+    const notifier = new Notifier({
+      store,
+      push,
+      phone: { list: () => ({ send: true }) as never, higher: () => {} },
+      activity: { notification: () => null, sent: () => {} },
+      devices: { addressed: () => false, quietOn: () => [] },
+      delivery: { listDue: () => true, plan: () => null },
+      server: { notify: (ev) => void pages.push(ev), warm: async () => {} },
+    });
+    notifier.message('Reminder', 'about this', 'cnv_r', 'msg_r', ['A reminder you set on Discord'], {}, 'held', 'push');
+    await notifier.last;
+    notifier.message('Ann', 'hi', 'cnv_m', 'msg_m', ['why'], {}, 'message', 'push');
+    await notifier.last;
+    expect(pages.map((e) => [e.t === 'notify' && e.conversationId, e.t === 'notify' && e.keep])).toEqual([
+      ['cnv_r', true],
+      ['cnv_m', undefined],
+    ]);
+    const to = (cid: string) => [...new Set(sent.filter((x) => x.body.conversationId === cid).map((x) => x.body.keep))];
+    expect(to('cnv_r')).toEqual([true]);
+    expect(to('cnv_m')).toEqual([undefined]);
   });
 
   test('a failed push is not counted, and its notification is still known to show', async () => {
@@ -218,57 +274,100 @@ describe('the caps', () => {
     expect([0, 0.5, 1, 2, 3, 7, 10, 30].map(firefoxAllowance)).toEqual([8, 8, 7, 4, 2, 1, 0, 0]);
   });
 
-  test('Chrome: a clear that leaves another notification showing is free; one that closes the last, four a day', async () => {
+  test('Chrome: one that closes the last notification there, two a day; six a day in all, free ones too', async () => {
     const t = Date.now();
-    // Each read closes the last notification there: costly. The fifth is held, and its notification stays.
-    for (let i = 0; i < CHROME_PER_DAY + 1; i++) {
+    expect([CHROME_COSTLY_PER_DAY, CHROME_PER_DAY]).toEqual([2, 6]);
+    // Each read closes the last notification there: costly. The third is held, and its notification stays.
+    for (let i = 0; i < 3; i++) {
       alerted(`cnv_${i}`, i, ['chrome'], t + i * HOUR);
       await push.clearBrowsers([{ id: `cnv_${i}`, upTo: i }], t + i * HOUR + 1);
     }
-    expect(clears('chrome').map((s) => s.body.clear)).toEqual(['cnv_0', 'cnv_1', 'cnv_2', 'cnv_3']);
-    // So the next one leaves that one showing: free, although the day's four are spent.
+    expect(clears('chrome').map((s) => s.body.clear)).toEqual(['cnv_0', 'cnv_1']);
+    // So the next ones leave cnv_2 showing: free, although the day's two are spent; four of them, then the day's six
+    // are spent too, free or not.
     reset();
-    alerted('cnv_x', 1, ['chrome'], t + 6 * HOUR);
-    await push.clearBrowsers([{ id: 'cnv_x', upTo: 1 }], t + 6 * HOUR + 1);
-    expect(clears('chrome').map((s) => s.body.clear)).toEqual(['cnv_x']);
-    // Swiped away: the next is the last again, and held until a day after the first.
+    for (let i = 0; i < 5; i++) {
+      alerted(`cnv_f${i}`, 1, ['chrome'], t + 2 * HOUR + i);
+      await push.clearBrowsers([{ id: `cnv_f${i}`, upTo: 1 }], t + 2 * HOUR + i + 1);
+    }
+    expect(clears('chrome').map((s) => s.body.clear)).toEqual(['cnv_f0', 'cnv_f1', 'cnv_f2', 'cnv_f3']);
+    // A day after the first: one goes again.
     reset();
-    push.browsers.noted({ event: 'dismissed', conversationId: `cnv_${CHROME_PER_DAY}`, device: ids.chrome });
-    alerted('cnv_y', 1, ['chrome'], t + 7 * HOUR);
-    await push.clearBrowsers([{ id: 'cnv_y', upTo: 1 }], t + 7 * HOUR + 1);
-    expect(clears('chrome')).toEqual([]);
-    push.browsers.noted({ event: 'dismissed', conversationId: 'cnv_y', device: ids.chrome });
     alerted('cnv_z', 1, ['chrome'], t + DAY + 1);
     await push.clearBrowsers([{ id: 'cnv_z', upTo: 1 }], t + DAY + 2);
     expect(clears('chrome').map((s) => s.body.clear)).toEqual(['cnv_z']);
   });
 
-  test('Firefox: every clear counts, free or not, at most eight since the device was last on the app', async () => {
+  test('Chrome: a notification sent hours ago no longer counts as still showing, though a clear may still close it', async () => {
     const t = Date.now();
-    store.db.query('UPDATE push_subscription SET device = ?, created_at = ? WHERE id = ?').run('dev_ff', t - 30 * DAY, ids.firefox);
-    // A stay of a minute, over: the page is not open there now.
-    const visit = (at: number) =>
-      store.db.query(`INSERT INTO visit (id, device, device_label, view, start_at, end_at, source, closed, updated_at) VALUES (?, 'dev_ff', 'Linux, Firefox', 'inbox', ?, ?, 'rail', 1, ?)`).run(`v${at}`, at, at + 60_000, at + 60_000);
-    // Registered a month ago and never seen since: no allowance left.
-    alerted('cnv_old', 1, ['firefox'], t);
+    // Sent five hours ago: the system may have let it go, or "clear all" closed it, without a word to the hub.
+    alerted('cnv_old', 1, ['chrome'], t - SHOWING_MS - HOUR);
+    alerted('cnv_new', 1, ['chrome'], t);
+    await push.clearBrowsers([{ id: 'cnv_new', upTo: 1 }], t + 1);
+    // Sent three hours ago: still counted.
+    alerted('cnv_mid', 1, ['chrome'], t - SHOWING_MS + HOUR);
+    alerted('cnv_new2', 1, ['chrome'], t + 2);
+    await push.clearBrowsers([{ id: 'cnv_new2', upTo: 1 }], t + 3);
+    expect((store.db.query('SELECT free FROM push_clear WHERE sub_id = ? ORDER BY at').all(ids.chrome) as { free: number }[]).map((r) => r.free)).toEqual([0, 1]);
+    // And the old one is still closed by its own read, within three days.
+    reset();
+    await push.clearBrowsers([{ id: 'cnv_old', upTo: 1 }], t + 4);
+    expect(clears('chrome').map((s) => s.body.clear)).toEqual(['cnv_old']);
+  });
+
+  test('Firefox: every clear counts, free or not, at most eight since a push reached it while its page was in use', async () => {
+    const t = Date.now();
+    store.db.query('UPDATE push_subscription SET created_at = ? WHERE id = ?').run(t - 30 * DAY, ids.firefox);
+    const refilled = () => row('firefox').refilled_at as number | null;
+    // Registered a month ago, and a push since only while no page of it was open: no allowance left.
+    stay('firefox', 'dev_ff', 'v0', t - 2 * DAY, t - 2 * DAY + 60_000, 1);
+    await push.notify('Ann', 'hi', 'cnv_old', { lines: [{ author: 'Ann', key: 'k', body: 'hi', ts: 1 }] });
+    expect(refilled()).toBeNull();
     await push.clearBrowsers([{ id: 'cnv_old', upTo: 1 }], t + 1);
     expect(clears('firefox')).toEqual([]);
-    visit(t);
-    // Always another one showing: still at most eight.
-    alerted('cnv_keep', 1, ['firefox'], t);
+    // A push while its page is in use: a tab of the site is open, so Firefox sets the quota back to 16. Chrome's stays
+    // as it was, whatever its page does.
+    stay('firefox', 'dev_ff', 'v1', t - 60_000, Date.now(), 0);
+    stay('chrome', 'dev_ch', 'v2', t - 60_000, Date.now(), 0);
+    await push.notify('Ann', 'there?', 'cnv_keep', { lines: [{ author: 'Ann', key: 'k', body: 'there?', ts: 1 }] });
+    expect(refilled()).toBeGreaterThanOrEqual(t);
+    expect(row('chrome').refilled_at).toBeNull();
+    // The stay ends; always another one showing: still at most eight.
+    store.db.query('UPDATE visit SET closed = 1 WHERE id = ?').run('v1');
+    const from = refilled()!;
     for (let i = 0; i < 10; i++) {
-      alerted(`cnv_${i}`, 1, ['firefox'], t + i);
-      await push.clearBrowsers([{ id: `cnv_${i}`, upTo: 1 }], t + 1000 + i);
+      alerted(`cnv_${i}`, 1, ['firefox'], from + i);
+      await push.clearBrowsers([{ id: `cnv_${i}`, upTo: 1 }], from + 1000 + i);
     }
     expect(clears('firefox').length).toBe(8);
-    // A visit lets them go again; one three days old, only two.
+    // A stay with no push in it (a tab restored with the session, which Firefox's history does not hold) starts
+    // nothing again.
     reset();
-    visit(t + HOUR);
-    for (let i = 10; i < 20; i++) {
-      alerted(`cnv_${i}`, 1, ['firefox'], t + 3 * DAY + HOUR);
-      await push.clearBrowsers([{ id: `cnv_${i}`, upTo: 1 }], t + 3 * DAY + HOUR + i);
+    stay('firefox', 'dev_ff', 'v3', from + HOUR, from + HOUR + 60_000, 1);
+    for (let i = 10; i < 13; i++) {
+      alerted(`cnv_${i}`, 1, ['firefox'], from + 2 * HOUR);
+      await push.clearBrowsers([{ id: `cnv_${i}`, upTo: 1 }], from + 2 * HOUR + i);
+    }
+    expect(clears('firefox')).toEqual([]);
+    // A refill three days old allows only two.
+    store.db.query('UPDATE push_subscription SET refilled_at = ? WHERE id = ?').run(from + 3 * HOUR, ids.firefox);
+    for (let i = 20; i < 30; i++) {
+      alerted(`cnv_${i}`, 1, ['firefox'], from + 3 * DAY + 3 * HOUR);
+      await push.clearBrowsers([{ id: `cnv_${i}`, upTo: 1 }], from + 3 * DAY + 3 * HOUR + i);
     }
     expect(clears('firefox').length).toBe(firefoxAllowance(3));
+  });
+
+  test('an older database gets the refill column and the index that finds a device\'s latest stay', () => {
+    // As it was before them.
+    store.db.exec('DROP INDEX visit_device; ALTER TABLE push_subscription DROP COLUMN refilled_at');
+    store.db.close();
+    store = new Store(join(dir, 'hub.sqlite'), () => null);
+    push = new PushService(store, generateVapidKeys(), 's');
+    expect((store.db.query('PRAGMA table_info(push_subscription)').all() as { name: string }[]).map((c) => c.name)).toContain('refilled_at');
+    expect((store.db.query('SELECT COUNT(*) AS n FROM push_subscription').get() as { n: number }).n).toBe(Object.keys(ENDPOINTS).length);
+    const plan = store.db.query('EXPLAIN QUERY PLAN SELECT start_at AS start, end_at AS end, closed FROM visit WHERE device = ? ORDER BY start_at DESC LIMIT 1').all('dev_x') as { detail: string }[];
+    expect(plan.map((p) => p.detail).join(' ')).toContain('visit_device');
   });
 
   test('what was sent is forgotten after three days, and so is the notification it showed', async () => {
@@ -305,7 +404,7 @@ test('a round: open pages hear `cleared` once, the phone list is told, the app a
   expect(live).toEqual([]);
   store.markRead(cid, Date.now());
   await round();
-  expect(live).toEqual([{ t: 'cleared', ids: [cid] }]);
+  expect(live).toEqual([{ t: 'cleared', reads: [{ id: cid, upTo: ts }] }]);
   expect(phone).toEqual([cid]);
   expect(clears().map((s) => [s.to, s.body.clear, s.body.upTo]).sort()).toEqual([
     ['app', cid, ts],

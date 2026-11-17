@@ -100,7 +100,7 @@ export class PushService {
 
   constructor(private store: Store, private keys: VapidKeys, private subject: string, env = process.env) {
     const cols = (store.db.query('PRAGMA table_info(push_subscription)').all() as Row[]).map((c) => c.name);
-    for (const c of ['last_error_at', 'last_test_at', 'last_arrived_at', 'clears']) if (!cols.includes(c)) store.db.exec(`ALTER TABLE push_subscription ADD COLUMN ${c} INTEGER`);
+    for (const c of ['last_error_at', 'last_test_at', 'last_arrived_at', 'clears', 'refilled_at']) if (!cols.includes(c)) store.db.exec(`ALTER TABLE push_subscription ADD COLUMN ${c} INTEGER`);
     this.browsers = new BrowserClears(store.db);
     this.relays = extraRelays(env.DITHER_PUSH_RELAYS);
     this.topic = env.DITHER_NTFY_URL ? { url: env.DITHER_NTFY_URL, token: env.DITHER_NTFY_TOKEN, click: env.DITHER_PUBLIC_URL, lastOkAt: null, lastError: null } : null;
@@ -293,6 +293,7 @@ export class PushService {
       const { outcome, status, detail } = await sendPush({ endpoint: r.endpoint, p256dh: r.p256dh, auth: r.auth }, payload, this.keys, this.subject, { ...opts, fetch: this.transport });
       if (outcome === 'ok') {
         db.query('UPDATE push_subscription SET last_ok_at = ?, last_error = NULL, last_error_at = NULL, failures = 0 WHERE id = ?').run(Date.now(), r.id);
+        this.browsers.reached(r);
         return { ok: true };
       }
       if (outcome === 'gone') {
@@ -333,14 +334,18 @@ export class PushService {
   async notify(title: string, body: string, conversationId: string | undefined, extra: Record<string, unknown>, quiet: string[] = [], level: 'push' | 'quiet' = 'push'): Promise<{ devices: number; accepted: number }> {
     const skip = new Set(quiet);
     const rows = (this.store.db.query('SELECT * FROM push_subscription').all() as Row[]).filter((r) => !skip.has(r.device || r.id));
-    const [results] = await Promise.all([Promise.all(rows.map((r) => this.deliver(r, pushPayload(title, body, conversationId, { ...extra, device: r.id })))), this.toTopic(title, body, conversationId, level, clickHash(extra))]);
-    // What a browser now shows under the conversation's tag, so reading it can take that away (clears.ts). A calendar
+    // What a browser now shows under the conversation's tag, so reading it can take that away (clears.ts), noted as
+    // each push is taken: a tap or a swipe reported while a slow push server holds up another finds it. A calendar
     // reminder or a ring has a tag of its own, which no read closes.
-    if (conversationId && !extra.calendar && !extra.call) {
-      const lines = extra.lines as { ts?: number }[] | undefined;
-      const ts = typeof extra.ts === 'number' ? extra.ts : (lines?.at(-1)?.ts ?? Date.now());
-      rows.forEach((r, i) => results[i].ok && this.browsers.shown(r, conversationId, ts));
-    }
+    const lines = extra.lines as { ts?: number }[] | undefined;
+    const ts = typeof extra.ts === 'number' ? extra.ts : (lines?.at(-1)?.ts ?? Date.now());
+    const tag = conversationId && !extra.calendar && !extra.call ? conversationId : null;
+    const one = async (r: Row) => {
+      const res = await this.deliver(r, pushPayload(title, body, conversationId, { ...extra, device: r.id }));
+      if (res.ok && tag) this.browsers.shown(r, tag, ts);
+      return res;
+    };
+    const [results] = await Promise.all([Promise.all(rows.map(one)), this.toTopic(title, body, conversationId, level, clickHash(extra))]);
     return { devices: rows.length, accepted: results.filter((r) => r.ok).length };
   }
 

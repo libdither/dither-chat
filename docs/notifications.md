@@ -417,7 +417,7 @@ conversation's unread lines, so the notification grows instead of being replaced
   sender's `icon`; with neither, the first letter of the title on a grey disc. A Discord group without a picture of
   its own has the default one Discord's client shows for it (the extractor reads it from the client). Its data keeps
   `ts`, the newest message it shows (the push's `ts`, else its last line's), so a clear closes it only up to where the
-  chat was read.
+  chat was read, and `keep` when no read may close it ([below](#read-elsewhere-gone-here)).
 - **On Android**: see [android.md](android.md).
 - **Pictures arrive first.** Before a push goes, the hub fetches the pictures it names into its media cache, waiting
   3 s at most, since the device fetches them while it draws the notification and a busy hub could take longer than
@@ -434,13 +434,23 @@ since (`Delivery.read`: in the app on any device, in the network's own client wh
 there), each once, with `upTo`, the newest message any of its notifications showed (`packages/hub/src/clears.ts`).
 Their notifications go:
 
-- **From open pages.** They get the live event `{ t: 'cleared', ids }` (of the moment, like `typing`: not journaled)
-  and close those notifications, unless the page holds something newer there that is still unread. A page also
-  closes a notification whenever it sees a read itself (`packages/web/src/shade.ts`): a chat read at the bottom of
-  its timeline, also one it already held as read because another device read it first; a mail thread read; the last
-  unread notice of a group read. After every catch-up with the hub (a start, a reconnect) it goes through
-  `getNotifications()` and closes each whose chat or mail thread it now holds as read, and each group of notices with
-  nothing unread left. So a browser that was closed or offline while you read elsewhere tidies up when the app opens.
+- **From open pages.** They get the live event `{ t: 'cleared', reads: [{ id, upTo }] }` (of the moment, like
+  `typing`: not journaled) and close those notifications up to `upTo`, as a clear push does: one showing a newer
+  message stays, even before the page hears of that message. One without a time (a page's own) closes unless the
+  page holds something unread there. A page also closes a notification whenever it sees a read itself
+  (`packages/web/src/shade.ts`): a chat read at the bottom of its timeline, also one it already held as read because
+  another device read it first; a mail thread read; the last unread notice of a group read, when the page holds the
+  notice its notification shows. After every catch-up with the hub (a start, a reconnect) it goes through
+  `getNotifications()` and closes each it can tell is read: a chat's whose `ts` is at or below the chat's read
+  marker, a mail thread's with nothing unread whose `ts` is no newer than the thread's newest message, a group of
+  notices' with nothing unread whose notice the page holds as read. Nothing unread is not enough: a notification
+  with no `ts`, or a newer one (an alert that came between the catch-up and this tidy), stays. So a browser that was
+  closed or offline while you read elsewhere tidies up when the app opens.
+- **Never what is kept.** A notification whose data has `keep` is closed by no read, here or elsewhere, by no
+  `cleared` and by no clear push: only a tap or a swipe ends it. That is a reminder you set on a network
+  (Discord's "Remind me") and the summary when quiet hours end (`Notifier.message` kind `held`, which also says
+  `keep` on the page's `notify`), and "Reply not sent" (`sw.js` `sendReply`), the only copy of what you typed. They
+  share their chat's tag and show no message's time.
 - **From the Android app.** A push `{ clear: tag, upTo }` for each read, only to registrations that said they take
   it (`clears: true` on `POST /api/push/subscribe`, the Android app from 0.7): an older app would show an empty
   notification. A registration made before an app said so keeps its endpoint and so never registers again: the app's
@@ -462,16 +472,24 @@ decide what one costs, and the hub sends them only where they are cheap or cappe
   visits report it, not over) gets none: the page closes it itself, and it stops counting as showing there. Most
   reads at a computer are made in its own page, and would otherwise spend the cap meant for reads on another device.
 - **Chrome** (an endpoint on `fcm.googleapis.com`): a push is free while another of the app's notifications still
-  shows there, or the app's tab is in front; otherwise it costs 2 of a budget that grows with how much the site is
-  used (at most about 6 such pushes a day), and with the budget spent Chrome shows its own "updated in the
-  background" notification. A clear that leaves another notification showing, as far as the hub knows, is not
-  capped; one that closes the last goes at most 4 times in 24 hours (`CHROME_PER_DAY`).
+  shows there, or the app's tab is in front; otherwise it costs 2 of a budget that earns 12/24 × engagement/100 an
+  hour (engagement is Chrome's 0 to 100 for how much the site is used), and with the budget spent Chrome shows its
+  own "updated in the background" notification. A clear that closes the last notification there goes at most 2 times
+  in 24 hours (`CHROME_COSTLY_PER_DAY`: 4 points a day, which an engagement of 33 earns), and clears of any kind at
+  most 6 (`CHROME_PER_DAY`), since "another still shows" is the hub's guess. It counts as still showing only what it
+  sent there in the last four hours (`SHOWING_MS`): the system lets older ones go, and "clear all" closes them,
+  without a word to the hub. A clear may still close one up to three days old.
 - **Firefox** (Mozilla's push service, `*.push.services.mozilla.com`): 3 s after a push with none of the app's
-  notifications left showing, the subscription's quota loses 1; a visit to the site sets it to
-  min(16, 8 × days since the visit ^ −0.8), and at 0 Firefox drops the subscription without telling the site. The hub
-  cannot see a notification swiped away, so every clear counts: at most `firefoxAllowance` since the device's last
-  visit (or since it registered), the quota less one, 8 at most and fewer as the visit gets older (2 after three days,
-  none from about eight and a half).
+  notifications left showing, the subscription's quota loses 1, and at 0 Firefox drops the subscription without
+  telling the site. A push that arrives while a tab of the site is open sets the quota to 16; the first push after a
+  visit in the browser's history sets it to min(16, 8 × days since that visit ^ −0.8). The hub cannot see a
+  notification swiped away, nor which of its visits the history holds (a tab restored with the session is none), so
+  every clear counts, and the count starts again only at a refill it is sure of: a push that reached the browser
+  while its page was in use (`refilled_at` on the registration), or the registration being made. At most
+  `firefoxAllowance` since then: the quota less one, 8 at most and fewer as that gets older (2 after three days, none
+  from about eight and a half). A visit since, which may have set the quota by its own age, is younger than the refill
+  and so allows more than the hub does. Lowering the cap instead (to 3) would not be safe: a reset at a visit Firefox
+  did not count can meet a quota already down to 1.
 - **Never** Safari (its push service drops all of a site's subscriptions after three pushes that show nothing), any
   other push service (Edge's, ntfy), a phone's browser (its label says Android, iPhone or iPad), or a registration
   whose label says Safari.
@@ -483,7 +501,8 @@ decide what one costs, and the hub sends them only where they are cheap or cappe
   keeps that harmless. Alerts have no topic, so a clear never takes an alert's place. A push service that ignores
   the topic delivers each clear, and the hub has counted each one against the cap.
 - **Counted before it goes,** so a slow push service cannot let two clears past one cap; one the push service did not
-  take is not counted and its notification is still known to show.
+  take is not counted and its notification is still known to show. What an alert shows is noted as each browser's
+  push is taken, not once every push server has answered, so a tap or a swipe reported meanwhile is not lost.
 
 ## The phone's list
 
@@ -747,5 +766,5 @@ before the tiers).
 Storage: `triage` (`decision`, `score`, `reasons`, `decided_by`, `facts` as JSON, `probs` and `shadow` as JSON
 chances, `alert_mark`, `less_mark`, `marked_at`, `was`, and from before the tiers `feedback`, `explore`,
 `propensity`); the models in `meta` (`triage_policy`: `model`, `rejected`, and `candidate` for the shadow);
-`list_level`, `quiet_hours` and `tiers_at` in `meta` too; the phone's list in `phone_episode` and `phone_snooze`; the scorecard in `model_score`; what each desktop browser was alerted about and the clears it was sent in `push_shown` and `push_clear` (ids and times only). Triage rows older than 90 days go when nothing can be
+`list_level`, `quiet_hours` and `tiers_at` in `meta` too; the phone's list in `phone_episode` and `phone_snooze`; the scorecard in `model_score`; what each desktop browser was alerted about and the clears it was sent in `push_shown` and `push_clear` (ids and times only), and when a push last reached a Firefox while its page was in use in `push_subscription.refilled_at`. Triage rows older than 90 days go when nothing can be
 learned from them ([deploy.md](deploy.md#backups-and-upkeep)).

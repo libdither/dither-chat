@@ -361,7 +361,8 @@ async function show(d) {
     icon: look.icon,
     badge: look.badge,
     // `ts`: the newest message it shows, so a clear that comes late closes it only up to where it was read (below).
-    data: { conversationId: d.conversationId, request: d.requestId, notice: d.noticeId, inbox: d.inbox, test: d.test, replyTo: d.replyTo, nid: d.nid, device: d.device, messageId: d.messageId, calendar: cal, ts: newest(d) },
+    // `keep`: a reminder or a held summary, which no read closes, here or in a page (shade.ts).
+    data: { conversationId: d.conversationId, request: d.requestId, notice: d.noticeId, inbox: d.inbox, test: d.test, replyTo: d.replyTo, nid: d.nid, device: d.device, messageId: d.messageId, calendar: cal, ts: newest(d), keep: d.keep === true || undefined },
     actions: actions.slice(0, self.Notification?.maxActions ?? 2),
   });
   return tag;
@@ -396,11 +397,13 @@ function newest(d) {
  * A clear closes its tag's notification, and those in `more` (one push carries everything still waiting for this
  * browser, clears.ts), each only when it shows nothing newer than `upTo`, where it was read: a clear that arrives
  * after a newer alert leaves that alert. Without `upTo` (an older hub), or a notification without `ts`, it closes.
+ * One with `keep` (a reminder, a held summary, "Reply not sent" with what you typed) stays whatever was read.
  */
 async function clear(d) {
   const all = [{ clear: d.clear, upTo: d.upTo }, ...(Array.isArray(d.more) ? d.more : [])].filter((c) => typeof c?.clear === 'string');
   for (const c of all) {
     for (const n of await self.registration.getNotifications({ tag: c.clear })) {
+      if (n.data?.keep === true) continue;
       const ts = n.data?.ts;
       if (typeof c.upTo !== 'number' || typeof ts !== 'number' || ts <= c.upTo) n.close();
     }
@@ -461,8 +464,9 @@ async function sendReply(n, conv, text, replyTo) {
     for (const other of await self.registration.getNotifications({ tag: n.tag })) other.close();
     return;
   }
-  // Same tag: it takes the place of the one replied to. What was typed stays readable, since nothing else kept it.
-  await self.registration.showNotification('Reply not sent', { body: `${error}. You wrote: ${text}`.slice(0, 1000), tag: n.tag, renotify: true, requireInteraction: true, icon: '/icon-192.png', badge: '/icon-192.png', data: { conversationId: conv } });
+  // Same tag: it takes the place of the one replied to. What was typed stays readable, since nothing else kept it, so
+  // no read of the chat closes it (`keep`: clear above, shade.ts), only a tap or a swipe.
+  await self.registration.showNotification('Reply not sent', { body: `${error}. You wrote: ${text}`.slice(0, 1000), tag: n.tag, renotify: true, requireInteraction: true, icon: '/icon-192.png', badge: '/icon-192.png', data: { conversationId: conv, keep: true } });
 }
 
 self.addEventListener('notificationclick', (e) => {

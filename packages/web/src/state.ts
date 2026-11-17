@@ -15,7 +15,7 @@ import { api } from './api.ts';
 import { isLoginRefusal, login, needLogin } from './login.ts';
 import { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines, type Timeline } from './store.ts';
 import { applyCalls, applyVoice, loadCalls } from './ringing.ts';
-import { closeNotifications, readIn, tidyNotifications } from './shade.ts';
+import { closeCleared, closeNotifications, readIn, tidyNotifications } from './shade.ts';
 
 // ------------------------------------------------------------------ data
 
@@ -340,10 +340,10 @@ export function applyEvents(events: P.ClientEvent[]) {
       case 'notify':
         onNotify(ev);
         break;
-      // Read on some device since the hub notified about it: its notification here goes, unless the page knows of
-      // something newer in it, unread (docs/notifications.md, "Read elsewhere, gone here").
+      // Read on some device since the hub notified about it: its notification here goes, unless it shows something
+      // newer than the read (docs/notifications.md, "Read elsewhere, gone here").
       case 'cleared':
-        void closeNotifications(ev.ids, readHere);
+        void closeCleared(ev.reads, readHere);
         break;
       case 'mail.threads':
         mergeMailTriage(ev.threads);
@@ -451,8 +451,9 @@ function onNotify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
     const conv = c && c.shape !== 'direct' && c.avatar ? { shape: c.shape === 'channel' || c.shape === 'thread' ? 'channel' : 'group', icon: c.avatar } : undefined;
     const show = (reg?: ServiceWorkerRegistration) => {
       // The worker draws the picture and the network's badge, as it does for a push (sw.js).
-      if (reg?.active) return reg.active.postMessage({ t: 'notify', d: { title: ev.title, body: ev.body, conversationId: ev.conversationId, inbox: !ev.conversationId && !cal, icon: ev.icon, network: ev.network, nid: ev.nid, ...(conv ? { conv } : {}), ...(cal ? { calendar: cal } : {}), ...(notice ? { noticeId: notice } : {}) } });
-      const opts = { body: ev.body, tag: cal ? `calendar:${cal.eventKey}` : (ev.conversationId ?? 'dither-inbox'), icon: conv?.icon ?? ev.icon, data: { conversationId: ev.conversationId, inbox: !ev.conversationId && !cal, calendar: cal, notice } };
+      // `keep`: a reminder or a held summary, which no read closes (shade.ts).
+      if (reg?.active) return reg.active.postMessage({ t: 'notify', d: { title: ev.title, body: ev.body, conversationId: ev.conversationId, inbox: !ev.conversationId && !cal, icon: ev.icon, network: ev.network, nid: ev.nid, ...(conv ? { conv } : {}), ...(cal ? { calendar: cal } : {}), ...(notice ? { noticeId: notice } : {}), ...(ev.keep ? { keep: true } : {}) } });
+      const opts = { body: ev.body, tag: cal ? `calendar:${cal.eventKey}` : (ev.conversationId ?? 'dither-inbox'), icon: conv?.icon ?? ev.icon, data: { conversationId: ev.conversationId, inbox: !ev.conversationId && !cal, calendar: cal, notice, ...(ev.keep ? { keep: true } : {}) } };
       if (reg) reg.showNotification(ev.title, opts);
       else new Notification(ev.title, opts).onclick = open ?? (() => go({ view: 'inbox', conv: ev.conversationId }));
     };

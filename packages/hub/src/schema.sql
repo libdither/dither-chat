@@ -343,7 +343,8 @@ CREATE TABLE IF NOT EXISTS push_subscription (
   -- added later, so push.ts also adds them to older databases
   last_error_at   INTEGER,
   last_test_at    INTEGER,
-  last_arrived_at INTEGER                    -- the device said a test push reached it
+  last_arrived_at INTEGER,                   -- the device said a test push reached it
+  refilled_at     INTEGER                    -- a push reached it while its page was in use: Firefox's quota is full (clears.ts)
 );
 
 -- Pushes that only close a notification, to desktop browsers (clears.ts, docs/notifications.md "Read elsewhere, gone
@@ -590,6 +591,8 @@ CREATE INDEX IF NOT EXISTS visit_start ON visit(start_at);
 CREATE INDEX IF NOT EXISTS visit_conv ON visit(conversation_id, start_at) WHERE conversation_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS visit_person ON visit(person_id, start_at) WHERE person_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS visit_push ON visit(push_id) WHERE push_id IS NOT NULL;
+-- A device's latest stay (clears.ts lastVisit): whether its page is in use, at once however long ago it last was.
+CREATE INDEX IF NOT EXISTS visit_device ON visit(device, start_at);
 
 -- What you did to an inbox row that says what you made of it (InboxAction): Mark As Read on a row showing a reply
 -- you owed. Ids and times only; part of the log (deleted with it, kept for its retention).

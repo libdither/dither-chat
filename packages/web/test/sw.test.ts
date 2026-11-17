@@ -76,6 +76,8 @@ test('a refusal shows what the hub said, and keeps what was typed', async () => 
   expect(w.shown[0].o.body).toBe('Sending to encrypted Matrix rooms is not supported yet. You wrote: hello');
   expect(w.shown[0].o.tag).toBe('cnv_1');
   expect(w.shown[0].o.data.conversationId).toBe('cnv_1');
+  // The only copy of what was typed: no read of the chat closes it (a clear below, shade.ts).
+  expect(w.shown[0].o.data.keep).toBe(true);
   expect(w.closed).toEqual([]);
 });
 
@@ -409,6 +411,20 @@ test('a notification keeps the newest message it shows, for those clears', async
   expect(w.shown.at(-1)!.o.data.ts).toBe(250);
   await w.push({ title: 'Quiet hours', conversationId: 'cnv_1' });
   expect(w.shown.at(-1)!.o.data.ts).toBeUndefined();
+  expect(w.shown.at(-1)!.o.data.keep).toBeUndefined();
+  // A reminder you set, or the summary when quiet hours end (hub notify.ts): kept until tapped or swiped.
+  await w.push({ title: 'A reminder', conversationId: 'cnv_1', keep: true });
+  expect(w.shown.at(-1)!.o.data.keep).toBe(true);
+  await w.push({ title: 'Ann', conversationId: 'cnv_1', keep: 'yes' });
+  expect(w.shown.at(-1)!.o.data.keep).toBeUndefined();
+});
+
+test('a clear never closes a reminder, a held summary or "Reply not sent", with upTo or without', async () => {
+  const w = worker({ showing: [{ tag: 'cnv_1', data: { keep: true } }, { tag: 'cnv_2', data: { conversationId: 'cnv_2', keep: true } }, { tag: 'cnv_3', data: { ts: 10 } }] });
+  await w.push({ clear: 'cnv_1', upTo: 900, more: [{ clear: 'cnv_2', upTo: 900 }, { clear: 'cnv_3', upTo: 900 }], device: 'd' });
+  await w.push({ clear: 'cnv_1' });
+  expect(w.closed).toEqual(['other:cnv_3']);
+  expect(w.shown).toEqual([]);
 });
 
 test('a page out of sight lets a new build in only while no window of the app is in sight; the bar always does', async () => {

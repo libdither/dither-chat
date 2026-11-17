@@ -6,12 +6,17 @@
  *
  * A browser must show something for every push (`userVisibleOnly`), and a push that only closes a notification
  * shows nothing. While another of the app's notifications is still showing there, that costs nothing; otherwise:
- * - Chrome (an FCM endpoint) spends 2 points of a budget that grows with how much the site is used, at most 12 a day.
- *   Spent, it shows its own "updated in the background" notification. So at most CHROME_PER_DAY of those in 24 hours.
- * - Firefox (Mozilla's push service) takes 1 from the subscription's quota, which the first push after a visit sets to
- *   min(16, round(8 * days since the visit ^ -0.8)); at 0 it drops the subscription without telling the site. The hub
- *   cannot see a notification swiped away, so its "another is still showing" is a guess, and every clear counts:
- *   at most `firefoxAllowance` (8, fewer as the visit gets older) since the device's last visit.
+ * - Chrome (an FCM endpoint) spends 2 points of a budget that earns 12/24 × engagement/100 an hour, at most 12 a day
+ *   on a site used all the time. Spent, it shows its own "updated in the background" notification. So at most
+ *   CHROME_COSTLY_PER_DAY of those in 24 hours (4 points: a site of engagement 33 earns that), and CHROME_PER_DAY
+ *   clears in all, since "another is still showing" is the hub's guess (`push_shown` rows younger than SHOWING_MS).
+ * - Firefox (Mozilla's push service) takes 1 from the subscription's quota; at 0 it drops the subscription without
+ *   telling the site. A push that arrives while a tab of the site is open sets the quota to 16; the first push after a
+ *   visit in its history sets it to min(16, round(8 * days since that visit ^ -0.8)). The hub cannot see a
+ *   notification swiped away, nor which of its visits Firefox's history holds (a tab restored with the session is
+ *   none), so every clear counts, and only a refill it is sure of resets the count: a push that reached the
+ *   subscription while its page was in use (`refilled_at`), or the subscription being made. At most
+ *   `firefoxAllowance` (8, fewer as that gets older) since then.
  * - Safari drops every subscription of a site after 3 pushes that show nothing, so it never gets one. Nor does any
  *   other push service, nor a phone's browser: only the Android app (`clears = 1`) clears a phone.
  *
@@ -34,7 +39,15 @@ export const CLEAR_TTL = 600;
  * one push, not one per chat, and at most one of them costs anything.
  */
 export const CLEAR_TOPIC = 'clear';
-export const CHROME_PER_DAY = 4;
+/** Clears to one Chrome in 24 hours, free or not. */
+export const CHROME_PER_DAY = 6;
+/** Of those, clears that close the last notification there, which spend Chrome's budget. */
+export const CHROME_COSTLY_PER_DAY = 2;
+/**
+ * A notification sent longer ago than this no longer counts as still showing, for whether a clear is free: the system
+ * may have let it go, or "clear all" closed it, and neither tells the hub. A clear can still close it for three days.
+ */
+export const SHOWING_MS = 4 * 3_600_000;
 /** A clear carries at most this many notifications, its own first: well inside a push's 4 KB. */
 const MAX_TAGS = 40;
 /** Clears are kept this long for the caps: past it Firefox's allowance is 0 anyway. */
@@ -105,7 +118,7 @@ export class BrowserClears {
     if (r.clears === 1) return null;
     const relay = clearRelay(r.endpoint, r.label);
     if (!relay) return null;
-    const shown = this.db.query('SELECT tag, ts FROM push_shown WHERE sub_id = ? AND at > ?').all(r.id, now - FORGET_MS) as { tag: string; ts: number }[];
+    const shown = this.db.query('SELECT tag, ts, at FROM push_shown WHERE sub_id = ? AND at > ?').all(r.id, now - FORGET_MS) as { tag: string; ts: number; at: number }[];
     const own = reads.filter((x) => shown.some((s) => s.tag === x.id && s.ts <= x.upTo));
     if (!own.length) return null;
     if (this.inUse(r, now)) {
@@ -115,8 +128,18 @@ export class BrowserClears {
     const upTo = new Map<string, number>();
     for (const x of [...own, ...this.carried(r.id, now)]) if (upTo.size < MAX_TAGS || upTo.has(x.id)) upTo.set(x.id, Math.max(upTo.get(x.id) ?? 0, x.upTo));
     const tags = [...upTo].map(([id, u]) => ({ id, upTo: u }));
-    const free = shown.some((s) => !(s.ts <= (upTo.get(s.tag) ?? -Infinity)));
+    // Free while one sent lately is left showing; one sent hours ago may be gone without a word.
+    const free = shown.some((s) => s.at > now - SHOWING_MS && !(s.ts <= (upTo.get(s.tag) ?? -Infinity)));
     return this.allowed(r, relay, free, now) ? { tags, free } : null;
+  }
+
+  /**
+   * A push reached this registration (push.ts `deliver`). With its page in use, Firefox's tab is open, so Firefox has
+   * just set the subscription's quota back to 16: the count of its clears starts again from here (`allowed`).
+   */
+  reached(r: Row, now = Date.now()) {
+    if (r.clears === 1 || clearRelay(r.endpoint, r.label) !== 'firefox' || !this.inUse(r, now)) return;
+    this.db.query('UPDATE push_subscription SET refilled_at = ? WHERE id = ?').run(now, r.id);
   }
 
   /** Clears to this registration that may still be waiting at the push server: the next one takes their place. */
@@ -125,7 +148,7 @@ export class BrowserClears {
     return rows.flatMap((x) => JSON.parse(x.tags) as Read[]);
   }
 
-  /** The device's latest stay in the app (activity.ts visits); newest first along visit_start, so one seen lately is found at once. */
+  /** The device's latest stay in the app (activity.ts visits), along the index visit_device. */
   private lastVisit(r: Row): { start: number; end: number; closed: number } | null {
     if (!r.device) return null;
     return this.db.query('SELECT start_at AS start, end_at AS end, closed FROM visit WHERE device = ? ORDER BY start_at DESC LIMIT 1').get(r.device) as { start: number; end: number; closed: number } | null;
@@ -141,10 +164,16 @@ export class BrowserClears {
     for (const t of reads) this.db.query('DELETE FROM push_shown WHERE sub_id = ? AND tag = ? AND ts <= ?').run(sub, t.id, t.upTo);
   }
 
+  /**
+   * Chrome: CHROME_PER_DAY in 24 hours, of them CHROME_COSTLY_PER_DAY that close the last notification there.
+   * Firefox: every clear since the last refill the hub is sure of, within `firefoxAllowance` of its age. Not since the
+   * device's last visit: a visit Firefox's history does not hold (a tab restored with the session) sets nothing back,
+   * and one it does hold sets the quota by days since that visit, which only lowers the allowance of an older refill.
+   */
   private allowed(r: Row, relay: ClearRelay, free: boolean, now: number): boolean {
     const count = (since: number, costly: boolean) => (this.db.query(`SELECT COUNT(*) AS n FROM push_clear WHERE sub_id = ? AND at > ?${costly ? ' AND free = 0' : ''}`).get(r.id, since) as Row).n as number;
-    if (relay === 'chrome') return free || count(now - DAY, true) < CHROME_PER_DAY;
-    const since = Math.max(this.lastVisit(r)?.start ?? 0, r.created_at ?? 0);
+    if (relay === 'chrome') return count(now - DAY, false) < CHROME_PER_DAY && (free || count(now - DAY, true) < CHROME_COSTLY_PER_DAY);
+    const since = Math.max(r.refilled_at ?? 0, r.created_at ?? 0);
     return count(since, false) < firefoxAllowance((now - since) / DAY);
   }
 
@@ -180,8 +209,9 @@ export function clearRead(
 ): Promise<unknown> {
   const reads = d.delivery.read(now);
   if (!reads.length) return Promise.resolve();
-  // Of the moment, like typing: a page that was away tidies up when it comes back (web state.ts).
-  d.live({ t: 'cleared', ids: reads.map((r) => r.id) });
+  // Of the moment, like typing: a page that was away tidies up when it comes back (web state.ts). `upTo`, as in a
+  // clear push: an alert that reached the device after the read stays.
+  d.live({ t: 'cleared', reads: reads.map((r) => ({ id: r.id, upTo: r.upTo })) });
   for (const r of reads) d.phone.read(r.id);
   return Promise.all([...reads.map((r) => d.push.clear(r.id, r.upTo).catch(d.failed)), d.push.clearBrowsers(reads, now).catch(d.failed)]);
 }

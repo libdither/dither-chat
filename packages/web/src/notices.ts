@@ -5,7 +5,7 @@
  */
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { closeNotifications, shownTags } from './shade.ts';
+import { closeNotifications, noticeReadIn, shownTags } from './shade.ts';
 import { api, eventHooks, freshHooks, noticesBoot } from './state.ts';
 
 export const noticesPage = signal<P.NoticesPage | null>(null);
@@ -46,7 +46,7 @@ function patch(id: string, f: (n: P.NoticeView) => P.NoticeView) {
 export async function readNotice(id: string): Promise<void> {
   patch(id, (n) => ({ ...n, unread: false }));
   const group = noticesPage.value?.items.find((n) => n.id === id)?.group;
-  if (group && !unreadGroups().has(group)) void closeNotifications([group]);
+  if (group && !unreadGroups().has(group)) void closeNotifications([group], noticeReadIn(noticesPage.value?.items ?? []));
   await api(`/api/notices/${encodeURIComponent(id)}/read`, { method: 'POST' });
 }
 
@@ -63,7 +63,7 @@ freshHooks.add(() => {
     await loadNotices();
     if (!noticesPage.value) return;
     const unread = unreadGroups();
-    await closeNotifications(groups.filter((g) => !unread.has(g)));
+    await closeNotifications(groups.filter((g) => !unread.has(g)), noticeReadIn(noticesPage.value.items));
   });
 });
 
