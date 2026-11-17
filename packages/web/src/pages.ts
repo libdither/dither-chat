@@ -52,7 +52,7 @@ export function isPage(r: Route): boolean {
     case 'space':
       return !!r.conv;
     case 'people':
-      return !!r.person || !!r.graph;
+      return !!r.person || !!r.graph || !!r.same;
     case 'folder':
       return !!(r.conv || r.person);
     case 'accounts':

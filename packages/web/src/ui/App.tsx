@@ -22,6 +22,7 @@ import { Palette } from './Palette.tsx';
 import { ReactionLayer } from './Reactions.tsx';
 import { ProfilePane } from './Profile.tsx';
 import { PlaceProfile } from './PlaceProfile.tsx';
+import { SamePane } from './SamePane.tsx';
 import { GraphPane } from './GraphPane.tsx';
 import { MessageHistoryLayer } from './MessageHistory.tsx';
 import { ThreadsLayerLazy } from './ThreadsLazy.tsx';
@@ -76,6 +77,7 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
       return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: convDetail(r.conv) } : { pane: <ForYou /> };
     case 'people':
       if (r.graph) return { pane: <GraphPane onBack={back} /> };
+      if (r.same) return { pane: <SamePane onBack={back} /> };
       return r.person ? { pane: <PersonPane personId={r.person} onBack={back} />, detail: { kind: 'person', id: r.person } } : { pane: <WelcomePane view="people" /> };
     case 'profile':
       if (r.conv || r.space) return { pane: <PlaceProfile kind={r.conv ? 'conversation' : 'space'} id={(r.conv ?? r.space)!} onBack={back} /> };

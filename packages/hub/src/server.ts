@@ -60,6 +60,7 @@ import { AccountSelf, ignoredOf } from './accountself.ts';
 import { mentionables } from './mentions.ts';
 import { lowerForSend } from './mentionrefs.ts';
 import { peopleGraph } from './graph.ts';
+import { ProfileCollector, SameMatches } from './samepeople.ts';
 import type { MailHub } from './mail/index.ts';
 import type { Notices } from './notices/index.ts';
 import { mailPeople } from './mail/people.ts';
@@ -174,6 +175,8 @@ interface ServerOpts {
   calendar?: { link(): CalendarLink | undefined; sync(): void };
   /** A reminder set on a network came due (saved.ts): main.ts notifies it like an alert. */
   onSavedReminder?: (n: { title: string; body: string; conversationId: string; messageId: string }) => void;
+  /** Same person? (samepeople.ts): the database file for its worker (none: worked out on this thread), and jev's address. */
+  matches?: { file: string | null; jevUrl: string | null };
 }
 
 // ------------------------------------------------------------------ access
@@ -329,6 +332,9 @@ export class HubServer {
   readonly abouts: Abouts;
   readonly groups: Groups;
   readonly people: People;
+  /** Same person? suggestions, and profiles collected in the background (samepeople.ts, docs/same-person.md). */
+  readonly matches: SameMatches;
+  readonly collector: ProfileCollector;
   /** Public posts read and logged as messages (posts.ts, docs/feed.md "Threads"). */
   readonly posts: Posts;
   /** Translating posts and messages: the network's own, or a translation server (translate.ts). */
@@ -411,6 +417,9 @@ export class HubServer {
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), posts: (a, ps) => this.posts.log(a, ps) });
     // A note joined from yours and the network's goes back to the network (store.ts networkNotes).
     store.contactNotesOut = (id, change) => this.people.pushContactNotes(id, change);
+    this.matches = new SameMatches({ store, file: opts.matches?.file ?? null, jevUrl: opts.matches?.jevUrl ?? null, log: (l) => console.log(l), flush: () => this.flush() });
+    this.collector = new ProfileCollector({ store, people: this.people, online: (a) => sup.online(a), log: (l) => console.log(l) });
+    this.collector.start();
     this.adding = new Adding({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), liveView: (a) => !!sup.liveViewUrl?.(a) || !!store.account(a)?.live_view });
     this.threads = new Threads({
       store,
@@ -591,6 +600,8 @@ export class HubServer {
     this.archiver?.stop();
     this.mediaInfo.stop();
     this.imports.stop();
+    this.matches.stop();
+    this.collector.stop();
     this.flush();
     this.server?.stop(true);
     this.plain?.stop(true);
@@ -1004,6 +1015,7 @@ export class HubServer {
     if (path === '/api/demo/reset' && method === 'POST') {
       if (!this.opts.onDemoReset) return bad('demo is not enabled', 404);
       await this.opts.onDemoReset();
+      await this.matches.forget();
       this.flush();
       this.broadcast([{ t: 'resync' }]);
       return ok();
@@ -1131,6 +1143,38 @@ export class HubServer {
     }
     // People and the places they share (graph.ts, docs/people-graph.md).
     if (path === '/api/graph' && method === 'GET') return ok(peopleGraph(s));
+    // Same person? (samepeople.ts, docs/same-person.md): pairs to merge, decisions, merging, pictures to hash.
+    if (path === '/api/matches' && method === 'GET') return ok(this.matches.view({ side: url.searchParams.get('side') ?? undefined }));
+    if (path === '/api/matches/refresh' && method === 'POST') {
+      void this.matches.refresh();
+      return ok(this.matches.view());
+    }
+    if (path === '/api/matches/decide' && method === 'POST') {
+      const b = await body<{ key?: unknown; decision?: unknown; undo?: unknown }>();
+      if (typeof b.key !== 'string' || !/^(per|idn)_[\w-]+\+(per|idn)_[\w-]+$/.test(b.key)) return bad('key: two side ids joined by +');
+      if (b.undo === true) await this.matches.undecide(b.key);
+      else if (b.decision === 'no' || b.decision === 'later') this.matches.decide(b.key, b.decision);
+      else return bad("decision: 'no' or 'later'");
+      return ok();
+    }
+    if (path === '/api/matches/merge' && method === 'POST') {
+      const b = await body<{ sides?: unknown }>();
+      if (!Array.isArray(b.sides) || b.sides.length > 50 || !b.sides.every((x) => typeof x === 'string')) return bad('sides: the ids to make one person');
+      try {
+        const person = this.matches.merge(b.sides as string[]);
+        this.flush();
+        return ok({ person });
+      } catch (e) {
+        return bad((e as Error).message, (e as { status?: number }).status ?? 400);
+      }
+    }
+    if (path === '/api/matches/pictures' && method === 'GET') return ok({ pictures: this.matches.pictures(Math.min(200, Number(url.searchParams.get('limit')) || 60)) });
+    if (path === '/api/matches/pictures' && method === 'POST') {
+      const b = await body<{ hashes?: unknown }>();
+      if (!Array.isArray(b.hashes)) return bad('hashes: [{ identityId, url, hash }]');
+      return ok({ saved: this.matches.savePictures(b.hashes as { identityId: string; url: string; hash: string | null }[]) });
+    }
+    if (path === '/api/profiles/collect' && method === 'GET') return ok(this.collector.status());
     // The networks' own search, a few places at a time in jev's order (netsearch.ts).
     if (path === '/api/search/network' && method === 'POST') return ok(this.netsearch.start((await body<{ q?: string }>()).q ?? ''));
     if ((m = path.match(/^\/api\/search\/network\/([\w-]+)(\/more)?$/))) {
@@ -1230,6 +1274,8 @@ export class HubServer {
           statuses: bool(b.statuses, cur.statuses),
           presence: bool(b.presence, cur.presence),
           members: bool(b.members, cur.members),
+          voice: bool(b.voice, cur.voice ?? false),
+          profiles: bool(b.profiles, cur.profiles ?? false),
           adversarial: bool(b.adversarial, cur.adversarial),
           show: b.show === 'hidden' ? 'hidden' : b.show === 'shown' || (b.show as unknown) === 'collapsed' ? 'shown' : cur.show,
           showIn,

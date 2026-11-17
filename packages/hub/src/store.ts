@@ -2354,6 +2354,7 @@ export class Store {
       presence: any(logged, 'presence'),
       members: any('SELECT 1 FROM membership'),
       voice: voiceKept(this),
+      profiles: any('SELECT 1 FROM profile_version'),
     };
   }
 
@@ -2364,6 +2365,8 @@ export class Store {
       return this.db.query('DELETE FROM membership').run().changes;
     }
     if (what === 'voice') return eraseVoice(this);
+    // Earlier versions of profiles; the last answer each network gave stays, as it does with the switch off.
+    if (what === 'profiles') return this.db.query('DELETE FROM profile_version').run().changes;
     if (what === 'statuses' || what === 'presence')
       return this.db.query(`DELETE FROM change_log WHERE target_kind = 'identity' AND field = ?`).run(what === 'statuses' ? 'status' : 'presence').changes;
     const touched = (sql: string) => (this.db.query(sql).all() as Row[]).forEach((r) => this.dirty.messages.set(r.message_id, true));

@@ -27,6 +27,8 @@ import { DEMO_APP_CAPS, DemoApps } from './demoapps.ts';
 import { DEMO_THREAD_CAPS, DemoThreads } from './demothreads.ts';
 import { DEMO_MOD_CAPS, DemoModeration } from './demomod.ts';
 import { DEMO_SEND_CAPS, DemoSending } from './demosending.ts';
+import { event, h, room, snow, tgUser, uuid, wgroup } from './demo-ids.ts';
+import { crowd } from './demo-crowd.ts';
 
 type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa' | 'tg';
 
@@ -42,6 +44,8 @@ const MULTI_ACCOUNT = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includ
  * two schools whose names share a word, and servers gone quiet a year ago: a sidebar to organize (docs/organize.md).
  */
 const SERVERS = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('servers');
+/** DITHER_DEMO_SCENARIO=crowd adds about 120 people, eight servers and eleven groups, with pairs for Same person? to find (demo-crowd.ts). */
+const CROWD = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('crowd');
 const named = (plain: string, username: string) => (MULTI_ACCOUNT || SERVERS ? username : plain);
 
 const DEMO_ACCOUNTS: { key: AccKey; id: string; network: P.Network; label: string; color: string }[] = [
@@ -55,14 +59,6 @@ const DEMO_ACCOUNTS: { key: AccKey; id: string; network: P.Network; label: strin
 
 // ------------------------------------------------------------------ id shapes
 
-const h = (s: string) => new Bun.CryptoHasher('sha256').update(s).digest();
-const snow = (k: string) => (BigInt('0x' + h('d' + k).toString('hex').slice(0, 15)) % 900000000000000000n + 1000000000000000000n).toString();
-const uuid = (k: string) => {
-  const x = h('s' + k).toString('hex');
-  return `${x.slice(0, 8)}-${x.slice(8, 12)}-4${x.slice(13, 16)}-a${x.slice(17, 20)}-${x.slice(20, 32)}`;
-};
-const room = (k: string, server: string) => `!${h('m' + k).toString('base64url').slice(0, 18)}:${server}`;
-const event = (k: string) => `$${h('e' + k).toString('base64url').slice(0, 43)}`;
 
 // ------------------------------------------------------------------ people
 
@@ -117,7 +113,6 @@ const W = {
   ines: wid('34611222333', 'Inês'),
   hoa: wid('15550188', 'Hoa (garden swap)', false),
 };
-const wgroup = (k: string) => `120363${BigInt('0x' + h('w' + k).toString('hex').slice(0, 12)).toString().padStart(12, '0').slice(0, 12)}@g.us`;
 const mid = (user: string, displayName: string, x: Partial<P.IdentityFact> = {}): P.IdentityFact => ({ nativeId: user, handle: user, displayName, ...x });
 const M = {
   // Multi-account: your accounts' own names differ a little, as people's do (docs/chats.md "Names").
@@ -135,7 +130,7 @@ const M = {
   ben: mid('@ben:matrix.org', 'Ben'),
 };
 /** Telegram: numeric user ids, @usernames as handles. */
-const tid = (k: string, username: string, displayName: string, contact = true): P.IdentityFact => ({ nativeId: String(100_000_000 + (h('t' + k).readUInt32BE(0) % 6_000_000_000)), handle: `@${username}`, displayName, contact });
+const tid = (k: string, username: string, displayName: string, contact = true): P.IdentityFact => ({ nativeId: tgUser(k), handle: `@${username}`, displayName, contact });
 const TG = {
   self: tid('self', 'zyansheep', named('zyan', 'zyan s.'), false),
   alice: tid('alice', 'alicechen', 'Alice Chen'),
@@ -198,6 +193,14 @@ if (MULTI_ACCOUNT) {
   Object.assign(S, { kit: KIT.sig });
   Object.assign(M, { kit: KIT.mx, kitNix: KIT.nix });
   Object.assign(TG, { kit: KIT.tg });
+}
+const C = CROWD ? crowd({ dmain: D.zyan, dalt: D.zyn, sig: S.self, mx: M.self, wa: W.self, tg: TG.self }) : null;
+if (C) {
+  Object.assign(D, C.pools.discord);
+  Object.assign(S, C.pools.signal);
+  Object.assign(M, C.pools.matrix);
+  Object.assign(W, C.pools.whatsapp);
+  Object.assign(TG, C.pools.telegram);
 }
 const POOLS: Partial<Record<P.Network, Record<string, P.IdentityFact>>> = { discord: D, signal: S, whatsapp: W, matrix: M, telegram: TG };
 const at = (i: P.IdentityFact) => `<@${i.nativeId}>`;
@@ -607,6 +610,7 @@ const SPACES: DemoSpace[] = [
   // WhatsApp: a community is its parent group; its groups are channels in it.
   { acc: ['wa'], fact: { nativeId: wgroup('nbh'), kind: 'community', name: 'Maple Street', topic: 'Neighbours on Maple Street' } },
   ...SERVER_SPACES,
+  ...(C?.spaces ?? []),
 ];
 
 const dch = (acc: AccKey[], k: string, name: string, section: string, i: number, x: Partial<P.ConversationFact> = {}): P.ConversationFact & { _acc?: AccKey[] } => ({
@@ -1276,6 +1280,7 @@ const MO_CONVS: DemoConv[] = [
   },
 ];
 if (MULTI_ACCOUNT) CONVS.push(...KIT_CONVS, ...MO_CONVS);
+if (C) CONVS.push(...C.convs);
 
 // ------------------------------------------------------------------ live behaviour
 
@@ -1436,10 +1441,10 @@ const DISCORD_PROFILES: Record<string, { bio?: string; pronouns?: string; status
     friends: ['alice', 'theo'],
     links: [{ label: 'GitHub', value: 'quinn-dev', url: 'https://github.com/quinn-dev', verified: true }, { label: 'Website', value: 'quinn.example', url: 'https://quinn.example' }],
   },
-  ravi: { bio: 'raid leader on tuesdays', accent: '#4B6CB7', servers: ['hk'], friends: ['alice'], status: { text: 'grinding', emoji: '⚔️' } },
+  ravi: { bio: 'raid leader on tuesdays', accent: '#4B6CB7', servers: ['hk'], friends: ['alice'], status: { text: 'grinding', emoji: '⚔️' }, links: [{ label: 'X', value: 'ravi_routes', url: 'https://x.com/ravi_routes', verified: true }] },
   jordan: { pronouns: 'he/him', servers: ['hk'], friends: ['alice'] },
   theo: { bio: 'has your belay device', servers: ['dither'], friends: ['alice', 'quinn'] },
-  lev: { bio: 'p2p, routing, coffee', servers: ['dither', 'rust'], roles: { dither: [{ name: 'Maintainer', color: '#E91E63' }] } },
+  lev: { bio: 'p2p, routing, coffee. signal me: +1 555 0118', servers: ['dither', 'rust'], roles: { dither: [{ name: 'Maintainer', color: '#E91E63' }] } },
   // Multi-account only (these accounts exist only there): each of someone's accounts says its own thing.
   kit: { bio: 'makes things, breaks things, fixes most of them', pronouns: 'they/them', friends: ['alice'] },
   kitWork: { bio: 'infra at a small co-op. work account, slow replies' },
@@ -1447,6 +1452,7 @@ const DISCORD_PROFILES: Record<string, { bio?: string; pronouns?: string; status
   mo: { bio: 'writes rust, mostly' },
   moArt: { bio: 'one drawing a day in november' },
 };
+if (C) Object.assign(DISCORD_PROFILES, C.profiles);
 const SIGNAL_ABOUT: Record<string, { text: string; emoji: string }> = {
   alice: { text: 'on the wall, back at 8', emoji: '🧗' },
   mom: { text: 'Call me!', emoji: '☎️' },
@@ -2512,6 +2518,7 @@ class DemoAdapter implements InprocAdapter {
           { who: D.zyan.nativeId, roles: ['Maintainer'] },
         ],
       });
+    for (const m of C?.members ?? []) if (m.acc === this.key) emit({ t: 'members', space: m.space, source: 'seen', total: m.total, members: m.members.map((i) => ({ who: i.nativeId })) });
     for (const c of CONVS) {
       if (!c.acc.includes(this.key)) continue;
       const msgs = c.msgs;
@@ -3319,6 +3326,20 @@ export function applyDemoOverlay(store: Store) {
     store.updatePerson(first, { name });
     return first;
   };
+  // Same person? (docs/same-person.md): two Discord profiles kept as if opened, so the list has something to show
+  // from the start: Ravi links an X account, Lev gives a Signal number in a bio.
+  for (const [k, who] of [['ravi', D.ravi], ['lev', D.lev]] as const) {
+    const p = DISCORD_PROFILES[k];
+    const about: P.PersonAbout = { displayName: who.displayName, handle: who.handle, ...(p.bio ? { bio: p.bio } : {}), ...(p.links ? { links: p.links } : {}) };
+    store.db.query('INSERT OR IGNORE INTO about (target_id, account_id, data, fetched_at) VALUES (?, ?, ?, ?)').run(idn('discord', who), 'acc_demo-discord-main', JSON.stringify(about), Date.now() - 86_400_000);
+  }
+  // The crowd (demo-crowd.ts): people already known to be one person, and the profiles that link an account.
+  for (const [name, accs] of C?.merges ?? []) merge(name, ...accs);
+  for (const [k, p] of Object.entries(C?.profiles ?? {})) {
+    const who = (D as Record<string, P.IdentityFact>)[k];
+    const about: P.PersonAbout = { displayName: who.displayName, handle: who.handle, ...(p.bio ? { bio: p.bio } : {}), ...(p.links ? { links: p.links } : {}) };
+    store.db.query('INSERT OR IGNORE INTO about (target_id, account_id, data, fetched_at) VALUES (?, ?, ?, ?)').run(idn('discord', who), 'acc_demo-discord-main', JSON.stringify(about), Date.now() - 86_400_000);
+  }
   const alice = merge('Alice Chen', ['signal', S.alice], ['discord', D.alice], ['matrix', M.alice], ['whatsapp', W.alice], ['telegram', TG.alice]);
   const sam = merge('Sam Rivera', ['signal', S.sam], ['matrix', M.sam]);
   merge('Theo', ['signal', S.theo], ['discord', D.theo]);
