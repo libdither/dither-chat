@@ -2,11 +2,14 @@
  * The sign-in screen, in place of the app while this device has no session (login.ts, docs/login.md), and Settings →
  * Signed-in devices.
  */
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useState } from 'preact/hooks';
 import { login, signIn, signOut } from '../login.ts';
 import { api } from '../api.ts';
 
 export function LoginScreen() {
+  // index.html draws the start logo as a full-screen layer in #app (#boot-static). The app's first render takes it
+  // over; this screen renders beside it, so it would stay on top and take every tap and click.
+  useLayoutEffect(() => document.getElementById('boot-static')?.remove(), []);
   const setup = login.value?.setup ?? false;
   const [user, setUser] = useState('admin');
   const [password, setPassword] = useState('');
