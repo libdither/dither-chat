@@ -379,7 +379,7 @@ describe('the hub', () => {
         return c.t === 'post' ? command({ ...c, id: crypto.randomUUID() } as P.AdapterCommand) : Promise.resolve({});
       },
     } as any;
-    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
     port = hub.start().port!;
   });
   afterAll(() => hub.stop());

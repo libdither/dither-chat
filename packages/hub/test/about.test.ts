@@ -188,6 +188,19 @@ describe('changing', () => {
 });
 
 describe('without the network', () => {
+  test('the kept About, read without asking the network (the message box\'s timer)', async () => {
+    const c = conv('signal', (c) => c.name === 'Climbing crew 🧗');
+    const before = sent.length;
+    const v = abouts.keptView('conversation', c.id)!;
+    expect(sent.length).toBe(before);
+    expect(v.stale).toBeUndefined();
+    expect(v.canConfigure).toBe(true);
+    expect(v.fields.disappearing).toMatchObject({ value: 90, canEdit: true });
+    const never = store.one<{ id: string }>('SELECT id FROM conversation WHERE id NOT IN (SELECT target_id FROM about) LIMIT 1')!;
+    expect(abouts.keptView('conversation', never.id)).toBeNull();
+    expect(() => abouts.keptView('conversation', 'cnv_nope')).toThrow('no such conversation');
+  });
+
   test('an offline account: the last answer, read-only, saying why', async () => {
     const c = conv('signal', (c) => c.name === 'Climbing crew 🧗');
     offline.add('acc_demo-signal');

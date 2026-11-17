@@ -136,6 +136,8 @@ jobs:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
       - run: bun run check:boot
+      # The sign-in screen on a cold start, clicked and typed into, against a hub behind the login (docs/login.md).
+      - run: bun run web:build && bun scripts/verify-login.ts
 
   # Load and chat switching on a tenth-size world in the runner's browser, a warm-up and then one run: renders, DOM
   # nodes and bytes against scripts/perf-baseline-ci.json; its times go in the job's summary and are never judged

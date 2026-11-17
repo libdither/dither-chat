@@ -127,10 +127,12 @@ describe('owed reply', () => {
 
   test('says why in your terms', () => {
     const r = scoreConversation(owedDm(5, now, habit(9, 10, 40 * MIN, now)));
-    expect(r.reasons[0]).toBe('You usually reply to Sam within an hour; unanswered for 5 hours');
+    // With the chance it needs a reply, to 5 points (needsreply.ts; here the owed table's alone).
+    expect(r.reasons[0]).toBe(`You usually reply to Sam within an hour; unanswered for 5 hours. Likely needs a reply: ${Math.round(r.needsReply! * 100)}%`);
+    expect(r.needsReply! * 20).toBeCloseTo(Math.round(r.needsReply! * 20), 6);
     expect(r.owedSince).toBe(now - 5 * HOUR);
     expect(medianLatency(habit(9, 10, 40 * MIN, now))).toBe(HOUR);
-    expect(scoreConversation(owedDm(3, now)).reasons[0]).toBe('Sam wrote to you 3 hours ago; not answered yet');
+    expect(scoreConversation(owedDm(3, now)).reasons[0]).toMatch(/^Sam wrote to you 3 hours ago; not answered yet\. (Likely needs|May need) a reply: \d+%$/);
   });
 
   test('a week-old one no longer needs you', () => {

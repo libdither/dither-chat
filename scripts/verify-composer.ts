@@ -56,7 +56,7 @@ const hub = Bun.spawn(['bun', join(root, 'packages/hub/src/main.ts'), '--demo', 
 await until(async () => (await fetch(`${base}/api/health`).catch(() => null))?.ok ?? false, 30_000, 'the hub did not start');
 const boot = (await fetch(`${base}/api/bootstrap`).then((r) => r.json())) as any;
 if (!boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub');
-// A Discord channel with more than one account in it: the send-as chip makes its box the narrowest there is.
+// A Discord channel with more than one account in it (its route line names the account sending).
 const conv = boot.conversations.find((c: any) => c.network === 'discord' && c.name === 'dev');
 if (!conv) throw new Error('no #dev in the demo');
 
@@ -195,9 +195,9 @@ try {
   await phoneSize(844);
   await Bun.sleep(200);
 
-  // ------------------------------------------------------------------ a long draft restored, and Catch up's box
+  // ------------------------------------------------------------------ a long draft restored
 
-  // The draft is shared with Catch up's reply box and kept across a reload.
+  // The draft is kept across a reload.
   await page.eval(`location.reload()`);
   await page.until(`!!document.querySelector('.app.phone .composer textarea')`, 20000);
   await Bun.sleep(800);

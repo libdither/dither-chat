@@ -74,6 +74,11 @@ export interface MessageExtra {
   attachmentNotes?: (AttachmentNote | null)[];
   /** Which of the author's devices sent it, and when the network's server took and handed it out (ms epoch). */
   sourceDevice?: number;
+  /**
+   * A disappearing message's timer, in seconds (Signal's `expiresInSeconds`): it goes this long after it is read, or
+   * after it is sent for your own.
+   */
+  expiresInSeconds?: number;
   serverReceivedTs?: number;
   serverDeliveredTs?: number;
 }

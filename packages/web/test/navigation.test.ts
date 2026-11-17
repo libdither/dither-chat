@@ -35,7 +35,7 @@ const ROUTES = [
   '#/inbox/c/pst_x_1',
   '#/inbox/c/pst_x_2',
   '#/inbox/c/mth_1',
-  '#/triage',
+  '#/foryou',
   '#/model',
   '#/people',
   '#/people/pal',

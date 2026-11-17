@@ -38,7 +38,7 @@ docs/chat.md "Threads, forums and group DMs"); the demo world answers the same w
 - **Group DMs.** **Leave** on a group DM's About page asks, then asks whether to leave without telling the others
   (Discord's own choice). On a 1:1 DM it is **Close**: Discord only hides it, and it comes back when either of you
   writes, so the hub keeps it. The group's owner gets a Group card: **Remove** someone, **Make owner** (with a confirm:
-  you can no longer remove people or take it back). Anyone in a group may **Change picture** or remove it.
+  you can no longer remove people or take it back). Anyone in a group may change its picture or remove it, from the page's big picture ([profile.md](profile.md#changing-a-picture)).
 - **Voice channels' text chat.** A voice or stage channel's page shows its messages and a message box (checked; it
   was already so).
 - **Newer channel types** (Discord's 17 to 21): a media channel's post is a thread, a game's DM a DM, a game lobby a

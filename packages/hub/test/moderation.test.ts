@@ -1,8 +1,8 @@
 /**
  * Moderating through the hub (moderation.ts, docs/moderation.md), against the demo world's adapters run in process:
  * a Signal group's admin removes, bans, unbans and makes admins, sets a member label and leaves naming who takes over;
- * a Discord server's moderator kicks, gives a role and times someone out; others' messages and reactions; and the
- * refusals: not an admin, someone who outranks you, yourself, an action out of shape, the hour's limit.
+ * a Discord server's moderator kicks, gives a role and times someone out; others' messages, embeds and reactions; and
+ * the refusals: not an admin, someone who outranks you, yourself, an action out of shape, the hour's limit.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
@@ -253,6 +253,12 @@ describe('a Discord server you moderate', () => {
     const msg = store.one<{ id: string }>('SELECT id FROM message WHERE conversation_id = ? AND author_id IS NOT ? LIMIT 1', id, self)!.id;
     expect(await mod.clearReactions(msg, { key: '👍' })).toEqual({ ok: true });
     expect(sent.at(-1)!.cmd).toMatchObject({ t: 'clearReactions', key: '👍' });
+    // Its embeds, as Discord's own × on someone else's embed does.
+    expect(await mod.removeEmbeds(msg, {})).toEqual({ ok: true });
+    expect(sent.at(-1)!.cmd).toMatchObject({ t: 'suppressEmbeds', moderator: true });
+    expect(notes.at(-1)).toMatch(/^\[moderate\] removed the embeds from a message by .+ in general$/);
+    const mine = store.one<{ id: string }>('SELECT id FROM message WHERE conversation_id = ? AND author_id = ? LIMIT 1', id, self);
+    if (mine) expect((await reject(mod.removeEmbeds(mine.id, {}))).status).toBe(400);
     expect((await reject(mod.clearReactions(msg, { identityId: 'idn_x' }))).status).toBe(404);
     expect(await mod.deleteMessage(msg, { accountId: MAIN })).toEqual({ ok: true });
     expect(sent.at(-1)!.cmd).toMatchObject({ t: 'redact', moderator: true });
@@ -261,6 +267,7 @@ describe('a Discord server you moderate', () => {
     // The alt account moderates nothing there.
     const other = store.one<{ id: string }>('SELECT id FROM message WHERE conversation_id = ? AND id != ? AND deleted = 0 LIMIT 1', id, msg);
     if (other) expect((await reject(mod.deleteMessage(other.id, { accountId: ALT }))).message).toBe('You need the Manage Messages permission here.');
+    if (other) expect((await reject(mod.removeEmbeds(other.id, { accountId: ALT }))).message).toBe('You need the Manage Messages permission here.');
   });
 
   test('at most so many an hour from one account', async () => {

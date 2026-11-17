@@ -4,10 +4,11 @@
  */
 import { isLottie } from './Sticker.tsx';
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META, RULE_LABEL, RULE_LEVELS, showsInline } from '@dither-chat/protocol';
+import { NETWORK_META, PICTURE_LAYOUTS, RULE_LABEL, RULE_LEVELS, showsInline } from '@dither-chat/protocol';
 import { fullTime } from '../format.ts';
 import { noteRowRead } from '../activity.ts';
-import { AUTOMATIC, OLDER_RULE, authorName, convTitle, deepLink, directsOf, effectiveLevel, externalProfile, heldHere, netName, plainBody, ruleOn, sumUnread, unreadOf, type Level } from '../model.ts';
+import { AUTOMATIC, OLDER_RULE, authorName, convTitle, deepLink, directsOf, effectiveLevel, externalProfile, heldHere, netName, placePref, plainBody, ruleOn, sumUnread, unreadOf, type Level } from '../model.ts';
+import { inheritedPictures, PICTURE_LABELS, setPlacePictures } from '../arrange.ts';
 import { deviceRule, myDevice, setDeviceRule } from '../devices.ts';
 import { android } from '../android.ts';
 import { alertToggle, isTier, lessToggle } from '../marks.ts';
@@ -15,7 +16,7 @@ import { phone } from '../phone.ts';
 import { mark } from '../triage.ts';
 import { desk, openLink } from '../desk.ts';
 import { pickerFor, quickReactions, reactionScope, reactorsFor, replacing, toggleReaction } from '../reactions.ts';
-import { clearReactions, moderatorDelete, modOf } from '../moderate.ts';
+import { clearReactions, moderatorDelete, moderatorRemoveEmbeds, modOf } from '../moderate.ts';
 import { canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
 import { messageSomeone, openPalette } from './Palette.tsx';
 import { hasHistory, historyOf } from './MessageHistory.tsx';
@@ -227,13 +228,14 @@ function pinEntry(m: P.MessageView): MenuEntry {
   return { label: 'Pin Message', icon: 'pin', track: 'pin', sub: choices.map((c): MenuEntry => ({ label: c.label, track: 'pin (duration)', run: () => void pin(m, false, c.seconds) })) };
 }
 
-/** Someone else's message where this account moderates (docs/moderation.md): delete it, take reactions off. */
+/** Someone else's message where this account moderates (docs/moderation.md): delete it, take its embeds or reactions off. */
 function moderatorEntries(m: P.MessageView): MenuEntry[] {
   const mod = modOf(m);
   if (!mod) return [];
   const label = (r: P.ReactionView) => (r.emoji ? `:${r.emoji.name}:` : r.key.match(/^(.+):\d+$/) ? `:${r.key.split(':')[0]}:` : r.key);
   return [
     mod.delete && m.kind !== 'system' && { label: 'Delete Message (Moderator)', icon: 'trash', danger: true, track: 'mod delete', run: () => moderatorDelete(m) },
+    mod.embeds && m.embeds.length > 0 && { label: 'Remove Embeds (Moderator)', icon: 'eyeOff', danger: true, track: 'mod embeds', run: () => moderatorRemoveEmbeds(m) },
     mod.reactions &&
       m.reactions.length > 0 && {
         label: 'Remove Reactions',
@@ -294,6 +296,8 @@ export function attachmentMenu(a: P.AttachmentView, m: P.MessageView | null, ima
       { label: `Save ${noun}`, icon: 'download', run: () => save(a.url, a.name) },
       { label: 'Copy Link', icon: 'link', run: () => copy(absolute(a.url), 'Link copied') },
     ],
+    // A run of pictures: how this chat shows them (the rail beside it does the same; ui/PictureSwitch.tsx).
+    image && m && images.length > 1 ? [{ label: 'Show Pictures As', icon: 'image', sub: pictureEntries('conversation', m.conversationId) }] : [],
     m ? messageEntries(m, onReply) : [],
   );
   return { label: `${noun} actions`, track: 'attachment menu', items, head: m ? <MessageHead m={m} /> : undefined };
@@ -375,6 +379,23 @@ export function WhyHere({ reasons }: { reasons: string[] }) {
   );
 }
 
+/**
+ * How a chat or a server shows pictures (docs/pictures.md): as the place it is in says, else as Settings say; or a
+ * way of its own. Several ids (a person's chat, one per route): each of them, and a way is ticked when they all have it.
+ */
+function pictureEntries(kind: P.PlaceKind, ids: string | string[]): MenuEntry[] {
+  const all = Array.isArray(ids) ? ids : [ids];
+  const id = all[0];
+  const owns = all.map((i) => placePref(kind, i).pictures ?? null);
+  const own = owns.every((o) => o === owns[0]) ? owns[0] : undefined;
+  const up = inheritedPictures(kind, id);
+  const from = up.from && (up.from.kind === 'space' ? db.spaces.get(up.from.id)?.name : up.from.kind === 'folder' ? db.folders.find((f) => f.id === up.from!.id)?.name : convTitle(db.conversations.get(up.from.id)));
+  return [
+    { label: `As ${from ? `in ${from}` : 'in Settings'}: ${PICTURE_LABELS[up.layout]}`, radio: true, checked: own === null, run: () => void setPlacePictures(kind, all, null) },
+    ...PICTURE_LAYOUTS.map((l): MenuEntry => ({ label: PICTURE_LABELS[l], radio: true, checked: own === l, run: () => void setPlacePictures(kind, all, l) })),
+  ];
+}
+
 /** `why`: the inbox's reasons for where this row sits (docs/inbox.md), shown first. */
 export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpec {
   const eff = effectiveLevel(c);
@@ -402,6 +423,7 @@ export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpe
         { label: muted ? `Unmute ${noun}` : `Mute ${noun}`, icon: muted ? 'bell' : 'bellOff', run: () => setRule('conversation', c.id, muted ? null : 'none') },
         { label: 'Notification Settings', icon: 'bell', sub: notifyEntries('conversation', c.id, own, heldHere(eff)) },
         deviceEntries('conversation', c.id),
+        { label: 'Pictures', icon: 'image', sub: pictureEntries('conversation', c.id) },
       ],
       c.shape !== 'thread' ? arrangeEntries(placeKey) : [],
       // Follow a thread and how it notifies; start, post, browse threads (threads.ts).
@@ -438,6 +460,7 @@ export function chatMenu(p: P.PersonView, routes: P.ConversationView[], why?: st
       [
         { label: muted ? 'Unmute Chat' : 'Mute Chat', icon: muted ? 'bell' : 'bellOff', run: () => ids.forEach((id) => setRule('conversation', id, muted ? null : 'none')) },
         { label: 'Notification Settings', icon: 'bell', sub: notifyEntries('conversation', ids, own) },
+        { label: 'Pictures', icon: 'image', sub: pictureEntries('conversation', ids) },
       ],
       identityCopies(p.identityIds.map((id) => db.identities.get(id)).filter((x): x is P.IdentityView => !!x)),
     ),
@@ -466,6 +489,7 @@ export function spaceMenu(s: P.SpaceView): MenuSpec {
         { label: muted ? `Unmute ${noun}` : `Mute ${noun}`, icon: muted ? 'bell' : 'bellOff', run: () => setRule('space', s.id, muted ? null : 'none') },
         { label: 'Notification Settings', icon: 'bell', sub: notifyEntries('space', s.id, own) },
         deviceEntries('space', s.id),
+        { label: 'Pictures', icon: 'image', sub: pictureEntries('space', s.id) },
       ],
       section ? [] : arrangeEntries(`space:${s.id}`),
       [
@@ -525,7 +549,10 @@ export function personMenu(p: P.PersonView, placeKey?: string): MenuSpec {
         !p.isSelf && directs.length > 0 && { label: 'Message', icon: 'groups', run: () => go({ view: 'people', person: p.id }) },
         !p.isSelf && !directs.length && idents[0] && canStartDirect() && { label: 'Message', icon: 'groups', run: () => messageSomeone(idents[0].id) },
       ],
-      [directs.length > 0 && { label: 'Mark As Read', icon: 'check', disabled: !sumUnread(directs).unread, run: () => markAllRead(directs, p.name) }],
+      [
+        directs.length > 0 && { label: 'Mark As Read', icon: 'check', disabled: !sumUnread(directs).unread, run: () => markAllRead(directs, p.name) },
+        directs.length > 0 && { label: 'Pictures', icon: 'image', sub: pictureEntries('conversation', directs.map((c) => c.id)) },
+      ],
       placeKey ? arrangeEntries(placeKey) : [],
       identityCopies(idents),
     ),

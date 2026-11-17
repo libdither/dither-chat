@@ -404,7 +404,7 @@ describe('serving and asking for a file once the hub knows what it is', () => {
       online: () => true,
       command: async (_a: string, c: any) => (c.t === 'fetchMedia' && files[c.url] ? { mime: files[c.url].mime, base64: Buffer.from(files[c.url].bytes).toString('base64') } : null),
     } as any;
-    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
     port = hub.start().port!;
     url = `http://127.0.0.1:${port}`;
     const a = store.createAccount({ network: 'matrix', label: 'mx', color: '#000', adapter: 'matrix' });

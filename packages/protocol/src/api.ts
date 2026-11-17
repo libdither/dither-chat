@@ -24,6 +24,7 @@ import type {
 } from './ontology.ts';
 import type { ArrangeSettings, UsageKind, UsageView } from './usage.ts';
 import type { FileInfo } from './files.ts';
+import type { PictureLayout } from './pictures.ts';
 import type { AboutModerationView, MemberMod, MessageModeration } from './moderation.ts';
 import type { RichView, VoiceFact } from './rich.ts';
 import type { PollView } from './poll.ts';
@@ -414,8 +415,41 @@ export interface ReactionView {
   /** The total. Can exceed identityIds: Discord reports totals without naming everyone. */
   count: number;
   identityIds: string[];
+  /**
+   * When each of identityIds reacted, by identity, as the network says (docs/reactions.md "When"). Those the network
+   * gives no time for are in seenAt instead, and those nobody knows a time for (already there when the hub first saw
+   * the message) are in neither. Keyed by identity, so a reaction shown before the network confirms it needs no entry.
+   */
+  at?: Record<string, number>;
+  /** When the hub first heard of the reaction, where the network gives no time (Discord): it was made no later. */
+  seenAt?: Record<string, number>;
   emoji?: CustomEmojiView;
   colors?: string[];
+}
+
+/** One reaction taken back, for its emoji's list of who reacted (MessageReactorsView). */
+export interface ReactionTakenBack {
+  identityId: string;
+  /** When it was taken back. */
+  at: number;
+  /** `at` is when the hub heard, not the network's own time. */
+  seen?: true;
+  /** When it had been added, where known. */
+  added?: number;
+  addedSeen?: true;
+  /** A moderator took it off. */
+  cleared?: true;
+}
+
+/** GET /api/messages/:id/reactors?key&style: who reacted with one emoji, when, and who took theirs back. */
+export interface MessageReactorsView {
+  count: number;
+  identityIds: string[];
+  at?: Record<string, number>;
+  seenAt?: Record<string, number>;
+  /** Taken back, oldest first, while Message history keeps reactions taken back (docs/history.md). Never your own. */
+  takenBack: ReactionTakenBack[];
+  identities: IdentityView[];
 }
 
 /**
@@ -602,7 +636,7 @@ export interface MessageView {
   gone?: { how: 'deleted' | 'disappeared'; at: number; kept: boolean };
   /** Earlier versions the hub kept: GET /api/messages/:id/history. */
   edits?: number;
-  /** Other things that happened to it the hub kept: reactions taken back, pins (docs/history.md). */
+  /** Other things that happened to it the hub kept: reactions taken back, pins (docs/history.md). Reaction times are on `reactions`. */
   events?: number;
   /** Pinned, as the last pin or unpin the hub saw says. */
   pinned?: boolean;
@@ -631,6 +665,8 @@ export interface MessageView {
   failed?: SendFailureView[];
   /** Files it had that the account could not download. */
   missingAttachments?: MissingAttachmentFact[];
+  /** A disappearing message: its timer in seconds, from when it is read (your own: from when it is sent). */
+  disappears?: number;
   /** A poll, with its votes as the hub has them (poll.ts). */
   poll?: PollView;
   /**
@@ -738,12 +774,14 @@ export interface ForwardResult {
   skipped?: string[];
 }
 
+/** What a folder holds. A `folder` item is a folder inside it: one level only, so a folder that holds folders sits at the top. */
+export type FolderItemKind = 'space' | 'conversation' | 'person' | 'folder';
 export interface FolderView {
   id: string;
   name: string;
   icon: string | null;
   color: string | null;
-  items: { kind: 'space' | 'conversation' | 'person'; id: string }[];
+  items: { kind: FolderItemKind; id: string }[];
 }
 
 /** Where a place sits in your sidebar. Hub-only: networks never see it. */
@@ -764,11 +802,14 @@ export interface PlacePrefView {
   mentionScope?: MentionScope;
   /** The @ picker's friends and everyone only on this chat's network. Absent: inherited, else false. */
   mentionSameNetwork?: boolean;
+  /** How pictures are shown here (docs/pictures.md). Absent: as the place it is in says, else the global setting. */
+  pictures?: PictureLayout;
 }
-/** The fields present change; null takes a mention setting away, so the place inherits it again. */
-export type PlacePrefPatch = { kind: PlaceKind; id: string } & Partial<Omit<PlacePrefView, 'kind' | 'id' | 'mentionScope' | 'mentionSameNetwork'>> & {
+/** The fields present change; null takes a mention or pictures setting away, so the place inherits it again. */
+export type PlacePrefPatch = { kind: PlaceKind; id: string } & Partial<Omit<PlacePrefView, 'kind' | 'id' | 'mentionScope' | 'mentionSameNetwork' | 'pictures'>> & {
   mentionScope?: MentionScope | null;
   mentionSameNetwork?: boolean | null;
+  pictures?: PictureLayout | null;
 };
 
 /** A category is a yes/no question asked of each place (hub categorize.ts). */
@@ -1238,8 +1279,33 @@ export interface AttentionView {
   owedSince: number | null;
   /** You marked what you owe here "Reply needed": it is held up until you answer (docs/inbox.md, "Marks"). */
   replyMark?: 'needs';
+  /**
+   * The chance the reply you owe is one you will want to give (docs/inbox.md, "Needs a reply"), 0..1 to 5 points: with
+   * `owedSince`, unless you marked it "Reply needed".
+   */
+  needsReply?: number;
   /** When the hub computed it. */
   at: number;
+}
+
+/**
+ * How well the "needs a reply" chances matched what you did (GET /api/attention/needs-reply, docs/inbox.md "Needs a
+ * reply"): each open turn's chance kept at 15 minutes, an hour, 6 hours and a day, against whether you answered within
+ * the reply window. By the day the turn began, and all together in bins. Counts and rates only.
+ */
+export interface NeedsReplyCalibration {
+  days: { day: string; n: number; answered: number; predicted: number; brier: number; logLoss: number; tableBrier: number }[];
+  n: number;
+  brier: number;
+  logLoss: number;
+  auc: number;
+  /** The owed table's chance alone, on the same turns, to compare. */
+  tableBrier: number;
+  tableAuc: number;
+  /** Ten bins of the chance given: how many, the mean chance, and the share answered. */
+  bins: { lo: number; hi: number; n: number; predicted: number; actual: number }[];
+  /** When the model was fitted, and on how many turns of each shape (none: the table alone). */
+  model: { fittedAt: number | null; turns: { direct?: number; group?: number } };
 }
 
 /**
@@ -1520,10 +1586,21 @@ export interface ChangeView {
 /** Something that happened to one message, besides its text changing. */
 export interface MessageEventView {
   kind: 'edit' | 'unreact' | 'pin' | 'unpin';
-  /** edit: the text it had before; unreact: { key, style }. */
+  /** edit: the text it had before; unreact: UnreactData. */
   data: unknown;
   actorId?: string;
   at: number;
+  /** `at` is when the hub heard, not the network's own time. */
+  seen?: true;
+}
+
+/** What an unreact event says: which reaction, and when it had been added where known. */
+export interface UnreactData {
+  key: string;
+  style: ReactionStyle;
+  cleared?: true;
+  added?: number;
+  addedSeen?: true;
 }
 
 /** GET /api/messages/:id/history */
@@ -1531,6 +1608,8 @@ export interface MessageHistoryView {
   /** Every version, oldest first, the last as it reads now. */
   versions: { body: string; at: number | null }[];
   events: MessageEventView[];
+  /** Reactions on it now whose time is known, oldest first. Those taken back are in events, with when they were added. */
+  reactions: { identityId: string; key: string; style: ReactionStyle; at: number; seen?: true }[];
   /** Your message: who got it, read it, played it, and when. */
   receipts: { identityId: string; state: ReceiptState; at: number }[];
   identities: IdentityView[];

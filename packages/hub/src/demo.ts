@@ -37,7 +37,12 @@ type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa' | 'tg';
  * are what the tests and perf baselines expect.
  */
 const MULTI_ACCOUNT = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('multiaccount');
-const named = (plain: string, username: string) => (MULTI_ACCOUNT ? username : plain);
+/**
+ * DITHER_DEMO_SCENARIO=servers adds 35 servers across your two Discord accounts, with Discord's own folders for each,
+ * two schools whose names share a word, and servers gone quiet a year ago: a sidebar to organize (docs/organize.md).
+ */
+const SERVERS = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('servers');
+const named = (plain: string, username: string) => (MULTI_ACCOUNT || SERVERS ? username : plain);
 
 const DEMO_ACCOUNTS: { key: AccKey; id: string; network: P.Network; label: string; color: string }[] = [
   { key: 'dmain', id: 'acc_demo-discord-main', network: 'discord', label: named('main', 'zyansheep'), color: '#F2A541' },
@@ -481,6 +486,8 @@ interface MsgOpts {
   thread?: string;
   /** A forward, as Discord marks one. */
   fwd?: P.ForwardFact;
+  /** Link previews, as Discord's embeds and Signal's previews come. */
+  embeds?: P.EmbedView[];
 }
 type Msg = [minutesAgo: number, author: P.IdentityFact, body: string, opts?: MsgOpts];
 interface DemoConv {
@@ -506,6 +513,67 @@ const g = {
 };
 const cat = (k: string) => snow('cat-' + k);
 const ch = (k: string) => snow('ch-' + k);
+
+// ---------------- DITHER_DEMO_SCENARIO=servers: [key, name, account, channels, minutes since its last message]
+const YEAR = 365 * DAY;
+const SERVER_LIST: [string, string, AccKey, string[], number][] = [
+  ['bevy', 'Bevy Engine', 'dmain', ['help', 'ecs', 'rendering', 'showcase'], 3 * H],
+  ['tokio', 'Tokio Runtime', 'dmain', ['tokio-users', 'async', 'tracing'], 2 * DAY],
+  ['zig', 'Zig Programming', 'dmain', ['help', 'compiler', 'build-system'], 6 * DAY],
+  ['lean', 'Lean Prover', 'dmain', ['mathlib', 'tactics', 'new-members'], 9 * DAY],
+  ['helix', 'Helix Editor', 'dmain', ['help', 'plugins', 'lsp'], 20 * DAY],
+  ['compilers', 'Compiler Hangout', 'dmain', ['parsing', 'type-systems', 'llvm', 'codegen'], 4 * DAY],
+  ['nixpkgs', 'Nixpkgs Contributors', 'dmain', ['flakes', 'packaging', 'nixos-modules'], 12 * DAY],
+  ['kestrel', 'Kestrel Talks', 'dmain', ['videos', 'patreon', 'memes'], DAY],
+  ['tinker', 'Tinker Lab Fans', 'dmain', ['builds', 'videos', 'off-topic'], 15 * DAY],
+  ['pixelws', 'Pixel Workshop', 'dmain', ['streams', 'art-share', 'palettes'], 30 * DAY],
+  ['synth', 'Synth Diaries', 'dmain', ['patches', 'modular', 'videos'], 40 * DAY],
+  ['wb-robotics', 'Westbrook Robotics', 'dmain', ['build-season', 'cad', 'general'], YEAR + 30 * DAY],
+  ['wb-math', 'Westbrook Math Club', 'dmain', ['problems', 'contests'], YEAR + 60 * DAY],
+  ['wb-games', 'Westbrook Game Night', 'dmain', ['lfg', 'general'], YEAR + 90 * DAY],
+  ['wb-seniors', 'Westbrook Seniors 2022', 'dmain', ['announcements', 'general'], 2 * YEAR],
+  ['million', 'Count to a Million', 'dmain', ['million'], 2 * YEAR],
+  ['realm', 'Minecraft Realm 2019', 'dmain', ['builds', 'general'], 3 * YEAR],
+  ['guild', 'The Old Guild', 'dmain', ['general'], 2 * YEAR + 100 * DAY],
+  ['harbor', 'Harbor Neighbours', 'dmain', ['events', 'free-stuff', 'lost-and-found'], 2 * DAY],
+  ['cityclimb', 'City Climbing Meetup', 'dmain', ['plans', 'gear', 'beta'], 5 * DAY],
+  ['lk-cs', 'Lakeside CS Society', 'dalt', ['announcements', 'projects', 'internships'], 6 * H],
+  ['lk-chess', 'Lakeside Chess Club', 'dalt', ['games', 'puzzles', 'events'], 2 * DAY],
+  ['lk-anime', 'Lakeside Anime Club', 'dalt', ['watch-party', 'recs'], 3 * DAY],
+  ['lk-hack', 'HackLakeside 2026', 'dalt', ['teams', 'help-desk', 'announcements'], 10 * DAY],
+  ['lk-dorms', 'Lakeside Dorms', 'dalt', ['north-hall', 'laundry', 'marketplace'], DAY],
+  ['lk-film', 'Lakeside Film Society', 'dalt', ['screenings'], YEAR + 20 * DAY],
+  ['ash', 'Ashford College', 'dalt', ['announcements', 'class-of-2027', 'general'], 4 * DAY],
+  ['ash-climb', 'Ashford Climbing', 'dalt', ['sessions', 'gear'], 8 * DAY],
+  ['ash-hang', 'Ashford Hangout', 'dalt', ['general', 'memes', 'vc-chat'], 2 * H],
+  ['ash-gazette', 'Ashford Gazette', 'dalt', ['pitches', 'edits'], YEAR + 100 * DAY],
+  ['mossy', 'Mossy Board Games', 'dalt', ['game-nights', 'rules-questions'], 11 * DAY],
+  ['reading', 'Tuesday Reading Circle', 'dalt', ['meetups', 'reading-group'], 13 * DAY],
+  ['riverside', 'Riverside Meetups', 'dalt', ['events', 'carpool'], 25 * DAY],
+  ['owls', 'Night Owls Chess', 'dalt', ['blitz', 'arena'], 3 * DAY],
+  ['corner', 'Quiet Corner', 'dalt', ['general'], YEAR + 200 * DAY],
+];
+const sg = (k: string) => snow('srv-' + k);
+const SERVER_SPACES: DemoSpace[] = SERVERS ? SERVER_LIST.map(([k, name, acc]) => ({ acc: [acc], fact: { nativeId: sg(k), kind: 'community', name } })) : [];
+/** Discord's own folders in this scenario, by account: named ones, unnamed ones, and the loose rest in order. */
+const SERVER_FOLDERS: Partial<Record<AccKey, { name?: string; color?: string; keys: string[] }[]>> = {
+  dmain: [
+    { name: 'Coding', color: '#5865f2', keys: ['@rust', '@dither', 'bevy', 'tokio', 'zig', 'lean', 'helix'] },
+    { name: 'Creators', color: '#eb459e', keys: ['kestrel', 'tinker', 'pixelws'] },
+    { keys: ['wb-robotics', 'wb-math'] },
+  ],
+  dalt: [
+    { keys: ['ash-gazette', 'mossy', 'ash-climb'] },
+    { keys: ['reading', 'riverside'] },
+    { keys: ['lk-cs', 'lk-chess'] },
+  ],
+};
+const serverFolderSpaces = (acc: AccKey, mine: string[]): P.NetworkFolder[] => {
+  const ids = (keys: string[]) => keys.map((k) => (k === '@rust' ? g.rust : k === '@dither' ? g.dither : sg(k)));
+  const listed = (SERVER_FOLDERS[acc] ?? []).map((f, i) => ({ ...(f.name ? { id: String(i + 1), name: f.name } : { id: String(i + 1) }), ...(f.color ? { color: f.color } : {}), spaces: ids(f.keys).filter((x) => mine.includes(x)) }));
+  const inOne = new Set(listed.flatMap((f) => f.spaces));
+  return [...listed, ...mine.filter((s) => !inOne.has(s)).map((s) => ({ spaces: [s] }))];
+};
 
 const SPACES: DemoSpace[] = [
   { acc: ['dmain'], fact: { nativeId: g.rust, kind: 'community', name: 'Rust Programming Language', topic: 'The unofficial community server for Rust' } },
@@ -538,6 +606,7 @@ const SPACES: DemoSpace[] = [
   { acc: ['mx'], fact: { nativeId: room('rust-space', 'matrix.org'), kind: 'community', name: 'Rust Community', topic: 'Rust rooms on Matrix' } },
   // WhatsApp: a community is its parent group; its groups are channels in it.
   { acc: ['wa'], fact: { nativeId: wgroup('nbh'), kind: 'community', name: 'Maple Street', topic: 'Neighbours on Maple Street' } },
+  ...SERVER_SPACES,
 ];
 
 const dch = (acc: AccKey[], k: string, name: string, section: string, i: number, x: Partial<P.ConversationFact> = {}): P.ConversationFact & { _acc?: AccKey[] } => ({
@@ -619,7 +688,7 @@ const CONVS: DemoConv[] = [
     acc: ['dmain'],
     fact: { nativeId: snow('gdm-raid'), shape: 'group', name: 'weekend raid', participants: [D.zyan.nativeId, D.ravi.nativeId, D.theo.nativeId] },
     msgs: [
-      [2 * DAY + 40, D.ravi, "ok who's in for saturday"],
+      [2 * DAY + 40, D.ravi, "ok who's in for saturday", { react: { '🙋': [D.theo] } }],
       [2 * DAY + 38, D.theo, 'me'],
       [2 * DAY + 30, D.zyan, 'me (on the alt lol)'],
       [31, D.theo, 'can we push it to 9? dinner thing'],
@@ -711,6 +780,8 @@ const CONVS: DemoConv[] = [
       [DAY + 490, D.pixelfox, 'is dither like libp2p?'],
       [DAY + 470, D.zyan, 'similar goals, but routing is coordinate-based instead of a Kademlia DHT. see #routing-research', { reply: 3 }],
       [DAY + 460, D.pixelfox, 'oh neat, reading now', { react: { '👍': [D.zyan] } }],
+      [DAY + 455, D.lev, 'the long version: https://example.com/dither/routing', { embeds: [{ url: 'https://example.com/dither/routing', provider: 'example.com', title: 'Coordinate routing in dither', description: 'How nodes find each other by position instead of by hash.' }] }],
+      [DAY + 450, D.zyan, 'and the simulator to try it in: https://example.com/dither/sim', { embeds: [{ url: 'https://example.com/dither/sim', provider: 'example.com', title: 'dither-sim', description: '10k-node simulations in the browser.' }] }],
     ],
   },
   {
@@ -799,6 +870,7 @@ const CONVS: DemoConv[] = [
       [26 * H, S.alice, 'are we still on for bouldering thursday?'],
       [26 * H - 4, S.self, 'yes! 7pm at Mesa?'],
       [25 * H, S.alice, "perfect. I'll bring the spare chalk bag"],
+      [20 * H, S.self, 'the gym moved its hours: https://example.com/mesa/hours', { embeds: [{ url: 'https://example.com/mesa/hours', provider: 'example.com', title: 'Mesa Climbing: hours', description: 'Open 6am to 11pm on weekdays.' }] }],
       [41, S.alice, "hey, can you grab my belay device from Theo's? I left it in his car"],
       [38, S.alice, 'no rush, just before thursday'],
     ],
@@ -845,7 +917,7 @@ const CONVS: DemoConv[] = [
       [DAY + 70, S.alice, 'me + zyan'],
       [DAY + 60, S.self, '👍'],
       [50, S.priya, "anyone have a spare harness? mine's being retired"],
-      [45, S.sam, 'I have one, three sizes too big though'],
+      [45, S.sam, 'I have one, three sizes too big though', { react: { '😂': [S.priya, S.alice, S.theo] } }],
       [20, S.priya, 'ok here is the purple V4, look at this heel hook', { att: [img(ART.wall, 'v4.jpg', 640, 420)] }],
     ],
     unread: 3,
@@ -1081,6 +1153,18 @@ const CONVS: DemoConv[] = [
     ],
     unread: 1,
   },
+  // DITHER_DEMO_SCENARIO=servers: each server's channels, its first with one message at its age.
+  ...(SERVERS
+    ? SERVER_LIST.flatMap(([k, , acc, chans, age]) =>
+        chans.map(
+          (c, i): DemoConv => ({
+            acc: [acc],
+            fact: { nativeId: snow(`srv-${k}-${c}`), shape: 'channel', name: c, spaces: [{ nativeId: sg(k), position: pos(i) }] },
+            msgs: i === 0 ? [[age, [D.alice, D.ravi, D.quinn, D.theo][k.length % 4], `${c}: anyone around?`]] : [],
+          }),
+        ),
+      )
+    : []),
 ];
 
 /**
@@ -2341,6 +2425,8 @@ class DemoAdapter implements InprocAdapter {
       ...(this.network === 'discord' ? DEMO_THREAD_CAPS : []),
       ...(DEMO_MOD_CAPS[this.network] ?? []),
       ...(this.network === 'discord' ? DEMO_SEND_CAPS : []),
+      // Signal takes a link preview off by an edit (demosending.ts).
+      ...(this.network === 'signal' ? (['suppressEmbeds'] as const) : []),
       // Voice calls, carried by the demo call room (democalls.ts).
       ...(this.network === 'discord' ? DEMO_CALL_CAPS : []),
     ];
@@ -2373,7 +2459,7 @@ class DemoAdapter implements InprocAdapter {
     if (this.key === 'sig') this.media.start([S.alice.nativeId, S.sam.nativeId], CONVS.find((c) => c.fact.name === 'Climbing crew 🧗')?.fact.nativeId);
     if (this.network === 'discord') {
       const mine = SPACES.filter((x) => x.acc.includes(this.key) && x.fact.kind === 'community').map((x) => x.fact.nativeId);
-      this.selfDemo = new DemoSelf(this.network, this.self, this.dir, emit, mine, (who, blocked) => this.adds.relate(who, blocked ? 'blocked' : 'stranger'));
+      this.selfDemo = new DemoSelf(this.network, this.self, this.dir, emit, mine, (who, blocked) => this.adds.relate(who, blocked ? 'blocked' : 'stranger'), SERVERS ? serverFolderSpaces(this.key, mine) : undefined);
       this.selfDemo.start();
     }
 
@@ -2382,6 +2468,7 @@ class DemoAdapter implements InprocAdapter {
       this.startServers(epoch);
       this.sending = new DemoSending({ emit, someDirect: () => CONVS.find((c) => c.acc.includes(this.key) && c.fact.shape === 'direct')?.fact.nativeId ?? null }, epoch);
     }
+    if (this.network === 'signal') this.sending = new DemoSending({ emit, someDirect: () => null }, epoch, { asEdit: true });
     if (DEMO_MOD_CAPS[this.network]) {
       this.mod = new DemoModeration({
         network: this.network,
@@ -2446,7 +2533,8 @@ class DemoAdapter implements InprocAdapter {
             mentionsSelf: body.includes(`<@${this.self.nativeId}>`),
             attachments: o.att,
             ...(o.fwd ? { forward: o.fwd } : {}),
-            reactions: o.react || o.fancy ? [...(o.fancy ?? []), ...Object.entries(o.react ?? {}).map(([key, who]) => ({ key, authors: who.map((w) => w.nativeId) }))] : undefined,
+            ...(o.embeds ? { extra: { embeds: o.embeds } } : {}),
+            reactions: o.react || o.fancy ? [...(o.fancy ?? []), ...Object.entries(o.react ?? {}).map(([key, who]) => ({ key, authors: who.map((w) => w.nativeId), ...this.reactedAt(ago(min), who, epoch) }))] : undefined,
           },
         });
       });
@@ -2454,6 +2542,7 @@ class DemoAdapter implements InprocAdapter {
       if (readUpTo >= 0) emit({ t: 'read', conversation: c.fact.nativeId, upToTs: ago(msgs[readUpTo][0]) });
     }
     if (firstRun) this.seedHistory(ago);
+    if (firstRun) this.seedHeardReactions();
     if (firstRun) writeFileSync(marker, String(Date.now()));
     if (this.network === 'discord') this.startThreads();
     scheduleChatter();
@@ -2599,6 +2688,25 @@ class DemoAdapter implements InprocAdapter {
     return { people, ...(roles.length ? { roles } : {}), everyone: !!guild && ADMIN_IN[this.key].includes(guild) };
   }
 
+  /**
+   * When each reacted, for reactions in the seeded chats: a few minutes apart after the message, as every network but
+   * Discord says (docs/reactions.md "When"). Discord gives no time, so its seeded ones have none.
+   */
+  private reactedAt(sent: number, who: P.IdentityFact[], now: number): { at?: Record<string, number> } {
+    if (this.network === 'discord') return {};
+    return { at: Object.fromEntries(who.map((w, j) => [w.nativeId, Math.min(now - 60_000, sent + (j + 1) * 7 * 60_000)])) };
+  }
+
+  /** Discord reactions the hub hears as they happen, so it keeps when it heard them ("~"): one made, taken back, and made again. */
+  private seedHeardReactions() {
+    if (this.key !== 'dmain') return;
+    const raid = snow('gdm-raid');
+    const at = { conversation: raid, message: `${raid}~0`, key: '🙋' };
+    this.emit({ t: 'reaction', ...at, author: D.ravi.nativeId });
+    this.emit({ t: 'reaction', ...at, author: D.ravi.nativeId, remove: true });
+    this.emit({ t: 'reaction', ...at, author: D.ravi.nativeId });
+  }
+
   private seedHistory(ago: (min: number) => number) {
     if (this.key !== 'sig') return;
     const climb = CONVS.find((c) => c.fact.nativeId === sgroup('climb', '', []).nativeId)!.fact;
@@ -2624,8 +2732,14 @@ class DemoAdapter implements InprocAdapter {
     voted(S.priya, ['0'], 1, 53);
     voted(S.alice, ['2'], 1, 52);
     voted(S.priya, ['1'], 2, 50);
-    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, author: S.sam.nativeId, key: '😢' });
-    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, author: S.sam.nativeId, key: '😢', remove: true });
+    // Signal says when: Sam's 😢, taken back a minute later, and made again (docs/reactions.md "When").
+    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, author: S.sam.nativeId, key: '😢', ts: ago(57) });
+    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, author: S.sam.nativeId, key: '😢', remove: true, ts: ago(56) });
+    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, author: S.sam.nativeId, key: '😢', ts: ago(44) });
+    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, author: S.alice.nativeId, key: '😢', ts: ago(52) });
+    // Mei laughed at Sam's harness, then thought better of it.
+    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~7`, author: S.mei.nativeId, key: '😂', ts: ago(43) });
+    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~7`, author: S.mei.nativeId, key: '😂', remove: true, ts: ago(42) });
     emit({ t: 'role', target: { kind: 'conversation', nativeId: climb.nativeId }, member: S.sam.nativeId, role: 'Admin', given: true, by: S.priya.nativeId, ts: ago(56) });
     emit({ t: 'customStatus', who: S.alice.nativeId, text: 'out climbing', emoji: '🧗', ts: ago(200) });
     emit({ t: 'customStatus', who: S.alice.nativeId, text: 'on the wall, back at 8', emoji: '🧗', ts: ago(55) });
@@ -2664,8 +2778,9 @@ class DemoAdapter implements InprocAdapter {
         const mine = rnd() < 0.35;
         const nativeId = `${dm}~a${k++}`;
         const body = mine ? yours[Math.floor(rnd() * yours.length)] : theirs[Math.floor(rnd() * theirs.length)];
-        emit({ t: 'message', live: false, message: { nativeId, conversation: dm, author: (mine ? S.self : S.sam).nativeId, ts: local(d, 19 + Math.floor(rnd() * 6), Math.floor(rnd() * 60)), body } });
-        if (mine && rnd() < 0.4) emit({ t: 'reaction', conversation: dm, message: nativeId, author: S.sam.nativeId, key: '👍' });
+        const ts = local(d, 19 + Math.floor(rnd() * 6), Math.floor(rnd() * 60));
+        emit({ t: 'message', live: false, message: { nativeId, conversation: dm, author: (mine ? S.self : S.sam).nativeId, ts, body } });
+        if (mine && rnd() < 0.4) emit({ t: 'reaction', conversation: dm, message: nativeId, author: S.sam.nativeId, key: '👍', ts: ts + 12 * 60_000 });
       }
     }
     // Presence each day of the last three weeks: on in the evening, idle or busy some days, off at night.
@@ -2752,6 +2867,11 @@ class DemoAdapter implements InprocAdapter {
     });
   }
 
+  /** A live reaction's time: now, on every network but Discord, which gives none (docs/reactions.md "When"). */
+  private now(): { ts?: number } {
+    return this.network === 'discord' ? {} : { ts: Date.now() };
+  }
+
   private later(ms: number, fn: () => void) {
     const t = setTimeout(() => {
       this.timers.delete(t);
@@ -2797,7 +2917,10 @@ class DemoAdapter implements InprocAdapter {
         if (sticker) attachments = [{ nativeId: `sticker:${sticker.id}`, kind: 'image', mime: sticker.mime, name: sticker.name, width: 160, height: 160, url: sticker.url }];
         const kind: P.MessageKind = sticker ? 'sticker' : (attachments?.length || cmd.viewOnce) && !cmd.body ? 'media' : 'text';
         const body = cmd.viewOnce ? cmd.body || '📷 View-once media' : cmd.body;
-        this.emit({ t: 'message', live: true, message: { nativeId, conversation: cmd.conversation, author: this.self.nativeId, ts: Date.now(), body, replyTo: cmd.replyTo, kind, attachments, ...(cmd.viewOnce ? { extra: { viewOnce: true } } : {}), ...(cmd.silent ? { silent: true } : {}) } });
+        // A chat with a disappearing timer: the message carries it, as Signal's do.
+        const timer = (demoPlaces.get(cmd.conversation)?.values.disappearing ?? DEMO_VALUES[cmd.conversation]?.disappearing ?? 0) as number;
+        const extra = { ...(cmd.viewOnce ? { viewOnce: true } : {}), ...(timer > 0 ? { expiresInSeconds: timer } : {}) };
+        this.emit({ t: 'message', live: true, message: { nativeId, conversation: cmd.conversation, author: this.self.nativeId, ts: Date.now(), body, replyTo: cmd.replyTo, kind, attachments, ...(Object.keys(extra).length ? { extra } : {}), ...(cmd.silent ? { silent: true } : {}) } });
         this.sent.set(nativeId, { body: cmd.body, att: attachments });
         reply({ nativeId });
         const conv = CONVS.find((c) => c.fact.nativeId === cmd.conversation);
@@ -2811,7 +2934,7 @@ class DemoAdapter implements InprocAdapter {
           this.later(3500 + Math.random() * 3000, () => this.say(cmd.conversation, author, lines[Math.floor(Math.random() * lines.length)]));
         } else if (others.length) {
           const who = others[Math.floor(Math.random() * others.length)];
-          this.later(2500, () => this.emit({ t: 'reaction', conversation: cmd.conversation, message: nativeId, author: who, key: '👍' }));
+          this.later(2500, () => this.emit({ t: 'reaction', conversation: cmd.conversation, message: nativeId, author: who, key: '👍', ...this.now() }));
           // A group stirs: a few people start typing, then think better of it.
           const typers = [...others].sort(() => Math.random() - 0.5).slice(0, Math.min(4, others.length));
           typers.forEach((who, i) => {
@@ -2862,7 +2985,7 @@ class DemoAdapter implements InprocAdapter {
         }
         break;
       case 'react':
-        this.emit({ t: 'reaction', conversation: cmd.conversation, message: cmd.message, author: this.self.nativeId, key: cmd.key, remove: cmd.remove, style: cmd.style, ...(cmd.style === 'super' ? { colors: SUPER_COLORS } : {}), emoji: cmd.emoji });
+        this.emit({ t: 'reaction', conversation: cmd.conversation, message: cmd.message, author: this.self.nativeId, key: cmd.key, remove: cmd.remove, style: cmd.style, ...(cmd.style === 'super' ? { colors: SUPER_COLORS } : {}), emoji: cmd.emoji, ...this.now() });
         reply();
         break;
       case 'edit':

@@ -3,7 +3,8 @@
 What an admin or moderator does to a group's or server's members and to other people's messages there, from the
 place's page and the message menu: on Signal, removing, banning and unbanning, making and unmaking admins, ending a
 group and answering requests to join; on Discord, kicking, banning (with how much of their history to delete),
-unbanning, timing out and giving or taking a role, deleting someone else's message and taking reactions off. Also your
+unbanning, timing out and giving or taking a role, deleting someone else's message and taking its embeds or reactions
+off. Also your
 own member label in a Signal group, a group's or server's picture, Signal's link approval, a Discord server's
 description and a channel's thread-hiding, user limit and bitrate, and leaving a Signal group as its only admin.
 
@@ -13,7 +14,7 @@ the demo world only (2026-11-12, net-gaps): no live account has run any of it.
 
 The protocol is `packages/protocol/src/moderation.ts`; the hub side `packages/hub/src/moderation.ts`; the page
 `packages/web/src/ui/Moderation.tsx` (a chunk of its own, loaded only where the About says the account may moderate,
-set a label, change the picture or must name who takes over) and `src/moderate.ts` for the message menu. The adapters
+set a label or must name who takes over; a new picture is the picture editor's, [profile.md](profile.md#changing-a-picture)) and `src/moderate.ts` for the message menu. The adapters
 are dither-accounts' `extractors/signal/src/groups.ts` and `extractors/discord/src/moderation.ts` with the hook's
 "moderation" section.
 
@@ -77,6 +78,7 @@ up to 1,000, on a click ("Show who is banned"), as the server settings page make
 | Give or take a role | Manage Roles | only roles below your own top role, never @everyone or a role an integration or boosting manages |
 | Delete someone else's message | Manage Messages | the message menu |
 | Take reactions off: all, one emoji's, one person's | Manage Messages | the message menu ("Remove Reactions"); one person's from the list of who reacted |
+| Take someone else's embeds off | Manage Messages | the message menu ("Remove Embeds (Moderator)"), as the client's × on an embed: the same `SUPPRESS_EMBEDS` flag patch as on your own ([sending.md](sending.md#remove-embeds-report)). `POST /api/messages/:id/moderate-embeds` |
 | Server description | Manage Server | Community servers only |
 | Server icon | Manage Server | PNG, JPEG, GIF or WebP, up to 8 MB, sent as a data URI. A group DM's icon is the group DMs work, not here |
 | Hide threads after inactivity | Manage Channels | text, announcement, forum and media channels: an hour, a day, 3 days, a week |

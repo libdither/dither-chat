@@ -49,6 +49,7 @@
         "src/ui/Moderation.tsx",
         "src/ui/NoticesPane.tsx",
         "src/ui/PalettePages.tsx",
+        "src/ui/PictureEditor.tsx",
         "src/ui/Poll.tsx",
         "src/ui/ProfileSelf.tsx",
         "src/ui/rich/Rich.tsx",

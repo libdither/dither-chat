@@ -14,12 +14,15 @@ slides in over them. A tab bar along the bottom shows whenever the lists do:
 | Tab | What it is |
 |---|---|
 | Home | The rail and the list you were last on |
-| Catch up | The conversations that need you, a card each to answer, mark Done or put Later; accounts that need you; Mark all read; How it sorts |
+| For you | Single messages from channels and big groups, one per burst, ranked ([foryou.md](foryou.md)); How it sorts; the inbox's menu (Mark Everything As Read). No badge |
 | Search | Search with every filter; a search for a name also lists matching people, communities and channels |
 | You | Settings, with your accounts first and Add account |
 
 The card and the panels are moved by `src/ui/Pager.ts`; `src/gesture.ts` holds the arithmetic (axis lock,
-release velocity, when a swipe commits, rubber banding) and is unit tested. `src/phone.ts` has the layers the
+release velocity, when a swipe commits, rubber banding, a settle that starts at the finger's speed) and is unit
+tested. A swipe that commits starts the card settling first and changes the route a frame later, so the render the
+new route brings never holds the card still at the moment it is let go; a card caught while still settling is
+picked up where it is on screen. `src/phone.ts` has the layers the
 back button closes, the keyboard handling and the sheet drag. Wider than 820px nothing of this applies, and
 the desktop is unchanged apart from the fixes listed below.
 
@@ -37,7 +40,7 @@ the desktop is unchanged apart from the fixes listed below.
 | Long-press | A reaction | Who reacted |
 | Long-press, or hold and drag | A rail entry, a row, a card in All communities | The arrange sheet; or drag to reorder and make folders |
 | Drag down | A sheet's grabber or header; anywhere in it once scrolled to its top | Dismisses it. A short drag springs back |
-| Pull down | The top of a list or Catch up | Reloads everything from the hub, or reconnects |
+| Pull down | The top of a list or For you | Reloads everything from the hub, or reconnects; on For you, takes a fresh snapshot too |
 | Pinch, double-tap, drag | An image | Zoom and pan, up to 5x, or to twice the picture's own pixels where that is further. A double tap on a long screenshot or a panorama fills the screen's width (or height). Zoomed, it pans past its edges by up to 40% of the screen (its top comes out from under the bar), and a flick glides on and slows. A touchpad is followed directly, never animated: its pinch zooms by the fingers' own scale about the point between them, and two fingers moving pan a zoomed picture. Only a mouse wheel's notches are eased |
 | Swipe sideways, swipe down | An image | Next or previous image of the message; close |
 | Flick sideways or up | A toast | Dismisses it |
@@ -90,8 +93,7 @@ is no Shift+Enter) and the send button sends; Ctrl+Enter also sends.
 line again after a send. The desktop keeps its ten lines (220px), also held to 40% of a short window. The cap is CSS
 (`max-height` against `100dvh`, which the keyboard resizes, or phone.ts's `--app-h` on iOS), so the keyboard opening
 or the window changing needs no measuring. Chromium sizes the box to its text by itself (`field-sizing: content`);
-other browsers measure it as the text changes, never while it is empty (`ui/grow.ts`). Catch up's reply box works
-the same way.
+other browsers measure it as the text changes, never while it is empty (`ui/grow.ts`).
 
 Before, the box was measured to its text and held at a fixed 220px, about nine lines at a phone's 16px. With the
 keyboard up that was half of what was visible, so a long message, a pasted one or a long draft restored from Catch
@@ -106,9 +108,9 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Desktop capability | How on a desktop | Before, on a phone | Now, on a phone |
 |---|---|---|---|
 | Inbox: one ranked list of DMs, groups, rooms outside a space and notes ([inbox.md](inbox.md)) | Sidebar | Inbox tab | Home, Inbox in the rail |
-| Catch up: the conversations that need you, to answer, Done or Later | Center pane with nothing open | **Unreachable**: the inbox tab showed the list | Catch up tab |
-| How it sorts: Alerts, Conversations, List and Below the list, each line with its two marks, and the counts | Catch up's header, the inbox button's menu, Settings | **Unreachable** | Catch up's header, Settings |
-| Mark all read, everywhere | Catch up's header | **Unreachable** | Catch up tab; per place in its arrange sheet |
+| For you: single messages from channels and big groups, ranked ([foryou.md](foryou.md)) | Center pane with nothing open | **Unreachable**: the inbox tab showed the list | For you tab |
+| How it sorts: Alerts, Conversations, List and Below the list, each line with its two marks, and the counts | For you's header, the inbox button's menu, Settings | **Unreachable** | For you's header, Settings |
+| Mark all read, everywhere | The inbox button's menu, For you's menu | **Unreachable** | For you's menu; per place in its arrange sheet |
 | People, merged DM timeline, one network's chat | Rail, sidebar, header chips | People tab; chips wrapped | Rail; the chips scroll sideways, and the details panel lists each chat |
 | Group chats (now in the inbox), spaces with channel trees and threads, folders | Rail and sidebar | Groups and Spaces tabs, no rail | The inbox, and the rail and its list, as in Discord |
 | Open a folder in the rail; open it as a list | Click; arrange menu | Spaces tab | Tap in the rail; arrange sheet |
@@ -148,7 +150,7 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Any one Settings section (Message history, Adversarial features) without scrolling past the rest | Section list beside Settings | More tab, scrolled | Sections in Settings' header: a sheet of the sections, two taps |
 | Adversarial features' warning and its Yes | Dialog | Not there yet | Bottom sheet whose words scroll, Yes pinned at its bottom |
 | Toasts, open the conversation from one | Bottom right | Covered the composer | At the top; tap to open, flick to dismiss |
-| Unread and mention badges | Rail | None on the tabs | Rail, and the Home and Catch up tabs; You has a dot when an account needs you |
+| Unread and mention badges | Rail | None on the tabs | Rail, and the Home tab; You has a dot when an account needs you |
 | Collapse sections and categories | Click | Tap, under 44px | Tap, 40-44px |
 | Escape closes things | Keyboard | Nothing | Back button, swipes, tap outside |
 
@@ -214,7 +216,7 @@ From the demo hub, at 390x844:
 [swipe to reply](screenshots/41-phone-swipe-reply.png),
 [message sheet](screenshots/42-phone-message-sheet.png),
 [image viewer](screenshots/43-phone-image-viewer.png),
-[Catch up tab](screenshots/44-phone-catchup.png),
+[For you tab](screenshots/44-phone-foryou.png),
 [You tab](screenshots/45-phone-you.png),
 [account](screenshots/46-phone-account.png),
 [a menu as a sheet](screenshots/47-phone-menu-sheet.png),

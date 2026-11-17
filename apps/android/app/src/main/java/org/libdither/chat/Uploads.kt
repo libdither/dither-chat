@@ -418,7 +418,9 @@ class UploadService : Service() {
             while (!halt && (offset < part.size || (part.size == 0L && offset == 0L))) {
                 if (input == null) input = openAt(part.uri, offset)
                 val len = minOf(Uploads.PIECE.toLong(), part.size - offset).toInt()
-                val conn = URL("${Hub.origin(this) ?: throw Fatal("No hub is set.")}/api/imports/${j.source}/data?file=$index&offset=$offset").openConnection() as HttpURLConnection
+                val hub = Hub.origin(this) ?: throw Fatal("No hub is set.")
+                val conn = URL("$hub/api/imports/${j.source}/data?file=$index&offset=$offset").openConnection() as HttpURLConnection
+                Hub.authorize(conn, hub)
                 var sent = 0
                 try {
                     conn.requestMethod = "PUT"

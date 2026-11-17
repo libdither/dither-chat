@@ -48,7 +48,7 @@ beforeAll(() => {
     stop: async () => {},
     command: async (account: string, cmd: any) => (commands.push({ account, cmd }), answer(cmd)),
   } as any;
-  hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+  hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
   base = `http://127.0.0.1:${hub.start().port}`;
   sig = store.createAccount({ network: 'signal', label: 'sig', color: '#111', adapter: 'signal' });
   caps(['send', 'viewed', 'resetSession']);
@@ -126,12 +126,18 @@ describe('cards, story replies, failures and files', () => {
     ]);
   });
 
+  test("a disappearing message: its timer, in seconds", () => {
+    put({ nativeId: `${ALICE}:${T + 25}`, extra: { expiresInSeconds: 604_800 } });
+    expect(view(`${ALICE}:${T + 25}`).disappears).toBe(604_800);
+  });
+
   test('nothing malformed gets through, and a message without extra has none of it', () => {
     const d = { identity: () => null, isSelf: () => false, media: (u: string | null | undefined) => u ?? null, stored: () => false };
-    expect(extraView({ quote: { text: 'no ts' }, contacts: [{ phones: [] }], failed: 'x', attachmentNotes: [1, null] } as any, null, d)).toEqual({});
+    expect(extraView({ quote: { text: 'no ts' }, contacts: [{ phones: [] }], failed: 'x', attachmentNotes: [1, null], expiresInSeconds: '60' } as any, null, d)).toEqual({});
+    expect(extraView({ expiresInSeconds: 0 }, null, d)).toEqual({});
     put({ nativeId: `${ALICE}:${T + 30}` });
     const v = view(`${ALICE}:${T + 30}`);
-    for (const k of ['quote', 'contacts', 'storyReply', 'failed', 'missingAttachments'] as const) expect(v[k]).toBeUndefined();
+    for (const k of ['quote', 'contacts', 'storyReply', 'failed', 'missingAttachments', 'disappears'] as const) expect(v[k]).toBeUndefined();
   });
 });
 

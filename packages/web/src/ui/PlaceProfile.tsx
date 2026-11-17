@@ -6,7 +6,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { ABOUT_LABEL, ABOUT_RULES, NETWORK_META, RULE_LABEL, RULE_LEVELS } from '@dither-chat/protocol';
-import { useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import { fullTime } from '../format.ts';
 import { AUTOMATIC, convTitle, deepLink, effectiveLevel, heldHere, netName, OLDER_RULE, ruleHelp, ruleOn, unreadOf } from '../model.ts';
 import { api, db, go, href, isSelfIdentity, markRead, openMessage, rev, setRule } from '../state.ts';
@@ -31,6 +31,8 @@ import { useServerParts } from './ServerPartsLazy.tsx';
 import { Stories } from './StoriesLazy.tsx';
 import { useThreadParts } from './ThreadsLazy.tsx';
 import { useModeration } from './ModerationLazy.tsx';
+import { usePictureEditor } from './PictureEditorLazy.tsx';
+import type { PictureStart, PictureTarget } from './PictureEditor.tsx';
 import { MentionFinds } from './MentionFinds.tsx';
 
 /** "Seen 12 of 1,287 listed (1%) · 214 online": honest about how little that may be. */
@@ -52,17 +54,14 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
   const sp = useServerParts((kind === 'space' && db.spaces.get(id)?.kind === 'community') || !!view?.leaving || !!view?.nick || !!view?.invite?.options);
   // A thread's following, archiving and locking; a group's owner, removing and its picture (Threads.tsx).
   const tp = useThreadParts(!!view?.thread || !!view?.ownership);
-  // Moderating, your label, a new picture, leaving as the only admin (Moderation.tsx): a chunk loaded only where they apply.
-  const md = useModeration(!!view && (!!view.moderation || !!view.label || !!view.leaving?.needsAdmin || !!view.leaving?.canForget || !!view.fields.avatar?.canEdit));
+  // Moderating, your label, leaving as the only admin (Moderation.tsx): a chunk loaded only where they apply.
+  const md = useModeration(!!view && (!!view.moderation || !!view.label || !!view.leaving?.needsAdmin || !!view.leaving?.canForget));
   const [leavingHere, setLeavingHere] = useState(false);
-  const pickPicture = () => {
-    if (!view || !md) return;
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/png,image/jpeg,image/gif,image/webp';
-    input.onchange = () => void md.changePicture(view, input.files?.[0], replace);
-    input.click();
-  };
+  // A new picture (PictureEditor.tsx): the big picture opens it where the About says this account may change it.
+  const pe = usePictureEditor(!!view?.fields.avatar?.canEdit);
+  const [picturing, setPicturing] = useState<PictureStart | null>(null);
+  // The editor's target, kept while it is open: the About is asked again as the picture changes.
+  const editing = useRef<PictureTarget | null>(null);
   // Add people (docs/group-settings.md): the palette's picker for this group, as the account this page is seen as.
   const addPeople = () => view && kind === 'conversation' && openPalette({ kind: 'add', conversationId: id, accountId: view.accountId, adding: view.adding, onDone: replace });
   const network = (conv ?? space)?.network;
@@ -88,6 +87,11 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
   const unread = conv ? unreadOf(conv).unread : 0;
   // A section is a community's category: the community is what gets indexed.
   const indexable = space?.kind !== 'section' && conv?.shape !== 'self' && canIndex(kind, id);
+  // A group's own picture call where the account has it (it can also take the picture away), else the About change.
+  const viaGroup = conv?.shape === 'group' && !!view?.accountId && !!db.accounts.get(view.accountId)?.capabilities.includes('groupPicture');
+  const picTarget =
+    pe && view?.fields.avatar?.canEdit ? pe.placeTarget({ kind, id, name: title, network, view, current: picture, viaGroup, square: conv?.shape !== 'direct', onDone: replace }) : null;
+  editing.current = picturing ? (picTarget ?? editing.current) : null;
 
   const hero = (
     <Hero
@@ -96,6 +100,7 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
       picture={picture}
       square={conv?.shape !== 'direct'}
       network={network}
+      onPicture={picTarget ? (e) => pe!.pictureMenu(e, picTarget, setPicturing) : undefined}
       title={<EditableText setting={f.name} fallback={title} label="Name" busy={busy === 'name'} big onSave={(v) => change({ key: 'name', value: v }, 'Name changed')} max={ABOUT_RULES[network].nameMax} />}
       sub={
         <span class="pf-kind">
@@ -132,7 +137,6 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
               onClick={() => (view.leaving!.can && (view.leaving!.needsAdmin || view.leaving!.canForget) && md ? setLeavingHere(true) : void sp?.leavePlace(kind, id, title, view))}
             />
           )}
-          {view?.fields.avatar?.canEdit && md && <Action icon="image" label="Change picture" kind="picture" onClick={pickPicture} />}
           {indexable && <Action icon="archive" label="Index…" kind="index" title={`Index this ${noun.toLowerCase()}: its whole history, and its members`} onClick={() => startIndexing(kind, id)} />}
           <Action icon="more" label="More" menu={() => (conv ? conversationMenu(conv) : spaceMenu(space!))} />
         </>
@@ -322,6 +326,8 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
     <ProfilePage title={title} label={`About ${title}`} onBack={onBack}>
       {hero}
       <Columns main={main} side={selfChat ? null : side} />
+      {picTarget && pe && <pe.PictureDrop open={setPicturing} />}
+      {pe && picturing && editing.current && <pe.PictureEditor target={editing.current} start={picturing} onClose={() => setPicturing(null)} />}
     </ProfilePage>
   );
 }

@@ -78,7 +78,7 @@ describe('forwarding through the hub', () => {
         return answer(account, cmd);
       },
     } as any;
-    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
     port = hub.start().port!;
     url = `http://127.0.0.1:${port}`;
     const acc = (network: 'discord' | 'matrix' | 'signal', label: string, caps: string[], self: string) => {

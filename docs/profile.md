@@ -56,8 +56,8 @@ Left:
   written two ways once); On Discord since; facts a network adds (Business, Time zone); how many of their messages
   the hub has, since when; follower, following and post counts (X). A network that could not be asked says why, in a line.
   Badges, the frame on their picture and their profile's colours, where the network shows them. On your own page,
-  under your bio: your name, pronouns, picture and banner on each network that lets you change them here
-  (docs/account-self.md).
+  under your bio: your name, pronouns and banner on each network that lets you change them here
+  (docs/account-self.md); your picture is the hero's ("Changing a picture", below).
 - **In common** (on your own page, **Your places**): servers as tiles with their icon, their nickname and roles
   there, or how many messages they wrote in it; then group chats with their picture, kind, and how many messages are
   from them. Discord's mutual servers count even where they never wrote; the rest comes from messages and member
@@ -109,11 +109,37 @@ why (502). On Signal and WhatsApp the About is also the status line, so the iden
 Someone else's bio never has a pencil.
 
 Where the adapter's answer lists more under `editable` (Signal: `name`, `emoji`, `avatar`, `username`), the rest of
-your profile there shows under the bio: your name, the emoji by your About, your picture (Choose… uploads it, Remove
-asks first) and your username (Set, Change, Delete; Signal adds the number after the name). The same `PUT` takes
+your profile there shows under the bio: your name, the emoji by your About and your username (Set, Change, Delete; Signal adds the number after the name). The same `PUT` takes
 `{ name }`, `{ emoji }` ('' clears it), `{ avatar: <upload id> | null }` and `{ username: <name> | null }`; the hub
 refuses a field the last answer did not list (409). Signal shows a username's link only when it sets one, so the link,
 and its code under My code (docs/add.md, "QR codes"), come from the last time it was set here.
+
+### Changing a picture
+
+Where you may change a picture, the hero's picture is a button with a camera on it ("Change" over it on hover):
+a group's or server's where its About says `fields.avatar.canEdit`, and yours on each network whose profile lists
+`avatar` under `editable`. It opens a menu (a sheet on a phone): **Upload a Picture…**, **From This Chat's
+Pictures…** (a conversation), **An Earlier Picture…** (where it had one), and **Remove Picture** where the network
+can take it away (a Discord group, your own profile; not a Signal group or a server's icon). A picture dropped
+anywhere on the page, or pasted where nothing is being typed, opens the editor too.
+
+The editor (`ui/PictureEditor.tsx`, a chunk of its own; the crop's arithmetic in `src/picturecrop.ts`) crops to the
+shape the network draws, a circle for a person and a rounded square for a place: drag to move, the wheel, a pinch,
+the slider or + and − to zoom, arrows to nudge; the frame always stays covered. Beside it the picture as it shows
+at three sizes, a button for another file, and pictures to pick instead: this chat's (`in:<conversation> has:image`,
+spoilers and explicit ones left out), the ones it had before (its History, `…/changes?fields=avatar`), and on your
+own page your picture on each network now. Nothing is sent until **Save**. What is sent is the square in the frame,
+at most 1024 pixels a side, JPEG where the file was a JPEG and PNG otherwise; a GIF can be sent as it is instead,
+uncropped, so it keeps moving.
+
+On your own page the editor lists each network you may change it on (by handle where two accounts share one) and
+ticks only the one you came from: the account the page was opened by, else the one whose picture the hero shows.
+An account tile's menu has **Change Picture…**, ticked to that account. Saving uploads the picture once per network
+and sends it the way that page always has: `PUT /api/identities/:id/about { avatar }` for yours, a group's
+`POST /api/conversations/:id/picture` where the account has `groupPicture`, else the About change
+(`{ key: 'avatar', value: <upload id> }`, docs/group-settings.md). The toast says where it changed, names a network
+that refused, and has **Undo**, which sends each network the picture it had before (fetched back from the hub) or,
+where it had none, takes the new one away.
 
 ### Safety numbers
 

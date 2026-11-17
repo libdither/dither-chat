@@ -5,11 +5,11 @@
  */
 import { effect, signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { DEFAULT_ARRANGE, smartScore, type ArrangeSettings, type SortMode, type SortScope, type UsageKind } from '@dither-chat/protocol';
+import { DEFAULT_ARRANGE, DEFAULT_PICTURE_LAYOUT, smartScore, type ArrangeSettings, type PictureLayout, type SortMode, type SortScope, type UsageKind } from '@dither-chat/protocol';
 import type { DropTarget } from './layout.ts';
-import { activityOfSpace, convTitle, directsOf, folderConvs, people, placePref, railEntries, spaceUnread, sumUnread, unreadOf, type RailEntry } from './model.ts';
+import { activityOfSpace, convTitle, directsOf, folderConvs, people, placePref, placesAbove, railEntries, spaceUnread, sumUnread, unreadOf, type RailEntry } from './model.ts';
 import { sameSnapshot, shouldResort, sortKeys, stabilize, type ResortReason, type Sortable } from './ordering.ts';
-import { api, db, loaded, patchPlaces, rev, saveFolders, toast } from './state.ts';
+import { api, db, loaded, metaRev, patchPlaces, rev, saveFolders, toast } from './state.ts';
 import { fetchUsage, onForeground, startUsage, usageLoaded, usageOf, usageState } from './usage.ts';
 
 const ARRANGE_KEY = 'dither-chat:arrange';
@@ -58,6 +58,45 @@ export function setFollowArchive(on: boolean) {
     .catch((e) => toast({ kind: 'error', title: 'Could not save that', body: e.message }));
 }
 
+/** Quiet servers on a shelf at the end of each list (ArrangeSettings.quietShelf; on unless turned off; quiet.ts). */
+export function setQuietShelf(on: boolean) {
+  setArrange({ ...arrange.value, quietShelf: on });
+  api<ArrangeSettings>('/api/arrange', { method: 'PATCH', body: { quietShelf: on } })
+    .then(setArrange)
+    .catch((e) => toast({ kind: 'error', title: 'Could not save that', body: e.message }));
+}
+
+// ------------------------------------------------------------------ how chats show pictures (docs/pictures.md)
+
+export const PICTURE_LABELS: Record<PictureLayout, string> = { six: 'Mosaic, six and +N', mosaic: 'Mosaic, all of them', rows: 'Rows, uncropped', fold: 'Folded after the first', small: 'Small' };
+
+/** The way for chats that don't say. */
+export const globalPictures = (): PictureLayout => arrange.value.pictures ?? DEFAULT_PICTURE_LAYOUT;
+export function setGlobalPictures(pictures: PictureLayout) {
+  setArrange({ ...arrange.value, pictures });
+  api<ArrangeSettings>('/api/arrange', { method: 'PATCH', body: { pictures } })
+    .then(setArrange)
+    .catch((e) => toast({ kind: 'error', title: 'Could not save that', body: e.message }));
+}
+
+/** What a place inherits: from the nearest place above it that says, with that place, else the global way. */
+export function inheritedPictures(kind: P.PlaceKind, id: string): { layout: PictureLayout; from: { kind: P.PlaceKind; id: string } | null } {
+  for (const [k, i] of placesAbove(kind, id)) {
+    const v = db.placePrefs.get(`${k}:${i}`)?.pictures;
+    if (v) return { layout: v, from: { kind: k, id: i } };
+  }
+  return { layout: globalPictures(), from: null };
+}
+
+/** How a chat shows pictures: its own way, else its channel's, server's or folder's, else the global way. */
+export function pictureLayout(convId: string): PictureLayout {
+  metaRev.value;
+  return db.placePrefs.get(`conversation:${convId}`)?.pictures ?? inheritedPictures('conversation', convId).layout;
+}
+
+/** null: back to what it inherits. Several ids: each of them (a person's chat, one per route). */
+export const setPlacePictures = (kind: P.PlaceKind, id: string | string[], pictures: PictureLayout | null) => patchPlaces((Array.isArray(id) ? id : [id]).map((i) => ({ kind, id: i, pictures })));
+
 export function patchDismissed(dismissed: Record<string, string[] | null>) {
   const next = { ...arrange.value.dismissed };
   for (const [k, v] of Object.entries(dismissed)) v === null ? delete next[k] : (next[k] = v);
@@ -72,6 +111,13 @@ const score = (kind: UsageKind, id: string, badge: number) => smartScore(usageOf
 
 function itemSortable(it: P.FolderView['items'][number]): Sortable | null {
   const key = `${it.kind}:${it.id}`;
+  if (it.kind === 'folder') {
+    // A folder inside a folder sorts as one unit by its best member, as a folder at the top does.
+    const f = db.folders.find((x) => x.id === it.id);
+    if (!f) return null;
+    const members = f.items.filter((x) => x.kind !== 'folder').map(itemSortable).filter((x): x is Sortable => !!x);
+    return { key, name: f.name, pinned: false, position: null, last: Math.max(0, ...folderConvs(f).map((c) => c.lastMessageAt ?? 0)), score: 0, members };
+  }
   if (it.kind === 'space') {
     const s = db.spaces.get(it.id);
     return s ? { key, name: s.name, pinned: false, position: null, last: activityOfSpace(s.id), score: score('space', s.id, spaceUnread(s.id).badge) } : null;

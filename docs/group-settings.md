@@ -376,7 +376,8 @@ still gets a panel: the hub builds it from what it stores (name, topic, picture,
 
 - `GET /api/conversations/:id/about` and `GET /api/spaces/:id/about` (`?account=` to see it as one of several
   accounts) ask the adapter and keep the answer in the `about` table, per target and account. When the account
-  is offline the last answer comes back with `stale` set and nothing editable.
+  is offline the last answer comes back with `stale` set and nothing editable. `?kept=1` answers with the kept
+  About alone, without asking the network (`null` when none was kept): the message box's timer reads it first.
 - `POST` to the same path with an `AboutChange`: the hub checks it against `ABOUT_RULES`, asks the adapter for a
   fresh About, refuses (403, with the network's reason) unless that says this account may, then sends
   `configure` and keeps the answer. Every refusal is in words, shown under the control.
@@ -395,6 +396,28 @@ top (with a pencil where you may change them), then Settings (a switch, a choice
 value and a lock with the reason where you may not), Invite link, Pinned, Members (with roles, as Discord's member
 list groups them), Who can do what, and Details. With more than one of your accounts in a place, a chooser says
 whose view it is.
+
+### In the message box
+
+On Signal and WhatsApp the chat's timer is also in the message box (ui/Disappearing.tsx), so it can be changed without
+opening About:
+
+- **The send menu** (hold send on a phone, the arrow beside send on a computer) has a **Disappearing messages** line
+  with the timer at its end. It opens the network's own timers (`ABOUT_RULES[network].disappearing`, plus the current
+  one when it is not among them), and a pick is the same `POST …/about` change as the panel's. Where the account may
+  not change it, the line is greyed out and says why on hover.
+- **The line above the box** ends in the timer while one is on (`TimerLabel`): "To Kit on Signal · 1w", or "Disappears
+  after 1 week" in a group whose line has nothing else. A press opens the same timers, Off among them. Off shows
+  nothing.
+- **Each message** that will disappear shows a stopwatch and its timer ("1w") after its time; on hover, when: for
+  your own, the time it goes (its timer counts from sending); for others', how long after you read it. It comes from
+  the message's own `extra.expiresInSeconds` (MessageView `disappears`), which Signal gives; WhatsApp's adapter does
+  not pass its messages' timers yet.
+
+The timer is the kept About at first (`?kept=1`), then the network is asked once per chat while the app is open, so a
+timer the other side changed shows up; the panel's answers update it too. (From #225 until this, a clock sat at the end
+of the route line over the box, shown while off too; a draft of this had a stopwatch on send's corner instead, which
+was cramped at phone size.)
 
 ## What was checked, and what needs a live check
 

@@ -306,7 +306,7 @@ describe('pace', () => {
 describe('the routes', () => {
   test('GET candidates; POST only with a browser Origin, and then it makes the group', async () => {
     const sup = { authorize: () => null, online: (a: string) => !offline.has(a), command: (a: string, c: any) => command(a, c), note: (_a: string, line: string) => notes.push(line), liveViewUrl: () => null } as any;
-    const hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    const hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
     const port = hub.start().port;
     const base = `http://127.0.0.1:${port}`;
     try {
@@ -424,7 +424,7 @@ describe("in the hub's log", () => {
 
   test('through the route: the refusal without an Origin (403) and a group made', async () => {
     const sup = { authorize: () => null, online: () => true, command: (a: string, c: any) => command(a, c), note: (a: string, line: string) => accountLog.push(`${a} ${line}`), liveViewUrl: () => null } as any;
-    const hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    const hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
     const base = `http://127.0.0.1:${hub.start().port}`;
     try {
       const b = JSON.stringify({ accountId: MAIN, identities: [who('discord', 'Alice'), who('discord', 'Jordan')] });

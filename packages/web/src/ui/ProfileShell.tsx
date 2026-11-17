@@ -45,6 +45,7 @@ export function Hero({
   tags,
   status,
   actions,
+  onPicture,
 }: {
   id: string;
   name: string;
@@ -59,14 +60,28 @@ export function Hero({
   tags?: ComponentChildren;
   status?: ComponentChildren;
   actions?: ComponentChildren;
+  /** Where you may change the picture: it is a button, with a camera on it, that opens what you can do. */
+  onPicture?: (e: MouseEvent) => void;
 }) {
+  const pic = <Avatar id={id} name={name} url={picture} size={92} square={square} />;
   return (
     <section class="pf-hero">
       <div class={`pf-banner ${banner ? 'pic' : ''}`} style={bannerStyle(banner, accent, network)} />
       <div class="pf-ident">
-        <span class={`pf-avatar ${square ? 'square' : ''}`}>
-          <Avatar id={id} name={name} url={picture} size={92} square={square} />
-        </span>
+        {onPicture ? (
+          <button class={`pf-avatar pf-avatar-edit ${square ? 'square' : ''}`} data-track="profile: picture" onClick={onPicture} aria-label="Change the picture" title="Change the picture">
+            {pic}
+            <span class="pf-avatar-over" aria-hidden="true">
+              <Icon name="camera" size={20} />
+              Change
+            </span>
+            <span class="pf-avatar-badge" aria-hidden="true">
+              <Icon name="camera" size={13} />
+            </span>
+          </button>
+        ) : (
+          <span class={`pf-avatar ${square ? 'square' : ''}`}>{pic}</span>
+        )}
         <div class="pf-names">
           <div class="pf-title">{title}</div>
           {sub && <div class="pf-sub">{sub}</div>}

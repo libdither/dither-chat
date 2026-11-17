@@ -200,7 +200,7 @@ export function kindLabel(c: P.ConversationView): string {
 
 // ------------------------------------------------------------------ hierarchy
 
-export function spaceParents(id: string): P.SpaceView[] {
+function spaceParents(id: string): P.SpaceView[] {
   return (db.parents.get(id) ?? []).map((e) => db.spaces.get(e.parentId)).filter((s): s is P.SpaceView => !!s);
 }
 
@@ -328,6 +328,51 @@ export function threadsOf(convId: string): P.ConversationView[] {
 }
 
 const NO_PREF: Omit<P.PlacePrefView, 'kind' | 'id'> = { position: null, pinned: false, hidden: false, open: false, railed: false };
+/**
+ * The places a place inherits a setting from, nearest first (not itself): a thread's channel, a channel's server and
+ * its parents, then the folders holding any of them (a direct chat through its person). The @ list's setting
+ * (ui/MentionFinds.tsx) and how pictures are shown (pictures.ts) are read along it.
+ */
+export function placesAbove(kind: P.PlaceKind, id: string): [P.PlaceKind, string][] {
+  const out: [P.PlaceKind, string][] = [];
+  const held: [string, string][] = [[kind, id]];
+  let spaces: string[] = [];
+  let peer: string | null | undefined;
+  if (kind === 'conversation') {
+    const c = db.conversations.get(id);
+    const base = c ? placeConv(c) : undefined;
+    if (base && base.id !== id) held.push(['conversation', base.id]);
+    spaces = base?.spaceIds ?? [];
+    if (c?.shape === 'direct') peer = c.peerPersonId;
+  } else if (kind === 'space') spaces = spaceParents(id).map((s) => s.id);
+  const seen = new Set<string>();
+  while (spaces.length) {
+    const next: string[] = [];
+    for (const s of spaces) {
+      if (seen.has(s)) continue;
+      seen.add(s);
+      held.push(['space', s]);
+      next.push(...spaceParents(s).map((p) => p.id));
+    }
+    spaces = next;
+  }
+  // A direct chat is in a folder through its person.
+  if (peer) held.push(['person', peer]);
+  for (const [k, i] of held) {
+    if ((k !== kind || i !== id) && k !== 'person') out.push([k as P.PlaceKind, i]);
+  }
+  // Folders after every channel and space, as the hub reads them.
+  for (const [k, i] of held) {
+    if (k !== 'folder') for (const f of db.folders.filter((f) => f.items.some((x) => x.kind === k && x.id === i)).sort((a, b) => a.id.localeCompare(b.id))) out.push(['folder', f.id]);
+  }
+  // A folder inside a folder: the outer one after it, as the hub reads them.
+  for (const [k, i] of [...out]) {
+    const outer = k === 'folder' ? db.folders.find((f) => f.items.some((x) => x.kind === 'folder' && x.id === i)) : undefined;
+    if (outer) out.push(['folder', outer.id]);
+  }
+  return out;
+}
+
 export function placePref(kind: P.PlaceKind, id: string) {
   return db.placePrefs.get(`${kind}:${id}`) ?? { kind, id, ...NO_PREF };
 }
@@ -349,7 +394,8 @@ export function railEntries(which: 'shown' | 'hidden' = 'shown'): RailEntry[] {
       return { inFolder, convs: [...db.conversations.values()].filter((c) => visibleConv(c) && !inFolder.has(`conversation:${c.id}`) && placePref('conversation', c.id).railed).map((c) => c.id) };
     });
     const entries: RailEntry[] = [
-      ...db.folders.map((folder): RailEntry => ({ key: `folder:${folder.id}`, kind: 'folder', folder })),
+      // A folder inside a folder is drawn there, not at the top.
+      ...db.folders.filter((folder) => !railed.inFolder.has(`folder:${folder.id}`)).map((folder): RailEntry => ({ key: `folder:${folder.id}`, kind: 'folder', folder })),
       ...allCommunities()
         .filter((s) => !railed.inFolder.has(`space:${s.id}`))
         .map((space): RailEntry => ({ key: `space:${space.id}`, kind: 'space', space })),
@@ -631,10 +677,20 @@ export function spaceUnread(id: string): Unread {
   return memo('su:' + id, () => sumUnread(convsUnder(id)));
 }
 
+/** The folder a folder sits in, if it is inside one. */
+export function parentFolder(id: string): P.FolderView | undefined {
+  return db.folders.find((f) => f.items.some((it) => it.kind === 'folder' && it.id === id));
+}
+
+/** What a folder holds, with a folder inside it read as its own items: for counts, names and pictures. */
+export function folderLeaves(f: P.FolderView): P.FolderView['items'] {
+  return f.items.flatMap((it) => (it.kind === 'folder' ? (db.folders.find((x) => x.id === it.id)?.items.filter((x) => x.kind !== 'folder') ?? []) : [it]));
+}
+
 export function folderConvs(f: P.FolderView): P.ConversationView[] {
   return memo('fc:' + f.id, () => {
     const out = new Map<string, P.ConversationView>();
-    for (const it of f.items) {
+    for (const it of folderLeaves(f)) {
       if (it.kind === 'space') for (const c of convsUnder(it.id)) out.set(c.id, c);
       else if (it.kind === 'conversation') {
         const c = db.conversations.get(it.id);
@@ -691,6 +747,22 @@ export function annotateAccounts(network: P.Network): boolean {
   return accountsOf(network).length > 1;
 }
 
+let usual: { convs: number; accounts: number; by: Map<P.Network, string | null> } | null = null;
+/**
+ * The account most of a network's chats come through: the one its dots leave out, so a second account (a test one, an
+ * alt) marks only the chats it is in. Counted again when chats or accounts come or go.
+ */
+export function usualAccount(network: P.Network): string | null {
+  if (!usual || usual.convs !== db.conversations.size || usual.accounts !== db.accounts.size) usual = { convs: db.conversations.size, accounts: db.accounts.size, by: new Map() };
+  if (usual.by.has(network)) return usual.by.get(network)!;
+  const counts = new Map<string, number>();
+  for (const c of db.conversations.values()) if (c.network === network) for (const v of c.vantages) counts.set(v.accountId, (counts.get(v.accountId) ?? 0) + 1);
+  let best: string | null = null;
+  for (const a of accountsOf(network)) if (best === null || (counts.get(a.id) ?? 0) > (counts.get(best) ?? 0)) best = a.id;
+  usual.by.set(network, best);
+  return best;
+}
+
 // ------------------------------------------------------------------ inbox
 
 /** What the hub says about how much a row of the inbox needs you (docs/inbox.md). */
@@ -721,11 +793,9 @@ export interface MailInboxRow extends InboxScore {
 }
 
 /** A conversation row's conversations: its one, or every route of a chat. */
-export const rowConvs = (r: ConvInboxRow) => r.chat?.routes ?? [r.conv];
+const rowConvs = (r: ConvInboxRow) => r.chat?.routes ?? [r.conv];
 /** The latest message of a row, anyone's. */
 export const rowLast = (r: InboxRow) => (r.kind === 'conv' ? (r.conv.lastMessageAt ?? 0) : r.thread.lastAt);
-/** Something in it you have not read. */
-export const rowUnread = (r: InboxRow) => (r.kind === 'conv' ? rowConvs(r).some((c) => unreadOf(c).unread > 0) : r.thread.unread > 0);
 /** One other person: a DM, or a mail thread between you and one other. */
 export const rowDirect = (r: InboxRow) => (r.kind === 'conv' ? r.conv.shape === 'direct' : r.thread.participants <= 2);
 /** Muted here or on its network: below everything else. Notes to self notify nobody, which is not the same. */
