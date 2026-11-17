@@ -78,7 +78,12 @@ list. A new kind of route goes in its ROUTES.
 
 **Keyboard.** The viewport asks Chromium to resize the layout for the keyboard
 (`interactive-widget=resizes-content`). Where only the visual viewport shrinks (iOS Safari), the app is
-sized and moved to it while a field has focus, so the composer sits just above the keyboard. Fields are 16px
+sized and moved to it while a field has focus, so the composer sits just above the keyboard. In the Android app the
+page keeps the keyboard's room itself ([android.md](android.md), "Keyboard"): the app reports the keyboard's height on
+every frame of its slide, and phone.ts sizes the app to what is left (`--app-h`), so the box rides up on the keyboard
+instead of jumping once it is up. A field the keyboard then covers is scrolled into sight, as the browser does when it
+resizes. The keyboard's height is remembered per orientation (`dither-chat:keyboard-height`) for the panel that takes
+its place (`keyboardroom.ts`). Fields are 16px
 so iOS does not zoom into them. The notch and the home indicator are kept clear with the safe-area insets;
 while the keyboard is up the bottom inset is dropped and the tab bar steps aside. On a touch keyboard Enter makes a new line (there
 is no Shift+Enter) and the send button sends; Ctrl+Enter also sends.
