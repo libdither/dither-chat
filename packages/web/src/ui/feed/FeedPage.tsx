@@ -1004,7 +1004,12 @@ function FeedComposer({ kit, fixed, sheet, onDone }: { kit: Kit; fixed?: string;
       </button>
     );
   const failed = (results ?? []).filter((r) => !r.ok);
-  // Post (or Schedule): at the foot on a computer, at the top right of a phone's sheet, clear of the keyboard.
+  // Save, and Post (or Schedule): at the foot on a computer, at the top right of a phone's sheet, clear of the keyboard.
+  const saveBtn = (
+    <button class={sheet ? 'link-btn' : 'btn'} disabled={sending || (!text.trim() && !own)} onClick={() => void save(false)} title="Keep it on the hub, in Drafts">
+      Save
+    </button>
+  );
   const send =
     when !== null ? (
       <button class="btn primary compose-send" disabled={!chosen.length || empty || !!over.length || !scheduleAt || scheduleAt < Date.now()} onClick={() => void save(true)}>
@@ -1023,6 +1028,7 @@ function FeedComposer({ kit, fixed, sheet, onDone }: { kit: Kit; fixed?: string;
             Cancel
           </button>
           <h3>New post</h3>
+          {saveBtn}
           {send}
         </header>
       )}
@@ -1172,9 +1178,7 @@ function FeedComposer({ kit, fixed, sheet, onDone }: { kit: Kit; fixed?: string;
         <button class="icon-btn" title={when === null ? 'Schedule' : 'Not scheduled'} aria-label="Schedule" aria-pressed={when !== null} disabled={sending || !!pics.length} onClick={() => setWhen(when === null ? localInput(Date.now() + 3_600_000) : null)}>
           <kit.Icon name="clock" size={18} />
         </button>
-        <button class="btn" disabled={sending || (!text.trim() && !own)} onClick={() => void save(false)} title="Keep it on the hub, in Drafts">
-          Save
-        </button>
+        {!sheet && saveBtn}
         {!sheet && send}
       </div>
     </div>
