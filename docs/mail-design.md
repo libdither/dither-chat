@@ -661,7 +661,7 @@ searches.
 | read grant | reader footer: "dither-accounts lets dither-chat read this account, not change it. Read here only." No archive, star or send. [Change] |
 | can't send | reply bar and ✎ off for that account: "me@proton.me can't send from here: Proton's send path was not found in the page (dither-accounts answered 501). Reading, archiving and starring work." |
 | dry run | composer banner: "Dry run: nothing reaches the account." |
-| offline | the existing reconnect bar; ops and sends say "waiting for the hub" |
+| offline | the app's offline notice (the rail's amber orb, docs/sync.md "Quiet"); ops and sends say "waiting for the hub" |
 
 ## 7. Safety: HTML, images, links, files
 

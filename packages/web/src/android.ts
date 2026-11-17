@@ -8,6 +8,7 @@
 import { effect, signal } from '@preact/signals';
 import { activeCall, leaveCall, setMuted } from './call.ts';
 import { noteOpen } from './activity.ts';
+import { reportAppCrashes } from './errors.ts';
 import { db, go, parseHash, prefs } from './state.ts';
 import { onIme, keepKeyboardRoom } from './phone.ts';
 
@@ -170,6 +171,9 @@ function receive(d: any) {
     case 'open':
       noteOpen(d.hash);
       go(parseHash(d.hash), false);
+      break;
+    case 'crashes':
+      reportAppCrashes(Array.isArray(d.list) ? d.list : [], android!.info.value?.version);
       break;
     case 'call.hangup':
       if (activeCall.value) leaveCall();

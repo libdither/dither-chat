@@ -18,6 +18,7 @@ import { api, applyEvents, db, go, openDirect, openProfile, rev, toast } from '.
 import { LiveView } from './Accounts.tsx';
 import { Avatar, Empty, Modal, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
+import { HeadOrb } from './Offline.tsx';
 import { contextMenu, groups, openMenu, useMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { identityMenu, personMenu } from './menus.tsx';
 import { CheckFirst, ConfirmFirst } from './NewMessage.tsx';
@@ -126,6 +127,7 @@ export function RequestsPane({ focus, onBack }: { focus?: string; onBack?: () =>
             <span class="muted-label">{count ? `${count} waiting on you` : 'Nothing waiting on you'}</span>
           </div>
         </div>
+        <HeadOrb />
       </header>
       <div class="requests-scroll">
         {!groups.length && (

@@ -16,6 +16,7 @@ import { forgetFactor, loadNeedsCalibration, loadPolicy, loadShadow, needsCalibr
 import { MarkToggles, percent, TIER_ICON } from './Marks.tsx';
 import { Avatar } from './bits.tsx';
 import { Icon } from './icons.tsx';
+import { HeadOrb } from './Offline.tsx';
 import { useMenu } from './ContextMenu.tsx';
 import { messageMenu } from './menus.tsx';
 
@@ -211,6 +212,7 @@ export function HowItSorts({ onBack }: { onBack?: () => void }) {
             <span class="muted-label">Where messages landed this week, and why</span>
           </div>
         </div>
+        <HeadOrb />
       </header>
       <div class="board-scroll">
         <p class="model-intro">

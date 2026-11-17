@@ -316,7 +316,7 @@ describe('one notification per thread', () => {
     expect(g.sender.name).toBe('Sam Rivera');
     expect(w.delivery.read()).toEqual([]);
     w.hub.readHere([thread]);
-    expect(w.delivery.read()).toEqual([thread]);
+    expect(w.delivery.read().map((r) => r.id)).toEqual([thread]);
   });
 });
 

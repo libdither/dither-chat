@@ -5,6 +5,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { api, db, eventHooks } from '../state.ts';
+import { closeNotifications } from '../shade.ts';
 import { mailChanged } from '../versions.ts';
 import { cursorOf, mergePage, newList } from './model.ts';
 
@@ -80,6 +81,8 @@ export function retryBody(messageId: string) {
 
 /** Read here, once the thread has been in view a moment (the hub keeps it; slice 4 tells the server too). */
 export function markThreadRead(id: string) {
+  // Its notification here has done its job, also when the thread was read on another device first.
+  void closeNotifications([id]);
   const t = db.mail.threads.get(id);
   if (!t?.unread) return;
   db.mail.threads.set(id, { ...t, unread: 0 });
