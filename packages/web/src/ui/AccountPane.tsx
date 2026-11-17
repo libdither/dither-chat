@@ -13,6 +13,7 @@ import { api, db, go, mailRev, rev, toast } from '../state.ts';
 import { dropLayer, pushLayer } from '../phone.ts';
 import { FeatureStrip, KindBadge } from './AccountFeatures.tsx';
 import { Icon } from './icons.tsx';
+import { HeadOrb } from './Offline.tsx';
 import { ImportsSection } from './Imports.tsx';
 import { TelegramSignIns } from './TelegramSignIns.tsx';
 import { MailAccountSection } from './mail/MailAccounts.tsx';
@@ -622,6 +623,7 @@ export function AccountPane({ accountId, onBack }: { accountId: string; onBack?:
             <span class="muted-label">{a ? `added ${ago(a.createdAt)}` : mg?.origin === 'self' ? 'added from here' : mg ? 'added on dither-accounts' : ''}</span>
           </div>
         </div>
+        <HeadOrb />
       </header>
       <div class="account-scroll">
         <FeatureStrip row={row} />

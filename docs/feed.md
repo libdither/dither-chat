@@ -79,8 +79,8 @@ Conversations section with a Reply button that cannot work. Likes and follows ar
 that does well they come by the hundred. So likes are silent, and a reply is at most what the List is for:
 "important enough for a ranked list on the phone".
 
-**Rules.** A person set to Always alert, a keyword, or Always alert on the feed itself does not make a feed message an
-alert. Muting the feed (or the account, or X) silences replies too. List only changes nothing, since it is that
+**Rules.** A person set to Always alert, or Always alert on the feed itself, does not make a feed message an alert,
+and a keyword does not make it a Conversation. Muting the feed (or the account, or X) silences replies too. List only changes nothing, since it is that
 already.
 
 ## The inbox row

@@ -4,12 +4,14 @@
  *
  * In order:
  *   1. Its group (`ntg_`, a repository, an app) or its account muted by a rule of yours: silent.
- *   2. One of your keywords, or Always alert on the group or the account: an alert.
+ *   2. Always alert on the group or the account: an alert.
  *   3. Else its two chances, which start from the source's urgency and move with your marks:
  *        high    alert 0.7, importance 0.9
  *        normal  alert from the local model's answer (the stop-now question, held to ALERT_BAR.other), importance 0.72
  *                (over the list's default level of 0.6 by a margin, so a little of what chat learned cannot sink it)
  *        low     alert 0.01, importance 0.15 (the local model is not asked)
+ *      One that says one of your keywords starts at least as important as what the network notifies (NOTIFIED, 0.8):
+ *      on the list, never an alert by itself.
  *      An alert at even odds or more; else on the list at your level of importance or more; else below it. List only
  *      on the group or the account keeps it from alerting.
  *   4. Quiet hours hold an alert as a row on the list. What came by a catch-up, was read already or came in late is
@@ -18,7 +20,7 @@
  * The start is kept in the facts (`Facts.start`), so learning from a mark starts where the decision did.
  */
 import type * as P from '@dither-chat/protocol';
-import { ALERT_BAR, describeWeight, importance, judgedAlert, learnedFrom, predict, TIER_NAME, UNJUDGED, words as wordsOf, type Facts, type Level, type Model, type Namer } from '../learn.ts';
+import { ALERT_BAR, describeWeight, importance, judgedAlert, learnedFrom, NOTIFIED, predict, TIER_NAME, UNJUDGED, words as wordsOf, type Facts, type Level, type Model, type Namer } from '../learn.ts';
 import { inQuietHours } from '../triage.ts';
 
 const MIN = 60_000;
@@ -99,7 +101,7 @@ export interface NoticeDecision {
 }
 
 /** Whether the local model is asked: a normal notice that no rule of yours decides. */
-export const wantsJudge = (n: Pick<NoticeInput, 'urgency'>, c: Pick<NoticeContext, 'rule' | 'keyword' | 'catchUp'>) => n.urgency === 'normal' && !c.catchUp && !c.keyword && c.rule?.level !== 'none' && c.rule?.level !== 'all';
+export const wantsJudge = (n: Pick<NoticeInput, 'urgency'>, c: Pick<NoticeContext, 'rule' | 'catchUp'>) => n.urgency === 'normal' && !c.catchUp && c.rule?.level !== 'none' && c.rule?.level !== 'all';
 
 /** The text the local model reads and the model's words come from. */
 export const textOf = (n: Pick<NoticeInput, 'title' | 'body'>) => `${n.title}${n.body ? `\n${n.body}` : ''}`;
@@ -109,8 +111,9 @@ export const textOf = (n: Pick<NoticeInput, 'title' | 'body'>) => `${n.title}${n
  * here and are left out, as is "mention" unless the reason is about you: so no "does not …" feature carries what chat
  * learned onto a notice.
  */
-export function factsOf(n: NoticeInput, judge?: number): Facts {
+export function factsOf(n: NoticeInput, judge?: number, keyword = false): Facts {
   const a = n.actors[0];
+  const start = startOf(n.urgency, judge);
   return {
     network: `notice:${n.source}`,
     shape: 'notice',
@@ -119,12 +122,13 @@ export function factsOf(n: NoticeInput, judge?: number): Facts {
     author: a ? (a.url ?? a.name) : null,
     bot: false,
     ...(n.reason && ADDRESSED.has(n.reason) ? { mention: true } : {}),
+    ...(keyword ? { keyword: true } : {}),
     urgent: n.urgency === 'high',
     media: false,
     link: !!n.url,
     base: 'drop',
     ...(judge !== undefined ? { judge } : {}),
-    start: startOf(n.urgency, judge),
+    start: keyword ? { ...start, important: Math.max(start.important, NOTIFIED) } : start,
   };
 }
 
@@ -135,17 +139,14 @@ export function decideNotice(n: NoticeInput, c: NoticeContext): NoticeDecision {
   const src = sourceName(n.source);
   const said = `${src} says: ${n.reason ? n.reason.replace(/_/g, ' ') : 'a notice'} (${n.urgency})`;
   if (c.rule?.level === 'none') return { decision: 'silent', importance: null, alert: null, reasons: [`Silenced: ${c.rule.source}`, said], decidedBy: 'rules', facts: null, words: [], hold: null, held: false };
-  const facts = factsOf(n, c.judge);
+  const facts = factsOf(n, c.judge, !!c.keyword);
   const words = wordsOf(textOf(n));
   const p = predict(c.model, facts, words);
   const th = c.thresholds;
   const reasons = [said];
   let decision: Level;
   let decidedBy: NoticeDecision['decidedBy'] = 'rules';
-  if (c.keyword) {
-    decision = 'push';
-    reasons.unshift(`Matches keyword “${c.keyword}”`);
-  } else if (c.rule?.level === 'all') {
+  if (c.rule?.level === 'all') {
     decision = 'push';
     reasons.unshift(`Always alert: ${c.rule.source}`);
   } else {
@@ -166,6 +167,7 @@ export function decideNotice(n: NoticeInput, c: NoticeContext): NoticeDecision {
       );
     } else if (decision === 'digest') reasons.unshift(`On the list: importance ${pct(p.probs.important)}, at or over your level of ${pct(th.important)}`);
     else reasons.unshift(`Below the list: importance ${pct(p.probs.important)}, under your level of ${pct(th.important)}`);
+    if (c.keyword) reasons.push(`Says “${c.keyword}”, one of your keywords`);
     if (cap) reasons.push(`List only: ${c.rule!.source}`);
     if (c.unjudged) reasons.push('The local model did not answer in time: not read for urgency');
     if (decision !== before) {

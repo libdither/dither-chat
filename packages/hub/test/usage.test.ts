@@ -130,14 +130,11 @@ describe('the table', () => {
     expect(usage.arrange().sort).toEqual({ rail: 'manual', people: 'recent' });
     usage.patchArrange({ sort: { rail: 'smart', people: 'manual', other: 'az' } as any });
     expect(usage.arrange().sort).toEqual({ rail: 'smart', people: 'recent' });
-    usage.patchArrange({ dismissed: { cat1: ['space:a', 'space:b'] } });
     usage.patchArrange({ sort: { people: 'az' } });
-    expect(usage.arrange()).toEqual({ sort: { rail: 'smart', people: 'az' }, dismissed: { cat1: ['space:a', 'space:b'] } });
+    expect(usage.arrange()).toEqual({ sort: { rail: 'smart', people: 'az' } });
     // The Groups list's scope from before it joined the inbox: kept on disk by older hubs, never shown.
     store.db.query(`UPDATE arrange_setting SET value = ? WHERE key = 'sort'`).run(JSON.stringify({ rail: 'az', people: 'smart', groups: 'smart' }));
     expect(usage.arrange().sort).toEqual({ rail: 'az', people: 'smart' });
-    usage.patchArrange({ dismissed: { cat1: null } });
-    expect(usage.arrange().dismissed).toEqual({});
   });
 });
 

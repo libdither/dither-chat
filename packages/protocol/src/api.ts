@@ -260,6 +260,8 @@ export interface AttachmentView {
   spoiler?: true;
   explicit?: true;
   voice?: VoiceFact;
+  /** A GIF the network sent as a video (AttachmentFact.gif): drawn looping and silent, with no player. */
+  gif?: true;
   /** Recorded as a voice note (extra.ts AttachmentNote). */
   voiceNote?: true;
   /** Its own caption, where the network has one per file. */
@@ -1345,7 +1347,7 @@ export type ClientEvent =
   | { t: 'message'; message: MessageView; identities: IdentityView[]; live: boolean }
   | { t: 'message.deleted'; id: string; conversationId: string }
   /** No conversation: it is about a request, or about what quiet hours held. */
-  | { t: 'notify'; messageId?: string; conversationId?: string; title: string; body: string; reasons: string[]; /** Its tier; absent is an alert. */ level?: 'push' | 'quiet' | 'digest'; /** The notification's id in the activity log (docs/activity.md). */ nid?: string; /** Devices whose own rules keep this quiet (docs/devices.md). */ quiet?: string[]; /** The sender's (or the place's) picture, a hub media path. */ icon?: string; network?: Network; /** About a mail thread (slice 9): `conversationId` is the thread too. */ mailThreadId?: string; /** About a request waiting on you (docs/add.md): it opens under Requests. */ requestId?: string; /** About an event in the calendar (docs/calendar.md): it opens the calendar there. */ calendar?: CalendarNotifyRef; /** A notice (docs/notices.md): `conversationId` is its group, and it opens under Notices. */ noticeId?: string }
+  | { t: 'notify'; messageId?: string; conversationId?: string; title: string; body: string; reasons: string[]; /** Its tier; absent is an alert. */ level?: 'push' | 'quiet' | 'digest'; /** The notification's id in the activity log (docs/activity.md). */ nid?: string; /** Devices whose own rules keep this quiet (docs/devices.md). */ quiet?: string[]; /** The sender's (or the place's) picture, a hub media path. */ icon?: string; network?: Network; /** About a mail thread (slice 9): `conversationId` is the thread too. */ mailThreadId?: string; /** About a request waiting on you (docs/add.md): it opens under Requests. */ requestId?: string; /** About an event in the calendar (docs/calendar.md): it opens the calendar there. */ calendar?: CalendarNotifyRef; /** A notice (docs/notices.md): `conversationId` is its group, and it opens under Notices. */ noticeId?: string; /** No read closes it, only a tap or a swipe: a reminder you set, the summary when quiet hours end (docs/notifications.md, "Read elsewhere, gone here"). */ keep?: true }
   /**
    * Someone started typing (it lasts `ttl` ms unless another start comes) or `stop`ped. Of the moment: not journaled,
    * and a client that reconnects simply does not see it. `name` only when the hub knows no name for the identity.
@@ -1356,6 +1358,13 @@ export type ClientEvent =
    * pending copy by id before the answer to its POST arrives. Of the moment, like `typing`: not journaled.
    */
   | { t: 'sent'; conversationId: string; clientId: string; messageId: string }
+  /**
+   * Chats, mail threads and groups of notices read on some device since the hub notified about them (delivery.ts
+   * `read`): an open page closes their notifications that show nothing newer than `upTo`, the newest message the hub
+   * notified about (docs/notifications.md, "Read elsewhere, gone here"). Of the moment, like `typing`: not journaled;
+   * a page that comes back tidies up by itself.
+   */
+  | { t: 'cleared'; reads: { id: string; upTo: number }[] }
   /** Calls that changed: ringing you, going on, or just over (call.ts CallView, docs/calls.md "Ringing"). Of the moment. */
   | { t: 'calls'; calls: import('./call.ts').CallView[] }
   /** Voice channels whose people or status line changed (call.ts VoiceChannelView). Of the moment. */

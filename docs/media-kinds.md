@@ -1,4 +1,4 @@
-# Stickers, voice messages, view-once and stories
+# Stickers, GIFs, voice messages, view-once and stories
 
 Kinds of message beyond text and files, sent from the composer (net-gaps, package media-kinds). Each is offered only
 where the sending account says it can, with a capability of protocol `media.ts`; an old adapter without them leaves
@@ -11,7 +11,7 @@ against a demo hub (`scripts/verify-media-kinds.ts`).
 
 ## Stickers
 
-Stickers are **Sticker** in the + menu on a computer ([sending.md](sending.md) "The box on a computer") and in the + sheet on a phone, after Photos & videos and File (until 2026-11-14 a button in the phone's box, beside the emoji button). The picker is a chunk of its own (`MediaParts.tsx`), and
+Stickers are **Sticker** in the + menu on a computer ([sending.md](sending.md) "The box on a computer") and the **Stickers** tab of the + panel on a phone, drawn in the panel itself ([uploads.md](uploads.md), "The panel"; until 2026-11-14 a button in the phone's box, beside the emoji button). The picker is a chunk of its own (`MediaParts.tsx`), and
 nothing is asked of the network until it opens: then `GET /api/conversations/:id/stickers` asks the sending account
 for one page of packs (the `stickers` command, `StickerPage`, up to `STICKER_PAGE_PACKS` packs), and the next page only
 when the owner presses More. Picking a sticker sends it at once, as a reply when one is open (`send`'s `sticker`).
@@ -80,16 +80,46 @@ phone set it up, which dither cannot read or show, so it is left to the phone. D
 --story`), story view lists, and a story deleted by its author before its day (signal-cli does not say which story a
 deletion is for) are not built either.
 
-## GIF picker (Discord): not built
+## GIFs
 
-Discord's own picker asks Discord for Tenor or Klipy results, and the pictures then come from those companies'
-servers. Showing them here would have the hub or the page load them from there too, a third party beyond what
-Discord's module itself asks for. Sending a GIF is sending its link, which pasting one already does.
+**Picking one.** The GIF picker (`ComposerMediaParts.tsx` `GifPicker`) is the phone panel's **GIFs** tab and the
+computer's + menu **GIF**, offered on Discord and wherever files go. It has a search box and two lists:
+
+- **Yours** first: the GIFs already in your chats, sent or received, newest first, one each (`GET /api/gifs/yours`,
+  media.ts `yourGifs`). GIF files and the networks' GIF videos (attachments marked `gif`) come from the attachment
+  table; Discord's GIF links from the stored embeds of Discord messages with a `gifv` embed, looked for over the last
+  120 days before each page. Nothing outside the hub is asked. With none yet, the picker opens on Trending.
+- **Trending**, and what a search finds, through an account with the `searchGifs` capability (`GET /api/gifs`,
+  media.ts `gifs`): the chat's own account where it has it, else any connected one, since the results can be sent
+  anywhere. Today that is Discord: the account asks Discord's own GIF search (`/gifs/trending-gifs`,
+  `/gifs/search`), exactly as Discord's picker does; Discord asks its provider (Klipy). Every picture comes through the
+  hub's media path, so the phone and the browser never load the provider's servers; the hub fetches them as it fetches
+  any embed's picture. No account with it connected: Trending says so, and Yours still works.
+
+**Sending one** (ComposerMedia.tsx `gifSend`). A tap sends at once. On Discord, a GIF that has a link goes as that
+link, as Discord's own picker sends it, and Discord draws it back as the GIF. Anywhere else, or one with no link, goes
+as a file named for what it is: the provider's animated picture (`gif`) where it has one, else its video. Discord's
+search gives only a WebM and an animated WebP (whatever `media_format` asks for, checked 2026-11-17), so a found GIF
+goes as the WebP; one from Yours goes as the file it was. Only an mp4 or a .gif goes with the send's `gif`, which an
+account with `sendGifs` sends as its network's own GIF (Telegram's animation, WhatsApp's GIF playback, in
+dither-accounts); a WebP goes as a picture. Signal (no GIF flag in signal-cli) shows the WebP as a moving picture
+(seen in Signal Desktop). Telegram and WhatsApp take only an mp4 (or, on Telegram, a .gif) as a GIF, and nothing here
+converts a WebP or WebM to one yet, so a found GIF goes to them as a WebP picture, not as their GIF.
+
+**Showing them.** Settings → Appearance → **Show GIFs as plain GIFs**, on unless switched off on the device (gifs.ts):
+
+- a Discord message that is only a link which Discord drew as a GIF (one `gifv` embed, no files) shows just the GIF,
+  looping, with no link text and no card naming the site, as Discord's own app shows it;
+- an attachment marked `gif` (`AttachmentFact.gif`: Telegram's animation, WhatsApp's GIF playback, Signal's GIF flag
+  where the adapter reads it) loops silently with no player.
+
+Off, both show as before: the link and its card, and a video player.
 
 ## Protocol
 
-Capabilities: `sendStickers`, `installStickers`, `sendVoice`, `sendViewOnce`, `stories`. Commands: `stickers`,
-`addStickerPack`, `storyViewed`, `storyReply`. Events: `story`, `storyGone` (no adapter sends it yet). Fields: `send`'s `sticker` and
-`viewOnce`, `OutgoingAttachment.voice`. Hub: `GET /api/conversations/:id/stickers`, `POST /api/accounts/:id/stickers`,
+Capabilities: `sendStickers`, `installStickers`, `searchGifs`, `sendGifs`, `sendVoice`, `sendViewOnce`, `stories`.
+Commands: `stickers`, `addStickerPack`, `gifs`, `storyViewed`, `storyReply`. Events: `story`, `storyGone` (no adapter sends it yet). Fields: `send`'s `sticker` and
+`viewOnce`, `OutgoingAttachment.voice` and `.gif`, `AttachmentFact.gif`. Hub: `GET /api/conversations/:id/stickers`,
+`POST /api/accounts/:id/stickers`, `GET /api/gifs?q=&cursor=&conversation=`, `GET /api/gifs/yours?before=`,
 `GET /api/stories?identity=|conversation=`, `POST /api/stories/:id/viewed`, `POST /api/stories/:id/reply`, and the send
-body's `sticker`, `voice` and `viewOnce`.
+body's `sticker`, `voice`, `viewOnce` and `gif`.

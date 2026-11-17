@@ -8,6 +8,7 @@ import { api, back, db, go, mailRev, openMessage, openProfile, rev, route } from
 import { retention } from '../history.ts';
 import { Avatar, Empty, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
+import { HeadOrb } from './Offline.tsx';
 import { homeRoute } from '../opening.ts';
 import { Menuable } from './ContextMenu.tsx';
 import { conversationMenu, identityMenu, messageMenu, personMenu, spaceMenu } from './menus.tsx';
@@ -483,6 +484,7 @@ export function SearchPane({ q, onBack }: { q: string; onBack?: () => void }) {
             set(next);
           }}
         />
+        <HeadOrb />
       </header>
       {scope && (
         <div class="search-scope">

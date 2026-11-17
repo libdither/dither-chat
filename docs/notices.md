@@ -66,7 +66,7 @@ marks. Kept 30 days; a marked one while it is learned from.
 - **Read there** (`notify.read`): read here, never notified. Its notification leaves the phones once its group has
   no unread notice that a notification showed: `readTs` is just below the earliest `shown_ts` (a notice's time as
   its notification last showed it, set only when `Notifier.notice` really sent one, and kept when the notice is
-  updated, cleared when it is read) among unread notices; delivery.ts `read` then sends a `{ clear }` push. So a notice raised again inside
+  updated, cleared when it is read) among unread notices; delivery.ts `read` then closes it on every device ([notifications.md](notifications.md#read-elsewhere-gone-here)). So a notice raised again inside
   the list's ten minutes, the update held, keeps its notification until it is read. The phone list's held episodes
   ask another question, whether anything in the group is unread (`readAllTs`): a group with an unread notice is not
   read, whether or not it was shown.
@@ -81,7 +81,7 @@ Notices have no Conversation tier: an **Alert**, a row on the **List**, **Below 
 
 1. Muted (a rule of yours on its account, `PUT /api/rules { scope: 'account' }`, or on its group, scope
    `conversation` with the `ntg_` id): silent.
-2. One of your keywords, or Always alert on the group or the account: an alert.
+2. Always alert on the group or the account: an alert.
 3. Else the two chances, starting from the source's urgency and moved by your marks (learn.ts `predict`; the start is
    kept in the facts as `start`, so learning starts from the same place):
 

@@ -166,6 +166,12 @@ const typeCaption = async (text: string) => {
   await page.send('Input.insertText', { text });
   await Bun.sleep(100);
 };
+/** The panel's Gallery… tile (the system's photo picker), opening the panel first where it is closed. */
+async function openGallery() {
+  if (!(await has('.kp'))) await tap('.composer-plus');
+  await page.until(`!!document.querySelector('.kp [data-track=gallery]')`, 5000);
+  await tap('.kp [data-track=gallery]');
+}
 async function openChat() {
   await page.goto(`${base}/#/inbox/c/${conv.id}`);
   await page.until(`!!document.querySelector('.app.phone .composer-row .composer-plus')`, 20000);
@@ -208,22 +214,21 @@ try {
   await page.eval(`(() => { const t = document.querySelector('.composer textarea'); t.select(); document.execCommand('delete'); t.blur(); })()`);
   await Bun.sleep(200);
 
-  // ------------------------------------------------------------------ + → Photos & videos → one photo → send
+  // ------------------------------------------------------------------ + → the panel → Gallery… → one photo → send
 
   await tap('.composer-plus');
-  await page.until(`!!document.querySelector('.attach-sheet')`, 3000);
-  const items = await page.eval<string[]>(`[...document.querySelectorAll('.attach-sheet [data-track]')].map((e) => e.closest('[data-track-area]').dataset.trackArea + ': ' + e.dataset.track)`);
-  // Then what else the network takes (Stickers, Poll): a phone's box has no sticker button of its own.
-  check('+ opens the sheet: Photos & videos, File, then Stickers', items.slice(0, 2).join() === 'attach: photos,attach: file' && items.includes('attach: stickers'), items);
-  if (shots) await page.shot(join(shots, 'plus-sheet.png'));
+  await page.until(`!!document.querySelector('.kp')`, 5000);
+  const items = await page.eval<string[]>(`[...document.querySelectorAll('.kp .kp-tab')].map((e) => e.closest('[data-track-area]').dataset.trackArea + ': ' + e.dataset.track)`);
+  // In a browser there is no gallery to show (ui/panel/Photos.tsx): the camera, the system's photo picker, and the
+  // pictures the chats hold. Then what else the network takes: a phone's box has no sticker button of its own.
+  check('+ opens the panel in the keyboard\'s place: Photos, Files, then Stickers', items.slice(0, 2).join() === 'panel: photos,panel: files' && items.includes('panel: stickers'), items);
+  check('…Photos has the camera and the system picker first', (await has('.kp [data-track=camera]')) && (await has('.kp [data-track=gallery]')));
+  check('…and + is the keyboard button while it is open', (await track('.composer-plus')) === 'keyboard');
+  if (shots) await page.shot(join(shots, 'plus-panel.png'));
   uploads.length = 0;
-  await tap('.attach-sheet [data-track=photos]');
+  await tap('.kp [data-track=gallery]');
   let c = await chooser();
-  check('Photos & videos asks for photos and videos, several at once', c.accept === 'image/*,video/*' && c.multiple && c.mode === 'selectMultiple' && !c.capture, c);
-  await page.until(`!document.querySelector('.attach-sheet')`, 3000).then(
-    () => check('…and the sheet goes as the picker opens', true),
-    () => check('…and the sheet goes as the picker opens', false),
-  );
+  check('Gallery… asks for photos and videos, several at once', c.accept === 'image/*,video/*' && c.multiple && c.mode === 'selectMultiple' && !c.capture, c);
   await answer(c, [pics[0]]);
   await page.until(`!!document.querySelector('.send-screen .ss-media')`, 5000);
   check('a picked photo opens the send screen, large', (await page.eval<string>(`document.querySelector('.send-screen .ss-media').tagName`)) === 'IMG');
@@ -245,8 +250,7 @@ try {
 
   // ------------------------------------------------------------------ three photos: the strip, pick, remove, back
 
-  await tap('.composer-plus');
-  await tap('.attach-sheet [data-track=photos]');
+  await openGallery();
   c = await chooser();
   await answer(c, pics.slice(1, 4));
   await page.until(`document.querySelectorAll('.send-screen .ss-thumb').length === 3`, 5000);
@@ -271,8 +275,7 @@ try {
 
   // ------------------------------------------------------------------ a file over the limit says so
 
-  await tap('.composer-plus');
-  await tap('.attach-sheet [data-track=photos]');
+  await openGallery();
   c = await chooser();
   await answer(c, [big]);
   await page.until(`!!document.querySelector('.send-screen')`, 5000);

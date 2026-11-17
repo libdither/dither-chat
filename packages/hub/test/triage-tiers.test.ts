@@ -278,7 +278,7 @@ describe('your rules', () => {
     expect(running.reasons).toContain('Muted in Discord: kept to the list');
   });
 
-  test('a person set to always alert, a keyword and a place set to always alert make an alert, and nobody asks the local model', async () => {
+  test('a person set to always alert and a place set to always alert make an alert, and nobody asks the local model', async () => {
     store.setRule('person', person('ann'), 'all');
     const p = await say(d, 'dm', 'ann', 'see you tomorrow');
     expect(p).toMatchObject({ decision: 'push', forced: true, alwaysNotify: true, decidedBy: 'rules' });
@@ -291,16 +291,6 @@ describe('your rules', () => {
     expect((await say(d, 'general', 'ann', 'hello all')).decision).toBe('push');
     store.setRule('person', person('ann'), null);
 
-    store.setRule('keyword', 'deploy', 'all');
-    const k = await say(d, 'general', 'bob', 'the Deploy is done');
-    expect(k).toMatchObject({ decision: 'push', forced: true, keyword: true });
-    expect(k.alwaysNotify).toBeUndefined();
-    expect(k.reasons).toEqual(['Matches keyword “deploy”']);
-    // A whole word, as typed: not part of another, not inside a mention token.
-    expect((await say(d, 'general', 'bob', 'the deployment is done')).decision).toBe('drop');
-    expect((await say(d, 'general', 'bob', 'ask <@deploy> about it')).decision).toBe('drop');
-    store.setRule('keyword', 'deploy', null);
-
     store.setRule('conversation', conv('rules'), 'all');
     const place = await say(d, 'rules', 'bob', 'anyone watching the game');
     expect(place).toMatchObject({ decision: 'push', forced: true });
@@ -308,6 +298,32 @@ describe('your rules', () => {
     store.setRule('conversation', conv('rules'), null);
     expect(asked).toEqual([]);
     expect((await say(d, 'general', 'bob', 'the deploy is done')).decision).toBe('drop');
+  });
+
+  test('a keyword makes a message about you, like a mention: a Conversation the local model reads, never an alert by itself', async () => {
+    store.setRule('keyword', 'deploy', 'all');
+    const k = await say(d, 'general', 'bob', 'the Deploy is done');
+    expect(k).toMatchObject({ decision: 'quiet', keyword: 'deploy', decidedBy: 'rules' });
+    expect(k.forced).toBeUndefined();
+    expect(k.facts).toMatchObject({ keyword: true, conv: true, base: 'drop' });
+    expect(k.reasons[0]).toBe('Says “deploy”, one of your keywords');
+    // As important as what the network notifies, though Discord notifies only mentions here.
+    expect(k.probs!.important).toBe(0.8);
+    expect(asked).toEqual(['the Deploy is done']);
+    // Urgent: the local model makes it an alert, against the bar of a message that is not to you.
+    const urgent = await say(d, 'general', 'bob', 'the deploy broke, look now');
+    expect(urgent.decision).toBe('push');
+    expect(urgent.reasons[0]).toBe(`${URGENT} ${ALERT_BAR.other}`);
+    // A whole word, as typed: not part of another, not inside a mention token.
+    expect((await say(d, 'general', 'bob', 'the deployment is done')).decision).toBe('drop');
+    expect((await say(d, 'general', 'bob', 'ask <@deploy> about it')).decision).toBe('drop');
+    // A place kept to the list keeps it there, high on it.
+    store.setRule('conversation', conv('side'), 'digest');
+    const listed = await say(d, 'side', 'bob', 'deploy at five, look now');
+    expect(listed.decision).toBe('digest');
+    expect(listed.reasons).toContain('Says “deploy”, one of your keywords: kept to the list here');
+    store.setRule('conversation', conv('side'), null);
+    store.setRule('keyword', 'deploy', null);
   });
 
   test("a keyword matches what people typed, never a bot's message or an agent's turn in a T3 thread", async () => {
@@ -318,12 +334,12 @@ describe('your rules', () => {
     store.setRule('keyword', 'deploy', 'all');
     const agent = await say(store.account(t3.id)!, 'thread', 'agent', 'the deploy script is fixed');
     expect(agent.keyword).toBeUndefined();
-    expect(agent.reasons).not.toContain('Matches keyword “deploy”');
+    expect(agent.facts!.keyword).toBeUndefined();
     const bot = await say(d, 'dm-bot', 'helper', 'deploy finished');
     expect(bot.keyword).toBeUndefined();
-    expect(bot.reasons).not.toContain('Matches keyword “deploy”');
+    expect(bot.facts!.keyword).toBeUndefined();
     // A person on the same account still matches.
-    expect(await say(d, 'general', 'bob', 'the deploy is done')).toMatchObject({ decision: 'push', keyword: true });
+    expect(await say(d, 'general', 'bob', 'the deploy is done')).toMatchObject({ decision: 'quiet', keyword: 'deploy' });
     store.setRule('keyword', 'deploy', null);
   });
 
@@ -403,14 +419,14 @@ describe('the local model, slow or missing', () => {
     expect(down.unjudged).toBeUndefined();
   });
 
-  test('no local model at all: only your rules alert', async () => {
+  test('no local model at all: only your rules alert, and a keyword is not one', async () => {
     triage.judge = null;
     const dm = await say(d, 'dm', 'ann', 'urgent: the stove is on, come now');
     expect(dm.decision).toBe('quiet');
     expect(dm.probs!.alert).toBe(UNJUDGED);
     expect(dm.unjudged).toBeUndefined();
     store.setRule('keyword', 'stove', 'all');
-    expect((await say(d, 'dm', 'ann', 'the stove is on')).decision).toBe('push');
+    expect((await say(d, 'dm', 'ann', 'the stove is on')).decision).toBe('quiet');
     store.setRule('keyword', 'stove', null);
   });
 });

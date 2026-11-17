@@ -115,8 +115,9 @@ that returns the model as of `cut` from what was known before it.
 
 - **The alert chance cannot be replayed.** There are no marks in history, so every policy has the same alerts: the
   local model's answer against the bars. What marks would teach shows only once there are some.
-- **Alerts by rule are not replayed.** A message from a person set to Always alert, in a place set so, or with one
-  of your keywords is decided here like any other, so the alert columns count only what the local model raised.
+- **Alerts by rule are not replayed.** A message from a person set to Always alert, or in a place set so, is
+  decided here like any other, so the alert columns count only what the local model raised. One that says one of
+  your keywords (as they are now) is a Conversation, as triage makes it.
 - **You mostly opened what had notified you.** Opens are the label for importance, and under the four levels a
   notification is what led to most of them. So "opened chat-days on the list" flatters a list that keeps what was
   notified before. The unprompted ones are free of that, and there are few of them.

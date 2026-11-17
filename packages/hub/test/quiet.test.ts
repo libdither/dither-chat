@@ -96,15 +96,16 @@ describe('triage', () => {
     expect(store.quietHeld()).toEqual({ count: 1, conversationId: store.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', id)!.conversation_id, messageId: id });
   });
   test('an alert that is not a Conversation is held as a row on the list', async () => {
-    store.setRule('keyword', 'deploy', 'all');
+    const alerts = store.one<{ id: string }>(`SELECT id FROM conversation WHERE native_id = 'alerts'`)!.id;
+    store.setRule('conversation', alerts, 'all');
     const r = await triage.decide(say('ann', 'the deploy failed', 'alerts'), NIGHT);
     expect(r?.facts?.conv).toBe(false);
     expect(r?.decision).toBe('digest');
-    expect(r?.reasons.slice(0, 2)).toEqual([HELD, 'Matches keyword “deploy”']);
+    expect(r?.reasons.slice(0, 2)).toEqual([HELD, 'Always alert: this conversation']);
     expect(store.quietHeld()?.count).toBe(1);
-    // A keyword is not a person: it does not get through, allowed or not.
+    // A place is not a person: it does not get through, allowed or not.
     expect(store.quietHours()!.allowStarred).toBe(true);
-    store.setRule('keyword', 'deploy', null);
+    store.setRule('conversation', alerts, null);
   });
   test('outside them, and with them off, it alerts', async () => {
     expect((await triage.decide(say('ann', URGENT), DAY))?.decision).toBe('push');
