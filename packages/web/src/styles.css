@@ -16574,3 +16574,26 @@ h1:hover > .pair-nick-edit,
     grid-template-areas: 'box icon name' '. . why' '. . members';
   }
 }
+
+/* Sensitive messages (ui/SensitiveCover.tsx, docs/sensitive.md): covered, one line in place, gone with a count. */
+.sens-cover { position: relative; }
+.sens-cover .sens-inner { pointer-events: none; user-select: none; }
+.sens-blur .sens-inner { filter: blur(9px); }
+.sens-bar .sens-inner { color: transparent; }
+.sens-bar .sens-inner .msg-body, .sens-bar .sens-inner .msg-body * { color: transparent !important; background: #000; border-radius: 2px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.sens-bar .sens-inner img, .sens-bar .sens-inner video, .sens-bar .sens-inner canvas { filter: brightness(0); }
+.sens-reveal { position: absolute; inset: 0; margin: auto; width: max-content; height: max-content; font-size: 12px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--border, #444); background: var(--bg-2, #2b2d31); color: var(--text, inherit); cursor: pointer; }
+.sens-answer { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3, #999); margin-top: 2px; }
+.sens-answer button, .sens-line button, .sens-gone button { font: inherit; font-size: 12px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--border, #444); background: transparent; color: inherit; cursor: pointer; }
+.sens-answer button.yes { border-color: #3ba55c; }
+.sens-answer button.no { border-color: #d14b42; }
+.sens-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; color: var(--text-3, #999); padding: 2px 16px 2px 72px; }
+.sens-line .sens-answer { margin: 0; }
+.sens-gone { font-size: 12px; color: var(--text-3, #999); text-align: center; padding: 4px; margin: 4px 16px; border-block: 1px dashed var(--border, #444); }
+.sens-num { font-variant-numeric: tabular-nums; min-width: 3ch; }
+.sens-agree table { border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.sens-agree td, .sens-agree th { border: 1px solid var(--border, #444); padding: 2px 8px; text-align: right; }
+.sens-agree th { text-align: left; font-weight: 600; }
+.sens-question { width: 100%; font: inherit; }
+.sens-trial { margin-top: 8px; display: grid; gap: 6px; }
+.sens-prompt { font-size: 12px; margin: 4px 0; }

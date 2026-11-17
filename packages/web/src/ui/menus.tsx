@@ -20,6 +20,7 @@ import { clearReactions, moderatorDelete, moderatorRemoveEmbeds, modOf } from '.
 import { canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
 import { messageSomeone, openPalette } from './Palette.tsx';
 import { hasHistory, historyOf } from './MessageHistory.tsx';
+import { sensitiveEntry } from './SensitiveCover.tsx';
 import { MarkToggles, tierHeading, tierIcon } from './Marks.tsx';
 import { Avatar } from './bits.tsx';
 import { closeMenu, copy, groups, menuPoint, openMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
@@ -205,6 +206,7 @@ function messageEntries(m: P.MessageView, onReply?: () => void, marks = true): M
       original && { label: 'Go to Original Message', icon: 'external', track: 'go to original', run: () => go({ view: 'inbox', conv: original.conversationId!, msg: original.messageId! }) },
       m.authorId && { label: self ? 'Your Profile' : 'Profile', icon: 'user', track: 'profile', run: () => openProfile(m.authorId) },
       hasHistory(m) && { label: 'Message History', icon: 'clock', track: 'history', run: () => (historyOf.value = m) },
+      sensitiveEntry(m),
     ],
     [canMarkUnread(m, self) && { label: 'Mark Unread', icon: 'mail', track: 'mark unread', run: () => void markUnreadFrom(m) }],
     // Saved on Discord, Remind Me, Remove Embeds, Report (sendingMenu.tsx, docs/sending.md).

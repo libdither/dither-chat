@@ -28,6 +28,7 @@ import type { PictureLayout } from './pictures.ts';
 import type { AboutModerationView, MemberMod, MessageModeration } from './moderation.ts';
 import type { RichView, VoiceFact } from './rich.ts';
 import type { PollView } from './poll.ts';
+import type { SensitiveMark } from './sensitive.ts';
 import type { MailAccess, MailAccountView, MailboxView, MailBootstrap, MailOutboxView, MailThreadView } from './mail.ts';
 import type { CalendarLinkView, CalendarNotifyRef, CalendarPlanView } from './calendar.ts';
 import type { AccountsManagerView } from './accounts.ts';
@@ -681,6 +682,8 @@ export interface MessageView {
    * each `author` a hub identity id and its pictures signed media paths.
    */
   post?: PostFact;
+  /** The local model's chance that it is sensitive, and your answer (sensitive.ts, docs/sensitive.md). */
+  sensitive?: SensitiveMark;
 }
 
 /** A post with the hub message it was logged as (docs/feed.md "Threads"). */

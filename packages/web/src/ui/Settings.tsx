@@ -32,6 +32,7 @@ import { followsArchive, globalPictures, PICTURE_LABELS, setFollowArchive, setGl
 import { PICTURE_LAYOUTS, type PictureLayout } from '@dither-chat/protocol';
 import { applyCallInput, myInput } from '../call.ts';
 import { TranslateSettings } from './TranslateSettings.tsx';
+import { SensitiveSettings } from './SensitiveSettings.tsx';
 
 /** Settings' sections: listed beside them on a desktop, and in a sheet from their header on a phone. */
 export const SECTIONS: [title: string, icon: string, id: string][] = [
@@ -421,6 +422,8 @@ export function SettingsPane() {
           </section>
 
           <TranslateSettings />
+
+          <SensitiveSettings />
 
           <DeskSettings />
           <SessionSettings />
