@@ -36,7 +36,7 @@
     "sync.missed.events": { "measured": 3, "budget": 3, "reason": "Three tiers: the perf world's decisions follow them (every decision has its importance), and a server channel is an inbox row while it holds an unread message on the list" }
   },
   "web": {
-    "startup.bytes": { "measured": 1123107, "budget": 1145570, "reason": "Switching a run of pictures where it is (ui/PictureSwitch.tsx, docs/pictures.md): the computer's rail beside a run, the phone's chip and pinch with the drawing between two ways, and their styles, in the chat view that opens at start" },
+    "startup.bytes": { "measured": 1145975, "budget": 1168895, "reason": "GIFs (docs/media-kinds.md \"GIFs\"): the plain-GIF setting and drawing a Discord link that is only a GIF as the GIF, in the chat view that opens at start" },
     "startup.gzip": { "measured": 349262, "budget": 356248, "reason": "GIFs (docs/media-kinds.md \"GIFs\"): the plain-GIF setting and drawing a Discord link that is only a GIF as the GIF, in the chat view that opens at start" },
     "startup.files": { "measured": 4, "budget": 4 },
     "html/index.html.bytes": { "measured": 5733, "budget": 5848, "reason": "index.html asks the hub again and reloads by itself when the app's script could not load (the hub out of reach, a file not kept), instead of staying on the logo for good, and says so under the logo when the hub answers but a file it lists is missing (docs/android.md, Starting fast)" },
