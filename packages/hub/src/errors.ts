@@ -313,6 +313,13 @@ export function clientReport(body: unknown): ErrorReport | null {
   if (b.version !== undefined && typeof b.version !== 'string') return null;
   const stack = Array.isArray(b.stack) ? b.stack.slice(0, STACK_FRAMES * 2).filter((f): f is string => typeof f === 'string') : (b.stack as string | undefined)?.slice(0, 8000);
   const version = typeof b.version === 'string' && /^[\w.\-+]{1,40}$/.test(b.version) ? b.version : undefined;
+  // extra: at most 8 short keys of strings, numbers and booleans (a loss's lostMs, lostAgo and calls); the rest dropped.
+  let extra: Record<string, string | number | boolean> | undefined;
+  if (b.extra !== undefined) {
+    if (!b.extra || typeof b.extra !== 'object' || Array.isArray(b.extra)) return null;
+    for (const [k, v] of Object.entries(b.extra).slice(0, 8))
+      if (/^\w{1,40}$/.test(k) && (typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)))) (extra ??= {})[k] = v;
+  }
   return {
     app: 'web',
     source: 'client',
@@ -322,8 +329,52 @@ export function clientReport(body: unknown): ErrorReport | null {
     stack: stack ?? [],
     ...(typeof b.status === 'number' ? { status: b.status } : {}),
     ...(version ? { version } : {}),
+    ...(extra ? { extra } : {}),
     trace: '',
   };
+}
+
+/** How many answers the hub gave, a count for each second of the last hour, and when it started: to judge a loss. */
+export class AnswerClock {
+  private readonly counts = new Uint32Array(3600);
+  private readonly secs = new Float64Array(3600);
+  readonly startedAt: number;
+  constructor(private readonly now: () => number = Date.now) {
+    this.startedAt = now();
+  }
+
+  answered(at = this.now()): void {
+    const s = Math.floor(at / 1000);
+    const i = s % 3600;
+    if (this.secs[i] !== s) (this.secs[i] = s), (this.counts[i] = 0);
+    this.counts[i]++;
+  }
+
+  /** Answers in the whole seconds from `from` to `to` (ms epoch), within the last hour. */
+  between(from: number, to: number): number {
+    const last = Math.floor(this.now() / 1000);
+    let n = 0;
+    for (let s = Math.max(Math.ceil(from / 1000), last - 3599); s < Math.floor(to / 1000) && s <= last; s++) if (this.secs[s % 3600] === s) n += this.counts[s % 3600];
+    return n;
+  }
+}
+
+/**
+ * A loss the page reports (packages/web/src/errors.ts HubLoss: `extra.lostMs` long, begun `extra.lostAgo` ms before the
+ * report, both by the page's clock, so no clock skew) that the hub can account for: it started during the loss (a
+ * deploy or a restart; a crash has lines of its own), or it was answering others meanwhile, so the path to that device
+ * was what failed (its network, the tailnet, the proxy), not the hub. Null: nothing explains it, so it is written.
+ */
+export function lossCovered(extra: Record<string, unknown> | undefined, clock: AnswerClock, now: number): 'restarted' | 'answering' | null {
+  const ms = extra?.lostMs;
+  const ago = extra?.lostAgo;
+  if (typeof ms !== 'number' || typeof ago !== 'number' || ms < 0 || ago < ms) return null;
+  const from = now - ago;
+  const to = from + ms;
+  if (clock.startedAt > from) return 'restarted';
+  // A second off each end: the call that failed and the answer that ended the loss.
+  if (clock.between(from + 1000, to - 1000) > 0) return 'answering';
+  return null;
 }
 
 /** At most `max` reports a minute from one client (by address). */

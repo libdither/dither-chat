@@ -1,6 +1,6 @@
 /** The page's error reports (src/errors.ts): route templates, the limits, and what is not reported. */
 import { expect, test } from 'bun:test';
-import { apiTemplate, noteLeaving, pageError, ReportLimiter, routeTemplate, unlessLeaving } from '../src/errors.ts';
+import { apiTemplate, BLIP_MS, HubLoss, type LossEnv, type LossVerdict, lossMessage, pageError, ReportLimiter, routeTemplate } from '../src/errors.ts';
 
 test('a route is a template: ids, names and anything typed become :id, the query goes', () => {
   expect(routeTemplate('#/inbox/c/dc_123?m=msg_9')).toBe('#/inbox/c/:id');
@@ -39,28 +39,123 @@ test('not reported: an abort, an api() error with a status (the hub wrote it); r
   expect(pageError(undefined)).toBeNull();
 });
 
-test('a fetch failure is dropped when the page starts leaving before it is sent: its own reload cut the fetch off', () => {
-  const timers: (() => void)[] = [];
-  const later = (f: () => void) => timers.push(f);
-  let sent = 0;
-  const send = () => sent++;
+/** A loss with a clock, timers and a hub the test moves by hand. */
+function harness() {
+  let now = 1_000_000;
+  const timers: { at: number; f: () => void }[] = [];
+  const st = { online: true, leaving: false, hubUp: false };
+  const sent: { ms: number; ago: number; calls: string[] }[] = [];
+  const verdicts: LossVerdict[] = [];
+  let probes = 0;
+  const env: LossEnv = {
+    now: () => now,
+    online: () => st.online,
+    leaving: () => st.leaving,
+    probe: async () => (probes++, st.hubUp),
+    later: (f, ms) => timers.push({ at: now + ms, f }),
+    send: (r) => sent.push(r),
+    judged: (v) => verdicts.push(v),
+  };
+  const loss = new HubLoss(env);
+  /** Move the clock to `ms` later, running each timer due on the way and waiting for its probe. */
+  const advance = async (ms: number) => {
+    const end = now + ms;
+    for (;;) {
+      timers.sort((a, b) => a.at - b.at);
+      const t = timers[0];
+      if (!t || t.at > end) break;
+      timers.shift();
+      now = t.at;
+      t.f();
+      // The probe's promise, then check()'s continuation.
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    }
+    now = end;
+  };
+  return { loss, st, sent, verdicts, advance, probes: () => probes, pending: () => timers.length };
+}
 
-  unlessLeaving(send, 1500, later);
-  timers.shift()!();
-  expect(sent).toBe(1);
+test('a hub back within a moment is a blip: nothing sent, however many calls failed', async () => {
+  const h = harness();
+  h.loss.fail('GET /api/usage');
+  h.loss.fail('GET /api/retention');
+  h.loss.fail('POST /api/devices/hello');
+  h.st.hubUp = true;
+  await h.advance(2000);
+  expect(h.verdicts).toEqual(['blip']);
+  expect(h.sent).toEqual([]);
+  expect(h.probes()).toBe(1);
+});
 
-  unlessLeaving(send, 1500, later);
-  noteLeaving(true);
-  timers.shift()!();
-  expect(sent).toBe(1);
+test('a hub lost for longer is one report, with every call that failed and how long', async () => {
+  const h = harness();
+  h.loss.fail('GET /api/usage');
+  await h.advance(5000);
+  h.loss.fail('GET /api/read-all');
+  h.loss.fail('GET /api/usage');
+  await h.advance(10_000);
+  h.st.hubUp = true;
+  await h.advance(60_000);
+  expect(h.verdicts).toEqual(['report']);
+  expect(h.sent).toHaveLength(1);
+  expect(h.sent[0].calls).toEqual(['GET /api/usage', 'GET /api/read-all']);
+  expect(h.sent[0].ms).toBeGreaterThanOrEqual(BLIP_MS);
+  expect(h.sent[0].ago).toBe(h.sent[0].ms);
+  // Done: no more asking, and a later failure is a new loss.
+  expect(h.pending()).toBe(0);
+});
 
-  // Already leaving: nothing is even queued.
-  unlessLeaving(send, 1500, later);
-  expect(timers.length).toBe(0);
+test('not the hub: the device offline, the page waking or leaving', async () => {
+  const offline = harness();
+  offline.loss.fail('GET /api/usage');
+  offline.st.online = false;
+  await offline.advance(30_000);
+  expect(offline.verdicts).toEqual(['offline']);
 
-  // Back from the back-forward cache: reported again.
-  noteLeaving(false);
-  unlessLeaving(send, 1500, later);
-  timers.shift()!();
-  expect(sent).toBe(2);
+  // A failure soon after the page came back into sight: the phone's network was still waking.
+  const woke = harness();
+  woke.loss.woke();
+  await woke.advance(3000);
+  woke.loss.fail('GET /api/usage');
+  await woke.advance(20_000);
+  woke.st.hubUp = true;
+  await woke.advance(60_000);
+  expect(woke.verdicts).toEqual(['woke']);
+
+  // Long after waking it counts again.
+  const later = harness();
+  later.loss.woke();
+  await later.advance(60_000);
+  later.loss.fail('GET /api/usage');
+  await later.advance(20_000);
+  later.st.hubUp = true;
+  await later.advance(60_000);
+  expect(later.verdicts).toEqual(['report']);
+
+  // The network changed during the loss.
+  const moved = harness();
+  moved.loss.fail('GET /api/usage');
+  await moved.advance(8000);
+  moved.loss.woke();
+  moved.st.hubUp = true;
+  await moved.advance(60_000);
+  expect(moved.verdicts).toEqual(['woke']);
+
+  // A reload cut the fetches off.
+  const leaving = harness();
+  leaving.loss.fail('GET /api/usage');
+  leaving.st.leaving = true;
+  leaving.loss.leaving();
+  await leaving.advance(5000);
+  expect(leaving.verdicts).toEqual(['leaving']);
+  expect(leaving.probes()).toBe(0);
+
+  for (const h of [offline, woke, moved, leaving]) expect(h.sent).toEqual([]);
+});
+
+test('a loss names its length in a few steps, one fingerprint per step', () => {
+  expect(lossMessage(12_000)).toBe('the hub was not reached for 10 s or more');
+  expect(lossMessage(59_999)).toBe('the hub was not reached for 10 s or more');
+  expect(lossMessage(90_000)).toBe('the hub was not reached for 1 min or more');
+  expect(lossMessage(600_000)).toBe('the hub was not reached for 5 min or more');
 });
