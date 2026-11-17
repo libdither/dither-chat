@@ -223,6 +223,12 @@ function sameOriginOpen(req: Request): boolean {
  * never answers without a session, because the router is never reached without one.
  */
 export const GATED = /^\/(api|media|emoji|voice|calendar|demo|adapter)(\/|$)/;
+/**
+ * Discord's DAVE library, as scripts/dave/update.ts extracted it from the public web client (docs/calls.md): public code,
+ * named by its hash. Direct mode loads it in a worker with an opaque origin, which sends no cookie, so it answers
+ * without a session.
+ */
+const DAVE_FILE = /^\/voice\/dave\/([0-9a-f]{16})\/(libdave\.mjs|libdave\.wasm)$/;
 /** The only gated paths open without a session: the login itself and a bare health check. */
 export const PUBLIC_API = new Set(['/api/health', '/api/login', '/api/logout']);
 
@@ -794,6 +800,8 @@ export class HubServer {
     if (path === '/api/health' && !me) return Response.json({ ok: true, now: Date.now() }, { headers: { 'cache-control': 'no-store' } });
     if (!me) {
       const ticketed = (path.startsWith('/media/') || path.startsWith('/emoji/')) && (req.method === 'GET' || req.method === 'HEAD') && ticketGood(this.opts.secret, path, url.searchParams.get('ticket'));
+      const dave = (req.method === 'GET' || req.method === 'HEAD') && path.match(DAVE_FILE);
+      if (dave) return this.daveFile(dave[1]!, dave[2]!);
       if (!ticketed) {
         if (GATED.test(path)) return this.signIn();
         return this.static(path);
@@ -942,7 +950,7 @@ export class HubServer {
       return new Response('upgrade failed', { status: 400 });
     }
     if (path === '/api/voice/dave') return this.daveCurrent();
-    if ((m = path.match(/^\/voice\/dave\/([0-9a-f]{16})\/(libdave\.mjs|libdave\.wasm)$/))) return this.daveFile(m[1], m[2]);
+    if ((m = path.match(DAVE_FILE))) return this.daveFile(m[1]!, m[2]!);
     if (path === '/api/voice/sounds') return this.callSounds();
     if ((m = path.match(/^\/voice\/sounds\/([a-z0-9_]{1,40})\.mp3$/))) return this.callSound(m[1]);
     if ((m = path.match(/^\/media\/([\w-]+)\/([\w-]+)$/))) return this.media(m[1], m[2], url.searchParams.get('a'));
