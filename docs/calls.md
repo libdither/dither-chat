@@ -87,7 +87,9 @@ unchanged. See `scripts/dave/README.md`.
 
 The output lives in `DITHER_DAVE_DIR` (default `<data>/dave`) and must never be committed. The hub serves it at
 `/voice/dave/<id>/libdave.mjs`. The device imports it inside a worker created from a `data:` URL, whose origin is
-opaque: it cannot read the app's storage or make credentialed requests to the hub.
+opaque: it cannot read the app's storage or make credentialed requests to the hub. So the library's two files answer
+without a session (docs/login.md): it is Discord's public code, named by its hash. Until 2026-11-17 they did not, the
+worker got a 401, and direct mode joined offering no DAVE, which a channel that requires it closes with 4017.
 
 Run it on a timer:
 
