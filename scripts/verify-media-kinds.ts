@@ -1,6 +1,7 @@
 /**
- * Stickers, voice messages, view-once and stories (docs/media-kinds.md) in a real browser against a demo hub of its
- * own on a fresh data dir: the sticker picker sends one, a recording made with Chromium's fake microphone goes out as
+ * Stickers, GIFs, voice messages, view-once and stories (docs/media-kinds.md) in a real browser against a demo hub of
+ * its own on a fresh data dir: the sticker picker sends one, the GIF picker finds one and sends it as Discord's link
+ * (drawn back as just the GIF) or elsewhere as a file, a recording made with Chromium's fake microphone goes out as
  * Ogg Opus with its length and waveform, view-once is offered for files on Signal and not on Discord, and a contact's
  * story shows on their page, opens, and takes a reply.
  *
@@ -55,7 +56,9 @@ if (!boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub');
 const group = boot.conversations.find((c: any) => c.network === 'signal' && c.name === 'Climbing crew 🧗');
 const discord = boot.conversations.find((c: any) => c.network === 'discord' && c.name === 'dev');
 const alice = boot.identities.find((i: any) => i.network === 'signal' && i.displayName === 'Alice Chen');
-if (!group || !discord || !alice) throw new Error('the demo world lacks the Signal group, #dev or Alice');
+// Alice's Discord DM, the first of the demo's, holds a GIF sent as its link (docs/media-kinds.md "GIFs").
+const aliceDm = boot.conversations.find((c: any) => c.network === 'discord' && c.shape === 'direct');
+if (!group || !discord || !alice || !aliceDm) throw new Error('the demo world lacks the Signal group, #dev, Alice or her Discord DM');
 const messages = async (convId: string): Promise<any[]> => {
   const r = (await fetch(`${base}/api/conversations/${convId}/messages?limit=10`).then((x) => x.json())) as any;
   return Array.isArray(r) ? r : (r.messages ?? []);
@@ -133,6 +136,40 @@ try {
   await page.until(`!!document.querySelector('.composer-file')`, 10000);
   check('on Discord: no View once', await page.eval(`!document.querySelector('.view-once-chip')`));
 
+  // ------------------------------------------------------------------ GIFs
+  check("a Discord GIF link shows as just the GIF", await page.goto(`${base}/#/inbox/c/${aliceDm.id}`).then(() => until(() => page.eval(`!!document.querySelector('.plain-gif') && ![...document.querySelectorAll('.msg-body')].some((e) => e.textContent.includes('gifs.example.com'))`), 20000, 'the plain GIF').then(() => true)));
+  await page.until(`!!document.querySelector('.composer textarea')`, 20000);
+  await click('.composer-plus-menu');
+  await page.until(`!!document.querySelector('.plus-menu [data-track="gifs"]')`, 5000);
+  await click('.plus-menu [data-track="gifs"]');
+  await page.until(`document.querySelectorAll('.gif-picker .gif-choice').length > 0`, 10000);
+  check('the GIF picker opens on Yours, with the GIF already in your chats', await page.eval(`document.querySelector('.gif-chip.on')?.dataset.track === 'gifs yours'`));
+  await click('.gif-chip[data-track="gifs trending"]');
+  await page.until(`document.querySelectorAll('.gif-picker .gif-choice').length >= 8`, 10000);
+  check("Trending, through the Discord account's GIF search", true);
+  await page.eval(`document.querySelector('.gif-picker .gif-search').focus()`);
+  await page.send('Input.insertText', { text: 'cat' });
+  await page.until(`document.querySelectorAll('.gif-picker .gif-choice').length === 1`, 10000);
+  check('a search finds by its words', await page.eval(`document.querySelector('.gif-picker .gif-choice').title === 'cat meow'`));
+  if (shots) await page.shot(join(shots, 'gif-picker.png'));
+  await click('.gif-picker .gif-choice');
+  await until(async () => (await messages(aliceDm.id)).some((m: any) => m.body === 'https://gifs.example.com/cat'), 10000, 'the GIF link');
+  check("on Discord it goes as its link, as Discord's picker sends it", true);
+  await until(() => page.eval(`(() => { const ms = [...document.querySelectorAll('.msg')]; return !!ms[ms.length - 1]?.querySelector('.plain-gif'); })()`), 10000, 'drawn back as the GIF');
+  check('and comes back drawn as just the GIF', true);
+  await page.goto(`${base}/#/inbox/c/${group.id}`);
+  await page.until(`!!document.querySelector('.composer textarea')`, 20000);
+  await Bun.sleep(400);
+  await click('.composer-plus-menu');
+  await page.until(`!!document.querySelector('.plus-menu [data-track="gifs"]')`, 5000);
+  await click('.plus-menu [data-track="gifs"]');
+  await page.until(`document.querySelectorAll('.gif-picker .gif-choice').length > 0`, 10000);
+  await click('.gif-chip[data-track="gifs trending"]');
+  await page.until(`document.querySelectorAll('.gif-picker .gif-choice').length >= 8`, 10000);
+  await click('.gif-picker .gif-choice');
+  await until(async () => (await messages(group.id)).some((m: any) => m.attachments?.some((a: any) => /^party/.test(a.name ?? ''))), 15000, 'the GIF file');
+  check('on Signal, through the Discord account\'s search, it goes as a file', true);
+
   // ------------------------------------------------------------------ stories
   await page.goto(`${base}/#/i/${alice.id}`);
   await until(() => page.eval(`!!document.querySelector('.pf-stories .story-thumb')`), 20000, "Alice's stories on her page");
@@ -164,6 +201,7 @@ try {
   await page.until(`!!document.querySelector('.kp')`, 5000);
   check("the phone's panel offers View once on Signal", await page.eval(`!!document.querySelector('.kp [data-track="view once"]')`));
   check('and Stickers', await page.eval(`!!document.querySelector('.kp .kp-tab[data-track="stickers"]')`));
+  check('and GIFs', await page.eval(`!!document.querySelector('.kp .kp-tab[data-track="gifs"]')`));
 
   const errors = page.errors.filter((e) => !/WebSocket connection|Failed to load resource/.test(e));
   check('no script errors', !errors.length, errors);

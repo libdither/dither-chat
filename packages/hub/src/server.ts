@@ -94,6 +94,11 @@ type SendBody = {
   voice?: P.VoiceOut;
   /** The files open once (Signal's view-once). */
   viewOnce?: boolean;
+  /**
+   * The one attached file is a GIF from the GIF picker: sent as the network's own GIF where it has one (capability
+   * 'sendGifs'), else as a file.
+   */
+  gif?: boolean;
   /** capability 'silentSend' (sending.ts) */
   silent?: boolean;
   /** capability 'replyMention' */
@@ -1571,6 +1576,20 @@ export class HubServer {
         return bad(`The network did not list stickers: ${(e as Error).message}`, 502);
       }
     }
+    // GIFs: search through an account that has it, and the ones already in your chats (docs/media-kinds.md "GIFs").
+    if (path === '/api/gifs' && method === 'GET') {
+      const q = url.searchParams;
+      try {
+        return ok(await this.kinds.gifs(q.get('conversation') ?? undefined, q.get('q') ?? undefined, q.get('cursor') ?? undefined));
+      } catch (e) {
+        if (e instanceof MediaError) return bad(e.message, e.status);
+        return bad(`The network did not find GIFs: ${(e as Error).message}`, 502);
+      }
+    }
+    if (path === '/api/gifs/yours' && method === 'GET') {
+      const before = Number(url.searchParams.get('before'));
+      return ok(this.kinds.yourGifs(before > 0 ? before : undefined));
+    }
     if ((m = path.match(/^\/api\/accounts\/([\w-]+)\/stickers$/)) && method === 'POST') {
       // From the app itself, on the owner's click: installing a pack changes the account.
       if (!req.headers.get('origin')) return bad('Sticker packs are installed from the app itself', 403);
@@ -2441,6 +2460,7 @@ export class HubServer {
     const media = sendMediaProblem({ sticker, files: files.length, voice: b.voice, viewOnce: b.viewOnce === true }, accCaps, `${acc.label} on ${name}`);
     if (media.error) return bad(media.error, 409);
     if (media.voice) files = files.map((f, i) => (i === 0 ? { ...f, voice: media.voice } : f));
+    if (b.gif === true && files.length === 1 && !media.voice && can.includes('sendGifs')) files = [{ ...files[0], gif: true }];
     // Person and identity references become the network's mentions or plain names (mentionrefs.ts).
     const text = lowerForSend(s, conversationId, accCaps, b.body ?? '');
     const preview = files.length || sticker ? null : await this.linkPreview(accountId, text);

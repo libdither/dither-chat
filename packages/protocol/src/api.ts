@@ -260,6 +260,8 @@ export interface AttachmentView {
   spoiler?: true;
   explicit?: true;
   voice?: VoiceFact;
+  /** A GIF the network sent as a video (AttachmentFact.gif): drawn looping and silent, with no player. */
+  gif?: true;
   /** Recorded as a voice note (extra.ts AttachmentNote). */
   voiceNote?: true;
   /** Its own caption, where the network has one per file. */

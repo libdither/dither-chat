@@ -19,7 +19,7 @@ import { FilesTab } from './Files.tsx';
 import { PhotosTab } from './Photos.tsx';
 import './panel.css';
 
-export type PanelTab = 'photos' | 'files' | 'stickers' | 'emoji' | 'poll';
+export type PanelTab = 'photos' | 'files' | 'stickers' | 'gifs' | 'emoji' | 'poll';
 
 /** What the composer lends the panel. */
 export interface PanelCtx {
@@ -39,9 +39,10 @@ export interface PanelCtx {
   /** The send screen: what is picked, large. */
   openLarge: () => void;
   viewOnce?: { on: boolean; set: (on: boolean) => void };
-  /** The tabs the composer draws itself, where the chat has them: the sticker picker, the emoji picker (typing into
-   * the box), the poll maker (the box's text as its question). */
+  /** The tabs the composer draws itself, where the chat has them: the sticker picker, the GIF picker, the emoji
+   * picker (typing into the box), the poll maker (the box's text as its question). */
   stickers?: () => ComponentChildren;
+  gifs?: () => ComponentChildren;
   emoji?: () => ComponentChildren;
   poll?: () => ComponentChildren;
 }
@@ -91,6 +92,7 @@ const TABS: { id: PanelTab; icon: string; label: string }[] = [
   { id: 'photos', icon: 'image', label: 'Photos' },
   { id: 'files', icon: 'file', label: 'Files' },
   { id: 'stickers', icon: 'sticker', label: 'Stickers' },
+  { id: 'gifs', icon: 'gif', label: 'GIFs' },
   { id: 'emoji', icon: 'smile', label: 'Emoji' },
   { id: 'poll', icon: 'list', label: 'Poll' },
 ];
@@ -138,7 +140,7 @@ export function Panel({ ctx, tab, setTab }: { ctx: PanelCtx; tab: PanelTab; setT
     };
   }, [up]);
   useEffect(() => () => void (panelLift.value = 0), []);
-  const own = { stickers: ctx.stickers, emoji: ctx.emoji, poll: ctx.poll } as Partial<Record<PanelTab, () => ComponentChildren>>;
+  const own = { stickers: ctx.stickers, gifs: ctx.gifs, emoji: ctx.emoji, poll: ctx.poll } as Partial<Record<PanelTab, () => ComponentChildren>>;
   const tabs = TABS.filter((t) => (t.id === 'photos' || t.id === 'files' ? ctx.canAttach : !!own[t.id]));
   const h = panelHeight();
   const shown = panelShown.value;
