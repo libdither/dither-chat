@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AboutError } from '../src/about.ts';
 import { attempt, candidatesAttempt } from '../src/attempts.ts';
-import { clientReport, ErrorLog, jobFailed, oneLine, PerClientCap, reportError, scrub, setErrorLog, stackFrames, type ErrorRecord } from '../src/errors.ts';
+import { AnswerClock, clientReport, ErrorLog, lossCovered, jobFailed, oneLine, PerClientCap, reportError, scrub, setErrorLog, stackFrames, type ErrorRecord } from '../src/errors.ts';
 import { HubServer, mediaSigner } from '../src/server.ts';
 import { Store } from '../src/store.ts';
 import { setSpanThrowHook, setTraceSink, span } from '../src/trace.ts';
@@ -188,6 +188,44 @@ describe('the page', () => {
     expect(clientReport({ message: 'x', where: '#/', version: 'not a version!' })?.version).toBeUndefined();
   });
 
+  test('clientReport keeps a short extra of words and numbers, and refuses one that is not an object', () => {
+    const r = clientReport({ message: 'x', where: '#/', extra: { lostMs: 12_000, lostAgo: 13_000, calls: 'GET /api/usage', 'bad key': 1, deep: { a: 1 }, n: Infinity } });
+    expect(r?.extra).toEqual({ lostMs: 12_000, lostAgo: 13_000, calls: 'GET /api/usage' });
+    expect(clientReport({ message: 'x', where: '#/', extra: [1] })).toBeNull();
+    expect(clientReport({ message: 'x', where: '#/' })?.extra).toBeUndefined();
+  });
+
+  test('lossCovered: a loss the hub restarted in, or answered others during, is not written', () => {
+    let now = 10_000_000;
+    const clock = new AnswerClock(() => now);
+    now += 600_000;
+    const loss = { lostMs: 30_000, lostAgo: 32_000 };
+    // Nothing answered during it: written.
+    expect(lossCovered(loss, clock, now)).toBeNull();
+    // Answers only at its very edges (the failed call, the answer that ended it): still written.
+    clock.answered(now - 32_000 + 200);
+    clock.answered(now - 2_000 - 100);
+    expect(lossCovered(loss, clock, now)).toBeNull();
+    // An answer in the middle: the hub was up, the device's path was not.
+    clock.answered(now - 20_000);
+    expect(lossCovered(loss, clock, now)).toBe('answering');
+    // The hub started after the loss began: a restart.
+    expect(lossCovered({ lostMs: 30_000, lostAgo: 700_000 }, clock, now)).toBe('restarted');
+    // Not a loss report.
+    expect(lossCovered(undefined, clock, now)).toBeNull();
+    expect(lossCovered({ lostMs: 'x' }, clock, now)).toBeNull();
+  });
+
+  test('AnswerClock forgets seconds over an hour old', () => {
+    let now = 50_000_000;
+    const clock = new AnswerClock(() => now);
+    clock.answered();
+    expect(clock.between(now - 5000, now + 5000)).toBe(1);
+    now += 3_600_000;
+    clock.answered(now);
+    expect(clock.between(now - 3_700_000, now - 3_590_000)).toBe(0);
+  });
+
   test("clientReport: the Android app's crash, passed on by its page, keeps app android and only its numbers", () => {
     const r = clientReport({
       app: 'android',
@@ -200,9 +238,9 @@ describe('the page', () => {
     });
     expect(r).toMatchObject({ app: 'android', source: 'client', where: '/android/uncaught', name: 'SecurityException', version: '0.12.0', extra: { at: 1_700_000_000_000, sdk: 35 } });
     expect(Object.keys(r!.extra!)).toEqual(['at', 'sdk']);
-    // Any other app is the page's; a page's report carries no extra.
+    // Any other app is the page's, and a page's extra is its own (a lost hub's: see the test above).
     expect(clientReport({ app: 'hub', message: 'x', where: '#/' })?.app).toBe('web');
-    expect(clientReport({ message: 'x', where: '#/', extra: { at: 1 } })?.extra).toBeUndefined();
+    expect(clientReport({ message: 'x', where: '#/', extra: { at: 1 } })?.extra).toEqual({ at: 1 });
   });
 
   test('PerClientCap: 60 a minute from one client', () => {
@@ -233,6 +271,30 @@ describe('the routes', () => {
     rmSync(dir, { recursive: true, force: true });
   });
   const post = (body: unknown, headers: Record<string, string> = {}) => fetch(`${base}/api/errors`, { method: 'POST', body: typeof body === 'string' ? body : JSON.stringify(body), headers: { 'content-type': 'application/json', ...headers } });
+
+  test('POST /api/errors: a lost hub is written only when the hub was up and answered no one meanwhile', async () => {
+    log();
+    const longUp = () => {
+      const c = new AnswerClock();
+      Object.defineProperty(c, 'startedAt', { value: Date.now() - 3_600_000 });
+      return c;
+    };
+    const loss = { name: 'FetchError', message: 'the hub was not reached for 10 s or more', where: '#/', extra: { lostMs: 20_000, lostAgo: 22_000, calls: 'GET /api/usage' } };
+    // Answering others in the middle of it: the device's path failed. Not written, and hub.log says why.
+    const answering = longUp();
+    answering.answered(Date.now() - 12_000);
+    (server as any).answers = answering;
+    const said = spyOn(console, 'log').mockImplementation(() => {});
+    expect((await post(loss)).status).toBe(204);
+    expect(lines).toEqual([]);
+    expect(said.mock.calls.flat().join(' ')).toContain('the hub answered others meanwhile');
+    said.mockRestore();
+    // Answering no one: written, with its extra.
+    (server as any).answers = longUp();
+    expect((await post(loss)).status).toBe(204);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ name: 'FetchError', message: loss.message, extra: loss.extra });
+  });
 
   test('POST /api/errors writes app web, source client; a bad body is 400; a cross-site one 403; past 60 a minute 429', async () => {
     log();
