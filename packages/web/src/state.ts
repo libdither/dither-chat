@@ -1404,6 +1404,8 @@ export function tryNow(): Promise<boolean> {
   return new Promise((done) => {
     sock.addEventListener('open', () => done(true), { once: true });
     sock.addEventListener('close', () => done(false), { once: true });
+    // A network that drops packets without a word can hold a socket half-open for a long while: no answer yet, after 5 s.
+    setTimeout(() => done(false), 5000);
   });
 }
 

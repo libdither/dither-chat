@@ -270,11 +270,13 @@ export function SettingsPane() {
         <div>
           <div class="set-title">
             <h2>Settings</h2>
-            {phone.value && <SectionsButton />}
+            <div class="set-title-acts">
+              {phone.value && <SectionsButton />}
+              <HeadOrb />
+            </div>
           </div>
           <p>Notification rules apply to every account at once. The most specific rule always wins.</p>
         </div>
-        <HeadOrb />
       </header>
       <div class="settings-scroll">
         <AccountsBlock />

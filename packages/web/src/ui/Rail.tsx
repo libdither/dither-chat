@@ -333,8 +333,8 @@ export function Rail() {
         track="inbox"
         badge={priorityCount}
         onClick={(e) => {
-          if (off) toggleOfflinePop(e.currentTarget);
-          if (!off || !inInbox) go({ view: 'inbox' });
+          if (off && r.view === 'inbox') toggleOfflinePop(e.currentTarget);
+          else go({ view: 'inbox' });
         }}
         menu={inboxMenu}
       >

@@ -157,7 +157,8 @@ try {
   check(head?.own, 'a phone in a chat: the orb is in the header, on top where it is drawn', head);
   check(await p.eval<boolean>(`document.querySelector('.conv-head-actions').firstElementChild?.classList.contains('head-orb')`), '…first of its buttons');
   check((await p.eval<string>(`document.querySelector('.head-orb').getAttribute('aria-label')`)) === "Can't reach the hub", '…a button with a name');
-  check((await text('.typing-bar .typing-off'))?.trim() === 'Offline · sends when the hub is back', 'the row over the box ends with what happens to a send', await text('.typing-bar .typing-off'));
+  check((await text('.typing-bar .typing-off'))?.trim() === 'Offline · sends later', 'the row over the box ends with what happens to a send, short on a phone', await text('.typing-bar .typing-off'));
+  check(await p.eval<boolean>(`(() => { const t = document.querySelector('.typing-bar .typing-off'), m = t.querySelector('.typing-off-more'); return m.getBoundingClientRect().top < t.getBoundingClientRect().bottom - 2; })()`), '…all of it shown beside the route');
   check(await onScreen('.typing-bar .typing-off .offline-orb'), '…after a small orb');
   check(!(await onScreen('.typing-bar .pair-last')), "…and the last message's route gives way");
   check((await p.eval<string | null>(`document.querySelector('.timeline-scroll .older-wait')?.textContent ?? null`)) === 'Older messages load when the hub is back', 'the top of the timeline says older messages wait for the hub');
@@ -232,6 +233,9 @@ try {
       () => check(true, `a phone's ${name}: its own orb in the header, the only one on screen`),
       async () => check(false, `a phone's ${name}: its own orb in the header, the only one on screen`, await p.eval(`${onTopOrbs}.map((e) => e.closest('button').className)`)),
     );
+    // On the header's first row, not wrapped onto a row of its own under the title.
+    const row = await p.eval<number>(`(() => { const o = document.querySelector('.head-orb:not([data-left])'); return o.getBoundingClientRect().top - o.closest('header').getBoundingClientRect().top; })()`);
+    check(row < 30, `…on the header's first row`, { fromHeaderTop: row });
   }
 
   await p.eval(`location.hash = '#/inbox/c/${conv.id}'`);
@@ -243,6 +247,17 @@ try {
   await p.size(1280, 800, false);
   await p.until(`!!document.querySelector('.titlebar') && !!document.querySelector('.rail .rail-logo .offline-orb')`, 5000);
   check(!(await onScreen('.head-orb')), "a computer: the rail's orb only, none in the header");
+  check((await text('.typing-bar .typing-off'))?.trim() === 'Offline · sends when the hub is back', 'a computer: the row over the box says it in full', await text('.typing-bar .typing-off'));
+  // Away from the inbox, the logo's button still goes there, with no popover.
+  await p.eval(`location.hash = '#/foryou'`);
+  await p.until(`location.hash.startsWith('#/foryou') && !!document.querySelector('.rail .rail-btn:has(.offline-orb)')`, 5000);
+  await click('.rail .rail-btn:has(.offline-orb)');
+  await p.until(`location.hash.startsWith('#/inbox')`, 5000).then(
+    async () => check(!(await p.eval<boolean>(`!!document.querySelector('.offline-pop')`)), "a computer away from the inbox: the logo's button goes to the inbox, no popover"),
+    async () => check(false, "a computer away from the inbox: the logo's button goes to the inbox, no popover", await p.eval('location.hash')),
+  );
+  await p.eval(`location.hash = '#/inbox/c/${conv.id}'`);
+  await p.until(`location.hash.includes(${JSON.stringify(conv.id)}) && document.querySelectorAll('.timeline-scroll .msg').length > 0`, 5000);
   await openPop(() => click('.rail .rail-btn:has(.offline-orb)'));
   const deskPop = await at('.offline-pop');
   const rail = await at('.rail .rail-btn:has(.offline-orb)');

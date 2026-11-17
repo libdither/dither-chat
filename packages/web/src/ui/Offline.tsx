@@ -30,14 +30,16 @@ export function OfflineOrb({ size }: { size: number }) {
 
 /** On a phone page that covers the rail: the orb, first of its header's buttons. Nothing anywhere else. */
 export function HeadOrb() {
+  const self = useRef<HTMLButtonElement>(null);
   if (!offline.value || !phone.value) return null;
   return (
     <button
+      ref={self}
       class="head-orb"
       data-track="offline orb"
       aria-label="Can't reach the hub"
       aria-haspopup="dialog"
-      aria-expanded={!!popFrom.value}
+      aria-expanded={!!popFrom.value && popFrom.value === self.current}
       onClick={(e) => toggleOfflinePop(e.currentTarget)}
     >
       <OfflineOrb size={18} />
@@ -45,12 +47,16 @@ export function HeadOrb() {
   );
 }
 
-/** The end of the row over the message box (Typing.tsx) while out of reach: what happens to a send. */
+/**
+ * The end of the row over the message box (Typing.tsx) while out of reach: what happens to a send, shorter on a phone,
+ * where the route beside it takes most of the row. Short of room, all of it after "Offline" goes.
+ */
 export function OfflineNote() {
   return (
     <span class="typing-off" role="status">
       <OfflineOrb size={10} />
-      <span class="typing-off-text">Offline · sends when the hub is back</span>
+      <span class="typing-off-text">Offline</span>
+      <span class="typing-off-more">{phone.value ? ' · sends later' : ' · sends when the hub is back'}</span>
     </span>
   );
 }
@@ -86,14 +92,18 @@ function OfflinePop({ from, onClose }: { from: HTMLElement; onClose: () => void 
       const t = e.target as Node;
       if (!box.current?.contains(t) && !from.contains(t)) onClose();
     };
-    const key = (e: KeyboardEvent) => e.key === 'Escape' && close();
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      close();
+    };
     const resize = () => relayout((n) => n + 1);
     document.addEventListener('pointerdown', down, true);
-    window.addEventListener('keydown', key);
+    window.addEventListener('keydown', key, true);
     window.addEventListener('resize', resize);
     return () => {
       document.removeEventListener('pointerdown', down, true);
-      window.removeEventListener('keydown', key);
+      window.removeEventListener('keydown', key, true);
       window.removeEventListener('resize', resize);
     };
   }, [from]);
