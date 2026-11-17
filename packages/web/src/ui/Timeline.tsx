@@ -91,6 +91,7 @@ import { isPicture, onlyPictures, pictureRuns, picturesOf } from '../pictures.ts
 import { pictureLayout } from '../arrange.ts';
 import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
 import { TypingBar } from './Typing.tsx';
+import { HeadOrb, offline } from './Offline.tsx';
 import { DisappearsMark, TimerLabel } from './Disappearing.tsx';
 import { useGrow } from './grow.ts';
 import { CameraView, SendScreen } from './Attach.tsx';
@@ -321,6 +322,7 @@ function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () =>
         </div>
       </div>
       <div class="conv-head-actions">
+        <HeadOrb />
         {person && isDirect && (
           <button class="hdr-btn phone-hide" data-track="profile" title="Profile" aria-label="Profile" onClick={() => go({ view: 'profile', person: person.id })}>
             <Icon name="info" size={16} />
@@ -844,6 +846,7 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   });
 
   const msgs = t?.messages ?? [];
+  const off = offline.value;
   // Settings → Adversarial features, or the chat's own say: kept deleted and disappeared messages not shown at all.
   const r = retention.value;
   const all = r.adversarial ? msgs.filter((m) => !(m.deleted && m.gone?.kept) || showsGone(r, m.conversationId)) : msgs;
@@ -934,7 +937,8 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
         drawn.current = { key: tkey, from: all[Math.max(0, start - STEP)].id, to: drawn.current.to };
         slices.extend(end - start);
         redraw((n) => n + 1);
-      } else {
+      } else if (!off) {
+        // (Without the hub a page cannot come: it is asked for once the hub is back, as this runs after every draw.)
         if (t && !t.loading && t.hasMore) {
           hold(first, 'first');
           // The page coming is drawn, as is everything above it: a slice at once, the rest in slices.
@@ -1118,7 +1122,15 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
             <Icon name="chevronDown" size={14} /> Older messages. Jump to the latest
           </button>
         )}
-        {t?.loading && (msgs.length ? <Loading inline label="Loading older messages" /> : <Loading label="Loading messages…" />)}
+        {/* Out of reach, what is not on the device waits for the hub, said rather than spun (Offline.tsx); its
+            coming back draws this again, and the scroll check after it loads them. */}
+        {off && msgs.length > 0 && (t?.loading || (t?.hasMore && start === 0)) ? (
+          <div class="older-wait">Older messages load when the hub is back</div>
+        ) : off && t?.loading ? (
+          <div class="older-wait">Messages load when the hub is back</div>
+        ) : (
+          t?.loading && (msgs.length ? <Loading inline label="Loading older messages" /> : <Loading label="Loading messages…" />)
+        )}
         {!t && <Loading label="Loading messages…" />}
         {t && !t.loading && msgs.length === 0 && <Empty icon="groups" title="No messages yet" />}
         {items}

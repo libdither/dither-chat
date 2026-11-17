@@ -15,6 +15,7 @@ import { api } from './api.ts';
 import { isLoginRefusal, login, needLogin } from './login.ts';
 import { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines, type Timeline } from './store.ts';
 import { applyCalls, applyVoice, loadCalls } from './ringing.ts';
+import { closeCleared, closeNotifications, readIn, tidyNotifications } from './shade.ts';
 
 // ------------------------------------------------------------------ data
 
@@ -266,7 +267,7 @@ export function patchMessage(id: string, patch: (m: P.MessageView) => P.MessageV
 }
 
 /** Events that change nothing in `db`: typing, toasts and read progress have signals of their own. */
-const NOT_DB = new Set<P.ClientEvent['t']>(['typing', 'notify', 'sync', 'readProgress', 'resync', 'sent', 'plans', 'calendar']);
+const NOT_DB = new Set<P.ClientEvent['t']>(['typing', 'notify', 'cleared', 'sync', 'readProgress', 'resync', 'sent', 'plans', 'calendar']);
 /** Events that change what lists show but no names or settings: `metaRev` stays. */
 const LIST_ONLY = new Set<P.ClientEvent['t']>(['message', 'message.deleted', 'identity', 'attention', 'usage', 'arrange', 'requests', 'accountsManager']);
 /** Events that change names (`metaRev` moves) but not what is where (versions.ts `changed('shown')`): people. */
@@ -338,6 +339,11 @@ export function applyEvents(events: P.ClientEvent[]) {
       }
       case 'notify':
         onNotify(ev);
+        break;
+      // Read on some device since the hub notified about it: its notification here goes, unless it shows something
+      // newer than the read (docs/notifications.md, "Read elsewhere, gone here").
+      case 'cleared':
+        void closeCleared(ev.reads, readHere);
         break;
       case 'mail.threads':
         mergeMailTriage(ev.threads);
@@ -416,6 +422,16 @@ function quietHere(ev: { quiet?: string[] }): boolean {
  */
 export const showsHere = (ev: Extract<P.ClientEvent, { t: 'notify' }>) => (!ev.level || ev.level === 'push') && !quietHere(ev);
 
+/** Whether the page holds what a notification shows as read (shade.ts). */
+const readHere = readIn(db);
+
+/**
+ * After each catch-up with the hub (a start, a reconnect): notices.ts checks its own. Notifications of what was read
+ * while this page was away go here (shade.ts), whether this browser was closed or only offline; `dither:tidied` marks
+ * when (scripts/verify-clear.ts waits for it).
+ */
+export const freshHooks = new Set<() => void>([() => void tidyNotifications(readHere).then(() => performance.mark('dither:tidied'))]);
+
 function onNotify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
   if (!showsHere(ev)) return;
   const r = route.value;
@@ -435,8 +451,9 @@ function onNotify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
     const conv = c && c.shape !== 'direct' && c.avatar ? { shape: c.shape === 'channel' || c.shape === 'thread' ? 'channel' : 'group', icon: c.avatar } : undefined;
     const show = (reg?: ServiceWorkerRegistration) => {
       // The worker draws the picture and the network's badge, as it does for a push (sw.js).
-      if (reg?.active) return reg.active.postMessage({ t: 'notify', d: { title: ev.title, body: ev.body, conversationId: ev.conversationId, inbox: !ev.conversationId && !cal, icon: ev.icon, network: ev.network, nid: ev.nid, ...(conv ? { conv } : {}), ...(cal ? { calendar: cal } : {}), ...(notice ? { noticeId: notice } : {}) } });
-      const opts = { body: ev.body, tag: cal ? `calendar:${cal.eventKey}` : (ev.conversationId ?? 'dither-inbox'), icon: conv?.icon ?? ev.icon, data: { conversationId: ev.conversationId, inbox: !ev.conversationId && !cal, calendar: cal, notice } };
+      // `keep`: a reminder or a held summary, which no read closes (shade.ts).
+      if (reg?.active) return reg.active.postMessage({ t: 'notify', d: { title: ev.title, body: ev.body, conversationId: ev.conversationId, inbox: !ev.conversationId && !cal, icon: ev.icon, network: ev.network, nid: ev.nid, ...(conv ? { conv } : {}), ...(cal ? { calendar: cal } : {}), ...(notice ? { noticeId: notice } : {}), ...(ev.keep ? { keep: true } : {}) } });
+      const opts = { body: ev.body, tag: cal ? `calendar:${cal.eventKey}` : (ev.conversationId ?? 'dither-inbox'), icon: conv?.icon ?? ev.icon, data: { conversationId: ev.conversationId, inbox: !ev.conversationId && !cal, calendar: cal, notice, ...(ev.keep ? { keep: true } : {}) } };
       if (reg) reg.showNotification(ev.title, opts);
       else new Notification(ev.title, opts).onclick = open ?? (() => go({ view: 'inbox', conv: ev.conversationId }));
     };
@@ -1074,11 +1091,18 @@ export function markAllRead(convs: P.ConversationView[], where: string) {
 }
 
 const readTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** When markRead last closed each chat's notification: at the bottom of a chat, every scroll calls it. */
+const closedAt = new Map<string, number>();
 export function markRead(conversationId: string) {
+  // Read here means the notification on this device has done its job, also when the page already held the chat as
+  // read: read on another device first, its notification here stays until something closes it.
+  const now = Date.now();
+  if (now - (closedAt.get(conversationId) ?? 0) > 1000) {
+    closedAt.set(conversationId, now);
+    void closeNotifications([conversationId]);
+  }
   const c = db.conversations.get(conversationId);
   if (!c || !c.vantages.some((v) => v.unread || v.mentions)) return;
-  // Read here means the notification on this device has done its job.
-  if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistration().then((reg) => reg?.getNotifications({ tag: conversationId })).then((ns) => ns?.forEach((n) => n.close())).catch(() => {});
   clearTimeout(readTimers.get(conversationId));
   readTimers.set(
     conversationId,
@@ -1151,6 +1175,8 @@ export const beforeSync = { wait: Promise.resolve() as Promise<unknown> };
 
 /** Since when the hub has not answered; null while it does. A start counts as not answering yet. */
 let downSince: number | null = Date.now();
+/** The same, for the notice's "Since 6:01 PM" (ui/Offline.tsx). */
+export const offlineSince = () => downSince;
 
 /** `since`: when the hub was last known to answer. Going down again while down keeps the first time. */
 function setConnected(v: boolean, since = Date.now()) {
@@ -1223,6 +1249,7 @@ function bootstrap() {
       sawHub(b.boot);
       freshFromHub();
       performance.mark('dither:fresh');
+      for (const h of freshHooks) h();
       loadInbox().catch(() => {});
       void loadCalls();
       // Timelines asked for before this socket may have missed anything: their newest pages again.
@@ -1277,6 +1304,7 @@ function resync() {
     sawHub(r.boot);
     freshFromHub();
     performance.mark('dither:fresh');
+    for (const h of freshHooks) h();
     release();
     persistSoon();
     void flushOutgoing();
@@ -1387,6 +1415,24 @@ function reconnectNow() {
   clearTimeout(retry);
   backoff = 500;
   connect();
+}
+
+/**
+ * The notice's Try now (ui/Offline.tsx): a new socket at once, even over one still trying, rather than at the end of
+ * the backoff. Says whether that socket opened, once it has opened or failed.
+ */
+export function tryNow(): Promise<boolean> {
+  if (ws && ws.readyState !== WebSocket.OPEN) dropped();
+  reconnectNow();
+  const sock = ws;
+  if (!sock) return Promise.resolve(false);
+  if (sock.readyState === WebSocket.OPEN) return Promise.resolve(true);
+  return new Promise((done) => {
+    sock.addEventListener('open', () => done(true), { once: true });
+    sock.addEventListener('close', () => done(false), { once: true });
+    // A network that drops packets without a word can hold a socket half-open for a long while: no answer yet, after 5 s.
+    setTimeout(() => done(false), 5000);
+  });
 }
 
 /**

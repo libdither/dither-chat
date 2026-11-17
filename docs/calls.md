@@ -41,6 +41,13 @@ plays its own chimes rather than Discord's recordings.
    opens the voice socket through the hub (`/api/call/<id>/voice`, forwarded only to `*.discord.media`) and its
    media through the hub's TURN relay (`iceTransportPolicy: relay`).
 
+What every network's call body has to take (any adapter that answers the `call` command): a `leave` can come while
+its `join` is still waiting (the device's socket closed: its app crashed, the network dropped, the person hung up at
+once), and the join then starts nothing more (no ring, no channel joined), lets go of what it opened, and fails. And on
+the device, the call starts before the microphone is allowed: the Android app's call service must not need it to start
+(docs/android.md, "The call service"). `scripts/verify-android-call.ts` runs the app's side against any account that
+makes calls (`--account`, `--conversation`), on a hub with a far end of its own.
+
 Participants and mute state come from the client's own stores in both modes. Speaking comes from the client in
 bridge mode and from the voice server's SPEAKING messages in direct mode. The call's state also carries the client's
 own state (`self`: connected, muted, deafened, camera, streaming, the streams it watches): in bridge mode the dock says

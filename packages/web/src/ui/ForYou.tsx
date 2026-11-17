@@ -20,6 +20,7 @@ import { viewer, type ViewerImage } from '../viewer.ts';
 import { Avatar } from './bits.tsx';
 import { openMenu } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
+import { HeadOrb } from './Offline.tsx';
 import { inboxMenu } from './Rail.tsx';
 import { isLottie } from './Sticker.tsx';
 
@@ -275,6 +276,7 @@ export function ForYou() {
           </button>
         )}
         <span class="foryou-actions">
+          <HeadOrb />
           <button class="btn ghost small" data-track="how it sorts" title="Why these: what triage rated, and how" onClick={() => go({ view: 'model' })}>
             <Icon name="sparkles" size={14} /> How it sorts
           </button>
