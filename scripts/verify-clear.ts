@@ -70,7 +70,7 @@ try {
       if (Array.isArray(f)) events.push(...f);
     } catch {}
   });
-  const event = (f: (e: Live) => boolean) => until('a live event', async () => events.find(f), 30_000);
+  const event = (f: (e: Live) => boolean) => until('a live event', async () => events.find(f), 30_000, async () => events.map((e) => `${e.t}:${e.conversationId ?? e.ids?.join(',') ?? ''}`));
 
   const fresh = async (mark: string) => {
     await p.goto(`${url}/#/inbox`);
@@ -120,7 +120,8 @@ try {
   // 2. The app opens (the chat still unread: its tidy leaves the alert), then the chat is read on another device.
   events.length = 0;
   await fresh('dither:tidied');
-  check((await inPage()).some((n) => n.tag === conv), 'opening the app leaves the alert of a chat still unread');
+  const opened = await inPage();
+  check(opened.some((n) => n.tag === conv), 'opening the app leaves the alert of a chat still unread', opened.map((n) => n.tag));
   check((await call('POST', `/api/conversations/${conv}/read`, {})).ok, 'the chat is read on another device');
   const cleared = await event((e) => e.t === 'cleared' && !!e.ids?.includes(conv));
   check(!!cleared, 'the hub tells the open page it was read', cleared);
@@ -145,10 +146,15 @@ try {
   await until('both to show', async () => (await inWorker()).filter((n) => n.tag === a || n.tag === b).length === 2, 20_000, inWorker);
   const before = (await inWorker()).length;
   await deliver({ clear: a, upTo: 2000, more: [{ clear: b, upTo: 4000 }], device: 'test' });
-  const left = await until('the clear to close the older one', async () => {
-    const ns = await inWorker();
-    return ns.some((n) => n.tag === a) ? null : ns;
-  });
+  const left = await until(
+    'the clear to close the older one',
+    async () => {
+      const ns = await inWorker();
+      return ns.some((n) => n.tag === a) ? null : ns;
+    },
+    20_000,
+    inWorker,
+  );
   check(!left.some((n) => n.tag === a), 'a clear push closes the notification read up to its upTo');
   check(left.some((n) => n.tag === b) && left.length === before - 1, 'and leaves the one with a newer message, showing nothing of its own', left.map((n) => `${n.title}:${n.tag}`));
   if (p.errors.length) check(false, 'no page errors', p.errors);
