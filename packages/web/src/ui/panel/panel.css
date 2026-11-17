@@ -293,8 +293,9 @@
   font-size: 16px;
 }
 
-/* The composer's own pickers, drawn in the panel (Stickers, Emoji, Poll): no frame or place of their own. */
+/* The composer's own pickers, drawn in the panel (Stickers, GIFs, Emoji, Poll): no frame or place of their own. */
 .kp .emoji-picker,
+.kp .gif-picker,
 .kp .sticker-picker {
   position: static;
   flex: 1;
@@ -366,4 +367,15 @@
 .kp .sticker-choice .sticker {
   width: 60px;
   height: 60px;
+}
+
+/* GIFs in the panel: two columns, as Signal's and Telegram's. */
+.kp .gif-grid {
+  columns: 2;
+}
+.kp .gif-head {
+  padding: 6px 8px 4px;
+}
+.kp .gif-search {
+  font-size: 16px;
 }

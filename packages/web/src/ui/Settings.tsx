@@ -398,6 +398,13 @@ export function SettingsPane() {
                 <small>A chat you archive or unarchive on a network (Signal) is hidden or shown in the sidebar here too, when that changes. Something that needs you still shows.</small>
               </span>
             </label>
+            <label class="toggle-row">
+              <input type="checkbox" data-track="settings: plain gifs" checked={prefs.value.plainGifs !== false} onChange={(e) => setPrefs({ plainGifs: (e.target as HTMLInputElement).checked })} />
+              <span>
+                <b>Show GIFs as plain GIFs</b>
+                <small>A GIF sent as a link (Discord's picker sends them so) shows as just the GIF, with no link or card naming the site it came from, and the GIF videos of Telegram and WhatsApp loop silently with no player, as each app shows them. Off: the link, its card and a player. For this device.</small>
+              </span>
+            </label>
             <div class="set-rule">
               <span class="set-rule-label">Pictures in chats</span>
               <select class="select" data-track="settings: pictures" value={globalPictures()} onChange={(e) => setGlobalPictures((e.target as HTMLSelectElement).value as PictureLayout)}>

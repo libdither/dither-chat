@@ -1,5 +1,5 @@
 /**
- * The sticker picker and the voice recorder (docs/media-kinds.md), in the chunk MediaParts.tsx: ComposerMedia.tsx loads it the
+ * The sticker picker, the GIF picker and the voice recorder (docs/media-kinds.md), in the chunk MediaParts.tsx: ComposerMedia.tsx loads it the
  * first time either is pressed. The picker asks the hub for one page of packs when it opens and the next only when
  * asked; the recorder asks for the microphone only when it opens.
  */
@@ -190,7 +190,146 @@ export function StickerPicker({ conversationId, accountId, anchor, onPick, onClo
   return <Layer box={box} onClose={onClose} label="Stickers">{body}</Layer>;
 }
 
-function Layer({ box, onClose, label, children }: { box: { current: HTMLDivElement | null }; onClose: () => void; label: string; children: any }) {
+// ------------------------------------------------------------------ GIFs
+
+/** A GIF picked to send: its link where Discord sent it as one, and the hub's address of its file. */
+export interface GifPick {
+  url: string | null;
+  file: string;
+  title?: string;
+}
+
+interface GifItem {
+  key: string;
+  src: string;
+  video: boolean;
+  width: number | null;
+  height: number | null;
+  title?: string;
+  pick: GifPick;
+}
+
+const yourItem = (g: P.YourGif): GifItem => ({ key: `y:${g.messageId}:${g.src}`, src: g.src, video: g.mime.startsWith('video/'), width: g.width, height: g.height, pick: { url: g.url, file: g.src } });
+const foundItem = (g: P.GifView): GifItem => ({ key: `f:${g.id}`, src: g.src, video: g.video, width: g.width || null, height: g.height || null, title: g.title, pick: { url: g.url, file: g.gif ?? g.src, title: g.title } });
+
+/**
+ * The GIF picker (docs/media-kinds.md "GIFs"): Yours first, the GIFs already in your chats, from the hub alone; then
+ * Trending and search, through an account that searches GIFs (Discord's own picker), every picture through the hub.
+ */
+export function GifPicker({ conversationId, anchor, onPick, onClose, inline }: {
+  conversationId: string;
+  anchor?: DOMRect;
+  /** In the phone's panel (ui/panel/): drawn where it is put, no sheet or popover of its own. */
+  inline?: boolean;
+  onPick: (g: GifPick) => void;
+  onClose: () => void;
+}) {
+  type Mode = 'yours' | 'trending';
+  const [mode, setMode] = useState<Mode>('yours');
+  const [query, setQuery] = useState('');
+  const [items, setItems] = useState<GifItem[]>([]);
+  const [next, setNext] = useState<string | number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const end = useRef<HTMLDivElement>(null);
+  const sheet = isSheet();
+  // Each list asked for is one request's worth; an answer for a list no longer showing is dropped.
+  const asked = useRef(0);
+  const q = query.trim();
+  const load = async (more: boolean) => {
+    const ask = more ? asked.current : ++asked.current;
+    setBusy(true);
+    setError(null);
+    try {
+      if (!q && mode === 'yours') {
+        const r = await api<P.YourGifsView>(`/api/gifs/yours${more && next ? `?before=${next}` : ''}`);
+        if (ask !== asked.current) return;
+        // Nothing of yours yet: Trending instead, where there is a search.
+        if (!more && !r.gifs.length) return setMode('trending');
+        setItems((before) => [...(more ? before : []), ...r.gifs.map(yourItem)]);
+        setNext(r.next);
+        setNote(null);
+      } else {
+        const p = new URLSearchParams({ conversation: conversationId, ...(q ? { q } : {}), ...(more && next ? { cursor: String(next) } : {}) });
+        const r = await api<P.GifPageView>(`/api/gifs?${p}`);
+        if (ask !== asked.current) return;
+        setItems((before) => [...(more ? before : []), ...r.gifs.map(foundItem)]);
+        setNext(r.next);
+        setNote(r.note ?? null);
+      }
+    } catch (e) {
+      if (ask === asked.current) setError((e as Error).message);
+    } finally {
+      if (ask === asked.current) setBusy(false);
+    }
+  };
+  useEffect(() => {
+    setItems([]);
+    setNext(null);
+    const t = setTimeout(() => void load(false), q ? 300 : 0);
+    return () => clearTimeout(t);
+  }, [q, mode, conversationId]);
+  // The next page as the end of the list comes into sight.
+  useEffect(() => {
+    const el = end.current;
+    if (!el || next === null || busy) return;
+    const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && void load(true), { rootMargin: '200px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [next, busy, items.length]);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el || sheet || !anchor || inline) return;
+    const { width: w, height: h } = el.getBoundingClientRect();
+    // From the + at the box's left edge, over the chat rather than the list beside it.
+    el.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, anchor.left))}px`;
+    el.style.top = `${anchor.top - 8 >= h ? anchor.top - h - 6 : Math.min(innerHeight - h - 8, anchor.bottom + 6)}px`;
+  });
+  const tile = (g: GifItem) => (
+    <button class="gif-choice" data-track="send gif" title={g.title} aria-label={g.title ? `Send ${g.title}` : 'Send this GIF'} onClick={() => onPick(g.pick)} style={g.width && g.height ? { aspectRatio: `${g.width} / ${g.height}` } : undefined}>
+      {g.video ? <video src={g.src} autoplay loop muted playsInline preload="metadata" aria-hidden="true" /> : <img src={g.src} alt="" loading="lazy" decoding="async" />}
+    </button>
+  );
+  const body = (
+    <div class="gif-picker-body" data-track-area="gif picker">
+      <div class="gif-head">
+        <input class="gif-search" type="search" enterKeyHint="search" placeholder="Search GIFs" value={query} onInput={(e) => setQuery((e.target as HTMLInputElement).value)} aria-label="Search GIFs" />
+        {!q && (
+          <div class="gif-chips" role="tablist">
+            {(['yours', 'trending'] as const).map((m) => (
+              <button role="tab" aria-selected={mode === m} class={`gif-chip ${mode === m ? 'on' : ''}`} data-track={`gifs ${m}`} onClick={() => setMode(m)}>
+                {m === 'yours' ? 'Yours' : 'Trending'}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <div class="gif-scroll">
+        <div class="gif-grid">{items.map(tile)}</div>
+        {busy && !items.length && <div class="gif-note">{mode === 'yours' && !q ? 'Looking through your chats…' : 'Asking for GIFs…'}</div>}
+        {!busy && !error && !items.length && <div class="gif-note">{note ?? (q ? `No GIFs for “${q}”.` : 'No GIFs here yet.')}</div>}
+        {error && <div class="gif-note error">{error}</div>}
+        <div ref={end} class="gif-end" />
+      </div>
+    </div>
+  );
+  if (inline) return <div class="gif-picker">{body}</div>;
+  if (sheet)
+    return (
+      <Sheet onClose={onClose} label="GIFs" class="gif-picker" tall>
+        {body}
+      </Sheet>
+    );
+  return (
+    <Layer box={box} onClose={onClose} label="GIFs" kind="gif-picker">
+      {body}
+    </Layer>
+  );
+}
+
+function Layer({ box, onClose, label, children, kind = 'sticker-picker' }: { box: { current: HTMLDivElement | null }; onClose: () => void; label: string; children: any; kind?: string }) {
   useLayer(onClose);
   useEffect(() => {
     const h = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -199,7 +338,7 @@ function Layer({ box, onClose, label, children }: { box: { current: HTMLDivEleme
   }, []);
   return (
     <div class="ep-layer" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div class="sticker-picker" ref={box} role="dialog" aria-label={label}>
+      <div class={kind} ref={box} role="dialog" aria-label={label}>
         {children}
       </div>
     </div>

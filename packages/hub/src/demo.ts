@@ -9,7 +9,7 @@
  * first seed and stored in the account config.
  */
 
-import { DEMO_MEDIA_CAPS, DemoMedia } from './demomedia.ts';
+import { DEMO_GIFS, DEMO_MEDIA_CAPS, DemoMedia } from './demomedia.ts';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
@@ -650,6 +650,8 @@ const CONVS: DemoConv[] = [
       [2 * DAY + 79, D.alice, 'https://gamebanana.com/mods/celeste-dither'],
       [2 * DAY + 60, D.zyan, 'ok that is gorgeous', { react: { '💜': [D.alice] } }],
       [DAY + 200, D.alice, "also pls stop getting pinged by me on three apps, I'll use signal for real stuff 😅"],
+      // A GIF from Discord's picker: its link as the message, drawn back as a looping GIF (docs/media-kinds.md "GIFs").
+      [DAY + 190, D.alice, DEMO_GIFS[3].url, { embeds: [{ url: DEMO_GIFS[3].url, provider: 'Klipy', video: { url: DEMO_GIFS[3].src, width: DEMO_GIFS[3].width, height: DEMO_GIFS[3].height, gifv: true } }] }],
     ],
   },
   {
@@ -2913,13 +2915,15 @@ class DemoAdapter implements InprocAdapter {
         // View-once: your own copy is not kept to look at, as Signal's apps show it.
         let attachments: P.AttachmentFact[] | undefined = cmd.viewOnce
           ? undefined
-          : cmd.attachments?.map((f) => ({ kind: f.kind, mime: f.mime, name: f.name, size: f.size, url: `data:${f.mime};base64,${readFileSync(f.path).toString('base64')}`, ...(f.voice ? { voice: f.voice } : {}) }));
+          : cmd.attachments?.map((f) => ({ kind: f.kind, mime: f.mime, name: f.name, size: f.size, url: `data:${f.mime};base64,${readFileSync(f.path).toString('base64')}`, ...(f.voice ? { voice: f.voice } : {}), ...(f.gif ? { gif: true as const } : {}) }));
         if (sticker) attachments = [{ nativeId: `sticker:${sticker.id}`, kind: 'image', mime: sticker.mime, name: sticker.name, width: 160, height: 160, url: sticker.url }];
         const kind: P.MessageKind = sticker ? 'sticker' : (attachments?.length || cmd.viewOnce) && !cmd.body ? 'media' : 'text';
         const body = cmd.viewOnce ? cmd.body || '📷 View-once media' : cmd.body;
         // A chat with a disappearing timer: the message carries it, as Signal's do.
         const timer = (demoPlaces.get(cmd.conversation)?.values.disappearing ?? DEMO_VALUES[cmd.conversation]?.disappearing ?? 0) as number;
-        const extra = { ...(cmd.viewOnce ? { viewOnce: true } : {}), ...(timer > 0 ? { expiresInSeconds: timer } : {}) };
+        // A GIF's link from Discord's picker comes back drawn as the GIF, as Discord does (docs/media-kinds.md "GIFs").
+        const gif = this.network === 'discord' ? DEMO_GIFS.find((g) => g.url === body?.trim()) : undefined;
+        const extra = { ...(cmd.viewOnce ? { viewOnce: true } : {}), ...(timer > 0 ? { expiresInSeconds: timer } : {}), ...(gif ? { embeds: [{ url: gif.url, provider: 'Klipy', video: { url: gif.src, width: gif.width, height: gif.height, gifv: true as const } }] } : {}) };
         this.emit({ t: 'message', live: true, message: { nativeId, conversation: cmd.conversation, author: this.self.nativeId, ts: Date.now(), body, replyTo: cmd.replyTo, kind, attachments, ...(Object.keys(extra).length ? { extra } : {}), ...(cmd.silent ? { silent: true } : {}) } });
         this.sent.set(nativeId, { body: cmd.body, att: attachments });
         reply({ nativeId });
@@ -3019,6 +3023,7 @@ class DemoAdapter implements InprocAdapter {
         }
         break;
       case 'stickers':
+      case 'gifs':
       case 'addStickerPack':
       case 'storyViewed':
       case 'storyReply':

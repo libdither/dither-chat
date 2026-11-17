@@ -135,6 +135,11 @@ interface Prefs {
   peopleLinkSort?: 'recent' | 'az';
   /** This device counts which buttons are pressed (clicklog.ts, docs/button-counts.md). Off unless switched on here. */
   countClicks?: boolean;
+  /**
+   * GIFs drawn as just the GIF (docs/media-kinds.md "GIFs"): a Discord GIF link with no link text or card, and the
+   * networks' GIF videos looping with no player. On unless switched off.
+   */
+  plainGifs?: boolean;
 }
 export type { InboxFilter };
 const PREFS_KEY = 'dither-chat:prefs';

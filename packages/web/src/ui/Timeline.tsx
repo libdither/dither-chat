@@ -95,8 +95,10 @@ import { DisappearsMark, TimerLabel } from './Disappearing.tsx';
 import { useGrow } from './grow.ts';
 import { CameraView, SendScreen } from './Attach.tsx';
 import type { PanelTab } from './panel/Panel.tsx';
-import { mediaOffer, preloadStickers, StickerPicker, stickerInstaller, ViewOnceChip, VoiceButton } from './ComposerMedia.tsx';
+import { GifPicker, gifSend, mediaOffer, preloadStickers, StickerPicker, stickerInstaller, ViewOnceChip, VoiceButton } from './ComposerMedia.tsx';
+import type { GifPick } from './ComposerMediaParts.tsx';
 import { CAPTURE_ACCEPT, MEDIA_ACCEPT, opensSendScreen } from '../camera.ts';
+import { gifLinkOf, plainGifs } from '../gifs.ts';
 import { closePanel, openPanel, panelOpen, panelShown, phone, touchOnly } from '../phone.ts';
 import { composerDone, composerTyped } from '../typing.ts';
 import { noteSeen } from '../activity.ts';
@@ -482,7 +484,13 @@ function Attachments({ m, run, absorbed, layout, switchable }: { m: P.MessageVie
         const kind = media(a);
         if (isSticker(m, a)) return <Sticker a={a} index={i} />;
         if (kind === 'video') {
-          const video = <video class="att-video" data-att={i} src={a.url} controls preload="metadata" onPlay={() => played(m)} />;
+          // A GIF the network sent as a video loops silently, as a GIF, with no player (docs/media-kinds.md "GIFs").
+          const video =
+            a.gif && plainGifs() ? (
+              <video class="att-video att-gif" data-att={i} src={a.url} autoplay loop muted playsInline preload="auto" aria-label={a.alt ?? 'GIF'} style={a.width && a.height ? { aspectRatio: `${a.width} / ${a.height}` } : undefined} />
+            ) : (
+              <video class="att-video" data-att={i} src={a.url} controls preload="metadata" onPlay={() => played(m)} />
+            );
           return withNote(a, veiled(a) ? <Veil a={a}>{video}</Veil> : video);
         }
         // A voice message with its waveform and length (docs/rich-messages.md).
@@ -520,6 +528,18 @@ const withNote = (a: P.AttachmentView, el: ComponentChildren) =>
   ) : (
     el
   );
+
+/** A Discord GIF drawn as just the GIF: a looping silent video (a picture in the demo world). */
+function PlainGif({ e }: { e: P.EmbedView }) {
+  const v = e.video!;
+  const ratio = v.width && v.height ? `${v.width} / ${v.height}` : undefined;
+  const label = e.title ?? 'GIF';
+  return v.url.startsWith('data:image/') ? (
+    <img class="plain-gif" src={v.url} alt={label} style={ratio ? { aspectRatio: ratio } : undefined} />
+  ) : (
+    <video class="plain-gif" src={v.url} autoplay loop muted playsInline preload="auto" aria-label={label} style={ratio ? { aspectRatio: ratio } : undefined} />
+  );
+}
 
 function Embeds({ m }: { m: P.MessageView }) {
   if (!m.embeds.length) return null;
@@ -655,6 +675,8 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
   const chip = !hover && !!chipOn && !m.deleted && !m.forward && chipOn.reduce((k, x) => k + picturesOf(x).length, 0) > 1;
   // Your message's ticks, after its text.
   const ticks = m.receipts && isSelfIdentity(m.authorId) ? <Ticks m={m} /> : null;
+  // A Discord GIF: just the GIF, with no link or card (docs/media-kinds.md "GIFs").
+  const gif = !m.deleted && !m.forward && !m.poll ? gifLinkOf(m) : null;
   return (
     <div
       class={`msg ${grouped ? 'grouped' : target || m.quote ? '' : 'head'} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''}`}
@@ -726,17 +748,17 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           <>
             <RichHead m={m} />
             <StoryReplyLine m={m} />
-            {m.poll ? <PollCardLazy m={m} fallback={<Body m={m} />} /> : <Body m={m.contacts ? withoutCardLines(m) : m} tail={ticks} />}
+            {m.poll ? <PollCardLazy m={m} fallback={<Body m={m} />} /> : gif ? null : <Body m={m.contacts ? withoutCardLines(m) : m} tail={ticks} />}
             <Attachments m={m} run={run} absorbed={absorbed} layout={pictures} switchable />
             <MissingFiles m={m} />
             <ContactCards m={m} />
-            <Embeds m={m} />
+            {gif ? <PlainGif e={gif} /> : <Embeds m={m} />}
             <InviteCards m={m} body={m.body} />
             <RichFoot m={m} />
           </>
         )}
         <SendFailures m={m} />
-        {ticks && (!m.body || m.deleted || (m.poll && !m.forward)) && <span class="msg-marks">{ticks}</span>}
+        {ticks && (!m.body || gif || m.deleted || (m.poll && !m.forward)) && <span class="msg-marks">{ticks}</span>}
         {grouped && (m.editedTs || m.edits) && <Edited m={m} />}
         {grouped && <DisappearsMark m={m} self={self} />}
         {grouped && (m.pinned || m.rich?.silent || m.rich?.marks) && (
@@ -1282,9 +1304,22 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
     if (files.length) closePanel();
   };
   /** A sticker or a recording goes at once, on its own, as a reply when one is open. */
-  const sendMedia = (opts: { files?: File[]; media?: { sticker?: string; voice?: P.VoiceOut } }) => {
+  const sendMedia = (opts: { files?: File[]; media?: { sticker?: string; voice?: P.VoiceOut; gif?: boolean } }) => {
     send(targets.convId, '', { accountId: targets.accountId, replyTo: reply?.id, ...opts });
     clearReply();
+  };
+  /** A GIF goes at once too: its link on Discord, its file elsewhere (ComposerMedia.tsx gifSend). */
+  const sendGif = async (g: GifPick) => {
+    if (!conv) return;
+    try {
+      const r = await gifSend(g, conv.network);
+      if ('body' in r) {
+        send(targets.convId, r.body, { accountId: targets.accountId, replyTo: reply?.id });
+        clearReply();
+      } else sendMedia({ files: [r.file], media: { gif: true } });
+    } catch (e) {
+      toast({ kind: 'error', title: 'The GIF did not go', body: (e as Error).message });
+    }
   };
   const canSend = !((!text.trim() && !files.length) || !!disabledReason || (att.failed && !edit));
   const sendTitle = att.failed && !edit ? 'A file did not upload: try it again or remove it' : undefined;
@@ -1320,8 +1355,12 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
   // files are all it takes, the + is a paperclip that opens the file picker at once.
   const [stickerAt, setStickerAt] = useState<DOMRect | null>(null);
   useEffect(() => setStickerAt(null), [targets.convId]);
+  const [gifAt, setGifAt] = useState<DOMRect | null>(null);
+  useEffect(() => setGifAt(null), [targets.convId]);
   const plusRef = useRef<HTMLButtonElement>(null);
   const canSticker = !!conv && !disabledReason && !edit && offer.stickers;
+  // GIFs (docs/media-kinds.md "GIFs"): a link on Discord, a file anywhere files go.
+  const canGif = !!conv && !disabledReason && !edit && (conv.network === 'discord' || attaching);
   type PlusItem = { track: string; icon: string; label: string; note?: string; run: () => void; hover?: () => void };
   const plusItems: PlusItem[] = onPhone
     ? []
@@ -1329,6 +1368,7 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
         attaching && { track: 'attach', icon: 'paperclip', label: 'Upload a file', note: limit.replace('up to ', ''), run: () => picker.current?.click() },
         pollAccount && { track: 'poll', icon: 'list', label: 'Poll', run: () => setPolling(true) },
         canSticker && { track: 'stickers', icon: 'sticker', label: 'Sticker', run: () => plusRef.current && setStickerAt(plusRef.current.getBoundingClientRect()), hover: preloadStickers },
+        canGif && { track: 'gifs', icon: 'gif', label: 'GIF', run: () => plusRef.current && setGifAt(plusRef.current.getBoundingClientRect()), hover: preloadStickers },
       ] as (PlusItem | false | null | undefined)[]).filter((x): x is PlusItem => !!x);
   const plus =
     plusItems.length === 1 && plusItems[0].track === 'attach' ? (
@@ -1339,7 +1379,7 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
       <Menu
         up
         trigger={(toggle) => (
-          <button ref={plusRef} class="icon-btn composer-plus-menu" data-track="plus" onClick={toggle} title="Files, polls and stickers" aria-label="More to send">
+          <button ref={plusRef} class="icon-btn composer-plus-menu" data-track="plus" onClick={toggle} title="Files, polls, stickers and GIFs" aria-label="More to send">
             <Icon name="plus" size={18} />
           </button>
         )}
@@ -1378,7 +1418,7 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
   // can't go); the box's emoji button opens it on Emoji. The button whose tab is showing becomes the keyboard's.
   const lastPlusTab = useRef<PanelTab>('photos');
   if (panelTab !== 'emoji') lastPlusTab.current = panelTab;
-  const plusTab: PanelTab = attaching ? lastPlusTab.current : lastPlusTab.current === 'stickers' || lastPlusTab.current === 'poll' ? lastPlusTab.current : canSticker ? 'stickers' : pollAccount ? 'poll' : 'emoji';
+  const plusTab: PanelTab = attaching ? lastPlusTab.current : lastPlusTab.current === 'stickers' || lastPlusTab.current === 'gifs' || lastPlusTab.current === 'poll' ? lastPlusTab.current : canSticker ? 'stickers' : canGif ? 'gifs' : pollAccount ? 'poll' : 'emoji';
   const onEmojiTab = panelOpen.value && panelTab === 'emoji';
   const onPlusTab = panelOpen.value && !onEmojiTab;
   const togglePanel = (at: PanelTab) => {
@@ -1597,7 +1637,7 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
               // Keeps the box focused, so the panel takes the keyboard's room before the keyboard goes.
               onPointerDown={(e) => e.preventDefault()}
               onClick={() => togglePanel(onPlusTab ? panelTab : plusTab)}
-              aria-label={onPlusTab ? 'Back to the keyboard' : 'Photos, files, stickers and polls'}
+              aria-label={onPlusTab ? 'Back to the keyboard' : 'Photos, files, stickers, GIFs and polls'}
             >
               <Icon name={onPlusTab ? 'keyboard' : 'plus'} size={22} />
             </button>
@@ -1636,6 +1676,7 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
           onClose={() => setStickerAt(null)}
         />
       )}
+      {gifAt && canGif && <GifPicker conversationId={targets.convId} anchor={gifAt} onSend={(g) => void sendGif(g)} onClose={() => setGifAt(null)} />}
       {emojiAt && conv && (
         <InsertPicker
           conversationId={targets.convId}
@@ -1663,6 +1704,7 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
             openLarge: () => setReview(true),
             ...(offer.viewOnce ? { viewOnce: { on: viewOnce, set: setViewOnce } } : {}),
             ...(canSticker ? { stickers: () => <StickerPicker inline conversationId={targets.convId} accountId={targets.accountId ?? sender?.id} onSend={(st) => sendMedia({ media: { sticker: st.id } })} onClose={() => closePanel()} /> } : {}),
+            ...(canGif ? { gifs: () => <GifPicker inline conversationId={targets.convId} onSend={(g) => void sendGif(g)} onClose={() => closePanel()} /> } : {}),
             emoji: () => <InsertPicker inline conversationId={targets.convId} network={conv.network} anchor={null} onInsert={insertFromPanel} onClose={() => closePanel()} />,
             ...(pollAccount
               ? { poll: () => <PollMakerLazy conversationId={targets.convId} network={conv.network} accountId={pollAccount.id} question={text.trim()} focus={false} onClose={() => closePanel()} onSent={() => type('')} /> }
