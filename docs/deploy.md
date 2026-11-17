@@ -391,6 +391,12 @@ devices.
 Screenshots, `scripts/verify-*.ts` and the call lab (`scripts/call-lab.ts`, see docs/calls.md) each run their
 own hub on another port with its own data dir.
 
+`DITHER_DEMO_SCENARIO` adds to the demo world, comma separated (packages/hub/src/demo.ts): `multiaccount` (Kit, one
+person on seven accounts, and Mo on two), `servers` (35 more Discord servers with folders, docs/organize.md) and
+`crowd` (about 120 more people in eight servers and eleven groups, with pairs planted for Same person? to find from
+sure to faint, demo-crowd.ts; `scripts/shots-same-person.ts` screenshots it, docs/same-person.md). Without it the
+world is the one tests and perf baselines expect.
+
 A demo hub runs without the login (its data is invented); any other hub is behind it, a throwaway one too. Scripts
 that run a throwaway hub that is not a demo world set a password and a service token in its data dir first and sign
 their browser in (`scripts/hub-login.ts`, [login.md](login.md)).

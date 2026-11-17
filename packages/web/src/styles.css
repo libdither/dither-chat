@@ -12286,6 +12286,12 @@ button.msg-edited.link:hover {
 .adv-where .icon {
   flex: none;
 }
+.toggle-row .adv-collect {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
 /* Message history, while adversarial features keep nothing. */
 .hist-off {
   display: flex;
@@ -12616,8 +12622,16 @@ button.msg-edited.link:hover {
 .side-graph.on {
   color: var(--accent);
 }
+.side-same {
+  color: var(--text-faint);
+}
+.side-same.on {
+  color: var(--accent);
+}
 .side-new + .side-graph,
-.side-graph + .side-sort {
+.side-graph + .side-same,
+.side-graph + .side-sort,
+.side-same + .side-sort {
   margin-left: 0;
 }
 .pg-pane {
@@ -16573,4 +16587,330 @@ h1:hover > .pair-nick-edit,
     grid-template-columns: auto auto minmax(0, 1fr);
     grid-template-areas: 'box icon name' '. . why' '. . members';
   }
+}
+
+/* Same person? (same/SamePerson.tsx, docs/same-person.md): pairs to merge, each with why. */
+.sp-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-center);
+}
+.sp-head {
+  align-items: center;
+}
+.sp-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 16px 24px;
+}
+.sp-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  padding: 10px 0 4px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.sp-note {
+  flex-basis: 100%;
+  color: var(--text-faint);
+}
+.sp-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0 12px;
+}
+.sp-find {
+  flex: 1 1 220px;
+  max-width: 360px;
+}
+.sp-list {
+  display: grid;
+  gap: 10px;
+  max-width: 860px;
+}
+.sp-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+}
+.sp-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+.sp-side {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 4px 6px;
+  border-radius: var(--radius);
+  text-align: left;
+  color: inherit;
+}
+.sp-side:hover {
+  background: var(--bg-hover);
+}
+.sp-side-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+}
+.sp-side-text b {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sp-side-text small {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.sp-ids {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.sp-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+.sp-id span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sp-odds {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  background:
+    radial-gradient(closest-side, var(--bg-raised) 78%, transparent 80%),
+    conic-gradient(var(--sp-ring) calc(var(--p) * 360deg), var(--border-soft) 0);
+  --sp-ring: var(--text-faint);
+}
+.sp-odds.mid {
+  --sp-ring: var(--warn);
+}
+.sp-odds.strong {
+  --sp-ring: var(--good);
+}
+.sp-evs {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sp-ev {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.sp-ev .icon {
+  flex: none;
+  margin-top: 2px;
+}
+.sp-ev.strong {
+  color: var(--text);
+}
+.sp-ev.strong .icon {
+  color: var(--good);
+}
+.sp-ev.against .icon,
+.sp-ev.against {
+  color: var(--danger);
+}
+.sp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+/* Where a band of the list starts: "Likely, 60% to 90%". */
+.sp-band {
+  margin: 8px 2px 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.sp-band:first-child {
+  margin-top: 0;
+}
+.sp-band small {
+  margin-left: 6px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-faint);
+}
+/* How much a piece of evidence counts: three bars. */
+.sp-ev-w {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  flex: none;
+  height: 11px;
+  margin: 3px 0 0 auto;
+  padding-left: 8px;
+}
+.sp-ev-w i {
+  width: 3px;
+  border-radius: 1px;
+  background: var(--border-soft);
+}
+.sp-ev-w i:nth-child(1) {
+  height: 5px;
+}
+.sp-ev-w i:nth-child(2) {
+  height: 8px;
+}
+.sp-ev-w i:nth-child(3) {
+  height: 11px;
+}
+.sp-ev-w i.on {
+  background: var(--good);
+}
+.sp-ev.against .sp-ev-w i.on {
+  background: var(--danger);
+}
+.sp-faint {
+  justify-self: start;
+}
+.sp-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.sp-group-sides {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 4px;
+}
+.sp-group-pairs {
+  display: grid;
+  gap: 8px;
+}
+.sp-group-pairs .sp-card {
+  background: var(--bg-center);
+}
+.sp-review {
+  display: grid;
+  gap: 2px;
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+  margin: 8px 0 12px;
+}
+.sp-review-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px;
+  border-radius: var(--radius-sm);
+}
+.sp-review-row:hover {
+  background: var(--bg-hover);
+}
+.sp-review-row .sp-odds {
+  width: 40px;
+  height: 40px;
+  font-size: 12px;
+}
+.sp-review-names {
+  flex: 1;
+  display: grid;
+  min-width: 0;
+}
+.sp-review-pair {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+}
+.sp-review-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.sp-review-names small {
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sp-review-and {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+@media (max-width: 640px) {
+  .sp-body {
+    padding: 0 12px 24px;
+  }
+  .sp-pair {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .sp-pair .sp-odds {
+    grid-row: 1 / span 2;
+    grid-column: 2;
+  }
+  .sp-pair .sp-side:last-child {
+    grid-column: 1;
+  }
+}
+/* A profile's Same person? box (ui/SameBox.tsx). */
+.pf-same-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  align-items: center;
+  padding: 6px 0;
+}
+.pf-same-row + .pf-same-row {
+  border-top: 1px solid var(--border-soft);
+}
+.pf-same-row .sp-evs,
+.pf-same-row .sp-actions {
+  grid-column: 1 / -1;
+}
+.pf-same-row .sp-odds {
+  width: 40px;
+  height: 40px;
+  font-size: 12px;
+}
+/* Graph: suggested same-person links are drawn dashed (graph/engine.ts); the picked person's in its card. */
+.pg-same {
+  display: grid;
+  gap: 4px;
+  padding-bottom: 4px;
+}
+.pg-same-actions {
+  display: flex;
+  gap: 6px;
+  padding-left: 6px;
 }

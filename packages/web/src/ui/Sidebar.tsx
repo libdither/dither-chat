@@ -83,6 +83,16 @@ function NewMessageButton() {
   );
 }
 
+/** Opens Same person?: who may be one person on several accounts (same/SamePerson.tsx). */
+function SameButton() {
+  const on = route.value.view === 'people' && !!route.value.same;
+  return (
+    <button class={`icon-btn small side-same ${on ? 'on' : ''}`} data-track="same person" title="Same person? Accounts that may be one person" aria-label="Same person?" aria-pressed={on} onClick={() => go(on ? { view: 'people' } : { view: 'people', same: true })}>
+      <Icon name="merge" size={16} />
+    </button>
+  );
+}
+
 /** Opens the people graph: who shares which servers and groups (graph/GraphView.tsx). */
 function GraphButton() {
   const on = route.value.view === 'people' && !!route.value.graph;
@@ -582,7 +592,7 @@ export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
   return (
     <div class="sidebar-inner" data-track-area="people">
       <header class="side-head">
-        <h1>People<NewMessageButton /><GraphButton />{relationship ? <LinkSortButton /> : <SortButton scope="people" class="side-sort" />}</h1>
+        <h1>People<NewMessageButton /><GraphButton /><SameButton />{relationship ? <LinkSortButton /> : <SortButton scope="people" class="side-sort" />}</h1>
         {accounts.length > 1 && <PeopleAccountPicker accounts={accounts} current={scoped} pick={setAccountId} />}
       </header>
       {chips.length > 0 && (

@@ -62,7 +62,7 @@ export function pageOf(r: Route): string {
     case 'inbox':
       return r.conv ? (r.conv.startsWith('mth_') ? 'mail thread' : r.conv.startsWith('pst_') ? 'post' : 'conversation') : 'inbox';
     case 'people':
-      return r.person ? 'conversation' : r.graph ? 'people graph' : 'people';
+      return r.person ? 'conversation' : r.graph ? 'people graph' : r.same ? 'same person' : 'people';
     case 'space':
     case 'search':
       return r.conv ? 'conversation' : r.view;

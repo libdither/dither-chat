@@ -107,7 +107,7 @@ const BIO: Record<Who, { bio: string; followers: number; following: number; post
   self: { bio: 'Building dither: one inbox for every network. Routing, sheaves, sheep.', followers: 812, following: 301, posts: 2210 },
   alice: { bio: 'Distributed systems at a small company. Rust, coffee, long walks. https://alicechen.dev/notes', followers: 2310, following: 512, posts: 8120, followsYou: true },
   ravi: { bio: 'Routing protocols and the people who break them.', followers: 640, following: 220, posts: 1900, followsYou: true },
-  quinn: { bio: 'Writer. Mostly about software, sometimes about birds. quinnwrites.blog', followers: 15200, following: 870, posts: 22100 },
+  quinn: { bio: 'Writer. Mostly about software, sometimes about birds. quinnwrites.blog, code at github.com/quinn-dev', followers: 15200, following: 870, posts: 22100 },
   maya: { bio: 'PhD student, networks and graphs.', followers: 410, following: 390, posts: 760, followsYou: true },
   theo: { bio: 'I make small tools for big repos.', followers: 980, following: 1020, posts: 5400 },
   nora: { bio: 'Networks researcher. Opinions are cached.', followers: 3300, following: 610, posts: 12000, followsYou: true },

@@ -14,6 +14,7 @@ first two, statuses, presence and server members, Adversarial features), everywh
 | **Statuses** (adversarial) | each change to people's custom statuses (the About on Signal and WhatsApp); the current one is kept either way | the Activity section of a profile: a list, and marks above its chart (docs/profile.md) |
 | **Presence** (adversarial) | each time people you follow come online, go idle or do not disturb, or go offline, and on which devices; nothing at all while off | the Activity section of a profile: a list, and a band under its chart (docs/profile.md) |
 | **Server members** (adversarial, passive) | who your accounts' clients saw as a member of each server, with nick, roles and when they joined, and the server's member and online counts: only what the client loaded anyway (message authors, the member list in view), never a walk of the list | "Members seen: 5 of 1,287 listed" on a server's About; the server under In common on a profile; its links in the people graph (docs/people-graph.md) |
+| **Profiles** (adversarial) | people's profiles opened in the background, one at a time per account and slower than a person would (docs/same-person.md "Collecting profiles"), and each distinct version of a profile as it changes; nothing collected while off | Same person? (People), and the profile pages |
 | **Voice channels** (adversarial, passive) | who is in each Discord voice channel when you are not, as your accounts' clients are told anyway, and each join and leave; nothing while off | a voice channel's row, its page and its chat (docs/calls.md "Voice channels") |
 
 Each adversarial switch says where what it keeps shows, in the words of the last column ("Where it shows: in full in
@@ -51,10 +52,11 @@ While hidden, what was kept stays in the database but out of sight: kept deleted
 and presence history are left out of the profile, server members and coverage are left out of About and profiles,
 and the section says "Still keeping deleted messages, out of sight". Message history → Forget erases it.
 
-Turning off a switch that keeps or shows kept things (deleted, disappearing, statuses, presence, members, the whole
+Turning off a switch that keeps or shows kept things (deleted, disappearing, statuses, presence, members, profiles, the whole
 section, or a network's or account's deleted or disappearing) is asked first in the app, and the hub refuses it
 without `confirm: true` (409). `PUT /api/retention` changes only the fields sent: a device that has not loaded the
-settings yet can no longer put the defaults back. On 2026-11-10 that, or an accidental Hide, turned them all off for a
+settings yet can no longer put the defaults back (the voice switch, missing from what it carried until 2026-11-17,
+could not stay on before then). On 2026-11-10 that, or an accidental Hide, turned them all off for a
 day and the hub emptied the messages deleted meanwhile. Every change is logged with the device's user agent
 (`GET /api/retention/log`, the newest 200, and the hub's log).
 
@@ -92,6 +94,10 @@ Three tables, by what they hang off:
   given. Coverage is seen / total, honest about how little that may be: Discord lists a big server's online members
   at most. Both go with the space when no account sees it any more. Written only while `adversarial` and `members`
   are on; at most 500 members per event.
+- **`profile_version`** (identity, account): each distinct answer to a profile request (`data`, the `about` row's JSON
+  without posts), written when it differs from the last one kept, and the answer before the first change too. Written
+  only while `adversarial` and `profiles` are on; Forget's "Profile versions" erases them. The last answer itself stays
+  in `about` either way, as it always has.
 - **`identity.status`**: the custom status (or About) as last heard, `{ text?, emoji?, at }`; `{ at }` alone is
   cleared, NULL is nothing heard yet, so the first status is where history starts rather than a change.
 

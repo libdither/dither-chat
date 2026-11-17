@@ -23,8 +23,10 @@ export function keeping(r: P.RetentionSettings, what: P.KeptKind): boolean {
       return r.adversarial && r.members;
     case 'voice':
       return r.adversarial && !!r.voice;
+    case 'profiles':
+      return r.adversarial && !!r.profiles;
   }
 }
 
 /** The kinds only adversarial features keep (docs/history.md). */
-export const ADVERSARIAL_KINDS: P.KeptKind[] = ['deleted', 'disappeared', 'statuses', 'presence', 'members', 'voice'];
+export const ADVERSARIAL_KINDS: P.KeptKind[] = ['deleted', 'disappeared', 'statuses', 'presence', 'members', 'voice', 'profiles'];
