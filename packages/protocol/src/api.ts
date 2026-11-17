@@ -1356,6 +1356,12 @@ export type ClientEvent =
    * pending copy by id before the answer to its POST arrives. Of the moment, like `typing`: not journaled.
    */
   | { t: 'sent'; conversationId: string; clientId: string; messageId: string }
+  /**
+   * Chats, mail threads and groups of notices read on some device since the hub notified about them (delivery.ts
+   * `read`): an open page closes their notifications (docs/notifications.md, "Read elsewhere, gone here"). Of the
+   * moment, like `typing`: not journaled; a page that comes back tidies up by itself.
+   */
+  | { t: 'cleared'; ids: string[] }
   /** Calls that changed: ringing you, going on, or just over (call.ts CallView, docs/calls.md "Ringing"). Of the moment. */
   | { t: 'calls'; calls: import('./call.ts').CallView[] }
   /** Voice channels whose people or status line changed (call.ts VoiceChannelView). Of the moment. */

@@ -12,7 +12,7 @@
 | `test-hub-mail` | the hub's mail-load tests (60k messages; 20 to 30 s, as long as the rest of the hub's) | `bun scripts/test-all.ts hub -- test/mail-load.test.ts` |
 | `test-packages` | every other package's tests, all at once | `bun scripts/test-all.ts --except hub` |
 | `web` | the web app's vite build | `bun run web:build` |
-| `boot` | the built web app in Chrome against a demo hub (scripts/check-boot.ts), then the sign-in screen against a hub behind the login, clicked and typed into (scripts/verify-login.ts) | `bun run check:boot`, `bun run web:build && bun scripts/verify-login.ts` |
+| `boot` | the built web app in Chrome against a demo hub (scripts/check-boot.ts), then the sign-in screen against a hub behind the login, clicked and typed into (scripts/verify-login.ts), then notifications closing once their chat is read, pushed to the service worker over DevTools (scripts/verify-clear.ts) | `bun run check:boot`, `bun run web:build && bun scripts/verify-login.ts`, `bun scripts/verify-clear.ts` |
 | `perf` | load and chat switching on a tenth-size world, a warm-up and one run, its counts against a baseline (docs/perf.md) | `bun scripts/verify-perf.ts --ci` |
 | `check` | passes only when each job above passed, or was skipped because `changes` said so | |
 

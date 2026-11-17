@@ -346,6 +346,26 @@ CREATE TABLE IF NOT EXISTS push_subscription (
   last_arrived_at INTEGER                    -- the device said a test push reached it
 );
 
+-- Pushes that only close a notification, to desktop browsers (clears.ts, docs/notifications.md "Read elsewhere, gone
+-- here"). What each browser registration was sent that a clear may close: one row per registration and notification
+-- tag, until it is cleared, tapped, swiped or three days old. Ids and times only.
+CREATE TABLE IF NOT EXISTS push_shown (
+  sub_id TEXT NOT NULL,                      -- push_subscription.id
+  tag    TEXT NOT NULL,                      -- the chat, mail thread or group of notices
+  ts     INTEGER NOT NULL,                   -- the newest message it showed
+  at     INTEGER NOT NULL,                   -- when it was sent
+  PRIMARY KEY (sub_id, tag)
+) WITHOUT ROWID;
+-- Each clear a browser registration was sent, for its cap, and for the next one within the push's ten minutes to
+-- carry again (it may take this one's place at the push service).
+CREATE TABLE IF NOT EXISTS push_clear (
+  sub_id TEXT NOT NULL,
+  at     INTEGER NOT NULL,
+  free   INTEGER NOT NULL,                   -- 1: another notification was still showing there, as far as the hub knew
+  tags   TEXT NOT NULL                       -- JSON [{ "id": tag, "upTo": ts }]: what it closes
+);
+CREATE INDEX IF NOT EXISTS push_clear_sub ON push_clear(sub_id, at);
+
 -- A rule of yours on a place or a person (docs/notifications.md): 'all' always alerts, 'digest' keeps a place to
 -- the list, 'none' mutes it; no rule is Automatic. Most specific scope wins: conversation > thread parent > section >
 -- community > account > network > global. 'mentions' and 'smart' are from before the tiers: 'mentions' still reads

@@ -77,7 +77,9 @@ describe('one notification per conversation', () => {
   test('reading the conversation anywhere clears it, once', () => {
     expect(delivery.read()).toEqual([]);
     store.markRead(conv('fam'), Date.now());
-    expect(delivery.read()).toEqual([conv('fam')]);
+    // Up to the newest message a notification showed (f5, the last planned), so a late clear never closes a newer alert.
+    const newest = store.one<{ ts: number }>('SELECT ts FROM message WHERE id = ?', msg('f5'))!.ts;
+    expect(delivery.read()).toEqual([{ id: conv('fam'), upTo: newest }]);
     expect(delivery.read()).toEqual([]);
   });
 
@@ -96,7 +98,7 @@ describe('one notification per conversation', () => {
     store.markRead(conv('den'), t);
     expect(d.read(t + 3)).toEqual([]);
     store.markRead(conv('pod'), t);
-    expect(d.read(t + 4)).toEqual([conv('pod')]);
+    expect(d.read(t + 4).map((r) => r.id)).toEqual([conv('pod')]);
     // The burst it was in is known too: a Conversation's, so an alert in it sounds.
     const again = new Delivery(store, new Triage(store));
     again.restore(t + 1);
@@ -162,7 +164,7 @@ describe('one notification per conversation', () => {
     expect(d.listDue(conv('band'), t + LIST_EVERY + 60_000)).toBe(false);
     // Read anywhere: the row is gone from the phones, and the next list message brings a new one at once.
     store.markRead(conv('band'), t + LIST_EVERY + 1);
-    expect(d.read(t + LIST_EVERY + 2)).toEqual([conv('band')]);
+    expect(d.read(t + LIST_EVERY + 2).map((r) => r.id)).toEqual([conv('band')]);
     expect(d.listDue(conv('band'), t + LIST_EVERY + 60_000)).toBe(true);
   });
 

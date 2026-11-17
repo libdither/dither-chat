@@ -5,7 +5,7 @@
 # (test/old-database.test.ts).
 # A pull request that only changes docs (*.md, docs/) or the Android app skips the work (scripts/ci-changes.ts); a push
 # to main and a manual run always run everything. The same locally: bun run typecheck, bun run test, bun run web:build,
-# bun run check:boot, bun scripts/verify-perf.ts --ci.
+# bun run check:boot, bun scripts/verify-login.ts, bun scripts/verify-clear.ts, bun scripts/verify-perf.ts --ci.
 name: CI
 
 on:
@@ -138,6 +138,9 @@ jobs:
       - run: bun run check:boot
       # The sign-in screen on a cold start, clicked and typed into, against a hub behind the login (docs/login.md).
       - run: bun run web:build && bun scripts/verify-login.ts
+      # A notification closes once its chat is read, here or on another device, pushes delivered to the service worker
+      # over DevTools (docs/notifications.md, "Read elsewhere, gone here").
+      - run: bun scripts/verify-clear.ts
 
   # Load and chat switching on a tenth-size world in the runner's browser, a warm-up and then one run: renders, DOM
   # nodes and bytes against scripts/perf-baseline-ci.json; its times go in the job's summary and are never judged

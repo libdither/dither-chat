@@ -17,7 +17,7 @@ objects that changed, not with the number of changes.
 - **Kinds**: `account`, `identity`, `person`, `space`, `conversation`, `message` (with its conversation),
   `attention` (the inbox score of a conversation), `usage` (`kind:id` of a place), and the lists kept whole, under id
   `*`: `folders`, `placePrefs`, `categories`, `rules`, `arrange`, and `attention:*` / `usage:*` for "all of them".
-  Typing, notifications and mark-all-read progress are of the moment and not kept.
+  Typing, notifications (and `cleared`, which closes them) and mark-all-read progress are of the moment and not kept.
 - **Epoch**: a random id for the journal. Every position belongs to one; a position from another epoch is void.
   The epoch changes when the journal cannot vouch for what happened: the hub did not stop cleanly last time (a crash
   or a kill can lose the last 80 ms of changes, which were in the database but not yet in a frame), the demo world was

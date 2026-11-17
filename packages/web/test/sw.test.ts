@@ -4,7 +4,8 @@ import { resolve } from 'node:path';
 
 const src = await Bun.file(resolve(import.meta.dir, '../public/sw.js')).text();
 
-function worker(opts: { canReply?: boolean; fetch?: (url: string, init: any) => Promise<Response> } = {}) {
+/** `showing`: the notifications already up, by tag and data; without it every tag has one, with no data. */
+function worker(opts: { canReply?: boolean; fetch?: (url: string, init: any) => Promise<Response>; showing?: { tag: string; data?: any }[] } = {}) {
   const listeners: Record<string, (e: any) => void> = {};
   const shown: { title: string; o: any }[] = [];
   const closed: string[] = [];
@@ -12,7 +13,10 @@ function worker(opts: { canReply?: boolean; fetch?: (url: string, init: any) => 
   const opened: string[] = [];
   const registration = {
     showNotification: async (title: string, o: any) => void shown.push({ title, o }),
-    getNotifications: async ({ tag }: { tag: string }) => [{ close: () => closed.push(`other:${tag}`) }],
+    getNotifications: async ({ tag }: { tag: string }) =>
+      opts.showing
+        ? opts.showing.filter((n) => n.tag === tag).map((n) => ({ ...n, close: () => closed.push(`other:${tag}`) }))
+        : [{ close: () => closed.push(`other:${tag}`) }],
   };
   const self: any = { registration, addEventListener: (t: string, fn: (e: any) => void) => (listeners[t] = fn), clients: { matchAll: async () => [], openWindow: async (u: string) => void opened.push(u) } };
   const NotificationEvent: any = function () {};
@@ -382,6 +386,29 @@ test('a clear push closes the conversation and shows nothing', async () => {
   await w.push({ clear: 'cnv_9', device: 'd' });
   expect(w.shown.length).toBe(0);
   expect(w.closed).toEqual(['other:cnv_9']);
+});
+
+test('a clear closes each of its notifications only up to where it was read, so a newer alert stays', async () => {
+  const w = worker({ showing: [{ tag: 'cnv_1', data: { ts: 100 } }, { tag: 'cnv_2', data: { ts: 300 } }, { tag: 'cnv_3', data: {} }, { tag: 'cnv_4', data: { ts: 50 } }] });
+  // One push carries what the hub still owes this browser (hub clears.ts): its own, then `more`.
+  await w.push({ clear: 'cnv_1', upTo: 150, more: [{ clear: 'cnv_2', upTo: 200 }, { clear: 'cnv_3', upTo: 1 }, { nonsense: true }], device: 'd' });
+  // cnv_2 shows a message from after the read: it stays. cnv_3 says nothing of its time (a page's own): it goes.
+  expect(w.closed).toEqual(['other:cnv_1', 'other:cnv_3']);
+  expect(w.shown).toEqual([]);
+  // Without upTo (an older hub, the Android app's form), it closes whatever shows.
+  await w.push({ clear: 'cnv_2' });
+  expect(w.closed).toEqual(['other:cnv_1', 'other:cnv_3', 'other:cnv_2']);
+});
+
+test('a notification keeps the newest message it shows, for those clears', async () => {
+  const w = worker();
+  const line = (ts: number) => ({ author: 'Ann', key: 'k', body: 'hi', ts });
+  await w.push({ title: 'Ann', conversationId: 'cnv_1', lines: [line(100), line(200)] });
+  expect(w.shown.at(-1)!.o.data.ts).toBe(200);
+  await w.push({ title: 'Ann', conversationId: 'cnv_1', ts: 250, lines: [line(100)] });
+  expect(w.shown.at(-1)!.o.data.ts).toBe(250);
+  await w.push({ title: 'Quiet hours', conversationId: 'cnv_1' });
+  expect(w.shown.at(-1)!.o.data.ts).toBeUndefined();
 });
 
 test('a page out of sight lets a new build in only while no window of the app is in sight; the bar always does', async () => {
