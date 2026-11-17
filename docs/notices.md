@@ -81,7 +81,7 @@ Notices have no Conversation tier: an **Alert**, a row on the **List**, **Below 
 
 1. Muted (a rule of yours on its account, `PUT /api/rules { scope: 'account' }`, or on its group, scope
    `conversation` with the `ntg_` id): silent.
-2. One of your keywords, or Always alert on the group or the account: an alert.
+2. Always alert on the group or the account: an alert.
 3. Else the two chances, starting from the source's urgency and moved by your marks (learn.ts `predict`; the start is
    kept in the facts as `start`, so learning starts from the same place):
 

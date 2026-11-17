@@ -39,8 +39,8 @@ deleted, also stays a link.
 
 Triage decides as it always does ([notifications.md](notifications.md)), and then a message sent silently that came
 out as an alert is put back where it would be without the alert: a Conversation, or a row on the list, both silent.
-Its first reason says so: "Sent silently: it never alerts". This holds against your own rules too (a keyword or a
-person set to Always alert), as Discord's own @silent does: the sender asked that it not sound. It still counts as
+Its first reason says so: "Sent silently: it never alerts". This holds against your own rules too (a person or a
+place set to Always alert), as Discord's own @silent does: the sender asked that it not sound. It still counts as
 unread, and a mention in it still counts as a mention.
 
 ## A bot's controls

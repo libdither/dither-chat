@@ -45,12 +45,13 @@ describe('rich messages', () => {
     expect(quiet?.reasons[0]).toBe('Sent silently: it never alerts');
   });
 
-  test('not even a keyword set to always alert makes a silent message alert', async () => {
-    store.setRule('keyword', 'deploy', 'all');
+  test('not even a place set to always alert makes a silent message alert', async () => {
+    const general = store.one<{ id: string }>(`SELECT id FROM conversation WHERE native_id = '300000000000000001'`)!.id;
+    store.setRule('conversation', general, 'all');
     const r = await triage.decide(put({ body: 'the deploy failed', silent: true }, '300000000000000001'));
     expect(r?.decision).toBe(r?.facts?.conv ? 'quiet' : 'digest');
-    expect(r?.reasons.slice(0, 2)).toEqual(['Sent silently: it never alerts', 'Matches keyword “deploy”']);
-    store.setRule('keyword', 'deploy', null);
+    expect(r?.reasons.slice(0, 2)).toEqual(['Sent silently: it never alerts', 'Always alert: this conversation']);
+    store.setRule('conversation', general, null);
   });
 
   test('alt text, spoilers, explicit flags and voice messages are kept with their files', () => {
