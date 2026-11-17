@@ -12,7 +12,7 @@
  *
  *   bun packages/hub/src/main.ts --demo --data <temp dir> --port <port> --web packages/web/dist
  *   (cd apps/android && ./gradlew assembleDebug)       # a debug build: applicationId ends in .verify
- *   bun scripts/verify-android-call.ts http://127.0.0.1:<port> [--serial emulator-5580] [--apk <path>]
+ *   bun scripts/verify-android-call.ts http://127.0.0.1:<port> [--serial emulator-5580] [--apk <path>] [--shots <dir>]
  *
  * The emulator must be booted already (docs/android.md has the command). The app under test is the debug build's own
  * package (org.libdither.chat.verify), so an installed release build is never touched; its data is cleared each run.
@@ -37,6 +37,8 @@ const ADB = opt('adb', process.env.ADB ?? (Bun.which('adb') || `${process.env.HO
 const ACCOUNT = opt('account', 'acc_demo-discord-main')!;
 /** `--only calls` or `--only rings`: one part of the run. */
 const ONLY = opt('only');
+/** `--shots <dir>`: screenshots of the ring (as it comes, in the shade) and of the answered call, for a PR. */
+const SHOTS = opt('shots');
 
 let failures = 0;
 const check = (ok: unknown, what: string, detail: unknown = '') => {
@@ -64,6 +66,13 @@ async function ring(native: string, caller: string): Promise<string> {
   return id;
 }
 const hubCall = async (id: string) => (((await fetch(`${hub}/api/calls/ringing`).then((x) => x.json())) as any).calls as any[]).find((c) => c.id === id) ?? null;
+
+/** A screenshot of the emulator's screen into SHOTS, when asked for. */
+function shot(name: string) {
+  if (!SHOTS) return;
+  const r = Bun.spawnSync([ADB, '-s', serial, 'exec-out', 'screencap', '-p'], { stdout: 'pipe' });
+  Bun.write(`${SHOTS}/${name}.png`, r.stdout);
+}
 
 const callNow = () => page<any>(`(() => { const c = window.__activeCall?.value; return c ? { phase: c.phase, conversationId: c.conversationId, listenOnly: !!c.listenOnly, muted: c.muted, timing: c.timing, note: c.note ?? null } : null; })()`);
 
@@ -214,6 +223,14 @@ async function rings() {
   let id = await ring(dm.nativeId, peer.nativeId);
   const n = await poll(() => notification(`call:${id}`), 15_000);
   check(n, 'a ring comes up as a notification of its own', n);
+  if (SHOTS) {
+    await Bun.sleep(1000);
+    shot('ring');
+    sh('cmd statusbar expand-notifications');
+    await Bun.sleep(1500);
+    shot('ring-shade');
+    sh('cmd statusbar collapse');
+  }
   check(n?.channel === 'rings' && n?.category === 'call', 'on the ringing channel, as a call', n);
   check(n?.actions.includes('Answer') && n?.actions.includes('Decline'), 'with Answer and Decline', n?.actions);
   check(n?.insistent, 'ringing until it is handled', n);
@@ -239,6 +256,7 @@ async function rings() {
   check(await until(`window.__activeCall?.value?.phase === 'live' && window.__activeCall.value.conversationId === ${JSON.stringify(dm.id)}`, 20_000), 'and joins the call in that chat', await callNow());
   check(await waitFor(async () => (await hubCall(id))?.state === 'ongoing', 8000), 'the network has it answered', await hubCall(id));
   check(!notification(`call:${id}`), 'the ring is gone');
+  if (SHOTS) await Bun.sleep(1500), shot('answered');
   if (room) check((await roomCalls()).length === 1, 'the far end has the call', await roomCalls());
   await pressCallButton('Mute');
   if (room) check(await waitFor(async () => (await roomCalls())[0]?.muted === true, 5000), 'the far end hears the mute', await roomCalls());
