@@ -5,6 +5,7 @@ import { accountsNeedingYou, convTitle, directsOf, folderConvs, folderLeaves, pe
 import { db, go, mailRev, markAllRead, patchPlaces, rev, route, type Route } from '../state.ts';
 import { unreadInbox } from '../mail/model.ts';
 import { preloadMail } from './mail/lazy.tsx';
+import { preloadFeed } from './feed/lazy.tsx';
 import { calendarLink, calendarOn } from '../plans.ts';
 import { AccountDots, Avatar, Count, NetBadge } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
@@ -285,6 +286,26 @@ function RailMail({ active }: { active: boolean }) {
   );
 }
 
+/**
+ * The Feed (docs/feed.md "The Feed page"), once an account has posts (X): a dot while someone answered, quoted or
+ * mentioned you there and you have not looked; never for likes or follows.
+ */
+function RailFeed({ active }: { active: boolean }) {
+  rev.value;
+  const feeds = [...db.conversations.values()].filter((c) => c.variant === 'feed');
+  if (!feeds.length && ![...db.accounts.values()].some((a) => a.network === 'x')) return null;
+  const said = feeds.reduce((n, c) => n + c.vantages.reduce((m, v) => m + (v.mentions ?? 0), 0), 0);
+  const sub = said ? `${said} ${said === 1 ? 'answer' : 'answers'} to your posts` : 'Posts from your networks, and what came of yours';
+  return (
+    <RailItem active={active} unread={said > 0} title="Feed" track="feed" sub={sub} onClick={() => go({ view: 'feed' })}>
+      <span class="rail-mail" onPointerEnter={() => void preloadFeed().catch(() => {})}>
+        <Icon name="rss" size={20} />
+        {said > 0 && <span class="rail-mail-dot" />}
+      </span>
+    </RailItem>
+  );
+}
+
 /** dither-calendar, when the hub has it (docs/calendar.md): a dot while plans from chats wait for you there. */
 function RailCalendar({ active }: { active: boolean }) {
   const link = calendarLink.value;
@@ -346,6 +367,7 @@ export function Rail() {
       </RailItem>
       <RailMail active={r.view === 'mail'} />
       <RailCalendar active={r.view === 'calendar'} />
+      <RailFeed active={r.view === 'feed'} />
       <div class="rail-sep" />
       <div class="rail-scroll" ref={scroll}>
         {entries.slice(0, drawn).map((e, i) => (

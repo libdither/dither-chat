@@ -42,7 +42,7 @@ const keepDraft = (k: string, v: string) => {
 };
 
 /** X's ring: fills as you write; from `warnAt` left bigger, with the number. */
-function Ring({ st, rules }: { st: ReturnType<typeof composeState>; rules: PostRules }) {
+export function Ring({ st, rules }: { st: ReturnType<typeof composeState>; rules: PostRules }) {
   if (rules.counter === 'text')
     return st.showCount ? (
       <span class={`compose-left ${st.level}`}>
@@ -81,6 +81,7 @@ export function PostComposer({
   onCancel,
   autoFocus,
   collapsed,
+  account,
 }: {
   network: P.Network;
   target: ComposeTarget;
@@ -90,6 +91,8 @@ export function PostComposer({
   autoFocus?: boolean;
   /** One line until it is focused (the reply box under a thread's post, as X shows it). */
   collapsed?: boolean;
+  /** Post as this account (the Feed page's), else the kit's, else the first that can. */
+  account?: string;
 }) {
   const rules = postRulesFor(network);
   const draftKey = `${network}:${target.quote ? `q${target.quote.id}` : target.replyTo ? `r${target.replyTo.id}` : 'new'}`;
@@ -134,7 +137,7 @@ export function PostComposer({
     setError(null);
     api<P.PostView>(`/api/posts/${network}/publish`, {
       method: 'POST',
-      body: { text, key, ...(target.replyTo ? { replyTo: target.replyTo.id } : {}), ...(target.quote ? { quote: target.quote.id } : {}) },
+      body: { text, key, ...(target.replyTo ? { replyTo: target.replyTo.id } : {}), ...(target.quote ? { quote: target.quote.id } : {}), ...((account ?? kit.account) ? { account: account ?? kit.account } : {}) },
     }).then(
       (p) => {
         setSending(false);

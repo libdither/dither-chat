@@ -845,7 +845,7 @@ function convRows(): ConvInboxRow[] {
     const held = heldByRequest();
     for (const c of db.conversations.values()) {
       const a = db.attention.get(c.id);
-      // A network's notifications are their own row, under Requests (ui/FeedRow.tsx, docs/feed.md); logged posts none.
+      // A network's notifications are the Feed page's Activity (docs/feed.md "The Feed page"); logged posts none.
       if ((!a && !inboxShape(c)) || !visibleConv(c) || held.has(c.id) || isQuietConv(c)) continue;
       const row: ConvInboxRow = a ? { kind: 'conv', key: c.id, conv: c, score: a.score, needs: a.needs, reasons: a.reasons, owedSince: a.owedSince } : unscored(c);
       if (!row.needs && c.shape !== 'self' && placePref('conversation', c.id).hidden) continue;

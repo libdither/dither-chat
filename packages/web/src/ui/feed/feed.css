@@ -1361,3 +1361,805 @@
   align-items: center;
   justify-content: center;
 }
+
+/* A post's own extras (Post.tsx Row, docs/feed.md "One card for every network"): where it was posted, a title, and a
+   content warning that keeps the words folded until opened. */
+.post-place a {
+  color: inherit;
+  font-weight: 600;
+}
+.post-title {
+  margin: 2px 0;
+  font-size: 15.5px;
+  line-height: 1.3;
+}
+.post-warning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 2px 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-hover);
+  text-align: left;
+  font-size: 13px;
+}
+.post-warning-text {
+  flex: 1;
+}
+.post-warning-btn {
+  color: var(--accent);
+  font-weight: 600;
+}
+.pa-menu a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  color: inherit;
+  text-decoration: none;
+  font-weight: 600;
+}
+.pa-menu a:hover {
+  background: var(--bg-hover);
+}
+.pa-menu .danger {
+  color: var(--danger);
+}
+.pa-more {
+  margin-left: auto;
+}
+
+/* The Feed page (FeedPage.tsx, docs/feed.md "The Feed page"): your feeds and the rest on the left, the posts with the
+   composer on top, and a post's thread or the feed's tuning beside them on a wide screen (in their place on a narrow
+   one). On a phone: a head with the bell and ⋯, the feeds as tabs, the order under them, and the pencil button. */
+.feed-srcs {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 8px 16px;
+}
+.feed-src {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 14px;
+  text-align: left;
+}
+.feed-src:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.feed-src.active {
+  background: var(--bg-active, var(--bg-hover));
+  color: var(--text);
+  font-weight: 600;
+}
+.feed-src-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.feed-src-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.feed-src-count {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.feed-src-hint {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 400;
+}
+.feed-src-group {
+  margin: 14px 0 4px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.feed-src-group:first-child {
+  margin-top: 4px;
+}
+.feed-src-new {
+  color: var(--text-faint);
+}
+.feed-src-offline {
+  display: flex;
+  gap: 6px;
+  margin: 14px 10px 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.feed-page {
+  display: flex;
+  flex-direction: row;
+  min-width: 0;
+}
+.feed-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.feed-thread {
+  flex: 0 0 min(480px, 45%);
+  min-width: 0;
+  display: flex;
+  border-left: 1px solid var(--border);
+}
+.feed-thread > .pane {
+  flex: 1;
+  min-width: 0;
+}
+.feed-entry {
+  border-bottom: 1px solid var(--border);
+  padding: 6px 0 2px;
+}
+.feed-entry .thread-post {
+  padding-bottom: 6px;
+}
+.feed-reason,
+.feed-via {
+  margin-right: 8px;
+}
+.feed-copies {
+  margin: 0 0 8px 46px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.feed-copies a {
+  color: var(--link);
+}
+.feed-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 6px 0;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.feed-note.error {
+  color: var(--danger);
+}
+.feed-end {
+  margin: 16px 0;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.feed-composer {
+  margin: 8px 0 12px;
+}
+.feed-compose-closed {
+  margin: 8px 0 12px;
+}
+.feed-composer .compose-text {
+  width: 100%;
+  min-height: 52px;
+  resize: none;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.4;
+  outline: none;
+}
+.feed-own {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+  border-top: 1px solid var(--border);
+}
+.feed-own-who {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-faint);
+}
+.feed-pics {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.feed-pic {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  margin: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-hover);
+}
+.feed-pic img,
+.feed-pic video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.feed-pic.up img,
+.feed-pic.up video {
+  opacity: 0.5;
+}
+.feed-pic.bad {
+  outline: 2px solid var(--danger);
+}
+.feed-pic-x {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.65);
+  color: #fff;
+}
+.feed-pic-up {
+  position: absolute;
+  inset: auto 0 4px;
+  text-align: center;
+  font-size: 11px;
+  color: #fff;
+  text-shadow: 0 1px 2px #000;
+}
+.feed-sched {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.feed-sched input {
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+.feed-results {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.feed-result {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  font-size: 12.5px;
+}
+.feed-result.bad {
+  color: var(--danger);
+}
+.feed-foot {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+/* Who can reply: words in the accent colour, as a link reads, not a box. */
+.feed-gate {
+  max-width: 210px;
+  padding: 3px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.feed-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.feed-count-who {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.feed-draft {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.feed-draft.failed {
+  border-left: 3px solid var(--danger);
+  padding-left: 10px;
+}
+.feed-draft-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.feed-draft-when {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.feed-draft-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.feed-draft-foot {
+  display: flex;
+  gap: 6px;
+}
+@media (max-width: 1100px) {
+  .feed-page.with-post .feed-main {
+    display: none;
+  }
+  .feed-thread {
+    flex: 1;
+    border-left: 0;
+  }
+}
+
+/* ---- the head over the posts: the order and Tune (a computer), Back (a phone's page off the feed) */
+.feed-head {
+  gap: 8px;
+}
+.feed-back {
+  margin-left: -6px;
+}
+.feed-filter {
+  max-width: 180px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.feed-order-box {
+  position: relative;
+}
+.feed-order-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.feed-order-btn:hover {
+  background: var(--bg-hover);
+}
+.feed-order-caret {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.feed-order-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  width: 340px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-sidebar);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.35);
+}
+.feed-orders {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.feed-order {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 8px;
+  text-align: left;
+  color: var(--text-dim);
+}
+.feed-order:hover {
+  background: var(--bg-hover);
+}
+.feed-order.on {
+  color: var(--text);
+}
+.feed-order.on > svg:first-child {
+  color: var(--accent);
+}
+.feed-order-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.feed-order-text b {
+  font-size: 14px;
+}
+.feed-order-text small {
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--text-faint);
+}
+.feed-sheet-title {
+  margin: 4px 20px 8px;
+  font-size: 15px;
+}
+.feed-tune-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.feed-tune-btn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ---- tuning a feed: beside the posts on a computer, a tall sheet on a phone */
+.feed-tune {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.feed-tune-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.feed-tune-head h3 {
+  flex: 1;
+  margin: 0;
+  font-size: 15px;
+}
+.feed-tune-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 16px 24px;
+}
+.feed-tune-name {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.feed-tune-name input {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+}
+.feed-tune-sub {
+  margin: 18px 0 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.feed-tune-hint {
+  margin: 4px 0 8px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.feed-tune-srcs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.feed-tune-src {
+  display: grid;
+  grid-template-columns: 4px 28px 1fr auto 40px;
+  grid-template-areas: 'sw face who share pct' 'sw face range range range';
+  align-items: center;
+  gap: 2px 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-soft, var(--border));
+}
+.feed-tune-src.off {
+  opacity: 0.55;
+}
+.feed-tune-swatch {
+  grid-area: sw;
+  align-self: stretch;
+  border-radius: 2px;
+}
+.feed-tune-src > .avatar {
+  grid-area: face;
+}
+.feed-tune-who {
+  grid-area: who;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  text-align: left;
+}
+.feed-tune-who b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+.feed-tune-who small {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.feed-tune-who:hover b {
+  text-decoration: underline;
+}
+.feed-tune-share {
+  grid-area: share;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.feed-tune-pct {
+  grid-area: pct;
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.feed-tune-src input[type='range'] {
+  grid-area: range;
+  width: 100%;
+  accent-color: var(--accent);
+}
+.feed-tune-bar {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  margin-top: 14px;
+  overflow: hidden;
+  border-radius: 5px;
+}
+.feed-tune-bar > span {
+  min-width: 3px;
+}
+.feed-tune-foot {
+  display: flex;
+  margin-top: 20px;
+}
+.feed-tune-sheet .feed-tune-head {
+  padding-top: 4px;
+}
+
+/* ---- a card's timeline, when the feed takes more than one */
+.feed-via-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+/* ---- who posts it: your accounts' pictures, pressed in (ringed, ticked) or out (faded) */
+.feed-as {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-bottom: 4px;
+}
+.feed-as-faces {
+  display: flex;
+  gap: 6px;
+}
+.feed-as-face {
+  position: relative;
+  display: grid;
+  padding: 2px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px transparent;
+  opacity: 0.4;
+  filter: grayscale(0.8);
+  transition:
+    opacity 0.12s,
+    box-shadow 0.12s,
+    filter 0.12s;
+}
+.feed-as-face:hover {
+  opacity: 0.75;
+}
+.feed-as-face.on {
+  opacity: 1;
+  filter: none;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.feed-as-face.off {
+  border: 1px dashed var(--danger);
+}
+.feed-as-face:disabled {
+  opacity: 0.2;
+}
+.feed-as-tick {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-sidebar);
+  background: var(--accent-fill, var(--accent));
+  color: var(--on-accent, #fff);
+}
+.feed-as-names {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+/* ---- a phone's Feed tab */
+.feed-phone-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: calc(8px + env(safe-area-inset-top)) 8px 2px 16px;
+}
+.feed-phone-head h1 {
+  margin: 0;
+  font-size: 22px;
+}
+.feed-bell {
+  position: relative;
+}
+.feed-bell-count {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  min-width: 17px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+}
+.feed-tabs {
+  flex: none;
+  display: flex;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  scrollbar-width: none;
+}
+.feed-tab {
+  position: relative;
+  flex: 1 0 auto;
+  min-width: 96px;
+  padding: 12px 14px 13px;
+  border-radius: 0;
+  color: var(--text-dim);
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.feed-tab[aria-selected='true'] {
+  color: var(--text);
+}
+/* The open feed's mark: a short bar under its name, as X and Bluesky draw theirs. */
+.feed-tab[aria-selected='true']::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: min(56px, 70%);
+  height: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+  transform: translateX(-50%);
+}
+.feed-tab-add {
+  flex: 0 0 auto;
+  min-width: 48px;
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+}
+.feed-orderline {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 4px 6px;
+  border-bottom: 1px solid var(--border-soft, var(--border));
+}
+.feed-orderline-read {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.feed-fab {
+  position: absolute;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
+  background: var(--accent-fill, var(--accent));
+  color: var(--on-accent, #fff);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.35);
+}
+.feed-page.is-phone .feed-main {
+  position: relative;
+}
+.feed-page.is-phone .feed-list {
+  padding-bottom: 88px;
+}
+
+/* ---- the composer in a phone's sheet: the whole sheet, Post at the foot over the keyboard */
+.sheet.feed-compose-sheet {
+  height: calc(100% - 24px - env(safe-area-inset-top));
+}
+.feed-composer.in-sheet {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0 16px;
+  border: 0;
+  background: transparent;
+}
+.feed-composer.in-sheet .compose-text {
+  flex: 1;
+  min-height: 140px;
+  font-size: 17px;
+}
+.feed-compose-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 0 10px;
+}
+.feed-compose-head h3 {
+  flex: 1;
+  margin: 0;
+  font-size: 16px;
+}
+.feed-composer.in-sheet .feed-gate {
+  max-width: 170px;
+}

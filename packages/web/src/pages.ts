@@ -33,7 +33,8 @@ const convOf = (r: Route): string | undefined => (r.view === 'profile' ? undefin
  */
 export function stacksOn(to: Route, from: Route | null, places: Places): boolean {
   if (!from || !isPage(to)) return false;
-  const conv = convOf(to);
+  // A post opened in the Feed stacks on what it was opened from, as one opened in the inbox does.
+  const conv = to.view === 'feed' ? to.post : convOf(to);
   if (!conv) return false;
   if (isPostKey(conv)) return true;
   // A chat opened from an item of For you's tab: back goes to the tab, where you were in it.
@@ -59,6 +60,8 @@ export function isPage(r: Route): boolean {
       return !!r.account;
     case 'mail':
       return !!r.thread;
+    case 'feed':
+      return !!r.post;
     case 'profile':
     case 'directory':
     case 'requests':
@@ -71,7 +74,7 @@ export function isPage(r: Route): boolean {
 }
 
 /** A tab's own page: full screen, with the tab bar under it. */
-export const isTabRoot = (r: Route) => r.view === 'foryou' || r.view === 'settings' || r.view === 'calendar' || (r.view === 'search' && !isPage(r));
+export const isTabRoot = (r: Route) => r.view === 'foryou' || r.view === 'settings' || r.view === 'calendar' || (r.view === 'feed' && !r.post) || (r.view === 'search' && !isPage(r));
 
 /** A page opened on top of the page you were on, rather than one of a list's own. */
 export function opensOver(r: Route): boolean {
@@ -107,6 +110,8 @@ export function ownList(r: Route, places: Places): Route {
       return { view: 'accounts' };
     case 'mail':
       return r.list ? { view: 'mail', list: r.list } : { view: 'mail' };
+    case 'feed':
+      return r.source ? { view: 'feed', source: r.source } : { view: 'feed' };
     case 'directory':
       return { view: 'spaces' };
     // How it sorts is reached from For you, Settings or the inbox's menu; opened directly, back goes to For you.

@@ -32,7 +32,7 @@ import type { CallEffect, CallFact, CallInput, CallMode, CallState, StageAction,
 import type { GateAnswer, ScheduledEventFact, SpaceGate } from './servers.ts';
 import type { MessageModeration, ModAction, ReactionClear } from './moderation.ts';
 import type { LinkPreviewOut } from './extra.ts';
-import type { PostAct } from './feed.ts';
+import type { HomeFeed, PostAct, ReplyGate } from './feed.ts';
 import type { AccountStatus, AttachmentKind, Attention, MessageKind, Network, ReactionStyle, Shape, SpaceKind, Variant } from './ontology.ts';
 import type { SelfCapability, SelfCommand, SelfEvent } from './self.ts';
 import type { VoiceFact } from './rich.ts';
@@ -104,6 +104,12 @@ export type Capability =
   | 'publish'
   /** Says who liked or reposted a post (the `postReactors` command, feed.ts ReactorsPage). */
   | 'postReactors'
+  /** Reads the account's home timelines, Following and For you (the `home` command, feed.ts HomePage). */
+  | 'home'
+  /** Deletes a post of its own (the `unpublish` command). */
+  | 'unpublish'
+  /** Posts pictures or a video with a post (`publish` with `media`). */
+  | 'postMedia'
   /** Translates a post of its network, as the network's own "Translate post" does (the `translate` command). */
   | 'translate'
   /** Changes the account's own profile: its bio/About (the `setProfile` command). */
@@ -809,7 +815,28 @@ export type AdapterCommand =
    * post's link as its attachment), neither for a new post. `text` has been checked against POST_RULES on the hub.
    * Sent only when you press Post. Identity facts first, then reply.result: PostFact, the post as the network made it.
    */
-  | { t: 'publish'; id: string; text: string; replyTo?: string; quote?: string }
+  | {
+      t: 'publish';
+      id: string;
+      text: string;
+      replyTo?: string;
+      quote?: string;
+      /** Who may reply to a new post (never with `replyTo`): X's "who can reply". Absent: everyone. */
+      replies?: ReplyGate;
+      /** Pictures or a video with it (capability 'postMedia'): up to 4 images, or one GIF or video. */
+      media?: OutgoingAttachment[];
+    }
+  /**
+   * Delete a post of the account's own (capability 'unpublish'): what the post's Delete does. Sent only when you press
+   * it. reply.result: { deleted: true } (a post already gone counts as deleted).
+   */
+  | { t: 'unpublish'; id: string; post: string }
+  /**
+   * One page of the account's home timeline (capability 'home'): `feed` Following or For you, `cursor` from an earlier
+   * page's `more` (older) or `top` (newer). Asked only when someone looks at it; nothing is marked seen and no view is
+   * logged. Identity facts first, then reply.result: HomePage.
+   */
+  | { t: 'home'; id: string; feed: HomeFeed; cursor?: string; count?: number }
   /**
    * Who liked (`kind` 'like') or reposted ('repost') a post, a page (capability 'postReactors'). X shows who liked a post
    * only to its author. Identity facts first, then reply.result: ReactorsPage.

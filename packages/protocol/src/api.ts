@@ -34,7 +34,8 @@ import type { AccountsManagerView } from './accounts.ts';
 import type { AccountSelfView } from './self.ts';
 import type { ContactCardView, MissingAttachmentFact, QuoteView, SendFailureView, StoryReplyView } from './extra.ts';
 import type { ForumView, ThreadView } from './threads.ts';
-import type { FeedItem, PostFact } from './feed.ts';
+import type { FeedItem, HomeFeed, HomeReason, PostFact, ReplyGate } from './feed.ts';
+import type { MixOrder } from './mix.ts';
 import type { NoticesBoot } from './notices.ts';
 
 export interface AccountView {
@@ -736,6 +737,146 @@ export interface ReactorsView {
   /** Why the list is what it is, when it is not the network's whole list. */
   note?: string;
   identities: IdentityView[];
+}
+
+// ------------------------------------------------------------------ the Feed page (docs/feed.md "The Feed page")
+
+/** An account the Feed page lists: what it can read and post (GET /api/feed/sources). */
+export interface FeedAccountView {
+  accountId: string;
+  network: Network;
+  label: string;
+  /** The account's own identity (its picture, name and handle). */
+  identityId: string | null;
+  online: boolean;
+  /** Its home timelines can be read (capability 'home'). */
+  home: boolean;
+  /** It can post (capability 'publish'), with pictures ('postMedia'), and delete its posts ('unpublish'). */
+  publish: boolean;
+  media: boolean;
+  unpublish: boolean;
+  /** Its notifications conversation (variant 'feed'), the Activity source's, when it has one. */
+  feedConvId: string | null;
+}
+
+export interface FeedSourcesView {
+  accounts: FeedAccountView[];
+  /** Your feeds, Following and Discover first, then the ones you made. */
+  mixes: FeedMixView[];
+  /** Drafts and scheduled posts waiting (the Drafts source's count). */
+  drafts: number;
+}
+
+/**
+ * A feed of yours (docs/feed.md "Feeds", mix.ts): home timelines from any of your accounts in one list, each with its
+ * share, put in an order you can swap. PUT /api/feed/mixes/<id> with any of name, order and sources saves it (a new id
+ * makes one); DELETE removes one you made, or puts Following or Discover back as they were.
+ */
+export interface FeedMixView {
+  id: string;
+  name: string;
+  order: MixOrder;
+  /** Every timeline it could take, each with its share: a step of SHARE_WEIGHTS, 0 left out. */
+  sources: { accountId: string; feed: HomeFeed; share: number }[];
+  /** You made it; Following and Discover are always there. */
+  custom: boolean;
+}
+
+/**
+ * Which posts a Feed source shows: a feed's id (`following`, `discover`, or one you made); `<accountId>:following`
+ * or `<accountId>:foryou` one account's own timeline in its network's order; `mine` what you posted, from every
+ * account, your cross-posts as one, or `<accountId>:mine` one account's.
+ */
+export type FeedSource = string;
+
+/** One post in a Feed source, as its card shows it. */
+export interface FeedEntryView {
+  /** `<network>:<id of the post shown>`: the same post through two accounts is one entry. */
+  key: string;
+  network: Network;
+  /** The post as the timeline gave it (a repost is the reposter's, with `repostOf`). */
+  post: PostView;
+  /** A conversation shown with it, the posts above it, oldest first. */
+  above?: PostView[];
+  /** Why it is there, beyond following its author ("Ann Lee liked"); `who` a hub identity id. */
+  reason?: HomeReason;
+  /** Which of your accounts it came through, and from which of their timelines. */
+  seenBy: { accountId: string; feed: HomeFeed | 'mine' }[];
+  /** Your post made in one press to several accounts: the others (`mine` only), each with its account. */
+  copies?: { accountId: string; post: PostView }[];
+  /** The order key: newer or higher in the timeline is larger. */
+  at: number;
+}
+
+/**
+ * GET /api/feed/entries?source=…[&before=…]: what the hub holds, at once; POST /api/feed/read { source, older? } asks
+ * the networks first (a person's own look at their timeline, at the reading pace) and answers the same.
+ */
+export interface FeedEntriesView {
+  source: FeedSource;
+  entries: FeedEntryView[];
+  /** Older entries the hub holds: ask again with `before` this. Null when it holds no more. */
+  before: number | null;
+  /** Where the page after this one starts, to ask with once older posts were read (`before` is null then). */
+  next: number | null;
+  /** The networks have older posts than the hub holds: POST /api/feed/read with `older` brings them. */
+  older: boolean;
+  /** When the networks were last asked for this source (the oldest of its timelines), or null when never. */
+  readAt: number | null;
+  /** What could not be read, per account, in words. */
+  notes: { accountId: string; text: string }[];
+  identities: IdentityView[];
+}
+
+/** One destination of a post from the Feed page's composer: an account, and its own words when they differ. */
+export interface PublishDestination {
+  accountId: string;
+  /** The post's words; with `parts`, the first post of a thread. */
+  text: string;
+  /** The rest of a thread, each posted as a reply to the one before. */
+  parts?: string[];
+}
+
+/** POST /api/feed/publish: one press of Post, to several accounts at once. */
+export interface PublishRequest {
+  /** The composer's id for this press: the same key again is answered with the first results, never posted twice. */
+  key: string;
+  destinations: PublishDestination[];
+  /** Upload ids (/api/uploads) of pictures or a video, posted with the first post on each destination. */
+  media?: string[];
+  /** Who may reply. Absent: everyone. */
+  replies?: ReplyGate;
+}
+
+export interface PublishResult {
+  accountId: string;
+  ok: boolean;
+  /** The first post, and the rest of the thread, as made. */
+  post?: PostView;
+  parts?: PostView[];
+  /** Why not, in words; `unsure`: no answer came, so it may have posted (look before posting again). */
+  error?: string;
+  unsure?: boolean;
+}
+
+export interface PublishView {
+  results: PublishResult[];
+}
+
+/** A post written and kept for later (GET/PUT /api/feed/drafts): on the hub, so every device has it. */
+export interface DraftView {
+  id: string;
+  /** The composer's state: the words, and per account words where they differ. */
+  text: string;
+  accounts: string[];
+  /** Per account words, when written apart ("Customize per network"). */
+  own?: Record<string, string>;
+  replies?: ReplyGate;
+  /** Post it then (ms epoch); the hub posts it at that time. */
+  scheduledAt?: number;
+  /** A scheduled post that could not go out, and why. */
+  failed?: string;
+  updatedAt: number;
 }
 
 /** A forward, shown as a card with where it came from. */

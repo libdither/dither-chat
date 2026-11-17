@@ -16,6 +16,8 @@ import { Icon } from '../icons.tsx';
 import { HeadOrb } from '../Offline.tsx';
 import { languageName, needsTranslation } from '@dither-chat/protocol';
 import { Loading } from '../Loader.tsx';
+import { phone } from '../../phone.ts';
+import { uploadFile } from '../../upload.ts';
 import { clip, feedBarLine, feedUnits, namesPhrase, notificationsUrl, opensPost, parsePostKey, postHref, postKey, reactionCounts, reactorsPhrase, shortCount } from '../../feed.ts';
 
 type Chunk = typeof import('./FeedView.tsx');
@@ -51,6 +53,8 @@ export const kit = {
   useLongPress,
   Sheet,
   toast,
+  /** The account answering, liking and reposting here (the Feed page's), else the hub picks the first that can. */
+  account: undefined as string | undefined,
   /** A post's thread, beside the inbox (docs/feed.md "Threads"). */
   openPost: (network: P.Network, post: string) => go({ view: 'inbox', conv: postKey(network, post) }),
   /** Back to the post this thread was opened from: a step back through history when that is the entry before, so
@@ -62,7 +66,10 @@ export const kit = {
     else go({ view: 'inbox', conv });
   },
   /** feed.ts, which the row draws with too: imported by the chunk, rolldown would split it into a startup file. */
-  feed: { clip, feedBarLine, feedUnits, namesPhrase, notificationsUrl, reactionCounts, reactorsPhrase, shortCount, opensPost, parsePostKey, postHref },
+  feed: { clip, feedBarLine, feedUnits, namesPhrase, notificationsUrl, reactionCounts, reactorsPhrase, shortCount, opensPost, parsePostKey, postHref, postKey },
+  /** A phone's layout, and a file sent to the hub (upload.ts): both in the app's start already. */
+  phone,
+  uploadFile,
   // Startup already has these (Settings → Translation): handed over, so the chunk does not split them out.
   translate: { needsTranslation, languageName },
 };
@@ -107,4 +114,21 @@ export function PostsListLazy({ c }: { c: P.ConversationView }) {
   const { m, failed } = useChunk(true);
   if (m) return <m.PostsList c={c} kit={kit} />;
   return <div class="feed-scroll">{failed ? <Empty icon="alert" title="Could not load the posts">Check the connection to the hub, then try again.</Empty> : <Loading fill />}</div>;
+}
+
+/** Loads the Feed page's chunk ahead (a pointer over its rail button). */
+export const preloadFeed = (): Promise<unknown> => load();
+
+/** The Feed page's list of sources (docs/feed.md "The Feed page"). */
+export function FeedSidebarLazy({ source }: { source?: string }) {
+  const { m } = useChunk(true);
+  if (m) return <m.FeedSidebar source={source} kit={kit} />;
+  return <div class="sidebar-inner"><Loading fill /></div>;
+}
+
+/** The Feed page: a source's posts with the composer over them, and a post's thread beside them. */
+export function FeedPaneLazy({ source, post, onBack }: { source?: string; post?: string; onBack?: () => void }) {
+  const { m, failed } = useChunk(true);
+  if (m) return <m.FeedPane source={source} post={post} kit={kit} onBack={onBack} />;
+  return <section class="pane">{failed ? <Empty icon="alert" title="Could not load the Feed">Check the connection to the hub, then try again.</Empty> : <Loading fill />}</section>;
 }

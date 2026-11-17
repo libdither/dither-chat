@@ -23,7 +23,8 @@ interface PostsDeps {
     cmd:
       | { t: 'post'; post: string; cursor?: string }
       | { t: 'postAct'; post: string; act: P.PostAct }
-      | { t: 'publish'; text: string; replyTo?: string; quote?: string }
+      | { t: 'publish'; text: string; replyTo?: string; quote?: string; replies?: P.ReplyGate; media?: P.OutgoingAttachment[] }
+      | { t: 'unpublish'; post: string }
       | { t: 'postReactors'; post: string; kind: 'like' | 'repost'; cursor?: string },
     timeoutMs?: number,
   ) => Promise<T>;
@@ -77,6 +78,33 @@ const REACTORS_CACHE_MS = 5 * 60_000;
 
 /** The network may have done it: the adapter stopped answering, not refused (as server.ts unknownOutcome). */
 const unknownOutcome = (e: unknown) => /timed out|disconnected mid/i.test(String((e as Error)?.message ?? e));
+
+/** What a publish asks for (the route's body, the Feed page's destinations). */
+interface PublishIn {
+  text?: unknown;
+  replyTo?: unknown;
+  quote?: unknown;
+  key?: unknown;
+  /** Post as this account (the Feed page's "Posting as"); else the first that can. */
+  account?: unknown;
+  replies?: unknown;
+  /** Files already resolved from upload ids. */
+  media?: P.OutgoingAttachment[];
+}
+
+/** Why these files cannot go with one post on this network, or null. */
+function postMediaProblem(media: readonly P.OutgoingAttachment[], rules: P.PostRules, net: string): string | null {
+  if (!media.length) return null;
+  const images = media.filter((m) => m.kind === 'image' && m.mime !== 'image/gif').length;
+  const gifs = media.filter((m) => m.mime === 'image/gif').length;
+  const videos = media.filter((m) => m.kind === 'video').length;
+  if (images + gifs + videos !== media.length) return `${net} posts take pictures and videos only.`;
+  if (videos && !rules.media.video) return `${net} posts take no videos here.`;
+  if (gifs && !rules.media.gif) return `${net} posts take no GIFs here.`;
+  if ((videos || gifs) && media.length > 1) return `A video or GIF goes on its own on ${net}.`;
+  if (images > rules.media.images) return `At most ${rules.media.images} pictures in a post on ${net}.`;
+  return null;
+}
 
 /** A refusal in words, with the HTTP status the route answers with. */
 export class PostsError extends Error {
@@ -155,10 +183,20 @@ export class Posts {
     return fresh;
   }
 
-  /** A connected account of the network that can do this, else why not in words. */
-  private able(network: P.Network, cap: P.Capability, doing: string): string {
+  /**
+   * A connected account of the network that can do this, else why not in words. `accountId`: that account must (the
+   * Feed page posts and likes as the account whose timeline it is).
+   */
+  able(network: P.Network, cap: P.Capability, doing: string, accountId?: string): string {
     const s = this.d.store;
     const net = NETWORK_META[network].name;
+    if (accountId) {
+      const acc = s.account(accountId);
+      if (!acc || acc.network !== network || !acc.enabled) throw new PostsError(`No such ${net} account.`, 404);
+      if (!this.d.online(accountId)) throw new PostsError(`${net} · ${acc.label} is not connected, so it cannot ${doing} now.`, 409);
+      if (!caps(s, accountId).includes(cap)) throw new PostsError(`The ${net} adapter cannot ${doing} yet.`, 409);
+      return accountId;
+    }
     const all = (s.db.query('SELECT id FROM account WHERE network = ? AND enabled = 1 ORDER BY created_at').all(network) as Row[]).map((r) => r.id as string);
     const ok = all.find((a) => this.d.online(a) && caps(s, a).includes(cap));
     if (ok) return ok;
@@ -184,11 +222,11 @@ export class Posts {
    * Like, repost, or take either back: the network's own button, pressed once (docs/feed.md "Answering"). The logged
    * post follows: what you did to it, and its count by one. Returns the post as it stands.
    */
-  async act(network: P.Network, post: string, act: P.PostAct): Promise<{ post: P.PostView | null; viewer: P.PostViewer }> {
+  async act(network: P.Network, post: string, act: P.PostAct, as?: string): Promise<{ post: P.PostView | null; viewer: P.PostViewer; accountId: string }> {
     if (!POST_ACTS.includes(act)) throw new PostsError('act: like, unlike, repost or unrepost', 400);
     const rules = postRulesFor(network);
     if (!rules || !(act.endsWith('like') ? rules.actions.like : rules.actions.repost)) throw new PostsError(`${NETWORK_META[network].name} has no ${act.replace(/^un/, '')} here.`, 409);
-    const accountId = this.able(network, 'postActions', act.replace(/^un/, ''));
+    const accountId = this.able(network, 'postActions', act.replace(/^un/, ''), as);
     let viewer: P.PostViewer;
     try {
       viewer = (await this.d.command<P.PostViewer>(accountId, { t: 'postAct', post, act }, WRITE_TIMEOUT_MS)) ?? {};
@@ -197,7 +235,7 @@ export class Posts {
       throw new PostsError((e as Error).message, 502);
     }
     const had = this.loggedPost(network, post);
-    if (!had) return { post: null, viewer };
+    if (!had) return { post: null, viewer, accountId };
     const key = act.endsWith('like') ? 'liked' : 'reposted';
     const on = !act.startsWith('un');
     const was = !!had.viewer?.[key];
@@ -208,7 +246,7 @@ export class Posts {
     this.log(accountId, [next]);
     this.forget(network, post);
     for (const k of this.reactorsSeen.keys()) if (k.startsWith(`${network}:${post}:`)) this.reactorsSeen.delete(k);
-    return { post: this.viewOf(network, accountId, next), viewer: next.viewer! };
+    return { post: this.viewOf(network, accountId, next), viewer: next.viewer!, accountId };
   }
 
   private publishing = new Map<string, { at: number; p: Promise<P.PostView>; sig: string }>();
@@ -218,10 +256,10 @@ export class Posts {
    * (compose.ts, the count the page shows). `key`, the page's id for this post: the same key again within ten minutes
    * is answered with the first, so a double press or a retried request posts once. Logged as soon as it is made.
    */
-  publish(network: P.Network, b: { text?: unknown; replyTo?: unknown; quote?: unknown; key?: unknown }): Promise<P.PostView> {
-    const key = typeof b.key === 'string' && b.key.length <= 100 ? `${network}:${b.key}` : null;
+  publish(network: P.Network, b: PublishIn): Promise<P.PostView> {
+    const key = typeof b.key === 'string' && b.key.length <= 200 ? `${network}:${b.key}` : null;
     for (const [k, v] of this.publishing) if (Date.now() - v.at > PUBLISH_DEDUPE_MS) this.publishing.delete(k);
-    const sig = JSON.stringify([b.text, b.replyTo ?? null, b.quote ?? null]);
+    const sig = JSON.stringify([b.text, b.replyTo ?? null, b.quote ?? null, b.account ?? null, b.replies ?? null, (b.media ?? []).map((m) => m.path)]);
     const had = key ? this.publishing.get(key) : null;
     // The same post again (a double press, a retried request): the first answer. Something else under the same key is
     // a page that kept its key by mistake: refused rather than dropped.
@@ -238,7 +276,7 @@ export class Posts {
     return p;
   }
 
-  private async write(network: P.Network, b: { text?: unknown; replyTo?: unknown; quote?: unknown }): Promise<P.PostView> {
+  private async write(network: P.Network, b: PublishIn): Promise<P.PostView> {
     const rules = postRulesFor(network);
     const net = NETWORK_META[network].name;
     if (!rules) throw new PostsError(`${net} has no posts here.`, 409);
@@ -252,22 +290,58 @@ export class Posts {
     const quote = id(b.quote, 'quote');
     if (replyTo && !rules.actions.reply) throw new PostsError(`${net} has no replies here.`, 409);
     if (quote && !rules.actions.quote) throw new PostsError(`${net} has no quotes here.`, 409);
+    if (b.replies !== undefined && b.replies !== null && !(rules.replyGates as readonly unknown[]).includes(b.replies)) throw new PostsError(`replies: ${net} has no such choice`, 400);
+    const replies = b.replies === undefined || b.replies === null || b.replies === 'everyone' ? undefined : (b.replies as P.ReplyGate);
+    if (replies && replyTo) throw new PostsError(`${net} lets you choose who can reply only on a new post.`, 400);
+    const media = b.media ?? [];
+    const mediaProblem = postMediaProblem(media, rules, net);
+    if (mediaProblem) throw new PostsError(mediaProblem, 422);
     const st = composeState(text, rules);
-    if (!st.sendable) throw new PostsError(st.remaining < 0 ? `Too long: ${-st.remaining} over ${net}'s ${rules.maxLength}.` : 'Nothing to post.', 422);
-    const accountId = this.able(network, 'publish', 'post');
+    // Pictures alone are a post.
+    if (!st.sendable && !(media.length && st.remaining >= 0)) throw new PostsError(st.remaining < 0 ? `Too long: ${-st.remaining} over ${net}'s ${rules.maxLength}.` : 'Nothing to post.', 422);
+    const as = typeof b.account === 'string' && b.account ? b.account : undefined;
+    const accountId = this.able(network, media.length ? 'postMedia' : 'publish', media.length ? 'post pictures' : 'post', as);
+    if (media.length && !caps(this.d.store, accountId).includes('publish')) throw new PostsError(`The ${net} adapter cannot post yet.`, 409);
     let made: P.PostFact;
     try {
-      made = await this.d.command<P.PostFact>(accountId, { t: 'publish', text, ...(replyTo ? { replyTo } : {}), ...(quote ? { quote } : {}) }, WRITE_TIMEOUT_MS);
+      made = await this.d.command<P.PostFact>(accountId, { t: 'publish', text, ...(replyTo ? { replyTo } : {}), ...(quote ? { quote } : {}), ...(replies ? { replies } : {}), ...(media.length ? { media } : {}) }, WRITE_TIMEOUT_MS);
     } catch (e) {
       if (unknownOutcome(e)) throw new PostsError(`${net} did not answer in ${WRITE_TIMEOUT_MS / 1000} seconds. It may still have posted: look on ${net} before posting again.`, 504);
       throw new PostsError((e as Error).message, 502);
     }
     if (!made?.id) throw new PostsError(`${net} did not say what it posted. It may have posted: look on ${net} before posting again.`, 504);
     // What it answers, as X may leave it out of the made post.
-    const p: P.PostFact = { ...made, ...(replyTo && !made.replyTo ? { replyTo: { id: replyTo } } : {}) };
+    const p: P.PostFact = { ...made, ...(replyTo && !made.replyTo ? { replyTo: { id: replyTo } } : {}), ...(replies && !made.replies ? { replies } : {}) };
     this.log(accountId, [p]);
     if (replyTo) this.forget(network, replyTo);
     return this.viewOf(network, accountId, p);
+  }
+
+  /**
+   * Delete a post of yours (docs/feed.md "The Feed page"): what its Delete does on the network, pressed once. The
+   * account is the one that wrote it (its own identity is the post's author), else `as`. The logged message goes as a
+   * deleted message does.
+   */
+  async unpublish(network: P.Network, post: string, as?: string): Promise<{ deleted: true; accountId: string }> {
+    const s = this.d.store;
+    const net = NETWORK_META[network].name;
+    const mid = hubId('msg', network, postNativeId(post));
+    const row = s.one<Row>('SELECT author_id, conversation_id FROM message WHERE id = ?', mid);
+    const author = row?.author_id ? (s.db.query('SELECT id FROM account WHERE network = ? AND self_identity = ? AND enabled = 1').get(network, row.author_id) as Row | null)?.id : null;
+    if (row && !author && !as) throw new PostsError(`That post is not one of yours on ${net}.`, 409);
+    const accountId = this.able(network, 'unpublish', 'delete posts', author ?? as);
+    try {
+      await this.d.command(accountId, { t: 'unpublish', post }, WRITE_TIMEOUT_MS);
+    } catch (e) {
+      if (unknownOutcome(e)) throw new PostsError(`${net} did not answer in ${WRITE_TIMEOUT_MS / 1000} seconds. It may still have deleted it: look again in a minute.`, 504);
+      throw new PostsError((e as Error).message, 502);
+    }
+    const acc = s.account(accountId)!;
+    const conv = row ? s.nativeOf('conversation', row.conversation_id)?.nativeId : null;
+    if (conv) s.ingest(acc, { t: 'delete', conversation: conv, nativeId: postNativeId(post) });
+    this.forget(network, post);
+    this.d.changed?.();
+    return { deleted: true, accountId };
   }
 
   /** A post's thread is read from X again next time (it changed). */

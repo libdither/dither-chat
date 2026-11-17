@@ -33,6 +33,10 @@ export interface AnswerCtx {
    */
   acted?: ReadonlyMap<string, { viewer: P.PostViewer; counts: P.PostFact['counts'] }>;
   onActed?: (post: string, s: { viewer: P.PostViewer; counts: P.PostFact['counts'] }) => void;
+  /** Like and repost as this account (the Feed page: the account whose timeline showed it); else the hub picks. */
+  account?: string;
+  /** Delete a post of yours (the network's own Delete): offered in the post's menu when given. */
+  onDelete?: (p: P.PostFact) => void;
 }
 
 /** Answers kept a while per post and kind: hovering back and forth reads once (the hub keeps them too). */
@@ -312,7 +316,7 @@ export function PostActions({ p, ctx, big }: { p: P.PostFact; ctx: AnswerCtx; bi
         n.delete(key);
         return n;
       });
-    api<{ viewer: P.PostViewer }>(`/api/posts/${network}/${p.id}/act`, { method: 'POST', body: { act } }).then(
+    api<{ viewer: P.PostViewer }>(`/api/posts/${network}/${p.id}/act`, { method: 'POST', body: { act, ...(ctx.account ? { account: ctx.account } : {}) } }).then(
       (r) => {
         done();
         setViewer((v) => {
@@ -384,6 +388,39 @@ export function PostActions({ p, ctx, big }: { p: P.PostFact; ctx: AnswerCtx; bi
           <kit.Icon name="eye" size={15} /> {kit.feed.shortCount(counts.views!)}
         </span>
       )}
+      {mine && ctx.onDelete && <MoreMenu p={p} ctx={ctx} />}
     </div>
+  );
+}
+
+/** A post of yours: its menu, with Delete (asked again first, as the network asks). */
+function MoreMenu({ p, ctx }: { p: P.PostFact; ctx: AnswerCtx }) {
+  const { kit, network } = ctx;
+  const [open, setOpen] = useState(false);
+  const [sure, setSure] = useState(false);
+  const btn = useRef<HTMLButtonElement>(null);
+  const close = () => (setOpen(false), setSure(false));
+  return (
+    <span class="pa-slot pa-more">
+      <button ref={btn} class="pa-btn more" aria-haspopup="menu" aria-expanded={open} aria-label="More" title="More" onClick={(e) => (e.stopPropagation(), setOpen(!open))}>
+        <kit.Icon name="more" size={16} />
+      </button>
+      {open && (
+        <Floating anchor={btn.current} onClose={close} label="Post" role="menu">
+          {sure ? (
+            <button role="menuitem" class="danger" autoFocus onClick={() => (close(), ctx.onDelete!(p))}>
+              <kit.Icon name="trash" size={14} /> Delete it from {NETWORK_META[network].name}
+            </button>
+          ) : (
+            <button role="menuitem" autoFocus onClick={() => setSure(true)}>
+              <kit.Icon name="trash" size={14} /> Delete…
+            </button>
+          )}
+          <a role="menuitem" href={p.url} target="_blank" rel="noreferrer" onClick={close}>
+            <kit.Icon name="external" size={14} /> Open on {NETWORK_META[network].name}
+          </a>
+        </Floating>
+      )}
+    </span>
   );
 }

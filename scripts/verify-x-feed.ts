@@ -85,36 +85,20 @@ try {
   check('live likes never notify (silent)', decided.filter((d: any) => d.type === 'like').length === 3 && decided.filter((d: any) => d.type === 'like').every((d: any) => d.decision === 'silent'), decided);
   check('the live reply is at most a silent row on the list', decided.some((d: any) => d.type === 'reply' && (d.decision === 'digest' || d.decision === 'drop')), decided);
 
-  // ------------------------------------------------------------------ the inbox row, desktop
+  // ------------------------------------------------------------------ Activity on the Feed page, desktop
   await page.size(1280, 860);
   await load('#/inbox');
-  await page.until(`!!document.querySelector('.feed-row')`, 20000);
-  await page.until(`document.querySelectorAll('.feed-row-who .avatar').length > 1`, 10000).catch(() => {});
-  const row = await page.eval<any>(`(() => {
-    const r = document.querySelector('.feed-row');
-    const side = r.closest('.side-scroll');
-    const kids = [...side.children];
-    // A ranked row may sit in a wrapper with its reply mark (ReplyMark.tsx): the side's child that holds it.
-    let firstRanked = side.querySelector('[data-row]');
-    while (firstRanked && firstRanked.parentElement !== side) firstRanked = firstRanked.parentElement;
-    return {
-      title: r.querySelector('.row-title').textContent,
-      count: r.querySelector('.requests-count')?.textContent ?? null,
-      who: r.querySelectorAll('.feed-row-who .avatar').length,
-      what: r.querySelector('.row-preview').textContent,
-      afterRequests: !document.querySelector('.requests-row') || kids.indexOf(document.querySelector('.requests-row')) < kids.indexOf(r),
-      beforeRanked: !firstRanked || kids.indexOf(r) < kids.indexOf(firstRanked),
-      feedRanked: !!side.querySelector('[data-row="${feed.id}"]'),
-    };
-  })()`);
-  check('the X notifications row sits under Requests, above the ranked rows', row.title.startsWith('X notifications') && row.afterRequests && row.beforeRanked, row);
-  check('it says how many are new (4), who (their faces) and what', row.count === '4' && row.who >= 3 && /replied to your post/.test(row.what) && /and \d+ more/.test(row.what), row);
-  check('the feed is not one of the ranked inbox rows', !row.feedRanked);
-  if (shots) await page.shot(join(shots, 'x-feed-row-desktop.png'));
+  await page.until(`!!document.querySelector('.rail-btn[data-track="feed"]')`, 20000);
+  check('the inbox has no row for the notifications, and they are not one of its ranked rows', await page.eval<boolean>(`!document.querySelector('.feed-row') && !document.querySelector('[data-row="${feed.id}"]')`));
+  check("the rail's Feed button says someone answered you", await page.eval<boolean>(`document.querySelector('.rail-btn[data-track="feed"]').closest('.rail-item').querySelector('.rail-pill').classList.contains('unread')`));
+  await page.eval(`document.querySelector('.rail-btn[data-track="feed"]').click()`);
+  await page.until(`!!document.querySelector('.feed-src[data-source="activity"]')`, 20000);
+  check('…its Activity source too', await page.eval<boolean>(`!!document.querySelector('.feed-src[data-source="activity"] .feed-src-dot')`));
+  if (shots) await page.shot(join(shots, 'x-feed-home-desktop.png'));
 
   // ------------------------------------------------------------------ the feed, desktop: by post
-  await page.eval(`document.querySelector('.feed-row').click()`);
-  await page.until(`location.hash.includes(${JSON.stringify(feed.id)}) && document.querySelectorAll('.feed-unit').length >= 4`, 20000);
+  await page.eval(`document.querySelector('.feed-src[data-source="activity"]').click()`);
+  await page.until(`location.hash === '#/feed/activity' && document.querySelectorAll('.feed-unit').length >= 4`, 20000);
   const units = await page.eval<any[]>(`[...document.querySelectorAll('.feed-unit')].map((u) => ({
     unit: u.dataset.unit, text: u.textContent, mine: u.querySelector('.feed-mine')?.textContent ?? '', pic: !!u.querySelector('.feed-mine-pic'),
     talk: [...u.querySelectorAll('.feed-talk .thread-post')].map((t) => t.textContent), react: u.querySelector('.feed-react')?.textContent ?? null,
@@ -156,7 +140,8 @@ try {
   const typing = (await action('typingLog')).result?.typing ?? null;
   const sends = (await action('sendLog')).result?.sent ?? null;
   check('X was sent no read mark, no typing and nothing else', Array.isArray(reads) && !reads.length && Array.isArray(typing) && !typing.length && Array.isArray(sends) && !sends.length, { reads, typing, sends });
-  check('the row stays a day after it was read, with no count', await page.eval<boolean>(`!!document.querySelector('.feed-row') && !document.querySelector('.feed-row .requests-count')`));
+  await page.until(`!document.querySelector('.feed-src[data-source="activity"] .feed-src-dot')`, 5000).catch(() => {});
+  check('once read, Activity has no dot', await page.eval<boolean>(`!document.querySelector('.feed-src[data-source="activity"] .feed-src-dot')`));
 
   // ------------------------------------------------------------------ a name opens their profile
   await page.eval(`(() => { const b = [...document.querySelectorAll('.feed-unit')].find((u) => /Greedy routing/.test(u.querySelector('.feed-mine')?.textContent ?? '')).querySelector('.feed-react'); if (b.getAttribute('aria-expanded') !== 'true') b.click(); })()`);
@@ -194,14 +179,11 @@ try {
 
   // ------------------------------------------------------------------ a phone
   await page.size(390, 844, true);
-  await load('#/inbox');
-  await page.until(`!!document.querySelector('.app.phone .feed-row')`, 20000);
-  if (shots) await page.shot(join(shots, 'x-feed-row-phone.png'));
-  await page.eval(`document.querySelector('.feed-row').click()`);
-  await page.until(`document.querySelectorAll('.feed-unit').length >= 4 && !!document.querySelector('.feed-bar')`, 20000);
+  await load('#/feed/activity');
+  await page.until(`!!document.querySelector('.app.phone .feed-head .feed-back') && document.querySelectorAll('.feed-unit').length >= 4`, 20000);
   await Bun.sleep(400);
-  const phone = await page.eval<any>(`(() => { const b = document.querySelector('.feed-bar').getBoundingClientRect(); return { barIn: b.bottom <= innerHeight + 1 && b.top > 0, back: !!document.querySelector('.conv-head .back') }; })()`);
-  check('on a phone: the feed full width, its bar on screen, a Back button', phone.barIn && phone.back, phone);
+  const phone = await page.eval<any>(`(() => { const u = document.querySelector('.feed-unit').getBoundingClientRect(); return { w: Math.round(u.width), title: document.querySelector('.feed-head h2')?.textContent }; })()`);
+  check('on a phone: Activity full width, a page of its own with Back to the feed', phone.w >= 360 && phone.title === 'Activity', phone);
   check('nothing sideways on a phone', (await overflow('.feed-scroll')) === 0, await overflow('.feed-scroll'));
   if (shots) await page.shot(join(shots, 'x-feed-phone.png'));
   await page.eval(`document.querySelector('.feed-talk .post-who').click()`);
