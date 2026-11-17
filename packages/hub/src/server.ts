@@ -2711,10 +2711,11 @@ export class HubServer {
       if (!r.ok) return new Response(r.error, { status: r.status });
       writeFileSync(file + '.mime', r.mime, { mode: 0o600 });
       return new Response(Bun.file(file), { headers: headers(r.mime) });
-    } else if (raw.startsWith('file://')) {
+    } else if (raw.startsWith('file://') && resolve(normalize(decodeURIComponent(raw.slice('file://'.length)))).startsWith(resolve(this.opts.dataDir) + '/')) {
+      // A file under this hub's data (an import, an account whose session the hub keeps): read here. One elsewhere is
+      // the account's own (an account dither-accounts made keeps its files in its own folder): asked of it below.
       const p = normalize(decodeURIComponent(raw.slice('file://'.length)));
-      const root = resolve(this.opts.dataDir);
-      if (!resolve(p).startsWith(root + '/') || !existsSync(p) || !statSync(p).isFile()) return new Response('not found', { status: 404 });
+      if (!existsSync(p) || !statSync(p).isFile()) return new Response('not found', { status: 404 });
       // A file kept on disk (an import, Signal's own copy) has no type recorded: by its name, else by its first bytes.
       const f = Bun.file(p);
       const named = f.type.split(';')[0];
