@@ -15,8 +15,9 @@
  *   visit in its history sets it to min(16, round(8 * days since that visit ^ -0.8)). The hub cannot see a
  *   notification swiped away, nor which of its visits Firefox's history holds (a tab restored with the session is
  *   none), so every clear counts, and only a refill it is sure of resets the count: a push that reached the
- *   subscription while its page was in use (`refilled_at`), or the subscription being made. At most
- *   `firefoxAllowance` (8, fewer as that gets older) since then.
+ *   subscription while its page was in use (`refilled_at`). At most `firefoxAllowance` (8, fewer as that gets older)
+ *   since then, and none before the first: the first push after the subscription is made sets the quota by its last
+ *   visit in history, which may be days older than the page that made it (a tab restored with the session).
  * - Safari drops every subscription of a site after 3 pushes that show nothing, so it never gets one. Nor does any
  *   other push service, nor a phone's browser: only the Android app (`clears = 1`) clears a phone.
  *
@@ -99,6 +100,11 @@ export class BrowserClears {
     this.db.query('INSERT INTO push_shown (sub_id, tag, ts, at) VALUES (?, ?, ?, ?) ON CONFLICT (sub_id, tag) DO UPDATE SET ts = excluded.ts, at = excluded.at').run(r.id, tag, ts, now);
   }
 
+  /** A kept notification (a reminder) took the place of what showed under this tag there: no read closes it. */
+  replaced(r: Row, tag: string) {
+    this.db.query('DELETE FROM push_shown WHERE sub_id = ? AND tag = ?').run(r.id, tag);
+  }
+
   /**
    * What a device said happened to a notification (activity.ts `noted`): tapped, swiped, replied to, or closed at once
    * because the app was in sight, it no longer shows there. `device` is the registration's id, or its page's.
@@ -166,15 +172,16 @@ export class BrowserClears {
 
   /**
    * Chrome: CHROME_PER_DAY in 24 hours, of them CHROME_COSTLY_PER_DAY that close the last notification there.
-   * Firefox: every clear since the last refill the hub is sure of, within `firefoxAllowance` of its age. Not since the
-   * device's last visit: a visit Firefox's history does not hold (a tab restored with the session) sets nothing back,
-   * and one it does hold sets the quota by days since that visit, which only lowers the allowance of an older refill.
+   * Firefox: every clear since the last refill the hub is sure of, within `firefoxAllowance` of its age; none until
+   * the first. Not since the device's last visit, nor since the subscription was made: a visit Firefox's history does
+   * not hold (a tab restored with the session) sets nothing back, and one it does hold sets the quota by days since
+   * that visit, which only lowers the allowance of an older refill.
    */
   private allowed(r: Row, relay: ClearRelay, free: boolean, now: number): boolean {
     const count = (since: number, costly: boolean) => (this.db.query(`SELECT COUNT(*) AS n FROM push_clear WHERE sub_id = ? AND at > ?${costly ? ' AND free = 0' : ''}`).get(r.id, since) as Row).n as number;
     if (relay === 'chrome') return count(now - DAY, false) < CHROME_PER_DAY && (free || count(now - DAY, true) < CHROME_COSTLY_PER_DAY);
-    const since = Math.max(r.refilled_at ?? 0, r.created_at ?? 0);
-    return count(since, false) < firefoxAllowance((now - since) / DAY);
+    const since = r.refilled_at as number | null;
+    return !!since && count(since, false) < firefoxAllowance((now - since) / DAY);
   }
 
   /** Counted before it goes, so a slow push server cannot let two clears past one cap; `undo` if it was not taken. */

@@ -336,13 +336,17 @@ export class PushService {
     const rows = (this.store.db.query('SELECT * FROM push_subscription').all() as Row[]).filter((r) => !skip.has(r.device || r.id));
     // What a browser now shows under the conversation's tag, so reading it can take that away (clears.ts), noted as
     // each push is taken: a tap or a swipe reported while a slow push server holds up another finds it. A calendar
-    // reminder or a ring has a tag of its own, which no read closes.
+    // reminder or a ring has a tag of its own, which no read closes. One that is kept (a reminder, the quiet hours'
+    // summary) takes the place of what showed under its tag, and no read closes it: nothing there for a clear.
     const lines = extra.lines as { ts?: number }[] | undefined;
     const ts = typeof extra.ts === 'number' ? extra.ts : (lines?.at(-1)?.ts ?? Date.now());
     const tag = conversationId && !extra.calendar && !extra.call ? conversationId : null;
     const one = async (r: Row) => {
       const res = await this.deliver(r, pushPayload(title, body, conversationId, { ...extra, device: r.id }));
-      if (res.ok && tag) this.browsers.shown(r, tag, ts);
+      if (res.ok && tag) {
+        if (extra.keep) this.browsers.replaced(r, tag);
+        else this.browsers.shown(r, tag, ts);
+      }
       return res;
     };
     const [results] = await Promise.all([Promise.all(rows.map(one)), this.toTopic(title, body, conversationId, level, clickHash(extra))]);

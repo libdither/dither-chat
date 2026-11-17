@@ -467,7 +467,8 @@ decide what one costs, and the hub sends them only where they are cheap or cappe
 - **Only what it showed there.** A clear goes only to a registration the hub sent an alert for that chat
   (`push_shown`, kept until it is cleared, tapped, swiped or three days old), and only up to what it showed; never
   for a calendar reminder or a ring, whose tags are their own. A tap, a swipe, a reply or an alert closed at once
-  because the app was in sight (`POST /api/activity/notifications`) takes it off `push_shown`.
+  because the app was in sight (`POST /api/activity/notifications`) takes it off `push_shown`, and so does a kept
+  notification (a reminder, the quiet hours' summary) that took its place under the same tag.
 - **Not to a page in use.** A browser whose page was in use in the last two minutes (its device's latest stay, as
   visits report it, not over) gets none: the page closes it itself, and it stops counting as showing there. Most
   reads at a computer are made in its own page, and would otherwise spend the cap meant for reads on another device.
@@ -485,11 +486,12 @@ decide what one costs, and the hub sends them only where they are cheap or cappe
   visit in the browser's history sets it to min(16, 8 × days since that visit ^ −0.8). The hub cannot see a
   notification swiped away, nor which of its visits the history holds (a tab restored with the session is none), so
   every clear counts, and the count starts again only at a refill it is sure of: a push that reached the browser
-  while its page was in use (`refilled_at` on the registration), or the registration being made. At most
-  `firefoxAllowance` since then: the quota less one, 8 at most and fewer as that gets older (2 after three days, none
-  from about eight and a half). A visit since, which may have set the quota by its own age, is younger than the refill
-  and so allows more than the hub does. Lowering the cap instead (to 3) would not be safe: a reset at a visit Firefox
-  did not count can meet a quota already down to 1.
+  while its page was in use (`refilled_at` on the registration). At most `firefoxAllowance` since then: the quota
+  less one, 8 at most and fewer as that gets older (2 after three days, none from about eight and a half). A visit
+  since, which may have set the quota by its own age, is younger than the refill and so allows more than the hub does.
+  None before the first refill: the first push after a registration sets the quota by the last visit in history,
+  which may be days older than the page that registered (a tab restored with the session). Lowering the cap instead
+  (to 3) would not be safe: a reset at a visit Firefox did not count can meet a quota already down to 1.
 - **Never** Safari (its push service drops all of a site's subscriptions after three pushes that show nothing), any
   other push service (Edge's, ntfy), a phone's browser (its label says Android, iPhone or iPad), or a registration
   whose label says Safari.

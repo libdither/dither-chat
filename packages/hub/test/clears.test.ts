@@ -78,6 +78,8 @@ beforeEach(() => {
     sent.push({ to: k.name, headers: init.headers as Record<string, string>, body: decrypt(init.body as Uint8Array, k.ua, k.auth) });
     return new Response('', { status: 201 });
   }) as unknown as typeof fetch;
+  // A push reached this Firefox while its page was in use: until then it gets no clears (the Firefox caps below).
+  store.db.query('UPDATE push_subscription SET refilled_at = ? WHERE id = ?').run(Date.now() - 1, ids.firefox);
 });
 afterEach(() => {
   store.db.close();
@@ -230,6 +232,20 @@ describe('who gets a clear', () => {
     const to = (cid: string) => [...new Set(sent.filter((x) => x.body.conversationId === cid).map((x) => x.body.keep))];
     expect(to('cnv_r')).toEqual([true]);
     expect(to('cnv_m')).toEqual([undefined]);
+    // The reminder is noted as showing nowhere, so a read of its chat sends no browser a clear it would ignore.
+    expect(shownRow('chrome', 'cnv_r')).toBeNull();
+    expect(shownRow('chrome', 'cnv_m')).not.toBeNull();
+  });
+
+  test('a kept notification that takes the place of an alert under the same tag: no clear for that chat', async () => {
+    await push.notify('Ann', 'hi', 'cnv_k', { lines: [{ author: 'Ann', key: 'k', body: 'hi', ts: 5 }] });
+    expect(shownRow('chrome', 'cnv_k')).toEqual({ ts: 5 });
+    await push.notify('Reminder', 'about this', 'cnv_k', { keep: true });
+    expect(shownRow('chrome', 'cnv_k')).toBeNull();
+    expect(shownRow('firefox', 'cnv_k')).toBeNull();
+    reset();
+    await push.clearBrowsers([{ id: 'cnv_k', upTo: Date.now() }]);
+    expect(clears()).toEqual([]);
   });
 
   test('a failed push is not counted, and its notification is still known to show', async () => {
@@ -317,7 +333,7 @@ describe('the caps', () => {
 
   test('Firefox: every clear counts, free or not, at most eight since a push reached it while its page was in use', async () => {
     const t = Date.now();
-    store.db.query('UPDATE push_subscription SET created_at = ? WHERE id = ?').run(t - 30 * DAY, ids.firefox);
+    store.db.query('UPDATE push_subscription SET created_at = ?, refilled_at = NULL WHERE id = ?').run(t - 30 * DAY, ids.firefox);
     const refilled = () => row('firefox').refilled_at as number | null;
     // Registered a month ago, and a push since only while no page of it was open: no allowance left.
     stay('firefox', 'dev_ff', 'v0', t - 2 * DAY, t - 2 * DAY + 60_000, 1);
@@ -356,6 +372,23 @@ describe('the caps', () => {
       await push.clearBrowsers([{ id: `cnv_${i}`, upTo: 1 }], from + 3 * DAY + 3 * HOUR + i);
     }
     expect(clears('firefox').length).toBe(firefoxAllowance(3));
+  });
+
+  test('Firefox: none before the first refill, however new the registration', async () => {
+    // Made a minute ago, perhaps in a tab restored with the session: the first push sets the quota by the last visit
+    // in Firefox's history, which may be days old.
+    const t = Date.now();
+    store.db.query('UPDATE push_subscription SET created_at = ?, refilled_at = NULL WHERE id = ?').run(t - 60_000, ids.firefox);
+    alerted('cnv_new', 1, ['firefox', 'chrome'], t);
+    await push.clearBrowsers([{ id: 'cnv_new', upTo: 1 }], t + 1);
+    expect(clears().map((s) => s.to)).toEqual(['chrome']);
+    // A push while its page is in use: now it may.
+    stay('firefox', 'dev_ff', 'v1', t - 60_000, Date.now(), 0);
+    await push.notify('Ann', 'there?', 'cnv_new2', { lines: [{ author: 'Ann', key: 'k', body: 'there?', ts: 2 }] });
+    store.db.query('UPDATE visit SET closed = 1 WHERE id = ?').run('v1');
+    reset();
+    await push.clearBrowsers([{ id: 'cnv_new2', upTo: 2 }], Date.now() + 1);
+    expect(clears('firefox').map((s) => s.body.clear)).toEqual(['cnv_new2']);
   });
 
   test('an older database gets the refill column and the index that finds a device\'s latest stay', () => {
