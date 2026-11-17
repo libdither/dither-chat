@@ -309,6 +309,23 @@ These live in the web app, so the PWA gets them too.
    asks for a new worker 3 s after every start, the new build waits for the reload bar or for the app to be out of
    sight, and after the reload the new worker serves its own cache. A new deploy shows up one start later (or at
    the bar), not on the first start after it.
+
+   The worker keeps the whole build: every file vite writes but the source maps, lazy chunks and workers included
+   (about 4.3 MB, 1.3 MB as zstd, of which the PDF viewer's worker is 1.3 MB, 0.4 MB as zstd), and the icons `index.html` names
+   (`vite.config.ts` lists them in `sw.js`). A new build's worker copies each hashed file (`/assets/`) that the
+   old build's cache holds instead of downloading it, since a hashed name never changes content, so a deploy
+   downloads only the files that changed; `index.html`, the manifest and the icons are fetched fresh. The old cache
+   goes only once the new one is whole: an install that cannot get a file fails, and the build in use stays. Before
+   2026-11-17 it kept only the entry chunk, what it imports itself and the CSS, and old caches went at each deploy, so
+   the first start after one with the hub out of reach and the HTTP cache cold (a WebView's is small) stayed on the
+   logo for good. `scripts/check-offline.ts` checks this in CI ([testing.md](testing.md#startup)).
+
+   If the app's script or one it imports still cannot load, `index.html` does not leave the logo up for good: it
+   asks the hub (`/api/health`) again when the network comes back and after 1 s, then twice as long each time up to
+   30 s (the wait carries over reloads, in `sessionStorage`), and reloads once it answers (its own `{ok: true}`, not
+   a Wi-Fi sign-in page), letting a build that waits for the page in first, since nothing in it ran. After a few
+   reloads the hub is there but a file it lists is not (a bad build): a line under the logo says part of the app
+   didn't load, and it asks every 5 minutes instead.
 2. **A snapshot of the last screen** (`src/snapshot.ts`), in IndexedDB. It holds the bootstrap (every sidebar list,
    unread counts and last messages) and the inbox, and beside it the newest 40 messages of the 60 conversations opened
    or fetched ahead most recently, a record each with their authors, reactors and quoted messages
@@ -316,7 +333,11 @@ These live in the web app, so the PWA gets them too.
    It is read before the network and painted at once. It also keeps its place in the hub's change journal, so the app then asks only for what changed since
    ([sync.md](sync.md)); a full bootstrap replaces it only when the hub cannot say. A kept conversation catches up
    the same way when opened. It is saved when the bootstrap arrives (the hub's own text, without
-   serializing it again) and again whenever the app goes out of sight. While the app stays open, the save after
+   serializing it again; at once when the device keeps none, so a device opened once can start offline) and again
+   whenever the app goes out of sight. A save waits until things settle (1.5 s after the last change), but never more
+   than 5 s after the first change it holds, however often things change (a run of chats fetched ahead). When the app
+   goes out of sight or is closed, the pages and the snapshot are written side by side and committed at once, so the
+   write is on its way before the page can go. While the app stays open, the save after
    a conversation opens writes only the rest (a record of its own) and the pages that changed, and keeps the stored
    bootstrap, unless that is
    over ten minutes old: writing the bootstrap again cost a phone a few hundred milliseconds each time. Caps: 12 MB of bootstrap (above that it is
