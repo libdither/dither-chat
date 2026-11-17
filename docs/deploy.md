@@ -358,6 +358,9 @@ On a demo hub (`--demo`), simulated messages are real pushes to any device that 
 
 ## Categories and local models
 
+Sensitive messages ([sensitive.md](sensitive.md)) ask jev too: `DITHER_SENSITIVE_MODEL` is `jev` (the default),
+`keyword` (a demo hub's) or `off`.
+
 Categories use keyword matching by default. Set `DITHER_CATEGORY_MODEL=<model>` for a local Ollama model, and `DITHER_OLLAMA_URL` if it is not on
 `127.0.0.1:11434`. The hub refuses to send to a public address unless `DITHER_CATEGORY_ALLOW_REMOTE=1`. It only ever sends names, topics and channel names.
 

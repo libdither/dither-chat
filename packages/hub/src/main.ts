@@ -20,6 +20,7 @@ import { listByPrior, PhoneList, phoneListBudget, phoneListMode } from './phonel
 import { RequestNotifier, requestChain, type RequestNotice } from './requestnotify.ts';
 import { Devices } from './devices.ts';
 import { Embeddings, Jev } from './embeddings.ts';
+import { demoJudge, type SensitiveJudge } from './sensitive.ts';
 import { PushService } from './push.ts';
 import { ReadQueue } from './readqueue.ts';
 import { HubServer, mediaSigner } from './server.ts';
@@ -178,6 +179,22 @@ function alertJudge(): Judge | null {
   } catch (e) {
     console.error(`alerts: ${(e as Error).message}; only your rules alert`);
     jobFailed('alerts: model', e);
+    return null;
+  }
+}
+/**
+ * What judges whether a message is sensitive (docs/sensitive.md): jev unless DITHER_SENSITIVE_MODEL says `keyword` (a
+ * demo hub's: a few words) or `off`.
+ */
+function sensitiveJudge(): { name: string; judge: SensitiveJudge } | null {
+  const name = process.env.DITHER_SENSITIVE_MODEL ?? (demo ? 'keyword' : 'jev');
+  if (name === 'off') return null;
+  if (name === 'keyword') return { name, judge: demoJudge };
+  try {
+    const jev = new Jev(process.env.DITHER_JEV_URL ?? 'http://127.0.0.1:7862', 60_000);
+    return { name, judge: (q, texts) => jev.judge(q, texts) };
+  } catch (e) {
+    console.error(`sensitive: ${(e as Error).message}; no model`);
     return null;
   }
 }
@@ -467,6 +484,7 @@ const server = new HubServer(store, sup, triage, {
   push,
   readQueue,
   onCategoriesChanged: (force) => void categorizer.refresh(force),
+  sensitiveJudge: sensitiveJudge(),
   probeCategory: (question) => categorizer.probe(question),
   attention,
   activity,

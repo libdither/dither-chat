@@ -1439,3 +1439,28 @@ export function loadTranslation(fresh = false): Promise<void> {
 export async function setTranslation(patch: Partial<P.TranslateSettings>): Promise<void> {
   translation.value = await api<{ settings: P.TranslateSettings; networks: P.Network[] }>('/api/translate/settings', { method: 'PUT', body: patch });
 }
+
+// ------------------------------------------------------------------ sensitive messages (docs/sensitive.md)
+
+/** The hub's sensitive-message settings, questions and agreement; null until first asked. */
+export const sensitive = signal<P.SensitiveState | null>(null);
+let sensitiveAsked: Promise<void> | null = null;
+/** Asks the hub once (again when `fresh`). The chat reads `settings` to cover and hide. */
+export function loadSensitive(fresh = false): Promise<void> {
+  if (!sensitiveAsked || fresh)
+    sensitiveAsked = api<P.SensitiveState>('/api/sensitive').then(
+      (v) => void (sensitive.value = v),
+      () => void (sensitiveAsked = null),
+    );
+  return sensitiveAsked;
+}
+/** Changes the settings on the hub (Settings → Sensitive messages); the chat follows at once. */
+export async function setSensitive(patch: Partial<P.SensitiveSettings>): Promise<void> {
+  const settings = await api<P.SensitiveSettings>('/api/sensitive/settings', { method: 'PATCH', body: patch });
+  if (sensitive.value) sensitive.value = { ...sensitive.value, settings };
+  else await loadSensitive(true);
+}
+/** Your answer on a message: sensitive (true), fine (false), or none. The message comes back with it. */
+export async function answerSensitive(m: P.MessageView, vote: boolean | null): Promise<void> {
+  await api(`/api/messages/${m.id}/sensitive`, { method: 'POST', body: { vote } });
+}

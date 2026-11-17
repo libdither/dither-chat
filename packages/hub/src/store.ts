@@ -272,6 +272,10 @@ export class Store {
   personsChanged: ((personIds: string[]) => void) | null = null;
   /** A reminder set on a network came due (saved.ts): the server notifies. Called inside ingest's transaction. */
   reminderDue: ((r: DueReminder) => void) | null = null;
+  /** Each message's sensitive chance and your answer (sensitive.ts), for message views. */
+  sensitiveMarks: ((ids: string[]) => Map<string, P.SensitiveMark>) | null = null;
+  /** A new live message stored, yours or someone else's (sensitive.ts asks about it). Called inside the ingest. */
+  newMessage: ((id: string) => void) | null = null;
   /** How long each step of opening the database took (startup.ts). */
   readonly opening: [string, number][];
 
@@ -1378,6 +1382,8 @@ export class Store {
     const changed = before === null || JSON.stringify(this.messageViews([this.db.query('SELECT * FROM message WHERE id = ?').get(id) as Row])) !== before;
     if (changed || this.placeSig('conversation', cid) !== convBefore) this.dirty.conversations.add(cid);
     if (live || late || (existed && changed)) this.dirty.messages.set(id, live || (late && !existed));
+    // Every new message, yours too, for what reads them all (sensitive.ts); triage gets only others'.
+    if (!existed && (live || late)) this.newMessage?.(id);
     return !existed && (live || late) && !fromSelf ? id : null;
   }
 
@@ -2839,6 +2845,7 @@ export class Store {
     );
     const seen = this.db.query(`SELECT * FROM message_seen WHERE message_id IN (${ph})`).all(...ids) as Row[];
     const tri = this.db.query(`SELECT * FROM triage WHERE message_id IN (${ph})`).all(...ids) as Row[];
+    const sensitive = this.sensitiveMarks?.(ids) ?? null;
     const marks = new Map((this.db.query(`SELECT message_id, mark FROM reply_mark WHERE message_id IN (${ph}) AND undone_at IS NULL`).all(...ids) as Row[]).map((r) => [r.message_id as string, r.mark as P.ReplyMark]));
     const sentForwards = new Map((this.db.query(`SELECT * FROM forward_sent WHERE message_id IN (${ph})`).all(...ids) as Row[]).map((f) => [f.message_id, json<P.ForwardView | null>(f.data, null)]));
     const by = <T extends Row>(xs: T[]) => {
@@ -2958,6 +2965,7 @@ export class Store {
         seenVia,
         triage: t ? triageView(t) : null,
         ...(marks.has(r.id) ? { replyMark: marks.get(r.id) } : {}),
+        ...(sensitive?.has(r.id) ? { sensitive: sensitive.get(r.id) } : {}),
       };
     });
   }

@@ -4,6 +4,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/ho
 import type { ComponentChildren } from 'preact';
 import { ago, clock, dayLabel, fullTime, sameDay } from '../format.ts';
 import { retention } from '../history.ts';
+import { loadSensitive } from '../state.ts';
+import { Cover, GoneBanner, goneHere, HiddenLine, levelOf } from './SensitiveCover.tsx';
 import { isJumbo, renderMarkdown } from '../markdown.ts';
 import { inviteRef } from '../invites.ts';
 import {
@@ -710,6 +712,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
             )}
           </div>
         )}
+        <Cover m={m}>
         {m.deleted && m.gone?.kept ? (
           <Gone m={m} layout={pictures} />
         ) : m.forward && !m.deleted ? (
@@ -734,6 +737,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
             <RichFoot m={m} />
           </>
         )}
+        </Cover>
         <SendFailures m={m} />
         {ticks && (!m.body || m.deleted || (m.poll && !m.forward)) && <span class="msg-marks">{ticks}</span>}
         {grouped && (m.editedTs || m.edits) && <Edited m={m} />}
@@ -817,6 +821,8 @@ interface Drawn {
 function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey: string; convIds: string[]; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string; chat?: { badge: boolean; onFocus: (convId: string) => void; onMissing: () => void } }) {
   if (counting) rendered('Timeline');
   timelineRev(tkey).value;
+  // Which messages to cover and hide (ui/SensitiveCover.tsx): asked of the hub once.
+  useEffect(() => void loadSensitive(), []);
   const scroller = useRef<HTMLDivElement>(null);
   const t = timelines.get(tkey);
   const [flash, setFlash] = useState<string | null>(null);
@@ -1052,7 +1058,10 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId;
   // One person's pictures one after another are one run, drawn by its last message (docs/pictures.md); a message of
   // it that is nothing but pictures has no row of its own. How each chat draws them, once per chat.
-  const runs = pictureRuns(all, start, end, (p, m, i) => groups(p, m) && i !== unreadFrom);
+  // A covered or hidden message's pictures stay its own: it is in no run (ui/SensitiveCover.tsx).
+  const runs = pictureRuns(all, start, end, (p, m, i) => groups(p, m) && i !== unreadFrom && levelOf(p!) === 'shown' && levelOf(m) === 'shown');
+  // Sensitive messages left out in "gone" mode, counted at the top.
+  let gone = 0;
   const layouts = new Map<string, PictureLayout>();
   const layoutOf = (cid: string) => layouts.get(cid) ?? layouts.set(cid, pictureLayout(cid)).get(cid)!;
   // A phone's switch for a run sits on its first row, with that row's words (ui/PictureSwitch.tsx).
@@ -1067,6 +1076,14 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     const ends = !!run && run[run.length - 1] === m;
     if (run && !ends && onlyPictures(m)) {
       prev = m;
+      continue;
+    }
+    // Above the hide line: gone, or one line in its place (ui/SensitiveCover.tsx).
+    if (levelOf(m) === 'hide') {
+      if (goneHere(m, tkey)) gone++;
+      else items.push(<HiddenLine key={m.id} m={m} />);
+      prev = m;
+      above = null;
       continue;
     }
     const grouped = groups(above, m);
@@ -1098,6 +1115,7 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     );
     prev = above = m;
   }
+  if (gone) items.unshift(<GoneBanner key="sens-gone" count={gone} chatKey={tkey} />);
 
   return (
     <div class="timeline-scroll" ref={scroller} onScroll={onScroll}>

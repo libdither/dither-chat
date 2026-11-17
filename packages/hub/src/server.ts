@@ -75,6 +75,7 @@ import { clientReport, jobFailed, PerClientCap, reportedInRequest, reportError, 
 import { callRoute } from './callstate.ts';
 import { handlesPolls, pollRoute } from './polls.ts';
 import { SendExtras } from './sendextras.ts';
+import { Sensitive, type SensitiveJudge } from './sensitive.ts';
 import { reminderWords } from './saved.ts';
 import { ASK_LEVEL, isChatKind, type ManagerLink } from './accounts-manager.ts';
 import { Auth, bearerOf, clientIp, COOKIE, cookieOf, fileTicket, fromOwnPage, MIN_PASSWORD, overHttps, sessionCookie, ticketGood, USER, type Who } from './auth.ts';
@@ -135,6 +136,8 @@ interface ServerOpts {
   readQueue?: ReadQueue;
   /** Rescore categories after they change. */
   onCategoriesChanged?: (force?: boolean) => void;
+  /** What judges whether a message is sensitive (sensitive.ts): the local model, a demo's words, or none. */
+  sensitiveJudge?: { name: string; judge: SensitiveJudge } | null;
   /** Every place's P(yes) for one question, not saved (categorize.ts probe). */
   probeCategory?: (question: string) => Promise<P.CategoryProbe>;
   onDemoReset?: () => Promise<void>;
@@ -338,6 +341,7 @@ export class HubServer {
   readonly moderation: Moderation;
   /** Send later, saved on the network, previews off (sendextras.ts, docs/sending.md). */
   readonly sendExtras: SendExtras;
+  readonly sensitive: Sensitive;
   /** Your marks on whether a message needs a reply (replymarks.ts). */
   private get marks(): ReplyMarks {
     return (this._marks ??= new ReplyMarks(this.store));
@@ -440,6 +444,19 @@ export class HubServer {
         return { messages: views, identities: store.identitiesOf(views) };
       },
     });
+    // Sensitive messages (sensitive.ts, docs/sensitive.md): the model's chance on each, your answers, its question.
+    this.sensitive = new Sensitive({
+      store,
+      judge: opts.sensitiveJudge?.judge ?? null,
+      model: opts.sensitiveJudge?.name ?? null,
+      flush: () => this.flush(),
+      messages: (ids) => {
+        const views = store.messageViews(store.raw(`SELECT * FROM message WHERE id IN (SELECT value FROM json_each(?))`, JSON.stringify(ids)));
+        return { messages: views, identities: store.identitiesOf(views) };
+      },
+    });
+    store.sensitiveMarks = (ids) => this.sensitive.marks(ids);
+    store.newMessage = (id) => this.sensitive.later([id]);
     // Files waiting to be sent later stay; a reminder that came due on a network notifies (saved.ts).
     this.uploads.held = () => this.sendExtras.later.heldUploads();
     store.reminderDue = (r) => {
@@ -1031,6 +1048,8 @@ export class HubServer {
     if (Moderation.handles(path)) return (await this.moderation.route(req, url, path))!;
     // Send later, saved on the network, previews off (sendextras.ts, docs/sending.md).
     if (SendExtras.handles(path)) return (await this.sendExtras.route(req, url, path))!;
+    // Sensitive messages: settings, your answers, trying and adopting a question (sensitive.ts).
+    if (Sensitive.handles(path)) return (await this.sensitive.route(req, url, path))!;
     // Reply marks (replymarks.ts, docs/inbox.md "Marks"): on a message, its mail twin, and on an inbox row.
     if ((m = path.match(/^\/api\/(mail\/)?messages\/([\w-]+)\/reply-mark$/)) && method === 'POST') {
       const b = await body<{ mark?: unknown; surface?: unknown; device?: unknown }>();
