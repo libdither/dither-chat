@@ -41,6 +41,12 @@ const folderSel = async (name: string) => {
   const f = (await bootstrap()).folders.find((x: any) => x.name === name);
   return f ? `.rail [data-dnd-key="folder:${f.id}"] > .rail-btn` : null;
 };
+/** A screenshot without the toasts (the demo's own notices, "Layout applied"), which would cover what it shows. */
+async function shot(file: string) {
+  await p.eval(`document.head.insertAdjacentHTML('beforeend', '<style id=shot-no-toasts>.toasts, .toast { display: none !important }</style>')`);
+  await p.shot(file);
+  await p.eval(`document.getElementById('shot-no-toasts')?.remove()`);
+}
 const away = () => p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 900, y: 600 });
 /** On a phone: the Spaces list, then the Organize view from its order button. */
 async function phoneOrganize(tag: string) {
@@ -50,15 +56,16 @@ async function phoneOrganize(tag: string) {
   // The demo's own notices (a mail bridge that stopped) would cover the list's header.
   await p.eval(`document.head.insertAdjacentHTML('beforeend', '<style id=no-toasts>.toasts, .toast { display: none !important }</style>')`);
   await Bun.sleep(600);
-  if (shots) await p.shot(`${shots}/${tag}-phone-spaces.png`);
+  if (shots) await shot(`${shots}/${tag}-phone-spaces.png`);
   await click('.side-sort');
   await p.until(`[...document.querySelectorAll('.cm-item, [role=menuitem]')].some((e) => e.textContent.includes('Organize Servers'))`, 5000);
   await p.eval(`[...document.querySelectorAll('.cm-item, [role=menuitem]')].find((e) => e.textContent.includes('Organize Servers')).click()`);
   await p.until(`!!document.querySelector('.org-list')`, 5000);
   await Bun.sleep(600);
-  if (shots) await p.shot(`${shots}/${tag}-phone-organize.png`);
-  const chip = await p.eval<boolean>(`(() => { const c = document.querySelector('.move-chip'); if (!c) return false; c.scrollIntoView({ block: 'center' }); const r = c.closest('.org-row').getBoundingClientRect(); return r.right <= innerWidth + 1; })()`);
-  if (shots) await p.shot(`${shots}/${tag}-phone-moves.png`);
+  if (shots) await shot(`${shots}/${tag}-phone-organize.png`);
+  // Every chip on a row's line is on the screen, on one line: it never scrolls, wraps or cuts a chip.
+  const chip = await p.eval<boolean>(`(() => { const c = document.querySelector('.move-chip'); if (!c) return false; c.scrollIntoView({ block: 'center' }); const r = c.closest('.org-row').getBoundingClientRect(); const lines = [...document.querySelectorAll('.org-moves')].filter((m) => m.children.length); return r.right <= innerWidth + 1 && lines.every((m) => m.scrollWidth <= m.clientWidth + 1 && m.getBoundingClientRect().height < 40 && [...m.children].every((x) => getComputedStyle(x).display === 'none' || x.getBoundingClientRect().right <= innerWidth + 1)); })()`);
+  if (shots) await shot(`${shots}/${tag}-phone-moves.png`);
   await p.eval(`document.getElementById('no-toasts')?.remove()`);
   await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
   await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
@@ -75,20 +82,20 @@ try {
   await Bun.sleep(800);
 
   // The quiet shelf at the end of the rail.
-  const shelf = await p.eval<string | null>(`document.querySelector('.rail-scroll > .rail-shelf .rail-shelf-n')?.textContent ?? null`);
+  const shelf = await p.eval<string | null>(`document.querySelector('.rail-scroll > .rail-shelf .rail-shelf-face')?.textContent ?? null`);
   check(shelf && Number(shelf) >= 8, 'quiet servers sit on a shelf at the end of the rail', shelf);
   const quietShown = () => p.eval<number>(`document.querySelectorAll('.rail-scroll .rail-item.quiet').length`);
   check((await quietShown()) === 0, 'closed, it shows none of them');
   if (shots) {
     await p.eval(`document.querySelector('.rail-scroll').scrollTop = 1e6`);
-    await p.shot(`${shots}/1-rail-shelf-closed.png`);
+    await shot(`${shots}/1-rail-shelf-closed.png`);
   }
   await click('.rail-scroll > .rail-shelf .rail-btn');
   await Bun.sleep(300);
   check((await quietShown()) === Number(shelf), 'a click lays them out, dimmed', await quietShown());
   if (shots) {
     await p.eval(`document.querySelector('.rail-scroll').scrollTop = 1e6`);
-    await p.shot(`${shots}/2-rail-shelf-open.png`);
+    await shot(`${shots}/2-rail-shelf-open.png`);
   }
   await click('.rail-scroll > .rail-shelf .rail-btn');
 
@@ -111,7 +118,7 @@ try {
   }))()`);
   check(/zyansheep/.test(plan.personas) && /zyn\.alt/.test(plan.personas), 'it offers one folder per account', plan.personas);
   check(['Coding', 'Creators', 'Lakeside', 'Ashford', 'Westbrook'].every((n) => plan.steps.some((s: string) => s.startsWith(n))), 'from Discord’s folders and shared words', plan.steps);
-  if (shots) await p.shot(`${shots}/3-suggested-layout.png`);
+  if (shots) await shot(`${shots}/3-suggested-layout.png`);
 
   // Untick one step, then apply.
   await p.eval(`[...document.querySelectorAll('.org-plan-row')].find((r) => r.querySelector('.org-plan-name')?.textContent.startsWith('Tuesday'))?.querySelector('input')?.click()`);
@@ -145,7 +152,7 @@ try {
   await away();
   if (shots) {
     await p.eval(`document.querySelector('.rail-scroll').scrollTop = 0`);
-    await p.shot(`${shots}/4-rail-after-closed.png`);
+    await shot(`${shots}/4-rail-after-closed.png`);
   }
 
   // Open the alt account's folder, then Lakeside inside it; and the main one's Westbrook, whose servers went quiet.
@@ -157,15 +164,17 @@ try {
   await click((await folderSel('zyansheep'))!);
   await opened(`document.querySelectorAll('.rail-scroll > .rail-folder.open').length === 2`);
   await click((await folderSel('Westbrook'))!);
-  await opened(`[...document.querySelectorAll('.rail-folder.inner.open')].some((x) => x.querySelector('.rail-shelf'))`);
-  const wbShelf = await p.eval<string | null>(`(() => { const f = [...document.querySelectorAll('.rail-folder.inner.open')].find((x) => x.querySelector('.rail-shelf')); return f?.querySelector('.rail-shelf-n')?.textContent ?? null; })()`);
-  check(wbShelf === '4', 'a folder of quiet servers keeps them on its own shelf', wbShelf);
+  const wbSel = `[...document.querySelectorAll('.rail-folder.inner.open')].find((x) => x.querySelector('[data-dnd-key="space:${b0.spaces.find((s: any) => s.name === 'Westbrook Robotics')?.id}"]'))`;
+  await opened(`!!${wbSel}`);
+  // Every server in it went quiet: a shelf would leave the open folder empty, so they show, dimmed.
+  const wb = await p.eval<{ quiet: number; shelf: boolean } | null>(`(() => { const f = ${wbSel}; return f ? { quiet: f.querySelectorAll('.rail-item.quiet').length, shelf: !!f.querySelector('.rail-shelf') } : null; })()`);
+  check(wb?.quiet === 4 && !wb.shelf, 'a folder whose servers all went quiet shows them, dimmed, not a shelf of everything', wb);
   await away();
   if (shots) {
     await p.eval(`document.querySelector('.rail-scroll').scrollTop = 0`);
-    await p.shot(`${shots}/5-rail-nested-open.png`);
-    await p.eval(`(() => { const e = [...document.querySelectorAll('.rail-folder.inner.open')].find((x) => x.querySelector('.rail-shelf')); e?.scrollIntoView({ block: 'center' }); })()`);
-    await p.shot(`${shots}/6-rail-westbrook-shelf.png`);
+    await shot(`${shots}/5-rail-nested-open.png`);
+    await p.eval(`${wbSel}?.scrollIntoView({ block: 'center' })`);
+    await shot(`${shots}/6-rail-westbrook-shelf.png`);
   }
 
   // The phone: a folder inside a folder is a row that opens it.
@@ -174,11 +183,11 @@ try {
   await Bun.sleep(1200);
   const rows = await p.eval<string[]>(`[...document.querySelectorAll('.sidebar .row-title')].map((e) => e.textContent)`);
   check(rows.includes('Lakeside') && rows.includes('Ashford'), 'on a phone, the account folder lists its folders', rows.slice(0, 8));
-  if (shots) await p.shot(`${shots}/7-phone-account-folder.png`);
+  if (shots) await shot(`${shots}/7-phone-account-folder.png`);
   await p.goto(`${hub}/#/f/${byName("Lakeside").id}`);
   await Bun.sleep(800);
   check(await p.eval<boolean>(`[...document.querySelectorAll('.sidebar .side-sub .link-btn')].some((e) => e.textContent === 'zyn.alt')`), 'and a folder inside one says where it is');
-  if (shots) await p.shot(`${shots}/8-phone-inner-folder.png`);
+  if (shots) await shot(`${shots}/8-phone-inner-folder.png`);
 
   // Undo puts it all back.
   await p.size(1280, 1000);
@@ -190,10 +199,14 @@ try {
   await p.until(`!!document.querySelector('.org-list')`, 5000);
   const near = await p.eval<number>(`document.querySelectorAll('.move-chip:not(.other)').length`);
   check(near > 0, 'loose servers show their nearest folders on their line', near);
+  // Each row's list is its own (the planner's ranking for that server), not the same biggest folders on every row.
+  const lists = await p.eval<string[]>(`[...document.querySelectorAll('.org-moves')].filter((m) => m.children.length).map((m) => [...m.querySelectorAll('.move-chip:not(.other)')].map((c) => c.textContent).join('|'))`);
+  check(new Set(lists).size >= Math.min(3, lists.length), 'rows list different folders, each its own nearest', [...new Set(lists)].slice(0, 4));
+  check(await p.eval<boolean>(`[...document.querySelectorAll('.org-moves')].every((m) => m.querySelectorAll('.move-chip.best').length <= 1)`), 'at most one folder on a line is marked best');
   check(!(await p.eval<boolean>(`!!document.querySelector('.org-list .cat-chip')`)), 'rows show no topic tags');
   if (shots) {
     await p.eval(`document.querySelector('.move-chip')?.scrollIntoView({ block: 'center' })`);
-    await p.shot(`${shots}/9-organize-near.png`);
+    await shot(`${shots}/9-organize-near.png`);
   }
   // One click on a suggestion files it.
   const before = (await bootstrap()).folders.reduce((n: number, f: any) => n + f.items.length, 0);

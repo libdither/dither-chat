@@ -299,6 +299,27 @@ code {
 .rail-btn:hover .folder-icon .folder-grid {
   border-radius: 13px;
 }
+.folder-icon.small {
+  width: 36px;
+  height: 36px;
+}
+/* Initials don't fit a quarter of a row's icon: a place without a picture is its colour alone. */
+.folder-icon.small .avatar-fallback {
+  font-size: 0 !important;
+}
+.folder-icon.small .avatar,
+.folder-icon.small .avatar > * {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+.folder-icon.small .folder-grid {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  padding: 3px;
+  background: color-mix(in oklab, var(--folder) 16%, var(--bg-raised));
+}
 .folder-mini {
   border-radius: 5px;
   overflow: hidden;
@@ -16234,11 +16255,6 @@ h1:hover > .pair-nick-edit,
   font-size: 12px;
   font-weight: 600;
 }
-.rail-shelf-n::before {
-  content: 'z ';
-  font-weight: 400;
-  opacity: 0.7;
-}
 .shelf-row {
   display: flex;
   align-items: center;
@@ -16262,12 +16278,6 @@ h1:hover > .pair-nick-edit,
   justify-content: flex-end;
   gap: 6px;
   min-width: 0;
-}
-.org-moves:not(:empty)::before {
-  content: '→';
-  color: var(--text-faint);
-  font-size: 13px;
-  margin-right: 2px;
 }
 .move-chip {
   display: inline-flex;
@@ -16320,15 +16330,38 @@ h1:hover > .pair-nick-edit,
   color: var(--text-dim);
   font-weight: 500;
 }
+.move-chip.other svg {
+  display: none;
+}
 @media (max-width: 820px) {
+  /* Under the name, two folders and Other…: it fits the screen, so nothing scrolls or is cut in half. */
   .org-moves {
     grid-column: 3;
     justify-content: flex-start;
-    overflow-x: auto;
-    scrollbar-width: none;
+    flex-wrap: wrap;
     padding: 2px 0;
-    /* More to the right: the line fades out instead of cutting a chip in half. */
-    mask-image: linear-gradient(to right, #000 85%, transparent);
+  }
+  .org-moves .move-chip:nth-child(3):not(.other) {
+    display: none;
+  }
+  .move-chip {
+    max-width: 38vw;
+    height: 28px;
+    padding: 0 10px;
+  }
+  /* "Other…" is a ⋯ beside the folders, so they keep one line. */
+  .move-chip.other:not(:only-child) {
+    padding: 0 8px;
+  }
+  .move-chip.other:not(:only-child) svg {
+    display: inline;
+  }
+  .move-chip.other:not(:only-child) .move-chip-name {
+    display: none;
+  }
+  .move-chip-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .org-row.in-folder {
     padding-left: 18px;

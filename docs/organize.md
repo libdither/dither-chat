@@ -175,9 +175,10 @@ lives), with that account's folders and loose servers inside.
 ## Quiet shelf
 
 A quiet server is one you never opened here (no visit in the usage history), with nothing unread and nothing new in
-180 days (`quiet.ts`). Two or more of them in a list sit on a shelf at its end, closed: a dashed pill with their
-count, at the end of the rail, of each open folder and of the phone's lists. A click lays them out, dimmed; another
-puts them away. It is display only: nothing leaves a folder, and a quiet server you open, pin or get a message in
+180 days (`quiet.ts`). Two or more of them in a list sit on a shelf at its end, closed: a dashed pill with a moon and
+their count, at the end of the rail, of each open folder and of the phone's lists. A click lays them out, dimmed;
+another puts them away. A list whose servers are all quiet gets no shelf (it would leave an open folder empty): they
+show where they are, dimmed. It is display only: nothing leaves a folder, and a quiet server you open, pin or get a message in
 comes off the shelf by itself. The order menu's **Quiet Servers on a Shelf** turns it off for every device
 (`ArrangeSettings.quietShelf`).
 
@@ -203,10 +204,12 @@ The rules, in the order they claim servers:
    its own, in its colour, holding its folders and its other servers. A server two of them see is the bigger
    account's; one on a network where you have one account is your biggest account's.
 
-A server no rule places is left where it is, with its three nearest folders on its line in the list, then "Other…"
-for any folder (one click moves it):
-nearest by the words of its name, topic and channel names (tf-idf) and by the categorizer's scores. They are
-suggestions, never filed by themselves.
+A server no rule places is left where it is, with three folders on its line in the list, then "Other…" for any folder
+(one click moves it; a phone shows two and a ⋯). The list is that server's own: the planner ranks every folder of its
+account for it (`FolderPlan.near`) by the words of its name, topic and channel names (tf-idf) and by the categorizer's
+scores, ties going to the bigger folder. The first is marked (filled, with a sparkle) only when it is one of the
+suggestions, a folder with some likeness (`FolderPlan.suggest`, at most three). They are suggestions, never filed by
+themselves.
 
 ### Backtest
 

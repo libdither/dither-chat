@@ -317,22 +317,26 @@ function usageLine(key: string): string {
 
 const rowId = (r: Row) => `${r.key}|${r.folder ?? ''}`;
 
-/** Folders shown on a loose place's line, at most this many before "Other…". */
-const TARGETS = 4;
+/** Folders shown on a loose place's line, at most this many before "Other…" (a phone shows two). */
+const TARGETS = 3;
+type Near = { folder: string; name: string }[];
 /**
- * Where a loose place could go: the planner's nearest folders first (marked best), then the other folders beside it,
- * biggest first: inside its account's folder when it sits in one, else every folder that holds places.
+ * Where a loose place could go, its own list: the folder it fits best first (marked), then the planner's ranking of
+ * the rest for this place, then any other folder by size. Inside an account's folder, only that account's folders.
  */
-function moveTargets(key: string, inFolder: string | undefined, suggest: { folder: string; name: string }[]): { folder: string; name: string; best: boolean }[] {
+function moveTargets(key: string, inFolder: string | undefined, suggest: Near, near: Near): { folder: string; name: string; best: boolean }[] {
   const holds = (f: P.FolderView) => !f.items.some((i) => i.kind === 'folder');
   const scope = inFolder ? (db.folders.find((f) => f.id === inFolder)?.items.filter((i) => i.kind === 'folder').map((i) => db.folders.find((f) => f.id === i.id)).filter((f): f is P.FolderView => !!f) ?? []) : db.folders.filter(holds);
-  const ok = (id: string) => db.folders.some((f) => f.id === id && holds(f)) && mayHold(asLayout(db.folders), id, key);
-  const best = suggest.filter((x) => !x.folder.startsWith('step:') && ok(x.folder)).map((x) => ({ folder: x.folder, name: x.name, best: true }));
-  const rest = scope
-    .filter((f) => ok(f.id) && !best.some((b) => b.folder === f.id))
-    .sort((a, b) => b.items.length - a.items.length)
-    .map((f) => ({ folder: f.id, name: f.name, best: false }));
-  return [...best, ...rest].slice(0, TARGETS);
+  const inScope = new Set(scope.map((f) => f.id));
+  const ok = (id: string) => inScope.has(id) && db.folders.some((f) => f.id === id && holds(f)) && mayHold(asLayout(db.folders), id, key);
+  const bySize = [...scope].sort((a, b) => b.items.length - a.items.length).map((f) => ({ folder: f.id, name: f.name }));
+  const out: { folder: string; name: string; best: boolean }[] = [];
+  for (const x of [...suggest, ...near, ...bySize]) {
+    if (out.length >= TARGETS) break;
+    if (!ok(x.folder) || out.some((o) => o.folder === x.folder)) continue;
+    out.push({ folder: x.folder, name: db.folders.find((f) => f.id === x.folder)?.name ?? x.name, best: !out.length && suggest.some((y) => y.folder === x.folder) });
+  }
+  return out;
 }
 
 /** What the filter asks the model when matching by meaning: a question as typed, else "about …". */
@@ -684,7 +688,7 @@ function Organize({ onClose }: { onClose: () => void }) {
             // A place not in a folder (or loose inside an account's folder): where it could go, on its own line.
             const level = !r.folder || db.folders.find((f) => f.id === r.folder)?.items.some((i) => i.kind === 'folder');
             const movable = level && !r.hidden && (r.key.startsWith('space:') || r.key.startsWith('conversation:'));
-            const near = movable ? moveTargets(r.key, r.folder, plan?.suggest[split(r.key).id] ?? []) : [];
+            const near = movable ? moveTargets(r.key, r.folder, plan?.suggest[split(r.key).id] ?? [], plan?.near[split(r.key).id] ?? []) : [];
             return (
               <>
                 {firstHidden && <div class="org-section">Hidden</div>}
@@ -733,13 +737,14 @@ function Organize({ onClose }: { onClose: () => void }) {
                               <Icon name={x.best ? 'sparkles' : 'folder'} size={12} />
                               {/* The account's folder it sits in already goes without saying. */}
                               {outer && outer.id !== r.folder ? <span class="move-chip-in">{outer.name} ›</span> : null}
-                              {x.name}
+                              <span class="move-chip-name">{x.name}</span>
                             </button>
                           );
                         })}
                         <button
                           class="move-chip other"
                           title="Pick a folder"
+                          aria-label={near.length ? "Other folders" : "Move to a folder"}
                           onClick={(e) => {
                             e.stopPropagation();
                             const b = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -754,7 +759,8 @@ function Organize({ onClose }: { onClose: () => void }) {
                             }, e.currentTarget as HTMLElement);
                           }}
                         >
-                          {near.length ? 'Other…' : 'Move to…'}
+                          <Icon name="more" size={14} />
+                          <span class="move-chip-name">{near.length ? 'Other…' : 'Move to…'}</span>
                         </button>
                       </>
                     )}
