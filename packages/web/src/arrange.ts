@@ -97,13 +97,6 @@ export function pictureLayout(convId: string): PictureLayout {
 /** null: back to what it inherits. Several ids: each of them (a person's chat, one per route). */
 export const setPlacePictures = (kind: P.PlaceKind, id: string | string[], pictures: PictureLayout | null) => patchPlaces((Array.isArray(id) ? id : [id]).map((i) => ({ kind, id: i, pictures })));
 
-export function patchDismissed(dismissed: Record<string, string[] | null>) {
-  const next = { ...arrange.value.dismissed };
-  for (const [k, v] of Object.entries(dismissed)) v === null ? delete next[k] : (next[k] = v);
-  setArrange({ ...arrange.value, dismissed: next });
-  api<ArrangeSettings>('/api/arrange', { method: 'PATCH', body: { dismissed } }).then(setArrange).catch(() => {});
-}
-
 // ------------------------------------------------------------------ what each place weighs
 
 const idOf = (key: string) => key.slice(key.indexOf(':') + 1);
