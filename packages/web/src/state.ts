@@ -12,6 +12,7 @@ import { href, parseHash, type Route } from './routes.ts';
 import { inboxFilterOf, type InboxFilter } from './ordering.ts';
 import { applyPlanEvent, calendarAt, calendarFromBootstrap, loadPlans } from './plans.ts';
 import { api } from './api.ts';
+import { isLoginRefusal, login, needLogin } from './login.ts';
 import { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines, type Timeline } from './store.ts';
 import { applyCalls, applyVoice, loadCalls } from './ringing.ts';
 
@@ -235,6 +236,8 @@ export { api, apiHooks } from './api.ts';
 // ------------------------------------------------------------------ applying hub data
 
 const putIdentity = (i: P.IdentityView) => void (put(db, i) && changed('shown'));
+/** People a page brought that the client may not know yet (For you's items). */
+export const adoptIdentities = (list: P.IdentityView[]) => list.forEach(putIdentity);
 
 export function applyBootstrap(b: P.Bootstrap) {
   applyBootstrapTo(db, b);
@@ -1096,9 +1099,10 @@ export function patchPlaces(items: P.PlacePrefPatch[]) {
     const k = prefKey(i.kind, i.id);
     const cur = db.placePrefs.get(k) ?? { kind: i.kind, id: i.id, position: null, pinned: false, hidden: false, open: false, railed: false };
     const next: P.PlacePrefView = { ...cur, ...(i as Partial<P.PlacePrefView>) };
-    // null takes a mention setting away: inherited again.
+    // null takes a mention or pictures setting away: inherited again.
     if (i.mentionScope === null) delete next.mentionScope;
     if (i.mentionSameNetwork === null) delete next.mentionSameNetwork;
+    if (i.pictures === null) delete next.pictures;
     db.placePrefs.set(k, next);
   }
   changed('meta');
@@ -1205,6 +1209,13 @@ function bootstrap() {
       // As text too: the snapshot keeps the hub's answer as it came, without serializing it again.
       const res = await fetch('/api/bootstrap');
       const text = await res.text();
+      if (res.status === 401) {
+        let body: { setup?: boolean } | null = null;
+        try {
+          body = JSON.parse(text);
+        } catch {}
+        if (isLoginRefusal(res.status, body)) return void needLogin(!!body?.setup);
+      }
       if (!res.ok) throw new Error(text.slice(0, 200) || `${res.status}`);
       const b = JSON.parse(text) as P.Bootstrap;
       applyBootstrap(b);
@@ -1296,9 +1307,12 @@ export function afterSync(): Promise<void> {
 
 export function connect() {
   clearTimeout(retry);
+  // Signed out: nothing to connect to until the sign-in screen has reloaded the page (login.ts).
+  if (login.value) return;
   if (!connected.value) setConnected(false);
   const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live`;
   const sock = new WebSocket(url);
+  socketStartedAt = Date.now();
   ws = sock;
   synced = false;
   socketGen++;
@@ -1331,8 +1345,23 @@ export function connect() {
     }
   };
   sock.onclose = () => {
-    if (ws === sock) dropped();
+    if (ws !== sock) return;
+    // Refused before it opened: maybe this device is not signed in (the hub answers the upgrade with 401, which a
+    // socket cannot read). /api/login says.
+    if (sock.readyState === WebSocket.CLOSED && openedAt < socketStartedAt) void checkSignedIn();
+    dropped();
   };
+}
+
+let socketStartedAt = 0;
+/** Whether this device still has a session; the sign-in screen when not (login.ts). */
+async function checkSignedIn() {
+  try {
+    const r = await fetch('/api/login', { cache: 'no-store' });
+    if (!r.ok) return;
+    const b = (await r.json()) as { signedIn?: boolean; passwordSet?: boolean };
+    if (b.signedIn === false) needLogin(!b.passwordSet);
+  } catch {}
 }
 
 /** The socket is gone, or as good as: forget it now rather than wait for its close to time out. */

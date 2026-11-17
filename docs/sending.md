@@ -24,10 +24,12 @@ controls rather than splitting them (`styles.css`, "A computer's box"). From lef
   picker opens beside the +. Where files are all the network takes (Matrix, Telegram, WhatsApp and the rest), the + is
   a paperclip that opens the file picker at once. Nothing that does not work here is shown, disabled or not.
   Dropping or pasting files still attaches them without it.
-- The account the message goes from, where there is a choice.
 - The text, then the emoji picker.
-- **Send, with its menu as the narrow right half** of the same button (Send silently, Send later). An empty box shows
+- **Send, with its menu as the narrow right half** of the same button (Send silently, Send later, Disappearing messages). An empty box shows
   the microphone in send's place ([media-kinds.md](media-kinds.md)).
+
+Which of your accounts sends, where two or more are in the chat, is on the line above the box ("To #general · via
+main", [chats.md](chats.md)); until 2026-11-16 it was a chip at the box's start.
 
 A phone keeps its own row: + outside the box opening the attach sheet, sticker and camera inside it.
 
@@ -53,6 +55,13 @@ silently by anyone never alerts here either ([rich-messages.md](rich-messages.md
 Signal's `send --no-urgent` is not the same thing and is not offered: it only leaves out the push that wakes the
 recipient's phone, so the message arrives late and still notifies when their app next connects
 ([research/signal-gaps.md](research/signal-gaps.md)).
+
+## Disappearing messages
+
+On Signal and WhatsApp the same menu has **Disappearing messages**, with the chat's timer at its end ("Off", "1 week").
+It opens the network's own timers under it; a pick changes the chat's timer for everyone in it, as the About panel
+does ([group-settings.md](group-settings.md), "In the message box"). While a timer is on, the line above the box ends in
+it ("· 1w"), and each message that will disappear shows its timer after its time.
 
 ## Send later
 
@@ -102,16 +111,33 @@ with Open and Remove, and More while Discord has more.
   account was away is not notified late; it shows as overdue in the list.
 - The hub keeps what it last heard (`saved_message`), so the menu knows Save from Remove without asking Discord.
 - **Not mapped onto the hub's own marks.** A saved message is not "Reply needed" ([inbox.md](inbox.md), "Marks"), a
-  reminder is not Catch up's Later (which lasts a session), and "kept messages" are history kept when deleted
+  reminder is not a Later of the app's own, and "kept messages" are history kept when deleted
   ([history.md](history.md)): none of them means what Discord's save means, so each side keeps its own and nothing here
   changes the other.
 
 ## Remove Embeds, Report
 
-- **Remove Embeds** on your own Discord message with link previews (capability `suppressEmbeds`): the patch the
-  client's own button sends (`flags` with `SUPPRESS_EMBEDS` added to the flags the message has; a message the client
-  has not loaded is read first, as jumping to it does). The message comes again without its previews. There is no
-  way back, as in Discord.
+Taking the link previews off a message, where the network lets you (capability `suppressEmbeds`,
+`POST /api/messages/:id/remove-previews`). The hub's copy keeps none once the network said yes: it drops them from
+the stored message itself, since an edit can come back with no extra at all and would leave them (`dropPreviews`).
+
+- **Remove Embeds** on your own Discord message with link previews: the patch the client's own button sends (`flags`
+  with `SUPPRESS_EMBEDS` added to the flags the message has; a message the client has not loaded is read first, as
+  jumping to it does). The message comes again without its previews. There is no way back, as in Discord. A moderator
+  can do the same to someone else's ([moderation.md](moderation.md)).
+- **Remove Link Preview** on your own Signal or Telegram message with one. Neither network has a way to take a preview
+  off on its own: their apps do it by editing the message and closing the preview, so this does that, after a confirm
+  that says it will show as edited. Signal: `send --edit-timestamp` with the same words (the hub sends them along as
+  the command's `body`; signal-cli keeps no copy) and the same quote, and no preview. Telegram: `messages.editMessage`
+  with the message's own text and entities and `no_webpage`. Only while the message can still be edited, as their
+  apps allow (`previewsRemovable` in the protocol): Signal 24 hours (Note to Self always), Telegram 48 (Saved
+  Messages and a channel's posts always). Signal's apps offer no edit after that, so the adapter refuses one too.
+- Matrix and WhatsApp: not offered. A Matrix room's previews are made by each reader's own app from the link, so there
+  is nothing on the message to take off; WhatsApp's adapter reads no previews.
+
+The demo world has a message with previews of each kind (libdither's #general, yours and Lev's; yours to Alice on
+Signal), and `bun scripts/verify-previews.ts <demo hub> [screenshot dir]` clicks through all three in headless
+Chromium. Not run against a live account.
 - **Report on Discord** on someone else's Discord message opens it in Discord's own app, where reporting is done. No
   report request is made from here.
 

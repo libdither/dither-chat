@@ -6,7 +6,7 @@
  */
 import { signal } from '@preact/signals';
 import { useLayoutEffect, useRef } from 'preact/hooks';
-import { clampDrag, commits, lockAxis, rubber, settleMs, velocity } from '../gesture.ts';
+import { clampDrag, commits, lockAxis, rubber, settleEase, settleMs, velocity } from '../gesture.ts';
 import { haptic, layerCount, phone, reducedMotion } from '../phone.ts';
 import { prefs, setPrefs } from '../state.ts';
 import { drag } from './dnd.tsx';
@@ -101,12 +101,10 @@ function restCss(rest: Rest): string {
 }
 
 /**
- * Can something under the finger scroll sideways that way, or does it claim a swipe that way for itself
- * (`data-claims-swipe="left"`: an inbox row swiped left marks it, ui/ReplyMark.tsx)? Then the swipe is its, not ours.
+ * Can something under the finger scroll sideways that way? Then the swipe is its, not ours.
  */
 function scrollsSideways(from: HTMLElement | null, stop: HTMLElement, dx: number): boolean {
   for (let n = from; n && n !== stop; n = n.parentElement) {
-    if (n.dataset?.claimsSwipe === (dx < 0 ? 'left' : 'right')) return true;
     if (n.scrollWidth <= n.clientWidth + 1) continue;
     const ox = getComputedStyle(n).overflowX;
     if (ox !== 'auto' && ox !== 'scroll') continue;
@@ -128,6 +126,8 @@ interface Gesture {
   // pager
   from?: number;
   to?: number;
+  /** Where the card was on screen when caught mid-settle, from `from`. */
+  offset?: number;
   x?: number;
   action?: () => void;
   landing?: Rest;
@@ -148,10 +148,10 @@ export function usePager(app: { current: HTMLElement | null }, card: { current: 
 
   // An attribute, not a class: the app's class list is the render's to set.
   const under = (details: boolean) => app.current && (app.current.dataset.under = details ? 'details' : 'lists');
-  const place = (x: number | Rest, ms: number, done?: () => void) => {
+  const place = (x: number | Rest, ms: number, done?: () => void, ease = 'cubic-bezier(.2,.8,.2,1)') => {
     const el = card.current;
     if (!el) return;
-    el.style.transition = ms ? `transform ${ms}ms cubic-bezier(.2,.8,.2,1)` : 'none';
+    el.style.transition = ms ? `transform ${ms}ms ${ease}` : 'none';
     el.style.transform = typeof x === 'number' ? `translateX(${x}px)` : restCss(x);
     if (done) {
       if (!ms) done();
@@ -270,7 +270,17 @@ export function usePager(app: { current: HTMLElement | null }, card: { current: 
         const mode = choose(dx, dy, axis, g.target);
         if (!mode) return void (g = null);
         g.mode = mode;
-        if (mode === 'pager') under((g.to ?? 0) < 0 || (g.from ?? 0) < 0);
+        if (mode === 'pager') {
+          under((g.to ?? 0) < 0 || (g.from ?? 0) < 0);
+          // Caught while it is still settling: it goes on from where it is on screen, not from where it was headed.
+          const el = card.current;
+          if (el && el.style.transition && el.style.transition !== 'none') {
+            const at = new DOMMatrix(getComputedStyle(el).transform).m41;
+            const lo = Math.min(g.from!, g.to!);
+            const hi = Math.max(g.from!, g.to!);
+            g.offset = Math.min(hi, Math.max(lo, at)) - g.from!;
+          }
+        }
         if (mode === 'reply') {
           const icon = document.createElement('div');
           icon.className = 'swipe-reply-icon';
@@ -291,7 +301,7 @@ export function usePager(app: { current: HTMLElement | null }, card: { current: 
       if (g.samples.length > 5) g.samples.shift();
 
       if (g.mode === 'pager') {
-        g.x = clampDrag(g.from! + dx, Math.min(g.from!, g.to!), Math.max(g.from!, g.to!));
+        g.x = clampDrag(g.from! + (g.offset ?? 0) + dx, Math.min(g.from!, g.to!), Math.max(g.from!, g.to!));
         place(g.x, 0);
       } else if (g.mode === 'reply') {
         const x = -rubber(Math.max(0, -dx), REPLY_AT + 8);
@@ -326,15 +336,22 @@ export function usePager(app: { current: HTMLElement | null }, card: { current: 
         const go = commits(cur.from!, cur.to!, cur.x!, v);
         const target = go ? cur.to! : cur.from!;
         const ms = reducedMotion() ? 0 : settleMs(target - cur.x!, v);
+        const ease = settleEase(target - cur.x!, v, ms);
+        // A new swipe that caught the card owns it now: these leave it alone.
+        const idle = () => g?.mode !== 'pager';
         if (go) {
           // The keyboard belongs to the page being left.
           (document.activeElement as HTMLElement | null)?.blur?.();
           applied.current = cur.landing!;
-          place(target, ms, () => cur.landing !== 'details' && under(false));
-          cur.action!();
-        } else place(target, ms, () => cur.from! >= 0 && under(false));
+          place(target, ms, () => idle() && cur.landing !== 'details' && under(false), ease);
+          // The route changes once the settle is under way, not in the frame that starts it: the render it brings
+          // (and the list re-sorting and measuring its rows) used to hold the card still for a frame or more at the
+          // moment it was let go.
+          if (ms) requestAnimationFrame(() => setTimeout(cur.action!));
+          else cur.action!();
+        } else place(target, ms, () => idle() && cur.from! >= 0 && under(false), ease);
         // Back at rest, the CSS takes over again (and a card at 0 drops its transform, so fixed children are not caught by it).
-        if (ms) setTimeout(() => applied.current && card.current?.style.transform.includes('px') && place(applied.current, 0), ms + 60);
+        if (ms) setTimeout(() => idle() && applied.current && card.current?.style.transform.includes('px') && place(applied.current, 0), ms + 60);
         else if (applied.current) place(applied.current, 0);
       } else if (cur.mode === 'reply') {
         const msg = cur.msg!;

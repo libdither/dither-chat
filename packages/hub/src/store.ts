@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } f
 import { dirname, join } from 'node:path';
 import { hubId, randomId } from '@dither-chat/protocol/ids';
 import type * as P from '@dither-chat/protocol';
-import { calendarAccountUrl, canonicalReactionKey, DEFAULT_RETENTION, MENTION_SCOPES, parseSearch, PROTOCOL_VERSION, REACTION_RULES } from '@dither-chat/protocol';
+import { calendarAccountUrl, canonicalReactionKey, DEFAULT_RETENTION, isPictureLayout, MENTION_SCOPES, parseSearch, PROTOCOL_VERSION, REACTION_RULES } from '@dither-chat/protocol';
 import { activityChart, type Zone } from './activitychart.ts';
 import { binsFor, estimateMessages, snowflakeTime, type ChannelInput } from './msgcount.ts';
 import { Journal } from './journal.ts';
@@ -223,6 +223,32 @@ function mailSchemaText(): string {
     .join('\n');
 }
 
+/** Some picture came without its size (Store.sizelessPictures). */
+const sizeless = (atts: P.AttachmentFact[]) => atts.some((a) => a.kind === 'image' && (!a.width || !a.height));
+
+/**
+ * A reaction's time as a network gave it, if it is one: milliseconds since 2000 and not ahead of now by more than a
+ * day (a clock a little fast is still the network's word). Seconds, or nonsense, are no time at all.
+ */
+function reactionTs(ts: unknown, now = Date.now()): number | null {
+  return typeof ts === 'number' && Number.isFinite(ts) && ts >= 946_684_800_000 && ts <= now + 86_400_000 ? Math.round(ts) : null;
+}
+
+/**
+ * A kept unreact as views give it. Its time is `seen` (when the hub heard) unless the network gave it: every one
+ * kept before times were (docs/history.md).
+ */
+function unreactView(raw: string | null): { data: P.UnreactData; seen?: true } {
+  const d = json<{ key?: string; style?: P.ReactionStyle; cleared?: boolean; exact?: boolean; added?: number; addedExact?: boolean }>(raw, {});
+  const data: P.UnreactData = {
+    key: d.key ?? '',
+    style: d.style ?? 'normal',
+    ...(d.cleared ? { cleared: true as const } : {}),
+    ...(typeof d.added === 'number' ? { added: d.added, ...(d.addedExact ? {} : { addedSeen: true as const }) } : {}),
+  };
+  return { data, ...(d.exact ? {} : { seen: true as const }) };
+}
+
 export class Store {
   readonly db: Database;
   readonly dirty = new Dirty();
@@ -289,7 +315,9 @@ export class Store {
       this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'" });
       this.addColumns('attachment', { alt: 'TEXT', extra: 'TEXT' });
       this.addColumns('notice', { caught: 'INTEGER NOT NULL DEFAULT 0', shown_ts: 'INTEGER', held_at: 'INTEGER' });
-      this.addColumns('place_pref', { mention_scope: 'TEXT', mention_same: 'INTEGER' });
+      this.addColumns('place_pref', { mention_scope: 'TEXT', mention_same: 'INTEGER', pictures: 'TEXT' });
+      this.addColumns('folder', { parent_id: 'TEXT', parent_pos: 'REAL' });
+      this.addColumns('reaction', { at: 'INTEGER', at_exact: 'INTEGER NOT NULL DEFAULT 0' });
       const oldTriage = this.setAsideTriage();
       const oldLog = this.setAside('change_log', 'actor_id', ['change_log_target']);
       this.db.exec(schema);
@@ -756,9 +784,9 @@ export class Store {
           const mid = hubId('msg', acc.network, ev.message);
           const key = ev.key === undefined ? null : canonicalReactionKey(ev.key);
           // A moderator clearing reactions: what was there, kept like any reaction taken back.
-          if (this.keeps('reactions', acc))
-            for (const r of this.db.query('SELECT identity_id, key, style FROM reaction WHERE message_id = ? AND (? IS NULL OR key = ?)').all(mid, key, key) as Row[])
-              this.messageEvent(mid, 'unreact', { key: r.key, style: r.style, cleared: true }, r.identity_id, acc.id);
+          const now = { at: Date.now(), exact: false };
+          for (const r of this.db.query('SELECT identity_id, key, style, at, at_exact FROM reaction WHERE message_id = ? AND (? IS NULL OR key = ?)').all(mid, key, key) as Row[])
+            this.takenBack(acc, mid, r.identity_id, r.key, r.style, r, now, true);
           this.db.query('DELETE FROM reaction WHERE message_id = ? AND (? IS NULL OR key = ?)').run(mid, key, key);
           this.db.query('DELETE FROM reaction_tally WHERE message_id = ? AND (? IS NULL OR key = ?)').run(mid, key, key);
           this.markReacted(mid);
@@ -1114,9 +1142,12 @@ export class Store {
     const before = this.placeSig('space', id);
     const parentsBefore = this.parentsOf('space', id);
     const was = this.db.query('SELECT name, topic, icon_url FROM space WHERE id = ?').get(id) as Row | null;
+    // A fact without a name (Discord's client sends some servers with theirs only under `properties`) keeps the
+    // name the hub has; a new place without one is named '' until a fact names it, rather than failing the event.
+    const name: string = typeof f.name === 'string' ? f.name : (was?.name ?? '');
     if (was)
       this.logChanges('space', id, acc.id, [
-        ['name', was.name, f.name],
+        ['name', was.name, name],
         ['topic', was.topic, f.topic],
         ['avatar', was.icon_url, f.iconUrl],
       ]);
@@ -1126,7 +1157,7 @@ export class Store {
          ON CONFLICT (network, native_id) DO UPDATE SET kind = excluded.kind, name = excluded.name,
            topic = COALESCE(excluded.topic, topic), icon_url = COALESCE(excluded.icon_url, icon_url), updated_at = excluded.updated_at`,
       )
-      .run(id, acc.network, f.nativeId, f.kind, f.name, f.topic ?? null, f.iconUrl ?? null, Date.now());
+      .run(id, acc.network, f.nativeId, f.kind, name, f.topic ?? null, f.iconUrl ?? null, Date.now());
     this.ensureVantage(acc.id, 'space', id, f.mute);
     if (f.parents) {
       this.db.query(`DELETE FROM space_edge WHERE child_kind = 'space' AND child_id = ?`).run(id);
@@ -1307,6 +1338,7 @@ export class Store {
       );
     if (f.attachments && !(old?.deleted && !f.attachments.length)) {
       this.db.query('DELETE FROM attachment WHERE message_id = ?').run(id);
+      if (sizeless(f.attachments)) this.sizelessPictures = true;
       f.attachments.forEach((a, i) => {
         this.db
           .query(`INSERT INTO attachment (id, message_id, kind, mime, name, size, width, height, url, position, alt, extra) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -1481,6 +1513,7 @@ export class Store {
           }
           filled = true;
         }
+        if (f.reactions && this.fillReactionTimes(acc, mid, f.reactions, o.dryRun)) filled = true;
         if (filled) {
           counts.filled++;
           if (!o.dryRun) this.dirty.messages.set(mid, false);
@@ -1499,7 +1532,33 @@ export class Store {
     return counts;
   }
 
+  /**
+   * When people reacted, from an import, for reactions the hub has with no time or only when it heard (docs/reactions.md
+   * "When"). How many it filled, or would.
+   */
+  private fillReactionTimes(acc: AccountRow, mid: string, facts: P.ReactionFact[], dryRun: boolean): number {
+    let n = 0;
+    for (const r of facts)
+      for (const a of r.authors) {
+        const ts = reactionTs(r.at?.[a]);
+        if (ts === null) continue;
+        const where = 'message_id = ? AND identity_id = ? AND key = ? AND style = ? AND (at IS NULL OR at_exact = 0)';
+        const args = [mid, hubId('idn', acc.network, a), canonicalReactionKey(r.key), r.style ?? 'normal'];
+        if (dryRun) n += this.db.query(`SELECT 1 FROM reaction WHERE ${where}`).get(...args) ? 1 : 0;
+        else n += this.db.query(`UPDATE reaction SET at = ?, at_exact = 1 WHERE ${where}`).run(ts, ...args).changes;
+      }
+    return n;
+  }
+
+  /**
+   * A picture came without its size (Signal leaves it out at times): set until the server asks the media archive to
+   * keep the new files now rather than at its next turn, so the hub reads the size from the file within seconds and
+   * the app draws the picture in its own shape (docs/pictures.md).
+   */
+  sizelessPictures = false;
+
   private insertAttachments(acc: AccountRow, mid: string, nativeId: string, atts: P.AttachmentFact[]) {
+    if (sizeless(atts)) this.sizelessPictures = true;
     atts.forEach((a, i) => {
       this.db
         .query(`INSERT OR REPLACE INTO attachment (id, message_id, kind, mime, name, size, width, height, url, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -1663,15 +1722,33 @@ export class Store {
     for (const r of rows) this.dirty.conversations.add(r.id);
   }
 
+  /**
+   * Replaces every folder. A `folder` item puts that folder inside this one (folder.parent_id), one level deep: a
+   * folder that holds folders cannot itself be inside one, so a deeper or circular nesting keeps only the first link
+   * read, and a folder listed in two keeps the first.
+   */
   setFolders(folders: P.FolderView[]) {
     const tx = this.db.transaction(() => {
       const kept = new Set(folders.map((f) => f.id));
       for (const r of this.db.query('SELECT id FROM folder').all() as Row[]) if (!kept.has(r.id)) this.db.query(`DELETE FROM place_pref WHERE kind = 'folder' AND id = ?`).run(r.id);
       this.db.query('DELETE FROM folder').run();
-      folders.forEach((f, i) => {
-        const id = f.id || randomId('fld');
-        this.db.query('INSERT INTO folder (id, name, icon, color, position) VALUES (?, ?, ?, ?, ?)').run(id, f.name, f.icon, f.color, i);
+      const ids = folders.map((f) => f.id || randomId('fld'));
+      const known = new Set(ids);
+      const parent = new Map<string, { id: string; pos: number }>();
+      folders.forEach((f, i) =>
         f.items.forEach((it, j) => {
+          if (it.kind !== 'folder' || !known.has(it.id) || it.id === ids[i] || parent.has(it.id) || parent.has(ids[i])) return;
+          // A folder that already holds folders stays at the top.
+          if ([...parent.values()].some((p) => p.id === it.id)) return;
+          parent.set(it.id, { id: ids[i], pos: j });
+        }),
+      );
+      folders.forEach((f, i) => {
+        const id = ids[i];
+        const p = parent.get(id);
+        this.db.query('INSERT INTO folder (id, name, icon, color, position, parent_id, parent_pos) VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, f.name, f.icon, f.color, i, p?.id ?? null, p?.pos ?? null);
+        f.items.forEach((it, j) => {
+          if (it.kind === 'folder') return;
           this.db.query('INSERT OR IGNORE INTO folder_item (folder_id, item_kind, item_id, position) VALUES (?, ?, ?, ?)').run(id, it.kind, it.id, j);
         });
       });
@@ -1697,6 +1774,7 @@ export class Store {
       railed: !!r.railed,
       ...(MENTION_SCOPES.includes(r.mention_scope) ? { mentionScope: r.mention_scope } : {}),
       ...(r.mention_same !== null && r.mention_same !== undefined ? { mentionSameNetwork: !!r.mention_same } : {}),
+      ...(isPictureLayout(r.pictures) ? { pictures: r.pictures } : {}),
     }));
   }
 
@@ -1717,6 +1795,8 @@ export class Store {
         if (i.mentionScope === null || MENTION_SCOPES.includes(i.mentionScope!)) this.db.query('UPDATE place_pref SET mention_scope = ? WHERE kind = ? AND id = ?').run(i.mentionScope ?? null, i.kind, i.id);
         if (i.mentionSameNetwork === null || typeof i.mentionSameNetwork === 'boolean')
           this.db.query('UPDATE place_pref SET mention_same = ? WHERE kind = ? AND id = ?').run(i.mentionSameNetwork === null ? null : i.mentionSameNetwork ? 1 : 0, i.kind, i.id);
+        // How pictures are shown here: null inherits again; anything else unknown is left as it is.
+        if (i.pictures === null || isPictureLayout(i.pictures)) this.db.query('UPDATE place_pref SET pictures = ? WHERE kind = ? AND id = ?').run(i.pictures ?? null, i.kind, i.id);
       }
     })();
     this.dirty.extra.push({ t: 'placePrefs', prefs: this.placePrefs() });
@@ -2216,10 +2296,46 @@ export class Store {
     const edits = evs.filter((e) => e.kind === 'edit');
     const versions = edits.map((e, i) => ({ body: json<{ body?: string }>(e.data, {}).body ?? '', at: i === 0 ? (m.ts as number) : (edits[i - 1].at as number) }));
     versions.push({ body: m.body, at: edits.at(-1)?.at ?? m.edited_ts ?? m.ts });
-    const events = evs.filter((e) => e.kind !== 'edit').map((e): P.MessageEventView => ({ kind: e.kind, data: json(e.data, null), at: e.at, ...(e.actor_id ? { actorId: e.actor_id } : {}) }));
+    const events = evs.filter((e) => e.kind !== 'edit').map((e): P.MessageEventView => {
+      const base = { kind: e.kind, at: e.at, ...(e.actor_id ? { actorId: e.actor_id } : {}) };
+      return e.kind === 'unreact' ? { ...base, ...unreactView(e.data) } : { ...base, data: json(e.data, null) };
+    });
+    const reactions = (this.db.query('SELECT identity_id, key, style, at, at_exact FROM reaction WHERE message_id = ? AND at IS NOT NULL ORDER BY at').all(id) as Row[]).map((r) => ({
+      identityId: r.identity_id,
+      key: r.key,
+      style: r.style,
+      at: r.at,
+      ...(r.at_exact ? {} : { seen: true as const }),
+    }));
     const receipts = (this.db.query('SELECT identity_id, state, at FROM receipt WHERE message_id = ? ORDER BY at').all(id) as Row[]).map((r) => ({ identityId: r.identity_id, state: r.state, at: r.at }));
-    const ids = [...new Set([...events.flatMap((e) => (e.actorId ? [e.actorId] : [])), ...receipts.map((r) => r.identityId)])];
-    return { versions, events, receipts, identities: this.identitiesByIds(ids) };
+    const ids = [...new Set([...events.flatMap((e) => (e.actorId ? [e.actorId] : [])), ...reactions.map((r) => r.identityId), ...receipts.map((r) => r.identityId)])];
+    return { versions, events, reactions, receipts, identities: this.identitiesByIds(ids) };
+  }
+
+  /**
+   * Who reacted with one emoji, when where known, and who took theirs back (docs/reactions.md "When").
+   */
+  reactorsView(messageId: string, key: string, style: P.ReactionStyle): P.MessageReactorsView {
+    const r = this.messageView(messageId)?.reactions.find((x) => x.key === key && x.style === style);
+    const takenBack = (this.db.query(`SELECT actor_id, data, at FROM message_event WHERE message_id = ? AND kind = 'unreact' AND actor_id IS NOT NULL ORDER BY at, id`).all(messageId) as Row[])
+      .map((e) => ({ actorId: e.actor_id as string, at: e.at as number, ...unreactView(e.data) }))
+      .filter((e) => e.data.key === key && e.data.style === style)
+      .map(({ actorId, at, seen, data: d }): P.ReactionTakenBack => ({
+        identityId: actorId,
+        at,
+        ...(seen ? { seen } : {}),
+        ...(d.added != null ? { added: d.added, ...(d.addedSeen ? { addedSeen: true as const } : {}) } : {}),
+        ...(d.cleared ? { cleared: true as const } : {}),
+      }));
+    const ids = [...new Set([...(r?.identityIds ?? []), ...takenBack.map((t) => t.identityId)])];
+    return {
+      count: r?.count ?? 0,
+      identityIds: r?.identityIds ?? [],
+      ...(r?.at ? { at: r.at } : {}),
+      ...(r?.seenAt ? { seenAt: r.seenAt } : {}),
+      takenBack,
+      identities: this.identitiesByIds(ids),
+    };
   }
 
   /** Which kinds have anything kept that Forget would erase. Each looks for one row (message_gone indexes the deleted). */
@@ -2523,29 +2639,52 @@ export class Store {
   private applyReactionAs(acc: AccountRow, mid: string, ev: Extract<P.AdapterEvent, { t: 'reaction' }>, iid: string) {
     const key = canonicalReactionKey(ev.key);
     const style = ev.style ?? 'normal';
+    // When (docs/reactions.md "When"): the network's own time where it gives one, else when the hub heard.
+    const ts = reactionTs(ev.ts);
+    const when = { at: ts ?? Date.now(), exact: ts !== null };
     if (ev.emoji) this.putEmoji(acc.network, ev.emoji);
     if (ev.remove) {
-      const known = this.db.query('DELETE FROM reaction WHERE message_id = ? AND identity_id = ? AND key = ? AND style = ?').run(mid, iid, key, style).changes > 0;
-      // Taken back (docs/history.md): only a reaction the hub saw them give, and not your own.
-      if (known && !this.isSelf(iid) && this.keeps('reactions', acc)) this.messageEvent(mid, 'unreact', { key, style }, iid, acc.id);
+      const was = this.db.query('SELECT at, at_exact FROM reaction WHERE message_id = ? AND identity_id = ? AND key = ? AND style = ?').get(mid, iid, key, style) as Row | null;
+      if (was) {
+        this.db.query('DELETE FROM reaction WHERE message_id = ? AND identity_id = ? AND key = ? AND style = ?').run(mid, iid, key, style);
+        this.takenBack(acc, mid, iid, key, style, was, when);
+      }
       // Totals include people we never knew by name, so they go down anyway. Your own reactions are
       // always known, so a second removal of yours is only an echo of the first.
-      if (known || !this.isSelf(iid)) this.db.query('UPDATE reaction_tally SET count = count - 1 WHERE message_id = ? AND key = ? AND style = ? AND count IS NOT NULL').run(mid, key, style);
+      if (was || !this.isSelf(iid)) this.db.query('UPDATE reaction_tally SET count = count - 1 WHERE message_id = ? AND key = ? AND style = ? AND count IS NOT NULL').run(mid, key, style);
       this.dropEmptyTallies(mid);
       return;
     }
     if (REACTION_RULES[acc.network].exclusive) {
-      const others = this.db.query('SELECT key, style FROM reaction WHERE message_id = ? AND identity_id = ? AND NOT (key = ? AND style = ?)').all(mid, iid, key, style) as Row[];
+      const others = this.db.query('SELECT key, style, at, at_exact FROM reaction WHERE message_id = ? AND identity_id = ? AND NOT (key = ? AND style = ?)').all(mid, iid, key, style) as Row[];
       for (const o of others) {
         this.db.query('DELETE FROM reaction WHERE message_id = ? AND identity_id = ? AND key = ? AND style = ?').run(mid, iid, o.key, o.style);
         this.db.query('UPDATE reaction_tally SET count = count - 1 WHERE message_id = ? AND key = ? AND style = ? AND count IS NOT NULL').run(mid, o.key, o.style);
+        // Replaced: the old one was taken back as the new one was made.
+        this.takenBack(acc, mid, iid, o.key, o.style, o, when);
       }
       this.dropEmptyTallies(mid);
     }
-    const added = this.db.query('INSERT OR IGNORE INTO reaction (message_id, identity_id, key, style) VALUES (?, ?, ?, ?)').run(mid, iid, key, style).changes > 0;
+    const added = this.putReactor(mid, iid, key, style, ts, when.at);
     this.db.query('INSERT OR IGNORE INTO reaction_tally (message_id, key, style) VALUES (?, ?, ?)').run(mid, key, style);
     if (added) this.db.query('UPDATE reaction_tally SET count = count + 1 WHERE message_id = ? AND key = ? AND style = ? AND count IS NOT NULL').run(mid, key, style);
     if (ev.colors?.length) this.db.query('UPDATE reaction_tally SET colors = ? WHERE message_id = ? AND key = ? AND style = ?').run(JSON.stringify(ev.colors), mid, key, style);
+  }
+
+  /**
+   * A reaction taken back, kept for Message history (docs/history.md): only one the hub saw them give, and not your
+   * own. It says when it had been added, so a list of who reacted can show both (docs/reactions.md "When").
+   */
+  private takenBack(acc: AccountRow, mid: string, iid: string, key: string, style: string, was: Row, when: { at: number; exact: boolean }, cleared = false) {
+    if ((!cleared && this.isSelf(iid)) || !this.keeps('reactions', acc)) return;
+    const data = {
+      key,
+      style,
+      ...(cleared ? { cleared: true } : {}),
+      ...(when.exact ? { exact: true } : {}),
+      ...(was.at != null ? { added: was.at, ...(was.at_exact ? { addedExact: true } : {}) } : {}),
+    };
+    this.messageEvent(mid, 'unreact', data, iid, acc.id, when.at);
   }
 
   private dropEmptyTallies(mid: string) {
@@ -2560,13 +2699,18 @@ export class Store {
   /** The whole reaction state of a message, as one account's network reports it. */
   private reactionSnapshot(acc: AccountRow, mid: string, facts: P.ReactionFact[], existed = true) {
     // A message new to the hub is folded with its reactions anyway.
-    if (!existed) return this.applySnapshot(acc, mid, facts);
+    if (!existed) return this.applySnapshot(acc, mid, facts, false);
     const before = this.selfReactions(mid);
-    this.applySnapshot(acc, mid, facts);
+    this.applySnapshot(acc, mid, facts, true);
     this.noteSelfReactions(mid, before);
   }
 
-  private applySnapshot(acc: AccountRow, mid: string, facts: P.ReactionFact[]) {
+  /**
+   * Reactions as a whole. One new to the hub is timed as the network says; else, on a message the hub already had, by
+   * when the hub heard of it; else (the message is new here too) not at all: it may be years old.
+   */
+  private applySnapshot(acc: AccountRow, mid: string, facts: P.ReactionFact[], existed: boolean) {
+    const now = Date.now();
     const present = new Set(facts.map((r) => `${r.style ?? 'normal'}|${canonicalReactionKey(r.key)}`));
     for (const t of this.db.query('SELECT key, style FROM reaction_tally WHERE message_id = ?').all(mid) as Row[]) {
       if (present.has(`${t.style}|${t.key}`)) continue;
@@ -2578,12 +2722,16 @@ export class Store {
       const style = r.style ?? 'normal';
       if (r.emoji) this.putEmoji(acc.network, r.emoji);
       const authors = r.authors.map((a) => this.ensureIdentity(acc, a));
-      if (r.count === undefined) this.db.query('DELETE FROM reaction WHERE message_id = ? AND key = ? AND style = ?').run(mid, key, style);
+      // The whole list: whoever it leaves out is gone, and whoever it names keeps the time the hub had.
+      if (r.count === undefined) {
+        for (const x of this.db.query('SELECT identity_id FROM reaction WHERE message_id = ? AND key = ? AND style = ?').all(mid, key, style) as Row[])
+          if (!authors.includes(x.identity_id)) this.db.query('DELETE FROM reaction WHERE message_id = ? AND identity_id = ? AND key = ? AND style = ?').run(mid, x.identity_id, key, style);
+      }
       // A partial list keeps whoever we learned about, but this account does know whether it reacted itself.
       else if (acc.self_identity && !authors.includes(acc.self_identity)) {
         this.db.query('DELETE FROM reaction WHERE message_id = ? AND identity_id = ? AND key = ? AND style = ?').run(mid, acc.self_identity, key, style);
       }
-      for (const a of authors) this.db.query('INSERT OR IGNORE INTO reaction (message_id, identity_id, key, style) VALUES (?, ?, ?, ?)').run(mid, a, key, style);
+      r.authors.forEach((native, i) => this.putReactor(mid, authors[i], key, style, reactionTs(r.at?.[native]), existed ? now : null));
       this.db
         .query(
           `INSERT INTO reaction_tally (message_id, key, style, count, colors) VALUES (?, ?, ?, ?, ?)
@@ -2637,11 +2785,21 @@ export class Store {
     return r?.id ?? null;
   }
 
-  /** Names behind a total. They are already in the count. */
-  addKnownReactors(acc: AccountRow, messageId: string, key: string, style: P.ReactionStyle, authors: string[]) {
+  /** Names behind a total. They are already in the count, and were made at no known time unless the network says. */
+  addKnownReactors(acc: AccountRow, messageId: string, key: string, style: P.ReactionStyle, authors: string[], at?: Record<string, number>) {
     const k = canonicalReactionKey(key);
-    for (const a of authors) this.db.query('INSERT OR IGNORE INTO reaction (message_id, identity_id, key, style) VALUES (?, ?, ?, ?)').run(messageId, this.ensureIdentity(acc, a), k, style);
+    for (const a of authors) this.putReactor(messageId, this.ensureIdentity(acc, a), k, style, reactionTs(at?.[a]), null);
     this.markReacted(messageId);
+  }
+
+  /**
+   * One person's reaction, known to be there. New: at the network's time `ts`, else at `heard` (when the hub heard,
+   * shown as "~" then), else at no known time. Already there: the network's time fills in one less sure.
+   */
+  private putReactor(mid: string, iid: string, key: string, style: string, ts: number | null, heard: number | null) {
+    const added = this.db.query('INSERT OR IGNORE INTO reaction (message_id, identity_id, key, style, at, at_exact) VALUES (?, ?, ?, ?, ?, ?)').run(mid, iid, key, style, ts ?? heard, ts !== null ? 1 : 0).changes > 0;
+    if (!added && ts !== null) this.db.query('UPDATE reaction SET at = ?, at_exact = 1 WHERE message_id = ? AND identity_id = ? AND key = ? AND style = ? AND (at IS NULL OR at_exact = 0)').run(ts, mid, iid, key, style);
+    return added;
   }
 
   reactionUsage(): P.ReactionUsage[] {
@@ -2716,8 +2874,14 @@ export class Store {
     return rows.map((r) => {
       const sealed = !!r.deleted && !unseal;
       const seenVia = (S.get(r.id) ?? []).map((s) => s.account_id);
-      const rx = new Map<string, string[]>();
-      for (const x of R.get(r.id) ?? []) (rx.get(`${x.style}|${x.key}`) ?? rx.set(`${x.style}|${x.key}`, []).get(`${x.style}|${x.key}`)!).push(x.identity_id);
+      // Who, and when where known: the network's time, or when the hub heard (docs/reactions.md "When").
+      const rx = new Map<string, { ids: string[]; at?: Record<string, number>; seenAt?: Record<string, number> }>();
+      for (const x of R.get(r.id) ?? []) {
+        const k = `${x.style}|${x.key}`;
+        const e = rx.get(k) ?? rx.set(k, { ids: [] }).get(k)!;
+        e.ids.push(x.identity_id);
+        if (x.at != null) (x.at_exact ? (e.at ??= {}) : (e.seenAt ??= {}))[x.identity_id] = x.at;
+      }
       const t = T.get(r.id);
       const extra = json<StoredExtra & { encryptionWarning?: string; forward?: P.ForwardFact; feed?: unknown; post?: P.PostFact }>(r.extra, {});
       const encryptionWarning = extra.encryptionWarning;
@@ -2775,10 +2939,20 @@ export class Store {
         ...(POLL.has(r.id) && !sealed ? { poll: POLL.get(r.id) } : {}),
         reactions: (RT.get(r.id) ?? [])
           .map((t): P.ReactionView => {
-            const identityIds = rx.get(`${t.style}|${t.key}`) ?? [];
+            const who = rx.get(`${t.style}|${t.key}`);
+            const identityIds = who?.ids ?? [];
             const e = this.emojiView(emoji.get(`${r.network}|${t.key}`), seenVia[0]);
             const colors = json<string[] | null>(t.colors, null);
-            return { key: t.key, style: t.style, count: Math.max(t.count ?? 0, identityIds.length), identityIds, ...(e ? { emoji: e } : {}), ...(colors ? { colors } : {}) };
+            return {
+              key: t.key,
+              style: t.style,
+              count: Math.max(t.count ?? 0, identityIds.length),
+              identityIds,
+              ...(who?.at ? { at: who.at } : {}),
+              ...(who?.seenAt ? { seenAt: who.seenAt } : {}),
+              ...(e ? { emoji: e } : {}),
+              ...(colors ? { colors } : {}),
+            };
           })
           .filter((x) => x.count > 0),
         seenVia,
@@ -3408,7 +3582,13 @@ export class Store {
       name: f.name,
       icon: f.icon,
       color: f.color,
-      items: items.filter((i) => i.folder_id === f.id).map((i) => ({ kind: i.item_kind, id: i.item_id })),
+      // Folders inside it and what it holds share one order.
+      items: [
+        ...items.filter((i) => i.folder_id === f.id).map((i) => ({ kind: i.item_kind as P.FolderItemKind, id: i.item_id as string, pos: i.position as number })),
+        ...fs.filter((c) => c.parent_id === f.id).map((c) => ({ kind: 'folder' as const, id: c.id as string, pos: (c.parent_pos ?? -1) as number })),
+      ]
+        .sort((a, b) => a.pos - b.pos)
+        .map(({ kind, id }) => ({ kind, id })),
     }));
   }
 

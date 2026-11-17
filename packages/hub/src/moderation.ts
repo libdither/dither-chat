@@ -1,13 +1,14 @@
 /**
  * Moderating (docs/moderation.md, protocol moderation.ts): removing, banning and unbanning, admins, roles and timeouts
- * on a group's or server's members, ending a group, your own member label, and deleting someone else's message or
- * clearing reactions as a moderator. Each passes on only what a fresh read says this account may do (the About for
- * members, the reaction context for messages), one at a time, from a click on the hub's own page; the adapter checks
- * again, and the network has the last word. Every one leaves a line in the account's log.
+ * on a group's or server's members, ending a group, your own member label, and deleting someone else's message,
+ * clearing its reactions or taking its embeds off as a moderator. Each passes on only what a fresh read says this
+ * account may do (the About for members, the reaction context for messages), one at a time, from a click on the hub's
+ * own page; the adapter checks again, and the network has the last word. Every one leaves a line in the account's log.
  */
 import type * as P from '@dither-chat/protocol';
 import { memberLabelProblem, modActionProblem, modRefusal, modVerb, NETWORK_META, reactionClearProblem, spanLabel, VOICE_MOD_OPS } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
+import { dropPreviews } from './sendextras.ts';
 import type { AccountRow, Store } from './store.ts';
 
 type Kind = P.AboutTarget['kind'];
@@ -19,6 +20,7 @@ type Cmd =
   | { t: 'setLabel'; conversation: string; text: string; emoji?: string }
   | { t: 'reactionContext'; conversation: string }
   | { t: 'redact'; conversation: string; message: string; moderator: true }
+  | { t: 'suppressEmbeds'; conversation: string; message: string; moderator: true }
   | ({ t: 'clearReactions'; conversation: string; message: string } & P.ReactionClear);
 
 interface ModerationDeps {
@@ -252,10 +254,29 @@ export class Moderation {
     return { ok: true };
   }
 
+  /** POST /api/messages/:id/moderate-embeds: the embeds off someone else's message (Discord: Manage Messages). */
+  async removeEmbeds(messageId: string, b: { accountId?: unknown }): Promise<{ ok: true }> {
+    const { msg, conv, acc, mod } = await this.messageContext(messageId, typeof b.accountId === 'string' ? b.accountId : undefined);
+    if (msg.author_id && this.d.store.isSelf(msg.author_id)) throw new ModerationError('That message is yours: take its previews off the usual way', 400);
+    const net = NETWORK_META[conv.network].name;
+    if (!mod?.embeds) throw new ModerationError(conv.network === 'discord' ? 'You need the Manage Messages permission here.' : `${net} does not let anyone take the previews off others’ messages.`, 403);
+    if (!(JSON.parse(acc.capabilities ?? '[]') as P.Capability[]).includes('suppressEmbeds')) throw new ModerationError(`Taking embeds off isn't built for ${acc.label} on ${net} yet.`, 409);
+    this.pace(acc.id);
+    try {
+      await this.d.command(acc.id, { t: 'suppressEmbeds', conversation: conv.nativeId, message: msg.native_id, moderator: true }, 30_000);
+    } catch (e) {
+      this.unpace(acc.id);
+      throw new ModerationError((e as Error).message, 502);
+    }
+    dropPreviews(this.d.store, messageId);
+    this.d.note?.(acc.id, `[moderate] removed the embeds from a message by ${msg.author_id ? this.who(msg.author_id) : 'someone'} in ${this.name('conversation', msg.conversation_id)}`);
+    return { ok: true };
+  }
+
   // ------------------------------------------------------------ routes
 
   static handles(path: string): boolean {
-    return /^\/api\/(conversations|spaces)\/[\w-]+\/(moderate|bans)$/.test(path) || /^\/api\/conversations\/[\w-]+\/label$/.test(path) || /^\/api\/messages\/[\w-]+\/(moderate-delete|clear-reactions)$/.test(path);
+    return /^\/api\/(conversations|spaces)\/[\w-]+\/(moderate|bans)$/.test(path) || /^\/api\/conversations\/[\w-]+\/label$/.test(path) || /^\/api\/messages\/[\w-]+\/(moderate-delete|moderate-embeds|clear-reactions)$/.test(path);
   }
 
   async route(req: Request, url: URL, path: string): Promise<Response | null> {
@@ -284,6 +305,10 @@ export class Moderation {
       if ((m = path.match(/^\/api\/messages\/([\w-]+)\/moderate-delete$/)) && method === 'POST') {
         fromPage();
         return done(await this.deleteMessage(m[1], await body()));
+      }
+      if ((m = path.match(/^\/api\/messages\/([\w-]+)\/moderate-embeds$/)) && method === 'POST') {
+        fromPage();
+        return done(await this.removeEmbeds(m[1], await body()));
       }
       if ((m = path.match(/^\/api\/messages\/([\w-]+)\/clear-reactions$/)) && method === 'POST') {
         fromPage();

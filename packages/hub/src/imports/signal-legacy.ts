@@ -437,7 +437,7 @@ export function mapLegacy(dbPath: string, o: { selfId: string; mediaDir: string;
     const atts = has('attachment')
       ? byMessage<Row>('SELECT a.*, b.sha, b.ext, b.size AS blob_size FROM attachment a LEFT JOIN _blob b ON b.row_id = a._id ORDER BY a.message_id, a.display_order, a._id')
       : new Map<number, Row[]>();
-    const reactions = has('reaction') ? byMessage<Row>('SELECT message_id, author_id, emoji FROM reaction ORDER BY date_sent') : new Map<number, Row[]>();
+    const reactions = has('reaction') ? byMessage<Row>('SELECT message_id, author_id, emoji, date_sent FROM reaction ORDER BY date_sent') : new Map<number, Row[]>();
     const mentions = has('mention') ? byMessage<Row>('SELECT message_id, recipient_id, range_start, range_length FROM mention') : new Map<number, Row[]>();
     const polls = new Map<number, { question: string; multiple: boolean; options: string[] }>();
     if (has('poll') && has('poll_option'))
@@ -495,15 +495,18 @@ export function mapLegacy(dbPath: string, o: { selfId: string; mediaDir: string;
       return { styles, mentions: ms };
     };
 
+    // With when each was sent, as its time (docs/reactions.md "When").
     const reactionFacts = (ids: number[]): P.ReactionFact[] | undefined => {
-      const by = new Map<string, Set<string>>();
+      const by = new Map<string, { authors: Set<string>; at: Record<string, number> }>();
       for (const id of ids)
         for (const r of reactions.get(id) ?? []) {
           const who = aciOf.get(r.author_id);
           if (!r.emoji || !who) continue;
-          (by.get(r.emoji) ?? by.set(r.emoji, new Set()).get(r.emoji)!).add(who);
+          const e = by.get(r.emoji) ?? by.set(r.emoji, { authors: new Set(), at: {} }).get(r.emoji)!;
+          e.authors.add(who);
+          if (typeof r.date_sent === 'number' && r.date_sent > 0) e.at[who] = r.date_sent;
         }
-      return by.size ? [...by].map(([key, authors]) => ({ key, authors: [...authors] })) : undefined;
+      return by.size ? [...by].map(([key, e]) => ({ key, authors: [...e.authors], ...(Object.keys(e.at).length ? { at: e.at } : {}) })) : undefined;
     };
 
     const total = (db.query('SELECT COUNT(*) AS n FROM message').get() as Row).n as number;

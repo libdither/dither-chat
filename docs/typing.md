@@ -28,7 +28,7 @@ clients ──POST /api/conversations/:id/typing {accountId?, stop?}──▶ hu
   never goes into the change journal (docs/sync.md), the database or the snapshot: a client that reconnects just
   does not see a typer it missed. A typer the hub has never heard of (a stranger in a big channel) comes with a name
   from the network instead of a stored identity.
-- **Your typing goes through the account that would send**: the send-as choice in a conversation, the chosen
+- **Your typing goes through the account that would send**: the account picked on the line above the box in a conversation, the chosen
   network in a person's timeline, else the account the hub would pick.
 - **Throttled like Discord's client** (`TypingSender` in `packages/protocol/src/typing.ts`): a start at the first
   keystroke, again at a keystroke 8 s after the last start, and a stop when you send, clear the text, leave the

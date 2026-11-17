@@ -188,7 +188,7 @@ hub no longer has in its range go. A catch-up that got no answer while the socke
   the message object), the conversations a person's chat spans changed, or its position's epoch did. The live socket
   moving the position along is not a change: the page keeps its older position, which is still right (catching up
   from it asks for a little more). One loading, a window around an old message, or one never opened or fetched ahead
-  (Catch up's cards) is not written.
+  (a page fetched ahead) is not written.
 - **Reads**: at start every record is read as text in the snapshot's transaction, and a page is parsed only when it
   is opened. Who wrote it and what it quotes go into the client's state then, where it holds no copies of its own.
 - **Removal**: a conversation or person the hub removes (an account removed takes what only it saw) takes its page

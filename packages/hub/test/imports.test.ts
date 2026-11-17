@@ -109,7 +109,7 @@ describe('import sources over HTTP', () => {
     store = new Store(join(hubDir, 'hub.sqlite'), mediaSigner('s'));
     store.createAccount({ id: 'acc_sig', network: 'signal', label: 'test', color: '#000', adapter: 'signal', token: 't' } as any);
     const sup = { authorize: () => null, online: () => false } as any;
-    server = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: hubDir, webDist: hubDir, secret: 's' });
+    server = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: hubDir, webDist: hubDir, open: true, secret: 's' });
     port = server.start().port!;
     base = `http://127.0.0.1:${port}`;
   });

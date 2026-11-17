@@ -182,6 +182,106 @@ describe('every network', () => {
   });
 });
 
+describe('when each reacted (docs/reactions.md "When")', () => {
+  const T = Date.UTC(2025, 0, 2, 12);
+  const who = (acc: AccountRow, native: string) => hubId('idn', acc.network, native);
+  const mid = (acc: AccountRow, native: string) => hubId('msg', acc.network, native);
+
+  test("the network's time, or when the hub heard where it gives none", () => {
+    const s = post(signal, 'c');
+    react(signal, s, 'a', '👍', { ts: T });
+    expect(view(signal, s).reactions[0]).toMatchObject({ at: { [who(signal, 'a')]: T } });
+    expect(view(signal, s).reactions[0].seenAt).toBeUndefined();
+    const heard = Date.now();
+    const d = post(discord, 'c');
+    react(discord, d, 'a', '👍');
+    const r = view(discord, d).reactions[0];
+    expect(r.at).toBeUndefined();
+    expect(r.seenAt![who(discord, 'a')]).toBeGreaterThanOrEqual(heard);
+  });
+
+  test('seconds, or a time days ahead, are no time: the hub keeps when it heard', () => {
+    const s = post(signal, 'c');
+    react(signal, s, 'a', '👍', { ts: T / 1000 });
+    react(signal, s, 'b', '👍', { ts: Date.now() + 7 * 86_400_000 });
+    const r = view(signal, s).reactions[0];
+    expect(r.at).toBeUndefined();
+    expect(Object.keys(r.seenAt!).sort()).toEqual([who(signal, 'a'), who(signal, 'b')].sort());
+  });
+
+  test("the network's time replaces when the hub heard: your own reaction, echoed with its time", () => {
+    const s = post(signal, 'c');
+    react(signal, s, 'sig-me', '👍');
+    react(signal, s, 'sig-me', '👍', { ts: T });
+    expect(view(signal, s).reactions[0].at).toEqual({ [who(signal, 'sig-me')]: T });
+    expect(view(signal, s).reactions[0].seenAt).toBeUndefined();
+  });
+
+  test('taken back and made again: the list of who reacted and Message history have each time', () => {
+    const s = post(signal, 'c');
+    react(signal, s, 'a', '👍', { ts: T });
+    react(signal, s, 'a', '👍', { ts: T + 60_000, remove: true });
+    react(signal, s, 'a', '👍', { ts: T + 120_000 });
+    const v = store.reactorsView(mid(signal, s), '👍', 'normal');
+    expect(v.at).toEqual({ [who(signal, 'a')]: T + 120_000 });
+    expect(v.takenBack).toEqual([{ identityId: who(signal, 'a'), at: T + 60_000, added: T }]);
+    const h = store.messageHistory(mid(signal, s))!;
+    expect(h.reactions).toEqual([{ identityId: who(signal, 'a'), key: '👍', style: 'normal', at: T + 120_000 }]);
+    expect(h.events).toEqual([{ kind: 'unreact', at: T + 60_000, actorId: who(signal, 'a'), data: { key: '👍', style: 'normal', added: T } }]);
+  });
+
+  test('on Signal a new reaction takes the old one back, at its own time', () => {
+    const s = post(signal, 'c');
+    react(signal, s, 'a', '👍', { ts: T });
+    react(signal, s, 'a', '🔥', { ts: T + 5000 });
+    expect(store.reactorsView(mid(signal, s), '👍', 'normal').takenBack).toEqual([{ identityId: who(signal, 'a'), at: T + 5000, added: T }]);
+  });
+
+  test('your own taken back are not kept', () => {
+    const s = post(signal, 'c');
+    react(signal, s, 'sig-me', '👍', { ts: T });
+    react(signal, s, 'sig-me', '👍', { ts: T + 1000, remove: true });
+    expect(store.reactorsView(mid(signal, s), '👍', 'normal').takenBack).toEqual([]);
+  });
+
+  test('a snapshot: none on a message new to the hub, when it heard on one it had, the network\'s own where given', () => {
+    const d = post(discord, 'c', [{ key: '🎉', count: 2, authors: [SELF] }]);
+    expect([view(discord, d).reactions[0].at, view(discord, d).reactions[0].seenAt]).toEqual([undefined, undefined]);
+    store.ingest(discord, { t: 'message', live: false, message: { nativeId: d, conversation: 'c', author: 'someone', ts: 1, body: 'hi', reactions: [{ key: '🎉', count: 2, authors: [SELF, 'b'] }] } });
+    expect(view(discord, d).reactions[0].seenAt).toEqual({ [who(discord, 'b')]: expect.any(Number) });
+    const s = post(signal, 'c', [{ key: '🔥', authors: ['a'], at: { a: T } }]);
+    expect(view(signal, s).reactions[0].at).toEqual({ [who(signal, 'a')]: T });
+  });
+
+  test('a full list again keeps the times the hub had', () => {
+    const s = post(signal, 'c');
+    react(signal, s, 'a', '🔥', { ts: T });
+    store.ingest(signal, { t: 'message', live: false, message: { nativeId: s, conversation: 'c', author: 'someone', ts: 1, body: 'hi', reactions: [{ key: '🔥', authors: ['a', 'b'] }] } });
+    expect(view(signal, s).reactions[0]).toMatchObject({ at: { [who(signal, 'a')]: T }, seenAt: { [who(signal, 'b')]: expect.any(Number) } });
+  });
+
+  test('names behind a total come at no known time, unless the network says', () => {
+    const d = post(discord, 'c', [{ key: '🎉', count: 2, authors: [] }]);
+    store.addKnownReactors(discord, mid(discord, d), '🎉', 'normal', ['a', 'b'], { a: T });
+    expect([view(discord, d).reactions[0].at, view(discord, d).reactions[0].seenAt]).toEqual([{ [who(discord, 'a')]: T }, undefined]);
+  });
+
+  test('an import fills in times the hub did not have, and a dry run only counts them', () => {
+    const s = post(signal, 'c', [{ key: '❤️', authors: ['a'] }]);
+    const again = (dryRun: boolean) =>
+      store.importBatch(
+        signal,
+        { conversation: { nativeId: 'c', shape: 'group', name: 'c' }, identities: [], messages: [{ nativeId: s, conversation: 'c', author: 'someone', ts: 1, body: 'hi', reactions: [{ key: '❤️', authors: ['a'], at: { a: T } }] }] },
+        { sourceSha: 'sha', runId: 'r', dryRun, archiveNew: false, first: true },
+      );
+    expect(again(true).filled).toBe(1);
+    expect(view(signal, s).reactions[0].at).toBeUndefined();
+    expect(again(false).filled).toBe(1);
+    expect(view(signal, s).reactions[0].at).toEqual({ [who(signal, 'a')]: T });
+    expect(again(false)).toMatchObject({ filled: 0, same: 1 });
+  });
+});
+
 describe('upgrading a database from before tallies', () => {
   test('old rows become reactions, with spellings merged', () => {
     const path = join(dir, 'old.sqlite');

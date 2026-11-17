@@ -7,6 +7,10 @@ Calendar pane, the plans it found as chips under the messages that made them, it
 reminders as that chat's messages. Remove the account, or turn it off, and all of it goes. The calendar's own design is
 in its repo (its `docs/chat-account.md` for its side of the account); this page is the hub's side.
 
+The calendar also reads the hub (the bootstrap, the live socket, a conversation's messages) to find plans. The hub is
+behind its login, so it sends the hub's service token, `<hub data>/api.token` ([login.md](login.md)); its side is its
+`docs/chat.md`. Through the hub, `/calendar/*` is behind the login like everything else.
+
 ## What works
 
 - **The calendar account.** Accounts → Add → Calendar asks for the address (`http://127.0.0.1:8470` unless you say

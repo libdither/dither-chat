@@ -40,7 +40,7 @@ beforeAll(() => {
       return { nativeId: `n${sent.length}` };
     },
   } as any;
-  hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+  hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
   url = `http://127.0.0.1:${hub.start().port}`;
   const acc = (network: 'discord' | 'signal', label: string, self: string) => {
     const a = store.createAccount({ network, label, color: '#000', adapter: network });

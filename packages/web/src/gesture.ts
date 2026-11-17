@@ -35,6 +35,18 @@ export function settleMs(remaining: number, v: number, slowest = 320, fastest = 
   return Math.round(Math.min(slowest, Math.max(fastest, (d / speed) * 1.4)));
 }
 
+/**
+ * The curve for the rest of the way, starting at the speed the finger let go at, so the element carries on rather
+ * than lurching forward or stalling. A cubic-bezier's speed at its start is y1/x1 times the average, so y1 is chosen
+ * for that ratio, between a plain start (1x) and five times the average; it lands softly whatever the start.
+ */
+export function settleEase(remaining: number, v: number, ms: number): string {
+  const d = Math.abs(remaining);
+  const toward = d && ms ? (v * Math.sign(remaining) * ms) / d : 0;
+  const y1 = Math.min(1, Math.max(0.2, 0.2 * toward));
+  return `cubic-bezier(.2,${+y1.toFixed(3)},.2,1)`;
+}
+
 /** Past `limit` the element still moves, but less and less, so it feels attached rather than stuck. */
 export function rubber(d: number, limit: number): number {
   const a = Math.abs(d);

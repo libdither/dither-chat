@@ -2,7 +2,7 @@
  * Moderating a group or server from its page (docs/moderation.md), a chunk of its own loaded only where the About
  * says this account may moderate something (ModerationLazy.tsx): what a member's menu adds (remove or kick, ban,
  * admins, roles, timeouts), the Moderation card (who is banned, unbanning, who asks to join, ending a group), your
- * own member label, a new picture, and leaving a Signal group as its only admin. Every action is one click and a
+ * own member label, and leaving a Signal group as its only admin. Every action is one click and a
  * confirm; the hub checks a fresh About again and the network has the last word, shown as its sentence.
  */
 import type * as P from '@dither-chat/protocol';
@@ -11,7 +11,6 @@ import { useState } from 'preact/hooks';
 import { fullTime } from '../format.ts';
 import { identityName, netName } from '../model.ts';
 import { api, db, go, isSelfIdentity, openProfile, toast } from '../state.ts';
-import { uploadFile } from '../upload.ts';
 import type { MenuEntry } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
 import { Card } from './ProfileShell.tsx';
@@ -216,18 +215,6 @@ export function LabelCard({ view, onDone }: { view: P.AboutView; onDone: (v: P.A
       <p class="pf-hint">{l.canEdit ? 'Shown by your name to everyone in it. Leave it empty to clear it.' : l.reason}</p>
     </Card>
   );
-}
-
-/** A new picture for a group or server: uploaded to the hub, then sent through the account whose view this is. */
-export async function changePicture(view: P.AboutView, file: File | undefined, onDone: (v: P.AboutView) => void) {
-  if (!file) return;
-  try {
-    const up = await uploadFile(file, file.name, file.type || 'application/octet-stream');
-    onDone(await api<P.AboutView>(`${base(view)}/about`, { body: { change: { key: 'avatar', value: up.id }, ...(view.accountId ? { accountId: view.accountId } : {}) } }));
-    toast({ kind: 'info', title: 'Picture changed', body: '' }, 2500);
-  } catch (e) {
-    toast({ kind: 'error', title: 'Could not change the picture', body: (e as Error).message });
-  }
 }
 
 /**

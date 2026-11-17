@@ -6,7 +6,7 @@
 import type * as P from '@dither-chat/protocol';
 import { RELATIONSHIP_LABEL, withList } from '@dither-chat/protocol';
 import { connections, connectionTags, withChanges, type Connection } from '../connections.ts';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { ago, fullTime } from '../format.ts';
 import { bioEditor, bioLeft } from '../bio.ts';
 import { openers } from '../direct.ts';
@@ -30,6 +30,8 @@ import { openConv } from '../opening.ts';
 import { Loading } from './Loader.tsx';
 import { peopleExtras } from './peopleExtras.ts';
 import { Stories } from './StoriesLazy.tsx';
+import { usePictureEditor } from './PictureEditorLazy.tsx';
+import type { PictureStart, PictureTarget } from './PictureEditor.tsx';
 
 import { signal } from '@preact/signals';
 
@@ -353,6 +355,14 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     return () => clearTimeout(t);
   }, [merging, q, person?.id]);
 
+  // Your own picture (PictureEditor.tsx): only your own profile's Abouts list what you may change.
+  const pe = usePictureEditor(Object.values(abouts).some((a) => a.editable?.includes('avatar')));
+  // The editor, open on a picture, ticked to the network it came from (an account tile's menu), else the page's.
+  const [picturing, setPicturing] = useState<(PictureStart & { came?: string }) | null>(null);
+  // The editor's target, kept while it is open: the Abouts are asked again (and empty for a moment) as the picture
+  // changes, and the editor must not close and open again meanwhile.
+  const editing = useRef<PictureTarget | null>(null);
+
   if (profile === 'none')
     return (
       <ProfilePage title="Profile" label="Profile" onBack={onBack}>
@@ -562,6 +572,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           !!link && { label: `Open on ${netName(i.network)}`, icon: 'external', run: () => void window.open(link, '_blank', 'noreferrer') },
         ],
         [several && !isSelf && { label: 'Split Into Its Own Person', icon: 'unlink', run: () => void split(i) }],
+        [!!ownPicture?.dests.some((d) => d.key === i.id) && { label: 'Change Picture…', icon: 'image', track: 'change picture', run: () => setPicturing({ came: i.id }) }],
       ),
     };
   };
@@ -571,12 +582,16 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const accent = discord?.accent ?? null;
   const banner = discord?.banner ?? null;
   const picture = person?.avatar ?? first?.avatar ?? said.find((a) => a.avatar)?.avatar;
+  const picTarget = (came?: string) => (isSelf && pe ? pe.selfTarget({ ids, abouts, came: came ?? identityId, picture: picture ?? null, historyPath: changesPath, onSaved: learn }) : null);
+  const ownPicture = picTarget();
+  editing.current = picturing ? ((picturing.came ? picTarget(picturing.came) : ownPicture) ?? editing.current) : null;
 
   const hero = (
     <Hero
       id={person?.id ?? first?.id ?? ''}
       name={name}
       picture={picture}
+      onPicture={ownPicture ? (e) => pe!.pictureMenu(e, ownPicture, setPicturing) : undefined}
       network={nets.length === 1 ? nets[0] : undefined}
       banner={banner}
       accent={accent}
@@ -1019,6 +1034,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         </p>
       )}
       <Columns main={main} side={side} />
+      {ownPicture && pe && <pe.PictureDrop open={setPicturing} />}
+      {pe && picturing && editing.current && <pe.PictureEditor target={editing.current} start={picturing} onClose={() => setPicturing(null)} />}
     </ProfilePage>
   );
 }

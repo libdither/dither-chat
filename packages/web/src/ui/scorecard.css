@@ -1,0 +1,175 @@
+/* The scorecard on How it sorts (Scorecard.tsx, docs/scorecard.md). Three series colours, stepped for each theme. */
+.scorecard {
+  --sc-1: #3987e5;
+  --sc-2: #d95926;
+  --sc-3: #199e70;
+}
+html[data-theme='light'] .scorecard {
+  --sc-1: #2a78d6;
+  --sc-2: #eb6834;
+  --sc-3: #1baf7a;
+}
+.sc-chart {
+  margin-top: 16px;
+}
+.sc-chart h4 {
+  margin: 0 0 2px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+}
+.sc-about,
+.sc-none {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.sc-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+.sc-legend-item b {
+  color: var(--text);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.sc-was {
+  color: var(--text-faint);
+}
+.sc-key {
+  display: inline-block;
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+  margin-right: 6px;
+  vertical-align: middle;
+  background: var(--sc-1);
+}
+.sc-key.s2 {
+  background: repeating-linear-gradient(90deg, var(--sc-2) 0 4px, transparent 4px 6px);
+}
+.sc-key.s3 {
+  background: var(--sc-3);
+}
+.sc-plot {
+  position: relative;
+  max-width: 720px;
+}
+.sc-plot svg {
+  display: block;
+  overflow: visible;
+  touch-action: pan-y;
+  outline: none;
+}
+.sc-plot svg:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.sc-grid {
+  stroke: var(--border-soft);
+  stroke-width: 1;
+}
+.sc-tick {
+  fill: var(--text-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.sc-cross {
+  stroke: var(--text-faint);
+  stroke-width: 1;
+}
+.sc-series {
+  --c: var(--sc-1);
+}
+.sc-series.s2 {
+  --c: var(--sc-2);
+}
+.sc-series.s3 {
+  --c: var(--sc-3);
+}
+.sc-line {
+  fill: none;
+  stroke: var(--c);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+/* The second line of a chart is dashed, so the lines differ by more than colour. */
+.sc-series.s2 .sc-line {
+  stroke-dasharray: 5 3;
+}
+.sc-dot {
+  fill: var(--c);
+  stroke: var(--bg-center);
+  stroke-width: 2;
+}
+.sc-tip {
+  position: absolute;
+  top: 0;
+  z-index: 3;
+  width: 196px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-center);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  color: var(--text-dim);
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sc-tip-when {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.sc-tip-row b {
+  color: var(--text);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.sc-n {
+  color: var(--text-faint);
+  margin-left: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.sc-table {
+  margin-top: 14px;
+  font-size: 12px;
+}
+.sc-table summary {
+  cursor: pointer;
+  color: var(--text-dim);
+}
+.sc-table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.sc-table table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.sc-table th,
+.sc-table td {
+  padding: 3px 8px;
+  text-align: right;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border-soft);
+}
+.sc-table thead th {
+  font-weight: 600;
+  color: var(--text-dim);
+  white-space: normal;
+  min-width: 90px;
+  vertical-align: bottom;
+}
+.sc-table tbody th {
+  text-align: left;
+  font-weight: 500;
+}

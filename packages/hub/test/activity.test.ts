@@ -388,7 +388,7 @@ describe('the API', () => {
     store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
     a = new ActivityStore(store);
     const sup = { authorize: () => null, online: () => false } as any;
-    server = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's', activity: a });
+    server = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's', activity: a });
     port = server.start().port!;
   });
   afterAll(() => {

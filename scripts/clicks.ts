@@ -7,6 +7,7 @@
  * Counts come only from devices where Settings → Usage → "Count which buttons I press" is on.
  */
 import type { ClicksView } from '@dither-chat/protocol';
+import { bearer, hubDataDir } from './hub-login.ts';
 
 const argv = process.argv.slice(2);
 const opt = (name: string, dflt: string) => {
@@ -23,7 +24,8 @@ if (!['device', 'page'].includes(by)) {
   process.exit(2);
 }
 
-const res = await fetch(`${hub}/api/usage/clicks?days=${days}&by=${by}&limit=${top}`);
+// The hub is behind its login: its service token (docs/login.md), from DITHER_DATA or the usual data dir.
+const res = await fetch(`${hub}/api/usage/clicks?days=${days}&by=${by}&limit=${top}`, { headers: bearer(hubDataDir()) });
 if (!res.ok) {
   console.error(`${hub}: ${res.status} ${await res.text()}`);
   process.exit(1);

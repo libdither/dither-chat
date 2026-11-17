@@ -179,7 +179,7 @@ describe('the send passes silent and no-ping only where the account can', () => 
   beforeAll(() => {
     store = new Store(join(dir, 'flags.sqlite'), mediaSigner('s'));
     const sup = { authorize: () => null, online: () => true, command: async (_: string, c: any) => (sent.push(c), { nativeId: 'x' }) } as any;
-    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: join(dir, 'flags'), webDist: dir, secret: 's' });
+    hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: join(dir, 'flags'), webDist: dir, open: true, secret: 's' });
     port = hub.start().port!;
     const a = store.createAccount({ network: 'discord', label: 'dc', color: '#000', adapter: 'discord' });
     store.ingest(a, { t: 'hello', network: 'discord', version: '1', capabilities: ['send'] });
@@ -330,6 +330,38 @@ describe('saved on the network, reminders, previews off, its own scheduled messa
   test('previews come off your own message only', async () => {
     expect((await req('POST', `/api/messages/${someMessage(false)}/remove-previews`)).status).toBe(403);
     expect((await req('POST', `/api/messages/${someMessage(true)}/remove-previews`)).status).toBe(200);
+  });
+
+  test("the hub's copy keeps no previews once the network took them off, even when the edit comes back without any", async () => {
+    const mid = someMessage(true);
+    const row = store.one<{ native_id: string; conversation_id: string }>('SELECT native_id, conversation_id FROM message WHERE id = ?', mid)!;
+    const conv = store.nativeOf('conversation', row.conversation_id)!.nativeId;
+    const author = store.nativeOf('identity', store.account(MAIN)!.self_identity!)!.nativeId;
+    const fact = { nativeId: row.native_id, conversation: conv, author, ts: Date.now(), body: 'see https://example.com/a' };
+    store.ingest(store.account(MAIN)!, { t: 'message', message: { ...fact, extra: { embeds: [{ url: 'https://example.com/a', title: 'A page' }], quote: { author: null, ts: 1, text: 'q' } } } });
+    store.flush();
+    expect(store.messageView(mid)!.embeds.length).toBe(1);
+    // Answered as Signal's and Telegram's edits are: the message again with its words and no extra, which leaves what
+    // is stored.
+    const a = adapters.get(MAIN)!;
+    const real = a.command;
+    const seen: P.AdapterCommand[] = [];
+    a.command = (cmd: P.AdapterCommand) => {
+      seen.push(cmd);
+      store.ingest(store.account(MAIN)!, { t: 'message', live: true, message: { ...fact, editedTs: Date.now() } });
+      const p = pending.get(cmd.id);
+      pending.delete(cmd.id);
+      p?.resolve({});
+    };
+    try {
+      expect((await req('POST', `/api/messages/${mid}/remove-previews`)).status).toBe(200);
+    } finally {
+      a.command = real;
+    }
+    expect(seen).toMatchObject([{ t: 'suppressEmbeds', conversation: conv, message: row.native_id, body: 'see https://example.com/a' }]);
+    expect(store.messageView(mid)!.embeds).toEqual([]);
+    // What else it kept stays.
+    expect(JSON.parse(store.one<{ extra: string }>('SELECT extra FROM message WHERE id = ?', mid)!.extra).quote).toMatchObject({ text: 'q' });
   });
 
   test("the network's own scheduled messages sit beside the hub's, and can be cancelled", async () => {

@@ -191,9 +191,13 @@ What it adds to a conversation's page:
   ("Send as zyn.alt to kit.work on Discord"). A long run on one route reads like that conversation's own page, with
   the accounts' names. Until 2026-11-11 a row of its own (the network's icon, their name, yours, and "sending here")
   stood above each run, and then, for a day, the tag said the route's whole label.
-- **The picture's badge**, the same badge an inbox row has (the network, and dots for your account), only when it
+- **The picture's badge**, the same badge an inbox row has (the network, and dots for your accounts), only when it
   would differ between the chat's routes: more than one network, or more than one of your accounts on a network
   (`badgeDiffers`). Mo's page has none, and neither has a page showing one route picked from the list.
+  Everywhere (inbox rows, server icons, channels, message pictures) an account's dot shows only where it says
+  something: where two or more of your accounts see the chat, or where the one that does is not the network's usual
+  account, the one most of its chats come through (`usualAccount` in `model.ts`). So a second account added for
+  testing marks only its own chats, not every chat on that network.
 - **Under the name, where your message goes**, in the same words as a direct conversation of one route says it
   (`SendLine` in `Pairs.tsx`): the network's icon and name, then `via` and your account's chip where you have more
   than one account (the rule every conversation's header has, and a window under 820 px wide leaves the chip out, as
@@ -225,7 +229,10 @@ What it adds to a conversation's page:
   that row's other end; the box's placeholder is only "Message", and nothing moves as you type. The same on a computer
   and a phone, where it ends in … when it is too long ("To kit.work" where a "to" follows, a phone having room for one
   name). The parts that can change switch: two options toggle (⟳), more open a menu (⌄, a sheet on a phone), each
-  tinted on hover. Until 2026-11-14 it took the placeholder's place, as a dashed link, and jumped to the box's top
+  tinted on hover. While a chat's disappearing timer is on, the line ends in it ("· 1w"), and a press opens the
+  network's timers ([group-settings.md](group-settings.md), "In the message box"). A channel or group where two or
+  more of your accounts sit has the same line for the one choice it has: "To #general · via main" (`SendAsLead`), the
+  account a token that switches or opens a menu; until 2026-11-16 that was a chip at the box's start. Until 2026-11-14 it took the placeholder's place, as a dashed link, and jumped to the box's top
   edge once typed in; then, on a computer, it was a row of its own over the box, under the typing line's.
 - **The header's buttons** are a conversation's: profile, call, search, notifications, details. With all chats shown
   they act on every route: search is `in:<person id>` (the hub reads a person's id as every direct conversation with

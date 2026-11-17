@@ -126,7 +126,7 @@ export const FilingRow: RowWrapper = ({ thread: t, children }) => {
   const on = selected.value.has(t.id);
   const fg = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
-  const g = useRef<{ x0: number; y0: number; mode: null | 'x' | 'y'; dx: number; timer?: ReturnType<typeof setTimeout>; armed: boolean } | null>(null);
+  const g = useRef<{ x0: number; y0: number; mode: null | 'x' | 'y'; dx: number; w: number; side: string; timer?: ReturnType<typeof setTimeout>; armed: boolean } | null>(null);
   const a = acc(t);
   const right = inInbox(t) && canMove(t, 'archive');
   const left = canWrite(a, 'flag.seen');
@@ -141,7 +141,7 @@ export const FilingRow: RowWrapper = ({ thread: t, children }) => {
   const onTouchStart = (e: TouchEvent) => {
     if (e.touches.length !== 1) return;
     const p = e.touches[0];
-    g.current = { x0: p.clientX, y0: p.clientY, mode: null, dx: 0, armed: false };
+    g.current = { x0: p.clientX, y0: p.clientY, mode: null, dx: 0, w: 0, side: '', armed: false };
     // A long press picks it.
     g.current.timer = setTimeout(() => {
       if (!g.current || g.current.mode) return;
@@ -163,18 +163,22 @@ export const FilingRow: RowWrapper = ({ thread: t, children }) => {
       clearTimeout(s.timer);
       if (axis === 'y' || picking || (dx > 0 ? !right : !left)) return void (g.current = null);
       s.mode = 'x';
+      // Measured once, when the swipe starts: a read after the last move's transform forced a layout every move.
+      s.w = box.current?.clientWidth ?? 320;
     }
     // The swipe is the row's: the pager under it does not see it.
     e.stopPropagation();
     if (e.cancelable) e.preventDefault();
-    const w = box.current?.clientWidth ?? 320;
+    const w = s.w;
     const x = dx > 0 ? (right ? rubber(dx, w * 0.6) : 0) : left ? -rubber(-dx, w * 0.6) : 0;
     s.dx = x;
     const armed = Math.abs(x) >= ARM;
     if (armed && !s.armed) haptic();
+    // Only when they change: each write restyles the row.
+    if (armed !== s.armed) box.current?.classList.toggle('armed', armed);
     s.armed = armed;
-    box.current?.classList.toggle('armed', armed);
-    box.current?.setAttribute('data-swipe', x > 0 ? 'right' : x < 0 ? 'left' : '');
+    const side = x > 0 ? 'right' : x < 0 ? 'left' : '';
+    if (side !== s.side) box.current?.setAttribute('data-swipe', (s.side = side));
     setX(x);
   };
   const onTouchEnd = () => {
@@ -186,7 +190,7 @@ export const FilingRow: RowWrapper = ({ thread: t, children }) => {
     swallowUntil = Date.now() + 500;
     box.current?.classList.remove('armed');
     if (s.armed && s.dx > 0) {
-      setX(box.current?.clientWidth ?? 400, 180);
+      setX(s.w || 400, 180);
       setTimeout(() => {
         file([t], 'archive');
         // Still listed here (Unread, a search): back in place.
@@ -194,7 +198,8 @@ export const FilingRow: RowWrapper = ({ thread: t, children }) => {
       }, 180);
     } else {
       setX(0, 180);
-      if (s.armed) markRead([t.id], t.unread > 0);
+      // Once the row is on its way back, not in the frame that starts it.
+      if (s.armed) requestAnimationFrame(() => setTimeout(() => markRead([t.id], t.unread > 0)));
     }
   };
   const onClickCapture = (e: MouseEvent) => {

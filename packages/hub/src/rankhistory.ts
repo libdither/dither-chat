@@ -15,6 +15,7 @@ import { emptyTally, foldMessage, freshState, PIN_FOR, scoreConversation, sumTal
 import { HORIZON, rankFeatures, type Moment, type Opened } from './rank.ts';
 import type { Triage } from './triage.ts';
 import type { OwedTable } from './owed.ts';
+import { FACTS_SQL, factsOf, type MessageFacts, type NeedsModel } from './needsreply.ts';
 
 type Row = Record<string, any>;
 
@@ -44,7 +45,12 @@ export interface Conv {
   incoming: { ts: number; mention: boolean; pushed: boolean; level: P.TriageDecision | null; score: number | null; vote: P.TriageDecision | null; votedAt: number | null }[];
   /** When you last wrote. */
   lastOwn: number | null;
+  /** The open turn's messages from others as facts (needsreply.ts), with when, up to TURN_FACTS of them. */
+  turnFacts: (MessageFacts & { ts: number })[];
 }
+
+/** A turn's messages the needs-reply model reads, at most (needsreply.ts `turnMessagesQuery` reads as many). */
+const TURN_FACTS = 60;
 
 /** One stay in a conversation or with a person, from the activity log. */
 export interface Stay {
@@ -77,6 +83,8 @@ export interface World {
   votes: Map<string, { at: number; dir: number }[]>;
   /** The owed table to score with (owed.ts): the hub's, else the default. */
   owedTable?: OwedTable;
+  /** The needs-reply model over it (needsreply.ts): the hub's, else the table alone. */
+  needsModel?: NeedsModel | null;
 }
 
 /** Where you had been by `t`: per usage key, decayed seconds and visits and when you were last there. */
@@ -159,6 +167,8 @@ export function seenAt(w: World, t: number, usage = usageAt(w.stays, t)): Seen[]
         level,
         votes: votesAt(w.votes.get(c.id), t),
         owedTable: w.owedTable ?? null,
+        needsModel: w.needsModel ?? null,
+        turnMessages: turn ? c.turnFacts : null,
       },
     });
   }
@@ -219,6 +229,7 @@ export function loadWorld(db: Database, mutedOf: (id: string, shape: string) => 
       lastMessageAt: null,
       incoming: [],
       lastOwn: null,
+      turnFacts: [],
     });
   }
   const stays: Stay[] = [];
@@ -246,7 +257,7 @@ const FOLD = `
          r.author_id AS reply_author,
          EXISTS (SELECT 1 FROM reaction x WHERE x.message_id = m.id AND x.identity_id IN ${SELF_SQL}) AS reacted,
          t.decision IN ('push', 'quiet', 'digest') AS pushed, t.reasons LIKE '%asks a question%' AS question,
-         t.decision, t.score, t.feedback, t.feedback_at
+         t.decision, t.score, t.feedback, t.feedback_at, ${FACTS_SQL}
   FROM message m INDEXED BY message_ts LEFT JOIN identity i ON i.id = m.author_id LEFT JOIN message r ON r.id = m.reply_to_id LEFT JOIN triage t ON t.message_id = m.id
   WHERE m.conversation_id IN (SELECT value FROM json_each(?)) ORDER BY m.ts, m.rowid`;
 
@@ -313,6 +324,14 @@ export class Rebuild {
         },
         { shape: c.shape, members: c.members },
       );
+      // The open turn's messages, as the hub reads them for the needs-reply model.
+      const turn = c.state.turn?.addressed ?? null;
+      if (me || turn === null) c.turnFacts.length = 0;
+      else if (!ignore) {
+        if (c.turnFacts.length && c.turnFacts[0].ts < turn) c.turnFacts = c.turnFacts.filter((f) => f.ts >= turn);
+        if (c.turnFacts.length < TURN_FACTS && r.ts <= turn + 2 * 86_400_000)
+          c.turnFacts.push({ ts: r.ts, ...factsOf(r as any, (!!r.mentions_self && !r.mentions_all) || mine(r.reply_author, null), r.person_id ?? r.author_id) });
+      }
       if (ignore) continue;
       c.lastMessageAt = Math.max(c.lastMessageAt ?? 0, r.ts);
       if (me) c.lastOwn = Math.max(c.lastOwn ?? 0, r.ts);

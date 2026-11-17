@@ -1,6 +1,7 @@
 /**
- * A moderator's actions on others' messages (docs/moderation.md): deleting one for everyone and taking reactions off,
- * offered only where the conversation's reaction context (asked as it opens, reactions.ts) says this account may.
+ * A moderator's actions on others' messages (docs/moderation.md): deleting one for everyone, taking its embeds off and
+ * taking reactions off, offered only where the conversation's reaction context (asked as it opens, reactions.ts) says
+ * this account may.
  * Each after a confirm; the hub asks the network again first.
  */
 import type * as P from '@dither-chat/protocol';
@@ -17,6 +18,11 @@ export function modOf(m: P.MessageView): P.MessageModeration | null {
 export function moderatorDelete(m: P.MessageView) {
   if (!confirm(`Delete ${authorName(m.authorId)}'s message for everyone? You may as a moderator here; it goes to the network and cannot be undone.`)) return;
   api(`/api/messages/${m.id}/moderate-delete`, { body: {} }).catch((e) => toast({ kind: 'error', title: 'Could not delete', body: e.message }));
+}
+
+export function moderatorRemoveEmbeds(m: P.MessageView) {
+  if (!confirm(`Remove the embeds from ${authorName(m.authorId)}'s message? You may as a moderator here; it cannot be undone.`)) return;
+  api(`/api/messages/${m.id}/moderate-embeds`, { body: {} }).catch((e) => toast({ kind: 'error', title: 'Embeds not removed', body: e.message }));
 }
 
 /** All reactions (no key), one emoji's, or one person's. */

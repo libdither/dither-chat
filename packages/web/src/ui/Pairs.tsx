@@ -16,10 +16,11 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { badgeDiffers, cameFromThem, headIdents, lastRouteTells, leadTells, pickHolds, tagTells, tagText, tells, type HeadName, type RouteKey, type Side } from '../chatroutes.ts';
 import { ago, hueOf, initials } from '../format.ts';
-import { identityName, netColor, netName, visibleAccount } from '../model.ts';
+import { convLabel, identityName, netColor, netName, visibleAccount } from '../model.ts';
 import { phone } from '../phone.ts';
 import { api, db, go, isSelfIdentity, prefs, route, setPrefs, timelineKey, timelines } from '../state.ts';
 import { AccountChip, Avatar, Count, Menu, NetBadge, NetGlyph } from './bits.tsx';
+import { TimerLabel } from './Disappearing.tsx';
 import { Icon } from './icons.tsx';
 
 // ------------------------------------------------------------------ pairs
@@ -287,6 +288,23 @@ function Token({ label, options, onPick, picture }: { label: string; options: { 
 }
 
 /**
+ * A channel's or group's route line where two or more of your accounts are in it: "To #general · via main", the
+ * account a token like a person chat's (two switch with a press, more open a menu). It was a chip in the box.
+ */
+export function SendAsLead({ c, accounts, value, onPick }: { c: P.ConversationView; accounts: P.AccountView[]; value: string; onPick: (accountId: string) => void }) {
+  const cur = accounts.find((a) => a.id === value) ?? accounts[0];
+  const dot = (a: P.AccountView) => <span class="acc-dot" style={{ width: '8px', height: '8px', background: a.color }} />;
+  return (
+    <span class="pair-lead-line">
+      {'To '}
+      <span class="pair-token fixed">{convLabel(c)}</span>
+      {' · via '}
+      <Token label={cur.label} picture={dot(cur)} options={accounts.map((a) => ({ id: a.id, label: a.label, picture: dot(a) }))} onPick={onPick} />
+    </span>
+  );
+}
+
+/**
  * Where a message goes, by the same rule as the tags and no more: "Message Kit on Signal", "Message Kit on Discord
  * (kit.work)", and "from zyn.alt" only when the account of theirs it goes to can be reached from several of yours
  * (chatroutes.ts leadTells). The parts that can change switch. It sits at the start of the typing line's row, over the
@@ -328,6 +346,7 @@ export function PairLead({ person, directs, focus, onFocus }: { person: P.Person
           <Token label={myName(cur)} picture={<MyPicture p={cur} size={16} />} options={mine.map((p) => ({ id: p.conv.id, label: myName(p), picture: <MyPicture p={p} size={16} /> }))} onPick={onFocus} />
         </>
       )}
+      <TimerLabel conv={focus} />
       <LastRoute directs={directs} focus={focus} onFocus={onFocus} />
     </span>
   );

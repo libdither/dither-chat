@@ -351,7 +351,18 @@ class MailAttention implements AttentionSource {
     if (!x) return null;
     const s = scoreConversation(x);
     // An alert you have not seen comes before everything (attention.ts).
-    return { id: threadId, kind: 'mail', score: s.score + (x.alerted ? ALERT_PIN : 0), needs: s.needs, reasons: s.reasons, owedSince: s.owedSince, ...(s.owed?.held ? { replyMark: 'needs' as const } : {}), at: now };
+    // Mail's chance is the owed table's alone: its turns are not in the chat model (needsreply.ts).
+    return {
+      id: threadId,
+      kind: 'mail',
+      score: s.score + (x.alerted ? ALERT_PIN : 0),
+      needs: s.needs,
+      reasons: s.reasons,
+      owedSince: s.owedSince,
+      ...(s.owed?.held ? { replyMark: 'needs' as const } : {}),
+      ...(s.needsReply !== null ? { needsReply: s.needsReply } : {}),
+      at: now,
+    };
   }
 
   /** Threads that may be listed now: the SQL side of isListed, so a year of mail is not read every few minutes. */
@@ -407,7 +418,7 @@ class MailAttention implements AttentionSource {
         }
         continue;
       }
-      if (prev && Math.abs(prev.score - v.score) < 0.5 && prev.needs === v.needs && prev.owedSince === v.owedSince && prev.replyMark === v.replyMark && prev.reasons.join('\n') === v.reasons.join('\n')) continue;
+      if (prev && Math.abs(prev.score - v.score) < 0.5 && prev.needs === v.needs && prev.owedSince === v.owedSince && prev.replyMark === v.replyMark && prev.needsReply === v.needsReply && prev.reasons.join('\n') === v.reasons.join('\n')) continue;
       this.views.set(id, v);
       items.push(v);
     }

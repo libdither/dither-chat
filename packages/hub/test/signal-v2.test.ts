@@ -69,7 +69,7 @@ describe('reading a snapshot', () => {
     const by = (ts: number) => msgs.find((m) => m.ts === ts)!;
     expect(by(T + 1000)).toMatchObject({ nativeId: `${ALICE}:${T + 1000}`, author: ALICE, body: `**hey** <@${SELF}>, look`, mentionsSelf: true, kind: 'text' });
     const reply = by(T + 2000);
-    expect(reply).toMatchObject({ author: SELF, body: 'a cat', kind: 'media', replyTo: `${ALICE}:${T + 1000}`, reactions: [{ key: '❤️', authors: [ALICE] }] });
+    expect(reply).toMatchObject({ author: SELF, body: 'a cat', kind: 'media', replyTo: `${ALICE}:${T + 1000}`, reactions: [{ key: '❤️', authors: [ALICE], at: { [ALICE]: T + 2500 } }] });
     expect(reply.attachments![0]).toMatchObject({ nativeId: made.attachmentSha, kind: 'image', mime: 'image/png', name: 'cat.png', size: PICTURE.length, width: 64, height: 48 });
     expect(readFileSync(new URL(reply.attachments![0].url))).toEqual(PICTURE);
     // An edit keeps the original's id and says when it was edited.
@@ -109,7 +109,7 @@ describe('a Molly folder over HTTP', () => {
     // Live sync already has Alice's first message, worded the same.
     store.ingest(store.account('acc_sig')!, { t: 'message', message: { nativeId: `${ALICE}:${T + 1000}`, conversation: `dm:${SELF}:${ALICE}`, author: ALICE, ts: T + 1000, body: `**hey** <@${SELF}>, look` }, live: false });
     const sup = { authorize: () => null, online: () => false } as any;
-    server = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: hubDir, webDist: hubDir, secret: 's' });
+    server = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: hubDir, webDist: hubDir, open: true, secret: 's' });
     port = server.start().port!;
     base = `http://127.0.0.1:${port}`;
   });

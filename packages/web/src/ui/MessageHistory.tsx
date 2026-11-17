@@ -1,12 +1,14 @@
 /**
- * One message's history (docs/history.md): its versions, oldest first; pins and reactions taken back, by whom; and for
- * your own, who got, read and played it. From "(edited)", the ticks on your message, or History in its menu.
+ * One message's history (docs/history.md): its versions, oldest first; pins, and reactions made and taken back, by
+ * whom and when (docs/reactions.md "When"); and for your own, who got, read and played it. From "(edited)", the ticks
+ * on your message, or History in its menu.
  */
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { fullTime } from '../format.ts';
 import { identityName, plainBody } from '../model.ts';
+import { whenTitle } from '../reactions.ts';
 import { api, db, isSelfIdentity, rev } from '../state.ts';
 import { Avatar, Modal } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -24,8 +26,30 @@ export function MessageHistoryLayer() {
   ) : null;
 }
 
-/** Whether there is anything to show beyond the message itself. */
-export const hasHistory = (m: P.MessageView) => !!(m.edits || m.events || m.receipts);
+/** Whether there is anything to show beyond the message itself: a reaction with a time counts. */
+export const hasHistory = (m: P.MessageView) => !!(m.edits || m.events || m.receipts || m.reactions.some((r) => r.at || r.seenAt));
+
+/** One line of "What happened to it". `seen`: the time is when the hub heard, not the network's own. */
+interface Happening {
+  at: number;
+  seen?: boolean;
+  actorId?: string;
+  what: 'reacted' | 'took back' | 'cleared' | 'pinned' | 'unpinned';
+  key?: string;
+}
+
+/** Pins, reactions made (those there now and those taken back), and reactions taken back, in the order they happened. */
+function happenings(h: P.MessageHistoryView): Happening[] {
+  const out: Happening[] = (h.reactions ?? []).map((r) => ({ at: r.at, seen: r.seen, actorId: r.identityId, what: 'reacted', key: r.key }));
+  for (const e of h.events) {
+    if (e.kind === 'pin' || e.kind === 'unpin') out.push({ at: e.at, actorId: e.actorId, what: e.kind === 'pin' ? 'pinned' : 'unpinned' });
+    if (e.kind !== 'unreact') continue;
+    const d = (e.data ?? {}) as Partial<P.UnreactData>;
+    if (d.added != null) out.push({ at: d.added, seen: d.addedSeen, actorId: e.actorId, what: 'reacted', key: d.key });
+    out.push({ at: e.at, seen: e.seen, actorId: e.actorId, what: d.cleared ? 'cleared' : 'took back', key: d.key });
+  }
+  return out.sort((a, b) => a.at - b.at);
+}
 
 const STATE: Record<P.ReceiptState, string> = { delivered: 'Delivered to', read: 'Read by', played: 'Played by' };
 
@@ -38,14 +62,17 @@ export function MessageHistory({ m }: { m: P.MessageView }) {
         for (const i of x.identities) if (!db.identities.has(i.id)) db.identities.set(i.id, i);
         setH(x);
       },
-      () => setH({ versions: [], events: [], receipts: [], identities: [] }),
+      () => setH({ versions: [], events: [], reactions: [], receipts: [], identities: [] }),
     );
-  }, [m.id, m.body, m.events, m.receipts?.read, m.receipts?.delivered]);
+  }, [m.id, m.body, m.events, m.reactions, m.receipts?.read, m.receipts?.delivered]);
   if (!h) return <Loading label="Loading…" />;
   const name = (id?: string) => (!id ? 'Someone' : isSelfIdentity(id) ? 'You' : (db.persons.get(db.identities.get(id)?.personId ?? '')?.name ?? identityName(id)));
   // Each person once per state, the first time.
   const by = new Map<P.ReceiptState, { identityId: string; at: number }[]>();
   for (const r of h.receipts) by.set(r.state, [...(by.get(r.state) ?? []), r]);
+  const happened = happenings(h);
+  // A custom emoji still on the message draws as itself; one taken back from it, by its name.
+  const emojiOf = (key?: string) => m.reactions.find((r) => r.key === key)?.emoji;
   return (
     <div class="msg-history">
       {h.versions.length > 1 && (
@@ -62,19 +89,22 @@ export function MessageHistory({ m }: { m: P.MessageView }) {
           ))}
         </section>
       )}
-      {h.events.length > 0 && (
+      {happened.length > 0 && (
         <section>
           <h4>What happened to it</h4>
-          {h.events.map((e) => {
-            const d = (e.data ?? {}) as { key?: string; cleared?: boolean };
+          {happened.map((e) => {
+            const glyph = <Glyph k={e.key ?? ''} emoji={emojiOf(e.key)} size={15} />;
             return (
               <div class="msg-history-event">
-                <Icon name={e.kind === 'unreact' ? 'smile' : 'pin'} size={13} />
+                <Icon name={e.what === 'pinned' || e.what === 'unpinned' ? 'pin' : 'smile'} size={13} />
                 <span>
                   <b>{name(e.actorId)}</b>{' '}
-                  {e.kind === 'pin' ? 'pinned it' : e.kind === 'unpin' ? 'unpinned it' : d.cleared ? <>had <Glyph k={d.key ?? ''} size={15} /> removed by a moderator</> : <>took back <Glyph k={d.key ?? ''} size={15} /></>}
+                  {e.what === 'pinned' ? 'pinned it' : e.what === 'unpinned' ? 'unpinned it' : e.what === 'cleared' ? <>had {glyph} removed by a moderator</> : e.what === 'reacted' ? <>reacted {glyph}</> : <>took back {glyph}</>}
                 </span>
-                <time>{fullTime(e.at)}</time>
+                <time title={e.seen ? whenTitle({ at: e.at, seen: true }) : undefined}>
+                  {e.seen ? '~' : ''}
+                  {fullTime(e.at)}
+                </time>
               </div>
             );
           })}
@@ -101,7 +131,7 @@ export function MessageHistory({ m }: { m: P.MessageView }) {
           </section>
         ) : null;
       })}
-      {h.versions.length <= 1 && !h.events.length && !h.receipts.length && <p class="edit-loading">Nothing kept about this message yet.</p>}
+      {h.versions.length <= 1 && !happened.length && !h.receipts.length && <p class="edit-loading">Nothing kept about this message yet.</p>}
     </div>
   );
 }

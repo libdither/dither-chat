@@ -7,8 +7,11 @@ The release APK is about 250 KB.
 ## Design
 
 One `Activity` with one `WebView` that loads the hub's own origin (`https://chat.example.net/`). Same origin means the
-page is exactly what a browser gets: the same service worker, storage, `Origin` checks and API, with no CORS and no
-login. The hub's address is typed on first run and kept in the app's preferences; nothing about it is built in.
+page is exactly what a browser gets: the same service worker, storage, `Origin` checks and API, with no CORS, and the
+same sign-in ([login.md](login.md)): the page signs in once and the WebView keeps its session cookie. The app's own
+requests (a reply from a notification, push registration, uploads, a notification's picture: `Hub.authorize`) carry
+that cookie and the hub's origin as their `Origin`; signed out, they get 401. The hub's address is typed on first run
+and kept in the app's preferences; nothing about it is built in.
 
 Around the WebView:
 

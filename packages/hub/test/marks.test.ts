@@ -530,7 +530,7 @@ describe('the routes', () => {
     const w = world();
     const dir = mkdtempSync(join(tmpdir(), 'dither-marks-routes-'));
     const sup = { authorize: () => null, online: () => false, command: async () => ({}) } as any;
-    const hub = new HubServer(w.store, sup, w.triage, { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's', votes: w.votes });
+    const hub = new HubServer(w.store, sup, w.triage, { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's', votes: w.votes });
     const base = `http://127.0.0.1:${hub.start().port}`;
     const call = async (method: string, path: string, body?: unknown) => {
       const r = await fetch(base + path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }) });

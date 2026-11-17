@@ -57,6 +57,8 @@ object HubFiles {
 
     private fun download(c: Context, u: Uri, name: String?, mime: String?, disposition: String?): Pair<File, String> {
         val conn = URL(u.toString()).openConnection() as HttpURLConnection
+        // The session goes only to the hub itself, never to another site's link.
+        Hub.origin(c)?.takeIf { Hub.sameOrigin(u, it) }?.let { Hub.authorize(conn, it) }
         conn.instanceFollowRedirects = false
         conn.connectTimeout = 15_000
         conn.readTimeout = 60_000

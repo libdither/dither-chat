@@ -6,7 +6,7 @@ import { emojiNow, loadEmoji, searchEmoji, SKIN_TONES, skinOf } from '../emoji.t
 import { customMarkup } from '../emojiComplete.ts';
 import { authorName } from '../model.ts';
 import { clearReactions, modOf } from '../moderate.ts';
-import { hasMine, knownReactionContext, pickerFor, quickReactions, reactionContext, reactionScope, reactorsFor, reactorsLabel, replacing, toggleReaction, type Picked } from '../reactions.ts';
+import { hasMine, knownReactionContext, pickerFor, quickReactions, reactedAt, reactionContext, reactionScope, reactionTip, reactorsFor, replacing, toggleReaction, whenText, whenTitle, type Picked } from '../reactions.ts';
 import { api, db, isSelfIdentity, prefs, rev, setPrefs } from '../state.ts';
 import { useLayer } from '../phone.ts';
 import { Avatar } from './bits.tsx';
@@ -14,6 +14,7 @@ import { Icon } from './icons.tsx';
 import { Sheet } from './Sheet.tsx';
 import { useLongPress } from './longpress.ts';
 import { Loading } from './Loader.tsx';
+import { tipProps } from './Tooltip.tsx';
 
 const isSheet = () => matchMedia('(max-width: 820px), (pointer: coarse)').matches;
 
@@ -41,7 +42,7 @@ function Pill({ m, r }: { m: P.MessageView; r: P.ReactionView }) {
       ref={ref}
       class={`reaction ${mine ? 'mine' : ''} ${r.style === 'super' ? 'super' : ''}`}
       style={superStyle as any}
-      title={`${reactorsLabel(r, authorName)}${r.style === 'super' ? ' · super reaction' : ''}${!mine && replacing(m) ? ` · joining replaces your ${keyText(replacing(m)!)}` : ''}`}
+      {...pillTip(m, r, mine)}
       aria-pressed={mine}
       onClick={() => {
         const el = ref.current;
@@ -59,6 +60,17 @@ function Pill({ m, r }: { m: P.MessageView; r: P.ReactionView }) {
       <span class="reaction-n">{compact(r.count)}</span>
     </button>
   );
+}
+
+/**
+ * A pill's tooltip, shown at once above it (Tooltip.tsx): who reacted, when where known (docs/reactions.md "When"),
+ * then what a click would do that is not obvious.
+ */
+function pillTip(m: P.MessageView, r: P.ReactionView, mine: boolean) {
+  const { text, lines } = reactionTip(r, authorName);
+  const swap = !mine ? replacing(m) : undefined;
+  const sub = [...lines, ...(r.style === 'super' ? ['Super reaction'] : []), ...(swap ? [`Joining replaces your ${keyText(swap)}`] : [])];
+  return tipProps(text, sub.join('\n'), 'top');
 }
 
 /** A reaction as words, for a title: the emoji itself, or a custom one's :name:. */
@@ -580,23 +592,34 @@ function Popover({ box, onClose, class: cls, label, children }: { box: { current
 
 // ------------------------------------------------------------------ who reacted
 
+/**
+ * One person's earlier turns with this emoji, as words: "added 2:10 PM · took back 2:12 PM". Each taken back says
+ * when it had been added, where known.
+ */
+function turns(past: P.ReactionTakenBack[]): string[] {
+  return past.flatMap((t) => [
+    ...(t.added != null ? [`added ${whenText({ at: t.added, seen: !!t.addedSeen })}`] : []),
+    `${t.cleared ? 'removed by a moderator' : 'took back'} ${whenText({ at: t.at, seen: !!t.seen })}`,
+  ]);
+}
+
 function Reactors({ m, reactionKey, style, anchor, onClose }: { m: P.MessageView; reactionKey: string; style: P.ReactionStyle; anchor: DOMRect; onClose: () => void }) {
   const r = m.reactions.find((x) => x.key === reactionKey && x.style === style);
-  const [ids, setIds] = useState<string[]>(r?.identityIds ?? []);
-  const [count, setCount] = useState(r?.count ?? 0);
-  const [loading, setLoading] = useState((r?.count ?? 0) > (r?.identityIds.length ?? 0));
+  // What the message already says draws at once; the hub's answer adds who took theirs back, and the names behind a total.
+  const [v, setV] = useState<P.MessageReactorsView>({ count: r?.count ?? 0, identityIds: r?.identityIds ?? [], at: r?.at, seenAt: r?.seenAt, takenBack: [], identities: [] });
+  const asking = (r?.count ?? 0) > (r?.identityIds.length ?? 0);
+  const [loading, setLoading] = useState(true);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!loading) return;
-    api<{ count: number; identityIds: string[]; identities: P.IdentityView[] }>(`/api/messages/${m.id}/reactors?key=${encodeURIComponent(reactionKey)}&style=${style}`)
+    api<P.MessageReactorsView>(`/api/messages/${m.id}/reactors?key=${encodeURIComponent(reactionKey)}&style=${style}`)
       .then((res) => {
         for (const i of res.identities) db.identities.set(i.id, i);
-        setIds(res.identityIds);
-        setCount(res.count);
+        setV(res);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+  const { count, identityIds: ids, takenBack } = v;
   const sheet = isSheet();
   useLayoutEffect(() => {
     const el = box.current;
@@ -606,6 +629,13 @@ function Reactors({ m, reactionKey, style, anchor, onClose }: { m: P.MessageView
     el.style.top = `${anchor.top - 8 >= h ? anchor.top - h - 6 : Math.min(innerHeight - h - 8, anchor.bottom + 6)}px`;
   });
   const unknown = count - ids.length;
+  const nameOf = (id: string) => (isSelfIdentity(id) ? 'You' : authorName(id));
+  // When each reacted (docs/reactions.md "When"): you first, then the earliest; no time means it was there before the hub saw the message.
+  const when = new Map(ids.map((id) => [id, reactedAt(v, id)]));
+  const order = [...ids].sort((a, b) => +isSelfIdentity(b) - +isSelfIdentity(a) || (when.get(a)?.at ?? -Infinity) - (when.get(b)?.at ?? -Infinity));
+  const pastOf = new Map<string, P.ReactionTakenBack[]>();
+  for (const t of takenBack) pastOf.set(t.identityId, [...(pastOf.get(t.identityId) ?? []), t]);
+  const gone = [...pastOf.keys()].filter((id) => !ids.includes(id));
   const body = (
     <>
       <h4>
@@ -614,12 +644,18 @@ function Reactors({ m, reactionKey, style, anchor, onClose }: { m: P.MessageView
         <span>{count === 1 ? '1 reaction' : `${count} reactions`}</span>
       </h4>
       <div class="reactors-list">
-        {[...ids.filter(isSelfIdentity), ...ids.filter((i) => !isSelfIdentity(i))].map((id) => {
-          const name = isSelfIdentity(id) ? 'You' : authorName(id);
+        {order.map((id) => {
+          const name = nameOf(id);
+          const w = when.get(id);
+          const past = turns(pastOf.get(id) ?? []);
           return (
             <div class="reactor">
               <Avatar id={id} name={name} url={db.identities.get(id)?.avatar} size={24} />
-              <span>{name}</span>
+              <span class="reactor-who">
+                <span>{name}</span>
+                {past.length > 0 && <small class="reactor-past">{past.join(' · ')}</small>}
+              </span>
+              {w && <time class="reactor-when" title={whenTitle(w)}>{whenText(w)}</time>}
               {/* A moderator takes someone's reaction off (docs/moderation.md). */}
               {style === 'normal' && !isSelfIdentity(id) && modOf(m)?.reactions && (
                 <button class="icon-btn small reactor-remove" title={`Remove ${name}'s reaction`} aria-label={`Remove ${name}'s reaction`} onClick={() => clearReactions(m, reactionKey, id)}>
@@ -629,8 +665,23 @@ function Reactors({ m, reactionKey, style, anchor, onClose }: { m: P.MessageView
             </div>
           );
         })}
-        {loading && <Loading inline label="Asking the network…" />}
-        {!loading && unknown > 0 && <div class="reactor-more">and {unknown} more</div>}
+        {loading && asking && <Loading inline label="Asking the network…" />}
+        {!(loading && asking) && unknown > 0 && <div class="reactor-more">and {unknown} more</div>}
+        {gone.length > 0 && <div class="reactors-sub">Taken back</div>}
+        {gone.map((id) => {
+          const name = nameOf(id);
+          const past = turns(pastOf.get(id)!);
+          return (
+            <div class="reactor gone">
+              <Avatar id={id} name={name} url={db.identities.get(id)?.avatar} size={24} />
+              <span class="reactor-who">
+                <span>{name}</span>
+                {past.length > 1 && <small class="reactor-past">{past.slice(0, -1).join(' · ')}</small>}
+              </span>
+              <span class="reactor-when">{past.at(-1)}</span>
+            </div>
+          );
+        })}
       </div>
     </>
   );

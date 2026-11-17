@@ -33,6 +33,21 @@ export function clock(ts: number): string {
   return (clockFmt ??= new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })).format(ts);
 }
 
+/** A time to the minute that still says which day, as short as it can: "3:41 PM", "Yesterday 3:41 PM", "Tue 3:41 PM", "Nov 2, 3:41 PM", "Nov 2, 2025, 3:41 PM". */
+export function stamp(ts: number, now = Date.now()): string {
+  const d = new Date(ts);
+  const n = new Date(now);
+  const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((startOf(n) - startOf(d)) / DAY);
+  const t = clock(ts);
+  if (days === 0) return t;
+  if (days === 1) return `Yesterday ${t}`;
+  if (days > 1 && days < 6) return `${(weekdayFmt ??= new Intl.DateTimeFormat(undefined, { weekday: 'short' })).format(ts)} ${t}`;
+  if (d.getFullYear() === n.getFullYear()) return `${(dayFmt ??= new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })).format(ts)}, ${t}`;
+  return `${(yearDayFmt ??= new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' })).format(ts)}, ${t}`;
+}
+let yearDayFmt: Intl.DateTimeFormat | undefined;
+
 export function fullTime(ts: number): string {
   return (fullFmt ??= new Intl.DateTimeFormat(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })).format(ts);
 }

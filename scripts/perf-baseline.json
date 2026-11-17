@@ -543,22 +543,6 @@
    "v": 161,
    "kind": "ms"
   },
-  "p4x.catchUp.nodes": {
-   "v": 2559,
-   "kind": "count"
-  },
-  "p4x.catchUp.renders": {
-   "v": 1,
-   "kind": "tally"
-  },
-  "p4x.catchUp.longest": {
-   "v": 113,
-   "kind": "ms"
-  },
-  "p4x.catchUp.busy": {
-   "v": 541,
-   "kind": "ms"
-  },
   "p4x.search.nodes": {
    "v": 3178,
    "kind": "count"
