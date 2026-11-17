@@ -93,6 +93,9 @@ an HMAC of the path with the hub's secret, good for 5 minutes and for that path 
 A 401 with `login` (from the bootstrap, any API call, or `/api/login` after the live socket was refused) puts the
 sign-in screen in place of the app (`packages/web/src/login.ts`, `ui/Login.tsx`). It is a plain form a password manager
 fills (`username`, `current-password`); signing in reloads the page. With no password set it says how to set one.
+The screen removes `index.html`'s start logo (`#boot-static`, a full-screen layer the app's own first render takes
+over), which would otherwise sit on top of the form and take every tap. `scripts/verify-login.ts` (CI's `boot` job)
+signs in with real clicks and typing on a cold start.
 
 What the device kept of the hub is forgotten on a 401 and on signing out: the snapshot and kept pages (IndexedDB) and
 the kept pictures (the service worker's `dither-media-*` cache). The service worker never keeps the hub's other answers
