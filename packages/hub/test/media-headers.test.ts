@@ -94,6 +94,8 @@ describe('the media route', () => {
     'mxc://hs/ogg': { mime: 'audio/ogg', body: 'ogg' },
     'mxc://hs/txt': { mime: 'text/plain; charset=utf-8', body: '<script>alert(1)</script>' },
     'mxc://hs/odd': { mime: 'text/html\r\nx-evil: 1', body: 'x' },
+    // A file in the account's own folder, outside this hub's data: an account dither-accounts made keeps its there.
+    'file:///elsewhere/accounts/acc_x/signal-cli/attachments/sent-1-0': { mime: 'image/webp', body: 'webp' },
   };
   let hub: HubServer;
   let acc: string;
@@ -201,6 +203,22 @@ describe('the media route', () => {
     expect(sent.headers.get('content-type')).toBe('image/png');
     expect(sent.headers.get('content-disposition')).toBeNull();
     await Promise.all([pic, other, sent].map((r) => r.arrayBuffer()));
+  });
+
+  test("a file outside this hub's data is the account's to give, and nobody's without an account", async () => {
+    const raw = 'file:///elsewhere/accounts/acc_x/signal-cli/attachments/sent-1-0';
+    const r = await get(raw, acc);
+    expect(r.status).toBe(200);
+    guarded(r);
+    expect(r.headers.get('content-type')).toBe('image/webp');
+    expect(await r.text()).toBe('webp');
+    const none = await get('file:///elsewhere/other.png', null);
+    expect(none.status).toBe(404);
+    await none.text();
+    // Not under the data dir by a path that only starts like it.
+    const sibling = await get(`file://${join(dir, 'data')}-not/pic.png`, null);
+    expect(sibling.status).toBe(404);
+    await sibling.text();
   });
 
   test('a device keeps media for a year without asking again, wherever the bytes came from; a refusal is not kept', async () => {

@@ -238,7 +238,8 @@ the backup's the same way: a fact with `gone: { how, at }` goes in as a kept del
 
 ### Attachments
 
-Imported files go under the hub's data dir, because `server.ts` serves `file://` URLs only under `dataDir`:
+Imported files go under the hub's data dir, because `server.ts` reads `file://` URLs itself only under `dataDir` (one
+elsewhere is asked of its account, which gives only files of its own):
 `<dataDir>/imports/signal/<backup-id>/<sha256>.<ext>`, mode 0600, deduplicated by content hash. They are written
 during the decode pass, and only for messages that are actually imported. Skip view-once media (it was meant to
 be gone) and anything `keepmsg` that wasn't opted in. A typical backup is mostly attachments, so the importer
