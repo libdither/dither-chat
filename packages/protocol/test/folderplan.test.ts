@@ -186,6 +186,17 @@ describe('the suggested layout', () => {
     expect(plan.suggest.compilers?.length).toBeGreaterThan(0);
   });
 
+  test('each loose server ranks every folder of its account, the suggestions first', () => {
+    const plan = planFolders({ ...input, folders: TRUTH.filter((f) => f.id !== 'Other').map((f) => ({ ...f, items: f.items.filter((i) => i.id !== 'compilers') })) });
+    for (const [id, near] of Object.entries(plan.near)) {
+      // Nearest first, and the suggestions are its head: the ones with some likeness.
+      expect(near.map((x) => x.score)).toEqual([...near.map((x) => x.score)].sort((a, b) => b - a));
+      expect(near.slice(0, plan.suggest[id]?.length ?? 0)).toEqual(plan.suggest[id] ?? []);
+      expect(new Set(near.map((x) => x.folder)).size).toBe(near.length);
+    }
+    expect(plan.near.compilers?.length).toBeGreaterThan(plan.suggest.compilers!.length);
+  });
+
   test('a new server: the word rule or the suggestions put it back', () => {
     const r = leaveOneOut(input, TRUTH);
     // Measured 2026-11-13: top-1 and top-2 both 0.68 here, all of it the word rule: names and a few channel names share

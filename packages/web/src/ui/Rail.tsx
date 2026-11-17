@@ -55,7 +55,8 @@ function SpaceIcon({ space }: { space: P.SpaceView }) {
   );
 }
 
-function FolderIcon({ folder }: { folder: P.FolderView }) {
+/** A folder's first places in a 2×2 grid; `small` is the one beside a list row (Sidebar.tsx). */
+export function FolderIcon({ folder, small }: { folder: P.FolderView; small?: boolean }) {
   // A folder of folders shows its folders' first places; its own come after.
   const minis = folderLeaves(folder).slice(0, 4).map((it) => {
     if (it.kind === 'space') {
@@ -71,7 +72,7 @@ function FolderIcon({ folder }: { folder: P.FolderView }) {
   });
   const nested = folder.items.some((it) => it.kind === 'folder');
   return (
-    <span class={`folder-icon ${nested ? 'nested' : ''}`} style={{ '--folder': folder.color ?? '#8b93a7' } as any}>
+    <span class={`folder-icon ${nested ? 'nested' : ''} ${small ? 'small' : ''}`} style={{ '--folder': folder.color ?? '#8b93a7' } as any}>
       <span class="folder-grid">
         {minis.map((m) =>
           m ? (
@@ -188,7 +189,7 @@ function RailFolder({ folder: f, route: r, parent }: { folder: P.FolderView; rou
   const inside = routeIn(f, r);
   const key = `folder:${f.id}`;
   const items = open ? arrangedFolderItems(f) : [];
-  const { shown, quiet } = shelve(items, (it) => `${it.kind}:${it.id}`);
+  const { shown, quiet, dim } = shelve(items, (it) => `${it.kind}:${it.id}`);
   const shelfOpen = openShelves.value.has(key);
   const item = (it: P.FolderView['items'][number]) => {
     if (it.kind === 'folder') {
@@ -198,7 +199,7 @@ function RailFolder({ folder: f, route: r, parent }: { folder: P.FolderView; rou
     if (it.kind === 'person') return <RailPerson id={it.id} route={r} folder={f.id} />;
     if (it.kind === 'space') {
       const s = db.spaces.get(it.id);
-      return s ? <RailSpace space={s} route={r} folder={f.id} quiet={quiet.includes(it)} /> : null;
+      return s ? <RailSpace space={s} route={r} folder={f.id} quiet={dim.has(it)} /> : null;
     }
     const c = db.conversations.get(it.id);
     return c ? <RailConv conv={c} route={r} folder={f.id} /> : null;
@@ -240,7 +241,7 @@ function QuietShelf({ list, n, open }: { list: string; n: number; open: boolean 
       track={open ? 'quiet shelf (close)' : 'quiet shelf (open)'}
       onClick={() => toggleShelf(list)}
     >
-      <span class="rail-shelf-face">{open ? <Icon name="chevronUp" size={16} /> : <span class="rail-shelf-n">{n}</span>}</span>
+      <span class="rail-shelf-face">{open ? <Icon name="chevronUp" size={16} /> : <><Icon name="moon" size={12} />{n}</>}</span>
     </RailItem>
   );
 }
