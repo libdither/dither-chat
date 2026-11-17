@@ -66,6 +66,7 @@ import { mailPeople } from './mail/people.ts';
 import { Adding, profileLinksOf, requestHeld, requestViews } from './add.ts';
 import { feedRefusalFor, isFeed } from './feed.ts';
 import { Posts, PostsError } from './posts.ts';
+import { Timelines } from './timelines.ts';
 import { TranslateError, Translator } from './translate.ts';
 import { calendarOff, type CalendarLink } from './calendar.ts';
 import { markCalendarAdded } from './calendar-account.ts';
@@ -320,6 +321,7 @@ export class HubServer {
   readonly people: People;
   /** Public posts read and logged as messages (posts.ts, docs/feed.md "Threads"). */
   readonly posts: Posts;
+  readonly timelines: Timelines;
   /** Translating posts and messages: the network's own, or a translation server (translate.ts). */
   readonly translator: Translator;
   /** The account's own self, block, ignore and notes (accountself.ts). */
@@ -394,6 +396,7 @@ export class HubServer {
     });
     this.groups = new Groups({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line) });
     this.posts = new Posts({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), changed: () => this.flush() });
+    this.timelines = new Timelines({ store, posts: this.posts, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), files: (ids) => this.uploads.get(ids), changed: () => this.flush() });
     this.translator = new Translator({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     this.self = new AccountSelf({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), quietHours: () => store.quietHours() });
@@ -566,6 +569,7 @@ export class HubServer {
     this.store.journal.prune();
     this.pruneTimer = setInterval(() => this.store.journal.prune(), 3_600_000);
     this.sendExtras.later.start();
+    this.timelines.start();
     return this.server;
   }
 
@@ -573,6 +577,7 @@ export class HubServer {
     clearInterval(this.flushTimer);
     clearInterval(this.pruneTimer);
     this.sendExtras.later.stop();
+    this.timelines.stop();
     this.importer.stop();
     this.gapfill.stopAll();
     this.jobs.stop();
@@ -1331,9 +1336,11 @@ export class HubServer {
     if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/act$/)) && method === 'POST') {
       const network = m[1] as P.Network;
       if (!(network in NETWORK_META)) return bad('no such network', 404);
-      const b = await body<{ act?: unknown }>();
+      const b = await body<{ act?: unknown; account?: unknown }>();
       try {
-        const r = await this.posts.act(network, m[2], String(b.act ?? '') as P.PostAct);
+        const r = await this.posts.act(network, m[2], String(b.act ?? '') as P.PostAct, typeof b.account === 'string' && b.account ? b.account : undefined);
+        // The Feed page's timeline of that account follows what it did.
+        this.timelines.noteAct(r.accountId, network, m[2], r.viewer);
         this.flush();
         return ok(r);
       } catch (e) {
@@ -1343,11 +1350,54 @@ export class HubServer {
     if ((m = path.match(/^\/api\/posts\/([a-z]+)\/publish$/)) && method === 'POST') {
       const network = m[1] as P.Network;
       if (!(network in NETWORK_META)) return bad('no such network', 404);
-      const b = await body<{ text?: unknown; replyTo?: unknown; quote?: unknown; key?: unknown }>();
+      const b = await body<{ text?: unknown; replyTo?: unknown; quote?: unknown; key?: unknown; account?: unknown }>();
       try {
-        const v = await this.posts.publish(network, b);
+        const v = await this.posts.publish(network, { text: b.text, replyTo: b.replyTo, quote: b.quote, key: b.key, account: b.account });
         this.flush();
         return ok(v);
+      } catch (e) {
+        return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
+      }
+    }
+    // Delete a post of yours (posts.ts unpublish).
+    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/delete$/)) && method === 'POST') {
+      const network = m[1] as P.Network;
+      if (!(network in NETWORK_META)) return bad('no such network', 404);
+      const b = await body<{ account?: unknown }>();
+      try {
+        const r = await this.posts.unpublish(network, m[2], typeof b.account === 'string' && b.account ? b.account : undefined);
+        this.flush();
+        return ok(r);
+      } catch (e) {
+        return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
+      }
+    }
+    // The Feed page (timelines.ts, docs/feed.md "The Feed page"): sources, timelines, posting to several accounts, drafts.
+    if (path.startsWith('/api/feed/')) {
+      try {
+        if (path === '/api/feed/sources' && method === 'GET') return ok(this.timelines.sources());
+        if (path === '/api/feed/entries' && method === 'GET') {
+          const before = url.searchParams.get('before');
+          return ok(this.timelines.entries(url.searchParams.get('source') ?? 'home', before !== null && before !== '' ? Number(before) : undefined));
+        }
+        if (path === '/api/feed/read' && method === 'POST') {
+          const b = await body<{ source?: unknown; older?: unknown }>();
+          const v = await this.timelines.read(typeof b.source === 'string' ? b.source : 'home', b.older === true);
+          this.flush();
+          return ok(v);
+        }
+        if (path === '/api/feed/publish' && method === 'POST') {
+          const v = await this.timelines.publish(await body<unknown>());
+          this.flush();
+          return ok(v);
+        }
+        if (path === '/api/feed/drafts' && method === 'GET') return ok({ drafts: this.timelines.drafts() });
+        const dm = path.match(/^\/api\/feed\/drafts\/([\w-]{6,64})$/);
+        if (dm && method === 'PUT') return ok(this.timelines.saveDraft(dm[1], await body<unknown>()));
+        if (dm && method === 'DELETE') {
+          this.timelines.dropDraft(dm[1]);
+          return ok({ ok: true });
+        }
       } catch (e) {
         return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
       }

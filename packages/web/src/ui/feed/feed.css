@@ -1361,3 +1361,407 @@
   align-items: center;
   justify-content: center;
 }
+
+/* A post's own extras (Post.tsx Row, docs/feed.md "One card for every network"): where it was posted, a title, and a
+   content warning that keeps the words folded until opened. */
+.post-place a {
+  color: inherit;
+  font-weight: 600;
+}
+.post-title {
+  margin: 2px 0;
+  font-size: 15.5px;
+  line-height: 1.3;
+}
+.post-warning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 2px 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-hover);
+  text-align: left;
+  font-size: 13px;
+}
+.post-warning-text {
+  flex: 1;
+}
+.post-warning-btn {
+  color: var(--accent);
+  font-weight: 600;
+}
+.pa-menu a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  color: inherit;
+  text-decoration: none;
+  font-weight: 600;
+}
+.pa-menu a:hover {
+  background: var(--bg-hover);
+}
+.pa-menu .danger {
+  color: var(--danger);
+}
+.pa-more {
+  margin-left: auto;
+}
+
+/* The Feed page (FeedPage.tsx, docs/feed.md "The Feed page"): its sources on the left, the posts with the composer
+   on top, and a post's thread beside them on a wide screen (in their place on a narrow one). */
+.feed-srcs {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 8px 16px;
+}
+.feed-src {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 14px;
+  text-align: left;
+}
+.feed-src:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.feed-src.active {
+  background: var(--bg-active, var(--bg-hover));
+  color: var(--text);
+  font-weight: 600;
+}
+.feed-src-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.feed-src-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.feed-src-count {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.feed-src-acc {
+  margin-top: 12px;
+}
+.feed-src-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 2px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-faint);
+}
+.feed-src-net {
+  font-weight: 400;
+}
+.feed-src-off {
+  margin-left: auto;
+  font-weight: 400;
+  color: var(--danger);
+}
+.feed-page {
+  display: flex;
+  flex-direction: row;
+  min-width: 0;
+}
+.feed-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.feed-thread {
+  flex: 0 0 min(480px, 45%);
+  min-width: 0;
+  display: flex;
+  border-left: 1px solid var(--border);
+}
+.feed-thread > .pane {
+  flex: 1;
+  min-width: 0;
+}
+.feed-strip {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 6px 8px;
+  scrollbar-width: none;
+}
+.feed-chip {
+  flex: none;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.feed-chip.on {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+  color: var(--text);
+  font-weight: 600;
+}
+.feed-entry {
+  border-bottom: 1px solid var(--border);
+  padding: 6px 0 2px;
+}
+.feed-entry .thread-post {
+  padding-bottom: 6px;
+}
+.feed-reason,
+.feed-via {
+  margin-right: 8px;
+}
+.feed-copies {
+  margin: 0 0 8px 46px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.feed-copies a {
+  color: var(--link);
+}
+.feed-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 6px 0;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.feed-note.error {
+  color: var(--danger);
+}
+.feed-end {
+  margin: 16px 0;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.feed-composer {
+  margin: 8px 0 12px;
+}
+.feed-compose-closed {
+  margin: 8px 0 12px;
+}
+.feed-as {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.feed-as-label {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.feed-as-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 3px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.feed-as-chip.on {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+  color: var(--text);
+  font-weight: 600;
+}
+.feed-as-chip.off {
+  opacity: 0.55;
+}
+.feed-as-chip:disabled {
+  opacity: 0.4;
+}
+.feed-composer .compose-text {
+  width: 100%;
+  min-height: 52px;
+  resize: none;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.4;
+  outline: none;
+}
+.feed-own {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+  border-top: 1px solid var(--border);
+}
+.feed-own-who {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-faint);
+}
+.feed-pics {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.feed-pic {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  margin: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-hover);
+}
+.feed-pic img,
+.feed-pic video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.feed-pic.up img,
+.feed-pic.up video {
+  opacity: 0.5;
+}
+.feed-pic.bad {
+  outline: 2px solid var(--danger);
+}
+.feed-pic-x {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.65);
+  color: #fff;
+}
+.feed-pic-up {
+  position: absolute;
+  inset: auto 0 4px;
+  text-align: center;
+  font-size: 11px;
+  color: #fff;
+  text-shadow: 0 1px 2px #000;
+}
+.feed-sched {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.feed-sched input {
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+.feed-results {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.feed-result {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  font-size: 12.5px;
+}
+.feed-result.bad {
+  color: var(--danger);
+}
+.feed-foot {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.feed-gate {
+  max-width: 190px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12.5px;
+}
+.feed-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.feed-count-who {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.feed-draft {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.feed-draft.failed {
+  border-left: 3px solid var(--danger);
+  padding-left: 10px;
+}
+.feed-draft-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.feed-draft-when {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.feed-draft-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.feed-draft-foot {
+  display: flex;
+  gap: 6px;
+}
+@media (max-width: 1100px) {
+  .feed-page.with-post .feed-main {
+    display: none;
+  }
+  .feed-thread {
+    flex: 1;
+    border-left: 0;
+  }
+}

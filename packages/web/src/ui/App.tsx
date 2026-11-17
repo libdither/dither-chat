@@ -49,7 +49,7 @@ import { NoticesPaneLazy } from './Notices.tsx';
 import { CalendarPane } from './calendar/CalendarPane.tsx';
 import { calendarLink, calendarOn } from '../plans.ts';
 import { countKey } from '../clicklog.ts';
-import { ThreadLazy } from './feed/lazy.tsx';
+import { FeedPaneLazy, FeedSidebarLazy, ThreadLazy } from './feed/lazy.tsx';
 import { isPostKey } from '../feed.ts';
 
 /** A conversation's details panel: the person's, for a DM of someone reached by several routes (their chat's page). */
@@ -105,6 +105,8 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
       return { pane: <NoticesPaneLazy focus={r.notice} onBack={back} /> };
     case 'calendar':
       return { pane: <CalendarPane at={r.at} /> };
+    case 'feed':
+      return { pane: <FeedPaneLazy source={r.source} post={r.post} onBack={back} /> };
   }
 }
 
@@ -146,6 +148,8 @@ function sidebarFor(r: Route, onAdd: () => void): ComponentChildren {
       return <InboxSidebar />;
     case 'calendar':
       return null;
+    case 'feed':
+      return <FeedSidebarLazy source={r.source} />;
   }
 }
 
@@ -234,6 +238,18 @@ effect(() => {
   });
 });
 
+// A network's notifications open in the Feed now (docs/feed.md "The Feed page"): an old link, a notification's or a
+// search hit's, to the notifications conversation goes to its account's Activity there.
+effect(() => {
+  const r = route.value;
+  rev.value;
+  if (r.view !== 'inbox' || !r.conv) return;
+  const c = untracked(() => db.conversations.get(r.conv!));
+  if (c?.variant !== 'feed') return;
+  const acc = c.vantages[0]?.accountId;
+  untracked(() => go({ view: 'feed', source: acc ? `${acc}:activity` : 'activity' }, true));
+});
+
 /** Back from page `r`, by a swipe or its back button: to its list, or off the page it was opened over (pages.ts). */
 function leave(r: Route) {
   const way = wayBack(r, previousRoute(), places);
@@ -241,8 +257,11 @@ function leave(r: Route) {
   else go(way.to, true);
 }
 
-type Tab = 'home' | 'foryou' | 'search' | 'calendar' | 'you';
-const tabOf = (r: Route): Tab => (r.view === 'foryou' || r.view === 'model' ? 'foryou' : r.view === 'search' ? 'search' : r.view === 'calendar' ? 'calendar' : r.view === 'settings' || r.view === 'accounts' ? 'you' : 'home');
+type Tab = 'home' | 'foryou' | 'feed' | 'search' | 'calendar' | 'you';
+const tabOf = (r: Route): Tab =>
+  r.view === 'foryou' || r.view === 'model' ? 'foryou' : r.view === 'feed' ? 'feed' : r.view === 'search' ? 'search' : r.view === 'calendar' ? 'calendar' : r.view === 'settings' || r.view === 'accounts' ? 'you' : 'home';
+/** The Feed's tab shows where it was left: its source (docs/feed.md "The Feed page"). */
+let lastFeed: Route = { view: 'feed' };
 
 /** The last page and the last list on the Home tab, which a phone keeps while you look elsewhere. */
 let lastDetail: Route | null = null;
@@ -253,12 +272,15 @@ function TabBar({ r }: { r: Route }) {
   // The calendar's tab comes and goes with its account (plans.ts).
   calendarLink.value;
   const tab = tabOf(r);
+  if (r.view === 'feed') lastFeed = r.post ? { view: 'feed', ...(r.source ? { source: r.source } : {}) } : r;
   const all = totalUnread().badge;
   const attention = [...db.accounts.values()].some((a) => a.attention);
   const tabs: { id: Tab; label: string; icon: string; to: () => Route; badge?: number; dot?: boolean }[] = [
     { id: 'home', label: 'Home', icon: 'home', to: () => lastHome, badge: all },
     // No badge: nothing in it is urgent. What needs you is on Home (docs/foryou.md).
     { id: 'foryou', label: 'For you', icon: 'sparkles', to: () => ({ view: 'foryou' }) },
+    // Once an account has posts (X): what your networks posted, and what came of yours.
+    ...(feedOn() ? [{ id: 'feed' as const, label: 'Feed', icon: 'rss', to: () => lastFeed, dot: feedSaid() > 0 }] : []),
     { id: 'search', label: 'Search', icon: 'search', to: () => ({ view: 'search', q: '' }) },
     // A hub with dither-calendar beside it (docs/calendar.md).
     ...(calendarOn ? [{ id: 'calendar' as const, label: 'Calendar', icon: 'calendar', to: (): Route => ({ view: 'calendar' }) }] : []),
@@ -279,6 +301,11 @@ function TabBar({ r }: { r: Route }) {
     </nav>
   );
 }
+
+/** Whether the Feed is offered: an account with posts (X), or its notifications already held. */
+const feedOn = () => [...db.accounts.values()].some((a) => a.network === 'x') || [...db.conversations.values()].some((c) => c.variant === 'feed');
+/** Answers, quotes and mentions not looked at, across the notifications (never likes). */
+const feedSaid = () => [...db.conversations.values()].filter((c) => c.variant === 'feed').reduce((n, c) => n + c.vantages.reduce((m, v) => m + (v.mentions ?? 0), 0), 0);
 
 /** The installed app's icon shows what wants you, where the platform has badges. */
 function AppBadge() {

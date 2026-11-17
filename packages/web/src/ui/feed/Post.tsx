@@ -168,6 +168,20 @@ export function QuotedIn({ p, kit, network }: { p: P.PostFact; kit: Kit; network
   );
 }
 
+/** A post behind its content warning (Mastodon, Misskey): the warning, and the words and pictures once opened. */
+function Folded({ warning, kit, children }: { warning?: string; kit: Kit; children: ComponentChildren }) {
+  const [open, setOpen] = useState(false);
+  if (!warning) return <>{children}</>;
+  return (
+    <>
+      <button class="post-warning" aria-expanded={open} onClick={(e) => (e.stopPropagation(), setOpen(!open))}>
+        <kit.Icon name="alert" size={13} /> <span class="post-warning-text">{warning}</span> <span class="post-warning-btn">{open ? 'Hide' : 'Show'}</span>
+      </button>
+      {open && children}
+    </>
+  );
+}
+
 /** Someone's name and handle, opening their profile. */
 export function Who({ id, kit }: { id: string | null; kit: Kit }) {
   const name = kit.name(id);
@@ -222,8 +236,23 @@ export function Row({ p, kit, network, line, focal, size = 36, above, tag, hideQ
           </span>
           {tag && <span class={`post-tag ${tag === 'new' ? 'new' : ''}`}>{tag}</span>}
         </div>
-        <Text p={shown} kit={kit} network={network} cls="post-text" />
-        <Pics media={shown.media} />
+        {shown.place && (
+          <span class="post-mark post-place">
+            in{' '}
+            {shown.place.url ? (
+              <a href={shown.place.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+                {shown.place.name}
+              </a>
+            ) : (
+              shown.place.name
+            )}
+          </span>
+        )}
+        {shown.title && <h3 class="post-title">{shown.title}</h3>}
+        <Folded warning={shown.warning} kit={kit}>
+          <Text p={shown} kit={kit} network={network} cls="post-text" />
+          <Pics media={shown.media} />
+        </Folded>
         {shown.quoteOf && shown.quoteOf.id !== hideQuote && <QuotedIn p={shown.quoteOf} kit={kit} network={network} />}
         {below ?? <Counts p={shown} kit={kit} />}
       </div>

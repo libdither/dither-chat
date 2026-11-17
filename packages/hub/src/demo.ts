@@ -19,7 +19,7 @@ import type { AccountRow, Store } from './store.ts';
 import { DEMO_SELF_CAPS, DemoSelf } from './demoself.ts';
 import type { InprocAdapter } from './supervisor.ts';
 import { DEMO_CALL_CAPS, demoCallRoom } from './democalls.ts';
-import { DEMO_X_ACCOUNT, DemoX } from './demo-x.ts';
+import { DEMO_X2_ACCOUNT, DEMO_X_ACCOUNT, DemoX } from './demo-x.ts';
 import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
 import { DEMO_SERVER_CAPS, DemoServers } from './demoservers.ts';
@@ -3265,7 +3265,7 @@ class DemoAdapter implements InprocAdapter {
 
 export function demoFactory(acc: AccountRow, dir: string): InprocAdapter | null {
   if (acc.adapter !== 'demo') return null;
-  if (acc.id === DEMO_X_ACCOUNT.id) return new DemoX(acc, dir);
+  if (acc.id === DEMO_X_ACCOUNT.id || acc.id === DEMO_X2_ACCOUNT.id) return new DemoX(acc, dir);
   const key = DEMO_ACCOUNTS.find((d) => d.id === acc.id)?.key;
   return key ? new DemoAdapter(key, acc, dir) : null;
 }
@@ -3277,7 +3277,7 @@ export function createDemoAccounts(store: Store, o: { x?: boolean } = {}): Accou
   for (const [c, f] of FIRST_CONVS) c.fact = f;
   for (const [x, f] of FIRST_SPACES) x.fact = f;
   const epoch = Date.now();
-  return [...DEMO_ACCOUNTS, ...(o.x === false ? [] : [DEMO_X_ACCOUNT])].map((d) => store.createAccount({ id: d.id, network: d.network, label: d.label, color: d.color, adapter: 'demo', demo: true, config: { epoch } }));
+  return [...DEMO_ACCOUNTS, ...(o.x === false ? [] : [DEMO_X_ACCOUNT, DEMO_X2_ACCOUNT])].map((d) => store.createAccount({ id: d.id, network: d.network, label: d.label, color: d.color, adapter: 'demo', demo: true, config: { epoch } }));
 }
 
 /** Hub-side organisation for the demo: merged people, folders, rules. Applied once. */

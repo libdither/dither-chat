@@ -363,8 +363,9 @@ export function ThreadView({ src, kit: base, onBack }: { src: Src; kit: Kit; onB
   const kit: Kit = useMemo(() => ({ ...base, openPost: (n: P.Network, id: string) => (noteLeaving(id), base.openPost(n, id)) }), [base, t, extra, done, folded, mine, acted, label]);
   const onLink = (e: MouseEvent) => {
     if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-    const href = (e.target as Element | null)?.closest?.('a[href^="#/inbox/c/pst_"]')?.getAttribute('href');
-    const to = href ? base.feed.parsePostKey(href.slice('#/inbox/c/'.length)) : null;
+    const href = (e.target as Element | null)?.closest?.('a[href*="pst_"]')?.getAttribute('href');
+    const at = href?.match(/(?:\/c\/|\/p\/)(pst_[^/?#]+)/)?.[1];
+    const to = at ? base.feed.parsePostKey(decodeURIComponent(at)) : null;
     if (to && 'post' in to) noteLeaving(to.post);
   };
   const back = parent ? () => base.backToPost(parent.network, parent.post) : onBack;
@@ -376,6 +377,7 @@ export function ThreadView({ src, kit: base, onBack }: { src: Src; kit: Kit; onB
   const answer: AnswerCtx = {
     kit,
     network,
+    ...(kit.account ? { account: kit.account } : {}),
     onReply: (p) => setAnswering({ mode: 'reply', post: p }),
     onQuote: (p) => setAnswering({ mode: 'quote', post: p }),
     acted,

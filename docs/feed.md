@@ -1,15 +1,18 @@
 # The feed: a network's notifications about you
 
 X tells you who liked, reposted, replied to or quoted your posts, mentioned you and followed you. dither-chat shows
-that as **a thread of its own, like Requests**: a row at the top of the inbox and a page of cards. Everyone in it
-becomes a person on the hub with their profile logged, and an X profile shows the person's recent posts.
+that on **the Feed page** (the rail's Feed button), as its Activity, apart from conversations: a page of cards, one
+per post of yours. Everyone in it becomes a person on the hub with their profile logged, and an X profile shows the
+person's recent posts. The same page reads your accounts' home timelines and posts as several accounts at once.
 
 Only X has a feed so far. The shapes are not X's own, so another network's notifications could arrive the same way.
 
 Code: `packages/protocol/src/feed.ts` (the shapes), `packages/hub/src/feed.ts` (what makes a feed, its refusals, its
 messages' `feed` for the page), `people.ts` (`keepAbout`: unasked profiles), `triage.ts` (its notifications),
-`demo-x.ts` (the demo's X account); `packages/web/src/feed.ts` (units by post, the row's words, pure), `ui/FeedRow.tsx`
-(the row), `ui/feed/` (the page, threads and a profile's posts, a lazy chunk; `Post.tsx` draws a post). The X extractor is in dither-accounts.
+`timelines.ts` (home timelines, posting to several accounts, drafts), `demo-x.ts` (the demo's two X accounts);
+`packages/web/src/feed.ts` (units by post, pure), `ui/feed/` (the Feed page, threads and a profile's posts, a lazy
+chunk; `FeedPage.tsx` the page, `Units.tsx` the notification cards, `Post.tsx` a post). The X extractor is in
+dither-accounts.
 
 ## What the network sends
 
@@ -83,22 +86,80 @@ that does well they come by the hundred. So likes are silent, and a reply is at 
 alert. Muting the feed (or the account, or X) silences replies too. List only changes nothing, since it is that
 already.
 
-## The inbox row
+## The Feed page
 
-Under Requests, one row per feed, while it has something unread or something from the last day (`feedRow`, RECENT):
+Posts live on a page of their own, opened by the rail's **Feed** button (on a phone, the Feed tab), shown once an
+account has posts (X) or notifications. The inbox has no row for them any more: a link to a notifications
+conversation (`#/inbox/c/<feed>`, an old notification's) opens that account's Activity here.
 
-- the network's badge and "X notifications", with how many are new (unread on the hub) in an accent count;
-- up to four faces of who did the new things, newest first;
-- what the newest card says, "Cam replied to your post, and 2 more"; before the feed's page is held, the last message;
-- when the newest came.
+**Sources**, on the left (on a phone, a row of chips over the page):
 
-Its words come from the feed's newest page, fetched as a glance (what the hub stored, without asking X) when the row
-shows with something unread. It counts on no badge. Opening it is the feed's page (`#/inbox/c/<feed>`). On a
-desktop that is the main pane beside the inbox, and on a phone a full-screen page with Back.
+| Source | Route | What it shows |
+| --- | --- | --- |
+| Home | `#/feed/home` | every account's Following, merged, newest first; a post two accounts follow once, "via" both |
+| Activity | `#/feed/activity` | every account's notifications, by post ([The feed's page](#the-feeds-page)) |
+| Your posts | `#/feed/mine` | what your accounts posted, newest first; posts made in one press as one entry with "Also posted as" |
+| Drafts | `#/feed/drafts` | posts kept for later and scheduled ones, with when and as whom |
+| an account's Following | `#/feed/<account>:following` | its own Following, newest first |
+| an account's For you | `#/feed/<account>:foryou` | the network's own picks, in its order, each with its reason ("Alice Chen liked", "Popular in Rust") |
+| an account's Activity, Posts | `#/feed/<account>:activity`, `:mine` | that account's alone |
+
+A post opens its thread ([Threads](#threads)) beside the list on a wide screen and in its place on a narrow one
+(`#/feed/<source>/p/<post key>`); Back closes it.
+
+**Reading.** A timeline is read only when it is looked at: opening a source shows what the hub holds at once, then
+asks the networks when it was not read in the last minute (as a person opening their Home tab would), and **Read
+again** in the header asks now. Scrolling past the end brings the hub's older entries, then the network's next page
+(its Bottom cursor). Nothing is marked seen on the network. Each post read is logged as a message in the account's
+quiet posts conversation, as a thread's are; `feed_item` keeps which timeline showed it, where, and why.
+
+**Cards.** A post as a thread draws it: who, when, the words, pictures, the post it quotes, and its bar (reply,
+repost or quote, like, views). Over it, why it is there (For you's reason) and, in Home with several accounts, which
+of them it came through. A conversation X shows with it (a reply and the post above) is joined by a line. **Likes,
+reposts and replies go as the account whose timeline showed it**: a post only your work account follows is liked
+as that account. A post of yours has **⋯ → Delete…**, asked again ("Delete it from X"), then gone from the network
+and from every source; when it was posted to several accounts, the next copy takes its place.
+
+**The composer**, on top of Home, Your posts and an account's own sources (on a phone, one line until tapped):
+
+- **Post as**: a chip per account that can post; one or several at once. It starts on the accounts last posted as
+  (on an account's own source, that account). "Post to 2" says how many.
+- One text for all of them, or **Write each apart**: a box per account, each counted against its network.
+- The counter as X counts ([The composer, as X counts](#the-composer-as-x-counts)). **Too long for one post**, it
+  posts as a thread (`splitThread`: paragraphs kept whole, short ones sharing a post, a long one cut between
+  sentences), saying "Posts as a thread: 3 posts on @you", or **Keep it one post**.
+- **Who can reply** (X: everyone, accounts you follow, only accounts you mention, verified accounts), set on the
+  first post.
+- **Pictures or a video** (X: four pictures or one video), sent to the hub as they are added, a thumbnail each.
+- **Save** keeps it in Drafts; the clock **schedules** it (a date and time), and the hub posts it then, each account
+  once. A scheduled post whose account is not connected waits, and after 30 minutes is held in Drafts as failed,
+  saying why. Pictures are not kept with drafts yet.
+- **Post**: every account at once. One that fails says why under the box, with **Post again where it failed**
+  (only those); "it may have posted" when no answer came. Each press has a key: pressed twice, posted once.
+
+**Hub.** `GET /api/feed/sources` (accounts and what each can do: `home`, `publish`, `postMedia`, `unpublish`, its
+notifications conversation; the drafts count); `GET /api/feed/entries?source=…[&before=…]` (what the hub holds);
+`POST /api/feed/read { source, older? }` (ask the networks, then the same); `POST /api/feed/publish { key,
+destinations: [{ accountId, text, parts? }], media?, replies? }`; `POST /api/posts/:network/:post/delete { account? }`;
+`GET /api/feed/drafts`, `PUT|DELETE /api/feed/drafts/:id`. Tables, made by `timelines.ts`: `feed_item`, `feed_read`
+(cursors and when), `post_group` (posts made in one press), `post_draft`.
+
+**Adapters.** Capability `home` and the `home` command (`{ feed: 'following' | 'foryou', cursor?, count? }` →
+`HomePage`: items with their reason and the posts above, the Bottom and Top cursors), `unpublish` (`{ post }`), and
+`postMedia` (`publish` with `media`, uploads as attachments); `publish` takes `replies`.
+
+### One card for every network
+
+A post card draws whatever a `PostFact` carries, so a network that brings these needs no card of its own: `title`
+(Reddit, Lemmy, Hacker News, a forum), shown over the words; `warning` (Mastodon's content warning, a spoiler), the
+words and pictures folded behind it until **Show**; `place` (a subreddit, a community, a channel), "in r/rust" over
+it; `replies`, who may reply. The composer reads the network's rules (`compose.ts`: limit, how it counts, pictures,
+reply gates, a title). Only X brings posts so far.
 
 ## The feed's page
 
-The conversation's header (search, mute, About), then the feed **by post**, newest activity first, and no composer.
+The Feed page's Activity (every account's, or one's), then the feed **by post**, newest activity first, and no
+composer: a card opens the post's thread, where you can answer.
 It was a list of notifications, one card per thing that happened ("Theo, Maya K. and 3 others liked your post");
 drawn by post, it reads as what it is: your posts and what came of them.
 
@@ -121,8 +182,8 @@ drawn by post, it reads as what it is: your posts and what came of them.
 
 - **What was new when it opened** is marked with a coloured edge, and stays marked while the page is open. The page
   marks the feed read on the hub as it shows.
-- **The bar** in place of the composer: "Replies, likes and follows happen on X." and **Open on X**
-  (x.com/notifications).
+- **The bar**, on the notifications conversation's own page: "Replies, likes and follows happen on X." and **Open on
+  X** (x.com/notifications).
 
 Older pages load as it scrolls; a post's card gathers what an older page adds to it. Dark and light come from the
 theme.
@@ -315,7 +376,9 @@ of it (a search hit, Recent messages) opens its thread (`GET /api/messages/:id/t
 
 ## The demo world
 
-The demo hub has an X account (`demo-x.ts`, made up throughout) with a feed. Five likes on one post, a repost of it,
+The demo hub has two X accounts (`demo-x.ts`, made up throughout): yours and a work account, each with a feed and
+home timelines (Following two pages, For you with reasons, a post both follow, a reply with the post above; the work
+account's own). Posts made there show on Following; `homeLog` lists what was read. Five likes on one post, a repost of it,
 a reply, a quote, a mention, two follows and two likes on another post. The newest four arrive live on the first run,
 so triage decides them. `personAbout` for everyone in it, and profiles with posts (pinned, a repost, a reply, a
 quote, pictures). Your routing post has a thread: you continuing it, Ravi and you going back and forth, two more
@@ -332,7 +395,7 @@ baselines predate it.
   silent, and the hub refusing a send, a reaction, an edit and settings, keeping reads and typing from X.
 - `packages/web/test/feed.test.ts`: units by post (likes, reposts, replies and quotes on one post as one, by its
   newest activity), mentions and follows on their own, what is new, the reactions line's words
-  and counts; the inbox row's cards, names as X says them.
+  and counts; cards, names as X says them.
 - `packages/hub/test/posts.test.ts`: a thread read in hub ids with the author's chain first, each post logged once as
   a quiet message (no unread, no triage, no persons), more replies by cursor, a reply's ancestors, search finding
   logged posts, the thread read back without X, a profile's posts logged, the routes, and nothing sent to X.
@@ -343,14 +406,25 @@ baselines predate it.
   reply opened as its own thread and Back to where you were (two deep), a reply with what it answers,
   the logged branches coming back, the posts conversation out of the inbox, nothing sent to X but the reads. With
   `--shots`, a tour (`tour-01` … `tour-09`).
+- `packages/hub/test/timelines.test.ts`: the sources, nothing read until looked at, Home merging both accounts (a
+  post both follow once), read again within a minute not asked, For you's order and reasons, older pages by cursor;
+  one press to both accounts as one entry with a copy, the same press twice posted once, a thread as replies with
+  who can reply on the first only, one account refused while the other posts, a delete leaving the other copy;
+  drafts, a scheduled post going out at its time as a thread, held when its account was not connected.
+- `scripts/verify-feed-page.ts`: in a real browser on a fresh demo hub, every press real input: the sources, Home
+  merged, a conversation joined, For you's reasons, posting as both accounts, a thread with who can reply, a picture,
+  scheduling, Drafts and Edit, Delete leaving the other copy, a like and a reply going as the account that saw the
+  post, a thread beside the list, Activity, an old link landing on Activity, and a phone (chips, the one-line
+  composer, a thread in the list's place, Back). `--shots <dir>` keeps screenshots.
 - `scripts/verify-x-feed.ts`: against a fresh demo hub in a real browser, on a desktop and a phone, dark and light,
-  with screenshots (`--shots <dir>`). It checks the row, the feed by post (your post small, the reply under it, the
+  with screenshots (`--shots <dir>`). It checks Activity on the Feed page, the feed by post (your post small, the reply under it, the
   reactions line, the list of who liked and reposted it, the quote, the mention, the follows),
   the bar, nothing sent to X, a profile's posts, counts and that you follow each other, and the decisions.
 - `packages/hub/test/posts.test.ts` also checks `GET /api/posts/:network/:post/activity`, and the branches logged
   before coming back with a thread (also from the two-minute read).
 - `packages/protocol/test/compose.test.ts`: X's count (CJK, emoji sequences, links), its counter (the ring, 20 left,
-  past the limit, past -10, where it goes over), Reddit's rules.
+  past the limit, past -10, where it goes over), Reddit's rules, and `splitThread` (paragraphs whole, short ones
+  together, a long one by sentences, a long word cut).
 - `packages/hub/test/posts.test.ts` "answering": a like once (and counted once), a reply posted once per key and
   logged under its post, a quote, too long or empty refused with nothing sent, who liked ranked with why, someone
   else's post's likers (X: the author's only), without X the notifications' list; the routes refusing bad input.
