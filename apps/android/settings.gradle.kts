@@ -14,3 +14,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = "dither-chat"
 include(":app")
+// Presses notification buttons for scripts/verify-android-call.ts (uitest/build.gradle.kts); never shipped.
+include(":uitest")
