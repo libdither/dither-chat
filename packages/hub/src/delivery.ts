@@ -24,6 +24,12 @@ const BUDGET = 3500;
 export const FORGET_MS = 3 * 24 * 3_600_000;
 const PHONE = /android|iphone|ipad|\bios\b/i;
 
+/** A conversation read since it was notified, and the newest message its notifications showed (Delivery.read). */
+export interface Read {
+  id: string;
+  upTo: number;
+}
+
 export interface Line {
   author: string;
   key: string;
@@ -131,15 +137,17 @@ export class Delivery {
 
   /**
    * Conversations read since their notification went out: on any device, in the app or in the network's own client
-   * (its read receipt for you), or by writing there. Each is returned once and forgotten.
+   * (its read receipt for you), or by writing there. Each is returned once and forgotten, with `upTo`, the newest
+   * message any of its notifications showed: a device closes a notification only up to it, so a clear that arrives
+   * late never closes an alert that came after the read.
    */
-  read(now = Date.now()): string[] {
-    const out: string[] = [];
+  read(now = Date.now()): Read[] {
+    const out: Read[] = [];
     for (const [cid, s] of this.showing) {
-      if (this.readTs(cid) >= s.ts) out.push(cid);
+      if (this.readTs(cid) >= s.ts) out.push({ id: cid, upTo: s.ts });
       else if (now - s.at > FORGET_MS) this.showing.delete(cid);
     }
-    for (const cid of out) this.showing.delete(cid);
+    for (const r of out) this.showing.delete(r.id);
     return out;
   }
 

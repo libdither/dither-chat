@@ -5,7 +5,8 @@
 # (test/old-database.test.ts).
 # A pull request that only changes docs (*.md, docs/) or the Android app skips the work (scripts/ci-changes.ts); a push
 # to main and a manual run always run everything. The same locally: bun run typecheck, bun run test, bun run web:build,
-# bun run check:boot, bun scripts/verify-perf.ts --ci.
+# bun run check:boot, bun scripts/verify-login.ts, bun scripts/verify-clear.ts, bun run check:offline,
+# bun scripts/verify-offline.ts, bun scripts/verify-perf.ts --ci.
 name: CI
 
 on:
@@ -120,7 +121,8 @@ jobs:
       - run: bun run web:build
 
   # The built web app in the runner's Google Chrome against a demo hub, at a desktop's and a phone's size: fails on a
-  # page error, a console.error, a failed request or no service worker (scripts/check-boot.ts).
+  # page error, a console.error, a failed request or no service worker (scripts/check-boot.ts). Then the sign-in screen,
+  # and the start with the hub out of reach right after a deploy (scripts/check-offline.ts).
   boot:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -138,6 +140,15 @@ jobs:
       - run: bun run check:boot
       # The sign-in screen on a cold start, clicked and typed into, against a hub behind the login (docs/login.md).
       - run: bun run web:build && bun scripts/verify-login.ts
+      # A notification closes once its chat is read, here or on another device, pushes delivered to the service worker
+      # over DevTools (docs/notifications.md, "Read elsewhere, gone here").
+      - run: bun scripts/verify-clear.ts
+      # The first start after a deploy with the hub out of reach: from the snapshot, every file from the service worker's
+      # cache, and a start that could not load comes back by itself once the hub does.
+      - run: bun scripts/check-offline.ts --web packages/web/dist
+      # The hub out of reach (docs/sync.md, "Quiet"), on the same build: a demo hub stopped and started again, the amber
+      # orb and its popover on a phone and a computer, the line over the message box, a send that waits and goes out once.
+      - run: bun scripts/verify-offline.ts
 
   # Load and chat switching on a tenth-size world in the runner's browser, a warm-up and then one run: renders, DOM
   # nodes and bytes against scripts/perf-baseline-ci.json; its times go in the job's summary and are never judged

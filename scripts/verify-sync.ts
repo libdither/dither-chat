@@ -3,7 +3,7 @@
  *
  *   - a short drop is not shown, and the app catches up with one POST /api/sync: no bootstrap, no timeline page;
  *   - what changed meanwhile (a message in the open conversation) shows up from that delta;
- *   - a long drop shows the small notice, and it goes once the hub is back;
+ *   - a long drop shows the small notice (the rail's amber orb, ui/Offline.tsx), and it goes once the hub is back;
  *   - a send without the hub waits, says so, and goes out by itself when the hub is back;
  *   - a cold start from the device's snapshot resumes with a delta too;
  *   - conversations opened before it open again at once from the pages the device kept, without the hub, and are
@@ -58,7 +58,7 @@ const since = (t: number, re: RegExp) => done.filter((d) => d.at >= t && re.test
 const bytes = (xs: { bytes: number }[]) => xs.reduce((n, x) => n + x.bytes, 0);
 const offline = (on: boolean) => page.send('Network.emulateNetworkConditions', { offline: on, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
 const freshCount = () => page.eval<number>(`performance.getEntriesByName('dither:fresh').length`);
-const notice = () => page.eval<boolean>(`!!document.querySelector('.reconnect')`);
+const notice = () => page.eval<boolean>(`!!document.querySelector('.rail .offline-orb')`);
 const shown = (text: string) => page.eval<boolean>(`[...document.querySelectorAll('.timeline-scroll .msg-body')].some(e => e.textContent.includes(${JSON.stringify(text)}))`);
 /** Coming back to the app: what a phone does when it is switched back to. */
 const wake = () => page.eval(`window.dispatchEvent(new Event('online')), document.dispatchEvent(new Event('visibilitychange'))`);
@@ -123,7 +123,7 @@ await Bun.sleep(8000);
 check('a long drop shows the notice', await notice());
 await offline(false);
 await wake();
-await page.until(`!document.querySelector('.reconnect')`, 10000).then(
+await page.until(`!document.querySelector('.rail .offline-orb')`, 10000).then(
   () => check('…which goes when the hub is back', true),
   () => check('…which goes when the hub is back', false),
 );
@@ -142,7 +142,7 @@ await page.until(`[...document.querySelectorAll('.msg.pending.queued')].some(e =
   () => check('a send without the hub waits, and says so', true),
   () => check('a send without the hub waits, and says so', false, page.eval(`document.querySelector('.msg.pending')?.textContent`)),
 );
-await page.until(`!!document.querySelector('.reconnect')`, 6000).then(
+await page.until(`!!document.querySelector('.rail .offline-orb')`, 6000).then(
   () => check('…with the notice up', true),
   () => check('…with the notice up', false),
 );

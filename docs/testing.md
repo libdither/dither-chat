@@ -12,7 +12,7 @@
 | `test-hub-mail` | the hub's mail-load tests (60k messages; 20 to 30 s, as long as the rest of the hub's) | `bun scripts/test-all.ts hub -- test/mail-load.test.ts` |
 | `test-packages` | every other package's tests, all at once | `bun scripts/test-all.ts --except hub` |
 | `web` | the web app's vite build | `bun run web:build` |
-| `boot` | the built web app in Chrome against a demo hub (scripts/check-boot.ts), then the sign-in screen against a hub behind the login, clicked and typed into (scripts/verify-login.ts) | `bun run check:boot`, `bun run web:build && bun scripts/verify-login.ts` |
+| `boot` | the built web app in Chrome against a demo hub (scripts/check-boot.ts), then the sign-in screen against a hub behind the login, clicked and typed into (scripts/verify-login.ts), then notifications closing once their chat is read, pushed to the service worker over DevTools (scripts/verify-clear.ts), then the start with the hub out of reach right after a deploy (scripts/check-offline.ts), then the hub out of reach and back, tapped and clicked (scripts/verify-offline.ts) | `bun run check:boot`, `bun run web:build && bun scripts/verify-login.ts`, `bun scripts/verify-clear.ts`, `bun run web:build && bun scripts/check-offline.ts --web packages/web/dist`, `bun run web:build && bun scripts/verify-offline.ts` |
 | `perf` | load and chat switching on a tenth-size world, a warm-up and one run, its counts against a baseline (docs/perf.md) | `bun scripts/verify-perf.ts --ci` |
 | `check` | passes only when each job above passed, or was skipped because `changes` said so | |
 
@@ -41,6 +41,14 @@ but those, as CI splits the hub. The hub in one process, as before: `cd packages
   request (unless `EXPECTED` in the script lists it with its reason) or a service worker that does not register fails
   it. The browser is the first of `chromium`, `chromium-browser`, `google-chrome`, `google-chrome-stable` on PATH, or
   `$DITHER_CHROMIUM` (scripts/browser.ts).
+- Then, in the same job, `check:offline` (scripts/check-offline.ts, 10-20 s) at a phone's size against a demo hub: it
+  loads the app twice and opens a conversation, waits for the snapshot and that conversation's kept page, then deploys a
+  new build (a new id in `sw.js`) while every hashed file is gone from the hub and the HTTP cache is empty, so the new
+  worker can only install from the old build's cache. It then stops the hub, empties the HTTP cache again and reloads:
+  the conversation must show from the snapshot with every file from the worker's cache. Last, it deletes a file the
+  app's script imports from that cache and reloads with the hub still gone: the start must fail and say so
+  (`dither:boot-failed`), and come back by itself once the hub is started again. Before the whole build was precached,
+  that offline start stayed on the logo (docs/android.md, "Starting fast").
 - `perf`, beside it: `verify-perf --ci`, a warm-up and one run on a tenth-size world, judging renders, layouts, DOM
   nodes and bytes against `scripts/perf-baseline-ci.json` and printing the times without judging them (docs/perf.md,
   "In CI"). A change that moves a count on purpose updates that baseline with `--ci --update --runs 5` and says why.
