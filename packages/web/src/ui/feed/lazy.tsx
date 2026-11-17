@@ -13,6 +13,7 @@ import { Avatar, Empty, Linked } from '../bits.tsx';
 import { useLongPress } from '../longpress.ts';
 import { Sheet } from '../Sheet.tsx';
 import { Icon } from '../icons.tsx';
+import { HeadOrb } from '../Offline.tsx';
 import { languageName, needsTranslation } from '@dither-chat/protocol';
 import { Loading } from '../Loader.tsx';
 import { clip, feedBarLine, feedUnits, namesPhrase, notificationsUrl, opensPost, parsePostKey, postHref, postKey, reactionCounts, reactorsPhrase, shortCount } from '../../feed.ts';
@@ -44,6 +45,8 @@ export const kit = {
   Empty,
   Loading,
   Linked,
+  /** The hub out of reach, on a phone page (Offline.tsx). */
+  HeadOrb,
   /** A long press on a phone (Reactions.tsx), a sheet from the bottom, a toast: as the rest of the app has them. */
   useLongPress,
   Sheet,

@@ -94,7 +94,7 @@
     "js/shared/TextView.bytes": { "measured": 8500, "budget": 8670 },
     "js/shared/TextView.gzip": { "measured": 3868, "budget": 3943 },
     "js/src/graph/GraphView.tsx.bytes": { "measured": 34106, "budget": 34231 },
-    "js/src/graph/GraphView.tsx.gzip": { "measured": 12462, "budget": 12712, "reason": "Notifications closing once read elsewhere: the startup chunk exports freshHooks and shade.ts's helpers to the mail and notices code, which renames what GraphView imports from it and so its local names; same length, compresses 34 bytes worse (none of its own code changed)" },
+    "js/src/graph/GraphView.tsx.gzip": { "measured": 12477, "budget": 12727, "reason": "The hub out of reach: the graph page's phone header holds the amber orb (ui/Offline.tsx HeadOrb)" },
     "js/src/prefetch.ts.bytes": { "measured": 3348, "budget": 3415 },
     "js/src/prefetch.ts.gzip": { "measured": 1597, "budget": 1629 },
     "js/src/ui/AccountPane.tsx.bytes": { "measured": 48217, "budget": 49177 },

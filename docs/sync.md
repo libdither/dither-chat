@@ -93,9 +93,14 @@ adapter announcing the same things again, and a send retried after a lost answer
 - **Heartbeat**: a `ping` text frame every 25 s while in sight, and at once on `visibilitychange`, `focus`, `online`
   and `pageshow`. Without a `pong` within 3 s the socket is dropped and a new one opens at once, rather than waiting
   for TCP to notice a socket that died while the phone slept.
-- **Quiet**: no banner for a drop. The small notice ("Can't reach the hub · showing what this device has") appears
-  only when the hub has not answered for 4 s, counted from the unanswered ping, or at once when a send is waiting.
-  It never blocks anything. The loading screen is only for a first start with nothing kept.
+- **Quiet**: no banner for a drop. Only when the hub has not answered for 4 s, counted from the unanswered ping, or
+  at once when a send is waiting, the rail's logo becomes the loader's sphere turning slowly in amber (on a phone page
+  that covers the rail, a small one at the start of the page header's buttons), the row over the message box ends
+  with "Offline · sends when the hub is back" ("Offline · sends later" on a phone, and only "Offline" where the route
+  beside it leaves no room for more), and the top of a timeline says "Older messages load when the hub is
+  back" instead of spinning; those pages are asked for once it is. A tap on the orb says since when, and its Try now
+  opens a new socket at once rather than at the end of the backoff (`ui/Offline.tsx`). Nothing covers anything, and
+  all of it goes the moment the hub answers. The loading screen is only for a first start with nothing kept.
 - **Sends** without the hub wait, marked "Waiting for the hub, sends when it is back", and go out when the sync after
   reconnecting is done. Each carries a `clientId`; the hub answers a repeat of one it is sending or sent in the last
   15 minutes with the first answer, so a send whose answer was lost goes out once. Until the hub has taken it, a send

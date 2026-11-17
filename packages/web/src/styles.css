@@ -153,42 +153,6 @@ code {
     transform: rotate(360deg);
   }
 }
-/* The hub out of reach for a while: small, and never in the way of what is under it. */
-.reconnect {
-  position: fixed;
-  top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 50;
-  pointer-events: none;
-  max-width: calc(100vw - 32px);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  background: var(--bg-raised);
-  color: var(--text-dim);
-  border: 1px solid var(--border-soft);
-  padding: 4px 12px;
-  border-radius: 20px;
-  font-size: 12px;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  box-shadow: var(--shadow);
-}
-.reconnect .dot {
-  flex: none;
-  width: 7px;
-  height: 7px;
-  background: var(--warn);
-  border-radius: 50%;
-  animation: pulse 2s infinite;
-}
-@keyframes pulse {
-  50% {
-    opacity: 0.3;
-  }
-}
 
 /* ---------------------------------------------------------------- rail */
 
@@ -6524,9 +6488,6 @@ textarea.chip-box {
     padding: 6px;
     margin: -6px -6px -6px 0;
   }
-  .reconnect {
-    top: calc(10px + env(safe-area-inset-top));
-  }
   .read-progress {
     bottom: calc(var(--tabbar-h) + 12px);
   }
@@ -7419,6 +7380,123 @@ pre.fv-md-html {
   }
 }
 
+/* ---- the hub out of reach (ui/Offline.tsx): the same orb, amber and slower (140 ms a frame), never a bar ---- */
+.offline-orb {
+  color: var(--warn);
+}
+.offline-orb .orb-turn {
+  animation-duration: 5.04s;
+}
+/* Under a phone's page, or a page moved off the screen, it stays still. */
+.app.phone.rest-open > .rail .offline-orb .orb-turn,
+.app.phone.rest-details > .rail .offline-orb .orb-turn,
+.app.phone.rest-away > .center .offline-orb .orb-turn,
+.app.phone.rest-peek > .center .offline-orb .orb-turn {
+  animation-play-state: paused;
+}
+/* A phone page's own, where the rail is covered: the first of its header's buttons. */
+.head-orb {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 44px;
+  margin-left: auto;
+  border-radius: 10px;
+}
+.head-orb:hover,
+.head-orb[aria-expanded='true'] {
+  background: var(--bg-hover);
+}
+.board-head .head-orb {
+  margin-top: -8px;
+}
+.set-title-acts {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.set-title-acts .head-orb {
+  margin: 0;
+}
+/* The rail stays dark in a light theme, where --warn is a dark amber for light backgrounds. */
+.rail .offline-orb {
+  color: #f2b84e;
+}
+.offline-pop {
+  position: fixed;
+  z-index: 80;
+  padding: 12px 14px;
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  line-height: 1.4;
+  animation: pop 0.12s ease-out;
+}
+.offline-pop b {
+  display: block;
+  margin-bottom: 2px;
+}
+.offline-pop p {
+  margin: 0;
+  color: var(--text-dim);
+}
+.offline-pop-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+.offline-pop-missed {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+/* The row over the message box (ui/Typing.tsx): what happens to a send, at its end. The route keeps its room (its name
+   says where the send goes); short of room, the rest of the note goes whole, onto a second line that is never shown,
+   and the orb and "Offline" always stay. */
+.typing-off {
+  flex: 0 1 auto;
+  min-width: 70px;
+  height: 1lh;
+  margin-left: auto;
+  padding-left: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-content: flex-start;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--warn);
+}
+.typing-off .offline-orb {
+  margin-right: 5px;
+}
+.typing-off-more {
+  white-space: pre;
+}
+.typing-bar.offline .typing-lead {
+  flex: none;
+  max-width: calc(100% - 70px);
+}
+.typing-bar.offline .pair-last {
+  display: none;
+}
+/* Instead of the spinner at the top of a timeline: what waits for the hub. */
+.older-wait {
+  padding: 14px 16px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .offline-pop {
+    animation: none;
+  }
+}
+
 /* ---- loading (Loader.tsx Loading): the dithered orb, small, where content is about to land ---- */
 .loading {
   display: grid;
@@ -7582,6 +7660,11 @@ body.dragging * {
   display: flex;
   justify-content: flex-start;
   gap: 10px;
+}
+/* On a phone the header wraps: the title shrinks rather than push the offline orb onto a row of its own. */
+.dir-head > div {
+  flex: 1 1 0;
+  min-width: 0;
 }
 .dir-back {
   display: none;
@@ -9025,9 +9108,6 @@ body.dragging * {
   }
 }
 @media (min-width: 821px) {
-  .reconnect {
-    top: calc(var(--titlebar-h) + 10px);
-  }
   .update-bar {
     top: calc(var(--titlebar-h) + 8px);
   }

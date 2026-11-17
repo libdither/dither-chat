@@ -5,7 +5,8 @@ import { AUTOMATIC, AUTOMATIC_HELP, RULE_HELP, communitiesOf, convLabel, convTit
 import { api, db, go, isSelfIdentity, openProfile, prefs, rev, setRule } from '../state.ts';
 import { AccountChip, Avatar, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
-import { showDetails } from './Pager.ts';
+import { HeadOrb } from './Offline.tsx';
+import { detailsShown, showDetails } from './Pager.ts';
 import { openConv } from '../opening.ts';
 import { Menuable } from './ContextMenu.tsx';
 import { identityMenu } from './menus.tsx';
@@ -62,6 +63,7 @@ export function ConversationDetails({ convId }: { convId: string }) {
           <h2>{convLabel(c)}</h2>
           <span class="det-kind">{kindLabel(c)}</span>
         </div>
+        {detailsShown() && <HeadOrb />}
         <button class="icon-btn" onClick={() => showDetails(false)} aria-label="Close details">
           <Icon name="x" />
         </button>
@@ -233,6 +235,7 @@ export function PersonDetails({ personId }: { personId: string }) {
             Person · {ids.length} {ids.length === 1 ? 'identity' : 'identities'}
           </span>
         </div>
+        {detailsShown() && <HeadOrb />}
         <button class="icon-btn" onClick={() => showDetails(false)} aria-label="Close details">
           <Icon name="x" />
         </button>
