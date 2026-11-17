@@ -117,7 +117,7 @@ optional ones; none is renamed or dropped.
 ```
 { "v": 1,
   "at": 1763000000000,            // ms epoch
-  "app": "hub" | "web",
+  "app": "hub" | "web" | "android",
   "source": "uncaught" | "rejection" | "request" | "job" | "attempt" | "client",
   "where": "POST /api/accounts/:id/action",   // route TEMPLATE (ids replaced by :id), span or job name, or the web page's route template
   "name": "SQLiteError",          // error class / name
@@ -142,6 +142,7 @@ else the checkout's `git rev-parse --short=8 HEAD`, for the hub; the page's is i
 | `job` | a span a throw ended (trace.ts's hook, but for requests and `command <op>` spans: a command's caller says what came of it); the hub's `console.error` / `console.warn` sites that mean something went wrong: triage, upkeep, push, flush, attention, the ranker, embeddings, categorizing, backups, checkpoints, adapter events that failed or met a locked database, the manager's admin calls, mail's sync/outbox/ops/classify/people/triage, notices, jobs (but rate limits) | the span's or the job's name: `triage`, `flush: mail`, `adapter events`, `mail: changes` |
 | `attempt` | attempts.ts: making a group or adding people failed (500, 502, 504), or went through with someone refused (`name` `Partial`); a candidates lookup that failed. The hub.log lines stay | `groups: create`, `members: add`, `groups: candidates`, `members: candidates`; `extra` { what, account, network, conversation, people, failed } |
 | `client` (app `web`) | `POST /api/errors` from the page (packages/web/src/errors.ts): `window.onerror`, `unhandledrejection`, and `api()` fetches that did not reach the hub (not answers with a status: the hub wrote its own `request` line for each 5xx) | the page's route template, `#/inbox/c/:id` |
+| `client` (app `android`) | the Android app's crashes, ANRs and caught failures, which its page posts on the next start (apps/android `Crashes.kt`, docs/android.md "Crashes"); `extra` { at: when it happened, sdk: Android's API level }, `version` the app's | `/android/uncaught`, `/android/exit`, `/android/renderer`, `/android/call-service` |
 
 **Left out:** 4xx answers, 429 and rate limits, captchas and terms prompts (refusals, 4xx), aborted requests and a
 client that went away, 503 (an account offline, the manager not reachable: a state the page shows), the hub stopping under a job (a closed database),

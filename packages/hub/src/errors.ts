@@ -19,7 +19,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { currentSpan } from './trace.ts';
 
-export type ErrorApp = 'hub' | 'web';
+/** `android`: the Android app's own crashes, which its page passes on (apps/android Crashes.kt). */
+export type ErrorApp = 'hub' | 'web' | 'android';
 export type ErrorSource = 'uncaught' | 'rejection' | 'request' | 'job' | 'attempt' | 'client';
 
 /** One line of errors.ndjson: the contract (docs/tracing.md "Errors"). */
@@ -313,8 +314,13 @@ export function clientReport(body: unknown): ErrorReport | null {
   if (b.version !== undefined && typeof b.version !== 'string') return null;
   const stack = Array.isArray(b.stack) ? b.stack.slice(0, STACK_FRAMES * 2).filter((f): f is string => typeof f === 'string') : (b.stack as string | undefined)?.slice(0, 8000);
   const version = typeof b.version === 'string' && /^[\w.\-+]{1,40}$/.test(b.version) ? b.version : undefined;
+  const app: ErrorApp = b.app === 'android' ? 'android' : 'web';
+  // The app's report: when it happened (it is sent on the next start) and Android's version. Numbers only.
+  const ex = app === 'android' && b.extra && typeof b.extra === 'object' ? (b.extra as Record<string, unknown>) : {};
+  const extra = Object.fromEntries(['at', 'sdk'].filter((k) => typeof ex[k] === 'number' && Number.isFinite(ex[k])).map((k) => [k, ex[k] as number]));
   return {
-    app: 'web',
+    app,
+    ...(Object.keys(extra).length ? { extra } : {}),
     source: 'client',
     where,
     name: (b.name as string | undefined) || 'Error',

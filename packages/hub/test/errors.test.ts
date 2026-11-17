@@ -188,6 +188,23 @@ describe('the page', () => {
     expect(clientReport({ message: 'x', where: '#/', version: 'not a version!' })?.version).toBeUndefined();
   });
 
+  test("clientReport: the Android app's crash, passed on by its page, keeps app android and only its numbers", () => {
+    const r = clientReport({
+      app: 'android',
+      name: 'SecurityException',
+      message: 'Starting FGS with type microphone requires permissions',
+      stack: ['at org.libdither.chat.CallService.refresh(CallService.kt:83)'],
+      where: '/android/uncaught',
+      version: '0.12.0',
+      extra: { at: 1_700_000_000_000, sdk: 35, note: 'dropped', nan: Number.NaN },
+    });
+    expect(r).toMatchObject({ app: 'android', source: 'client', where: '/android/uncaught', name: 'SecurityException', version: '0.12.0', extra: { at: 1_700_000_000_000, sdk: 35 } });
+    expect(Object.keys(r!.extra!)).toEqual(['at', 'sdk']);
+    // Any other app is the page's; a page's report carries no extra.
+    expect(clientReport({ app: 'hub', message: 'x', where: '#/' })?.app).toBe('web');
+    expect(clientReport({ message: 'x', where: '#/', extra: { at: 1 } })?.extra).toBeUndefined();
+  });
+
   test('PerClientCap: 60 a minute from one client', () => {
     let t = 0;
     const cap = new PerClientCap(60, 60_000, () => t);

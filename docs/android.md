@@ -25,7 +25,7 @@ Around the WebView:
 | Launch | Theme, splash and WebView background are the page's own colour (`#14151b`, or the light theme's after the page reports it), so there is no white flash |
 | System bars | Edge to edge; the bars and keyboard are padding around the WebView |
 | Bridge | `WebViewCompat.addWebMessageListener` named `DitherAndroid`, with an allowed-origin rule of the hub's origin only, so no other page, frame or redirect target can post to it. Page side: `packages/web/src/android.ts` |
-| Calls | `CallService`: a `microphone` foreground service while the page says a call is live, with an ongoing notification (Hang up, Mute, Audio route) |
+| Calls | `CallService`: a foreground service while the page says a call is live (`phoneCall`, and `microphone` once the microphone is allowed: [The call service](#the-call-service)), with an ongoing notification (Hang up, Mute, Audio route) |
 | Audio route | `AudioManager.setCommunicationDevice` (Android 12+: speaker, earpiece, Bluetooth, wired, USB); speaker or earpiece before that. The notification's Audio button cycles; `android.setAudioRoute()` is there for the call UI. On the earpiece a proximity wake lock turns the screen off at the ear |
 | History uploads | The History section's upload buttons open the system picker from the app, which then uploads in a `dataSync` foreground service, so it goes on with the app closed. Files, or a whole folder, which a WebView's picker can't do. See [History uploads](#history-uploads) |
 | Push | UnifiedPush (below), registered from Settings → *Push on this device*. Tapping a notification opens its conversation; opening a conversation clears its notification; Reply in the notification goes through the hub's ordinary send, as `sw.js` does in a browser |
@@ -65,6 +65,36 @@ Without the service, Android keeps the page running for a while but silences the
 nothing. With it, the call goes on. During a call the app also skips `WebView.onPause`, keeps the renderer at
 `RENDERER_PRIORITY_IMPORTANT` while not visible, and holds a partial wake lock and a low-latency Wi-Fi lock.
 Swiping the app away from Recents destroys the WebView, and with it the call.
+
+### The call service
+
+A page starts its call before the microphone is allowed: it opens the call's socket and tells the app the call is
+live while Android is still asking. Android 14+ throws at `startForeground` with type `microphone` unless the app holds
+`RECORD_AUDIO` at that moment, and the throw ends the app. Until 2026-11-16 that is what every first call did: the
+app died behind the microphone prompt, the prompt went with it, so the microphone was never allowed and the next call
+died the same way. A phone saw a frozen screen, then the app starting over.
+
+So the service starts as `phoneCall`, which asks no runtime permission (`MANAGE_OWN_CALLS`, granted at install, is
+what Android 14+ checks for it), and adds `microphone` once the microphone is allowed (the permission answer calls
+`CallService.permissionsChanged()`). Only a change of types calls `startForeground` again; every other update just
+re-posts the notification, since Android checks a `microphone` type against the app being in front each time and a
+phase or route change can come with the screen off. A refused or failed `startForeground` is caught and reported
+([Crashes](#crashes)), never thrown.
+
+Permission prompts go one at a time (`MainActivity.ask`): Android answers a second request made while one is showing
+at once, with nothing granted. Notifications are asked for once a call is live, not as it starts: a prompt showing
+while the page asked for the microphone made the WebView cancel the page's request, which then never got an answer
+and held the call at *Connecting*. A queued prompt whose page request was cancelled meanwhile is dropped.
+
+## Crashes
+
+`Crashes.kt` keeps what took the app down for the hub's `traces/errors.ndjson` (docs/tracing.md, "Errors"), where the
+bug watch sees it. A crash ends the process before anything can be sent, so it is written to `files/crashes.json`
+(an uncaught exception's class, message and frames), and handed to the next page that says hello, which posts each
+report to `/api/errors` as app `android`, `where` `/android/...`. Also kept: exits Android recorded since the last
+look (ANR, native crash, initialization failure, excessive resource use; Android 11+), the page's renderer crashing
+(not Android reclaiming it), and errors the app caught on purpose that should not happen (the call service refused).
+At most 20 wait at a time.
 
 ## Push
 
@@ -430,18 +460,45 @@ The hub needs `https://` for calls, push setup and the offline start, because a 
 workers to secure contexts only. A plain `http://100.x.y.z:8460` loads but gets neither. Settings → *Use another hub*
 changes the address later.
 
-For debugging, `./gradlew assembleDebug` builds an 8.8 MB debuggable APK. Its WebView shows up in
+For debugging, `./gradlew assembleDebug` builds an 8.8 MB debuggable APK, as its own app
+(`org.libdither.chat.verify`), so it installs beside a release build without touching it. Its WebView shows up in
 `chrome://inspect`, and it logs the page's console under the tag `DitherWeb`. Both builds log start-up timings under
 `DitherStartup`, and the activity reports itself fully drawn when content shows (`ActivityTaskManager: Fully drawn`).
+
+## Testing calls
+
+`scripts/verify-android-call.ts` runs calls in the app itself on an emulator: its WebView, its call service and
+Android's own permission prompts, against a demo hub whose call room plays the far end. Each run clears the debug
+build's data, so every call is a first call on a fresh install.
+
+```sh
+emulator -avd <avd> -port 5584 -read-only -no-snapshot -no-window -no-audio \
+  -no-boot-anim -gpu swiftshader_indirect          # wait for `getprop sys.boot_completed`
+bun packages/hub/src/main.ts --demo --data <temp dir> --port <port> --web packages/web/dist
+(cd apps/android && ./gradlew assembleDebug)
+bun scripts/verify-android-call.ts http://127.0.0.1:<port> --serial emulator-5584
+```
+
+It checks that the first call asks for the microphone, then for notifications once live, without the app restarting;
+that the call goes live and is heard, with the service in the foreground as `phoneCall` and `microphone`; that it
+holds 12 s with the app away and the screen off; that the notification has its buttons and leaving stops the service
+and the far end's call; that a refused microphone still gives a live call, listening only, with the service as
+`phoneCall` alone; and that logcat has no crash or ANR of the app and no crash report waits in it.
+
+The prompts are answered without tapping: uiautomator cannot read a screen while the call's page animates (it waits
+for an idle screen that never comes). A prompt is seen in `dumpsys activity` (`GrantPermissionsActivity` on top), what
+it asks for is the app's own `asking for` log line (tag `DitherStartup`), "Allow" is `pm grant` while the prompt is up
+and then Back, and "Don't allow" is Back alone. `--account` and `--conversation` point it at another account that
+makes calls, on a hub with its own far end (a lab hub), so the same run covers another network's call body.
 
 ## What is left
 
 - The call UI has no audio-route picker yet; the notification has one button that cycles. `android.audio` and
   `android.setAudioRoute()` in `src/android.ts` are there for it.
-- A real call (bridge or direct mode) has not been run inside the app. The pieces are verified one by one: the
-  microphone permission flow, WebRTC with the screen off, the foreground service, the notification actions reaching
-  the page, the WebRTC features direct mode uses. Audio routing has only been seen on the emulator, which offers a
-  speaker and nothing else.
+- Calls in the app run end to end on the emulator against the demo call room (bridge mode, [Testing
+  calls](#testing-calls)); direct mode and an incoming ring answered in the app are not in that run yet. The
+  notification's buttons are checked as posted, not pressed (uiautomator again). Audio routing has only been seen on
+  the emulator, which offers a speaker and nothing else.
 - Not tried on a physical phone.
 - Notifications were checked on Android 15 only: not on 10 and 11, and not on Android 16, whose rules for bundling
   an app's notifications by itself may differ (a group without a summary is how a conversation gets a row of its own
