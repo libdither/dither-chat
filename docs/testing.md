@@ -41,7 +41,7 @@ but those, as CI splits the hub. The hub in one process, as before: `cd packages
   request (unless `EXPECTED` in the script lists it with its reason) or a service worker that does not register fails
   it. The browser is the first of `chromium`, `chromium-browser`, `google-chrome`, `google-chrome-stable` on PATH, or
   `$DITHER_CHROMIUM` (scripts/browser.ts).
-- Then, in the same job, `check:offline` (scripts/check-offline.ts, about 10 s) at a phone's size against a demo hub: it
+- Then, in the same job, `check:offline` (scripts/check-offline.ts, 10-20 s) at a phone's size against a demo hub: it
   loads the app twice and opens a conversation, waits for the snapshot and that conversation's kept page, then deploys a
   new build (a new id in `sw.js`) while every hashed file is gone from the hub and the HTTP cache is empty, so the new
   worker can only install from the old build's cache. It then stops the hub, empties the HTTP cache again and reloads:

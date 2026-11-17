@@ -311,7 +311,7 @@ These live in the web app, so the PWA gets them too.
    the bar), not on the first start after it.
 
    The worker keeps the whole build: every file vite writes but the source maps, lazy chunks and workers included
-   (about 4.3 MB, 1.3 MB as zstd, of which the PDF viewer's worker is 0.4 MB), and the icons `index.html` names
+   (about 4.3 MB, 1.3 MB as zstd, of which the PDF viewer's worker is 1.3 MB, 0.4 MB as zstd), and the icons `index.html` names
    (`vite.config.ts` lists them in `sw.js`). A new build's worker copies each hashed file (`/assets/`) that the
    old build's cache holds instead of downloading it, since a hashed name never changes content, so a deploy
    downloads only the files that changed; `index.html`, the manifest and the icons are fetched fresh. The old cache
@@ -322,8 +322,10 @@ These live in the web app, so the PWA gets them too.
 
    If the app's script or one it imports still cannot load, `index.html` does not leave the logo up for good: it
    asks the hub (`/api/health`) again when the network comes back and after 1 s, then twice as long each time up to
-   30 s (the wait carries over reloads, in `sessionStorage`), and reloads once it answers, letting a build that
-   waits for the page in first, since nothing in it ran.
+   30 s (the wait carries over reloads, in `sessionStorage`), and reloads once it answers (its own `{ok: true}`, not
+   a Wi-Fi sign-in page), letting a build that waits for the page in first, since nothing in it ran. After a few
+   reloads the hub is there but a file it lists is not (a bad build): a line under the logo says part of the app
+   didn't load, and it asks every 5 minutes instead.
 2. **A snapshot of the last screen** (`src/snapshot.ts`), in IndexedDB. It holds the bootstrap (every sidebar list,
    unread counts and last messages) and the inbox, and beside it the newest 40 messages of the 60 conversations opened
    or fetched ahead most recently, a record each with their authors, reactors and quoted messages

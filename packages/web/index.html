@@ -31,27 +31,34 @@
         const K = 'dither-chat:boot-retries', R = () => location.reload();
         let n = 0, failed = 0, ran = 0, busy = 0, timer;
         try { n = +sessionStorage.getItem(K) || 0; } catch {}
-        let wait = Math.min(1e3 * 2 ** n, 3e4);
+        // After a few reloads the hub answers but a file it lists is missing: ask less often (android.md).
+        const cap = n > 6 ? 3e5 : 3e4;
+        let wait = Math.min(1e3 * 2 ** n, cap);
         const back = async () => {
           try { sessionStorage.setItem(K, n + 1); } catch {}
           const sw = navigator.serviceWorker, r = sw?.controller && (await sw.getRegistration().catch(() => null));
           if (!r?.waiting) return R();
+          // Not unlessSeen: this page is in sight itself.
           sw.addEventListener('controllerchange', R);
           r.waiting.postMessage('skipWaiting');
+          setTimeout(R, 5e3);
         };
         const retry = () => {
           if (busy) return;
           busy = 1;
           clearTimeout(timer);
+          // The hub's own answer, not a Wi-Fi sign-in page.
           fetch('/api/health', { cache: 'no-store', signal: AbortSignal.timeout?.(1e4) })
-            .then((r) => { if (!r.ok) throw 0; back(); })
-            .catch(() => { busy = 0; timer = setTimeout(retry, (wait = Math.min(wait * 2, 3e4))); });
+            .then((r) => r.json())
+            .then((j) => { if (j?.ok !== true) throw 0; back(); })
+            .catch(() => { busy = 0; timer = setTimeout(retry, (wait = Math.min(wait * 2, cap))); });
         };
         addEventListener('error', (e) => {
           const s = e.target;
           if (ran || failed || s?.tagName !== 'SCRIPT' || s.type !== 'module') return;
           failed = 1;
           performance.mark('dither:boot-failed');
+          if (n > 1) document.getElementById('boot-static')?.insertAdjacentHTML('beforeend', '<p style="position:absolute;top:calc(50% + 64px);font:14px sans-serif;color:#9a9cab">Part of the app didn\'t load. Trying again\u2026</p>');
           addEventListener('online', retry);
           timer = setTimeout(retry, wait);
         }, true);

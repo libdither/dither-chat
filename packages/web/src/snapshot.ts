@@ -335,6 +335,8 @@ let pending: { text: string; rev: number } | null = null;
 let timer: ReturnType<typeof setTimeout> | undefined;
 /** When the first save not yet written was asked for. */
 let askedAt = 0;
+/** The hub's first answer on a device that keeps nothing yet is waiting to be written: no later ask delays it. */
+let urgent = false;
 /** However often things keep changing (a run of chats fetched ahead), a save asked for is written within this. */
 export const SAVE_WITHIN_MS = 5000;
 
@@ -354,6 +356,7 @@ export function saveDelay(o: { now: number; askedAt: number; ms: number; first: 
  */
 export function persistSoon(bootstrapText?: string, ms = 1500) {
   if (bootstrapText) pending = { text: bootstrapText, rev: dataVersion() };
+  if (bootstrapText && !bootstrapAt) urgent = true;
   const now = Date.now();
   if (timer === undefined) askedAt = now;
   clearTimeout(timer);
@@ -361,10 +364,12 @@ export function persistSoon(bootstrapText?: string, ms = 1500) {
     () => {
       timer = undefined;
       const idle = (globalThis as any).requestIdleCallback as ((cb: () => void, o?: { timeout: number }) => void) | undefined;
-      if (idle) idle(() => void persistNow(false), { timeout: 3000 });
+      // The first answer is written now, not at the next idle moment: a start is rarely idle, and until it is written an
+      // offline start has nothing to show.
+      if (idle && !urgent) idle(() => void persistNow(false), { timeout: 3000 });
       else void persistNow(false);
     },
-    saveDelay({ now, askedAt, ms, first: !!bootstrapText && !bootstrapAt }),
+    saveDelay({ now, askedAt, ms, first: urgent }),
   );
 }
 
@@ -378,6 +383,7 @@ export function persistSoon(bootstrapText?: string, ms = 1500) {
 async function persistNow(full = true) {
   clearTimeout(timer);
   timer = undefined;
+  urgent = false;
   if (!loaded.value || fromSnapshot) return;
   let text: string | null = null;
   if (pending) {
