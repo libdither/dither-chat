@@ -123,7 +123,8 @@ export function PollCard({ m }: { m: P.MessageView }) {
  * network's name and limits in its header. `question`: what the box held, as the question to start from. Enter moves
  * to the next line and sends from the last; Esc goes back to the message box.
  */
-export function PollMaker({ conversationId, network, accountId, question: initial = '', onClose, onSent }: { conversationId: string; network: P.Network; accountId?: string; question?: string; onClose: () => void; onSent?: () => void }) {
+/** `focus`: the question takes the focus as it opens (not in the phone's panel, where a tap brings the keyboard). */
+export function PollMaker({ conversationId, network, accountId, question: initial = '', onClose, onSent, focus = true }: { conversationId: string; network: P.Network; accountId?: string; question?: string; onClose: () => void; onSent?: () => void; focus?: boolean }) {
   const rules = POLL_RULES[network]!;
   const [question, setQuestion] = useState(initial.replace(/\s+/g, ' ').trim().slice(0, rules.questionMax));
   const [options, setOptions] = useState(['', '']);
@@ -177,7 +178,7 @@ export function PollMaker({ conversationId, network, accountId, question: initia
           <Icon name="x" size={14} />
         </button>
       </div>
-      <input data-line class="poll-draft-q" value={question} maxLength={rules.questionMax} onInput={(e) => setQuestion(e.currentTarget.value)} onKeyDown={keys} placeholder="Ask a question" aria-label="Question" autoFocus />
+      <input data-line class="poll-draft-q" value={question} maxLength={rules.questionMax} onInput={(e) => setQuestion(e.currentTarget.value)} onKeyDown={keys} placeholder="Ask a question" aria-label="Question" autoFocus={focus} />
       <div class="poll-draft-options">
         {options.map((o, i) => (
           <div class="poll-draft-row">

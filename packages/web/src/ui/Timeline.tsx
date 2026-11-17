@@ -1376,11 +1376,27 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
         )}
       </Menu>
     ) : null;
-  // + : the panel in the keyboard's place; while it is open the + is the keyboard's button.
-  const togglePanel = () => {
-    if (panelOpen.value) return ta.current?.focus();
-    // Nothing to attach here: what + offers is a sticker or a poll, as before.
-    if (!attaching) return canSticker ? plusRef.current && setStickerAt(plusRef.current.getBoundingClientRect()) : setPolling(true);
+  // The box re-renders as each emoji goes in and, unfocused, loses its caret: the panel keeps it here.
+  const caret = useRef<number | null>(null);
+  const insertFromPanel = (t: string) => {
+    const el = ta.current;
+    if (!el) return;
+    const at = Math.min(caret.current ?? el.value.length, el.value.length);
+    el.setSelectionRange(at, at);
+    insertAtCaret(el, t, false);
+    caret.current = at + t.length;
+  };
+  // + opens the panel in the keyboard's place on the last of its tabs (Photos first, or Stickers or Poll where files
+  // can't go); the box's emoji button opens it on Emoji. The button whose tab is showing becomes the keyboard's.
+  const lastPlusTab = useRef<PanelTab>('photos');
+  if (panelTab !== 'emoji') lastPlusTab.current = panelTab;
+  const plusTab: PanelTab = attaching ? lastPlusTab.current : lastPlusTab.current === 'stickers' || lastPlusTab.current === 'poll' ? lastPlusTab.current : canSticker ? 'stickers' : pollAccount ? 'poll' : 'emoji';
+  const onEmojiTab = panelOpen.value && panelTab === 'emoji';
+  const onPlusTab = panelOpen.value && !onEmojiTab;
+  const togglePanel = (at: PanelTab) => {
+    if (panelOpen.value && at === panelTab) return ta.current?.focus();
+    setPanelTab(at);
+    if (panelOpen.value) return;
     void loadPanels().then((m) => {
       setPanelMod(m);
       openPanel();
@@ -1400,7 +1416,11 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
       placeholder={disabledReason ?? (routed ? 'Message' : placeholder)}
       disabled={!!disabledReason}
       onInput={chips.onInput}
-      onBlur={composerDone}
+      onBlur={(e) => {
+        // Where the caret was: the panel's emoji go there while the box is not focused.
+        caret.current = (e.currentTarget as HTMLTextAreaElement).selectionEnd;
+        composerDone();
+      }}
       onPaste={(e) => {
         const pasted = [...(e.clipboardData?.files ?? [])];
         if (!pasted.length) return void chips.onPaste(e);
@@ -1434,13 +1454,15 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
       class="icon-btn composer-emoji"
       data-track="emoji"
       title="Emoji"
-      aria-label="Emoji"
+      aria-label={onEmojiTab ? 'Back to the keyboard' : 'Emoji'}
       aria-expanded={!!emojiAt}
       // The catalog loads while the pointer is on its way, so the picker opens whole.
       onPointerEnter={() => void loadEmoji()}
-      onClick={(e) => setEmojiAt(emojiAt ? null : (e.currentTarget as HTMLElement).getBoundingClientRect())}
+      // On a phone the panel's Emoji tab, in the keyboard's place; it keeps the box focused until then.
+      onPointerDown={(e) => onPhone && e.preventDefault()}
+      onClick={(e) => (onPhone ? togglePanel('emoji') : setEmojiAt(emojiAt ? null : (e.currentTarget as HTMLElement).getBoundingClientRect()))}
     >
-      <Icon name="smile" size={onPhone ? 20 : 18} />
+      <Icon name={onEmojiTab ? 'keyboard' : 'smile'} size={onPhone ? 20 : 18} />
     </button>
   );
   const recording = attaching && offer.record && !text.trim() && !files.length;
@@ -1579,17 +1601,17 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
         />
       ) : onPhone ? (
         <div class="composer-row">
-          {(attaching || canSticker || !!pollAccount) && (
+          {!!conv && !disabledReason && (
             <button
               ref={plusRef}
-              class={`icon-btn composer-plus ${panelOpen.value ? 'on' : ''}`}
-              data-track={panelOpen.value ? 'keyboard' : 'plus'}
+              class={`icon-btn composer-plus ${onPlusTab ? 'on' : ''}`}
+              data-track={onPlusTab ? 'keyboard' : 'plus'}
               // Keeps the box focused, so the panel takes the keyboard's room before the keyboard goes.
               onPointerDown={(e) => e.preventDefault()}
-              onClick={togglePanel}
-              aria-label={panelOpen.value ? 'Back to the keyboard' : 'Photos, files, stickers and polls'}
+              onClick={() => togglePanel(onPlusTab ? panelTab : plusTab)}
+              aria-label={onPlusTab ? 'Back to the keyboard' : 'Photos, files, stickers and polls'}
             >
-              <Icon name={panelOpen.value ? 'keyboard' : 'plus'} size={22} />
+              <Icon name={onPlusTab ? 'keyboard' : 'plus'} size={22} />
             </button>
           )}
           <div class={`composer-box ${disabledReason ? 'disabled' : ''}`}>
@@ -1652,8 +1674,11 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
             pickFiles: () => picker.current?.click(),
             openLarge: () => setReview(true),
             ...(offer.viewOnce ? { viewOnce: { on: viewOnce, set: setViewOnce } } : {}),
-            ...(canSticker ? { stickers: () => plusRef.current && setStickerAt(plusRef.current.getBoundingClientRect()) } : {}),
-            ...(pollAccount ? { poll: () => setPolling(true) } : {}),
+            ...(canSticker ? { stickers: () => <StickerPicker inline conversationId={targets.convId} accountId={targets.accountId ?? sender?.id} onSend={(st) => sendMedia({ media: { sticker: st.id } })} onClose={() => closePanel()} /> } : {}),
+            emoji: () => <InsertPicker inline conversationId={targets.convId} network={conv.network} anchor={null} onInsert={insertFromPanel} onClose={() => closePanel()} />,
+            ...(pollAccount
+              ? { poll: () => <PollMakerLazy conversationId={targets.convId} network={conv.network} accountId={pollAccount.id} question={text.trim()} focus={false} onClose={() => closePanel()} onSent={() => type('')} /> }
+              : {}),
           }}
         />
       )}

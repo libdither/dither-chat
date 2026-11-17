@@ -194,7 +194,7 @@ composer and settings are 40px or more.
 pasted, deleted, sent, restored from a draft and with files attached, with the keyboard imitated for Android (a
 smaller layout) and iOS (a smaller visual viewport), at 390x844, 360x330 and on a desktop.
 
-`bun scripts/verify-attach.ts [--port 8700]` drives the + sheet, the camera (Chromium's fake cameras) and the send
+`bun scripts/verify-attach.ts [--port 8700]` drives the + panel, the camera (Chromium's fake cameras) and the send
 screen on a demo hub of its own, and the camera's fallback when it is refused or missing.
 
 **What headless cannot show.** It is Chromium on Linux pretending: not iOS Safari, which handles the
