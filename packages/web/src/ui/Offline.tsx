@@ -79,8 +79,9 @@ function OfflinePop({ from, onClose }: { from: HTMLElement; onClose: () => void 
     if (box.current?.contains(document.activeElement)) from.focus({ preventScroll: true });
     onClose();
   };
-  // Esc, a click anywhere else, and on a phone its back button close it. A click on the orb itself toggles it.
-  useEffect(() => {
+  // Esc, a click anywhere else, and on a phone its back button close it. A click on the orb itself toggles it. Listening
+  // from the moment it is drawn (a layout effect, not one after the next paint), so an Esc right away is not missed.
+  useLayoutEffect(() => {
     const down = (e: PointerEvent) => {
       const t = e.target as Node;
       if (!box.current?.contains(t) && !from.contains(t)) onClose();
