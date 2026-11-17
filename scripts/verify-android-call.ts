@@ -19,9 +19,7 @@
  * `--account` and `--conversation` point it at another account that makes calls (a lab hub's), with that hub's own
  * far end instead of the demo call room.
  */
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { androidDevice, TYPE_MICROPHONE, TYPE_PHONE_CALL } from './android-device.ts';
 import { launch } from './browser.ts';
 
 const args = process.argv.slice(2);
@@ -33,9 +31,12 @@ const hub = (args.find((a) => !a.startsWith('--') && !args[args.indexOf(a) - 1]?
 const serial = opt('serial', process.env.ANDROID_SERIAL ?? 'emulator-5580')!;
 const apk = opt('apk', 'apps/android/app/build/outputs/apk/debug/app-debug.apk')!;
 const PKG = opt('package', 'org.libdither.chat.verify')!;
+/** apps/android/uitest's outputs: `./gradlew :uitest:assembleDebug :uitest:assembleDebugAndroidTest`. */
+const UITEST = opt('uitest', 'apps/android/uitest/build/outputs/apk')!;
 const ADB = opt('adb', process.env.ADB ?? (Bun.which('adb') || `${process.env.HOME}/Android/Sdk/platform-tools/adb`))!;
 const ACCOUNT = opt('account', 'acc_demo-discord-main')!;
-const hubPort = new URL(hub).port || '80';
+/** `--only calls` or `--only rings`: one part of the run. */
+const ONLY = opt('only');
 
 let failures = 0;
 const check = (ok: unknown, what: string, detail: unknown = '') => {
@@ -44,152 +45,27 @@ const check = (ok: unknown, what: string, detail: unknown = '') => {
   return !!ok;
 };
 
-// ---------------------------------------------------------------- adb
+// ---------------------------------------------------------------- the device
 
-function adb(...cmd: string[]): string {
-  const r = Bun.spawnSync([ADB, '-s', serial, ...cmd], { stdout: 'pipe', stderr: 'pipe' });
-  if (r.exitCode !== 0) throw new Error(`adb ${cmd.join(' ')}: ${r.stderr.toString().trim() || r.stdout.toString().trim()}`);
-  return r.stdout.toString();
-}
-const sh = (cmd: string) => adb('shell', cmd);
-const pid = () => sh(`pidof ${PKG} || true`).trim();
+const phone = androidDevice({ serial, pkg: PKG, hub, adb: ADB });
+const { adb, sh, pid, deaths, callService, prompt, answerPrompts, attach, page, until, waitFor, poll, pressInShade, closeShade, notification, freshApp } = phone;
 
-/** Logcat lines that say the app died or hung. */
-function deaths(): string[] {
-  const log = adb('logcat', '-d', '-v', 'brief', '*:E', 'ActivityManager:W');
-  const lines = log.split('\n');
-  const out: string[] = [];
-  lines.forEach((l, i) => {
-    if (/FATAL EXCEPTION/.test(l) && lines.slice(i, i + 3).some((x) => x.includes(PKG))) out.push(lines.slice(i, i + 6).join(' | '));
-    if (new RegExp(`ANR in ${PKG.replace(/\./g, '\\.')}`).test(l)) out.push(l);
-  });
-  return out;
+/** Rings the demo account in a chat (the demo's `ring` action, as a network's call would); returns the hub's call id. */
+async function ring(native: string, caller: string): Promise<string> {
+  const r = (await fetch(`${hub}/api/accounts/${ACCOUNT}/action`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'ring', args: { conversation: native, caller } }) }).then((x) => x.json())) as any;
+  if (!r.ok) throw new Error(`ring: ${JSON.stringify(r)}`);
+  let id = '';
+  await waitFor(async () => {
+    const calls = ((await fetch(`${hub}/api/calls/ringing`).then((x) => x.json())) as any).calls as any[];
+    id = calls.find((c) => c.ringing && c.accountId === ACCOUNT)?.id ?? '';
+    return !!id;
+  }, 5000);
+  if (!id) throw new Error('the hub never had the ring');
+  return id;
 }
+const hubCall = async (id: string) => (((await fetch(`${hub}/api/calls/ringing`).then((x) => x.json())) as any).calls as any[]).find((c) => c.id === id) ?? null;
 
-/** The call service as ActivityManager has it: running, in the foreground, and its types (ServiceInfo bits). */
-function callService(): { running: boolean; foreground: boolean; types: number } {
-  // Only the running record ("* ServiceRecord"), never the "Last ANR service" one, which stays after the process.
-  const all = sh(`dumpsys activity services ${PKG}/org.libdither.chat.CallService`);
-  const at = all.search(/\* ServiceRecord\{/);
-  if (at < 0) return { running: false, foreground: false, types: 0 };
-  const d = all.slice(at);
-  const fg = /isForeground=true/.test(d);
-  const t = d.match(/foregroundServiceType=0x([0-9a-f]+)/i) ?? d.match(/types=0x([0-9a-f]+)/i);
-  return { running: true, foreground: fg, types: t ? parseInt(t[1], 16) : 0 };
-}
-const TYPE_PHONE_CALL = 0x4;
-const TYPE_MICROPHONE = 0x80;
-
-/** Android's permission prompt is on top: which permission it asks for, or null. */
-function prompt(): string | null {
-  const top = sh('dumpsys activity activities | grep -m1 topResumedActivity || true');
-  return /GrantPermissionsActivity/.test(top) ? top.trim() : null;
-}
-
-/**
- * Answers Android's permission prompts until each of `expect` has been asked for, then for 2 s more to catch one asked
- * twice; returns what each prompt was for, in order. Not by tapping: uiautomator cannot read a screen while the page
- * animates, so "Allow" is the grant made from here while the prompt is up and then Back, which closes it with that
- * answer (the app reads the permission as it stands), and "Don't allow" is Back alone. `allow`: the permissions to
- * allow; the rest are refused. The prompts still come in the middle of the call's start, the case that took the app down.
- */
-async function answerPrompts(allow: string[], expect: string[], maxMs = 40_000): Promise<string[]> {
-  const asked: string[] = [];
-  const end = Date.now() + maxMs;
-  let doneAt = 0;
-  while (Date.now() < end && !(doneAt && Date.now() - doneAt > 2000)) {
-    if (prompt()) {
-      // What this prompt is for: the app logs each request as it makes it, one at a time (MainActivity.ask).
-      const which = [...adb('logcat', '-d', '-s', 'DitherStartup:I').matchAll(/asking for (.+)/g)].pop()?.[1]?.trim().split(', ').map((p) => p.replace('android.permission.', '')) ?? [];
-      for (const p of which) if (allow.includes(p)) sh(`pm grant ${PKG} android.permission.${p}`);
-      sh('input keyevent KEYCODE_BACK');
-      asked.push(which.join('+') || 'unknown');
-      for (let i = 0; i < 20 && prompt(); i++) await Bun.sleep(150);
-    } else await Bun.sleep(300);
-    if (!doneAt && expect.every((e) => asked.includes(e))) doneAt = Date.now();
-  }
-  return asked;
-}
-
-// ---------------------------------------------------------------- the app's page over DevTools
-
-let cdpPort = 0;
-async function attach(): Promise<void> {
-  const end = Date.now() + 30_000;
-  while (Date.now() < end) {
-    const p = pid();
-    const sock = p && sh('cat /proc/net/unix').match(new RegExp(`webview_devtools_remote_${p}\\b`))?.[0];
-    if (sock) {
-      if (cdpPort) Bun.spawnSync([ADB, '-s', serial, 'forward', '--remove', `tcp:${cdpPort}`]);
-      cdpPort = Number(adb('forward', 'tcp:0', `localabstract:${sock}`).trim());
-      const list = (await fetch(`http://127.0.0.1:${cdpPort}/json`).then((r) => r.json()).catch(() => [])) as any[];
-      if (list.some((t) => t.type === 'page' && t.url.startsWith(hub))) return;
-    }
-    await Bun.sleep(500);
-  }
-  throw new Error('the app\'s WebView never showed the hub (is this a debug build, pointed at the hub?)');
-}
-
-/** One expression in the app's page; null when the page is gone (the app died). */
-async function page<T = any>(expr: string): Promise<T | null> {
-  try {
-    const list = (await fetch(`http://127.0.0.1:${cdpPort}/json`).then((r) => r.json())) as any[];
-    const t = list.find((x) => x.type === 'page' && x.url.startsWith(hub));
-    if (!t) return null;
-    const ws = new WebSocket(t.webSocketDebuggerUrl);
-    await new Promise((res, rej) => ((ws.onopen = res), (ws.onerror = rej)));
-    const out = await new Promise<any>((res) => {
-      const timer = setTimeout(() => res({ timeout: true }), 15_000);
-      ws.onmessage = (e) => {
-        const m = JSON.parse(String(e.data));
-        if (m.id !== 1) return;
-        clearTimeout(timer);
-        res(m.result);
-      };
-      ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: expr, awaitPromise: true, returnByValue: true, userGesture: true } }));
-    });
-    ws.close();
-    if (out?.exceptionDetails) throw new Error(out.exceptionDetails.exception?.description ?? 'exception');
-    return (out?.result?.value ?? null) as T | null;
-  } catch (e) {
-    if (/exception/.test(String(e))) throw e;
-    return null;
-  }
-}
-async function until(expr: string, ms: number): Promise<boolean> {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    if (await page<boolean>(`!!(${expr})`).catch(() => false)) return true;
-    await Bun.sleep(300);
-  }
-  return false;
-}
-/** Polls a check on the host side (adb, the call room) until it holds. */
-async function waitFor(fn: () => boolean | Promise<boolean>, ms: number): Promise<boolean> {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    if (await fn()) return true;
-    await Bun.sleep(300);
-  }
-  return false;
-}
-const callNow = () => page<any>(`(() => { const c = window.__activeCall?.value; return c ? { phase: c.phase, listenOnly: !!c.listenOnly, muted: c.muted, timing: c.timing, note: c.note ?? null } : null; })()`);
-
-/** A fresh start of the app: data cleared, pointed at the hub, permissions as on a fresh install. */
-async function freshApp() {
-  sh(`am force-stop ${PKG}`);
-  sh(`pm clear ${PKG} >/dev/null`);
-  for (const p of ['android.permission.RECORD_AUDIO', 'android.permission.CAMERA', 'android.permission.POST_NOTIFICATIONS']) {
-    sh(`pm revoke ${PKG} ${p} 2>/dev/null; pm clear-permission-flags ${PKG} ${p} user-set user-fixed 2>/dev/null; true`);
-  }
-  const prefs = join(mkdtempSync(join(tmpdir(), 'dither-android-')), 'dither.xml');
-  writeFileSync(prefs, `<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map><string name="hub">${hub}</string></map>\n`);
-  adb('push', prefs, '/data/local/tmp/dither-verify.xml');
-  sh(`run-as ${PKG} mkdir -p shared_prefs && run-as ${PKG} cp /data/local/tmp/dither-verify.xml shared_prefs/dither.xml`);
-  adb('reverse', `tcp:${hubPort}`, `tcp:${hubPort}`);
-  sh(`am start -W -n ${PKG}/org.libdither.chat.MainActivity >/dev/null`);
-  await attach();
-}
+const callNow = () => page<any>(`(() => { const c = window.__activeCall?.value; return c ? { phase: c.phase, conversationId: c.conversationId, listenOnly: !!c.listenOnly, muted: c.muted, timing: c.timing, note: c.note ?? null } : null; })()`);
 
 /** The voice channel open in the app, in bridge mode as the account; throws with what the page shows instead. */
 async function openVoice(conversation: string) {
@@ -220,8 +96,33 @@ try {
     check(await room.page.until(`/Open/.test(document.getElementById('status').textContent)`, 15_000).then(() => true, () => false), 'the demo call room connects to the hub');
   }
   adb('install', '-r', apk);
+  // The button presser (apps/android/uitest): its app and the test APK that instruments it.
+  for (const u of [`${UITEST}/debug/uitest-debug.apk`, `${UITEST}/androidTest/debug/uitest-debug-androidTest.apk`]) adb('install', '-r', '-t', u);
   adb('logcat', '-c');
 
+  if (ONLY !== 'rings') await calls();
+  if (ONLY !== 'calls') {
+    if (demo) await rings();
+    else console.log('skip rings: they need a demo hub, whose accounts ring when told to');
+  }
+
+  // ------------------------------------------------------------ nothing died
+  const dead = deaths();
+  check(dead.length === 0, 'no crash or ANR of the app in logcat', dead.slice(0, 3));
+  const waiting = sh(`run-as ${PKG} cat files/crashes.json 2>/dev/null || true`).trim();
+  check(!waiting || waiting === '[]', 'no crash report waiting in the app', waiting.slice(0, 300));
+} finally {
+  await room?.close().catch(() => {});
+  try {
+    closeShade();
+    sh(`am force-stop ${PKG}`);
+    if (phone.cdpPort) adb('forward', '--remove', `tcp:${phone.cdpPort}`);
+  } catch {}
+}
+console.log(failures ? `\n${failures} failed` : '\nall passed');
+process.exit(failures ? 1 : 0);
+
+async function calls() {
   // ------------------------------------------------------------ first call, fresh install: the prompts come mid-start
   await freshApp();
   check(await openVoice(conversation), 'the app opens the voice channel');
@@ -282,17 +183,100 @@ try {
   check(await waitFor(() => !callService().running, 5000), 'the call service stops', callService());
   if (room) check(await waitFor(async () => (await roomCalls()).length === 0, 8000), 'the far end lets go', await roomCalls());
 
-  // ------------------------------------------------------------ nothing died
-  const dead = deaths();
-  check(dead.length === 0, 'no crash or ANR of the app in logcat', dead.slice(0, 3));
-  const waiting = sh(`run-as ${PKG} cat files/crashes.json 2>/dev/null || true`).trim();
-  check(!waiting || waiting === '[]', 'no crash report waiting in the app', waiting.slice(0, 300));
-} finally {
-  await room?.close().catch(() => {});
-  try {
-    sh(`am force-stop ${PKG}`);
-    if (cdpPort) adb('forward', '--remove', `tcp:${cdpPort}`);
-  } catch {}
 }
-console.log(failures ? `\n${failures} failed` : '\nall passed');
-process.exit(failures ? 1 : 0);
+
+/**
+ * A call ringing the app's account (docs/calls.md "Ringing"), through real push: the app registered with the hub through
+ * the emulator's UnifiedPush distributor. The ring rings with Answer and Decline; Decline declines it on the network;
+ * Answer opens the app and joins, with the app open in the background and with its process gone; and a ring the caller
+ * gives up is taken back.
+ */
+async function rings() {
+  const dm = boot.conversations.find((c: any) => c.shape === 'direct' && c.vantages.some((v: any) => v.accountId === ACCOUNT));
+  const peer = boot.identities.find((i: any) => dm.participantIds.includes(i.id) && !boot.accounts.some((a: any) => a.selfIdentityId === i.id));
+  if (!dm || !peer) throw new Error('no direct chat with someone for the account to be rung in');
+  const devicesNow = async () => ((await fetch(`${hub}/api/push`).then((r) => r.json())) as any).devices.length as number;
+
+  await freshApp();
+  sh(`pm grant ${PKG} android.permission.POST_NOTIFICATIONS`);
+  sh(`pm grant ${PKG} android.permission.RECORD_AUDIO`);
+  await until(`document.querySelector('#app > .app')`, 60_000);
+  const had = await devicesNow();
+  const vapid = ((await fetch(`${hub}/api/push`).then((r) => r.json())) as any).publicKey;
+  await page(`(window.DitherAndroid.postMessage(JSON.stringify({ t: 'push.register', vapid: ${JSON.stringify(vapid)} })), true)`);
+  if (!check(await waitFor(async () => (await devicesNow()) > had, 30_000), 'the app registers for push through the distributor')) return;
+  // The distributor must hold its connection before a message for the new topic is taken (ntfy answers 507 until then).
+  await Bun.sleep(3000);
+
+  // ------------------------------------------------------------ Decline, the app in the background
+  sh('input keyevent KEYCODE_HOME');
+  await waitFor(() => !sh('dumpsys activity activities | grep -m1 topResumedActivity || true').includes(PKG), 5000);
+  let id = await ring(dm.nativeId, peer.nativeId);
+  const n = await poll(() => notification(`call:${id}`), 15_000);
+  check(n, 'a ring comes up as a notification of its own', n);
+  check(n?.channel === 'rings' && n?.category === 'call', 'on the ringing channel, as a call', n);
+  check(n?.actions.includes('Answer') && n?.actions.includes('Decline'), 'with Answer and Decline', n?.actions);
+  check(n?.insistent, 'ringing until it is handled', n);
+  check(n?.style === 'CallStyle' && n?.fullScreen, "as Android's call notification, which can light the screen", n);
+  check(pressInShade('Decline'), 'Decline is in the shade and pressed');
+  closeShade();
+  check(await waitFor(async () => (await hubCall(id))?.outcome === 'declined', 8000), 'the call is declined on the network', await hubCall(id));
+  check(await waitFor(() => !notification(`call:${id}`), 5000), 'and the ring is gone from the phone');
+
+  // ------------------------------------------------------------ the caller gives up
+  id = await ring(dm.nativeId, peer.nativeId);
+  check(await waitFor(() => !!notification(`call:${id}`), 15_000), 'a second ring comes up');
+  await fetch(`${hub}/api/accounts/${ACCOUNT}/action`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'ringStop', args: { conversation: dm.nativeId } }) });
+  check(await waitFor(() => !notification(`call:${id}`), 15_000), 'a ring the caller gives up is taken back', notification(`call:${id}`));
+  check((await hubCall(id))?.outcome === 'missed', 'as missed', await hubCall(id));
+
+  // ------------------------------------------------------------ Answer, the app in the background
+  id = await ring(dm.nativeId, peer.nativeId);
+  check(await waitFor(() => !!notification(`call:${id}`), 15_000), 'a third ring comes up');
+  check(pressInShade('Answer'), 'Answer is pressed');
+  closeShade();
+  check(await waitFor(() => sh('dumpsys activity activities | grep -m1 topResumedActivity || true').includes(PKG), 8000), 'Answer brings the app up');
+  check(await until(`window.__activeCall?.value?.phase === 'live' && window.__activeCall.value.conversationId === ${JSON.stringify(dm.id)}`, 20_000), 'and joins the call in that chat', await callNow());
+  check(await waitFor(async () => (await hubCall(id))?.state === 'ongoing', 8000), 'the network has it answered', await hubCall(id));
+  check(!notification(`call:${id}`), 'the ring is gone');
+  if (room) check((await roomCalls()).length === 1, 'the far end has the call', await roomCalls());
+  await pressCallButton('Mute');
+  if (room) check(await waitFor(async () => (await roomCalls())[0]?.muted === true, 5000), 'the far end hears the mute', await roomCalls());
+  await pressCallButton('Hang up');
+
+  // ------------------------------------------------------------ Answer with the app's process gone: push starts it
+  sh(`am force-stop ${PKG}`);
+  // A force-stopped app gets no broadcasts until it is started again; a process the system killed does. Kill it as
+  // Android's low-memory killer would: start it, put it away, and end its process with a signal (`am kill` only ends
+  // a process Android already counts as in the background, which takes a moment after Home).
+  sh(`am start -W -n ${PKG}/org.libdither.chat.MainActivity >/dev/null`);
+  sh('input keyevent KEYCODE_HOME');
+  await waitFor(() => !sh('dumpsys activity activities | grep -m1 topResumedActivity || true').includes(PKG), 5000);
+  const was = pid();
+  if (was) sh(`run-as ${PKG} kill -9 ${was} || true`);
+  check(await waitFor(() => !pid(), 5000), 'the app\'s process is gone', pid());
+  id = await ring(dm.nativeId, peer.nativeId);
+  check(await waitFor(() => !!notification(`call:${id}`), 20_000), 'a ring reaches the app with its process gone');
+  check(pressInShade('Answer'), 'Answer is pressed');
+  closeShade();
+  await attach();
+  check(await until(`window.__activeCall?.value?.phase === 'live' && window.__activeCall.value.conversationId === ${JSON.stringify(dm.id)}`, 40_000), 'a cold start joins the call', await callNow());
+  check(await waitFor(async () => (await hubCall(id))?.state === 'ongoing', 8000), 'the network has it answered', await hubCall(id));
+  await pressCallButton('Hang up');
+  check(await waitFor(async () => (await hubCall(id))?.state === 'ended', 8000), 'hanging up ends the call', await hubCall(id));
+}
+
+/**
+ * Presses one of the ongoing call notification's buttons in the shade (Hang up, Mute, Audio) and checks what it did.
+ * The page must be away for the shade to be readable, so the app goes to the background first.
+ */
+async function pressCallButton(which: 'Hang up' | 'Mute') {
+  sh('input keyevent KEYCODE_HOME');
+  await waitFor(() => !sh('dumpsys activity activities | grep -m1 topResumedActivity || true').includes(PKG), 5000);
+  check(pressInShade(which), `the call notification's ${which} is pressed in the shade`);
+  closeShade();
+  if (which === 'Hang up') {
+    check(await until(`!window.__activeCall?.value || window.__activeCall.value.phase === 'ended'`, 10_000), 'Hang up ends the call', await callNow());
+    check(await waitFor(() => !callService().running, 5000), 'the call service stops', callService());
+  } else check(await until(`window.__activeCall?.value?.muted === true`, 5000), 'Mute mutes the call', await callNow());
+}

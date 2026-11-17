@@ -297,7 +297,7 @@ onRing(store, (n) => {
   if (ringMuted(store, c) || inQuietHours(store.quietHours(), Date.now())) return;
   const { title, body } = ringWords(store, c);
   const look = store.notifyLook(c.conversationId, undefined);
-  const call = { id: c.id, tag, canAnswer: c.canAnswer, canDecline: c.canDecline };
+  const call = { id: c.id, tag, accountId: c.accountId, canAnswer: c.canAnswer, canDecline: c.canDecline };
   push.notify(title, body, c.conversationId, { ...look, call, level: 'push', tier: 'push' }, devices.quietOn(c.conversationId, false), 'push').catch((e) => console.error('push failed', e));
 });
 

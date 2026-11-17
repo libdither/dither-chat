@@ -18,7 +18,7 @@ import { hubId } from '@dither-chat/protocol/ids';
 import type { AccountRow, Store } from './store.ts';
 import { DEMO_SELF_CAPS, DemoSelf } from './demoself.ts';
 import type { InprocAdapter } from './supervisor.ts';
-import { DEMO_CALL_CAPS, demoCallRoom } from './democalls.ts';
+import { DEMO_CALL_CAPS, DemoRings, demoCallRoom } from './democalls.ts';
 import { DEMO_X_ACCOUNT, DemoX } from './demo-x.ts';
 import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
@@ -1945,6 +1945,8 @@ class DemoAdapter implements InprocAdapter {
   private mod: DemoModeration | null = null;
   /** Silent sends, previews off, saved messages and the network's scheduled ones (demosending.ts). */
   private sending: DemoSending | null = null;
+  /** Calls ringing this account (democalls.ts): Discord's demo accounts only. */
+  private rings = new DemoRings((ev) => this.emit(ev));
   /** Capabilities a verify script took away (action 'capabilities'), to see the page without them. */
   private without = new Set<P.Capability>();
   private network: P.Network;
@@ -2895,6 +2897,9 @@ class DemoAdapter implements InprocAdapter {
           this.emit({ t: 'reply', id: cmd.id, ok: false, error: 'Calls are on the demo Discord accounts.' });
           return;
         }
+        // Joining a chat that rings you answers its ring; leaving it ends that call.
+        if (cmd.op === 'join') this.rings.answered(cmd.call, cmd.conversation);
+        else if (cmd.op === 'leave') this.rings.left(cmd.call);
         demoCallRoom
           .command((ev) => this.emit(ev), { self: this.self.nativeId, bot: { id: D.lev.nativeId, name: D.lev.displayName ?? 'Lev' } }, cmd)
           .then(
@@ -3227,6 +3232,16 @@ class DemoAdapter implements InprocAdapter {
           reply({ ok: true });
           break;
         }
+        // ring / ringStop: a call rings this account, or the caller gives up (democalls.ts DemoRings).
+        if (cmd.action === 'ring' || cmd.action === 'ringStop') {
+          const a = (cmd.args ?? {}) as { conversation?: string; caller?: string; video?: boolean };
+          if (typeof a.conversation !== 'string') {
+            this.emit({ t: 'reply', id: cmd.id, ok: false, error: `${cmd.action}: { conversation, caller?, video? }` });
+            break;
+          }
+          reply(cmd.action === 'ring' ? { call: this.rings.ring(a.conversation, a.caller ?? D.lev.nativeId, !!a.video) } : { stopped: this.rings.giveUp(a.conversation) });
+          break;
+        }
         // capabilities: say hello again without these (scripts/verify-add.ts), or with everything when none are given.
         if (cmd.action === 'capabilities') {
           this.without = new Set(((cmd.args as { without?: P.Capability[] } | undefined)?.without ?? []).filter((c) => typeof c === 'string'));
@@ -3246,6 +3261,13 @@ class DemoAdapter implements InprocAdapter {
           break;
         }
         reply(cmd.action === 'typingLog' ? { typing: this.typingLog } : cmd.action === 'addLog' ? this.adds.counts : cmd.action === 'readLog' ? { reads: this.readLog } : { note: 'demo adapters have no actions' });
+        break;
+      case 'declineCall':
+        if (!this.rings.decline(cmd.conversation, cmd.call)) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: 'That call is not ringing you' });
+          break;
+        }
+        reply({});
         break;
       default:
         if ('id' in cmd) reply();

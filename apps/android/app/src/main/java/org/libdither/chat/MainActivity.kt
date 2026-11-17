@@ -55,6 +55,8 @@ import org.unifiedpush.android.connector.UnifiedPush
 class MainActivity : Activity() {
     companion object {
         const val EXTRA_HASH = "hash"
+        /** Answer on a ring's notification (Notifications.ring): the call to join, for the page. */
+        const val EXTRA_ANSWER = "answer"
         private const val TAG = "DitherStartup"
         private const val REQ_FILES = 1
         private const val REQ_ASK = 2
@@ -123,6 +125,21 @@ class MainActivity : Activity() {
         hub = Hub.origin(this)
         val h = hub
         if (h == null) showSetup(null, null) else showWeb(h, hashFrom(intent))
+        answerFrom(intent)
+    }
+
+    /**
+     * Answer on a ring: the ring stops here at once and the page joins the call (android.ts `call.answer`), held by the
+     * bridge until a page that just started says hello. Its microphone prompt, if any, comes from the join as usual.
+     */
+    private fun answerFrom(i: Intent?) {
+        val raw = i?.getStringExtra(EXTRA_ANSWER) ?: return
+        // Once: a later recreation of the activity from the same intent must not join again.
+        i.removeExtra(EXTRA_ANSWER)
+        val a = runCatching { JSONObject(raw) }.getOrNull() ?: return
+        Notifications.cancel(this, a.optString("tag").ifEmpty { "call:${a.optString("call")}" })
+        Log.i(TAG, "answering call ${a.optString("call")}")
+        bridge?.send(a.put("t", "call.answer"))
     }
 
     // ---------------------------------------------------------------- splash
@@ -470,9 +487,12 @@ class MainActivity : Activity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        val hash = hashFrom(intent) ?: return
-        val b = bridge
-        if (b != null) b.send(JSONObject().put("t", "open").put("hash", hash)) else hub?.let { showWeb(it, hash) }
+        val hash = hashFrom(intent)
+        if (hash != null) {
+            val b = bridge
+            if (b != null) b.send(JSONObject().put("t", "open").put("hash", hash)) else hub?.let { showWeb(it, hash) }
+        }
+        answerFrom(intent)
     }
 
     private fun hashFrom(i: Intent?) = i?.getStringExtra(EXTRA_HASH)?.takeIf { it.startsWith("/") }

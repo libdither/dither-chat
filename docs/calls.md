@@ -148,6 +148,11 @@ devices, and checks joining (and how fast), hearing and being heard, the join, l
 reaching the far end and the other device, the camera both ways, sharing a screen and watching it from the other
 device, watching the bot's Go Live, leaving, and a device with no microphone joining to listen.
 
+A demo account can also be rung: the account action `ring` (`{conversation, caller?, video?}`, the conversation's
+native id) makes the caller ring it there, as a network's ring would, and `ringStop` is the caller giving up
+(`DemoRings`). Answering joins the room's call, and declining ends it as declined. The Android run uses it
+([android.md](android.md#testing-calls)).
+
 ## Call lab
 
 `scripts/call-lab.ts` measures latency, quality and cost with real media both ways between two Discord

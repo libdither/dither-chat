@@ -86,6 +86,23 @@ at once, with nothing granted. Notifications are asked for once a call is live, 
 while the page asked for the microphone made the WebView cancel the page's request, which then never got an answer
 and held the call at *Connecting*. A queued prompt whose page request was cancelled meanwhile is dropped.
 
+### A ring
+
+A push whose data has a `call` (`{id, tag, accountId, canAnswer, canDecline}`, from the hub's ringing,
+[calls.md](calls.md#ringing-calls-you-are-not-in-from-here)) is a ring, not a message (`Notifications.ring`):
+
+- On the `rings` channel (high importance, the phone's ringtone, as a ringtone), tagged `call:<id>`, so the hub's
+  `push.clear` for that call takes it back once the call is answered elsewhere, declined or given up. It rings until
+  then (`FLAG_INSISTENT`), for at most 3 minutes, as the hub's own `RING.maxMs`.
+- Android 12+ shows it as its own incoming call (`CallStyle.forIncomingCall`), which lights a locked screen through a
+  full-screen intent. Android 14+ grants those to calling apps only, so where it is not granted
+  (`canUseFullScreenIntent`), it is a plain notification with the same two buttons.
+- **Decline** goes to `RingReceiver`, which takes the ring away at once and posts `/api/calls/<id>/decline` (a failure
+  posts "Call not declined").
+- **Answer** opens the app on the chat with the call (`MainActivity`, `EXTRA_ANSWER`), which hands the page
+  `{t: 'call.answer', call, conversationId, accountId}` once it says hello (warm or cold). The page joins the call from
+  that account in the device's call mode (`src/android.ts`), waiting for its data on a cold start.
+
 ## Crashes
 
 `Crashes.kt` keeps what took the app down for the hub's `traces/errors.ndjson` (docs/tracing.md, "Errors"), where the
@@ -491,14 +508,41 @@ it asks for is the app's own `asking for` log line (tag `DitherStartup`), "Allow
 and then Back, and "Don't allow" is Back alone. `--account` and `--conversation` point it at another account that
 makes calls, on a hub with its own far end (a lab hub), so the same run covers another network's call body.
 
+Then the rings: the demo account is rung (the demo's `ring` action), and the run checks the ring notification
+(channel, call style, Answer and Decline, insistent, full-screen) and presses its buttons: Decline is declined on the
+network and the ring goes; a ring the caller gives up goes as missed; Answer with the app in the background brings it
+up in the call; and Answer after Android killed the app (as for memory) starts it and joins. In those calls it also
+presses the call notification's Mute and Hang up and checks the far end sees them. `--only calls|rings` runs one half.
+
+The notification's buttons are pressed through `apps/android/uitest`, a small test app that drives the shade with
+UiAutomator with its idle wait turned off (`Shade#press`, run with `am instrument`): uiautomator's own `dump` waits
+for an idle screen, and a call's notification redraws its timer every second. It instruments itself, not the app:
+`am instrument` restarts the package it targets, which would end the call. Build it with
+`./gradlew :uitest:assembleDebug :uitest:assembleDebugAndroidTest`; the run installs it (`--uitest <outputs dir>`).
+
+`scripts/verify-call-pair.ts` calls between two devices on a hub with real accounts (a lab hub), each a computer
+(headless Chromium) or the emulator: the caller presses Call, the other rings (the ring card, or the phone's
+notification, answered from the shade) or joins the voice channel, and it checks both are in, hear each other, the
+ring stopped, and hanging up (from the shade on the phone) ends the call on the hub.
+
+```sh
+bun scripts/verify-call-pair.ts <hub> --conversation <id> --caller <account>@phone --callee <account>@computer \
+  [--mode bridge|direct] [--wav-callee speech.wav] --serial emulator-5584
+```
+
+The emulator reaches the hub through `adb reverse`, which carries TCP only: its call's media needs the hub's TURN
+relay (on an address the emulator can reach, such as the computer's LAN address), since the far end offers only
+`.local` host addresses, which the emulator cannot resolve. A phone hears through its WebView, which reports no
+loudness without an audio device, so on the phone hearing is the far end's audio arriving.
+
 ## What is left
 
 - The call UI has no audio-route picker yet; the notification has one button that cycles. `android.audio` and
   `android.setAudioRoute()` in `src/android.ts` are there for it.
 - Calls in the app run end to end on the emulator against the demo call room (bridge mode, [Testing
-  calls](#testing-calls)); direct mode and an incoming ring answered in the app are not in that run yet. The
-  notification's buttons are checked as posted, not pressed (uiautomator again). Audio routing has only been seen on
-  the emulator, which offers a speaker and nothing else.
+  calls](#testing-calls)), rings included; direct mode and Discord calls between the app and a computer are checked by
+  hand with `verify-call-pair.ts` on a lab hub. Audio routing has only been seen on the emulator, which offers a
+  speaker and nothing else.
 - Not tried on a physical phone.
 - Notifications were checked on Android 15 only: not on 10 and 11, and not on Android 16, whose rules for bundling
   an app's notifications by itself may differ (a group without a summary is how a conversation gets a row of its own
