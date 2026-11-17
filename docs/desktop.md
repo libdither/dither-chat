@@ -1,4 +1,4 @@
-# On a desktop: themes, the title bar, and opening things elsewhere
+# On a desktop: themes, panel widths, the title bar, and opening things elsewhere
 
 ## Themes
 
@@ -23,6 +23,21 @@ in that mode replaces the dark or the light one.
 The browser's `theme-color` follows the theme: the title bar colour on a desktop, the list's colour on a
 phone (Android's status bar). `index.html` repeats the last theme before any script runs, so a reload never
 flashes the default.
+
+## Panel widths
+
+The list and the details panel are as wide as you drag them. Their edge beside the conversation is a handle
+([`ui/PaneEdge.tsx`](../packages/web/src/ui/PaneEdge.tsx)): it lights when the pointer is over it; drag it to
+resize, double-click it for the usual width again. Focused (Tab), the arrow keys move it 16 px a press (64 with
+Shift) and Home puts the usual width back.
+
+Widths are kept per device, in this browser's storage ([`panes.ts`](../packages/web/src/panes.ts)), and set as
+`--sidebar-w` and `--details-w` on `<html>`, so whatever lines up with the list (the call dock) follows. Each has
+bounds (the list 220 to 640 px, the details 260 to 640) and the conversation keeps at least 380 px; a window made
+narrower later narrows the panels with it, back to the width kept when there is room again. A phone has no
+handles: it lays out its own way (docs/phone.md).
+
+`bun scripts/verify-panes.ts <demo hub>` drags both edges in headless Chromium with real mouse input.
 
 ## The title bar
 
@@ -75,6 +90,9 @@ desktop instead: links to your default browser (`xdg-open`, so whatever `xdg-set
 says), files to the app registered for their type, or one you pick with **Open With…** in a file's menu.
 
 Without the helper, or with it switched off or not answering, everything opens as it did before.
+
+The helper has no session with the hub, so before handing it a file the page asks the hub for a ticket
+(`POST /api/ticket`): the file's link with `?ticket=…`, good for 5 minutes and for that path only ([login.md](login.md)).
 
 A file the app has a viewer for (text and code, Markdown, JSON, CSV, PDF, archives: [files.md](files.md)) opens in
 that viewer on a click even with the helper on; the viewer's header has Open File and Open With…, which go to the

@@ -1,6 +1,6 @@
 /** The page's error reports (src/errors.ts): route templates, the limits, and what is not reported. */
 import { expect, test } from 'bun:test';
-import { apiTemplate, pageError, ReportLimiter, routeTemplate } from '../src/errors.ts';
+import { apiTemplate, noteLeaving, pageError, ReportLimiter, routeTemplate, unlessLeaving } from '../src/errors.ts';
 
 test('a route is a template: ids, names and anything typed become :id, the query goes', () => {
   expect(routeTemplate('#/inbox/c/dc_123?m=msg_9')).toBe('#/inbox/c/:id');
@@ -37,4 +37,30 @@ test('not reported: an abort, an api() error with a status (the hub wrote it); r
   expect(pageError(new TypeError('x is undefined'))).toMatchObject({ name: 'TypeError', message: 'x is undefined' });
   expect(pageError('typed text')).toEqual({ name: 'string', message: 'a string was thrown, not an Error' });
   expect(pageError(undefined)).toBeNull();
+});
+
+test('a fetch failure is dropped when the page starts leaving before it is sent: its own reload cut the fetch off', () => {
+  const timers: (() => void)[] = [];
+  const later = (f: () => void) => timers.push(f);
+  let sent = 0;
+  const send = () => sent++;
+
+  unlessLeaving(send, 1500, later);
+  timers.shift()!();
+  expect(sent).toBe(1);
+
+  unlessLeaving(send, 1500, later);
+  noteLeaving(true);
+  timers.shift()!();
+  expect(sent).toBe(1);
+
+  // Already leaving: nothing is even queued.
+  unlessLeaving(send, 1500, later);
+  expect(timers.length).toBe(0);
+
+  // Back from the back-forward cache: reported again.
+  noteLeaving(false);
+  unlessLeaving(send, 1500, later);
+  timers.shift()!();
+  expect(sent).toBe(2);
 });

@@ -441,10 +441,9 @@ How: `mail_triage` (`schema-triage.sql`) keeps each decision with its facts, wor
 your mark (`feedback`: `drop` for "Less like this", else a vote from before the tiers); a message the server no longer
 has keeps its row only if you marked it, and an account's mail going (§14 Q6) takes its rows, marked ones keeping
 their facts but not their words. `GET /api/mail/triage?since=` is How it sorts' mail (`MailTriageItem`: the last week,
-and the last two days of what fell below the list), and Catch up's tier for a mail card; each thread's view carries
+and the last two days of what fell below the list), and the tier for a mail row; each thread's view carries
 its newest decision (`MailThreadView.triage`) and each message's its own (`MailMessageView.triage`), so both follow
-new mail and reads live. Mail threads from people are cards in Catch up too ([inbox.md](inbox.md#catch-up)), with Open
-and Done.
+new mail and reads live.
 
 Decisions from before the tiers were converted once, as chat's ([notifications.md](notifications.md#the-migration)):
 Important and Active mail became rows on the list, Digest went below it, each keeping what it was (`was`), and the

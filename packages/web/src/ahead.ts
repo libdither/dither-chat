@@ -7,7 +7,7 @@ import type { Deps } from './prefetch.ts';
 import { inboxSnap, shownInbox } from './inbox.ts';
 import { chatPersonOf, directsOf } from './model.ts';
 import { fromSnapshot, pages } from './snapshot.ts';
-import { connected, db, loaded, loadTimeline, openHooks, route, timelines } from './state.ts';
+import { connected, db, loaded, loadTimeline, openHooks, timelines } from './state.ts';
 
 /** The timeline a person's page opens: their one DM, or their chat of several routes (ui/Timeline.tsx PersonPane). */
 const personKey = (id: string) => {
@@ -34,9 +34,6 @@ const deps: Deps = {
   personKey,
   inMemory: (key) => timelines.has(key),
   drop: (key) => {
-    // Not while Catch up may show it as a card (the inbox with nothing open, or its tab).
-    const r = route.value;
-    if (r.view === 'triage' || (r.view === 'inbox' && !r.conv)) return false;
     const t = timelines.get(key);
     if (t?.glance && !t.loading) timelines.delete(key);
     return true;

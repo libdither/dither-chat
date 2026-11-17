@@ -50,7 +50,9 @@ self.addEventListener('fetch', (e) => {
   const p = url.pathname;
   // /calendar/ is dither-calendar through the hub (docs/calendar.md): its pages and files are never this app's.
   // /__device/ is the Android app's own (the phone's photos and files for the panel): it answers before the network.
-  const hubOwn = p.startsWith('/api/') || p.startsWith('/media/') || p.startsWith('/emoji/') || p.startsWith('/voice/') || p === '/sw.js' || p === '/ca.crt' || p === '/calendar' || p.startsWith('/calendar/') || p.startsWith('/__device/');
+  // Never kept here: the hub's answers are behind its login (docs/login.md), and a kept copy would outlive it. Only
+  // pictures are kept (below), and signing out deletes them (login.ts).
+  const hubOwn = p.startsWith('/api/') || p.startsWith('/media/') || p.startsWith('/emoji/') || p.startsWith('/voice/') || p.startsWith('/demo/') || p === '/sw.js' || p === '/ca.crt' || p === '/calendar' || p.startsWith('/calendar/') || p.startsWith('/__device/');
   if (e.request.mode === 'navigate') {
     if (hubOwn) return;
     // Every other path is the app (routes live in the hash). Cache first: the cached index.html names exactly the

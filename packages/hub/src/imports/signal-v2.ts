@@ -315,16 +315,20 @@ function mapFrames(b: Uint8Array, files: string, o: Omit<ReadV2Options, 'dir' | 
     return { body: md, mentionsSelf };
   };
 
+  // Reaction: emoji 1, authorId 2, sentTimestamp 3 (when it was made, kept as its time: docs/reactions.md "When").
   const reactions = (fs: Field[] | null, no: number): P.ReactionFact[] | undefined => {
-    const by = new Map<string, string[]>();
+    const by = new Map<string, { authors: string[]; at: Record<string, number> }>();
     for (const r of all(fs ?? [], no)) {
       const x = fields(r.bytes!);
       const emoji = str(x, 1);
       const who = aciOf(int(x, 2));
       if (!emoji || !who) continue;
-      (by.get(emoji) ?? by.set(emoji, []).get(emoji)!).push(who);
+      const e = by.get(emoji) ?? by.set(emoji, { authors: [], at: {} }).get(emoji)!;
+      e.authors.push(who);
+      const sent = int(x, 3);
+      if (sent) e.at[who] = sent;
     }
-    return by.size ? [...by].map(([key, authors]) => ({ key, authors })) : undefined;
+    return by.size ? [...by].map(([key, e]) => ({ key, authors: e.authors, ...(Object.keys(e.at).length ? { at: e.at } : {}) })) : undefined;
   };
 
   const total = b.length;

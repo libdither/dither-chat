@@ -382,7 +382,7 @@ describe('requests', () => {
 
     const told: any[] = [];
     const sup = { authorize: () => null, online: () => true, command: async (id: string, c: any) => (told.push([id, c]), {}), note() {}, liveViewUrl: () => null } as any;
-    const hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    const hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
     const port = hub.start().port;
     try {
       store.setPrivacy({ ...store.privacy(), shareTyping: true });

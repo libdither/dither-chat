@@ -29,7 +29,7 @@ beforeAll(() => {
       return { mime: 'image/png', base64: Buffer.from('pic').toString('base64') };
     },
   } as any;
-  hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+  hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
 });
 afterAll(() => {
   store.db.close();

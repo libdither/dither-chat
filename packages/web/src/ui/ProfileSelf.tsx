@@ -2,7 +2,7 @@
  * The parts of a profile that are about you and them on their network (docs/account-self.md): Ignore in their menu
  * (Block is SignalPeople.tsx's, for every network that can); what their profile shows beyond its text (badges,
  * colours); and, on your own profile, your pronouns, banner and its colour where the profile's `editable` lists them
- * (your name and picture are SignalPeople.tsx's OwnProfileExtras, by the same list).
+ * (your name is SignalPeople.tsx's OwnProfileExtras, by the same list; your picture is the page's big picture).
  */
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, SELF_LIMITS } from '@dither-chat/protocol';

@@ -21,7 +21,7 @@ const put = async (body: unknown) => {
 beforeAll(() => {
   store = new Store(join(dir, 'hub.sqlite'));
   store.setRetention({ ...DEFAULT_RETENTION, adversarial: true, deleted: true, disappearing: true, presence: true });
-  hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+  hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
   port = hub.start().port!;
 });
 afterAll(() => {

@@ -2,6 +2,7 @@ package org.libdither.chat
 
 import android.content.Context
 import android.net.Uri
+import android.webkit.CookieManager
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -33,12 +34,20 @@ object Hub {
     private fun effectivePort(u: Uri) = if (u.port > 0) u.port else if (u.scheme == "https") 443 else 80
 
     /**
-     * A request from the app itself, not the page. It carries no Origin header, which the hub reads as "not a browser",
-     * the same as its CLI: the tailnet is the only gate, as for everything else on the hub.
+     * The hub is behind its login (docs/login.md): the app's own requests carry the page's session, the WebView's
+     * cookie for the hub, and the hub's origin as their Origin, as the page's own requests do. Signed out, the hub
+     * answers 401 and the page shows its sign-in.
      */
+    fun authorize(conn: HttpURLConnection, origin: Uri) {
+        runCatching { CookieManager.getInstance().getCookie(origin.toString()) }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { conn.setRequestProperty("Cookie", it) }
+        conn.setRequestProperty("Origin", origin.toString())
+    }
+
+    /** A request from the app itself, not the page, with the page's session (authorize). */
     fun request(c: Context, method: String, path: String, body: JSONObject? = null, timeoutMs: Int = 15_000): Pair<Int, String> {
         val origin = origin(c) ?: return 0 to "no hub"
         val conn = URL("$origin$path").openConnection() as HttpURLConnection
+        authorize(conn, origin)
         try {
             conn.requestMethod = method
             conn.connectTimeout = timeoutMs
@@ -61,6 +70,7 @@ object Hub {
         val origin = origin(c) ?: return null
         if (!path.startsWith("/")) return null
         val conn = URL("$origin$path").openConnection() as HttpURLConnection
+        authorize(conn, origin)
         try {
             conn.connectTimeout = timeoutMs
             conn.readTimeout = timeoutMs

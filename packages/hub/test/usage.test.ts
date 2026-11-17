@@ -152,7 +152,7 @@ describe('the API', () => {
   beforeAll(() => {
     store = new Store(join(dir, 'hub.sqlite'), mediaSigner('s'));
     const sup = { authorize: () => null, online: () => false } as any;
-    server = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's' });
+    server = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's' });
     port = server.start().port!;
   });
   afterAll(() => {

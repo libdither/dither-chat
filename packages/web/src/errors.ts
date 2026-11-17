@@ -2,7 +2,7 @@
  * The page's errors, to the hub's traces/errors.ndjson (POST /api/errors; docs/tracing.md "Errors"): a throw nothing
  * caught, a rejection nothing handled, and an API call that could not reach the hub. Not an answer with a status: the
  * hub writes each 5xx it answers itself, so the page sending it too would make one bug two. Not an abort, not while
- * offline. `where` is the page's route as a template (`#/inbox/c/:id`), never an id or anything
+ * offline, not a fetch the page's own leaving cut off. `where` is the page's route as a template (`#/inbox/c/:id`), never an id or anything
  * typed; `message` is an Error's message (the hub clips it). At most 20 reports a minute, the same one at most once a
  * minute. Reporting never throws.
  */
@@ -11,7 +11,7 @@ declare const __BUILD_SHA__: string;
 const VERSION = typeof __BUILD_SHA__ === 'string' ? __BUILD_SHA__ : undefined;
 
 /** The words of the app's addresses (routes.ts); every other segment is an id, a name or something typed. */
-const WORDS = new Set(['inbox', 'c', 'people', 'graph', 'p', 'i', 'about', 's', 'groups', 'spaces', 'f', 'accounts', 'settings', 'triage', 'model', 'directory', 'search', 'requests', 'notices', 'mail', 'l', 't', 'calendar']);
+const WORDS = new Set(['inbox', 'c', 'people', 'graph', 'p', 'i', 'about', 's', 'groups', 'spaces', 'f', 'accounts', 'settings', 'triage', 'foryou', 'model', 'directory', 'search', 'requests', 'notices', 'mail', 'l', 't', 'calendar']);
 
 /** A hash as a route template: `#/inbox/c/dc_123?m=x` → `#/inbox/c/:id`. */
 export function routeTemplate(hash: string): string {
@@ -88,6 +88,24 @@ export function pageError(e: unknown): PageError | null {
 }
 
 /**
+ * A page that goes away (a reload for a new build, the bar's Reload, the tab closed) ends the fetches it has in flight,
+ * and the browser rejects each as if the hub were unreachable ("Failed to fetch"). Those are not the hub's fault, so a
+ * fetch failure waits a moment before it is sent and is dropped if the page has started leaving by then.
+ */
+const LEAVE_WAIT_MS = 1500;
+let leaving = false;
+export function noteLeaving(now: boolean): void {
+  leaving = now;
+}
+/** Run `send` after `ms`, unless the page started leaving meanwhile (or already had). */
+export function unlessLeaving(send: () => void, ms = LEAVE_WAIT_MS, later: (f: () => void, ms: number) => unknown = setTimeout): void {
+  if (leaving) return;
+  later(() => {
+    if (!leaving) send();
+  }, ms);
+}
+
+/**
  * api()'s failures: a fetch that did not reach the hub. An answer with a status is not sent: the hub wrote its own line
  * for each 5xx (server.ts reportAnswer), and a 4xx is a refusal.
  */
@@ -96,7 +114,7 @@ export function reportApiFailure(method: string, path: string, e: unknown, statu
   if (status !== undefined) return;
   const what = `${method} ${apiTemplate(path)}`;
   const msg = status !== undefined ? `${what} answered ${status}` : `${what} failed: ${(e as Error)?.message ?? 'no answer'}`;
-  reportPageError({ name: status !== undefined ? 'ApiError' : 'FetchError', message: msg, stack: (e as Error)?.stack, status }, e);
+  unlessLeaving(() => reportPageError({ name: status !== undefined ? 'ApiError' : 'FetchError', message: msg, stack: (e as Error)?.stack, status }, e));
 }
 
 let installed = false;
@@ -105,6 +123,10 @@ let installed = false;
 export function installErrorReports(): void {
   if (installed || typeof window === 'undefined') return;
   installed = true;
+  // beforeunload comes as a reload starts, pagehide as the page goes; pageshow is a page back from the back-forward cache.
+  window.addEventListener('beforeunload', () => noteLeaving(true));
+  window.addEventListener('pagehide', () => noteLeaving(true));
+  window.addEventListener('pageshow', () => noteLeaving(false));
   window.addEventListener('error', (ev) => {
     // A cross-origin script's "Script error." carries nothing, and a ResizeObserver loop is the browser's notice.
     if (!ev.error && (!ev.message || /^Script error\.?$|ResizeObserver loop/.test(ev.message))) return;

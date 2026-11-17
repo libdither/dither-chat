@@ -33,6 +33,7 @@ const FEATURE_TTL = 5 * MIN;
 /** Hard caps, whatever the retention: the oldest rows go first. */
 const MAX_VISITS = 200_000;
 const MAX_NOTIFICATIONS = 100_000;
+const MAX_FORYOU = 200_000;
 const PRUNE_EVERY = 10 * MIN;
 
 const EVENT_COLUMN: Partial<Record<P.NotificationEventKind, string>> = {
@@ -413,7 +414,7 @@ export class ActivityStore {
   }
 
   /** Drops what is past retention, then the oldest past the row caps. Returns how many rows went. */
-  prune(now = Date.now(), force = false, caps = { visits: MAX_VISITS, notifications: MAX_NOTIFICATIONS }): number {
+  prune(now = Date.now(), force = false, caps: { visits: number; notifications: number; foryou?: number } = { visits: MAX_VISITS, notifications: MAX_NOTIFICATIONS }): number {
     if (!force && now - this.lastPrune < PRUNE_EVERY) return 0;
     this.lastPrune = now;
     const cutoff = now - this.settings().retentionDays * DAY;
@@ -429,6 +430,11 @@ export class ActivityStore {
       this.db.query('DELETE FROM notification_event WHERE notification_id NOT IN (SELECT id FROM notification)').run();
       this.db.query('DELETE FROM triage_input WHERE at < ?').run(cutoff);
       n += this.db.query('DELETE FROM inbox_action WHERE at < ?').run(cutoff).changes;
+      // For you's served items and what devices said of them (foryou.ts).
+      n += this.db.query('DELETE FROM foryou_item WHERE created_at < ?').run(cutoff).changes;
+      const f = over('foryou_item', caps.foryou ?? MAX_FORYOU);
+      if (f) n += this.db.query('DELETE FROM foryou_item WHERE id IN (SELECT id FROM foryou_item ORDER BY created_at LIMIT ?)').run(f).changes;
+      n += this.db.query('DELETE FROM foryou_event WHERE at < ?').run(cutoff).changes;
     })();
     if (n) this.cache.clear();
     return n;
@@ -451,7 +457,7 @@ export class ActivityStore {
 
   /** Everything in the log. Usage totals (place_usage) are separate and stay. */
   clear() {
-    this.db.exec('DELETE FROM visit; DELETE FROM notification; DELETE FROM notification_event; DELETE FROM triage_input; DELETE FROM inbox_action;');
+    this.db.exec('DELETE FROM visit; DELETE FROM notification; DELETE FROM notification_event; DELETE FROM triage_input; DELETE FROM inbox_action; DELETE FROM foryou_item; DELETE FROM foryou_event;');
     this.cache.clear();
   }
 

@@ -23,6 +23,8 @@ export function useLongPress(onPress: (e: PointerEvent) => void, ms = 420) {
       // A reaction pill sits inside a message: the innermost long-press is the one meant.
       if (e.pointerType !== 'touch' || e.longPressTaken) return;
       e.longPressTaken = true;
+      // A second finger while the first is still held: a pinch (ui/PictureSwitch.tsx), not a long press.
+      if (start.current) return cancel();
       start.current = { x: e.clientX, y: e.clientY };
       fired.current = false;
       timer.current = setTimeout(() => {

@@ -2,8 +2,8 @@
 
 export type Route =
   | { view: 'inbox'; conv?: string; msg?: string }
-  /** Catch up (docs/inbox.md#catch-up). On a desktop it is the inbox with nothing open; a phone gives it a tab of its own. */
-  | { view: 'triage' }
+  /** For you (docs/foryou.md). On a desktop it is the inbox with nothing open; a phone gives it a tab of its own. */
+  | { view: 'foryou' }
   /** How it sorts (docs/notifications.md): which tier triage put each conversation's messages in this week, and why. */
   | { view: 'model' }
   /** graph: the people graph (graph/GraphView.tsx) in place of a thread. */
@@ -58,8 +58,10 @@ export function parseHash(h = location.hash): Route {
       return { view: 'accounts', account: p[1] };
     case 'settings':
       return { view: 'settings' };
+    // Catch up's old address opens For you, which took its place.
+    case 'foryou':
     case 'triage':
-      return { view: 'triage' };
+      return { view: 'foryou' };
     case 'model':
       return { view: 'model' };
     case 'directory':
@@ -101,8 +103,8 @@ export function href(r: Route): string {
       return r.account ? `#/accounts/${e(r.account)}` : '#/accounts';
     case 'settings':
       return '#/settings';
-    case 'triage':
-      return '#/triage';
+    case 'foryou':
+      return '#/foryou';
     case 'model':
       return '#/model';
     case 'directory':

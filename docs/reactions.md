@@ -14,6 +14,7 @@ what is possible here before offering it.
 | `identityIds` | Whoever we know reacted | Signal and Matrix name everyone; Discord only on request |
 | `emoji` | Name, image, animated flag, for custom keys | The catalog (`custom_emoji`) fills in as emoji are seen or offered |
 | `colors` | Super reactions: colours of the effect | Reported by Discord |
+| `at`, `seenAt` | When each person reacted (below, "When") | Most networks say; Discord does not |
 
 Storage is two tables. `reaction` holds who, `reaction_tally` holds one row per pill in display order.
 `reaction_tally.count` is NULL when a network names every reactor, so the number shown is the larger
@@ -22,6 +23,41 @@ of the reported total and the people known.
 The same emoji arrives spelled differently: Element adds U+FE0F to everything, and a bare `❤` renders
 as text. `canonicalReactionKey` reduces them to the fully qualified form at ingest, so they count as
 one pill, and each adapter matches on that form when taking a reaction back.
+
+## When
+
+Each person's reaction keeps when it was made: `reaction.at`, with `at_exact` saying whose time it is.
+
+| Network | Time | Shown |
+|---|---|---|
+| Signal | the reaction's own timestamp, a taken-back one's too; the backup's `sentTimestamp` (v2) or `date_sent` (legacy) | `3:41 PM` |
+| WhatsApp | the reaction's own time (`senderTimestampMS`), else its message's; history's too | `3:41 PM` |
+| Matrix | the `m.reaction` event's server time, old ones included; a taken-back one, the redaction's | `3:41 PM` |
+| Telegram | the date it gives for the people it names on a message; none for one taken back | `3:41 PM`; taken back `~3:41 PM` |
+| Discord, X, Messenger, Instagram, Google Messages | none: the hub keeps when it heard (live events, or a new name in a snapshot of a message it had) | `~3:41 PM` |
+| any | a reaction already there when the hub first saw the message, or from before times were kept | no time |
+
+An adapter puts the network's time on the `reaction` event as `ts` (and on a snapshot's `ReactionFact.at`, by
+author); without one the hub uses the time it heard and marks it. A time it gets later replaces one it heard, and an
+import fills in times for reactions the hub had without one. A time that is not one (seconds, or days ahead) counts
+as none. Message views carry `at` and `seenAt` on each pill, by identity, so a reaction shown before the network
+confirms it needs no entry.
+
+What shows:
+
+- **A pill's tooltip** (the app's own, shown at once above it): who reacted, then a line each with when, earliest
+  first (just the time for one person), at most eight. A time the hub heard, not the network's own, starts with "~",
+  and nothing more is said about it.
+- **Who reacted** (right-click or long-press a pill; `GET /api/messages/:id/reactors`): each person with their time,
+  and under their name their earlier turns ("added 2:10 PM · took back 2:12 PM"); then **Taken back**: those who took
+  theirs back and did not react again, with when. A "~" time's title says it is when the hub heard; reactions already
+  there have no time.
+- **Message history** lists reactions made and taken back with the pins, in order, each with its time. A message with
+  a timed reaction offers Message History in its menu.
+
+Taken back reactions come from `message_event` (docs/history.md): each says when it had been added, so a person can
+read "added, took back, added again". As there, your own are not kept, and nothing is while Message history does not
+keep reactions taken back. On Signal and WhatsApp a new reaction replaces the old, which counts as taken back then.
 
 ## Rules and context
 

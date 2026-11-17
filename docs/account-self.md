@@ -74,9 +74,9 @@ written (your choice, docs/chats.md).
 
 ## Your own profile
 
-On your own profile, under your bio: your name and picture (SignalPeople.tsx's OwnProfileExtras) and your pronouns,
-banner and banner colour (ProfileSelf.tsx), each where the profile's `editable` lists it; Discord's lists `bio`, `name`,
-`avatar`, `pronouns`, `banner` and `accent`. All go through `PUT /api/identities/:id/about`. Discord's limits are
+On your own profile, under your bio: your name (SignalPeople.tsx's OwnProfileExtras) and your pronouns, banner and
+banner colour (ProfileSelf.tsx), each where the profile's `editable` lists it; Discord's lists `bio`, `name`,
+`avatar`, `pronouns`, `banner` and `accent`. Your picture is the page's big picture ([profile.md](profile.md#changing-a-picture)). All go through `PUT /api/identities/:id/about`. Discord's limits are
 checked by its adapter (32 characters for a name, 40 for pronouns, pictures up to 10 MB); a banner picture without
 Nitro is Discord's refusal, said as it said it.
 

@@ -27,8 +27,8 @@ const ROUTES: [hash: string, kind: 'list' | 'tab' | 'page' | 'over', own: string
   ['#/inbox/c/feedx', 'page', '#/inbox'],
   ['#/inbox/c/pst_x_1', 'page', '#/inbox'],
   ['#/inbox/c/pst_x_2', 'page', '#/inbox'],
-  ['#/triage', 'tab', '#/triage'],
-  ['#/model', 'over', '#/triage'],
+  ['#/foryou', 'tab', '#/foryou'],
+  ['#/model', 'over', '#/foryou'],
   ['#/people', 'list', '#/people'],
   ['#/people/pal', 'page', '#/people'],
   ['#/people/graph', 'page', '#/people'],
@@ -67,7 +67,12 @@ const ROUTES: [hash: string, kind: 'list' | 'tab' | 'page' | 'over', own: string
 
 test('the table covers every kind of route', () => {
   const views = new Set(ROUTES.map(([h]) => R(h).view));
-  expect([...views].sort()).toEqual(['accounts', 'calendar', 'directory', 'folder', 'inbox', 'mail', 'model', 'notices', 'people', 'profile', 'requests', 'search', 'settings', 'space', 'spaces', 'triage']);
+  expect([...views].sort()).toEqual(['accounts', 'calendar', 'directory', 'folder', 'foryou', 'inbox', 'mail', 'model', 'notices', 'people', 'profile', 'requests', 'search', 'settings', 'space', 'spaces']);
+});
+
+test("Catch up's old address opens For you, which took its place", () => {
+  expect(R('#/triage')).toEqual({ view: 'foryou' });
+  expect(href(R('#/triage'))).toBe('#/foryou');
 });
 
 test("the calendar's own hash is kept verbatim, query and all, both ways", () => {
@@ -134,7 +139,9 @@ test('going to a page writes its list first, unless it comes from that list or j
   expect(written('#/s/srv', '#/s/srv/c/chan')).toBeNull();
   // …but opened directly, a page opened over another has its list under it, as a list's page has.
   expect(written('#/p/pal', null)).toBe('#/people');
-  expect(written('#/model', null)).toBe('#/triage');
+  expect(written('#/model', null)).toBe('#/foryou');
+  // A chat opened from For you's tab stacks on it: nothing written between.
+  expect(written('#/inbox/c/chan?m=m1', '#/foryou')).toBeNull();
   expect(written('#/search?q=in%3Achan%20hello', null)).toBe('#/s/srv');
   // A post's thread stacks on wherever it was opened from; opened directly, it is in the inbox.
   expect(written('#/inbox/c/pst_x_2', '#/inbox/c/pst_x_1')).toBeNull();
@@ -161,7 +168,9 @@ test("back from a list's page always goes to its list, and steps back through hi
   expect(way('#/s/srv2/c/chan2', '#/s/srv/c/chan')).toEqual(['#/s/srv2', 'replace']);
   expect(way('#/s/srv2/c/chan2', '#/s/srv')).toEqual(['#/s/srv2', 'replace']);
   expect(way('#/people/pal', '#/p/pal')).toEqual(['#/people', 'replace']);
-  expect(way('#/inbox/c/group', '#/triage')).toEqual(['#/inbox', 'replace']);
+  // …except For you's tab: a chat opened from an item goes back to it, where you were.
+  expect(way('#/inbox/c/group?m=m1', '#/foryou')).toEqual(['#/foryou', 'back']);
+  expect(restAfter(R('#/inbox/c/group?m=m1'), R('#/foryou'), places)).toBe('open');
   // A notification opens a conversation in the inbox, with nothing before it.
   expect(way('#/inbox/c/dm', null)).toEqual(['#/inbox', 'replace']);
   // A search hit goes to the list the conversation lives in, not back to the results.
@@ -191,10 +200,10 @@ test('back from a page opened over another closes it onto that page, or goes to 
     return [href(w.to), w.how];
   };
   expect(way('#/p/pal', '#/s/srv/c/chan')).toEqual(['#/s/srv/c/chan', 'back']);
-  // How it sorts, from Catch up or Settings; opened directly, back goes to Catch up.
-  expect(way('#/model', '#/triage')).toEqual(['#/triage', 'back']);
+  // How it sorts, from For you or Settings; opened directly, back goes to For you.
+  expect(way('#/model', '#/foryou')).toEqual(['#/foryou', 'back']);
   expect(way('#/model', '#/settings')).toEqual(['#/settings', 'back']);
-  expect(way('#/model', null)).toEqual(['#/triage', 'replace']);
+  expect(way('#/model', null)).toEqual(['#/foryou', 'replace']);
   expect(way('#/p/pal', null)).toEqual(['#/people', 'replace']);
   expect(way('#/about/c/chan', null)).toEqual(['#/s/srv', 'replace']);
   expect(way('#/accounts/acc', '#/settings')).toEqual(['#/settings', 'back']);

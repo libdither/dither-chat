@@ -2,7 +2,9 @@
  * The reaction picker and the add button (docs/reactions.md), end to end against a demo hub in headless Chromium:
  * Discord's layout (category rail, named emoji along the bottom), emoji drawn whole rather than clipped, hovering and
  * scrolling leaving the grid untouched, and on Signal, where one reaction per person is kept, the add button and the
- * picker saying a pick replaces yours, and a pick doing so.
+ * picker saying a pick replaces yours, and a pick doing so. Then when each reacted (docs/reactions.md "When"): a pill's
+ * tooltip with a line per person, the list of who reacted with each time and who took theirs back, Message history's
+ * reactions made and taken back, and on Discord, times marked "~" (when the hub heard) with no note.
  *
  *   bun scripts/verify-reactions.ts http://127.0.0.1:8482 [/tmp/shots]
  * The hub must be a fresh demo hub (--demo) with its own data dir: this reacts to messages.
@@ -20,6 +22,10 @@ const group = (network: string) => boot.conversations.find((c: any) => c.network
 const discord = group('discord');
 const signal = group('signal');
 if (!discord || !signal) throw new Error('the demo world has no Discord or Signal group');
+const named = (name: string) => boot.conversations.find((c: any) => c.name === name)?.id;
+const climb = named('Climbing crew 🧗');
+const raid = named('weekend raid');
+if (!climb || !raid) throw new Error('the demo world has no Climbing crew or weekend raid');
 
 let failures = 0;
 const check = (ok: unknown, what: string, detail: unknown = '') => {
@@ -127,6 +133,92 @@ try {
   const after = ((await fetch(`${hub}/api/conversations/${signal}/messages?limit=1`).then((r) => r.json())) as any).messages.at(-1).reactions.filter((r: any) => r.identityIds.length && r.key);
   const mine = after.filter((r: any) => r.identityIds.some((i: string) => boot.accounts.some((a: any) => a.selfIdentityId === i)));
   check(mine.length === 1 && mine[0].key === '😂', 'picking 😂 replaced your 👍', mine.map((r: any) => r.key));
+
+  // When each reacted (docs/reactions.md "When"). The pill of a message found by its words, marked for move().
+  const pillOf = (words: string, key: string) =>
+    p.eval<boolean>(`(() => {
+      document.querySelectorAll('[data-vr]').forEach((e) => e.removeAttribute('data-vr'));
+      const m = [...document.querySelectorAll('.msg')].find((x) => x.textContent.includes(${JSON.stringify(words)}));
+      const r = m && [...m.querySelectorAll('.reaction')].find((x) => x.textContent.includes(${JSON.stringify(key)}));
+      if (r) r.setAttribute('data-vr', '1');
+      return !!r;
+    })()`);
+  const tooltip = async () => {
+    await p.until(`!!document.querySelector('.tooltip.shown')`, 4000).catch(() => {});
+    return p.eval<string>(`document.querySelector('.tooltip.shown')?.innerText ?? ''`);
+  };
+  const openWho = async () => {
+    await p.eval(`(() => { const r = document.querySelector('[data-vr]'); const b = r.getBoundingClientRect(); r.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.x + 5, clientY: b.y + 5 })); })()`);
+    await p.until(`!!document.querySelector('.reactors .reactor')`, 5000);
+    await Bun.sleep(600);
+    return p.eval<{ rows: { name: string; when: string; title: string; past: string; gone: boolean }[]; sub: string; notes: number }>(`(() => {
+      const box = document.querySelector('.reactors');
+      return {
+        rows: [...box.querySelectorAll('.reactor')].map((r) => ({ name: r.querySelector('.reactor-who > span')?.textContent ?? '', when: r.querySelector('.reactor-when')?.textContent ?? '', title: r.querySelector('.reactor-when')?.title ?? '', past: r.querySelector('.reactor-past')?.textContent ?? '', gone: r.classList.contains('gone') })),
+        sub: box.querySelector('.reactors-sub')?.textContent ?? '',
+        notes: box.querySelectorAll('p').length,
+      };
+    })()`);
+  };
+  const time = /\d{1,2}:\d{2}/;
+
+  await p.goto(`${hub}/#/c/${climb}`);
+  await p.until(`[...document.querySelectorAll('.msg')].some((m) => m.textContent.includes('three sizes too big'))`, 15000);
+  await Bun.sleep(500);
+  check(await pillOf('three sizes too big', '😂'), "Sam's message has a 😂 from three people");
+  await move('[data-vr]');
+  const tip = await tooltip();
+  const tipLines = tip.split('\n').filter(Boolean);
+  check(tipLines.length >= 4 && ['Priya', 'Alice', 'Theo'].every((n) => tipLines.some((l) => l.startsWith(n) && time.test(l))) && !/~/.test(tip), "hovering a pill shows who reacted and each one's time, Signal's own", tipLines);
+  if (shots) await p.shot(`${shots}/when-tooltip-signal.png`);
+  await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+  const laughs = await openWho();
+  const mei = laughs.rows.find((r) => r.name.startsWith('Mei'));
+  check(laughs.sub === 'Taken back' && mei?.gone && /^took back \d/.test(mei.when) && /^added \d/.test(mei.past), 'who took theirs back is listed under Taken back, with when they added it', laughs.rows);
+  if (shots) await p.shot(`${shots}/when-who-taken-back.png`);
+  await escape();
+  await Bun.sleep(200);
+
+  // Sam's 😢 on the pinned message: made, taken back, made again; Alice's once.
+  check(await pillOf('Mesa is open till 10', '😢'), 'the pinned message has a 😢');
+  const who = await openWho();
+  const sam = who.rows.find((r) => r.name.startsWith('Sam'));
+  check(sam && time.test(sam.when) && /^added .*· took back /.test(sam.past), "the list of who reacted: Sam's time now, and under it when they added and took it back", who.rows);
+  check(who.rows.some((r) => r.name.startsWith('Alice') && time.test(r.when) && !r.past), "…and Alice's time, with nothing before it", who.rows);
+  check(!who.notes && who.rows.every((r) => !r.when.startsWith('~')), 'no note and no "~": Signal says when', who);
+  if (shots) await p.shot(`${shots}/when-who-signal.png`);
+  await escape();
+  await Bun.sleep(200);
+
+  // Message history: reactions made and taken back, in order.
+  await p.eval(`(() => { const m = [...document.querySelectorAll('.msg')].find((x) => x.textContent.includes('Mesa is open till 10')); const b = m.getBoundingClientRect(); m.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: b.x + 40, clientY: b.y + 8 })); })()`);
+  await p.until(`[...document.querySelectorAll('[role="menuitem"]')].some((i) => i.textContent.includes('Message History'))`, 4000);
+  await p.eval(`[...document.querySelectorAll('[role="menuitem"]')].find((i) => i.textContent.includes('Message History')).click()`);
+  await p.until(`!!document.querySelector('.modal .msg-history-event')`, 5000);
+  await Bun.sleep(300);
+  const lines = await p.eval<string[]>(`[...document.querySelectorAll('.modal .msg-history-event')].map((e) => e.innerText.replace(/\s+/g, ' ').trim())`);
+  const order = lines.map((l) => (l.includes('pinned') ? 'pin' : /^Sam\S* ?\S* reacted/.test(l) ? 'sam+' : /^Sam\S* ?\S* took back/.test(l) ? 'sam-' : /^Alice\S* ?\S* reacted/.test(l) ? 'alice+' : '?'));
+  check(order.join() === 'sam+,sam-,pin,alice+,sam+' || order.join() === 'pin,sam+,sam-,alice+,sam+', 'Message history: Sam reacted, took it back, Alice reacted, Sam reacted again, each with its time', lines);
+  if (shots) await p.shot(`${shots}/when-history-signal.png`);
+  await escape();
+  await Bun.sleep(300);
+
+  // Discord gives no times: "~" when the hub heard, and no note; Theo's, there before the hub saw it, has none.
+  await p.goto(`${hub}/#/c/${raid}`);
+  await p.until(`[...document.querySelectorAll('.msg')].some((m) => m.textContent.includes("who's in for saturday"))`, 15000);
+  await Bun.sleep(500);
+  check(await pillOf("who's in for saturday", '🙋'), "Ravi's message has a 🙋");
+  await move('[data-vr]');
+  const dtip = (await tooltip()).split('\n').filter(Boolean);
+  check(dtip.some((l) => /^Ravi · ~\d/.test(l)) && dtip.includes('Theo') && !dtip.some((l) => /doesn't say|hub/.test(l)), 'on Discord the tooltip marks the time "~", with no note', dtip);
+  if (shots) await p.shot(`${shots}/when-tooltip-discord.png`);
+  await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+  const dwho = await openWho();
+  check(dwho.rows.some((r) => r.name === 'Ravi' && /^~\d/.test(r.when) && /when the hub heard/.test(r.title) && /^added ~\d.*took back ~\d/.test(r.past)), "the list: Ravi's time is ~ when the hub heard (its title says so), after they took one back", dwho.rows);
+  check(dwho.rows.some((r) => r.name === 'Theo' && !r.when), "…Theo's has no time", dwho.rows);
+  check(!dwho.notes, 'no note under the list', dwho);
+  if (shots) await p.shot(`${shots}/when-who-discord.png`);
+  await escape();
   check(!p.errors.length, 'no page errors', p.errors);
 } finally {
   await close();

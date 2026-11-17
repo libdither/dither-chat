@@ -33,6 +33,18 @@ const HUB = process.env.DITHER_DEPLOY_HUB ?? 'http://127.0.0.1:8460';
 const MANAGER = process.env.DITHER_DEPLOY_MANAGER ?? 'http://127.0.0.1:8486';
 const HUB_DATA = process.env.DITHER_DEPLOY_HUB_DATA ?? join(HOME, '.local/share/dither-chat');
 const MANAGER_DATA = process.env.DITHER_DEPLOY_MANAGER_DATA ?? join(HOME, '.local/share/dither-accounts');
+/**
+ * The hub is behind its login (dither-chat docs/login.md): the checks send its service token, <hub data>/api.token,
+ * read on each call (a hub makes it at its first start, and `cli.ts rotate-token` replaces it).
+ */
+function hubAuth(): Record<string, string> {
+  try {
+    const t = readFileSync(join(HUB_DATA, 'api.token'), 'utf8').trim();
+    return t ? { authorization: `Bearer ${t}` } : {};
+  } catch {
+    return {};
+  }
+}
 /** Written in a release folder once its build is done: one without it is half built. */
 const BUILT = '.deploy-built';
 /** Releases kept besides the current and the one before it. */
@@ -189,7 +201,7 @@ async function untilOr(f: () => boolean | Promise<boolean>, ms: number, by = che
 
 /** Restarts the hub still has to do after gaps (its /api/health; 0 from a hub before them). */
 async function hubGapRestarts(): Promise<number> {
-  const r = await fetch(`${HUB}/api/health`, { signal: AbortSignal.timeout(3000) });
+  const r = await fetch(`${HUB}/api/health`, { headers: hubAuth(), signal: AbortSignal.timeout(3000) });
   if (!r.ok) throw new Error(`health ${r.status}`);
   return Number(((await r.json()) as { gapRestarts?: number }).gapRestarts ?? 0) || 0;
 }
@@ -232,7 +244,7 @@ async function codeRestarts(): Promise<CodeRestarts | null> {
 }
 
 async function onlineAccounts(): Promise<number> {
-  const r = await fetch(`${HUB}/api/bootstrap`, { signal: AbortSignal.timeout(capped(60_000)) });
+  const r = await fetch(`${HUB}/api/bootstrap`, { headers: hubAuth(), signal: AbortSignal.timeout(capped(60_000)) });
   if (!r.ok) throw new Error(`bootstrap ${r.status}`);
   const b = (await r.json()) as { accounts: { status?: string }[] };
   return b.accounts.filter((a) => a.status === 'online').length;
@@ -240,14 +252,15 @@ async function onlineAccounts(): Promise<number> {
 
 /** Whether the hub is connected to the manager: its notices' access is known (granted, pending or denied). */
 async function hubLinked(): Promise<boolean> {
-  const r = await fetch(`${HUB}/api/notices?limit=1`, { signal: AbortSignal.timeout(10_000) });
+  const r = await fetch(`${HUB}/api/notices?limit=1`, { headers: hubAuth(), signal: AbortSignal.timeout(10_000) });
+  if (r.status === 401) throw new Error('the hub did not take its service token (api.token)');
   if (!r.ok) return true; // notices off on this hub: nothing to tell by
   return ((await r.json()) as { access?: string }).access !== 'unreachable';
 }
 
 async function callsOn(): Promise<number> {
   try {
-    const r = await fetch(`${HUB}/api/calls`, { signal: AbortSignal.timeout(3000) });
+    const r = await fetch(`${HUB}/api/calls`, { headers: hubAuth(), signal: AbortSignal.timeout(3000) });
     return r.ok ? ((await r.json()) as unknown[]).length : 0;
   } catch {
     return 0;
@@ -279,7 +292,7 @@ async function notice(id: string, title: string, body: string, urgency: 'high' |
   // Right after the hub restarts, a notice can come between its catch-up and its live connection, and never reach it
   // (2026-11-13). The same id again replaces it at the manager and reaches the hub as new.
   const reached = async () => {
-    const r = await fetch(`${HUB}/api/notices?limit=30`, { signal: AbortSignal.timeout(10_000) });
+    const r = await fetch(`${HUB}/api/notices?limit=30`, { headers: hubAuth(), signal: AbortSignal.timeout(10_000) });
     const b = (await r.json()) as { items?: { title?: string }[] };
     return (b.items ?? []).some((n) => n.title === title);
   };

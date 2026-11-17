@@ -66,14 +66,20 @@ export class MediaArchiver {
     private onKept?: Kept,
   ) {}
 
-  start(everyMs = 60_000) {
+  /** Walks now and every `everyMs`; the first walk's promise. */
+  start(everyMs = 60_000): Promise<void> {
     this.timer = setInterval(() => void this.tick(), everyMs);
-    void this.tick();
+    return this.tick();
   }
 
   stop() {
     this.stopped = true;
     clearInterval(this.timer);
+  }
+
+  /** New files to keep now rather than at the next turn (a picture that came without its size, server.ts). */
+  nudge(): Promise<void> {
+    return this.timer && !this.stopped ? this.tick() : Promise.resolve();
   }
 
   private get cursor(): number {

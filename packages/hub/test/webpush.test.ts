@@ -335,7 +335,7 @@ describe('push servers, allowed from the app', () => {
   test('over HTTP: only a same-origin page can allow a server; a refused device learns which one', async () => {
     const svc = make();
     const sup = { authorize: () => null, online: () => true, command: async () => undefined } as any;
-    const hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, secret: 's', push: svc });
+    const hub = new HubServer(store, sup, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's', push: svc });
     const port = hub.start().port;
     const url = `http://127.0.0.1:${port}`;
     const post = (path: string, body: unknown, headers: Record<string, string> = {}, method = 'POST') => fetch(url + path, { method, body: JSON.stringify(body), headers: { 'content-type': 'application/json', ...headers } });

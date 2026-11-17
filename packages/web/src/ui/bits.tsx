@@ -4,7 +4,7 @@ import type * as P from '@dither-chat/protocol';
 import { GLYPH } from '../brand.ts';
 import { linkParts } from '../links.ts';
 import { hueOf, initials } from '../format.ts';
-import { annotateAccounts, netColor, netName } from '../model.ts';
+import { annotateAccounts, netColor, netName, usualAccount } from '../model.ts';
 import { db, go } from '../state.ts';
 import { phone, slideAway, useLayer, useSheetDrag } from '../phone.ts';
 import { Icon } from './icons.tsx';
@@ -31,11 +31,15 @@ export function NetBadge({ network, size = 16, class: cls }: { network: P.Networ
   );
 }
 
-/** Coloured dots for the accounts that see something. Hidden when the network has only one account. */
+/**
+ * Coloured dots for the accounts that see something. Hidden when the network has only one account, and where only the
+ * network's usual account sees it (usualAccount): a dot means "another account of yours", not "your account".
+ */
 export function AccountDots({ network, accountIds, size = 8, force }: { network: P.Network; accountIds: string[]; size?: number; force?: boolean }) {
   if (!force && !annotateAccounts(network)) return null;
   const accs = accountIds.map((id) => db.accounts.get(id)).filter((a): a is P.AccountView => !!a);
   if (!accs.length) return null;
+  if (!force && accs.length === 1 && accs[0].id === usualAccount(network)) return null;
   return (
     <span class="acc-dots" title={`via ${accs.map((a) => a.label).join(' + ')}`}>
       {accs.map((a) => (

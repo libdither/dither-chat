@@ -19,6 +19,7 @@ import { IndexingSettings } from './Indexing.tsx';
 import { AdversarialSettings } from './Adversarial.tsx';
 import { UsageSettings } from './ButtonCounts.tsx';
 import { DeskSettings } from './DeskSettings.tsx';
+import { SessionSettings } from './Login.tsx';
 import { MailAccessNote, MailAccountRows } from './mail/MailAccounts.tsx';
 import { MailReadSetting } from './mail/MailReadSetting.tsx';
 import { phone } from '../phone.ts';
@@ -26,7 +27,8 @@ import { android } from '../android.ts';
 import { Sheet } from './Sheet.tsx';
 import { chosenTheme, followsSystem, Swatch, ThemeList } from './Themes.tsx';
 import { themeById } from '../themes.ts';
-import { followsArchive, setFollowArchive } from '../arrange.ts';
+import { followsArchive, globalPictures, PICTURE_LABELS, setFollowArchive, setGlobalPictures } from '../arrange.ts';
+import { PICTURE_LAYOUTS, type PictureLayout } from '@dither-chat/protocol';
 import { applyCallInput, myInput } from '../call.ts';
 import { TranslateSettings } from './TranslateSettings.tsx';
 
@@ -47,6 +49,7 @@ export const SECTIONS: [title: string, icon: string, id: string][] = [
   ['Mail', 'mail', 'set-mail'],
   // The phone app opens links and files in the phone's apps by itself.
   ...(android ? [] : ([['Desktop helper', 'monitor', 'set-desk']] as [string, string, string][])),
+  ['Signed-in devices', 'lock', 'set-sessions'],
 ];
 
 /** A phone's way to any section without scrolling past the rest: a button in the header, and the sections in a sheet. */
@@ -395,11 +398,21 @@ export function SettingsPane() {
                 <small>A chat you archive or unarchive on a network (Signal) is hidden or shown in the sidebar here too, when that changes. Something that needs you still shows.</small>
               </span>
             </label>
+            <div class="set-rule">
+              <span class="set-rule-label">Pictures in chats</span>
+              <select class="select" data-track="settings: pictures" value={globalPictures()} onChange={(e) => setGlobalPictures((e.target as HTMLSelectElement).value as PictureLayout)}>
+                {PICTURE_LAYOUTS.map((l) => (
+                  <option value={l}>{PICTURE_LABELS[l]}</option>
+                ))}
+              </select>
+            </div>
+            <p class="set-help">One person's pictures sent one after another, in one message or several, show as one block, drawn this way. A chat or a server can have its own: Pictures in its menu.</p>
           </section>
 
           <TranslateSettings />
 
           <DeskSettings />
+          <SessionSettings />
 
           <MailSettings />
         </Later>

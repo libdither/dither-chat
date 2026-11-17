@@ -9,7 +9,7 @@
  *     you; the list does not count;
  *   - a mark on a line ticks at once on its newest message, the hub has it, and nothing moves: every count and the
  *     badge stay; a click on the ticked mark takes it back. On an alert the mark reads "Alert was wrong";
- *   - the same on a phone, reached from Catch up's header;
+ *   - the same on a phone, reached from For you's header;
  *   - tiers are named Alert, Conversation and List everywhere, with no level name from before them; what it learned
  *     says the two bars, the list's level with its preview, and the marks;
  *   - a message's bell says its tier, its importance, and the local model's answer against the hub's bar;
@@ -224,19 +224,17 @@ try {
     await page.shot(`${shots}/desk-model-learned.png`);
   }
 
-  // ------------------------------------------------------------------ on a phone, from Catch up
+  // ------------------------------------------------------------------ on a phone, from For you
 
   await page.size(400, 820, true);
-  await page.goto(`${base}/#/triage`);
-  await page.until(`!!document.querySelector('.catchup-head')`, 10000);
+  await page.goto(`${base}/#/foryou`);
+  await page.until(`!!document.querySelector('.foryou-head')`, 10000);
   await Bun.sleep(800);
-  const tags = await page.eval<string[]>(`[...new Set([...document.querySelectorAll('.cu-card .tier-chip')].map((e) => e.textContent.trim()))]`);
-  check("Catch up's cards are tagged with tier names only", tags.length > 0 && tags.every((t) => ['Alert', 'Conversation', 'List'].includes(t)), tags);
-  await page.eval(`[...document.querySelectorAll('.catchup-head .btn')].find((b) => b.textContent.includes('How it sorts')).click()`);
+  await page.eval(`[...document.querySelectorAll('.foryou-head .btn')].find((b) => b.textContent.includes('How it sorts')).click()`);
   await page.until(`location.hash === '#/model' && !!document.querySelector('.model-line')`, 8000).catch(() => {});
   await Bun.sleep(800);
   const phone = await state();
-  check('on a phone, How it sorts opens from Catch up', (await page.eval<string>('location.hash')) === '#/model');
+  check('on a phone, How it sorts opens from For you', (await page.eval<string>('location.hash')) === '#/model');
   agree(phone, 'on a phone', phone.tab);
   check('…with every line its importance and its marks', phone.bare.length === 0, phone.bare);
   check('…and nothing runs off the side', await page.eval<boolean>(`document.querySelector('.model-page .board-scroll').scrollWidth <= document.querySelector('.model-page .board-scroll').clientWidth + 1`));
@@ -253,7 +251,7 @@ try {
   }
   await page.eval(`document.querySelector('.model-page .icon-btn.back').click()`);
   await Bun.sleep(600);
-  check('…and its back button goes back to Catch up', (await page.eval<string>('location.hash')) === '#/triage', await page.eval<string>('location.hash'));
+  check('…and its back button goes back to For you', (await page.eval<string>('location.hash')) === '#/foryou', await page.eval<string>('location.hash'));
 
   // ------------------------------------------------------------------ the words, and what it learned
 

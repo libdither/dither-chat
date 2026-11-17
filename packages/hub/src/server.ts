@@ -15,6 +15,7 @@ import { setNativeMute } from './nativemute.ts';
 import { markUnreadFrom } from './unread.ts';
 import { validQuietHours, type Triage } from './triage.ts';
 import type { TriageVotes } from './votes.ts';
+import type { Scorecard } from './scorecard.ts';
 import { cleanFileName, Uploads } from './uploads.ts';
 import { ImportRunner } from './imports/engine.ts';
 import { GapFill } from './imports/gapfill.ts';
@@ -37,6 +38,7 @@ import { UsageStore } from './usage.ts';
 import { ClickCounts } from './clicks.ts';
 import type { Attention } from './attention.ts';
 import type { ActivityStore } from './activity.ts';
+import type { ForYou } from './foryou.ts';
 import { Devices } from './devices.ts';
 import { changesOf } from './journal.ts';
 import { syncResponse } from './sync.ts';
@@ -75,6 +77,7 @@ import { handlesPolls, pollRoute } from './polls.ts';
 import { SendExtras } from './sendextras.ts';
 import { reminderWords } from './saved.ts';
 import { ASK_LEVEL, isChatKind, type ManagerLink } from './accounts-manager.ts';
+import { Auth, bearerOf, clientIp, COOKIE, cookieOf, fileTicket, fromOwnPage, MIN_PASSWORD, overHttps, sessionCookie, ticketGood, USER, type Who } from './auth.ts';
 
 
 type ClientData = { kind: 'client' };
@@ -116,6 +119,11 @@ type WsData = ClientData | LiveViewData | AdapterSocketData | CallSocketData | V
 
 interface ServerOpts {
   port: number;
+  /**
+   * No login: every route answers without a session (auth.ts, docs/login.md). For a demo world (main.ts --demo) and
+   * tests only; a hub with real accounts never runs open.
+   */
+  open?: boolean;
   hostname: string;
   dataDir: string;
   webDist: string;
@@ -136,10 +144,14 @@ interface ServerOpts {
   attention?: Attention;
   /** The activity log (activity.ts, docs/activity.md). */
   activity?: ActivityStore;
+  /** For you (foryou.ts, docs/foryou.md): its pages, the "N new" count and what devices say of its items. */
+  foryou?: ForYou;
   /** Per-device notification rules (devices.ts, docs/devices.md). */
   devices?: Devices;
   /** Your votes on triage and the rules learned from them (votes.ts, docs/notifications.md). */
   votes?: TriageVotes;
+  /** How the models did, day by day (scorecard.ts, docs/scorecard.md): GET /api/model/scores. */
+  scorecard?: Scorecard;
   /** Fetch every remote attachment into the media cache soon after it arrives (mediaarchive.ts). A real hub, not a demo. */
   archiveMedia?: boolean;
   /** How index jobs and the gap fill read (readingpace.ts): a person's pace unless told otherwise. */
@@ -177,19 +189,37 @@ export function isTailnet(ip: string) {
 }
 
 /**
- * Cross-site pages get no say here: the hub has no login, only "you are on the tailnet", so a page
- * open on a tailnet device must not be able to drive it. Browsers always send Origin on these.
+ * A write or a socket from this hub's own page: its Origin (or, without one, its Referer) names the host it was sent
+ * to (auth.ts fromOwnPage). One with neither is refused: a program without a browser sends the service token instead,
+ * and those requests are not asked this (docs/login.md "Cross-site requests").
  */
 export function sameOrigin(req: Request): boolean {
+  return fromOwnPage(req);
+}
+
+/**
+ * The same on an open hub (a demo world, a test: `open`): programs there send no Origin, and the vite dev server
+ * proxies from localhost. Never on a hub behind the login.
+ */
+function sameOriginOpen(req: Request): boolean {
   const origin = req.headers.get('origin');
-  if (!origin) return true; // not a browser: the CLI, curl
+  if (!origin) return true;
   try {
     const o = new URL(origin);
-    return o.host === req.headers.get('host') || o.hostname === 'localhost' || o.hostname === '127.0.0.1'; // the vite dev proxy
+    return o.host === req.headers.get('host') || o.hostname === 'localhost' || o.hostname === '127.0.0.1';
   } catch {
     return false;
   }
 }
+
+/**
+ * Paths that answer only behind the login. Everything else a request without a session gets is the web app's own
+ * files (static(): files of the build, else its index.html), whatever the path: a route added outside these still
+ * never answers without a session, because the router is never reached without one.
+ */
+export const GATED = /^\/(api|media|emoji|voice|calendar|demo|adapter)(\/|$)/;
+/** The only gated paths open without a session: the login itself and a bare health check. */
+export const PUBLIC_API = new Set(['/api/health', '/api/login', '/api/logout']);
 
 /** A name this hub does not have (hosts.ts). DITHER_ALLOWED_HOSTS adds one. */
 const unknownHost = () => new Response('unknown host: add it to DITHER_ALLOWED_HOSTS (docs/deploy.md)', { status: 421 });
@@ -313,6 +343,8 @@ export class HubServer {
     return (this._marks ??= new ReplyMarks(this.store));
   }
   private _marks: ReplyMarks | null = null;
+  /** The login: password, sessions, the service token (auth.ts, docs/login.md). */
+  readonly auth: Auth;
   /** This process. A client that sees it change knows the hub restarted, and may have a new web build. */
   readonly boot = Buffer.from(crypto.getRandomValues(new Uint8Array(6))).toString('base64url');
   /** Sends by the client's id for them, so one retried after a lost answer goes out once (state.ts queues sends). */
@@ -326,6 +358,8 @@ export class HubServer {
     private triage: Triage,
     private opts: ServerOpts,
   ) {
+    if (!existsSync(opts.dataDir)) mkdirSync(opts.dataDir, { recursive: true, mode: 0o700 });
+    this.auth = new Auth(opts.dataDir);
     this.uploads = new Uploads(join(opts.dataDir, 'uploads'));
     // Mail's outbox sends files uploaded the same way (mail/outbox.ts).
     if (opts.mail) opts.mail.outbox.files = this.uploads;
@@ -527,7 +561,7 @@ export class HubServer {
     this.imports.resume();
     this.gapfill.resume();
     this.jobs.start();
-    this.archiver?.start();
+    void this.archiver?.start();
     this.mediaInfo.start();
     this.store.journal.prune();
     this.pruneTimer = setInterval(() => this.store.journal.prune(), 3_600_000);
@@ -587,6 +621,12 @@ export class HubServer {
     // locked database), or devices would miss it until their next bootstrap.
     const events = this.store.flush();
     if (events.length) noteWork('flush');
+    // A picture came without its size: the archive keeps the new files now, and the hub reads their sizes as it does
+    // (mediainfo.ts kept), instead of up to a minute later. A walk already under way gets to them by itself.
+    if (this.store.sizelessPictures) {
+      this.store.sizelessPictures = false;
+      void this.archiver?.nudge();
+    }
     try {
       if (this.opts.mail) events.push(...this.opts.mail.flush());
     } catch (e) {
@@ -736,16 +776,124 @@ export class HubServer {
     // And only under a name this hub has (hosts.ts), so a page that rebinds its own domain here gets nothing.
     if (!hostAllowed(req.headers.get('host'), this.names)) return unknownHost();
 
-    // dither-calendar (calendar.ts, docs/calendar.md). Its paths are not under /api/, so the cross-site check is here too.
+    if (path === '/ca.crt') return this.caCert();
+
+    // The login (auth.ts, docs/login.md). Being on this machine or the tailnet is not enough: the proxy on this machine
+    // (Caddy) reaches us from loopback too. Past here a request has a session, the service token, or a file ticket;
+    // without one it gets the login's own routes, a bare health check, or the web app's files, nothing else.
+    const who = clientIp(req, ip);
+    const https = overHttps(req, ip);
+    if (path === '/api/login' || path === '/api/logout') return this.loginRoute(req, path, who, https);
+    const me = this.whoIs(req, who);
+    if (path === '/api/health' && !me) return Response.json({ ok: true, now: Date.now() }, { headers: { 'cache-control': 'no-store' } });
+    if (!me) {
+      const ticketed = (path.startsWith('/media/') || path.startsWith('/emoji/')) && (req.method === 'GET' || req.method === 'HEAD') && ticketGood(this.opts.secret, path, url.searchParams.get('ticket'));
+      if (!ticketed) {
+        if (GATED.test(path)) return this.signIn();
+        return this.static(path);
+      }
+    }
+    // Cross-site: a browser's write or socket must come from this page (its cookie is SameSite=Lax, and this is the
+    // second lock). The service token is no browser's, so it is not asked.
+    const write = req.method !== 'GET' && req.method !== 'HEAD';
+    const socket = req.headers.get('upgrade')?.toLowerCase() === 'websocket';
+    const ownPage = me?.kind === 'open' ? sameOriginOpen(req) : me?.kind === 'token' || fromOwnPage(req);
+    if ((write || socket) && !ownPage) return new Response(socket ? 'cross-site socket refused' : 'cross-site request refused', { status: 403 });
+    if (me?.kind === 'session' && me.refresh !== null) {
+      const res = await this.routeIn(req, server, url, path, ip, me);
+      res?.headers.append('set-cookie', sessionCookie(cookieOf(req)!, me.refresh, https));
+      return res;
+    }
+    return this.routeIn(req, server, url, path, ip, me);
+  }
+
+  /** Who a request is (auth.ts Who), or null: nobody, and only the login's routes and the app's files answer. */
+  private whoIs(req: Request, who: string): Who | null {
+    if (this.opts.open) return { kind: 'open' };
+    if (this.auth.isToken(bearerOf(req))) return { kind: 'token' };
+    const s = this.auth.session(cookieOf(req), who);
+    return s ? { kind: 'session', ...s } : null;
+  }
+
+  /** 401 for a gated path without a session: the page shows its sign-in (or, with no password set, how to set one). */
+  private signIn(): Response {
+    const setup = !this.auth.password();
+    return Response.json(
+      { error: setup ? 'This hub has no password yet: set one with `bun packages/hub/src/cli.ts set-password` (docs/login.md).' : 'Sign in first.', login: true, ...(setup ? { setup: true } : {}) },
+      { status: 401, headers: { 'cache-control': 'no-store' } },
+    );
+  }
+
+  /**
+   * GET /api/login: whether this device is signed in and whether a password is set. POST /api/login { username,
+   * password }: a session cookie. POST /api/logout: this session ends. Writes only from this page.
+   */
+  private async loginRoute(req: Request, path: string, who: string, https: boolean): Promise<Response> {
+    const json = (x: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(x, { status, headers: { 'cache-control': 'no-store', ...headers } });
+    if (path === '/api/login' && (req.method === 'GET' || req.method === 'HEAD')) {
+      const signedIn = !!this.opts.open || !!this.auth.session(cookieOf(req), who);
+      return json({ signedIn, passwordSet: !!this.auth.password(), user: USER, open: !!this.opts.open, minPassword: MIN_PASSWORD });
+    }
+    if (req.method !== 'POST') return json({ error: 'POST' }, 405);
+    if (!(this.opts.open ? sameOriginOpen(req) : fromOwnPage(req))) return json({ error: 'cross-site request refused' }, 403);
+    if (path === '/api/logout') {
+      const s = this.auth.session(cookieOf(req), who);
+      if (s) this.auth.revoke(s.id);
+      return json({ ok: true }, 200, { 'set-cookie': sessionCookie('', 0, https), 'clear-site-data': '"cache", "storage"' });
+    }
+    if (Number(req.headers.get('content-length') ?? 0) > 8192) return json({ error: 'too large' }, 413);
+    const b = (await req.json().catch(() => ({}))) as { username?: unknown; password?: unknown };
+    const r = await this.auth.login(typeof b.username === 'string' ? b.username : USER, typeof b.password === 'string' ? b.password : '', who, req.headers.get('user-agent'));
+    if (r.ok) {
+      console.log(`login from ${who}`);
+      return json({ ok: true }, 200, { 'set-cookie': sessionCookie(r.token, r.maxAge, https) });
+    }
+    if (r.status !== 503) console.log(`login refused from ${who}: ${r.status}`);
+    return json({ error: r.error, ...(r.status === 503 ? { setup: true } : {}) }, r.status, r.retryAfter ? { 'retry-after': String(r.retryAfter) } : {});
+  }
+
+  /**
+   * GET /api/sessions: the signed-in devices. DELETE /api/sessions (?others=1: all but this one), DELETE
+   * /api/sessions/:id. The CLI does the same (cli.ts sessions, revoke-sessions). POST /api/sessions, with the service
+   * token only: a new session's cookie, for a script that drives a browser (scripts/hub-login.ts).
+   */
+  private sessionsRoute(req: Request, path: string, me: Who | null): Response {
+    if (path === '/api/sessions' && req.method === 'POST') {
+      if (me?.kind !== 'token') return Response.json({ error: 'the service token only' }, { status: 403 });
+      const s = this.auth.create('', req.headers.get('user-agent'));
+      return s ? Response.json({ cookie: sessionCookie(s.token, s.maxAge, false), name: COOKIE, value: s.token }, { headers: { 'cache-control': 'no-store' } }) : Response.json({ error: 'no password is set' }, { status: 409 });
+    }
+    const current = me?.kind === 'session' ? me.id : null;
+    const url = new URL(req.url);
+    let m: RegExpMatchArray | null;
+    if (path === '/api/sessions' && req.method === 'GET') return Response.json({ sessions: this.auth.list(current) }, { headers: { 'cache-control': 'no-store' } });
+    if (path === '/api/sessions' && req.method === 'DELETE') return Response.json({ revoked: this.auth.revokeAll(url.searchParams.get('others') === '1' ? current : null) });
+    if ((m = path.match(/^\/api\/sessions\/([\w-]+)$/)) && req.method === 'DELETE') return this.auth.revoke(m[1]) ? Response.json({ revoked: 1 }) : Response.json({ error: 'no such session' }, { status: 404 });
+    return Response.json({ error: 'not found' }, { status: 404 });
+  }
+
+  /** Everything behind the login. */
+  private async routeIn(req: Request, server: Server<WsData>, url: URL, path: string, ip: string, me: Who | null): Promise<Response | undefined> {
+    // dither-calendar (calendar.ts, docs/calendar.md).
     if (path === '/calendar' || path.startsWith('/calendar/')) {
-      if (req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) return new Response('cross-site request refused', { status: 403 });
       const link = this.opts.calendar?.link();
       return link ? link.proxy(req, url) : calendarOff(path);
     }
-
-    if (path.startsWith('/api/') && req.method !== 'GET' && !sameOrigin(req)) return new Response('cross-site request refused', { status: 403 });
-    if ((path === '/api/live' || path.startsWith('/api/liveview/') || path.startsWith('/api/call')) && !sameOrigin(req)) return new Response('cross-site socket refused', { status: 403 });
-    if (path === '/ca.crt') return this.caCert();
+    if (path.startsWith('/api/sessions')) return this.sessionsRoute(req, path, me);
+    // A link a program without the cookie may fetch for a few minutes (the desktop helper: docs/desktop.md).
+    if (path === '/api/ticket' && req.method === 'POST') {
+      const b = (await req.json().catch(() => ({}))) as { url?: unknown };
+      let u: URL;
+      try {
+        u = new URL(typeof b.url === 'string' ? b.url : '', url);
+      } catch {
+        return Response.json({ error: 'Send { url } of a /media or /emoji link' }, { status: 400 });
+      }
+      // Bound to the path alone: behind the proxy the page's origin is not the one this request came in on.
+      if (!/^\/(media|emoji)\/[^/]/.test(u.pathname)) return Response.json({ error: 'Only /media and /emoji links' }, { status: 400 });
+      u.searchParams.set('ticket', fileTicket(this.opts.secret, u.pathname));
+      return Response.json({ url: u.pathname + u.search });
+    }
 
     if (path === '/api/live') {
       if (server.upgrade(req, { data: { kind: 'client' } satisfies ClientData })) return undefined;
@@ -794,7 +942,7 @@ export class HubServer {
     if ((m = path.match(/^\/media\/([\w-]+)\/([\w-]+)$/))) return this.media(m[1], m[2], url.searchParams.get('a'));
     // Custom emoji inside message bodies: the id is all a body has, and it can only reach Discord's CDN.
     if ((m = path.match(/^\/emoji\/discord\/(\d+)(\.animated)?$/))) return this.fetchMedia(discordEmojiUrl(m[1], !!m[2]), null);
-    if (path === '/api/errors' && req.method === 'POST') return this.clientError(req, ip);
+    if (path === '/api/errors' && req.method === 'POST') return this.clientError(req, clientIp(req, ip));
     if (path.startsWith('/api/')) return this.api(req, url, path);
     return this.static(path);
   }
@@ -935,6 +1083,8 @@ export class HubServer {
       if (path === '/api/attention' && method === 'GET') return ok({ now: Date.now(), items: a.list() });
       // The learned order (ranker.ts): its mode and what it learned, as weights on named features.
       if (path === '/api/attention/model' && method === 'GET') return ok((a.judge as { view?: () => unknown } | undefined)?.view?.() ?? { mode: 'off' });
+      // How well "needs a reply" chances matched what you did (needsreply.ts): by day, and in bins.
+      if (path === '/api/attention/needs-reply' && method === 'GET') return ok(a.needsCalibration(Date.now(), Math.min(365, Math.max(1, num('days') ?? 60))));
       if ((m = path.match(/^\/api\/attention\/([\w-]+)$/)) && method === 'GET') {
         const x = a.explain(m[1]);
         return x ? ok(x) : bad('not in the inbox', 404);
@@ -947,6 +1097,17 @@ export class HubServer {
       }
     }
     if (path === '/api/inbox') return ok(s.inbox(num('since') ?? Date.now() - 7 * 86_400_000));
+    // For you (foryou.ts, docs/foryou.md): a page of a snapshot, how many a fresh one would add, and its events.
+    if (path.startsWith('/api/foryou') && this.opts.foryou) {
+      const f = this.opts.foryou;
+      if (path === '/api/foryou' && method === 'GET') return ok(await f.page(url.searchParams.get('epoch') || null, num('from') ?? 0, num('limit') ?? 20));
+      if (path === '/api/foryou/fresh' && method === 'GET') return ok(await f.fresh(url.searchParams.get('epoch') ?? ''));
+      if (path === '/api/foryou/stats' && method === 'GET') return ok(f.stats(num('since') ?? Date.now() - 7 * 86_400_000));
+      if (path === '/api/foryou/events' && method === 'POST') {
+        const b = await body<{ events?: Partial<P.ForYouEvent>[] }>();
+        return ok({ applied: f.events(Array.isArray(b.events) ? b.events : []) });
+      }
+    }
     // People and the places they share (graph.ts, docs/people-graph.md).
     if (path === '/api/graph' && method === 'GET') return ok(peopleGraph(s));
     // The networks' own search, a few places at a time in jev's order (netsearch.ts).
@@ -1329,6 +1490,8 @@ export class HubServer {
           this.flush();
           return ok(v);
         }
+        // ?kept=1: what was kept, without asking the network (null when nothing was).
+        if (url.searchParams.get('kept') === '1') return ok(this.abouts.keptView(kind, m[2], url.searchParams.get('account') ?? undefined));
         const v = await this.abouts.get(kind, m[2], url.searchParams.get('account') ?? undefined);
         this.flush();
         return ok(v);
@@ -1646,21 +1809,20 @@ export class HubServer {
       const style = (url.searchParams.get('style') ?? 'normal') as P.ReactionStyle;
       const msg = s.one<{ conversation_id: string; native_id: string }>('SELECT conversation_id, native_id FROM message WHERE id = ?', m[1]);
       if (!msg) return bad('no such message', 404);
-      const shown = () => s.messageView(m![1])?.reactions.find((r) => r.key === key && r.style === style);
-      const before = shown();
+      const before = s.messageView(m[1])?.reactions.find((r) => r.key === key && r.style === style);
       // Only ask the network when it has not told us everyone already.
       if (before && before.count > before.identityIds.length) {
         const conv = s.nativeOf('conversation', msg.conversation_id)!;
         const accountId = this.pickAccount(msg.conversation_id);
         const acc = accountId ? s.account(accountId) : null;
         if (acc && this.sup.online(acc.id)) {
-          const r = await this.sup.command<{ authors?: string[] }>(acc.id, { t: 'reactors', conversation: conv.nativeId, message: msg.native_id, key, style }, 20_000).catch(() => null);
-          if (r?.authors?.length) s.addKnownReactors(acc, m[1], key, style, r.authors);
+          const r = await this.sup.command<{ authors?: string[]; at?: Record<string, number> }>(acc.id, { t: 'reactors', conversation: conv.nativeId, message: msg.native_id, key, style }, 20_000).catch(() => null);
+          if (r?.authors?.length) s.addKnownReactors(acc, m[1], key, style, r.authors, r.at);
           this.flush();
         }
       }
-      const after = shown();
-      return ok({ count: after?.count ?? 0, identityIds: after?.identityIds ?? [], identities: s.identitiesByIds(after?.identityIds ?? []) });
+      // With when each reacted, and who took theirs back (docs/reactions.md "When").
+      return ok(s.reactorsView(m[1], key, style));
     }
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/(edit|delete)$/)) && method === 'POST') {
       const edit = m[2] === 'edit';
@@ -1712,6 +1874,12 @@ export class HubServer {
       // The list's preview is worked out in the background (votes.ts): the first answer waits for it.
       await this.opts.votes.previewReady();
       return ok(this.opts.votes.view());
+    }
+    // The scorecard (scorecard.ts, docs/scorecard.md): each scored day's metrics, for the last ?days= days (60).
+    if (path === '/api/model/scores' && method === 'GET') {
+      if (!this.opts.scorecard) return bad('No scorecard here', 404);
+      const days = Math.max(1, Math.min(400, Math.floor(Number(url.searchParams.get('days') ?? 60)) || 60));
+      return ok(this.opts.scorecard.view(days));
     }
     // What the shadow model would have done lately (shadow.ts): counts only.
     if (path === '/api/triage/shadow' && method === 'GET') return this.opts.votes ? ok(this.opts.votes.shadow()) : bad('No triage here', 404);
@@ -1894,7 +2062,7 @@ export class HubServer {
       }
       // Which push servers the hub may POST to. Only the app itself changes this: a same-origin page, never a bare request.
       if (path === '/api/push/servers' && (method === 'POST' || method === 'DELETE')) {
-        if (!req.headers.get('origin') || !sameOrigin(req)) return bad('push servers are allowed from the app itself', 403);
+        if (!req.headers.get('origin') || !(this.opts.open ? sameOriginOpen(req) : sameOrigin(req))) return bad('push servers are allowed from the app itself', 403);
         const b = await body<{ origin?: string; typed?: boolean; allowPrivate?: boolean; dismiss?: boolean }>();
         if (typeof b.origin !== 'string' || !b.origin) return bad('which server?');
         if (method === 'DELETE' && b.dismiss) return (push.dismiss(b.origin), ok());

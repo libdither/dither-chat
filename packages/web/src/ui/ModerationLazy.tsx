@@ -1,6 +1,6 @@
 /**
  * Moderating from a place's page (Moderation.tsx, docs/moderation.md) is a chunk of its own, loaded the first time a
- * page's About says this account may moderate there, set a label, change the picture or must name who takes over.
+ * page's About says this account may moderate there, set a label or must name who takes over.
  */
 import { useEffect, useState } from 'preact/hooks';
 

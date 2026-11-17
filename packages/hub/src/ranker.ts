@@ -12,13 +12,15 @@
  * `GET /api/attention/:id` without sorting by it; `off` does neither.
  *
  * DITHER_INBOX_EXPLORE: `1` (the default) sorts by a Thompson sample of the model instead of its mean, so a row it
- * knows little about sometimes rises into view (rank.ts `drawZ`); `0` sorts by the mean.
+ * knows little about sometimes rises into view (rank.ts `drawZ`), and every row moves a little (`EXPLORE_FLOOR`);
+ * `0` sorts by the mean.
  */
 import { Database } from 'bun:sqlite';
 import type { AttentionJudge, ScoreInput, Scored } from './attention.ts';
 import type { OwedTable } from './owed.ts';
+import type { NeedsModel } from './needsreply.ts';
 import { EXPLORE_REASON } from '@dither-chat/protocol';
-import { drawZ, epochOf, EXAM_AT, EXPLORE_EPOCH, EXPLORE_SCALE, FEATURES, FIT, fitRankSteps, GUESSED_CURVE, HORIZON, predict, PRIOR, rankFeatures, Z_CLIP, type Moment, type Prediction, type RankModel } from './rank.ts';
+import { drawZ, epochOf, EXAM_AT, EXPLORE_EPOCH, EXPLORE_FLOOR, EXPLORE_SCALE, FEATURES, FIT, fitRankSteps, GUESSED_CURVE, HORIZON, predict, PRIOR, rankFeatures, Z_CLIP, type Moment, type Prediction, type RankModel } from './rank.ts';
 import { flagged, isChoice, loadWorld, momentOf, mutedBy, Rebuild } from './rankhistory.ts';
 import { noteWork } from './stalls.ts';
 import { BUSY_MS, type Store } from './store.ts';
@@ -55,6 +57,8 @@ export class InboxRanker implements AttentionJudge {
   onFit?: () => void;
   /** The inbox's owed table (owed.ts, attention.ts): history is scored with it, as the live rows are. */
   owedTable?: () => OwedTable;
+  /** The needs-reply model the live scores use (needsreply.ts), so the replays score as the hub does. */
+  needsModel?: () => NeedsModel | null;
 
   constructor(
     private store: Store,
@@ -122,7 +126,7 @@ export class InboxRanker implements AttentionJudge {
       prior: { open: PRIOR.open, send: PRIOR.send },
       learned: { open: diff('open'), send: diff('send') },
       examination: this.examinationView(),
-      explore: { on: this.explore, sampling: this.explore && !!m.cov, epochMinutes: EXPLORE_EPOCH / MIN, zClip: Z_CLIP, scale: EXPLORE_SCALE },
+      explore: { on: this.explore, sampling: this.explore && !!m.cov, epochMinutes: EXPLORE_EPOCH / MIN, zClip: Z_CLIP, scale: EXPLORE_SCALE, floor: EXPLORE_FLOOR },
     };
   }
 
@@ -191,6 +195,7 @@ export class InboxRanker implements AttentionJudge {
       // Two more weeks of stays before the window, for where you had been by its first open.
       const w = loadWorld(db, mutedBy(this.triage), since - 14 * DAY, await run(flagged(db)));
       w.owedTable = this.owedTable?.();
+      w.needsModel = this.needsModel?.() ?? null;
       const opens = w.stays.filter((s) => isChoice(s) && s.targets.length && s.start >= since && s.start + HORIZON <= now).slice(-MAX_MOMENTS);
       const moments: Moment[] = [];
       let i = 0;

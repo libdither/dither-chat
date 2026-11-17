@@ -8,7 +8,7 @@ first two, statuses, presence and server members, Adversarial features), everywh
 | **Deleted messages** (adversarial) | the words and files of a message someone deleted (not ones you delete yourself) | in full in the chat, marked "Deleted · 3m" under it |
 | **Disappearing messages** (adversarial) | a Signal or WhatsApp message whose timer ran out | the same, marked "Disappeared" |
 | **Edits** | each earlier version of an edited message | click "(edited)" on it |
-| **Reactions taken back** | who took back which reaction; reactions a moderator cleared | Message History in the message's menu |
+| **Reactions taken back** | who took back which reaction and when, with when they had added it; reactions a moderator cleared | Message History in the message's menu; Taken back in a reaction's list of who reacted (docs/reactions.md "When") |
 | **Read receipts** | who got, read and played your messages, and when (Signal, WhatsApp, Matrix) | ticks beside your messages; click for who |
 | **Changes** (one switch) | names, descriptions, pictures, settings, members and roles of conversations and spaces; pins; people's names, usernames, pictures, bios, pronouns and banners | History on the profile page (docs/profile.md); a pin mark on pinned messages |
 | **Statuses** (adversarial) | each change to people's custom statuses (the About on Signal and WhatsApp); the current one is kept either way | the Activity section of a profile: a list, and marks above its chart (docs/profile.md) |
@@ -75,7 +75,9 @@ Three tables, by what they hang off:
   `gone_at`, and the body and attachments left in place when kept. Timelines, search and counts need nothing special;
   `message_gone`, a partial index on `gone_how`, finds them for Forget without reading every message.
 - **`message_event`** (message_id → message, ON DELETE CASCADE): `kind` (`edit`, `unreact`, `pin`, `unpin`), `data`
-  (JSON: an edit's previous `{ body }`, an unreact's `{ key, style, cleared? }`), `actor_id`, `at`, `account_id`. It
+  (JSON: an edit's previous `{ body }`, an unreact's `{ key, style, cleared?, exact?, added?, addedExact? }`: `exact`
+  when `at` is the network's own time rather than when the hub heard, `added` when the reaction had been made, as
+  `reaction.at` had it), `actor_id`, `at`, `account_id`. It
   goes with its message, so leaving a conversation leaves nothing behind.
 - **`receipt`** (message_id → message, ON DELETE CASCADE; key message, identity, state): the first time each person
   got, read or played each of your messages. Others' messages are not kept: nobody's receipts but yours are news.
@@ -123,8 +125,8 @@ then the global switch. Settings live in the hub (`meta.retention`, `GET/PUT /ap
 ## Changes
 
 `GET /api/{conversations|spaces|identities|persons}/:id/changes`, newest first (a person's covers all their
-identities), with the identities they name; `GET /api/messages/:id/history` for a message's versions, events and
-receipts.
+identities), with the identities they name; `GET /api/messages/:id/history` for a message's versions, events,
+reactions with a known time (docs/reactions.md "When") and receipts.
 
 - Conversations and spaces: name, description (topic), picture, as their facts arrive. A conversation first known
   from a message, with no name yet, filling in is not a change.

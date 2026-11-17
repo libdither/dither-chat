@@ -227,6 +227,8 @@ CREATE TABLE IF NOT EXISTS reaction (
   identity_id TEXT NOT NULL REFERENCES identity(id) ON DELETE CASCADE,
   key         TEXT NOT NULL,
   style       TEXT NOT NULL DEFAULT 'normal' CHECK (style IN ('normal', 'super')),
+  at          INTEGER,                          -- when it was added; NULL: already there when the hub first saw it
+  at_exact    INTEGER NOT NULL DEFAULT 0,       -- 1: the network's own time; 0: when the hub heard (Discord gives none)
   PRIMARY KEY (message_id, identity_id, key, style)
 );
 
@@ -258,7 +260,9 @@ CREATE TABLE IF NOT EXISTS folder (
   name     TEXT NOT NULL,
   icon     TEXT,
   color    TEXT,
-  position REAL NOT NULL
+  position REAL NOT NULL,
+  parent_id  TEXT,                            -- the folder it sits in (one level: a parent has none)
+  parent_pos REAL                             -- its place among the parent's items
 );
 
 -- A folder holds anything from any network: communities, single conversations, people.
@@ -271,7 +275,7 @@ CREATE TABLE IF NOT EXISTS folder_item (
 );
 
 -- How you arranged your sidebar: order, pins, hidden places, closed folders. And whom the @ picker offers there
--- (docs/mentions.md): NULL inherits from the place it is in.
+-- (docs/mentions.md) and how pictures are shown there (docs/pictures.md): NULL inherits from the place it is in.
 CREATE TABLE IF NOT EXISTS place_pref (
   kind      TEXT NOT NULL CHECK (kind IN ('folder', 'space', 'conversation')),
   id        TEXT NOT NULL,
@@ -282,6 +286,7 @@ CREATE TABLE IF NOT EXISTS place_pref (
   railed    INTEGER NOT NULL DEFAULT 0,
   mention_scope TEXT,                         -- here | friends | everyone
   mention_same  INTEGER,                      -- 1: friends and everyone only on the chat's network
+  pictures      TEXT,                         -- mosaic | rows | six | fold | small
   PRIMARY KEY (kind, id)
 );
 
@@ -491,6 +496,19 @@ CREATE TABLE IF NOT EXISTS owed_turn (
   PRIMARY KEY (conversation_id, addressed)
 ) WITHOUT ROWID;
 
+-- The chance a turn needs a reply as shown (needsreply.ts), kept once per open turn at 15 min, 1 h, 6 h and 1 day of
+-- age, to check against what you did (owed_turn): the calibration record (docs/inbox.md, "Needs a reply"). A year.
+CREATE TABLE IF NOT EXISTS needs_prediction (
+  conversation_id TEXT NOT NULL,
+  addressed       INTEGER NOT NULL,            -- the turn (owed_turn's key)
+  age             INTEGER NOT NULL,            -- the age it was kept at, ms
+  p               REAL NOT NULL,               -- the chance shown
+  table_p         REAL NOT NULL,               -- the owed table's chance alone, to compare
+  at              INTEGER NOT NULL,
+  PRIMARY KEY (conversation_id, addressed, age)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS needs_prediction_addressed ON needs_prediction(addressed);
+
 -- ------------------------------------------------------------------ the change journal (journal.ts, docs/sync.md)
 -- What changed, by object, at which position, so a client that comes back asks only for that. Compacted: one row
 -- per object, at its latest change. Holds ids only; what an object is now is read from its own table at sync time.
@@ -618,10 +636,66 @@ CREATE TABLE IF NOT EXISTS phone_episode (
 CREATE INDEX IF NOT EXISTS phone_episode_open ON phone_episode(conversation_id) WHERE ended_at IS NULL;
 CREATE INDEX IF NOT EXISTS phone_episode_day ON phone_episode(day, conversation_id);
 CREATE INDEX IF NOT EXISTS phone_episode_ended ON phone_episode(outcome_at) WHERE outcome = 'dismissed';
+-- For you (foryou.ts, docs/foryou.md): each item a page was served, with the exact chance of its slot, and what each
+-- device said happened to it. Ids and numbers only: never what was said. Part of the activity log: written only while
+-- it is on, pruned with its retention, deleted with it.
+CREATE TABLE IF NOT EXISTS foryou_item (
+  id              TEXT PRIMARY KEY,
+  epoch           TEXT NOT NULL,             -- the snapshot it was served from
+  message_id      TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  author_id       TEXT,
+  position        INTEGER NOT NULL,          -- from 0, in the snapshot
+  slot            TEXT NOT NULL,             -- 'rank' or 'explore'
+  propensity      REAL NOT NULL,             -- the exact chance of this item in this slot: 1 for 'rank'
+  score           REAL,                      -- what ordered it: importance times freshness
+  prior           REAL,                      -- triage's importance
+  age_ms          INTEGER,                   -- how old the message was when the snapshot was taken
+  burst_n         INTEGER,                   -- messages in its burst, it included
+  chars           INTEGER,                   -- its text's length: how long reading it takes
+  reply           INTEGER NOT NULL DEFAULT 0, -- it replies to a message (shown quoted)
+  created_at      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS foryou_item_created ON foryou_item(created_at);
+CREATE INDEX IF NOT EXISTS foryou_item_conv ON foryou_item(conversation_id, created_at);
+CREATE TABLE IF NOT EXISTS foryou_event (
+  item_id TEXT NOT NULL,
+  device  TEXT NOT NULL,
+  kind    TEXT NOT NULL,                     -- ForYouEventKind: shown, clicked, more, less, hidden
+  at      INTEGER NOT NULL,                  -- when it first happened
+  ms      INTEGER,                           -- shown: milliseconds on screen, summed
+  PRIMARY KEY (item_id, device, kind)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS foryou_event_at ON foryou_event(at);
+
+-- Each list push the phone's list was asked for that passed the gate, the snoozes and the cap: whether the day's
+-- budget sent it, and its importance, for the day's bar (phonelist.ts `bar`) and a later replay. Ids, times, numbers.
+CREATE TABLE IF NOT EXISTS phone_push (
+  id              INTEGER PRIMARY KEY,
+  at              INTEGER NOT NULL,
+  day             TEXT NOT NULL,             -- the hub's local day, YYYY-MM-DD
+  mode            TEXT NOT NULL,             -- 'on' or 'shadow'
+  conversation_id TEXT NOT NULL,
+  importance      REAL,                      -- triage's, 0 to 1; null when not known
+  sent            INTEGER NOT NULL           -- 1 when the budget let it go (in shadow: would have)
+);
+CREATE INDEX IF NOT EXISTS phone_push_day ON phone_push(day);
 -- A chat whose row the phone swiped away: its list rows wait until this, or until something above the list comes.
 CREATE TABLE IF NOT EXISTS phone_snooze (
   conversation_id TEXT PRIMARY KEY,
   until           INTEGER NOT NULL
+) WITHOUT ROWID;
+
+-- The scorecard (scorecard.ts, docs/scorecard.md): how the notification and inbox models did on each local day, scored
+-- once the day's outcomes are in. One row per day and metric (protocol SCORE_CHARTS). Numbers only: no ids, no text.
+CREATE TABLE IF NOT EXISTS model_score (
+  day    TEXT NOT NULL,                      -- the hub's local day, YYYY-MM-DD
+  metric TEXT NOT NULL,                      -- e.g. alert.opened, importance.auc_start, inbox.mrr
+  value  REAL,                               -- NULL: nothing to score that day
+  n      INTEGER NOT NULL,                   -- how many it is of
+  extra  TEXT,                               -- JSON of more counts, e.g. {"opened": 19}
+  at     INTEGER NOT NULL,                   -- when it was scored
+  PRIMARY KEY (day, metric)
 ) WITHOUT ROWID;
 
 -- What triage knew from the log when it decided (DITHER_ACTIVITY_FEATURES), so training sees no later outcomes.
@@ -664,7 +738,7 @@ CREATE TABLE IF NOT EXISTS message_event (
   id         INTEGER PRIMARY KEY,
   message_id TEXT NOT NULL REFERENCES message(id) ON DELETE CASCADE,
   kind       TEXT NOT NULL CHECK (kind IN ('edit', 'unreact', 'pin', 'unpin')),
-  data       TEXT,                        -- JSON: edit { body } (the version before); unreact { key, style }
+  data       TEXT,                        -- JSON: edit { body } (the version before); unreact { key, style, cleared?, exact?, added?, addedExact? }
   actor_id   TEXT,
   at         INTEGER NOT NULL,
   account_id TEXT
