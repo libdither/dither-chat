@@ -74,6 +74,7 @@ and not in your notes to self, and the first of these that holds:
 | | Its reason |
 | --- | --- |
 | it is in a DM | A direct message |
+| it is in a post you follow: a reply the hub's check found ([feed.md](feed.md#following-a-post)) | A reply to a post you follow |
 | it mentions you by name or replies to your message (`@everyone` does not count) | About you |
 | it says one of your keywords ([Rules](#rules)) | Says “…”, one of your keywords |
 | you wrote in its chat in the last 24 hours (`TOOK_PART`) | You wrote here in the last day |

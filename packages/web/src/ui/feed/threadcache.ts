@@ -42,6 +42,14 @@ export function heldThread(network: P.Network, post: string): P.PostThreadView |
   return h && Date.now() - h.at < KEEP_MS ? h.v : null;
 }
 
+/**
+ * The thread read for this post forgotten: the next open asks the hub, whose copy the hub keeps current itself (a
+ * followed post's chat: the hub's checks find its new replies, which a thread read here before them lacks).
+ */
+export function forgetThread(network: P.Network, post: string) {
+  held.delete(keyOf(network, post));
+}
+
 /** A post's thread: the one read ahead while fresh, the read in flight, else asked now. `fresh`: asked again
  * (checking for new replies). */
 export function readThread(network: P.Network, post: string, fresh = false): Promise<P.PostThreadView> {

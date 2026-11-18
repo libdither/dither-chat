@@ -88,6 +88,8 @@ export interface Facts {
   known?: boolean;
   /** People talking with you (tiers.ts): a DM, about you, or a chat you take part in. */
   conv?: boolean;
+  /** In a post you follow (variant 'follow', follows.ts): a Conversation, as a DM is. Absent elsewhere. */
+  followed?: boolean;
   /** The local model's answer to the stop-now question, 0 to 1; absent when it was not asked or did not answer. */
   judge?: number;
   /** Kept to the list: a rule of yours (List only), or the place is muted on its network. Never a Conversation or an alert. */

@@ -58,10 +58,13 @@ const THREADS_WAITS = 10;
 /** A page's messages may land just after its answer (remote accounts): looked for this often, this many times. */
 const LAND_MS = 500;
 const LAND_TRIES = 6;
-/** Channels whose own history holds nothing: their posts are threads. */
-const NO_MESSAGES = new Set(['forum', 'media']);
+/**
+ * Channels whose own history holds nothing: their posts are threads. Nor a feed, the logged posts or a followed post's
+ * replies (docs/feed.md): the hub made those conversations, the network has no history of them.
+ */
+const NO_MESSAGES = new Set(['forum', 'media', 'feed', 'posts', 'follow']);
 /** Channels that cannot have threads. */
-const NO_THREADS = new Set(['voice', 'stage']);
+const NO_THREADS = new Set(['voice', 'stage', 'feed', 'posts', 'follow']);
 const PRIORITY: Record<P.JobPriority, number> = { low: 0, normal: 1, high: 2 };
 
 type Command = (accountId: string, cmd: any, timeoutMs?: number) => Promise<any>;

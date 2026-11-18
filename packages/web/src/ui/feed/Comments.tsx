@@ -25,6 +25,7 @@ import type { Kit } from './lazy.tsx';
 import { Counts, Pics, QuotedIn, Row, Text, Who } from './Post.tsx';
 import { REPLY_ICONS, Seg } from './Seg.tsx';
 import { runOf, runPair, treeChains, type TreeNode } from './tree.ts';
+import { freshReplies } from './fresh.ts';
 
 export type CommentStyle = 'tree' | 'compact' | 'flat' | 'chains';
 export const COMMENT_STYLES: { id: CommentStyle; label: string; title: string }[] = [
@@ -79,6 +80,9 @@ interface CommentCtx {
   fresh?: ReadonlySet<string>;
 }
 
+/** New here: came with the last check for new replies, or (a followed post's chat, fresh.ts) since you last read it. */
+const isNew = (ctx: CommentCtx, id: string) => !!ctx.fresh?.has(id) || freshReplies.value.has(id);
+
 function MoreUnder({ n, ctx, under }: { n: TreeNode; ctx: CommentCtx; under?: boolean }) {
   const id = n.post.id;
   const busy = ctx.loading.has(id);
@@ -125,7 +129,7 @@ function Head({ p, ctx, avatar, folded, size }: { p: P.PostView; ctx: CommentCtx
       )}
       <Who id={who} kit={kit} />
       {who && who === ctx.op && <span class="post-tag op" title="Wrote the post">OP</span>}
-      {ctx.fresh?.has(p.id) && <span class="post-tag new">new</span>}
+      {isNew(ctx, p.id) && <span class="post-tag new" title="Came since you last looked">new</span>}
       <a class="post-handle ct-time" href={kit.feed.postHref(ctx.network, p.id)} title={`${kit.fullTime(p.ts)}: open as a thread`}>
         · {kit.ago(p.ts)}
       </a>
@@ -294,7 +298,7 @@ export function Comments({ nodes, style, ctx }: { nodes: TreeNode[]; style: Comm
           return (
             <div class="thread-chain" key={first.id}>
               {chain.map((p, i) => (
-                <Row p={p} kit={ctx.kit} network={ctx.network} line={i < chain.length - 1} above={i === 0 && to ? <span class="post-mark">Replying to @{to}</span> : undefined} below={ctx.below?.(p)} {...(ctx.fresh?.has(p.id) ? { tag: 'new' } : {})} />
+                <Row p={p} kit={ctx.kit} network={ctx.network} line={i < chain.length - 1} above={i === 0 && to ? <span class="post-mark">Replying to @{to}</span> : undefined} below={ctx.below?.(p)} {...(isNew(ctx, p.id) ? { tag: 'new' } : {})} />
               ))}
               {chain.map((p) => byId.get(p.id)).map((x) => x && <MoreUnder n={x} ctx={ctx} under />)}
             </div>

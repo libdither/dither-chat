@@ -50,7 +50,9 @@ function describe(kind: P.JobTargetKind, id: string): { name: string; noun: stri
     if (!c) return null;
     const accounts = c.vantages.map((v) => v.accountId);
     const channel = c.shape === 'channel' || c.shape === 'thread';
-    return { name: c.shape === 'direct' ? convTitle(c) : convLabel(c), noun: channel ? 'channel' : 'chat', network: c.network, history: able(accounts, 'history'), members: false, communities: false };
+    // The hub's own (docs/feed.md: notifications, logged posts, a post you follow) have no history on the network to read.
+    const hubMade = c.variant === 'feed' || c.variant === 'posts' || c.variant === 'follow';
+    return { name: c.shape === 'direct' ? convTitle(c) : convLabel(c), noun: channel ? 'channel' : 'chat', network: c.network, history: !hubMade && able(accounts, 'history'), members: false, communities: false };
   }
   const f = db.folders.find((x) => x.id === id);
   if (!f) return null;

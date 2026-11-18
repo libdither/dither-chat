@@ -4,7 +4,7 @@
  */
 import { isLottie } from './Sticker.tsx';
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META, PICTURE_LAYOUTS, RULE_LABEL, RULE_LEVELS, showsInline } from '@dither-chat/protocol';
+import { followedPostOf, NETWORK_META, PICTURE_LAYOUTS, RULE_LABEL, RULE_LEVELS, showsInline } from '@dither-chat/protocol';
 import { fullTime } from '../format.ts';
 import { noteRowRead } from '../activity.ts';
 import { AUTOMATIC, OLDER_RULE, authorName, convTitle, deepLink, directsOf, effectiveLevel, externalProfile, heldHere, netName, placePref, plainBody, ruleOn, sumUnread, unreadOf, type Level } from '../model.ts';
@@ -17,7 +17,7 @@ import { mark } from '../triage.ts';
 import { desk, openLink } from '../desk.ts';
 import { pickerFor, quickReactions, reactionScope, reactorsFor, replacing, toggleReaction } from '../reactions.ts';
 import { clearReactions, moderatorDelete, moderatorRemoveEmbeds, modOf } from '../moderate.ts';
-import { canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
+import { api, canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
 import { messageSomeone, openPalette } from './Palette.tsx';
 import { hasHistory, historyOf } from './MessageHistory.tsx';
 import { MarkToggles, tierHeading, tierIcon } from './Marks.tsx';
@@ -396,6 +396,19 @@ function pictureEntries(kind: P.PlaceKind, ids: string | string[]): MenuEntry[] 
   ];
 }
 
+/** A post you follow (docs/feed.md "Following a post"): stop the hub looking for replies, or start it again. */
+function followEntries(c: P.ConversationView): MenuEntry[] {
+  const post = c.variant === 'follow' ? followedPostOf(c.nativeId) : null;
+  if (!post) return [];
+  const stopped = !!c.follow && c.follow.stopped !== null;
+  const run = () =>
+    void api<P.PostFollow>(`/api/posts/${c.network}/${post}/follow`, { method: stopped ? 'PUT' : 'DELETE' }).then(
+      () => toast(stopped ? { kind: 'info', title: 'Following replies again', body: 'New replies will come to this chat.' } : { kind: 'info', title: 'Stopped following', body: 'No more replies come here. The chat stays.' }),
+      (e) => toast({ kind: 'error', title: stopped ? 'Could not follow it again' : 'Could not stop following', body: (e as Error).message }),
+    );
+  return [{ label: stopped ? 'Follow Again' : 'Stop Following', icon: stopped ? 'bell' : 'bellOff', run }];
+}
+
 /** `why`: the inbox's reasons for where this row sits (docs/inbox.md), shown first. */
 export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpec {
   const eff = effectiveLevel(c);
@@ -428,6 +441,7 @@ export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpe
       c.shape !== 'thread' ? arrangeEntries(placeKey) : [],
       // Follow a thread and how it notifies; start, post, browse threads (threads.ts).
       threadConvEntries(c),
+      followEntries(c),
       [
         { label: `Copy ${channel ? 'Channel' : 'Chat'} ID`, icon: 'idBadge', run: () => copy(c.nativeId, 'ID copied') },
         { label: 'Copy dither-chat ID', icon: 'idBadge', run: () => copy(c.id, 'ID copied') },

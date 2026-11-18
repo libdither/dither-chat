@@ -200,6 +200,8 @@ export interface ConversationView {
   thread?: ThreadView;
   /** A forum or media channel's tags and default order (threads.ts). */
   forum?: ForumView;
+  /** A followed post's conversation (variant 'follow'): whether the hub still checks it for replies. */
+  follow?: PostFollow;
 }
 
 /**
@@ -684,6 +686,32 @@ export interface MessageView {
   post?: PostFact;
 }
 
+/**
+ * A post you follow (docs/feed.md "Following a post"): its replies found from then on come to a conversation of their
+ * own (variant 'follow'), and the hub reads the thread again now and then for them. PUT and DELETE
+ * /api/posts/:network/:post/follow answer with it; GET adds `fresh`.
+ */
+export interface PostFollow {
+  /** The followed post's conversation. It stays when checks stop. */
+  conversationId: string;
+  /** The account that follows it: the one whose reads find the replies. */
+  accountId: string;
+  /** ms epoch: followed (again). */
+  since: number;
+  /** ms epoch: checks stopped, or null while they go on. */
+  stopped: number | null;
+  /** Why they stopped: unfollowed, or no new reply in a week. */
+  why?: 'unfollowed' | 'quiet';
+  /** ms epoch: the next check, while they go on (it waits for the account's reading pace and its being online). */
+  next: number | null;
+  /** ms epoch: the hub last read the thread for replies. */
+  checked: number | null;
+  /** ms epoch: the last time a check found a new reply (or `since`). */
+  lastNew: number;
+  /** GET only: the replies found since the conversation was last read (post ids), for the thread to mark them new. */
+  fresh?: string[];
+}
+
 /** A post with the hub message it was logged as (docs/feed.md "Threads"). */
 export type PostView = PostFact & { messageId: string | null };
 
@@ -706,6 +734,8 @@ export interface PostThreadView {
   logged?: PostView[];
   /** The conversation the posts were logged in (variant 'posts'), when there is one. */
   conversationId: string | null;
+  /** The post followed (docs/feed.md "Following a post"), or null; absent from a page of more replies. */
+  follow?: PostFollow | null;
   stored?: string;
   /** Everyone the posts name, for rendering. */
   identities: IdentityView[];

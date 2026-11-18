@@ -25,6 +25,7 @@ import { PushService } from './push.ts';
 import { ReadQueue } from './readqueue.ts';
 import { HubServer, mediaSigner } from './server.ts';
 import { BRISK, paceFromEnv } from './readingpace.ts';
+import { followFromEnv } from './follows.ts';
 import { Store } from './store.ts';
 import { RoutedSupervisor } from './remote.ts';
 import { Supervisor } from './supervisor.ts';
@@ -482,6 +483,9 @@ const server = new HubServer(store, sup, triage, {
   matches: { file: join(dataDir, 'hub.sqlite'), jevUrl: demo || process.env.DITHER_MATCH_MODEL === 'off' ? null : (process.env.DITHER_JEV_URL ?? 'http://127.0.0.1:7862') },
   // Index jobs and the gap fill read like a person (readingpace.ts); a demo's networks are fake, so no need there.
   pace: demo ? BRISK : paceFromEnv(),
+  // A followed post's replies found by the hub's own checks are decided like any new message (follows.ts).
+  onFresh: triageLater,
+  follow: followFromEnv(),
   mail,
   notices: notices ?? undefined,
   calendar: calendars,

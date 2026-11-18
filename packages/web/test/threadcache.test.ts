@@ -1,7 +1,7 @@
 /**
  * Threads read ahead on the Feed page (src/ui/feed/threadcache.ts, docs/feed.md "Reading ahead"): two at a time, twelve
  * a minute, a card pointed at first, a card that left the screen not read, none where data is dear; a thread read is
- * kept, and its card says how far it is.
+ * kept, and its card says how far it is; one forgotten is asked again.
  */
 import { afterEach, expect, mock, setSystemTime, test } from 'bun:test';
 import { hub, stateMock } from './fixtures/state.ts';
@@ -115,4 +115,19 @@ test('a post on the page is shown before its thread comes', () => {
   tc.seedPosts('x', [{ id: id('e1'), url: 'https://x.example/e1', ts: 0, author: 'idn_a', text: 'shown at once' }]);
   expect(tc.seedPost('x', id('e1'))).toMatchObject({ id: id('e1'), text: 'shown at once', messageId: null });
   expect(tc.seedPost('x', id('e2'))).toBeNull();
+});
+
+test('a thread forgotten is asked of the hub again: a followed post’s chat sees what the hub’s checks found', async () => {
+  tick();
+  holdAnswers();
+  const p = tc.readThread('x', id('f1'));
+  answer(id('f1'));
+  await p;
+  expect(tc.heldThread('x', id('f1'))?.post).toBe(id('f1'));
+  tc.forgetThread('x', id('f1'));
+  expect(tc.heldThread('x', id('f1'))).toBeNull();
+  const again = tc.readThread('x', id('f1'));
+  expect(asked).toEqual([path(id('f1')), path(id('f1'))]);
+  answer(id('f1'));
+  expect((await again).post).toBe(id('f1'));
 });
