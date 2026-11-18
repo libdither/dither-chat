@@ -13,8 +13,10 @@ import { Avatar, Empty, NetBadge, openAdversarial } from '../ui/bits.tsx';
 import { Icon } from '../ui/icons.tsx';
 import { HeadOrb } from '../ui/Offline.tsx';
 import { Engine } from './engine.ts';
+import { importance, monthName, talkedWith, thisMonth, totals, type Importance } from './importance.ts';
 import { DEFAULT_FILTERS, index, neighbours, sharesWith, visible, type Filters, type Index, type Visible } from './model.ts';
 import { Loading } from '../ui/Loader.tsx';
+import './graph.css';
 
 const KEY = 'dither-chat:graph';
 const CAPS = [2000, 6000, 20000];
@@ -47,9 +49,11 @@ const saveSameOn = (on: boolean) => {
   } catch {}
 };
 
+const isId = (name: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(name);
 /** A group's own name, else who is in it; a name that is only an id (a Signal group with none) counts as none. */
-const placeName = (p: P.GraphPlace) =>
-  (p.name && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(p.name) ? p.name : null) ?? (p.kind === 'group' ? convTitle(db.conversations.get(p.id)) || 'Group' : 'Server');
+const placeName = (p: P.GraphPlace) => (p.name && !isId(p.name) ? p.name : null) ?? (p.kind === 'group' ? convTitle(db.conversations.get(p.id)) || 'Group' : 'Server');
+/** A person's name; one that is only an id (someone on Signal with no profile name) as who they are. */
+const personName = (p: P.GraphPerson) => (p.name && !isId(p.name) ? p.name : `${p.bot ? 'Bot' : 'Someone'} on ${netName(p.networks[0] ?? 'signal')}`);
 
 const KEY_OPEN = 'dither-chat:graph-key';
 
@@ -122,7 +126,18 @@ function Sparse({ graph }: { graph: P.PeopleGraph }) {
 function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) {
   const ix = useMemo(() => index(graph), [graph]);
   const [f, setF] = useState<Filters>(loadFilters);
-  const vis = useMemo(() => visible(ix, f), [ix, f]);
+  // How much you have talked with each person, by month: asked for after the graph, as it takes the hub a while.
+  const [act, setAct] = useState<P.GraphActivity | null>(null);
+  useEffect(() => {
+    api<P.GraphActivity>('/api/graph/activity')
+      .then((a) => setAct(a && typeof a.from === 'number' && a.people && a.mutual ? a : null))
+      .catch(() => setAct(null));
+  }, [graph]);
+  const talked = useMemo(() => talkedWith(graph, act), [graph, act]);
+  const vis = useMemo(() => visible(ix, f, talked), [ix, f, talked]);
+  /** The month the graph is replayed at (the time bar); null for now. */
+  const [asOf, setAsOf] = useState<number | null>(null);
+  const imp = useMemo(() => importance(ix, act, asOf), [ix, act, asOf]);
   const [picked, setPicked] = useState<number | null>(null);
   // Hovering changes often: only the tip redraws for it.
   const hover = useMemo(() => signal<Hover | null>(null), []);
@@ -137,7 +152,8 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
     saveFilters(next);
     setF(next);
   };
-  const name = (g: number) => (g < np ? graph.people[g].name : placeName(graph.places[g - np]));
+  const nq = graph.places.length;
+  const name = (g: number) => (g < np ? personName(graph.people[g]) : g < np + nq ? placeName(graph.places[g - np]) : 'You');
 
   useEffect(() => {
     const e = new Engine(host.current!, glc.current!, txt.current!, {
@@ -158,6 +174,7 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
     };
   }, []);
   useEffect(() => engine.current?.setData(ix, vis), [ix, vis]);
+  useEffect(() => engine.current?.setScores(imp.score), [imp, vis]);
   // Same person? suggestions as dashed links (docs/same-person.md), when asked for.
   const [sameOn, setSameOn] = useState(loadSameOn);
   const [same, setSame] = useState<P.MatchSuggestion[]>([]);
@@ -288,7 +305,7 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
             <Icon name="grid" size={15} />
           </button>
         </div>
-        <Key graph={graph} vis={vis} />
+        <Key graph={graph} vis={vis} me={vis.me >= 0} />
         <Tip hover={hover} picked={picked} graph={graph} ix={ix} name={name} />
         {picked !== null && (
           <Card
@@ -308,15 +325,18 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
                 return { s: x, side, at: byId.get(side.id) };
               })}
             onSameDone={(key, merged) => (merged ? reload() : setSame(same.filter((x) => x.key !== key)))}
+            act={act}
+            imp={imp}
           />
         )}
       </div>
+      {act && act.to > act.from && <TimeBar act={act} asOf={asOf} setAsOf={setAsOf} />}
     </>
   );
 }
 
 /** What the colours, sizes and shapes mean, with how many of each are shown. Folds away. */
-function Key({ graph, vis }: { graph: P.PeopleGraph; vis: Visible }) {
+function Key({ graph, vis, me }: { graph: P.PeopleGraph; vis: Visible; me: boolean }) {
   const [open, setOpen] = useState(() => {
     try {
       const v = localStorage.getItem(KEY_OPEN);
@@ -368,10 +388,18 @@ function Key({ graph, vis }: { graph: P.PeopleGraph; vis: Visible }) {
         ))}
       </div>
       <div class="pg-key-row">
-        <i class="pg-key-dot big" /> You have chats with them <em>{known.toLocaleString()}</em>
+        <i class="pg-key-dot big" /> Bigger the more they matter to you: talk, places and friends you share
       </div>
       <div class="pg-key-row">
-        <i class="pg-key-dot" /> Only seen in a server or group
+        <i class="pg-key-dot" /> Only seen in a server or group <em>{(vis.shown.people - known).toLocaleString()}</em>
+      </div>
+      {me && (
+        <div class="pg-key-row">
+          <i class="pg-key-line" /> You, in the middle, linked to who you talk with; nearer and brighter the more you do
+        </div>
+      )}
+      <div class="pg-key-row">
+        <i class="pg-key-line net" /> Links in the colour of the place's network
       </div>
       {multi > 0 && (
         <div class="pg-key-row">
@@ -445,6 +473,8 @@ function Card({
   bots,
   same,
   onSameDone,
+  act,
+  imp,
 }: {
   graph: P.PeopleGraph;
   ix: Index;
@@ -458,6 +488,8 @@ function Card({
   /** Suggestions with this person in them: the other side, and its node when it is on the graph. */
   same: { s: P.MatchSuggestion; side: P.MatchSide; at: number | undefined }[];
   onSameDone: (key: string, merged: boolean) => void;
+  act: P.GraphActivity | null;
+  imp: Importance;
 }) {
   const np = graph.people.length;
   const isPerson = node < np;
@@ -510,6 +542,7 @@ function Card({
           {accts.map(accountName).join(', ')}
         </div>
       )}
+      {isPerson && <Talk act={act} imp={imp} node={node} id={graph.people[node].id} />}
       <div class="pg-card-actions">
         <button class="btn small" onClick={() => go(r.profile)}>
           {isPerson ? 'Profile' : 'About'}
@@ -629,6 +662,127 @@ function Finder({ graph, name, onPick }: { graph: P.PeopleGraph; name: (g: numbe
             </button>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** How much you have talked with someone, and when: a bar a year, the past year's count, and friends you share. */
+function Talk({ act, imp, node, id }: { act: P.GraphActivity | null; imp: Importance; node: number; id: string }) {
+  const flat = act?.people[id];
+  const friends = imp.friends[node];
+  const years = useMemo(() => {
+    if (!act || !flat) return null;
+    const y0 = Math.floor(act.from / 12);
+    const out = new Float32Array(Math.floor(act.to / 12) - y0 + 1);
+    for (let k = 0; k < flat.length; k += 2) out[Math.floor(flat[k] / 12) - y0] += flat[k + 1] / 10;
+    return { y0, out };
+  }, [act, flat]);
+  if (!flat && !friends) return null;
+  const now = thisMonth();
+  let total = 0;
+  let year = 0;
+  for (let k = 0; flat && k < flat.length; k += 2) {
+    total += flat[k + 1] / 10;
+    if (flat[k] > now - 12) year += flat[k + 1] / 10;
+  }
+  const n = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : Math.round(v).toLocaleString());
+  const max = years ? Math.max(...years.out, 1) : 1;
+  return (
+    <div class="pg-talk">
+      {flat && (
+        <div class="pg-card-sub">
+          About {n(total)} messages between you{year >= 1 ? `, ${n(year)} in the past year` : ', none in the past year'}
+        </div>
+      )}
+      {years && years.out.length > 1 && (
+        <div class="pg-talk-years" aria-hidden="true">
+          {[...years.out].map((v, i) => (
+            <span title={`${years.y0 + i}: about ${n(v)}`}>
+              <i style={{ height: `${v > 0 ? Math.max(8, (100 * Math.sqrt(v)) / Math.sqrt(max)) : 0}%` }} />
+            </span>
+          ))}
+          <em>{years.y0}</em>
+          <em>{years.y0 + years.out.length - 1}</em>
+        </div>
+      )}
+      {friends > 0 && (
+        <div class="pg-card-sub">
+          {friends.toLocaleString()} {friends === 1 ? 'friend' : 'friends'} in common
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Replay the graph at a month in the past: who you talked with then is big and near, fading from then. Over all the
+ * talk there is, month by month, with a play button that runs through it.
+ */
+function TimeBar({ act, asOf, setAsOf }: { act: P.GraphActivity; asOf: number | null; setAsOf: (m: number | null) => void }) {
+  const sums = useMemo(() => totals(act), [act]);
+  const [playing, setPlaying] = useState(false);
+  const at = asOf ?? act.to;
+  useEffect(() => {
+    if (!playing) return;
+    let m = asOf === null || asOf >= act.to ? act.from : asOf;
+    const t = setInterval(() => {
+      m += 1;
+      if (m >= act.to) {
+        setAsOf(null);
+        setPlaying(false);
+      } else setAsOf(m);
+    }, 90);
+    return () => clearInterval(t);
+  }, [playing]);
+  // The sparkline: square roots, so a quiet year still shows beside a busy one.
+  const w = 1000;
+  const h = 100;
+  const max = Math.sqrt(Math.max(...sums, 1));
+  const step = w / Math.max(sums.length - 1, 1);
+  const path = `M0,${h} ` + [...sums].map((v, i) => `L${(i * step).toFixed(1)},${(h - (h * Math.sqrt(v)) / max).toFixed(1)}`).join(' ') + ` L${w},${h} Z`;
+  const x = ((at - act.from) / Math.max(act.to - act.from, 1)) * w;
+  const y0 = Math.ceil(act.from / 12);
+  const ticks: number[] = [];
+  for (let y = y0; y * 12 <= act.to; y++) ticks.push(y);
+  const every = Math.ceil(ticks.length / 8);
+  return (
+    <div class="pg-time" role="group" aria-label="Over time">
+      <button class="icon-btn small" aria-label={playing ? 'Pause' : 'Play through the years'} title={playing ? 'Pause' : 'Play through the years'} onClick={() => setPlaying(!playing)}>
+        {playing ? <span class="pg-pause" /> : <span class="pg-play" />}
+      </button>
+      <div class="pg-time-track">
+        <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true">
+          <path d={path} class="pg-time-area" />
+          <path d={`M0,${h} ` + [...sums].slice(0, at - act.from + 1).map((v, i) => `L${(i * step).toFixed(1)},${(h - (h * Math.sqrt(v)) / max).toFixed(1)}`).join(' ') + ` L${x.toFixed(1)},${h} Z`} class="pg-time-past" />
+        </svg>
+        <div class="pg-time-ticks" aria-hidden="true">
+          {ticks
+            .filter((_, i) => i % every === 0)
+            .map((y) => (
+              <span style={{ left: `${(((y * 12 - act.from) / Math.max(act.to - act.from, 1)) * 100).toFixed(2)}%` }}>{y}</span>
+            ))}
+        </div>
+        <input
+          type="range"
+          min={act.from}
+          max={act.to}
+          step={1}
+          value={at}
+          aria-label="Month"
+          aria-valuetext={asOf === null ? 'Now' : monthName(at)}
+          onInput={(e) => {
+            const v = Number((e.target as HTMLInputElement).value);
+            setPlaying(false);
+            setAsOf(v >= act.to ? null : v);
+          }}
+        />
+      </div>
+      <span class="pg-time-at">{asOf === null ? 'Now' : monthName(at)}</span>
+      {asOf !== null && (
+        <button class="btn small ghost" onClick={() => (setPlaying(false), setAsOf(null))}>
+          Now
+        </button>
       )}
     </div>
   );

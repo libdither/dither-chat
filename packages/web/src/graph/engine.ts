@@ -20,6 +20,26 @@ interface EngineEvents {
 
 /** World radius from its links: places above their people, and someone you have chats with above someone only seen. */
 const radius = (place: boolean, deg: number, known: boolean) => (place ? 6 + 2.4 * Math.sqrt(deg) : known ? 6 + 1.2 * Math.sqrt(deg) : 2.6 + 0.8 * Math.sqrt(deg));
+/** A person's world radius from how much they matter (importance.ts), 0 to 1. */
+const radiusOf = (score: number) => 2.4 + 10 * Math.sqrt(score);
+/** A place's smallest size, however far out: by how many are in it. */
+const placeMin = (deg: number) => Math.min(3.5 + 1.6 * Math.log2(1 + deg), 22);
+/**
+ * How far from you someone sits, in world units, by their rank: room for everyone before them round you, each about
+ * as much as a big picture needs at the overview's zoom. Past the ranks drawn big, far enough not to crowd them.
+ */
+const nearness = (rank: number) => 150 * Math.sqrt((Math.min(rank, 400) + 4) / Math.PI);
+const LINK = 34;
+/**
+ * The sizes a person can be drawn at however far out: a picture with a badge, a picture, a dot. Each frame the people
+ * who matter most get the biggest that fits where they are without covering anyone already drawn (fitSizes); at most
+ * so many times the screen's room (against a computer's 1200 × 800) at each, and only above a score.
+ */
+const TIERS = [
+  { rank: 14, score: 0.2, r: 15 },
+  { rank: 70, score: 0.1, r: 9 },
+  { rank: 260, score: 0.05, r: 5 },
+];
 
 /** Pictures show once a node is drawn at least this wide, in CSS pixels; at most this many a frame, biggest first. */
 const PIC_MIN_R = 6.5;
@@ -31,12 +51,24 @@ export class Engine {
   private w = 1;
   private h = 1;
   private dpr = 1;
-  private scene: Scene = { n: 0, pos: new Float32Array(0), size: new Float32Array(0), color: new Uint8Array(0), shape: new Uint8Array(0), minR: new Uint8Array(0), edges: new Uint32Array(0), edgeHi: new Uint8Array(0) };
+  private scene: Scene = { n: 0, pos: new Float32Array(0), size: new Float32Array(0), color: new Uint8Array(0), shape: new Uint8Array(0), minR: new Uint8Array(0), edges: new Uint32Array(0), edgeHi: new Uint8Array(0), edgeColor: new Uint8Array(0) };
   private ix: Index | null = null;
   private vis: Visible | null = null;
   /** Global node id → position in the scene. */
   private local = new Map<number, number>();
-  private palette: Palette = { edge: [128, 128, 128, 50], edgeHi: [90, 120, 255, 220], ring: [0, 0, 0, 255] };
+  private palette: Palette = { ring: [0, 0, 0, 255] };
+  /** A plain link's opacity, 0–255: fainter the more links there are. */
+  private edgeA = 80;
+  private accent = '#58f';
+  /** The theme's colours as RGBA, kept from theme() so a hover does not read them again. */
+  private rgb: { accent: RGBA; faint: RGBA; nets: Map<string, RGBA> } = { accent: [90, 120, 255, 255], faint: [136, 136, 136, 255], nets: new Map() };
+  /** How much each person matters (graph index → 0 to 1), from setScores; null until then. */
+  private scores: Float32Array | null = null;
+  /** Each shown person's place among those shown, by how much they matter (scene index → rank). */
+  private rank = new Uint32Array(0);
+  /** The people who may be drawn bigger than a speck, most important first (scene indexes). */
+  private byRank: number[] = [];
+  private room = 1;
   private ink = '#ccc';
   private halo = '#000';
   private font = 'sans-serif';
@@ -63,12 +95,162 @@ export class Engine {
   private pics = new Pictures(() => this.dirty());
   /** Each node's smallest size when nothing is picked; a picked node and its neighbours are drawn bigger. */
   private baseMinR = new Uint8Array(0);
-  private rawMinR = new Uint8Array(0);
 
-  /** On a narrow screen (a phone) everything's smallest size is smaller, so the overview is not a pile. */
-  private scaleMin() {
+  /**
+   * Who gets the room: people ranked by how much they matter, the top so many (more on a bigger screen) drawn big
+   * enough for their picture, the next as dots you can tell apart, the rest as specks. Places by how many are in them,
+   * smaller on a phone.
+   */
+  private tiers() {
+    const { ix, vis } = this;
+    if (!ix || !vis) return;
+    const np = ix.graph.people.length;
+    const n = vis.nodes.length;
+    const room = (this.room = Math.min(Math.max((this.w * this.h) / (1200 * 800), 0.35), 2.5));
     const f = this.w < 600 ? 0.7 : 1;
-    this.baseMinR = this.rawMinR.map((r) => Math.max(2, Math.round(r * f)));
+    const min = new Uint8Array(n);
+    const people: number[] = [];
+    for (let i = 0; i < n; i++) {
+      const g = vis.nodes[i];
+      if (i === vis.me) min[i] = Math.round(22 * f);
+      else if (g >= np) min[i] = Math.max(2, Math.round(placeMin(vis.degree[i]) * f));
+      else people.push(i);
+    }
+    const sc = this.scores;
+    const s = (i: number) => sc?.[vis.nodes[i]] ?? 0;
+    people.sort((a, b) => s(b) - s(a) || a - b);
+    this.rank = new Uint32Array(n).fill(n);
+    people.forEach((i, r) => {
+      this.rank[i] = r;
+      const pe = ix.graph.people[vis.nodes[i]];
+      const t = sc ? TIERS.find((t) => r < t.rank * room && s(i) >= t.score) : null;
+      min[i] = !sc && (pe.dm.length || pe.networks.length > 1) ? 4 : 2;
+      this.info[i].strong = !!pe.dm.length || (t?.r ?? 0) >= 9;
+    });
+    this.byRank = sc ? people.filter((i, r) => r < TIERS[TIERS.length - 1].rank * room && s(i) >= TIERS[TIERS.length - 1].score) : [];
+    this.baseMinR = min;
+  }
+
+  /** How much each person matters (importance.ts), per graph person: sizes, who gets pictures and names, and how near you. */
+  setScores(score: Float32Array) {
+    this.scores = score;
+    const { ix, vis } = this;
+    if (!ix || !vis) return;
+    this.sizes();
+    this.tiers();
+    this.paint();
+    const len = this.lengths();
+    const mass = this.masses();
+    if (this.worker) this.worker.postMessage({ t: 'tune', len, mass } satisfies ToWorker, [len.buffer, mass.buffer]);
+    else if (this.inline) {
+      this.inline.tune(len, mass);
+      this.inline.heat(0.25);
+    }
+    this.dirty();
+  }
+
+  private sizes() {
+    const { ix, vis } = this;
+    if (!ix || !vis) return;
+    const np = ix.graph.people.length;
+    for (let i = 0; i < vis.nodes.length; i++) {
+      const g = vis.nodes[i];
+      if (i === vis.me) this.scene.size[i] = 18;
+      else if (g >= np) this.scene.size[i] = radius(true, vis.degree[i], false);
+      else this.scene.size[i] = this.scores ? radiusOf(this.scores[g]) : radius(false, vis.degree[i], !!ix.graph.people[g].dm.length);
+    }
+  }
+
+  /** Each link's length for the layout: yours by how much the other end matters, the rest as usual. */
+  private lengths(): Float32Array {
+    const vis = this.vis!;
+    const e = vis.edges;
+    const len = new Float32Array(e.length / 2).fill(1);
+    if (vis.me < 0) return len;
+    for (let k = 0; k < len.length; k++) {
+      const a = e[2 * k];
+      const b = e[2 * k + 1];
+      if (a !== vis.me && b !== vis.me) continue;
+      const o = a === vis.me ? b : a;
+      // The layout makes a link to someone with no other links shorter (layout.ts): undo that here.
+      const usual = Math.min(vis.degree[a], vis.degree[b]) <= 1 ? 0.45 : 1;
+      len[k] = nearness(this.rank[o] ?? 999) / LINK / usual;
+    }
+    return len;
+  }
+
+  /** The people who may be drawn big push harder, so their pictures do not pile up. */
+  private masses(): Float32Array {
+    const mass = new Float32Array(this.scene.n);
+    for (const i of this.byRank) mass[i] = this.rank[i] < TIERS[0].rank * this.room ? 12 : this.rank[i] < TIERS[1].rank * this.room ? 4 : 0;
+    return mass;
+  }
+
+  /**
+   * Every node's smallest size for this frame. Places and you as set; then people, most important first, each at the
+   * biggest size its rank and score allow that does not cover anything already placed on screen; what is picked and
+   * its neighbours bigger still.
+   */
+  private fitSizes() {
+    const { vis } = this;
+    if (!vis) return;
+    const { minR, shape, size } = this.scene;
+    minR.set(this.baseMinR);
+    const k = this.view.k;
+    const CELL = 48;
+    const grid = new Map<number, number[]>();
+    const cellOf = (cx: number, cy: number) => cx * 65536 + cy;
+    const put = (x: number, y: number, r: number) => {
+      const key = cellOf(Math.floor(x / CELL), Math.floor(y / CELL));
+      const list = grid.get(key);
+      if (list) list.push(x, y, r);
+      else grid.set(key, [x, y, r]);
+    };
+    const free = (x: number, y: number, r: number) => {
+      const cx = Math.floor(x / CELL);
+      const cy = Math.floor(y / CELL);
+      for (let dx = -1; dx <= 1; dx++)
+        for (let dy = -1; dy <= 1; dy++) {
+          const list = grid.get(cellOf(cx + dx, cy + dy));
+          if (!list) continue;
+          for (let j = 0; j < list.length; j += 3) {
+            const d = r + list[j + 2] + 2;
+            if ((list[j] - x) ** 2 + (list[j + 1] - y) ** 2 < d * d) return false;
+          }
+        }
+      return true;
+    };
+    const inView = (x: number, y: number) => x > -40 && y > -40 && x < this.w + 40 && y < this.h + 40;
+    // You and the bigger places are in the way; a small place's marker may be drawn over.
+    for (let i = 0; i < this.scene.n; i++) {
+      if (!shape[i] && i !== vis.me) continue;
+      const r = screenR(this.scene, i, k);
+      if (r < 10 && i !== vis.me) continue;
+      const [x, y] = this.screen(i);
+      if (inView(x, y)) put(x, y, r);
+    }
+    const sc = this.scores;
+    for (const i of this.byRank) {
+      const [x, y] = this.screen(i);
+      if (!inView(x, y)) continue;
+      const s = sc?.[vis.nodes[i]] ?? 0;
+      const own = Math.min(size[i] * k, 48);
+      for (const t of TIERS) {
+        if (this.rank[i] >= t.rank * this.room || s < t.score) continue;
+        const r = Math.max(t.r, own);
+        if (!free(x, y, r)) continue;
+        minR[i] = t.r;
+        put(x, y, r);
+        break;
+      }
+    }
+    if (this.selected === null || !this.near) return;
+    const many = this.near.size;
+    for (let i = 0; i < this.scene.n; i++) {
+      const g = vis.nodes[i];
+      if (g === this.selected) minR[i] = Math.max(minR[i], 18);
+      else if (this.near.has(g)) minR[i] = Math.max(minR[i], many > 150 ? 0 : many > 50 ? 6 : 11);
+    }
   }
   private ro: ResizeObserver;
   private off: (() => void)[] = [];
@@ -104,22 +286,12 @@ export class Engine {
     this.vis = vis;
     const n = vis.nodes.length;
     this.local = new Map([...vis.nodes].map((g, i) => [g, i]));
-    const isPlace = (i: number) => vis.nodes[i] >= np;
+    const isPlace = (i: number) => vis.nodes[i] >= np && i !== vis.me;
     const pos = seed(n, isPlace, vis.degree, vis.edges, this.kept, (i) => this.key(vis.nodes[i]));
-    const size = new Float32Array(n);
     const shape = new Uint8Array(n);
-    const minR = new Uint8Array(n);
-    for (let i = 0; i < n; i++) {
-      const g = vis.nodes[i];
-      const place = g >= np;
-      const pe = place ? null : ix.graph.people[g];
-      size[i] = radius(place, vis.degree[i], !!pe?.dm.length);
-      shape[i] = place ? (ix.graph.places[g - np].kind === 'group' ? 2 : 1) : 0;
-      // However far out: a place by how many are in it, someone you have chats with big enough for their picture, the
-      // rest specks.
-      minR[i] = place ? Math.round(Math.min(3.5 + 1.6 * Math.log2(1 + vis.degree[i]), 22)) : pe!.dm.length || pe!.networks.length > 1 ? 4 : 2;
-    }
-    this.info = [...vis.nodes].map((g) => {
+    for (let i = 0; i < n; i++) if (isPlace(i)) shape[i] = ix.graph.places[vis.nodes[i] - np].kind === 'group' ? 2 : 1;
+    this.info = [...vis.nodes].map((g, i) => {
+      if (i === vis.me) return { id: 'me', pic: ix.graph.me?.pic, networks: [], strong: true };
       if (g >= np) {
         const pl = ix.graph.places[g - np];
         return { id: pl.id, pic: pl.pic, networks: [pl.network], strong: true };
@@ -127,10 +299,11 @@ export class Engine {
       const pe = ix.graph.people[g];
       return { id: pe.id, pic: pe.pic, networks: pe.networks, strong: pe.dm.length > 0 || pe.networks.length > 1 };
     });
-    this.rawMinR = minR.slice();
-    this.scene = { n, pos, size, shape, minR, color: new Uint8Array(n * 4), edges: vis.edges, edgeHi: new Uint8Array(vis.edges.length / 2) };
+    const m = vis.edges.length / 2;
+    this.scene = { n, pos, size: new Float32Array(n), shape, minR: new Uint8Array(n), color: new Uint8Array(n * 4), edges: vis.edges, edgeHi: new Uint8Array(m), edgeColor: new Uint8Array(m * 4) };
     this.byDegree = [...Array(n).keys()].filter(isPlace).sort((a, b) => vis.degree[b] - vis.degree[a]);
-    this.scaleMin();
+    this.sizes();
+    this.tiers();
     if (this.selected !== null && !this.local.has(this.selected)) this.selected = null;
     this.theme();
     this.start(pos);
@@ -239,8 +412,10 @@ export class Engine {
     const v = (name: string, fb: string) => cs.getPropertyValue(name).trim() || fb;
     // Fainter links the more there are, so a big graph is not a solid blot.
     const m = this.scene.edges.length / 2;
-    const a = m < 1000 ? 0.55 : m < 10_000 ? 0.32 : 0.2;
-    this.palette = { edge: cssColor(v('--text-dim', '#999'), a), edgeHi: cssColor(v('--accent', '#58f'), 0.9), ring: cssColor(v('--bg-center', v('--bg', '#000'))) };
+    this.edgeA = Math.round(255 * (m < 1000 ? 0.5 : m < 10_000 ? 0.3 : 0.18));
+    this.palette = { ring: cssColor(v('--bg-center', v('--bg', '#000'))) };
+    this.accent = v('--accent', '#58f');
+    this.rgb = { accent: cssColor(this.accent), faint: cssColor(v('--text-faint', '#888')), nets: new Map() };
     this.ink = v('--text', '#ddd');
     this.halo = v('--bg-center', v('--bg', '#000'));
     this.font = cs.getPropertyValue('--font').trim() || 'sans-serif';
@@ -262,12 +437,16 @@ export class Engine {
 
   private key(g: number) {
     const np = this.ix?.graph.people.length ?? 0;
-    return g < np ? `p:${this.ix!.graph.people[g].id}` : `q:${this.ix!.graph.places[g - np].id}`;
+    const nq = this.ix?.graph.places.length ?? 0;
+    return g < np ? `p:${this.ix!.graph.people[g].id}` : g < np + nq ? `q:${this.ix!.graph.places[g - np].id}` : 'me';
   }
 
   private start(pos: Float32Array) {
     this.moved(false);
-    const msg: ToWorker = { t: 'start', n: this.scene.n, edges: this.scene.edges.slice(), pos: pos.slice() };
+    const fixed = this.vis!.me >= 0 ? this.vis!.me : undefined;
+    const len = this.lengths();
+    const mass = this.masses();
+    const msg: ToWorker & { t: 'start' } = { t: 'start', n: this.scene.n, edges: this.scene.edges.slice(), pos: pos.slice(), fixed, len, mass };
     if (!this.inline && !this.worker)
       try {
         this.worker = new Worker(new URL('./layout.worker.ts', import.meta.url), { type: 'module' });
@@ -280,18 +459,18 @@ export class Engine {
         this.worker.onerror = () => {
           this.worker?.terminate();
           this.worker = null;
-          this.startInline(this.scene.pos);
+          this.startInline(this.scene.pos, this.vis!.me >= 0 ? this.vis!.me : undefined, this.lengths(), this.masses());
         };
       } catch {
         this.worker = null;
       }
-    if (this.worker) this.worker.postMessage(msg, [msg.edges.buffer, msg.pos.buffer]);
-    else this.startInline(pos);
+    if (this.worker) this.worker.postMessage(msg, [msg.edges.buffer, msg.pos.buffer, len.buffer, mass.buffer]);
+    else this.startInline(pos, fixed, this.lengths(), this.masses());
   }
 
   /** Where workers are not allowed: a few steps a frame on this thread. */
-  private startInline(pos: Float32Array) {
-    this.inline = new Layout({ n: this.scene.n, edges: this.scene.edges, pos });
+  private startInline(pos: Float32Array, fixed?: number, len?: Float32Array, mass?: Float32Array) {
+    this.inline = new Layout({ n: this.scene.n, edges: this.scene.edges, pos, fixed, len, mass });
     this.scene.pos = pos;
     this.dirty();
   }
@@ -306,33 +485,49 @@ export class Engine {
       near.add(focus);
       for (const g of neighbours(ix, focus)) near.add(g);
     }
-    const cs = getComputedStyle(document.documentElement);
-    const accent = cssColor(cs.getPropertyValue('--accent').trim() || '#58f');
-    const faint = cssColor(cs.getPropertyValue('--text-faint').trim() || '#888');
-    const nets = new Map<string, RGBA>();
+    const { accent, faint, nets } = this.rgb;
     const net = (n: P.Network) => nets.get(n) ?? (nets.set(n, cssColor(NETWORK_META[n]?.color ?? '#888')), nets.get(n)!);
     for (let i = 0; i < vis.nodes.length; i++) {
       const g = vis.nodes[i];
       let c: RGBA;
-      if (g >= np) c = net(ix.graph.places[g - np].network);
+      if (i === vis.me) c = accent;
+      else if (g >= np) c = net(ix.graph.places[g - np].network);
       else {
         const p = ix.graph.people[g];
         c = p.bot ? faint : p.networks.length > 1 ? accent : net(p.networks[0]);
       }
-      const dim = focus !== null && !near.has(g);
-      // What is picked, big enough for its picture, and what it is in (or who is in it) big enough for theirs.
-      const base = this.baseMinR[i] ?? 2;
-      this.scene.minR[i] = focus === null ? base : g === focus ? Math.max(base, 18) : near.has(g) ? Math.max(base, near.size > 150 ? 0 : near.size > 50 ? 6 : 11) : base;
+      const dim = focus !== null && !near.has(g) && i !== vis.me;
       this.scene.color.set([c[0], c[1], c[2], dim ? 40 : g >= np || this.info[i]?.strong ? 255 : 150], 4 * i);
     }
     this.near = focus !== null ? near : null;
     const e = this.scene.edges;
     const sel = focus !== null ? this.local.get(focus) : undefined;
     const hov = this.hovered !== null ? this.local.get(this.hovered) : undefined;
+    // Each link in its place's network's colour; yours in the accent, stronger the more that person matters. A picked
+    // or hovered node's links lit, and the rest faded while something is picked.
     for (let k = 0; k < e.length / 2; k++) {
       const a = e[2 * k];
       const b = e[2 * k + 1];
-      this.scene.edgeHi[k] = +(a === sel || b === sel || a === hov || b === hov);
+      const lit = a === sel || b === sel || a === hov || b === hov;
+      this.scene.edgeHi[k] = +lit;
+      const mine = a === vis.me || b === vis.me;
+      let c: RGBA;
+      let al: number;
+      if (mine) {
+        c = accent;
+        al = 18 + 190 * (this.scores?.[vis.nodes[a === vis.me ? b : a]] ?? 0);
+      } else {
+        const place = vis.nodes[a] >= np ? a : b;
+        c = net(ix.graph.places[vis.nodes[place] - np].network);
+        al = this.edgeA;
+      }
+      if (lit) al = 235;
+      else if (focus !== null) al *= 0.25;
+      const ec = this.scene.edgeColor;
+      ec[4 * k] = c[0];
+      ec[4 * k + 1] = c[1];
+      ec[4 * k + 2] = c[2];
+      ec[4 * k + 3] = al;
     }
   }
 
@@ -349,6 +544,7 @@ export class Engine {
       this.moved(this.inline.done);
       this.frame = requestAnimationFrame(() => this.draw());
     }
+    this.fitSizes();
     this.r.draw(this.scene, this.view, this.palette);
     drawLabels(this.text, this.labels(), this.dpr, this.ink, this.halo, this.font, (x) => {
       drawDiscs(x, this.discs(), this.pics, this.halo);
@@ -372,7 +568,8 @@ export class Engine {
       const inf = this.info[i];
       if (!inf) continue;
       const g = this.vis!.nodes[i];
-      out.push({ x, y, r, shape: shape[i] as Shape, id: inf.id, name: this.name(g), pic: inf.pic, networks: inf.networks, strong: inf.strong || g >= np, dim: !!this.near && !this.near.has(g) });
+      const me = i === this.vis!.me;
+      out.push({ x, y, r, shape: shape[i] as Shape, id: inf.id, name: this.name(g), pic: inf.pic, networks: inf.networks, strong: inf.strong || g >= np, dim: !me && !!this.near && !this.near.has(g), accent: me ? this.accent : undefined });
     }
     out.sort((a, b) => b.r - a.r);
     if (out.length > PIC_MAX) out.length = PIC_MAX;
@@ -433,11 +630,15 @@ export class Engine {
     };
     const add = (g: number, strong = false) => {
       const i = this.local.get(g);
-      if (i === undefined) return;
+      if (i === undefined || i === vis.me) return;
       const [x, y] = this.screen(i);
       if (!inView(x, y)) return;
       out.push(g >= np ? placeLabel(i, strong) : { x: x + edge(i) - 4, y, text: this.name(g), strong });
     };
+    if (vis.me >= 0) {
+      const [x, y] = this.screen(vis.me);
+      if (inView(x, y)) out.push({ x: x + edge(vis.me) - 4, y, text: this.name(vis.nodes[vis.me]), strong: true });
+    }
     if (this.hovered !== null) add(this.hovered, true);
     if (this.selected !== null) {
       add(this.selected, true);
@@ -451,11 +652,11 @@ export class Engine {
       add(s.a);
       add(s.b);
     }
-    // The busiest places in view, as pills; then the people you have chats with, biggest first, once they are drawn
-    // big enough to tell apart; everyone else when close.
+    // The busiest places in view, as pills; then the people who matter most in view (more on a bigger screen), the
+    // first few in bold; and anyone drawn big enough to name.
     let n = 0;
     for (const i of this.byDegree) {
-      if (n >= 36) break;
+      if (n >= 20) break;
       const [x, y] = this.screen(i);
       if (!inView(x, y) || (edge(i) < 12 && n >= 8) || (this.w < 600 && n >= 14)) continue;
       out.push(placeLabel(i));
@@ -463,14 +664,21 @@ export class Engine {
     }
     const people: number[] = [];
     for (let i = 0; i < this.scene.n; i++) {
-      if (this.scene.shape[i] || edge(i) < (this.info[i]?.strong ? 7 : 10)) continue;
+      if (this.scene.shape[i] || i === vis.me || edge(i) < 4) continue;
       const [x, y] = this.screen(i);
       if (inView(x, y)) people.push(i);
     }
-    people.sort((a, b) => edge(b) - edge(a));
-    for (const i of people.slice(0, 80)) {
+    people.sort((a, b) => this.rank[a] - this.rank[b]);
+    const room = Math.min(Math.max((this.w * this.h) / (1200 * 800), 0.35), 2.5);
+    const top = Math.round(22 * room);
+    const bold = Math.round(8 * room);
+    let named = 0;
+    for (const [j, i] of people.entries()) {
+      if (named >= 80) break;
+      if ((j >= top || edge(i) < 9) && edge(i) < 11) continue;
       const [x, y] = this.screen(i);
-      out.push({ x: x + edge(i) - 4, y, text: this.name(vis.nodes[i]) });
+      out.push({ x: x + edge(i) - 4, y, text: this.name(vis.nodes[i]), strong: j < bold });
+      named++;
     }
     return out;
   }
@@ -482,6 +690,7 @@ export class Engine {
     const { n, pos } = this.scene;
     const { k, x: tx, y: ty } = this.view;
     for (let i = 0; i < n; i++) {
+      if (i === this.vis?.me) continue;
       const dx = pos[2 * i] * k + tx - x;
       const dy = pos[2 * i + 1] * k + ty - y;
       const d = dx * dx + dy * dy;
@@ -503,8 +712,9 @@ export class Engine {
     this.r.resize(this.w, this.h, this.dpr);
     this.text.width = Math.round(this.w * this.dpr);
     this.text.height = Math.round(this.h * this.dpr);
-    if ((was.w < 600) !== (this.w < 600)) {
-      this.scaleMin();
+    // The room changed: who gets pictures and names, again.
+    if (Math.abs(this.w * this.h - was.w * was.h) > 0.1 * was.w * was.h || (was.w < 600) !== (this.w < 600)) {
+      this.tiers();
       this.paint();
     }
     if (this.autoFit) this.fit();

@@ -571,6 +571,8 @@ export interface PeopleGraph {
   accounts: string[];
   people: GraphPerson[];
   places: GraphPlace[];
+  /** You, drawn in the middle: your name and picture. */
+  me?: { name: string; pic?: string };
   /** Person–place links as flat triples: person index, place index, GRAPH_SOURCE bits. Each pair once. */
   links: number[];
 }
@@ -598,6 +600,18 @@ export interface GraphPlace {
   total?: number;
   /** A server's icon or a group's picture (a signed media link). */
   pic?: string;
+}
+/**
+ * GET /api/graph/activity: how much you have had to do with each person, month by month (closeness.ts), for sizing
+ * people by it and replaying it over time. Months are year × 12 + month (0-based), UTC.
+ */
+export interface GraphActivity {
+  from: number;
+  to: number;
+  /** A graph person's id → flat [month, weight × 10] pairs, months ascending. */
+  people: Record<string, number[]>;
+  /** A graph person's id → friends you share, as a profile said. */
+  mutual: Record<string, number>;
 }
 /** Where a link came from: members seen (adversarial), a profile's mutual servers, a conversation's participants. */
 export const GRAPH_SOURCE = { members: 1, profile: 2, participant: 4 } as const;

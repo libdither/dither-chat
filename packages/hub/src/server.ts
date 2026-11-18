@@ -60,6 +60,7 @@ import { AccountSelf, ignoredOf } from './accountself.ts';
 import { mentionables } from './mentions.ts';
 import { lowerForSend } from './mentionrefs.ts';
 import { peopleGraph } from './graph.ts';
+import { activityView, Closeness } from './closeness.ts';
 import { ProfileCollector, SameMatches } from './samepeople.ts';
 import type { MailHub } from './mail/index.ts';
 import type { Notices } from './notices/index.ts';
@@ -335,6 +336,8 @@ export class HubServer {
   readonly people: People;
   /** Same person? suggestions, and profiles collected in the background (samepeople.ts, docs/same-person.md). */
   readonly matches: SameMatches;
+  /** How much you have had to do with each person, by month, for the people graph (closeness.ts). */
+  readonly closeness: Closeness;
   readonly collector: ProfileCollector;
   /** Public posts read and logged as messages (posts.ts, docs/feed.md "Threads"). */
   readonly posts: Posts;
@@ -421,6 +424,7 @@ export class HubServer {
     // A note joined from yours and the network's goes back to the network (store.ts networkNotes).
     store.contactNotesOut = (id, change) => this.people.pushContactNotes(id, change);
     this.matches = new SameMatches({ store, file: opts.matches?.file ?? null, jevUrl: opts.matches?.jevUrl ?? null, log: (l) => console.log(l), flush: () => this.flush() });
+    this.closeness = new Closeness({ store, file: opts.matches?.file ?? null, log: (l) => console.log(l) });
     this.collector = new ProfileCollector({ store, people: this.people, online: (a) => sup.online(a), log: (l) => console.log(l) });
     this.collector.start();
     this.adding = new Adding({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), liveView: (a) => !!sup.liveViewUrl?.(a) || !!store.account(a)?.live_view });
@@ -1148,6 +1152,7 @@ export class HubServer {
     }
     // People and the places they share (graph.ts, docs/people-graph.md).
     if (path === '/api/graph' && method === 'GET') return ok(peopleGraph(s));
+    if (path === '/api/graph/activity' && method === 'GET') return ok(activityView(s, await this.closeness.get()));
     // Same person? (samepeople.ts, docs/same-person.md): pairs to merge, decisions, merging, pictures to hash.
     if (path === '/api/matches' && method === 'GET') return ok(this.matches.view({ side: url.searchParams.get('side') ?? undefined }));
     if (path === '/api/matches/refresh' && method === 'POST') {

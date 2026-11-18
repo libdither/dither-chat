@@ -17,8 +17,10 @@ export interface Scene {
   minR: Uint8Array;
   /** Pairs of node indexes. */
   edges: Uint32Array;
-  /** 1 for a link to what is hovered or picked. */
+  /** 1 for a link to what is hovered or picked: drawn last, over the rest. */
   edgeHi: Uint8Array;
+  /** Each link's RGBA, 0–255: its place's network, or yours. */
+  edgeColor: Uint8Array;
 }
 
 /** Screen = world × k + (x, y), in CSS pixels. */
@@ -30,8 +32,6 @@ export interface View {
 
 export type RGBA = [number, number, number, number];
 export interface Palette {
-  edge: RGBA;
-  edgeHi: RGBA;
   /** Around each node, to set it off: the background. */
   ring: RGBA;
 }
@@ -61,16 +61,19 @@ export function cssColor(c: string, alpha = 1): RGBA {
 
 const EDGE_VS = `
 attribute vec2 a_pos;
+attribute vec4 a_col;
 uniform vec2 u_res;
 uniform vec3 u_view;
+varying vec4 v_col;
 void main() {
   vec2 s = a_pos * u_view.z + u_view.xy;
   gl_Position = vec4(s.x / u_res.x * 2.0 - 1.0, 1.0 - s.y / u_res.y * 2.0, 0.0, 1.0);
+  v_col = a_col;
 }`;
 const EDGE_FS = `
 precision mediump float;
-uniform vec4 u_col;
-void main() { gl_FragColor = u_col; }`;
+varying vec4 v_col;
+void main() { gl_FragColor = v_col; }`;
 const NODE_VS = `
 attribute vec4 a_p;
 attribute vec4 a_c;
@@ -141,9 +144,11 @@ function webgl(canvas: HTMLCanvasElement): Renderer | null {
     return null;
   }
   const eBuf = gl.createBuffer();
+  const ecBuf = gl.createBuffer();
   const pBuf = gl.createBuffer();
   const cBuf = gl.createBuffer();
   let lines = new Float32Array(0);
+  let lineCol = new Uint8Array(0);
   let pts = new Float32Array(0);
   let w = 1;
   let h = 1;
@@ -151,8 +156,8 @@ function webgl(canvas: HTMLCanvasElement): Renderer | null {
   const loc = {
     eRes: gl.getUniformLocation(edgeProg, 'u_res'),
     eView: gl.getUniformLocation(edgeProg, 'u_view'),
-    eCol: gl.getUniformLocation(edgeProg, 'u_col'),
     ePos: gl.getAttribLocation(edgeProg, 'a_pos'),
+    eCol: gl.getAttribLocation(edgeProg, 'a_col'),
     nRes: gl.getUniformLocation(nodeProg, 'u_res'),
     nView: gl.getUniformLocation(nodeProg, 'u_view'),
     nDpr: gl.getUniformLocation(nodeProg, 'u_dpr'),
@@ -177,7 +182,10 @@ function webgl(canvas: HTMLCanvasElement): Renderer | null {
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
       // Links: the plain ones, then the lit ones over them.
       const m = s.edges.length / 2;
-      if (lines.length < m * 4) lines = new Float32Array(Math.max(m * 4, lines.length * 2));
+      if (lines.length < m * 4) {
+        lines = new Float32Array(Math.max(m * 4, lines.length * 2));
+        lineCol = new Uint8Array(lines.length * 2);
+      }
       let lo = 0;
       let hi = m * 4;
       for (let k = 0; k < m; k++) {
@@ -188,6 +196,10 @@ function webgl(canvas: HTMLCanvasElement): Renderer | null {
         lines[o + 1] = s.pos[2 * a + 1];
         lines[o + 2] = s.pos[2 * b];
         lines[o + 3] = s.pos[2 * b + 1];
+        // Both ends the same colour.
+        const c = s.edgeColor.subarray(4 * k, 4 * k + 4);
+        lineCol.set(c, 2 * o);
+        lineCol.set(c, 2 * o + 4);
       }
       gl.useProgram(edgeProg);
       gl.uniform2f(loc.eRes, w, h);
@@ -196,15 +208,13 @@ function webgl(canvas: HTMLCanvasElement): Renderer | null {
       gl.bufferData(gl.ARRAY_BUFFER, lines.subarray(0, m * 4), gl.DYNAMIC_DRAW);
       gl.enableVertexAttribArray(loc.ePos);
       gl.vertexAttribPointer(loc.ePos, 2, gl.FLOAT, false, 0, 0);
-      if (lo) {
-        gl.uniform4f(loc.eCol, ...norm(p.edge));
-        gl.drawArrays(gl.LINES, 0, lo / 2);
-      }
-      if (hi < m * 4) {
-        gl.uniform4f(loc.eCol, ...norm(p.edgeHi));
-        gl.drawArrays(gl.LINES, hi / 2, (m * 4 - hi) / 2);
-      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, ecBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, lineCol.subarray(0, m * 8), gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(loc.eCol);
+      gl.vertexAttribPointer(loc.eCol, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+      if (m) gl.drawArrays(gl.LINES, 0, m * 2);
       gl.disableVertexAttribArray(loc.ePos);
+      gl.disableVertexAttribArray(loc.eCol);
       // Nodes.
       if (pts.length < s.n * 4) pts = new Float32Array(Math.max(s.n * 4, pts.length * 2));
       for (let i = 0; i < s.n; i++) {
@@ -231,7 +241,7 @@ function webgl(canvas: HTMLCanvasElement): Renderer | null {
       gl.disableVertexAttribArray(loc.nC);
     },
     destroy() {
-      for (const b of [eBuf, pBuf, cBuf]) gl.deleteBuffer(b);
+      for (const b of [eBuf, ecBuf, pBuf, cBuf]) gl.deleteBuffer(b);
       gl.deleteProgram(edgeProg);
       gl.deleteProgram(nodeProg);
       gl.getExtension('WEBGL_lose_context')?.loseContext();
@@ -255,17 +265,23 @@ function canvas2d(canvas: HTMLCanvasElement): Renderer {
       x.clearRect(0, 0, canvas.width, canvas.height);
       x.setTransform(dpr, 0, 0, dpr, 0, 0);
       x.lineWidth = 1;
+      // One path per colour, the lit links last.
       for (const lit of [0, 1]) {
-        x.beginPath();
+        const paths = new Map<string, Path2D>();
         for (let k = 0; k < s.edges.length / 2; k++) {
           if (s.edgeHi[k] !== lit) continue;
           const a = s.edges[2 * k];
           const b = s.edges[2 * k + 1];
-          x.moveTo(s.pos[2 * a] * v.k + v.x, s.pos[2 * a + 1] * v.k + v.y);
-          x.lineTo(s.pos[2 * b] * v.k + v.x, s.pos[2 * b + 1] * v.k + v.y);
+          const c = rgba(s.edgeColor, 4 * k);
+          let path = paths.get(c);
+          if (!path) paths.set(c, (path = new Path2D()));
+          path.moveTo(s.pos[2 * a] * v.k + v.x, s.pos[2 * a + 1] * v.k + v.y);
+          path.lineTo(s.pos[2 * b] * v.k + v.x, s.pos[2 * b + 1] * v.k + v.y);
         }
-        x.strokeStyle = rgba(lit ? p.edgeHi : p.edge);
-        x.stroke();
+        for (const [c, path] of paths) {
+          x.strokeStyle = c;
+          x.stroke(path);
+        }
       }
       for (let i = 0; i < s.n; i++) {
         const r = screenR(s, i, v.k);

@@ -1,6 +1,6 @@
 /**
  * Which part of the people graph to draw (docs/people-graph.md): filters by network, account and server, and a cap so
- * the view stays quick, keeping the busiest. Nodes are numbered people first, then places.
+ * the view stays quick, keeping the busiest. Nodes are numbered people first, then places, then you (meNode).
  */
 import type * as P from '@dither-chat/protocol';
 
@@ -30,6 +30,9 @@ export interface Index {
   qStart: Uint32Array;
   peopleOf: Uint32Array;
 }
+
+/** Your node's number: after every person and place. */
+export const meNode = (g: P.PeopleGraph) => g.people.length + g.places.length;
 
 export function index(graph: P.PeopleGraph): Index {
   const np = graph.people.length;
@@ -63,12 +66,18 @@ export interface Visible {
   edges: Uint32Array;
   /** Links each shown node has among those shown. */
   degree: Uint32Array;
+  /** Where you are in `nodes` (linked to everyone you have talked with), or -1. */
+  me: number;
   /** How many people and places pass the filters, before the cap. */
   matching: { people: number; places: number };
   shown: { people: number; places: number };
 }
 
-export function visible(ix: Index, f: Filters): Visible {
+/**
+ * `talked`: people you have had to do with (a direct chat, or messages counted in closeness): they show even with no
+ * place in common, linked to you in the middle.
+ */
+export function visible(ix: Index, f: Filters, talked?: Uint8Array): Visible {
   const g = ix.graph;
   const np = g.people.length;
   const nq = g.places.length;
@@ -102,7 +111,10 @@ export function visible(ix: Index, f: Filters): Visible {
   }
   const min = f.shared ? 2 : 1;
   let people: number[] = [];
-  for (let p = 0; p < np; p++) if (personOk[p] && deg[p] >= min) people.push(p);
+  const known = (p: number) => !!talked?.[p] || g.people[p].dm.length > 0;
+  // Everyone you talk with shows, linked to you, unless the filters ask for places (shared, one place, one account).
+  const loose = !!g.me && !f.shared && f.place === null && f.account === null;
+  for (let p = 0; p < np; p++) if (personOk[p] && (deg[p] >= min || (loose && known(p)))) people.push(p);
   // A place shows when someone shown is in it.
   const placeDeg = new Uint32Array(nq);
   const countPlaces = (list: number[]) => {
@@ -126,8 +138,10 @@ export function visible(ix: Index, f: Filters): Visible {
       return n;
     };
     const score = new Map(people.map((p) => [p, d2(p)]));
-    people = people.filter((p) => score.get(p)! >= min).sort((a, b) => score.get(b)! - score.get(a)! || a - b);
-    people = people.slice(0, Math.max(0, f.cap - places.length));
+    // Everyone you know stays; then the people most connected to the places kept.
+    const mine = people.filter((p) => loose && known(p));
+    const rest = people.filter((p) => !(loose && known(p)) && score.get(p)! >= min).sort((a, b) => score.get(b)! - score.get(a)! || a - b);
+    people = [...mine, ...rest.slice(0, Math.max(0, f.cap - places.length - mine.length))].sort((a, b) => a - b);
     countPlaces(people);
   }
   const nodes: number[] = [...people];
@@ -138,6 +152,10 @@ export function visible(ix: Index, f: Filters): Visible {
       at[np + q] = nodes.length;
       nodes.push(np + q);
     }
+  // You, in the middle, linked to everyone shown you have talked with.
+  const mine = g.me && loose ? people.filter(known) : [];
+  const me = mine.length ? nodes.length : -1;
+  if (me >= 0) nodes.push(np + nq);
   const edges: number[] = [];
   const degree = new Uint32Array(nodes.length);
   for (const p of people)
@@ -149,7 +167,13 @@ export function visible(ix: Index, f: Filters): Visible {
       degree[at[p]]++;
       degree[b]++;
     }
-  return { nodes: Uint32Array.from(nodes), edges: Uint32Array.from(edges), degree, matching, shown: { people: people.length, places: nodes.length - people.length } };
+  for (const p of mine) {
+    edges.push(me, at[p]);
+    degree[me]++;
+    degree[at[p]]++;
+  }
+  const shownPlaces = nodes.length - people.length - (me >= 0 ? 1 : 0);
+  return { nodes: Uint32Array.from(nodes), edges: Uint32Array.from(edges), degree, me, matching, shown: { people: people.length, places: shownPlaces } };
 }
 
 /**

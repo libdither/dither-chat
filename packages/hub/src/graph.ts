@@ -5,8 +5,8 @@
  *  - server members seen, only while the adversarial `members` setting records them;
  *  - the mutual servers a fetched profile named;
  *  - the participants of groups, and of channels inside a server.
- * Only people and places with a link are sent; you are left out. Ids, names, indexes and pictures (signed media links,
- * as a chat list has them), never message text.
+ * Only people and places with a link are sent, and people you have a direct chat with; you are sent apart (`me`).
+ * Ids, names, indexes and pictures (signed media links, as a chat list has them), never message text.
  */
 import type * as P from '@dither-chat/protocol';
 import { GRAPH_SOURCE } from '@dither-chat/protocol';
@@ -148,8 +148,8 @@ export function peopleGraph(s: Store): P.PeopleGraph {
   for (const r of db
     .query(`SELECT p.identity_id, v.account_id FROM participant p JOIN conversation c ON c.id = p.conversation_id AND c.shape = 'direct' JOIN vantage v ON v.target_kind = 'conversation' AND v.target_id = c.id`)
     .all() as Row[]) {
-    const r2 = idents.get(r.identity_id);
-    const i = r2 ? personIx.get(r2.person_id ?? r.identity_id) : undefined;
+    // Someone you have a direct chat with is on the graph even with no place in common: linked to you, in the middle.
+    const i = personOf(r.identity_id) ?? undefined;
     if (i !== undefined) push(people[i].dm, accIx.get(r.account_id));
   }
 
@@ -168,5 +168,15 @@ export function peopleGraph(s: Store): P.PeopleGraph {
 
   const flat: number[] = [];
   for (const [k, src] of links) flat.push(Math.floor(k / 2 ** 22), k % 2 ** 22, src);
-  return { members, accounts: accounts.map((a) => a.id), people, places, links: flat };
+  return { members, accounts: accounts.map((a) => a.id), people, places, links: flat, me: meOf(s, accounts) };
+}
+
+/** You: your person's name and picture, else your first account's. */
+function meOf(s: Store, accounts: Row[]): P.PeopleGraph['me'] {
+  const p = s.db.query('SELECT name, avatar_url FROM person WHERE is_self = 1 ORDER BY created_at LIMIT 1').get() as Row | null;
+  const ids = accounts.map((a) => a.self_identity).filter(Boolean);
+  // Your own identities, one with a picture first.
+  const i = ids.length ? (s.db.query(`SELECT display_name, handle, avatar_url, seen_via FROM identity WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY avatar_url IS NULL LIMIT 1`).get(...ids) as Row | null) : null;
+  const pic = s.mediaUrl(p?.avatar_url ?? i?.avatar_url, i?.seen_via ?? accounts[0]?.id ?? null);
+  return { name: p?.name ?? i?.display_name ?? i?.handle ?? 'You', ...(pic ? { pic } : {}) };
 }

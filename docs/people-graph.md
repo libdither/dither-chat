@@ -7,17 +7,22 @@ you talk to on another.
 **Getting there.** The graph button in the People header (between New message and Order), or `#/people/graph`. On a
 phone it is a page of its own over the People list.
 
-Code: `packages/hub/src/graph.ts` (`GET /api/graph`), `packages/web/src/graph/` (the view: `GraphView.tsx`, the
-filters in `model.ts`, the force layout in `layout.ts` run by `layout.worker.ts`, WebGL drawing in `render.ts`,
-`pictures.ts` the pictures and rings, `engine.ts` tying them to the canvas), `packages/web/src/ui/GraphPane.tsx` (loads it). Checked end to end by
-`scripts/verify-graph.ts`.
+Code: `packages/hub/src/graph.ts` (`GET /api/graph`), `packages/hub/src/closeness.ts` (`GET /api/graph/activity`,
+worked out on `closeness-worker.ts`), `packages/web/src/graph/` (the view: `GraphView.tsx`, the filters in
+`model.ts`, who matters in `importance.ts`, the force layout in `layout.ts` run by `layout.worker.ts`, WebGL drawing in
+`render.ts`, `pictures.ts` the pictures and rings, `engine.ts` tying them to the canvas),
+`packages/web/src/ui/GraphPane.tsx` (loads it). Checked end to end by `scripts/verify-graph.ts`.
 
 ## What it shows
 
+- **You**, in the middle and held there, with your picture and an accent ring, linked to everyone shown you have
+  talked with: nearer the more they matter (below), the link brighter too. You are left out of the people, and drawn
+  only while no filter asks for places (an account, a place, or "In 2+ places").
 - **People**: a person stands for all their identities (merge and split them on their profile); an identity in no
-  person stands alone. You are left out. Someone you have direct chats with (or who is on several networks) is drawn
-  bigger and bright; someone only seen in a server or group is a faint speck. A dot is in its network's colour (a
-  person on several networks in the accent colour, a bot grey).
+  person stands alone. Everyone you have a direct chat with, or have talked with, is shown even with no place in
+  common. Each is sized by how much they matter to you ("Who matters", below); someone only seen in a server or group
+  is a faint speck. A dot is in its network's colour (a person on several networks in the accent colour, a bot grey);
+  a name that is only an id reads "Someone on Signal".
 - **Pictures**: once a node is drawn big enough, it shows its picture (a person's, a server's icon, a group's), a ring
   in its network's colour (split between the colours of each network a person is on) and, bigger still, a badge with
   each network's glyph. Places keep a smallest size by how many people are in them, so the overview shows the busiest
@@ -26,7 +31,9 @@ filters in `model.ts`, the force layout in `layout.ts` run by `layout.worker.ts`
 - **Places**: servers and spaces (rounded squares; a channel or category counts toward its server) and group chats
   (diamonds), in their network's colour, bigger the more people the hub knows there. Their names are on pills with how
   many people are in them (the network's count when members are recorded).
-- **Links** between a person and a place, each pair once, from what the hub already has:
+- **Links** between a person and a place, each pair once, in the colour of the place's network (fainter the more
+  links there are; a picked or hovered node's lit, the rest faded while something is picked), from what the hub
+  already has:
   - the participants of group chats, and of channels inside a server that list them;
   - the servers a profile you opened said you share (`mutualSpaces`, docs/profile.md);
   - server members your accounts' clients saw — only while the adversarial "Record server members" is on
@@ -37,6 +44,37 @@ networks, which of your accounts see each place and which have a direct chat wit
 count of a server when members are recorded.
 Nothing is guessed: two identities are one person only if you (or a direct chat) made them one. Suggestions of who may
 be are drawn only when asked ("Same person?", below).
+
+## Who matters
+
+How much each person matters to you is a score from 0 to 1 (`importance.ts`), from:
+
+- **Talk** (most of it): the hub's closeness (`closeness.ts`), by month. A month's weight for someone is every message
+  in your direct chat, theirs and yours (1 each); their messages in a group chat you are in, less the bigger the group
+  (2 / people in it, groups up to 50); and in a server's channels, a reply between you either way (1.5) and their
+  mentions of you by name (1). Each month fades by e every 18 months, then the sum is taken on a log scale.
+- **Places you share** (log scale), **friends in common** (a fetched profile's count, or the people you talk with who
+  share a group of 30 or fewer with them, whichever is more), and being on **several networks**.
+
+The graph gives the room it has to who matters most. People are drawn bigger the more they matter, and each frame,
+most important first, each person gets the biggest of three sizes that fits where they are on screen without covering
+anyone already placed (you and the bigger places count; small place markers may be covered): a picture with its
+network badge, a picture, or a dot, each only up to so many people for the screen's size (14, 70 and 260 on a
+1200 × 800 canvas, more or fewer with its area) and above a score. Zoomed in, there is room for more. The people most
+important in view are named (about 22 on that canvas, the first 8 bold), and anyone drawn big enough. In the layout,
+your link to each is as long as room round you for everyone ranked before them, and the ones drawn big push harder,
+so their pictures do not pile up.
+
+**Over time.** The bar under the graph shows all your talk month by month since the first, behind a slider: drag it
+(or press play) to replay the graph at that month. Talk counts up to then and fades from then; places and friends
+count for less, as the hub does not know when you came to share them. People move nearer or further and change size
+as you go; Now goes back. A person's card says about how many messages you have had with them, how many in the past
+year, a bar a year, and how many friends you have in common.
+
+`GET /api/graph/activity` answers `{from, to, people, mutual}`: months as year × 12 + month, and per person (keyed as
+the graph keys them) flat `[month, weight × 10]` pairs. Counts only, never message text. The page asks for it after
+the graph, so the graph opens at once; the hub works it out on a worker on a read-only connection (about 12 s for
+~1,200 people over ten years) and keeps it for 30 minutes, answering with what it has while a new run is under way.
 
 ## Using it
 
@@ -69,9 +107,10 @@ members, a note at the top says servers show only who profiles and channels name
 ## How it stays quick
 
 The hub builds the graph in one pass over its tables (about 35 ms for ~2k people and 150 places) and sends links as
-flat index triples. The page loads the view as its own chunk only when opened. The layout (Barnes–Hut repulsion,
+flat index triples; who matters comes apart, from a worker (above). The page loads the view as its own chunk only when opened. The layout (Barnes–Hut repulsion,
 springs, a pull to the middle) runs in a worker, about 14 ms a step at 11k nodes, and posts positions each frame;
 links and nodes are drawn with WebGL (a 2D canvas where WebGL is missing, which the status line says). Pictures
 (`pictures.ts`) are drawn on the label canvas only for nodes big enough on screen, at most 700 a frame: each is fetched
 once, a few at a time with the biggest first, and cut to its shape on a small canvas kept for reuse. Picking scans the
-shown nodes once a frame at most; labels are capped and skip any that would overlap.
+shown nodes once a frame at most; labels are capped and skip any that would overlap. Fitting sizes to the room is
+one pass over the people who may be drawn big, with a grid of what is already placed.

@@ -2,7 +2,8 @@
 import { describe, expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
 import { Layout, seed } from '../src/graph/layout.ts';
-import { DEFAULT_FILTERS, index, neighbours, sharesWith, visible } from '../src/graph/model.ts';
+import { importance } from '../src/graph/importance.ts';
+import { DEFAULT_FILTERS, index, meNode, neighbours, sharesWith, visible } from '../src/graph/model.ts';
 
 // Accounts: 0 Discord main, 1 Discord alt, 2 Signal. Places: 0 server A (main and alt), 1 server B (alt), 2 a
 // Signal group. Ann is in A and the group; Bob in A and B; Cy in B; Dee in the group; a bot in A.
@@ -120,5 +121,52 @@ describe('layout', () => {
     const pos = seed(2, () => false, new Uint32Array(2), new Uint32Array(0), new Map([['a', [5, 6] as [number, number]]]), (i) => (i ? 'b' : 'a'));
     expect([pos[0], pos[1]]).toEqual([5, 6]);
     expect(Number.isFinite(pos[2])).toBe(true);
+  });
+});
+
+describe('you and who matters', () => {
+  // Eli: a direct chat, no place shared. Cy: talked with in a server, no direct chat.
+  const g2: P.PeopleGraph = { ...graph, me: { name: 'Me' }, people: [...graph.people, { id: 'per_eli', name: 'Eli', networks: ['signal'], dm: [2] }] };
+  const ix2 = index(g2);
+  const talked = new Uint8Array(g2.people.length);
+  talked[2] = 1;
+
+  test('you, last, linked to everyone shown you talk with; someone you only talk with still shows', () => {
+    const v = visible(ix2, DEFAULT_FILTERS, talked);
+    expect(v.me).toBe(v.nodes.length - 1);
+    expect(v.nodes[v.me]).toBe(meNode(g2));
+    const mine: string[] = [];
+    for (let k = 0; k < v.edges.length; k += 2)
+      if (v.edges[k] === v.me || v.edges[k + 1] === v.me) mine.push(g2.people[v.nodes[v.edges[k] === v.me ? v.edges[k + 1] : v.edges[k]]].name);
+    expect(mine.sort()).toEqual(['Ann', 'Bob', 'Cy', 'Dee', 'Eli']);
+    expect(v.shown.places).toBe(3);
+  });
+
+  test('filters that ask for places leave you out, and who shares none', () => {
+    for (const f of [{ account: 0 }, { shared: true }, { place: 0 }]) {
+      const v = visible(ix2, { ...DEFAULT_FILTERS, ...f }, talked);
+      expect(v.me).toBe(-1);
+      expect([...v.nodes]).not.toContain(5);
+    }
+  });
+
+  test('importance: talk most, fading with time; replayed at a month', () => {
+    const M = 2024 * 12;
+    const act: P.GraphActivity = { from: M - 48, to: M, people: { per_bob: [M - 48, 1000], per_dee: [M, 200] }, mutual: { idn_cy: 3 } };
+    const now = importance(ix, act, M);
+    expect(now.score[3]).toBe(1);
+    expect(now.score[1]).toBeLessThan(1);
+    expect(now.friends[2]).toBe(3);
+    const then = importance(ix, act, M - 48);
+    expect(then.score[1]).toBe(1);
+    expect(then.talk[3]).toBe(0);
+    for (const s of now.score) expect(s >= 0 && s <= 1).toBe(true);
+  });
+
+  test('a fixed node stays in the middle while the rest settle round it, nearer the shorter its link', () => {
+    const l = new Layout({ n: 3, edges: Uint32Array.from([0, 1, 0, 2]), pos: Float32Array.from([5, 5, 10, 0, 0, 10]), fixed: 0, len: Float32Array.from([1, 4]) });
+    for (let i = 0; i < 400 && !l.done; i++) l.tick();
+    expect([l.pos[0], l.pos[1]]).toEqual([0, 0]);
+    expect(Math.hypot(l.pos[2], l.pos[3])).toBeLessThan(Math.hypot(l.pos[4], l.pos[5]));
   });
 });

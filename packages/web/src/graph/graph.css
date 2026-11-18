@@ -1,0 +1,129 @@
+/* The people graph's own (docs/people-graph.md), loaded with its chunk: the key's line swatches, a person's talk on
+   their card, and the time bar. The rest of the graph's styles are in styles.css. */
+
+.pg-key-line {
+  flex: none;
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+.pg-key-line.net {
+  background: linear-gradient(90deg, var(--net-discord) 50%, var(--net-signal) 50%);
+}
+.pg-talk {
+  display: grid;
+  gap: 4px;
+}
+/* A bar a year, how much you talked; the first and last year under the ends. */
+.pg-talk-years {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 34px;
+  margin-bottom: 14px;
+}
+.pg-talk-years span {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  border-bottom: 1px solid var(--border);
+}
+.pg-talk-years i {
+  width: 100%;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+}
+.pg-talk-years em {
+  position: absolute;
+  bottom: -14px;
+  left: 0;
+  font-size: 10.5px;
+  font-style: normal;
+  color: var(--text-faint);
+}
+.pg-talk-years em:last-child {
+  left: auto;
+  right: 0;
+}
+/* The graph over time: talk by month behind a slider, a play button, the month shown. */
+.pg-time {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-center);
+}
+.pg-time-track {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+}
+.pg-time-track svg {
+  position: absolute;
+  inset: 0 0 14px;
+  width: 100%;
+  height: calc(100% - 14px);
+}
+.pg-time-area {
+  fill: color-mix(in oklab, var(--text-faint) 30%, transparent);
+}
+.pg-time-past {
+  fill: color-mix(in oklab, var(--accent) 55%, transparent);
+}
+.pg-time-ticks span {
+  position: absolute;
+  bottom: 0;
+  transform: translateX(-50%);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.pg-time-track input {
+  position: absolute;
+  inset: 0 0 14px;
+  width: 100%;
+  height: calc(100% - 14px);
+  margin: 0;
+  background: transparent;
+  appearance: none;
+  cursor: pointer;
+}
+.pg-time-track input::-webkit-slider-thumb {
+  appearance: none;
+  width: 3px;
+  height: 26px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg-center);
+}
+.pg-time-track input::-moz-range-thumb {
+  width: 3px;
+  height: 26px;
+  border: 0;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.pg-time-at {
+  min-width: 64px;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.pg-play {
+  width: 0;
+  height: 0;
+  margin-left: 2px;
+  border-style: solid;
+  border-width: 6px 0 6px 10px;
+  border-color: transparent transparent transparent currentColor;
+}
+.pg-pause {
+  width: 10px;
+  height: 12px;
+  border-inline: 3.5px solid currentColor;
+}

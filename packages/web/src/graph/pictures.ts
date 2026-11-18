@@ -20,7 +20,7 @@ const LOADING_AT_ONCE = 6;
 const KEEP = 1500;
 
 /** The outline of a shape of radius r about (x, y). */
-export function outline(x: CanvasRenderingContext2D | Path2D, shape: Shape, cx: number, cy: number, r: number) {
+function outline(x: CanvasRenderingContext2D | Path2D, shape: Shape, cx: number, cy: number, r: number) {
   if (shape === 0) {
     x.moveTo(cx + r, cy);
     x.arc(cx, cy, r, 0, 2 * Math.PI);
@@ -128,6 +128,8 @@ export interface Disc {
   strong: boolean;
   /** Dimmed: something else is picked. */
   dim: boolean;
+  /** A ring in this colour instead of the networks' (you). */
+  accent?: string;
 }
 
 const netColor = (n: P.Network) => NETWORK_META[n]?.color ?? '#888';
@@ -144,7 +146,13 @@ export function drawDiscs(x: CanvasRenderingContext2D, discs: Disc[], pics: Pict
     const rw = Math.min(Math.max(1.5, r * 0.14), 3.5);
     const nets = d.networks.length ? d.networks : [];
     x.lineWidth = rw;
-    if (shape === 0 && nets.length > 1) {
+    if (d.accent) {
+      x.lineWidth = rw + 1;
+      x.beginPath();
+      outline(x, shape, d.x, d.y, r + rw / 2 + 0.5);
+      x.strokeStyle = d.accent;
+      x.stroke();
+    } else if (shape === 0 && nets.length > 1) {
       const step = (2 * Math.PI) / nets.length;
       nets.forEach((n, i) => {
         x.beginPath();
@@ -165,7 +173,7 @@ export function drawDiscs(x: CanvasRenderingContext2D, discs: Disc[], pics: Pict
       outline(x, shape, d.x, d.y, r);
       x.fillStyle = shape === 0 ? hueOf(d.id) : netColor(nets[0] ?? 'discord');
       x.fill();
-      if (r >= 9) {
+      if (r >= 11) {
         x.fillStyle = '#fff';
         x.font = `600 ${Math.round(r * (shape === 0 ? 0.78 : 0.7))}px system-ui, sans-serif`;
         x.textAlign = 'center';

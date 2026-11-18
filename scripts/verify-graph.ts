@@ -68,7 +68,7 @@ const select = (label: string, value: string | number) =>
 const chunks = () => p.eval<string[]>(`performance.getEntriesByType('resource').map((e) => e.name.split('/').pop()).filter((n) => /\\.js$/.test(n))`);
 /** A graph the hub did not send: the page asks /api/graph and gets this. */
 const fake = (g: unknown) =>
-  p.eval(`(() => { const body = ${JSON.stringify(JSON.stringify(g))}; const f = window.__realFetch ??= window.fetch; window.fetch = (u, ...a) => String(u).includes('/api/graph') ? Promise.resolve(new Response(body, { headers: { 'content-type': 'application/json' } })) : f(u, ...a); })()`);
+  p.eval(`(() => { const body = ${JSON.stringify(JSON.stringify(g))}; const f = window.__realFetch ??= window.fetch; window.fetch = (u, ...a) => /\\/api\\/graph$/.test(String(u)) ? Promise.resolve(new Response(body, { headers: { 'content-type': 'application/json' } })) : f(u, ...a); })()`);
 
 try {
   await p.size(1360, 900);
@@ -107,8 +107,11 @@ try {
   for (let k = 0; k < on.links.length; k += 3) if (on.links[k + 1] === dither && !on.people[on.links[k]].bot) inDither.add(on.links[k]);
   check(byServer === inDither.size, 'by server: its people', { shown: byServer, members: inDither.size });
   await select('Server or group', '');
+  // Group chats go; the people in them stay when you talk with them (linked to you).
+  const places = (t: string) => Number(/([\d,]+) of [\d,]+ places/.exec(t)?.[1].replace(/,/g, '') ?? NaN);
+  const before = places(await status());
   await click('.pg-controls [aria-label="Show"] .chip-btn');
-  check((await shownPeople()) < all, 'groups off', await status());
+  check(places(await status()) < before, 'groups off', await status());
   await click('.pg-controls [aria-label="Show"] .chip-btn');
 
   // Find someone; they are picked and brought to the middle; a click there picks them on the canvas; a double-click opens.

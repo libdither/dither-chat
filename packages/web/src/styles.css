@@ -12880,6 +12880,7 @@ button.msg-edited.link:hover {
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
   padding: 12px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
   align-content: start;
 }

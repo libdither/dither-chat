@@ -10,6 +10,12 @@ interface LayoutInput {
   edges: Uint32Array;
   /** Where each node starts: x0, y0, x1, y1… */
   pos: Float32Array;
+  /** A node held at (0, 0): you, in the middle. */
+  fixed?: number;
+  /** Each link's length as a share of the usual one (yours: shorter to who matters more). */
+  len?: Float32Array;
+  /** Per node, how hard it pushes, instead of from its links (0: as usual): people drawn big need the room. */
+  mass?: Float32Array;
 }
 
 const THETA2 = 0.81;
@@ -30,6 +36,9 @@ export class Layout {
   private strength: Float32Array;
   /** Each link's length at rest: shorter to someone in that one place only. */
   private rest: Float32Array;
+  private base: Float32Array;
+  private baseMass: Float32Array;
+  private fixed: number;
   // The quadtree, rebuilt each tick: per cell its square, children, body (-1 none, -2 split), mass and its centre.
   private cap = 0;
   private x0 = new Float32Array(0);
@@ -52,6 +61,12 @@ export class Layout {
     this.mass = new Float32Array(this.n);
     // Someone in one place only is light: they sit close round it, a tight cloud, rather than pushing it apart.
     for (let i = 0; i < this.n; i++) this.mass[i] = deg[i] <= 1 ? 0.35 : 1 + Math.sqrt(deg[i]);
+    // You are linked to everyone you talk with: held still, and pushing no harder than a middling place.
+    this.fixed = inp.fixed ?? -1;
+    if (this.fixed >= 0) {
+      this.mass[this.fixed] = 4;
+      this.pos[2 * this.fixed] = this.pos[2 * this.fixed + 1] = 0;
+    }
     // As d3's link force: a link pulls the end with fewer links more, and is weaker between busy nodes.
     const m = this.edges.length / 2;
     this.bias = new Float32Array(m);
@@ -64,11 +79,20 @@ export class Layout {
       this.strength[k] = 1 / Math.min(a, b);
       this.rest[k] = Math.min(a, b) <= 1 ? LINK * 0.45 : LINK;
     }
+    this.base = this.rest.slice();
+    this.baseMass = this.mass.slice();
+    this.tune(inp.len, inp.mass);
     this.grow(this.n * 2 + 8);
   }
 
   get done() {
     return this.alpha < ALPHA_MIN;
+  }
+
+  /** New link lengths and pushes (as LayoutInput's); heat() after, to settle into them. */
+  tune(len?: Float32Array, mass?: Float32Array) {
+    if (len) for (let k = 0; k < this.rest.length; k++) this.rest[k] = this.base[k] * (len[k] || 1);
+    if (mass) for (let i = 0; i < this.n; i++) if (i !== this.fixed) this.mass[i] = mass[i] || this.baseMass[i];
   }
 
   /** Warm it up again, after the layout changed under it. */
@@ -137,6 +161,10 @@ export class Layout {
       vel[2 * i + 1] *= DECAY;
       pos[2 * i] += vel[2 * i];
       pos[2 * i + 1] += vel[2 * i + 1];
+    }
+    if (this.fixed >= 0) {
+      pos[2 * this.fixed] = pos[2 * this.fixed + 1] = 0;
+      vel[2 * this.fixed] = vel[2 * this.fixed + 1] = 0;
     }
     this.alpha += (0 - this.alpha) * 0.02;
   }
