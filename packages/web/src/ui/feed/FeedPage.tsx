@@ -27,7 +27,10 @@ import type { Kit } from './lazy.tsx';
 import { PostActions, type AnswerCtx } from './Actions.tsx';
 import { PostComposer, Ring } from './Composer.tsx';
 import { accountsKey, addMine, dropDraft, dropMix, dropPost, drafts, editing, line, loadDrafts, loadSources, more, newMix, openSource, refresh, saveDraft, saveMix, sources, tuning } from './feedstate.ts';
+import { density, setDensity, type Density } from './look.ts';
 import { Row } from './Post.tsx';
+import { DENSITY_ICONS, flip, Seg, snap } from './Seg.tsx';
+import { dropAhead, preState, readAhead, seedPosts } from './threadcache.ts';
 import { ThreadView } from './Thread.tsx';
 import { Unit } from './Units.tsx';
 
@@ -96,10 +99,30 @@ function titleOf(kit: Kit, s: Src): { title: string; sub: string; icon: string }
   }
 }
 
-/** The kit for posts on the Feed page: a post opens beside the source, and acts as the given account. */
+/** The kit for posts on the Feed page: a post opens beside the source (a link to one too: a quote, a reply's time),
+ * and acts as the given account. */
 function feedKit(kit: Kit, source: string, account?: string): Kit {
   const open = (network: P.Network, post: string) => go({ view: 'feed', source, post: kit.feed.postKey(network, post) });
-  return { ...kit, account, openPost: open, backToPost: open };
+  // As routes.ts writes a Feed route: an account's source keeps its colon.
+  const postHref = (network: P.Network, post: string) => `#/feed/${encodeURIComponent(source).replace(/%3A/g, ':')}/p/${kit.feed.postKey(network, post)}`;
+  return { ...kit, account, openPost: open, backToPost: open, feed: { ...kit.feed, postHref } };
+}
+
+const DENSITY_OPTS: { id: Density; label: string; line: string; icon: h.JSX.Element }[] = [
+  { id: 'roomy', label: 'Roomy', line: 'Large pictures, the composer open', icon: DENSITY_ICONS.roomy },
+  { id: 'snug', label: 'Snug', line: 'Smaller faces and pictures, the composer one line until used', icon: DENSITY_ICONS.snug },
+  { id: 'dense', label: 'Dense', line: 'A list to skim: small faces, pictures as a strip, the bar under a post faint', icon: DENSITY_ICONS.dense },
+];
+
+/** The page's spacing (look.ts): each post slides to where the new spacing puts it. */
+function DensitySwitch() {
+  const pick = (d: Density) => {
+    const root = document.querySelector('.feed-page');
+    const before = snap(root);
+    setDensity(d);
+    requestAnimationFrame(() => flip(root, before));
+  };
+  return <Seg value={density.value} options={DENSITY_OPTS} pick={pick} label="Spacing" cls="feed-density" />;
 }
 
 const toFeed = (source: string, replace = false) => go({ view: 'feed', source }, replace);
@@ -207,7 +230,7 @@ export function FeedPane({ source, post, kit, onBack }: { source?: string; post?
   ) : null;
   const composer = s.kind === 'mix' || s.kind === 'line' || s.kind === 'mine' ? (phone ? null : <FeedComposer kit={fk} fixed={s.kind === 'line' ? s.account : undefined} />) : null;
   return (
-    <section class={`pane feed-page ${side ? 'with-post' : ''} ${phone ? 'is-phone' : ''}`} aria-label="Feed">
+    <section class={`pane feed-page dens-${density.value} ${side ? 'with-post' : ''} ${phone ? 'is-phone' : ''}`} aria-label="Feed">
       <div class="feed-main">
         {phone && s.kind === 'mix' ? <PhoneHead s={s} l={l} kit={kit} /> : <PageHead s={s} at={at} l={l} kit={kit} phone={phone} />}
         {s.kind === 'activity' ? (
@@ -279,6 +302,7 @@ function PageHead({ s, at, l, kit, phone }: { s: Src; at: string; l: LineState |
           <kit.Icon name="settings" size={15} /> Tune
         </button>
       )}
+      {!phone && <DensitySwitch />}
       {l && (
         <button class="icon-btn" title="Read again" aria-label="Read again" disabled={!!l.reading} onClick={() => void refresh(at)} data-track="feed: refresh">
           <kit.Icon name="refresh" size={16} />
@@ -344,6 +368,10 @@ function PhoneHead({ s, l, kit }: { s: Extract<Src, { kind: 'mix' }>; l: LineSta
           <button class="sheet-action" onClick={() => (setMenu(false), void makeMix(kit))}>
             <kit.Icon name="plus" size={20} /> New feed
           </button>
+          <div class="sheet-row feed-density-row">
+            <span>Spacing</span>
+            <DensitySwitch />
+          </div>
         </kit.Sheet>
       )}
     </>
@@ -539,8 +567,9 @@ function TunePanel({ mix, kit, entries, onClose }: { mix: P.FeedMixView; kit: Ki
   );
 }
 
-/** A scroller that asks for more near its end, and again while what it shows does not fill it. */
-function Scroll({ children, onEnd, can, deps, reset }: { children: ComponentChildren; onEnd: () => void; can: boolean; deps: unknown[]; reset?: unknown }) {
+/** A scroller that asks for more near its end, and again while what it shows does not fill it. It says on itself when
+ * it is reading (`data-reading`) and when there is nothing more to ask for (`data-end`). */
+function Scroll({ children, onEnd, can, deps, reset, reading, end }: { children: ComponentChildren; onEnd: () => void; can: boolean; deps: unknown[]; reset?: unknown; reading?: boolean; end?: boolean }) {
   const el = useRef<HTMLDivElement>(null);
   // A feed put in another order starts from its top.
   useEffect(() => void el.current?.scrollTo({ top: 0 }), [reset]);
@@ -552,7 +581,7 @@ function Scroll({ children, onEnd, can, deps, reset }: { children: ComponentChil
     if (can && near()) onEnd();
   }, [can, ...deps]);
   return (
-    <div class="feed-scroll" ref={el} onScroll={() => can && near() && onEnd()}>
+    <div class="feed-scroll" ref={el} onScroll={() => can && near() && onEnd()} data-reading={reading ? '' : undefined} data-end={end ? '' : undefined}>
       <div class="feed-list">{children}</div>
     </div>
   );
@@ -561,6 +590,10 @@ function Scroll({ children, onEnd, can, deps, reset }: { children: ComponentChil
 function EntriesList({ source, s, order, kit, top }: { source: string; s: Src; order?: P.MixOrder; kit: Kit; top: ComponentChildren }) {
   const l = line(source).value;
   useEffect(() => void openSource(source), [source]);
+  // The posts shown: one opened shows at once, before its thread comes (threadcache.ts).
+  useEffect(() => {
+    for (const e of l.entries) seedPosts(e.network, [e.post, ...(e.above ?? [])]);
+  }, [l.entries]);
   const [acted, setActed] = useState<Map<string, { viewer: P.PostViewer; counts: P.PostFact['counts'] }>>(new Map());
   const [answering, setAnswering] = useState<{ key: string; mode: 'reply' | 'quote' } | null>(null);
   // Which timeline a card came through, when the feed takes more than one.
@@ -575,7 +608,7 @@ function EntriesList({ source, s, order, kit, top }: { source: string; s: Src; o
           ? ['sparkles', 'Nothing here yet', `${net}'s own picks for this account show here once read.`]
           : ['home', 'Nothing here yet', 'Posts from the people your accounts follow show here once read.'];
   return (
-    <Scroll onEnd={() => void more(source)} can={l.loaded && !l.reading && (l.before !== null || l.older)} deps={[l.entries.length]} reset={order}>
+    <Scroll onEnd={() => void more(source)} can={l.loaded && !l.reading && (l.before !== null || l.older)} deps={[l.entries.length]} reset={order} reading={!l.loaded || !!l.reading} end={l.loaded && l.before === null && !l.older}>
       {top}
       {l.reading === 'top' && !l.entries.length && <kit.Loading inline label={`Reading from ${net}…`} />}
       {!l.loaded && <kit.Loading inline label="Loading…" />}
@@ -615,6 +648,42 @@ function EntriesList({ source, s, order, kit, top }: { source: string; s: Src; o
   );
 }
 
+/** A card's faces, by the page's spacing. */
+const FACE: Record<Density, number> = { roomy: 36, snug: 32, dense: 26 };
+
+/** A card pointed at this long has its thread read ahead; one on the screen, this long. */
+const HOVER_AHEAD_MS = 120;
+const VISIBLE_AHEAD_MS = 800;
+const watched = new Map<Element, { network: P.Network; post: string; timer?: ReturnType<typeof setTimeout> }>();
+let watcher: IntersectionObserver | null = null;
+/** Watch a card: once it has stayed mostly on the screen, its thread is read ahead; gone before then, it is not. */
+function watchCard(el: Element, network: P.Network, post: string): () => void {
+  if (typeof IntersectionObserver === 'undefined') return () => {};
+  watcher ??= new IntersectionObserver(
+    (es) => {
+      for (const x of es) {
+        const w = watched.get(x.target);
+        if (!w) continue;
+        const shown = x.isIntersecting && x.intersectionRect.height >= Math.min(160, x.boundingClientRect.height * 0.5);
+        if (shown) w.timer ??= setTimeout(() => readAhead(w.network, w.post), VISIBLE_AHEAD_MS);
+        else {
+          clearTimeout(w.timer);
+          w.timer = undefined;
+          dropAhead(w.network, w.post);
+        }
+      }
+    },
+    { threshold: [0, 0.25, 0.5] },
+  );
+  watched.set(el, { network, post });
+  watcher.observe(el);
+  return () => {
+    clearTimeout(watched.get(el)?.timer);
+    watched.delete(el);
+    watcher?.unobserve(el);
+  };
+}
+
 const REASON_ICON: Record<NonNullable<P.HomeReason['kind']>, string> = { like: 'heart', follow: 'users', reply: 'reply', topic: 'hash', community: 'groups', pinned: 'pin', other: 'sparkles' };
 
 /** One post in a source: the conversation above it, why it is there, which account saw it, and what can be done. */
@@ -631,6 +700,17 @@ function EntryCard({ e, kit, via, acted, onActed, answering, setAnswering }: {
   const acting = e.seenBy[0]?.accountId;
   const acc = accountOf(acting);
   const shown = e.post.repostOf ?? e.post;
+  // Its thread read ahead (threadcache.ts): once the card has stayed on the screen, or at once when pointed at.
+  const card = useRef<HTMLDivElement>(null);
+  const replies = (shown.counts?.replies ?? 0) > 0;
+  useEffect(() => (replies && card.current ? watchCard(card.current, e.network, shown.id) : undefined), [e.key, replies]);
+  const hover = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(hover.current), []);
+  const point = (ev: PointerEvent) => {
+    if (ev.pointerType !== 'mouse' || (!replies && !shown.replyTo)) return;
+    clearTimeout(hover.current);
+    hover.current = setTimeout(() => readAhead(e.network, shown.id, true), HOVER_AHEAD_MS);
+  };
   const del = async (p: P.PostFact) => {
     try {
       await api(`/api/posts/${e.network}/${p.id}/delete`, { method: 'POST', body: { account: acting } });
@@ -649,34 +729,42 @@ function EntryCard({ e, kit, via, acted, onActed, answering, setAnswering }: {
     acted,
     onActed,
     ...(acc?.unpublish && !e.post.repostOf && kit.isSelf(shown.author) ? { onDelete: del } : {}),
+    pre: (id) => (id === shown.id && replies ? preState(e.network, id) : null),
   };
-  const marks = (
-    <>
-      {e.reason && (
-        <span class="post-mark feed-reason">
-          <kit.Icon name={REASON_ICON[e.reason.kind ?? 'other']} size={11} /> {e.reason.text}
-        </span>
-      )}
-      {via && e.seenBy[0] && (
-        <span class="post-mark feed-via" title="The timeline it came through: likes and replies go as its account">
-          <span class="feed-via-dot" style={{ background: hue(via.find((x) => x.accountId === e.seenBy[0].accountId && x.feed === e.seenBy[0].feed)?.i ?? 0) }} aria-hidden="true" />
-          {handleOf(kit, accountOf(e.seenBy[0].accountId))} · {e.seenBy[0].feed === 'mine' ? 'Posts' : FEED_WORDS[e.seenBy[0].feed]}
-          {e.seenBy.length > 1 && ` (+${e.seenBy.length - 1})`}
-        </span>
-      )}
-    </>
+  const reason = e.reason && (
+    <span class="post-mark feed-reason">
+      <kit.Icon name={REASON_ICON[e.reason.kind ?? 'other']} size={11} /> {e.reason.text}
+    </span>
   );
+  const came = via && e.seenBy[0] && (
+    <span class="post-mark feed-via" title="The timeline it came through: likes and replies go as its account">
+      <span class="feed-via-dot" style={{ background: hue(via.find((x) => x.accountId === e.seenBy[0].accountId && x.feed === e.seenBy[0].feed)?.i ?? 0) }} aria-hidden="true" />
+      <span class="feed-via-text">
+        {handleOf(kit, accountOf(e.seenBy[0].accountId))} · {e.seenBy[0].feed === 'mine' ? 'Posts' : FEED_WORDS[e.seenBy[0].feed]}
+        {e.seenBy.length > 1 && ` (+${e.seenBy.length - 1})`}
+      </span>
+    </span>
+  );
+  // Roomy gives it a line of its own over the post; snug and dense end the name's line with it.
+  const roomy = density.value === 'roomy';
   return (
-    <div class="feed-entry" data-entry={e.key}>
+    <div class="feed-entry" data-entry={e.key} ref={card} onPointerEnter={point} onPointerLeave={() => clearTimeout(hover.current)}>
       {e.above?.map((p) => (
-        <Row p={p} kit={kit} network={e.network} line />
+        <Row p={p} kit={kit} network={e.network} line size={FACE[density.value]} />
       ))}
       <Row
         p={e.post}
         kit={kit}
         network={e.network}
         line={false}
-        above={marks}
+        size={FACE[density.value]}
+        above={
+          <>
+            {reason}
+            {roomy && came}
+          </>
+        }
+        aside={!roomy && came}
         below={
           <>
             <PostActions p={shown} ctx={ctx} />
@@ -863,10 +951,24 @@ function FeedComposer({ kit, fixed, sheet, onDone }: { kit: Kit; fixed?: string;
   const [key, setKey] = useState(fresh);
   const [sending, setSending] = useState(false);
   const [results, setResults] = useState<P.PublishResult[] | null>(null);
-  const [open, setOpen] = useState(!kit.phone.value || !!text || !!sheet);
+  // Open from the start only when roomy (look.ts); snug and dense keep it one line until it is used.
+  const roomy = density.value === 'roomy' && !kit.phone.value;
+  const [open, setOpen] = useState(roomy || !!text || !!sheet);
   useEffect(() => void (sheet && setTimeout(() => area.current?.focus(), 300)), []);
   const file = useRef<HTMLInputElement>(null);
   const area = useRef<HTMLTextAreaElement>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const blank = !text.trim() && !own && !pics.length && when === null;
+  // Roomy opens it; snug or dense closes it to its line, when nothing is written in it.
+  useEffect(() => void (roomy ? setOpen(true) : blank && !sheet && setOpen(false)), [roomy]);
+  // Snug or dense: a click outside it with nothing written closes it to its line again. On the click, not the press:
+  // closed on the press, what was pressed would move from under the pointer before its release, and the click be lost.
+  useEffect(() => {
+    if (roomy || sheet || !open || !blank) return;
+    const away = (e: MouseEvent) => !box.current?.contains(e.target as Node) && setOpen(false);
+    addEventListener('click', away, true);
+    return () => removeEventListener('click', away, true);
+  }, [roomy, sheet, open, blank]);
   // The accounts come after the first draw: pick then.
   useEffect(() => {
     if (!as.length && accs.length) setAs(first());
@@ -1033,7 +1135,7 @@ function FeedComposer({ kit, fixed, sheet, onDone }: { kit: Kit; fixed?: string;
       </button>
     );
   return (
-    <div class={`post-composer feed-composer ${sheet ? 'in-sheet' : ''}`} data-composer="feed">
+    <div class={`post-composer feed-composer ${sheet ? 'in-sheet' : ''}`} data-composer="feed" ref={box}>
       {sheet && (
         <header class="feed-compose-head">
           <button class="link-btn" onClick={onDone}>

@@ -155,6 +155,25 @@ export function PostComposer({
       },
     );
   };
+  /**
+   * Cancel: the box goes (the one under a thread's post closes to its line), and what was written with it; a toast
+   * brings it back.
+   */
+  const cancel =
+    onCancel || collapsed !== undefined
+      ? () => {
+          const had = text;
+          if (collapsed !== undefined) {
+            setText('');
+            keepDraft(draftKey, '');
+            setError(null);
+            setOpen(false);
+          }
+          onCancel?.();
+          if (collapsed !== undefined && had.trim())
+            kit.toast({ title: `${label} discarded`, body: '', kind: 'info', actionLabel: 'Undo', action: () => (setText(had), setOpen(true), setTimeout(() => area.current?.focus())) }, 5000);
+        }
+      : undefined;
   // What is past the limit, marked behind the text as X marks it.
   const overFrom = st.overFrom;
   const nfc = text.normalize('NFC');
@@ -196,12 +215,12 @@ export function PostComposer({
           onScroll={(e) => back.current && (back.current.scrollTop = (e.currentTarget as HTMLTextAreaElement).scrollTop)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) (e.preventDefault(), send());
-            if (e.key === 'Escape' && onCancel) (e.preventDefault(), onCancel());
+            if (e.key === 'Escape' && cancel) (e.preventDefault(), cancel());
           }}
           disabled={sending}
         />
       </div>
-      {target.quote && <QuotedIn p={target.quote} kit={kit} network={network} />}
+      {target.quote && <QuotedIn p={target.quote} kit={kit} network={network} still />}
       {/* Said once when it goes over or comes back, not at every key. */}
       <span class="sr-only" aria-live="polite">
         {st.level === 'over' ? `Too long by ${-st.remaining}` : ''}
@@ -220,8 +239,8 @@ export function PostComposer({
         )}
         <span class="compose-spacer" />
         <Ring st={st} rules={rules} />
-        {onCancel && (
-          <button class="btn compose-cancel" onClick={onCancel} disabled={sending}>
+        {cancel && (
+          <button class="btn compose-cancel" onClick={cancel} disabled={sending}>
             Cancel
           </button>
         )}

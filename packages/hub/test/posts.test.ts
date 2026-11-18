@@ -4,7 +4,7 @@
  * found by search, with its pictures as attachments and the post in its view; a profile's posts are logged too; the
  * thread comes back from what was logged when X cannot be asked; nothing there unread, notified or sent to X.
  */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -207,6 +207,25 @@ describe('what the review found', () => {
     const again = await posts.thread('x', routingId());
     expect(sent.length).toBe(n);
     expect(again.logged?.some((p) => p.id === '881')).toBe(true);
+  });
+
+  test('Check for new replies asks X again, but not twice in ten seconds', async () => {
+    const posts = new Posts(deps());
+    await posts.thread('x', routingId());
+    const n = sent.length;
+    await posts.thread('x', routingId(), undefined, true);
+    expect(sent.length).toBe(n);
+    setSystemTime(new Date(Date.now() + 11_000));
+    try {
+      await posts.thread('x', routingId(), undefined, true);
+      expect(sent.length).toBeGreaterThan(n);
+      // What it brought is kept as any read: the next plain read asks nothing.
+      const m = sent.length;
+      await posts.thread('x', routingId());
+      expect(sent.length).toBe(m);
+    } finally {
+      setSystemTime();
+    }
   });
 
   test("the stored thread finds replies logged through another account", async () => {

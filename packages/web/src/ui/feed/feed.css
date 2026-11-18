@@ -93,9 +93,6 @@
   font-size: 13px;
   overflow-wrap: anywhere;
 }
-.post-clip:hover {
-  color: var(--text);
-}
 .post-by {
   display: flex;
   align-items: center;
@@ -609,7 +606,7 @@
 .thread-replies-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   flex-wrap: wrap;
   gap: 6px 12px;
   margin: 14px 8px 6px;
@@ -950,14 +947,8 @@
   position: fixed;
   z-index: 120;
 }
-.ct-style-menu {
-  position: absolute;
-  z-index: 30;
-  top: calc(100% + 4px);
-}
 .pa-menu,
-.pa-pop,
-.ct-style-menu {
+.pa-pop {
   min-width: 180px;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -965,8 +956,7 @@
   box-shadow: 0 10px 30px rgb(0 0 0 / 0.35);
   overflow: hidden;
 }
-.pa-menu button,
-.ct-style-menu button {
+.pa-menu button {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -975,8 +965,7 @@
   text-align: left;
   font-weight: 600;
 }
-.pa-menu button:hover,
-.ct-style-menu button:hover {
+.pa-menu button:hover {
   background: var(--bg-hover);
 }
 .pa-pop {
@@ -1213,43 +1202,6 @@
   color: var(--text);
   font-weight: 700;
   font-size: 13px;
-}
-/* The style menu: a quiet word beside Replies. */
-.ct-style {
-  position: relative;
-}
-.ct-style-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 6px;
-  border-radius: 6px;
-  color: var(--text-faint);
-  font-size: 12px;
-}
-.ct-style-btn:hover,
-.ct-style-btn[aria-expanded='true'] {
-  color: var(--text-dim);
-  background: var(--bg-hover);
-}
-.ct-style-menu {
-  left: auto;
-  right: 0;
-  width: 270px;
-}
-.ct-style-menu button {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
-}
-.ct-style-menu button span {
-  color: var(--text-faint);
-  font-weight: 400;
-  font-size: 12px;
-}
-.ct-style-menu button.on b::after {
-  content: ' ✓';
-  color: var(--accent);
 }
 .thread-focal .post-composer,
 .thread-focal .compose-closed {
@@ -2163,3 +2115,334 @@
 .feed-composer.in-sheet .feed-gate {
   max-width: 170px;
 }
+
+/* Looks (Seg.tsx): a few ways of drawing something, small pictures side by side, the one chosen raised; the raise
+   slides to the next, and pointing at one names it. */
+.look-seg {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  padding: 2px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--text) 7%, transparent);
+}
+.look-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 32px;
+  height: 26px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--accent) 30%, var(--bg-raised));
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 0.3),
+    inset 0 0 0 1px color-mix(in oklab, var(--accent) 45%, transparent);
+  transform: translateX(calc(var(--look-i) * 32px));
+  transition: transform 0.26s cubic-bezier(0.3, 0.8, 0.25, 1.15);
+}
+.look-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 26px;
+  padding: 0;
+  border-radius: 999px;
+  color: var(--text-faint);
+  transition: color 0.15s;
+}
+.look-btn:hover {
+  color: var(--text-dim);
+}
+.look-btn[aria-checked='true'] {
+  color: var(--text);
+}
+.look-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.look-icon {
+  width: 17px;
+  height: 17px;
+}
+.look-btn[aria-checked='true'] .look-icon {
+  animation: look-pop 0.34s cubic-bezier(0.3, 0.8, 0.25, 1.3);
+}
+@keyframes look-pop {
+  0% {
+    transform: scale(0.7);
+  }
+  60% {
+    transform: scale(1.15);
+  }
+}
+.look-tip {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 8px);
+  right: -6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: max-content;
+  max-width: 230px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-raised);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+  opacity: 0;
+  transform: translateY(-3px);
+  pointer-events: none;
+  transition:
+    opacity 0.12s,
+    transform 0.12s;
+}
+.look-tip b {
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.look-btn:hover .look-tip,
+.look-btn:focus-visible .look-tip {
+  opacity: 1;
+  transform: none;
+  transition-delay: 0.35s;
+}
+@media (hover: none) {
+  .look-tip {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .look-thumb {
+    transition: none;
+  }
+  .look-btn[aria-checked='true'] .look-icon {
+    animation: none;
+  }
+}
+
+/* Replies' style switch, named before it; checking for new replies beside the count. */
+.ct-style {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.ct-style-name {
+  color: var(--text-faint);
+  font-size: 12px;
+  animation: look-name 0.25s ease-out;
+}
+@keyframes look-name {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+.thread-check {
+  color: var(--text-faint);
+}
+.thread-check[data-busy] svg {
+  animation: thread-spin 0.8s linear infinite;
+}
+@keyframes thread-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.thread-coming {
+  display: flex;
+  align-items: center;
+  margin: 14px 8px;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+/* A quote: pointing at it lights it alone, not the post around it as well; its words select as the post's do. */
+.thread-quoted {
+  cursor: pointer;
+}
+.thread-quoted:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.thread-quoted.still {
+  cursor: default;
+}
+.thread-quoted.still:hover {
+  border-color: var(--border);
+}
+.thread-post:has(.thread-quoted:not(.still):hover) {
+  background: transparent;
+}
+
+/* A card's thread read ahead (threadcache.ts): a dot by its reply count, pulsing while read, filled once read. */
+.pa-pre {
+  width: 6px;
+  height: 6px;
+  margin: 0 0 0 5px;
+}
+.pa-pre[data-pre='loading'] {
+  animation: pre-dot 1s ease-in-out infinite;
+}
+.pa-pre[data-pre='ready'] {
+  border-color: var(--accent);
+  background: var(--accent);
+  opacity: 1;
+}
+
+/* Spacing (look.ts): roomy is the page as drawn above; snug and dense take it in. */
+.feed-density {
+  margin: 0 2px;
+}
+.feed-density-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  font-size: 15px;
+}
+.dens-snug .feed-entry {
+  padding: 0;
+}
+.dens-snug .feed-entry .thread-post {
+  gap: 9px;
+  padding: 6px 6px 2px;
+}
+.dens-snug .feed-entry .post-text,
+.dens-snug .ct-text {
+  font-size: 14px;
+  line-height: 1.4;
+}
+.dens-snug .post-media {
+  max-width: 360px;
+}
+.dens-snug .post-pic img {
+  max-height: 190px;
+}
+.dens-snug .feed-entry .post-actions {
+  margin-top: 0;
+}
+.dens-snug .feed-entry .pa-btn {
+  padding: 3px 8px;
+}
+.dens-snug .thread-focal {
+  gap: 8px;
+  padding: 10px 8px;
+}
+.dens-snug .thread-focal-text {
+  font-size: 16px;
+}
+.dens-snug .feed-entry .thread-post.line .thread-face::after {
+  top: 36px;
+}
+.dens-dense .feed-scroll {
+  padding: 4px 10px 16px;
+}
+.dens-dense .feed-entry {
+  padding: 0;
+}
+.dens-dense .feed-entry .thread-post {
+  gap: 8px;
+  padding: 5px 4px 2px;
+  border-radius: 6px;
+}
+.dens-dense .feed-entry .post-text,
+.dens-dense .ct-text {
+  font-size: 13.5px;
+  line-height: 1.35;
+}
+.dens-dense .feed-entry .post-mark,
+.dens-dense .feed-entry .post-handle {
+  font-size: 11.5px;
+}
+/* Pictures as a strip of small squares. */
+.dens-dense .feed-entry .post-media {
+  display: flex;
+  gap: 4px;
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+}
+.dens-dense .feed-entry .post-pic {
+  flex: none;
+  width: 84px;
+  height: 84px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.dens-dense .feed-entry .post-pic img {
+  max-height: none;
+}
+.dens-dense .feed-entry .post-quoted {
+  padding: 5px 8px;
+}
+.dens-dense .thread-quoted-pic {
+  max-height: 84px;
+}
+.dens-dense .feed-entry .pa-btn {
+  padding: 2px 7px;
+  font-size: 12px;
+}
+.dens-dense .thread-focal {
+  gap: 7px;
+  padding: 8px 6px;
+}
+.dens-dense .thread-focal-text {
+  font-size: 15px;
+}
+.dens-dense .feed-entry .thread-post.line .thread-face::after {
+  top: 30px;
+}
+@media (hover: hover) {
+  .dens-dense .feed-entry .post-actions {
+    opacity: 0.45;
+    transition: opacity 0.15s;
+  }
+  .dens-dense .feed-entry:hover .post-actions,
+  .dens-dense .feed-entry:focus-within .post-actions {
+    opacity: 1;
+  }
+}
+
+/* The head keeps one line for its words when the page is narrowed by a thread beside it. */
+.feed-head .conv-head-text {
+  min-width: 0;
+}
+.feed-head .conv-head-sub .muted-label {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* Snug and dense: which timeline a card came through ends its name's line (Row's aside), not a line of its own; where
+   the line is too short for both, it goes under the name, at the right, and the name stays whole. */
+.thread-head:has(> .post-aside) {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+.thread-head .post-aside {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  padding-left: 8px;
+}
+.post-aside .feed-via {
+  display: flex;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.post-aside .feed-via-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+

@@ -20,9 +20,10 @@
 import { Fragment, h, type ComponentChildren } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { openProfile } from '../../state.ts';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useRef } from 'preact/hooks';
 import type { Kit } from './lazy.tsx';
 import { Counts, Pics, QuotedIn, Row, Text, Who } from './Post.tsx';
+import { REPLY_ICONS, Seg } from './Seg.tsx';
 import { runOf, runPair, treeChains, type TreeNode } from './tree.ts';
 
 export type CommentStyle = 'tree' | 'compact' | 'flat' | 'chains';
@@ -32,35 +33,16 @@ export const COMMENT_STYLES: { id: CommentStyle; label: string; title: string }[
   { id: 'flat', label: 'Flat', title: 'One level of replies under each, as on YouTube' },
   { id: 'chains', label: 'Chains', title: 'Each reply and the answers under it in a line, as on X' },
 ];
-/** The style menu: a quiet word beside Replies ("Tree ▾") that opens the four, each with what it is like. */
-export function StyleMenu({ style, pick, kit }: { style: CommentStyle; pick: (s: CommentStyle) => void; kit: Kit }) {
-  const [open, setOpen] = useState(false);
-  const box = useRef<HTMLSpanElement>(null);
-  // Closes on a press outside it, as a menu does.
-  useEffect(() => {
-    if (!open) return;
-    const down = (e: PointerEvent) => !box.current?.contains(e.target as Node) && setOpen(false);
-    const key = (e: KeyboardEvent) => e.key === 'Escape' && (setOpen(false), box.current?.querySelector<HTMLElement>('.ct-style-btn')?.focus());
-    addEventListener('pointerdown', down, true);
-    addEventListener('keydown', key);
-    return () => (removeEventListener('pointerdown', down, true), removeEventListener('keydown', key));
-  }, [open]);
+/** The style switch beside Replies: the four drawn small, side by side, the one in use raised and named before them;
+ * pointing at one says what it is like (Seg.tsx). */
+export function StyleMenu({ style, pick }: { style: CommentStyle; pick: (s: CommentStyle) => void }) {
   const current = COMMENT_STYLES.find((s) => s.id === style)!;
   return (
-    <span class="ct-style" ref={box}>
-      <button class="ct-style-btn" aria-haspopup="menu" aria-expanded={open} title="How replies are drawn" onClick={() => setOpen(!open)}>
-        {current.label} <kit.Icon name="chevronDown" size={12} />
-      </button>
-      {open && (
-        <div class="ct-style-menu" role="menu">
-          {COMMENT_STYLES.map((s) => (
-            <button role="menuitemradio" aria-checked={s.id === style} class={s.id === style ? 'on' : ''} onClick={() => (pick(s.id), setOpen(false))}>
-              <b>{s.label}</b>
-              <span>{s.title}</span>
-            </button>
-          ))}
-        </div>
-      )}
+    <span class="ct-style">
+      <span class="ct-style-name" key={style}>
+        {current.label}
+      </span>
+      <Seg value={style} options={COMMENT_STYLES.map((s) => ({ id: s.id, label: s.label, line: s.title, icon: REPLY_ICONS[s.id] }))} pick={pick} label="How replies are drawn" cls="ct-style-seg" />
     </span>
   );
 }
@@ -93,6 +75,8 @@ interface CommentCtx {
   root?: { current: HTMLElement | null };
   /** What goes under a reply in place of its counts: its actions, and a composer when answering it. */
   below?: (p: P.PostFact) => ComponentChildren;
+  /** Replies that came with the last check for new ones: marked new. */
+  fresh?: ReadonlySet<string>;
 }
 
 function MoreUnder({ n, ctx, under }: { n: TreeNode; ctx: CommentCtx; under?: boolean }) {
@@ -141,6 +125,7 @@ function Head({ p, ctx, avatar, folded, size }: { p: P.PostView; ctx: CommentCtx
       )}
       <Who id={who} kit={kit} />
       {who && who === ctx.op && <span class="post-tag op" title="Wrote the post">OP</span>}
+      {ctx.fresh?.has(p.id) && <span class="post-tag new">new</span>}
       <a class="post-handle ct-time" href={kit.feed.postHref(ctx.network, p.id)} title={`${kit.fullTime(p.ts)}: open as a thread`}>
         · {kit.ago(p.ts)}
       </a>
@@ -309,7 +294,7 @@ export function Comments({ nodes, style, ctx }: { nodes: TreeNode[]; style: Comm
           return (
             <div class="thread-chain" key={first.id}>
               {chain.map((p, i) => (
-                <Row p={p} kit={ctx.kit} network={ctx.network} line={i < chain.length - 1} above={i === 0 && to ? <span class="post-mark">Replying to @{to}</span> : undefined} below={ctx.below?.(p)} />
+                <Row p={p} kit={ctx.kit} network={ctx.network} line={i < chain.length - 1} above={i === 0 && to ? <span class="post-mark">Replying to @{to}</span> : undefined} below={ctx.below?.(p)} {...(ctx.fresh?.has(p.id) ? { tag: 'new' } : {})} />
               ))}
               {chain.map((p) => byId.get(p.id)).map((x) => x && <MoreUnder n={x} ctx={ctx} under />)}
             </div>
