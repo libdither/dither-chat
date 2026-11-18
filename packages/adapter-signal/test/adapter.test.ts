@@ -601,7 +601,7 @@ describe('signal adapter against a fake signal-cli', () => {
     expect(calls('updateGroup').at(-1).params).toEqual({ groupId: GID, name: 'Crag rats' });
     // The group is read again after the write. Other calls (the daemon's health check) may land around it.
     const rpcs = records().filter((r) => r.t === 'rpc');
-    const wrote = rpcs.findLastIndex((r) => r.method === 'updateGroup');
+    const wrote = rpcs.map((r) => r.method).lastIndexOf('updateGroup');
     expect(rpcs.slice(wrote + 1)).toContainEqual({ t: 'rpc', method: 'listGroups', params: { groupId: [GID] } });
     expect(a.fields.name).toEqual({ value: 'Crag rats', canEdit: true });
     expect(of('conversation', mark).map((c) => c.conversation)).toEqual([expect.objectContaining({ nativeId: GROUP, name: 'Crag rats', topic: 'thursday nights' })]);
