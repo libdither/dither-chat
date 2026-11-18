@@ -118,6 +118,11 @@ export interface MailChanges {
   removed: string[];
   /** More changes wait: call again with the new state. */
   more: boolean;
+  /**
+   * Ids the extractor could not parse and left out of `added` (mail.list's and mail.search's answers carry it too).
+   * The server still has them: read each with mail.get later. Absent: none (or an extractor from before it).
+   */
+  skipped?: string[];
 }
 
 export interface OutgoingFile {

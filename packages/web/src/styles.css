@@ -12985,6 +12985,9 @@ button.msg-edited.link:hover {
 .mail-acc-btn[aria-expanded='true'] {
   color: var(--text);
 }
+.mail-stale {
+  color: var(--warn);
+}
 .mail-acc-name {
   min-width: 0;
   overflow: hidden;
