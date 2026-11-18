@@ -120,7 +120,8 @@ conversation (`#/inbox/c/<feed>`, an old notification's) opens that account's Ac
 `#/feed/home`, Home's old route, is Following.
 
 A post opens its thread ([Threads](#threads)) beside the list on a wide screen and in its place on a narrow one
-(`#/feed/<source>/p/<post key>`); Back closes it.
+(`#/feed/<source>/p/<post key>`); Back closes it. So does every post inside the page: a quoted post, a reply's time, a
+post link (Ctrl or ⌘ opens one in a new tab).
 
 ### Feeds
 
@@ -194,6 +195,32 @@ press), `post_draft`.
 **Adapters.** Capability `home` and the `home` command (`{ feed: 'following' | 'foryou', cursor?, count? }` →
 `HomePage`: items with their reason and the posts above, the Bottom and Top cursors), `unpublish` (`{ post }`), and
 `postMedia` (`publish` with `media`, uploads as attachments); `publish` takes `replies`.
+
+### Looks
+
+**Spacing**, from three small pictures in the head (on a phone, ⋯ → Spacing), kept on the device
+(`dither.feed.density`, `ui/feed/look.ts`):
+
+- **Roomy**: large pictures, the composer open.
+- **Snug** (the default): smaller faces and pictures; which timeline a card came through ends its name's line (under
+  it, at the right, when the line is too short for both); the composer one line until used, and a click outside it
+  with nothing written closes it again (on the click, not the press, so what was clicked does not move away first).
+- **Dense**: small faces, pictures as a strip of small squares, the bar under a post faint until pointed at.
+
+The pictures are `Seg.tsx`, as the pictures' rail in a chat: each a drawing of what it does, the one chosen raised,
+the raise sliding to the next, its name and what it is like on pointing; the arrow keys move through them. A change
+slides each post from where it was to where it is (`flip`), not with reduced motion. The reply styles in a thread are
+chosen the same way ([Threads](#threads)).
+
+### Reading ahead
+
+A card with replies that stays on the screen (800 ms), or one pointed at (120 ms, ahead of the others), has its thread
+read before it is opened (`ui/feed/threadcache.ts`), so opening it shows the replies at once. Each read is a call to
+the network, so they are few: two at a time, twelve a minute, none where data is dear (Save-Data, a cellular
+connection, 2G: prefetch.ts `linkAllows`, as the inbox's fetching ahead); a card that leaves the screen before its
+turn is not read. A thread read is kept for two minutes, as the hub keeps its answer. The card says how far it is by a
+dot after its reply count: pulsing being read, filled read (opens at once). A card opened before its thread came shows
+its post at once, from the page, "Reading the replies from X…" under it until they come.
 
 ### One card for every network
 
@@ -280,13 +307,19 @@ no one who reacted shows the count alone: the line opens no list.
 ## Threads
 
 **Any post opens in the app.** Your post at the head of a card in the feed, a reply or mention in it, a profile's recent
-post, a post quoted in another, a reply in a thread: each opens that post's thread beside the inbox, where a
-conversation would open (`#/inbox/c/pst_<network>_<post id>`, feed.ts `postKey`), full screen with Back on a phone.
-Links, @handles, pictures, names and Open on X inside a card keep doing what they do.
+post, a post quoted in another, a reply in a thread: each opens that post's thread, on the Feed page beside the list
+(`#/feed/<source>/p/pst_<network>_<post id>`), elsewhere beside the inbox, where a conversation would open
+(`#/inbox/c/pst_<network>_<post id>`, feed.ts `postKey`), full screen with Back on a phone. Links, @handles, pictures,
+names and Open on X inside a card keep doing what they do. A quoted post is not a link: its words can be selected as
+the post's own can, and a press that ends a selection opens nothing.
 
 **The page** (`ui/feed/Thread.tsx`, in the feed's chunk): what the post answers, oldest first, each joined to the next
 by a line from its picture; the post itself, large, with its full time, its counts and Open on X; then **Replies** as a
-comment section; **Show more replies** while X has more. The header says whose post it is.
+comment section; **Show more replies** while X has more, and not once every reply X counts under the post is shown
+(a page read ahead that brings nothing new ends it at once). The header says whose post it is.
+
+**Check for new replies** (↻ beside Replies) asks X again: what came goes in its place marked **new**, and a toast
+says how many ("2 new replies", "No new replies").
 
 **Read ahead.** A reply's hidden answers ("N more replies") are read as they come within about two screens, two at a
 time and at most 24 per thread opened (each is one TweetDetail read, about 7 s on X), and the next page of replies as
@@ -310,8 +343,9 @@ opened from the feed, a profile or search results goes back there rather than to
 answers: X's chains (a reply and the first answers under it), the branches the hub logged before (`logged`, below),
 and the branches opened since. Siblings keep the order they first came in, X's order: the author's own continuation
 first, then what X ranks highest. Where X counts more replies under a post than are known, **N more replies** reads
-that post's thread and puts its replies in place, as Reddit's "load more comments". Four ways to draw it, chosen in a
-quiet menu beside Replies ("Tree ▾", each with what it is like) and kept on the device:
+that post's thread and puts its replies in place, as Reddit's "load more comments". Four ways to draw it, chosen from
+four small pictures beside Replies, the one in use named (`Seg.tsx`, [Looks](#looks)), and kept on the device; on a
+change the replies slide to their new places:
 
 - **Tree** (the default, as Reddit, with LessWrong's thin lines): each reply's picture (small, by the name), name, OP
   on the post's author, time (which opens the reply as a thread of its own), words, pictures and likes; under it its
@@ -329,11 +363,12 @@ quiet menu beside Replies ("Tree ▾", each with what it is like) and kept on th
 A network that gives its comments as a tree (Reddit, Mastodon) gives the same tree; a network with one level of
 replies (YouTube) is the Flat style already.
 
-**Where it comes from.** `GET /api/posts/:network/:post/thread[?cursor=]` (posts.ts): the hub asks an X account that
+**Where it comes from.** `GET /api/posts/:network/:post/thread[?cursor=][&fresh=1]` (posts.ts): the hub asks an X account that
 can (capability `posts`, the `post` command, `PostThread`: `focal`, `ancestors`, `replies` as chains, `more`), the way
 X's own post page asks (TweetDetail). Nothing else is sent: nothing liked, viewed or marked. Two devices opening the
 same thread ask once, and a thread read in the last two minutes is answered from that read (back and forth between a
 post and its replies asks X once; the view is made again from that read, so what was logged since comes with it).
+`fresh=1` (Check for new replies) is answered from a read of the last ten seconds only.
 The hub waits up to 150 s: the extractor paces its reads. A page of more replies that brings none, or the same cursor
 back, ends Show more. With the thread come **the posts logged under it before** that X did not show this time
 (`logged`: any depth to 10, any account, at most 500, through `message_post_reply`), so a branch opened once stays
@@ -353,8 +388,10 @@ bar X has**: Reply, Repost, Like, and the views X counts. Code: `protocol/src/co
   says what you did, its count changes by one only when the state does (pressing Like on a liked post counts nothing).
   Repost asks first, as X does: **Repost** (or Undo repost) or **Quote**.
 - **Reply and Quote open a composer** where you are: under the post a thread is about there is always a one-line "Post
-  your reply" box (X's), and Reply under any reply opens one under it, focused, "Replying to @handle". Quote opens one
-  with the post quoted under it. What you post goes first in the tree, marked OP, and a toast offers View.
+  your reply" box (X's), so the post itself has no Reply in its bar; Reply under any reply opens one under it, focused,
+  "Replying to @handle". Quote opens one with the post quoted under it. What you post goes first in the tree, marked
+  OP, and a toast offers View. **Cancel** (or Escape) closes a box, and what was written in it goes; the toast's
+  **Undo** brings it back.
   `POST /api/posts/:network/publish` (`{ text, replyTo?, quote?, key }`, the `publish` command, capability `publish`)
   checks the text with the same count the page shows, and posts once per `key` (a composer's own id): a double press or
   a retried request within ten minutes is answered with the first post. Too long or empty is refused (422) before
@@ -445,7 +482,11 @@ baselines predate it.
   and counts; cards, names as X says them.
 - `packages/hub/test/posts.test.ts`: a thread read in hub ids with the author's chain first, each post logged once as
   a quiet message (no unread, no triage, no persons), more replies by cursor, a reply's ancestors, search finding
-  logged posts, the thread read back without X, a profile's posts logged, the routes, and nothing sent to X.
+  logged posts, the thread read back without X, a profile's posts logged, the routes, Check for new replies asking X
+  again (not twice in ten seconds), and nothing sent to X.
+- `packages/web/test/threadcache.test.ts`: reading ahead two at a time and twelve a minute, a card pointed at first,
+  one that left the screen not read, none on a cellular connection, a thread read kept and opened without asking, a
+  post shown before its thread.
 - `packages/web/test/links.test.ts`: links in bios.
 - `scripts/verify-x-threads.ts`: in a real browser on a fresh demo hub, desktop and phone: links in bios, a feed card,
   a profile's post and a search hit opening their threads, the replies as a tree, hidden branches and the next page
@@ -469,9 +510,13 @@ baselines predate it.
   with its reasons, the order swapped from its menu (the same posts, X not asked), Tune (a timeline turned off, put
   back), a feed made, named and deleted, posting as both accounts, a thread with who can reply, a picture,
   scheduling, Drafts and Edit, Delete leaving the other copy, a like and a reply going as the account that saw the
-  post, a thread beside the list, Activity and its filter, an old link landing on Activity, and a phone (the tabs,
-  the order sheet, Tune as a sheet, the composer sheet from the pencil button, the bell, ⋯, a thread in the list's
-  place, Back). `--shots <dir>` keeps screenshots.
+  post, a thread beside the list, threads read ahead (the dot; a thread read ahead opening with its replies, never
+  "Reading the replies…"), no Reply on the post itself, Show more replies gone once all are shown, the reply styles
+  from their pictures, Check for new replies, Cancel and Undo on a reply, a quote's words selectable and the quote
+  opening beside the list, the spacings (snug at first with the composer one line, dense's small faces, roomy's
+  composer open), Activity and its filter, an old link landing on Activity, and a phone (the tabs, the order sheet,
+  Tune as a sheet, the composer sheet from the pencil button, the bell, ⋯, a thread in the list's place, Back).
+  `--shots <dir>` keeps screenshots.
 - `scripts/verify-x-feed.ts`: against a fresh demo hub in a real browser, on a desktop and a phone, dark and light,
   with screenshots (`--shots <dir>`). It checks Activity on the Feed page, the feed by post (your post small, the reply under it, the
   reactions line, the list of who liked and reposted it, the quote, the mention, the follows),
@@ -487,7 +532,7 @@ baselines predate it.
 - `scripts/verify-x-answer.ts`: in a real browser, desktop and phone: the bar, who liked on hover (ranked, more,
   opening a profile), like and repost reaching the demo X once each, Repost asking Repost or Quote, the counter at 100,
   15 left, 6 over (marked), CJK and links, a reply to the top of the tree, a reply to a reply, Escape, a quote with
-  Ctrl+Enter, the style menu, a long press on a phone showing a sheet, and X getting exactly the presses made.
+  Ctrl+Enter, the style pictures, a long press on a phone showing a sheet, and X getting exactly the presses made.
 - `packages/web/test/tree.test.ts`: chains and logged branches as one tree, a post seen twice, posts outside the
   thread, cycles, what is hidden to load, the tree read back as chains.
 

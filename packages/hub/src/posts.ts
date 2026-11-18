@@ -63,6 +63,9 @@ function withInner(p: P.PostFact, out: { p: P.PostFact; inner: boolean }[] = [],
 
 /** A thread read is answered from the last read for this long: back and forth between posts asks X once. */
 const CACHE_MS = 2 * 60_000;
+/** A fresh read asked for (a thread's "Check for new replies") still takes an answer this new: a press after press
+ * asks X once. */
+const FRESH_MS = 10_000;
 /** The hub waits this long for X: the extractor paces its reads, and a read may wait behind a long history read. */
 const THREAD_TIMEOUT_MS = 150_000;
 
@@ -409,14 +412,17 @@ export class Posts {
     return view(notified(), null, 'notifications', `${why} These are the people your notifications named.`);
   }
 
-  /** A post's thread: from the network when an account can ask (and logged), else what the hub logged. */
-  thread(network: P.Network, post: string, cursor?: string): Promise<P.PostThreadView> {
+  /**
+   * A post's thread: from the network when an account can ask (and logged), else what the hub logged. `fresh`: not
+   * the last answer unless it is a few seconds old (checking for new replies).
+   */
+  thread(network: P.Network, post: string, cursor?: string, fresh = false): Promise<P.PostThreadView> {
     const key = `${network}:${post}:${cursor ?? ''}`;
     const live = this.asking.get(key);
     if (live) return live;
     const hit = !cursor ? this.recent.get(key) : null;
     // What X said is reused; the view is made again, so the branches logged since (opened under a reply) come with it.
-    if (hit && Date.now() - hit.at < CACHE_MS) return Promise.resolve(this.view(network, post, hit.accountId, hit.t, undefined));
+    if (hit && Date.now() - hit.at < (fresh ? FRESH_MS : CACHE_MS)) return Promise.resolve(this.view(network, post, hit.accountId, hit.t, undefined));
     const p = this.ask(network, post, cursor).finally(() => this.asking.delete(key));
     this.asking.set(key, p);
     return p;

@@ -94,7 +94,8 @@ try {
   await page.eval(`[...document.querySelectorAll('.feed-unit[data-unit="post"] .feed-mine')].find((a) => /Greedy routing/.test(a.textContent)).click()`);
   await page.until(`!!document.querySelector('${focalLike}') && document.querySelectorAll('.ct-node').length > 0`, 20000);
   const bar = await page.eval<any>(`(() => { const b = document.querySelector('.thread-focal .post-actions'); return { buttons: [...b.querySelectorAll('.pa-btn')].map((x) => x.className.replace('pa-btn ', '').trim()), like: b.querySelector('.pa-btn.like').textContent, title: b.querySelector('.pa-btn.like').title }; })()`);
-  check('under your post: reply, repost and like, with counts', bar.buttons.join(',') === 'reply,repost,like' && /41/.test(bar.like), bar);
+  // No Reply: the box under it is where a reply is written.
+  check('under your post: repost and like, with counts', bar.buttons.join(',') === 'repost,like' && /41/.test(bar.like), bar);
   check('…the like button says it shows who on hovering', /hover to see who/.test(bar.title), bar.title);
   await hover(focalLike);
   await page.until(`document.querySelectorAll('.pa-pop .post-reactor').length >= 5`, 10000);
@@ -143,10 +144,11 @@ try {
   );
 
   // ------------------------------------------------------------------ the composer, counting as X counts
-  await page.eval(`document.querySelector('.thread-focal .post-actions .pa-btn.reply').click()`);
+  check('no Reply in the post’s own bar: its box is under it', !(await page.eval<boolean>(`!!document.querySelector('.thread-focal .post-actions .pa-btn.reply')`)));
+  await page.eval(`document.querySelector('.thread-focal .compose-closed').click()`);
   await page.until(`document.activeElement?.classList.contains('compose-text') && !!document.activeElement.closest('.thread-focal')`, 3000).then(
-    () => check('Reply on the post opens its reply box, focused', true),
-    () => check('Reply on the post opens its reply box, focused', false),
+    () => check('the box under the post opens focused', true),
+    () => check('the box under the post opens focused', false),
   );
   await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
   await page.until(`!!document.querySelector('.thread-focal .compose-closed')`, 3000).then(
@@ -196,7 +198,9 @@ try {
   // ------------------------------------------------------------------ a reply to a reply; a quote
   await page.eval(`[...document.querySelectorAll('.ct-node')].find((n) => n.querySelector(':scope > .ct-main .post-who b')?.textContent === 'Ravi').querySelector(':scope > .ct-main .pa-btn.reply').click()`);
   await page.until(`!!document.querySelector('.ct-node .post-composer')`, 3000);
-  r = await page.eval<any>(`({ to: document.querySelector('.ct-node .post-composer .compose-to')?.textContent, focused: document.activeElement?.classList.contains('compose-text') })`);
+  // Focused once it is drawn (an effect after the paint): waited for, in that box.
+  const inBox = await page.until(`document.activeElement?.classList.contains('compose-text') && !!document.activeElement.closest('.ct-node .post-composer')`, 3000).then(() => true, () => false);
+  r = { to: await page.eval<string>(`document.querySelector('.ct-node .post-composer .compose-to')?.textContent ?? ''`), focused: inBox };
   check('Reply under a reply opens a box there, focused, "Replying to @ravi_routes"', /@ravi_routes/.test(r.to) && r.focused, r);
   if (shots) await page.shot(join(shots, 'answer-reply-to-reply.png'));
   await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
@@ -222,8 +226,7 @@ try {
   check('…and stays taken back when the tree changes around it', stillOff);
 
   // ------------------------------------------------------------------ in Chains the menu is over the page, not clipped
-  await page.eval(`document.querySelector('.ct-style-btn').click()`);
-  await page.eval(`[...document.querySelectorAll('.ct-style-menu button')].find((b) => /Chains/.test(b.textContent)).click()`);
+  await page.eval(`document.querySelector('.ct-style .look-btn[aria-label="Chains"]').click()`);
   await page.until(`document.querySelectorAll('.thread-chain .thread-post.line').length > 0`, 3000);
   await page.eval(`document.querySelector('.thread-chain .thread-post.line .pa-btn.repost').scrollIntoView({ block: 'center' })`);
   await Bun.sleep(150);
@@ -238,19 +241,16 @@ try {
     () => check('…and a press outside closes it', false),
   );
 
-  // ------------------------------------------------------------------ the style menu, out of the way
-  await page.eval(`document.querySelector('.ct-style-btn').click()`);
-  await page.eval(`[...document.querySelectorAll('.ct-style-menu button')].find((b) => /Tree/.test(b.querySelector('b').textContent)).click()`);
-  const st = await page.eval<any>(`({ btn: document.querySelector('.ct-style-btn')?.textContent.trim(), segmented: document.querySelectorAll('.thread-replies-bar .feed-tab').length })`);
-  check('the style is a quiet word beside Replies ("Tree"), not four buttons', st.btn === 'Tree' && st.segmented === 0, st);
-  await page.eval(`document.querySelector('.ct-style-btn').click()`);
-  await page.until(`document.querySelectorAll('.ct-style-menu button').length === 4`, 3000);
+  // ------------------------------------------------------------------ the styles, as pictures beside Replies
+  await page.eval(`document.querySelector('.ct-style .look-btn[aria-label="Tree"]').click()`);
+  await page.until(`!!document.querySelector('.ct.tree')`, 3000);
+  const st = await page.eval<any>(`({ name: document.querySelector('.ct-style-name')?.textContent.trim(), pictures: [...document.querySelectorAll('.ct-style .look-btn')].map((b) => b.getAttribute('aria-label')), on: document.querySelector('.ct-style .look-btn[aria-checked="true"]')?.getAttribute('aria-label') })`);
+  check('the styles are four pictures beside Replies, the one in use named ("Tree")', st.name === 'Tree' && st.pictures.join() === 'Tree,Compact,Flat,Chains' && st.on === 'Tree', st);
   if (shots) await toReplies(), await page.shot(join(shots, 'answer-style-menu.png'));
-  await page.eval(`[...document.querySelectorAll('.ct-style-menu button')].find((b) => /Compact/.test(b.textContent)).click()`);
-  await page.until(`!!document.querySelector('.ct.compact') && !document.querySelector('.ct-style-menu')`, 3000);
-  check('…its menu has the four, and choosing one draws it', true);
-  await page.eval(`document.querySelector('.ct-style-btn').click()`);
-  await page.eval(`[...document.querySelectorAll('.ct-style-menu button')].find((b) => /Tree/.test(b.textContent)).click()`);
+  await page.eval(`document.querySelector('.ct-style .look-btn[aria-label="Compact"]').click()`);
+  await page.until(`!!document.querySelector('.ct.compact') && document.querySelector('.ct-style-name')?.textContent.trim() === 'Compact'`, 3000);
+  check('…and pressing one draws it', true);
+  await page.eval(`document.querySelector('.ct-style .look-btn[aria-label="Tree"]').click()`);
   await page.until(`!!document.querySelector('.ct.tree')`, 3000);
 
   // ------------------------------------------------------------------ a phone: a long press shows who
