@@ -298,6 +298,24 @@ function day(t: number, now: number): string {
   return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', ...(d.getFullYear() !== new Date(now).getFullYear() ? { year: 'numeric' } : {}) });
 }
 
+/**
+ * An account whose mail has not been brought up to date for a while (its followed mailboxes' last pass that worked,
+ * `sync.stateAt`): "Hasn't synced in 3 h: <the last failure>". Past half an hour when passes are failing, past an hour
+ * when none failed (a big mailbox's timer may wait half an hour); null while it keeps up, before a first sync that has
+ * not failed, and without access.
+ */
+export function staleSync(a: P.MailAccountView, now = Date.now()): string | null {
+  if (a.level === null) return null;
+  const { stateAt, error, failures = 0 } = a.sync;
+  const why = error ? `: ${error}` : '';
+  if (stateAt == null) return failures > 0 ? `Hasn't synced yet${why}` : null;
+  const age = now - stateAt;
+  if (age < (failures > 0 ? 30 : 60) * 60_000) return null;
+  const mins = Math.floor(age / 60_000);
+  const span = mins < 60 ? `${mins} min` : mins < 48 * 60 ? `${Math.floor(mins / 60)} h` : `${Math.floor(mins / 1440)} days`;
+  return `Hasn't synced in ${span}${why}`;
+}
+
 /** One line under the list: the first sync, the backfill going back, a refresh after the server lost track. */
 export function syncLine(accounts: P.MailAccountView[], now = Date.now()): string | null {
   const busy = accounts.filter((a) => a.sync.phase !== 'idle');

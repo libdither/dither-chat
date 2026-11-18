@@ -9,6 +9,7 @@
  * An id the hub does not know becomes `@someone`: the raw id never goes out. References inside code stay as written.
  */
 import type * as P from '@dither-chat/protocol';
+import { hubId } from '@dither-chat/protocol/ids';
 import type { Store } from './store.ts';
 
 /** What a reference becomes: the network's mention of this account, or a name written out. Null: nobody the hub knows. */
@@ -86,4 +87,21 @@ export function storeResolve(store: Store, conversationId: string): RefResolve {
 export function lowerForSend(store: Store, conversationId: string, caps: readonly P.Capability[], body: string): string {
   if (!hasRefs(body) || caps.includes('personRefs')) return body;
   return lowerRefs(body, storeResolve(store, conversationId));
+}
+
+/** Mentions as plain names, so a re-sent message pings nobody; channel and emoji tokens as text another network can show. */
+export function plainTokens(body: string, name: (kind: 'user' | 'room', nativeId: string) => string | null): string {
+  return body
+    .replace(/<@&\d+>/g, '@role')
+    .replace(/<@!?([^>\s]+)>/g, (_, id) => '@' + (name('user', id) ?? 'someone'))
+    .replace(/<#([^>\s]+)>/g, (_, id) => '#' + (name('room', id) ?? 'channel'))
+    .replace(/<a?:(\w+):\d+>/g, ':$1:')
+    .replace(/@(everyone|here)\b/g, '@​$1');
+}
+
+/** A body's mentions and channels as the names the hub knows, references (a Calendar chat's) included: what a forward or a notification shows. */
+export function namedTokens(store: Store, network: P.Network, body: string): string {
+  const names = (kind: 'user' | 'room', id: string) =>
+    kind === 'user' ? store.identityLabel(hubId('idn', network, id)) : store.conversationView(hubId('cnv', network, id))?.name ?? null;
+  return plainTokens(lowerRefs(body, storeResolve(store, '')), names);
 }

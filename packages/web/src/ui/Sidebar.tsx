@@ -43,6 +43,7 @@ import { RowTyping } from './Typing.tsx';
 import { AccountChip, AccountDots, Avatar, Count, NetBadge, NetGlyph, SourceChip, variantIcon } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
+import { FolderIcon } from './Rail.tsx';
 import { phone } from '../phone.ts';
 import { dropPlace, placeLabel } from './Organize.tsx';
 import { contextMenu, Menuable, onMenu, openMenu, useMenu, type MenuEntry } from './ContextMenu.tsx';
@@ -58,7 +59,6 @@ import { arrangeDrop, arrangedFolderItems, arrangedPeople, arrangedRail, snapsho
 import { openShelves, shelve, toggleShelf } from '../quiet.ts';
 import { inboxSnap, shownInbox } from '../inbox.ts';
 import { linkAccounts, PeopleAccountPicker, PeopleLinks, RequestsRow, usePeopleLinks } from './Requests.tsx';
-import { FeedRows } from './FeedRow.tsx';
 import { NoticesRow } from './Notices.tsx';
 import { nameMatches, peopleFilters, type PeopleFilter } from '../requests.ts';
 import { SortButton, SortIcon, useFlip } from './Reorganize.tsx';
@@ -79,6 +79,16 @@ function NewMessageButton() {
   return (
     <button class="icon-btn small side-new" data-track="new message" title="New message, join or add" aria-label="New message" onClick={() => openPalette({ kind: 'new' })}>
       <Icon name="plus" size={16} />
+    </button>
+  );
+}
+
+/** Opens Same person?: who may be one person on several accounts (same/SamePerson.tsx). */
+function SameButton() {
+  const on = route.value.view === 'people' && !!route.value.same;
+  return (
+    <button class={`icon-btn small side-same ${on ? 'on' : ''}`} data-track="same person" title="Same person? Accounts that may be one person" aria-label="Same person?" aria-pressed={on} onClick={() => go(on ? { view: 'people' } : { view: 'people', same: true })}>
+      <Icon name="merge" size={16} />
     </button>
   );
 }
@@ -454,7 +464,6 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
         )}
         <RequestsRow />
         <NoticesRow />
-        <FeedRows />
         {rows.slice(0, drawn).map(row)}
         {more}
         {!rows.length && <p class="inbox-empty">{EMPTY[filter]}</p>}
@@ -583,7 +592,7 @@ export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
   return (
     <div class="sidebar-inner" data-track-area="people">
       <header class="side-head">
-        <h1>People<NewMessageButton /><GraphButton />{relationship ? <LinkSortButton /> : <SortButton scope="people" class="side-sort" />}</h1>
+        <h1>People<NewMessageButton /><GraphButton /><SameButton />{relationship ? <LinkSortButton /> : <SortButton scope="people" class="side-sort" />}</h1>
         {accounts.length > 1 && <PeopleAccountPicker accounts={accounts} current={scoped} pick={setAccountId} />}
       </header>
       {chips.length > 0 && (
@@ -805,9 +814,13 @@ export function FolderSidebar({ folderId, activeConv, activePerson }: { folderId
             return (
               <button class="row conv-row place-row" onClick={() => go({ view: 'folder', folder: c.id })} onContextMenu={onMenu(() => folderMenuSpec(c.id))}>
                 <span class="row-avatar">
-                  <span class="folder-row-icon" style={{ '--folder': c.color ?? '#8b93a7' } as any}>
-                    {c.icon ?? <Icon name="folder" />}
-                  </span>
+                  {c.icon ? (
+                    <span class="folder-row-icon" style={{ '--folder': c.color ?? '#8b93a7' } as any}>
+                      {c.icon}
+                    </span>
+                  ) : (
+                    <FolderIcon folder={c} small />
+                  )}
                 </span>
                 <span class="row-main">
                   <span class="row-top">
@@ -876,9 +889,13 @@ function SpacesEntry({ entry: e, hidden }: { entry: RailEntry; hidden?: boolean 
   const pinned = placePref(e.kind, e.key.slice(e.key.indexOf(':') + 1)).pinned;
   const icon =
     e.kind === 'folder' ? (
-      <span class="folder-row-icon" style={{ '--folder': e.folder.color ?? '#8b93a7' } as any}>
-        {e.folder.icon ?? <Icon name="folder" />}
-      </span>
+      e.folder.icon ? (
+        <span class="folder-row-icon" style={{ '--folder': e.folder.color ?? '#8b93a7' } as any}>
+          {e.folder.icon}
+        </span>
+      ) : (
+        <FolderIcon folder={e.folder} small />
+      )
     ) : e.kind === 'space' ? (
       <Avatar id={e.space.id} name={e.space.name} url={e.space.icon} size={36} square network={e.space.network} accountIds={e.space.accountIds} />
     ) : (

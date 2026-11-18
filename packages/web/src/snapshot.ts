@@ -199,6 +199,9 @@ function tx<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T
       new Promise<T>((resolve, reject) => {
         const t = d.transaction(STORE, mode);
         const req = fn(t.objectStore(STORE));
+        // Every request is in: commit without waiting for their answers to come back (one round trip fewer to lose
+        // to a page going away).
+        if (mode === 'readwrite') t.commit?.();
         t.oncomplete = () => resolve(req.result);
         t.onerror = t.onabort = () => reject(t.error);
       }),
@@ -330,6 +333,22 @@ let bootstrapAt = 0;
 const BOOTSTRAP_EVERY_MS = 10 * 60_000;
 let pending: { text: string; rev: number } | null = null;
 let timer: ReturnType<typeof setTimeout> | undefined;
+/** When the first save not yet written was asked for. */
+let askedAt = 0;
+/** The hub's first answer on a device that keeps nothing yet is waiting to be written: no later ask delays it. */
+let urgent = false;
+/** However often things keep changing (a run of chats fetched ahead), a save asked for is written within this. */
+export const SAVE_WITHIN_MS = 5000;
+
+/**
+ * How long a save asked for now waits: `ms` after the last ask, but never past SAVE_WITHIN_MS after the first one not
+ * yet written; at once for the hub's first answer on a device that keeps nothing yet (a first start, or a deploy that
+ * changed the protocol), since until it is written an offline start has nothing to show.
+ */
+export function saveDelay(o: { now: number; askedAt: number; ms: number; first: boolean }): number {
+  if (o.first) return 0;
+  return Math.max(0, Math.min(o.ms, o.askedAt + SAVE_WITHIN_MS - o.now));
+}
 
 /**
  * Save once things settle. `bootstrapText` is the hub's own answer, which costs nothing to keep; without it the
@@ -337,12 +356,21 @@ let timer: ReturnType<typeof setTimeout> | undefined;
  */
 export function persistSoon(bootstrapText?: string, ms = 1500) {
   if (bootstrapText) pending = { text: bootstrapText, rev: dataVersion() };
+  if (bootstrapText && !bootstrapAt) urgent = true;
+  const now = Date.now();
+  if (timer === undefined) askedAt = now;
   clearTimeout(timer);
-  timer = setTimeout(() => {
-    const idle = (globalThis as any).requestIdleCallback as ((cb: () => void, o?: { timeout: number }) => void) | undefined;
-    if (idle) idle(() => void persistNow(false), { timeout: 3000 });
-    else void persistNow(false);
-  }, ms);
+  timer = setTimeout(
+    () => {
+      timer = undefined;
+      const idle = (globalThis as any).requestIdleCallback as ((cb: () => void, o?: { timeout: number }) => void) | undefined;
+      // The first answer is written now, not at the next idle moment: a start is rarely idle, and until it is written an
+      // offline start has nothing to show.
+      if (idle && !urgent) idle(() => void persistNow(false), { timeout: 3000 });
+      else void persistNow(false);
+    },
+    saveDelay({ now, askedAt, ms, first: urgent }),
+  );
 }
 
 /**
@@ -354,6 +382,8 @@ export function persistSoon(bootstrapText?: string, ms = 1500) {
  */
 async function persistNow(full = true) {
   clearTimeout(timer);
+  timer = undefined;
+  urgent = false;
   if (!loaded.value || fromSnapshot) return;
   let text: string | null = null;
   if (pending) {
@@ -364,21 +394,25 @@ async function persistNow(full = true) {
     savedRev = dataVersion();
     text = JSON.stringify(currentBootstrap());
   }
-  await savePages();
+  // Both writes are on their way before anything is awaited: on pagehide the page can be gone before one finishes.
+  const pagesSaved = savePages();
   const mail = { details: [...mailDetails.values()].filter((d) => !d.loading && !d.error && d.messages.length), bodies: [...mailBodies.values()] };
   const rest = buildRest({ inbox: inbox.value, identities: db.identities, quoted, mail, mailTriage: mailTriage.value });
-  if (text === null) return void (await patchRest(rest));
+  if (text === null) return void (await Promise.all([pagesSaved, patchRest(rest)]));
   if (text.length > MAX_BOOTSTRAP_CHARS) {
     console.warn(`snapshot: the bootstrap is ${text.length} characters, over ${MAX_BOOTSTRAP_CHARS}; not kept`);
     bootstrapAt = 0;
-    return void (await dropSnapshot());
+    return void (await Promise.all([pagesSaved, dropSnapshot()]));
   }
   const s: Snapshot = { schema: SCHEMA, savedAt: Date.now(), bootstrap: text, rest };
   bootstrapAt = s.savedAt;
-  await tx('readwrite', (st) => {
-    st.delete(REST_KEY);
-    return st.put(s, KEY);
-  }).catch((e) => console.warn('snapshot not saved', e));
+  await Promise.all([
+    pagesSaved,
+    tx('readwrite', (st) => {
+      st.delete(REST_KEY);
+      return st.put(s, KEY);
+    }).catch((e) => console.warn('snapshot not saved', e)),
+  ]);
 }
 
 let lastIndex = '';
@@ -406,6 +440,7 @@ async function savePages() {
           for (const k of w.del) st.delete(k);
           for (const r of w.put) st.put(r, r.key);
           st.put(w.index, INDEX_KEY);
+          t.commit?.();
           t.oncomplete = () => resolve();
           t.onerror = t.onabort = () => reject(t.error);
         }),

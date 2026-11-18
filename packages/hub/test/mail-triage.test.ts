@@ -87,7 +87,8 @@ async function world(seed: (put: (i: FakeInput) => void) => void = () => {}, lat
   delivery.other = mt;
   hub.start();
   await hub.sync(ACC)!.whenSynced();
-  await Bun.sleep(20);
+  // The people and the classes worked out in the background after the first sync.
+  await until(() => mailPeople(hub)!.idle && mailClassifier(hub)!.idle, 4000, 'people and classes');
   cleanup = () => {
     mailPeople(hub)?.stop();
     hub.stop();
@@ -100,7 +101,8 @@ async function world(seed: (put: (i: FakeInput) => void) => void = () => {}, lat
   const arrive = async (i: FakeInput & { messageId: string }, decided = true) => {
     fake.deliver(ACC, { from: [SAM], to: [ME], subject: 'Hi', text: 'Hello there.', ...i });
     if (decided) await until(() => row(i.messageId), 3000, `a decision on ${i.messageId}`);
-    else await Bun.sleep(500);
+    // Triage looks at mail as it is stored, classed: one not classed personal then is never decided.
+    else await until(() => (chat.one<{ class: string | null }>('SELECT class FROM mail_message WHERE id = ?', mid(i.messageId))?.class ?? 'personal') !== 'personal', 3000, `${i.messageId} stored, not personal`);
     return row(i.messageId);
   };
   const tid = (messageId: string) => chat.one<{ thread_id: string }>('SELECT thread_id FROM mail_message WHERE id = ?', mid(messageId))!.thread_id;
@@ -316,7 +318,7 @@ describe('one notification per thread', () => {
     expect(g.sender.name).toBe('Sam Rivera');
     expect(w.delivery.read()).toEqual([]);
     w.hub.readHere([thread]);
-    expect(w.delivery.read()).toEqual([thread]);
+    expect(w.delivery.read().map((r) => r.id)).toEqual([thread]);
   });
 });
 

@@ -9,6 +9,7 @@ import { bodies, details, loadBody, loadThread, markThreadRead } from '../../mai
 import { db, mailRev } from '../../state.ts';
 import { Empty } from '../bits.tsx';
 import { Icon } from '../icons.tsx';
+import { HeadOrb } from '../Offline.tsx';
 import { SendNote } from './Composer.tsx';
 import { MessageCard } from './MessageCard.tsx';
 import { THREAD_ACTIONS } from './slots.tsx';
@@ -77,14 +78,17 @@ export function Reader({ threadId, onBack }: { threadId: string; onBack: () => v
             </div>
           )}
         </div>
-        {head.length > 0 && (
+        {head.length > 0 ? (
           <div class="conv-head-actions">
+            <HeadOrb />
             {head.map((a) => (
               <button class="hdr-btn" title={a.label} aria-label={a.label} onClick={() => thread && a.run(thread)}>
                 <Icon name={a.icon} size={16} />
               </button>
             ))}
           </div>
+        ) : (
+          <HeadOrb />
         )}
       </header>
       <div class="mail-reader-scroll">

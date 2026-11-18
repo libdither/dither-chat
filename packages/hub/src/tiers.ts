@@ -4,7 +4,9 @@
  *
  * A message is a Conversation when its place is not kept to the list and it is not from a bot, and
  *  - it is in a DM, or
+ *  - it is a reply to a post you follow (follows.ts: you chose to hear of its replies), or
  *  - it mentions you by name or replies to your message (not @everyone), or
+ *  - it says one of your keywords (triage.ts), or
  *  - you wrote in its chat in the last `TOOK_PART`, or
  *  - you answer openings there at `ANSWER_RATE` or more (interact.ts `answerRate`: of the times someone started
  *    talking there while you were away, how often you wrote back within three hours, the last months counting most).
@@ -30,13 +32,15 @@ export interface Part {
   answerRate: number;
 }
 
-export type Conversing = 'dm' | 'about' | 'wrote' | 'answers' | null;
+export type Conversing = 'dm' | 'followed' | 'about' | 'keyword' | 'wrote' | 'answers' | null;
 
 /** Why a message is a Conversation, or null when it is not. */
-export function conversing(f: Pick<Facts, 'shape' | 'bot' | 'mention' | 'reply' | 'cap'>, part: Part, ts: number): Conversing {
+export function conversing(f: Pick<Facts, 'shape' | 'bot' | 'mention' | 'reply' | 'keyword' | 'cap' | 'followed'>, part: Part, ts: number): Conversing {
   if (f.cap || f.bot || f.shape === 'self') return null;
   if (f.shape === 'direct') return 'dm';
+  if (f.followed) return 'followed';
   if (f.mention || f.reply) return 'about';
+  if (f.keyword) return 'keyword';
   if (part.lastOwn !== null && part.lastOwn <= ts && ts - part.lastOwn <= TOOK_PART) return 'wrote';
   if (part.answerRate >= ANSWER_RATE) return 'answers';
   return null;
@@ -44,7 +48,9 @@ export function conversing(f: Pick<Facts, 'shape' | 'bot' | 'mention' | 'reply' 
 
 export const CONVERSING_REASON: Record<Exclude<Conversing, null>, string> = {
   dm: 'A direct message',
+  followed: 'A reply to a post you follow',
   about: 'About you',
+  keyword: 'Says one of your keywords',
   wrote: 'You wrote here in the last day',
   answers: 'You usually answer here',
 };

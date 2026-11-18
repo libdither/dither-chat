@@ -65,6 +65,8 @@ export interface Facts {
   /** @everyone / @here, not you by name. */
   everyone?: boolean;
   reply?: boolean;
+  /** It says one of your keywords: about you, like a mention (tiers.ts), and as important as what the network notifies. */
+  keyword?: boolean;
   question?: boolean;
   urgent: boolean;
   /** You wrote there in the half hour before. */
@@ -86,6 +88,8 @@ export interface Facts {
   known?: boolean;
   /** People talking with you (tiers.ts): a DM, about you, or a chat you take part in. */
   conv?: boolean;
+  /** In a post you follow (variant 'follow', follows.ts): a Conversation, as a DM is. Absent elsewhere. */
+  followed?: boolean;
   /** The local model's answer to the stop-now question, 0 to 1; absent when it was not asked or did not answer. */
   judge?: number;
   /** Kept to the list: a rule of yours (List only), or the place is muted on its network. Never a Conversation or an alert. */
@@ -158,20 +162,21 @@ export const judgedAlert = (judge: number, bar: number) => clampP(sigmoid(logit(
 
 /**
  * Before any mark. Alert: the local model's answer against the bar, so it is even odds exactly at the bar. Important:
- * the network would have notified you (facts from before `notify` was kept say so by their base); below that, how
+ * the network would have notified you, or it says one of your keywords (facts from before `notify` was kept say so
+ * by their base); below that, how
  * addressed to you it is; half of either from a bot. A notice's facts carry their own start (`start`).
  */
 export function prior(f: Facts): P.TriageProbs {
   if (f.start) return f.start;
   const alert = f.judge === undefined ? UNJUDGED : judgedAlert(f.judge, alertBar(f));
-  const notified = f.notify ?? (f.base === 'push' || f.base === 'quiet');
+  const notified = !!f.keyword || (f.notify ?? (f.base === 'push' || f.base === 'quiet'));
   const important = (notified ? NOTIFIED : Math.min(0.6, 0.05 + 0.75 * (f.score ?? 0.15))) * (f.bot ? 0.5 : 1);
   return { alert, important };
 }
 
 // ------------------------------------------------------------------ features
 
-const FLAGS = ['mention', 'everyone', 'reply', 'question', 'urgent', 'bot', 'active', 'media', 'link', 'long', 'known'] as const;
+const FLAGS = ['mention', 'everyone', 'reply', 'keyword', 'question', 'urgent', 'bot', 'active', 'media', 'link', 'long', 'known'] as const;
 /** Flags whose absence says something: "unless it mentions you". */
 const NEGATABLE = new Set(['mention', 'reply', 'question', 'active', 'known']);
 
@@ -418,6 +423,7 @@ const SHAPES: Record<string, string> = { direct: 'DMs', group: 'group chats', ch
 const FLAG_WORDS: Record<string, string> = {
   mention: 'mentions you',
   '!mention': 'does not mention you',
+  keyword: 'says one of your keywords',
   everyone: 'pings @everyone',
   reply: 'replies to you',
   '!reply': 'is not a reply to you',

@@ -3,12 +3,12 @@
  * headless Chromium (docs/organize.md, ui/Tooltip.tsx, ui/Loader.tsx):
  * - the page starts with the loader's sphere drawn before any script, and the app replaces it;
  * - pointing at a server in the rail shows its name in a bubble to its right, with no browser tooltip;
- * - a suggested folder's sensitivity slider takes in more or fewer servers as it moves, and is saved;
+ * - the Organize view has no folder-by-topic cards;
  * - "By meaning" asks the categorizer about every server, shows how sure it is, filters by the slider, and saves the
  *   question as a category.
  *
  *   bun scripts/verify-organize.ts http://127.0.0.1:8531 [/tmp/shots]
- * The hub must be a fresh demo hub with its own data dir: this saves a threshold and adds a category. With
+ * The hub must be a fresh demo hub with its own data dir: this adds a category. With
  * DITHER_CATEGORY_MODEL=jev on the hub, it asks the machine's reranker; otherwise keywords.
  */
 import { mkdirSync } from 'node:fs';
@@ -72,7 +72,7 @@ try {
   await Bun.sleep(100);
   check(!(await p.eval<boolean>(`!!document.querySelector('.tooltip')`)), 'and hides it when the pointer leaves');
 
-  // The Organize view. The demo files its servers into folders: empty them, so there is something to suggest.
+  // The Organize view. The demo files its servers into folders: empty them, so every server is loose.
   await fetch(`${hub}/api/folders`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ folders: [] }) });
   await p.goto(`${hub}/#/`);
   await p.until(`document.querySelectorAll('.rail-scroll .rail-item[data-dnd-key^="space:"]').length > 4`, 15000);
@@ -80,22 +80,7 @@ try {
   await p.until(`[...document.querySelectorAll('.cm-item, [role=menuitem]')].some((e) => e.textContent.includes('Organize Servers'))`, 5000);
   await p.eval(`[...document.querySelectorAll('.cm-item, [role=menuitem]')].find((e) => e.textContent.includes('Organize Servers')).click()`);
   await p.until(`!!document.querySelector('.org')`, 5000);
-  const cards = () => p.eval<{ name: string; n: number; disabled: boolean }[]>(`[...document.querySelectorAll('.org-sugg')].map((c) => ({ name: c.querySelector('b').textContent.trim(), n: +c.querySelector('.sensitivity-count').textContent, disabled: c.querySelector('.btn.primary').disabled }))`);
-  const before = await cards();
-  check(before.length > 0, 'suggested folders, each with a sensitivity slider', before);
-  const first = before[0];
-  const cardSel = `.org-sugg:nth-child(1) input[type=range]`;
-  await slide(cardSel, 100);
-  await Bun.sleep(150);
-  const more = (await cards()).find((c) => c.name === first.name)!;
-  await slide(cardSel, 0);
-  await Bun.sleep(150);
-  const none = (await cards()).find((c) => c.name === first.name);
-  check(more.n >= first.n && none?.n === 0 && none.disabled, 'More takes in more servers, Fewer none (the card stays, its Create off)', { first, more, none });
-  await slide(cardSel, 60);
-  await Bun.sleep(600);
-  const cat = (await bootstrap()).categories.find((c: any) => first.name.includes(c.name));
-  check(cat && Math.abs(cat.threshold - 10 ** (-3 * 0.6)) < 0.001, 'the threshold is saved on the hub', cat?.threshold);
+  check(!(await p.eval<boolean>(`!!document.querySelector('.org-sugg, [aria-label="Folders by topic"]')`)), 'no folder-by-topic cards: the suggested layout and each line suggest instead');
 
   // By meaning.
   await click('.org-meaning');

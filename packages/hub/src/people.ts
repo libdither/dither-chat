@@ -40,6 +40,15 @@ const caps = (store: Store, accountId: string): P.Capability[] => JSON.parse(sto
  */
 const ABOUT_IS_STATUS = new Set<P.Network>(['signal', 'whatsapp']);
 
+/**
+ * Someone a network has no profile for, so it is never asked: on Signal, a number or email that SMS reached
+ * (imports/signal-legacy.ts makes them `tel:` and `mailto:` ids). Only an ACI names a Signal account, and the adapter
+ * refuses anything else rather than look it up on the server.
+ */
+const SIGNAL_ACI = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const notOnNetwork = (network: P.Network, nativeId: string): string | null =>
+  network === 'signal' && !SIGNAL_ACI.test(nativeId) ? 'Known only from SMS in an imported backup: there is no Signal profile to ask for.' : null;
+
 /** A fresh answer this recent is not asked again. */
 const FRESH_MS = 10 * 60_000;
 
@@ -100,13 +109,13 @@ export class People {
     // What the network showed unasked (a `personAbout` event) is no answer: it has no posts, so the network is asked.
     if (!force && k && !k.about.unasked && Date.now() - k.at < FRESH_MS) return this.view(identityId, k.accountId, k.about, k.at, undefined);
     const net = NETWORK_META[n.network].name;
-    const why = !accountId
+    const why = notOnNetwork(n.network, n.nativeId) ?? (!accountId
       ? `None of your accounts is on ${net}.`
       : !this.d.online(accountId)
         ? `${net} · ${s.account(accountId)?.label} is not connected; this is what it said last.`
         : !caps(s, accountId).includes('profile')
           ? `The ${net} adapter cannot read profiles yet.`
-          : null;
+          : null);
     if (accountId && !why) {
       try {
         const about = await this.d.command<P.PersonAbout>(accountId, { t: 'profile', who: n.nativeId }, 20_000);
@@ -294,7 +303,7 @@ export class People {
     const spaces = mutualSpaces?.map((m) => {
       const id = hubId('spc', network, m.id);
       const known = s.one<Row>('SELECT id FROM space WHERE id = ?', id);
-      return { spaceId: known ? id : null, nativeId: m.id, ...(m.nick ? { nick: m.nick } : {}), ...(m.roles?.length ? { roles: m.roles } : {}), ...(m.joinedAt ? { joinedAt: m.joinedAt } : {}) };
+      return { spaceId: known ? id : null, nativeId: m.id, ...(m.nick ? { nick: m.nick } : {}), ...(m.roles?.length ? { roles: m.roles } : {}), ...(m.joinedAt ? { joinedAt: m.joinedAt } : {}), ...(m.bio ? { bio: m.bio } : {}), ...(m.pronouns ? { pronouns: m.pronouns } : {}) };
     });
     const mf = mutualFriends?.map(ident);
     const fr = friends?.map(ident);
@@ -374,5 +383,27 @@ export function keepAbout(store: Store, identityId: string, accountId: string, n
   s.db
     .query('INSERT INTO about (target_id, account_id, data, fetched_at) VALUES (?, ?, ?, ?) ON CONFLICT (target_id, account_id) DO UPDATE SET data = excluded.data, fetched_at = excluded.fetched_at')
     .run(identityId, accountId, JSON.stringify(about), at);
+  keepVersion(s, identityId, accountId, about, at, k);
   return true;
+}
+
+/** A profile as a version: without its posts or how it was seen. Adapters build answers in one order, so equal ones compare equal. */
+function versionOf(a: P.PersonAbout | Kept): string {
+  const { posts: _p, unasked: _u, ...rest } = a as Kept;
+  return JSON.stringify(rest);
+}
+
+/**
+ * Each version of a profile, while profiles are collected (adversarial `profiles`, docs/same-person.md): kept when it
+ * differs from the last kept one. The first time, the answer held from before goes in too, so the change shows.
+ */
+function keepVersion(s: Store, identityId: string, accountId: string, about: P.PersonAbout, at: number, before: { about: Kept; at: number; accountId: string } | null) {
+  const r = s.retention();
+  if (!r.adversarial || !r.profiles) return;
+  const last = s.one<Row>('SELECT data FROM profile_version WHERE identity_id = ? ORDER BY at DESC, id DESC LIMIT 1', identityId);
+  const now = versionOf(about);
+  if (last?.data === now) return;
+  const add = s.db.query('INSERT INTO profile_version (identity_id, account_id, data, at) VALUES (?, ?, ?, ?)');
+  if (!last && before && versionOf(before.about) !== now) add.run(identityId, before.accountId, versionOf(before.about), before.at);
+  add.run(identityId, accountId, now, at);
 }

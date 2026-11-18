@@ -4,7 +4,7 @@
  */
 import { expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
-import { cardSentence, clip, feedCards, feedRow, feedUnits, isPostKey, namesPhrase, parsePostKey, postHref, postKey, postMessageKey, reactionCounts, reactorsPhrase, shortCount } from '../src/feed.ts';
+import { cardSentence, clip, feedCards, feedUnits, isPostKey, namesPhrase, parsePostKey, postHref, postKey, postMessageKey, reactionCounts, reactorsPhrase, shortCount } from '../src/feed.ts';
 
 const post = (id: string, text = `post ${id}`): P.PostFact => ({ id, url: `https://x.com/me/status/${id}`, ts: 0, author: 'idn_me', text });
 let n = 0;
@@ -72,18 +72,6 @@ test('what is new is what came after the read line', () => {
   const p1 = post('1');
   const cards = feedCards([msg('like', 'a', 10, { post: p1 }), msg('follow', 'b', 20), msg('like', 'c', 30, { post: p1 })], 15);
   expect(cards.map((c) => c.fresh)).toEqual([true, true, false]);
-});
-
-test("the inbox row: how many new, who, and the newest card's words; nothing once read and a day old", () => {
-  const now = 1_000_000_000;
-  const conv = (unread: number, lastAt: number, lastReadTs: number) =>
-    ({ id: 'cnv_feed', network: 'x', variant: 'feed', lastMessageAt: lastAt, lastMessage: { id: 'm', authorId: 'a', ts: lastAt, kind: 'system', text: 'liked your post' }, vantages: [{ accountId: 'acc', unread, mentions: 0, lastReadTs }] }) as unknown as P.ConversationView;
-  const p1 = post('1');
-  const ms = [msg('like', 'a', now - 100, { post: p1 }), msg('like', 'b', now - 50, { post: p1 }), msg('reply', 'c', now - 10, { post: p1, theirs: post('9') })];
-  expect(feedRow(conv(3, now - 10, now - 1000), ms, name, now)).toEqual({ count: 3, who: ['c', 'b', 'a'], what: 'Cam replied to your post, and 1 more', lastAt: now - 10 });
-  // Before its page is held: the last message.
-  expect(feedRow(conv(1, now - 10, now - 1000), null, name, now)?.what).toBe('Alice liked your post');
-  expect(feedRow(conv(0, now - 25 * 60 * 60_000, now), ms, name, now)).toBeNull();
 });
 
 test('clipping and counts', () => {

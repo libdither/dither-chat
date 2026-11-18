@@ -116,6 +116,8 @@ export class MailStore {
   managedUrl: (accountId: string) => string | null = () => null;
   /** Where an account's sync is (sync.ts): set by MailHub. */
   syncOf: (accountId: string) => P.MailAccountView['sync']['phase'] = () => 'idle';
+  /** The last failure of an account's changes passes and how many in a row (sync.ts): set by MailHub. */
+  syncFailure: (accountId: string) => { error: string | null; failures: number } = () => ({ error: null, failures: 0 });
   /** After a thread is worked out from its messages (none: it went). mail/people.ts keeps who is on it. */
   readonly recomputed: ((threadId: string, messages: Row[]) => void)[] = [];
   /** The identity and person behind each address, for the views: set by mail/people.ts. */
@@ -554,6 +556,15 @@ export class MailStore {
     this.run('UPDATE mailbox SET state = ?, state_at = ? WHERE id = ?', state, this.now(), mailboxId);
   }
 
+  /** The oldest state_at among the account's followed mailboxes: the last time all of them had a pass that worked. */
+  stalestState(accountId: string): number | null {
+    const r = this.one<{ n: number; missing: number; at: number | null }>(
+      `SELECT COUNT(*) AS n, SUM(state_at IS NULL) AS missing, MIN(state_at) AS at FROM mailbox WHERE account_id = ? AND follow = 'always'`,
+      accountId,
+    );
+    return !r?.n || r.missing ? null : r.at;
+  }
+
   /** How far down the list from the top has come. Each cursor is kept with the oldest above it (schema-big.sql). */
   setListed(mailboxId: string, l: { next: string | null; horizon: number | null; complete: boolean }) {
     this.run('UPDATE mailbox SET list_next = ?, horizon = ?, complete = ? WHERE id = ?', l.next, l.horizon, l.complete ? 1 : 0, mailboxId);
@@ -613,6 +624,8 @@ export class MailStore {
     this.db.transaction(() => {
       if (list.some((s) => s.bulk || s.inReplyTo || s.references?.length)) this.run('UPDATE mail_account SET headers_seen = 1 WHERE id = ? AND headers_seen IS NULL', accountId);
       for (const s of list) {
+        // A summary of an id that was skipped (mail_skipped): it is read now.
+        this.run('DELETE FROM mail_skipped WHERE mailbox_id = ? AND native_id = ?', mailbox.id, s.id);
         const { id, key } = this.identify(accountId, mailbox, s);
         const at = this.one<{ message_id: string }>('SELECT message_id FROM mail_location WHERE mailbox_id = ? AND native_id = ?', mailbox.id, s.id);
         if (at && at.message_id !== id) out.orphans.push(at.message_id);
@@ -824,6 +837,7 @@ export class MailStore {
     const touched = new Set<string>();
     this.db.transaction(() => {
       for (const nid of nativeIds) {
+        this.run('DELETE FROM mail_skipped WHERE mailbox_id = ? AND native_id = ?', mailboxId, nid);
         const l = this.one<{ message_id: string }>('SELECT message_id FROM mail_location WHERE mailbox_id = ? AND native_id = ?', mailboxId, nid);
         if (!l) continue;
         this.run('DELETE FROM mail_location WHERE mailbox_id = ? AND native_id = ?', mailboxId, nid);
@@ -838,16 +852,49 @@ export class MailStore {
 
   /**
    * After a relist: locations it did not see go, of messages received since `since` (where the listing stopped; null:
-   * it reached the end). Returns the messages left with none.
+   * it reached the end). Returns the messages left with none. Ids the server skipped (mail_skipped) stay: it has them
+   * and could not read them.
    */
   dropUnseen(mailboxId: string, gen: number, since: number | null = null): string[] {
     const ids = this.all<{ native_id: string }>(
-      'SELECT l.native_id FROM mail_location l JOIN mail_message m ON m.id = l.message_id WHERE l.mailbox_id = ? AND l.seen_gen != ? AND m.received_at >= ?',
+      `SELECT l.native_id FROM mail_location l JOIN mail_message m ON m.id = l.message_id WHERE l.mailbox_id = ? AND l.seen_gen != ? AND m.received_at >= ?
+         AND NOT EXISTS (SELECT 1 FROM mail_skipped k WHERE k.mailbox_id = l.mailbox_id AND k.native_id = l.native_id)`,
       mailboxId,
       gen,
       since ?? Number.MIN_SAFE_INTEGER,
     ).map((r) => r.native_id);
     return this.dropLocations(mailboxId, ids);
+  }
+
+  // ------------------------------------------------------------ skipped ids (schema-skipped.sql)
+
+  /** Ids an answer named in `skipped`: pending, a mail.get for each due now. */
+  noteSkipped(mailboxId: string, nativeIds: string[]) {
+    if (!nativeIds.length) return;
+    const now = this.now();
+    this.db.transaction(() => {
+      for (const id of new Set(nativeIds)) this.run('INSERT OR IGNORE INTO mail_skipped (mailbox_id, native_id, first_at, next_at) VALUES (?, ?, ?, ?)', mailboxId, id, now, now);
+    })();
+  }
+
+  /** An account's skipped ids whose mail.get is due, the oldest first. */
+  dueSkipped(accountId: string, limit = 20): { mailbox_id: string; native_id: string; tries: number }[] {
+    return this.all(
+      `SELECT k.mailbox_id, k.native_id, k.tries FROM mail_skipped k JOIN mailbox b ON b.id = k.mailbox_id WHERE b.account_id = ? AND k.next_at <= ? ORDER BY k.next_at LIMIT ?`,
+      accountId,
+      this.now(),
+      limit,
+    );
+  }
+
+  /** Its mail.get failed: the next one after `waitMs`. */
+  skippedFailed(mailboxId: string, nativeId: string, waitMs: number, error: string) {
+    this.run('UPDATE mail_skipped SET tries = tries + 1, next_at = ?, error = ? WHERE mailbox_id = ? AND native_id = ?', this.now() + waitMs, error.slice(0, 300), mailboxId, nativeId);
+  }
+
+  /** It is read, or the server no longer has it: no longer pending. */
+  dropSkipped(mailboxId: string, nativeId: string) {
+    this.run('DELETE FROM mail_skipped WHERE mailbox_id = ? AND native_id = ?', mailboxId, nativeId);
   }
 
   /** Messages that still have no location are deleted: their bodies too, and threads left empty. */
@@ -1044,7 +1091,7 @@ export class MailStore {
       online: !!r.online,
       problem: json(r.problem, null),
       send: { ok: send.ok ?? null, why: send.why ?? null, ...(send.ok === false && send.refused ? { refused: true } : {}) },
-      sync: { phase: this.syncOf(r.id), synced: held?.n ?? 0, oldest: held?.oldest ?? null },
+      sync: { phase: this.syncOf(r.id), synced: held?.n ?? 0, oldest: held?.oldest ?? null, stateAt: this.stalestState(r.id), ...this.syncFailure(r.id) },
       managedUrl: this.managedUrl(r.id),
       deleteAt: r.gone_at ? r.gone_at + MAIL_LIMITS.goneMs : null,
       ops: this.opsOf(r.id),

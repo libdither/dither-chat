@@ -533,7 +533,7 @@ export interface PersonAbout {
   /** Your standing with them on this network. */
   relationship?: PersonRelationship;
   /** Spaces you share, native ids, with their name and roles there. All of them, not only where they posted. */
-  mutualSpaces?: { id: string; nick?: string; roles?: { name: string; color?: string }[]; joinedAt?: number }[];
+  mutualSpaces?: { id: string; nick?: string; roles?: { name: string; color?: string }[]; joinedAt?: number; /** Their bio and pronouns in this server, where they differ from the main ones. */ bio?: string; pronouns?: string }[];
   /** Friends you share: native identity ids (identity facts for them are emitted first). */
   mutualFriends?: string[];
   /** When the person is you: your friends or contacts on this network, native identity ids. */

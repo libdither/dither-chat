@@ -8,10 +8,11 @@
  *
  * For each message, in order:
  *   1. A place you muted, or a held message request: silent.
- *   2. A person or place you set to always alert, or one of your keywords: an alert.
- *   3. Its importance, a chance (learn.ts): it starts from the network's own setting for the place and moves with
- *      what you opened, swiped away and marked.
- *   4. Is it a Conversation? A rule (tiers.ts): a DM, about you, or a chat you take part in.
+ *   2. A person or place you set to always alert: an alert.
+ *   3. Its importance, a chance (learn.ts): it starts from the network's own setting for the place (or high, when it
+ *      says one of your keywords) and moves with what you opened, swiped away and marked.
+ *   4. Is it a Conversation? A rule (tiers.ts): a DM, a reply to a post you follow, about you (a mention, a reply,
+ *      one of your keywords), or a chat you take part in.
  *   5. If it is (or you marked this place or person "should have alerted" lately), the local model reads it
  *      (`judge`), and it alerts when its alert chance is even or better. That chance starts from the model's answer
  *      and moves with your marks.
@@ -33,6 +34,7 @@
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, reminderOf } from '@dither-chat/protocol';
 import { previewText, type Store } from './store.ts';
+import { namedTokens } from './mentionrefs.ts';
 import { describeActivity, type ActivityStore, type Features } from './activity.ts';
 import { alertBar, describeWeight, emptyModel, importance, learnedFrom, predict, prior, THRESHOLDS, tierFrom, TIER_NAME, words, type Facts, type Level, type Model, type Namer, type TierContext } from './learn.ts';
 import { InteractionLog } from './interact.ts';
@@ -60,8 +62,8 @@ export interface Decision {
   alwaysNotify?: boolean;
   /** What the activity log said about this place when deciding (DITHER_ACTIVITY_FEATURES), kept for training. */
   features?: Features;
-  /** Matched one of your keywords. */
-  keyword?: boolean;
+  /** The keyword of yours it says: it counts as about you (a Conversation), never an alert by itself. */
+  keyword?: string;
   /** A rule of yours made it an alert: the model does not decide. */
   forced?: boolean;
   /** A reminder from a calendar account (`extra.reminder`, docs/calendar.md): an alert, held quiet in quiet hours and left out of their summary. */
@@ -83,6 +85,8 @@ export const MARKED_FOR = 90 * 86_400_000;
 /**
  * Networks whose messages a machine writes: T3 Code's coding threads (an agent's turns name the repository and its
  * files) and calendars (events and reminders). Your keywords never match there, nor in a bot's message or a feed's.
+ * A keyword never alerts by itself: it makes a message about you, so a Conversation that the local model reads like a
+ * mention (docs/notifications.md, "Keywords").
  */
 const MACHINE_WRITTEN: ReadonlySet<string> = new Set<P.Network>(['t3', 'calendar']);
 
@@ -384,7 +388,8 @@ export class Triage {
     const before = tierFrom(prior(f), ctx, t);
     d.decision = tier;
     const pct = (x: number) => `${Math.round(x * 100)}%`;
-    if (why) d.reasons.unshift(CONVERSING_REASON[why]);
+    if (why) d.reasons.unshift(why === 'keyword' && d.keyword ? `Says “${d.keyword}”, one of your keywords` : CONVERSING_REASON[why]);
+    else if (d.keyword) d.reasons.push(`Says “${d.keyword}”, one of your keywords: kept to the list here`);
     if (tier === 'push') d.reasons.unshift((f.judge ?? 0) >= alertBar(f) ? `Reads as urgent: the local model's answer is ${f.judge} against a bar of ${alertBar(f)}` : `The local model's answer is ${f.judge}, under its bar of ${alertBar(f)}: your marks made it an alert`);
     else if (tier === 'digest') d.reasons.unshift(`On the list: importance ${pct(p.probs.important)}, at or over your level of ${pct(t.important)}`);
     else if (tier === 'drop') d.reasons.unshift(`Below the list: importance ${pct(p.probs.important)}, under your level of ${pct(t.important)}`);
@@ -463,6 +468,8 @@ export class Triage {
       link: /https?:\/\//.test(m.body),
       long: m.body.length > 280,
       known: !!author?.person_id,
+      // A post you follow: you asked for its replies (tiers.ts).
+      ...(c.variant === 'follow' ? { followed: true } : {}),
     };
   }
 
@@ -525,7 +532,7 @@ export class Triage {
     // A network's notifications about you (docs/feed.md): what they did decides, not who they are or what it says.
     const feedType: P.FeedItemType | null = c.variant === 'feed' ? (feedItemOf(m.extra ? JSON.parse(m.extra) : null)?.type ?? 'other') : null;
     const title = c.shape === 'direct' || feedType ? `${where} · ${NETWORK_META[c.network as P.Network].name}` : where;
-    const body = `${c.shape === 'direct' ? '' : authorName + (feedType && feedType !== 'other' ? ` (${FEED_REASON[feedType]})` : '') + ': '}${previewText(m.body, m.kind) || (m.kind === 'media' ? 'Sent an attachment' : '')}`;
+    const body = `${c.shape === 'direct' ? '' : authorName + (feedType && feedType !== 'other' ? ` (${FEED_REASON[feedType]})` : '') + ': '}${previewText(namedTokens(s, c.network, m.body), m.kind) || (m.kind === 'media' ? 'Sent an attachment' : '')}`;
 
     if (eff.level === 'none') {
       reasons.push(`Silenced: ${eff.source}`);
@@ -576,8 +583,8 @@ export class Triage {
     // Nothing in a feed alerts, not even from someone set to Always alert (docs/feed.md): answering happens on the network.
     const personRule = person && !feedType ? s.rules().find((r) => r.scope === 'person' && r.target === person.id) : null;
     const always = eff.level === 'all' && !eff.native && !feedType;
-    const forced = !feedType && (personRule?.level === 'all' || !!keyword || always);
-    const facts: Facts = { ...f, base: forced ? 'push' : 'drop', score: how.score, explicit: eff.explicit, native, notify, ...(cap ? { cap } : {}) };
+    const forced = !feedType && (personRule?.level === 'all' || always);
+    const facts: Facts = { ...f, base: forced ? 'push' : 'drop', score: how.score, explicit: eff.explicit, native, notify, ...(cap ? { cap } : {}), ...(keyword ? { keyword: true } : {}) };
     const done = (decision: Level, extra: Partial<Decision> = {}): Decision => ({ decision, score: null, reasons, decidedBy: 'rules', title, body, facts, ...extra });
 
     if (personRule?.level === 'all') {
@@ -589,10 +596,6 @@ export class Triage {
     if (reminder) {
       reasons.push(reminder.late ? `A reminder from ${net}, sent late` : `A reminder from ${net}`);
       return done('push', { forced: true, reminder: true });
-    }
-    if (keyword) {
-      reasons.push(`Matches keyword “${keyword.target}”`);
-      return done('push', { keyword: true, forced: true });
     }
     if (always) {
       reasons.push(`Always alert: ${eff.source}`);
@@ -607,7 +610,7 @@ export class Triage {
       if (how.why.length) reasons.push(`About you: ${how.why.join(', ')}`);
     }
     // The model decides between Conversation, the list and below it (`withModel`).
-    return done('drop');
+    return done('drop', keyword ? { keyword: keyword.target! } : {});
   }
 }
 

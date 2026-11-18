@@ -49,6 +49,9 @@ Left:
   Remove Nickname once it has one, editing the name on the tile in place; only you see it, docs/chats.md "Names"),
   Copy the handle and the id, Open on the network, Split Into Its Own Person. The merge hint and search sit under the tiles. Before 2026-11-11 the hero
   had a chip per handle and the right column a plain row per identity, with one picture for the person.
+- **Maybe the same person**: up to four Same person? suggestions with this person in them (docs/same-person.md), each
+  with the other side's name and accounts, the chance, the strongest three pieces of evidence, Merge and Not the same;
+  All opens the whole list. Only when there are some, and never on your own page.
 - **About**: each network's bio (on the account tiles instead, for someone with several), its links as links (an
   address with or without `https://`, a Markdown link, and on X an @handle; `links.ts`, `bits.tsx` Linked), the longest first, labelled
   by network when there is more than one (a network's
@@ -59,7 +62,8 @@ Left:
   under your bio: your name, pronouns and banner on each network that lets you change them here
   (docs/account-self.md); your picture is the hero's ("Changing a picture", below).
 - **In common** (on your own page, **Your places**): servers as tiles with their icon, their nickname and roles
-  there, or how many messages they wrote in it; then group chats with their picture, kind, and how many messages are
+  there, or how many messages they wrote in it, and the bio and pronouns they set for that server where Discord gives
+  them (a server profile); then group chats with their picture, kind, and how many messages are
   from them. Discord's mutual servers count even where they never wrote; the rest comes from messages and member
   lists the hub has. A server they wrote in says how many of their messages the hub holds there, and an estimate of
   how many they posted when one can be made (below, "Message counts").

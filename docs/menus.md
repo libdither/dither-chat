@@ -66,7 +66,8 @@ Mute Channel and Notification Settings › (Automatic, Always alert, List only, 
 [notifications.md](notifications.md#rules)) · Pin to Top, Add to Sidebar, Move Up/Down, Move to Folder › (with
 New Folder…), Take Out of folder, Hide · the thread entries where an account can ([threads.md](threads.md)):
 Follow Thread / Unfollow Thread and Thread Notifications › (a thread), Start Thread (a text or announcement channel),
-New Post (a forum or media channel), Browse Threads or Archived Posts · Copy Channel ID, Copy dither-chat ID.
+New Post (a forum or media channel), Browse Threads or Archived Posts · Stop Following or Follow Again (a post you
+follow, [feed.md](feed.md#following-a-post)) · Copy Channel ID, Copy dither-chat ID.
 
 A person reached by several routes is one row in the inbox ([chats.md](chats.md)), and that row's menu acts on the
 whole chat: Mark As Read (every route) · Profile · Search in Chat · Copy Link · Mute Chat and Notification Settings ›

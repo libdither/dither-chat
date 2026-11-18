@@ -1,5 +1,6 @@
 import type { Store } from './store.ts';
 import { previewText } from './store.ts';
+import { namedTokens } from './mentionrefs.ts';
 import type { Triage } from './triage.ts';
 
 type Row = Record<string, any>;
@@ -23,6 +24,12 @@ const BUDGET = 3500;
  */
 export const FORGET_MS = 3 * 24 * 3_600_000;
 const PHONE = /android|iphone|ipad|\bios\b/i;
+
+/** A conversation read since it was notified, and the newest message its notifications showed (Delivery.read). */
+export interface Read {
+  id: string;
+  upTo: number;
+}
 
 export interface Line {
   author: string;
@@ -131,15 +138,17 @@ export class Delivery {
 
   /**
    * Conversations read since their notification went out: on any device, in the app or in the network's own client
-   * (its read receipt for you), or by writing there. Each is returned once and forgotten.
+   * (its read receipt for you), or by writing there. Each is returned once and forgotten, with `upTo`, the newest
+   * message any of its notifications showed: a device closes a notification only up to it, so a clear that arrives
+   * late never closes an alert that came after the read.
    */
-  read(now = Date.now()): string[] {
-    const out: string[] = [];
+  read(now = Date.now()): Read[] {
+    const out: Read[] = [];
     for (const [cid, s] of this.showing) {
-      if (this.readTs(cid) >= s.ts) out.push(cid);
+      if (this.readTs(cid) >= s.ts) out.push({ id: cid, upTo: s.ts });
       else if (now - s.at > FORGET_MS) this.showing.delete(cid);
     }
-    for (const cid of out) this.showing.delete(cid);
+    for (const r of out) this.showing.delete(r.id);
     return out;
   }
 
@@ -186,7 +195,7 @@ export class Delivery {
       if (lines.length >= LINES && !own) continue;
       const key = r.person_id ?? r.author_id ?? 'someone';
       const author = r.person_name ?? r.display_name ?? r.handle ?? 'Someone';
-      const body = (previewText(r.body, r.kind) || (r.kind === 'media' ? 'Sent an attachment' : '')).slice(0, BODY);
+      const body = (previewText(namedTokens(s, c.network, r.body), r.kind) || (r.kind === 'media' ? 'Sent an attachment' : '')).slice(0, BODY);
       lines.push({ author, key, body, ts: r.ts });
       const icon = r.avatar_url ? s.media(r.avatar_url, r.seen_via ?? via) : r.person_avatar ? s.media(r.person_avatar, null) : null;
       if (icon && small(icon)) icons[key] ??= icon;

@@ -33,6 +33,12 @@ export interface AnswerCtx {
    */
   acted?: ReadonlyMap<string, { viewer: P.PostViewer; counts: P.PostFact['counts'] }>;
   onActed?: (post: string, s: { viewer: P.PostViewer; counts: P.PostFact['counts'] }) => void;
+  /** Like and repost as this account (the Feed page: the account whose timeline showed it); else the hub picks. */
+  account?: string;
+  /** Delete a post of yours (the network's own Delete): offered in the post's menu when given. */
+  onDelete?: (p: P.PostFact) => void;
+  /** How far the post's thread is read ahead (threadcache.ts): a dot by its reply count, pulsing or filled. */
+  pre?: (post: string) => 'loading' | 'ready' | null;
 }
 
 /** Answers kept a while per post and kind: hovering back and forth reads once (the hub keeps them too). */
@@ -197,6 +203,7 @@ function CountButton({
   kit,
   disabled,
   menu,
+  pre,
 }: {
   kind: 'reply' | 'repost' | 'like';
   on: boolean;
@@ -208,6 +215,8 @@ function CountButton({
   disabled?: boolean;
   /** It opens a menu (Repost): said to assistive tech, and the menu drawn over the page. */
   menu?: { open: boolean; close: () => void; items: ComponentChildren };
+  /** The thread under it being read ahead, or read (Reply only). */
+  pre?: 'loading' | 'ready' | null;
 }) {
   const [shown, setShown] = useState<'pop' | 'sheet' | null>(null);
   const btn = useRef<HTMLButtonElement>(null);
@@ -237,7 +246,7 @@ function CountButton({
         aria-haspopup={menu ? 'menu' : undefined}
         aria-expanded={menu ? menu.open : undefined}
         aria-label={`${label}${n !== undefined ? `, ${n.toLocaleString()}` : ''}`}
-        title={who ? `${label} · hold or hover to see who` : label}
+        title={who ? `${label} · hold or hover to see who` : pre === 'ready' ? `${label} · the replies are read: the post opens at once` : pre === 'loading' ? `${label} · reading the replies` : label}
         onClick={(e) => {
           e.stopPropagation();
           // A press is not a hover: no list opening under the menu or after the like.
@@ -255,6 +264,7 @@ function CountButton({
       >
         <kit.Icon name={kind === 'like' ? 'heart' : kind === 'repost' ? 'repeat' : 'reply'} size={16} />
         {n !== undefined && n > 0 && <span class="pa-n">{kit.feed.shortCount(n)}</span>}
+        {pre && <span class="pre-dot pa-pre" data-pre={pre} aria-hidden="true" />}
       </button>
       {menu?.open && (
         <Floating anchor={btn.current} onClose={menu.close} label={label} role="menu">
@@ -312,7 +322,7 @@ export function PostActions({ p, ctx, big }: { p: P.PostFact; ctx: AnswerCtx; bi
         n.delete(key);
         return n;
       });
-    api<{ viewer: P.PostViewer }>(`/api/posts/${network}/${p.id}/act`, { method: 'POST', body: { act } }).then(
+    api<{ viewer: P.PostViewer }>(`/api/posts/${network}/${p.id}/act`, { method: 'POST', body: { act, ...(ctx.account ? { account: ctx.account } : {}) } }).then(
       (r) => {
         done();
         setViewer((v) => {
@@ -338,7 +348,7 @@ export function PostActions({ p, ctx, big }: { p: P.PostFact; ctx: AnswerCtx; bi
   const list = (kind: 'like' | 'repost', n?: number) => () => <ReactorsList network={network} post={p.id} kind={kind} kit={kit} count={n} compact />;
   return (
     <div class={`post-actions ${big ? 'big' : ''}`} role="group" aria-label="Answer">
-      {rules.actions.reply && ctx.onReply && <CountButton kind="reply" on={false} n={counts.replies} label={rules.words.reply} onPress={() => ctx.onReply!(p)} who={null} kit={kit} />}
+      {rules.actions.reply && ctx.onReply && <CountButton kind="reply" on={false} n={counts.replies} label={rules.words.reply} onPress={() => ctx.onReply!(p)} who={null} kit={kit} pre={ctx.pre?.(p.id)} />}
       {rules.actions.repost && (
         <CountButton
           kind="repost"
@@ -384,6 +394,39 @@ export function PostActions({ p, ctx, big }: { p: P.PostFact; ctx: AnswerCtx; bi
           <kit.Icon name="eye" size={15} /> {kit.feed.shortCount(counts.views!)}
         </span>
       )}
+      {mine && ctx.onDelete && <MoreMenu p={p} ctx={ctx} />}
     </div>
+  );
+}
+
+/** A post of yours: its menu, with Delete (asked again first, as the network asks). */
+function MoreMenu({ p, ctx }: { p: P.PostFact; ctx: AnswerCtx }) {
+  const { kit, network } = ctx;
+  const [open, setOpen] = useState(false);
+  const [sure, setSure] = useState(false);
+  const btn = useRef<HTMLButtonElement>(null);
+  const close = () => (setOpen(false), setSure(false));
+  return (
+    <span class="pa-slot pa-more">
+      <button ref={btn} class="pa-btn more" aria-haspopup="menu" aria-expanded={open} aria-label="More" title="More" onClick={(e) => (e.stopPropagation(), setOpen(!open))}>
+        <kit.Icon name="more" size={16} />
+      </button>
+      {open && (
+        <Floating anchor={btn.current} onClose={close} label="Post" role="menu">
+          {sure ? (
+            <button role="menuitem" class="danger" autoFocus onClick={() => (close(), ctx.onDelete!(p))}>
+              <kit.Icon name="trash" size={14} /> Delete it from {NETWORK_META[network].name}
+            </button>
+          ) : (
+            <button role="menuitem" autoFocus onClick={() => setSure(true)}>
+              <kit.Icon name="trash" size={14} /> Delete…
+            </button>
+          )}
+          <a role="menuitem" href={p.url} target="_blank" rel="noreferrer" onClick={close}>
+            <kit.Icon name="external" size={14} /> Open on {NETWORK_META[network].name}
+          </a>
+        </Floating>
+      )}
+    </span>
   );
 }

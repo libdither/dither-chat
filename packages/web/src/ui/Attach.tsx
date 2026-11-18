@@ -1,11 +1,9 @@
 /**
- * Attaching on a phone, as Signal does it (docs/uploads.md, "On a phone"): the composer's + opens a sheet with
- * Photos & videos and File; the camera button in the box opens a full-screen camera; and photos and videos, picked
- * or taken, open a send screen with them large, a strip of thumbnails, and a caption that is the message's text.
- * The files are the composer's own (ComposerFiles.tsx): each starts uploading as it is attached, so send is quick.
- *
- * Signal's sheet also shows a grid of recent photos. That would need the Android app to read every photo on the
- * phone; the system's photo picker stands in for it, and needs no permission.
+ * Attaching on a phone, as Signal does it (docs/uploads.md, "On a phone"): the camera button in the box (and the
+ * panel's camera tile) opens a full-screen camera; and photos and videos, picked or taken, open a send screen with
+ * them large, a strip of thumbnails, and a caption that is the message's text. The composer's + opens the panel in
+ * the keyboard's place (ui/panel/), with the phone's own gallery and files. The files are the composer's own
+ * (ComposerFiles.tsx): each starts uploading as it is attached, so send is quick.
  */
 import type * as P from '@dither-chat/protocol';
 import { createPortal, type ComponentChildren } from 'preact';
@@ -16,79 +14,6 @@ import { useLayer } from '../phone.ts';
 import { splitNote, statusOf, Thumb, type Attached } from './ComposerFiles.tsx';
 import { useGrow } from './grow.ts';
 import { Icon } from './icons.tsx';
-import { Sheet } from './Sheet.tsx';
-
-// ------------------------------------------------------------------ the + sheet
-
-export function AttachSheet({ onPhotos, onFile, onPoll, onSticker, onStickerHover, onClose, limit, onViewOnce }: {
-  /** Where the account can send files; without them the sheet is for stickers and polls. */
-  onPhotos?: () => void;
-  onFile?: () => void;
-  onPoll?: () => void;
-  onSticker?: () => void;
-  onStickerHover?: () => void;
-  onClose: () => void;
-  limit: string;
-  /** Where the network has view-once (docs/media-kinds.md). */ onViewOnce?: () => void;
-}) {
-  // The picker opens from the tap itself, which a browser asks of it; the sheet goes as it opens.
-  const pick = (open: () => void) => () => {
-    open();
-    onClose();
-  };
-  return (
-    <Sheet onClose={onClose} label="Attach" class="attach-sheet">
-      <div class="cm-sheet-title">{onPhotos ? 'Attach' : 'Send'}</div>
-      <div class="sheet-actions" data-track-area="attach">
-        {onPhotos && (
-          <button class="sheet-action attach-action" data-track="photos" onClick={pick(onPhotos)}>
-            <Icon name="image" size={22} />
-            <span>
-              Photos & videos
-              <small>From your gallery, several at once</small>
-            </span>
-          </button>
-        )}
-        {onFile && (
-          <button class="sheet-action attach-action" data-track="file" onClick={pick(onFile)}>
-            <Icon name="file" size={22} />
-            <span>
-              File
-              <small>Any kind, {limit}</small>
-            </span>
-          </button>
-        )}
-        {onViewOnce && (
-          <button class="sheet-action attach-action" data-track="view once" onClick={pick(onViewOnce)}>
-            <Icon name="eyeOff" size={22} />
-            <span>
-              View once
-              <small>A photo or video they can open once</small>
-            </span>
-          </button>
-        )}
-        {onSticker && (
-          <button class="sheet-action attach-action" data-track="stickers" onPointerDown={onStickerHover} onClick={pick(onSticker)}>
-            <Icon name="sticker" size={22} />
-            <span>
-              Sticker
-              <small>From your sticker packs</small>
-            </span>
-          </button>
-        )}
-        {onPoll && (
-          <button class="sheet-action attach-action" data-track="poll" onClick={pick(onPoll)}>
-            <Icon name="list" size={22} />
-            <span>
-              Poll
-              <small>A question with options to vote on</small>
-            </span>
-          </button>
-        )}
-      </div>
-    </Sheet>
-  );
-}
 
 // ------------------------------------------------------------------ the camera
 

@@ -5,7 +5,7 @@
  * `bun scripts/budgets.ts --update` writes new ones (scripts/budgets.ts).
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, relative } from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -56,6 +56,25 @@ function keyOf(o: Rollup.OutputChunk | Rollup.OutputAsset): string | null {
 
 test('the build', () => {
   expect(output.some((o) => o.type === 'chunk' && o.isEntry)).toBe(true);
+});
+
+test('the service worker keeps the whole build: every chunk, lazy ones and workers too, and what index.html links to', () => {
+  const sw = readFileSync(join(out, 'sw.js'), 'utf8');
+  const stamped = sw.match(/const PRECACHE = '(.*)';/)?.[1];
+  expect(stamped).toBeDefined();
+  const precache: string[] = JSON.parse(stamped!.replace(/\\'/g, "'"));
+  const written = readdirSync(join(out, 'assets'))
+    .filter((f) => !f.endsWith('.map'))
+    .map((f) => `/assets/${f}`);
+  // Every chunk, not only the entry and what it imports itself: lazy screens, and rolldown's runtime (under startup).
+  const chunks = output.filter((o) => o.type === 'chunk').map((o) => `/${o.fileName}`);
+  expect(chunks.length).toBeGreaterThan(20);
+  expect(precache).toEqual(expect.arrayContaining(chunks));
+  const html = readFileSync(join(out, 'index.html'), 'utf8');
+  const linked = [...html.matchAll(/(?:href|src)="(\/[^"]+)"/g)].map((m) => m[1]);
+  expect(linked).toContain('/icon.svg');
+  expect([...precache].sort()).toEqual([...new Set([...written, ...linked, '/index.html'])].sort());
+  expect(sw).toMatch(/const BUILD = '[0-9a-f]{12}';/);
 });
 
 test('within budget', () => {

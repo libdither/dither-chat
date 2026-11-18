@@ -526,6 +526,28 @@ describe("Gmail's audits", () => {
     expect(hubId()).toBe(was);
   });
 
+  test('an id the search skipped is unresolved, not matched: its window stays missed until mail.get reads it', async () => {
+    const w = await world({ ids: 'gmail', seed: seedGmail });
+    await kept(w);
+    await clock.until(() => allMatch(w), 6 * 3_600_000, 'every window matching');
+    // The hub lost one, and the server can no longer parse it, in a search or by mail.get.
+    const lostHdr = '<old9@big.example>';
+    const fm = w.fake.messages(ACC, GMAIL.all).find((m) => m.messageId === lostHdr)!;
+    w.hub.store.db.query('DELETE FROM mail_message WHERE id = ?').run(mid(lostHdr));
+    w.fake.skip(ACC, [fm.id], 'all');
+    const win = audits(w).find((r) => r.start <= fm.receivedAt && r.end > fm.receivedAt)!;
+    w.hub.store.db.query('UPDATE mail_audit SET checked_at = 0 WHERE account_id = ? AND start = ?').run(ACC, win.start);
+    const row = () => audits(w).find((r) => r.start === win.start)!;
+    await clock.until(() => row().state === 'missed', 3_600_000, 'the window missed');
+    // Counted as the server's, not as held here.
+    expect(row()).toMatchObject({ server: inWindow(w, GMAIL.all, win), held: inWindow(w, GMAIL.all, win) - 1 });
+    expect(w.hub.store.one('SELECT 1 FROM mail_message WHERE id = ?', mid(lostHdr))).toBeNull();
+    // Readable again: the window's next search reads it with mail.get and matches.
+    w.fake.skip(ACC, [fm.id], null);
+    await clock.until(() => w.hub.store.one('SELECT 1 FROM mail_message WHERE id = ?', mid(lostHdr)), 3_600_000, 'the skipped message read');
+    await clock.until(() => row().state === 'match', 3_600_000, 'the window matching');
+  });
+
   test('re-checks: the current month daily, older ones less and less often', async () => {
     const { recheckMs } = await import('../src/mail/keep.ts');
     const at = (monthsAgo: number) => {

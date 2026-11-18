@@ -209,7 +209,11 @@ async function defaultLookup(h: string): Promise<string[]> {
   return (await lookup(h, { all: true })).map((r) => r.address);
 }
 
-export async function sendPush(target: PushTarget, payload: unknown, keys: VapidKeys, subject: string, opts: { ttl?: number; fetch?: typeof fetch } = {}): Promise<{ outcome: PushOutcome; status: number; detail?: string }> {
+/**
+ * `ttl`: seconds the push server keeps it for a device that is away (a day unless given). `topic` (RFC 8030 5.4, at
+ * most 32 URL-safe base64 characters): a later push with the same topic takes the place of this one while it waits.
+ */
+export async function sendPush(target: PushTarget, payload: unknown, keys: VapidKeys, subject: string, opts: { ttl?: number; topic?: string; fetch?: typeof fetch } = {}): Promise<{ outcome: PushOutcome; status: number; detail?: string }> {
   const res = await (opts.fetch ?? fetch)(target.endpoint, {
     method: 'POST',
     headers: {
@@ -218,6 +222,7 @@ export async function sendPush(target: PushTarget, payload: unknown, keys: Vapid
       'Content-Type': 'application/octet-stream',
       TTL: String(opts.ttl ?? 86_400),
       Urgency: 'high',
+      ...(opts.topic ? { Topic: opts.topic } : {}),
     },
     body: new Uint8Array(encryptPayload(target, Buffer.from(JSON.stringify(payload)))),
     signal: AbortSignal.timeout(15_000),

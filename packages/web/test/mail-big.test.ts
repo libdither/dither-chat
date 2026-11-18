@@ -4,7 +4,7 @@
  */
 import { expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
-import { applyMailBootstrap, applyMailEvent, cursorOf, emptyMail, hasMore, listThreads, mergePage, syncLine } from '../src/mail/model.ts';
+import { applyMailBootstrap, applyMailEvent, cursorOf, emptyMail, hasMore, listThreads, mergePage, staleSync, syncLine } from '../src/mail/model.ts';
 
 const ACC = 'acc_a';
 const t = (id: string, lastAt: number, x: Partial<P.MailThreadView> = {}): P.MailThreadView => ({
@@ -96,4 +96,21 @@ test('the progress line: the first sync, the backfill going back, a refresh, the
   expect(line).not.toContain('2026');
   expect(syncLine([acc({ phase: 'backfill', synced: 1, oldest: Date.UTC(2025, 2, 3) })], now)).toContain('2025');
   expect(syncLine([acc({ phase: 'relist', synced: 1, oldest: null })], now)).toBe('Refreshing…');
+});
+
+test("the account's staleness: past half an hour while passes fail, past an hour when none did, with the reason", () => {
+  const now = Date.UTC(2026, 10, 8, 12);
+  const M = 60_000;
+  const idle = { phase: 'idle', synced: 9, oldest: 1 } as const;
+  // An older hub (no stateAt), and one keeping up.
+  expect(staleSync(acc(idle), now)).toBeNull();
+  expect(staleSync(acc({ ...idle, stateAt: now - 5 * M, error: null, failures: 0 }), now)).toBeNull();
+  expect(staleSync(acc({ ...idle, stateAt: now - 40 * M, error: null, failures: 0 }), now)).toBeNull();
+  expect(staleSync(acc({ ...idle, stateAt: now - 40 * M, error: 'Gmail did not answer', failures: 3 }), now)).toBe("Hasn't synced in 40 min: Gmail did not answer");
+  expect(staleSync(acc({ ...idle, stateAt: now - 3 * 60 * M - 5 * M, error: 'Gmail did not answer', failures: 30 }), now)).toBe("Hasn't synced in 3 h: Gmail did not answer");
+  expect(staleSync(acc({ ...idle, stateAt: now - 90 * M, error: null, failures: 0 }), now)).toBe("Hasn't synced in 1 h");
+  expect(staleSync(acc({ ...idle, stateAt: now - 3 * 24 * 60 * M, error: 'offline', failures: 9 }), now)).toBe("Hasn't synced in 3 days: offline");
+  expect(staleSync(acc({ ...idle, stateAt: null, error: 'no route', failures: 1 }), now)).toBe("Hasn't synced yet: no route");
+  // No access: the page says so already.
+  expect(staleSync({ ...acc({ ...idle, stateAt: now - 9 * 60 * M, error: 'x', failures: 2 }), level: null }, now)).toBeNull();
 });

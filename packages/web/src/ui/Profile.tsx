@@ -22,6 +22,7 @@ import { copy, groups, openMenu, useMenu, type MenuEntry, type MenuSpec } from '
 import { Icon } from './icons.tsx';
 import { nicknamable, nicknameEntries, NicknamedName, NicknameInput, ownName } from './Nickname.tsx';
 import { ActivityCard } from './ActivityCard.tsx';
+import { SameBox } from './SameBox.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
 import { copyEntries, identityMenu, personMenu } from './menus.tsx';
 import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, Tag } from './ProfileShell.tsx';
@@ -340,6 +341,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const change = (accountId: string | null, identityId: string, rel: P.PersonRelationship) => accountId && setChanged((x) => ({ ...x, [`${accountId}|${identityId}`]: rel }));
   const [filter, setFilter] = useState('');
   const person = personId ? db.persons.get(personId) : undefined;
+  // Same person? suggestions with them in: by their person, or the identity when no person holds it.
+  const sameSide = personId ?? (identityId ? (db.identities.get(identityId)?.personId ?? identityId) : null);
   // The hub's merge search: people by any name or handle (an email address too), and email identities no person holds.
   const [found, setFound] = useState<{ q: string; persons: P.PersonView[]; identities: P.IdentityView[] } | null>(null);
   const q = filter.trim();
@@ -407,11 +410,11 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
 
   // ---- what you share
   const convs = profile.conversations.map((x) => ({ ...x, c: db.conversations.get(x.id) })).filter((x): x is typeof x & { c: P.ConversationView } => !!x.c);
-  const spaces = new Map<string, { s: P.SpaceView; messages: number; nick?: string; roles?: { name: string; color?: string }[] }>();
+  const spaces = new Map<string, { s: P.SpaceView; messages: number; nick?: string; roles?: { name: string; color?: string }[]; bio?: string; pronouns?: string }>();
   for (const a of said)
     for (const m of a.mutualSpaces ?? []) {
       const s = m.spaceId ? db.spaces.get(m.spaceId) : null;
-      if (s) spaces.set(s.id, { s, messages: 0, nick: m.nick, roles: m.roles });
+      if (s) spaces.set(s.id, { s, messages: 0, nick: m.nick, roles: m.roles, bio: m.bio, pronouns: m.pronouns });
     }
   // Servers your accounts saw them in as a member (the adversarial members setting), where no profile said so.
   for (const m of profile.memberOf ?? []) {
@@ -731,6 +734,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           {mergeUi}
         </Card>
       )}
+      {!isSelf && sameSide && <SameBox side={sameSide} />}
       <Card title="About" icon="info" extra={asking ? <span class="pf-asking">Asking…</span> : undefined}>
         {editable.map(({ i, account }) => (
           <>
@@ -850,7 +854,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         <Card title={isSelf ? 'Your places' : 'In common'} icon="layers" count={sharedSpaces.length + groupChats.length}>
           {sharedSpaces.length > 0 && (
             <div class="pf-spaces">
-              {sharedSpaces.map(({ s, messages, nick, roles }) => {
+              {sharedSpaces.map(({ s, messages, nick, roles, bio, pronouns }) => {
                 const est = counts[s.id]?.observed ? counts[s.id] : undefined;
                 return (
                   <button class="pf-space" onClick={() => go({ view: 'space', space: s.id })} title={s.name}>
@@ -861,6 +865,11 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
                       {est && (
                         <small class="pf-msgcount" title={countTitle(est, fullTime)}>
                           {countText(est)}
+                        </small>
+                      )}
+                      {(bio || pronouns) && (
+                        <small class="pf-space-bio" title="Their profile in this server">
+                          {[pronouns, bio].filter(Boolean).join(' · ')}
                         </small>
                       )}
                       {roles && roles.length > 0 && (

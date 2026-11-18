@@ -217,7 +217,7 @@ CREATE TABLE IF NOT EXISTS attachment (
   url        TEXT NOT NULL,                  -- MediaUrl as the adapter gave it
   position   INTEGER NOT NULL DEFAULT 0,
   alt        TEXT,                           -- its description (alt text), searched (rich.ts)
-  extra      TEXT                            -- JSON: spoiler, explicit, voice (hub rich.ts attachmentExtra)
+  extra      TEXT                            -- JSON: spoiler, explicit, gif, voice (hub rich.ts attachmentExtra)
 );
 CREATE INDEX IF NOT EXISTS attachment_message ON attachment(message_id);
 
@@ -343,8 +343,29 @@ CREATE TABLE IF NOT EXISTS push_subscription (
   -- added later, so push.ts also adds them to older databases
   last_error_at   INTEGER,
   last_test_at    INTEGER,
-  last_arrived_at INTEGER                    -- the device said a test push reached it
+  last_arrived_at INTEGER,                   -- the device said a test push reached it
+  refilled_at     INTEGER                    -- a push reached it while its page was in use: Firefox's quota is full (clears.ts)
 );
+
+-- Pushes that only close a notification, to desktop browsers (clears.ts, docs/notifications.md "Read elsewhere, gone
+-- here"). What each browser registration was sent that a clear may close: one row per registration and notification
+-- tag, until it is cleared, tapped, swiped or three days old. Ids and times only.
+CREATE TABLE IF NOT EXISTS push_shown (
+  sub_id TEXT NOT NULL,                      -- push_subscription.id
+  tag    TEXT NOT NULL,                      -- the chat, mail thread or group of notices
+  ts     INTEGER NOT NULL,                   -- the newest message it showed
+  at     INTEGER NOT NULL,                   -- when it was sent
+  PRIMARY KEY (sub_id, tag)
+) WITHOUT ROWID;
+-- Each clear a browser registration was sent, for its cap, and for the next one within the push's ten minutes to
+-- carry again (it may take this one's place at the push service).
+CREATE TABLE IF NOT EXISTS push_clear (
+  sub_id TEXT NOT NULL,
+  at     INTEGER NOT NULL,
+  free   INTEGER NOT NULL,                   -- 1: another notification was still showing there, as far as the hub knew
+  tags   TEXT NOT NULL                       -- JSON [{ "id": tag, "upTo": ts }]: what it closes
+);
+CREATE INDEX IF NOT EXISTS push_clear_sub ON push_clear(sub_id, at);
 
 -- A rule of yours on a place or a person (docs/notifications.md): 'all' always alerts, 'digest' keeps a place to
 -- the list, 'none' mutes it; no rule is Automatic. Most specific scope wins: conversation > thread parent > section >
@@ -570,6 +591,8 @@ CREATE INDEX IF NOT EXISTS visit_start ON visit(start_at);
 CREATE INDEX IF NOT EXISTS visit_conv ON visit(conversation_id, start_at) WHERE conversation_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS visit_person ON visit(person_id, start_at) WHERE person_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS visit_push ON visit(push_id) WHERE push_id IS NOT NULL;
+-- A device's latest stay (clears.ts lastVisit): whether its page is in use, at once however long ago it last was.
+CREATE INDEX IF NOT EXISTS visit_device ON visit(device, start_at);
 
 -- What you did to an inbox row that says what you made of it (InboxAction): Mark As Read on a row showing a reply
 -- you owed. Ids and times only; part of the log (deleted with it, kept for its retention).
@@ -944,3 +967,62 @@ CREATE TABLE IF NOT EXISTS notice (
 CREATE INDEX IF NOT EXISTS notice_at ON notice(at);
 CREATE INDEX IF NOT EXISTS notice_grp ON notice(grp, at);
 CREATE INDEX IF NOT EXISTS notice_marked ON notice(marked_at) WHERE marked_at IS NOT NULL;
+
+-- Same person? (matches.ts, docs/same-person.md). What you said about a suggested pair: 'no' for good, 'later' until
+-- `until`. key: the two sides' ids (per_… or idn_…), sorted, joined with '+'.
+CREATE TABLE IF NOT EXISTS match_decision (
+  key      TEXT PRIMARY KEY,
+  decision TEXT NOT NULL CHECK (decision IN ('no', 'later', 'yes')),
+  until    INTEGER,
+  features TEXT,                            -- JSON: the evidence weights by kind when decided, to learn from
+  at       INTEGER NOT NULL
+) WITHOUT ROWID;
+-- Profile pictures as a 64-bit difference hash (hex), made by the browser: the hub draws no pictures. url: the stored
+-- picture it was made from, so a new picture is hashed again.
+CREATE TABLE IF NOT EXISTS picture_hash (
+  identity_id TEXT PRIMARY KEY,
+  url         TEXT NOT NULL,
+  hash        TEXT,                         -- NULL: the picture would not load
+  at          INTEGER NOT NULL
+) WITHOUT ROWID;
+-- jev's answers on a pair's two profile cards, by the cards' hash: asked once per version of the cards.
+CREATE TABLE IF NOT EXISTS match_model (
+  key  TEXT PRIMARY KEY,
+  card TEXT NOT NULL,                       -- hash of the text jev read
+  p    REAL NOT NULL,
+  at   INTEGER NOT NULL
+) WITHOUT ROWID;
+-- Each version of a profile while profiles are collected (adversarial, docs/same-person.md): what the network said,
+-- without posts. The `about` table keeps the last answer either way; this keeps the ones before.
+CREATE TABLE IF NOT EXISTS profile_version (
+  id          INTEGER PRIMARY KEY,
+  identity_id TEXT NOT NULL,
+  account_id  TEXT NOT NULL,
+  data        TEXT NOT NULL,                -- JSON PersonAbout
+  at          INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS profile_version_identity ON profile_version(identity_id, at);
+
+-- Posts you follow (follows.ts, docs/feed.md "Following a post"): each has a conversation of its own (variant
+-- 'follow') where its replies found from then on go, and the hub reads the thread again for them at a slowing pace.
+CREATE TABLE IF NOT EXISTS post_follow (
+  conversation_id TEXT PRIMARY KEY REFERENCES conversation(id) ON DELETE CASCADE,
+  account_id      TEXT NOT NULL REFERENCES account(id) ON DELETE CASCADE,   -- reads the thread
+  network         TEXT NOT NULL,
+  post            TEXT NOT NULL,            -- the network's id for the post
+  since           INTEGER NOT NULL,         -- followed (again)
+  last_new        INTEGER NOT NULL,         -- a check last found a new reply, or `since`
+  gap             INTEGER NOT NULL,         -- ms from the last check to the next
+  next_at         INTEGER,                  -- the next check; NULL once stopped
+  checked_at      INTEGER,
+  stopped         INTEGER,                  -- checks stopped then; NULL while they go on
+  why             TEXT                      -- 'unfollowed' | 'quiet' (a week with no new reply)
+) WITHOUT ROWID;
+CREATE UNIQUE INDEX IF NOT EXISTS post_follow_post ON post_follow(network, post);
+-- When each reply in a followed post's conversation was found: those found since it was last read are new there.
+CREATE TABLE IF NOT EXISTS post_follow_found (
+  message_id      TEXT PRIMARY KEY REFERENCES message(id) ON DELETE CASCADE,
+  conversation_id TEXT NOT NULL REFERENCES conversation(id) ON DELETE CASCADE,
+  at              INTEGER NOT NULL
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS post_follow_found_conv ON post_follow_found(conversation_id, at);

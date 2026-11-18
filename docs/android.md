@@ -20,12 +20,14 @@ Around the WebView:
 | Microphone, camera | `WebChromeClient.onPermissionRequest`, only for the hub's origin, mapped to `RECORD_AUDIO` / `CAMERA` runtime permissions, asked when the page asks |
 | Attachments | `onShowFileChooser` with the system picker, several files where the page allows it. Photos and videos open the system photo picker (Android 13+), and `capture` the camera app writing to a file of the app's own when the camera is allowed ([uploads.md](uploads.md#on-a-phone)) |
 | Links | Anything that is not the app's own page (other sites, downloads from elsewhere) opens in the system browser |
+| Photos and files | The message box's panel shows the phone's gallery and folders itself (`Device.kt`; [uploads.md](uploads.md), "The panel"): lists over the bridge, bytes at a private path under the hub's origin that the WebView answers before the network |
 | Files | The hub's `/media/` and `/emoji/` files are downloaded into the app's cache and offered with the system chooser, as `content://org.libdither.chat.files/<name>` (Files.kt). The page passes the file's name and type; older pages fall back to the hub's headers |
 | Back | Walks the page's history: its routes, and the sheets and panels that push entries (`phone.ts`). At the start the app goes to the background and stays alive, so the next open is instant |
 | Launch | Theme, splash and WebView background are the page's own colour (`#14151b`, or the light theme's after the page reports it), so there is no white flash |
-| System bars | Edge to edge; the bars and keyboard are padding around the WebView |
+| System bars | Edge to edge; the bars are padding around the WebView, and so is the keyboard for a page that doesn't keep its room itself (below) |
+| Keyboard | A page that says it keeps the keyboard's room (`{ t: 'keyboard', page: true }`, after `info` lists `keyboard`) gets the WebView's whole height, and the keyboard's height over the navigation bar on every frame of its slide (`{ t: 'ime', h, done }`, from a `WindowInsetsAnimation` callback; Android 11+). The page then sizes itself to what the keyboard leaves, so the message box rides on the keyboard, and a panel can take the keyboard's place without the box moving ([phone.md](phone.md), "The keyboard and the panel"). Each new page starts with the app making room, until it says so again |
 | Bridge | `WebViewCompat.addWebMessageListener` named `DitherAndroid`, with an allowed-origin rule of the hub's origin only, so no other page, frame or redirect target can post to it. Page side: `packages/web/src/android.ts` |
-| Calls | `CallService`: a `microphone` foreground service while the page says a call is live, with an ongoing notification (Hang up, Mute, Audio route) |
+| Calls | `CallService`: a foreground service while the page says a call is live (`phoneCall`, and `microphone` once the microphone is allowed: [The call service](#the-call-service)), with an ongoing notification (Hang up, Mute, Audio route) |
 | Audio route | `AudioManager.setCommunicationDevice` (Android 12+: speaker, earpiece, Bluetooth, wired, USB); speaker or earpiece before that. The notification's Audio button cycles; `android.setAudioRoute()` is there for the call UI. On the earpiece a proximity wake lock turns the screen off at the ear |
 | History uploads | The History section's upload buttons open the system picker from the app, which then uploads in a `dataSync` foreground service, so it goes on with the app closed. Files, or a whole folder, which a WebView's picker can't do. See [History uploads](#history-uploads) |
 | Push | UnifiedPush (below), registered from Settings → *Push on this device*. Tapping a notification opens its conversation; opening a conversation clears its notification; Reply in the notification goes through the hub's ordinary send, as `sw.js` does in a browser |
@@ -65,6 +67,53 @@ Without the service, Android keeps the page running for a while but silences the
 nothing. With it, the call goes on. During a call the app also skips `WebView.onPause`, keeps the renderer at
 `RENDERER_PRIORITY_IMPORTANT` while not visible, and holds a partial wake lock and a low-latency Wi-Fi lock.
 Swiping the app away from Recents destroys the WebView, and with it the call.
+
+### The call service
+
+A page starts its call before the microphone is allowed: it opens the call's socket and tells the app the call is
+live while Android is still asking. Android 14+ throws at `startForeground` with type `microphone` unless the app holds
+`RECORD_AUDIO` at that moment, and the throw ends the app. Until 2026-11-16 that is what every first call did: the
+app died behind the microphone prompt, the prompt went with it, so the microphone was never allowed and the next call
+died the same way. A phone saw a frozen screen, then the app starting over.
+
+So the service starts as `phoneCall`, which asks no runtime permission (`MANAGE_OWN_CALLS`, granted at install, is
+what Android 14+ checks for it), and adds `microphone` once the microphone is allowed (the permission answer calls
+`CallService.permissionsChanged()`). Only a change of types calls `startForeground` again; every other update just
+re-posts the notification, since Android checks a `microphone` type against the app being in front each time and a
+phase or route change can come with the screen off. A refused or failed `startForeground` is caught and reported
+([Crashes](#crashes)), never thrown.
+
+Permission prompts go one at a time (`MainActivity.ask`): Android answers a second request made while one is showing
+at once, with nothing granted. Notifications are asked for once a call is live, not as it starts: a prompt showing
+while the page asked for the microphone made the WebView cancel the page's request, which then never got an answer
+and held the call at *Connecting*. A queued prompt whose page request was cancelled meanwhile is dropped.
+
+### A ring
+
+A push whose data has a `call` (`{id, tag, accountId, canAnswer, canDecline}`, from the hub's ringing,
+[calls.md](calls.md#ringing-calls-you-are-not-in-from-here)) is a ring, not a message (`Notifications.ring`):
+
+- On the `rings` channel (high importance, the phone's ringtone, as a ringtone), tagged `call:<id>`, so the hub's
+  `push.clear` for that call takes it back once the call is answered elsewhere, declined or given up. It rings until
+  then (`FLAG_INSISTENT`), for at most 3 minutes, as the hub's own `RING.maxMs`.
+- Android 12+ shows it as its own incoming call (`CallStyle.forIncomingCall`), which lights a locked screen through a
+  full-screen intent. Android 14+ grants those to calling apps only, so where it is not granted
+  (`canUseFullScreenIntent`), it is a plain notification with the same two buttons.
+- **Decline** goes to `RingReceiver`, which takes the ring away at once and posts `/api/calls/<id>/decline` (a failure
+  posts "Call not declined").
+- **Answer** opens the app on the chat with the call (`MainActivity`, `EXTRA_ANSWER`), which hands the page
+  `{t: 'call.answer', call, conversationId, accountId}` once it says hello (warm or cold). The page joins the call from
+  that account in the device's call mode (`src/android.ts`), waiting for its data on a cold start.
+
+## Crashes
+
+`Crashes.kt` keeps what took the app down for the hub's `traces/errors.ndjson` (docs/tracing.md, "Errors"), where the
+bug watch sees it. A crash ends the process before anything can be sent, so it is written to `files/crashes.json`
+(an uncaught exception's class, message and frames), and handed to the next page that says hello, which posts each
+report to `/api/errors` as app `android`, `where` `/android/...`. Also kept: exits Android recorded since the last
+look (ANR, native crash, initialization failure, excessive resource use; Android 11+), the page's renderer crashing
+(not Android reclaiming it), and errors the app caught on purpose that should not happen (the call service refused).
+At most 20 wait at a time.
 
 ## Push
 
@@ -140,7 +189,8 @@ alert otherwise. Each tier has a channel, so Android's own settings can change o
   in a group that leaves alerting to the group's summary never alerts, and its group has none. That is what
   `setSilent(true)` does on Android 12+, and it also works on 10 and 11.
 - **Read elsewhere.** A `{ clear: <conversationId> }` push cancels that conversation's notification, whichever kind
-  it has, without any outcome event. Opening the conversation in the app does the same, and tells the system it is on
+  it has, without any outcome event. It also carries `upTo`, the newest message the hub notified about, which the app
+  does not read yet ([notifications.md](notifications.md#read-elsewhere-gone-here)). Opening the conversation in the app does the same, and tells the system it is on
   screen (`setLocusContext`).
 - **Reply** sends through the hub, then re-posts the notification (recovered from the one showing) with what you wrote
   as its newest message, quietly, and reports the shortcut as used. On failure it says why, with what you typed.
@@ -279,6 +329,23 @@ These live in the web app, so the PWA gets them too.
    asks for a new worker 3 s after every start, the new build waits for the reload bar or for the app to be out of
    sight, and after the reload the new worker serves its own cache. A new deploy shows up one start later (or at
    the bar), not on the first start after it.
+
+   The worker keeps the whole build: every file vite writes but the source maps, lazy chunks and workers included
+   (about 4.3 MB, 1.3 MB as zstd, of which the PDF viewer's worker is 1.3 MB, 0.4 MB as zstd), and the icons `index.html` names
+   (`vite.config.ts` lists them in `sw.js`). A new build's worker copies each hashed file (`/assets/`) that the
+   old build's cache holds instead of downloading it, since a hashed name never changes content, so a deploy
+   downloads only the files that changed; `index.html`, the manifest and the icons are fetched fresh. The old cache
+   goes only once the new one is whole: an install that cannot get a file fails, and the build in use stays. Before
+   2026-11-17 it kept only the entry chunk, what it imports itself and the CSS, and old caches went at each deploy, so
+   the first start after one with the hub out of reach and the HTTP cache cold (a WebView's is small) stayed on the
+   logo for good. `scripts/check-offline.ts` checks this in CI ([testing.md](testing.md#startup)).
+
+   If the app's script or one it imports still cannot load, `index.html` does not leave the logo up for good: it
+   asks the hub (`/api/health`) again when the network comes back and after 1 s, then twice as long each time up to
+   30 s (the wait carries over reloads, in `sessionStorage`), and reloads once it answers (its own `{ok: true}`, not
+   a Wi-Fi sign-in page), letting a build that waits for the page in first, since nothing in it ran. After a few
+   reloads the hub is there but a file it lists is not (a bad build): a line under the logo says part of the app
+   didn't load, and it asks every 5 minutes instead.
 2. **A snapshot of the last screen** (`src/snapshot.ts`), in IndexedDB. It holds the bootstrap (every sidebar list,
    unread counts and last messages) and the inbox, and beside it the newest 40 messages of the 60 conversations opened
    or fetched ahead most recently, a record each with their authors, reactors and quoted messages
@@ -286,7 +353,11 @@ These live in the web app, so the PWA gets them too.
    It is read before the network and painted at once. It also keeps its place in the hub's change journal, so the app then asks only for what changed since
    ([sync.md](sync.md)); a full bootstrap replaces it only when the hub cannot say. A kept conversation catches up
    the same way when opened. It is saved when the bootstrap arrives (the hub's own text, without
-   serializing it again) and again whenever the app goes out of sight. While the app stays open, the save after
+   serializing it again; at once when the device keeps none, so a device opened once can start offline) and again
+   whenever the app goes out of sight. A save waits until things settle (1.5 s after the last change), but never more
+   than 5 s after the first change it holds, however often things change (a run of chats fetched ahead). When the app
+   goes out of sight or is closed, the pages and the snapshot are written side by side and committed at once, so the
+   write is on its way before the page can go. While the app stays open, the save after
    a conversation opens writes only the rest (a record of its own) and the pages that changed, and keeps the stored
    bootstrap, unless that is
    over ten minutes old: writing the bootstrap again cost a phone a few hundred milliseconds each time. Caps: 12 MB of bootstrap (above that it is
@@ -430,17 +501,71 @@ The hub needs `https://` for calls, push setup and the offline start, because a 
 workers to secure contexts only. A plain `http://100.x.y.z:8460` loads but gets neither. Settings → *Use another hub*
 changes the address later.
 
-For debugging, `./gradlew assembleDebug` builds an 8.8 MB debuggable APK. Its WebView shows up in
+For debugging, `./gradlew assembleDebug` builds an 8.8 MB debuggable APK, as its own app
+(`org.libdither.chat.verify`), so it installs beside a release build without touching it. Its WebView shows up in
 `chrome://inspect`, and it logs the page's console under the tag `DitherWeb`. Both builds log start-up timings under
 `DitherStartup`, and the activity reports itself fully drawn when content shows (`ActivityTaskManager: Fully drawn`).
+
+## Testing calls
+
+`scripts/verify-android-call.ts` runs calls in the app itself on an emulator: its WebView, its call service and
+Android's own permission prompts, against a demo hub whose call room plays the far end. Each run clears the debug
+build's data, so every call is a first call on a fresh install.
+
+```sh
+emulator -avd <avd> -port 5584 -read-only -no-snapshot -no-window -no-audio \
+  -no-boot-anim -gpu swiftshader_indirect          # wait for `getprop sys.boot_completed`
+bun packages/hub/src/main.ts --demo --data <temp dir> --port <port> --web packages/web/dist
+(cd apps/android && ./gradlew assembleDebug)
+bun scripts/verify-android-call.ts http://127.0.0.1:<port> --serial emulator-5584
+```
+
+It checks that the first call asks for the microphone, then for notifications once live, without the app restarting;
+that the call goes live and is heard, with the service in the foreground as `phoneCall` and `microphone`; that it
+holds 12 s with the app away and the screen off; that the notification has its buttons and leaving stops the service
+and the far end's call; that a refused microphone still gives a live call, listening only, with the service as
+`phoneCall` alone; and that logcat has no crash or ANR of the app and no crash report waits in it.
+
+The prompts are answered without tapping: uiautomator cannot read a screen while the call's page animates (it waits
+for an idle screen that never comes). A prompt is seen in `dumpsys activity` (`GrantPermissionsActivity` on top), what
+it asks for is the app's own `asking for` log line (tag `DitherStartup`), "Allow" is `pm grant` while the prompt is up
+and then Back, and "Don't allow" is Back alone. `--account` and `--conversation` point it at another account that
+makes calls, on a hub with its own far end (a lab hub), so the same run covers another network's call body.
+
+Then the rings: the demo account is rung (the demo's `ring` action), and the run checks the ring notification
+(channel, call style, Answer and Decline, insistent, full-screen) and presses its buttons: Decline is declined on the
+network and the ring goes; a ring the caller gives up goes as missed; Answer with the app in the background brings it
+up in the call; and Answer after Android killed the app (as for memory) starts it and joins. In those calls it also
+presses the call notification's Mute and Hang up and checks the far end sees them. `--only calls|rings` runs one half.
+
+The notification's buttons are pressed through `apps/android/uitest`, a small test app that drives the shade with
+UiAutomator with its idle wait turned off (`Shade#press`, run with `am instrument`): uiautomator's own `dump` waits
+for an idle screen, and a call's notification redraws its timer every second. It instruments itself, not the app:
+`am instrument` restarts the package it targets, which would end the call. Build it with
+`./gradlew :uitest:assembleDebug :uitest:assembleDebugAndroidTest`; the run installs it (`--uitest <outputs dir>`).
+
+`scripts/verify-call-pair.ts` calls between two devices on a hub with real accounts (a lab hub), each a computer
+(headless Chromium) or the emulator: the caller presses Call, the other rings (the ring card, or the phone's
+notification, answered from the shade) or joins the voice channel, and it checks both are in, hear each other, the
+ring stopped, and hanging up (from the shade on the phone) ends the call on the hub.
+
+```sh
+bun scripts/verify-call-pair.ts <hub> --conversation <id> --caller <account>@phone --callee <account>@computer \
+  [--mode bridge|direct] [--wav-callee speech.wav] --serial emulator-5584
+```
+
+The emulator reaches the hub through `adb reverse`, which carries TCP only: its call's media needs the hub's TURN
+relay (on an address the emulator can reach, such as the computer's LAN address), since the far end offers only
+`.local` host addresses, which the emulator cannot resolve. A phone hears through its WebView, which reports no
+loudness without an audio device, so on the phone hearing is the far end's audio arriving.
 
 ## What is left
 
 - The call UI has no audio-route picker yet; the notification has one button that cycles. `android.audio` and
   `android.setAudioRoute()` in `src/android.ts` are there for it.
-- A real call (bridge or direct mode) has not been run inside the app. The pieces are verified one by one: the
-  microphone permission flow, WebRTC with the screen off, the foreground service, the notification actions reaching
-  the page, the WebRTC features direct mode uses. Audio routing has only been seen on the emulator, which offers a
+- Calls in the app run end to end on the emulator against the demo call room (bridge mode, [Testing
+  calls](#testing-calls)), rings included; direct mode and Discord calls between the app and a computer are checked by
+  hand with `verify-call-pair.ts` on a lab hub. Audio routing has only been seen on the emulator, which offers a
   speaker and nothing else.
 - Not tried on a physical phone.
 - Notifications were checked on Android 15 only: not on 10 and 11, and not on Android 16, whose rules for bundling

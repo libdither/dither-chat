@@ -40,6 +40,7 @@ const ROUTES = [
   '#/people',
   '#/people/pal',
   '#/people/graph',
+  '#/people/same',
   '#/p/pal',
   '#/i/ident',
   '#/about/c/chan',

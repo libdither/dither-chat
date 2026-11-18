@@ -1,6 +1,6 @@
 /** Writing a post (compose.ts, docs/feed.md "Answering"): X's count and counter, Reddit's, from one set of rules. */
-import { expect, test } from 'bun:test';
-import { composeState, POST_RULES, postLength, REDDIT_RULES } from '../src/compose.ts';
+import { describe, expect, test } from 'bun:test';
+import { composeState, POST_RULES, postLength, postRulesFor, REDDIT_RULES, splitThread } from '../src/compose.ts';
 
 const X = POST_RULES.x;
 
@@ -59,4 +59,37 @@ test('a bracket the link opened stays in it; © and ® alone are one each; only 
   expect(postLength('©️', X)).toBe(2);
   expect(composeState('​', X).sendable).toBe(false);
   expect(composeState('​ hi', X).sendable).toBe(true);
+});
+
+describe('splitThread', () => {
+  const x = postRulesFor('x')!;
+  const sentence = 'Routing on a sheaf keeps each hop local, and the global picture falls out of the gluing.';
+  test('text that fits is one part, trimmed; nothing is no parts', () => {
+    expect(splitThread('  hello  ', x)).toEqual(['hello']);
+    expect(splitThread('   ', x)).toEqual([]);
+  });
+  test('paragraphs stay whole, each in its own post when two do not fit together', () => {
+    const paras = [1, 2, 3].map((n) => `Paragraph ${n}. ${sentence} ${sentence}`);
+    const parts = splitThread(paras.join('\n\n'), x);
+    expect(parts).toEqual(paras);
+  });
+  test('short paragraphs share a post', () => {
+    const parts = splitThread(['One.', 'Two.', 'x'.repeat(279)].join('\n\n'), x);
+    expect(parts).toEqual(['One.\n\nTwo.', 'x'.repeat(279)]);
+  });
+  test('a paragraph too long for one post is cut between sentences, every part fitting', () => {
+    const para = Array.from({ length: 8 }, () => sentence).join(' ');
+    const parts = splitThread(para, x);
+    expect(parts.length).toBe(3);
+    for (const p of parts) {
+      expect(composeState(p, x).remaining).toBeGreaterThanOrEqual(0);
+      expect(p.endsWith('gluing.')).toBe(true);
+    }
+    expect(parts.join(' ')).toBe(para);
+  });
+  test('a word longer than a post is cut where it must', () => {
+    const parts = splitThread('a'.repeat(700), x);
+    expect(parts.join('')).toBe('a'.repeat(700));
+    for (const p of parts) expect(composeState(p, x).remaining).toBeGreaterThanOrEqual(0);
+  });
 });

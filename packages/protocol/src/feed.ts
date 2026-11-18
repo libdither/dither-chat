@@ -47,6 +47,52 @@ export interface PostFact {
   viewer?: PostViewer;
   /** The language it is written in, as the network says (X: legacy.lang; 'und' when it cannot tell). */
   lang?: string;
+  // What other networks' posts have and X's do not (docs/feed.md "One card for every network"). Each is optional; a card
+  // draws whichever are there, so a network that brings them needs no card of its own.
+  /** A title apart from the words (Reddit, Lemmy, Hacker News, Discourse, YouTube, a forum post). */
+  title?: string;
+  /** A content warning or spoiler line shown before the words, which stay folded until opened (Mastodon, Misskey). */
+  warning?: string;
+  /** Where it was posted when that is not its author's own profile: a subreddit, a community, a channel, a forum. */
+  place?: { id: string; name: string; url?: string };
+  /** Who may reply, when the author limited it (X's "who can reply", Bluesky's thread gates). */
+  replies?: ReplyGate;
+}
+
+/** Who may reply to a new post: everyone, people the author follows, people mentioned in it, verified accounts. */
+export type ReplyGate = 'everyone' | 'following' | 'mentioned' | 'verified';
+export const REPLY_GATES: readonly ReplyGate[] = ['everyone', 'following', 'mentioned', 'verified'];
+
+/** Which of an account's home timelines: X's Following (newest first) or For you (X's own ranking). */
+export type HomeFeed = 'following' | 'foryou';
+export const HOME_FEEDS: readonly HomeFeed[] = ['following', 'foryou'];
+
+/** Why a post is in a home timeline beyond following its author: the network's social-context line. */
+export interface HomeReason {
+  /** The network's own words ("Ann Lee liked", "Followed by Ann Lee and 2 others", "Popular in Rust"). */
+  text: string;
+  kind?: 'like' | 'follow' | 'reply' | 'topic' | 'community' | 'pinned' | 'other';
+  /** A native identity id the line names, when it names one person. */
+  who?: string;
+}
+
+export interface HomeItem {
+  post: PostFact;
+  reason?: HomeReason;
+  /** A conversation shown with it (X's home-conversation modules): the posts above it, oldest first. */
+  above?: PostFact[];
+}
+
+/**
+ * One page of a home timeline (capability 'home', the `home` command): what the network's own Home tab shows,
+ * promoted posts and suggestions left out. Identity facts for every author and everyone a reason names come first.
+ */
+export interface HomePage {
+  items: HomeItem[];
+  /** Ask with this cursor for older posts (the Bottom cursor), or null. */
+  more: string | null;
+  /** Ask with this cursor for what came since (the Top cursor), or null. */
+  top: string | null;
 }
 
 /** What you have done to a post. */
@@ -114,3 +160,6 @@ export interface PostThread {
 export const postNativeId = (postId: string) => `post:${postId}`;
 /** The post id in a post's message native id, or null when it is not one. */
 export const postIdOf = (nativeId: string) => (nativeId.startsWith('post:') ? nativeId.slice(5) : null);
+/** A followed post's conversation (variant 'follow', docs/feed.md "Following a post"): its native id, and back. */
+export const followNativeId = (postId: string) => `follow:${postId}`;
+export const followedPostOf = (nativeId: string) => (nativeId.startsWith('follow:') ? nativeId.slice(7) : null);

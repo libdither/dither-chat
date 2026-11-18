@@ -16,6 +16,7 @@ export function attachmentExtra(a: P.AttachmentFact): string | null {
   const x: Record<string, unknown> = {};
   if (a.spoiler) x.spoiler = true;
   if (a.explicit) x.explicit = true;
+  if (a.gif === true) x.gif = true;
   if (a.voice && (a.voice.seconds !== undefined || a.voice.waveform)) {
     const v: P.VoiceFact = {};
     if (typeof a.voice.seconds === 'number' && Number.isFinite(a.voice.seconds) && a.voice.seconds >= 0) v.seconds = a.voice.seconds;
@@ -31,9 +32,10 @@ export function attachmentRich(r: Row): Partial<P.AttachmentView> {
   if (r.alt) out.alt = r.alt;
   if (!r.extra) return out;
   try {
-    const x = JSON.parse(r.extra) as { spoiler?: boolean; explicit?: boolean; voice?: P.VoiceFact };
+    const x = JSON.parse(r.extra) as { spoiler?: boolean; explicit?: boolean; gif?: boolean; voice?: P.VoiceFact };
     if (x.spoiler) out.spoiler = true;
     if (x.explicit) out.explicit = true;
+    if (x.gif) out.gif = true;
     if (x.voice) out.voice = x.voice;
   } catch {}
   return out;

@@ -57,6 +57,15 @@ describe('PUT /api/retention', () => {
     await put({ show: 'shown' });
   });
 
+  test('voice channels and collected profiles turn on, stay on through another save, and turn off only when confirmed', async () => {
+    const on = await put({ voice: true, profiles: true });
+    expect(on.status).toBe(200);
+    expect(on.json).toMatchObject({ voice: true, profiles: true });
+    expect((await put({ edits: true })).json).toMatchObject({ voice: true, profiles: true });
+    expect((await put({ profiles: false })).status).toBe(409);
+    expect((await put({ voice: false, profiles: false, confirm: true })).json).toMatchObject({ voice: false, profiles: false });
+  });
+
   test('each change is logged with the device that made it', async () => {
     const log = store.retentionLog();
     expect(log.findLast((c) => 'adversarial' in c.changed)).toMatchObject({ by: 'test phone', changed: { adversarial: [false, true] } });

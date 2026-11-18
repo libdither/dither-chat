@@ -5,9 +5,13 @@
  * message. A post's message id is `post:<id>` and its `replyTo` the post it answers, so a thread can be read back from
  * what the hub logged when the network cannot be asked. The conversation is quiet: no unread counts, no notifications,
  * no persons made for everyone in a thread, nothing sent to the network.
+ *
+ * A post you follow (follows.ts, docs/feed.md "Following a post") has a conversation of its own (variant 'follow'): a
+ * post logged for the first time whose reply chain reaches it goes there instead, as a chat's message: unread when a
+ * check found it, read when your own reading did.
  */
 import type * as P from '@dither-chat/protocol';
-import { composeState, NETWORK_META, POST_ACTS, postIdOf, postNativeId, postRulesFor } from '@dither-chat/protocol';
+import { composeState, followNativeId, NETWORK_META, POST_ACTS, postIdOf, postNativeId, postRulesFor } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { postAuthors, postView } from './feed.ts';
 import { rankReactors, type ReactorIn } from './reactors.ts';
@@ -23,15 +27,23 @@ interface PostsDeps {
     cmd:
       | { t: 'post'; post: string; cursor?: string }
       | { t: 'postAct'; post: string; act: P.PostAct }
-      | { t: 'publish'; text: string; replyTo?: string; quote?: string }
+      | { t: 'publish'; text: string; replyTo?: string; quote?: string; replies?: P.ReplyGate; media?: P.OutgoingAttachment[] }
+      | { t: 'unpublish'; post: string }
       | { t: 'postReactors'; post: string; kind: 'like' | 'repost'; cursor?: string },
     timeoutMs?: number,
   ) => Promise<T>;
   /** After posts were logged: devices hear of them. */
   changed?: () => void;
+  /** Replies a check found for a post you follow, new and live: triage decides how each is told (main.ts). */
+  fresh?: (messageIds: string[]) => void;
+  /** The time a reply to a followed post is found at (a test's clock). */
+  now?: () => number;
 }
 
 const caps = (store: Store, accountId: string): P.Capability[] => JSON.parse(store.account(accountId)?.capabilities ?? '[]');
+
+/** A reply this many posts or fewer under a followed post goes to its conversation. */
+const FOLLOW_DEPTH = 100;
 
 /** At most this many posts down one reply chain when the thread is read back from what was logged. */
 const STORED_CHAIN = 4;
@@ -62,6 +74,9 @@ function withInner(p: P.PostFact, out: { p: P.PostFact; inner: boolean }[] = [],
 
 /** A thread read is answered from the last read for this long: back and forth between posts asks X once. */
 const CACHE_MS = 2 * 60_000;
+/** A fresh read asked for (a thread's "Check for new replies") still takes an answer this new: a press after press
+ * asks X once. */
+const FRESH_MS = 10_000;
 /** The hub waits this long for X: the extractor paces its reads, and a read may wait behind a long history read. */
 const THREAD_TIMEOUT_MS = 150_000;
 
@@ -77,6 +92,33 @@ const REACTORS_CACHE_MS = 5 * 60_000;
 
 /** The network may have done it: the adapter stopped answering, not refused (as server.ts unknownOutcome). */
 const unknownOutcome = (e: unknown) => /timed out|disconnected mid/i.test(String((e as Error)?.message ?? e));
+
+/** What a publish asks for (the route's body, the Feed page's destinations). */
+interface PublishIn {
+  text?: unknown;
+  replyTo?: unknown;
+  quote?: unknown;
+  key?: unknown;
+  /** Post as this account (the Feed page's "Posting as"); else the first that can. */
+  account?: unknown;
+  replies?: unknown;
+  /** Files already resolved from upload ids. */
+  media?: P.OutgoingAttachment[];
+}
+
+/** Why these files cannot go with one post on this network, or null. */
+function postMediaProblem(media: readonly P.OutgoingAttachment[], rules: P.PostRules, net: string): string | null {
+  if (!media.length) return null;
+  const images = media.filter((m) => m.kind === 'image' && m.mime !== 'image/gif').length;
+  const gifs = media.filter((m) => m.mime === 'image/gif').length;
+  const videos = media.filter((m) => m.kind === 'video').length;
+  if (images + gifs + videos !== media.length) return `${net} posts take pictures and videos only.`;
+  if (videos && !rules.media.video) return `${net} posts take no videos here.`;
+  if (gifs && !rules.media.gif) return `${net} posts take no GIFs here.`;
+  if ((videos || gifs) && media.length > 1) return `A video or GIF goes on its own on ${net}.`;
+  if (images > rules.media.images) return `At most ${rules.media.images} pictures in a post on ${net}.`;
+  return null;
+}
 
 /** A refusal in words, with the HTTP status the route answers with. */
 export class PostsError extends Error {
@@ -126,15 +168,28 @@ export class Posts {
    * a post the hub has is updated (its words if X shows them changed, its counts). Returns how many were new.
    */
   log(accountId: string, posts: readonly P.PostFact[]): number {
+    return this.record(accountId, posts, false).fresh;
+  }
+
+  /**
+   * log(), saying how many new posts went to a followed post's conversation. `live`: they were found by a check
+   * (follows.ts), so they are news, decided by triage like any chat's message; a thread you are reading shows them
+   * anyway, so they come in unread and silent.
+   */
+  private record(accountId: string, posts: readonly P.PostFact[], live: boolean): { fresh: number; followed: number } {
     const s = this.d.store;
     const acc = s.account(accountId);
-    if (!acc || !posts.length) return 0;
+    if (!acc || !posts.length) return { fresh: 0, followed: 0 };
     const conv = postsConvNative(s, acc);
     const cid = hubId('cnv', acc.network, conv);
     let fresh = 0;
+    let followed = 0;
+    const triage: string[] = [];
     // Whole posts first, so a post seen whole and quoted in one answer is logged whole.
     const all = posts.flatMap((p) => withInner(p)).sort((a, b) => Number(a.inner) - Number(b.inner));
     const seen = new Set<string>();
+    const follows = this.following(acc.network, all.map((x) => x.p));
+    const now = this.d.now?.() ?? Date.now();
     s.db.transaction(() => {
       if (!s.one('SELECT 1 FROM conversation WHERE id = ?', cid)) s.ingest(acc, { t: 'conversation', conversation: { nativeId: conv, shape: 'channel', variant: 'posts', name: `${NETWORK_META[acc.network].name} posts` } });
       for (const { p, inner } of all) {
@@ -147,18 +202,83 @@ export class Posts {
         // A copy from inside another post never replaces the post as logged: it may be clipped, and has lost its own quote.
         if (had && inner) continue;
         if (!had) fresh++;
+        // New under a post you follow: to its conversation, through the account that follows it.
+        const to = had ? null : follows?.(p);
+        const by = to ? (s.account(to.accountId) ?? acc) : acc;
+        if (to) {
+          followed++;
+          triage.push(...s.ingest(by, { t: 'message', ...(live ? { live: true } : {}), message: { ...f, conversation: followNativeId(to.post) } }));
+          // Found by a check: news, marked New until the chat is read. One your own reading brought in is on your
+          // screen as it is logged: in the chat, but neither unread (store.ts) nor New.
+          if (live) s.db.query('INSERT OR IGNORE INTO post_follow_found (message_id, conversation_id, at) VALUES (?, ?, ?)').run(mid, to.conversationId, now);
+          continue;
+        }
         // Logged by another account first: it stays where it is (one message per post).
         s.ingest(acc, { t: 'message', message: had && had.conversation_id !== cid ? { ...f, conversation: s.nativeOf('conversation', had.conversation_id)!.nativeId } : f });
       }
     })();
     this.d.changed?.();
-    return fresh;
+    if (triage.length) this.d.fresh?.(triage);
+    return { fresh, followed };
   }
 
-  /** A connected account of the network that can do this, else why not in words. */
-  private able(network: P.Network, cap: P.Capability, doing: string): string {
+  /**
+   * The followed post a new post answers, at any depth (to FOLLOW_DEPTH), through the posts of this answer and what
+   * was logged; null when none. Undefined when no post of the network is followed (the usual case: nothing to ask).
+   */
+  private following(network: P.Network, batch: readonly P.PostFact[]): ((p: P.PostFact) => { conversationId: string; accountId: string; post: string } | null) | undefined {
+    const s = this.d.store;
+    const rows = s.db.query('SELECT conversation_id, account_id, post FROM post_follow WHERE network = ? AND stopped IS NULL').all(network) as Row[];
+    if (!rows.length) return undefined;
+    const msg = (post: string) => hubId('msg', network, postNativeId(post));
+    const byMessage = new Map(rows.map((r) => [msg(r.post), { conversationId: r.conversation_id as string, accountId: r.account_id as string, post: r.post as string }]));
+    // What each post of this answer replies to, before any of them is logged.
+    const up = new Map(batch.filter((p) => p.replyTo).map((p) => [msg(p.id), msg(p.replyTo!.id)]));
+    return (p) => {
+      let at = p.replyTo ? msg(p.replyTo.id) : null;
+      for (let i = 0; at && i < FOLLOW_DEPTH; i++) {
+        const hit = byMessage.get(at);
+        if (hit) return hit;
+        at = up.get(at) ?? (s.one<Row>('SELECT reply_to_id FROM message WHERE id = ?', at)?.reply_to_id as string | undefined) ?? null;
+      }
+      return null;
+    };
+  }
+
+  /**
+   * A post's thread read from the network now, its first page only, past the short cache (follows.ts: following, and
+   * each check), and logged: new replies under a post you follow go to its conversation (`live`: as news). The answer
+   * is kept as the cache's too.
+   */
+  async reread(network: P.Network, post: string, accountId: string, live: boolean): Promise<{ thread: P.PostThread; read: number; followed: number }> {
+    const net = NETWORK_META[network].name;
+    let t: P.PostThread;
+    try {
+      t = await this.d.command<P.PostThread>(accountId, { t: 'post', post }, THREAD_TIMEOUT_MS);
+    } catch (e) {
+      throw new PostsError(`Could not ask ${net}: ${(e as Error).message}`, 502);
+    }
+    if (!t?.focal) throw new PostsError(`${net} did not give this post`, 502);
+    const all = [t.focal, ...t.ancestors, ...t.replies.flat()];
+    const r = this.record(accountId, all, live);
+    this.recent.set(`${network}:${post}:`, { at: Date.now(), t, accountId });
+    return { thread: t, read: all.length, followed: r.followed };
+  }
+
+  /**
+   * A connected account of the network that can do this, else why not in words. `accountId`: that account must (the
+   * Feed page posts and likes as the account whose timeline it is).
+   */
+  able(network: P.Network, cap: P.Capability, doing: string, accountId?: string): string {
     const s = this.d.store;
     const net = NETWORK_META[network].name;
+    if (accountId) {
+      const acc = s.account(accountId);
+      if (!acc || acc.network !== network || !acc.enabled) throw new PostsError(`No such ${net} account.`, 404);
+      if (!this.d.online(accountId)) throw new PostsError(`${net} · ${acc.label} is not connected, so it cannot ${doing} now.`, 409);
+      if (!caps(s, accountId).includes(cap)) throw new PostsError(`The ${net} adapter cannot ${doing} yet.`, 409);
+      return accountId;
+    }
     const all = (s.db.query('SELECT id FROM account WHERE network = ? AND enabled = 1 ORDER BY created_at').all(network) as Row[]).map((r) => r.id as string);
     const ok = all.find((a) => this.d.online(a) && caps(s, a).includes(cap));
     if (ok) return ok;
@@ -184,11 +304,11 @@ export class Posts {
    * Like, repost, or take either back: the network's own button, pressed once (docs/feed.md "Answering"). The logged
    * post follows: what you did to it, and its count by one. Returns the post as it stands.
    */
-  async act(network: P.Network, post: string, act: P.PostAct): Promise<{ post: P.PostView | null; viewer: P.PostViewer }> {
+  async act(network: P.Network, post: string, act: P.PostAct, as?: string): Promise<{ post: P.PostView | null; viewer: P.PostViewer; accountId: string }> {
     if (!POST_ACTS.includes(act)) throw new PostsError('act: like, unlike, repost or unrepost', 400);
     const rules = postRulesFor(network);
     if (!rules || !(act.endsWith('like') ? rules.actions.like : rules.actions.repost)) throw new PostsError(`${NETWORK_META[network].name} has no ${act.replace(/^un/, '')} here.`, 409);
-    const accountId = this.able(network, 'postActions', act.replace(/^un/, ''));
+    const accountId = this.able(network, 'postActions', act.replace(/^un/, ''), as);
     let viewer: P.PostViewer;
     try {
       viewer = (await this.d.command<P.PostViewer>(accountId, { t: 'postAct', post, act }, WRITE_TIMEOUT_MS)) ?? {};
@@ -197,7 +317,7 @@ export class Posts {
       throw new PostsError((e as Error).message, 502);
     }
     const had = this.loggedPost(network, post);
-    if (!had) return { post: null, viewer };
+    if (!had) return { post: null, viewer, accountId };
     const key = act.endsWith('like') ? 'liked' : 'reposted';
     const on = !act.startsWith('un');
     const was = !!had.viewer?.[key];
@@ -208,7 +328,7 @@ export class Posts {
     this.log(accountId, [next]);
     this.forget(network, post);
     for (const k of this.reactorsSeen.keys()) if (k.startsWith(`${network}:${post}:`)) this.reactorsSeen.delete(k);
-    return { post: this.viewOf(network, accountId, next), viewer: next.viewer! };
+    return { post: this.viewOf(network, accountId, next), viewer: next.viewer!, accountId };
   }
 
   private publishing = new Map<string, { at: number; p: Promise<P.PostView>; sig: string }>();
@@ -218,10 +338,10 @@ export class Posts {
    * (compose.ts, the count the page shows). `key`, the page's id for this post: the same key again within ten minutes
    * is answered with the first, so a double press or a retried request posts once. Logged as soon as it is made.
    */
-  publish(network: P.Network, b: { text?: unknown; replyTo?: unknown; quote?: unknown; key?: unknown }): Promise<P.PostView> {
-    const key = typeof b.key === 'string' && b.key.length <= 100 ? `${network}:${b.key}` : null;
+  publish(network: P.Network, b: PublishIn): Promise<P.PostView> {
+    const key = typeof b.key === 'string' && b.key.length <= 200 ? `${network}:${b.key}` : null;
     for (const [k, v] of this.publishing) if (Date.now() - v.at > PUBLISH_DEDUPE_MS) this.publishing.delete(k);
-    const sig = JSON.stringify([b.text, b.replyTo ?? null, b.quote ?? null]);
+    const sig = JSON.stringify([b.text, b.replyTo ?? null, b.quote ?? null, b.account ?? null, b.replies ?? null, (b.media ?? []).map((m) => m.path)]);
     const had = key ? this.publishing.get(key) : null;
     // The same post again (a double press, a retried request): the first answer. Something else under the same key is
     // a page that kept its key by mistake: refused rather than dropped.
@@ -238,7 +358,7 @@ export class Posts {
     return p;
   }
 
-  private async write(network: P.Network, b: { text?: unknown; replyTo?: unknown; quote?: unknown }): Promise<P.PostView> {
+  private async write(network: P.Network, b: PublishIn): Promise<P.PostView> {
     const rules = postRulesFor(network);
     const net = NETWORK_META[network].name;
     if (!rules) throw new PostsError(`${net} has no posts here.`, 409);
@@ -252,22 +372,58 @@ export class Posts {
     const quote = id(b.quote, 'quote');
     if (replyTo && !rules.actions.reply) throw new PostsError(`${net} has no replies here.`, 409);
     if (quote && !rules.actions.quote) throw new PostsError(`${net} has no quotes here.`, 409);
+    if (b.replies !== undefined && b.replies !== null && !(rules.replyGates as readonly unknown[]).includes(b.replies)) throw new PostsError(`replies: ${net} has no such choice`, 400);
+    const replies = b.replies === undefined || b.replies === null || b.replies === 'everyone' ? undefined : (b.replies as P.ReplyGate);
+    if (replies && replyTo) throw new PostsError(`${net} lets you choose who can reply only on a new post.`, 400);
+    const media = b.media ?? [];
+    const mediaProblem = postMediaProblem(media, rules, net);
+    if (mediaProblem) throw new PostsError(mediaProblem, 422);
     const st = composeState(text, rules);
-    if (!st.sendable) throw new PostsError(st.remaining < 0 ? `Too long: ${-st.remaining} over ${net}'s ${rules.maxLength}.` : 'Nothing to post.', 422);
-    const accountId = this.able(network, 'publish', 'post');
+    // Pictures alone are a post.
+    if (!st.sendable && !(media.length && st.remaining >= 0)) throw new PostsError(st.remaining < 0 ? `Too long: ${-st.remaining} over ${net}'s ${rules.maxLength}.` : 'Nothing to post.', 422);
+    const as = typeof b.account === 'string' && b.account ? b.account : undefined;
+    const accountId = this.able(network, media.length ? 'postMedia' : 'publish', media.length ? 'post pictures' : 'post', as);
+    if (media.length && !caps(this.d.store, accountId).includes('publish')) throw new PostsError(`The ${net} adapter cannot post yet.`, 409);
     let made: P.PostFact;
     try {
-      made = await this.d.command<P.PostFact>(accountId, { t: 'publish', text, ...(replyTo ? { replyTo } : {}), ...(quote ? { quote } : {}) }, WRITE_TIMEOUT_MS);
+      made = await this.d.command<P.PostFact>(accountId, { t: 'publish', text, ...(replyTo ? { replyTo } : {}), ...(quote ? { quote } : {}), ...(replies ? { replies } : {}), ...(media.length ? { media } : {}) }, WRITE_TIMEOUT_MS);
     } catch (e) {
       if (unknownOutcome(e)) throw new PostsError(`${net} did not answer in ${WRITE_TIMEOUT_MS / 1000} seconds. It may still have posted: look on ${net} before posting again.`, 504);
       throw new PostsError((e as Error).message, 502);
     }
     if (!made?.id) throw new PostsError(`${net} did not say what it posted. It may have posted: look on ${net} before posting again.`, 504);
     // What it answers, as X may leave it out of the made post.
-    const p: P.PostFact = { ...made, ...(replyTo && !made.replyTo ? { replyTo: { id: replyTo } } : {}) };
+    const p: P.PostFact = { ...made, ...(replyTo && !made.replyTo ? { replyTo: { id: replyTo } } : {}), ...(replies && !made.replies ? { replies } : {}) };
     this.log(accountId, [p]);
     if (replyTo) this.forget(network, replyTo);
     return this.viewOf(network, accountId, p);
+  }
+
+  /**
+   * Delete a post of yours (docs/feed.md "The Feed page"): what its Delete does on the network, pressed once. The
+   * account is the one that wrote it (its own identity is the post's author), else `as`. The logged message goes as a
+   * deleted message does.
+   */
+  async unpublish(network: P.Network, post: string, as?: string): Promise<{ deleted: true; accountId: string }> {
+    const s = this.d.store;
+    const net = NETWORK_META[network].name;
+    const mid = hubId('msg', network, postNativeId(post));
+    const row = s.one<Row>('SELECT author_id, conversation_id FROM message WHERE id = ?', mid);
+    const author = row?.author_id ? (s.db.query('SELECT id FROM account WHERE network = ? AND self_identity = ? AND enabled = 1').get(network, row.author_id) as Row | null)?.id : null;
+    if (row && !author && !as) throw new PostsError(`That post is not one of yours on ${net}.`, 409);
+    const accountId = this.able(network, 'unpublish', 'delete posts', author ?? as);
+    try {
+      await this.d.command(accountId, { t: 'unpublish', post }, WRITE_TIMEOUT_MS);
+    } catch (e) {
+      if (unknownOutcome(e)) throw new PostsError(`${net} did not answer in ${WRITE_TIMEOUT_MS / 1000} seconds. It may still have deleted it: look again in a minute.`, 504);
+      throw new PostsError((e as Error).message, 502);
+    }
+    const acc = s.account(accountId)!;
+    const conv = row ? s.nativeOf('conversation', row.conversation_id)?.nativeId : null;
+    if (conv) s.ingest(acc, { t: 'delete', conversation: conv, nativeId: postNativeId(post) });
+    this.forget(network, post);
+    this.d.changed?.();
+    return { deleted: true, accountId };
   }
 
   /** A post's thread is read from X again next time (it changed). */
@@ -335,14 +491,17 @@ export class Posts {
     return view(notified(), null, 'notifications', `${why} These are the people your notifications named.`);
   }
 
-  /** A post's thread: from the network when an account can ask (and logged), else what the hub logged. */
-  thread(network: P.Network, post: string, cursor?: string): Promise<P.PostThreadView> {
+  /**
+   * A post's thread: from the network when an account can ask (and logged), else what the hub logged. `fresh`: not
+   * the last answer unless it is a few seconds old (checking for new replies).
+   */
+  thread(network: P.Network, post: string, cursor?: string, fresh = false): Promise<P.PostThreadView> {
     const key = `${network}:${post}:${cursor ?? ''}`;
     const live = this.asking.get(key);
     if (live) return live;
     const hit = !cursor ? this.recent.get(key) : null;
     // What X said is reused; the view is made again, so the branches logged since (opened under a reply) come with it.
-    if (hit && Date.now() - hit.at < CACHE_MS) return Promise.resolve(this.view(network, post, hit.accountId, hit.t, undefined));
+    if (hit && Date.now() - hit.at < (fresh ? FRESH_MS : CACHE_MS)) return Promise.resolve(this.view(network, post, hit.accountId, hit.t, undefined));
     const p = this.ask(network, post, cursor).finally(() => this.asking.delete(key));
     this.asking.set(key, p);
     return p;
@@ -417,9 +576,17 @@ export class Posts {
       more: t.more,
       ...(logged.length ? { logged: logged.map(one) } : {}),
       conversationId: conv && s.one('SELECT 1 FROM conversation WHERE id = ?', conv) ? conv : null,
+      // Whether you follow it (follows.ts): the thread's bell says so. A page of more replies leaves it out.
+      ...(withLogged ? { follow: this.followOf(network, post) } : {}),
       ...(stored ? { stored } : {}),
       identities: s.identitiesByIds(named),
     };
+  }
+
+  /** The post's follow (follows.ts), or null. */
+  private followOf(network: P.Network, post: string): P.PostFollow | null {
+    const r = this.d.store.one<Row>('SELECT conversation_id FROM post_follow WHERE network = ? AND post = ?', network, post);
+    return r ? this.d.store.postFollow(r.conversation_id) : null;
   }
 
   /** Posts logged under a post, any depth to LOGGED_DEPTH, oldest first (through message_post_reply). */

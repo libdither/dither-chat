@@ -1360,14 +1360,16 @@ export class Store {
     // Someone in your notifications (docs/feed.md) is someone: a person, so their profile and what they did are kept
     // and found like anyone you talk with.
     if (!fromSelf && !existed && conv.variant === 'feed') this.ensurePerson(author);
-    // Logged posts (posts.ts) are read as they are logged: someone opened them.
-    if (newForAccount && !fromSelf && conv.variant !== 'posts') {
+    // Logged posts (posts.ts) are read as they are logged: someone opened them. A followed post's reply (follows.ts) is
+    // news when the hub's check finds it (live), however long ago it was posted: the hub finds replies minutes or hours
+    // late. One your own reading brought in (a branch of the thread opened) is on your screen already: read.
+    if (newForAccount && !fromSelf && conv.variant !== 'posts' && (live || conv.variant !== 'follow')) {
       this.db
         .query(
           `UPDATE vantage SET unread = unread + 1, mentions = mentions + ? WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?
-             AND (last_read_ts IS NULL OR last_read_ts < ?)`,
+             AND (last_read_ts IS NULL OR last_read_ts < ? OR ?)`,
         )
-        .run(f.mentionsSelf ? 1 : 0, acc.id, cid, f.ts);
+        .run(f.mentionsSelf ? 1 : 0, acc.id, cid, f.ts, conv.variant === 'follow' ? 1 : 0);
     }
     if (fromSelf && newForAccount) {
       // Sending from any client counts as reading up to there.
@@ -2354,6 +2356,7 @@ export class Store {
       presence: any(logged, 'presence'),
       members: any('SELECT 1 FROM membership'),
       voice: voiceKept(this),
+      profiles: any('SELECT 1 FROM profile_version'),
     };
   }
 
@@ -2364,6 +2367,8 @@ export class Store {
       return this.db.query('DELETE FROM membership').run().changes;
     }
     if (what === 'voice') return eraseVoice(this);
+    // Earlier versions of profiles; the last answer each network gave stays, as it does with the switch off.
+    if (what === 'profiles') return this.db.query('DELETE FROM profile_version').run().changes;
     if (what === 'statuses' || what === 'presence')
       return this.db.query(`DELETE FROM change_log WHERE target_kind = 'identity' AND field = ?`).run(what === 'statuses' ? 'status' : 'presence').changes;
     const touched = (sql: string) => (this.db.query(sql).all() as Row[]).forEach((r) => this.dirty.messages.set(r.message_id, true));
@@ -2582,7 +2587,29 @@ export class Store {
       ...(pending ? { pending } : {}),
       ...(th?.thread || th?.firstRow ? { thread: this.threadView(th, via) } : {}),
       ...(th?.forum ? { forum: th.forum } : {}),
+      ...(r.variant === 'follow' ? this.postFollowPart(r.id) : {}),
     };
+  }
+
+  /** A followed post's state (follows.ts), for its conversation's view. */
+  postFollow(conversationId: string): P.PostFollow | null {
+    const f = this.db.query('SELECT * FROM post_follow WHERE conversation_id = ?').get(conversationId) as Row | null;
+    if (!f) return null;
+    return {
+      conversationId: f.conversation_id,
+      accountId: f.account_id,
+      since: f.since,
+      stopped: f.stopped ?? null,
+      ...(f.why ? { why: f.why } : {}),
+      next: f.next_at ?? null,
+      checked: f.checked_at ?? null,
+      lastNew: f.last_new,
+    };
+  }
+
+  private postFollowPart(conversationId: string): { follow?: P.PostFollow } {
+    const f = this.postFollow(conversationId);
+    return f ? { follow: f } : {};
   }
 
   /** A thread's view: its facts, its first message as a preview, and that message's first picture for a gallery. */

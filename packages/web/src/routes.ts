@@ -7,7 +7,7 @@ export type Route =
   /** How it sorts (docs/notifications.md): which tier triage put each conversation's messages in this week, and why. */
   | { view: 'model' }
   /** graph: the people graph (graph/GraphView.tsx) in place of a thread. */
-  | { view: 'people'; person?: string; graph?: boolean }
+  | { view: 'people'; person?: string; graph?: boolean; same?: boolean }
   /** A profile page (docs/profile.md): a person, an identity not merged into one, or a conversation or space. */
   | { view: 'profile'; person?: string; identity?: string; conv?: string; space?: string }
   | { view: 'spaces' }
@@ -24,7 +24,13 @@ export type Route =
   /** What your accounts and services told you (docs/notices.md), `notice` the one to show. */
   | { view: 'notices'; notice?: string }
   /** dither-calendar beside the hub (docs/calendar.md): `at` is the calendar's own hash without "#/", query and all. */
-  | { view: 'calendar'; at?: string };
+  | { view: 'calendar'; at?: string }
+  /**
+   * The Feed (docs/feed.md "The Feed page"): a source (`home`, `activity`, `mine`, `drafts`, `<account>:following`,
+   * `<account>:foryou`, `<account>:activity`, `<account>:mine`; Home when absent) and the post open beside it (a
+   * post key, feed.ts postKey).
+   */
+  | { view: 'feed'; source?: string; post?: string };
 
 export function parseHash(h = location.hash): Route {
   // The calendar's address is its own, kept verbatim (#/calendar/day/2026-11-14?e=…).
@@ -38,7 +44,7 @@ export function parseHash(h = location.hash): Route {
   const q = new URLSearchParams(query ?? '');
   switch (p[0]) {
     case 'people':
-      return p[1] === 'graph' && !p[2] ? { view: 'people', graph: true } : { view: 'people', person: p[1] };
+      return p[1] === 'graph' && !p[2] ? { view: 'people', graph: true } : p[1] === 'same' && !p[2] ? { view: 'people', same: true } : { view: 'people', person: p[1] };
     case 'p':
       return { view: 'profile', person: p[1] };
     case 'i':
@@ -74,6 +80,13 @@ export function parseHash(h = location.hash): Route {
       return { view: 'requests', request: p[1] };
     case 'notices':
       return { view: 'notices', notice: p[1] };
+    case 'feed': {
+      // #/feed, #/feed/<source>, #/feed/<source>/p/<post key>
+      const source = p[1] && p[1] !== 'p' ? p[1] : undefined;
+      const at = p.indexOf('p', 1);
+      const post = at > 0 ? p[at + 1] : undefined;
+      return { view: 'feed', ...(source ? { source } : {}), ...(post ? { post } : {}) };
+    }
     case 'mail':
       // #/mail, #/mail/l/<list>, #/mail/t/<thread>, #/mail/l/<list>/t/<thread>
       return p[1] === 'l' ? { view: 'mail', list: p[2], thread: p[3] === 't' ? p[4] : undefined } : { view: 'mail', thread: p[1] === 't' ? p[2] : undefined };
@@ -88,7 +101,7 @@ export function href(r: Route): string {
     case 'inbox':
       return r.conv ? `#/inbox/c/${e(r.conv)}${r.msg ? `?m=${e(r.msg)}` : ''}` : '#/inbox';
     case 'people':
-      return r.person ? `#/people/${e(r.person)}` : r.graph ? '#/people/graph' : '#/people';
+      return r.person ? `#/people/${e(r.person)}` : r.graph ? '#/people/graph' : r.same ? '#/people/same' : '#/people';
     case 'profile':
       if (r.conv) return `#/about/c/${e(r.conv)}`;
       if (r.space) return `#/about/s/${e(r.space)}`;
@@ -119,6 +132,9 @@ export function href(r: Route): string {
       return `#/notices${r.notice ? `/${e(r.notice)}` : ''}`;
     case 'calendar':
       return r.at ? `#/calendar/${r.at}` : '#/calendar';
+    case 'feed':
+      // An account's source keeps its colon readable (`#/feed/acc_1:foryou`).
+      return `#/feed${r.source ? `/${e(r.source).replace(/%3A/g, ':')}` : ''}${r.post ? `/p/${e(r.post)}` : ''}`;
   }
 }
 

@@ -49,6 +49,8 @@ export const MAIL_LIMITS = {
   page: 150,
   /** After access to an account ends, its mail stays this long, then goes (§14 Q6, decided). */
   goneMs: 24 * 3_600_000,
+  /** How long an account's trouble that may pass (an extractor not ready, a 502) lasts before the bug watch hears of it. */
+  troubleReportMs: 15 * 60_000,
   /** Keep-up timers, insurance against a missed event (§3.4). */
   inboxEveryMs: 5 * 60_000,
   otherEveryMs: 15 * 60_000,

@@ -78,7 +78,12 @@ list. A new kind of route goes in its ROUTES.
 
 **Keyboard.** The viewport asks Chromium to resize the layout for the keyboard
 (`interactive-widget=resizes-content`). Where only the visual viewport shrinks (iOS Safari), the app is
-sized and moved to it while a field has focus, so the composer sits just above the keyboard. Fields are 16px
+sized and moved to it while a field has focus, so the composer sits just above the keyboard. In the Android app the
+page keeps the keyboard's room itself ([android.md](android.md), "Keyboard"): the app reports the keyboard's height on
+every frame of its slide, and phone.ts sizes the app to what is left (`--app-h`), so the box rides up on the keyboard
+instead of jumping once it is up. A field the keyboard then covers is scrolled into sight, as the browser does when it
+resizes. The keyboard's height is remembered per orientation (`dither-chat:keyboard-height`) for the panel that takes
+its place (`keyboardroom.ts`). Fields are 16px
 so iOS does not zoom into them. The notch and the home indicator are kept clear with the safe-area insets;
 while the keyboard is up the bottom inset is dropped and the tab bar steps aside. On a touch keyboard Enter makes a new line (there
 is no Shift+Enter) and the send button sends; Ctrl+Enter also sends.
@@ -140,7 +145,7 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | The list's level, your rules, notifications while open | Settings | More tab | You tab; the section list on a desktop now scrolls to each section |
 | Web Push opt-in, devices | Settings | More tab | You tab |
 | Quiet hours | Settings | More tab | You tab; time fields at 16px |
-| Keywords that always alert | Settings | More tab | You tab |
+| Keywords (count as about you) | Settings | More tab | You tab |
 | Theme, demo accounts, reset demo | Settings | More tab | You tab |
 | Any one Settings section (Message history, Adversarial features) without scrolling past the rest | Section list beside Settings | More tab, scrolled | Sections in Settings' header: a sheet of the sections, two taps |
 | Adversarial features' warning and its Yes | Dialog | Not there yet | Bottom sheet whose words scroll, Yes pinned at its bottom |
@@ -189,7 +194,7 @@ composer and settings are 40px or more.
 pasted, deleted, sent, restored from a draft and with files attached, with the keyboard imitated for Android (a
 smaller layout) and iOS (a smaller visual viewport), at 390x844, 360x330 and on a desktop.
 
-`bun scripts/verify-attach.ts [--port 8700]` drives the + sheet, the camera (Chromium's fake cameras) and the send
+`bun scripts/verify-attach.ts [--port 8700]` drives the + panel, the camera (Chromium's fake cameras) and the send
 screen on a demo hub of its own, and the camera's fallback when it is refused or missing.
 
 **What headless cannot show.** It is Chromium on Linux pretending: not iOS Safari, which handles the

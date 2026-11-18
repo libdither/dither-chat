@@ -2,7 +2,7 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { effect, untracked } from '@preact/signals';
 import { chatPersonOf, convsUnder, firstChannel, rootCommunity, totalUnread } from '../model.ts';
-import { adoptEntry, api, connected, db, go, loaded, pending, prefs, previousRoute, readProgress, refresh, rev, route, setListUnder, setRouteFill, unreachable, type Route } from '../state.ts';
+import { adoptEntry, api, connected, db, go, loaded, prefs, previousRoute, readProgress, refresh, rev, route, setListUnder, setRouteFill, type Route } from '../state.ts';
 import { isPage, isTabRoot, listKey, listToWrite, ownList, restAfter, wayBack, type Places } from '../pages.ts';
 import { dropLayer, phone, pushLayer } from '../phone.ts';
 import { AccountPane, AccountsSidebar, AddAccount, addingAccount } from './Accounts.tsx';
@@ -22,6 +22,7 @@ import { Palette } from './Palette.tsx';
 import { ReactionLayer } from './Reactions.tsx';
 import { ProfilePane } from './Profile.tsx';
 import { PlaceProfile } from './PlaceProfile.tsx';
+import { SamePane } from './SamePane.tsx';
 import { GraphPane } from './GraphPane.tsx';
 import { MessageHistoryLayer } from './MessageHistory.tsx';
 import { ThreadsLayerLazy } from './ThreadsLazy.tsx';
@@ -34,6 +35,7 @@ import { FolderSidebar, InboxSidebar, PeopleSidebar, SpaceSidebar, SpacesSidebar
 import { homeRoute } from '../opening.ts';
 import { ConversationPane, PersonPane } from './Timeline.tsx';
 import { Toasts } from './Toasts.tsx';
+import { OfflineLayer } from './Offline.tsx';
 import { PaneEdge, usePaneWidths } from './PaneEdge.tsx';
 import { CallDock } from './Call.tsx';
 import { RingCards } from './Ringing.tsx';
@@ -49,7 +51,7 @@ import { NoticesPaneLazy } from './Notices.tsx';
 import { CalendarPane } from './calendar/CalendarPane.tsx';
 import { calendarLink, calendarOn } from '../plans.ts';
 import { countKey } from '../clicklog.ts';
-import { ThreadLazy } from './feed/lazy.tsx';
+import { FeedPaneLazy, FeedSidebarLazy, ThreadLazy } from './feed/lazy.tsx';
 import { isPostKey } from '../feed.ts';
 
 /** A conversation's details panel: the person's, for a DM of someone reached by several routes (their chat's page). */
@@ -75,6 +77,7 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
       return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: convDetail(r.conv) } : { pane: <ForYou /> };
     case 'people':
       if (r.graph) return { pane: <GraphPane onBack={back} /> };
+      if (r.same) return { pane: <SamePane onBack={back} /> };
       return r.person ? { pane: <PersonPane personId={r.person} onBack={back} />, detail: { kind: 'person', id: r.person } } : { pane: <WelcomePane view="people" /> };
     case 'profile':
       if (r.conv || r.space) return { pane: <PlaceProfile kind={r.conv ? 'conversation' : 'space'} id={(r.conv ?? r.space)!} onBack={back} /> };
@@ -105,6 +108,8 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
       return { pane: <NoticesPaneLazy focus={r.notice} onBack={back} /> };
     case 'calendar':
       return { pane: <CalendarPane at={r.at} /> };
+    case 'feed':
+      return { pane: <FeedPaneLazy source={r.source} post={r.post} onBack={back} /> };
   }
 }
 
@@ -146,6 +151,8 @@ function sidebarFor(r: Route, onAdd: () => void): ComponentChildren {
       return <InboxSidebar />;
     case 'calendar':
       return null;
+    case 'feed':
+      return <FeedSidebarLazy source={r.source} />;
   }
 }
 
@@ -234,6 +241,18 @@ effect(() => {
   });
 });
 
+// A network's notifications open in the Feed now (docs/feed.md "The Feed page"): an old link, a notification's or a
+// search hit's, to the notifications conversation goes to its account's Activity there.
+effect(() => {
+  const r = route.value;
+  rev.value;
+  if (r.view !== 'inbox' || !r.conv) return;
+  const c = untracked(() => db.conversations.get(r.conv!));
+  if (c?.variant !== 'feed') return;
+  const acc = c.vantages[0]?.accountId;
+  untracked(() => go({ view: 'feed', source: acc ? `${acc}:activity` : 'activity' }, true));
+});
+
 /** Back from page `r`, by a swipe or its back button: to its list, or off the page it was opened over (pages.ts). */
 function leave(r: Route) {
   const way = wayBack(r, previousRoute(), places);
@@ -241,8 +260,11 @@ function leave(r: Route) {
   else go(way.to, true);
 }
 
-type Tab = 'home' | 'foryou' | 'search' | 'calendar' | 'you';
-const tabOf = (r: Route): Tab => (r.view === 'foryou' || r.view === 'model' ? 'foryou' : r.view === 'search' ? 'search' : r.view === 'calendar' ? 'calendar' : r.view === 'settings' || r.view === 'accounts' ? 'you' : 'home');
+type Tab = 'home' | 'foryou' | 'feed' | 'search' | 'calendar' | 'you';
+const tabOf = (r: Route): Tab =>
+  r.view === 'foryou' || r.view === 'model' ? 'foryou' : r.view === 'feed' ? 'feed' : r.view === 'search' ? 'search' : r.view === 'calendar' ? 'calendar' : r.view === 'settings' || r.view === 'accounts' ? 'you' : 'home';
+/** The Feed's tab shows where it was left: its source (docs/feed.md "The Feed page"). */
+let lastFeed: Route = { view: 'feed' };
 
 /** The last page and the last list on the Home tab, which a phone keeps while you look elsewhere. */
 let lastDetail: Route | null = null;
@@ -253,12 +275,15 @@ function TabBar({ r }: { r: Route }) {
   // The calendar's tab comes and goes with its account (plans.ts).
   calendarLink.value;
   const tab = tabOf(r);
+  if (r.view === 'feed') lastFeed = r.post ? { view: 'feed', ...(r.source ? { source: r.source } : {}) } : r;
   const all = totalUnread().badge;
   const attention = [...db.accounts.values()].some((a) => a.attention);
   const tabs: { id: Tab; label: string; icon: string; to: () => Route; badge?: number; dot?: boolean }[] = [
     { id: 'home', label: 'Home', icon: 'home', to: () => lastHome, badge: all },
     // No badge: nothing in it is urgent. What needs you is on Home (docs/foryou.md).
     { id: 'foryou', label: 'For you', icon: 'sparkles', to: () => ({ view: 'foryou' }) },
+    // Once an account has posts (X): what your networks posted, and what came of yours.
+    ...(feedOn() ? [{ id: 'feed' as const, label: 'Feed', icon: 'rss', to: () => lastFeed, dot: feedSaid() > 0 }] : []),
     { id: 'search', label: 'Search', icon: 'search', to: () => ({ view: 'search', q: '' }) },
     // A hub with dither-calendar beside it (docs/calendar.md).
     ...(calendarOn ? [{ id: 'calendar' as const, label: 'Calendar', icon: 'calendar', to: (): Route => ({ view: 'calendar' }) }] : []),
@@ -279,6 +304,11 @@ function TabBar({ r }: { r: Route }) {
     </nav>
   );
 }
+
+/** Whether the Feed is offered: an account with posts (X), or its notifications already held. */
+const feedOn = () => [...db.accounts.values()].some((a) => a.network === 'x') || [...db.conversations.values()].some((c) => c.variant === 'feed');
+/** Answers, quotes and mentions not looked at, across the notifications (never likes). */
+const feedSaid = () => [...db.conversations.values()].filter((c) => c.variant === 'feed').reduce((n, c) => n + c.vantages.reduce((m, v) => m + (v.mentions ?? 0), 0), 0);
 
 /** The installed app's icon shows what wants you, where the platform has badges. */
 function AppBadge() {
@@ -363,12 +393,6 @@ export function App() {
       class={`app ${p ? `phone rest-${rest}` : ''} ${!p && details ? 'with-details' : ''} ${full ? 'full' : ''} ${tabs ? 'tabs' : ''} ${tabRoot ? 'tab-root' : ''} ${narrow ? 'narrow' : ''}`}
       style={{ '--peek': `${PEEK}px` } as any}
     >
-      {/* Short drops go unmentioned: the app shows what it has and catches up when the hub is back (docs/sync.md). */}
-      {(unreachable.value || (!connected.value && pending.value.some((x) => x.queued))) && (
-        <div class="reconnect" role="status">
-          <span class="dot" /> Can't reach the hub · showing what this device has
-        </div>
-      )}
       {updateReady.value && (
         <button class="update-bar" onClick={applyUpdate}>
           <Icon name="refresh" size={14} /> A new version is ready. Tap to reload.
@@ -414,6 +438,8 @@ export function App() {
       <MessageHistoryLayer />
       <ThreadsLayerLazy />
       <Toasts />
+      {/* The hub out of reach: the rail's orb or a phone page's says so, and opens this (docs/sync.md). */}
+      <OfflineLayer />
       <DragLayer />
       <ContextMenuLayer />
       <TooltipLayer />

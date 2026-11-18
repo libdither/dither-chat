@@ -4,6 +4,7 @@
  * composer draws every network from these rules: X's ring that fills and counts down from 20, Reddit's 10,000
  * characters of Markdown. Pure, so the hub checks a post with the same count the page shows.
  */
+import type { ReplyGate } from './feed.ts';
 
 export interface PostRules {
   /** The network's words: its button, its placeholder, a reply's. */
@@ -34,6 +35,12 @@ export interface PostRules {
    * Who reposted is public where reposts are.
    */
   likersVisible: 'author' | 'all' | 'none';
+  /** Pictures or a video with a new post: at most `images` pictures, or one GIF, or one video (none: 0 and false). */
+  media: { images: number; gif: boolean; video: boolean };
+  /** Who may reply, offered on a new post (X's "who can reply"); empty when the network has no such choice. */
+  replyGates: readonly ReplyGate[];
+  /** A title apart from the words (Reddit): whether a post needs one, and how long it may be. */
+  title?: { required: boolean; maxLength: number };
 }
 
 const X_RULES: PostRules = {
@@ -46,6 +53,8 @@ const X_RULES: PostRules = {
   markdown: false,
   actions: { like: true, repost: true, quote: true, reply: true },
   likersVisible: 'author',
+  media: { images: 4, gif: true, video: true },
+  replyGates: ['everyone', 'following', 'mentioned', 'verified'],
 };
 
 /** Reddit's comment box, for when a Reddit account comes: the same composer, its own rules. */
@@ -59,6 +68,9 @@ export const REDDIT_RULES: PostRules = {
   markdown: true,
   actions: { like: true, repost: false, quote: false, reply: true },
   likersVisible: 'none',
+  media: { images: 20, gif: true, video: true },
+  replyGates: [],
+  title: { required: true, maxLength: 300 },
 };
 
 /** The rules of each network that has posts. */
@@ -179,4 +191,64 @@ export function composeState(text: string, rules: PostRules): ComposeState {
     overFrom,
     sendable: text.replace(BLANK, '').length > 0 && remaining >= 0,
   };
+}
+
+/**
+ * Text too long for one post, as a thread: parts that each fit, cut where a reader would. A paragraph is kept whole in
+ * one post when it fits, short ones sharing a post; a paragraph too long for one is cut between sentences, then words,
+ * and a word longer than a whole post where it must. Each part trimmed; empty ones dropped. Text that fits is one part.
+ */
+export function splitThread(text: string, rules: PostRules): string[] {
+  const fits = (s: string) => postLength(s, rules) <= rules.maxLength;
+  const t = text.trim();
+  if (!t) return [];
+  if (fits(t)) return [t];
+  const parts: string[] = [];
+  let cur = '';
+  const flush = () => {
+    if (cur.trim()) parts.push(cur.trim());
+    cur = '';
+  };
+  /** Adds a piece after what is there, joined by `join`, starting a new part when it would not fit. */
+  const add = (piece: string, join: string) => {
+    const next = cur ? cur + join + piece : piece;
+    if (cur && !fits(next)) {
+      flush();
+      cur = piece;
+    } else cur = next;
+  };
+  for (const raw of t.split(/\n\s*\n/)) {
+    const para = raw.trim();
+    if (!para) continue;
+    // A paragraph that fits goes whole: with what came before when both fit, else in a post of its own.
+    if (fits(para)) {
+      add(para, '\n\n');
+      continue;
+    }
+    flush();
+    // Too long for one post: by sentences, a sentence too long by words, a word too long by characters.
+    const sentences = para.match(/[^.!?。！？\n]+(?:[.!?。！？]+["')\]]*|\n|$)/gu) ?? [para];
+    for (const sen of sentences) {
+      const sentence = sen.trim();
+      if (!sentence) continue;
+      const join = sen.startsWith('\n') || /\n$/.test(cur) ? '\n' : ' ';
+      if (fits(sentence)) {
+        add(sentence, join);
+        continue;
+      }
+      for (const [wi, w] of sentence.split(/\s+/).entries()) {
+        let rest = w;
+        while (!fits(rest)) {
+          let n = rest.length;
+          while (n > 1 && !fits(rest.slice(0, n))) n = Math.floor(n * 0.9);
+          add(rest.slice(0, n), wi ? ' ' : join);
+          rest = rest.slice(n);
+        }
+        if (rest) add(rest, wi ? ' ' : join);
+      }
+    }
+    flush();
+  }
+  flush();
+  return parts.filter(Boolean);
 }

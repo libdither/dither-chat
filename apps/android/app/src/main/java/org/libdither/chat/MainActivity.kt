@@ -23,6 +23,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewTreeObserver
 import android.view.WindowInsets
+import android.view.WindowInsetsAnimation
 import android.view.WindowInsetsController
 import android.view.inputmethod.EditorInfo
 import android.webkit.ConsoleMessage
@@ -33,6 +34,7 @@ import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
@@ -55,10 +57,11 @@ import org.unifiedpush.android.connector.UnifiedPush
 class MainActivity : Activity() {
     companion object {
         const val EXTRA_HASH = "hash"
+        /** Answer on a ring's notification (Notifications.ring): the call to join, for the page. */
+        const val EXTRA_ANSWER = "answer"
         private const val TAG = "DitherStartup"
         private const val REQ_FILES = 1
-        private const val REQ_MEDIA = 2
-        private const val REQ_NOTIFY = 3
+        private const val REQ_ASK = 2
         private const val REQ_UPLOAD = 4
 
         /** The activity on screen, if any: a push for what the page is showing needs no notification. */
@@ -96,13 +99,13 @@ class MainActivity : Activity() {
     /** Where the camera app is writing the photo a page's `capture` input asked for. */
     private var captured: Uri? = null
     private var mediaRequest: PermissionRequest? = null
-    private var afterNotify: ((Boolean) -> Unit)? = null
     private val createdAt = SystemClock.uptimeMillis()
     private val cold = firstInProcess.also { firstInProcess = false }
     private var drawnReported = false
     private var loadAt = 0L
     var callActive = false
         private set
+    private var notifyAsked = false
     private var backCallback: Any? = null
     /** The system splash stays up until the page has drawn its own sphere in the same place, or for 1.5 s at most. */
     private var splashHeld = false
@@ -110,6 +113,8 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         current = this
+        Crashes.install(this)
+        Crashes.collectExits(this)
         Notifications.channels(this)
         bg = Hub.prefs(this).getInt("bg", getColor(R.color.app_bg))
         window.setBackgroundDrawable(ColorDrawable(bg))
@@ -122,6 +127,21 @@ class MainActivity : Activity() {
         hub = Hub.origin(this)
         val h = hub
         if (h == null) showSetup(null, null) else showWeb(h, hashFrom(intent))
+        answerFrom(intent)
+    }
+
+    /**
+     * Answer on a ring: the ring stops here at once and the page joins the call (android.ts `call.answer`), held by the
+     * bridge until a page that just started says hello. Its microphone prompt, if any, comes from the join as usual.
+     */
+    private fun answerFrom(i: Intent?) {
+        val raw = i?.getStringExtra(EXTRA_ANSWER) ?: return
+        // Once: a later recreation of the activity from the same intent must not join again.
+        i.removeExtra(EXTRA_ANSWER)
+        val a = runCatching { JSONObject(raw) }.getOrNull() ?: return
+        Notifications.cancel(this, a.optString("tag").ifEmpty { "call:${a.optString("call")}" })
+        Log.i(TAG, "answering call ${a.optString("call")}")
+        bridge?.send(a.put("t", "call.answer"))
     }
 
     // ---------------------------------------------------------------- splash
@@ -147,16 +167,58 @@ class MainActivity : Activity() {
 
     // ---------------------------------------------------------------- layout
 
-    /** Content between the system bars and above the keyboard; the bars themselves show the page's colour. */
+    /**
+     * Content between the system bars and above the keyboard; the bars themselves show the page's colour. A page that
+     * keeps the keyboard's room itself (it says so: Bridge "keyboard") gets the whole height instead, and is told the
+     * keyboard's height on every frame of its slide, so the message box rides on the keyboard and a panel can take
+     * the keyboard's place without the box moving (docs/android.md "The keyboard").
+     */
     private fun edgeToEdge() {
         if (Build.VERSION.SDK_INT < 30) return
         // Android 15 does this by itself for apps targeting it; 11 to 14 need asking.
         @Suppress("DEPRECATION") window.setDecorFitsSystemWindows(false)
         root.setOnApplyWindowInsetsListener { v, insets ->
-            val i = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.ime() or WindowInsets.Type.displayCutout())
+            val page = pageKeyboard
+            val i = insets.getInsets(WindowInsets.Type.systemBars() or (if (page) 0 else WindowInsets.Type.ime()) or WindowInsets.Type.displayCutout())
             v.setPadding(i.left, i.top, i.right, i.bottom)
+            // While the keyboard slides, its final height arrives here first: the page hears the frames instead.
+            if (page && !imeMoving) sendIme(insets, true)
             WindowInsets.CONSUMED
         }
+        root.setWindowInsetsAnimationCallback(object : WindowInsetsAnimation.Callback(DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
+            override fun onPrepare(animation: WindowInsetsAnimation) {
+                if (animation.typeMask and WindowInsets.Type.ime() != 0) imeMoving = true
+            }
+
+            override fun onProgress(insets: WindowInsets, running: MutableList<WindowInsetsAnimation>): WindowInsets {
+                if (pageKeyboard && imeMoving) sendIme(insets, false)
+                return insets
+            }
+
+            override fun onEnd(animation: WindowInsetsAnimation) {
+                if (animation.typeMask and WindowInsets.Type.ime() == 0) return
+                imeMoving = false
+                val w = root.rootWindowInsets ?: return
+                if (pageKeyboard) sendIme(w, true)
+            }
+        })
+    }
+
+    /** The page keeps the keyboard's room itself. Each new page says so again; until then the app makes room. */
+    var pageKeyboard = false
+        set(v) {
+            if (field == v) return
+            field = v
+            root.requestApplyInsets()
+        }
+    private var imeMoving = false
+
+    /** The keyboard's height over the navigation bar, in the page's pixels; `done` once it stopped moving. */
+    private fun sendIme(insets: WindowInsets, done: Boolean) {
+        val ime = insets.getInsets(WindowInsets.Type.ime()).bottom
+        val nav = insets.getInsets(WindowInsets.Type.systemBars()).bottom
+        val css = Math.max(0, ime - nav) / resources.displayMetrics.density
+        bridge?.sendLive(JSONObject().put("t", "ime").put("h", Math.round(css * 10) / 10.0).put("done", done))
     }
 
     private fun lightBars(light: Boolean) {
@@ -226,6 +288,9 @@ class MainActivity : Activity() {
     private fun isAppPath(path: String?) = path.isNullOrEmpty() || path == "/" || path == "/index.html"
 
     private inner class Client : WebViewClient() {
+        // The phone's photos and files for the panel, at the hub's origin under a private path (Device.kt).
+        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? = Device.serve(this@MainActivity, hub, request.url)
+
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val u = request.url
             if (Hub.sameOrigin(u, hub) && isAppPath(u.path)) return false
@@ -255,6 +320,7 @@ class MainActivity : Activity() {
 
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
             Log.w(TAG, "renderer gone (crashed: ${detail.didCrash()}), reloading")
+            if (detail.didCrash()) Crashes.rendererCrashed(this@MainActivity)
             if (view == web) {
                 web = null
                 bridge = null
@@ -268,6 +334,7 @@ class MainActivity : Activity() {
 
     private inner class Chrome : WebChromeClient() {
         override fun onPermissionRequest(request: PermissionRequest) {
+            Log.i(TAG, "page asks for ${request.resources.joinToString()}")
             runOnUiThread {
                 if (!Hub.sameOrigin(request.origin, hub)) return@runOnUiThread request.deny()
                 val needed = request.resources.mapNotNull(::permissionFor).filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
@@ -275,12 +342,20 @@ class MainActivity : Activity() {
                 else {
                     mediaRequest?.deny()
                     mediaRequest = request
-                    requestPermissions(needed.distinct().toTypedArray(), REQ_MEDIA)
+                    ask(needed.distinct().toTypedArray(), still = { mediaRequest == request }) {
+                        if (mediaRequest == request) {
+                            mediaRequest = null
+                            grantGranted(request)
+                        }
+                        // A call already running takes the microphone type now that it may.
+                        CallService.permissionsChanged()
+                    }
                 }
             }
         }
 
         override fun onPermissionRequestCanceled(request: PermissionRequest) {
+            Log.i(TAG, "page's request for ${request.resources.joinToString()} cancelled")
             if (mediaRequest == request) mediaRequest = null
         }
 
@@ -364,17 +439,62 @@ class MainActivity : Activity() {
         if (ok.isEmpty()) request.deny() else request.grant(ok.toTypedArray())
     }
 
+    /**
+     * One permission prompt at a time. Android shows one request and answers a second made meanwhile at once, with
+     * nothing granted: a call asks for the microphone (the page) and for notifications (onCall) in the same moment, and
+     * the microphone's answer was lost that way.
+     */
+    private class Ask(val perms: Array<String>, val still: () -> Boolean, val then: () -> Unit)
+    private val asks = ArrayDeque<Ask>()
+    private var asking: (() -> Unit)? = null
+
+    /** `still`: whether the prompt is wanted when its turn comes (the page may have given up on its request). */
+    private fun ask(perms: Array<String>, still: () -> Boolean = { true }, then: () -> Unit) {
+        asks.addLast(Ask(perms, still, then))
+        if (asking == null) nextAsk()
+    }
+
+    private fun nextAsk() {
+        val a = asks.removeFirstOrNull() ?: return
+        val perms = a.perms
+        val then = a.then
+        if (!a.still()) return nextAsk()
+        // Granted while it waited (the same permission asked twice): no prompt.
+        if (perms.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) {
+            then()
+            return nextAsk()
+        }
+        asking = then
+        Log.i(TAG, "asking for ${perms.joinToString()}")
+        requestPermissions(perms, REQ_ASK)
+    }
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        when (requestCode) {
-            REQ_MEDIA -> mediaRequest?.let(::grantGranted).also { mediaRequest = null }
-            REQ_NOTIFY -> afterNotify?.invoke(grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED).also { afterNotify = null }
+        if (requestCode != REQ_ASK) return
+        Log.i(TAG, "answered: ${permissions.zip(grantResults.toList()).joinToString { (p, r) -> "$p=${r == PackageManager.PERMISSION_GRANTED}" }.ifEmpty { "nothing (cancelled)" }}")
+        val then = asking
+        asking = null
+        then?.invoke()
+        nextAsk()
+    }
+
+    /** The gallery for the panel (Device.kt): Android's own question, all photos or the ones picked. Asking again changes the pick. */
+    fun askMediaAccess() = runOnUiThread { ask(Device.mediaPermissions()) { bridge?.refresh() } }
+
+    /** Folders for the panel: "All files access" is a switch in Settings (Android 11+); the page hears on return. */
+    fun askFilesAccess() {
+        if (Build.VERSION.SDK_INT < 30) return runOnUiThread { ask(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)) { bridge?.refresh() } }
+        try {
+            startActivity(Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")))
+        } catch (e: ActivityNotFoundException) {
+            startActivity(Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
         }
     }
 
     fun ensureNotifications(then: (Boolean) -> Unit) {
-        if (Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return then(true)
-        afterNotify = then
-        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
+        val granted = { Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED }
+        if (granted()) return then(true)
+        ask(arrayOf(Manifest.permission.POST_NOTIFICATIONS)) { then(granted()) }
     }
 
     @Deprecated("Activity result API", level = DeprecationLevel.WARNING)
@@ -427,9 +547,12 @@ class MainActivity : Activity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        val hash = hashFrom(intent) ?: return
-        val b = bridge
-        if (b != null) b.send(JSONObject().put("t", "open").put("hash", hash)) else hub?.let { showWeb(it, hash) }
+        val hash = hashFrom(intent)
+        if (hash != null) {
+            val b = bridge
+            if (b != null) b.send(JSONObject().put("t", "open").put("hash", hash)) else hub?.let { showWeb(it, hash) }
+        }
+        answerFrom(intent)
     }
 
     private fun hashFrom(i: Intent?) = i?.getStringExtra(EXTRA_HASH)?.takeIf { it.startsWith("/") }
@@ -481,12 +604,19 @@ class MainActivity : Activity() {
     fun onCall(m: JSONObject) {
         val active = m.optBoolean("active")
         callActive = active
+        if (!active) notifyAsked = false
         // During a call the renderer keeps its priority with the screen off, so Android does not reclaim it first.
         web?.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, !active)
         CallService.update(this, m)
         // Android 13+ hides a foreground service's notification without this, and with it the hang-up button.
-        // A notification posted before the grant stays hidden, so post it again after.
-        if (active) ensureNotifications { granted -> if (granted && callActive) CallService.update(this, m) }
+        // A notification posted before the grant stays hidden, so post it again after. Asked once a call is live: by
+        // then the page has its microphone, and a prompt up while the page asks for it made the WebView cancel the
+        // page's request, which then never got an answer and held the call at Connecting. Once a call: a refusal is
+        // an answer, and the page tells every change of phase and mute.
+        if (active && m.optString("phase") == "live" && !notifyAsked) {
+            notifyAsked = true
+            ensureNotifications { granted -> if (granted && callActive) CallService.update(this, m) }
+        }
     }
 
     fun changeHub() = showSetup(hub?.toString(), null)

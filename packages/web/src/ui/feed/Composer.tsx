@@ -42,7 +42,7 @@ const keepDraft = (k: string, v: string) => {
 };
 
 /** X's ring: fills as you write; from `warnAt` left bigger, with the number. */
-function Ring({ st, rules }: { st: ReturnType<typeof composeState>; rules: PostRules }) {
+export function Ring({ st, rules }: { st: ReturnType<typeof composeState>; rules: PostRules }) {
   if (rules.counter === 'text')
     return st.showCount ? (
       <span class={`compose-left ${st.level}`}>
@@ -81,6 +81,7 @@ export function PostComposer({
   onCancel,
   autoFocus,
   collapsed,
+  account,
 }: {
   network: P.Network;
   target: ComposeTarget;
@@ -90,6 +91,8 @@ export function PostComposer({
   autoFocus?: boolean;
   /** One line until it is focused (the reply box under a thread's post, as X shows it). */
   collapsed?: boolean;
+  /** Post as this account (the Feed page's), else the kit's, else the first that can. */
+  account?: string;
 }) {
   const rules = postRulesFor(network);
   const draftKey = `${network}:${target.quote ? `q${target.quote.id}` : target.replyTo ? `r${target.replyTo.id}` : 'new'}`;
@@ -134,7 +137,7 @@ export function PostComposer({
     setError(null);
     api<P.PostView>(`/api/posts/${network}/publish`, {
       method: 'POST',
-      body: { text, key, ...(target.replyTo ? { replyTo: target.replyTo.id } : {}), ...(target.quote ? { quote: target.quote.id } : {}) },
+      body: { text, key, ...(target.replyTo ? { replyTo: target.replyTo.id } : {}), ...(target.quote ? { quote: target.quote.id } : {}), ...((account ?? kit.account) ? { account: account ?? kit.account } : {}) },
     }).then(
       (p) => {
         setSending(false);
@@ -152,6 +155,25 @@ export function PostComposer({
       },
     );
   };
+  /**
+   * Cancel: the box goes (the one under a thread's post closes to its line), and what was written with it; a toast
+   * brings it back.
+   */
+  const cancel =
+    onCancel || collapsed !== undefined
+      ? () => {
+          const had = text;
+          if (collapsed !== undefined) {
+            setText('');
+            keepDraft(draftKey, '');
+            setError(null);
+            setOpen(false);
+          }
+          onCancel?.();
+          if (collapsed !== undefined && had.trim())
+            kit.toast({ title: `${label} discarded`, body: '', kind: 'info', actionLabel: 'Undo', action: () => (setText(had), setOpen(true), setTimeout(() => area.current?.focus())) }, 5000);
+        }
+      : undefined;
   // What is past the limit, marked behind the text as X marks it.
   const overFrom = st.overFrom;
   const nfc = text.normalize('NFC');
@@ -193,12 +215,12 @@ export function PostComposer({
           onScroll={(e) => back.current && (back.current.scrollTop = (e.currentTarget as HTMLTextAreaElement).scrollTop)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) (e.preventDefault(), send());
-            if (e.key === 'Escape' && onCancel) (e.preventDefault(), onCancel());
+            if (e.key === 'Escape' && cancel) (e.preventDefault(), cancel());
           }}
           disabled={sending}
         />
       </div>
-      {target.quote && <QuotedIn p={target.quote} kit={kit} network={network} />}
+      {target.quote && <QuotedIn p={target.quote} kit={kit} network={network} still />}
       {/* Said once when it goes over or comes back, not at every key. */}
       <span class="sr-only" aria-live="polite">
         {st.level === 'over' ? `Too long by ${-st.remaining}` : ''}
@@ -217,8 +239,8 @@ export function PostComposer({
         )}
         <span class="compose-spacer" />
         <Ring st={st} rules={rules} />
-        {onCancel && (
-          <button class="btn compose-cancel" onClick={onCancel} disabled={sending}>
+        {cancel && (
+          <button class="btn compose-cancel" onClick={cancel} disabled={sending}>
             Cancel
           </button>
         )}

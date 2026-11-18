@@ -60,18 +60,21 @@ import { AccountSelf, ignoredOf } from './accountself.ts';
 import { mentionables } from './mentions.ts';
 import { lowerForSend } from './mentionrefs.ts';
 import { peopleGraph } from './graph.ts';
+import { ProfileCollector, SameMatches } from './samepeople.ts';
 import type { MailHub } from './mail/index.ts';
 import type { Notices } from './notices/index.ts';
 import { mailPeople } from './mail/people.ts';
 import { Adding, profileLinksOf, requestHeld, requestViews } from './add.ts';
 import { feedRefusalFor, isFeed } from './feed.ts';
 import { Posts, PostsError } from './posts.ts';
+import { Follows, type FollowConfig } from './follows.ts';
+import { Timelines } from './timelines.ts';
 import { TranslateError, Translator } from './translate.ts';
 import { calendarOff, type CalendarLink } from './calendar.ts';
 import { markCalendarAdded } from './calendar-account.ts';
 import { ReplyMarks, type ReplyMark } from './replymarks.ts';
 import { mailAttention } from './mail/attention.ts';
-import { clientReport, jobFailed, PerClientCap, reportedInRequest, reportError, withRequest } from './errors.ts';
+import { AnswerClock, clientReport, jobFailed, lossCovered, PerClientCap, reportedInRequest, reportError, withRequest } from './errors.ts';
 import { callRoute } from './callstate.ts';
 import { handlesPolls, pollRoute } from './polls.ts';
 import { SendExtras } from './sendextras.ts';
@@ -94,6 +97,11 @@ type SendBody = {
   voice?: P.VoiceOut;
   /** The files open once (Signal's view-once). */
   viewOnce?: boolean;
+  /**
+   * The one attached file is a GIF from the GIF picker: sent as the network's own GIF where it has one (capability
+   * 'sendGifs'), else as a file.
+   */
+  gif?: boolean;
   /** capability 'silentSend' (sending.ts) */
   silent?: boolean;
   /** capability 'replyMention' */
@@ -169,6 +177,12 @@ interface ServerOpts {
   calendar?: { link(): CalendarLink | undefined; sync(): void };
   /** A reminder set on a network came due (saved.ts): main.ts notifies it like an alert. */
   onSavedReminder?: (n: { title: string; body: string; conversationId: string; messageId: string }) => void;
+  /** Same person? (samepeople.ts): the database file for its worker (none: worked out on this thread), and jev's address. */
+  matches?: { file: string | null; jevUrl: string | null };
+  /** New live messages the hub made itself (a followed post's replies, follows.ts): triage decides them (main.ts). */
+  onFresh?: (messageIds: string[]) => void;
+  /** How often a followed post is read again (follows.ts FOLLOW unless told otherwise). */
+  follow?: FollowConfig;
 }
 
 // ------------------------------------------------------------------ access
@@ -218,6 +232,12 @@ function sameOriginOpen(req: Request): boolean {
  * never answers without a session, because the router is never reached without one.
  */
 export const GATED = /^\/(api|media|emoji|voice|calendar|demo|adapter)(\/|$)/;
+/**
+ * Discord's DAVE library, as scripts/dave/update.ts extracted it from the public web client (docs/calls.md): public code,
+ * named by its hash. Direct mode loads it in a worker with an opaque origin, which sends no cookie, so it answers
+ * without a session.
+ */
+const DAVE_FILE = /^\/voice\/dave\/([0-9a-f]{16})\/(libdave\.mjs|libdave\.wasm)$/;
 /** The only gated paths open without a session: the login itself and a bare health check. */
 export const PUBLIC_API = new Set(['/api/health', '/api/login', '/api/logout']);
 
@@ -318,8 +338,14 @@ export class HubServer {
   readonly abouts: Abouts;
   readonly groups: Groups;
   readonly people: People;
+  /** Same person? suggestions, and profiles collected in the background (samepeople.ts, docs/same-person.md). */
+  readonly matches: SameMatches;
+  readonly collector: ProfileCollector;
   /** Public posts read and logged as messages (posts.ts, docs/feed.md "Threads"). */
   readonly posts: Posts;
+  /** Posts you follow, read again for new replies (follows.ts, docs/feed.md "Following a post"). */
+  readonly follows: Follows;
+  readonly timelines: Timelines;
   /** Translating posts and messages: the network's own, or a translation server (translate.ts). */
   readonly translator: Translator;
   /** The account's own self, block, ignore and notes (accountself.ts). */
@@ -393,13 +419,19 @@ export class HubServer {
       note: (a, line) => sup.note(a, line),
     });
     this.groups = new Groups({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line) });
-    this.posts = new Posts({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), changed: () => this.flush() });
+    this.posts = new Posts({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), changed: () => this.flush(), fresh: (ids) => this.opts.onFresh?.(ids) });
+    // Through the same pace: a check never reads while a job or the gap fill does on that account.
+    this.follows = new Follows({ store, posts: this.posts, online: (a) => sup.online(a), pace, config: opts.follow, changed: () => this.flush(), log: (l) => console.warn(l) });
+    this.timelines = new Timelines({ store, posts: this.posts, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), files: (ids) => this.uploads.get(ids), changed: () => this.flush() });
     this.translator = new Translator({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     this.self = new AccountSelf({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), quietHours: () => store.quietHours() });
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), posts: (a, ps) => this.posts.log(a, ps) });
     // A note joined from yours and the network's goes back to the network (store.ts networkNotes).
     store.contactNotesOut = (id, change) => this.people.pushContactNotes(id, change);
+    this.matches = new SameMatches({ store, file: opts.matches?.file ?? null, jevUrl: opts.matches?.jevUrl ?? null, log: (l) => console.log(l), flush: () => this.flush() });
+    this.collector = new ProfileCollector({ store, people: this.people, online: (a) => sup.online(a), log: (l) => console.log(l) });
+    this.collector.start();
     this.adding = new Adding({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), liveView: (a) => !!sup.liveViewUrl?.(a) || !!store.account(a)?.live_view });
     this.threads = new Threads({
       store,
@@ -471,6 +503,7 @@ export class HubServer {
             withRequest(async () => {
               try {
                 const raw = await handler(req, server);
+                self.answers.answered();
                 // An answer of 5xx is an error for traces/errors.ndjson (errors.ts), unless something inside the request
                 // was reported already (an attempt, a job) or the client went away.
                 if (raw && raw.status >= 500 && !reportedInRequest() && !req.signal.aborted) await reportAnswer(req, route, raw, s.traceId);
@@ -566,6 +599,8 @@ export class HubServer {
     this.store.journal.prune();
     this.pruneTimer = setInterval(() => this.store.journal.prune(), 3_600_000);
     this.sendExtras.later.start();
+    this.timelines.start();
+    this.follows.start();
     return this.server;
   }
 
@@ -573,12 +608,16 @@ export class HubServer {
     clearInterval(this.flushTimer);
     clearInterval(this.pruneTimer);
     this.sendExtras.later.stop();
+    this.timelines.stop();
+    this.follows.stop();
     this.importer.stop();
     this.gapfill.stopAll();
     this.jobs.stop();
     this.archiver?.stop();
     this.mediaInfo.stop();
     this.imports.stop();
+    this.matches.stop();
+    this.collector.stop();
     this.flush();
     this.server?.stop(true);
     this.plain?.stop(true);
@@ -788,6 +827,8 @@ export class HubServer {
     if (path === '/api/health' && !me) return Response.json({ ok: true, now: Date.now() }, { headers: { 'cache-control': 'no-store' } });
     if (!me) {
       const ticketed = (path.startsWith('/media/') || path.startsWith('/emoji/')) && (req.method === 'GET' || req.method === 'HEAD') && ticketGood(this.opts.secret, path, url.searchParams.get('ticket'));
+      const dave = (req.method === 'GET' || req.method === 'HEAD') && path.match(DAVE_FILE);
+      if (dave) return this.daveFile(dave[1]!, dave[2]!);
       if (!ticketed) {
         if (GATED.test(path)) return this.signIn();
         return this.static(path);
@@ -936,7 +977,7 @@ export class HubServer {
       return new Response('upgrade failed', { status: 400 });
     }
     if (path === '/api/voice/dave') return this.daveCurrent();
-    if ((m = path.match(/^\/voice\/dave\/([0-9a-f]{16})\/(libdave\.mjs|libdave\.wasm)$/))) return this.daveFile(m[1], m[2]);
+    if ((m = path.match(DAVE_FILE))) return this.daveFile(m[1]!, m[2]!);
     if (path === '/api/voice/sounds') return this.callSounds();
     if ((m = path.match(/^\/voice\/sounds\/([a-z0-9_]{1,40})\.mp3$/))) return this.callSound(m[1]);
     if ((m = path.match(/^\/media\/([\w-]+)\/([\w-]+)$/))) return this.media(m[1], m[2], url.searchParams.get('a'));
@@ -949,6 +990,8 @@ export class HubServer {
 
   /** At most 60 of the page's error reports a minute from one address. */
   private readonly errorCap = new PerClientCap(60, 60_000);
+  /** Answers given, per second, to judge the page's reports of a hub it could not reach (errors.ts lossCovered). */
+  readonly answers = new AnswerClock();
 
   /**
    * POST /api/errors: an error the page met (errors.ts `clientReport`), written to traces/errors.ndjson as app `web`,
@@ -965,6 +1008,11 @@ export class HubServer {
     const r = clientReport(body);
     if (!r) return Response.json({ error: 'Send { name, message, stack, where, status?, version }, where a route template like #/chat/:id' }, { status: 400 });
     if (!this.errorCap.take(ip)) return Response.json({ error: 'too many reports' }, { status: 429 });
+    const covered = lossCovered(r.extra, this.answers, Date.now());
+    if (covered) {
+      console.log(`errors: a device lost the hub for ${Math.round(Number(r.extra?.lostMs) / 1000)} s, not written: ${covered === 'restarted' ? 'the hub restarted meanwhile' : 'the hub answered others meanwhile'}`);
+      return new Response(null, { status: 204 });
+    }
     reportError(r);
     return new Response(null, { status: 204 });
   }
@@ -983,6 +1031,7 @@ export class HubServer {
     if (path === '/api/demo/reset' && method === 'POST') {
       if (!this.opts.onDemoReset) return bad('demo is not enabled', 404);
       await this.opts.onDemoReset();
+      await this.matches.forget();
       this.flush();
       this.broadcast([{ t: 'resync' }]);
       return ok();
@@ -1110,6 +1159,38 @@ export class HubServer {
     }
     // People and the places they share (graph.ts, docs/people-graph.md).
     if (path === '/api/graph' && method === 'GET') return ok(peopleGraph(s));
+    // Same person? (samepeople.ts, docs/same-person.md): pairs to merge, decisions, merging, pictures to hash.
+    if (path === '/api/matches' && method === 'GET') return ok(this.matches.view({ side: url.searchParams.get('side') ?? undefined }));
+    if (path === '/api/matches/refresh' && method === 'POST') {
+      void this.matches.refresh();
+      return ok(this.matches.view());
+    }
+    if (path === '/api/matches/decide' && method === 'POST') {
+      const b = await body<{ key?: unknown; decision?: unknown; undo?: unknown }>();
+      if (typeof b.key !== 'string' || !/^(per|idn)_[\w-]+\+(per|idn)_[\w-]+$/.test(b.key)) return bad('key: two side ids joined by +');
+      if (b.undo === true) await this.matches.undecide(b.key);
+      else if (b.decision === 'no' || b.decision === 'later') this.matches.decide(b.key, b.decision);
+      else return bad("decision: 'no' or 'later'");
+      return ok();
+    }
+    if (path === '/api/matches/merge' && method === 'POST') {
+      const b = await body<{ sides?: unknown }>();
+      if (!Array.isArray(b.sides) || b.sides.length > 50 || !b.sides.every((x) => typeof x === 'string')) return bad('sides: the ids to make one person');
+      try {
+        const person = this.matches.merge(b.sides as string[]);
+        this.flush();
+        return ok({ person });
+      } catch (e) {
+        return bad((e as Error).message, (e as { status?: number }).status ?? 400);
+      }
+    }
+    if (path === '/api/matches/pictures' && method === 'GET') return ok({ pictures: this.matches.pictures(Math.min(200, Number(url.searchParams.get('limit')) || 60)) });
+    if (path === '/api/matches/pictures' && method === 'POST') {
+      const b = await body<{ hashes?: unknown }>();
+      if (!Array.isArray(b.hashes)) return bad('hashes: [{ identityId, url, hash }]');
+      return ok({ saved: this.matches.savePictures(b.hashes as { identityId: string; url: string; hash: string | null }[]) });
+    }
+    if (path === '/api/profiles/collect' && method === 'GET') return ok(this.collector.status());
     // The networks' own search, a few places at a time in jev's order (netsearch.ts).
     if (path === '/api/search/network' && method === 'POST') return ok(this.netsearch.start((await body<{ q?: string }>()).q ?? ''));
     if ((m = path.match(/^\/api\/search\/network\/([\w-]+)(\/more)?$/))) {
@@ -1209,6 +1290,8 @@ export class HubServer {
           statuses: bool(b.statuses, cur.statuses),
           presence: bool(b.presence, cur.presence),
           members: bool(b.members, cur.members),
+          voice: bool(b.voice, cur.voice ?? false),
+          profiles: bool(b.profiles, cur.profiles ?? false),
           adversarial: bool(b.adversarial, cur.adversarial),
           show: b.show === 'hidden' ? 'hidden' : b.show === 'shown' || (b.show as unknown) === 'collapsed' ? 'shown' : cur.show,
           showIn,
@@ -1320,7 +1403,7 @@ export class HubServer {
       const cursor = url.searchParams.get('cursor') ?? undefined;
       if (cursor && cursor.length > 2000) return bad('cursor: too long');
       try {
-        const v = await this.posts.thread(network, m[2], cursor);
+        const v = await this.posts.thread(network, m[2], cursor, url.searchParams.get('fresh') === '1');
         this.flush();
         return ok(v);
       } catch (e) {
@@ -1331,9 +1414,11 @@ export class HubServer {
     if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/act$/)) && method === 'POST') {
       const network = m[1] as P.Network;
       if (!(network in NETWORK_META)) return bad('no such network', 404);
-      const b = await body<{ act?: unknown }>();
+      const b = await body<{ act?: unknown; account?: unknown }>();
       try {
-        const r = await this.posts.act(network, m[2], String(b.act ?? '') as P.PostAct);
+        const r = await this.posts.act(network, m[2], String(b.act ?? '') as P.PostAct, typeof b.account === 'string' && b.account ? b.account : undefined);
+        // The Feed page's timeline of that account follows what it did.
+        this.timelines.noteAct(r.accountId, network, m[2], r.viewer);
         this.flush();
         return ok(r);
       } catch (e) {
@@ -1343,11 +1428,78 @@ export class HubServer {
     if ((m = path.match(/^\/api\/posts\/([a-z]+)\/publish$/)) && method === 'POST') {
       const network = m[1] as P.Network;
       if (!(network in NETWORK_META)) return bad('no such network', 404);
-      const b = await body<{ text?: unknown; replyTo?: unknown; quote?: unknown; key?: unknown }>();
+      const b = await body<{ text?: unknown; replyTo?: unknown; quote?: unknown; key?: unknown; account?: unknown }>();
       try {
-        const v = await this.posts.publish(network, b);
+        const v = await this.posts.publish(network, { text: b.text, replyTo: b.replyTo, quote: b.quote, key: b.key, account: b.account });
         this.flush();
         return ok(v);
+      } catch (e) {
+        return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
+      }
+    }
+    // Following a post (follows.ts, docs/feed.md "Following a post"): PUT follows (reading the thread first), DELETE
+    // stops the checks and keeps the conversation, GET says how it stands and which replies are new since it was read.
+    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/follow$/)) && (method === 'PUT' || method === 'DELETE' || method === 'GET')) {
+      const network = m[1] as P.Network;
+      if (!(network in NETWORK_META)) return bad('no such network', 404);
+      try {
+        if (method === 'GET') {
+          const f = this.follows.state(network, m[2], true);
+          return f ? ok(f) : bad('That post is not followed.', 404);
+        }
+        const f = method === 'PUT' ? await this.follows.follow(network, m[2]) : this.follows.unfollow(network, m[2]);
+        this.flush();
+        return ok(f);
+      } catch (e) {
+        return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
+      }
+    }
+    // Delete a post of yours (posts.ts unpublish).
+    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/delete$/)) && method === 'POST') {
+      const network = m[1] as P.Network;
+      if (!(network in NETWORK_META)) return bad('no such network', 404);
+      const b = await body<{ account?: unknown }>();
+      try {
+        const r = await this.posts.unpublish(network, m[2], typeof b.account === 'string' && b.account ? b.account : undefined);
+        this.flush();
+        return ok(r);
+      } catch (e) {
+        return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
+      }
+    }
+    // The Feed page (timelines.ts, docs/feed.md "The Feed page"): sources, your feeds, timelines, posting to several
+    // accounts, drafts.
+    if (path.startsWith('/api/feed/')) {
+      try {
+        if (path === '/api/feed/sources' && method === 'GET') return ok(this.timelines.sources());
+        if (path === '/api/feed/entries' && method === 'GET') {
+          const before = url.searchParams.get('before');
+          return ok(this.timelines.entries(url.searchParams.get('source') ?? 'following', before !== null && before !== '' ? Number(before) : undefined));
+        }
+        if (path === '/api/feed/read' && method === 'POST') {
+          const b = await body<{ source?: unknown; older?: unknown }>();
+          const v = await this.timelines.read(typeof b.source === 'string' ? b.source : 'following', b.older === true);
+          this.flush();
+          return ok(v);
+        }
+        if (path === '/api/feed/publish' && method === 'POST') {
+          const v = await this.timelines.publish(await body<unknown>());
+          this.flush();
+          return ok(v);
+        }
+        const mm = path.match(/^\/api\/feed\/mixes\/([\w-]{1,40})$/);
+        if (mm && method === 'PUT') return ok(this.timelines.saveMix(mm[1], await body<unknown>()));
+        if (mm && method === 'DELETE') {
+          this.timelines.dropMix(mm[1]);
+          return ok({ ok: true });
+        }
+        if (path === '/api/feed/drafts' && method === 'GET') return ok({ drafts: this.timelines.drafts() });
+        const dm = path.match(/^\/api\/feed\/drafts\/([\w-]{6,64})$/);
+        if (dm && method === 'PUT') return ok(this.timelines.saveDraft(dm[1], await body<unknown>()));
+        if (dm && method === 'DELETE') {
+          this.timelines.dropDraft(dm[1]);
+          return ok({ ok: true });
+        }
       } catch (e) {
         return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
       }
@@ -1562,6 +1714,20 @@ export class HubServer {
         if (e instanceof MediaError) return bad(e.message, e.status);
         return bad(`The network did not list stickers: ${(e as Error).message}`, 502);
       }
+    }
+    // GIFs: search through an account that has it, and the ones already in your chats (docs/media-kinds.md "GIFs").
+    if (path === '/api/gifs' && method === 'GET') {
+      const q = url.searchParams;
+      try {
+        return ok(await this.kinds.gifs(q.get('conversation') ?? undefined, q.get('q') ?? undefined, q.get('cursor') ?? undefined));
+      } catch (e) {
+        if (e instanceof MediaError) return bad(e.message, e.status);
+        return bad(`The network did not find GIFs: ${(e as Error).message}`, 502);
+      }
+    }
+    if (path === '/api/gifs/yours' && method === 'GET') {
+      const before = Number(url.searchParams.get('before'));
+      return ok(this.kinds.yourGifs(before > 0 ? before : undefined));
     }
     if ((m = path.match(/^\/api\/accounts\/([\w-]+)\/stickers$/)) && method === 'POST') {
       // From the app itself, on the owner's click: installing a pack changes the account.
@@ -2433,6 +2599,7 @@ export class HubServer {
     const media = sendMediaProblem({ sticker, files: files.length, voice: b.voice, viewOnce: b.viewOnce === true }, accCaps, `${acc.label} on ${name}`);
     if (media.error) return bad(media.error, 409);
     if (media.voice) files = files.map((f, i) => (i === 0 ? { ...f, voice: media.voice } : f));
+    if (b.gif === true && files.length === 1 && !media.voice && can.includes('sendGifs')) files = [{ ...files[0], gif: true }];
     // Person and identity references become the network's mentions or plain names (mentionrefs.ts).
     const text = lowerForSend(s, conversationId, accCaps, b.body ?? '');
     const preview = files.length || sticker ? null : await this.linkPreview(accountId, text);
@@ -2703,10 +2870,11 @@ export class HubServer {
       if (!r.ok) return new Response(r.error, { status: r.status });
       writeFileSync(file + '.mime', r.mime, { mode: 0o600 });
       return new Response(Bun.file(file), { headers: headers(r.mime) });
-    } else if (raw.startsWith('file://')) {
+    } else if (raw.startsWith('file://') && resolve(normalize(decodeURIComponent(raw.slice('file://'.length)))).startsWith(resolve(this.opts.dataDir) + '/')) {
+      // A file under this hub's data (an import, an account whose session the hub keeps): read here. One elsewhere is
+      // the account's own (an account dither-accounts made keeps its files in its own folder): asked of it below.
       const p = normalize(decodeURIComponent(raw.slice('file://'.length)));
-      const root = resolve(this.opts.dataDir);
-      if (!resolve(p).startsWith(root + '/') || !existsSync(p) || !statSync(p).isFile()) return new Response('not found', { status: 404 });
+      if (!existsSync(p) || !statSync(p).isFile()) return new Response('not found', { status: 404 });
       // A file kept on disk (an import, Signal's own copy) has no type recorded: by its name, else by its first bytes.
       const f = Bun.file(p);
       const named = f.type.split(';')[0];

@@ -5,7 +5,9 @@
  * the section says so. Hiding them keeps their switches as they are: what they keep goes on being kept, out of sight,
  * so nothing is lost by hiding. Turning a switch off is asked first, and never forgets what was kept.
  */
+import type * as P from '@dither-chat/protocol';
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { api } from '../state.ts';
 import { confirmOff, retention, saveRetention } from '../history.ts';
 import { Modal, showSection } from './bits.tsx';
 import { type Kind, SourceTable } from './HistorySettings.tsx';
@@ -20,7 +22,7 @@ const KINDS: Kind[] = [
 ];
 
 /** Each switch, and where what it keeps shows (docs/history.md, "Where it shows"). */
-const SWITCHES: { key: 'deleted' | 'disappearing' | 'statuses' | 'presence' | 'members' | 'voice'; label: string; help: string; where: string }[] = [
+const SWITCHES: { key: 'deleted' | 'disappearing' | 'statuses' | 'presence' | 'members' | 'voice' | 'profiles'; label: string; help: string; where: string }[] = [
   {
     key: 'deleted',
     label: 'Keep deleted messages',
@@ -57,6 +59,12 @@ const SWITCHES: { key: 'deleted' | 'disappearing' | 'statuses' | 'presence' | 'm
     label: 'Record who is in voice channels (passive)',
     help: "Who is in each server voice channel when you are not, as your accounts' clients are told anyway, and each time someone joins or leaves one. Nothing of it is kept while this is off.",
     where: "a voice channel's row and its page",
+  },
+  {
+    key: 'profiles',
+    label: 'Collect profiles (slowly, in the background)',
+    help: "Opens the profiles of people you share a chat or a server with, one at a time and slower than you would click through them, and keeps each version as it changes: names, bios, connected accounts, servers in common. Same person? uses them to find who is one person on several accounts. Nothing is collected while this is off.",
+    where: 'Same person? (People), and the profile pages',
   },
 ];
 
@@ -114,6 +122,7 @@ export function AdversarialSettings() {
                 <small class="adv-where">
                   <Icon name="eye" size={12} /> Where it shows: {x.where}
                 </small>
+                {x.key === 'profiles' && r.profiles && <CollectStatus />}
               </span>
             </label>
           ))}
@@ -193,6 +202,10 @@ function Warning({ onClose, onYes }: { onClose: () => void; onYes: () => void })
               People join a server to be in it, not to be listed by its members.
             </li>
             <li>
+              <b>Collected profiles.</b> Opening everyone's profile in the background, and keeping each version, builds a file on people who only
+              ever showed you a profile when you looked. It also ties their accounts on different networks together, which some keep apart on purpose.
+            </li>
+            <li>
               <b>Voice channels.</b> A record of who sat in which voice channel, and when, says who spends their evenings with whom. People join a
               voice channel to talk, not to be logged.
             </li>
@@ -221,5 +234,27 @@ function Warning({ onClose, onYes }: { onClose: () => void; onYes: () => void })
         </div>
       </div>
     </Modal>
+  );
+}
+
+/** How collecting is going: kept, versions, and each network's pace (GET /api/profiles/collect). */
+function CollectStatus() {
+  const [st, setSt] = useState<P.ProfileCollectStatus | null>(null);
+  useEffect(() => {
+    let live = true;
+    api<P.ProfileCollectStatus>('/api/profiles/collect')
+      .then((x) => live && setSt(x))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+  if (!st) return null;
+  const busy = st.networks.filter((n) => n.waiting || n.today);
+  return (
+    <small class="adv-collect">
+      {st.kept.toLocaleString()} profiles kept, {st.versions.toLocaleString()} earlier versions.
+      {busy.map((n) => ` ${n.name}: ${n.today} today of ${n.perDay}, one every ${n.everySeconds < 120 ? `${n.everySeconds} s` : `${Math.round(n.everySeconds / 60)} min`}${n.waiting ? `, ${n.waiting.toLocaleString()} in line` : ''}.`).join('')}
+    </small>
   );
 }

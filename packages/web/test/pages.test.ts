@@ -32,6 +32,7 @@ const ROUTES: [hash: string, kind: 'list' | 'tab' | 'page' | 'over', own: string
   ['#/people', 'list', '#/people'],
   ['#/people/pal', 'page', '#/people'],
   ['#/people/graph', 'page', '#/people'],
+  ['#/people/same', 'page', '#/people'],
   ['#/p/pal', 'over', '#/people'],
   ['#/i/ident', 'over', '#/people'],
   ['#/about/c/chan', 'over', '#/s/srv'],
@@ -63,11 +64,16 @@ const ROUTES: [hash: string, kind: 'list' | 'tab' | 'page' | 'over', own: string
   ['#/notices/ntc_1', 'page', '#/inbox'],
   ['#/calendar', 'tab', '#/calendar'],
   ['#/calendar/day/2026-11-14?x', 'tab', '#/calendar/day/2026-11-14?x'],
+  ['#/feed', 'tab', '#/feed'],
+  ['#/feed/following', 'tab', '#/feed/following'],
+  ['#/feed/acc_1:foryou', 'tab', '#/feed/acc_1:foryou'],
+  ['#/feed/following/p/pst_x_1', 'page', '#/feed/following'],
+  ['#/feed/acc_1:activity/p/pst_x_2', 'page', '#/feed/acc_1:activity'],
 ];
 
 test('the table covers every kind of route', () => {
   const views = new Set(ROUTES.map(([h]) => R(h).view));
-  expect([...views].sort()).toEqual(['accounts', 'calendar', 'directory', 'folder', 'foryou', 'inbox', 'mail', 'model', 'notices', 'people', 'profile', 'requests', 'search', 'settings', 'space', 'spaces']);
+  expect([...views].sort()).toEqual(['accounts', 'calendar', 'directory', 'feed', 'folder', 'foryou', 'inbox', 'mail', 'model', 'notices', 'people', 'profile', 'requests', 'search', 'settings', 'space', 'spaces']);
 });
 
 test("Catch up's old address opens For you, which took its place", () => {
@@ -82,6 +88,16 @@ test("the calendar's own hash is kept verbatim, query and all, both ways", () =>
   expect(R('#/calendar')).toEqual({ view: 'calendar' });
   expect(R('#/calendar/')).toEqual({ view: 'calendar' });
   for (const h of ['#/calendar', '#/calendar/day/2026-11-14?x', '#/calendar/week/2026-11-09', '#/calendar/chats']) expect(href(R(h))).toBe(h);
+});
+
+test("the Feed's sources and posts, both ways, an account's colon readable", () => {
+  expect(R('#/feed')).toEqual({ view: 'feed' });
+  expect(R('#/feed/acc_1:foryou')).toEqual({ view: 'feed', source: 'acc_1:foryou' });
+  expect(R('#/feed/acc_1%3Aforyou')).toEqual({ view: 'feed', source: 'acc_1:foryou' });
+  expect(R('#/feed/following/p/pst_x_1')).toEqual({ view: 'feed', source: 'following', post: 'pst_x_1' });
+  for (const h of ['#/feed', '#/feed/drafts', '#/feed/m-a1b2c3', '#/feed/acc_1:mine', '#/feed/following/p/pst_x_1']) expect(href(R(h))).toBe(h);
+  // A post opened in the Feed stacks on the source it came from: back is to that source.
+  expect(stacksOn(R('#/feed/following/p/pst_x_1'), R('#/feed/following'), places)).toBe(true);
 });
 
 test('pages, tabs and lists are told apart', () => {
@@ -219,8 +235,9 @@ test("the card's rest after back matches where back lands", () => {
     if (kind !== 'page') continue;
     for (const prev of [null, '#/search?q=hello', '#/s/srv2/c/chan2', '#/p/pal']) {
       const r = R(h);
-      // A page that stacks on the page or tab it came from lands there, open.
-      const want = prev && stacksOn(r, R(prev), places) && (isPage(R(prev)) || isTabRoot(R(prev))) ? 'open' : 'peek';
+      // A page that stacks on the page or tab it came from lands there, open; so does one whose own list is a tab (a
+      // post on the Feed page goes back to its source, which fills the screen).
+      const want = (prev && stacksOn(r, R(prev), places) && (isPage(R(prev)) || isTabRoot(R(prev)))) || isTabRoot(ownList(r, places)) ? 'open' : 'peek';
       expect([h, prev, restAfter(r, wayBack(r, prev ? R(prev) : null, places).to, places)]).toEqual([h, prev, want]);
     }
   }

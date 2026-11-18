@@ -41,6 +41,13 @@ plays its own chimes rather than Discord's recordings.
    opens the voice socket through the hub (`/api/call/<id>/voice`, forwarded only to `*.discord.media`) and its
    media through the hub's TURN relay (`iceTransportPolicy: relay`).
 
+What every network's call body has to take (any adapter that answers the `call` command): a `leave` can come while
+its `join` is still waiting (the device's socket closed: its app crashed, the network dropped, the person hung up at
+once), and the join then starts nothing more (no ring, no channel joined), lets go of what it opened, and fails. And on
+the device, the call starts before the microphone is allowed: the Android app's call service must not need it to start
+(docs/android.md, "The call service"). `scripts/verify-android-call.ts` runs the app's side against any account that
+makes calls (`--account`, `--conversation`), on a hub with a far end of its own.
+
 Participants and mute state come from the client's own stores in both modes. Speaking comes from the client in
 bridge mode and from the voice server's SPEAKING messages in direct mode. The call's state also carries the client's
 own state (`self`: connected, muted, deafened, camera, streaming, the streams it watches): in bridge mode the dock says
@@ -80,7 +87,9 @@ unchanged. See `scripts/dave/README.md`.
 
 The output lives in `DITHER_DAVE_DIR` (default `<data>/dave`) and must never be committed. The hub serves it at
 `/voice/dave/<id>/libdave.mjs`. The device imports it inside a worker created from a `data:` URL, whose origin is
-opaque: it cannot read the app's storage or make credentialed requests to the hub.
+opaque: it cannot read the app's storage or make credentialed requests to the hub. So the library's two files answer
+without a session (docs/login.md): it is Discord's public code, named by its hash. Until 2026-11-17 they did not, the
+worker got a 401, and direct mode joined offering no DAVE, which a channel that requires it closes with 4017.
 
 Run it on a timer:
 
@@ -140,6 +149,11 @@ The script runs two devices as the two demo Discord accounts and the room, each 
 devices, and checks joining (and how fast), hearing and being heard, the join, leave, mute and camera sounds, mute
 reaching the far end and the other device, the camera both ways, sharing a screen and watching it from the other
 device, watching the bot's Go Live, leaving, and a device with no microphone joining to listen.
+
+A demo account can also be rung: the account action `ring` (`{conversation, caller?, video?}`, the conversation's
+native id) makes the caller ring it there, as a network's ring would, and `ringStop` is the caller giving up
+(`DemoRings`). Answering joins the room's call, and declining ends it as declined. The Android run uses it
+([android.md](android.md#testing-calls)).
 
 ## Call lab
 

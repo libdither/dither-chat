@@ -92,7 +92,7 @@ const thread = () =>
       ),
       nodes: document.querySelectorAll('.ct-node').length,
       flat: [...document.querySelectorAll('.ct-flat')].map((f) => [f.querySelector('.ct-flat-top .post-who b')?.textContent, f.querySelectorAll('.ct-flat-reply').length]),
-      style: document.querySelector('.ct-style-btn')?.textContent.trim() ?? null,
+      style: document.querySelector('.ct-style .look-btn[aria-checked="true"]')?.getAttribute('aria-label') ?? null,
       lines: document.querySelectorAll('.thread-post.line').length,
       more: !!document.querySelector('.thread-more'),
       openOnX: f?.querySelector('.post-open')?.href ?? null,
@@ -120,7 +120,7 @@ try {
   await page.eval(`[...document.querySelectorAll('.feed-unit[data-unit="post"] .feed-mine')].find((a) => /Greedy routing/.test(a.textContent)).click()`);
   await page.until(`location.hash.includes('pst_x_') && !!document.querySelector('.thread-focal') && document.querySelectorAll('.ct-node').length > 0`, 20000);
   let t = await thread();
-  check('a card in the feed opens its post in the app', /^#\/inbox\/c\/pst_x_\d+$/.test(t.hash) && /Greedy routing/.test(t.focal ?? ''), t.hash);
+  check('a card in the feed opens its post in the app, beside the list', /^#\/feed\/[^/]+\/p\/pst_x_\d+$/.test(t.hash) && /Greedy routing/.test(t.focal ?? ''), t.hash);
   const routing = t.hash.match(/pst_x_(\d+)/)?.[1] ?? '';
   check('the post large, by its author, with Open on X', t.focalWho === 'You' && /^https:\/\/x\.com\/zyan_demo\/status\/\d+$/.test(t.openOnX ?? ''), t);
   const postReads = async () => ((await action('postLog')).result?.posts ?? []) as { post: string; cursor?: string }[];
@@ -222,11 +222,10 @@ try {
   await page.until(`!document.querySelector('.ct-node.folded')`, 5000);
 
   // The other ways to draw it.
-  // The style is a quiet menu beside Replies: open it, choose.
+  // The style is four small pictures beside Replies (Seg.tsx): press one.
   const pick = async (label: string) => {
-    await page.eval(`document.querySelector('.ct-style-btn').click()`);
-    await page.until(`document.querySelectorAll('.ct-style-menu button').length === 4`, 3000);
-    await page.eval(`[...document.querySelectorAll('.ct-style-menu button')].find((b) => b.querySelector('b').textContent === ${JSON.stringify(label)}).click()`);
+    await page.eval(`document.querySelector('.ct-style .look-btn[aria-label=${JSON.stringify(label)}]').click()`);
+    await page.until(`document.querySelector('.ct-style .look-btn[aria-label=${JSON.stringify(label)}]').getAttribute('aria-checked') === 'true'`, 3000);
   };
   await pick('Compact');
   await page.until(`!!document.querySelector('.ct.compact')`, 5000);
@@ -442,7 +441,9 @@ try {
   await page.until(`document.querySelectorAll('.feed-unit').length >= 4`, 20000);
   // Back on a phone (pages.ts stacksOn): a post goes back to the post, feed or profile it was opened from, every way.
   const focalWho = () => page.eval<string | null>(`document.querySelector('.thread-focal .post-who b')?.textContent ?? null`);
-  const feedHash = `#/inbox/c/${feed.id}`;
+  // The notifications conversation opens as its account's Activity on the Feed page (docs/feed.md "The Feed page").
+  await page.until(`location.hash.startsWith('#/feed/')`, 10000);
+  const feedHash = await page.eval<string>('location.hash');
   await page.eval(`document.querySelector('.feed-talk .post-text').click()`);
   await page.until(`document.querySelector('.thread-focal .post-who b')?.textContent === 'Ravi' && document.querySelectorAll('.thread-list > .thread-post').length > 0`, 20000);
   await page.eval(`document.querySelector('.thread-list > .thread-post').click()`);
@@ -454,9 +455,7 @@ try {
   await page.eval(`document.querySelector('.thread-pane .conv-head .back').click()`);
   await page.until(`location.hash === ${JSON.stringify(feedHash)} && document.querySelectorAll('.feed-unit').length >= 4`, 10000).catch(() => {});
   check("…the header's Back from it goes to the feed it was opened from", (await page.eval<string>('location.hash')) === feedHash, await page.eval('location.hash'));
-  await page.eval(`document.querySelector('.conv-head .back').click()`);
-  await page.until(`location.hash === '#/inbox' && !!document.querySelector('.feed-row')`, 10000).catch(() => {});
-  check('…and the feed back to the inbox', (await page.eval<string>('location.hash')) === '#/inbox', await page.eval('location.hash'));
+  check('…and Activity is a tab of its own, with no Back', !(await page.eval<boolean>(`!!document.querySelector('.feed-main .conv-head .back')`)));
   // A post from a person's page goes back to that page.
   await load(`#/i/${alice.id}`);
   await page.until(`!!document.querySelector('.thread-post[data-post]')`, 20000).catch(() => {});

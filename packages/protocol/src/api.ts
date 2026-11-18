@@ -34,7 +34,8 @@ import type { AccountsManagerView } from './accounts.ts';
 import type { AccountSelfView } from './self.ts';
 import type { ContactCardView, MissingAttachmentFact, QuoteView, SendFailureView, StoryReplyView } from './extra.ts';
 import type { ForumView, ThreadView } from './threads.ts';
-import type { FeedItem, PostFact } from './feed.ts';
+import type { FeedItem, HomeFeed, HomeReason, PostFact, ReplyGate } from './feed.ts';
+import type { MixOrder } from './mix.ts';
 import type { NoticesBoot } from './notices.ts';
 
 export interface AccountView {
@@ -199,6 +200,8 @@ export interface ConversationView {
   thread?: ThreadView;
   /** A forum or media channel's tags and default order (threads.ts). */
   forum?: ForumView;
+  /** A followed post's conversation (variant 'follow'): whether the hub still checks it for replies. */
+  follow?: PostFollow;
 }
 
 /**
@@ -260,6 +263,8 @@ export interface AttachmentView {
   spoiler?: true;
   explicit?: true;
   voice?: VoiceFact;
+  /** A GIF the network sent as a video (AttachmentFact.gif): drawn looping and silent, with no player. */
+  gif?: true;
   /** Recorded as a voice note (extra.ts AttachmentNote). */
   voiceNote?: true;
   /** Its own caption, where the network has one per file. */
@@ -681,6 +686,32 @@ export interface MessageView {
   post?: PostFact;
 }
 
+/**
+ * A post you follow (docs/feed.md "Following a post"): its replies found from then on come to a conversation of their
+ * own (variant 'follow'), and the hub reads the thread again now and then for them. PUT and DELETE
+ * /api/posts/:network/:post/follow answer with it; GET adds `fresh`.
+ */
+export interface PostFollow {
+  /** The followed post's conversation. It stays when checks stop. */
+  conversationId: string;
+  /** The account that follows it: the one whose reads find the replies. */
+  accountId: string;
+  /** ms epoch: followed (again). */
+  since: number;
+  /** ms epoch: checks stopped, or null while they go on. */
+  stopped: number | null;
+  /** Why they stopped: unfollowed, or no new reply in a week. */
+  why?: 'unfollowed' | 'quiet';
+  /** ms epoch: the next check, while they go on (it waits for the account's reading pace and its being online). */
+  next: number | null;
+  /** ms epoch: the hub last read the thread for replies. */
+  checked: number | null;
+  /** ms epoch: the last time a check found a new reply (or `since`). */
+  lastNew: number;
+  /** GET only: the replies found since the conversation was last read (post ids), for the thread to mark them new. */
+  fresh?: string[];
+}
+
 /** A post with the hub message it was logged as (docs/feed.md "Threads"). */
 export type PostView = PostFact & { messageId: string | null };
 
@@ -703,6 +734,8 @@ export interface PostThreadView {
   logged?: PostView[];
   /** The conversation the posts were logged in (variant 'posts'), when there is one. */
   conversationId: string | null;
+  /** The post followed (docs/feed.md "Following a post"), or null; absent from a page of more replies. */
+  follow?: PostFollow | null;
   stored?: string;
   /** Everyone the posts name, for rendering. */
   identities: IdentityView[];
@@ -734,6 +767,146 @@ export interface ReactorsView {
   /** Why the list is what it is, when it is not the network's whole list. */
   note?: string;
   identities: IdentityView[];
+}
+
+// ------------------------------------------------------------------ the Feed page (docs/feed.md "The Feed page")
+
+/** An account the Feed page lists: what it can read and post (GET /api/feed/sources). */
+export interface FeedAccountView {
+  accountId: string;
+  network: Network;
+  label: string;
+  /** The account's own identity (its picture, name and handle). */
+  identityId: string | null;
+  online: boolean;
+  /** Its home timelines can be read (capability 'home'). */
+  home: boolean;
+  /** It can post (capability 'publish'), with pictures ('postMedia'), and delete its posts ('unpublish'). */
+  publish: boolean;
+  media: boolean;
+  unpublish: boolean;
+  /** Its notifications conversation (variant 'feed'), the Activity source's, when it has one. */
+  feedConvId: string | null;
+}
+
+export interface FeedSourcesView {
+  accounts: FeedAccountView[];
+  /** Your feeds, Following and Discover first, then the ones you made. */
+  mixes: FeedMixView[];
+  /** Drafts and scheduled posts waiting (the Drafts source's count). */
+  drafts: number;
+}
+
+/**
+ * A feed of yours (docs/feed.md "Feeds", mix.ts): home timelines from any of your accounts in one list, each with its
+ * share, put in an order you can swap. PUT /api/feed/mixes/<id> with any of name, order and sources saves it (a new id
+ * makes one); DELETE removes one you made, or puts Following or Discover back as they were.
+ */
+export interface FeedMixView {
+  id: string;
+  name: string;
+  order: MixOrder;
+  /** Every timeline it could take, each with its share: a step of SHARE_WEIGHTS, 0 left out. */
+  sources: { accountId: string; feed: HomeFeed; share: number }[];
+  /** You made it; Following and Discover are always there. */
+  custom: boolean;
+}
+
+/**
+ * Which posts a Feed source shows: a feed's id (`following`, `discover`, or one you made); `<accountId>:following`
+ * or `<accountId>:foryou` one account's own timeline in its network's order; `mine` what you posted, from every
+ * account, your cross-posts as one, or `<accountId>:mine` one account's.
+ */
+export type FeedSource = string;
+
+/** One post in a Feed source, as its card shows it. */
+export interface FeedEntryView {
+  /** `<network>:<id of the post shown>`: the same post through two accounts is one entry. */
+  key: string;
+  network: Network;
+  /** The post as the timeline gave it (a repost is the reposter's, with `repostOf`). */
+  post: PostView;
+  /** A conversation shown with it, the posts above it, oldest first. */
+  above?: PostView[];
+  /** Why it is there, beyond following its author ("Ann Lee liked"); `who` a hub identity id. */
+  reason?: HomeReason;
+  /** Which of your accounts it came through, and from which of their timelines. */
+  seenBy: { accountId: string; feed: HomeFeed | 'mine' }[];
+  /** Your post made in one press to several accounts: the others (`mine` only), each with its account. */
+  copies?: { accountId: string; post: PostView }[];
+  /** The order key: newer or higher in the timeline is larger. */
+  at: number;
+}
+
+/**
+ * GET /api/feed/entries?source=…[&before=…]: what the hub holds, at once; POST /api/feed/read { source, older? } asks
+ * the networks first (a person's own look at their timeline, at the reading pace) and answers the same.
+ */
+export interface FeedEntriesView {
+  source: FeedSource;
+  entries: FeedEntryView[];
+  /** Older entries the hub holds: ask again with `before` this. Null when it holds no more. */
+  before: number | null;
+  /** Where the page after this one starts, to ask with once older posts were read (`before` is null then). */
+  next: number | null;
+  /** The networks have older posts than the hub holds: POST /api/feed/read with `older` brings them. */
+  older: boolean;
+  /** When the networks were last asked for this source (the oldest of its timelines), or null when never. */
+  readAt: number | null;
+  /** What could not be read, per account, in words. */
+  notes: { accountId: string; text: string }[];
+  identities: IdentityView[];
+}
+
+/** One destination of a post from the Feed page's composer: an account, and its own words when they differ. */
+export interface PublishDestination {
+  accountId: string;
+  /** The post's words; with `parts`, the first post of a thread. */
+  text: string;
+  /** The rest of a thread, each posted as a reply to the one before. */
+  parts?: string[];
+}
+
+/** POST /api/feed/publish: one press of Post, to several accounts at once. */
+export interface PublishRequest {
+  /** The composer's id for this press: the same key again is answered with the first results, never posted twice. */
+  key: string;
+  destinations: PublishDestination[];
+  /** Upload ids (/api/uploads) of pictures or a video, posted with the first post on each destination. */
+  media?: string[];
+  /** Who may reply. Absent: everyone. */
+  replies?: ReplyGate;
+}
+
+export interface PublishResult {
+  accountId: string;
+  ok: boolean;
+  /** The first post, and the rest of the thread, as made. */
+  post?: PostView;
+  parts?: PostView[];
+  /** Why not, in words; `unsure`: no answer came, so it may have posted (look before posting again). */
+  error?: string;
+  unsure?: boolean;
+}
+
+export interface PublishView {
+  results: PublishResult[];
+}
+
+/** A post written and kept for later (GET/PUT /api/feed/drafts): on the hub, so every device has it. */
+export interface DraftView {
+  id: string;
+  /** The composer's state: the words, and per account words where they differ. */
+  text: string;
+  accounts: string[];
+  /** Per account words, when written apart ("Customize per network"). */
+  own?: Record<string, string>;
+  replies?: ReplyGate;
+  /** Post it then (ms epoch); the hub posts it at that time. */
+  scheduledAt?: number;
+  /** A scheduled post that could not go out, and why. */
+  failed?: string;
+  updatedAt: number;
 }
 
 /** A forward, shown as a card with where it came from. */
@@ -869,7 +1042,7 @@ export interface PersonAboutView extends Omit<PersonAbout, 'avatar' | 'banner' |
   avatar?: string | null;
   banner?: string | null;
   /** Spaces you share; `spaceId` null for one the hub does not have. */
-  mutualSpaces?: { spaceId: string | null; nativeId: string; nick?: string; roles?: { name: string; color?: string }[]; joinedAt?: number }[];
+  mutualSpaces?: { spaceId: string | null; nativeId: string; nick?: string; roles?: { name: string; color?: string }[]; joinedAt?: number; bio?: string; pronouns?: string }[];
   mutualFriends?: string[];
   friends?: string[];
   /** Their recent posts (X), as PersonAbout's, with each `author` a hub identity id and pictures signed media paths. */
@@ -1345,7 +1518,7 @@ export type ClientEvent =
   | { t: 'message'; message: MessageView; identities: IdentityView[]; live: boolean }
   | { t: 'message.deleted'; id: string; conversationId: string }
   /** No conversation: it is about a request, or about what quiet hours held. */
-  | { t: 'notify'; messageId?: string; conversationId?: string; title: string; body: string; reasons: string[]; /** Its tier; absent is an alert. */ level?: 'push' | 'quiet' | 'digest'; /** The notification's id in the activity log (docs/activity.md). */ nid?: string; /** Devices whose own rules keep this quiet (docs/devices.md). */ quiet?: string[]; /** The sender's (or the place's) picture, a hub media path. */ icon?: string; network?: Network; /** About a mail thread (slice 9): `conversationId` is the thread too. */ mailThreadId?: string; /** About a request waiting on you (docs/add.md): it opens under Requests. */ requestId?: string; /** About an event in the calendar (docs/calendar.md): it opens the calendar there. */ calendar?: CalendarNotifyRef; /** A notice (docs/notices.md): `conversationId` is its group, and it opens under Notices. */ noticeId?: string }
+  | { t: 'notify'; messageId?: string; conversationId?: string; title: string; body: string; reasons: string[]; /** Its tier; absent is an alert. */ level?: 'push' | 'quiet' | 'digest'; /** The notification's id in the activity log (docs/activity.md). */ nid?: string; /** Devices whose own rules keep this quiet (docs/devices.md). */ quiet?: string[]; /** The sender's (or the place's) picture, a hub media path. */ icon?: string; network?: Network; /** About a mail thread (slice 9): `conversationId` is the thread too. */ mailThreadId?: string; /** About a request waiting on you (docs/add.md): it opens under Requests. */ requestId?: string; /** About an event in the calendar (docs/calendar.md): it opens the calendar there. */ calendar?: CalendarNotifyRef; /** A notice (docs/notices.md): `conversationId` is its group, and it opens under Notices. */ noticeId?: string; /** No read closes it, only a tap or a swipe: a reminder you set, the summary when quiet hours end (docs/notifications.md, "Read elsewhere, gone here"). */ keep?: true }
   /**
    * Someone started typing (it lasts `ttl` ms unless another start comes) or `stop`ped. Of the moment: not journaled,
    * and a client that reconnects simply does not see it. `name` only when the hub knows no name for the identity.
@@ -1356,6 +1529,13 @@ export type ClientEvent =
    * pending copy by id before the answer to its POST arrives. Of the moment, like `typing`: not journaled.
    */
   | { t: 'sent'; conversationId: string; clientId: string; messageId: string }
+  /**
+   * Chats, mail threads and groups of notices read on some device since the hub notified about them (delivery.ts
+   * `read`): an open page closes their notifications that show nothing newer than `upTo`, the newest message the hub
+   * notified about (docs/notifications.md, "Read elsewhere, gone here"). Of the moment, like `typing`: not journaled;
+   * a page that comes back tidies up by itself.
+   */
+  | { t: 'cleared'; reads: { id: string; upTo: number }[] }
   /** Calls that changed: ringing you, going on, or just over (call.ts CallView, docs/calls.md "Ringing"). Of the moment. */
   | { t: 'calls'; calls: import('./call.ts').CallView[] }
   /** Voice channels whose people or status line changed (call.ts VoiceChannelView). Of the moment. */
@@ -1506,6 +1686,11 @@ export interface RetentionSettings extends KeepSettings {
    */
   voice?: boolean;
   /**
+   * Profiles collected in the background, slowly, for everyone your accounts share a chat or a server with, and each
+   * version of a profile kept as it changes (docs/same-person.md). Adversarial. Absent (a hub from before it): off.
+   */
+  profiles?: boolean;
+  /**
    * Adversarial features shown, after the warning (docs/history.md): their switches, and what they kept, in sight.
    * Statuses, presence and members are logged only while shown. Deleted and disappearing messages are kept as their
    * switches say whether shown or not: hiding never loses a message, it only keeps what was kept out of sight.
@@ -1530,6 +1715,7 @@ export const DEFAULT_RETENTION: RetentionSettings = {
   presence: false,
   members: false,
   voice: false,
+  profiles: false,
   adversarial: false,
   show: 'shown',
   showIn: {},
@@ -1544,7 +1730,7 @@ export interface RetentionChange {
 }
 
 /** Switches whose turning off is confirmed (PUT /api/retention takes `confirm: true` for it). */
-export const RETENTION_GUARDED = ['deleted', 'disappearing', 'statuses', 'presence', 'members', 'voice', 'adversarial'] as const satisfies readonly (keyof RetentionSettings)[];
+export const RETENTION_GUARDED = ['deleted', 'disappearing', 'statuses', 'presence', 'members', 'voice', 'profiles', 'adversarial'] as const satisfies readonly (keyof RetentionSettings)[];
 
 /** Whether kept deleted and disappeared messages show in this chat. */
 export const showsGone = (r: RetentionSettings, conversationId: string | null | undefined): boolean =>
@@ -1561,7 +1747,7 @@ export interface PresenceView {
 export const ADVERSARIAL_KEEPS = ['deleted', 'disappearing'] as const satisfies readonly (keyof KeepSettings)[];
 
 /** What Forget erases, one kind at a time (POST /api/retention/erase); GET /api/retention/kept says which have anything kept. */
-export const KEPT_KINDS = ['deleted', 'disappeared', 'edits', 'reactions', 'receipts', 'changes', 'statuses', 'presence', 'members', 'voice'] as const;
+export const KEPT_KINDS = ['deleted', 'disappeared', 'edits', 'reactions', 'receipts', 'changes', 'statuses', 'presence', 'members', 'voice', 'profiles'] as const;
 export type KeptKind = (typeof KEPT_KINDS)[number];
 
 /**

@@ -79,8 +79,13 @@ export interface FolderPlan {
   personas: PlanPersona[];
   /** Space id -> its persona's account id (empty when there is one). */
   personaOf: Record<string, string>;
-  /** Servers no rule places: the two folders each fits best. */
+  /** Servers no rule places: the folders each fits best (up to three, each with some likeness). */
   suggest: Record<string, PlanSuggestion[]>;
+  /**
+   * Every folder a loose server could go to, nearest first, likeness or not (ties: the bigger folder first). What a
+   * list of places to move it to shows after the suggestions, so each server's list is its own.
+   */
+  near: Record<string, PlanSuggestion[]>;
 }
 
 /** An account needs this many servers of its own to get a folder of its own. */
@@ -259,7 +264,7 @@ export function planFolders(input: PlanInput): FolderPlan {
   // Suggestions for whatever is still loose: the nearest folders of the same account, yours or the steps'.
   const { words, extra } = vectorsOf(input);
   const vecOf = (id: string): [Vec, Vec] => [words.get(id) ?? new Map(), extra.get(id) ?? new Map()];
-  const centroids: { folder: string; name: string; persona: string | null; w: Vec; x: Vec }[] = [];
+  const centroids: { folder: string; name: string; persona: string | null; size: number; w: Vec; x: Vec }[] = [];
   const centroid = (folder: string, name: string, ids: string[]) => {
     if (!ids.length) return;
     const w: Vec = new Map();
@@ -269,7 +274,7 @@ export function planFolders(input: PlanInput): FolderPlan {
       add(w, a);
       add(x, b);
     }
-    centroids.push({ folder, name, persona: majority(ids.map(pOf)), w: norm(w), x: norm(x) });
+    centroids.push({ folder, name, persona: majority(ids.map(pOf)), size: ids.length, w: norm(w), x: norm(x) });
   };
   for (const f of input.folders) {
     // A folder of folders is a level (an account), not a topic: its folders are the suggestions.
@@ -281,16 +286,18 @@ export function planFolders(input: PlanInput): FolderPlan {
   for (const st of steps) if (!st.into) centroid(`step:${st.id}`, st.name, st.spaces);
   const hasExtra = extra.size > 0;
   const suggest: Record<string, PlanSuggestion[]> = {};
+  const near: Record<string, PlanSuggestion[]> = {};
   for (const s of free) {
     if (claimed.has(s.id)) continue;
     const p = persona.of(s);
     const [w, x] = vecOf(s.id);
-    const scored = centroids
+    const ranked = centroids
       .filter((c) => !persona.list.length || c.persona === p)
-      .map((c) => ({ folder: c.folder, name: c.name, score: hasExtra ? (dot(w, c.w) + dot(x, c.x)) / 2 : dot(w, c.w) }))
-      .filter((c) => c.score > 0.02)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 3);
+      .map((c) => ({ folder: c.folder, name: c.name, size: c.size, score: hasExtra ? (dot(w, c.w) + dot(x, c.x)) / 2 : dot(w, c.w) }))
+      .sort((a, b) => b.score - a.score || b.size - a.size)
+      .map(({ size: _, ...c }) => c);
+    near[s.id] = ranked;
+    const scored = ranked.filter((c) => c.score > 0.02).slice(0, 3);
     if (scored.length) suggest[s.id] = scored;
   }
 
@@ -299,7 +306,7 @@ export function planFolders(input: PlanInput): FolderPlan {
     const p = persona.of(s);
     if (p) personaOf[s.id] = p;
   }
-  return { steps, personas: persona.list, personaOf, suggest };
+  return { steps, personas: persona.list, personaOf, suggest, near };
 }
 
 function majority<T>(xs: T[]): T {

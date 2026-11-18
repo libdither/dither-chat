@@ -93,9 +93,6 @@
   font-size: 13px;
   overflow-wrap: anywhere;
 }
-.post-clip:hover {
-  color: var(--text);
-}
 .post-by {
   display: flex;
   align-items: center;
@@ -609,7 +606,7 @@
 .thread-replies-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   flex-wrap: wrap;
   gap: 6px 12px;
   margin: 14px 8px 6px;
@@ -950,14 +947,8 @@
   position: fixed;
   z-index: 120;
 }
-.ct-style-menu {
-  position: absolute;
-  z-index: 30;
-  top: calc(100% + 4px);
-}
 .pa-menu,
-.pa-pop,
-.ct-style-menu {
+.pa-pop {
   min-width: 180px;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -965,8 +956,7 @@
   box-shadow: 0 10px 30px rgb(0 0 0 / 0.35);
   overflow: hidden;
 }
-.pa-menu button,
-.ct-style-menu button {
+.pa-menu button {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -975,8 +965,7 @@
   text-align: left;
   font-weight: 600;
 }
-.pa-menu button:hover,
-.ct-style-menu button:hover {
+.pa-menu button:hover {
   background: var(--bg-hover);
 }
 .pa-pop {
@@ -1214,43 +1203,6 @@
   font-weight: 700;
   font-size: 13px;
 }
-/* The style menu: a quiet word beside Replies. */
-.ct-style {
-  position: relative;
-}
-.ct-style-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 6px;
-  border-radius: 6px;
-  color: var(--text-faint);
-  font-size: 12px;
-}
-.ct-style-btn:hover,
-.ct-style-btn[aria-expanded='true'] {
-  color: var(--text-dim);
-  background: var(--bg-hover);
-}
-.ct-style-menu {
-  left: auto;
-  right: 0;
-  width: 270px;
-}
-.ct-style-menu button {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
-}
-.ct-style-menu button span {
-  color: var(--text-faint);
-  font-weight: 400;
-  font-size: 12px;
-}
-.ct-style-menu button.on b::after {
-  content: ' ✓';
-  color: var(--accent);
-}
 .thread-focal .post-composer,
 .thread-focal .compose-closed {
   margin-top: 4px;
@@ -1360,4 +1312,1179 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+/* A post's own extras (Post.tsx Row, docs/feed.md "One card for every network"): where it was posted, a title, and a
+   content warning that keeps the words folded until opened. */
+.post-place a {
+  color: inherit;
+  font-weight: 600;
+}
+.post-title {
+  margin: 2px 0;
+  font-size: 15.5px;
+  line-height: 1.3;
+}
+.post-warning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 2px 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-hover);
+  text-align: left;
+  font-size: 13px;
+}
+.post-warning-text {
+  flex: 1;
+}
+.post-warning-btn {
+  color: var(--accent);
+  font-weight: 600;
+}
+.pa-menu a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  color: inherit;
+  text-decoration: none;
+  font-weight: 600;
+}
+.pa-menu a:hover {
+  background: var(--bg-hover);
+}
+.pa-menu .danger {
+  color: var(--danger);
+}
+.pa-more {
+  margin-left: auto;
+}
+
+/* The Feed page (FeedPage.tsx, docs/feed.md "The Feed page"): your feeds and the rest on the left, the posts with the
+   composer on top, and a post's thread or the feed's tuning beside them on a wide screen (in their place on a narrow
+   one). On a phone: a head with the bell and ⋯, the feeds as tabs, the order under them, and the pencil button. */
+.feed-srcs {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 8px 16px;
+}
+.feed-src {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 14px;
+  text-align: left;
+}
+.feed-src:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.feed-src.active {
+  background: var(--bg-active, var(--bg-hover));
+  color: var(--text);
+  font-weight: 600;
+}
+.feed-src-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.feed-src-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.feed-src-count {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.feed-src-hint {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 400;
+}
+.feed-src-group {
+  margin: 14px 0 4px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.feed-src-group:first-child {
+  margin-top: 4px;
+}
+.feed-src-new {
+  color: var(--text-faint);
+}
+.feed-src-offline {
+  display: flex;
+  gap: 6px;
+  margin: 14px 10px 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.feed-page {
+  display: flex;
+  flex-direction: row;
+  min-width: 0;
+}
+.feed-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.feed-thread {
+  flex: 0 0 min(480px, 45%);
+  min-width: 0;
+  display: flex;
+  border-left: 1px solid var(--border);
+}
+.feed-thread > .pane {
+  flex: 1;
+  min-width: 0;
+}
+.feed-entry {
+  border-bottom: 1px solid var(--border);
+  padding: 6px 0 2px;
+}
+.feed-entry .thread-post {
+  padding-bottom: 6px;
+}
+.feed-reason,
+.feed-via {
+  margin-right: 8px;
+}
+.feed-copies {
+  margin: 0 0 8px 46px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.feed-copies a {
+  color: var(--link);
+}
+.feed-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 6px 0;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.feed-note.error {
+  color: var(--danger);
+}
+.feed-end {
+  margin: 16px 0;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.feed-composer {
+  margin: 8px 0 12px;
+}
+.feed-compose-closed {
+  margin: 8px 0 12px;
+}
+.feed-composer .compose-text {
+  width: 100%;
+  min-height: 52px;
+  resize: none;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.4;
+  outline: none;
+}
+.feed-own {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+  border-top: 1px solid var(--border);
+}
+.feed-own-who {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-faint);
+}
+.feed-pics {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.feed-pic {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  margin: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-hover);
+}
+.feed-pic img,
+.feed-pic video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.feed-pic.up img,
+.feed-pic.up video {
+  opacity: 0.5;
+}
+.feed-pic.bad {
+  outline: 2px solid var(--danger);
+}
+.feed-pic-x {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.65);
+  color: #fff;
+}
+.feed-pic-up {
+  position: absolute;
+  inset: auto 0 4px;
+  text-align: center;
+  font-size: 11px;
+  color: #fff;
+  text-shadow: 0 1px 2px #000;
+}
+.feed-sched {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.feed-sched input {
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+.feed-results {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.feed-result {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  font-size: 12.5px;
+}
+.feed-result.bad {
+  color: var(--danger);
+}
+.feed-foot {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+/* Who can reply: words in the accent colour, as a link reads, not a box. */
+.feed-gate {
+  max-width: 210px;
+  padding: 3px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.feed-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.feed-count-who {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.feed-draft {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.feed-draft.failed {
+  border-left: 3px solid var(--danger);
+  padding-left: 10px;
+}
+.feed-draft-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.feed-draft-when {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.feed-draft-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.feed-draft-foot {
+  display: flex;
+  gap: 6px;
+}
+@media (max-width: 1100px) {
+  .feed-page.with-post .feed-main {
+    display: none;
+  }
+  .feed-thread {
+    flex: 1;
+    border-left: 0;
+  }
+}
+
+/* ---- the head over the posts: the order and Tune (a computer), Back (a phone's page off the feed) */
+.feed-head {
+  gap: 8px;
+}
+.feed-back {
+  margin-left: -6px;
+}
+.feed-filter {
+  max-width: 180px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.feed-order-box {
+  position: relative;
+}
+.feed-order-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.feed-order-btn:hover {
+  background: var(--bg-hover);
+}
+.feed-order-caret {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.feed-order-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  width: 340px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-sidebar);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.35);
+}
+.feed-orders {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.feed-order {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 8px;
+  text-align: left;
+  color: var(--text-dim);
+}
+.feed-order:hover {
+  background: var(--bg-hover);
+}
+.feed-order.on {
+  color: var(--text);
+}
+.feed-order.on > svg:first-child {
+  color: var(--accent);
+}
+.feed-order-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.feed-order-text b {
+  font-size: 14px;
+}
+.feed-order-text small {
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--text-faint);
+}
+.feed-sheet-title {
+  margin: 4px 20px 8px;
+  font-size: 15px;
+}
+.feed-tune-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.feed-tune-btn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ---- tuning a feed: beside the posts on a computer, a tall sheet on a phone */
+.feed-tune {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.feed-tune-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.feed-tune-head h3 {
+  flex: 1;
+  margin: 0;
+  font-size: 15px;
+}
+.feed-tune-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 16px 24px;
+}
+.feed-tune-name {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.feed-tune-name input {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+}
+.feed-tune-sub {
+  margin: 18px 0 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.feed-tune-hint {
+  margin: 4px 0 8px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.feed-tune-srcs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.feed-tune-src {
+  display: grid;
+  grid-template-columns: 4px 28px 1fr auto 40px;
+  grid-template-areas: 'sw face who share pct' 'sw face range range range';
+  align-items: center;
+  gap: 2px 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-soft, var(--border));
+}
+.feed-tune-src.off {
+  opacity: 0.55;
+}
+.feed-tune-swatch {
+  grid-area: sw;
+  align-self: stretch;
+  border-radius: 2px;
+}
+.feed-tune-src > .avatar {
+  grid-area: face;
+}
+.feed-tune-who {
+  grid-area: who;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  text-align: left;
+}
+.feed-tune-who b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+.feed-tune-who small {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.feed-tune-who:hover b {
+  text-decoration: underline;
+}
+.feed-tune-share {
+  grid-area: share;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.feed-tune-pct {
+  grid-area: pct;
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.feed-tune-src input[type='range'] {
+  grid-area: range;
+  width: 100%;
+  accent-color: var(--accent);
+}
+.feed-tune-bar {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  margin-top: 14px;
+  overflow: hidden;
+  border-radius: 5px;
+}
+.feed-tune-bar > span {
+  min-width: 3px;
+}
+.feed-tune-foot {
+  display: flex;
+  margin-top: 20px;
+}
+.feed-tune-sheet .feed-tune-head {
+  padding-top: 4px;
+}
+
+/* ---- a card's timeline, when the feed takes more than one */
+.feed-via-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+/* ---- who posts it: your accounts' pictures, pressed in (ringed, ticked) or out (faded) */
+.feed-as {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-bottom: 4px;
+}
+.feed-as-faces {
+  display: flex;
+  gap: 6px;
+}
+.feed-as-face {
+  position: relative;
+  display: grid;
+  padding: 2px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px transparent;
+  opacity: 0.4;
+  filter: grayscale(0.8);
+  transition:
+    opacity 0.12s,
+    box-shadow 0.12s,
+    filter 0.12s;
+}
+.feed-as-face:hover {
+  opacity: 0.75;
+}
+.feed-as-face.on {
+  opacity: 1;
+  filter: none;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.feed-as-face.off {
+  border: 1px dashed var(--danger);
+}
+.feed-as-face:disabled {
+  opacity: 0.2;
+}
+.feed-as-tick {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-sidebar);
+  background: var(--accent-fill, var(--accent));
+  color: var(--on-accent, #fff);
+}
+.feed-as-names {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+/* ---- a phone's Feed tab */
+.feed-phone-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: calc(8px + env(safe-area-inset-top)) 8px 2px 16px;
+}
+.feed-phone-head h1 {
+  margin: 0;
+  font-size: 22px;
+}
+.feed-bell {
+  position: relative;
+}
+.feed-bell-count {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  min-width: 17px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+}
+.feed-tabs {
+  flex: none;
+  display: flex;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  scrollbar-width: none;
+}
+.feed-tab {
+  position: relative;
+  flex: 1 0 auto;
+  min-width: 96px;
+  padding: 12px 14px 13px;
+  border-radius: 0;
+  color: var(--text-dim);
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.feed-tab[aria-selected='true'] {
+  color: var(--text);
+}
+/* The open feed's mark: a short bar under its name, as X and Bluesky draw theirs. */
+.feed-tab[aria-selected='true']::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: min(56px, 70%);
+  height: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+  transform: translateX(-50%);
+}
+.feed-tab-add {
+  flex: 0 0 auto;
+  min-width: 48px;
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+}
+.feed-orderline {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 4px 6px;
+  border-bottom: 1px solid var(--border-soft, var(--border));
+}
+.feed-orderline-read {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.feed-fab {
+  position: absolute;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
+  background: var(--accent-fill, var(--accent));
+  color: var(--on-accent, #fff);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.35);
+}
+.feed-page.is-phone .feed-main {
+  position: relative;
+}
+.feed-page.is-phone .feed-list {
+  padding-bottom: 88px;
+}
+
+/* ---- the composer in a phone's sheet: the whole sheet, Post at the foot over the keyboard */
+.sheet.feed-compose-sheet {
+  height: calc(100% - 24px - env(safe-area-inset-top));
+}
+.feed-composer.in-sheet {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0 16px;
+  border: 0;
+  background: transparent;
+}
+.feed-composer.in-sheet .compose-text {
+  flex: 1;
+  min-height: 140px;
+  font-size: 17px;
+}
+.feed-compose-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 0 10px;
+}
+.feed-compose-head h3 {
+  flex: 1;
+  margin: 0;
+  font-size: 16px;
+}
+.feed-composer.in-sheet .feed-gate {
+  max-width: 170px;
+}
+
+/* Looks (Seg.tsx): a few ways of drawing something, small pictures side by side, the one chosen raised; the raise
+   slides to the next, and pointing at one names it. */
+.look-seg {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  padding: 2px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--text) 7%, transparent);
+}
+.look-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 32px;
+  height: 26px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--accent) 30%, var(--bg-raised));
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 0.3),
+    inset 0 0 0 1px color-mix(in oklab, var(--accent) 45%, transparent);
+  transform: translateX(calc(var(--look-i) * 32px));
+  transition: transform 0.26s cubic-bezier(0.3, 0.8, 0.25, 1.15);
+}
+.look-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 26px;
+  padding: 0;
+  border-radius: 999px;
+  color: var(--text-faint);
+  transition: color 0.15s;
+}
+.look-btn:hover {
+  color: var(--text-dim);
+}
+.look-btn[aria-checked='true'] {
+  color: var(--text);
+}
+.look-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.look-icon {
+  width: 17px;
+  height: 17px;
+}
+.look-btn[aria-checked='true'] .look-icon {
+  animation: look-pop 0.34s cubic-bezier(0.3, 0.8, 0.25, 1.3);
+}
+@keyframes look-pop {
+  0% {
+    transform: scale(0.7);
+  }
+  60% {
+    transform: scale(1.15);
+  }
+}
+.look-tip {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 8px);
+  right: -6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: max-content;
+  max-width: 230px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-raised);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+  opacity: 0;
+  transform: translateY(-3px);
+  pointer-events: none;
+  transition:
+    opacity 0.12s,
+    transform 0.12s;
+}
+.look-tip b {
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.look-btn:hover .look-tip,
+.look-btn:focus-visible .look-tip {
+  opacity: 1;
+  transform: none;
+  transition-delay: 0.35s;
+}
+@media (hover: none) {
+  .look-tip {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .look-thumb {
+    transition: none;
+  }
+  .look-btn[aria-checked='true'] .look-icon {
+    animation: none;
+  }
+}
+
+/* Replies' style switch, named before it; checking for new replies beside the count. */
+.ct-style {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.ct-style-name {
+  color: var(--text-faint);
+  font-size: 12px;
+  animation: look-name 0.25s ease-out;
+}
+@keyframes look-name {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+.thread-check {
+  color: var(--text-faint);
+}
+.thread-check[data-busy] svg {
+  animation: thread-spin 0.8s linear infinite;
+}
+@keyframes thread-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.thread-coming {
+  display: flex;
+  align-items: center;
+  margin: 14px 8px;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+/* A quote: pointing at it lights it alone, not the post around it as well; its words select as the post's do. */
+.thread-quoted {
+  cursor: pointer;
+}
+.thread-quoted:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.thread-quoted.still {
+  cursor: default;
+}
+.thread-quoted.still:hover {
+  border-color: var(--border);
+}
+.thread-post:has(.thread-quoted:not(.still):hover) {
+  background: transparent;
+}
+
+/* A card's thread read ahead (threadcache.ts): a dot by its reply count, pulsing while read, filled once read. */
+.pa-pre {
+  width: 6px;
+  height: 6px;
+  margin: 0 0 0 5px;
+}
+.pa-pre[data-pre='loading'] {
+  animation: pre-dot 1s ease-in-out infinite;
+}
+.pa-pre[data-pre='ready'] {
+  border-color: var(--accent);
+  background: var(--accent);
+  opacity: 1;
+}
+
+/* Spacing (look.ts): roomy is the page as drawn above; snug and dense take it in. */
+.feed-density {
+  margin: 0 2px;
+}
+.feed-density-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  font-size: 15px;
+}
+.dens-snug .feed-entry {
+  padding: 0;
+}
+.dens-snug .feed-entry .thread-post {
+  gap: 9px;
+  padding: 6px 6px 2px;
+}
+.dens-snug .feed-entry .post-text,
+.dens-snug .ct-text {
+  font-size: 14px;
+  line-height: 1.4;
+}
+.dens-snug .post-media {
+  max-width: 360px;
+}
+.dens-snug .post-pic img {
+  max-height: 190px;
+}
+.dens-snug .feed-entry .post-actions {
+  margin-top: 0;
+}
+.dens-snug .feed-entry .pa-btn {
+  padding: 3px 8px;
+}
+.dens-snug .thread-focal {
+  gap: 8px;
+  padding: 10px 8px;
+}
+.dens-snug .thread-focal-text {
+  font-size: 16px;
+}
+.dens-snug .feed-entry .thread-post.line .thread-face::after {
+  top: 36px;
+}
+.dens-dense .feed-scroll {
+  padding: 4px 10px 16px;
+}
+.dens-dense .feed-entry {
+  padding: 0;
+}
+.dens-dense .feed-entry .thread-post {
+  gap: 8px;
+  padding: 5px 4px 2px;
+  border-radius: 6px;
+}
+.dens-dense .feed-entry .post-text,
+.dens-dense .ct-text {
+  font-size: 13.5px;
+  line-height: 1.35;
+}
+.dens-dense .feed-entry .post-mark,
+.dens-dense .feed-entry .post-handle {
+  font-size: 11.5px;
+}
+/* Pictures as a strip of small squares. */
+.dens-dense .feed-entry .post-media {
+  display: flex;
+  gap: 4px;
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+}
+.dens-dense .feed-entry .post-pic {
+  flex: none;
+  width: 84px;
+  height: 84px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.dens-dense .feed-entry .post-pic img {
+  max-height: none;
+}
+.dens-dense .feed-entry .post-quoted {
+  padding: 5px 8px;
+}
+.dens-dense .thread-quoted-pic {
+  max-height: 84px;
+}
+.dens-dense .feed-entry .pa-btn {
+  padding: 2px 7px;
+  font-size: 12px;
+}
+.dens-dense .thread-focal {
+  gap: 7px;
+  padding: 8px 6px;
+}
+.dens-dense .thread-focal-text {
+  font-size: 15px;
+}
+.dens-dense .feed-entry .thread-post.line .thread-face::after {
+  top: 30px;
+}
+@media (hover: hover) {
+  .dens-dense .feed-entry .post-actions {
+    opacity: 0.45;
+    transition: opacity 0.15s;
+  }
+  .dens-dense .feed-entry:hover .post-actions,
+  .dens-dense .feed-entry:focus-within .post-actions {
+    opacity: 1;
+  }
+}
+
+/* The head keeps one line for its words when the page is narrowed by a thread beside it. */
+.feed-head .conv-head-text {
+  min-width: 0;
+}
+.feed-head .conv-head-sub .muted-label {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* Snug and dense: which timeline a card came through ends its name's line (Row's aside), not a line of its own; where
+   the line is too short for both, it goes under the name, at the right, and the name stays whole. */
+.thread-head:has(> .post-aside) {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+.thread-head .post-aside {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  padding-left: 8px;
+}
+.post-aside .feed-via {
+  display: flex;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.post-aside .feed-via-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+
+/* Follow replies (Follow.tsx): the bell in a thread's head, with its words where there is room; lit while on. */
+.follow-btn {
+  width: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.follow-btn.on {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.follow-btn:disabled {
+  opacity: 0.6;
+}
+/* A followed post's chat (FollowChat.tsx): the note once the hub stopped looking, and replies found while open. */
+.follow-note {
+  flex-wrap: wrap;
+}
+.follow-more {
+  align-self: flex-start;
+  margin: 8px 0;
+  color: var(--accent);
+}
+@media (max-width: 820px) {
+  .follow-btn {
+    width: 32px;
+    padding: 0;
+    justify-content: center;
+    border-color: transparent;
+  }
+  .follow-btn-label {
+    display: none;
+  }
 }

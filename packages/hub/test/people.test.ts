@@ -135,3 +135,17 @@ test('an adapter without profile: said plainly, nothing asked', async () => {
   expect(v.stale).toBe('The Matrix adapter cannot read profiles yet.');
   expect(asked.length).toBe(0);
 });
+
+test('someone Signal knows only by SMS (an imported tel: or mailto: id): said plainly, Signal not asked', async () => {
+  const acc = store.account('acc_demo-signal')!;
+  store.ingest(acc, { t: 'hello', network: 'signal', version: '1', capabilities: ['send', 'profile'] });
+  for (const nativeId of ['tel:+15550199', 'mailto:ann.lee@example.com']) {
+    store.ingest(acc, { t: 'identity', identity: { nativeId, displayName: 'Ann Lee' } });
+    store.flush();
+    const id = store.one<{ id: string }>('SELECT id FROM identity WHERE network = ? AND native_id = ?', 'signal', nativeId)!.id;
+    asked.length = 0;
+    const v = await people.get(id, true);
+    expect(v.stale).toBe('Known only from SMS in an imported backup: there is no Signal profile to ask for.');
+    expect(asked.length).toBe(0);
+  }
+});

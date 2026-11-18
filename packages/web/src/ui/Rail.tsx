@@ -5,6 +5,7 @@ import { accountsNeedingYou, convTitle, directsOf, folderConvs, folderLeaves, pe
 import { db, go, mailRev, markAllRead, patchPlaces, rev, route, type Route } from '../state.ts';
 import { unreadInbox } from '../mail/model.ts';
 import { preloadMail } from './mail/lazy.tsx';
+import { preloadFeed } from './feed/lazy.tsx';
 import { calendarLink, calendarOn } from '../plans.ts';
 import { AccountDots, Avatar, Count, NetBadge } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
@@ -23,9 +24,10 @@ import { openMenu } from './ContextMenu.tsx';
 import { useShown } from './more.tsx';
 import { whenIdle } from '../slices.ts';
 import { openShelves, shelve, toggleShelf } from '../quiet.ts';
+import { offline, OfflineOrb, toggleOfflinePop } from './Offline.tsx';
 
 /** `track`: its key for button counts (clicks.ts), never the title, which may be a name. */
-function RailItem({ active, unread, badge, title, sub, onClick, children, dnd, menu, class: cls, track }: { active: boolean; unread?: boolean; badge?: number; title: string; sub?: string; onClick: () => void; children: any; dnd?: Record<string, unknown>; menu?: () => MenuSpec | null; class?: string; track: string }) {
+function RailItem({ active, unread, badge, title, sub, onClick, children, dnd, menu, class: cls, track }: { active: boolean; unread?: boolean; badge?: number; title: string; sub?: string; onClick: (e: { currentTarget: HTMLElement }) => void; children: any; dnd?: Record<string, unknown>; menu?: () => MenuSpec | null; class?: string; track: string }) {
   const ctx = useMenu(menu ?? (() => null));
   return (
     <div class={`rail-item ${active ? 'active' : ''} ${cls ?? ''}`} {...dnd}>
@@ -54,7 +56,8 @@ function SpaceIcon({ space }: { space: P.SpaceView }) {
   );
 }
 
-function FolderIcon({ folder }: { folder: P.FolderView }) {
+/** A folder's first places in a 2×2 grid; `small` is the one beside a list row (Sidebar.tsx). */
+export function FolderIcon({ folder, small }: { folder: P.FolderView; small?: boolean }) {
   // A folder of folders shows its folders' first places; its own come after.
   const minis = folderLeaves(folder).slice(0, 4).map((it) => {
     if (it.kind === 'space') {
@@ -70,7 +73,7 @@ function FolderIcon({ folder }: { folder: P.FolderView }) {
   });
   const nested = folder.items.some((it) => it.kind === 'folder');
   return (
-    <span class={`folder-icon ${nested ? 'nested' : ''}`} style={{ '--folder': folder.color ?? '#8b93a7' } as any}>
+    <span class={`folder-icon ${nested ? 'nested' : ''} ${small ? 'small' : ''}`} style={{ '--folder': folder.color ?? '#8b93a7' } as any}>
       <span class="folder-grid">
         {minis.map((m) =>
           m ? (
@@ -187,7 +190,7 @@ function RailFolder({ folder: f, route: r, parent }: { folder: P.FolderView; rou
   const inside = routeIn(f, r);
   const key = `folder:${f.id}`;
   const items = open ? arrangedFolderItems(f) : [];
-  const { shown, quiet } = shelve(items, (it) => `${it.kind}:${it.id}`);
+  const { shown, quiet, dim } = shelve(items, (it) => `${it.kind}:${it.id}`);
   const shelfOpen = openShelves.value.has(key);
   const item = (it: P.FolderView['items'][number]) => {
     if (it.kind === 'folder') {
@@ -197,7 +200,7 @@ function RailFolder({ folder: f, route: r, parent }: { folder: P.FolderView; rou
     if (it.kind === 'person') return <RailPerson id={it.id} route={r} folder={f.id} />;
     if (it.kind === 'space') {
       const s = db.spaces.get(it.id);
-      return s ? <RailSpace space={s} route={r} folder={f.id} quiet={quiet.includes(it)} /> : null;
+      return s ? <RailSpace space={s} route={r} folder={f.id} quiet={dim.has(it)} /> : null;
     }
     const c = db.conversations.get(it.id);
     return c ? <RailConv conv={c} route={r} folder={f.id} /> : null;
@@ -239,7 +242,7 @@ function QuietShelf({ list, n, open }: { list: string; n: number; open: boolean 
       track={open ? 'quiet shelf (close)' : 'quiet shelf (open)'}
       onClick={() => toggleShelf(list)}
     >
-      <span class="rail-shelf-face">{open ? <Icon name="chevronUp" size={16} /> : <span class="rail-shelf-n">{n}</span>}</span>
+      <span class="rail-shelf-face">{open ? <Icon name="chevronUp" size={16} /> : <><Icon name="moon" size={12} />{n}</>}</span>
     </RailItem>
   );
 }
@@ -283,6 +286,26 @@ function RailMail({ active }: { active: boolean }) {
   );
 }
 
+/**
+ * The Feed (docs/feed.md "The Feed page"), once an account has posts (X): a dot while someone answered, quoted or
+ * mentioned you there and you have not looked; never for likes or follows.
+ */
+function RailFeed({ active }: { active: boolean }) {
+  rev.value;
+  const feeds = [...db.conversations.values()].filter((c) => c.variant === 'feed');
+  if (!feeds.length && ![...db.accounts.values()].some((a) => a.network === 'x')) return null;
+  const said = feeds.reduce((n, c) => n + c.vantages.reduce((m, v) => m + (v.mentions ?? 0), 0), 0);
+  const sub = said ? `${said} ${said === 1 ? 'answer' : 'answers'} to your posts` : 'Posts from your networks, and what came of yours';
+  return (
+    <RailItem active={active} unread={said > 0} title="Feed" track="feed" sub={sub} onClick={() => go({ view: 'feed' })}>
+      <span class="rail-mail" onPointerEnter={() => void preloadFeed().catch(() => {})}>
+        <Icon name="rss" size={20} />
+        {said > 0 && <span class="rail-mail-dot" />}
+      </span>
+    </RailItem>
+  );
+}
+
 /** dither-calendar, when the hub has it (docs/calendar.md): a dot while plans from chats wait for you there. */
 function RailCalendar({ active }: { active: boolean }) {
   const link = calendarLink.value;
@@ -318,19 +341,33 @@ export function Rail() {
   const { shown: entries, quiet } = shelve(all, (e) => e.key);
   const shelfOpen = openShelves.value.has('rail');
   const [drawn, more] = useShown(entries.length);
+  const off = offline.value;
+  const inInbox = is((r) => r.view === 'inbox' || r.view === 'foryou' || r.view === 'model');
 
   return (
     <nav class="rail" aria-label="Places" data-track-area="rail">
-      <RailItem active={is((r) => r.view === 'inbox' || r.view === 'foryou' || r.view === 'model')} title="Inbox" track="inbox" badge={priorityCount} onClick={() => go({ view: 'inbox' })} menu={inboxMenu}>
-        <span class="rail-logo">
-          <DitherMark size={26} />
-        </span>
+      {/* Out of reach, the logo turns amber, and a click on it also says since when (Offline.tsx), without leaving the
+          inbox's chat you have open. */}
+      <RailItem
+        active={inInbox}
+        title="Inbox"
+        sub={off ? "Can't reach the hub" : undefined}
+        track="inbox"
+        badge={priorityCount}
+        onClick={(e) => {
+          if (off && r.view === 'inbox') toggleOfflinePop(e.currentTarget);
+          else go({ view: 'inbox' });
+        }}
+        menu={inboxMenu}
+      >
+        <span class="rail-logo">{off ? <OfflineOrb size={26} /> : <DitherMark size={26} />}</span>
       </RailItem>
       <RailItem active={is((r) => r.view === 'people')} title="People" track="people" sub="Every DM, merged per person" badge={peopleBadge} onClick={() => go({ view: 'people' })}>
         <Icon name="users" size={22} />
       </RailItem>
       <RailMail active={r.view === 'mail'} />
       <RailCalendar active={r.view === 'calendar'} />
+      <RailFeed active={r.view === 'feed'} />
       <div class="rail-sep" />
       <div class="rail-scroll" ref={scroll}>
         {entries.slice(0, drawn).map((e, i) => (

@@ -1,5 +1,5 @@
 /**
- * The composer's stickers, voice messages and view-once (docs/media-kinds.md): small buttons here, and the picker and
+ * The composer's stickers, GIFs, voice messages and view-once (docs/media-kinds.md): small buttons here, and the pickers and
  * the recorder in a chunk with stories (MediaParts.tsx), loaded the first time one is pressed. Each is offered
  * only where the sending account says it can (capabilities 'sendStickers', 'sendMedia' with or without 'sendVoice',
  * 'sendViewOnce').
@@ -10,6 +10,7 @@ import { signalStickerLink } from '@dither-chat/protocol';
 import { db, toast } from '../state.ts';
 import { Icon } from './icons.tsx';
 import { LOTTIE_MIME, Sticker } from './Sticker.tsx';
+import type { GifPick } from './ComposerMediaParts.tsx';
 
 type Parts = typeof import('./MediaParts.tsx');
 let parts: Parts | null = null;
@@ -41,7 +42,7 @@ export function mediaOffer(acc: P.AccountView | undefined, canAttach: boolean) {
 export const preloadStickers = () => void load().catch(() => {});
 
 /** The sticker picker beside `anchor` (the + menu's Sticker on a computer, the + sheet's on a phone). */
-export function StickerPicker({ conversationId, accountId, anchor, onSend, onClose }: { conversationId: string; accountId?: string; anchor: DOMRect; onSend: (sticker: P.StickerView) => void; onClose: () => void }) {
+export function StickerPicker({ conversationId, accountId, anchor, onSend, onClose, inline }: { conversationId: string; accountId?: string; anchor?: DOMRect; onSend: (sticker: P.StickerView) => void; onClose: () => void; inline?: boolean }) {
   const m = useParts(true);
   if (!m) return null;
   return (
@@ -49,14 +50,52 @@ export function StickerPicker({ conversationId, accountId, anchor, onSend, onClo
       conversationId={conversationId}
       accountId={accountId}
       anchor={anchor}
+      inline={inline}
       onPick={(s) => {
-        onClose();
+        // In the panel it stays, as Telegram's does, for another.
+        if (!inline) onClose();
         onSend(s);
       }}
       onClose={onClose}
       draw={drawSticker}
     />
   );
+}
+
+/** The GIF picker beside `anchor` (the + menu's GIF on a computer), or in the phone's panel (`inline`). */
+export function GifPicker({ conversationId, anchor, onSend, onClose, inline }: { conversationId: string; anchor?: DOMRect; onSend: (g: GifPick) => void; onClose: () => void; inline?: boolean }) {
+  const m = useParts(true);
+  if (!m) return null;
+  return (
+    <m.GifPicker
+      conversationId={conversationId}
+      anchor={anchor}
+      inline={inline}
+      onPick={(g) => {
+        if (!inline) onClose();
+        onSend(g);
+      }}
+      onClose={onClose}
+    />
+  );
+}
+
+/**
+ * A picked GIF, as the chat's network takes one: on Discord its link where it has one (Discord draws it back as the
+ * GIF, as its own picker sends it); elsewhere its file, marked as a GIF so a network with its own GIFs sends one.
+ */
+export async function gifSend(g: GifPick, network: P.Network): Promise<{ body: string } | { file: File; gif: boolean }> {
+  if (network === 'discord' && g.url) return { body: g.url };
+  const r = await fetch(g.file);
+  if (!r.ok) throw new Error(`The GIF did not load (${r.status})`);
+  const blob = await r.blob();
+  // Named for what it is: Discord's GIF search gives a WebM and an animated WebP, never a .gif.
+  const type = blob.type.split(';')[0];
+  const ext = ({ 'video/mp4': 'mp4', 'video/webm': 'webm', 'image/webp': 'webp', 'image/svg+xml': 'svg' } as Record<string, string>)[type] ?? 'gif';
+  const base = (g.title ?? 'gif').replace(/[^\w-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'gif';
+  // Marked a GIF only when it is one the networks' GIF sends take (Telegram's animation, WhatsApp's GIF playback): an
+  // mp4 or a .gif. A WebP marked so would go as an animated document Telegram cannot play; unmarked, it is a picture.
+  return { file: new File([blob], `${base}.${ext}`, { type: blob.type || 'image/gif' }), gif: type === 'video/mp4' || type === 'image/gif' };
 }
 
 const drawSticker = (s: P.StickerView) =>

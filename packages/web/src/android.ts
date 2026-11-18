@@ -6,9 +6,14 @@
  * Messages are JSON both ways, `{ t: ... }`. Everywhere else `android` is null and nothing here runs.
  */
 import { effect, signal } from '@preact/signals';
-import { activeCall, leaveCall, setMuted } from './call.ts';
+import { activeCall, leaveCall, setMuted, startCall } from './call.ts';
 import { noteOpen } from './activity.ts';
+import { reportAppCrashes } from './errors.ts';
 import { db, go, parseHash, prefs } from './state.ts';
+import { rev } from './versions.ts';
+import { api } from './api.ts';
+import type * as P from '@dither-chat/protocol';
+import { onIme, keepKeyboardRoom } from './phone.ts';
 
 interface Port {
   postMessage(msg: string): void;
@@ -62,6 +67,11 @@ interface AppInfo {
   notifications?: boolean;
   /** What this build of the app can open for the page: 'app' (another app), 'appInfo', 'notifications'. */
   opens: string[];
+  /**
+   * The phone's photos and files for the message box's panel (apps/android Device.kt), on builds that list 'device':
+   * what Android lets the app read, and the token of the private address the bytes are served at.
+   */
+  device?: { media: 'all' | 'partial' | 'none'; files: boolean; token: string };
 }
 
 export const android = port
@@ -84,6 +94,19 @@ export const android = port
       forgetUpload: () => android!.send({ t: 'upload.forget' }),
       send(msg: Record<string, unknown>) {
         port.postMessage(JSON.stringify(msg));
+      },
+      /** Resolves with the reply that carries this request's id (the app echoes `rid`), or rejects with its `error`. */
+      request<T>(msg: Record<string, unknown>, ms = 30_000): Promise<T> {
+        const rid = ++rids;
+        return new Promise((resolve, reject) => {
+          const timer = setTimeout(() => (byRid.delete(rid), reject(new Error('The app did not answer.'))), ms);
+          byRid.set(rid, (d) => {
+            clearTimeout(timer);
+            if (d.error) reject(new Error(d.error));
+            else resolve(d as T);
+          });
+          android!.send({ ...msg, rid });
+        });
       },
       /** Resolves with the next reply of type `t`, or rejects with a `${t}.error` reply. */
       ask<T>(msg: Record<string, unknown>, t: string, ms = 60_000): Promise<T> {
@@ -116,6 +139,8 @@ export const android = port
   : null;
 
 const waiters = new Map<string, (d: any) => void>();
+const byRid = new Map<number, (d: any) => void>();
+let rids = 0;
 const uploadListeners = new Set<(u: NativeUpload | null) => void>();
 
 /** Hear every upload report, the one-off `done` and `failed` included. Returns the way to stop. */
@@ -126,6 +151,11 @@ export function onNativeUpload(fn: (u: NativeUpload | null) => void): () => void
 
 function receive(d: any) {
   const t = String(d.t ?? '');
+  if (typeof d.rid === 'number' && byRid.has(d.rid)) {
+    const w = byRid.get(d.rid)!;
+    byRid.delete(d.rid);
+    return w(d);
+  }
   const base = t.endsWith('.error') ? t.slice(0, -6) : t;
   const w = waiters.get(base);
   if (w) {
@@ -133,13 +163,22 @@ function receive(d: any) {
     w(t.endsWith('.error') ? { ...d, error: d.error ?? 'Failed' } : d);
   }
   switch (t) {
+    case 'ime':
+      onIme(Number(d.h) || 0, !!d.done);
+      break;
     case 'info':
+      // This app leaves the keyboard's room to the page, which says it will keep it (phone.ts).
+      if ((d.opens ?? []).includes('keyboard') && !android!.info.value?.opens.includes('keyboard')) {
+        android!.send({ t: 'keyboard', page: true });
+        keepKeyboardRoom();
+      }
       android!.info.value = {
         version: d.version,
         distributors: (d.distributors ?? []).map((x: string | Distributor) => (typeof x === 'string' ? { pkg: x, label: x === 'io.heckel.ntfy' ? 'ntfy' : x } : x)),
         current: d.current ?? null,
         notifications: d.notifications,
         opens: d.opens ?? [],
+        ...(d.device ? { device: d.device } : {}),
       };
       break;
     case 'upload':
@@ -161,6 +200,12 @@ function receive(d: any) {
     case 'open':
       noteOpen(d.hash);
       go(parseHash(d.hash), false);
+      break;
+    case 'crashes':
+      reportAppCrashes(Array.isArray(d.list) ? d.list : [], android!.info.value?.version);
+      break;
+    case 'call.answer':
+      answer(d);
       break;
     case 'call.hangup':
       if (activeCall.value) leaveCall();
@@ -206,5 +251,32 @@ export function startAndroid() {
   effect(() => {
     void [prefs.value.theme, prefs.value.themeDark, prefs.value.themeLight];
     requestAnimationFrame(() => android.send({ t: 'theme', bg: getComputedStyle(document.body).backgroundColor }));
+  });
+}
+
+/**
+ * Answer on a ring's notification (the app's Notifications.ring): join the call from here, as the ring card's Answer
+ * does. A page the tap started has no accounts yet: it waits for them, a minute at most. A hub that did not say which
+ * account the ring is for is asked by the call's id.
+ */
+async function answer(d: { call?: string; conversationId?: string; accountId?: string }) {
+  const conv = d.conversationId;
+  if (typeof conv !== 'string' || !conv) return;
+  if (activeCall.value?.conversationId === conv && activeCall.value.phase !== 'ended') return;
+  let account = d.accountId || '';
+  if (!account && d.call) {
+    const r = await api<{ calls: P.CallView[] }>(`/api/calls/ringing?conversation=${encodeURIComponent(conv)}`).catch(() => null);
+    account = r?.calls.find((c) => c.id === d.call)?.accountId ?? '';
+  }
+  if (!account) return;
+  const join = () => void startCall(conv, account, prefs.value.callMode);
+  if (db.accounts.has(account)) return join();
+  const giveUp = setTimeout(() => stop(), 60_000);
+  const stop = effect(() => {
+    rev.value;
+    if (!db.accounts.has(account)) return;
+    clearTimeout(giveUp);
+    queueMicrotask(() => stop());
+    join();
   });
 }

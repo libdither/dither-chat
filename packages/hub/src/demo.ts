@@ -9,7 +9,7 @@
  * first seed and stored in the account config.
  */
 
-import { DEMO_MEDIA_CAPS, DemoMedia } from './demomedia.ts';
+import { DEMO_GIFS, DEMO_MEDIA_CAPS, DemoMedia } from './demomedia.ts';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
@@ -18,8 +18,8 @@ import { hubId } from '@dither-chat/protocol/ids';
 import type { AccountRow, Store } from './store.ts';
 import { DEMO_SELF_CAPS, DemoSelf } from './demoself.ts';
 import type { InprocAdapter } from './supervisor.ts';
-import { DEMO_CALL_CAPS, demoCallRoom } from './democalls.ts';
-import { DEMO_X_ACCOUNT, DemoX } from './demo-x.ts';
+import { DEMO_CALL_CAPS, DemoRings, demoCallRoom } from './democalls.ts';
+import { DEMO_X2_ACCOUNT, DEMO_X_ACCOUNT, DemoX } from './demo-x.ts';
 import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
 import { DEMO_SERVER_CAPS, DemoServers } from './demoservers.ts';
@@ -27,6 +27,8 @@ import { DEMO_APP_CAPS, DemoApps } from './demoapps.ts';
 import { DEMO_THREAD_CAPS, DemoThreads } from './demothreads.ts';
 import { DEMO_MOD_CAPS, DemoModeration } from './demomod.ts';
 import { DEMO_SEND_CAPS, DemoSending } from './demosending.ts';
+import { event, h, room, snow, tgUser, uuid, wgroup } from './demo-ids.ts';
+import { crowd } from './demo-crowd.ts';
 
 type AccKey = 'dmain' | 'dalt' | 'sig' | 'mx' | 'wa' | 'tg';
 
@@ -42,6 +44,8 @@ const MULTI_ACCOUNT = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includ
  * two schools whose names share a word, and servers gone quiet a year ago: a sidebar to organize (docs/organize.md).
  */
 const SERVERS = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('servers');
+/** DITHER_DEMO_SCENARIO=crowd adds about 120 people, eight servers and eleven groups, with pairs for Same person? to find (demo-crowd.ts). */
+const CROWD = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('crowd');
 const named = (plain: string, username: string) => (MULTI_ACCOUNT || SERVERS ? username : plain);
 
 const DEMO_ACCOUNTS: { key: AccKey; id: string; network: P.Network; label: string; color: string }[] = [
@@ -55,14 +59,6 @@ const DEMO_ACCOUNTS: { key: AccKey; id: string; network: P.Network; label: strin
 
 // ------------------------------------------------------------------ id shapes
 
-const h = (s: string) => new Bun.CryptoHasher('sha256').update(s).digest();
-const snow = (k: string) => (BigInt('0x' + h('d' + k).toString('hex').slice(0, 15)) % 900000000000000000n + 1000000000000000000n).toString();
-const uuid = (k: string) => {
-  const x = h('s' + k).toString('hex');
-  return `${x.slice(0, 8)}-${x.slice(8, 12)}-4${x.slice(13, 16)}-a${x.slice(17, 20)}-${x.slice(20, 32)}`;
-};
-const room = (k: string, server: string) => `!${h('m' + k).toString('base64url').slice(0, 18)}:${server}`;
-const event = (k: string) => `$${h('e' + k).toString('base64url').slice(0, 43)}`;
 
 // ------------------------------------------------------------------ people
 
@@ -117,7 +113,6 @@ const W = {
   ines: wid('34611222333', 'Inês'),
   hoa: wid('15550188', 'Hoa (garden swap)', false),
 };
-const wgroup = (k: string) => `120363${BigInt('0x' + h('w' + k).toString('hex').slice(0, 12)).toString().padStart(12, '0').slice(0, 12)}@g.us`;
 const mid = (user: string, displayName: string, x: Partial<P.IdentityFact> = {}): P.IdentityFact => ({ nativeId: user, handle: user, displayName, ...x });
 const M = {
   // Multi-account: your accounts' own names differ a little, as people's do (docs/chats.md "Names").
@@ -135,7 +130,7 @@ const M = {
   ben: mid('@ben:matrix.org', 'Ben'),
 };
 /** Telegram: numeric user ids, @usernames as handles. */
-const tid = (k: string, username: string, displayName: string, contact = true): P.IdentityFact => ({ nativeId: String(100_000_000 + (h('t' + k).readUInt32BE(0) % 6_000_000_000)), handle: `@${username}`, displayName, contact });
+const tid = (k: string, username: string, displayName: string, contact = true): P.IdentityFact => ({ nativeId: tgUser(k), handle: `@${username}`, displayName, contact });
 const TG = {
   self: tid('self', 'zyansheep', named('zyan', 'zyan s.'), false),
   alice: tid('alice', 'alicechen', 'Alice Chen'),
@@ -198,6 +193,14 @@ if (MULTI_ACCOUNT) {
   Object.assign(S, { kit: KIT.sig });
   Object.assign(M, { kit: KIT.mx, kitNix: KIT.nix });
   Object.assign(TG, { kit: KIT.tg });
+}
+const C = CROWD ? crowd({ dmain: D.zyan, dalt: D.zyn, sig: S.self, mx: M.self, wa: W.self, tg: TG.self }) : null;
+if (C) {
+  Object.assign(D, C.pools.discord);
+  Object.assign(S, C.pools.signal);
+  Object.assign(M, C.pools.matrix);
+  Object.assign(W, C.pools.whatsapp);
+  Object.assign(TG, C.pools.telegram);
 }
 const POOLS: Partial<Record<P.Network, Record<string, P.IdentityFact>>> = { discord: D, signal: S, whatsapp: W, matrix: M, telegram: TG };
 const at = (i: P.IdentityFact) => `<@${i.nativeId}>`;
@@ -607,6 +610,7 @@ const SPACES: DemoSpace[] = [
   // WhatsApp: a community is its parent group; its groups are channels in it.
   { acc: ['wa'], fact: { nativeId: wgroup('nbh'), kind: 'community', name: 'Maple Street', topic: 'Neighbours on Maple Street' } },
   ...SERVER_SPACES,
+  ...(C?.spaces ?? []),
 ];
 
 const dch = (acc: AccKey[], k: string, name: string, section: string, i: number, x: Partial<P.ConversationFact> = {}): P.ConversationFact & { _acc?: AccKey[] } => ({
@@ -650,6 +654,8 @@ const CONVS: DemoConv[] = [
       [2 * DAY + 79, D.alice, 'https://gamebanana.com/mods/celeste-dither'],
       [2 * DAY + 60, D.zyan, 'ok that is gorgeous', { react: { '💜': [D.alice] } }],
       [DAY + 200, D.alice, "also pls stop getting pinged by me on three apps, I'll use signal for real stuff 😅"],
+      // A GIF from Discord's picker: its link as the message, drawn back as a looping GIF (docs/media-kinds.md "GIFs").
+      [DAY + 190, D.alice, DEMO_GIFS[3].url, { embeds: [{ url: DEMO_GIFS[3].url, provider: 'Klipy', video: { url: DEMO_GIFS[3].src, width: DEMO_GIFS[3].width, height: DEMO_GIFS[3].height, gifv: true } }] }],
     ],
   },
   {
@@ -1274,6 +1280,7 @@ const MO_CONVS: DemoConv[] = [
   },
 ];
 if (MULTI_ACCOUNT) CONVS.push(...KIT_CONVS, ...MO_CONVS);
+if (C) CONVS.push(...C.convs);
 
 // ------------------------------------------------------------------ live behaviour
 
@@ -1434,10 +1441,10 @@ const DISCORD_PROFILES: Record<string, { bio?: string; pronouns?: string; status
     friends: ['alice', 'theo'],
     links: [{ label: 'GitHub', value: 'quinn-dev', url: 'https://github.com/quinn-dev', verified: true }, { label: 'Website', value: 'quinn.example', url: 'https://quinn.example' }],
   },
-  ravi: { bio: 'raid leader on tuesdays', accent: '#4B6CB7', servers: ['hk'], friends: ['alice'], status: { text: 'grinding', emoji: '⚔️' } },
+  ravi: { bio: 'raid leader on tuesdays', accent: '#4B6CB7', servers: ['hk'], friends: ['alice'], status: { text: 'grinding', emoji: '⚔️' }, links: [{ label: 'X', value: 'ravi_routes', url: 'https://x.com/ravi_routes', verified: true }] },
   jordan: { pronouns: 'he/him', servers: ['hk'], friends: ['alice'] },
   theo: { bio: 'has your belay device', servers: ['dither'], friends: ['alice', 'quinn'] },
-  lev: { bio: 'p2p, routing, coffee', servers: ['dither', 'rust'], roles: { dither: [{ name: 'Maintainer', color: '#E91E63' }] } },
+  lev: { bio: 'p2p, routing, coffee. signal me: +1 555 0118', servers: ['dither', 'rust'], roles: { dither: [{ name: 'Maintainer', color: '#E91E63' }] } },
   // Multi-account only (these accounts exist only there): each of someone's accounts says its own thing.
   kit: { bio: 'makes things, breaks things, fixes most of them', pronouns: 'they/them', friends: ['alice'] },
   kitWork: { bio: 'infra at a small co-op. work account, slow replies' },
@@ -1445,6 +1452,7 @@ const DISCORD_PROFILES: Record<string, { bio?: string; pronouns?: string; status
   mo: { bio: 'writes rust, mostly' },
   moArt: { bio: 'one drawing a day in november' },
 };
+if (C) Object.assign(DISCORD_PROFILES, C.profiles);
 const SIGNAL_ABOUT: Record<string, { text: string; emoji: string }> = {
   alice: { text: 'on the wall, back at 8', emoji: '🧗' },
   mom: { text: 'Call me!', emoji: '☎️' },
@@ -1945,6 +1953,8 @@ class DemoAdapter implements InprocAdapter {
   private mod: DemoModeration | null = null;
   /** Silent sends, previews off, saved messages and the network's scheduled ones (demosending.ts). */
   private sending: DemoSending | null = null;
+  /** Calls ringing this account (democalls.ts): Discord's demo accounts only. */
+  private rings = new DemoRings((ev) => this.emit(ev));
   /** Capabilities a verify script took away (action 'capabilities'), to see the page without them. */
   private without = new Set<P.Capability>();
   private network: P.Network;
@@ -2508,6 +2518,7 @@ class DemoAdapter implements InprocAdapter {
           { who: D.zyan.nativeId, roles: ['Maintainer'] },
         ],
       });
+    for (const m of C?.members ?? []) if (m.acc === this.key) emit({ t: 'members', space: m.space, source: 'seen', total: m.total, members: m.members.map((i) => ({ who: i.nativeId })) });
     for (const c of CONVS) {
       if (!c.acc.includes(this.key)) continue;
       const msgs = c.msgs;
@@ -2895,6 +2906,9 @@ class DemoAdapter implements InprocAdapter {
           this.emit({ t: 'reply', id: cmd.id, ok: false, error: 'Calls are on the demo Discord accounts.' });
           return;
         }
+        // Joining a chat that rings you answers its ring; leaving it ends that call.
+        if (cmd.op === 'join') this.rings.answered(cmd.call, cmd.conversation);
+        else if (cmd.op === 'leave') this.rings.left(cmd.call);
         demoCallRoom
           .command((ev) => this.emit(ev), { self: this.self.nativeId, bot: { id: D.lev.nativeId, name: D.lev.displayName ?? 'Lev' } }, cmd)
           .then(
@@ -2913,13 +2927,15 @@ class DemoAdapter implements InprocAdapter {
         // View-once: your own copy is not kept to look at, as Signal's apps show it.
         let attachments: P.AttachmentFact[] | undefined = cmd.viewOnce
           ? undefined
-          : cmd.attachments?.map((f) => ({ kind: f.kind, mime: f.mime, name: f.name, size: f.size, url: `data:${f.mime};base64,${readFileSync(f.path).toString('base64')}`, ...(f.voice ? { voice: f.voice } : {}) }));
+          : cmd.attachments?.map((f) => ({ kind: f.kind, mime: f.mime, name: f.name, size: f.size, url: `data:${f.mime};base64,${readFileSync(f.path).toString('base64')}`, ...(f.voice ? { voice: f.voice } : {}), ...(f.gif ? { gif: true as const } : {}) }));
         if (sticker) attachments = [{ nativeId: `sticker:${sticker.id}`, kind: 'image', mime: sticker.mime, name: sticker.name, width: 160, height: 160, url: sticker.url }];
         const kind: P.MessageKind = sticker ? 'sticker' : (attachments?.length || cmd.viewOnce) && !cmd.body ? 'media' : 'text';
         const body = cmd.viewOnce ? cmd.body || '📷 View-once media' : cmd.body;
         // A chat with a disappearing timer: the message carries it, as Signal's do.
         const timer = (demoPlaces.get(cmd.conversation)?.values.disappearing ?? DEMO_VALUES[cmd.conversation]?.disappearing ?? 0) as number;
-        const extra = { ...(cmd.viewOnce ? { viewOnce: true } : {}), ...(timer > 0 ? { expiresInSeconds: timer } : {}) };
+        // A GIF's link from Discord's picker comes back drawn as the GIF, as Discord does (docs/media-kinds.md "GIFs").
+        const gif = this.network === 'discord' ? DEMO_GIFS.find((g) => g.url === body?.trim()) : undefined;
+        const extra = { ...(cmd.viewOnce ? { viewOnce: true } : {}), ...(timer > 0 ? { expiresInSeconds: timer } : {}), ...(gif ? { embeds: [{ url: gif.url, provider: 'Klipy', video: { url: gif.src, width: gif.width, height: gif.height, gifv: true as const } }] } : {}) };
         this.emit({ t: 'message', live: true, message: { nativeId, conversation: cmd.conversation, author: this.self.nativeId, ts: Date.now(), body, replyTo: cmd.replyTo, kind, attachments, ...(Object.keys(extra).length ? { extra } : {}), ...(cmd.silent ? { silent: true } : {}) } });
         this.sent.set(nativeId, { body: cmd.body, att: attachments });
         reply({ nativeId });
@@ -3019,6 +3035,7 @@ class DemoAdapter implements InprocAdapter {
         }
         break;
       case 'stickers':
+      case 'gifs':
       case 'addStickerPack':
       case 'storyViewed':
       case 'storyReply':
@@ -3227,6 +3244,16 @@ class DemoAdapter implements InprocAdapter {
           reply({ ok: true });
           break;
         }
+        // ring / ringStop: a call rings this account, or the caller gives up (democalls.ts DemoRings).
+        if (cmd.action === 'ring' || cmd.action === 'ringStop') {
+          const a = (cmd.args ?? {}) as { conversation?: string; caller?: string; video?: boolean };
+          if (typeof a.conversation !== 'string') {
+            this.emit({ t: 'reply', id: cmd.id, ok: false, error: `${cmd.action}: { conversation, caller?, video? }` });
+            break;
+          }
+          reply(cmd.action === 'ring' ? { call: this.rings.ring(a.conversation, a.caller ?? D.lev.nativeId, !!a.video) } : { stopped: this.rings.giveUp(a.conversation) });
+          break;
+        }
         // capabilities: say hello again without these (scripts/verify-add.ts), or with everything when none are given.
         if (cmd.action === 'capabilities') {
           this.without = new Set(((cmd.args as { without?: P.Capability[] } | undefined)?.without ?? []).filter((c) => typeof c === 'string'));
@@ -3247,6 +3274,13 @@ class DemoAdapter implements InprocAdapter {
         }
         reply(cmd.action === 'typingLog' ? { typing: this.typingLog } : cmd.action === 'addLog' ? this.adds.counts : cmd.action === 'readLog' ? { reads: this.readLog } : { note: 'demo adapters have no actions' });
         break;
+      case 'declineCall':
+        if (!this.rings.decline(cmd.conversation, cmd.call)) {
+          this.emit({ t: 'reply', id: cmd.id, ok: false, error: 'That call is not ringing you' });
+          break;
+        }
+        reply({});
+        break;
       default:
         if ('id' in cmd) reply();
     }
@@ -3265,7 +3299,7 @@ class DemoAdapter implements InprocAdapter {
 
 export function demoFactory(acc: AccountRow, dir: string): InprocAdapter | null {
   if (acc.adapter !== 'demo') return null;
-  if (acc.id === DEMO_X_ACCOUNT.id) return new DemoX(acc, dir);
+  if (acc.id === DEMO_X_ACCOUNT.id || acc.id === DEMO_X2_ACCOUNT.id) return new DemoX(acc, dir);
   const key = DEMO_ACCOUNTS.find((d) => d.id === acc.id)?.key;
   return key ? new DemoAdapter(key, acc, dir) : null;
 }
@@ -3277,7 +3311,7 @@ export function createDemoAccounts(store: Store, o: { x?: boolean } = {}): Accou
   for (const [c, f] of FIRST_CONVS) c.fact = f;
   for (const [x, f] of FIRST_SPACES) x.fact = f;
   const epoch = Date.now();
-  return [...DEMO_ACCOUNTS, ...(o.x === false ? [] : [DEMO_X_ACCOUNT])].map((d) => store.createAccount({ id: d.id, network: d.network, label: d.label, color: d.color, adapter: 'demo', demo: true, config: { epoch } }));
+  return [...DEMO_ACCOUNTS, ...(o.x === false ? [] : [DEMO_X_ACCOUNT, DEMO_X2_ACCOUNT])].map((d) => store.createAccount({ id: d.id, network: d.network, label: d.label, color: d.color, adapter: 'demo', demo: true, config: { epoch } }));
 }
 
 /** Hub-side organisation for the demo: merged people, folders, rules. Applied once. */
@@ -3292,6 +3326,20 @@ export function applyDemoOverlay(store: Store) {
     store.updatePerson(first, { name });
     return first;
   };
+  // Same person? (docs/same-person.md): two Discord profiles kept as if opened, so the list has something to show
+  // from the start: Ravi links an X account, Lev gives a Signal number in a bio.
+  for (const [k, who] of [['ravi', D.ravi], ['lev', D.lev]] as const) {
+    const p = DISCORD_PROFILES[k];
+    const about: P.PersonAbout = { displayName: who.displayName, handle: who.handle, ...(p.bio ? { bio: p.bio } : {}), ...(p.links ? { links: p.links } : {}) };
+    store.db.query('INSERT OR IGNORE INTO about (target_id, account_id, data, fetched_at) VALUES (?, ?, ?, ?)').run(idn('discord', who), 'acc_demo-discord-main', JSON.stringify(about), Date.now() - 86_400_000);
+  }
+  // The crowd (demo-crowd.ts): people already known to be one person, and the profiles that link an account.
+  for (const [name, accs] of C?.merges ?? []) merge(name, ...accs);
+  for (const [k, p] of Object.entries(C?.profiles ?? {})) {
+    const who = (D as Record<string, P.IdentityFact>)[k];
+    const about: P.PersonAbout = { displayName: who.displayName, handle: who.handle, ...(p.bio ? { bio: p.bio } : {}), ...(p.links ? { links: p.links } : {}) };
+    store.db.query('INSERT OR IGNORE INTO about (target_id, account_id, data, fetched_at) VALUES (?, ?, ?, ?)').run(idn('discord', who), 'acc_demo-discord-main', JSON.stringify(about), Date.now() - 86_400_000);
+  }
   const alice = merge('Alice Chen', ['signal', S.alice], ['discord', D.alice], ['matrix', M.alice], ['whatsapp', W.alice], ['telegram', TG.alice]);
   const sam = merge('Sam Rivera', ['signal', S.sam], ['matrix', M.sam]);
   merge('Theo', ['signal', S.theo], ['discord', D.theo]);

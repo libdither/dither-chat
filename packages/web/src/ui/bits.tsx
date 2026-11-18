@@ -233,6 +233,6 @@ export function Empty({ icon, title, children }: { icon: string; title: string; 
 
 export function variantIcon(v: P.Variant, shape?: P.Shape): string {
   if (shape === 'thread') return 'thread';
-  return { text: 'hash', announcement: 'announcement', forum: 'forum', voice: 'voice', stage: 'stage', media: 'media', rules: 'rules', feed: 'bell', posts: 'quote' }[v] ?? 'hash';
+  return { text: 'hash', announcement: 'announcement', forum: 'forum', voice: 'voice', stage: 'stage', media: 'media', rules: 'rules', feed: 'bell', posts: 'quote', follow: 'bell' }[v] ?? 'hash';
 }
 

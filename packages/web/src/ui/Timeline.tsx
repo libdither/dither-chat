@@ -91,12 +91,16 @@ import { isPicture, onlyPictures, pictureRuns, picturesOf } from '../pictures.ts
 import { pictureLayout } from '../arrange.ts';
 import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
 import { TypingBar } from './Typing.tsx';
+import { HeadOrb, offline } from './Offline.tsx';
 import { DisappearsMark, TimerLabel } from './Disappearing.tsx';
 import { useGrow } from './grow.ts';
-import { AttachSheet, CameraView, SendScreen } from './Attach.tsx';
-import { mediaOffer, preloadStickers, StickerPicker, stickerInstaller, ViewOnceChip, VoiceButton } from './ComposerMedia.tsx';
+import { CameraView, SendScreen } from './Attach.tsx';
+import type { PanelTab } from './panel/Panel.tsx';
+import { GifPicker, gifSend, mediaOffer, preloadStickers, StickerPicker, stickerInstaller, ViewOnceChip, VoiceButton } from './ComposerMedia.tsx';
+import type { GifPick } from './ComposerMediaParts.tsx';
 import { CAPTURE_ACCEPT, MEDIA_ACCEPT, opensSendScreen } from '../camera.ts';
-import { phone, touchOnly } from '../phone.ts';
+import { gifLinkOf, plainGifs } from '../gifs.ts';
+import { closePanel, openPanel, panelOpen, panelShown, phone, touchOnly } from '../phone.ts';
 import { composerDone, composerTyped } from '../typing.ts';
 import { noteSeen } from '../activity.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
@@ -124,7 +128,7 @@ import { EmbedVideo, RichFoot, RichHead, RichMarks, Veil, veiled, Voice } from '
 import { VoicePeople } from './Ringing.tsx';
 import { ForumLazy } from './ThreadsLazy.tsx';
 import { ScheduledStrip, useSendExtras } from './SendExtras.tsx';
-import { FeedViewLazy, PostsListLazy, ThreadLazy } from './feed/lazy.tsx';
+import { FeedViewLazy, FollowChatLazy, PostsListLazy, ThreadLazy } from './feed/lazy.tsx';
 import { postMessageKey } from '../feed.ts';
 
 
@@ -320,6 +324,7 @@ function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () =>
         </div>
       </div>
       <div class="conv-head-actions">
+        <HeadOrb />
         {person && isDirect && (
           <button class="hdr-btn phone-hide" data-track="profile" title="Profile" aria-label="Profile" onClick={() => go({ view: 'profile', person: person.id })}>
             <Icon name="info" size={16} />
@@ -481,7 +486,13 @@ function Attachments({ m, run, absorbed, layout, switchable }: { m: P.MessageVie
         const kind = media(a);
         if (isSticker(m, a)) return <Sticker a={a} index={i} />;
         if (kind === 'video') {
-          const video = <video class="att-video" data-att={i} src={a.url} controls preload="metadata" onPlay={() => played(m)} />;
+          // A GIF the network sent as a video loops silently, as a GIF, with no player (docs/media-kinds.md "GIFs").
+          const video =
+            a.gif && plainGifs() ? (
+              <video class="att-video att-gif" data-att={i} src={a.url} autoplay loop muted playsInline preload="auto" aria-label={a.alt ?? 'GIF'} style={a.width && a.height ? { aspectRatio: `${a.width} / ${a.height}` } : undefined} />
+            ) : (
+              <video class="att-video" data-att={i} src={a.url} controls preload="metadata" onPlay={() => played(m)} />
+            );
           return withNote(a, veiled(a) ? <Veil a={a}>{video}</Veil> : video);
         }
         // A voice message with its waveform and length (docs/rich-messages.md).
@@ -519,6 +530,18 @@ const withNote = (a: P.AttachmentView, el: ComponentChildren) =>
   ) : (
     el
   );
+
+/** A Discord GIF drawn as just the GIF: a looping silent video (a picture in the demo world). */
+function PlainGif({ e }: { e: P.EmbedView }) {
+  const v = e.video!;
+  const ratio = v.width && v.height ? `${v.width} / ${v.height}` : undefined;
+  const label = e.title ?? 'GIF';
+  return v.url.startsWith('data:image/') ? (
+    <img class="plain-gif" src={v.url} alt={label} style={ratio ? { aspectRatio: ratio } : undefined} />
+  ) : (
+    <video class="plain-gif" src={v.url} autoplay loop muted playsInline preload="auto" aria-label={label} style={ratio ? { aspectRatio: ratio } : undefined} />
+  );
+}
 
 function Embeds({ m }: { m: P.MessageView }) {
   if (!m.embeds.length) return null;
@@ -654,6 +677,8 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
   const chip = !hover && !!chipOn && !m.deleted && !m.forward && chipOn.reduce((k, x) => k + picturesOf(x).length, 0) > 1;
   // Your message's ticks, after its text.
   const ticks = m.receipts && isSelfIdentity(m.authorId) ? <Ticks m={m} /> : null;
+  // A Discord GIF: just the GIF, with no link or card (docs/media-kinds.md "GIFs").
+  const gif = !m.deleted && !m.forward && !m.poll ? gifLinkOf(m) : null;
   return (
     <div
       class={`msg ${grouped ? 'grouped' : target || m.quote ? '' : 'head'} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''}`}
@@ -725,17 +750,17 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           <>
             <RichHead m={m} />
             <StoryReplyLine m={m} />
-            {m.poll ? <PollCardLazy m={m} fallback={<Body m={m} />} /> : <Body m={m.contacts ? withoutCardLines(m) : m} tail={ticks} />}
+            {m.poll ? <PollCardLazy m={m} fallback={<Body m={m} />} /> : gif ? null : <Body m={m.contacts ? withoutCardLines(m) : m} tail={ticks} />}
             <Attachments m={m} run={run} absorbed={absorbed} layout={pictures} switchable />
             <MissingFiles m={m} />
             <ContactCards m={m} />
-            <Embeds m={m} />
+            {gif ? <PlainGif e={gif} /> : <Embeds m={m} />}
             <InviteCards m={m} body={m.body} />
             <RichFoot m={m} />
           </>
         )}
         <SendFailures m={m} />
-        {ticks && (!m.body || m.deleted || (m.poll && !m.forward)) && <span class="msg-marks">{ticks}</span>}
+        {ticks && (!m.body || gif || m.deleted || (m.poll && !m.forward)) && <span class="msg-marks">{ticks}</span>}
         {grouped && (m.editedTs || m.edits) && <Edited m={m} />}
         {grouped && <DisappearsMark m={m} self={self} />}
         {grouped && (m.pinned || m.rich?.silent || m.rich?.marks) && (
@@ -843,6 +868,7 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   });
 
   const msgs = t?.messages ?? [];
+  const off = offline.value;
   // Settings → Adversarial features, or the chat's own say: kept deleted and disappeared messages not shown at all.
   const r = retention.value;
   const all = r.adversarial ? msgs.filter((m) => !(m.deleted && m.gone?.kept) || showsGone(r, m.conversationId)) : msgs;
@@ -933,7 +959,8 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
         drawn.current = { key: tkey, from: all[Math.max(0, start - STEP)].id, to: drawn.current.to };
         slices.extend(end - start);
         redraw((n) => n + 1);
-      } else {
+      } else if (!off) {
+        // (Without the hub a page cannot come: it is asked for once the hub is back, as this runs after every draw.)
         if (t && !t.loading && t.hasMore) {
           hold(first, 'first');
           // The page coming is drawn, as is everything above it: a slice at once, the rest in slices.
@@ -1117,7 +1144,15 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
             <Icon name="chevronDown" size={14} /> Older messages. Jump to the latest
           </button>
         )}
-        {t?.loading && (msgs.length ? <Loading inline label="Loading older messages" /> : <Loading label="Loading messages…" />)}
+        {/* Out of reach, what is not on the device waits for the hub, said rather than spun (Offline.tsx); its
+            coming back draws this again, and the scroll check after it loads them. */}
+        {off && msgs.length > 0 && (t?.loading || (t?.hasMore && start === 0)) ? (
+          <div class="older-wait">Older messages load when the hub is back</div>
+        ) : off && t?.loading ? (
+          <div class="older-wait">Messages load when the hub is back</div>
+        ) : (
+          t?.loading && (msgs.length ? <Loading inline label="Loading older messages" /> : <Loading label="Loading messages…" />)
+        )}
         {!t && <Loading label="Loading messages…" />}
         {t && !t.loading && msgs.length === 0 && <Empty icon="groups" title="No messages yet" />}
         {items}
@@ -1155,6 +1190,19 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
 
 // ------------------------------------------------------------------ composer
 
+// The phone's + panel is a chunk of its own, loaded at the first press of + (ui/panel/Panel.tsx).
+type Panels = typeof import('./panel/Panel.tsx');
+let panels: Panels | null = null;
+let loadingPanels: Promise<Panels> | null = null;
+const loadPanels = () =>
+  (loadingPanels ??= import('./panel/Panel.tsx').then(
+    (m) => (panels = m),
+    (e) => {
+      loadingPanels = null;
+      throw e;
+    },
+  ));
+
 function Composer({ targets, placeholder, reply, clearReply, disabledReason, routed }: {
   targets: { convId: string; accountId?: string };
   placeholder: string;
@@ -1172,11 +1220,14 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
   const att = useAttached(conv?.network, targets.convId);
   const [dropping, setDropping] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
-  // A phone's attaching (ui/Attach.tsx): the + sheet, the camera, the send screen, and their inputs.
+  // A phone's attaching: the + panel in the keyboard's place (ui/panel/), the camera and the send screen
+  // (ui/Attach.tsx), and the system pickers' inputs.
   const onPhone = phone.value;
   const photos = useRef<HTMLInputElement>(null);
   const capture = useRef<HTMLInputElement>(null);
-  const [sheet, setSheet] = useState(false);
+  const [panelTab, setPanelTab] = useState<PanelTab>('photos');
+  const [panelMod, setPanelMod] = useState(panels);
+  const panelUp = onPhone && !!panelMod && (panelOpen.value || panelShown.value > 0);
   const [camera, setCamera] = useState(false);
   const [review, setReview] = useState(false);
   // The emoji button's picker, beside what opened it (Reactions.tsx).
@@ -1185,9 +1236,9 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
   const offer = mediaOffer(sender, canAttach);
   const [viewOnce, setViewOnce] = useState(false);
   const addFiles = async (list: File[]) => {
-    if (!list.length || !conv) return;
-    if (!canAttach) return toast({ kind: 'error', title: 'Cannot send files here', body: conv.encrypted ? 'Set up encryption on the account\'s page to send files in encrypted Matrix rooms.' : `${netName(conv.network)} is not set up to send files.` });
-    await att.add(list);
+    if (!list.length || !conv) return [];
+    if (!canAttach) return (toast({ kind: 'error', title: 'Cannot send files here', body: conv.encrypted ? 'Set up encryption on the account\'s page to send files in encrypted Matrix rooms.' : `${netName(conv.network)} is not set up to send files.` }), []);
+    return att.add(list);
   };
   /** Photos and videos, picked or taken on a phone, go to the send screen; other files to the row. */
   const addMedia = async (list: File[]) => {
@@ -1195,7 +1246,7 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
     if (onPhone && canAttach && opensSendScreen(list)) setReview(true);
   };
   useEffect(() => {
-    setSheet(false);
+    closePanel(true);
     setCamera(false);
     setReview(false);
     setEmojiAt(null);
@@ -1261,11 +1312,26 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
     clearReply();
     setReview(false);
     setViewOnce(false);
+    // What the panel picked went: it goes too, as Telegram's does.
+    if (files.length) closePanel();
   };
   /** A sticker or a recording goes at once, on its own, as a reply when one is open. */
-  const sendMedia = (opts: { files?: File[]; media?: { sticker?: string; voice?: P.VoiceOut } }) => {
+  const sendMedia = (opts: { files?: File[]; media?: { sticker?: string; voice?: P.VoiceOut; gif?: boolean } }) => {
     send(targets.convId, '', { accountId: targets.accountId, replyTo: reply?.id, ...opts });
     clearReply();
+  };
+  /** A GIF goes at once too: its link on Discord, its file elsewhere (ComposerMedia.tsx gifSend). */
+  const sendGif = async (g: GifPick) => {
+    if (!conv) return;
+    try {
+      const r = await gifSend(g, conv.network);
+      if ('body' in r) {
+        send(targets.convId, r.body, { accountId: targets.accountId, replyTo: reply?.id });
+        clearReply();
+      } else sendMedia({ files: [r.file], media: { gif: r.gif } });
+    } catch (e) {
+      toast({ kind: 'error', title: 'The GIF did not go', body: (e as Error).message });
+    }
   };
   const canSend = !((!text.trim() && !files.length) || !!disabledReason || (att.failed && !edit));
   const sendTitle = att.failed && !edit ? 'A file did not upload: try it again or remove it' : undefined;
@@ -1301,8 +1367,12 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
   // files are all it takes, the + is a paperclip that opens the file picker at once.
   const [stickerAt, setStickerAt] = useState<DOMRect | null>(null);
   useEffect(() => setStickerAt(null), [targets.convId]);
+  const [gifAt, setGifAt] = useState<DOMRect | null>(null);
+  useEffect(() => setGifAt(null), [targets.convId]);
   const plusRef = useRef<HTMLButtonElement>(null);
   const canSticker = !!conv && !disabledReason && !edit && offer.stickers;
+  // GIFs (docs/media-kinds.md "GIFs"): a link on Discord, a file anywhere files go.
+  const canGif = !!conv && !disabledReason && !edit && (conv.network === 'discord' || attaching);
   type PlusItem = { track: string; icon: string; label: string; note?: string; run: () => void; hover?: () => void };
   const plusItems: PlusItem[] = onPhone
     ? []
@@ -1310,6 +1380,7 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
         attaching && { track: 'attach', icon: 'paperclip', label: 'Upload a file', note: limit.replace('up to ', ''), run: () => picker.current?.click() },
         pollAccount && { track: 'poll', icon: 'list', label: 'Poll', run: () => setPolling(true) },
         canSticker && { track: 'stickers', icon: 'sticker', label: 'Sticker', run: () => plusRef.current && setStickerAt(plusRef.current.getBoundingClientRect()), hover: preloadStickers },
+        canGif && { track: 'gifs', icon: 'gif', label: 'GIF', run: () => plusRef.current && setGifAt(plusRef.current.getBoundingClientRect()), hover: preloadStickers },
       ] as (PlusItem | false | null | undefined)[]).filter((x): x is PlusItem => !!x);
   const plus =
     plusItems.length === 1 && plusItems[0].track === 'attach' ? (
@@ -1320,7 +1391,7 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
       <Menu
         up
         trigger={(toggle) => (
-          <button ref={plusRef} class="icon-btn composer-plus-menu" data-track="plus" onClick={toggle} title="Files, polls and stickers" aria-label="More to send">
+          <button ref={plusRef} class="icon-btn composer-plus-menu" data-track="plus" onClick={toggle} title="Files, polls, stickers and GIFs" aria-label="More to send">
             <Icon name="plus" size={18} />
           </button>
         )}
@@ -1345,6 +1416,32 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
         )}
       </Menu>
     ) : null;
+  // The box re-renders as each emoji goes in and, unfocused, loses its caret: the panel keeps it here.
+  const caret = useRef<number | null>(null);
+  const insertFromPanel = (t: string) => {
+    const el = ta.current;
+    if (!el) return;
+    const at = Math.min(caret.current ?? el.value.length, el.value.length);
+    el.setSelectionRange(at, at);
+    insertAtCaret(el, t, false);
+    caret.current = at + t.length;
+  };
+  // + opens the panel in the keyboard's place on the last of its tabs (Photos first, or Stickers or Poll where files
+  // can't go); the box's emoji button opens it on Emoji. The button whose tab is showing becomes the keyboard's.
+  const lastPlusTab = useRef<PanelTab>('photos');
+  if (panelTab !== 'emoji') lastPlusTab.current = panelTab;
+  const plusTab: PanelTab = attaching ? lastPlusTab.current : lastPlusTab.current === 'stickers' || lastPlusTab.current === 'gifs' || lastPlusTab.current === 'poll' ? lastPlusTab.current : canSticker ? 'stickers' : canGif ? 'gifs' : pollAccount ? 'poll' : 'emoji';
+  const onEmojiTab = panelOpen.value && panelTab === 'emoji';
+  const onPlusTab = panelOpen.value && !onEmojiTab;
+  const togglePanel = (at: PanelTab) => {
+    if (panelOpen.value && at === panelTab) return ta.current?.focus();
+    setPanelTab(at);
+    if (panelOpen.value) return;
+    void loadPanels().then((m) => {
+      setPanelMod(m);
+      openPanel();
+    });
+  };
   const openCamera = () => {
     // No camera API at all: the system's camera, from this tap.
     if (!navigator.mediaDevices?.getUserMedia) return capture.current?.click();
@@ -1359,7 +1456,11 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
       placeholder={disabledReason ?? (routed ? 'Message' : placeholder)}
       disabled={!!disabledReason}
       onInput={chips.onInput}
-      onBlur={composerDone}
+      onBlur={(e) => {
+        // Where the caret was: the panel's emoji go there while the box is not focused.
+        caret.current = (e.currentTarget as HTMLTextAreaElement).selectionEnd;
+        composerDone();
+      }}
       onPaste={(e) => {
         const pasted = [...(e.clipboardData?.files ?? [])];
         if (!pasted.length) return void chips.onPaste(e);
@@ -1393,13 +1494,15 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
       class="icon-btn composer-emoji"
       data-track="emoji"
       title="Emoji"
-      aria-label="Emoji"
+      aria-label={onEmojiTab ? 'Back to the keyboard' : 'Emoji'}
       aria-expanded={!!emojiAt}
       // The catalog loads while the pointer is on its way, so the picker opens whole.
       onPointerEnter={() => void loadEmoji()}
-      onClick={(e) => setEmojiAt(emojiAt ? null : (e.currentTarget as HTMLElement).getBoundingClientRect())}
+      // On a phone the panel's Emoji tab, in the keyboard's place; it keeps the box focused until then.
+      onPointerDown={(e) => onPhone && e.preventDefault()}
+      onClick={(e) => (onPhone ? togglePanel('emoji') : setEmojiAt(emojiAt ? null : (e.currentTarget as HTMLElement).getBoundingClientRect()))}
     >
-      <Icon name="smile" size={onPhone ? 20 : 18} />
+      <Icon name={onEmojiTab ? 'keyboard' : 'smile'} size={onPhone ? 20 : 18} />
     </button>
   );
   const recording = attaching && offer.record && !text.trim() && !files.length;
@@ -1538,15 +1641,25 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
         />
       ) : onPhone ? (
         <div class="composer-row">
-          {(attaching || canSticker) && (
-            <button ref={plusRef} class="icon-btn composer-plus" data-track="plus" onClick={() => setSheet(true)} aria-label={attaching ? 'Attach photos, videos or files' : 'Stickers'}>
-              <Icon name="plus" size={22} />
+          {!!conv && !disabledReason && (
+            <button
+              ref={plusRef}
+              class={`icon-btn composer-plus ${onPlusTab ? 'on' : ''}`}
+              data-track={onPlusTab ? 'keyboard' : 'plus'}
+              // Keeps the box focused, so the panel takes the keyboard's room before the keyboard goes.
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => togglePanel(onPlusTab ? panelTab : plusTab)}
+              aria-label={onPlusTab ? 'Back to the keyboard' : 'Photos, files, stickers, GIFs and polls'}
+            >
+              <Icon name={onPlusTab ? 'keyboard' : 'plus'} size={22} />
             </button>
           )}
           <div class={`composer-box ${disabledReason ? 'disabled' : ''}`}>
             {box}
             {emojiBtn}
-            {attaching && (
+            {/* Once you type, the text has the camera's width (as in Signal and WhatsApp): the box takes a second line
+                only when the words need one. The panel's camera tile is still there. */}
+            {attaching && !text && (
               <button class="icon-btn composer-camera" data-track="camera" onClick={openCamera} aria-label="Take a photo or video">
                 <Icon name="camera" size={20} />
               </button>
@@ -1575,6 +1688,7 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
           onClose={() => setStickerAt(null)}
         />
       )}
+      {gifAt && canGif && <GifPicker conversationId={targets.convId} anchor={gifAt} onSend={(g) => void sendGif(g)} onClose={() => setGifAt(null)} />}
       {emojiAt && conv && (
         <InsertPicker
           conversationId={targets.convId}
@@ -1584,14 +1698,30 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
           onClose={() => setEmojiAt(null)}
         />
       )}
-      {sheet && (
-        <AttachSheet
-          limit={limit}
-          onClose={() => setSheet(false)}
-          {...(attaching ? { onPhotos: () => photos.current?.click(), onFile: () => picker.current?.click() } : {})}
-          onPoll={pollAccount ? () => setPolling(true) : undefined}
-          {...(canSticker ? { onSticker: () => plusRef.current && setStickerAt(plusRef.current.getBoundingClientRect()), onStickerHover: preloadStickers } : {})}
-          {...(offer.viewOnce ? { onViewOnce: () => (setViewOnce(true), photos.current?.click()) } : {})}
+      {panelUp && conv && (
+        <panelMod.Panel
+          tab={panelTab}
+          setTab={setPanelTab}
+          ctx={{
+            convId: targets.convId,
+            network: conv.network,
+            limit,
+            attached: att.files,
+            add: addFiles,
+            remove: att.remove,
+            canAttach: attaching,
+            openCamera,
+            pickPhotos: () => photos.current?.click(),
+            pickFiles: () => picker.current?.click(),
+            openLarge: () => setReview(true),
+            ...(offer.viewOnce ? { viewOnce: { on: viewOnce, set: setViewOnce } } : {}),
+            ...(canSticker ? { stickers: () => <StickerPicker inline conversationId={targets.convId} accountId={targets.accountId ?? sender?.id} onSend={(st) => sendMedia({ media: { sticker: st.id } })} onClose={() => closePanel()} /> } : {}),
+            ...(canGif ? { gifs: () => <GifPicker inline conversationId={targets.convId} onSend={(g) => void sendGif(g)} onClose={() => closePanel()} /> } : {}),
+            emoji: () => <InsertPicker inline conversationId={targets.convId} network={conv.network} anchor={null} onInsert={insertFromPanel} onClose={() => closePanel()} />,
+            ...(pollAccount
+              ? { poll: () => <PollMakerLazy conversationId={targets.convId} network={conv.network} accountId={pollAccount.id} question={text.trim()} focus={false} onClose={() => closePanel()} onSent={() => type('')} /> }
+              : {}),
+          }}
         />
       )}
       {camera && (
@@ -1686,6 +1816,8 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
         <PostsListLazy c={c} />
       </section>
     );
+  // A post you follow (docs/feed.md "Following a post"): its thread, what came since it was read marked new.
+  if (c.variant === 'follow') return <FollowChatLazy c={c} onBack={onBack} />;
   const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && visibleAccount(a.id));
   const sendAsValue = prefs.value.sendAs[c.id] ?? accounts.find((a) => a.status === 'online')?.id ?? accounts[0]?.id;
   const voice = c.variant === 'voice' || c.variant === 'stage';

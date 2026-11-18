@@ -1,5 +1,5 @@
 /**
- * The one mock of src/state.ts for the tests that need one (snapshot.test.ts, model-memo.test.ts, apps.test.ts, menu-toggle.test.ts, mention-complete.test.ts, reactions.test.ts, retention-load.test.ts). Bun's module mocks
+ * The one mock of src/state.ts for the tests that need one (snapshot.test.ts, model-memo.test.ts, apps.test.ts, menu-toggle.test.ts, mention-complete.test.ts, reactions.test.ts, retention-load.test.ts, threadcache.test.ts). Bun's module mocks
  * are the whole process's, and the first test file to load state.ts fixes what it exports for the rest: so every such
  * test uses this, which has what each of them reads. Its `db` is a real empty one (syncmodel.ts). `selfIds`: the
  * identities a test calls yours (none unless it says).
@@ -16,6 +16,8 @@ export const connected = signal(false);
 export const answers = new Map<string, () => unknown>();
 /** Each path api() was called with, in order. */
 export const asked: string[] = [];
+/** What `api` answers for any path, for a test that asks the hub (threadcache.test.ts); `answers` comes first. */
+export const hub: { answer: ((path: string) => Promise<unknown>) | null } = { answer: null };
 
 export const stateMock = () => ({
   db,
@@ -43,6 +45,7 @@ export const stateMock = () => ({
     asked.push(path);
     const answer = answers.get(path);
     if (answer) return answer();
+    if (hub.answer) return hub.answer(path);
     throw new TypeError('Failed to fetch');
   },
   toast: () => {},

@@ -90,6 +90,7 @@ const STOPS: Partial<Record<keyof P.RetentionSettings, string>> = {
   presence: 'Stop logging presence?',
   members: 'Stop recording server members?',
   voice: 'Stop recording who is in voice channels?',
+  profiles: 'Stop collecting profiles? Profiles you open are still kept, as before, and earlier versions stop being added.',
   adversarial: 'Hide adversarial features? What their switches keep goes on being kept, out of sight. Turn a switch off to stop it.',
 };
 

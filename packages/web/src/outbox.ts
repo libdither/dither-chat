@@ -43,7 +43,7 @@ export interface OutboxEntry {
    */
   unsure?: boolean;
   attempt?: number;
-  /** A sticker, a voice message, view-once (docs/media-kinds.md): sent with the message as they are. */
+  /** A sticker, a voice message, view-once, a GIF (docs/media-kinds.md): sent with the message as they are. */
   media?: SendMedia;
 }
 
@@ -52,6 +52,8 @@ export interface SendMedia {
   sticker?: string;
   voice?: { seconds: number; waveform?: string };
   viewOnce?: boolean;
+  /** The one file is a GIF from the GIF picker: sent as the network's own GIF where it has one. */
+  gif?: boolean;
 }
 
 interface Outbox {
