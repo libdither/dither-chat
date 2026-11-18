@@ -9,9 +9,10 @@
  * newest messages of the conversations opened most recently or fetched ahead, a record each in another (keptpages.ts).
  * Capped, see the limits below and there. The hub stays the only source of truth: nothing here is ever sent back.
  *
- * A snapshot is only read by a build of the same protocol (the vite config hashes packages/protocol into
- * __SNAPSHOT_SCHEMA__), so a deploy that changes the shapes starts once from the network instead of from data
- * the new code does not expect.
+ * Each snapshot names the protocol it was written under (the vite config hashes packages/protocol into
+ * __SNAPSHOT_SCHEMA__). One from an older build (a deploy changed the protocol) is still shown, since protocol changes
+ * are nearly always fields added, but nothing is caught up from it: once the hub answers, a full bootstrap replaces it
+ * and its kept pages load afresh. If drawing it throws, main.tsx drops it and starts from the hub, once per build.
  */
 import type * as P from '@dither-chat/protocol';
 import { INDEX_KEY, PageCache, type IndexRecord, type KeptPage, type PageRecord, type PageWrites } from './keptpages.ts';
@@ -59,6 +60,8 @@ interface SnapshotRest {
 interface Snapshot {
   schema: string;
   savedAt: number;
+  /** Written by a build of another protocol: shown, never caught up from (see the top of this file). */
+  older?: boolean;
   /** JSON text. Parsing text is faster than structured clone for this many small objects. */
   bootstrap: string;
   rest: string;
@@ -226,7 +229,25 @@ function forgetRemoved() {
   });
 }
 
-/** The snapshot, if one of this schema is kept; the kept pages go to `pages` either way. */
+/** sessionStorage: an older build's snapshot did not draw under this build (main.tsx), so it is not tried again. */
+const REFUSED_KEY = 'dither:older-snapshot-refused';
+function olderRefused(): boolean {
+  try {
+    return sessionStorage.getItem(REFUSED_KEY) === SCHEMA;
+  } catch {
+    return false;
+  }
+}
+
+/** Drawing an older build's snapshot threw: it and its pages go, and this build starts from the hub. */
+export async function refuseOlder() {
+  try {
+    sessionStorage.setItem(REFUSED_KEY, SCHEMA);
+  } catch {}
+  await Promise.all([dropSnapshot(), dropPages()]);
+}
+
+/** The snapshot kept, this build's or an older one's (`older`); the kept pages go to `pages` either way. */
 export async function readSnapshot(): Promise<Snapshot | null> {
   forgetRemoved();
   if (typeof indexedDB === 'undefined') return null;
@@ -243,10 +264,16 @@ export async function readSnapshot(): Promise<Snapshot | null> {
         }),
     )
     .catch(() => [undefined, undefined, [] as (PageRecord | IndexRecord)[]] as const);
-  pages.adopt(kept);
-  if (!s || s.schema !== SCHEMA) return null;
-  // savedAt stays the bootstrap's.
-  return r && r.schema === SCHEMA && r.savedAt > s.savedAt ? { ...s, rest: r.rest } : s;
+  const older = !!s && s.schema !== SCHEMA;
+  if (older && olderRefused()) {
+    pages.adopt(kept);
+    return null;
+  }
+  pages.adopt(kept, older);
+  if (!s) return null;
+  // savedAt stays the bootstrap's. A rest written beside it is only read with a bootstrap of its own build.
+  const out = r && r.schema === s.schema && r.savedAt > s.savedAt ? { ...s, rest: r.rest } : s;
+  return older ? { ...out, older: true } : out;
 }
 
 export const dropSnapshot = () =>
@@ -273,6 +300,11 @@ export const dropPages = () =>
 
 /** Set while what is on screen came from this device, not yet from the hub. */
 export let fromSnapshot = false;
+/**
+ * Set while what is on screen came from an older build's snapshot: the first sync is a full bootstrap, not a catch-up
+ * from its position, and an error while it shows drops it (main.tsx).
+ */
+export let olderFormat = false;
 
 /** The kept end of a conversation, given once, to show while its first page loads. */
 export function cachedTimeline(key: string): KeptPage | undefined {
@@ -290,8 +322,9 @@ export function touchTimeline(key: string) {
  */
 export function restore(s: Snapshot, apply: (b: P.Bootstrap) => void, putIdentities: (i: P.IdentityView[]) => void): boolean {
   const rest = JSON.parse(s.rest) as SnapshotRest;
-  if (rest.timelines?.length) pages.adoptLegacy(legacyPages(rest));
+  if (rest.timelines?.length) pages.adoptLegacy(legacyPages(rest), !!s.older);
   if (loaded.value) return false;
+  olderFormat = !!s.older;
   bootstrapAt = s.savedAt;
   apply(JSON.parse(s.bootstrap) as P.Bootstrap);
   putIdentities(rest.identities);
@@ -322,6 +355,9 @@ function legacyPages(rest: SnapshotRest): KeptPage[] {
 /** The hub's own bootstrap is in. */
 export function freshFromHub() {
   fromSnapshot = false;
+  if (!olderFormat) return;
+  olderFormat = false;
+  pages.dropOlder();
 }
 
 // ------------------------------------------------------------------ saving

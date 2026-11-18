@@ -2,7 +2,7 @@ import { effect, signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, fileBatches, splitsFiles, SYNC_VERSION } from '@dither-chat/protocol';
 import { leaveLayerEntry, takeOverLayers } from './phone.ts';
-import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snapshot.ts';
+import { cachedTimeline, freshFromHub, olderFormat, persistSoon, touchTimeline } from './snapshot.ts';
 import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, identityVersion, indexThreads, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
 import { changed, mailChanged, timelineChanged, timelineRev } from './versions.ts';
 import { applyTyping, type TypingState } from './typers.ts';
@@ -718,7 +718,8 @@ const catching = new Set<string>();
 /** A timeline missed something (a message stored without a live event): ask for what is newer than it holds. */
 async function catchUp(key: string) {
   const t = timelines.get(key);
-  const pos = db.sync;
+  // An older build's position is never caught up from: the timeline loads afresh.
+  const pos = olderFormat ? null : db.sync;
   if (!t || catching.has(key)) return;
   catching.add(key);
   try {
@@ -1277,7 +1278,8 @@ function resync() {
     // A cold start resumes from the snapshot, once it is read; IndexedDB can be slow, but not this slow.
     await Promise.race([beforeSync.wait, new Promise((r) => setTimeout(r, 1500))]);
     const pos = db.sync;
-    if (!loaded.value || !pos || pos.v !== SYNC_VERSION) return void (release(), bootstrap());
+    // An older build's snapshot is not caught up from: it may lack what this build keeps (snapshot.ts).
+    if (!loaded.value || !pos || pos.v !== SYNC_VERSION || olderFormat) return void (release(), bootstrap());
     // Timelines in memory are as current as `db`, or as their kept copy when it has not been caught up yet. One
     // kept under another epoch loads afresh; those loading now catch up on their own.
     const mine = [...timelines.values()].filter((t) => !t.loading && (t.fetchedAt || t.from));

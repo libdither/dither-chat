@@ -95,32 +95,42 @@ export class PageCache {
   private wrote = new Map<string, { msgs: P.MessageView[]; convs: string; epoch: string }>();
   /** Records to write that were not made from a timeline in memory (an older snapshot's pages). */
   private loose = new Map<string, string>();
+  /**
+   * Records an older build wrote (another schema), shown when opened but never caught up from their position: that build
+   * may have kept less than this one needs, so the hub's whole page replaces them (snapshot.ts, "older format").
+   */
+  private older = new Set<string>();
 
   constructor(
     readonly schema: string,
     private now: () => number = Date.now,
   ) {}
 
-  /** What the store held at start. Records of another schema are left out, and go at the next save. */
-  adopt(records: (PageRecord | IndexRecord)[]) {
+  /**
+   * What the store held at start. Records of another schema are kept and shown as older ones when `older` (the start
+   * shows an older build's snapshot); else they are left out, and go at the next save.
+   */
+  adopt(records: (PageRecord | IndexRecord)[], older = false) {
     let index: IndexRecord | undefined;
     for (const r of records) {
       if ('at' in r) index = r;
-      else if (r.schema === this.schema) {
+      else if (r.schema === this.schema || older) {
         this.unread.set(r.key, r);
         this.stored.set(r.key, r.text.length);
         this.at.set(r.key, 0);
+        if (r.schema !== this.schema) this.older.add(r.key);
       } else this.stored.set(r.key, Infinity);
     }
-    if (index?.schema === this.schema) for (const [k, t] of index.at) if (this.at.has(k)) this.at.set(k, t);
+    if (index && (index.schema === this.schema || older)) for (const [k, t] of index.at) if (this.at.has(k)) this.at.set(k, t);
   }
 
   /** Pages from a snapshot of before this store (they were part of its rest), kept as they were. */
-  adoptLegacy(pages: KeptPage[]) {
+  adoptLegacy(pages: KeptPage[], older = false) {
     const t = this.now();
     pages.forEach((p, i) => {
       if (this.at.has(p.key)) return;
-      const text = JSON.stringify(p);
+      // From an older build's snapshot: kept without its position, so no later start catches up from it.
+      const text = JSON.stringify(older ? { ...p, sync: undefined } : p);
       this.unread.set(p.key, { schema: this.schema, key: p.key, text });
       this.loose.set(p.key, text);
       this.at.set(p.key, t - 1 - i);
@@ -139,6 +149,8 @@ export class PageCache {
     this.unread.delete(key);
     try {
       const page = JSON.parse(r.text) as KeptPage;
+      // An older build's page: shown, then replaced by the hub's (no position, so nothing is caught up from it).
+      if (this.older.delete(key)) delete page.sync;
       // The messages shown are these objects: if nothing changes them, the record stays as it is.
       this.wrote.set(key, { msgs: page.messages.slice(-MAX_PAGE_MESSAGES), convs: (page.conversationIds ?? []).join(','), epoch: epochOf(page.sync) });
       return page;
@@ -146,6 +158,15 @@ export class PageCache {
       this.forget(key);
       return undefined;
     }
+  }
+
+  /**
+   * The hub's answer is in: an older build's pages not opened yet go, and are deleted at the next save. Only the start
+   * that could not reach the hub shows them; from now on the hub's own page is a request away.
+   */
+  dropOlder() {
+    for (const k of this.older) if (this.unread.delete(k)) (this.at.delete(k), this.stored.set(k, Infinity));
+    this.older.clear();
   }
 
   /** Has a page for it: one not yet opened since the start, or one kept from memory. */
@@ -161,6 +182,7 @@ export class PageCache {
   /** Gone from the hub (a conversation removed, an account left): never shown again, and deleted at the next save. */
   forget(key: string) {
     this.at.delete(key);
+    this.older.delete(key);
     this.unread.delete(key);
     this.loose.delete(key);
     this.wrote.delete(key);
@@ -207,6 +229,7 @@ export class PageCache {
         put.push({ schema: this.schema, key, text });
         this.stored.set(key, text.length);
         this.loose.delete(key);
+        this.older.delete(key);
         if (made) this.wrote.set(key, made);
       }
     }
@@ -217,6 +240,7 @@ export class PageCache {
       this.stored.delete(k);
       this.wrote.delete(k);
       this.loose.delete(k);
+      this.older.delete(k);
     }
     // What fell out of the bounds stays out: it is not in memory any more than in the store.
     for (const k of [...this.at.keys()]) if (!keep.has(k) && !o.live(k)) this.at.delete(k);

@@ -45,9 +45,12 @@ but those, as CI splits the hub. The hub in one process, as before: `cd packages
   loads the app twice and opens a conversation, waits for the snapshot and that conversation's kept page, then deploys a
   new build (a new id in `sw.js`) while every hashed file is gone from the hub and the HTTP cache is empty, so the new
   worker can only install from the old build's cache. It then stops the hub, empties the HTTP cache again and reloads:
-  the conversation must show from the snapshot with every file from the worker's cache. Last, it deletes a file the
+  the conversation must show from the snapshot with every file from the worker's cache. It then stamps the snapshot
+  and the pages as an older build's (a deploy that changed the protocol) and reloads, the hub still gone: the
+  conversation must show from them. Last, it deletes a file the
   app's script imports from that cache and reloads with the hub still gone: the start must fail and say so
-  (`dither:boot-failed`), and come back by itself once the hub is started again. Before the whole build was precached,
+  (`dither:boot-failed`), and come back by itself once the hub is started again, writing the snapshot again as this
+  build's. Before the whole build was precached,
   that offline start stayed on the logo (docs/android.md, "Starting fast").
 - `perf`, beside it: `verify-perf --ci`, a warm-up and one run on a tenth-size world, judging renders, layouts, DOM
   nodes and bytes against `scripts/perf-baseline-ci.json` and printing the times without judging them (docs/perf.md,

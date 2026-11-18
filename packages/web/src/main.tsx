@@ -11,7 +11,7 @@ import { installDeskLinks } from './desk.ts';
 import { trackViewport } from './phone.ts';
 import { startAhead } from './ahead.ts';
 import { registerServiceWorker } from './pwa.ts';
-import { dropPages, dropSnapshot, readSnapshot, restore } from './snapshot.ts';
+import { dropPages, dropSnapshot, olderFormat, readSnapshot, refuseOlder, restore } from './snapshot.ts';
 import { applyBootstrap, applyEvents, beforeSync, connect, loaded, restoreOutbox } from './state.ts';
 import { installErrorReports } from './errors.ts';
 import './styles.css';
@@ -35,7 +35,7 @@ let readMs = -1;
 const restored = readSnapshot()
   .then((s) => {
     readMs = performance.now() - scriptAt;
-    if (s && restore(s, applyBootstrap, (ids) => applyEvents(ids.map((identity) => ({ t: 'identity', identity }))))) source = 'snapshot';
+    if (s && restore(s, applyBootstrap, (ids) => applyEvents(ids.map((identity) => ({ t: 'identity', identity }))))) source = s.older ? 'older snapshot' : 'snapshot';
   })
   .catch((e) => console.warn('snapshot not restored', e));
 // The socket may open first: the sync waits for the snapshot, to resume from its position (docs/sync.md).
@@ -67,15 +67,29 @@ new PerformanceObserver((list, obs) => {
   reportFresh(fresh.startTime);
 }).observe({ type: 'mark', buffered: true });
 
+// An older build's snapshot (snapshot.ts) is drawn by code it was not written for. A TypeError while it is still on
+// screen (a field this build needs and it lacks) drops it, once per build, and the app starts from the hub. Typed
+// sends are in the outbox, not the snapshot, so they stay.
+let refusing = false;
+function olderFailed(e: unknown) {
+  if (refusing || !olderFormat || !(e instanceof TypeError)) return;
+  refusing = true;
+  console.error('the older snapshot did not draw; starting from the hub', e);
+  void refuseOlder().then(() => location.reload());
+}
+addEventListener('error', (e) => olderFailed(e.error));
+addEventListener('unhandledrejection', (e) => olderFailed(e.reason));
+
 try {
   // Without a session the sign-in screen stands in for the whole app (login.ts, docs/login.md).
   const Root = () => (login.value ? <LoginScreen /> : <App />);
   render(<Root />, document.getElementById('app')!);
 } catch (e) {
   // A snapshot the code cannot render is dropped, once, and the app starts from the hub.
-  if (source !== 'snapshot') throw e;
+  if (source === 'hub') throw e;
   console.error('the snapshot did not render; starting from the hub', e);
-  await Promise.all([dropSnapshot(), dropPages()]);
+  if (olderFormat) await refuseOlder();
+  else await Promise.all([dropSnapshot(), dropPages()]);
   location.reload();
 }
 

@@ -199,6 +199,10 @@ hub no longer has in its range go. A catch-up that got no answer while the socke
 - **Removal**: a conversation or person the hub removes (an account removed takes what only it saw) takes its page
   along, and every save drops the pages of conversations the hub no longer lists. A start that cannot render the
   snapshot drops all of them.
+- **An older build's pages** (another `__SNAPSHOT_SCHEMA__`, after a deploy that changed the protocol) are shown
+  only by a start from that build's snapshot (packages/web/src/snapshot.ts), and without their position: opening one
+  shows its messages and then the hub's newest page replaces them. Those not opened by the time the hub answers go
+  at the next save; one opened and loaded is written again as this build's.
 - Before 2026-11-11 the snapshot's rest held the 12 most recently opened timelines. A build with the page store
   reads those once as kept pages and writes them as records; an older build cannot open the database (version 2) and
   starts from the hub.
