@@ -244,7 +244,7 @@ export class Backfill {
   private async listPage(mailboxId: string, until: number | null, background: boolean): Promise<string[]> {
     const b = this.store.mailbox(mailboxId);
     if (!b || b.complete) return [];
-    let r: { messages: M.MailSummary[]; next: string | null };
+    let r: { messages: M.MailSummary[]; next: string | null; skipped?: string[] };
     try {
       // The cursor as the server gave it (an opaque one, good for days, on Gmail on the web), kept across restarts.
       const input = { mailboxId: b.native_id, limit: MAIL_LIMITS.backfillPage, ...(b.list_next ? { before: b.list_next } : {}) };
@@ -271,6 +271,7 @@ export class Backfill {
       this.s.stored(ing, false);
       return ing;
     });
+    this.s.skipped(row.id, r.skipped);
     const oldest = list.length ? Math.min(...list.map((m) => m.receivedAt)) : null;
     const horizon = oldest === null ? row.horizon : Math.min(oldest, row.horizon ?? oldest);
     if (crossed) {

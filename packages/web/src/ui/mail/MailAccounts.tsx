@@ -8,6 +8,7 @@ import type * as P from '@dither-chat/protocol';
 import { useState } from 'preact/hooks';
 import { ago, fullTime } from '../../format.ts';
 import { askMailAgain, deleteMailAccount } from '../../mail/api.ts';
+import { staleSync } from '../../mail/model.ts';
 import { sendingAgain } from '../../mail/drafts.ts';
 import { db, go, mailRev, toast } from '../../state.ts';
 import { Icon } from '../icons.tsx';
@@ -67,6 +68,7 @@ const PHASE: Record<P.MailAccountView['sync']['phase'], string> = { first: 'firs
 export function MailAccountSection({ a, openLive }: { a: P.MailAccountView; openLive?: () => void }) {
   mailRev.value;
   const [busy, setBusy] = useState(false);
+  const stale = staleSync(a);
   const level = a.level === 'write' ? 'Read and send' : a.level === 'read' ? 'Read only (marked read here only)' : 'None';
   return (
     <section class="det-section" data-mail-section>
@@ -103,7 +105,7 @@ export function MailAccountSection({ a, openLive }: { a: P.MailAccountView; open
         <dt>Here</dt>
         <dd>
           {a.sync.synced.toLocaleString()} {a.sync.synced === 1 ? 'message' : 'messages'}
-          {a.sync.oldest ? `, back to ${ago(a.sync.oldest)}` : ''} · {PHASE[a.sync.phase]}
+          {a.sync.oldest ? `, back to ${ago(a.sync.oldest)}` : ''} · {stale ? <span class="mail-stale" data-mail-stale>{stale}</span> : PHASE[a.sync.phase]}
         </dd>
         <dt>Sending</dt>
         <dd>

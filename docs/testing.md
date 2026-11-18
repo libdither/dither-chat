@@ -220,7 +220,7 @@ scripts imported `@dither-chat/protocol` with the root package.json not listing 
 ### The environment
 
 Each package's bunfig.toml preloads scripts/test-env.ts, which clears every DITHER_* variable before the tests run
-(but DITHER_CHROMIUM and DITHER_DAVE_DIR, paths to tools tests skip without). The hub and the adapters read their
+(but DITHER_CHROMIUM, DITHER_DAVE_DIR and DITHER_ACCOUNTS_REPO, paths to tools and checkouts tests skip without). The hub and the adapters read their
 settings from those variables, and a test that starts a hub passes its environment on, so a shell with one set (for a
 demo hub, a lab, a replay) ran the tests on other settings than CI's: with DITHER_MEDIA_ALLOW_PRIVATE=1 three of the
 media fetcher's address-guard tests failed. A test that needs a setting sets it. `DITHER_TEST_KEEP_ENV=1` keeps them,

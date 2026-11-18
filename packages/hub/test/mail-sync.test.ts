@@ -9,6 +9,7 @@ import type * as P from '@dither-chat/protocol';
 import { mailId } from '@dither-chat/protocol/ids';
 import { type ErrorRecord, ErrorLog, setErrorLog } from '../src/errors.ts';
 import { MailCallError } from '../src/mail/backend.ts';
+import { skippedWaitMs } from '../src/mail/sync.ts';
 import { FakeMailBackend, type FakeOpts } from '../src/mail/fake.ts';
 import { MailHub } from '../src/mail/index.ts';
 import { MAIL_LIMITS } from '../src/mail/limits.ts';
@@ -211,7 +212,7 @@ describe('keeping up', () => {
     await until(() => st.one<{ seen: number }>('SELECT seen FROM mail_message')?.seen === 1, 3000, 'the flag');
   });
 
-  test("the manager's `offline` (an extractor reconnecting) is logged, not reported as a bug; other failures are", async () => {
+  test("the manager's `offline` (an extractor reconnecting) and a 503 are logged, not reported as bugs; other failures are", async () => {
     const reported: ErrorRecord[] = [];
     setErrorLog(new ErrorLog((r) => reported.push(r), { now: () => clock.now(), dedupMs: 0 }));
     try {
@@ -221,6 +222,12 @@ describe('keeping up', () => {
       fake.deliver(ACC, { messageId: '<off@x>', receivedAt: T0 });
       await clock.settle();
       expect(fake.calls.filter((c) => c.op === 'mail.changes').length).toBeGreaterThan(0);
+      expect(reported.filter((r) => r.where === 'mail: changes')).toEqual([]);
+      // A 503 without a code: the google kind's Gmail page silent or reloading, "not now" (mail-remote-google.test.ts).
+      fake.fail('mail.changes', new MailCallError('the Gmail page did not answer in 25 s', 503));
+      fake.deliver(ACC, { messageId: '<later@x>', receivedAt: T0 + 1 });
+      await clock.settle();
+      expect(hub!.sync(ACC)!.failure).toMatchObject({ error: 'the Gmail page did not answer in 25 s' });
       expect(reported.filter((r) => r.where === 'mail: changes')).toEqual([]);
       fake.fail('mail.changes', new MailCallError('Internal Server Error', 500));
       fake.deliver(ACC, { messageId: '<boom@x>', receivedAt: T0 + H });
@@ -383,5 +390,100 @@ describe('a page that comes back (the journal, docs/sync.md)', () => {
     expect(client.accounts.get(ACC)).toEqual(fresh.accounts.get(ACC)!);
     expect(client.accounts.get(ACC)!.online).toBe(false);
     store.db.close();
+  });
+});
+
+describe('skipped ids (an answer’s `skipped`: the extractor could not parse them)', () => {
+  const pending = (st: MailHub['store']) => st.all<{ native_id: string; tries: number }>('SELECT native_id, tries FROM mail_skipped ORDER BY mailbox_id');
+  const gets = (fake: FakeMailBackend, id: string) => fake.calls.filter((c) => c.op === 'mail.get' && c.input.id === id).length;
+
+  test('a 410 relist that skips a held message keeps it; mail.get reads it later, after a wait that grows', async () => {
+    const { fake, st, synced } = world({ ids: 'gmail-web' }, (f) => {
+      for (let i = 0; i < 3; i++) f.put(ACC, { messageId: `<s${i}@x>`, receivedAt: T0 + i * H, subject: `S ${i}` });
+    });
+    await synced();
+    const inbox = st.mailboxByNative(ACC, 'INBOX')!;
+    const victim = fake.messages(ACC, 'INBOX').find((m) => m.subject === 'S 1')!.id;
+    const hubId = held(st, victim)!;
+    expect(hubId).not.toBeNull();
+    // The extractor can no longer parse it, in lists or by mail.get; then the account's state is lost (410).
+    fake.skip(ACC, [victim], 'all');
+    fake.rebuild(ACC, 'INBOX');
+    await clock.wait(hub!.sync(ACC)!.changes(inbox.id));
+    // Listed again with it skipped: still here, pending, its first mail.get failed.
+    expect(fake.calls.some((c) => c.op === 'mail.list' && c.input.mailboxId === 'INBOX')).toBe(true);
+    expect(held(st, victim)).toBe(hubId);
+    expect(st.one('SELECT 1 FROM mail_message WHERE id = ?', hubId)).not.toBeNull();
+    // Pending in each mailbox listing it (Inbox, All Mail), each read once (the budget paces the calls) and failed.
+    await clock.until(() => pending(st).length === 2 && pending(st).every((k) => k.tries === 1), 4000, 'a failed read of each');
+    expect(pending(st).every((k) => k.native_id === victim)).toBe(true);
+    const tried = gets(fake, victim);
+    // Not due before its wait is over.
+    await clock.wait(hub!.sync(ACC)!.readSkipped());
+    expect(gets(fake, victim)).toBe(tried);
+    // Readable again: the next round after the wait reads it, and it is no longer pending.
+    fake.skip(ACC, [victim], null);
+    await clock.advance(skippedWaitMs(0));
+    await clock.wait(hub!.sync(ACC)!.readSkipped());
+    expect(gets(fake, victim)).toBeGreaterThan(tried);
+    expect(pending(st)).toEqual([]);
+    expect(held(st, victim)).toBe(hubId);
+    expect(skippedWaitMs(1)).toBe(2 * skippedWaitMs(0));
+    expect(skippedWaitMs(40)).toBe(6 * H);
+  });
+
+  test('an id a changes pass skipped is fetched with mail.get and stored', async () => {
+    const { fake, st, synced } = world({ ids: 'proton', state: 'account', events: 'all' });
+    await synced();
+    const inbox = st.mailboxByNative(ACC, 'INBOX')!;
+    // On the server without an event; the extractor leaves it out of summaries but mail.get reads it.
+    const m = fake.put(ACC, { messageId: '<odd@x>', receivedAt: T0, subject: 'Odd' });
+    fake.put(ACC, { messageId: '<plain@x>', receivedAt: T0 + 1, subject: 'Plain' });
+    fake.skip(ACC, [m.id], 'list');
+    await clock.wait(hub!.sync(ACC)!.changes(inbox.id));
+    expect(held(st, fake.messages(ACC).find((x) => x.subject === 'Plain')!.id)).not.toBeNull();
+    await clock.until(() => held(st, m.id), 4000, 'the skipped message read by mail.get');
+    // Read once as skipped (a fetch ahead of the new mail's body may read it again).
+    expect(gets(fake, m.id)).toBeGreaterThanOrEqual(1);
+    expect(pending(st)).toEqual([]);
+    expect(st.one<{ subject: string }>('SELECT subject FROM mail_message WHERE id = ?', held(st, m.id))!.subject).toBe('Odd');
+  });
+
+  test('an id the server then removes is no longer pending', async () => {
+    const { fake, st, synced } = world({ ids: 'proton', state: 'account', events: 'all' });
+    await synced();
+    const inbox = st.mailboxByNative(ACC, 'INBOX')!;
+    const m = fake.put(ACC, { messageId: '<bad@x>', receivedAt: T0 });
+    fake.skip(ACC, [m.id], 'all');
+    await clock.wait(hub!.sync(ACC)!.changes(inbox.id));
+    await clock.settle();
+    expect(pending(st).map((k) => k.native_id)).toEqual([m.id]);
+    fake.remove(ACC, m.id);
+    await clock.wait(hub!.sync(ACC)!.changes(inbox.id));
+    expect(pending(st)).toEqual([]);
+  });
+});
+
+describe('how stale an account is (sync.stateAt, error, failures)', () => {
+  test('failed passes count up with their reason; one that works clears them and moves stateAt', async () => {
+    let now = T0;
+    const { fake, st, synced } = world({}, () => {}, () => now);
+    await synced();
+    const inbox = st.mailboxByNative(ACC, 'INBOX')!;
+    const view = () => st.accountView(st.account(ACC)!).sync;
+    const first = view().stateAt!;
+    expect(first).toBe(T0);
+    expect(view()).toMatchObject({ error: null, failures: 0 });
+    now = T0 + 3 * H;
+    fake.fail('mail.changes', new MailCallError('Gmail did not answer', 502, 'failed'));
+    fake.fail('mail.changes', new MailCallError('Gmail did not answer again', 502, 'failed'));
+    await clock.wait(hub!.sync(ACC)!.changes(inbox.id));
+    await clock.wait(hub!.sync(ACC)!.changes(inbox.id));
+    expect(view()).toMatchObject({ stateAt: first, error: 'Gmail did not answer again', failures: 2 });
+    await clock.wait(hub!.sync(ACC)!.changes(inbox.id));
+    // Inbox is up to date; the other followed mailboxes are not yet, so the oldest is still the first.
+    expect(view()).toMatchObject({ stateAt: first, error: null, failures: 0 });
+    await clock.wait(hub!.sync(ACC)!.catchUp());
+    expect(view().stateAt).toBe(now);
   });
 });

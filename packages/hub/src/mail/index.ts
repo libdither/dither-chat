@@ -112,6 +112,7 @@ export class MailHub {
     const base = opts.managerUrl?.replace(/\/$/, '') ?? null;
     this.store.managedUrl = (id) => (base ? `${base}/#/accounts/${encodeURIComponent(id)}` : null);
     this.store.syncOf = (id) => this.syncs.get(id)?.phase ?? 'idle';
+    this.store.syncFailure = (id) => this.syncs.get(id)?.failure ?? { error: null, failures: 0 };
     this.outbox = new MailOutbox(this, { dir: opts.dataDir ? `${opts.dataDir}/mail-outbox` : null, holdMs: opts.holdMs, now: this.now, log: this.log });
     this.media = opts.media ?? null;
     this.routes = mountRouters(this);

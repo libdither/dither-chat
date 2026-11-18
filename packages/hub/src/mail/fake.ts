@@ -165,6 +165,8 @@ interface Account {
   noselect: Set<string>;
   /** Ids whose writes the server turns down (`refused`) or does not find (`unknown`): `refuse`. */
   refusals: Map<string, 'refused' | 'unknown'>;
+  /** Ids the extractor cannot parse (`skip`): left out of lists, changes and searches and named in `skipped`. */
+  skips: Map<string, 'list' | 'all'>;
 }
 
 /** A mailbox id as dither-accounts' imap extractor makes it (extractors/imap/src/ids.ts): base64url of its path. */
@@ -311,7 +313,22 @@ export class FakeMailBackend implements MailBackend {
         throw e;
       }
     }
-    return this.answer(a, op, input) as T;
+    return this.skipping(a, op, input, this.answer(a, op, input)) as T;
+  }
+
+  /**
+   * Ids `skip` named, as an extractor that could not parse them answers: left out of mail.list, mail.changes' `added`
+   * and mail.search's messages, and named in the answer's `skipped`; mail.get of one fails (502) when it is skipped
+   * there too ('all').
+   */
+  private skipping(a: Account, op: string, input: Record<string, any>, r: any): unknown {
+    if (!a.skips.size) return r;
+    if (op === 'mail.get' && a.skips.get(String(input.id ?? input.message)) === 'all') throw new MailCallError('the extractor could not read this message', 502, 'failed');
+    const key = op === 'mail.changes' ? 'added' : op === 'mail.list' || op === 'mail.search' ? 'messages' : null;
+    if (!key || !Array.isArray(r?.[key])) return r;
+    const skipped = (r[key] as M.MailSummary[]).filter((m) => a.skips.has(m.id)).map((m) => m.id);
+    if (!skipped.length) return r;
+    return { ...r, [key]: (r[key] as M.MailSummary[]).filter((m) => !a.skips.has(m.id)), skipped };
   }
 
   // ---------------------------------------------------------- the server's side, for tests and the demo
@@ -357,6 +374,7 @@ export class FakeMailBackend implements MailBackend {
       gm: new Map(),
       noselect: new Set(gmail ? [GMAIL.parent] : []),
       refusals: new Map(),
+      skips: new Map(),
     };
     a.status = this.statusOf(a, online);
     this.accs.set(id, a);
@@ -428,6 +446,16 @@ export class FakeMailBackend implements MailBackend {
     const r = this.accs.get(account)!.refusals;
     for (const id of ids) if (how) r.set(id, how);
     else r.delete(id);
+  }
+
+  /**
+   * From now on the extractor cannot parse these ids: 'list' leaves them out of lists, changes and searches (named in
+   * `skipped`, as dither-accounts answers) while mail.get still reads them; 'all' fails mail.get too. Null: readable again.
+   */
+  skip(account: string, ids: string[], how: 'list' | 'all' | null) {
+    const sk = this.accs.get(account)!.skips;
+    for (const id of ids) if (how) sk.set(id, how);
+    else sk.delete(id);
   }
 
   /** `op` fails once with this error (or each time `when` says so, once per call it matches). */

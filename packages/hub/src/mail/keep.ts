@@ -91,6 +91,8 @@ interface IdsAnswer {
   ids: string[];
   next: string | null;
   estimate: number | null;
+  /** Ids it could not parse and left out (as on mail.search's answers). */
+  skipped?: string[];
 }
 
 /** Where a kept account's newest-first pass over its bodies has got to. */
@@ -108,13 +110,19 @@ interface Feed {
 interface WindowFound {
   server: number;
   held: number;
-  /** Summaries the hub lacked (split search), or native ids (ids-only). */
+  /** Summaries the hub lacked (split search), or native ids (ids-only, and ids an answer skipped that are not here). */
   missing: M.MailSummary[];
   missingIds: string[];
   full: boolean;
   estimate: number | null;
   searches: number;
 }
+
+/** An answer's `skipped`: ids the extractor could not parse and left out. */
+const skippedOf = (r: unknown): string[] => {
+  const k = (r as { skipped?: unknown } | null)?.skipped;
+  return Array.isArray(k) ? k.filter((x): x is string => typeof x === 'string') : [];
+};
 
 /** Gmail's search operators for a window, epoch seconds: `after:` from its start (none for the first), `before:` its end. */
 export const auditQuery = (start: number, end: number) => [start > 0 ? `after:${Math.floor(start / 1000)}` : '', `before:${Math.floor(end / 1000)}`].filter(Boolean).join(' ');
@@ -406,7 +414,7 @@ class Keeper {
       const input: Record<string, unknown> = { query, limit: AUDIT_IDS_PAGE, idsOnly: true, ...(cursor ? { cursor } : {}) };
       const r: IdsAnswer = await s.queue.run(P5, `audit:${w.start}:${cursor ?? ''}`, () => s.background<IdsAnswer>('mail.search', input, 60_000));
       searches++;
-      ids.push(...(Array.isArray(r?.ids) ? r.ids : []));
+      ids.push(...(Array.isArray(r?.ids) ? r.ids : []), ...skippedOf(r));
       if (estimate === null && typeof r?.estimate === 'number') estimate = r.estimate;
       cursor = r?.next ?? null;
     } while (cursor);
@@ -422,17 +430,24 @@ class Keeper {
       const [a, b] = stack.pop()!;
       if (!(await this.pace(accountId, s))) return null;
       const input = { query: auditQuery(a, b), limit: AUDIT_LIMIT };
-      const r = await s.queue.run(P5, `audit:${a}:${b}`, () => s.background<{ messages: M.MailSummary[] }>('mail.search', input, 60_000));
+      const r = await s.queue.run(P5, `audit:${a}:${b}`, () => s.background<{ messages: M.MailSummary[]; skipped?: string[] }>('mail.search', input, 60_000));
       out.searches++;
       const list = Array.isArray(r?.messages) ? r.messages : [];
-      if (list.length >= AUDIT_LIMIT && b - a > AUDIT_MIN_MS) {
+      // Ids the server has and could not parse: unresolved, not matched. Held here already, they count as held;
+      // otherwise mail.get is tried for each, and the window stays 'missed' until it reads them.
+      const skipped = skippedOf(r);
+      if (list.length + skipped.length >= AUDIT_LIMIT && b - a > AUDIT_MIN_MS) {
         // Full: the server may have more than it said. In halves, on whole seconds, newer half first.
         const mid = a + Math.max(1_000, Math.floor((b - a) / 2_000) * 1_000);
         stack.push([a, mid], [mid, b]);
         continue;
       }
-      if (list.length >= AUDIT_LIMIT) out.full = true;
-      out.server += list.length;
+      if (list.length + skipped.length >= AUDIT_LIMIT) out.full = true;
+      out.server += list.length + skipped.length;
+      for (const id of skipped) {
+        if (this.heldNative(accountId, id)) out.held++;
+        else out.missingIds.push(id);
+      }
       for (const m of list) {
         if (this.heldSummary(accountId, m)) out.held++;
         else out.missing.push(m);

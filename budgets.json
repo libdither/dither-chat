@@ -3,7 +3,7 @@
   "hub": {
     "bootstrap.bytes": { "measured": 430589, "budget": 437693 },
     "bootstrap.zstd": { "measured": 43950, "budget": 44782 },
-    "bootstrap.fields": { "measured": 19200, "budget": 19200, "reason": "An inbox row that owes a reply carries the chance it needs one (needsReply, docs/inbox.md \"Needs a reply\"): one owed row in the perf world" },
+    "bootstrap.fields": { "measured": 19203, "budget": 19203, "reason": "A mail account's sync says how stale it is (stateAt, error, failures; docs/mail.md, the account's Mail section): three fields on the perf world's one mail account" },
     "bootstrap.conversations": { "measured": 574, "budget": 574 },
     "bootstrap.identities": { "measured": 146, "budget": 146 },
     "bootstrap.persons": { "measured": 51, "budget": 51 },

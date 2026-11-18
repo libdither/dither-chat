@@ -20,11 +20,16 @@ import { asMailError, type MailBackend } from './backend.ts';
 import { Backfill, Budget } from './backfill.ts';
 import { storeBody } from './cache.ts';
 import { MAIL_LIMITS } from './limits.ts';
-import { MailQueue, P0, P1, type Priority } from './queue.ts';
+import { MailQueue, P0, P1, P2, type Priority } from './queue.ts';
 import type { Ingested, MailStore } from './store.ts';
 import { jobFailed } from '../errors.ts';
 
 type Row = Record<string, any>;
+/** A mail.list page; `skipped`: ids the extractor could not parse and left out (they stay pending: readSkipped). */
+type Page = { messages: M.MailSummary[]; next: string | null; skipped?: string[] };
+
+/** The wait after a skipped id's mail.get fails: a minute, doubling, at most 6 hours. */
+export const skippedWaitMs = (tries: number) => Math.min(60_000 * 2 ** Math.min(tries, 20), 6 * 3_600_000);
 
 interface SyncContext {
   store: MailStore;
@@ -51,6 +56,10 @@ export class AccountSync {
   private timer: Timer | null = null;
   private retry: unknown = null;
   private clock: Clock;
+  /** The last failed pass's message and the failures in a row since one worked (the page's "Hasn't synced in …"). */
+  failure: { error: string | null; failures: number } = { error: null, failures: 0 };
+  /** Skipped ids whose mail.get is on its way (readSkipped). */
+  private reading = new Set<string>();
 
   constructor(
     readonly accountId: string,
@@ -101,6 +110,19 @@ export class AccountSync {
     return !this.stopped && this.ctx.backend.connected && !!this.store.account(this.accountId)?.online;
   }
 
+  /** A changes pass or a first sync failed: what the page shows once the mailboxes' states are old. */
+  private failed(message: string) {
+    this.failure = { error: message, failures: this.failure.failures + 1 };
+    this.store.dirty.accounts.add(this.accountId);
+  }
+
+  /** A changes pass worked: the failures end. */
+  private worked() {
+    if (!this.failure.failures && !this.failure.error) return;
+    this.failure = { error: null, failures: 0 };
+    this.store.dirty.accounts.add(this.accountId);
+  }
+
   setPhase(p: AccountSync['phase']) {
     if (this.phase === p) return;
     this.phase = p;
@@ -144,6 +166,7 @@ export class AccountSync {
       })
       .catch((e) => {
         this.setPhase('idle');
+        this.failed(asMailError(e).message);
         this.ctx.log(`[${this.accountId}] first sync stopped: ${asMailError(e).message}; trying again in a minute`);
         if (!this.stopped) this.retry = this.clock.setTimeout(() => ((this.first = null), this.start()), 60_000);
       });
@@ -184,8 +207,47 @@ export class AccountSync {
    * Summaries from the server into the store and on to its listeners (people, the inbox's rows, triage): one piece on
    * the hub's thread, set off by an answer, so it is noted and timed (stalls.ts).
    */
-  private take(box: Row, messages: M.MailSummary[], live: boolean, gen?: number) {
+  private take(box: Row, messages: M.MailSummary[], live: boolean, gen?: number, skipped?: string[]) {
     timedWork(`mail: ${messages.length} summaries`, () => this.stored(this.store.ingest(this.accountId, box, messages, gen), live));
+    if (skipped?.length) this.skipped(box.id, skipped);
+  }
+
+  /** Ids an answer left out as unparseable (its `skipped`): pending until mail.get reads them (readSkipped). */
+  skipped(mailboxId: string, ids: unknown) {
+    const list = Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string') : [];
+    if (!list.length) return;
+    this.store.noteSkipped(mailboxId, list);
+    void this.readSkipped();
+  }
+
+  /**
+   * Each skipped id that is due, read with mail.get and stored as its summary. A failure waits longer each time
+   * (skippedWaitMs; the timer's tick tries again); 404 drops it (the server no longer has it). Done when this round is.
+   */
+  async readSkipped(): Promise<void> {
+    if (!this.workable) return;
+    // One read of each at a time: the queue shares only work that has not started.
+    const due = this.store.dueSkipped(this.accountId).filter((k) => !this.reading.has(`${k.mailbox_id}:${k.native_id}`));
+    await Promise.all(
+      due.map((k) => {
+        const key = `${k.mailbox_id}:${k.native_id}`;
+        this.reading.add(key);
+        return this.queue
+          .run(P2, `skipped:${k.mailbox_id}:${k.native_id}`, async () => {
+            const m = await this.call<M.MailMessage>('mail.get', { id: k.native_id }, 65_000);
+            const row = this.store.mailbox(k.mailbox_id);
+            this.store.dropSkipped(k.mailbox_id, k.native_id);
+            if (row && m?.id) this.take(row, [{ ...m, id: k.native_id }], true);
+          })
+          .catch((e) => {
+            const err = asMailError(e);
+            if (err.status === 404) this.store.dropSkipped(k.mailbox_id, k.native_id);
+            else this.store.skippedFailed(k.mailbox_id, k.native_id, skippedWaitMs(k.tries), err.message);
+            this.log(`a skipped message: ${err.message}`);
+          })
+          .finally(() => this.reading.delete(key));
+      }),
+    );
   }
 
   stored(ing: Ingested, live: boolean) {
@@ -195,10 +257,10 @@ export class AccountSync {
 
   /** The newest `n` of a mailbox. */
   private async listTop(b: Row, n: number) {
-    const r = await this.call<{ messages: M.MailSummary[]; next: string | null }>('mail.list', { mailboxId: b.native_id, limit: n });
+    const r = await this.call<Page>('mail.list', { mailboxId: b.native_id, limit: n });
     const row = this.store.mailbox(b.id);
     if (!row) return;
-    this.take(row, r.messages, false);
+    this.take(row, r.messages, false, undefined, r.skipped);
     const oldest = r.messages.length ? Math.min(...r.messages.map((m) => m.receivedAt)) : null;
     this.store.setListed(b.id, { next: r.next, horizon: oldest, complete: !r.next });
   }
@@ -210,8 +272,8 @@ export class AccountSync {
       if (!row || row.complete || !row.list_next || this.stopped) return;
       const held = this.store.mailboxHeld(b.id).n;
       if (held >= max) return;
-      const r = await this.call<{ messages: M.MailSummary[]; next: string | null }>('mail.list', { mailboxId: row.native_id, limit: Math.min(MAIL_LIMITS.page, max - held), before: row.list_next });
-      this.take(row, r.messages, false);
+      const r = await this.call<Page>('mail.list', { mailboxId: row.native_id, limit: Math.min(MAIL_LIMITS.page, max - held), before: row.list_next });
+      this.take(row, r.messages, false, undefined, r.skipped);
       const oldest = r.messages.length ? Math.min(...r.messages.map((m) => m.receivedAt)) : row.horizon;
       this.store.setListed(b.id, { next: r.next, horizon: oldest === null ? row.horizon : Math.min(oldest, row.horizon ?? oldest), complete: !r.next });
       if (!r.messages.length) return;
@@ -273,6 +335,7 @@ export class AccountSync {
         now - (b.opened_at ?? 0) < 2 * 60_000 ? 60_000 : b.role === 'inbox' ? MAIL_LIMITS.inboxEveryMs : diff && (b.total ?? 0) > 10_000 ? 2 * MAIL_LIMITS.otherEveryMs : MAIL_LIMITS.otherEveryMs;
       if (now - (b.state_at ?? 0) >= every) void this.changes(b.id);
     }
+    void this.readSkipped();
     this.backfill.start();
   }
 
@@ -288,33 +351,37 @@ export class AccountSync {
         if (!this.workable) return;
         let b = this.store.mailbox(mailboxId);
         if (!b?.follow) return;
-        if (!b.state) return this.takeState(b);
+        if (!b.state) return this.takeState(b).then(() => this.worked());
         for (let i = 0; i < 50; i++) {
           let r: M.MailChanges;
           try {
             r = await this.call<M.MailChanges>('mail.changes', { mailboxId: b.native_id, state: b.state });
           } catch (e) {
-            if (asMailError(e).status === 410) return this.relist(b);
+            if (asMailError(e).status === 410) return this.relist(b).then(() => this.worked());
             throw e;
           }
           b = this.store.mailbox(mailboxId);
           if (!b) return;
-          this.take(b, r.added, true);
+          this.take(b, r.added, true, undefined, r.skipped);
           this.store.changeFlags(b.id, r.changed);
           this.orphan(this.store.dropLocations(b.id, r.removed));
           this.store.setState(b.id, r.state);
           b = { ...b, state: r.state };
           if (!r.more) break;
         }
+        this.worked();
       })
       .then(
         () => (nested ? undefined : this.settle()),
         (e) => {
           const err = asMailError(e);
           this.ctx.log(`[${this.accountId}] changes: ${err.message}`);
+          this.failed(err.message);
           // The manager's `offline` (its extractor not connected, as while the manager restarts) is a state, not a
-          // bug: the account's coming back runs a catch-up.
-          if (err.code !== 'offline') jobFailed('mail: changes', e, { account: this.accountId });
+          // bug: the account's coming back runs a catch-up. So is a 503, the account's "not now" (the google kind's Gmail
+          // page silent or being reloaded): the next pass tries again, and one that lasts shows on the account's page
+          // as "Hasn't synced in …" (failure).
+          if (err.code !== 'offline' && err.status !== 503) jobFailed('mail: changes', e, { account: this.accountId });
         },
       );
   }
@@ -335,10 +402,11 @@ export class AccountSync {
       let ended = false;
       const cap = Math.max(MAIL_LIMITS.firstSync, held.n * 2 + MAIL_LIMITS.page);
       for (;;) {
-        const r: { messages: M.MailSummary[]; next: string | null } = await this.call('mail.list', { mailboxId: b.native_id, limit: MAIL_LIMITS.page, ...(next ? { before: next } : {}) });
+        const r: Page = await this.call('mail.list', { mailboxId: b.native_id, limit: MAIL_LIMITS.page, ...(next ? { before: next } : {}) });
         const row = this.store.mailbox(b.id);
         if (!row) return;
-        this.take(row, r.messages, true, gen);
+        // Skipped ids are noted before dropUnseen, which leaves their locations alone.
+        this.take(row, r.messages, true, gen, r.skipped);
         listed += r.messages.length;
         for (const m of r.messages) oldest = Math.min(oldest, m.receivedAt);
         next = r.next;

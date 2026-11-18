@@ -24,7 +24,9 @@ Email beside your chats, through dither-accounts' `mail` interface. The design, 
   server too, unless Settings says "only when I mark it".
 - **Accounts** lists the mail accounts with the others, one list ([accounts.md](accounts.md), "One list"): a mail icon,
   a dot on it when something is wrong; the account's page has its Mail section (what is wrong, "Sign in to Proton in
-  the live view" with the live view, "Sending is off: …", what is held). **Settings → Mail** links to those pages.
+  the live view" with the live view, "Sending is off: …", what is held, and "Hasn't synced in 3 h: <the last failure>"
+  once its followed mailboxes have gone half an hour without a changes pass that worked while passes fail, or an hour
+  with none failing; the account view's `sync.stateAt`, `error` and `failures`). **Settings → Mail** links to those pages.
   Proton Mail is added from Add account once dither-accounts lets the hub add it; the other kinds on the manager's page,
   or from Add account after asking ([accounts.md](accounts.md), "Adding mail").
 - **When access ends** (the account leaves the manager's list, or the hub's grant goes), its mail stays readable for
@@ -925,6 +927,20 @@ gap, the account coming online and the hub starting each catch up the same way. 
 the mailbox again and drops what is no longer there. A message removed from one mailbox is deleted only after the
 others were asked, because an IMAP move is a removal there and an addition elsewhere.
 
+A pass that fails is logged and counted (the account's `sync.failures` and `error`, cleared by the next pass that
+works); it goes to errors.ndjson only when it looks like a bug, not for the manager's `offline` or a 503, an account's
+"not now" (the google kind's Gmail page silent or being reloaded). One that lasts shows on the account's page instead.
+
+### Skipped messages
+
+An extractor may leave a message out of a `mail.changes`, `mail.list` or `mail.search` answer because it could not
+parse it, and name its id in the answer's optional `skipped` (dither-accounts' interface). The server still has it, so
+the hub keeps each such id pending (`mail_skipped`, schema-skipped.sql) per mailbox: a relist after a 410 never drops
+its location, and `mail.get` reads it (sync.ts `readSkipped`, on the minute timer and when one is noted), a minute
+after a failure, doubling to at most 6 hours; read, it is stored as its summary. A summary of it, the server's removing
+it, or a 404 from `mail.get` ends it. Keep-all audits count a skipped id as the server's: held here it is held, else it
+is fetched by id, and the window stays "missed" until it is read.
+
 ## Running it locally
 
 - A demo hub has a mail account of its own, on a fake server (`hub/src/mail/fake.ts`, seeded by `seedDemoMail` in
@@ -973,6 +989,13 @@ others were asked, because an IMAP move is a removal there and an addition elsew
   and Dovecot (`DOVECOT_BIN`, or the binary dither-accounts' own imap tests found), and skips without them:
 
       DITHER_ACCOUNTS_REPO=~/Projects/dither-accounts bun test packages/hub/test/mail-remote.test.ts
+
+- `hub/test/mail-remote-google.test.ts` does the same with a `google` account on dither-accounts' fake Google
+  (test/fake-google.ts there): the first sync, a message arriving, and a Gmail page that stops answering and is
+  reloaded, with no errors.ndjson line meanwhile. The google kind runs Chromium on Xvfb (and x11vnc), so it skips
+  without them (and in CI); it takes a few minutes. `mail-gmail-web-contract.test.ts` runs one script of calls on the
+  fake's `gmail-web` mode and pins where it differs from the google kind (mailbox and message ids, Starred), reading
+  that extractor's protocol module when the checkout is there.
 
 ## Where later slices plug in
 
