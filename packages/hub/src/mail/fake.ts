@@ -25,7 +25,8 @@
  * mail.send (slice 5) checks From against the account's addresses (422, code 'from'), can refuse a recipient as
  * Proton's extractor does (422, code 'recipients': `refuseRecipient`), answers a dry run as the manager does, keeps
  * what it got in `sent` (with the files' bytes, read from a path or base64), and puts a copy in Sent that threads to
- * the original by In-Reply-To and References, which it marks answered.
+ * the original by In-Reply-To and References, which it marks answered. A second send with an `idempotencyKey` it has
+ * sent already answers 409 `duplicate`, as the manager does.
  *
  * The hub's own writes (mail.flag, mail.move, mail.trash) change it as the extractors do: at most 1000 ids a call, 403
  * on a read grant, `{ dryRun: true }` and no change on a dry run (as the manager answers), mail.changed for every
@@ -1060,6 +1061,8 @@ export class FakeMailBackend implements MailBackend {
     // The manager: a read grant may not write; a dry run answers without reaching the account.
     if (a.view.level !== 'write') throw new MailCallError('this app may only read this account', 403, 'denied');
     if (a.view.dryRun) return { dryRun: true };
+    // A try of a send it already sent (the same idempotencyKey): not sent again.
+    if (mail.idempotencyKey && this.sent.some((x) => x.account === a.view.id && x.mail.idempotencyKey === mail.idempotencyKey)) throw new MailCallError('this message was sent already', 409, 'duplicate');
     if (a.opts.send === 501) throw new MailCallError("Proton's send path was not found in the page", 501, 'failed');
     const own = a.self.addresses ?? [{ email: a.self.email, name: a.self.displayName ?? null }];
     const from = mail.from === undefined ? own[0] : own.find((x) => x.email.toLowerCase() === String(mail.from).trim().toLowerCase());

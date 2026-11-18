@@ -11,11 +11,13 @@
  *   P5 audit     Gmail's month windows searched (keep.ts): the lowest
  *
  * The same `key` queued twice is one piece of work (two mail.changed for one mailbox make one changes pass). The
- * manager's `limited` answer puts the work back and holds the queue, from 2 s, doubling. Slice 2's budgets plug in as
- * `gate`.
+ * manager's `limited` answer puts the work back and holds the queue, from 2 s, doubling. Other failures that may pass
+ * (backend.ts troubleOf: transient, or a 502) fail the work and hold the background (P1 and lower) from 2 s, doubling
+ * to 10 min with jitter, until a call succeeds; `streak` says since when, for the bug watch (sync.ts report). Slice 2's
+ * budgets plug in as `gate`.
  */
 import { type Clock, realClock } from '../clock.ts';
-import { asMailError } from './backend.ts';
+import { asMailError, backoffMs, MailCallError, type MailTrouble, troubleOf } from './backend.ts';
 
 export type Priority = 0 | 1 | 2 | 3 | 4 | 5;
 export const P0 = 0, P1 = 1, P2 = 2, P3 = 3, P4 = 4, P5 = 5;
@@ -37,6 +39,15 @@ export class MailQueue {
   private backoff = 0;
   private timer: unknown = null;
   private stopped = false;
+  /** Background work waits until then: failures that may pass came one after another. */
+  private quietUntil = 0;
+  /**
+   * Failures that may pass, one after another with no success between: how many, since when, of which kind, and
+   * whether the bug watch heard of this streak.
+   */
+  readonly streak: { n: number; since: number; kind: MailTrouble | null; reported: boolean } = { n: 0, since: 0, kind: null, reported: false };
+  /** The jitter's dice (tests fix it). */
+  random: () => number = Math.random;
   /**
    * How long work of this priority must wait before it may start (0: now). Slice 2 sets it for its budgets: P2 to P5
    * together at most 2 calls/s, and none for 10 s after a P0 call.
@@ -59,7 +70,7 @@ export class MailQueue {
 
   /** Run `fn` at priority `p`. With a `key`, work under the same key that has not started yet is shared. */
   run<T>(p: Priority, key: string | null, fn: () => Promise<T>): Promise<T> {
-    if (this.stopped) return Promise.reject(asMailError(new Error('stopped')));
+    if (this.stopped) return Promise.reject(stoppedError());
     if (key) {
       for (const q of this.waiting) {
         const t = q.find((x) => x.key === key);
@@ -87,7 +98,7 @@ export class MailQueue {
   stop() {
     this.stopped = true;
     if (this.timer) this.clock.clearTimeout(this.timer);
-    for (const q of this.waiting) for (const t of q.splice(0)) t.reject(asMailError(new Error('the account stopped syncing')));
+    for (const q of this.waiting) for (const t of q.splice(0)) t.reject(stoppedError());
   }
 
   private pump() {
@@ -106,6 +117,10 @@ export class MailQueue {
       let next: Task | undefined;
       for (let p = 0 as Priority; p <= LOWEST; p = (p + 1) as Priority) {
         if (!this.waiting[p].length) continue;
+        if (p > P0 && now < this.quietUntil) {
+          wait = Math.min(wait, this.quietUntil - now);
+          continue;
+        }
         const g = this.gate(p, now);
         if (g > 0) {
           wait = Math.min(wait, g);
@@ -127,6 +142,8 @@ export class MailQueue {
     t.fn().then(
       (v) => {
         this.backoff = 0;
+        this.quietUntil = 0;
+        Object.assign(this.streak, { n: 0, since: 0, kind: null, reported: false });
         this.running.delete(t);
         this.onEnd(p, this.now());
         t.resolve(v);
@@ -141,9 +158,27 @@ export class MailQueue {
           this.backoff = this.backoff ? Math.min(this.backoff * 2, 60_000) : 2_000;
           this.holdUntil = this.now() + this.backoff;
           this.waiting[t.p].unshift(t);
-        } else t.reject(err);
+        } else {
+          if (!this.stopped) this.failed(err);
+          t.reject(err);
+        }
         this.pump();
       },
     );
   }
+
+  /** A failure that may pass lengthens the streak and the background's wait; any other leaves both as they are. */
+  private failed(err: MailCallError) {
+    const kind = troubleOf(err);
+    if (kind !== 'transient' && kind !== 'layout') return;
+    const now = this.now();
+    const s = this.streak;
+    // Another kind of trouble is another state: its own streak.
+    if (s.kind !== kind) Object.assign(s, { n: 0, since: now, kind, reported: false });
+    s.n++;
+    this.quietUntil = now + backoffMs(s.n, 2_000, 600_000, this.random);
+  }
 }
+
+/** Work turned away because the account stopped syncing (it went, or the hub is stopping): not a failure. */
+const stoppedError = () => new MailCallError('the account stopped syncing', undefined, 'stopped');
