@@ -1,5 +1,6 @@
 import type { Store } from './store.ts';
 import { previewText } from './store.ts';
+import { namedTokens } from './forward.ts';
 import type { Triage } from './triage.ts';
 
 type Row = Record<string, any>;
@@ -194,7 +195,7 @@ export class Delivery {
       if (lines.length >= LINES && !own) continue;
       const key = r.person_id ?? r.author_id ?? 'someone';
       const author = r.person_name ?? r.display_name ?? r.handle ?? 'Someone';
-      const body = (previewText(r.body, r.kind) || (r.kind === 'media' ? 'Sent an attachment' : '')).slice(0, BODY);
+      const body = (previewText(namedTokens(s, c.network, r.body), r.kind) || (r.kind === 'media' ? 'Sent an attachment' : '')).slice(0, BODY);
       lines.push({ author, key, body, ts: r.ts });
       const icon = r.avatar_url ? s.media(r.avatar_url, r.seen_via ?? via) : r.person_avatar ? s.media(r.person_avatar, null) : null;
       if (icon && small(icon)) icons[key] ??= icon;

@@ -46,6 +46,13 @@ export function plainTokens(body: string, name: (kind: 'user' | 'room', nativeId
     .replace(/@(everyone|here)\b/g, '@​$1');
 }
 
+/** A body's mentions and channels as the names the hub knows, references (a Calendar chat's) included: what a forward or a notification shows. */
+export function namedTokens(store: Store, network: P.Network, body: string): string {
+  const names = (kind: 'user' | 'room', id: string) =>
+    kind === 'user' ? store.identityLabel(hubId('idn', network, id)) : store.conversationView(hubId('cnv', network, id))?.name ?? null;
+  return plainTokens(lowerRefs(body, storeResolve(store, '')), names);
+}
+
 /** The text of a forward that goes out as an ordinary message: the note, a line saying where it came from, the original quoted. */
 export function forwardText(o: { note?: string; text: string; author: string | null; source: string | null; network: P.Network; dest: P.Network; mode: P.ForwardMode }): string {
   const note = o.note?.trim();
@@ -92,10 +99,7 @@ export async function forwardMessage(deps: ForwardDeps, messageId: string, req: 
     source,
     ts: inner?.ts ?? m.ts,
   };
-  const names = (kind: 'user' | 'room', id: string) =>
-    kind === 'user' ? store.identityLabel(hubId('idn', m.network, id)) : store.conversationView(hubId('cnv', m.network, id))?.name ?? null;
-  // A person or account named by reference (a Calendar chat's) goes on as their name.
-  const plain = plainTokens(lowerRefs(text, storeResolve(store, '')), names);
+  const plain = namedTokens(store, m.network, text);
 
   let files: File[] | null = null;
   const loadFiles = async (): Promise<{ files: File[]; missing: string[] }> => {
