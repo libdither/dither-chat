@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 const src = await Bun.file(resolve(import.meta.dir, '../public/sw.js')).text();
 
 /** `showing`: the notifications already up, by tag and data; without it every tag has one, with no data. */
-function worker(opts: { canReply?: boolean; fetch?: (url: string, init: any) => Promise<Response>; showing?: { tag: string; data?: any }[] } = {}) {
+function worker(opts: { canReply?: boolean; fetch?: (url: string, init: any) => Promise<Response>; showing?: { tag: string; data?: any }[]; indexedDB?: unknown } = {}) {
   const listeners: Record<string, (e: any) => void> = {};
   const shown: { title: string; o: any }[] = [];
   const closed: string[] = [];
@@ -18,7 +18,7 @@ function worker(opts: { canReply?: boolean; fetch?: (url: string, init: any) => 
         ? opts.showing.filter((n) => n.tag === tag).map((n) => ({ ...n, close: () => closed.push(`other:${tag}`) }))
         : [{ close: () => closed.push(`other:${tag}`) }],
   };
-  const self: any = { registration, addEventListener: (t: string, fn: (e: any) => void) => (listeners[t] = fn), clients: { matchAll: async () => [], openWindow: async (u: string) => void opened.push(u) } };
+  const self: any = { indexedDB: opts.indexedDB, registration, addEventListener: (t: string, fn: (e: any) => void) => (listeners[t] = fn), clients: { matchAll: async () => [], openWindow: async (u: string) => void opened.push(u) } };
   const NotificationEvent: any = function () {};
   if (opts.canReply !== false) NotificationEvent.prototype.reply = null;
   const fetchStub = async (url: string, init: any) => {
@@ -685,4 +685,66 @@ test('an unstamped worker (a dev server) still keeps index.html and the manifest
   on.install({ waitUntil: (p: Promise<unknown>) => (done = p) });
   await done;
   expect(kept.sort()).toEqual(['/index.html', '/manifest.webmanifest']);
+});
+
+
+/** An IndexedDB of one store, enough for keepArrived: put, getAll, delete, and a transaction that completes. */
+function fakeIdb() {
+  const rows = new Map<string, any>();
+  const later = (fn: () => void) => queueMicrotask(fn);
+  const idb = {
+    rows,
+    open: () => {
+      const q: any = {};
+      later(() => {
+        q.result = {
+          close: () => {},
+          transaction: () => {
+            const t: any = {};
+            let open = 0;
+            const done = () => --open === 0 && later(() => t.oncomplete?.());
+            const req = (fn: () => any) => {
+              const r: any = {};
+              open++;
+              later(() => {
+                r.result = fn();
+                r.onsuccess?.();
+                done();
+              });
+              return r;
+            };
+            t.objectStore = () => ({
+              put: (v: any, k: string) => req(() => rows.set(k, v)),
+              delete: (k: string) => req(() => rows.delete(k)),
+              getAll: () => req(() => [...rows.values()]),
+            });
+            return t;
+          },
+        };
+        q.onsuccess?.();
+      });
+      return q;
+    },
+  };
+  return idb;
+}
+
+test("a push's copy of its message, and each read it carries, are kept for the page's next start (arrived.ts)", async () => {
+  const idb = fakeIdb();
+  const w = worker({ indexedDB: idb });
+  const copy = { message: { id: 'msg_1', conversationId: 'cnv_1', ts: 5 }, lastMessage: null, lastMessageAt: 5, vantages: [] };
+  await w.push({ title: 'Ann', body: 'hi', conversationId: 'cnv_1', arrived: copy });
+  expect([...idb.rows.keys()]).toEqual(['m:msg_1']);
+  expect(idb.rows.get('m:msg_1')).toMatchObject({ kind: 'message', conv: 'cnv_1', arrived: copy });
+  // A copy for another conversation than the push's is not kept.
+  await w.push({ title: 'Ann', body: 'hi', conversationId: 'cnv_2', arrived: { ...copy, message: { ...copy.message, id: 'msg_2' } } });
+  expect(idb.rows.has('m:msg_2')).toBe(false);
+  await w.push({ clear: 'cnv_1', upTo: 5, more: [{ clear: 'cnv_3' }] });
+  const reads = [...idb.rows.values()].filter((r) => r.kind === 'clear');
+  expect(reads.map((r) => [r.conv, r.upTo])).toEqual([
+    ['cnv_1', 5],
+    ['cnv_3', undefined],
+  ]);
+  // Without IndexedDB (an old browser, this test's other workers), nothing breaks.
+  await worker().push({ title: 'Ann', body: 'hi', conversationId: 'cnv_1', arrived: copy });
 });

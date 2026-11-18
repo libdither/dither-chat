@@ -173,6 +173,20 @@ export interface MessagePreview {
   text: string;
 }
 
+/**
+ * A copy of the message a push is about, and where its conversation stands, for the device to show before it reaches
+ * the hub (docs/notifications.md, "A copy in the push"). Only what fits beside the notification under a push's 4 KB:
+ * `message` has no embeds or reactions, its attachments only when they fit, and its body is cut (`cut`) when it is
+ * long. The hub's own data replaces it once the device has it.
+ */
+export interface PushArrived {
+  message: MessageView;
+  cut?: true;
+  lastMessage: MessagePreview | null;
+  lastMessageAt: number | null;
+  vantages: VantageView[];
+}
+
 export interface ConversationView {
   id: string;
   network: Network;

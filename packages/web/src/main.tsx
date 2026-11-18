@@ -14,6 +14,7 @@ import { registerServiceWorker } from './pwa.ts';
 import { dropPages, dropSnapshot, readSnapshot, restore } from './snapshot.ts';
 import { applyBootstrap, applyEvents, beforeSync, connect, loaded, restoreOutbox } from './state.ts';
 import { installErrorReports } from './errors.ts';
+import { addArrived, openArrived, readKept } from './arrived.ts';
 import './styles.css';
 
 const scriptAt = performance.now();
@@ -32,12 +33,15 @@ installDeskLinks();
 
 let source = 'hub';
 let readMs = -1;
+// What pushes brought while the app was closed (arrived.ts): shown over the snapshot until the hub answers.
+void readKept().then(addArrived);
 const restored = readSnapshot()
   .then((s) => {
     readMs = performance.now() - scriptAt;
     if (s && restore(s, applyBootstrap, (ids) => applyEvents(ids.map((identity) => ({ t: 'identity', identity }))))) source = 'snapshot';
   })
-  .catch((e) => console.warn('snapshot not restored', e));
+  .catch((e) => console.warn('snapshot not restored', e))
+  .finally(() => openArrived(source !== 'hub'));
 // The socket may open first: the sync waits for the snapshot, to resume from its position (docs/sync.md).
 beforeSync.wait = restored;
 // Painting the loading screen first would only flash it: the snapshot is a few tens of milliseconds away.

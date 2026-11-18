@@ -3,6 +3,7 @@ import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, fileBatches, splitsFiles, SYNC_VERSION } from '@dither-chat/protocol';
 import { leaveLayerEntry, takeOverLayers } from './phone.ts';
 import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snapshot.ts';
+import { arrivedInto, doneArrived, dropArrived, heldEnds, markCatchingUp } from './arrived.ts';
 import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, identityVersion, indexThreads, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
 import { changed, mailChanged, timelineChanged, timelineRev } from './versions.ts';
 import { applyTyping, type TypingState } from './typers.ts';
@@ -527,6 +528,8 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
     }
     t = { key, messages: c?.messages ?? [], hasMore: true, loading: false, conversationIds: c?.conversationIds, from: c?.sync };
     timelines.set(key, t);
+    // What pushes brought since, while the hub has not answered (arrived.ts).
+    arrivedInto(t);
     if (!o.glance && !older) servedFrom(key, c ? 'kept' : 'hub');
     if (o.glance) t.glance = true;
     else touchTimeline(key);
@@ -730,11 +733,13 @@ async function catchUp(key: string) {
 }
 
 function timelineRequest(t: Timeline, seq: number): P.SyncTimelineRequest {
+  // A push's copy (arrived.ts) is not what the timeline holds: the hub is asked from the newest it sent.
+  const { newest, oldest } = heldEnds(t.messages);
   return {
     key: t.key,
     seq,
-    newest: t.messages[t.messages.length - 1]?.ts ?? 0,
-    oldest: t.messages[0]?.ts ?? 0,
+    newest,
+    oldest,
     ...(t.detached ? { newer: false } : {}),
     ...(t.key.startsWith('p:') ? { conversationIds: t.conversationIds ?? [] } : {}),
   };
@@ -1236,6 +1241,7 @@ function bootstrap() {
     held ??= [];
     const since = openedAt;
     const gen = socketGen;
+    markCatchingUp();
     try {
       // As text too: the snapshot keeps the hub's answer as it came, without serializing it again.
       const res = await fetch('/api/bootstrap');
@@ -1249,10 +1255,13 @@ function bootstrap() {
       }
       if (!res.ok) throw new Error(text.slice(0, 200) || `${res.status}`);
       const b = JSON.parse(text) as P.Bootstrap;
+      // What pushes laid over the snapshot goes in the same task as the hub's state comes (arrived.ts).
+      dropArrived();
       applyBootstrap(b);
       synced = !!b.sync && ws?.readyState === WebSocket.OPEN && gen === socketGen;
       sawHub(b.boot);
       freshFromHub();
+      doneArrived();
       performance.mark('dither:fresh');
       for (const h of freshHooks) h();
       loadInbox().catch(() => {});
@@ -1283,6 +1292,7 @@ function resync() {
     const mine = [...timelines.values()].filter((t) => !t.loading && (t.fetchedAt || t.from));
     const tls = mine.filter((t) => !t.from || (t.from.v === pos.v && t.from.epoch === pos.epoch));
     let r: P.SyncResponse;
+    markCatchingUp();
     try {
       r = await api<P.SyncResponse>('/api/sync', { body: { v: pos.v, epoch: pos.epoch, since: pos.seq, timelines: tls.map((t) => timelineRequest(t, t.from?.seq ?? pos.seq)) } satisfies P.SyncRequest });
     } catch (e) {
@@ -1298,6 +1308,8 @@ function resync() {
       void bootstrap();
       return;
     }
+    // What pushes laid over the snapshot goes in the same task as the hub's answer comes (arrived.ts).
+    dropArrived();
     applyTimelines(r);
     for (const t of tls) t.from = undefined;
     for (const t of mine) if (!tls.includes(t)) void reload(t.key);
@@ -1308,6 +1320,7 @@ function resync() {
     synced = ws?.readyState === WebSocket.OPEN && gen === socketGen;
     sawHub(r.boot);
     freshFromHub();
+    doneArrived();
     performance.mark('dither:fresh');
     for (const h of freshHooks) h();
     release();

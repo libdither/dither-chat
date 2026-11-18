@@ -104,6 +104,8 @@ class PushReceiver : PushService() {
         }
         val d = runCatching { JSONObject(String(message.content)) }.getOrNull() ?: return
         Notifications.show(this, d)
+        // The message's copy, or the reads, for the page's next start (Arrived.kt).
+        runCatching { Arrived.keep(this, d) }.onFailure { Log.w("DitherPush", "arrived not kept", it) }
         // A test asks to be confirmed, so Settings can tell "ntfy took it" from "it reached the phone".
         val device = d.optString("device")
         if (d.optBoolean("test") && device.isNotEmpty()) {

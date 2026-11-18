@@ -411,6 +411,50 @@ async function clear(d) {
   }
 }
 
+// Copies of the messages pushes were about, and reads elsewhere, kept for the page's next start (src/arrived.ts,
+// docs/notifications.md "A copy in the push"): it shows them before the hub answers, and deletes them once it has.
+// The newest ARRIVED_MAX, none older than ARRIVED_KEEP_MS. The key is the page's to agree with.
+const ARRIVED_DB = 'dither-arrived';
+const ARRIVED_MAX = 300;
+const ARRIVED_KEEP_MS = 3 * 24 * 3600 * 1000;
+
+/** What a push leaves for the page: its message's copy, or each read it carries. */
+function arrivedRecords(d, at) {
+  const a = d.arrived;
+  if (a && typeof a.message?.id === 'string' && a.message.conversationId === d.conversationId) return [{ key: `m:${a.message.id}`, kind: 'message', conv: d.conversationId, arrived: a, at }];
+  if (typeof d.clear !== 'string') return [];
+  return [{ clear: d.clear, upTo: d.upTo }, ...(Array.isArray(d.more) ? d.more : [])]
+    .filter((c) => typeof c?.clear === 'string')
+    .map((c, i) => ({ key: `c:${c.clear}:${at}:${i}`, kind: 'clear', conv: c.clear, ...(typeof c.upTo === 'number' ? { upTo: c.upTo } : {}), at }));
+}
+
+function keepArrived(records) {
+  const idb = self.indexedDB;
+  if (!idb || !records.length) return Promise.resolve();
+  return new Promise((resolve) => {
+    const q = idb.open(ARRIVED_DB, 1);
+    q.onupgradeneeded = () => q.result.createObjectStore('arrived');
+    q.onerror = q.onblocked = () => resolve();
+    q.onsuccess = () => {
+      const d = q.result;
+      try {
+        const t = d.transaction('arrived', 'readwrite');
+        const st = t.objectStore('arrived');
+        for (const r of records) st.put(r, r.key);
+        const all = st.getAll();
+        all.onsuccess = () => {
+          const now = Date.now();
+          all.result.sort((x, y) => y.at - x.at).forEach((r, i) => (i >= ARRIVED_MAX || now - r.at > ARRIVED_KEEP_MS) && st.delete(r.key));
+        };
+        t.oncomplete = t.onerror = t.onabort = () => (d.close(), resolve());
+      } catch {
+        d.close();
+        resolve();
+      }
+    };
+  });
+}
+
 self.addEventListener('push', (e) => {
   let d = {};
   try {
@@ -420,7 +464,7 @@ self.addEventListener('push', (e) => {
   const arrived = d.test && d.device ? fetch('/api/push/arrived', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: d.device }) }).catch(() => {}) : null;
   // Read somewhere else (docs/notifications.md, "Read elsewhere, gone here"): it shows nothing, and only closes.
   if (d.clear) {
-    e.waitUntil(clear(d));
+    e.waitUntil(Promise.all([clear(d), keepArrived(arrivedRecords(d, Date.now()))]));
     return;
   }
   e.waitUntil(
@@ -433,6 +477,7 @@ self.addEventListener('push', (e) => {
       if (looking && !d.test) (await self.registration.getNotifications({ tag })).forEach((n) => n.close());
       await outcome(d, 'delivered');
       await outcome(d, looking ? 'suppressed' : 'shown');
+      await keepArrived(arrivedRecords(d, Date.now()));
     })(),
   );
 });

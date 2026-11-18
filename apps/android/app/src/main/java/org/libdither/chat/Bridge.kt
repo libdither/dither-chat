@@ -33,9 +33,13 @@ class Bridge(private val activity: MainActivity, private val origin: Uri) : WebV
                 send(Uploads.state(activity))
                 // What took the app down since a page last heard (Crashes.kt): the page posts it to the hub.
                 Crashes.take(activity).takeIf { it.length() > 0 }?.let { send(JSONObject().put("t", "crashes").put("list", it)) }
+                // What pushes brought since the hub last caught this app up (Arrived.kt): shown before it answers. Always
+                // sent, so the page knows there is nothing to wait for.
+                send(JSONObject().put("t", "arrived").put("list", runCatching { Arrived.list(activity) }.getOrDefault(JSONArray())))
                 queue.forEach(replyProxy::postMessage)
                 queue.clear()
             }
+            "arrived.done" -> runCatching { Arrived.done(activity, m.optLong("upTo")) }
             "ready" -> activity.onPageTiming("content", m.optLong("ms"), m.optString("source"))
             "fresh" -> activity.onPageTiming("fresh from the hub", m.optLong("ms"), null)
             "probe" -> activity.onProbe(m.optLong("ms"), m.optLong("at"), m.optLong("origin"))
