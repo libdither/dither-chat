@@ -1,6 +1,6 @@
 import type { Store } from './store.ts';
 import { previewText } from './store.ts';
-import { namedTokens } from './forward.ts';
+import { namedTokens } from './mentionrefs.ts';
 import type { Triage } from './triage.ts';
 
 type Row = Record<string, any>;
