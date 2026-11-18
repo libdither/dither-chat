@@ -1403,7 +1403,7 @@ export class HubServer {
       const cursor = url.searchParams.get('cursor') ?? undefined;
       if (cursor && cursor.length > 2000) return bad('cursor: too long');
       try {
-        const v = await this.posts.thread(network, m[2], cursor);
+        const v = await this.posts.thread(network, m[2], cursor, url.searchParams.get('fresh') === '1');
         this.flush();
         return ok(v);
       } catch (e) {

@@ -10,10 +10,11 @@
 import { Fragment, h } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { followedPostOf } from '@dither-chat/protocol';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { api, markRead } from '../../state.ts';
 import type { Kit } from './lazy.tsx';
 import { freshReplies } from './fresh.ts';
+import { forgetThread } from './threadcache.ts';
 import { ThreadView } from './Thread.tsx';
 
 /** Shown in the thread on the page now. */
@@ -27,6 +28,8 @@ export function FollowChat({ c, kit, onBack }: { c: P.ConversationView; kit: Kit
   const [round, setRound] = useState(0);
   const [waiting, setWaiting] = useState(0);
   const opened = useRef(false);
+  // Read from the hub each time, never a copy read on this device before: the hub's checks found what is new since.
+  useMemo(() => post && forgetThread(c.network, post), [c.id, round]);
   const unread = c.vantages.some((v) => v.unread > 0);
   // What is new since it was last read, asked before it is marked read; and again as more comes while it is open.
   useEffect(() => {

@@ -92,7 +92,7 @@ const thread = () =>
       ),
       nodes: document.querySelectorAll('.ct-node').length,
       flat: [...document.querySelectorAll('.ct-flat')].map((f) => [f.querySelector('.ct-flat-top .post-who b')?.textContent, f.querySelectorAll('.ct-flat-reply').length]),
-      style: document.querySelector('.ct-style-btn')?.textContent.trim() ?? null,
+      style: document.querySelector('.ct-style .look-btn[aria-checked="true"]')?.getAttribute('aria-label') ?? null,
       lines: document.querySelectorAll('.thread-post.line').length,
       more: !!document.querySelector('.thread-more'),
       openOnX: f?.querySelector('.post-open')?.href ?? null,
@@ -120,7 +120,7 @@ try {
   await page.eval(`[...document.querySelectorAll('.feed-unit[data-unit="post"] .feed-mine')].find((a) => /Greedy routing/.test(a.textContent)).click()`);
   await page.until(`location.hash.includes('pst_x_') && !!document.querySelector('.thread-focal') && document.querySelectorAll('.ct-node').length > 0`, 20000);
   let t = await thread();
-  check('a card in the feed opens its post in the app', /^#\/inbox\/c\/pst_x_\d+$/.test(t.hash) && /Greedy routing/.test(t.focal ?? ''), t.hash);
+  check('a card in the feed opens its post in the app, beside the list', /^#\/feed\/[^/]+\/p\/pst_x_\d+$/.test(t.hash) && /Greedy routing/.test(t.focal ?? ''), t.hash);
   const routing = t.hash.match(/pst_x_(\d+)/)?.[1] ?? '';
   check('the post large, by its author, with Open on X', t.focalWho === 'You' && /^https:\/\/x\.com\/zyan_demo\/status\/\d+$/.test(t.openOnX ?? ''), t);
   const postReads = async () => ((await action('postLog')).result?.posts ?? []) as { post: string; cursor?: string }[];
@@ -222,11 +222,10 @@ try {
   await page.until(`!document.querySelector('.ct-node.folded')`, 5000);
 
   // The other ways to draw it.
-  // The style is a quiet menu beside Replies: open it, choose.
+  // The style is four small pictures beside Replies (Seg.tsx): press one.
   const pick = async (label: string) => {
-    await page.eval(`document.querySelector('.ct-style-btn').click()`);
-    await page.until(`document.querySelectorAll('.ct-style-menu button').length === 4`, 3000);
-    await page.eval(`[...document.querySelectorAll('.ct-style-menu button')].find((b) => b.querySelector('b').textContent === ${JSON.stringify(label)}).click()`);
+    await page.eval(`document.querySelector('.ct-style .look-btn[aria-label=${JSON.stringify(label)}]').click()`);
+    await page.until(`document.querySelector('.ct-style .look-btn[aria-label=${JSON.stringify(label)}]').getAttribute('aria-checked') === 'true'`, 3000);
   };
   await pick('Compact');
   await page.until(`!!document.querySelector('.ct.compact')`, 5000);

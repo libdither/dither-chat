@@ -30,6 +30,8 @@ import { Comments, COMMENT_STYLES, StyleMenu, type CommentStyle } from './Commen
 import { PostComposer } from './Composer.tsx';
 import { FollowButton } from './Follow.tsx';
 import { Counts, Pics, QuotedIn, Row, Text, Who } from './Post.tsx';
+import { flip, snap } from './Seg.tsx';
+import { heldThread, readThread, seedPost } from './threadcache.ts';
 import { replyTree, treeSize, type TreeNode } from './tree.ts';
 
 const STYLE_KEY = 'dither.thread.style';
@@ -105,7 +107,8 @@ function Focal({ p, kit, network, joined, answer, children }: { p: P.PostView; k
           <kit.Icon name="external" size={12} /> Open on {NETWORK_META[network].name}
         </a>
       </div>
-      <PostActions p={shown} ctx={answer} big />
+      {/* No Reply in its bar: the box under it is where a reply is written. */}
+      <PostActions p={shown} ctx={{ ...answer, onReply: undefined }} big />
       {children}
     </article>
   );
@@ -128,7 +131,8 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
     return { kept: null as Kept | null, went: null as string | null, parent: trail[trail.length - 1] ?? null };
   });
   const parent = arrival.parent;
-  const [t, setT] = useState<P.PostThreadView | null>(null);
+  // Back to it as it was left, or read ahead from the page (threadcache.ts): drawn with its replies from the first frame.
+  const [t, setT] = useState<P.PostThreadView | null>(() => arrival.kept?.t ?? ('network' in src ? heldThread(src.network, src.post) : null));
   const [error, setError] = useState<string | null>(null);
   const [more, setMore] = useState<'idle' | 'loading' | string>('idle');
   // Read ahead and not shown yet: the next page of replies, and the answers under replies (by reply).
@@ -138,46 +142,57 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
   const [asking, setAsking] = useState(false);
   const want = useRef(new Set<string>());
   // Branches opened under replies (their threads' replies), folded replies, and the reader's style.
-  const [extra, setExtra] = useState<P.PostView[]>([]);
+  const [extra, setExtra] = useState<P.PostView[]>(() => arrival.kept?.extra ?? []);
   const [loading, setLoading] = useState<ReadonlySet<string>>(new Set());
-  const [done, setDone] = useState<ReadonlySet<string>>(new Set());
-  const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
+  const [done, setDone] = useState<ReadonlySet<string>>(() => arrival.kept?.done ?? new Set());
+  const [folded, setFolded] = useState<ReadonlySet<string>>(() => arrival.kept?.folded ?? new Set());
   const [style, setStyle] = useState<CommentStyle>(readStyle);
   const [failed, setFailed] = useState<ReadonlyMap<string, string>>(new Map());
   // Answering: the post a reply or quote is being written to, and what you posted here (first in the tree).
   const [answering, setAnswering] = useState<{ mode: 'reply' | 'quote'; post: P.PostFact } | null>(null);
-  const [mine, setMine] = useState<P.PostView[]>([]);
-  const [acted, setActed] = useState<ReadonlyMap<string, { viewer: P.PostViewer; counts: P.PostFact['counts'] }>>(new Map());
+  const [mine, setMine] = useState<P.PostView[]>(() => arrival.kept?.mine ?? []);
+  const [acted, setActed] = useState<ReadonlyMap<string, { viewer: P.PostViewer; counts: P.PostFact['counts'] }>>(() => arrival.kept?.acted ?? new Map());
+  // Checking the network for new replies, and those it brought (marked new).
+  const [checking, setChecking] = useState(false);
+  const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set());
+  // The post itself, from the page that opened it, shown before its thread comes.
+  const seed = 'network' in src ? seedPost(src.network, src.post) : null;
   const scroller = useRef<HTMLDivElement>(null);
   // Pages and branches read ahead so far.
   const autoPages = useRef(0);
   const autoBudget = useRef(AUTO_BRANCHES);
   const queue = useRef<TreeNode[]>([]);
   const running = useRef(0);
+  // The states above start as this thread's: back to it as it was left, or afresh. Only another thread in the same
+  // pane (not keyed by its post) needs them set again here; set at the first draw, they would undo a press made before
+  // this runs (a like on the post drawn from the first frame).
+  const first = useRef(true);
   useEffect(() => {
-    const k = arrival.kept;
-    if (k) {
-      // Back to a thread as it was left: nothing asked again.
-      setT(k.t);
-      setExtra(k.extra);
-      setDone(k.done);
-      setFolded(k.folded);
-      setMine(k.mine);
-      setActed(k.acted);
+    const again = !first.current;
+    first.current = false;
+    // Back to a thread as it was left: nothing asked again.
+    if (arrival.kept && !again) return;
+    let live = true;
+    if (again) {
+      setError(null);
+      setMore('idle');
+      setExtra([]);
+      setLoading(new Set());
+      setDone(new Set());
+      setFolded(new Set());
+      setAnswering(null);
+      setMine([]);
+      setActed(new Map());
+      setFresh(new Set());
+    }
+    // Read ahead from the page (threadcache.ts): shown at once.
+    const had = 'network' in src ? heldThread(src.network, src.post) : null;
+    if (had) {
+      setT(had);
       return;
     }
-    let live = true;
-    setT(null);
-    setError(null);
-    setMore('idle');
-    setExtra([]);
-    setLoading(new Set());
-    setDone(new Set());
-    setFolded(new Set());
-    setAnswering(null);
-    setMine([]);
-    setActed(new Map());
-    api<P.PostThreadView>('message' in src ? `/api/messages/${encodeURIComponent(src.message)}/thread` : `/api/posts/${src.network}/${src.post}/thread`).then(
+    if (again) setT(null);
+    ('message' in src ? api<P.PostThreadView>(`/api/messages/${encodeURIComponent(src.message)}/thread`) : readThread(src.network, src.post)).then(
       (v) => {
         if (!live) return;
         v.identities.forEach((i) => db.identities.has(i.id) || db.identities.set(i.id, i));
@@ -221,7 +236,9 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
     api<P.PostThreadView>(`/api/posts/${t.network}/${t.post}/thread?cursor=${encodeURIComponent(t.more)}`).then(
       (v) => {
         v.identities.forEach((i) => db.identities.has(i.id) || db.identities.set(i.id, i));
-        if (wantMore.current) showPage(v);
+        // A page with nothing not shown yet is put in at once: its cursor (none, at the end) takes the button away.
+        const seen = new Set(t.replies.flat().map((p) => p.id));
+        if (wantMore.current || !v.replies.flat().some((p) => !seen.has(p.id))) showPage(v);
         else setNextPage(v);
         setMore('idle');
       },
@@ -342,6 +359,9 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
       });
   };
   const pickStyle = (s: CommentStyle) => {
+    // Each reply slides from where it was to where the new style puts it.
+    const before = snap(scroller.current);
+    requestAnimationFrame(() => flip(scroller.current, before));
     setStyle(s);
     setFolded(new Set());
     try {
@@ -349,6 +369,31 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
     } catch {
       /* a private window: the choice lasts while the page is open */
     }
+  };
+  /** Ask the network again for this thread's replies: what came that was not here is put in and marked new. */
+  const check = () => {
+    if (!t || checking) return;
+    setChecking(true);
+    // Known already: shown, logged, or read ahead behind a button (the next page, a branch).
+    const had = new Set([...t.replies.flat(), ...(t.logged ?? []), ...extra, ...mine, ...(nextPage?.replies.flat() ?? []), ...[...ready.values()].flat()].map((p) => p.id));
+    readThread(t.network, t.post, true).then(
+      (v) => {
+        setChecking(false);
+        const got = [...v.replies.flat(), ...(v.logged ?? [])].filter((p) => !had.has(p.id) && p.id !== t.post);
+        setFresh(new Set(got.map((p) => p.id)));
+        // The new read's first page in place of the old one; pages read past it stay.
+        setT((t0) => {
+          if (!t0) return v;
+          const ids = new Set(v.replies.flat().map((p) => p.id));
+          return { ...v, replies: [...v.replies, ...t0.replies.filter((c) => !c.some((p) => ids.has(p.id)))], more: t0.more && v.more ? t0.more : v.more };
+        });
+        kit.toast({ title: got.length ? `${got.length} new ${got.length === 1 ? 'reply' : 'replies'}` : 'No new replies', body: '', kind: 'info' }, 2500);
+      },
+      (e) => {
+        setChecking(false);
+        kit.toast({ title: 'Could not check for replies', body: (e as Error).message, kind: 'error' });
+      },
+    );
   };
   const network = t?.network ?? ('network' in src ? src.network : 'x');
   const focalOf = t?.focal ? (t.focal.repostOf ?? t.focal) : null;
@@ -367,7 +412,10 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
     const href = (e.target as Element | null)?.closest?.('a[href*="pst_"]')?.getAttribute('href');
     const at = href?.match(/(?:\/c\/|\/p\/)(pst_[^/?#]+)/)?.[1];
     const to = at ? base.feed.parsePostKey(decodeURIComponent(at)) : null;
-    if (to && 'post' in to) noteLeaving(to.post);
+    if (!to || !('post' in to)) return;
+    // Opened where this page opens threads (beside the list on the Feed page), the way back kept.
+    e.preventDefault();
+    kit.openPost(to.network, to.post);
   };
   const back = parent ? () => base.backToPost(parent.network, parent.post) : onBack;
   const posted = (p: P.PostView, mode: 'reply' | 'quote') => {
@@ -404,7 +452,12 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
   );
   const net = NETWORK_META[network].name;
   const focal = t?.focal;
-  const author = focal ? ((focal.repostOf ?? focal).author ?? null) : null;
+  // The post: as the thread gave it, else as the page that opened it showed it.
+  const shownFocal = focal ?? (t ? null : seed);
+  const author = shownFocal ? ((shownFocal.repostOf ?? shownFocal).author ?? null) : null;
+  // Every reply X counts under the post is shown: no "Show more replies" unless a page read ahead brought more.
+  const counted = (shownFocal?.repostOf ?? shownFocal)?.counts?.replies;
+  const allShown = counted !== undefined && nodes.length >= counted;
   return (
     <section class="pane feed-pane thread-pane" aria-label="Post" onClickCapture={onLink}>
       <header class="conv-head">
@@ -417,15 +470,15 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
           <kit.Icon name="quote" size={18} />
         </span>
         <div class="conv-head-text">
-          <h2>{!focal ? 'Post' : kit.isSelf(author) ? 'Your post' : `${kit.name(author)}'s post`}</h2>
+          <h2>{!shownFocal ? 'Post' : kit.isSelf(author) ? 'Your post' : `${kit.name(author)}'s post`}</h2>
           <div class="conv-head-sub">
             <span class="muted-label">{t?.stored ? `As the hub logged it · ${net}` : `On ${net}`}</span>
           </div>
         </div>
         <kit.HeadOrb />
         <FollowButton t={t} kit={kit} />
-        {focal && (
-          <a class="icon-btn" href={(focal.repostOf ?? focal).url} target="_blank" rel="noreferrer" title={`Open on ${net}`} aria-label={`Open on ${net}`}>
+        {shownFocal && (
+          <a class="icon-btn" href={(shownFocal.repostOf ?? shownFocal).url} target="_blank" rel="noreferrer" title={`Open on ${net}`} aria-label={`Open on ${net}`}>
             <kit.Icon name="external" size={16} />
           </a>
         )}
@@ -438,7 +491,7 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
       <div class="feed-scroll thread-scroll" ref={scroller} data-thread={t?.post ?? ''}>
         <div class="feed-list thread-list">
           {top}
-          {!t && !error && <kit.Loading inline label={`Reading the thread from ${net}…`} />}
+          {!t && !error && !seed && <kit.Loading inline label={`Reading the thread from ${net}…`} />}
           {error && (
             <kit.Empty icon="alert" title="Could not read this post">
               {error}
@@ -454,45 +507,58 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
               The hub has not read this post yet, and could not ask {net} now.
             </kit.Empty>
           )}
-          {t && focal && (
+          {shownFocal && (t || !error) && (
             <>
-              {t.ancestors.map((p) => (
+              {t?.ancestors.map((p) => (
                 <Row p={p} kit={kit} network={network} line />
               ))}
-              <Focal p={focal} kit={kit} network={network} joined={t.ancestors.length > 0} answer={answer}>
+              <Focal p={shownFocal} kit={kit} network={network} joined={!!t?.ancestors.length} answer={answer}>
                 {/* The reply box under the post, one line until used, as X shows it; a quote of the post opens in its place. */}
-                {answering && answering.post.id === (focal.repostOf ?? focal).id && answering.mode === 'quote' ? (
-                  <div key="quote">{composerFor(focal.repostOf ?? focal)}</div>
+                {answering && answering.post.id === (shownFocal.repostOf ?? shownFocal).id && answering.mode === 'quote' ? (
+                  <div key="quote">{composerFor(shownFocal.repostOf ?? shownFocal)}</div>
                 ) : (
                   // Reply under the post opens this box (focused), rather than a second one.
                   <PostComposer
                     key="reply"
                     network={network}
-                    target={{ replyTo: focal.repostOf ?? focal }}
+                    target={{ replyTo: shownFocal.repostOf ?? shownFocal }}
                     kit={kit}
-                    collapsed={!(answering && answering.post.id === (focal.repostOf ?? focal).id)}
-                    autoFocus={!!(answering && answering.post.id === (focal.repostOf ?? focal).id)}
+                    collapsed={!(answering && answering.post.id === (shownFocal.repostOf ?? shownFocal).id)}
+                    autoFocus={!!(answering && answering.post.id === (shownFocal.repostOf ?? shownFocal).id)}
                     onCancel={answering ? () => setAnswering(null) : undefined}
                     onPosted={(made) => posted(made, 'reply')}
                   />
                 )}
               </Focal>
-              {nodes.length > 0 && (
+              {!t && (
+                // Shown from the page that opened it; the replies come under it.
+                <p class="thread-coming" data-pre="loading" role="status">
+                  <span class="pre-dot" aria-hidden="true" /> Reading the replies from {net}…
+                </p>
+              )}
+              {t && (
                 <div class="thread-replies-bar">
                   <h3 class="thread-replies-head">
                     Replies <span class="thread-replies-n">{treeSize(nodes)}</span>
                   </h3>
-                  <StyleMenu style={style} pick={pickStyle} kit={kit} />
+                  {!t.stored && (
+                    <button class="icon-btn thread-check" data-busy={checking ? '' : undefined} onClick={check} disabled={checking} title="Check for new replies" aria-label="Check for new replies" data-track="thread: check for new replies">
+                      <kit.Icon name="refresh" size={15} />
+                    </button>
+                  )}
+                  {nodes.length > 0 && <StyleMenu style={style} pick={pickStyle} />}
                 </div>
               )}
-              <Comments
-                nodes={nodes}
-                style={style}
-                ctx={{ kit, network, op: author, folded, fold, loading, done, failed, ready, load: openUnder, auto, root: scroller, below }}
-              />
+              {t && (
+                <Comments
+                  nodes={nodes}
+                  style={style}
+                  ctx={{ kit, network, op: author, folded, fold, loading, done, failed, ready, load: openUnder, auto, root: scroller, below, fresh }}
+                />
+              )}
               <div ref={end} class="thread-end" aria-hidden="true" />
-              {!nodes.length && !t.more && <p class="thread-none">{t.stored ? 'No replies logged.' : 'No replies yet.'}</p>}
-              {t.more && (
+              {t && !nodes.length && !t.more && <p class="thread-none">{t.stored ? 'No replies logged.' : 'No replies yet.'}</p>}
+              {t?.more && (!allShown || nextPage) && (
                 // Its dot says whether the page is read ahead: hollow not yet, pulsing being read, filled shows at once.
                 <button class={`btn thread-more`} data-pre={nextPage ? 'ready' : more === 'loading' ? 'loading' : 'idle'} onClick={() => loadMore(true)} disabled={asking}>
                   <span class="pre-dot" aria-hidden="true" />

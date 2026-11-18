@@ -112,7 +112,8 @@ export function Text({ p, kit, network, cls }: { p: P.PostFact; kit: Kit; networ
   );
 }
 
-/** Pictures in a thread: each opens the full picture. */
+/** Pictures in a thread: each opens the full picture. Its size known, its place is kept before it loads, so nothing
+ * under it moves when it comes. */
 export function Pics({ media }: { media?: P.PostMedia[] }) {
   const shown = (media ?? []).slice(0, 4);
   if (!shown.length) return null;
@@ -120,7 +121,7 @@ export function Pics({ media }: { media?: P.PostMedia[] }) {
     <div class={`post-media n${shown.length}`}>
       {shown.map((m) => (
         <a class="post-pic" href={m.url} target="_blank" rel="noreferrer" title={m.alt || 'Open the picture'}>
-          <img src={m.url} alt={m.alt ?? ''} loading="lazy" />
+          <img src={m.url} alt={m.alt ?? ''} loading="lazy" {...(m.width && m.height ? { width: m.width, height: m.height } : {})} />
           {m.kind !== 'image' && <span class="post-pic-kind">{m.kind === 'gif' ? 'GIF' : '▶'}</span>}
         </a>
       ))}
@@ -151,11 +152,28 @@ export function Counts({ p, kit, big }: { p: P.PostFact; kit: Kit; big?: boolean
   );
 }
 
-/** A quoted post inside one: its byline and words, opening its own thread. */
-export function QuotedIn({ p, kit, network }: { p: P.PostFact; kit: Kit; network: P.Network }) {
+/**
+ * A quoted post inside one: its byline and words, opening its own thread where threads open (beside the list on the
+ * Feed page). Not a link, so its words can be selected as the post's own can; a press that ends a selection opens
+ * nothing. `still`: shown only (the post being quoted, in the composer).
+ */
+export function QuotedIn({ p, kit, network, still }: { p: P.PostFact; kit: Kit; network: P.Network; still?: boolean }) {
   const who = p.author ?? null;
+  const href = kit.feed.postHref(network, p.id);
+  const open = (e: MouseEvent | KeyboardEvent) => {
+    e.stopPropagation();
+    if (still || ('button' in e && e.button !== 0) || getSelection()?.toString()) return;
+    if (e.metaKey || e.ctrlKey) return void window.open(href, '_blank', 'noopener');
+    kit.openPost(network, p.id);
+  };
   return (
-    <a class="post-quoted thread-quoted" href={kit.feed.postHref(network, p.id)} onClick={(e) => e.stopPropagation()}>
+    <div
+      class={`post-quoted thread-quoted ${still ? 'still' : ''}`}
+      data-quote={p.id}
+      {...(still ? {} : { role: 'link', tabIndex: 0, title: 'Open the quoted post', 'data-href': href })}
+      onClick={open}
+      onKeyDown={(e) => e.key === 'Enter' && e.target === e.currentTarget && open(e)}
+    >
       <span class="post-by">
         <kit.Avatar id={who ?? p.id} name={kit.name(who)} url={kit.avatarUrl(who)} size={16} />
         <b>{kit.name(who)}</b>
@@ -164,7 +182,7 @@ export function QuotedIn({ p, kit, network }: { p: P.PostFact; kit: Kit; network
       </span>
       {p.text && <span class="post-clip">{p.text}</span>}
       {p.media?.[0] && <img class="thread-quoted-pic" src={p.media[0].url} alt={p.media[0].alt ?? ''} loading="lazy" />}
-    </a>
+    </div>
   );
 }
 
@@ -194,7 +212,7 @@ export function Who({ id, kit }: { id: string | null; kit: Kit }) {
 }
 
 /** A post in a thread, small: their picture on the left with the line down to the next, then who, when and what. */
-export function Row({ p, kit, network, line, focal, size = 36, above, tag, hideQuote, below }: {
+export function Row({ p, kit, network, line, focal, size = 36, above, tag, aside, hideQuote, below }: {
   p: P.PostFact;
   kit: Kit;
   network: P.Network;
@@ -206,6 +224,8 @@ export function Row({ p, kit, network, line, focal, size = 36, above, tag, hideQ
   above?: ComponentChildren;
   /** A word after its time ("new", "quoted"). */
   tag?: string;
+  /** At the end of its name's line, giving way first where the line is short (the timeline it came through). */
+  aside?: ComponentChildren;
   /** Leave out the post it quotes when it is this one (a quote under the post it quotes, in the feed). */
   hideQuote?: string;
   /** In place of its counts: what can be done to it (Actions.tsx), and a composer answering it. */
@@ -235,6 +255,7 @@ export function Row({ p, kit, network, line, focal, size = 36, above, tag, hideQ
             · {kit.ago(shown.ts)}
           </span>
           {tag && <span class={`post-tag ${tag === 'new' ? 'new' : ''}`}>{tag}</span>}
+          {aside && <span class="post-aside">{aside}</span>}
         </div>
         {shown.place && (
           <span class="post-mark post-place">
