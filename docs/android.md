@@ -362,10 +362,16 @@ These live in the web app, so the PWA gets them too.
    bootstrap, unless that is
    over ten minutes old: writing the bootstrap again cost a phone a few hundred milliseconds each time. Caps: 12 MB of bootstrap (above that it is
    not kept, because reading it back would cost about what the network does), 1.5 MB for the rest and 3 million
-   characters for the kept pages. Only a build
-   with the same `packages/protocol` reads it back (the vite config hashes the protocol into
-   `__SNAPSHOT_SCHEMA__`), and one that fails to render is dropped and the page reloads from the hub. Nothing in it
-   is ever sent anywhere.
+   characters for the kept pages. Each snapshot names the `packages/protocol` it was written under (the vite config
+   hashes the protocol into `__SNAPSHOT_SCHEMA__`). One from an older build, after a deploy that changed the
+   protocol (about one deploy in three), is still drawn at once, since protocol changes are nearly always added
+   fields; but nothing is caught up from it: once the hub answers, a full bootstrap replaces it, and its kept pages
+   load afresh when opened (those not opened by then go). Until 2026-11-18 such a start waited on the logo for the
+   full bootstrap, and with the hub out of reach it stayed there. A snapshot that fails to render is dropped and the
+   page reloads from the hub; for an older build's, so is one whose drawing throws a TypeError while it is still on
+   screen, once per build (`OlderGuard` in `snapshot.ts`, around the app). A request that fails while it shows (the hub
+   is out of reach) is not its fault and leaves it. A chat opened from an older build's kept page is never saved or
+   caught up as current until the hub's own page for it has come. Nothing in it is ever sent anywhere.
 3. **Compression at the hub** (`packages/hub/src/compress.ts`): zstd, or gzip for clients without it, on every text
    response of 1 KB or more. A real bootstrap is 4.9 MB of JSON: 758 KB as zstd in 9 ms, 901 KB as gzip in 19 ms.
    Caddy passes it through untouched.

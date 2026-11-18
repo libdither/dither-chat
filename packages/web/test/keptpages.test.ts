@@ -143,3 +143,38 @@ test("an older build's pages, kept inside its snapshot, are kept as records at t
   expect(JSON.parse(w.put[0].text).sync).toEqual(pos(3));
   expect(k.save().put).toEqual([]);
 });
+
+test("a start from an older build's snapshot shows that build's pages without their position, and drops the unopened ones once the hub answers", () => {
+  const old = new PageCache('s0', () => 1000);
+  const live = new Map<string, LiveTimeline>([['c:a', tl('a', 2)], ['c:b', tl('b', 2)], ['c:c', tl('c', 2)]]);
+  for (const k of live.keys()) old.touch(k);
+  const w = old.save({ live: (k) => live.get(k), exists: () => true, identities: new Map(), quoted: new Map() });
+  // Without `older`, another schema's records are left out, as before.
+  const strict = cache();
+  strict.c.adopt([...w.put, w.index]);
+  expect(strict.c.unopened()).toEqual([]);
+  // With it: shown, with no position to catch up from, so the hub's page replaces them.
+  const k = cache({ t: 2000 });
+  k.c.adopt([...w.put, w.index], true);
+  expect(k.c.unopened().sort()).toEqual(['c:a', 'c:b', 'c:c']);
+  const a = k.c.take('c:a')!;
+  expect(a.messages.map((m) => m.id)).toEqual(['a-0', 'a-1']);
+  expect(a.sync).toBeUndefined();
+  expect(a.older).toBe(true);
+  // c:b opened and loaded from the hub: written again, under this build's schema.
+  const b = k.c.take('c:b')!;
+  expect(b.sync).toBeUndefined();
+  k.live.set('c:b', tl('b', 3, { sync: pos(20) }));
+  k.c.touch('c:b');
+  // The hub answered: c:c, never opened, goes; c:a, opened but not loaded (still offline), stays as it was.
+  k.c.dropOlder();
+  expect(k.c.unopened()).toEqual([]);
+  const w2 = k.save();
+  expect(w2.put.map((r) => [r.key, r.schema])).toEqual([['c:b', 's1']]);
+  expect(w2.del).toEqual(['c:c']);
+  // Legacy pages inside an older build's snapshot lose their position too.
+  const l = cache();
+  l.c.adoptLegacy([{ key: 'c:l', messages: [msg('x', 1)], sync: pos(3), identities: [], quoted: [] }], true);
+  expect(l.c.take('c:l')?.sync).toBeUndefined();
+  expect(JSON.parse(l.save().put[0].text).sync).toBeUndefined();
+});

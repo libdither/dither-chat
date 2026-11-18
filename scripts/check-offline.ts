@@ -10,8 +10,10 @@
  *    build (public/sw.js, vite.config.ts).
  * 3. The hub gone and the HTTP cache emptied again: a reload shows the conversation from the snapshot, every file
  *    from the worker's cache.
- * 4. A file the cache lost, the hub still gone: the start fails (dither:boot-failed in index.html). The hub back: the
- *    page comes back by itself.
+ * 4. A deploy that changed the protocol, the hub still gone: the snapshot and the pages were written by an older build
+ *    (their schema stamped as another one's), and a reload still shows the conversation from them.
+ * 5. A file the cache lost, the hub still gone: the start fails (dither:boot-failed in index.html). The hub back: the
+ *    page comes back by itself, and the older snapshot is written again as this build's.
  *
  *   bun scripts/check-offline.ts [--web <built dist>] [--keep]     (bun run check:offline)
  *
@@ -110,6 +112,42 @@ const kept = (p: Page) =>
         d.close();
         res(null);
       }
+    };
+  })`);
+
+/** Stamps what IndexedDB keeps as another build's (a deploy that changed the protocol); resolves to how many records. */
+const stampOlder = (p: Page) =>
+  p.eval<number>(`new Promise((res, rej) => {
+    const q = indexedDB.open('dither-chat');
+    q.onerror = () => rej(q.error);
+    q.onsuccess = () => {
+      const d = q.result;
+      const t = d.transaction(['snapshot', 'pages'], 'readwrite');
+      let n = 0;
+      for (const name of ['snapshot', 'pages']) {
+        const st = t.objectStore(name);
+        const c = st.openCursor();
+        c.onsuccess = () => {
+          const cur = c.result;
+          if (!cur) return;
+          if (cur.value && typeof cur.value === 'object' && 'schema' in cur.value) (cur.update({ ...cur.value, schema: 'older-build' }), n++);
+          cur.continue();
+        };
+      }
+      t.oncomplete = () => (d.close(), res(n));
+      t.onerror = () => (d.close(), rej(t.error));
+    };
+  })`);
+/** The kept snapshot's schema. */
+const snapshotSchema = (p: Page) =>
+  p.eval<string | null>(`new Promise((res) => {
+    const q = indexedDB.open('dither-chat');
+    q.onerror = () => res(null);
+    q.onsuccess = () => {
+      const d = q.result;
+      const a = d.transaction('snapshot', 'readonly').objectStore('snapshot').get('last');
+      a.onsuccess = () => (d.close(), res(a.result?.schema ?? null));
+      a.onerror = () => (d.close(), res(null));
     };
   })`);
 
@@ -222,7 +260,34 @@ async function main() {
   }
   check(!lost.some((f) => f.startsWith('/assets/') || f === '/'), "every file of the app came from the worker's cache", lost.filter((f) => f.startsWith('/assets/') || f === '/'));
 
-  // ------------------------------------------------------------------ 4. a file the cache lost, then the hub back
+  // ------------------------------------------------------------------ 4. a deploy that changed the protocol, offline
+  const stamped = await stampOlder(p);
+  check(stamped >= 2, 'the snapshot and the pages are stamped as an older build’s', stamped);
+  await reload(p);
+  try {
+    await p.until(
+      newPage(
+        `!!document.querySelector('.app') && document.querySelectorAll('.timeline-scroll .msg').length > 0 && performance.getEntriesByName('dither:content')[0]?.detail?.source === 'older snapshot'`,
+      ),
+      20_000,
+    );
+    check(true, 'offline after a deploy that changed the protocol: the conversation shows, from the older snapshot');
+  } catch {
+    const state = await p.eval(`({ logo: !!document.getElementById('boot-static'), app: !!document.querySelector('.app'), source: performance.getEntriesByName('dither:content')[0]?.detail?.source ?? null })`).catch(() => null);
+    check(false, 'offline after a deploy that changed the protocol: the conversation shows, from the older snapshot', state);
+  }
+  // Views that ask the hub, which is gone: a request that fails is not the older snapshot failing to draw, so it stays.
+  await p.eval('window.__checkOfflineStay = true');
+  for (const hash of ['#/settings', '#/search?q=a']) {
+    lost = [];
+    await p.eval(`location.hash = ${JSON.stringify(hash)}`);
+    await until(`${hash} to ask the hub`, async () => lost.some((f) => f.startsWith('/api/')));
+  }
+  const stayed = await p.eval<boolean>('window.__checkOfflineStay === true');
+  const schema = await snapshotSchema(p);
+  check(stayed && schema === 'older-build', 'requests that fail while it shows (Settings, Search) leave the older snapshot alone', { reloaded: !stayed, schema });
+
+  // ------------------------------------------------------------------ 5. a file the cache lost, then the hub back
   const html = readFileSync(join(web, 'index.html'), 'utf8');
   // A file the app's script imports: index.html preloads them.
   const gone = html.match(/<link rel="modulepreload"[^>]* href="(\/assets\/[^"]+)"/)?.[1] ?? html.match(/<script type="module"[^>]* src="(\/assets\/[^"]+)"/)![1];
@@ -235,6 +300,11 @@ async function main() {
   // Its backoff starts at a second and doubles; the hub took about that to start.
   await p.until(newPage(`!!document.querySelector('.app') && performance.getEntriesByName('dither:fresh').length > 0`), 45_000);
   check(true, 'the hub back: the page comes back by itself, fresh from the hub');
+  await until("the older snapshot written again as this build's", async () => {
+    const schema = await snapshotSchema(p);
+    return !!schema && schema !== 'older-build';
+  });
+  check(true, "the older snapshot is written again as this build's");
   await until(`${gone} kept again`, async () => (await shellCaches(p))[name]?.includes(gone));
   check(true, 'the file it lost is kept again');
 }
