@@ -6,7 +6,8 @@
  *  - every message in your direct chat with them, theirs and yours (1 each);
  *  - their messages in a group chat you are in, less the bigger the group (2 / people in it, groups up to 50);
  *  - a reply between you and them in a server's channel, either way (1.5), and their mentions of you there (1).
- * Plus, per identity, how many friends a fetched profile says you share (mutualFriends).
+ * Plus, per identity, how many friends a fetched profile says you share (mutualFriends). Bots are left out: a bot's
+ * direct chat can send thousands of messages a month.
  *
  * Worked out on a thread of its own (closeness-worker.ts) on a read-only connection, kept for a while, and asked for
  * by the page apart from the graph, so the graph opens at once.
@@ -35,7 +36,9 @@ const GROUP_MAX = 50;
 export function closeness(db: Database): ClosenessRun {
   const t0 = performance.now();
   const acc = new Map<string, Map<number, number>>();
+  const bots = new Set((db.query('SELECT id FROM identity WHERE is_bot = 1').all() as Row[]).map((r) => r.id as string));
   const add = (who: string, mo: number, w: number) => {
+    if (bots.has(who)) return;
     let m = acc.get(who);
     if (!m) acc.set(who, (m = new Map()));
     m.set(mo, (m.get(mo) ?? 0) + w);

@@ -1,7 +1,8 @@
 /**
  * Closeness (closeness.ts): how much you have had to do with each person, month by month. Direct chats count every
  * message either way, groups count their messages less the bigger the group, servers count replies between you and
- * their mentions of you; activityView sums a person's identities, and the graph sends you apart.
+ * their mentions of you; bots count for nothing; activityView sums a person's identities, and the graph sends you
+ * apart.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -27,6 +28,8 @@ beforeAll(() => {
   store.ingest(d, { t: 'status', status: 'online', self: { nativeId: 'me', displayName: 'Me', isSelf: true } });
   store.ingest(s, { t: 'status', status: 'online', self: { nativeId: 'mes', displayName: 'Me', isSelf: true } });
   for (const a of ['ann', 'dee']) store.ingest(d, { t: 'identity', identity: { nativeId: a, displayName: a.toUpperCase() } });
+  store.ingest(d, { t: 'identity', identity: { nativeId: 'helper', displayName: 'Helper', isBot: true } });
+  store.ingest(d, { t: 'conversation', conversation: { nativeId: 'dm-bot', shape: 'direct', participants: ['me', 'helper'] } });
   for (const a of ['ann-s', 'fay']) store.ingest(s, { t: 'identity', identity: { nativeId: a, displayName: a.toUpperCase() } });
   store.ingest(d, { t: 'conversation', conversation: { nativeId: 'dm-ann', shape: 'direct', participants: ['me', 'ann'] } });
   store.ingest(s, { t: 'conversation', conversation: { nativeId: 'grp', shape: 'group', name: 'Three', participants: ['mes', 'ann-s', 'fay'] } });
@@ -40,6 +43,8 @@ beforeAll(() => {
   msg(d, 'dm-ann', 'ann', MAR24);
   msg(d, 'dm-ann', 'ann', MAR24 + 1);
   msg(d, 'dm-ann', 'me', MAR24 + 2);
+  // A bot's direct chat, however busy.
+  for (let i = 0; i < 5; i++) msg(d, 'dm-bot', 'helper', MAR24 + i);
   // A group of three: each of their messages is worth 2/3; yours count for no one.
   for (let i = 0; i < 3; i++) msg(s, 'grp', 'fay', JAN23 + i);
   msg(s, 'grp', 'ann-s', JAN23 + 5);
@@ -64,6 +69,7 @@ test('each kind of talk, by month, weight × 10; you are never counted', () => {
   expect(run.byIdentity[sid('ann-s')]).toEqual([month(2023, 0), 7]);
   expect(run.byIdentity[did('dee')]).toEqual([month(2024, 2), 25]);
   expect(Object.keys(run.byIdentity).some((k) => k === did('me') || k === sid('mes'))).toBe(false);
+  expect(run.byIdentity[did('helper')]).toBeUndefined();
   expect(run.mutual).toEqual({ [did('dee')]: 2 });
   expect(run.from).toBe(month(2023, 0));
 });

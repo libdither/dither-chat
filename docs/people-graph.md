@@ -52,7 +52,8 @@ How much each person matters to you is a score from 0 to 1 (`importance.ts`), fr
 - **Talk** (most of it): the hub's closeness (`closeness.ts`), by month. A month's weight for someone is every message
   in your direct chat, theirs and yours (1 each); their messages in a group chat you are in, less the bigger the group
   (2 / people in it, groups up to 50); and in a server's channels, a reply between you either way (1.5) and their
-  mentions of you by name (1). Each month fades by e every 18 months, then the sum is taken on a log scale.
+  mentions of you by name (1). Bots count for nothing (one bot's direct chat can send thousands of messages a month).
+  Each month fades by e every 18 months, then the sum is taken on a log scale.
 - **Places you share** (log scale), **friends in common** (a fetched profile's count, or the people you talk with who
   share a group of 30 or fewer with them, whichever is more), and being on **several networks**.
 
