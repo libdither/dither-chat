@@ -160,3 +160,6 @@ export interface PostThread {
 export const postNativeId = (postId: string) => `post:${postId}`;
 /** The post id in a post's message native id, or null when it is not one. */
 export const postIdOf = (nativeId: string) => (nativeId.startsWith('post:') ? nativeId.slice(5) : null);
+/** A followed post's conversation (variant 'follow', docs/feed.md "Following a post"): its native id, and back. */
+export const followNativeId = (postId: string) => `follow:${postId}`;
+export const followedPostOf = (nativeId: string) => (nativeId.startsWith('follow:') ? nativeId.slice(7) : null);

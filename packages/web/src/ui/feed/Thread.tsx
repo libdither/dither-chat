@@ -28,6 +28,7 @@ import type { Kit } from './lazy.tsx';
 import { PostActions, type AnswerCtx } from './Actions.tsx';
 import { Comments, COMMENT_STYLES, StyleMenu, type CommentStyle } from './Comments.tsx';
 import { PostComposer } from './Composer.tsx';
+import { FollowButton } from './Follow.tsx';
 import { Counts, Pics, QuotedIn, Row, Text, Who } from './Post.tsx';
 import { replyTree, treeSize, type TreeNode } from './tree.ts';
 
@@ -111,7 +112,7 @@ function Focal({ p, kit, network, joined, answer, children }: { p: P.PostView; k
 }
 
 /** A post's thread, as a pane: read from the hub (which asks the network and logs it), more replies on asking. */
-export function ThreadView({ src, kit: base, onBack }: { src: Src; kit: Kit; onBack?: () => void }) {
+export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit; onBack?: () => void; top?: preact.ComponentChildren }) {
   const key = 'message' in src ? src.message : `${src.network}:${src.post}`;
   // How this thread was come to: back to one left (as it was), from another (which Back returns to), or afresh.
   const [arrival] = useState(() => {
@@ -422,6 +423,7 @@ export function ThreadView({ src, kit: base, onBack }: { src: Src; kit: Kit; onB
           </div>
         </div>
         <kit.HeadOrb />
+        <FollowButton t={t} kit={kit} />
         {focal && (
           <a class="icon-btn" href={(focal.repostOf ?? focal).url} target="_blank" rel="noreferrer" title={`Open on ${net}`} aria-label={`Open on ${net}`}>
             <kit.Icon name="external" size={16} />
@@ -435,6 +437,7 @@ export function ThreadView({ src, kit: base, onBack }: { src: Src; kit: Kit; onB
       )}
       <div class="feed-scroll thread-scroll" ref={scroller} data-thread={t?.post ?? ''}>
         <div class="feed-list thread-list">
+          {top}
           {!t && !error && <kit.Loading inline label={`Reading the thread from ${net}…`} />}
           {error && (
             <kit.Empty icon="alert" title="Could not read this post">

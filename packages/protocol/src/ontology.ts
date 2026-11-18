@@ -39,9 +39,11 @@ export type Shape =
  * notifications about you (X's likes, reposts, replies, mentions, quotes and follows; feed.ts), read-only, shape
  * 'channel' with no space. Nothing is sent there: no message, read mark or typing. And `posts`: the public posts the hub
  * logged as they were read (X: a thread or a profile opened; docs/feed.md "Threads"), one conversation per account,
- * read-only and quiet as a feed is, kept out of the inbox and every unread count.
+ * read-only and quiet as a feed is, kept out of the inbox and every unread count. And `follow`: a post you follow
+ * (docs/feed.md "Following a post"), its replies found after you followed it, one message each; read-only like the
+ * posts, but a chat: unread, in the inbox, notified.
  */
-export type Variant = 'text' | 'announcement' | 'forum' | 'voice' | 'stage' | 'media' | 'rules' | 'feed' | 'posts';
+export type Variant = 'text' | 'announcement' | 'forum' | 'voice' | 'stage' | 'media' | 'rules' | 'feed' | 'posts' | 'follow';
 
 /**
  * community: something you join and that has its own membership and moderation

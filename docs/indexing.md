@@ -82,8 +82,9 @@ channels added since the last run.
 
 ## Reading pace
 
-Index jobs and the [gap fill](import-discord.md) fetch through your own accounts, so they go the way you would read
-back through a chat, not the way an exporter pages it (`readingpace.ts`):
+Index jobs, the [gap fill](import-discord.md) and the checks of a post you follow ([feed.md](feed.md#following-a-post))
+fetch through your own accounts, so they go the way you would read back through a chat, not the way an exporter pages
+it (`readingpace.ts`):
 
 - **Your hours only:** 9:00 to 1:00 local time by default. Reading starts up to 40 minutes after the hour, not on it.
 - **Sessions:** 5 to 20 minutes of reading, then a break of 10 to 45.
@@ -91,7 +92,8 @@ back through a chat, not the way an exporter pages it (`readingpace.ts`):
   Moving on to another channel adds 3 to 10 s.
 - **A daily cap:** 3,000 messages per account a day. A day runs from the start of the hours to the next start, so
   reading past midnight counts toward the day it started in.
-- **One reader per account:** a job and the gap fill never read through one account at the same time.
+- **One reader per account:** a job, the gap fill and a followed post's checks never read through one account at the
+  same time.
 - Each draw is the mean of two random ones, so values sit around the middle more often than at the ends.
 
 The state lives in `meta` (`pace:<account>`), so a restart neither resets the day's count nor cuts a break short. A

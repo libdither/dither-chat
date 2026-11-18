@@ -421,6 +421,55 @@ X. Everyone in a thread is an identity, not a person: no person is made for them
 one is for someone in your notifications. Opening the conversation lists what was logged, newest first; a message
 of it (a search hit, Recent messages) opens its thread (`GET /api/messages/:id/thread`).
 
+## Following a post
+
+**The bell.** A thread's head has **Follow replies** (a bell, beside Open on X; a phone shows the bell alone). Pressed,
+it says **Following replies** and a toast says "New replies will come to your inbox", its View opening the chat.
+Pressed again it stops following, and the chat stays. The chat's row in the inbox has **Stop Following** in its menu
+(**Follow Again** once stopped).
+
+**A chat for the post** (`follows.ts`). Following makes a conversation for the account that reads the post: native id
+`follow:<post id>` (protocol `followNativeId`), variant **`follow`**, a channel named for the post ("Replies to your
+post", "Replies to Maya K.'s post"), its topic the post's first words, its picture the author's. Unlike the posts
+conversation it is a chat: in the inbox, unread, notified, muted and put in folders like any other. It is read-only as
+the posts conversation is (feed.ts `isFeed`: nothing is sent, reacted or edited from it, and X is never asked about it:
+no history, no About, no index job), and For you leaves it out. The hub follows a post once, whichever account
+followed it; following needs an account that can read the post now (else 502), since it reads the thread first.
+
+**What goes in it** (posts.ts `record`). Following reads the thread's first page, so the replies there stay in the
+posts conversation: old news. From then on, a post logged for the first time whose reply chain reaches the followed
+post (through the posts of the same read and those logged before, 100 deep at most) goes into the follow chat instead,
+one message per post (`post:<id>`) with its reply kept, so the thread reads the same from anywhere. A reply a check
+found is news: unread however long ago it was written (store.ts counts it past the chat's read point), triaged live
+and decided as a **Conversation** by default (tiers.ts `conversing`: "A reply to a post you follow",
+docs/notifications.md), which a rule on the chat changes like any other's. A reply your own reading brought in (a
+branch of the thread opened, more replies) is on your screen already: it goes into the chat read and is not told.
+Your own replies go there too. A post that has stopped being followed routes nothing.
+
+**Opening it** shows the post's thread, the same page as anywhere (`ui/feed/FollowChat.tsx`), with the replies the
+checks found since the chat was last read marked **New** (`fresh`, kept in `post_follow_found` with when each was
+found), and reads the chat as any chat opened does. A reply found while it is open is offered with **Show 1 new
+reply** rather than put into the thread under the reader. The row shows the latest reply. Once the hub stopped
+looking, a note at the top says so and that what it found stays.
+
+**The checks** (`follows.ts` `Follows`). The hub reads the thread again itself, slower and slower: 5 minutes after
+following or after a check found something, then 10, 20, 40 and so on, 6 hours apart at most. After a week with
+nothing new it stops (the last check falls on the week's end): the chat stays, says "No new replies in a week, so the
+hub stopped looking", and the bell says **Follow again**, which reads the thread and starts over. Each check reads
+the first page only, past the two-minute cache, through the account's [reading pace](indexing.md#reading-pace) (its
+hours, sessions and breaks, a pause after each read), one check at a time per account; a check due while the account
+is offline waits for it, looked at again each minute. A read that fails counts as nothing new. **X ranks that page by
+relevance**, not by time, so on a busy post a new reply may not be on it: asking X for the replies newest first (in
+dither-accounts) is a later step.
+
+**The API.** `GET /api/posts/:network/:post/follow` gives `PostFollow`: the conversation and the account, `since`,
+`stopped` and `why` (`unfollowed`, or `quiet` after the week), `next` and `checked` (the next check and the last),
+`lastNew`, and `fresh` (the replies found since the chat was last read); 404 when the post is not followed. `PUT`
+follows (or returns the follow already running), `DELETE` stops (404 when not followed). A thread
+(`PostThreadView.follow`, its first page only) and the chat (`ConversationView.follow`) carry it, so devices hear of
+it the usual way, as a conversation changed. `DITHER_FOLLOW_FIRST_MS` sets the first gap (5 minutes; the verify
+script uses 1.5 s).
+
 ## The demo world
 
 The demo hub has two X accounts (`demo-x.ts`, made up throughout): yours and a work account, each with a feed and
@@ -431,7 +480,9 @@ so triage decides them. `personAbout` for everyone in it, and profiles with post
 quote, pictures). Your routing post has a thread: you continuing it, Ravi and you going back and forth, two more
 replies and two on a second page (cursor `more-1`); any other post it knows opens with what it answers. Two bios have
 links. Its markRead, typing and send are logged (actions `readLog`, `typingLog`, `sendLog`), and the threads asked
-for (`postLog`), so a script can see the hub sent nothing else. scripts/perf-world.ts leaves it out (`createDemoAccounts(store, { x: false })`): the perf
+for (`postLog`), so a script can see the hub sent nothing else. Action `newReply` (`{ post?, text? }`, your routing
+post when none is named) has someone answer a post now, first on its first page as X puts a fresh reply: a post you
+follow has news. scripts/perf-world.ts leaves it out (`createDemoAccounts(store, { x: false })`): the perf
 baselines predate it.
 
 ## Checked by
@@ -476,6 +527,15 @@ baselines predate it.
   with screenshots (`--shots <dir>`). It checks Activity on the Feed page, the feed by post (your post small, the reply under it, the
   reactions line, the list of who liked and reposted it, the quote, the mention, the follows),
   the bar, nothing sent to X, a profile's posts, counts and that you follow each other, and the decisions.
+- `packages/hub/test/follows.test.ts`: following reads first (the replies there stay in the posts conversation), a
+  reply found by the check five minutes on comes unread and told and marked new until read, a reply to it too, one
+  you read comes in read, a Conversation by default and changed by a rule, the gaps doubling to six hours and
+  stopping after a quiet week, Follow again starting over, a check waiting while the account is offline, unfollowing
+  keeping the chat, nothing sent to X; the routes (follow, state, unfollow, errors, sending refused), on a test clock.
+- `scripts/verify-follow-post.ts`: in a real browser on a fresh demo hub: the bell on a thread from the Feed page,
+  the toast and its View, the chat in the inbox, a reply written later found and unread with its row saying so,
+  opening it with the reply marked New and the chat read, Stop Following from the row's menu (no Index there), the
+  note, Follow again, and the bell as an icon on a phone. `--shots <dir>` keeps screenshots.
 - `packages/hub/test/posts.test.ts` also checks `GET /api/posts/:network/:post/activity`, and the branches logged
   before coming back with a thread (also from the two-minute read).
 - `packages/protocol/test/compose.test.ts`: X's count (CJK, emoji sequences, links), its counter (the ring, 20 left,

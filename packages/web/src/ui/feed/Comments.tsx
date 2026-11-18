@@ -24,6 +24,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Kit } from './lazy.tsx';
 import { Counts, Pics, QuotedIn, Row, Text, Who } from './Post.tsx';
 import { runOf, runPair, treeChains, type TreeNode } from './tree.ts';
+import { freshReplies } from './fresh.ts';
 
 export type CommentStyle = 'tree' | 'compact' | 'flat' | 'chains';
 export const COMMENT_STYLES: { id: CommentStyle; label: string; title: string }[] = [
@@ -141,6 +142,7 @@ function Head({ p, ctx, avatar, folded, size }: { p: P.PostView; ctx: CommentCtx
       )}
       <Who id={who} kit={kit} />
       {who && who === ctx.op && <span class="post-tag op" title="Wrote the post">OP</span>}
+      {freshReplies.value.has(p.id) && <span class="post-tag new" title="Came since you last read this chat">New</span>}
       <a class="post-handle ct-time" href={kit.feed.postHref(ctx.network, p.id)} title={`${kit.fullTime(p.ts)}: open as a thread`}>
         · {kit.ago(p.ts)}
       </a>

@@ -11,8 +11,8 @@
  *   2. A person or place you set to always alert: an alert.
  *   3. Its importance, a chance (learn.ts): it starts from the network's own setting for the place (or high, when it
  *      says one of your keywords) and moves with what you opened, swiped away and marked.
- *   4. Is it a Conversation? A rule (tiers.ts): a DM, about you (a mention, a reply, one of your keywords), or a chat
- *      you take part in.
+ *   4. Is it a Conversation? A rule (tiers.ts): a DM, a reply to a post you follow, about you (a mention, a reply,
+ *      one of your keywords), or a chat you take part in.
  *   5. If it is (or you marked this place or person "should have alerted" lately), the local model reads it
  *      (`judge`), and it alerts when its alert chance is even or better. That chance starts from the model's answer
  *      and moves with your marks.
@@ -467,6 +467,8 @@ export class Triage {
       link: /https?:\/\//.test(m.body),
       long: m.body.length > 280,
       known: !!author?.person_id,
+      // A post you follow: you asked for its replies (tiers.ts).
+      ...(c.variant === 'follow' ? { followed: true } : {}),
     };
   }
 

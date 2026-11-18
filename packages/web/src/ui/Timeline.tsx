@@ -128,7 +128,7 @@ import { EmbedVideo, RichFoot, RichHead, RichMarks, Veil, veiled, Voice } from '
 import { VoicePeople } from './Ringing.tsx';
 import { ForumLazy } from './ThreadsLazy.tsx';
 import { ScheduledStrip, useSendExtras } from './SendExtras.tsx';
-import { FeedViewLazy, PostsListLazy, ThreadLazy } from './feed/lazy.tsx';
+import { FeedViewLazy, FollowChatLazy, PostsListLazy, ThreadLazy } from './feed/lazy.tsx';
 import { postMessageKey } from '../feed.ts';
 
 
@@ -1816,6 +1816,8 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
         <PostsListLazy c={c} />
       </section>
     );
+  // A post you follow (docs/feed.md "Following a post"): its thread, what came since it was read marked new.
+  if (c.variant === 'follow') return <FollowChatLazy c={c} onBack={onBack} />;
   const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && visibleAccount(a.id));
   const sendAsValue = prefs.value.sendAs[c.id] ?? accounts.find((a) => a.status === 'online')?.id ?? accounts[0]?.id;
   const voice = c.variant === 'voice' || c.variant === 'stage';
