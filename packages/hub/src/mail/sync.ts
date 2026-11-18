@@ -16,7 +16,7 @@ import type * as P from '@dither-chat/protocol';
 import type * as M from '@dither-chat/protocol/mail-iface';
 import { type Clock, realClock } from '../clock.ts';
 import { noteWork, timedWork } from '../stalls.ts';
-import { asMailError, type MailBackend } from './backend.ts';
+import { asMailError, backoffMs, type MailBackend, MailCallError, troubleExtra, troubleOf } from './backend.ts';
 import { Backfill, Budget } from './backfill.ts';
 import { storeBody } from './cache.ts';
 import { MAIL_LIMITS } from './limits.ts';
@@ -50,6 +50,8 @@ export class AccountSync {
   private settling: Promise<void> | null = null;
   private timer: Timer | null = null;
   private retry: unknown = null;
+  /** First syncs that failed in a row: the next try waits longer (from a minute, doubling to 30). */
+  private firstFails = 0;
   private clock: Clock;
 
   constructor(
@@ -80,6 +82,8 @@ export class AccountSync {
    * stops background reads for the account until its status no longer says so.
    */
   async background<T>(op: string, input: Record<string, unknown> = {}, timeoutMs?: number): Promise<T> {
+    // Queued before the account paused them: no call until its status clears.
+    if (this.store.backgroundStopped(this.accountId)) throw new MailCallError('the account paused background reads', 503, 'paused');
     try {
       return await this.call<T>(op, this.store.backgroundLane(this.accountId) ? { ...input, background: true } : input, timeoutMs);
     } catch (e) {
@@ -140,12 +144,16 @@ export class AccountSync {
       })
       // The backfill took over, or there was nothing left to list.
       .then(() => {
+        this.firstFails = 0;
         if (this.phase === 'first') this.setPhase('idle');
       })
       .catch((e) => {
         this.setPhase('idle');
-        this.ctx.log(`[${this.accountId}] first sync stopped: ${asMailError(e).message}; trying again in a minute`);
-        if (!this.stopped) this.retry = this.clock.setTimeout(() => ((this.first = null), this.start()), 60_000);
+        if (this.stopped) return;
+        const wait = backoffMs(++this.firstFails, 60_000, 30 * 60_000, this.queue.random);
+        this.ctx.log(`[${this.accountId}] first sync stopped: ${asMailError(e).message}; trying again in ${Math.round(wait / 1000)} s`);
+        this.report('mail: first sync', e);
+        this.retry = this.clock.setTimeout(() => ((this.first = null), this.start()), wait);
       });
     return this.first;
   }
@@ -312,9 +320,7 @@ export class AccountSync {
         (e) => {
           const err = asMailError(e);
           this.ctx.log(`[${this.accountId}] changes: ${err.message}`);
-          // The manager's `offline` (its extractor not connected, as while the manager restarts) is a state, not a
-          // bug: the account's coming back runs a catch-up.
-          if (err.code !== 'offline') jobFailed('mail: changes', e, { account: this.accountId });
+          this.report('mail: changes', e);
         },
       );
   }
@@ -357,6 +363,26 @@ export class AccountSync {
     } finally {
       this.setPhase(this.backfill.active ? 'backfill' : 'idle');
     }
+  }
+
+  /**
+   * A failure, to the bug watch (errors.ndjson) when it is one: a bug at once; trouble that may pass (the manager's
+   * `offline` while it restarts, an extractor not ready, a 502) only once it has lasted MAIL_LIMITS.troubleReportMs,
+   * and once a streak; a 4xx about one request, and the account stopping, never.
+   */
+  report(where: string, e: unknown) {
+    const err = asMailError(e);
+    if (this.stopped || err.code === 'stopped') return;
+    const kind = troubleOf(err);
+    const extra = { account: this.accountId, kind, ...troubleExtra(err) };
+    if (kind === 'bug') return jobFailed(where, e, extra);
+    if (kind === 'data') return;
+    const s = this.queue.streak;
+    // On the queue's clock, which dated the streak.
+    const lasted = (this.ctx.now ?? (() => this.clock.now()))() - s.since;
+    if (!s.n || s.reported || lasted < MAIL_LIMITS.troubleReportMs) return;
+    s.reported = true;
+    jobFailed(where, e, { ...extra, failures: s.n, minutes: Math.round(lasted / 60_000) });
   }
 
   // ---------------------------------------------------------- removals

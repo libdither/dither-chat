@@ -164,7 +164,8 @@ async function world() {
   mailClassifier(hub)!.connect(chat);
   hub.start();
   await hub.sync(ACC)!.whenSynced();
-  await Bun.sleep(20);
+  // The people and the classes worked out in the background after the first sync.
+  await until(() => mailPeople(hub)!.idle && mailClassifier(hub)!.idle, 4000, 'people and classes');
   const route = (method: string, path: string, body?: unknown) => {
     const url = new URL(`http://hub${path}`);
     return hub.route(new Request(url, { method, ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }) }), url);

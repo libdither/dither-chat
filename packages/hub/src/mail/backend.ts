@@ -38,6 +38,43 @@ export function asMailError(e: unknown): MailCallError {
   return new MailCallError(String(x?.message ?? e), x?.status ?? (x?.code ? CODE_STATUS[x.code] : undefined), x?.code);
 }
 
+/**
+ * What a failed call says about the account (docs/mail.md "When the account's side fails"):
+ *
+ *   transient  it may pass by itself: 503, the codes below, an extractor that is not ready yet, a read that timed out
+ *   layout     502: the extractor could not read the service's page or answer (a changed layout)
+ *   data       any other 4xx: this request, not the account (a message gone, input refused)
+ *   bug        anything else: the hub's or the extractor's
+ */
+export type MailTrouble = 'transient' | 'layout' | 'data' | 'bug';
+
+const PASSING = new Set(['unavailable', 'offline', 'backoff', 'limited', 'paused']);
+/** An extractor's words while it is still starting (dither-accounts' google kind, its sandbox). */
+const NOT_READY = /not attached yet|has not made a sync call|not open in the sandbox|still loading|not connected/i;
+
+/** `read: false` for a call that changes something: its timeout may have gone through, so it is not passing trouble. */
+export function troubleOf(e: unknown, o: { read?: boolean } = {}): MailTrouble {
+  const err = asMailError(e);
+  const s = err.status;
+  if (s === 503 || (err.code && PASSING.has(err.code)) || NOT_READY.test(err.message)) return 'transient';
+  if ((s === 504 || err.code === 'timeout') && o.read !== false) return 'transient';
+  if (s === 502) return 'layout';
+  if (s !== undefined && s >= 400 && s < 500) return 'data';
+  return 'bug';
+}
+
+/** The status and code of a failed call, for an error report's `extra`. */
+export function troubleExtra(e: unknown): Record<string, string | number> {
+  const err = asMailError(e);
+  return { ...(err.status !== undefined ? { status: err.status } : {}), ...(err.code ? { code: err.code } : {}) };
+}
+
+/** A wait that doubles from `base` with each try `n` (1, 2, …) up to `cap`, spread over ±25% so accounts do not retry together. */
+export function backoffMs(n: number, base: number, cap: number, random: () => number = Math.random): number {
+  const ms = Math.min(cap, base * 2 ** Math.max(0, n - 1));
+  return Math.round(ms * (0.75 + 0.5 * random()));
+}
+
 export interface MailBackend {
   /** The manager answers. */
   readonly connected: boolean;
