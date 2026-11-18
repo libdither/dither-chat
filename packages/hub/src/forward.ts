@@ -6,7 +6,7 @@
 import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, NETWORK_META } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
-import { lowerForSend, lowerRefs, storeResolve } from './mentionrefs.ts';
+import { lowerForSend, namedTokens } from './mentionrefs.ts';
 import type { Store } from './store.ts';
 import type { Uploads } from './uploads.ts';
 
@@ -35,16 +35,6 @@ export function planForward(
 
 /** Networks whose own clients forward without saying so. A re-send within them looks the same. */
 const BARE_RESEND: Partial<Record<P.Network, true>> = { signal: true };
-
-/** Mentions as plain names, so a re-sent message pings nobody; channel and emoji tokens as text another network can show. */
-export function plainTokens(body: string, name: (kind: 'user' | 'room', nativeId: string) => string | null): string {
-  return body
-    .replace(/<@&\d+>/g, '@role')
-    .replace(/<@!?([^>\s]+)>/g, (_, id) => '@' + (name('user', id) ?? 'someone'))
-    .replace(/<#([^>\s]+)>/g, (_, id) => '#' + (name('room', id) ?? 'channel'))
-    .replace(/<a?:(\w+):\d+>/g, ':$1:')
-    .replace(/@(everyone|here)\b/g, '@​$1');
-}
 
 /** The text of a forward that goes out as an ordinary message: the note, a line saying where it came from, the original quoted. */
 export function forwardText(o: { note?: string; text: string; author: string | null; source: string | null; network: P.Network; dest: P.Network; mode: P.ForwardMode }): string {
@@ -92,10 +82,7 @@ export async function forwardMessage(deps: ForwardDeps, messageId: string, req: 
     source,
     ts: inner?.ts ?? m.ts,
   };
-  const names = (kind: 'user' | 'room', id: string) =>
-    kind === 'user' ? store.identityLabel(hubId('idn', m.network, id)) : store.conversationView(hubId('cnv', m.network, id))?.name ?? null;
-  // A person or account named by reference (a Calendar chat's) goes on as their name.
-  const plain = plainTokens(lowerRefs(text, storeResolve(store, '')), names);
+  const plain = namedTokens(store, m.network, text);
 
   let files: File[] | null = null;
   const loadFiles = async (): Promise<{ files: File[]; missing: string[] }> => {

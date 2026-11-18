@@ -212,6 +212,14 @@ describe('one notification per conversation', () => {
     expect(store.one(`SELECT COUNT(*) AS n FROM change_log WHERE target_id = ? AND field = 'name'`, conv('gdm'))!.n).toBe(1);
   });
 
+  test('mentions and channels read as names, never as ids', () => {
+    store.ingest(sg, { t: 'conversation', conversation: { nativeId: 'pals', shape: 'group', name: 'Pals', participants: ['ann', 'bo'] } });
+    const t = Date.now();
+    say('p1', 'pals', 'ann', t, 'hey <@bo> and <@nobody>, see <#fam>');
+    const p = delivery.plan(conv('pals'), msg('p1'), 'push', false, t)!;
+    expect(p.lines.map((l) => l.body)).toEqual(['hey @Bo and @someone, see #Family']);
+  });
+
   test('a long burst keeps under the push budget', () => {
     const t = Date.now() + 10_000;
     for (let i = 0; i < 12; i++) say(`L${i}`, 'fam', i % 2 ? 'ann' : 'bo', t + i, 'x'.repeat(400));

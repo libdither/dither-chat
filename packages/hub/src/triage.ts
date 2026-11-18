@@ -34,6 +34,7 @@
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, reminderOf } from '@dither-chat/protocol';
 import { previewText, type Store } from './store.ts';
+import { namedTokens } from './mentionrefs.ts';
 import { describeActivity, type ActivityStore, type Features } from './activity.ts';
 import { alertBar, describeWeight, emptyModel, importance, learnedFrom, predict, prior, THRESHOLDS, tierFrom, TIER_NAME, words, type Facts, type Level, type Model, type Namer, type TierContext } from './learn.ts';
 import { InteractionLog } from './interact.ts';
@@ -531,7 +532,7 @@ export class Triage {
     // A network's notifications about you (docs/feed.md): what they did decides, not who they are or what it says.
     const feedType: P.FeedItemType | null = c.variant === 'feed' ? (feedItemOf(m.extra ? JSON.parse(m.extra) : null)?.type ?? 'other') : null;
     const title = c.shape === 'direct' || feedType ? `${where} · ${NETWORK_META[c.network as P.Network].name}` : where;
-    const body = `${c.shape === 'direct' ? '' : authorName + (feedType && feedType !== 'other' ? ` (${FEED_REASON[feedType]})` : '') + ': '}${previewText(m.body, m.kind) || (m.kind === 'media' ? 'Sent an attachment' : '')}`;
+    const body = `${c.shape === 'direct' ? '' : authorName + (feedType && feedType !== 'other' ? ` (${FEED_REASON[feedType]})` : '') + ': '}${previewText(namedTokens(s, c.network, m.body), m.kind) || (m.kind === 'media' ? 'Sent an attachment' : '')}`;
 
     if (eff.level === 'none') {
       reasons.push(`Silenced: ${eff.source}`);
