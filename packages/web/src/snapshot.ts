@@ -247,6 +247,23 @@ export async function refuseOlder() {
   await Promise.all([dropSnapshot(), dropPages()]);
 }
 
+/**
+ * An older build's snapshot is drawn by code it was not written for. A TypeError while it is still on screen (a field
+ * this build needs and it lacks) drops it, once per build, and the app starts from the hub. Typed sends are in the
+ * outbox, not the snapshot, so they stay. main.tsx installs this before the first render.
+ */
+export function guardOlder() {
+  let refusing = false;
+  const failed = (e: unknown) => {
+    if (refusing || !olderFormat || !(e instanceof TypeError)) return;
+    refusing = true;
+    console.error('the older snapshot did not draw; starting from the hub', e);
+    void refuseOlder().then(() => location.reload());
+  };
+  addEventListener('error', (e) => failed(e.error));
+  addEventListener('unhandledrejection', (e) => failed(e.reason));
+}
+
 /** The snapshot kept, this build's or an older one's (`older`); the kept pages go to `pages` either way. */
 export async function readSnapshot(): Promise<Snapshot | null> {
   forgetRemoved();
