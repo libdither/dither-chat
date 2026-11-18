@@ -5,7 +5,8 @@
  *  - server members seen, only while the adversarial `members` setting records them;
  *  - the mutual servers a fetched profile named;
  *  - the participants of groups, and of channels inside a server.
- * Only people and places with a link are sent; you are left out. Ids, names and indexes, never message text.
+ * Only people and places with a link are sent; you are left out. Ids, names, indexes and pictures (signed media links,
+ * as a chat list has them), never message text.
  */
 import type * as P from '@dither-chat/protocol';
 import { GRAPH_SOURCE } from '@dither-chat/protocol';
@@ -24,7 +25,7 @@ export function peopleGraph(s: Store): P.PeopleGraph {
   for (const r of db.query('SELECT i.id FROM person p CROSS JOIN identity i ON i.person_id = p.id WHERE p.is_self = 1 ORDER BY i.id').all() as Row[]) self.add(r.id);
 
   // Communities, and the community each section or subspace sits in.
-  const spaces = new Map<string, Row>((db.query('SELECT id, network, kind, name FROM space').all() as Row[]).map((r) => [r.id, r]));
+  const spaces = new Map<string, Row>((db.query('SELECT id, network, kind, name, icon_url FROM space').all() as Row[]).map((r) => [r.id, r]));
   const parents = new Map<string, string[]>();
   for (const e of db.query(`SELECT parent_id, child_id FROM space_edge WHERE child_kind = 'space'`).all() as Row[]) {
     const l = parents.get(e.child_id);
@@ -59,7 +60,7 @@ export function peopleGraph(s: Store): P.PeopleGraph {
 
   // People, made only when a link needs them.
   const idents = new Map<string, Row>(
-    (db.query('SELECT i.id, i.network, i.display_name, i.handle, i.is_bot, i.person_id, p.name AS person_name FROM identity i LEFT JOIN person p ON p.id = i.person_id').all() as Row[]).map((r) => [r.id, r]),
+    (db.query('SELECT i.id, i.network, i.display_name, i.handle, i.is_bot, i.person_id, i.avatar_url, i.seen_via, p.name AS person_name, p.avatar_url AS person_avatar FROM identity i LEFT JOIN person p ON p.id = i.person_id').all() as Row[]).map((r) => [r.id, r]),
   );
   const byPerson = new Map<string, Row[]>();
   for (const r of idents.values()) if (r.person_id) (byPerson.get(r.person_id) ?? byPerson.set(r.person_id, []).get(r.person_id)!).push(r);
@@ -76,6 +77,9 @@ export function peopleGraph(s: Store): P.PeopleGraph {
       personIx.set(key, i);
       const list = r.person_id ? byPerson.get(r.person_id)! : [r];
       const networks = [...new Set(list.map((x) => x.network as P.Network))];
+      // Their picture: the person's own, else the first of their accounts' that has one, through the account that saw it.
+      const withPic = list.find((x) => x.avatar_url);
+      const pic = s.mediaUrl(r.person_avatar ?? withPic?.avatar_url, (withPic ?? r).seen_via);
       people.push({
         id: key,
         ...(r.person_id ? {} : { identity: true as const }),
@@ -83,6 +87,7 @@ export function peopleGraph(s: Store): P.PeopleGraph {
         networks,
         dm: [],
         ...(list.every((x) => x.is_bot) ? { bot: true as const } : {}),
+        ...(pic ? { pic } : {}),
       });
     }
     return i;
@@ -90,7 +95,7 @@ export function peopleGraph(s: Store): P.PeopleGraph {
 
   const places: P.GraphPlace[] = [];
   const placeIx = new Map<string, number>();
-  const groups = new Map<string, Row>((db.query(`SELECT id, network, name FROM conversation WHERE shape = 'group'`).all() as Row[]).map((r) => [r.id, r]));
+  const groups = new Map<string, Row>((db.query(`SELECT id, network, name, avatar_url FROM conversation WHERE shape = 'group'`).all() as Row[]).map((r) => [r.id, r]));
   const placeOf = (id: string): number | null => {
     let i = placeIx.get(id);
     if (i !== undefined) return i;
@@ -146,6 +151,13 @@ export function peopleGraph(s: Store): P.PeopleGraph {
     const r2 = idents.get(r.identity_id);
     const i = r2 ? personIx.get(r2.person_id ?? r.identity_id) : undefined;
     if (i !== undefined) push(people[i].dm, accIx.get(r.account_id));
+  }
+
+  // A place's picture (a server's icon, a group's), through an account that sees it.
+  for (const pl of places) {
+    const raw = spaces.get(pl.id)?.icon_url ?? groups.get(pl.id)?.avatar_url;
+    const pic = raw ? s.mediaUrl(raw, accounts[pl.accounts[0]]?.id ?? null) : null;
+    if (pic) pl.pic = pic;
   }
 
   if (members)

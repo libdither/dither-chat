@@ -7,12 +7,13 @@ import { NETWORK_META } from '@dither-chat/protocol';
 import { signal, type Signal } from '@preact/signals';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { convTitle, netName } from '../model.ts';
+import { phone } from '../phone.ts';
 import { api, db, go, toast, type Route } from '../state.ts';
-import { Empty, NetBadge, openAdversarial } from '../ui/bits.tsx';
+import { Avatar, Empty, NetBadge, openAdversarial } from '../ui/bits.tsx';
 import { Icon } from '../ui/icons.tsx';
 import { HeadOrb } from '../ui/Offline.tsx';
 import { Engine } from './engine.ts';
-import { DEFAULT_FILTERS, index, neighbours, sharesWith, visible, type Filters, type Index } from './model.ts';
+import { DEFAULT_FILTERS, index, neighbours, sharesWith, visible, type Filters, type Index, type Visible } from './model.ts';
 import { Loading } from '../ui/Loader.tsx';
 
 const KEY = 'dither-chat:graph';
@@ -46,7 +47,11 @@ const saveSameOn = (on: boolean) => {
   } catch {}
 };
 
-const placeName = (p: P.GraphPlace) => p.name ?? (p.kind === 'group' ? convTitle(db.conversations.get(p.id)) || 'Group' : 'Server');
+/** A group's own name, else who is in it; a name that is only an id (a Signal group with none) counts as none. */
+const placeName = (p: P.GraphPlace) =>
+  (p.name && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(p.name) ? p.name : null) ?? (p.kind === 'group' ? convTitle(db.conversations.get(p.id)) || 'Group' : 'Server');
+
+const KEY_OPEN = 'dither-chat:graph-key';
 
 export default function GraphView({ onBack }: { onBack: () => void }) {
   const [graph, setGraph] = useState<P.PeopleGraph | null>(null);
@@ -283,6 +288,7 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
             <Icon name="grid" size={15} />
           </button>
         </div>
+        <Key graph={graph} vis={vis} />
         <Tip hover={hover} picked={picked} graph={graph} ix={ix} name={name} />
         {picked !== null && (
           <Card
@@ -309,6 +315,76 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
   );
 }
 
+/** What the colours, sizes and shapes mean, with how many of each are shown. Folds away. */
+function Key({ graph, vis }: { graph: P.PeopleGraph; vis: Visible }) {
+  const [open, setOpen] = useState(() => {
+    try {
+      const v = localStorage.getItem(KEY_OPEN);
+      return v === null ? !phone.value : v === '1';
+    } catch {
+      return !phone.value;
+    }
+  });
+  const toggle = () => {
+    setOpen(!open);
+    try {
+      localStorage.setItem(KEY_OPEN, open ? '0' : '1');
+    } catch {}
+  };
+  const np = graph.people.length;
+  const { nets, known, multi } = useMemo(() => {
+    const nets = new Map<P.Network, number>();
+    let known = 0;
+    let multi = 0;
+    for (const g of vis.nodes) {
+      if (g >= np) continue;
+      const p = graph.people[g];
+      for (const n of p.networks) nets.set(n, (nets.get(n) ?? 0) + 1);
+      if (p.dm.length) known++;
+      if (p.networks.length > 1) multi++;
+    }
+    return { nets: [...nets].sort((a, b) => b[1] - a[1]), known, multi };
+  }, [graph, vis]);
+  if (!open)
+    return (
+      <button class="pg-key pg-key-closed" onClick={toggle} title="What the colours and shapes mean">
+        Key
+      </button>
+    );
+  return (
+    <div class="pg-key" role="group" aria-label="Key">
+      <div class="pg-key-head">
+        <b>Key</b>
+        <button class="icon-btn small" aria-label="Fold the key" onClick={toggle}>
+          <Icon name="x" size={12} />
+        </button>
+      </div>
+      <div class="pg-key-nets">
+        {nets.map(([n, c]) => (
+          <span class="pg-key-net" style={{ '--net': NETWORK_META[n].color } as Record<string, string>}>
+            <i />
+            {netName(n)} <em>{c.toLocaleString()}</em>
+          </span>
+        ))}
+      </div>
+      <div class="pg-key-row">
+        <i class="pg-key-dot big" /> You have chats with them <em>{known.toLocaleString()}</em>
+      </div>
+      <div class="pg-key-row">
+        <i class="pg-key-dot" /> Only seen in a server or group
+      </div>
+      {multi > 0 && (
+        <div class="pg-key-row">
+          <i class="pg-key-dot two" /> On two networks or more <em>{multi.toLocaleString()}</em>
+        </div>
+      )}
+      <div class="pg-key-row">
+        <i class="pg-key-shape square" /> Server <i class="pg-key-shape diamond" /> Group, bigger the more people
+      </div>
+    </div>
+  );
+}
+
 type Hover = { node: number; x: number; y: number };
 
 function Tip({ hover, picked, graph, ix, name }: { hover: Signal<Hover | null>; picked: number | null; graph: P.PeopleGraph; ix: Index; name: (g: number) => string }) {
@@ -316,11 +392,17 @@ function Tip({ hover, picked, graph, ix, name }: { hover: Signal<Hover | null>; 
   if (!h || h.node === picked) return null;
   return (
     <div class="pg-tip" style={{ left: `${h.x + 14}px`, top: `${h.y + 10}px` }}>
-      <b>{name(h.node)}</b>
-      <span>{describe(graph, ix, h.node)}</span>
+      <Avatar id={h.node < graph.people.length ? graph.people[h.node].id : graph.places[h.node - graph.people.length].id} name={name(h.node)} url={pic(graph, h.node)} size={32} square={h.node >= graph.people.length} />
+      <span class="pg-tip-text">
+        <b>{name(h.node)}</b>
+        <span>{describe(graph, ix, h.node)}</span>
+      </span>
     </div>
   );
 }
+
+/** A node's picture: a person's, a server's icon, a group's. */
+const pic = (graph: P.PeopleGraph, g: number) => (g < graph.people.length ? graph.people[g].pic : graph.places[g - graph.people.length].pic);
 
 /** One line on what a node is. */
 function describe(graph: P.PeopleGraph, ix: Index, g: number): string {
@@ -404,9 +486,19 @@ function Card({
   return (
     <aside class="pg-card" aria-label={name(node)}>
       <div class="pg-card-head">
-        <button class="pg-card-name" onClick={() => go(r.profile)} title="Open their page">
-          {name(node)}
-        </button>
+        <span class="pg-card-pic">
+          <Avatar id={isPerson ? graph.people[node].id : graph.places[placeIx].id} name={name(node)} url={pic(graph, node)} size={44} square={!isPerson} />
+        </span>
+        <span class="pg-card-title">
+          <button class="pg-card-name" onClick={() => go(r.profile)} title="Open their page">
+            {name(node)}
+          </button>
+          <span class="pg-card-nets">
+            {(isPerson ? graph.people[node].networks : [graph.places[placeIx].network]).map((n) => (
+              <NetBadge network={n} size={15} />
+            ))}
+          </span>
+        </span>
         <button class="icon-btn small" aria-label="Close" onClick={onClose}>
           <Icon name="x" size={14} />
         </button>
@@ -476,7 +568,7 @@ function Card({
           <div class="pg-card-list">
             {near.slice(0, 12).map((g) => (
               <button class="pg-row" onClick={() => onPick(g)}>
-                <NetBadge network={graph.places[g - np].network} size={13} />
+                <Avatar id={graph.places[g - np].id} name={name(g)} url={pic(graph, g)} size={20} square network={graph.places[g - np].network} />
                 <span class="pg-row-name">{name(g)}</span>
               </button>
             ))}
@@ -490,6 +582,7 @@ function Card({
           <div class="pg-card-list">
             {alike.map((s) => (
               <button class="pg-row" onClick={() => onPick(s.g)}>
+                <Avatar id={s.g < np ? graph.people[s.g].id : graph.places[s.g - np].id} name={name(s.g)} url={pic(graph, s.g)} size={20} square={s.g >= np} />
                 <span class="pg-row-name">{name(s.g)}</span>
                 {s.other && (
                   <span class="pg-tag" title="You have direct chats with each of them, on different accounts">

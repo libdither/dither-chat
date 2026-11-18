@@ -583,6 +583,8 @@ export interface GraphPerson {
   /** Accounts that have a direct chat with them. */
   dm: number[];
   bot?: true;
+  /** Their picture (a signed media link), when one of their accounts has one. */
+  pic?: string;
 }
 export interface GraphPlace {
   /** A community space (`space`) or a group conversation (`group`). */
@@ -594,6 +596,8 @@ export interface GraphPlace {
   accounts: number[];
   /** The network's member count, when it gave one (members setting on). */
   total?: number;
+  /** A server's icon or a group's picture (a signed media link). */
+  pic?: string;
 }
 /** Where a link came from: members seen (adversarial), a profile's mutual servers, a conversation's participants. */
 export const GRAPH_SOURCE = { members: 1, profile: 2, participant: 4 } as const;

@@ -9,24 +9,32 @@ phone it is a page of its own over the People list.
 
 Code: `packages/hub/src/graph.ts` (`GET /api/graph`), `packages/web/src/graph/` (the view: `GraphView.tsx`, the
 filters in `model.ts`, the force layout in `layout.ts` run by `layout.worker.ts`, WebGL drawing in `render.ts`,
-`engine.ts` tying them to the canvas), `packages/web/src/ui/GraphPane.tsx` (loads it). Checked end to end by
+`pictures.ts` the pictures and rings, `engine.ts` tying them to the canvas), `packages/web/src/ui/GraphPane.tsx` (loads it). Checked end to end by
 `scripts/verify-graph.ts`.
 
 ## What it shows
 
 - **People**: a person stands for all their identities (merge and split them on their profile); an identity in no
-  person stands alone. You are left out. A person on several networks is drawn in the accent colour, a bot grey,
-  everyone else in their network's colour.
-- **Places**: servers and spaces (squares; a channel or category counts toward its server) and group chats
-  (diamonds), in their network's colour, bigger the more people the hub knows there.
+  person stands alone. You are left out. Someone you have direct chats with (or who is on several networks) is drawn
+  bigger and bright; someone only seen in a server or group is a faint speck. A dot is in its network's colour (a
+  person on several networks in the accent colour, a bot grey).
+- **Pictures**: once a node is drawn big enough, it shows its picture (a person's, a server's icon, a group's), a ring
+  in its network's colour (split between the colours of each network a person is on) and, bigger still, a badge with
+  each network's glyph. Places keep a smallest size by how many people are in them, so the overview shows the busiest
+  with their icons; the picked node and what it is in are drawn bigger. The key (bottom left, folded on a phone) says
+  what the colours, sizes and shapes mean, with how many of each are shown.
+- **Places**: servers and spaces (rounded squares; a channel or category counts toward its server) and group chats
+  (diamonds), in their network's colour, bigger the more people the hub knows there. Their names are on pills with how
+  many people are in them (the network's count when members are recorded).
 - **Links** between a person and a place, each pair once, from what the hub already has:
   - the participants of group chats, and of channels inside a server that list them;
   - the servers a profile you opened said you share (`mutualSpaces`, docs/profile.md);
   - server members your accounts' clients saw — only while the adversarial "Record server members" is on
     (docs/history.md). Turned off, those links go, and people only they named go with them.
 
-No message text, avatars or profile fields are sent: ids, names, networks, which of your accounts see each place and
-which have a direct chat with each person, and the network's member count of a server when members are recorded.
+No message text or profile fields are sent: ids, names, pictures (signed media links, as the chat list has them),
+networks, which of your accounts see each place and which have a direct chat with each person, and the network's member
+count of a server when members are recorded.
 Nothing is guessed: two identities are one person only if you (or a direct chat) made them one. Suggestions of who may
 be are drawn only when asked ("Same person?", below).
 
@@ -63,5 +71,7 @@ members, a note at the top says servers show only who profiles and channels name
 The hub builds the graph in one pass over its tables (about 35 ms for ~2k people and 150 places) and sends links as
 flat index triples. The page loads the view as its own chunk only when opened. The layout (Barnes–Hut repulsion,
 springs, a pull to the middle) runs in a worker, about 14 ms a step at 11k nodes, and posts positions each frame;
-links and nodes are drawn with WebGL (a 2D canvas where WebGL is missing, which the status line says). Picking scans
-the shown nodes once a frame at most; labels are capped and skip any that would overlap.
+links and nodes are drawn with WebGL (a 2D canvas where WebGL is missing, which the status line says). Pictures
+(`pictures.ts`) are drawn on the label canvas only for nodes big enough on screen, at most 700 a frame: each is fetched
+once, a few at a time with the biggest first, and cut to its shape on a small canvas kept for reuse. Picking scans the
+shown nodes once a frame at most; labels are capped and skip any that would overlap.

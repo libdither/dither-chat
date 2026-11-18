@@ -28,6 +28,8 @@ export class Layout {
   private edges: Uint32Array;
   private bias: Float32Array;
   private strength: Float32Array;
+  /** Each link's length at rest: shorter to someone in that one place only. */
+  private rest: Float32Array;
   // The quadtree, rebuilt each tick: per cell its square, children, body (-1 none, -2 split), mass and its centre.
   private cap = 0;
   private x0 = new Float32Array(0);
@@ -48,16 +50,19 @@ export class Layout {
     const deg = new Float32Array(this.n);
     for (let e = 0; e < this.edges.length; e++) deg[this.edges[e]]++;
     this.mass = new Float32Array(this.n);
-    for (let i = 0; i < this.n; i++) this.mass[i] = 1 + Math.sqrt(deg[i]);
+    // Someone in one place only is light: they sit close round it, a tight cloud, rather than pushing it apart.
+    for (let i = 0; i < this.n; i++) this.mass[i] = deg[i] <= 1 ? 0.35 : 1 + Math.sqrt(deg[i]);
     // As d3's link force: a link pulls the end with fewer links more, and is weaker between busy nodes.
     const m = this.edges.length / 2;
     this.bias = new Float32Array(m);
     this.strength = new Float32Array(m);
+    this.rest = new Float32Array(m);
     for (let k = 0; k < m; k++) {
       const a = deg[this.edges[2 * k]];
       const b = deg[this.edges[2 * k + 1]];
       this.bias[k] = a / (a + b);
       this.strength[k] = 1 / Math.min(a, b);
+      this.rest[k] = Math.min(a, b) <= 1 ? LINK * 0.45 : LINK;
     }
     this.grow(this.n * 2 + 8);
   }
@@ -115,7 +120,7 @@ export class Layout {
       let dx = pos[2 * b] + vel[2 * b] - pos[2 * a] - vel[2 * a];
       let dy = pos[2 * b + 1] + vel[2 * b + 1] - pos[2 * a + 1] - vel[2 * a + 1];
       const l = Math.sqrt(dx * dx + dy * dy) || 1e-3;
-      const f = ((l - LINK) / l) * alpha * this.strength[k];
+      const f = ((l - this.rest[k]) / l) * alpha * this.strength[k];
       dx *= f;
       dy *= f;
       const bb = this.bias[k];

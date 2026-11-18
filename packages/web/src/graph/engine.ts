@@ -7,7 +7,8 @@ import { NETWORK_META } from '@dither-chat/protocol';
 import { Layout, seed } from './layout.ts';
 import type { FromWorker, ToWorker } from './layout.worker.ts';
 import { neighbours, type Index, type Visible } from './model.ts';
-import { cssColor, drawLabels, MIN_PX, renderer, type Label, type Palette, type Renderer, type RGBA, type Scene, type View } from './render.ts';
+import { drawDiscs, Pictures, type Disc, type Shape } from './pictures.ts';
+import { cssColor, drawLabels, renderer, screenR, type Label, type Palette, type Renderer, type RGBA, type Scene, type View } from './render.ts';
 
 interface EngineEvents {
   hover(node: number | null, x: number, y: number): void;
@@ -17,8 +18,12 @@ interface EngineEvents {
   label(node: number): string;
 }
 
-/** How far a place is drawn above its people: world radius from its links. */
-const radius = (place: boolean, deg: number) => (place ? 5 + 2.2 * Math.sqrt(deg) : 3.2 + Math.sqrt(deg));
+/** World radius from its links: places above their people, and someone you have chats with above someone only seen. */
+const radius = (place: boolean, deg: number, known: boolean) => (place ? 6 + 2.4 * Math.sqrt(deg) : known ? 6 + 1.2 * Math.sqrt(deg) : 2.6 + 0.8 * Math.sqrt(deg));
+
+/** Pictures show once a node is drawn at least this wide, in CSS pixels; at most this many a frame, biggest first. */
+const PIC_MIN_R = 6.5;
+const PIC_MAX = 700;
 
 export class Engine {
   private r: Renderer;
@@ -26,7 +31,7 @@ export class Engine {
   private w = 1;
   private h = 1;
   private dpr = 1;
-  private scene: Scene = { n: 0, pos: new Float32Array(0), size: new Float32Array(0), color: new Uint8Array(0), shape: new Uint8Array(0), edges: new Uint32Array(0), edgeHi: new Uint8Array(0) };
+  private scene: Scene = { n: 0, pos: new Float32Array(0), size: new Float32Array(0), color: new Uint8Array(0), shape: new Uint8Array(0), minR: new Uint8Array(0), edges: new Uint32Array(0), edgeHi: new Uint8Array(0) };
   private ix: Index | null = null;
   private vis: Visible | null = null;
   /** Global node id → position in the scene. */
@@ -51,6 +56,20 @@ export class Engine {
   /** Same person? suggestions, as pairs of global node ids and their odds: dashed lines (drawSame). */
   private same: { a: number; b: number; p: number }[] = [];
   private sameInk = '#58f';
+  /** What is picked and its neighbours (paint), for dimming the rest. */
+  private near: Set<number> | null = null;
+  /** Per shown node, what its disc needs: names, pictures, networks, and whether you have chats with them. */
+  private info: { id: string; pic?: string; networks: P.Network[]; strong: boolean }[] = [];
+  private pics = new Pictures(() => this.dirty());
+  /** Each node's smallest size when nothing is picked; a picked node and its neighbours are drawn bigger. */
+  private baseMinR = new Uint8Array(0);
+  private rawMinR = new Uint8Array(0);
+
+  /** On a narrow screen (a phone) everything's smallest size is smaller, so the overview is not a pile. */
+  private scaleMin() {
+    const f = this.w < 600 ? 0.7 : 1;
+    this.baseMinR = this.rawMinR.map((r) => Math.max(2, Math.round(r * f)));
+  }
   private ro: ResizeObserver;
   private off: (() => void)[] = [];
 
@@ -89,14 +108,29 @@ export class Engine {
     const pos = seed(n, isPlace, vis.degree, vis.edges, this.kept, (i) => this.key(vis.nodes[i]));
     const size = new Float32Array(n);
     const shape = new Uint8Array(n);
+    const minR = new Uint8Array(n);
     for (let i = 0; i < n; i++) {
       const g = vis.nodes[i];
       const place = g >= np;
-      size[i] = radius(place, vis.degree[i]);
+      const pe = place ? null : ix.graph.people[g];
+      size[i] = radius(place, vis.degree[i], !!pe?.dm.length);
       shape[i] = place ? (ix.graph.places[g - np].kind === 'group' ? 2 : 1) : 0;
+      // However far out: a place by how many are in it, someone you have chats with big enough for their picture, the
+      // rest specks.
+      minR[i] = place ? Math.round(Math.min(3.5 + 1.6 * Math.log2(1 + vis.degree[i]), 22)) : pe!.dm.length || pe!.networks.length > 1 ? 4 : 2;
     }
-    this.scene = { n, pos, size, shape, color: new Uint8Array(n * 4), edges: vis.edges, edgeHi: new Uint8Array(vis.edges.length / 2) };
+    this.info = [...vis.nodes].map((g) => {
+      if (g >= np) {
+        const pl = ix.graph.places[g - np];
+        return { id: pl.id, pic: pl.pic, networks: [pl.network], strong: true };
+      }
+      const pe = ix.graph.people[g];
+      return { id: pe.id, pic: pe.pic, networks: pe.networks, strong: pe.dm.length > 0 || pe.networks.length > 1 };
+    });
+    this.rawMinR = minR.slice();
+    this.scene = { n, pos, size, shape, minR, color: new Uint8Array(n * 4), edges: vis.edges, edgeHi: new Uint8Array(vis.edges.length / 2) };
     this.byDegree = [...Array(n).keys()].filter(isPlace).sort((a, b) => vis.degree[b] - vis.degree[a]);
+    this.scaleMin();
     if (this.selected !== null && !this.local.has(this.selected)) this.selected = null;
     this.theme();
     this.start(pos);
@@ -138,8 +172,10 @@ export class Engine {
     const ys = pts.map((j) => this.scene.pos[2 * j + 1]);
     const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
     const pad = 90;
-    const k = Math.min(most, (this.w - 2 * pad) / Math.max(x1 - x0, 1), (this.h - 2 * pad) / Math.max(y1 - y0, 1));
-    this.view = { k, x: this.w / 2 - ((x0 + x1) / 2) * k, y: this.h / 2 - ((y0 + y1) / 2) * k };
+    // On a phone the card covers the lower half: aim at the half above it.
+    const h = this.w < 600 ? this.h * 0.45 : this.h;
+    const k = Math.min(most, (this.w - 2 * pad) / Math.max(x1 - x0, 1), (h - pad) / Math.max(y1 - y0, 1));
+    this.view = { k, x: this.w / 2 - ((x0 + x1) / 2) * k, y: h / 2 + (this.w < 600 ? 20 : 0) - ((y0 + y1) / 2) * k };
   }
 
   /** The layout moved things: keep what is followed in the middle, or everything in view. */
@@ -284,8 +320,12 @@ export class Engine {
         c = p.bot ? faint : p.networks.length > 1 ? accent : net(p.networks[0]);
       }
       const dim = focus !== null && !near.has(g);
-      this.scene.color.set([c[0], c[1], c[2], dim ? 40 : g >= np ? 255 : 225], 4 * i);
+      // What is picked, big enough for its picture, and what it is in (or who is in it) big enough for theirs.
+      const base = this.baseMinR[i] ?? 2;
+      this.scene.minR[i] = focus === null ? base : g === focus ? Math.max(base, 18) : near.has(g) ? Math.max(base, near.size > 150 ? 0 : near.size > 50 ? 6 : 11) : base;
+      this.scene.color.set([c[0], c[1], c[2], dim ? 40 : g >= np || this.info[i]?.strong ? 255 : 150], 4 * i);
     }
+    this.near = focus !== null ? near : null;
     const e = this.scene.edges;
     const sel = focus !== null ? this.local.get(focus) : undefined;
     const hov = this.hovered !== null ? this.local.get(this.hovered) : undefined;
@@ -310,7 +350,33 @@ export class Engine {
       this.frame = requestAnimationFrame(() => this.draw());
     }
     this.r.draw(this.scene, this.view, this.palette);
-    drawLabels(this.text, this.labels(), this.dpr, this.ink, this.halo, this.font, this.same.length ? (x) => this.drawSame(x) : undefined);
+    drawLabels(this.text, this.labels(), this.dpr, this.ink, this.halo, this.font, (x) => {
+      drawDiscs(x, this.discs(), this.pics, this.halo);
+      if (this.same.length) this.drawSame(x);
+    });
+    this.pics.pump();
+  }
+
+  /** Nodes drawn big enough for a picture, in view: the biggest kept when there are too many, drawn smallest first. */
+  private discs(): Disc[] {
+    const { n, pos, shape } = this.scene;
+    const { k, x: tx, y: ty } = this.view;
+    const np = this.ix?.graph.people.length ?? 0;
+    const out: Disc[] = [];
+    for (let i = 0; i < n; i++) {
+      const r = screenR(this.scene, i, k);
+      if (r < PIC_MIN_R) continue;
+      const x = pos[2 * i] * k + tx;
+      const y = pos[2 * i + 1] * k + ty;
+      if (x < -r || y < -r || x > this.w + r || y > this.h + r) continue;
+      const inf = this.info[i];
+      if (!inf) continue;
+      const g = this.vis!.nodes[i];
+      out.push({ x, y, r, shape: shape[i] as Shape, id: inf.id, name: this.name(g), pic: inf.pic, networks: inf.networks, strong: inf.strong || g >= np, dim: !!this.near && !this.near.has(g) });
+    }
+    out.sort((a, b) => b.r - a.r);
+    if (out.length > PIC_MAX) out.length = PIC_MAX;
+    return out.reverse();
   }
 
   /** Suggested same-person links, dashed, stronger the likelier; the picked person's in full. */
@@ -335,7 +401,7 @@ export class Engine {
       x.setLineDash([]);
       for (const [cx, cy, at] of [[ax, ay, i], [bx, by, j]]) {
         x.beginPath();
-        x.arc(cx, cy, Math.min(this.scene.size[at] * this.view.k, 30) + 4, 0, 2 * Math.PI);
+        x.arc(cx, cy, screenR(this.scene, at, this.view.k) + 4, 0, 2 * Math.PI);
         x.stroke();
       }
       x.setLineDash([5, 4]);
@@ -354,13 +420,23 @@ export class Engine {
   private labels(): Label[] {
     const { ix, vis } = this;
     if (!ix || !vis) return [];
+    const np = ix.graph.people.length;
     const out: Label[] = [];
     const inView = (x: number, y: number) => x > -20 && y > -20 && x < this.w + 20 && y < this.h + 20;
+    const edge = (i: number) => screenR(this.scene, i, this.view.k);
+    /** A place's label: on a pill in its network's colour, with how many people are in it. */
+    const placeLabel = (i: number, strong = false): Label => {
+      const [x, y] = this.screen(i);
+      const pl = ix.graph.places[vis.nodes[i] - np];
+      const n = vis.degree[i];
+      return { x: x + edge(i) - 4, y, text: this.name(vis.nodes[i]), sub: (pl.total ?? n).toLocaleString(), pill: NETWORK_META[pl.network]?.color ?? '#888', big: n >= 200, strong };
+    };
     const add = (g: number, strong = false) => {
       const i = this.local.get(g);
       if (i === undefined) return;
       const [x, y] = this.screen(i);
-      if (inView(x, y)) out.push({ x: x + Math.min(this.scene.size[i] * this.view.k, 30) - 6, y, text: this.name(g), strong });
+      if (!inView(x, y)) return;
+      out.push(g >= np ? placeLabel(i, strong) : { x: x + edge(i) - 4, y, text: this.name(g), strong });
     };
     if (this.hovered !== null) add(this.hovered, true);
     if (this.selected !== null) {
@@ -375,24 +451,26 @@ export class Engine {
       add(s.a);
       add(s.b);
     }
-    // The busiest places in view; people too once close enough to tell them apart.
+    // The busiest places in view, as pills; then the people you have chats with, biggest first, once they are drawn
+    // big enough to tell apart; everyone else when close.
     let n = 0;
     for (const i of this.byDegree) {
-      if (n >= 40) break;
+      if (n >= 36) break;
       const [x, y] = this.screen(i);
-      if (!inView(x, y) || this.scene.size[i] * this.view.k < 4) continue;
-      out.push({ x: x + Math.min(this.scene.size[i] * this.view.k, 30) - 6, y, text: this.name(vis.nodes[i]) });
+      if (!inView(x, y) || (edge(i) < 12 && n >= 8) || (this.w < 600 && n >= 14)) continue;
+      out.push(placeLabel(i));
       n++;
     }
-    if (this.view.k > 2.2) {
-      let m = 0;
-      for (let i = 0; i < this.scene.n && m < 60; i++) {
-        if (this.scene.shape[i]) continue;
-        const [x, y] = this.screen(i);
-        if (!inView(x, y)) continue;
-        out.push({ x: x + 4, y, text: this.name(vis.nodes[i]) });
-        m++;
-      }
+    const people: number[] = [];
+    for (let i = 0; i < this.scene.n; i++) {
+      if (this.scene.shape[i] || edge(i) < (this.info[i]?.strong ? 7 : 10)) continue;
+      const [x, y] = this.screen(i);
+      if (inView(x, y)) people.push(i);
+    }
+    people.sort((a, b) => edge(b) - edge(a));
+    for (const i of people.slice(0, 80)) {
+      const [x, y] = this.screen(i);
+      out.push({ x: x + edge(i) - 4, y, text: this.name(vis.nodes[i]) });
     }
     return out;
   }
@@ -401,13 +479,13 @@ export class Engine {
   private pick(x: number, y: number): number | null {
     let best = -1;
     let bd = Infinity;
-    const { n, pos, size, shape } = this.scene;
+    const { n, pos } = this.scene;
     const { k, x: tx, y: ty } = this.view;
     for (let i = 0; i < n; i++) {
       const dx = pos[2 * i] * k + tx - x;
       const dy = pos[2 * i + 1] * k + ty - y;
       const d = dx * dx + dy * dy;
-      const r = Math.max(size[i] * k, (shape[i] ? MIN_PX.place : MIN_PX.person) / 2) + 4;
+      const r = screenR(this.scene, i, k) + 4;
       if (d < r * r && d < bd) {
         bd = d;
         best = i;
@@ -425,6 +503,10 @@ export class Engine {
     this.r.resize(this.w, this.h, this.dpr);
     this.text.width = Math.round(this.w * this.dpr);
     this.text.height = Math.round(this.h * this.dpr);
+    if ((was.w < 600) !== (this.w < 600)) {
+      this.scaleMin();
+      this.paint();
+    }
     if (this.autoFit) this.fit();
     else {
       this.view.x += (this.w - was.w) / 2;

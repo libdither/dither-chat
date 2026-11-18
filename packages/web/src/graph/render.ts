@@ -13,6 +13,8 @@ export interface Scene {
   color: Uint8Array;
   /** 0 a circle (a person), 1 a rounded square (a server), 2 a diamond (a group). */
   shape: Uint8Array;
+  /** The smallest each is drawn, however far out: a radius in whole CSS pixels. */
+  minR: Uint8Array;
   /** Pairs of node indexes. */
   edges: Uint32Array;
   /** 1 for a link to what is hovered or picked. */
@@ -41,8 +43,8 @@ export interface Renderer {
   destroy(): void;
 }
 
-/** The smallest a node is drawn, in CSS pixels, however far out. */
-export const MIN_PX = { person: 4, place: 7 };
+/** A node's radius on screen, CSS pixels: its world size at this zoom, at least its minimum, at most 48. */
+export const screenR = (s: Scene, i: number, k: number) => Math.min(Math.max(s.size[i] * k, s.minR[i]), 48);
 
 /** Any CSS colour as RGBA 0–255. */
 export function cssColor(c: string, alpha = 1): RGBA {
@@ -75,18 +77,19 @@ attribute vec4 a_c;
 uniform vec2 u_res;
 uniform vec3 u_view;
 uniform float u_dpr;
-uniform vec2 u_min;
 varying vec4 v_c;
 varying float v_shape;
 varying float v_px;
 void main() {
   vec2 s = a_p.xy * u_view.z + u_view.xy;
   gl_Position = vec4(s.x / u_res.x * 2.0 - 1.0, 1.0 - s.y / u_res.y * 2.0, 0.0, 1.0);
-  float px = min(max(a_p.z * 2.0 * u_view.z, a_p.w > 0.5 ? u_min.y : u_min.x), 96.0) * u_dpr;
+  // w packs the shape (0-3) and the minimum radius in pixels (w / 4).
+  float shape = mod(a_p.w, 4.0);
+  float px = min(max(a_p.z * 2.0 * u_view.z, floor(a_p.w / 4.0) * 2.0), 96.0) * u_dpr;
   gl_PointSize = px;
   v_px = px;
   v_c = a_c;
-  v_shape = a_p.w;
+  v_shape = shape;
 }`;
 const NODE_FS = `
 precision mediump float;
@@ -153,7 +156,6 @@ function webgl(canvas: HTMLCanvasElement): Renderer | null {
     nRes: gl.getUniformLocation(nodeProg, 'u_res'),
     nView: gl.getUniformLocation(nodeProg, 'u_view'),
     nDpr: gl.getUniformLocation(nodeProg, 'u_dpr'),
-    nMin: gl.getUniformLocation(nodeProg, 'u_min'),
     nRing: gl.getUniformLocation(nodeProg, 'u_ring'),
     nP: gl.getAttribLocation(nodeProg, 'a_p'),
     nC: gl.getAttribLocation(nodeProg, 'a_c'),
@@ -209,13 +211,12 @@ function webgl(canvas: HTMLCanvasElement): Renderer | null {
         pts[4 * i] = s.pos[2 * i];
         pts[4 * i + 1] = s.pos[2 * i + 1];
         pts[4 * i + 2] = s.size[i];
-        pts[4 * i + 3] = s.shape[i];
+        pts[4 * i + 3] = s.shape[i] + 4 * s.minR[i];
       }
       gl.useProgram(nodeProg);
       gl.uniform2f(loc.nRes, w, h);
       gl.uniform3f(loc.nView, v.x, v.y, v.k);
       gl.uniform1f(loc.nDpr, dpr);
-      gl.uniform2f(loc.nMin, MIN_PX.person, MIN_PX.place);
       gl.uniform4f(loc.nRing, ...norm(p.ring));
       gl.bindBuffer(gl.ARRAY_BUFFER, pBuf);
       gl.bufferData(gl.ARRAY_BUFFER, pts.subarray(0, s.n * 4), gl.DYNAMIC_DRAW);
@@ -267,7 +268,7 @@ function canvas2d(canvas: HTMLCanvasElement): Renderer {
         x.stroke();
       }
       for (let i = 0; i < s.n; i++) {
-        const r = Math.min(Math.max(s.size[i] * v.k, (s.shape[i] ? MIN_PX.place : MIN_PX.person) / 2), 48);
+        const r = screenR(s, i, v.k);
         const sx = s.pos[2 * i] * v.k + v.x;
         const sy = s.pos[2 * i + 1] * v.k + v.y;
         x.fillStyle = rgba(s.color, 4 * i);
@@ -293,6 +294,12 @@ export interface Label {
   text: string;
   /** Drawn bolder, and before the rest so it wins a collision. */
   strong?: boolean;
+  /** Dimmer text after it (a place's count of people). */
+  sub?: string;
+  /** On a pill edged in this colour (a place's network), rather than a halo. */
+  pill?: string;
+  /** Bigger text: a big place. */
+  big?: boolean;
 }
 
 /** Labels at screen positions, skipping any that would overlap one already drawn; `under` draws first, below them. */
@@ -307,17 +314,50 @@ export function drawLabels(c: HTMLCanvasElement, labels: Label[], dpr: number, i
   x.textBaseline = 'middle';
   x.lineJoin = 'round';
   const taken: [number, number, number, number][] = [];
-  for (const l of [...labels.filter((l) => l.strong), ...labels.filter((l) => !l.strong)]) {
-    x.font = `${l.strong ? 600 : 500} ${l.strong ? 13 : 12}px ${font}`;
+  const order = [...labels.filter((l) => l.strong), ...labels.filter((l) => !l.strong && l.pill), ...labels.filter((l) => !l.strong && !l.pill)];
+  for (const l of order) {
+    const size = l.big ? 13.5 : l.strong ? 13 : 12;
+    const weight = l.strong || l.pill ? 600 : 500;
+    x.font = `${weight} ${size}px ${font}`;
     const t = l.text.length > 40 ? l.text.slice(0, 39) + '…' : l.text;
     const w = x.measureText(t).width;
-    const box: [number, number, number, number] = [l.x + 8, l.y - 8, l.x + 12 + w, l.y + 8];
+    x.font = `500 ${size - 1.5}px ${font}`;
+    const sw = l.sub ? x.measureText(l.sub).width + 6 : 0;
+    const padX = l.pill ? 7 : 0;
+    const h = l.pill ? size + 9 : 16;
+    const x0 = l.x + 10 - padX;
+    const box: [number, number, number, number] = [x0 - 2, l.y - h / 2 - 1, x0 + w + sw + 2 * padX + 2, l.y + h / 2 + 1];
     if (taken.some((b) => box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1])) continue;
     taken.push(box);
-    x.strokeStyle = halo;
-    x.lineWidth = 3.5;
-    x.strokeText(t, l.x + 10, l.y);
+    if (l.pill) {
+      x.beginPath();
+      x.roundRect(x0, l.y - h / 2, w + sw + 2 * padX, h, h / 2);
+      x.globalAlpha = 0.86;
+      x.fillStyle = halo;
+      x.fill();
+      x.globalAlpha = 0.9;
+      x.lineWidth = 1.25;
+      x.strokeStyle = l.pill;
+      x.stroke();
+      x.globalAlpha = 1;
+    } else {
+      x.font = `${weight} ${size}px ${font}`;
+      x.strokeStyle = halo;
+      x.lineWidth = 3.5;
+      x.strokeText(t, l.x + 10, l.y);
+      if (l.sub) {
+        x.font = `500 ${size - 1.5}px ${font}`;
+        x.strokeText(l.sub, l.x + 16 + w, l.y);
+      }
+    }
+    x.font = `${weight} ${size}px ${font}`;
     x.fillStyle = ink;
     x.fillText(t, l.x + 10, l.y);
+    if (l.sub) {
+      x.font = `500 ${size - 1.5}px ${font}`;
+      x.globalAlpha = 0.6;
+      x.fillText(l.sub, l.x + 16 + w, l.y);
+      x.globalAlpha = 1;
+    }
   }
 }
