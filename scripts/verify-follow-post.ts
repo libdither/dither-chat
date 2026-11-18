@@ -72,14 +72,14 @@ const unread = (c: any) => (c?.vantages ?? []).reduce((n: number, v: any) => n +
 
 const { page, close } = await launch();
 const q = (s: string) => JSON.stringify(s);
-/** A real press at the middle of the first element matching, once nothing on the page is moving and nothing else lies
- * over that point. */
+/** A real press at the middle of the first element matching, once nothing on the page is moving, it stays where it is
+ * from one frame to the next (an inbox row moves when the list re-sorts), and nothing else lies over that point. */
 async function tap(sel: string, button: 'left' | 'right' = 'left') {
   let r: { x: number; y: number; over?: string } | null = null;
   const end = Date.now() + 15_000;
   do {
     r = await page.eval<{ x: number; y: number; over?: string } | null>(
-      `(() => { const e = document.querySelector(${q(sel)}); if (!e) return null; const moving = document.getAnimations().find((a) => a.playState === 'running' && a.effect?.getTiming().iterations !== Infinity); if (moving) return { x: 0, y: 0, over: 'an animation still running' }; e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); const x = b.left + b.width / 2, y = b.top + b.height / 2; const at = document.elementFromPoint(x, y); return { x, y, ...(b.width && b.height && at && (at === e || e.contains(at)) ? {} : { over: at ? at.outerHTML.slice(0, 120) : 'nothing' }) }; })()`,
+      `(() => { const e = document.querySelector(${q(sel)}); if (!e) return null; const moving = document.getAnimations().find((a) => a.playState === 'running' && a.effect?.getTiming().iterations !== Infinity); if (moving) return { x: 0, y: 0, over: 'an animation still running' }; e.scrollIntoView({ block: 'center' }); return new Promise((ok) => { const a = e.getBoundingClientRect(); requestAnimationFrame(() => requestAnimationFrame(() => { const b = e.getBoundingClientRect(); const x = b.left + b.width / 2, y = b.top + b.height / 2; if (!e.isConnected || a.top !== b.top || a.left !== b.left) return ok({ x, y, over: 'it moved' }); const at = document.elementFromPoint(x, y); ok({ x, y, ...(b.width && b.height && at && (at === e || e.contains(at)) ? {} : { over: at ? at.outerHTML.slice(0, 120) : 'nothing' }) }); })); }); })()`,
     );
     if (r && !r.over) break;
     await Bun.sleep(50);
@@ -164,6 +164,8 @@ try {
   if (shots) await clearToasts().then(() => page.shot(join(shots, 'follow-chat-new.png')));
 
   // ---------------------------------------------------------------- Stop Following, from the row's menu
+  // Read on the page too: the list re-sorts a chat once it is read, and the row moves.
+  await page.until(`!!document.querySelector(${q(`.conv-row[data-row="${cid}"]`)}) && !document.querySelector(${q(`.conv-row[data-row="${cid}"]`)}).classList.contains('unread')`, 10000);
   await tap(`.conv-row[data-row="${cid}"]`, 'right');
   await page.until(`[...document.querySelectorAll('.cm-item, .sheet-action')].some((b) => b.textContent.trim().startsWith('Stop Following'))`, 5000);
   await page.eval(`[...document.querySelectorAll('.cm-item, .sheet-action')].find((b) => b.textContent.trim().startsWith('Stop Following')).setAttribute('data-test', 'stop')`);
