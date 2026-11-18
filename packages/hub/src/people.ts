@@ -40,6 +40,15 @@ const caps = (store: Store, accountId: string): P.Capability[] => JSON.parse(sto
  */
 const ABOUT_IS_STATUS = new Set<P.Network>(['signal', 'whatsapp']);
 
+/**
+ * Someone a network has no profile for, so it is never asked: on Signal, a number or email that SMS reached
+ * (imports/signal-legacy.ts makes them `tel:` and `mailto:` ids). Only an ACI names a Signal account, and the adapter
+ * refuses anything else rather than look it up on the server.
+ */
+const SIGNAL_ACI = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const notOnNetwork = (network: P.Network, nativeId: string): string | null =>
+  network === 'signal' && !SIGNAL_ACI.test(nativeId) ? 'Known only from SMS in an imported backup: there is no Signal profile to ask for.' : null;
+
 /** A fresh answer this recent is not asked again. */
 const FRESH_MS = 10 * 60_000;
 
@@ -100,13 +109,13 @@ export class People {
     // What the network showed unasked (a `personAbout` event) is no answer: it has no posts, so the network is asked.
     if (!force && k && !k.about.unasked && Date.now() - k.at < FRESH_MS) return this.view(identityId, k.accountId, k.about, k.at, undefined);
     const net = NETWORK_META[n.network].name;
-    const why = !accountId
+    const why = notOnNetwork(n.network, n.nativeId) ?? (!accountId
       ? `None of your accounts is on ${net}.`
       : !this.d.online(accountId)
         ? `${net} · ${s.account(accountId)?.label} is not connected; this is what it said last.`
         : !caps(s, accountId).includes('profile')
           ? `The ${net} adapter cannot read profiles yet.`
-          : null;
+          : null);
     if (accountId && !why) {
       try {
         const about = await this.d.command<P.PersonAbout>(accountId, { t: 'profile', who: n.nativeId }, 20_000);
