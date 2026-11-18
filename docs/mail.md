@@ -124,9 +124,12 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
   base64; a forward's files are fetched from the server (`mail.attachment`) then. What the account answers:
   - sent: "Sent", and Sent is asked what changed, so the copy shows in the thread (it threads by In-Reply-To);
   - a dry run: "Dry run: … did not reach the account";
-  - 503, `limited`, or the manager away: tried again, from 2 s up to every 15 min (at once when the manager is back),
-    for a day;
-  - no answer in time: "it may have been sent: look in Sent before sending it again";
+  - 503 (an extractor not ready yet, say), `limited`, the manager away or the account offline: tried again, from 2 s up
+    to every 15 min (at once when the manager is back), for a day. While the account is offline no call is made;
+  - no answer in time (504), a 502 (the page broke after the send), the manager's `unsure`, or `offline` once the call
+    was out: "it may have been sent: look in Sent before sending it again". It is never sent again by itself;
+  - `duplicate`: the manager had sent it already (a try whose answer was lost), so it shows as sent. Each try carries
+    the send's id as `idempotencyKey`, the same every time; a manager that does not know the field ignores it;
   - 501: sending is off for the account, with the extractor's words (Proton today). It stays off while the account's
     status still says it can send, until "Try sending again";
   - 422 `recipients`: the extractor won't send to someone on it (Proton: a pinned key in your contacts, say). Its
@@ -240,8 +243,10 @@ As built, where it differs from §7: "Always from" is its own table, `mail_sende
   the connection is back, once.
 - **When the server says no** (§3.7): 404 drops the change and fetches what changed; 403 undoes every change waiting
   for the account and makes it read only here; 422 (it applied none of it) undoes it; 501 undoes it and hides that
-  button for the account from then on (Proton's `answered`); 410 lists the mailbox again and tries again; anything
-  else is tried again, from 2 s, doubling, ten times, then undone. What failed shows above the list until you dismiss
+  button for the account from then on (Proton's `answered`); 410 lists the mailbox again and tries again. Trouble that
+  may pass (a 503, `offline`, an extractor not ready yet, as Gmail "not attached yet") uses up no try: the account's
+  changes wait for its next status, or from 2 s, doubling to 5 min, whichever comes first. Anything else is tried
+  again, from 2 s, doubling, ten times, then undone. What failed shows above the list until you dismiss
   it.
 - **In part.** A write may apply to some messages and not others (dither-accounts' google kind): the answer names
   the ids the server `refused` and those it could not find (`unknown`), and only those are undone here, with a line
@@ -927,9 +932,25 @@ gap, the account coming online and the hub starting each catch up the same way. 
 the mailbox again and drops what is no longer there. A message removed from one mailbox is deleted only after the
 others were asked, because an IMAP move is a removal there and an addition elsewhere.
 
-A pass that fails is logged and counted (the account's `sync.failures` and `error`, cleared by the next pass that
-works); it goes to errors.ndjson only when it looks like a bug, not for the manager's `offline` or a 503, an account's
-"not now" (the google kind's Gmail page silent or being reloaded). One that lasts shows on the account's page instead.
+### When the account's side fails
+
+Each failed call is sorted once (`mail/backend.ts` troubleOf): **transient** (a 503; the codes `unavailable`,
+`offline`, `backoff`, `limited`, `paused`; an extractor saying it is not ready, as "not attached yet", "has not made a
+sync call", "not open in the sandbox", "still loading", "not connected"; a read that timed out), **layout** (a 502:
+the extractor could not read the service's page), **data** (any other 4xx: this one request) or **bug** (anything
+else).
+
+- **Backing off.** After a transient or layout failure the account's background work (everything but what a page
+  waits for) waits 2 s, doubling with each failure in a row to 10 min, spread ±25%; a call that works ends the wait.
+  A first sync that fails is tried again after a minute, doubling to 30 min. A failed changes pass leaves the
+  mailbox's state where it was, so the next one asks for the same changes.
+- **The bug watch** (`traces/errors.ndjson`, docs/tracing.md) hears of a bug at once, and of transient or layout
+  trouble only once it has lasted 15 min (`MAIL_LIMITS.troubleReportMs`), once for each streak, with `kind`, `status`,
+  `code`, `failures` and `minutes` in its `extra`. A 4xx about one request and an account stopping (`stopped`) are
+  not reported.
+- **On the account's page.** A failed changes pass or first sync is also counted (the account view's `sync.failures`
+  and `error`, cleared by the next changes pass that works), and the Mail section says "Hasn't synced in …" from them
+  and `sync.stateAt` (above).
 
 ### Skipped messages
 

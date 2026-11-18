@@ -149,6 +149,11 @@ export interface OutgoingMail {
   /** A reply to this message (its id): sets In-Reply-To and References, and marks the original answered. */
   replyTo?: string;
   attachments?: OutgoingFile[];
+  /**
+   * The sender's own id for this message, the same on every try: a manager that has sent it already answers with the
+   * code `duplicate` rather than send it again. A manager that does not know the field ignores it.
+   */
+  idempotencyKey?: string;
 }
 
 /** One person `mail.contacts` suggests: an address to write to, and the name the service shows with it. */

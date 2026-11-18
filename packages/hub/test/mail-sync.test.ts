@@ -212,7 +212,7 @@ describe('keeping up', () => {
     await until(() => st.one<{ seen: number }>('SELECT seen FROM mail_message')?.seen === 1, 3000, 'the flag');
   });
 
-  test("the manager's `offline` (an extractor reconnecting) and a 503 are logged, not reported as bugs; other failures are", async () => {
+  test("the manager's `offline` (an extractor reconnecting) is logged, not reported as a bug; other failures are", async () => {
     const reported: ErrorRecord[] = [];
     setErrorLog(new ErrorLog((r) => reported.push(r), { now: () => clock.now(), dedupMs: 0 }));
     try {
@@ -222,12 +222,6 @@ describe('keeping up', () => {
       fake.deliver(ACC, { messageId: '<off@x>', receivedAt: T0 });
       await clock.settle();
       expect(fake.calls.filter((c) => c.op === 'mail.changes').length).toBeGreaterThan(0);
-      expect(reported.filter((r) => r.where === 'mail: changes')).toEqual([]);
-      // A 503 without a code: the google kind's Gmail page silent or reloading, "not now" (mail-remote-google.test.ts).
-      fake.fail('mail.changes', new MailCallError('the Gmail page did not answer in 25 s', 503));
-      fake.deliver(ACC, { messageId: '<later@x>', receivedAt: T0 + 1 });
-      await clock.settle();
-      expect(hub!.sync(ACC)!.failure).toMatchObject({ error: 'the Gmail page did not answer in 25 s' });
       expect(reported.filter((r) => r.where === 'mail: changes')).toEqual([]);
       fake.fail('mail.changes', new MailCallError('Internal Server Error', 500));
       fake.deliver(ACC, { messageId: '<boom@x>', receivedAt: T0 + H });
@@ -261,6 +255,156 @@ describe('keeping up', () => {
     // The queue held it 2 s, then twice that.
     const at = fake.calls.filter((c) => c.op === 'mail.get').map((c) => c.at);
     expect(at.slice(1).map((t, i) => t - at[i])).toEqual([2_000, 4_000]);
+  });
+});
+
+describe('an account whose side keeps failing', () => {
+  /** Every report the hub writes to errors.ndjson, while `fn` runs. */
+  async function reports(fn: (reported: ErrorRecord[]) => Promise<void>) {
+    const reported: ErrorRecord[] = [];
+    setErrorLog(new ErrorLog((r) => reported.push(r), { now: () => clock.now(), dedupMs: 0 }));
+    try {
+      await fn(reported);
+    } finally {
+      setErrorLog(null);
+    }
+  }
+  /** `op` fails with a new error from `make` (as each answer is) while `broken()` holds. */
+  const failWhile = (fake: FakeMailBackend, op: string, make: () => MailCallError, broken: () => boolean) => {
+    for (let i = 0; i < 500; i++) fake.fail(op, make(), () => broken());
+  };
+  const changesAt = (fake: FakeMailBackend) => fake.calls.filter((c) => c.op === 'mail.changes').map((c) => c.at);
+  const gaps = (at: number[]) => at.slice(1).map((t, i) => t - at[i]);
+  const MIN = 60_000;
+
+  test('not ready: the background waits longer after each failure, from 2 s, and a success resets it; the cursor stays', async () => {
+    const { fake, hub, st, synced } = world();
+    await synced();
+    const s = hub.sync(ACC)!;
+    s.queue.random = () => 0.5;
+    const box = st.followed(ACC).find((b) => b.role === 'inbox')!;
+    const cursor = st.mailbox(box.id)!.state;
+    let broken = true;
+    failWhile(fake, 'mail.changes', () => new MailCallError('Gmail is not attached yet', 503, 'unavailable'), () => broken);
+    const from = changesAt(fake).length;
+    for (let i = 0; i < 6; i++) await clock.wait(s.changes(box.id), 3_600_000);
+    expect(gaps(changesAt(fake).slice(from))).toEqual([2_000, 4_000, 8_000, 16_000, 32_000]);
+    expect(st.mailbox(box.id)!.state).toBe(cursor);
+    expect(s.queue.streak).toMatchObject({ n: 6, kind: 'transient' });
+    broken = false;
+    await clock.wait(s.changes(box.id), 3_600_000);
+    expect(s.queue.streak.n).toBe(0);
+    broken = true;
+    const again = changesAt(fake).length;
+    for (let i = 0; i < 2; i++) await clock.wait(s.changes(box.id), 3_600_000);
+    expect(gaps(changesAt(fake).slice(again))).toEqual([2_000]);
+  });
+
+  test('not ready for a while: nothing reported for 15 minutes, then once, with its status and code; once more for a new streak', async () => {
+    await reports(async (reported) => {
+      const { fake, hub, st, synced } = world();
+      await synced();
+      const s = hub.sync(ACC)!;
+      const box = st.followed(ACC).find((b) => b.role === 'inbox')!;
+      let broken = true;
+      failWhile(fake, 'mail.changes', () => new MailCallError('Gmail is not attached yet', 503, 'unavailable'), () => broken);
+      const mine = () => reported.filter((r) => r.where === 'mail: changes');
+      const start = clock.now();
+      // A changes pass a minute (the insurance timer, events), for 40 minutes.
+      while (clock.now() - start < 40 * MIN) {
+        await clock.wait(s.changes(box.id), 3_600_000);
+        await clock.advance(MIN);
+      }
+      expect(mine()).toHaveLength(1);
+      expect(mine()[0].at - start).toBeGreaterThanOrEqual(15 * MIN);
+      expect(mine()[0]).toMatchObject({ message: 'Gmail is not attached yet', extra: { account: ACC, kind: 'transient', status: 503, code: 'unavailable' } });
+      expect(mine()[0].extra!.minutes).toBeGreaterThanOrEqual(15);
+      // It passes, and comes back: a new streak, reported once more when it has lasted as long.
+      broken = false;
+      await clock.wait(s.changes(box.id), 3_600_000);
+      broken = true;
+      const back = clock.now();
+      while (clock.now() - back < 40 * MIN) {
+        await clock.wait(s.changes(box.id), 3_600_000);
+        await clock.advance(MIN);
+      }
+      expect(mine()).toHaveLength(2);
+    });
+  });
+
+  test('a storm of 502s: the cursor stays, the calls thin out, and it is reported once', async () => {
+    await reports(async (reported) => {
+      const { fake, hub, st, synced } = world();
+      await synced();
+      const s = hub.sync(ACC)!;
+      const box = st.followed(ACC).find((b) => b.role === 'inbox')!;
+      const cursor = st.mailbox(box.id)!.state;
+      failWhile(fake, 'mail.changes', () => new MailCallError("could not read Gmail's page", 502), () => true);
+      const from = changesAt(fake).length;
+      const start = clock.now();
+      // Ten events a minute for an hour, each asking for a changes pass.
+      while (clock.now() - start < 60 * MIN) {
+        for (let i = 0; i < 10; i++) void s.changes(box.id);
+        await clock.advance(6_000);
+      }
+      const calls = changesAt(fake).length - from;
+      expect(calls).toBeLessThan(20);
+      expect(st.mailbox(box.id)!.state).toBe(cursor);
+      const mine = reported.filter((r) => r.where === 'mail: changes');
+      expect(mine).toHaveLength(1);
+      expect(mine[0].extra).toMatchObject({ kind: 'layout', status: 502 });
+    });
+  });
+
+  test('a bug is reported at once; a 4xx about one request never', async () => {
+    await reports(async (reported) => {
+      const { fake, hub, st, synced } = world();
+      await synced();
+      const s = hub.sync(ACC)!;
+      const box = st.followed(ACC).find((b) => b.role === 'inbox')!;
+      fake.fail('mail.changes', new MailCallError('no such mailbox', 404));
+      await clock.wait(s.changes(box.id));
+      expect(reported.filter((r) => r.where === 'mail: changes')).toEqual([]);
+      fake.fail('mail.changes', new MailCallError('Cannot read properties of undefined', 500));
+      await clock.wait(s.changes(box.id), 3_600_000);
+      expect(reported.filter((r) => r.where === 'mail: changes').map((r) => [r.message, r.extra?.kind, r.extra?.status])).toEqual([['Cannot read properties of undefined', 'bug', 500]]);
+    });
+  });
+
+  test('the first sync: tried again from a minute, doubling to 30, until it works', async () => {
+    await reports(async (reported) => {
+      let broken = true;
+      const { fake, hub, st, synced } = world({}, (f) => {
+        failWhile(f, 'mail.mailboxes', () => new MailCallError('Gmail is not attached yet', 503, 'unavailable'), () => broken);
+        f.put(ACC, { messageId: '<late@x>', receivedAt: T0 });
+      });
+      hub.sync(ACC)!.queue.random = () => 0.5;
+      await synced();
+      const tries = () => fake.calls.filter((c) => c.op === 'mail.mailboxes').map((c) => c.at);
+      await until(() => tries().length >= 8, 4 * 3_600_000, 'eight tries');
+      expect(gaps(tries())).toEqual([MIN, 2 * MIN, 4 * MIN, 8 * MIN, 16 * MIN, 30 * MIN, 30 * MIN]);
+      // Reported once, as a first sync that has not worked for a while.
+      expect(reported.filter((r) => r.where === 'mail: first sync')).toHaveLength(1);
+      broken = false;
+      await until(() => st.one('SELECT 1 FROM mail_message'), 3_600_000, 'the first sync');
+      expect(st.account(ACC)!.synced_at).toBeTruthy();
+    });
+  });
+
+  test('the account going away (a normal teardown) is not reported', async () => {
+    await reports(async (reported) => {
+      const { fake, hub, st, synced } = world();
+      await synced();
+      const s = hub.sync(ACC)!;
+      const [a, b] = st.followed(ACC);
+      fake.fail('mail.changes', new MailCallError('Gmail is not attached yet', 503, 'unavailable'));
+      await clock.wait(s.changes(a.id));
+      // Held by the failure before it, then the account stops.
+      const held = s.changes(b.id);
+      hub.stop();
+      await clock.wait(held);
+      expect(reported).toEqual([]);
+    });
   });
 });
 
@@ -466,24 +610,24 @@ describe('skipped ids (an answer’s `skipped`: the extractor could not parse th
 
 describe('how stale an account is (sync.stateAt, error, failures)', () => {
   test('failed passes count up with their reason; one that works clears them and moves stateAt', async () => {
-    let now = T0;
-    const { fake, st, synced } = world({}, () => {}, () => now);
+    const { fake, st, synced } = world();
     await synced();
     const inbox = st.mailboxByNative(ACC, 'INBOX')!;
     const view = () => st.accountView(st.account(ACC)!).sync;
     const first = view().stateAt!;
-    expect(first).toBe(T0);
+    expect(first).not.toBeNull();
     expect(view()).toMatchObject({ error: null, failures: 0 });
-    now = T0 + 3 * H;
+    // Three hours on the hub's clock (its own passes on the timer are real-time, so none runs meanwhile).
+    await clock.advance(3 * H);
     fake.fail('mail.changes', new MailCallError('Gmail did not answer', 502, 'failed'));
     fake.fail('mail.changes', new MailCallError('Gmail did not answer again', 502, 'failed'));
-    await clock.wait(hub!.sync(ACC)!.changes(inbox.id));
-    await clock.wait(hub!.sync(ACC)!.changes(inbox.id));
+    await clock.wait(hub!.sync(ACC)!.changes(inbox.id), 3_600_000);
+    await clock.wait(hub!.sync(ACC)!.changes(inbox.id), 3_600_000);
     expect(view()).toMatchObject({ stateAt: first, error: 'Gmail did not answer again', failures: 2 });
-    await clock.wait(hub!.sync(ACC)!.changes(inbox.id));
+    await clock.wait(hub!.sync(ACC)!.changes(inbox.id), 3_600_000);
     // Inbox is up to date; the other followed mailboxes are not yet, so the oldest is still the first.
     expect(view()).toMatchObject({ stateAt: first, error: null, failures: 0 });
-    await clock.wait(hub!.sync(ACC)!.catchUp());
-    expect(view().stateAt).toBe(now);
+    await clock.wait(hub!.sync(ACC)!.catchUp(), 3_600_000);
+    expect(view().stateAt).toBeGreaterThanOrEqual(first + 3 * H);
   });
 });
