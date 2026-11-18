@@ -25,6 +25,8 @@ export interface Timeline {
   fetchedAt?: number;
   /** A copy kept on this device: the journal position it is current to, until the hub has caught it up. */
   from?: P.SyncPosition;
+  /** Shown from an older build's kept page (snapshot.ts): not current to any position until the hub's page is in. */
+  older?: boolean;
   /** Loaded for a glance (Catch up's cards) from what the hub stored: opening it asks the network, as a first open does. */
   glance?: boolean;
 }

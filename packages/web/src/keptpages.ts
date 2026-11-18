@@ -29,6 +29,8 @@ export interface KeptPage {
   /** Authors and reactors of the messages, and the messages replies quote, which the bootstrap may not have. */
   identities: P.IdentityView[];
   quoted: P.MessageView[];
+  /** Given by `take`, never stored: written by an older build, so only the hub's whole page may replace it. */
+  older?: true;
 }
 export interface PageRecord {
   schema: string;
@@ -150,7 +152,10 @@ export class PageCache {
     try {
       const page = JSON.parse(r.text) as KeptPage;
       // An older build's page: shown, then replaced by the hub's (no position, so nothing is caught up from it).
-      if (this.older.delete(key)) delete page.sync;
+      if (this.older.delete(key)) {
+        delete page.sync;
+        page.older = true;
+      }
       // The messages shown are these objects: if nothing changes them, the record stays as it is.
       this.wrote.set(key, { msgs: page.messages.slice(-MAX_PAGE_MESSAGES), convs: (page.conversationIds ?? []).join(','), epoch: epochOf(page.sync) });
       return page;

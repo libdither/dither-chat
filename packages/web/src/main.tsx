@@ -11,7 +11,7 @@ import { installDeskLinks } from './desk.ts';
 import { trackViewport } from './phone.ts';
 import { startAhead } from './ahead.ts';
 import { registerServiceWorker } from './pwa.ts';
-import { dropPages, dropSnapshot, guardOlder, olderFormat, readSnapshot, refuseOlder, restore } from './snapshot.ts';
+import { dropPages, dropSnapshot, olderFormat, OlderGuard, readSnapshot, refuseOlder, restore } from './snapshot.ts';
 import { applyBootstrap, applyEvents, beforeSync, connect, loaded, restoreOutbox } from './state.ts';
 import { installErrorReports } from './errors.ts';
 import './styles.css';
@@ -67,12 +67,10 @@ new PerformanceObserver((list, obs) => {
   reportFresh(fresh.startTime);
 }).observe({ type: 'mark', buffered: true });
 
-// An older build's snapshot that throws while it shows is dropped (snapshot.ts).
-guardOlder();
 
 try {
   // Without a session the sign-in screen stands in for the whole app (login.ts, docs/login.md).
-  const Root = () => (login.value ? <LoginScreen /> : <App />);
+  const Root = () => <OlderGuard>{login.value ? <LoginScreen /> : <App />}</OlderGuard>;
   render(<Root />, document.getElementById('app')!);
 } catch (e) {
   // A snapshot the code cannot render is dropped, once, and the app starts from the hub.

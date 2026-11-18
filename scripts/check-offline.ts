@@ -276,6 +276,16 @@ async function main() {
     const state = await p.eval(`({ logo: !!document.getElementById('boot-static'), app: !!document.querySelector('.app'), source: performance.getEntriesByName('dither:content')[0]?.detail?.source ?? null })`).catch(() => null);
     check(false, 'offline after a deploy that changed the protocol: the conversation shows, from the older snapshot', state);
   }
+  // Views that ask the hub, which is gone: a request that fails is not the older snapshot failing to draw, so it stays.
+  await p.eval('window.__checkOfflineStay = true');
+  for (const hash of ['#/settings', '#/search?q=a']) {
+    lost = [];
+    await p.eval(`location.hash = ${JSON.stringify(hash)}`);
+    await until(`${hash} to ask the hub`, async () => lost.some((f) => f.startsWith('/api/')));
+  }
+  const stayed = await p.eval<boolean>('window.__checkOfflineStay === true');
+  const schema = await snapshotSchema(p);
+  check(stayed && schema === 'older-build', 'requests that fail while it shows (Settings, Search) leave the older snapshot alone', { reloaded: !stayed, schema });
 
   // ------------------------------------------------------------------ 5. a file the cache lost, then the hub back
   const html = readFileSync(join(web, 'index.html'), 'utf8');

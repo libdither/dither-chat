@@ -12,9 +12,10 @@
  * Each snapshot names the protocol it was written under (the vite config hashes packages/protocol into
  * __SNAPSHOT_SCHEMA__). One from an older build (a deploy changed the protocol) is still shown, since protocol changes
  * are nearly always fields added, but nothing is caught up from it: once the hub answers, a full bootstrap replaces it
- * and its kept pages load afresh. If drawing it throws, main.tsx drops it and starts from the hub, once per build.
+ * and its kept pages load afresh. If drawing it throws, OlderGuard drops it and starts from the hub, once per build.
  */
 import type * as P from '@dither-chat/protocol';
+import { Component, type ComponentChildren } from 'preact';
 import { INDEX_KEY, PageCache, type IndexRecord, type KeptPage, type PageRecord, type PageWrites } from './keptpages.ts';
 import { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines } from './store.ts';
 import { calendarLink } from './plans.ts';
@@ -247,21 +248,28 @@ export async function refuseOlder() {
   await Promise.all([dropSnapshot(), dropPages()]);
 }
 
+/** A request that could not reach the hub, or a chunk that could not load: not the snapshot's fault. */
+const NETWORK = /fetch|dynamically imported|NetworkError|Load failed|network/i;
+
 /**
- * An older build's snapshot is drawn by code it was not written for. A TypeError while it is still on screen (a field
- * this build needs and it lacks) drops it, once per build, and the app starts from the hub. Typed sends are in the
- * outbox, not the snapshot, so they stay. main.tsx installs this before the first render.
+ * Around the app (main.tsx): an older build's snapshot is drawn by code it was not written for. A TypeError while
+ * drawing it (a field this build needs and it lacks), while it is still on screen, drops it, once per build, and the
+ * app starts from the hub. Only drawing errors reach here, never a failed request or a click's: a hub out of reach is
+ * what this snapshot is for. Typed sends are in the outbox, not the snapshot, so they stay. Anything else goes on up.
  */
-export function guardOlder() {
-  let refusing = false;
-  const failed = (e: unknown) => {
-    if (refusing || !olderFormat || !(e instanceof TypeError)) return;
-    refusing = true;
-    console.error('the older snapshot did not draw; starting from the hub', e);
-    void refuseOlder().then(() => location.reload());
-  };
-  addEventListener('error', (e) => failed(e.error));
-  addEventListener('unhandledrejection', (e) => failed(e.reason));
+export class OlderGuard extends Component<{ children?: ComponentChildren }> {
+  private refusing = false;
+  componentDidCatch(e: unknown) {
+    if (olderFormat && e instanceof TypeError && !NETWORK.test(e.message) && !this.refusing) {
+      this.refusing = true;
+      console.error('the older snapshot did not draw; starting from the hub', e);
+      void refuseOlder().then(() => location.reload());
+    }
+    throw e;
+  }
+  render() {
+    return this.props.children;
+  }
 }
 
 /** The snapshot kept, this build's or an older one's (`older`); the kept pages go to `pages` either way. */
@@ -340,17 +348,28 @@ export function touchTimeline(key: string) {
 export function restore(s: Snapshot, apply: (b: P.Bootstrap) => void, putIdentities: (i: P.IdentityView[]) => void): boolean {
   const rest = JSON.parse(s.rest) as SnapshotRest;
   if (rest.timelines?.length) pages.adoptLegacy(legacyPages(rest), !!s.older);
-  if (loaded.value) return false;
+  if (loaded.value) {
+    // The hub got here first: an older build's pages are not shown at all (and go at the next save).
+    if (s.older) pages.dropOlder();
+    return false;
+  }
   olderFormat = !!s.older;
   bootstrapAt = s.savedAt;
-  apply(JSON.parse(s.bootstrap) as P.Bootstrap);
-  putIdentities(rest.identities);
-  rest.quoted.forEach((m) => quoted.set(m.id, m));
-  inbox.value = rest.inbox;
-  mailTriage.value = rest.mailTriage ?? [];
-  for (const d of rest.mail?.details ?? []) mailDetails.set(d.thread.id, d);
-  for (const b of rest.mail?.bodies ?? []) mailBodies.set(b.messageId, b);
+  // Before anything is applied: nothing is saved from a restore, even one that throws halfway.
   fromSnapshot = true;
+  try {
+    apply(JSON.parse(s.bootstrap) as P.Bootstrap);
+    putIdentities(rest.identities);
+    rest.quoted.forEach((m) => quoted.set(m.id, m));
+    inbox.value = rest.inbox;
+    mailTriage.value = rest.mailTriage ?? [];
+    for (const d of rest.mail?.details ?? []) mailDetails.set(d.thread.id, d);
+    for (const b of rest.mail?.bodies ?? []) mailBodies.set(b.messageId, b);
+  } catch (e) {
+    // An older build's that does not even apply: dropped, and the app starts from the hub.
+    if (s.older) void refuseOlder().then(() => location.reload());
+    throw e;
+  }
   changed('meta');
   mailChanged();
   timelineChanged();
@@ -475,6 +494,8 @@ async function savePages() {
     // What a timeline is current to: a kept copy not yet caught up, its own position; one loaded here, the client's.
     live: (k) => {
       const t = timelines.get(k);
+      // One shown from an older build's page and not yet loaded from the hub: its stored record stays as it was.
+      if (t?.older) return undefined;
       return t ? { ...t, sync: t.from ?? (t.fetchedAt && !t.loading ? (db.sync ?? undefined) : undefined) } : undefined;
     },
     exists: (k) => (k.startsWith('c:') ? db.conversations.has(k.slice(2)) : k.startsWith('p:') && db.persons.has(k.slice(2))),

@@ -160,6 +160,7 @@ test("a start from an older build's snapshot shows that build's pages without th
   const a = k.c.take('c:a')!;
   expect(a.messages.map((m) => m.id)).toEqual(['a-0', 'a-1']);
   expect(a.sync).toBeUndefined();
+  expect(a.older).toBe(true);
   // c:b opened and loaded from the hub: written again, under this build's schema.
   const b = k.c.take('c:b')!;
   expect(b.sync).toBeUndefined();

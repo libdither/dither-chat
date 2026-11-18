@@ -525,7 +525,7 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
       for (const i of c.identities ?? []) if (!db.identities.has(i.id)) put(db, i);
       for (const m of c.quoted ?? []) if (!quoted.has(m.id)) quoted.set(m.id, m);
     }
-    t = { key, messages: c?.messages ?? [], hasMore: true, loading: false, conversationIds: c?.conversationIds, from: c?.sync };
+    t = { key, messages: c?.messages ?? [], hasMore: true, loading: false, conversationIds: c?.conversationIds, from: c?.sync, ...(c?.older ? { older: true } : {}) };
     timelines.set(key, t);
     if (!o.glance && !older) servedFrom(key, c ? 'kept' : 'hub');
     if (o.glance) t.glance = true;
@@ -569,6 +569,8 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
         t.messages = t.messages.filter((m) => !stale!.has(m.id) || got.has(m.id) || m.ts < from);
       }
       for (const m of page.messages) upsertInto(t.messages, m);
+      // The hub's page is in: what an older build kept is current now.
+      t.older = undefined;
       t.hasMore = page.hasMore;
       got = page.messages.length;
       if (page.conversationIds) t.conversationIds = page.conversationIds;
@@ -589,6 +591,8 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
   } catch (e) {
     // The page did not come (the network, most likely): the timeline keeps what it shows and catches up later.
     console.warn('timeline not loaded', key, e);
+    // An older build's page is not current to anything: the next sync loads it afresh (resync, bootstrap).
+    if (t.older) t.fetchedAt = undefined;
   } finally {
     t.loading = false;
     settle();
@@ -688,7 +692,10 @@ function reload(key: string) {
   // A glance stays one: only opening it asks the network.
   return loadTimeline(key, false, { glance: t.glance }).then(() => {
     const fresh = timelines.get(key);
-    if (fresh) for (const m of t.messages) if (!fresh.messages.some((x) => x.id === m.id)) upsertInto(fresh.messages, m);
+    if (!fresh) return;
+    if (!t.older) for (const m of t.messages) if (!fresh.messages.some((x) => x.id === m.id)) upsertInto(fresh.messages, m);
+    // An older build's page is only replaced, never merged: where the hub's page did not come, it stays as it was.
+    else if (!fresh.messages.length && !fresh.loading) Object.assign(fresh, { messages: t.messages, older: true, fetchedAt: undefined });
     timelineChanged(key);
   });
 }
@@ -718,8 +725,8 @@ const catching = new Set<string>();
 /** A timeline missed something (a message stored without a live event): ask for what is newer than it holds. */
 async function catchUp(key: string) {
   const t = timelines.get(key);
-  // An older build's position is never caught up from: the timeline loads afresh.
-  const pos = olderFormat ? null : db.sync;
+  // An older build's position or page is never caught up from: the timeline loads afresh.
+  const pos = olderFormat || t?.older ? null : db.sync;
   if (!t || catching.has(key)) return;
   catching.add(key);
   try {
@@ -1282,8 +1289,9 @@ function resync() {
     if (!loaded.value || !pos || pos.v !== SYNC_VERSION || olderFormat) return void (release(), bootstrap());
     // Timelines in memory are as current as `db`, or as their kept copy when it has not been caught up yet. One
     // kept under another epoch loads afresh; those loading now catch up on their own.
-    const mine = [...timelines.values()].filter((t) => !t.loading && (t.fetchedAt || t.from));
-    const tls = mine.filter((t) => !t.from || (t.from.v === pos.v && t.from.epoch === pos.epoch));
+    // One shown from an older build's page is not current to `pos`: it loads afresh.
+    const mine = [...timelines.values()].filter((t) => !t.loading && (t.fetchedAt || t.from || t.older));
+    const tls = mine.filter((t) => !t.older && (!t.from || (t.from.v === pos.v && t.from.epoch === pos.epoch)));
     let r: P.SyncResponse;
     try {
       r = await api<P.SyncResponse>('/api/sync', { body: { v: pos.v, epoch: pos.epoch, since: pos.seq, timelines: tls.map((t) => timelineRequest(t, t.from?.seq ?? pos.seq)) } satisfies P.SyncRequest });
