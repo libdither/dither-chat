@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 import { activeCall, callMedia, callNetwork, canCall, canRing, canShareScreen, canVideo, leaveCall, micLevel, setCamera, setDeafened, setMuted, setScreen, startCall } from '../call.ts';
@@ -141,42 +141,44 @@ export function CallDock() {
   );
 }
 
-/** One video: a stream on a <video>, a tap for full screen. */
-function VideoTile({ stream, label, mirror, slot }: { stream: MediaStream; label: string; mirror?: boolean; slot?: string }) {
-  const ref = useRef<HTMLVideoElement>(null);
+type WindowParts = typeof import('./CallWindow.tsx');
+let videoWindow: WindowParts | null = null;
+let loadingWindow: Promise<WindowParts> | null = null;
+
+/** The video window's chunk (CallWindow.tsx), asked for only once a call has video. */
+function useCallWindow(want: boolean): WindowParts['CallWindow'] | null {
+  const [w, setW] = useState(videoWindow);
   useEffect(() => {
-    const v = ref.current;
-    if (v && v.srcObject !== stream) {
-      v.srcObject = stream;
-      v.play().catch(() => {});
-    }
-  }, [stream]);
-  return (
-    <figure class={`call-video ${mirror ? 'mirror' : ''}`} data-video-slot={slot}>
-      <video ref={ref} autoplay playsInline muted onClick={(e) => void (e.currentTarget as HTMLVideoElement).requestFullscreen?.().catch(() => {})} />
-      <figcaption>{label}</figcaption>
-    </figure>
-  );
+    if (!want || w) return;
+    (loadingWindow ??= import('./CallWindow.tsx').then(
+      (m) => (videoWindow = m),
+      (e) => {
+        loadingWindow = null;
+        throw e;
+      },
+    )).then(setW, () => {});
+  }, [want]);
+  return w?.CallWindow ?? null;
 }
 
-/** Video in the call: others' cameras and streams on the bridge's slots, and what this device sends. */
+/** Video in the call: others' cameras and streams on the bridge's slots, and what this device sends, in one window. */
 function CallVideos() {
   const call = activeCall.value;
   const media = callMedia.value;
-  if (!call || call.phase === 'ended') return null;
-  const remote = call.video.map((v) => ({ v, stream: media.slots.get(v.slot) })).filter((x) => !!x.stream);
-  if (!remote.length && !media.camera && !media.screen) return null;
-  return (
-    <div class="call-videos" aria-label="Video">
-      {remote.map(({ v, stream }) => (
-        <VideoTile key={`${v.slot}:${v.who}:${v.source}`} stream={stream!} slot={v.slot} label={`${name(v.who)}${v.source === 'stream' ? ' · screen' : ''}`} />
-      ))}
-      {media.screen && <VideoTile key="my-screen" stream={media.screen} label="Your screen" />}
-      {media.camera && <VideoTile key="my-camera" stream={media.camera} label="You" mirror />}
-    </div>
-  );
+  const live = !!call && call.phase !== 'ended';
+  const remote = live ? call.video.map((v) => ({ v, stream: media.slots.get(v.slot) })).filter((x) => !!x.stream) : [];
+  const any = live && (remote.length > 0 || !!media.camera || !!media.screen);
+  const Window = useCallWindow(any);
+  if (!any || !Window) return null;
+  const me = db.accounts.get(call.accountId)?.selfIdentityId ?? '';
+  const tiles = [
+    ...remote.map(({ v, stream }) => ({ id: `${v.slot}:${v.who}:${v.source}`, stream: stream!, slot: v.slot, who: v.who, share: v.source === 'stream', label: `${name(v.who)}${v.source === 'stream' ? ' · screen' : ''}` })),
+    ...(media.screen ? [{ id: 'my-screen', stream: media.screen, who: me, share: true, label: 'Your screen' }] : []),
+    ...(media.camera ? [{ id: 'my-camera', stream: media.camera, who: me, self: true, label: 'You' }] : []),
+  ];
+  const speaking = new Set(call.participants.filter((p) => p.speaking).map((p) => p.id));
+  return <Window tiles={tiles} speaking={speaking} people={call.participants.length} />;
 }
-
 
 function name(identityId: string): string {
   const i = db.identities.get(identityId);

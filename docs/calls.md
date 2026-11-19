@@ -149,6 +149,7 @@ The script runs two devices as the two demo Discord accounts and the room, each 
 devices, and checks joining (and how fast), hearing and being heard, the join, leave, mute and camera sounds, mute
 reaching the far end and the other device, the camera both ways, sharing a screen and watching it from the other
 device, watching the bot's Go Live, leaving, and a device with no microphone joining to listen.
+`bun scripts/verify-call-window.ts <hub>` checks the video window the same way ("The video window" below).
 
 A demo account can also be rung: the account action `ring` (`{conversation, caller?, video?}`, the conversation's
 native id) makes the caller ring it there, as a network's ring would, and `ringStop` is the caller giving up
@@ -401,12 +402,40 @@ up front, so turning a camera on or a remote video changing never renegotiates:
   `<user>-<ssrc>`), and the connection says what (context `default`: a camera, `stream`: a Go Live). The hook puts
   them on the slots, streams first, then cameras, keeping what plays where it is, and the state's `video` says whose is
   on which; a camera turned off or a stream no longer watched frees its slot.
-- **On the device.** Video floats beside the dock (on a phone, at the top): others' cameras and streams with their
-  names, and what it sends (its own camera mirrored). A tap goes full screen. Someone LIVE has Watch in the open dock.
+- **On the device.** Video shows in one window ("The video window" below): others' cameras and streams with their
+  names, and what it sends (its own camera mirrored). A click goes full screen. Someone LIVE has Watch in the open dock.
   The dock's camera and screen buttons show only in bridge mode, where the account can (`callVideo`); screen sharing
   only where the browser has `getDisplayMedia` (not phones).
 - **Cost.** The sandbox decodes and encodes each video again (measured above). Discord's own clients send H.264; the
   bridge sends the device VP8.
+
+### The video window
+
+All the call's video is in one window (`ui/CallWindow.tsx`, a chunk of its own loaded once the call has video; the
+layout itself is `src/callLayout.ts`, pure and unit-tested). It has no title bar: a round button at its top right,
+shown on hover (always on a touch screen), opens a small menu of three rows:
+
+- **Arrange**: Grid (everyone the same size, in the columns that make them largest) or Speaker (one fills the window,
+  the rest in a strip below). Speaker shows the pinned video, else a shared screen, else whoever is talking (their
+  camera over their stream), else the one it showed last. Double-click a video to pin it big; double-click the pinned
+  one to go back to Grid. A pin mark shows which is pinned.
+- **Your camera**: a tile like the others, a small inset in a corner (drag it; it settles in the nearest corner), or
+  hidden. When it is the only video, it is shown as a tile whatever the choice.
+- **Place**: floating over the conversation (drag it anywhere on the video, past 5 px so a double-click still pins;
+  resize from its lower right corner; it stays on screen), or docked above the conversation, the messages pushed down,
+  with a divider at its foot to drag for its height. Dragging the floating window to the conversation's top docks it;
+  dragging the docked video down floats it.
+
+Every change moves the same video elements to their new places with a transition, so a switch morphs rather than
+redraws. The choices are kept on the device (`dither-chat:call-window` in localStorage, with the floating window's
+place and size and the docked height). Before you pick, the window chooses: two people in the call, Grid with you in
+the corner; a screen being shared, Speaker on it; a phone, Speaker docked at the top, you in the corner. A video's
+edge is green while its person talks. A single click goes full screen (a moment after the click, so a double-click
+pins instead); a click that ends a drag does not.
+
+`scripts/verify-call-window.ts` checks it on a demo hub: the menu,
+each arrangement and camera choice moving the tiles, pinning, moving, resizing, docking and floating again, the choices
+kept, and a phone's start. `--shots <dir>` saves screenshots of each.
 
 ### Sounds
 
