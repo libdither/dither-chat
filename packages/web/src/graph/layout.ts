@@ -10,6 +10,14 @@ interface LayoutInput {
   edges: Uint32Array;
   /** Where each node starts: x0, y0, x1, y1… */
   pos: Float32Array;
+  /** A node held at (0, 0): you, in the middle. */
+  fixed?: number;
+  /** Each link's length as a share of the usual one (yours: shorter to who matters more). */
+  len?: Float32Array;
+  /** Per node, how hard it pushes, instead of from its links (0: as usual): people drawn big need the room. */
+  mass?: Float32Array;
+  /** Pairs of node indexes held close, not drawn: people who may be one person (Same person?), side by side. */
+  ties?: Uint32Array;
 }
 
 const THETA2 = 0.81;
@@ -18,6 +26,13 @@ const LINK = 34;
 const GRAVITY = 0.012;
 const DECAY = 0.62;
 const ALPHA_MIN = 0.004;
+/**
+ * How far apart tied nodes sit, and how hard the tie pulls: twice a link, so people who may be one sit together even
+ * when each is held by a place of their own; never more than nearly halfway each in one step, so they do not overshoot.
+ */
+const TIE = 16;
+const TIE_PULL = 2;
+const TIE_MOST = 0.45;
 
 export class Layout {
   readonly n: number;
@@ -28,6 +43,12 @@ export class Layout {
   private edges: Uint32Array;
   private bias: Float32Array;
   private strength: Float32Array;
+  /** Each link's length at rest: shorter to someone in that one place only. */
+  private rest: Float32Array;
+  private base: Float32Array;
+  private baseMass: Float32Array;
+  private fixed: number;
+  private ties: Uint32Array;
   // The quadtree, rebuilt each tick: per cell its square, children, body (-1 none, -2 split), mass and its centre.
   private cap = 0;
   private x0 = new Float32Array(0);
@@ -48,22 +69,46 @@ export class Layout {
     const deg = new Float32Array(this.n);
     for (let e = 0; e < this.edges.length; e++) deg[this.edges[e]]++;
     this.mass = new Float32Array(this.n);
-    for (let i = 0; i < this.n; i++) this.mass[i] = 1 + Math.sqrt(deg[i]);
+    // Someone in one place only is light: they sit close round it, a tight cloud, rather than pushing it apart.
+    for (let i = 0; i < this.n; i++) this.mass[i] = deg[i] <= 1 ? 0.35 : 1 + Math.sqrt(deg[i]);
+    // You are linked to everyone you talk with: held still, and pushing no harder than a middling place.
+    this.fixed = inp.fixed ?? -1;
+    if (this.fixed >= 0) {
+      this.mass[this.fixed] = 4;
+      this.pos[2 * this.fixed] = this.pos[2 * this.fixed + 1] = 0;
+    }
     // As d3's link force: a link pulls the end with fewer links more, and is weaker between busy nodes.
     const m = this.edges.length / 2;
     this.bias = new Float32Array(m);
     this.strength = new Float32Array(m);
+    this.rest = new Float32Array(m);
     for (let k = 0; k < m; k++) {
       const a = deg[this.edges[2 * k]];
       const b = deg[this.edges[2 * k + 1]];
       this.bias[k] = a / (a + b);
       this.strength[k] = 1 / Math.min(a, b);
+      this.rest[k] = Math.min(a, b) <= 1 ? LINK * 0.45 : LINK;
     }
+    this.ties = inp.ties ?? new Uint32Array(0);
+    this.base = this.rest.slice();
+    this.baseMass = this.mass.slice();
+    this.tune(inp.len, inp.mass);
     this.grow(this.n * 2 + 8);
   }
 
   get done() {
     return this.alpha < ALPHA_MIN;
+  }
+
+  /** New link lengths and pushes (as LayoutInput's); heat() after, to settle into them. */
+  tune(len?: Float32Array, mass?: Float32Array) {
+    if (len) for (let k = 0; k < this.rest.length; k++) this.rest[k] = this.base[k] * (len[k] || 1);
+    if (mass) for (let i = 0; i < this.n; i++) if (i !== this.fixed) this.mass[i] = mass[i] || this.baseMass[i];
+  }
+
+  /** Hold these pairs close instead (as LayoutInput's ties); heat() after. */
+  setTies(ties: Uint32Array) {
+    this.ties = ties;
   }
 
   /** Warm it up again, after the layout changed under it. */
@@ -115,7 +160,7 @@ export class Layout {
       let dx = pos[2 * b] + vel[2 * b] - pos[2 * a] - vel[2 * a];
       let dy = pos[2 * b + 1] + vel[2 * b + 1] - pos[2 * a + 1] - vel[2 * a + 1];
       const l = Math.sqrt(dx * dx + dy * dy) || 1e-3;
-      const f = ((l - LINK) / l) * alpha * this.strength[k];
+      const f = ((l - this.rest[k]) / l) * alpha * this.strength[k];
       dx *= f;
       dy *= f;
       const bb = this.bias[k];
@@ -123,6 +168,26 @@ export class Layout {
       vel[2 * b + 1] -= dy * bb;
       vel[2 * a] += dx * (1 - bb);
       vel[2 * a + 1] += dy * (1 - bb);
+    }
+    // Ties: each end pulled toward the other.
+    const t = this.ties;
+    for (let k = 0; k < t.length; k += 2) {
+      const a = t[k];
+      const b = t[k + 1];
+      let dx = pos[2 * b] - pos[2 * a];
+      let dy = pos[2 * b + 1] - pos[2 * a + 1];
+      const l = Math.sqrt(dx * dx + dy * dy) || 1e-3;
+      const f = ((l - TIE) / l) * Math.min(TIE_MOST, alpha * TIE_PULL);
+      dx *= f;
+      dy *= f;
+      if (a !== this.fixed) {
+        vel[2 * a] += dx;
+        vel[2 * a + 1] += dy;
+      }
+      if (b !== this.fixed) {
+        vel[2 * b] -= dx;
+        vel[2 * b + 1] -= dy;
+      }
     }
     // Toward the middle, then move.
     for (let i = 0; i < n; i++) {
@@ -132,6 +197,10 @@ export class Layout {
       vel[2 * i + 1] *= DECAY;
       pos[2 * i] += vel[2 * i];
       pos[2 * i + 1] += vel[2 * i + 1];
+    }
+    if (this.fixed >= 0) {
+      pos[2 * this.fixed] = pos[2 * this.fixed + 1] = 0;
+      vel[2 * this.fixed] = vel[2 * this.fixed + 1] = 0;
     }
     this.alpha += (0 - this.alpha) * 0.02;
   }

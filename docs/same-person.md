@@ -5,8 +5,8 @@ evidence for it, for you to merge or turn down. Nothing is merged without a clic
 
 **Getting there.** The merge button in the People header (after the graph button), or `#/people/same`. On a phone it is
 a page of its own over the People list. A profile shows the suggestions with that person in them ("Maybe the same
-person", docs/profile.md), and the people graph draws them as dashed links when its "Same person?" chip is on
-(docs/people-graph.md).
+person", docs/profile.md), and the people graph shades each group of them together, with a card to merge them in full
+or in part, when its "Same person?" chip is on (docs/people-graph.md).
 
 Code: `packages/hub/src/matches.ts` (the engine), `matches-worker.ts` (runs it off the hub's thread),
 `samepeople.ts` (`SameMatches`: the list, decisions, merging, jev; `ProfileCollector`: collecting profiles),
@@ -30,7 +30,11 @@ Not every pair is compared. Pairs come from keys two sides share (blocking):
   (`@discord_…:server`) and the account it stands for.
 - **Names and handles**, the rarer the more they count; a handle on one that is the name on the other.
 - **Pictures**: profile picture hashes, in four bands of 16 bits so near ones meet too.
-- **People around them**: people already one person across networks who are friends or group mates of both.
+- **People around them**: people already one person across networks who are friends or group mates of both (group
+  chats of 60 or fewer; a profile's friends and mutual friends). Server membership is left out, as a server says little
+  about who someone is, and so are your own accounts' friend lists: they say who you know, not who they are. One
+  network's user seen by two of your accounts (two Discord accounts in different servers) is one identity already,
+  with nothing to merge.
 
 Each key brings in a few pairs at most, so a common name or a big group adds little work.
 
