@@ -189,6 +189,39 @@ END;
 -- The index's words and how many messages have each, for correcting a misspelt word (docs/search.md).
 CREATE VIRTUAL TABLE IF NOT EXISTS message_fts_vocab USING fts5vocab(message_fts, row);
 
+-- Search by time (docs/search.md, "How a search runs"): the same words again, keyed by when each message was sent, so
+-- newest first (or oldest first) is a walk along the index that stops at the page's end, however many messages match.
+-- A key is ts (whole milliseconds: a network may send a fraction) × 1024 plus the message's rowid mod 1024, which keeps messages of one millisecond apart (a taken key
+-- moves up to the next free one). search_key maps it to the message by id, which a VACUUM keeps. Prefix indexes for
+-- one and two letters: on about a million messages they take the newest matches for "m" or "meeting t" from 160 and 440 ms
+-- to under 5, for about 0.3 ms more a new message. Three letters already match few enough words without one.
+-- Store fills it in for older messages, newest first, in
+-- slices (Store.fillSearchIndexSteps; meta 'search_time_rowid' is how far down it has got, 'search_time_ready' that
+-- it is done).
+CREATE TABLE IF NOT EXISTS search_key (
+  key INTEGER PRIMARY KEY,
+  msg TEXT NOT NULL UNIQUE
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS search_time USING fts5(body, content = '', contentless_delete = 1, prefix = '1 2', tokenize = "unicode61 remove_diacritics 2");
+CREATE TRIGGER IF NOT EXISTS search_time_insert AFTER INSERT ON message BEGIN
+  INSERT INTO search_key (key, msg) VALUES (
+    CASE WHEN EXISTS (SELECT 1 FROM search_key WHERE key = CAST(new.ts AS INTEGER) * 1024 + new.rowid % 1024)
+      -- Taken: the first free key after it, so an insert never fails over a key.
+      THEN (SELECT k.key + 1 FROM search_key k WHERE k.key >= CAST(new.ts AS INTEGER) * 1024 + new.rowid % 1024
+              AND NOT EXISTS (SELECT 1 FROM search_key j WHERE j.key = k.key + 1) ORDER BY k.key LIMIT 1)
+      ELSE CAST(new.ts AS INTEGER) * 1024 + new.rowid % 1024 END,
+    new.id);
+  INSERT INTO search_time (rowid, body) SELECT key, new.body FROM search_key WHERE msg = new.id;
+END;
+CREATE TRIGGER IF NOT EXISTS search_time_delete AFTER DELETE ON message BEGIN
+  DELETE FROM search_time WHERE rowid = (SELECT key FROM search_key WHERE msg = old.id);
+  DELETE FROM search_key WHERE msg = old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS search_time_update AFTER UPDATE OF body ON message WHEN old.body IS NOT new.body BEGIN
+  DELETE FROM search_time WHERE rowid = (SELECT key FROM search_key WHERE msg = new.id);
+  INSERT INTO search_time (rowid, body) SELECT key, new.body FROM search_key WHERE msg = new.id;
+END;
+
 -- Forwards this hub sent, by the message they became, so they show as forwards even where the network has no
 -- such thing. Keyed by hub message id; the message itself may arrive before or after this row.
 CREATE TABLE IF NOT EXISTS forward_sent (
@@ -1026,3 +1059,28 @@ CREATE TABLE IF NOT EXISTS post_follow_found (
   at              INTEGER NOT NULL
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS post_follow_found_conv ON post_follow_found(conversation_id, at);
+
+-- People search keeps every identity's names in memory (Store.findPeople) and reloads only those written since:
+-- these triggers note which. (Not OR IGNORE: an outer statement's conflict clause would override it.)
+CREATE TABLE IF NOT EXISTS people_dirty (id TEXT PRIMARY KEY) WITHOUT ROWID;
+CREATE TRIGGER IF NOT EXISTS people_dirty_identity_insert AFTER INSERT ON identity BEGIN
+  INSERT INTO people_dirty (id) SELECT new.id WHERE NOT EXISTS (SELECT 1 FROM people_dirty WHERE id = new.id);
+END;
+CREATE TRIGGER IF NOT EXISTS people_dirty_identity_update AFTER UPDATE OF display_name, handle, nickname, net_nickname, net_note, status, person_id ON identity BEGIN
+  INSERT INTO people_dirty (id) SELECT new.id WHERE NOT EXISTS (SELECT 1 FROM people_dirty WHERE id = new.id);
+END;
+CREATE TRIGGER IF NOT EXISTS people_dirty_identity_delete AFTER DELETE ON identity BEGIN
+  INSERT INTO people_dirty (id) SELECT old.id WHERE NOT EXISTS (SELECT 1 FROM people_dirty WHERE id = old.id);
+END;
+CREATE TRIGGER IF NOT EXISTS people_dirty_person AFTER UPDATE OF name, note, starred, is_self ON person BEGIN
+  INSERT INTO people_dirty (id) SELECT id FROM identity WHERE person_id = new.id AND id NOT IN (SELECT id FROM people_dirty);
+END;
+CREATE TRIGGER IF NOT EXISTS people_dirty_about_insert AFTER INSERT ON about WHEN new.target_id LIKE 'idn\_%' ESCAPE '\' BEGIN
+  INSERT INTO people_dirty (id) SELECT new.target_id WHERE NOT EXISTS (SELECT 1 FROM people_dirty WHERE id = new.target_id);
+END;
+CREATE TRIGGER IF NOT EXISTS people_dirty_about_update AFTER UPDATE OF data ON about WHEN new.target_id LIKE 'idn\_%' ESCAPE '\' BEGIN
+  INSERT INTO people_dirty (id) SELECT new.target_id WHERE NOT EXISTS (SELECT 1 FROM people_dirty WHERE id = new.target_id);
+END;
+CREATE TRIGGER IF NOT EXISTS people_dirty_change_log AFTER INSERT ON change_log WHEN new.target_kind = 'identity' AND new.field IN ('displayName', 'handle') BEGIN
+  INSERT INTO people_dirty (id) SELECT new.target_id WHERE NOT EXISTS (SELECT 1 FROM people_dirty WHERE id = new.target_id);
+END;
