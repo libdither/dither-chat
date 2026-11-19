@@ -25,6 +25,8 @@ export interface SearchQuery {
   before: number | null;
   relevance: boolean;
   oldest: boolean;
+  /** sort:newest typed: newest first and nothing else, no top matches above. */
+  newest: boolean;
   /** Mail only: recipients (To or Cc), either side (From, To or Cc), words in the subject, labels. */
   to: string[];
   with: string[];
@@ -86,7 +88,7 @@ export function searchDay(s: string, end: boolean, now = new Date()): number | n
 }
 
 export function parseSearch(input: string, now = new Date(), kind: 'chat' | 'mail' = 'chat'): SearchQuery {
-  const q: SearchQuery = { terms: [], phrases: [], not: [], from: [], in: [], network: [], account: [], has: [], is: [], mentionsMe: false, mentions: [], after: null, before: null, relevance: false, oldest: false, to: [], with: [], subject: [], label: [], filename: [] };
+  const q: SearchQuery = { terms: [], phrases: [], not: [], from: [], in: [], network: [], account: [], has: [], is: [], mentionsMe: false, mentions: [], after: null, before: null, relevance: false, oldest: false, newest: false, to: [], with: [], subject: [], label: [], filename: [] };
   const day = (s: string, end: boolean) => searchDay(s, end, now);
   const mail = kind === 'mail';
   for (const m of input.matchAll(/(-?)(?:(\w+):)?(?:"([^"]*)"|(\S+))/g)) {
@@ -111,7 +113,7 @@ export function parseSearch(input: string, now = new Date(), kind: 'chat' | 'mai
     if (!neg && key) {
       if (key === 'sort' && low === 'relevance') { q.relevance = true; continue; }
       if (key === 'sort' && low === 'oldest') { q.oldest = true; continue; }
-      if (key === 'sort' && low === 'newest') continue;
+      if (key === 'sort' && low === 'newest') { q.newest = true; continue; }
       if (key === 'after' && day(val, true) !== null) { q.after = day(val, true); continue; }
       if (key === 'before' && day(val, false) !== null) { q.before = day(val, false); continue; }
       if (key === 'during' && day(val, false) !== null) { q.after = day(val, false); q.before = day(val, true); continue; }

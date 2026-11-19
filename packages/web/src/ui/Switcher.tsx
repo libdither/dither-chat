@@ -5,7 +5,6 @@
 import type * as P from '@dither-chat/protocol';
 import type { JSX } from 'preact';
 import { useMemo } from 'preact/hooks';
-import { allCommunities, communitiesOf, convLabel, convTitle, directsOf, netName, people, visibleConv } from '../model.ts';
 import { shownInbox } from '../inbox.ts';
 import { db, go, type Route } from '../state.ts';
 import { describeAddRef, joinsSomething, mailboxList, parseAdd, viewList } from '@dither-chat/protocol';
@@ -17,7 +16,7 @@ import { Avatar, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { closePalette, pushPage } from './Palette.tsx';
 import { Frame, type Row } from './PaletteFrame.tsx';
-import { homeRoute } from '../opening.ts';
+import { jumpTargets } from '../jump.ts';
 
 interface Item {
   key: string;
@@ -35,10 +34,6 @@ interface Item {
   also?: string[];
 }
 
-const scoreOf = (ids: string[]) => {
-  const s = ids.map((id) => db.attention.get(id)?.score).filter((x): x is number => x !== undefined);
-  return s.length ? Math.max(...s) : null;
-};
 
 /** New group (the next step): its page. Set, it shows as a row of New and of the root; null keeps both off. */
 export const NEW_GROUP: PageRef | null = { kind: 'group' };
@@ -87,17 +82,13 @@ function items(): Item[] {
     out.push(action('a:scan', 'Scan a code', 'An invite or a profile, with the camera or a picture', 'scan', { kind: 'scan' }));
     out.push(action('a:mine', 'My code', "Your accounts' codes, for someone to scan", 'qr', { kind: 'mine' }));
   }
-  for (const { person, last } of people()) {
-    // Found by any of their accounts' names and handles too, not only the name the person goes by.
-    const also = person.identityIds.flatMap((id) => ((i) => (i ? [i.displayName, i.handle, i.nickname] : []))(db.identities.get(id))).filter((n): n is string => !!n && n !== person.name);
-    out.push({ key: person.id, label: person.name, sub: 'Person', icon: <Avatar id={person.id} name={person.name} url={person.avatar} size={24} />, to: { view: 'people', person: person.id }, last, score: scoreOf(directsOf(person.id).map((d) => d.id)), track: 'row (person)', also });
-  }
-  for (const s of allCommunities()) out.push({ key: s.id, label: s.name, sub: `${netName(s.network)} community`, icon: <Avatar id={s.id} name={s.name} url={s.icon} size={24} square network={s.network} />, to: { view: 'space', space: s.id }, last: 0, track: 'row (community)' });
-  for (const f of db.folders) out.push({ key: f.id, label: f.name, sub: 'Folder', icon: <Icon name="folder" size={18} />, to: { view: 'folder', folder: f.id }, last: 0, track: 'row (folder)' });
-  for (const c of db.conversations.values()) {
-    if (!visibleConv(c) || c.shape === 'direct') continue;
-    const com = communitiesOf(c)[0];
-    out.push({ key: c.id, label: c.shape === 'channel' ? convLabel(c) : convTitle(c), sub: com ? com.name : netName(c.network), icon: <NetGlyph network={c.network as P.Network} size={16} />, to: homeRoute(c), last: c.lastMessageAt ?? 0, score: scoreOf([c.id]), track: 'row (place)' });
+  for (const t of jumpTargets()) {
+    const icon =
+      t.person ? <Avatar id={t.person.id} name={t.person.name} url={t.person.avatar} size={24} />
+      : t.space ? <Avatar id={t.space.id} name={t.space.name} url={t.space.icon} size={24} square network={t.space.network} />
+      : t.conv ? <NetGlyph network={t.conv.network as P.Network} size={16} />
+      : <Icon name="folder" size={18} />;
+    out.push({ key: t.key, label: t.label, sub: t.sub, icon, to: t.to, last: t.last, score: t.score, track: `row (${t.kind === 'place' ? 'place' : t.kind})`, ...(t.also ? { also: t.also } : {}) });
   }
   return out;
 }

@@ -1304,6 +1304,8 @@ export interface SearchHit {
   /** With &context=n: the messages just before and after it in its conversation, oldest first. */
   before?: MessageView[];
   after?: MessageView[];
+  /** A top match's reason in a few words ("DM · you talk often"), from what ranked it (docs/search.md, "Ranking"). */
+  why?: string;
 }
 
 /** Someone found by a name, a handle, a name they had before, your nickname or note, their status or bio. */
@@ -1325,6 +1327,11 @@ export interface SearchPage {
   mode: 'fulltext' | 'substring' | 'filters';
   /** Nothing matched as typed, so these hits are for this query instead, a misspelt word corrected. Page with it. */
   corrected?: string;
+  /**
+   * With no sort: the best few matches, ranked by how well, how lately and how close to you (docs/search.md,
+   * "Ranking"), shown above the newest. First page only; they also appear in `hits` where they fall.
+   */
+  top?: SearchHit[];
 }
 
 /** A message with what surrounds it, for jumping to it. */

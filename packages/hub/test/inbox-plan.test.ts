@@ -23,7 +23,7 @@ describe('the inbox query', () => {
     const cid = store.one<{ id: string }>(`SELECT id FROM conversation WHERE native_id = 'c1'`)!.id;
     const author = store.one<{ id: string }>(`SELECT id FROM identity WHERE native_id = 'ann'`)!.id;
     // Many rows, fast: this store is thrown away, so full-text search can go without them.
-    store.db.exec('DROP TRIGGER message_fts_insert');
+    store.db.exec('DROP TRIGGER message_fts_insert; DROP TRIGGER search_time_insert');
     const msg = store.db.query(`INSERT INTO message (id, conversation_id, network, native_id, author_id, ts, body) VALUES (?, ?, 'discord', ?, ?, ?, 'hi')`);
     const tri = store.db.query(`INSERT INTO triage (message_id, decision, score, reasons, decided_by, created_at) VALUES (?, ?, ?, '[]', 'rules', ?)`);
     let seed = 7;
