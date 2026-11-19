@@ -44,6 +44,8 @@ export interface CallParticipant {
   localMute?: boolean;
   /** On a stage: what they are there (StageRole). Absent outside a stage. */
   stage?: StageRole;
+  /** On a stage: they moderate it (may invite people to speak and move speakers to the audience). Absent: not known or not. */
+  stageModerator?: boolean;
 }
 
 /**

@@ -1,0 +1,311 @@
+/* The room view (CallRoom.tsx): loaded with its chunk. Its own section; the dock's people are CallPanel.css. */
+.croom {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  background: var(--bg-center);
+  overflow: hidden;
+}
+.croom-main {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+  min-height: 0;
+  padding: 18px 22px 14px;
+  overflow-y: auto;
+}
+.croom-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.croom-title {
+  flex: 1;
+  min-width: 0;
+}
+.croom-title b {
+  display: block;
+  font-size: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.croom-title span {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.croom-zone h4,
+.croom-side-part h4 {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+.croom-speakers,
+.croom-audience {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.croom-speakers {
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 16px 10px;
+}
+.croom-audience {
+  grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+  gap: 12px 6px;
+}
+.croom-person {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.croom-person:disabled {
+  cursor: default;
+}
+.croom-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.croom-listener .croom-name {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.croom-listener {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.croom-role {
+  margin-top: -4px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* A face: a square box (never an inline span's box, which made the ring an oval), the ring its own ::after. Moves to
+   CallAvatar once the speaking indicators land. */
+.croom-av {
+  position: relative;
+  display: block;
+  flex: none;
+  width: var(--s);
+  height: var(--s);
+}
+.croom-av .avatar {
+  display: block;
+}
+.croom-av::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2.5px var(--good);
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+.croom-av.speaking::after {
+  opacity: 1;
+}
+.croom-badge {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  display: grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 2px;
+  border-radius: 9px;
+  border: 2px solid var(--bg-center);
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1;
+}
+.croom-badge.muted {
+  color: var(--danger);
+}
+.croom-badge.invited {
+  color: var(--good);
+}
+.croom-more {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bg-hover);
+  font-size: 11px;
+  font-weight: 600;
+}
+.croom-quiet {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.croom-controls {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+}
+.croom-note {
+  width: 100%;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.croom-btn {
+  height: 38px;
+  min-width: 38px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 19px;
+  background: var(--bg-hover);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-grid;
+  place-items: center;
+}
+.croom-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.croom-btn.round {
+  width: 38px;
+  padding: 0;
+}
+.croom-btn.off {
+  color: var(--danger);
+}
+.croom-btn.leave {
+  background: var(--danger);
+  color: #fff;
+}
+.croom-btn.hand {
+  background: color-mix(in srgb, var(--warn) 20%, transparent);
+  color: var(--warn);
+}
+.croom-btn.go {
+  background: var(--good);
+  color: #fff;
+}
+
+.croom-side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  min-height: 0;
+  padding: 18px 14px;
+  background: var(--bg-sidebar);
+  border-left: 1px solid var(--border-soft);
+  overflow-y: auto;
+}
+.croom-side-part {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.croom-side-part h4 {
+  margin-bottom: 2px;
+}
+.croom-request {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+}
+.croom-request .croom-name {
+  flex: 1;
+  font-size: 12px;
+}
+.croom-invite {
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--good);
+  color: #fff;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.croom-hand-faces {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.croom-line {
+  margin: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.croom-line span {
+  color: var(--text-dim);
+}
+.croom-open-chat {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--link, var(--accent));
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+@media (max-width: 700px) {
+  /* One column that scrolls as a whole: the room, then the side column under it. */
+  .croom {
+    display: block;
+    overflow-y: auto;
+  }
+  .croom-main {
+    min-height: auto;
+    padding: 14px 16px 0;
+    overflow: visible;
+  }
+  .croom-speakers {
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  }
+  .croom-controls {
+    position: sticky;
+    bottom: 0;
+    padding: 10px 0;
+    background: var(--bg-center);
+  }
+  .croom-side {
+    border-left: 0;
+    border-top: 1px solid var(--border-soft);
+    overflow: visible;
+  }
+}

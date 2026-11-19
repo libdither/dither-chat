@@ -128,10 +128,13 @@ export function callNetwork(call: Pick<ActiveCall, 'accountId'>): P.Network {
   return db.accounts.get(call.accountId)?.network ?? 'discord';
 }
 
-/** A voice channel's account to call from: the one chosen to send as in this chat, else the first online one that can. */
+/**
+ * A voice or stage channel's account to call from: the one chosen to send as in this chat, else the first online one
+ * that can (on a stage, one with the capability 'stage', so it can take part beyond listening).
+ */
 export function canCall(c: P.ConversationView): string | null {
-  const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && a.capabilities.includes('calls') && a.status === 'online');
-  if (c.variant !== 'voice') return null;
+  if (c.variant !== 'voice' && c.variant !== 'stage') return null;
+  const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && a.capabilities.includes('calls') && (c.variant !== 'stage' || a.capabilities.includes('stage')) && a.status === 'online');
   return (accounts.find((a) => a.id === prefs.value.sendAs[c.id]) ?? accounts[0])?.id ?? null;
 }
 

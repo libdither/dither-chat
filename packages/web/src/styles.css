@@ -3649,6 +3649,34 @@ textarea.chip-box {
   opacity: 0.7;
   padding: 12px;
 }
+/* The Room / Chat switch over a stage you are in (CallRoomLazy.tsx); the room's own styles are CallRoom.css. */
+.room-switch {
+  display: flex;
+  gap: 4px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-center);
+}
+.room-switch button {
+  padding: 4px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.room-switch button.on {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.room-loading {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+}
 .voice-note {
   display: flex;
   align-items: center;
