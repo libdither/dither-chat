@@ -628,15 +628,21 @@ export class HubServer {
     // What a flush writes (attention's folds, one transaction per conversation; the journal) is one transaction: one
     // commit, and each commit waits for the disk on the hub's thread. The frame goes out once it is committed.
     // Every 80 ms: a span only when there was something to send (docs/tracing.md).
+    // It takes the write lock as it begins (BEGIN IMMEDIATE). Begun as a read, it reads first and writes last; if
+    // another connection committed in between, SQLite cannot turn it into a write and fails at once
+    // (SQLITE_BUSY_SNAPSHOT), with no wait for busy_timeout: what the live hub hit in a flush at two deploys' stops.
+    // Begun immediate, it waits for the lock like any write and then reads what is newest.
     const s = startSpan('flush');
     let events: P.ClientEvent[] = [];
     let frame: string | null = null;
     try {
       frame = timedWrite('flush', () =>
-        this.store.db.transaction(() => {
-          events = this.gather();
-          return this.record(events);
-        })(),
+        this.store.db
+          .transaction(() => {
+            events = this.gather();
+            return this.record(events);
+          })
+          .immediate(),
       );
     } catch (e) {
       // The commit failed (a lock held past busy_timeout): attention's folds are undone and fold again later; what
