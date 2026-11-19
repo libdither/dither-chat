@@ -10,7 +10,7 @@
  * Ids, names, indexes and pictures (signed media links, as a chat list has them), never message text.
  */
 import type * as P from '@dither-chat/protocol';
-import { GRAPH_SOURCE } from '@dither-chat/protocol';
+import { GRAPH_SOURCE, GRAPH_WEIGHT_KEYS } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import type { Store } from './store.ts';
 
@@ -195,4 +195,41 @@ function meOf(s: Store, accounts: Row[]): P.PeopleGraph['me'] {
   const i = ids.length ? (s.db.query(`SELECT display_name, handle, avatar_url, seen_via FROM identity WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY avatar_url IS NULL LIMIT 1`).get(...ids) as Row | null) : null;
   const pic = s.mediaUrl(p?.avatar_url ?? i?.avatar_url, i?.seen_via ?? accounts[0]?.id ?? null);
   return { name: p?.name ?? i?.display_name ?? i?.handle ?? 'You', ...(pic ? { pic } : {}) };
+}
+
+/** Your tuning of the graph's importance (docs/people-graph.md "How it is worked out, and tuning it"), or null when never tuned. */
+export function graphTuning(db: Store['db']): P.GraphTuning | null {
+  const r = db.query(`SELECT value FROM arrange_setting WHERE key = 'graphTuning'`).get() as Row | null;
+  if (!r) return null;
+  try {
+    return cleanTuning(JSON.parse(r.value));
+  } catch {
+    return null;
+  }
+}
+
+/** Keeps a tuning (null forgets it); what is not a number in range is refused. */
+export function setGraphTuning(db: Store['db'], t: unknown): P.GraphTuning | null {
+  if (t === null) {
+    db.query(`DELETE FROM arrange_setting WHERE key = 'graphTuning'`).run();
+    return null;
+  }
+  const clean = cleanTuning(t);
+  if (!clean) throw new Error('bad tuning');
+  db.query(`INSERT OR REPLACE INTO arrange_setting (key, value) VALUES ('graphTuning', ?)`).run(JSON.stringify(clean));
+  return clean;
+}
+
+const inRange = (x: unknown, lo: number, hi: number): x is number => typeof x === 'number' && Number.isFinite(x) && x >= lo && x <= hi;
+
+function cleanTuning(t: any): P.GraphTuning | null {
+  if (!t || typeof t !== 'object' || !t.weights || typeof t.weights !== 'object' || !inRange(t.fade, 3, 60)) return null;
+  const weights = {} as P.GraphTuning['weights'];
+  for (const k of GRAPH_WEIGHT_KEYS) {
+    if (!inRange(t.weights[k], 0, 3)) return null;
+    weights[k] = t.weights[k];
+  }
+  const f = t.fitted;
+  const fitted = f && inRange(f.at, 0, 1e15) && inRange(f.before, 0, 1) && inRange(f.after, 0, 1) ? { at: f.at, before: f.before, after: f.after } : undefined;
+  return { weights, fade: t.fade, ...(fitted ? { fitted } : {}) };
 }

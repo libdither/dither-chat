@@ -2,7 +2,7 @@
  * Closeness (closeness.ts): how much you have had to do with each person, month by month. Direct chats count every
  * message either way, groups count their messages less the bigger the group, servers count replies between you and
  * their mentions of you; bots count for nothing; activityView sums a person's identities, and the graph sends you
- * apart.
+ * apart. Ties between two other people: replies, reactions, turns in a small group, and friends a profile names.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hubId } from '@dither-chat/protocol/ids';
 import { activityView, closeness } from '../src/closeness.ts';
-import { peopleGraph } from '../src/graph.ts';
+import { graphTuning, peopleGraph, setGraphTuning } from '../src/graph.ts';
 import { Store } from '../src/store.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'dither-closeness-'));
@@ -56,6 +56,14 @@ beforeAll(() => {
   msg(d, 'ch', 'dee', MAR24 + 3, { mentionsSelf: true, mentionsAll: true });
   msg(d, 'ch', 'dee', MAR24 + 4);
   store.db.query('INSERT INTO about (target_id, account_id, data, fetched_at) VALUES (?, ?, ?, ?)').run(did('dee'), d.id, JSON.stringify({ mutualFriends: [{ id: 'a' }, { id: 'b' }] }), 1);
+  // Others in the channel: Eve answers Dee twice and reacts to one of Dee's; a profile says Eve and Dee are friends.
+  store.ingest(d, { t: 'identity', identity: { nativeId: 'eve', displayName: 'Eve' } });
+  msg(d, 'ch', 'dee', MAR24 + 10);
+  const dee = n;
+  msg(d, 'ch', 'eve', MAR24 + 11, { replyTo: `m${dee}` });
+  msg(d, 'ch', 'eve', MAR24 + 12, { replyTo: `m${dee}` });
+  store.db.query(`INSERT INTO reaction (message_id, identity_id, key) VALUES (?, ?, '👍')`).run(hubId('msg', 'discord', `m${dee}`), did('eve'));
+  store.db.query('INSERT INTO about (target_id, account_id, data, fetched_at) VALUES (?, ?, ?, ?)').run(did('eve'), d.id, JSON.stringify({ mutualFriends: ['dee'] }), 1);
 });
 afterAll(() => {
   store.db.close();
@@ -70,7 +78,7 @@ test('each kind of talk, by month, weight × 10; you are never counted', () => {
   expect(run.byIdentity[did('dee')]).toEqual([month(2024, 2), 25]);
   expect(Object.keys(run.byIdentity).some((k) => k === did('me') || k === sid('mes'))).toBe(false);
   expect(run.byIdentity[did('helper')]).toBeUndefined();
-  expect(run.mutual).toEqual({ [did('dee')]: 2 });
+  expect(run.mutual).toEqual({ [did('dee')]: 2, [did('eve')]: 1 });
   expect(run.from).toBe(month(2023, 0));
 });
 
@@ -117,4 +125,40 @@ test('the graph says which accounts list someone as a friend', () => {
   const ai = g.accounts.indexOf(d);
   expect(g.people.find((p) => p.id === did('dee'))?.friend).toEqual([ai]);
   expect(g.people.find((p) => p.id === store.ensurePerson(did('ann')))?.friend).toBeUndefined();
+});
+
+test('ties between two others: replies and reactions either way, turns in a small group; never you', () => {
+  const run = closeness(store.db);
+  const key = (a: string, b: string) => (a < b ? `${a} ${b}` : `${b} ${a}`);
+  // Eve answered Dee twice (1 each) and reacted once (0.3).
+  expect(run.ties[key(did('dee'), did('eve'))]).toEqual([month(2024, 2), 23]);
+  // In the group of three, Ann spoke right after Fay: a turn (0.5). Your own turns and replies tie no one to you.
+  expect(run.ties[key(sid('ann-s'), sid('fay'))]).toEqual([month(2023, 0), 5]);
+  expect(Object.keys(run.ties).some((k) => k.includes(did('me')) || k.includes(sid('mes')))).toBe(false);
+  expect(run.friendPairs).toEqual([did('eve'), did('dee')]);
+});
+
+test('the activity keys ties as the graph does, leaving out pairs under 2', () => {
+  const t = activityView(store, closeness(store.db)).ties!;
+  const pairs: [string, string, number[]][] = [];
+  for (let k = 0; k < t.links.length; ) {
+    const n = t.links[k + 2];
+    pairs.push([t.ids[t.links[k]], t.ids[t.links[k + 1]], t.links.slice(k + 3, k + 3 + 2 * n)]);
+    k += 3 + 2 * n;
+  }
+  // Ann and Fay's one turn is too little; Dee and Eve's 2.3 is kept.
+  expect(pairs.map(([a, b, m]) => [[a, b].sort(), m])).toEqual([[[did('dee'), did('eve')].sort(), [month(2024, 2), 23]]]);
+  expect([t.ids[t.friends[0]], t.ids[t.friends[1]]].sort()).toEqual([did('dee'), did('eve')].sort());
+});
+
+test('your tuning of importance is kept, checked, and can be forgotten', () => {
+  expect(graphTuning(store.db)).toBeNull();
+  const tuning = { weights: { talk: 1, places: 0.5, friends: 0.4, listed: 0.6, networks: 0.3, circle: 0.8 }, fade: 12, fitted: { at: 5, before: 0.4, after: 0.6 } };
+  expect(setGraphTuning(store.db, tuning)).toEqual(tuning);
+  expect(graphTuning(store.db)).toEqual(tuning);
+  expect(() => setGraphTuning(store.db, { ...tuning, fade: 100 })).toThrow();
+  expect(() => setGraphTuning(store.db, { ...tuning, weights: { ...tuning.weights, talk: -1 } })).toThrow();
+  expect(graphTuning(store.db)).toEqual(tuning);
+  setGraphTuning(store.db, null);
+  expect(graphTuning(store.db)).toBeNull();
 });

@@ -59,7 +59,7 @@ import { People } from './people.ts';
 import { AccountSelf, ignoredOf } from './accountself.ts';
 import { mentionables } from './mentions.ts';
 import { lowerForSend } from './mentionrefs.ts';
-import { peopleGraph } from './graph.ts';
+import { graphTuning, peopleGraph, setGraphTuning } from './graph.ts';
 import { activityView, Closeness } from './closeness.ts';
 import { ProfileCollector, SameMatches } from './samepeople.ts';
 import type { MailHub } from './mail/index.ts';
@@ -1170,6 +1170,15 @@ export class HubServer {
     // People and the places they share (graph.ts, docs/people-graph.md).
     if (path === '/api/graph' && method === 'GET') return ok(peopleGraph(s));
     if (path === '/api/graph/activity' && method === 'GET') return ok(activityView(s, await this.closeness.get()));
+    if (path === '/api/graph/tuning' && method === 'GET') return ok(graphTuning(s.db));
+    if (path === '/api/graph/tuning' && method === 'PUT') {
+      const b = await body<{ tuning?: unknown }>();
+      try {
+        return ok(setGraphTuning(s.db, b.tuning ?? null));
+      } catch {
+        return bad('a tuning is weights 0 to 3 for each signal and a fade of 3 to 60 months');
+      }
+    }
     // Same person? (samepeople.ts, docs/same-person.md): pairs to merge, decisions, merging, pictures to hash.
     if (path === '/api/matches' && method === 'GET') return ok(this.matches.view({ side: url.searchParams.get('side') ?? undefined }));
     if (path === '/api/matches/refresh' && method === 'POST') {

@@ -12645,6 +12645,8 @@ button.msg-edited.link:hover {
   cursor: grab;
   touch-action: none;
   outline: none;
+  /* A double-click opens a node; it must not select the page's text. */
+  user-select: none;
 }
 .pg-canvas canvas {
   position: absolute;
