@@ -146,8 +146,8 @@ export function ReactorsList({ network, post, kind, kit, count, compact }: { net
   return (
     <div class={`post-reactors ${compact ? 'compact' : ''}`} data-reactors={kind}>
       <div class="post-reactors-head">
-        <kit.Icon name={kind === 'like' ? 'heart' : 'repeat'} size={13} />
-        <b>{kind === 'like' ? 'Liked by' : 'Reposted by'}</b>
+        <kit.Icon name={kind === 'like' ? kit.feed.reactWords(network).likeIcon : 'repeat'} size={13} />
+        <b>{kind === 'like' ? kit.feed.reactWords(network).likedBy : kit.feed.reactWords(network).repostedBy}</b>
         {count !== undefined && <span class="post-handle">{kit.feed.shortCount(count)}</span>}
         <span class="post-reactors-sort" title="Who you talk with, who follows you and who many follow first">most relevant first</span>
       </div>
@@ -204,6 +204,8 @@ function CountButton({
   disabled,
   menu,
   pre,
+  icon,
+  listLabel,
 }: {
   kind: 'reply' | 'repost' | 'like';
   on: boolean;
@@ -217,6 +219,9 @@ function CountButton({
   menu?: { open: boolean; close: () => void; items: ComponentChildren };
   /** The thread under it being read ahead, or read (Reply only). */
   pre?: 'loading' | 'ready' | null;
+  /** The network's picture for it (Mastodon's star, Reddit's arrow) and its "Liked by" words. */
+  icon?: string;
+  listLabel?: string;
 }) {
   const [shown, setShown] = useState<'pop' | 'sheet' | null>(null);
   const btn = useRef<HTMLButtonElement>(null);
@@ -262,7 +267,7 @@ function CountButton({
           if (who && e.key === 'ArrowDown') (e.preventDefault(), setShown('pop'));
         }}
       >
-        <kit.Icon name={kind === 'like' ? 'heart' : kind === 'repost' ? 'repeat' : 'reply'} size={16} />
+        <kit.Icon name={icon ?? (kind === 'like' ? 'heart' : kind === 'repost' ? 'repeat' : 'reply')} size={16} />
         {n !== undefined && n > 0 && <span class="pa-n">{kit.feed.shortCount(n)}</span>}
         {pre && <span class="pre-dot pa-pre" data-pre={pre} aria-hidden="true" />}
       </button>
@@ -272,12 +277,12 @@ function CountButton({
         </Floating>
       )}
       {shown === 'pop' && who && (
-        <Floating anchor={btn.current} onClose={() => setShown(null)} label={kind === 'like' ? 'Liked by' : 'Reposted by'} hover={{ enter: stay, leave: go }}>
+        <Floating anchor={btn.current} onClose={() => setShown(null)} label={listLabel ?? (kind === 'like' ? 'Liked by' : 'Reposted by')} hover={{ enter: stay, leave: go }}>
           {who()}
         </Floating>
       )}
       {shown === 'sheet' && who && (
-        <kit.Sheet onClose={() => setShown(null)} label={kind === 'like' ? 'Liked by' : 'Reposted by'}>
+        <kit.Sheet onClose={() => setShown(null)} label={listLabel ?? (kind === 'like' ? 'Liked by' : 'Reposted by')}>
           {who()}
         </kit.Sheet>
       )}
@@ -339,7 +344,8 @@ export function PostActions({ p, ctx, big }: { p: P.PostFact; ctx: AnswerCtx; bi
         setViewer((v) => (v2 = { ...v, [key]: was }));
         setCounts((c) => (c2 = c[count] !== undefined && was !== on ? { ...c, [count]: Math.max(0, c[count]! + (on ? -1 : 1)) } : c));
         setTimeout(() => ctx.onActed?.(p.id, { viewer: v2, counts: c2 }));
-        kit.toast({ title: `Could not ${act.replace(/^un/, 'undo ')}`, body: (e as Error).message, kind: 'error' });
+        const said = { like: rules.words.like, unlike: rules.words.unlike, repost: rules.words.repost, unrepost: rules.words.unrepost }[act];
+        kit.toast({ title: `Could not ${said[0]!.toLowerCase()}${said.slice(1)}`, body: (e as Error).message, kind: 'error' });
       },
     );
   };
@@ -354,7 +360,8 @@ export function PostActions({ p, ctx, big }: { p: P.PostFact; ctx: AnswerCtx; bi
           kind="repost"
           on={!!viewer.reposted}
           n={counts.reposts}
-          label={viewer.reposted ? 'Undo repost' : 'Repost'}
+          label={viewer.reposted ? rules.words.unrepost : rules.words.repost}
+          listLabel={rules.words.repostedBy}
           onPress={() => setMenu(!menu)}
           who={(counts.reposts ?? 0) > 0 ? list('repost', counts.reposts) : null}
           kit={kit}
@@ -365,7 +372,7 @@ export function PostActions({ p, ctx, big }: { p: P.PostFact; ctx: AnswerCtx; bi
             items: (
               <>
                 <button role="menuitem" autoFocus onClick={() => (setMenu(false), act(viewer.reposted ? 'unrepost' : 'repost'))}>
-                  <kit.Icon name="repeat" size={14} /> {viewer.reposted ? 'Undo repost' : 'Repost'}
+                  <kit.Icon name="repeat" size={14} /> {viewer.reposted ? rules.words.unrepost : rules.words.repost}
                 </button>
                 {rules.actions.quote && ctx.onQuote && (
                   <button role="menuitem" onClick={() => (setMenu(false), ctx.onQuote!(p))}>
@@ -382,7 +389,9 @@ export function PostActions({ p, ctx, big }: { p: P.PostFact; ctx: AnswerCtx; bi
           kind="like"
           on={!!viewer.liked}
           n={counts.likes}
-          label={viewer.liked ? 'Unlike' : 'Like'}
+          label={viewer.liked ? rules.words.unlike : rules.words.like}
+          icon={rules.likeIcon}
+          listLabel={rules.words.likedBy}
           onPress={() => act(viewer.liked ? 'unlike' : 'like')}
           who={likers && (counts.likes ?? 0) > 0 ? list('like', counts.likes) : null}
           kit={kit}

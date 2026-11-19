@@ -11,7 +11,7 @@
  * check found it, read when your own reading did.
  */
 import type * as P from '@dither-chat/protocol';
-import { composeState, followNativeId, NETWORK_META, POST_ACTS, postIdOf, postNativeId, postRulesFor } from '@dither-chat/protocol';
+import { composeState, followNativeId, isPostId, NETWORK_META, placeName, POST_ACTS, postFieldsProblem, postIdOf, postNativeId, postRulesFor, rulesForReply } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { postAuthors, postView } from './feed.ts';
 import { rankReactors, type ReactorIn } from './reactors.ts';
@@ -104,6 +104,10 @@ interface PublishIn {
   replies?: unknown;
   /** Files already resolved from upload ids. */
   media?: P.OutgoingAttachment[];
+  /** A new post's title and place (Reddit, Lemmy), a content warning (Mastodon): POST_RULES says which. */
+  title?: unknown;
+  place?: unknown;
+  warning?: unknown;
 }
 
 /** Why these files cannot go with one post on this network, or null. */
@@ -290,7 +294,7 @@ export class Posts {
   /** The post as logged, if it is. */
   private loggedPost(network: P.Network, post: string): P.PostFact | null {
     const r = this.d.store.one<Row>('SELECT * FROM message WHERE id = ? AND deleted = 0', hubId('msg', network, postNativeId(post)));
-    return r ? this.postOf(r) : null;
+    return r ? this.postOf(r, network) : null;
   }
 
   private viewOf(network: P.Network, accountId: string, p: P.PostFact): P.PostView {
@@ -341,7 +345,7 @@ export class Posts {
   publish(network: P.Network, b: PublishIn): Promise<P.PostView> {
     const key = typeof b.key === 'string' && b.key.length <= 200 ? `${network}:${b.key}` : null;
     for (const [k, v] of this.publishing) if (Date.now() - v.at > PUBLISH_DEDUPE_MS) this.publishing.delete(k);
-    const sig = JSON.stringify([b.text, b.replyTo ?? null, b.quote ?? null, b.account ?? null, b.replies ?? null, (b.media ?? []).map((m) => m.path)]);
+    const sig = JSON.stringify([b.text, b.replyTo ?? null, b.quote ?? null, b.account ?? null, b.replies ?? null, (b.media ?? []).map((m) => m.path), b.title ?? null, b.place ?? null, b.warning ?? null]);
     const had = key ? this.publishing.get(key) : null;
     // The same post again (a double press, a retried request): the first answer. Something else under the same key is
     // a page that kept its key by mistake: refused rather than dropped.
@@ -359,34 +363,46 @@ export class Posts {
   }
 
   private async write(network: P.Network, b: PublishIn): Promise<P.PostView> {
-    const rules = postRulesFor(network);
+    const base = postRulesFor(network);
     const net = NETWORK_META[network].name;
-    if (!rules) throw new PostsError(`${net} has no posts here.`, 409);
+    if (!base) throw new PostsError(`${net} has no posts here.`, 409);
     const text = typeof b.text === 'string' ? b.text : '';
     const id = (v: unknown, what: string) => {
       if (v === undefined || v === null || v === '') return undefined;
-      if (typeof v !== 'string' || !/^\d{1,25}$/.test(v)) throw new PostsError(`${what}: not a post`, 400);
+      if (!isPostId(v)) throw new PostsError(`${what}: not a post`, 400);
       return v;
     };
     const replyTo = id(b.replyTo, 'replyTo');
     const quote = id(b.quote, 'quote');
+    const rules = replyTo ? rulesForReply(base) : base;
     if (replyTo && !rules.actions.reply) throw new PostsError(`${net} has no replies here.`, 409);
     if (quote && !rules.actions.quote) throw new PostsError(`${net} has no quotes here.`, 409);
     if (b.replies !== undefined && b.replies !== null && !(rules.replyGates as readonly unknown[]).includes(b.replies)) throw new PostsError(`replies: ${net} has no such choice`, 400);
     const replies = b.replies === undefined || b.replies === null || b.replies === 'everyone' ? undefined : (b.replies as P.ReplyGate);
     if (replies && replyTo) throw new PostsError(`${net} lets you choose who can reply only on a new post.`, 400);
+    const field = (v: unknown, what: string) => {
+      if (v === undefined || v === null) return '';
+      if (typeof v !== 'string') throw new PostsError(`${what}: not text`, 400);
+      return v.trim();
+    };
+    const title = field(b.title, 'title');
+    const placeIn = field(b.place, 'place');
+    const warning = field(b.warning, 'warning');
+    const fieldsProblem = postFieldsProblem({ title, place: placeIn, warning }, rules, !!replyTo, net);
+    if (fieldsProblem) throw new PostsError(fieldsProblem, 422);
+    const place = placeIn ? placeName(placeIn, rules)! : '';
     const media = b.media ?? [];
     const mediaProblem = postMediaProblem(media, rules, net);
     if (mediaProblem) throw new PostsError(mediaProblem, 422);
     const st = composeState(text, rules);
-    // Pictures alone are a post.
-    if (!st.sendable && !(media.length && st.remaining >= 0)) throw new PostsError(st.remaining < 0 ? `Too long: ${-st.remaining} over ${net}'s ${rules.maxLength}.` : 'Nothing to post.', 422);
+    // Pictures alone are a post, and so is a title alone (a Reddit or Lemmy post with no body).
+    if (!st.sendable && !((media.length || (title && rules.title)) && st.remaining >= 0)) throw new PostsError(st.remaining < 0 ? `Too long: ${-st.remaining} over ${net}'s ${rules.maxLength}.` : 'Nothing to post.', 422);
     const as = typeof b.account === 'string' && b.account ? b.account : undefined;
     const accountId = this.able(network, media.length ? 'postMedia' : 'publish', media.length ? 'post pictures' : 'post', as);
     if (media.length && !caps(this.d.store, accountId).includes('publish')) throw new PostsError(`The ${net} adapter cannot post yet.`, 409);
     let made: P.PostFact;
     try {
-      made = await this.d.command<P.PostFact>(accountId, { t: 'publish', text, ...(replyTo ? { replyTo } : {}), ...(quote ? { quote } : {}), ...(replies ? { replies } : {}), ...(media.length ? { media } : {}) }, WRITE_TIMEOUT_MS);
+      made = await this.d.command<P.PostFact>(accountId, { t: 'publish', text, ...(replyTo ? { replyTo } : {}), ...(quote ? { quote } : {}), ...(replies ? { replies } : {}), ...(media.length ? { media } : {}), ...(title ? { title } : {}), ...(place ? { place } : {}), ...(warning ? { warning } : {}) }, WRITE_TIMEOUT_MS);
     } catch (e) {
       if (unknownOutcome(e)) throw new PostsError(`${net} did not answer in ${WRITE_TIMEOUT_MS / 1000} seconds. It may still have posted: look on ${net} before posting again.`, 504);
       throw new PostsError((e as Error).message, 502);
@@ -603,11 +619,11 @@ export class Posts {
          SELECT m.* FROM d CROSS JOIN message m ON m.id = d.id WHERE d.depth > 0 ORDER BY m.ts LIMIT ?`,
       )
       .all(hubId('msg', network, postNativeId(post)), LOGGED_DEPTH, LOGGED_MAX) as Row[];
-    return rows.map((r) => this.postOf(r)).filter((p): p is P.PostFact => !!p);
+    return rows.map((r) => this.postOf(r, network)).filter((p): p is P.PostFact => !!p);
   }
 
   /** The post's message, as logged: the post in its `extra`, else rebuilt from the message. */
-  private postOf(r: Row): P.PostFact | null {
+  private postOf(r: Row, network: P.Network): P.PostFact | null {
     const id = postIdOf(r.native_id);
     if (!id) return null;
     let p: P.PostFact | null = null;
@@ -618,7 +634,7 @@ export class Posts {
     const author = r.author_id ? this.d.store.nativeOf('identity', r.author_id)?.nativeId : undefined;
     const parentNative = r.reply_to_id ? this.d.store.nativeOf('message', r.reply_to_id)?.nativeId : null;
     const parent = parentNative ? postIdOf(parentNative) : null;
-    return { id, url: `https://x.com/i/web/status/${id}`, ts: r.ts, text: r.body ?? '', ...(author ? { author } : {}), ...(parent ? { replyTo: { id: parent } } : {}) };
+    return { id, url: network === 'x' ? `https://x.com/i/web/status/${id}` : '', ts: r.ts, text: r.body ?? '', ...(author ? { author } : {}), ...(parent ? { replyTo: { id: parent } } : {}) };
   }
 
   /** What the hub logged of a thread: what the post answers, back to the first post logged, and the replies to it. */
@@ -627,14 +643,14 @@ export class Posts {
     const row = (id: string) => s.one<Row>('SELECT * FROM message WHERE id = ? AND deleted = 0', id);
     const focalRow = row(hubId('msg', network, postNativeId(post)));
     if (!focalRow) return { ...this.view(network, post, accountId, { ancestors: [], replies: [], more: null }, why), focal: null };
-    const focal = this.postOf(focalRow)!;
+    const focal = this.postOf(focalRow, network)!;
     const ancestors: P.PostFact[] = [];
     const visited = new Set<string>([focalRow.id]);
     for (let r = focalRow; r.reply_to_id && ancestors.length < 50; ) {
       const up = row(r.reply_to_id);
       if (!up || visited.has(up.id)) break;
       visited.add(up.id);
-      const p = this.postOf(up);
+      const p = this.postOf(up, network);
       if (!p) break;
       ancestors.unshift(p);
       r = up;
@@ -655,7 +671,7 @@ export class Posts {
         chain.push(next);
         last = next;
       }
-      replies.push(chain.map((x) => this.postOf(x)).filter((p): p is P.PostFact => !!p));
+      replies.push(chain.map((x) => this.postOf(x, network)).filter((p): p is P.PostFact => !!p));
     }
     return this.view(network, post, accountId, { focal, ancestors, replies, more: null }, why);
   }
