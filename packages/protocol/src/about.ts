@@ -400,6 +400,7 @@ export const ABOUT_RULES: Record<Network, AboutRules> = {
   reddit: { conversation: [], space: [] },
   lemmy: { conversation: [], space: [] },
   substack: { conversation: [], space: [] },
+  bluesky: { conversation: [], space: [] },
 };
 
 export const ABOUT_LABEL: Record<AboutKey, string> = {

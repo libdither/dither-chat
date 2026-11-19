@@ -1,6 +1,7 @@
-/** Writing a post (compose.ts, docs/feed.md "Answering"): X's count and counter, Mastodon's, Reddit's, Lemmy's, Substack's, from one set of rules. */
+/** Writing a post (compose.ts, docs/feed.md "Answering"): X's count and counter, Mastodon's, Reddit's, Lemmy's, Substack's, Bluesky's, from one set of rules. */
 import { describe, expect, test } from 'bun:test';
-import { composeState, LEMMY_RULES, MASTODON_RULES, placeName, POST_RULES, postFieldsProblem, postLength, postRulesFor, REDDIT_RULES, rulesForReply, SUBSTACK_RULES, splitThread, timelineName } from '../src/compose.ts';
+import { isPostId } from '../src/feed.ts';
+import { BLUESKY_RULES, composeState, LEMMY_RULES, MASTODON_RULES, placeName, POST_RULES, postFieldsProblem, postLength, postRulesFor, REDDIT_RULES, rulesForReply, SUBSTACK_RULES, splitThread, timelineName } from '../src/compose.ts';
 
 const X = POST_RULES.x;
 
@@ -49,6 +50,23 @@ test("Mastodon's: 500 as read, every link 23 however long, a content warning; fa
   expect(composeState('a'.repeat(501), MASTODON_RULES)).toMatchObject({ remaining: -1, level: 'over', sendable: false, showRing: false });
   expect(MASTODON_RULES.warning).toBeDefined();
   expect([MASTODON_RULES.words.like, MASTODON_RULES.words.repost, MASTODON_RULES.likeIcon]).toEqual(['Favourite', 'Boost', 'star']);
+});
+
+test("Bluesky's: 300 graphemes (an emoji, a flag or a ZWJ family is one; a link as written), quote posts, no content warning", () => {
+  expect(postLength('日本語 👨‍👩‍👧 🇯🇵', BLUESKY_RULES)).toBe(7);
+  expect(postLength('see https://example.com/abcdef', BLUESKY_RULES)).toBe(4 + 26);
+  expect(composeState('é'.normalize('NFD').repeat(300), BLUESKY_RULES)).toMatchObject({ remaining: 0, sendable: true });
+  expect(composeState('a'.repeat(301), BLUESKY_RULES)).toMatchObject({ remaining: -1, level: 'over', sendable: false, showRing: true });
+  expect(BLUESKY_RULES.actions).toEqual({ like: true, repost: true, quote: true, reply: true });
+  expect([BLUESKY_RULES.media.images, BLUESKY_RULES.likersVisible, BLUESKY_RULES.title, BLUESKY_RULES.place, BLUESKY_RULES.warning]).toEqual([4, 'all', undefined, undefined, undefined]);
+  expect(postFieldsProblem({ warning: 'nsfw' }, BLUESKY_RULES, false, 'Bluesky')).toBe('Bluesky posts take no content warning.');
+  expect([timelineName('bluesky', 'following'), timelineName('bluesky', 'foryou')]).toEqual(['Following', 'Discover']);
+});
+
+test('a post id is opaque: Bluesky\'s `<did>~<rkey>` fits, a slash or a space does not', () => {
+  expect(isPostId('did:plc:riverdemoqqqqqqqqqqqqqqq~3kgcbqtnfxk2a')).toBe(true);
+  expect(isPostId('did:web:river.example~3lbxaaaaaaaab')).toBe(true);
+  expect(['at://did:plc:a/app.bsky.feed.post/3k', 'a b', '', 'x'.repeat(121)].map(isPostId)).toEqual([false, false, false, false]);
 });
 
 test("each network's timelines by its own names; the rules of a network without posts are none", () => {

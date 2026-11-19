@@ -204,6 +204,7 @@ interface ReactWords {
   /** The like's picture: a heart, Mastodon's star, Reddit's and Lemmy's arrow up. */
   likeIcon: 'heart' | 'star' | 'upvote';
 }
+// X's words are also Bluesky's: like and repost.
 const X_REACT: ReactWords = { liked: 'liked', reposted: 'reposted', likedBy: 'Liked by', repostedBy: 'Reposted by', likes: 'Likes', reposts: 'Reposts', likeIcon: 'heart' };
 const REACT_WORDS: Partial<Record<P.Network, ReactWords>> = {
   mastodon: { liked: 'favourited', reposted: 'boosted', likedBy: 'Favourited by', repostedBy: 'Boosted by', likes: 'Favourites', reposts: 'Boosts', likeIcon: 'star' },
@@ -261,8 +262,8 @@ export function clip(text: string, max = 80): string {
 
 /**
  * Where the network shows its notifications, for "Open on X". Mastodon's and Lemmy's are on the account's own server,
- * which the account's notifications conversation names in its `url` when the extractor knows it; Reddit's inbox and
- * Substack's activity are at one address.
+ * which the account's notifications conversation names in its `url` when the extractor knows it; Reddit's inbox,
+ * Substack's activity and Bluesky's notifications are at one address.
  */
 export function notificationsUrl(network: P.Network, own?: string | null): string | null {
   if (own && /^https:\/\//.test(own)) return own;
@@ -273,6 +274,8 @@ export function notificationsUrl(network: P.Network, own?: string | null): strin
       return 'https://www.reddit.com/notifications';
     case 'substack':
       return 'https://substack.com/activity';
+    case 'bluesky':
+      return 'https://bsky.app/notifications';
     default:
       return null;
   }

@@ -306,7 +306,7 @@ function TabBar({ r }: { r: Route }) {
   );
 }
 
-/** Whether the Feed is offered: an account with posts (X, Mastodon, Reddit, Lemmy, Substack), or its notifications already held. */
+/** Whether the Feed is offered: an account with posts (X, Mastodon, Reddit, Lemmy, Substack, Bluesky), or its notifications already held. */
 const feedOn = () => [...db.accounts.values()].some((a) => POST_NETWORKS.includes(a.network)) || [...db.conversations.values()].some((c) => c.variant === 'feed');
 /** Answers, quotes and mentions not looked at, across the notifications (never likes). */
 const feedSaid = () => [...db.conversations.values()].filter((c) => c.variant === 'feed').reduce((n, c) => n + c.vantages.reduce((m, v) => m + (v.mentions ?? 0), 0), 0);

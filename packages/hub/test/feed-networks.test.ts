@@ -1,10 +1,10 @@
 /**
- * The Feed with Mastodon, Reddit, Lemmy and Substack (docs/feed.md "A feed of posts, for any network"), through the
- * demo world's four accounts (demo-posts.ts): their timelines in Following and Discover with titles, places and a
+ * The Feed with Mastodon, Reddit, Lemmy, Substack and Bluesky (docs/feed.md "A feed of posts, for any network"), through
+ * the demo world's five accounts (demo-posts.ts): their timelines in Following and Discover with titles, places and a
  * content warning; threads with comment trees read by their own ids (Reddit's t1_…, Lemmy's comment:…), a branch
  * deeper than six levels opened as a thread of its own; like and repost where each network has them; a new Reddit or
  * Lemmy post refused without its title and place, posted with them; Mastodon's content warning; the notifications in
- * each network's words; the feed read-only.
+ * each network's words; Bluesky's `<did>~<rkey>` ids, its 300 graphemes and quote posts; the feed read-only.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
@@ -23,7 +23,7 @@ let store: Store;
 const adapters = new Map<string, DemoPosts>();
 const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
 const sent: { accountId: string; cmd: Record<string, any> }[] = [];
-const ACC = Object.fromEntries(DEMO_POST_ACCOUNTS.map((a) => [a.network, a.id])) as Record<'mastodon' | 'reddit' | 'lemmy' | 'substack', string>;
+const ACC = Object.fromEntries(DEMO_POST_ACCOUNTS.map((a) => [a.network, a.id])) as Record<'mastodon' | 'reddit' | 'lemmy' | 'substack' | 'bluesky', string>;
 
 function command<T>(accountId: string, cmd: object): Promise<T> {
   const id = crypto.randomUUID();
@@ -69,7 +69,7 @@ afterAll(() => {
 describe('sources and timelines', () => {
   test('each account reads timelines, posts and has its notifications conversation', () => {
     const v = tl.sources();
-    expect(v.accounts.map((a) => a.network)).toEqual(['mastodon', 'reddit', 'lemmy', 'substack']);
+    expect(v.accounts.map((a) => a.network)).toEqual(['mastodon', 'reddit', 'lemmy', 'substack', 'bluesky']);
     for (const a of v.accounts) expect(a).toMatchObject({ online: true, home: true, publish: true, unpublish: true });
     expect(v.accounts.every((a) => !!a.feedConvId)).toBe(true);
   });
@@ -82,6 +82,9 @@ describe('sources and timelines', () => {
     expect(by('mastodon').some((p) => p.warning?.startsWith('Spoilers'))).toBe(true);
     expect(by('mastodon').some((p) => p.repostOf)).toBe(true);
     expect(by('substack').some((p) => p.title === 'Why maps lie, gently' && p.place?.name === 'The Slow Graph')).toBe(true);
+    expect(by('bluesky').some((p) => p.quoteOf?.media?.length)).toBe(true);
+    expect(by('bluesky').some((p) => p.repostOf)).toBe(true);
+    expect(by('bluesky').every((p) => !p.title && !p.place && !p.warning)).toBe(true);
     // Discover is each account's For you, its reasons kept.
     const d = await tl.read('discover');
     expect(d.entries.some((e) => e.network === 'reddit' && e.reason?.text.startsWith('Popular in r/'))).toBe(true);
@@ -115,9 +118,10 @@ describe('threads', () => {
 describe('answering', () => {
   test('like everywhere; repost on Mastodon and Substack, refused on Reddit and Lemmy before anything is sent', async () => {
     const first = (n: string) => tl.entries(`${ACC[n as 'reddit']}:following`).entries[0]!.post;
-    for (const n of ['mastodon', 'reddit', 'lemmy', 'substack'] as const) expect((await posts.act(n, first(n).id, 'like')).viewer.liked).toBe(true);
+    for (const n of ['mastodon', 'reddit', 'lemmy', 'substack', 'bluesky'] as const) expect((await posts.act(n, first(n).id, 'like')).viewer.liked).toBe(true);
     expect((await posts.act('mastodon', first('mastodon').id, 'repost')).viewer.reposted).toBe(true);
     expect((await posts.act('substack', first('substack').id, 'repost')).viewer.reposted).toBe(true);
+    expect((await posts.act('bluesky', first('bluesky').id, 'repost')).viewer.reposted).toBe(true);
     const before = sent.length;
     await expect(posts.act('reddit', first('reddit').id, 'repost')).rejects.toMatchObject({ status: 409 });
     await expect(posts.act('lemmy', first('lemmy').id, 'repost')).rejects.toMatchObject({ status: 409 });
@@ -168,6 +172,41 @@ describe('answering', () => {
     expect(r.people.length).toBe(2);
     const greedy = tl.entries(`${ACC.reddit}:following`).entries.find((e) => e.post.title?.startsWith('Greedy'))!.post;
     expect((await posts.reactors('reddit', greedy.id, 'like')).note).toStartWith('Reddit does not say who liked a post.');
+  });
+});
+
+describe('Bluesky', () => {
+  const mineOf = () => tl.entries(`${ACC.bluesky}:following`).entries.find((e) => e.post.text.startsWith('Trying Bluesky'))!.post;
+
+  test('a post id is `<did>~<rkey>`; its thread is read by it, and a reply opened by its own id', async () => {
+    const mine = mineOf();
+    expect(mine.id).toMatch(/^did:plc:[a-z0-9]{24}~[a-z0-9]{13}$/);
+    expect(mine.url).toMatch(/^https:\/\/bsky\.app\/profile\/zyan\.example\/post\/[a-z0-9]{13}$/);
+    const t = await posts.thread('bluesky', mine.id);
+    expect(t.focal?.id).toBe(mine.id);
+    const deep = t.replies.flat().find((p) => p.text.startsWith('Yes please'))!;
+    const sub = await posts.thread('bluesky', deep.id);
+    expect(sub.ancestors.map((p) => p.id)).toEqual([mine.id, t.replies.flat().find((p) => p.text.startsWith('Welcome'))!.id]);
+  });
+
+  test('300 graphemes, an emoji one; no title, place or content warning; a reply and a quote post go to it', async () => {
+    const mine = mineOf();
+    await expect(posts.publish('bluesky', { text: 'a'.repeat(301), key: 'b1' })).rejects.toMatchObject({ status: 422, message: "Too long: 1 over Bluesky's 300." });
+    expect((await posts.publish('bluesky', { text: '👨‍👩‍👧'.repeat(300), key: 'b2' })).id).toMatch(/~/);
+    for (const [k, f] of [['b3', { warning: 'cw' }], ['b4', { title: 'T' }], ['b5', { place: 'somewhere' }]] as const) await expect(posts.publish('bluesky', { text: 'hi', key: k, ...f })).rejects.toMatchObject({ status: 422 });
+    expect((await posts.publish('bluesky', { text: 'A reply.', replyTo: mine.id, key: 'b6' })).replyTo?.id).toBe(mine.id);
+    const q = await posts.publish('bluesky', { text: 'Quoting myself.', quote: mine.id, key: 'b7' });
+    expect(q.quoteOf?.id).toBe(mine.id);
+    expect(sent.filter((s) => s.accountId === ACC.bluesky && s.cmd.t === 'publish').at(-1)!.cmd).toMatchObject({ quote: mine.id });
+  });
+
+  test('who liked and reposted is named; a quote post arrives as a notification', async () => {
+    const mine = mineOf();
+    expect((await posts.reactors('bluesky', mine.id, 'like')).people.length).toBe(1);
+    expect((await posts.reactors('bluesky', mine.id, 'repost')).people.length).toBe(1);
+    const conv = tl.sources().accounts.find((a) => a.accountId === ACC.bluesky)!.feedConvId!;
+    const types = (store.db.query('SELECT extra FROM message WHERE conversation_id = ?').all(conv) as { extra: string }[]).map((m) => JSON.parse(m.extra).feed.type);
+    expect(types.sort()).toEqual(['follow', 'like', 'quote', 'reply', 'repost']);
   });
 });
 

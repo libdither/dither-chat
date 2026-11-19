@@ -89,6 +89,11 @@ const NET_HELP: Record<P.Network, { adapter: string; blurb: string; fields: { ke
     blurb: 'Brings the posts of the publications you subscribe to and Substack Notes to the Feed page, where you can comment, like, restack and write Notes. It runs in dither-accounts; after you add it, sign in to Substack there.',
     fields: [],
   },
+  bluesky: {
+    adapter: 'bluesky',
+    blurb: 'Brings your Bluesky Following and Discover feeds, threads and notifications to the Feed page, where you can reply, like, repost and quote. It runs in dither-accounts; after you add it, sign in to Bluesky there.',
+    fields: [],
+  },
   // Runs only in dither-accounts, beside T3 Code on the same machine (its docs/t3.md).
   t3: {
     adapter: 't3',
