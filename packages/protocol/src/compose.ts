@@ -1,23 +1,47 @@
 /**
  * Writing a post or a reply on a network that has posts (docs/feed.md "Answering"): how long it may be and how the
  * network counts, what the counter shows and when, the network's own words, and what can be done to a post. One
- * composer draws every network from these rules: X's ring that fills and counts down from 20, Reddit's 10,000
- * characters of Markdown. Pure, so the hub checks a post with the same count the page shows.
+ * composer draws every network from these rules: X's ring that fills and counts down from 20, Mastodon's 500 with its
+ * content warning, Reddit's and Lemmy's title, place and Markdown, Substack's Notes. Pure, so the hub checks a post with the same count the page shows.
  */
 import type { ReplyGate } from './feed.ts';
 
 export interface PostRules {
-  /** The network's words: its button, its placeholder, a reply's. */
-  words: { post: string; reply: string; quote: string; placeholder: string; replyPlaceholder: string; quotePlaceholder: string };
+  /**
+   * The network's words: its button, its placeholder, a reply's; what liking and reposting are called there (X's Like
+   * and Repost, Mastodon's Favourite and Boost, Reddit's Upvote, Substack's Restack).
+   */
+  words: {
+    post: string;
+    reply: string;
+    quote: string;
+    placeholder: string;
+    replyPlaceholder: string;
+    quotePlaceholder: string;
+    like: string;
+    unlike: string;
+    repost: string;
+    unrepost: string;
+    /** The list of who liked or reposted: "Liked by", "Favourited by", "Boosted by". */
+    likedBy: string;
+    repostedBy: string;
+  };
+  /** The like button's picture: X's and Substack's heart, Mastodon's star, Reddit's and Lemmy's arrow up. */
+  likeIcon: 'heart' | 'star' | 'upvote';
+  /** What the account's two home timelines are called there (HomeFeed 'following' and 'foryou'). */
+  timelines: { following: string; foryou: string };
   /** At most this long, as `count` counts. */
   maxLength: number;
+  /** A reply or comment, where the network allows less than a new post (Reddit: 10,000 in a comment, 40,000 in a post). */
+  replyMaxLength?: number;
   /**
    * How length is counted. 'weighted' (X, twitter-text v3): most Latin, Cyrillic, Greek and punctuation count one,
    * other characters (CJK, most symbols) and each emoji two, every link `urlLength`; the limit is in those units.
-   * 'chars': characters as the reader sees them (graphemes).
+   * 'chars': characters as the reader sees them (graphemes). 'links': graphemes, but every link `urlLength`
+   * (Mastodon's 23, whatever its length).
    */
-  count: 'weighted' | 'chars';
-  /** What a link counts as under 'weighted'. */
+  count: 'weighted' | 'chars' | 'links';
+  /** What a link counts as under 'weighted' and 'links'. */
   urlLength: number;
   /**
    * The counter: 'ring' (X: a ring filling as you type; from `warnAt` left it grows and shows what is left, past the
@@ -39,12 +63,21 @@ export interface PostRules {
   media: { images: number; gif: boolean; video: boolean };
   /** Who may reply, offered on a new post (X's "who can reply"); empty when the network has no such choice. */
   replyGates: readonly ReplyGate[];
-  /** A title apart from the words (Reddit): whether a post needs one, and how long it may be. */
+  /** A title apart from the words (Reddit, Lemmy), on a new post only: whether it needs one, and how long it may be. */
   title?: { required: boolean; maxLength: number };
+  /**
+   * Where a new post goes (a subreddit, a community), on a new post only. `prefix` is how the network writes one
+   * ("r/", "!"), `example` a placeholder, `pattern` what a name must look like (without the prefix).
+   */
+  place?: { required: boolean; noun: string; prefix: string; example: string; pattern: string };
+  /** A content warning over the words (Mastodon's CW), on any post: how long it may be. */
+  warning?: { maxLength: number };
 }
 
 const X_RULES: PostRules = {
-  words: { post: 'Post', reply: 'Reply', quote: 'Quote', placeholder: "What's happening?", replyPlaceholder: 'Post your reply', quotePlaceholder: 'Add a comment' },
+  words: { post: 'Post', reply: 'Reply', quote: 'Quote', placeholder: "What's happening?", replyPlaceholder: 'Post your reply', quotePlaceholder: 'Add a comment', like: 'Like', unlike: 'Unlike', repost: 'Repost', unrepost: 'Undo repost', likedBy: 'Liked by', repostedBy: 'Reposted by' },
+  likeIcon: 'heart',
+  timelines: { following: 'Following', foryou: 'For you' },
   maxLength: 280,
   count: 'weighted',
   urlLength: 23,
@@ -57,10 +90,34 @@ const X_RULES: PostRules = {
   replyGates: ['everyone', 'following', 'mentioned', 'verified'],
 };
 
-/** Reddit's comment box, for when a Reddit account comes: the same composer, its own rules. */
+/**
+ * Mastodon's: 500 characters (an instance may allow more), every link 23, a content warning (counted in the same 500
+ * on Mastodon; here on its own), favourites everyone can see, boosts. Home is the home timeline, For you its trends.
+ */
+export const MASTODON_RULES: PostRules = {
+  words: { post: 'Publish', reply: 'Reply', quote: 'Quote', placeholder: "What's on your mind?", replyPlaceholder: 'Post your reply', quotePlaceholder: 'Add a comment', like: 'Favourite', unlike: 'Undo favourite', repost: 'Boost', unrepost: 'Undo boost', likedBy: 'Favourited by', repostedBy: 'Boosted by' },
+  likeIcon: 'star',
+  timelines: { following: 'Home', foryou: 'Trending' },
+  maxLength: 500,
+  count: 'links',
+  urlLength: 23,
+  counter: 'text',
+  warnAt: 50,
+  markdown: false,
+  actions: { like: true, repost: true, quote: false, reply: true },
+  likersVisible: 'all',
+  media: { images: 4, gif: true, video: true },
+  replyGates: [],
+  warning: { maxLength: 500 },
+};
+
+/** Reddit's: a post needs a title (300) and a subreddit; a body up to 40,000 characters of Markdown, a comment 10,000; votes, no reposts. */
 export const REDDIT_RULES: PostRules = {
-  words: { post: 'Post', reply: 'Comment', quote: 'Crosspost', placeholder: 'Title', replyPlaceholder: 'Add a comment', quotePlaceholder: 'Add a comment' },
-  maxLength: 10_000,
+  words: { post: 'Post', reply: 'Comment', quote: 'Crosspost', placeholder: 'Body text (optional)', replyPlaceholder: 'Add a comment', quotePlaceholder: 'Add a comment', like: 'Upvote', unlike: 'Remove upvote', repost: 'Crosspost', unrepost: 'Undo crosspost', likedBy: 'Upvoted by', repostedBy: 'Crossposted by' },
+  likeIcon: 'upvote',
+  timelines: { following: 'New', foryou: 'Best' },
+  maxLength: 40_000,
+  replyMaxLength: 10_000,
   count: 'chars',
   urlLength: 0,
   counter: 'text',
@@ -71,11 +128,88 @@ export const REDDIT_RULES: PostRules = {
   media: { images: 20, gif: true, video: true },
   replyGates: [],
   title: { required: true, maxLength: 300 },
+  place: { required: true, noun: 'subreddit', prefix: 'r/', example: 'r/subreddit', pattern: '^[A-Za-z0-9][A-Za-z0-9_]{1,20}$' },
+};
+
+/** Lemmy's: as Reddit's, a title (200) and a community (`name@instance` for one on another server), 10,000 characters. */
+export const LEMMY_RULES: PostRules = {
+  words: { post: 'Post', reply: 'Reply', quote: 'Crosspost', placeholder: 'Body (optional)', replyPlaceholder: 'Write a reply', quotePlaceholder: 'Add a comment', like: 'Upvote', unlike: 'Remove upvote', repost: 'Crosspost', unrepost: 'Undo crosspost', likedBy: 'Upvoted by', repostedBy: 'Crossposted by' },
+  likeIcon: 'upvote',
+  timelines: { following: 'Subscribed', foryou: 'All' },
+  maxLength: 10_000,
+  count: 'chars',
+  urlLength: 0,
+  counter: 'text',
+  warnAt: 500,
+  markdown: true,
+  actions: { like: true, repost: false, quote: false, reply: true },
+  likersVisible: 'none',
+  media: { images: 1, gif: false, video: false },
+  replyGates: [],
+  title: { required: true, maxLength: 200 },
+  place: { required: true, noun: 'community', prefix: '!', example: '!community@instance', pattern: '^[a-z0-9_]{3,20}(@[a-z0-9.-]+\\.[a-z]{2,})?$' },
+};
+
+/** Substack's: Notes and comments, no short limit (10,000 here), hearts and restacks. Inbox is your subscriptions' posts, Notes its For you. */
+export const SUBSTACK_RULES: PostRules = {
+  words: { post: 'Post', reply: 'Reply', quote: 'Restack with note', placeholder: 'What’s on your mind?', replyPlaceholder: 'Write a comment…', quotePlaceholder: 'Add a note', like: 'Like', unlike: 'Unlike', repost: 'Restack', unrepost: 'Undo restack', likedBy: 'Liked by', repostedBy: 'Restacked by' },
+  likeIcon: 'heart',
+  timelines: { following: 'Inbox', foryou: 'Notes' },
+  maxLength: 10_000,
+  count: 'chars',
+  urlLength: 0,
+  counter: 'text',
+  warnAt: 500,
+  markdown: false,
+  actions: { like: true, repost: true, quote: false, reply: true },
+  likersVisible: 'all',
+  media: { images: 4, gif: true, video: false },
+  replyGates: [],
 };
 
 /** The rules of each network that has posts. */
-export const POST_RULES: Readonly<Record<string, PostRules>> = { x: X_RULES, reddit: REDDIT_RULES };
-export const postRulesFor = (network: string): PostRules | null => POST_RULES[network] ?? null;
+export const POST_RULES: Readonly<Record<string, PostRules>> = { x: X_RULES, mastodon: MASTODON_RULES, reddit: REDDIT_RULES, lemmy: LEMMY_RULES, substack: SUBSTACK_RULES };
+export const postRulesFor = (network: string): PostRules | null => (Object.hasOwn(POST_RULES, network) ? POST_RULES[network]! : null);
+
+/** The rules for a reply or comment: the network's, with its reply limit where it has one. */
+export const rulesForReply = (rules: PostRules): PostRules => (rules.replyMaxLength === undefined ? rules : { ...rules, maxLength: rules.replyMaxLength });
+
+/** A timeline's name on its network: X's "For you", Reddit's "Best", Substack's "Notes". */
+export const timelineName = (network: string, feed: 'following' | 'foryou'): string => postRulesFor(network)?.timelines[feed] ?? (feed === 'following' ? 'Following' : 'For you');
+
+/**
+ * A place as written in the composer ("r/rust", "rust", "!rust@lemmy.example", "rust@lemmy.example") as the network's name for
+ * it, without its prefix; null when the network takes no place or it does not look like one.
+ */
+export function placeName(input: string, rules: PostRules): string | null {
+  if (!rules.place) return null;
+  let t = input.trim();
+  const pre = rules.place.prefix;
+  if (t.toLowerCase().startsWith(pre.toLowerCase())) t = t.slice(pre.length);
+  else if (pre === 'r/' && t.toLowerCase().startsWith('/r/')) t = t.slice(3);
+  if (rules.place.noun === 'community') t = t.toLowerCase();
+  return new RegExp(rules.place.pattern).test(t) ? t : null;
+}
+
+/**
+ * What stops a new post's extra fields (a title, a place, a content warning) from going, or null: the same words on the
+ * page and from the hub. `reply`: a reply or comment takes no title and no place.
+ */
+export function postFieldsProblem(f: { title?: string; place?: string; warning?: string }, rules: PostRules, reply: boolean, net: string): string | null {
+  const title = f.title?.trim() ?? '';
+  const place = f.place?.trim() ?? '';
+  if (reply && (title || place)) return `A reply on ${net} takes no title or ${rules.place?.noun ?? 'place'}.`;
+  if (title && !rules.title) return `${net} posts take no title.`;
+  if (place && !rules.place) return `${net} posts go to no place.`;
+  if (f.warning?.trim() && !rules.warning) return `${net} posts take no content warning.`;
+  if (rules.warning && (f.warning?.trim().length ?? 0) > rules.warning.maxLength) return `The content warning is longer than ${rules.warning.maxLength}.`;
+  if (reply) return null;
+  if (rules.title?.required && !title) return `A post on ${net} needs a title.`;
+  if (rules.title && graphemes(title).length > rules.title.maxLength) return `The title is longer than ${net}'s ${rules.title.maxLength}.`;
+  if (rules.place?.required && !place) return `A post on ${net} goes to a ${rules.place.noun}: say which (${rules.place.example}).`;
+  if (rules.place && place && !placeName(place, rules)) return `That is not a ${rules.place.noun} name (${rules.place.example}).`;
+  return null;
+}
 
 // twitter-text v3: code points in these ranges weigh 100 (one), all others 200 (two); scale 100.
 const LIGHT: readonly [number, number][] = [
@@ -142,7 +276,7 @@ function pieces(text: string, rules: PostRules): { at: number; end: number; weig
     }
     const stop = link ? link[0] : t.length;
     for (const g of graphemes(t.slice(at, stop))) {
-      const weight = EMOJI.test(g) ? 2 : Array.from(g).reduce((n, ch) => n + (light(ch.codePointAt(0)!) ? 1 : 2), 0);
+      const weight = rules.count === 'links' ? 1 : EMOJI.test(g) ? 2 : Array.from(g).reduce((n, ch) => n + (light(ch.codePointAt(0)!) ? 1 : 2), 0);
       out.push({ at, end: at + g.length, weight });
       at += g.length;
     }

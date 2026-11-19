@@ -60,6 +60,7 @@ import { AccountSelf, ignoredOf } from './accountself.ts';
 import { mentionables } from './mentions.ts';
 import { lowerForSend } from './mentionrefs.ts';
 import { peopleGraph } from './graph.ts';
+import { activityView, Closeness } from './closeness.ts';
 import { ProfileCollector, SameMatches } from './samepeople.ts';
 import type { MailHub } from './mail/index.ts';
 import type { Notices } from './notices/index.ts';
@@ -340,6 +341,8 @@ export class HubServer {
   readonly people: People;
   /** Same person? suggestions, and profiles collected in the background (samepeople.ts, docs/same-person.md). */
   readonly matches: SameMatches;
+  /** How much you have had to do with each person, by month, for the people graph (closeness.ts). */
+  readonly closeness: Closeness;
   readonly collector: ProfileCollector;
   /** Public posts read and logged as messages (posts.ts, docs/feed.md "Threads"). */
   readonly posts: Posts;
@@ -430,6 +433,7 @@ export class HubServer {
     // A note joined from yours and the network's goes back to the network (store.ts networkNotes).
     store.contactNotesOut = (id, change) => this.people.pushContactNotes(id, change);
     this.matches = new SameMatches({ store, file: opts.matches?.file ?? null, jevUrl: opts.matches?.jevUrl ?? null, log: (l) => console.log(l), flush: () => this.flush() });
+    this.closeness = new Closeness({ store, file: opts.matches?.file ?? null, log: (l) => console.log(l) });
     this.collector = new ProfileCollector({ store, people: this.people, online: (a) => sup.online(a), log: (l) => console.log(l) });
     this.collector.start();
     this.adding = new Adding({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), liveView: (a) => !!sup.liveViewUrl?.(a) || !!store.account(a)?.live_view });
@@ -628,15 +632,21 @@ export class HubServer {
     // What a flush writes (attention's folds, one transaction per conversation; the journal) is one transaction: one
     // commit, and each commit waits for the disk on the hub's thread. The frame goes out once it is committed.
     // Every 80 ms: a span only when there was something to send (docs/tracing.md).
+    // It takes the write lock as it begins (BEGIN IMMEDIATE). Begun as a read, it reads first and writes last; if
+    // another connection committed in between, SQLite cannot turn it into a write and fails at once
+    // (SQLITE_BUSY_SNAPSHOT), with no wait for busy_timeout: what the live hub hit in a flush at two deploys' stops.
+    // Begun immediate, it waits for the lock like any write and then reads what is newest.
     const s = startSpan('flush');
     let events: P.ClientEvent[] = [];
     let frame: string | null = null;
     try {
       frame = timedWrite('flush', () =>
-        this.store.db.transaction(() => {
-          events = this.gather();
-          return this.record(events);
-        })(),
+        this.store.db
+          .transaction(() => {
+            events = this.gather();
+            return this.record(events);
+          })
+          .immediate(),
       );
     } catch (e) {
       // The commit failed (a lock held past busy_timeout): attention's folds are undone and fold again later; what
@@ -1159,6 +1169,7 @@ export class HubServer {
     }
     // People and the places they share (graph.ts, docs/people-graph.md).
     if (path === '/api/graph' && method === 'GET') return ok(peopleGraph(s));
+    if (path === '/api/graph/activity' && method === 'GET') return ok(activityView(s, await this.closeness.get()));
     // Same person? (samepeople.ts, docs/same-person.md): pairs to merge, decisions, merging, pictures to hash.
     if (path === '/api/matches' && method === 'GET') return ok(this.matches.view({ side: url.searchParams.get('side') ?? undefined }));
     if (path === '/api/matches/refresh' && method === 'POST') {
@@ -1397,7 +1408,7 @@ export class HubServer {
         return bad((e as Error).message, 502);
       }
     }
-    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/thread$/)) && method === 'GET') {
+    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/([A-Za-z0-9_.~:-]{1,120})\/thread$/)) && method === 'GET') {
       const network = m[1] as P.Network;
       if (!(network in NETWORK_META)) return bad('no such network', 404);
       const cursor = url.searchParams.get('cursor') ?? undefined;
@@ -1411,7 +1422,7 @@ export class HubServer {
       }
     }
     // Answering on a network with posts (posts.ts, docs/feed.md "Answering"): like, repost, post. Each is one press.
-    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/act$/)) && method === 'POST') {
+    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/([A-Za-z0-9_.~:-]{1,120})\/act$/)) && method === 'POST') {
       const network = m[1] as P.Network;
       if (!(network in NETWORK_META)) return bad('no such network', 404);
       const b = await body<{ act?: unknown; account?: unknown }>();
@@ -1428,9 +1439,9 @@ export class HubServer {
     if ((m = path.match(/^\/api\/posts\/([a-z]+)\/publish$/)) && method === 'POST') {
       const network = m[1] as P.Network;
       if (!(network in NETWORK_META)) return bad('no such network', 404);
-      const b = await body<{ text?: unknown; replyTo?: unknown; quote?: unknown; key?: unknown; account?: unknown }>();
+      const b = await body<{ text?: unknown; replyTo?: unknown; quote?: unknown; key?: unknown; account?: unknown; warning?: unknown }>();
       try {
-        const v = await this.posts.publish(network, { text: b.text, replyTo: b.replyTo, quote: b.quote, key: b.key, account: b.account });
+        const v = await this.posts.publish(network, { text: b.text, replyTo: b.replyTo, quote: b.quote, key: b.key, account: b.account, warning: b.warning });
         this.flush();
         return ok(v);
       } catch (e) {
@@ -1439,7 +1450,7 @@ export class HubServer {
     }
     // Following a post (follows.ts, docs/feed.md "Following a post"): PUT follows (reading the thread first), DELETE
     // stops the checks and keeps the conversation, GET says how it stands and which replies are new since it was read.
-    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/follow$/)) && (method === 'PUT' || method === 'DELETE' || method === 'GET')) {
+    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/([A-Za-z0-9_.~:-]{1,120})\/follow$/)) && (method === 'PUT' || method === 'DELETE' || method === 'GET')) {
       const network = m[1] as P.Network;
       if (!(network in NETWORK_META)) return bad('no such network', 404);
       try {
@@ -1455,7 +1466,7 @@ export class HubServer {
       }
     }
     // Delete a post of yours (posts.ts unpublish).
-    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/delete$/)) && method === 'POST') {
+    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/([A-Za-z0-9_.~:-]{1,120})\/delete$/)) && method === 'POST') {
       const network = m[1] as P.Network;
       if (!(network in NETWORK_META)) return bad('no such network', 404);
       const b = await body<{ account?: unknown }>();
@@ -1522,7 +1533,7 @@ export class HubServer {
       }
     }
     // Who liked or reposted a post, ranked for you (reactors.ts).
-    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/reactors$/)) && method === 'GET') {
+    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/([A-Za-z0-9_.~:-]{1,120})\/reactors$/)) && method === 'GET') {
       const network = m[1] as P.Network;
       if (!(network in NETWORK_META)) return bad('no such network', 404);
       const kind = url.searchParams.get('kind') === 'repost' ? 'repost' : 'like';
@@ -1535,7 +1546,7 @@ export class HubServer {
       }
     }
     // Who liked, reposted, replied to or quoted a post, from the feeds the hub holds: nothing is asked of the network.
-    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/activity$/)) && method === 'GET') {
+    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/([A-Za-z0-9_.~:-]{1,120})\/activity$/)) && method === 'GET') {
       const network = m[1] as P.Network;
       if (!(network in NETWORK_META)) return bad('no such network', 404);
       return ok(s.postActivity(network, m[2]));

@@ -92,7 +92,7 @@ function Reactors({ u, kit }: { u: PostUnit; kit: Kit }) {
       <div class="feed-reactors-tabs">
         {(['like', 'repost'] as const).map((k) => (
           <button aria-pressed={tab === k} class={`feed-tab ${tab === k ? 'on' : ''}`} onClick={() => setTab(k)}>
-            {k === 'like' ? 'Likes' : 'Reposts'} <span class="feed-tab-n">{kit.feed.shortCount(counts[k])}</span>
+            {k === 'like' ? kit.feed.reactWords(u.network).likes : kit.feed.reactWords(u.network).reposts} <span class="feed-tab-n">{kit.feed.shortCount(counts[k])}</span>
           </button>
         ))}
       </div>
@@ -138,7 +138,7 @@ function PostCard({ u, kit }: { u: PostUnit; kit: Kit }) {
             <span class="feed-react-counts">
               {counts.like > 0 && (
                 <span class="like">
-                  <kit.Icon name="heart" size={13} /> {kit.feed.shortCount(counts.like)}
+                  <kit.Icon name={kit.feed.reactWords(u.network).likeIcon} size={13} /> {kit.feed.shortCount(counts.like)}
                 </span>
               )}
               {counts.repost > 0 && (

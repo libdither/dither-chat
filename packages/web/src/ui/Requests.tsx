@@ -13,7 +13,7 @@ import { identityPeer } from '../direct.ts';
 import { ago } from '../format.ts';
 import { directsOf, identityName, netName } from '../model.ts';
 import { CONNECTION_KINDS, CONNECTION_TITLE, connectionLine, linkKind, linksLine, type Connection } from '../connections.ts';
-import { accountLine, ANSWER_LABEL, canRemove, groupRequests, linkRows, linkSinceLine, messageRequestNote, nameMatches, relation, removeNote, removeQuestion, requestLine, requestsRow, sentence, sortLinkRows, talkedLine, targetMembers, type LinkSort } from '../requests.ts';
+import { accountLine, ANSWER_LABEL, canRemove, FOLLOW_NETWORKS, groupRequests, linkRows, linkSinceLine, messageRequestNote, nameMatches, relation, removeNote, removeQuestion, requestLine, requestsRow, sentence, sortLinkRows, talkedLine, targetMembers, type LinkSort } from '../requests.ts';
 import { api, applyEvents, db, go, openDirect, openProfile, rev, toast } from '../state.ts';
 import { LiveView } from './Accounts.tsx';
 import { Avatar, Empty, Modal, NetBadge, NetGlyph } from './bits.tsx';
@@ -819,7 +819,7 @@ export function PeopleLinks({
 }) {
   rev.value;
   const [ending, setEnding] = useState<{ identityId: string; accountId: string; relationship: P.LinkRelationship } | null>(null);
-  const listing = [...db.accounts.values()].filter((a) => a.capabilities.includes('relationships') || ((a.network === 'x' || a.network === 'instagram') && a.capabilities.includes('profile')));
+  const listing = [...db.accounts.values()].filter((a) => a.capabilities.includes('relationships') || (FOLLOW_NETWORKS.includes(a.network) && a.capabilities.includes('profile')));
   if (links.error) return <p class="inbox-empty">{links.error}</p>;
   const view = links.view;
   if (!view) return <Loading label="Asking the hub…" />;
