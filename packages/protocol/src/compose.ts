@@ -2,7 +2,7 @@
  * Writing a post or a reply on a network that has posts (docs/feed.md "Answering"): how long it may be and how the
  * network counts, what the counter shows and when, the network's own words, and what can be done to a post. One
  * composer draws every network from these rules: X's ring that fills and counts down from 20, Mastodon's 500 with its
- * content warning, Reddit's and Lemmy's title, place and Markdown, Substack's Notes. Pure, so the hub checks a post with the same count the page shows.
+ * content warning, Reddit's and Lemmy's title, place and Markdown, Substack's Notes, Bluesky's 300. Pure, so the hub checks a post with the same count the page shows.
  */
 import type { ReplyGate } from './feed.ts';
 
@@ -167,8 +167,30 @@ export const SUBSTACK_RULES: PostRules = {
   replyGates: [],
 };
 
+/**
+ * Bluesky's: 300 characters as the reader sees them (graphemes, as Bluesky counts: an emoji or a flag is one, a link
+ * counts as written), up to four pictures or one video, likes and reposts everyone can see, quote posts. No title, no
+ * place (no communities), and no content warning of your own words (Bluesky's labels are a fixed few, not built here).
+ * Following is your follows, Discover Bluesky's own feed.
+ */
+export const BLUESKY_RULES: PostRules = {
+  words: { post: 'Post', reply: 'Reply', quote: 'Quote post', placeholder: "What's up?", replyPlaceholder: 'Write your reply', quotePlaceholder: 'Add a comment', like: 'Like', unlike: 'Unlike', repost: 'Repost', unrepost: 'Undo repost', likedBy: 'Liked by', repostedBy: 'Reposted by' },
+  likeIcon: 'heart',
+  timelines: { following: 'Following', foryou: 'Discover' },
+  maxLength: 300,
+  count: 'chars',
+  urlLength: 0,
+  counter: 'ring',
+  warnAt: 20,
+  markdown: false,
+  actions: { like: true, repost: true, quote: true, reply: true },
+  likersVisible: 'all',
+  media: { images: 4, gif: false, video: true },
+  replyGates: [],
+};
+
 /** The rules of each network that has posts. */
-export const POST_RULES: Readonly<Record<string, PostRules>> = { x: X_RULES, mastodon: MASTODON_RULES, reddit: REDDIT_RULES, lemmy: LEMMY_RULES, substack: SUBSTACK_RULES };
+export const POST_RULES: Readonly<Record<string, PostRules>> = { x: X_RULES, mastodon: MASTODON_RULES, reddit: REDDIT_RULES, lemmy: LEMMY_RULES, substack: SUBSTACK_RULES, bluesky: BLUESKY_RULES };
 export const postRulesFor = (network: string): PostRules | null => (Object.hasOwn(POST_RULES, network) ? POST_RULES[network]! : null);
 
 /** The rules for a reply or comment: the network's, with its reply limit where it has one. */

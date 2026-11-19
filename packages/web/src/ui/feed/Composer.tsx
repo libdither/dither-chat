@@ -3,7 +3,7 @@
 /** @jsxFrag Fragment */
 /**
  * Writing a post, a reply or a quote (docs/feed.md "Answering"), drawn from the network's rules (protocol compose.ts):
- * one composer for X, Mastodon, Reddit, Lemmy and Substack.
+ * one composer for X, Mastodon, Reddit, Lemmy, Substack and Bluesky.
  *
  * As X does it: "Replying to @handle" over the box; a ring that fills as you write and, from 20 left, grows and says
  * how many are left (yellow), at the limit red, past it a negative count in red and the ring gone past -10; what is

@@ -832,7 +832,7 @@ function ActivityList({ account, kit }: { account?: string; kit: Kit }) {
       {loading && <kit.Loading inline label="Loading notifications…" />}
       {!loading && !units.length && (
         <kit.Empty icon="bell" title="Nothing yet">
-          {convs.length ? 'When people like, answer or share your posts, mention you or follow you, it shows here.' : 'An account that has notifications (X, Mastodon, Reddit, Lemmy, Substack) shows them here.'}
+          {convs.length ? 'When people like, answer or share your posts, mention you or follow you, it shows here.' : 'An account that has notifications (X, Mastodon, Reddit, Lemmy, Substack, Bluesky) shows them here.'}
         </kit.Empty>
       )}
     </Scroll>

@@ -300,7 +300,7 @@ function sourceOf(r: AddRef): string {
     case 'name':
       return `@${r.name}`;
     case 'person':
-      if (r.network === 'x' || r.network === 'instagram' || r.network === 'mastodon' || r.network === 'substack' || r.network === 'lemmy') return `@${r.handle}`;
+      if (r.network === 'x' || r.network === 'instagram' || r.network === 'mastodon' || r.network === 'substack' || r.network === 'lemmy' || r.network === 'bluesky') return `@${r.handle}`;
       if (r.network === 'reddit') return `u/${r.handle}`;
       if (r.network === 'messenger') return `https://m.me/${r.handle}`;
       return r.handle;
@@ -358,7 +358,7 @@ export function describeAddRef(r: AddRef): string {
     case 'name':
       return `${net} @${r.name}`;
     case 'person':
-      if (r.network === 'x' || r.network === 'instagram' || r.network === 'mastodon' || r.network === 'substack' || r.network === 'lemmy') return `${net} @${r.handle}`;
+      if (r.network === 'x' || r.network === 'instagram' || r.network === 'mastodon' || r.network === 'substack' || r.network === 'lemmy' || r.network === 'bluesky') return `${net} @${r.handle}`;
       if (r.network === 'reddit') return `Reddit u/${r.handle}`;
       if (r.network === 'signal' && r.handle.startsWith('https://')) return 'Signal username link';
       if (r.network === 'signal' && !r.handle.startsWith('+')) return `Signal username ${r.handle}`;
