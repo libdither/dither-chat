@@ -61,6 +61,7 @@ export class LinkFlow {
   private stopped = false;
   private done = false;
   private paused = false;
+  /** When the codes began showing (the first since start or a resume); 0 until one shows. */
   private activeSince = 0;
   private rotateTimer?: Timer;
   private retryTimer?: Timer;
@@ -70,7 +71,7 @@ export class LinkFlow {
   constructor(private o: LinkOptions) {}
 
   start() {
-    this.activeSince = Date.now();
+    this.activeSince = 0;
     this.spawn();
   }
 
@@ -89,7 +90,7 @@ export class LinkFlow {
     if ([...this.attempts].some((a) => a.scanned)) return;
     if (this.paused) {
       this.paused = false;
-      this.activeSince = Date.now();
+      this.activeSince = 0;
     }
     if ([...this.attempts].some((a) => !a.uri)) return; // one is already starting
     this.spawn();
@@ -142,6 +143,9 @@ export class LinkFlow {
       return;
     }
     const after = this.o.rotateAfterMs ?? 80_000;
+    // The cap on rotating counts from the first code shown, not from the start: starting signal-cli can take a while,
+    // and that time is no code anyone could have scanned.
+    if (!this.activeSince) this.activeSince = Date.now();
     this.failures = 0;
     this.published = a;
     this.o.onUri(uri, this.note, Date.now() + after);
@@ -193,7 +197,7 @@ export class LinkFlow {
       this.o.log('warn', `link attempt #${a.n} failed after the scan: ${why}`);
       this.note = `Linking failed: ${why.replace(/\.$/, '')}.`;
       this.o.onTrouble(this.note);
-      this.activeSince = Date.now();
+      this.activeSince = 0;
       this.spawn();
       return;
     }
