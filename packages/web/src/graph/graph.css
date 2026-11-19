@@ -127,3 +127,82 @@
   height: 12px;
   border-inline: 3.5px solid currentColor;
 }
+/* Same person? groups: shaded together on the graph (engine.ts drawBlobs), and their merge card. */
+.pg-key-blob {
+  flex: none;
+  width: 16px;
+  height: 9px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.pg-same-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.pg-same-sides {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+}
+.pg-same-side {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.pg-same-side input {
+  flex: none;
+  accent-color: var(--accent);
+}
+.pg-same-side .pg-row {
+  width: auto;
+  min-width: 0;
+  flex: 1;
+}
+.pg-same-side .btn {
+  flex: none;
+}
+.pg-same-name {
+  display: grid;
+  min-width: 0;
+}
+.pg-same-name small {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.pg-same-name small span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pg-same-why {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  font-size: 12px;
+}
+.pg-same-pair-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-dim);
+}
+.pg-same-pair ul {
+  margin: 2px 0 0;
+  padding-left: 16px;
+  color: var(--text-faint);
+}
+.pg-same-pair li.against {
+  color: var(--warn);
+}

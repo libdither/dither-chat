@@ -584,6 +584,8 @@ export interface GraphPerson {
   networks: Network[];
   /** Accounts that have a direct chat with them. */
   dm: number[];
+  /** Accounts that list them as a friend or a contact. */
+  friend?: number[];
   bot?: true;
   /** Their picture (a signed media link), when one of their accounts has one. */
   pic?: string;
@@ -612,6 +614,11 @@ export interface GraphActivity {
   people: Record<string, number[]>;
   /** A graph person's id → friends you share, as a profile said. */
   mutual: Record<string, number>;
+  /**
+   * A graph place's id → flat [month, weight × 10] pairs: your own messages there (1 each) and the time you spent in
+   * it (1 a minute, since the hub kept track). Absent from an older hub.
+   */
+  places?: Record<string, number[]>;
 }
 /** Where a link came from: members seen (adversarial), a profile's mutual servers, a conversation's participants. */
 export const GRAPH_SOURCE = { members: 1, profile: 2, participant: 4 } as const;

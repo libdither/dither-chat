@@ -16,6 +16,8 @@ interface LayoutInput {
   len?: Float32Array;
   /** Per node, how hard it pushes, instead of from its links (0: as usual): people drawn big need the room. */
   mass?: Float32Array;
+  /** Pairs of node indexes held close, not drawn: people who may be one person (Same person?), side by side. */
+  ties?: Uint32Array;
 }
 
 const THETA2 = 0.81;
@@ -24,6 +26,13 @@ const LINK = 34;
 const GRAVITY = 0.012;
 const DECAY = 0.62;
 const ALPHA_MIN = 0.004;
+/**
+ * How far apart tied nodes sit, and how hard the tie pulls: twice a link, so people who may be one sit together even
+ * when each is held by a place of their own; never more than nearly halfway each in one step, so they do not overshoot.
+ */
+const TIE = 16;
+const TIE_PULL = 2;
+const TIE_MOST = 0.45;
 
 export class Layout {
   readonly n: number;
@@ -39,6 +48,7 @@ export class Layout {
   private base: Float32Array;
   private baseMass: Float32Array;
   private fixed: number;
+  private ties: Uint32Array;
   // The quadtree, rebuilt each tick: per cell its square, children, body (-1 none, -2 split), mass and its centre.
   private cap = 0;
   private x0 = new Float32Array(0);
@@ -79,6 +89,7 @@ export class Layout {
       this.strength[k] = 1 / Math.min(a, b);
       this.rest[k] = Math.min(a, b) <= 1 ? LINK * 0.45 : LINK;
     }
+    this.ties = inp.ties ?? new Uint32Array(0);
     this.base = this.rest.slice();
     this.baseMass = this.mass.slice();
     this.tune(inp.len, inp.mass);
@@ -93,6 +104,11 @@ export class Layout {
   tune(len?: Float32Array, mass?: Float32Array) {
     if (len) for (let k = 0; k < this.rest.length; k++) this.rest[k] = this.base[k] * (len[k] || 1);
     if (mass) for (let i = 0; i < this.n; i++) if (i !== this.fixed) this.mass[i] = mass[i] || this.baseMass[i];
+  }
+
+  /** Hold these pairs close instead (as LayoutInput's ties); heat() after. */
+  setTies(ties: Uint32Array) {
+    this.ties = ties;
   }
 
   /** Warm it up again, after the layout changed under it. */
@@ -152,6 +168,26 @@ export class Layout {
       vel[2 * b + 1] -= dy * bb;
       vel[2 * a] += dx * (1 - bb);
       vel[2 * a + 1] += dy * (1 - bb);
+    }
+    // Ties: each end pulled toward the other.
+    const t = this.ties;
+    for (let k = 0; k < t.length; k += 2) {
+      const a = t[k];
+      const b = t[k + 1];
+      let dx = pos[2 * b] - pos[2 * a];
+      let dy = pos[2 * b + 1] - pos[2 * a + 1];
+      const l = Math.sqrt(dx * dx + dy * dy) || 1e-3;
+      const f = ((l - TIE) / l) * Math.min(TIE_MOST, alpha * TIE_PULL);
+      dx *= f;
+      dy *= f;
+      if (a !== this.fixed) {
+        vel[2 * a] += dx;
+        vel[2 * a + 1] += dy;
+      }
+      if (b !== this.fixed) {
+        vel[2 * b] -= dx;
+        vel[2 * b + 1] -= dy;
+      }
     }
     // Toward the middle, then move.
     for (let i = 0; i < n; i++) {

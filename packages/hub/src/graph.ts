@@ -5,6 +5,7 @@
  *  - server members seen, only while the adversarial `members` setting records them;
  *  - the mutual servers a fetched profile named;
  *  - the participants of groups, and of channels inside a server.
+ * Each person also says which of your accounts have a direct chat with them, and which list them as a friend or contact.
  * Only people and places with a link are sent, and people you have a direct chat with; you are sent apart (`me`).
  * Ids, names, indexes and pictures (signed media links, as a chat list has them), never message text.
  */
@@ -24,39 +25,7 @@ export function peopleGraph(s: Store): P.PeopleGraph {
   const self = new Set<string>(accounts.map((a) => a.self_identity).filter(Boolean));
   for (const r of db.query('SELECT i.id FROM person p CROSS JOIN identity i ON i.person_id = p.id WHERE p.is_self = 1 ORDER BY i.id').all() as Row[]) self.add(r.id);
 
-  // Communities, and the community each section or subspace sits in.
-  const spaces = new Map<string, Row>((db.query('SELECT id, network, kind, name, icon_url FROM space').all() as Row[]).map((r) => [r.id, r]));
-  const parents = new Map<string, string[]>();
-  for (const e of db.query(`SELECT parent_id, child_id FROM space_edge WHERE child_kind = 'space'`).all() as Row[]) {
-    const l = parents.get(e.child_id);
-    if (l) l.push(e.parent_id);
-    else parents.set(e.child_id, [e.parent_id]);
-  }
-  const rootCache = new Map<string, string | null>();
-  const community = (id: string): string | null => {
-    if (rootCache.has(id)) return rootCache.get(id)!;
-    let out: string | null = null;
-    const seen = new Set<string>();
-    const walk = [id];
-    while (walk.length) {
-      const x = walk.shift()!;
-      if (seen.has(x)) continue;
-      seen.add(x);
-      if (spaces.get(x)?.kind === 'community') {
-        out = x;
-        break;
-      }
-      walk.push(...(parents.get(x) ?? []));
-    }
-    rootCache.set(id, out);
-    return out;
-  };
-  // The server a channel is in.
-  const convSpace = new Map<string, string>();
-  for (const e of db.query(`SELECT parent_id, child_id FROM space_edge WHERE child_kind = 'conversation'`).all() as Row[]) {
-    const c = community(e.parent_id);
-    if (c && !convSpace.has(e.child_id)) convSpace.set(e.child_id, c);
-  }
+  const { spaces, community, convSpace } = communities(db);
 
   // People, made only when a link needs them.
   const idents = new Map<string, Row>(
@@ -153,6 +122,13 @@ export function peopleGraph(s: Store): P.PeopleGraph {
     if (i !== undefined) push(people[i].dm, accIx.get(r.account_id));
   }
 
+  // Which of your accounts list them as a friend or a contact: only for people already on the graph.
+  for (const r of db.query(`SELECT identity_id, account_id FROM person_link WHERE relationship IN ('friend', 'contact')`).all() as Row[]) {
+    const id = idents.get(r.identity_id);
+    const i = id && !self.has(r.identity_id) ? personIx.get(id.person_id ?? r.identity_id) : undefined;
+    if (i !== undefined) push((people[i].friend ??= []), accIx.get(r.account_id));
+  }
+
   // A place's picture (a server's icon, a group's), through an account that sees it.
   for (const pl of places) {
     const raw = spaces.get(pl.id)?.icon_url ?? groups.get(pl.id)?.avatar_url;
@@ -169,6 +145,46 @@ export function peopleGraph(s: Store): P.PeopleGraph {
   const flat: number[] = [];
   for (const [k, src] of links) flat.push(Math.floor(k / 2 ** 22), k % 2 ** 22, src);
   return { members, accounts: accounts.map((a) => a.id), people, places, links: flat, me: meOf(s, accounts) };
+}
+
+/**
+ * Communities, and the community each section, subspace and channel sits in: a channel or category counts toward its
+ * server. The graph's places and closeness's time in places (closeness.ts) both key by it.
+ */
+export function communities(db: Store['db']) {
+  const spaces = new Map<string, Row>((db.query('SELECT id, network, kind, name, icon_url FROM space').all() as Row[]).map((r) => [r.id, r]));
+  const parents = new Map<string, string[]>();
+  for (const e of db.query(`SELECT parent_id, child_id FROM space_edge WHERE child_kind = 'space'`).all() as Row[]) {
+    const l = parents.get(e.child_id);
+    if (l) l.push(e.parent_id);
+    else parents.set(e.child_id, [e.parent_id]);
+  }
+  const rootCache = new Map<string, string | null>();
+  const community = (id: string): string | null => {
+    if (rootCache.has(id)) return rootCache.get(id)!;
+    let out: string | null = null;
+    const seen = new Set<string>();
+    const walk = [id];
+    while (walk.length) {
+      const x = walk.shift()!;
+      if (seen.has(x)) continue;
+      seen.add(x);
+      if (spaces.get(x)?.kind === 'community') {
+        out = x;
+        break;
+      }
+      walk.push(...(parents.get(x) ?? []));
+    }
+    rootCache.set(id, out);
+    return out;
+  };
+  // The server a channel is in.
+  const convSpace = new Map<string, string>();
+  for (const e of db.query(`SELECT parent_id, child_id FROM space_edge WHERE child_kind = 'conversation'`).all() as Row[]) {
+    const c = community(e.parent_id);
+    if (c && !convSpace.has(e.child_id)) convSpace.set(e.child_id, c);
+  }
+  return { spaces, community, convSpace };
 }
 
 /** You: your person's name and picture, else your first account's. */

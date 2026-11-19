@@ -207,3 +207,22 @@ export function neighbours(ix: Index, node: number): number[] {
   const q = node - np;
   return [...ix.peopleOf.subarray(ix.qStart[q], ix.qStart[q + 1])];
 }
+
+/**
+ * For someone one of your accounts lists as a friend: your other accounts on the same network that see places they
+ * are in where no account that lists them sees them (a friend on one Discord account, in a server only another is
+ * in), with how many such places each. Empty when no account lists them.
+ */
+export function otherAccounts(ix: Index, p: number, netOf: (account: number) => P.Network | undefined): [number, number][] {
+  const g = ix.graph;
+  const fr = g.people[p].friend ?? [];
+  if (!fr.length) return [];
+  const nets = new Set(fr.map(netOf));
+  const out = new Map<number, number>();
+  for (let k = ix.pStart[p]; k < ix.pStart[p + 1]; k++) {
+    const pl = g.places[ix.placesOf[k]];
+    if (pl.accounts.some((a) => fr.includes(a))) continue;
+    for (const a of pl.accounts) if (nets.has(netOf(a))) out.set(a, (out.get(a) ?? 0) + 1);
+  }
+  return [...out];
+}

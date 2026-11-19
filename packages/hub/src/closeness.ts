@@ -6,14 +6,19 @@
  *  - every message in your direct chat with them, theirs and yours (1 each);
  *  - their messages in a group chat you are in, less the bigger the group (2 / people in it, groups up to 50);
  *  - a reply between you and them in a server's channel, either way (1.5), and their mentions of you there (1).
- * Plus, per identity, how many friends a fetched profile says you share (mutualFriends). Bots are left out: a bot's
- * direct chat can send thousands of messages a month.
+ * And the time you spent in your direct chat with them (1 a minute). Plus, per identity, how many friends a fetched
+ * profile says you share (mutualFriends). Bots are left out: a bot's direct chat can send thousands of messages a month.
+ *
+ * The same for each place the graph shows (a server, counting its channels and threads, or a group chat): your own
+ * messages there (1 each) and the time you spent in it (1 a minute). Time comes from the hub's record of visits
+ * (`visit`), so it only goes back as far as that does.
  *
  * Worked out on a thread of its own (closeness-worker.ts) on a read-only connection, kept for a while, and asked for
  * by the page apart from the graph, so the graph opens at once.
  */
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
+import { communities } from './graph.ts';
 import type { Store } from './store.ts';
 
 type Row = Record<string, any>;
@@ -24,6 +29,8 @@ interface ClosenessRun {
   to: number;
   /** Identity id → flat [month, weight × 10] pairs, months ascending. */
   byIdentity: Record<string, number[]>;
+  /** A graph place's id → flat [month, weight × 10] pairs: your messages and time there. */
+  byPlace: Record<string, number[]>;
   /** Identity id → friends you share, as their profile said. */
   mutual: Record<string, number>;
   ms: number;
@@ -89,27 +96,70 @@ export function closeness(db: Database): ClosenessRun {
     .all() as Row[])
     add(r.who, r.mo, r.n);
 
+  // Places: your own messages, in a server's channels and threads or a group chat.
+  const { community, convSpace } = communities(db);
+  const conv = new Map<string, Row>((db.query(`SELECT id, shape, parent_id FROM conversation WHERE shape IN ('direct', 'group', 'channel', 'thread')`).all() as Row[]).map((r) => [r.id, r]));
+  const placeOf = (id: string | null): string | null => {
+    const c = id ? conv.get(id) : undefined;
+    if (!c) return null;
+    if (c.shape === 'group') return c.id;
+    if (c.shape === 'channel') return convSpace.get(c.id) ?? null;
+    if (c.shape === 'thread') return convSpace.get(c.parent_id) ?? convSpace.get(c.id) ?? null;
+    return null;
+  };
+  const places = new Map<string, Map<number, number>>();
+  const addPlace = (id: string | null, mo: number, w: number) => {
+    if (!id) return;
+    let m = places.get(id);
+    if (!m) places.set(id, (m = new Map()));
+    m.set(mo, (m.get(mo) ?? 0) + w);
+  };
+  for (const r of db
+    .query(
+      `SELECT m.conversation_id AS conv, ${MONTH} AS mo, count(*) AS n FROM message m
+       JOIN conversation c ON c.id = m.conversation_id AND c.shape IN ('group', 'channel', 'thread')
+       WHERE m.author_id IN ${ME} GROUP BY conv, mo`,
+    )
+    .all() as Row[])
+    addPlace(placeOf(r.conv), r.mo, r.n);
+  // Time spent: in a place (a chat in it, or the server's own page), or in a direct chat with someone.
+  const other = new Map<string, string>();
+  for (const r of db.query(`SELECT p.conversation_id AS c, p.identity_id AS i FROM participant p JOIN conversation c ON c.id = p.conversation_id AND c.shape = 'direct' WHERE p.identity_id NOT IN ${ME}`).all() as Row[]) other.set(r.c, r.i);
+  for (const r of db.query('SELECT conversation_id AS conv, space_id AS space, start_at AS at, active FROM visit WHERE active > 0').all() as Row[]) {
+    const d = new Date(r.at);
+    const mo = d.getUTCFullYear() * 12 + d.getUTCMonth();
+    const w = r.active / 60;
+    const dm = r.conv ? other.get(r.conv) : undefined;
+    if (dm) add(dm, mo, w);
+    else addPlace(placeOf(r.conv) ?? (r.space ? community(r.space) : null), mo, w);
+  }
+
   let from = Infinity;
   let to = -Infinity;
-  const byIdentity: Record<string, number[]> = {};
-  for (const [who, months] of acc) {
-    const flat: number[] = [];
-    for (const mo of [...months.keys()].sort((a, b) => a - b)) {
-      const w = Math.round(months.get(mo)! * 10);
-      if (!w) continue;
-      flat.push(mo, w);
-      from = Math.min(from, mo);
-      to = Math.max(to, mo);
+  const flatten = (acc: Map<string, Map<number, number>>) => {
+    const out: Record<string, number[]> = {};
+    for (const [who, months] of acc) {
+      const flat: number[] = [];
+      for (const mo of [...months.keys()].sort((a, b) => a - b)) {
+        const w = Math.round(months.get(mo)! * 10);
+        if (!w) continue;
+        flat.push(mo, w);
+        from = Math.min(from, mo);
+        to = Math.max(to, mo);
+      }
+      if (flat.length) out[who] = flat;
     }
-    if (flat.length) byIdentity[who] = flat;
-  }
+    return out;
+  };
+  const byIdentity = flatten(acc);
+  const byPlace = flatten(places);
   // Friends in common, as profiles said.
   const mutual: Record<string, number> = {};
   for (const r of db.query(`SELECT target_id, json_array_length(data, '$.mutualFriends') AS n FROM about WHERE json_valid(data) AND json_type(data, '$.mutualFriends') = 'array'`).all() as Row[])
     if (r.n > 0) mutual[r.target_id] = r.n;
   const now = new Date();
   const thisMonth = now.getUTCFullYear() * 12 + now.getUTCMonth();
-  return { from: Number.isFinite(from) ? from : thisMonth, to: Math.max(Number.isFinite(to) ? to : thisMonth, thisMonth), byIdentity, mutual, ms: Math.round(performance.now() - t0) };
+  return { from: Number.isFinite(from) ? from : thisMonth, to: Math.max(Number.isFinite(to) ? to : thisMonth, thisMonth), byIdentity, byPlace, mutual, ms: Math.round(performance.now() - t0) };
 }
 
 /** Each person's months, summed over their identities: what GET /api/graph/activity answers, keyed as the graph is. */
@@ -129,7 +179,7 @@ export function activityView(store: Store, run: ClosenessRun): P.GraphActivity {
     if (f) mutual[key] = Math.max(mutual[key] ?? 0, f);
   }
   for (const [key, m] of merged) people[key] = [...m.keys()].sort((a, b) => a - b).flatMap((mo) => [mo, m.get(mo)!]);
-  return { from: run.from, to: run.to, people, mutual };
+  return { from: run.from, to: run.to, people, mutual, places: run.byPlace };
 }
 
 const KEEP_MS = 30 * 60_000;

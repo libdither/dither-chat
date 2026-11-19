@@ -12,9 +12,10 @@ import { api, db, go, toast, type Route } from '../state.ts';
 import { Avatar, Empty, NetBadge, openAdversarial } from '../ui/bits.tsx';
 import { Icon } from '../ui/icons.tsx';
 import { HeadOrb } from '../ui/Offline.tsx';
+import { components } from '../same/merge.ts';
 import { Engine } from './engine.ts';
 import { importance, monthName, talkedWith, thisMonth, totals, type Importance } from './importance.ts';
-import { DEFAULT_FILTERS, index, neighbours, sharesWith, visible, type Filters, type Index, type Visible } from './model.ts';
+import { DEFAULT_FILTERS, index, neighbours, otherAccounts, sharesWith, visible, type Filters, type Index, type Visible } from './model.ts';
 import { Loading } from '../ui/Loader.tsx';
 import './graph.css';
 
@@ -61,16 +62,17 @@ export default function GraphView({ onBack }: { onBack: () => void }) {
   const [graph, setGraph] = useState<P.PeopleGraph | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [gen, setGen] = useState(0);
-  const load = () => {
+  /** `fresh`: start the drawing over; else keep it, and where everything is (after a merge). */
+  const load = (fresh = true) => {
     setError(null);
     api<P.PeopleGraph>('/api/graph')
       .then((g) => {
         setGraph(g);
-        setGen((n) => n + 1);
+        if (fresh) setGen((n) => n + 1);
       })
       .catch((e) => setError((e as Error).message));
   };
-  useEffect(load, []);
+  useEffect(() => load(), []);
   return (
     <section class="pane pg-pane" aria-label="People graph">
       <header class="board-head dir-head pg-head">
@@ -83,7 +85,7 @@ export default function GraphView({ onBack }: { onBack: () => void }) {
         </div>
         <span class="pg-head-tools">
           <HeadOrb />
-          <button class="icon-btn small" title="Load again" aria-label="Load again" onClick={load}>
+          <button class="icon-btn small" title="Load again" aria-label="Load again" onClick={() => load()}>
             <Icon name="refresh" size={16} />
           </button>
           <button class="icon-btn small pg-close" title="Close" aria-label="Close" onClick={() => go({ view: 'people' })}>
@@ -100,7 +102,7 @@ export default function GraphView({ onBack }: { onBack: () => void }) {
       ) : !graph.links.length ? (
         <Sparse graph={graph} />
       ) : (
-        <Stage key={gen} graph={graph} reload={load} />
+        <Stage key={gen} graph={graph} reload={() => load(false)} />
       )}
     </section>
   );
@@ -139,6 +141,8 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
   const [asOf, setAsOf] = useState<number | null>(null);
   const imp = useMemo(() => importance(ix, act, asOf), [ix, act, asOf]);
   const [picked, setPicked] = useState<number | null>(null);
+  /** A Same person? group picked (an index into groups), for its merge card. */
+  const [pickedGroup, setPickedGroup] = useState<number | null>(null);
   // Hovering changes often: only the tip redraws for it.
   const hover = useMemo(() => signal<Hover | null>(null), []);
   const [kind, setKind] = useState<'webgl' | '2d' | null>(null);
@@ -158,9 +162,16 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
   useEffect(() => {
     const e = new Engine(host.current!, glc.current!, txt.current!, {
       hover: (node, x, y) => (hover.value = node === null ? null : { node, x, y }),
-      pick: (node) => setPicked(node),
+      pick: (node) => {
+        setPickedGroup(null);
+        setPicked(node);
+      },
       open: (node) => open(graph, node),
       label: name,
+      group: (gi) => {
+        setPicked(null);
+        setPickedGroup(gi);
+      },
     });
     engine.current = e;
     setKind(e.kind);
@@ -174,25 +185,55 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
     };
   }, []);
   useEffect(() => engine.current?.setData(ix, vis), [ix, vis]);
-  useEffect(() => engine.current?.setScores(imp.score), [imp, vis]);
+  useEffect(() => engine.current?.setScores(imp.score, imp.place), [imp, vis]);
+  // A new graph (after a merge) numbers everyone afresh.
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) return void (first.current = false);
+    setPicked(null);
+    setPickedGroup(null);
+  }, [graph]);
   // Same person? suggestions as dashed links (docs/same-person.md), when asked for.
   const [sameOn, setSameOn] = useState(loadSameOn);
   const [same, setSame] = useState<P.MatchSuggestion[]>([]);
   useEffect(() => {
     saveSameOn(sameOn);
     if (!sameOn) return setSame([]);
-    api<P.MatchesView>('/api/matches')
-      .then((v) => setSame(v.suggestions))
-      .catch(() => setSame([]));
-  }, [sameOn]);
+    // While the hub is still working them out, ask again a few times.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let tries = 0;
+    const ask = () =>
+      api<P.MatchesView>('/api/matches')
+        .then((v) => {
+          setSame(v.suggestions);
+          if (v.running && tries++ < 12) timer = setTimeout(ask, 5000);
+        })
+        .catch(() => setSame([]));
+    void ask();
+    return () => clearTimeout(timer);
+  }, [sameOn, graph]);
   const byId = useMemo(() => new Map(graph.people.map((p, i) => [p.id, i])), [graph]);
   const sameLinks = useMemo(
     () => same.map((s) => ({ s, a: byId.get(s.a.id), b: byId.get(s.b.id) })).filter((x): x is { s: P.MatchSuggestion; a: number; b: number } => x.a !== undefined && x.b !== undefined),
     [same, byId],
   );
-  useEffect(() => engine.current?.setSame(sameLinks.map((x) => ({ a: x.a, b: x.b, p: x.s.p }))), [sameLinks]);
-  const shownSame = sameLinks.filter((x) => vis.nodes.includes(x.a) && vis.nodes.includes(x.b)).length;
+  // Suggestions joined by the people they share: one group each, to merge in full or in part.
+  const groups = useMemo(() => {
+    const byKey = new Map(same.map((s) => [s.key, s]));
+    return components(same)
+      .map((c) => {
+        const pairs = c.keys.map((k) => byKey.get(k)!);
+        const sides = c.sides.map((id) => pairs.flatMap((p) => [p.a, p.b]).find((x) => x.id === id)!);
+        return { sides, pairs, p: Math.min(...pairs.map((x) => x.p)), members: c.sides.map((id) => byId.get(id)).filter((g): g is number => g !== undefined) };
+      })
+      .filter((g) => g.members.length > 0);
+  }, [same, byId]);
+  useEffect(() => engine.current?.setSame(sameLinks.map((x) => ({ a: x.a, b: x.b, p: x.s.p })), groups.map((g) => ({ members: g.members, n: g.sides.length, p: g.p }))), [sameLinks, groups, vis]);
+  useEffect(() => setPickedGroup(null), [groups]);
+  const shownSame = groups.filter((g) => g.members.some((m) => vis.nodes.includes(m))).length;
   useEffect(() => engine.current?.select(picked), [picked]);
+  useEffect(() => engine.current?.selectGroup(pickedGroup), [pickedGroup]);
+  const netOf = (a: number) => db.accounts.get(graph.accounts[a])?.network;
 
   /** Show a node, widening the filters if it is not shown. */
   const reveal = (g: number) => {
@@ -201,6 +242,7 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
       const home = g >= np ? g : neighbours(ix, g)[0];
       set({ networks: [], account: null, bots: f.bots || (g < np && !!graph.people[g].bot), shared: false, groups: true, place: home === undefined ? null : home - np });
     }
+    setPickedGroup(null);
     setPicked(g);
     requestAnimationFrame(() => requestAnimationFrame(() => engine.current?.center(g)));
   };
@@ -276,10 +318,10 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
           {sameOn && (
             <span>
               {' '}
-              · {shownSame.toLocaleString()} possible same-person {shownSame === 1 ? 'link' : 'links'} dashed
-              {same.length > shownSame && (
+              · {shownSame.toLocaleString()} {shownSame === 1 ? 'group' : 'groups'} that may be one person, shaded: click one to merge
+              {groups.length < components(same).length && (
                 <>
-                  {` (${(same.length - shownSame).toLocaleString()} more off the graph: `}
+                  {` (${(components(same).length - groups.length).toLocaleString()} more off the graph: `}
                   <button class="link-btn" onClick={() => go({ view: 'people', same: true })}>
                     see all
                   </button>
@@ -305,7 +347,7 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
             <Icon name="grid" size={15} />
           </button>
         </div>
-        <Key graph={graph} vis={vis} me={vis.me >= 0} />
+        <Key graph={graph} ix={ix} vis={vis} me={vis.me >= 0} same={sameOn && shownSame > 0} netOf={netOf} />
         <Tip hover={hover} picked={picked} graph={graph} ix={ix} name={name} />
         {picked !== null && (
           <Card
@@ -327,6 +369,25 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
             onSameDone={(key, merged) => (merged ? reload() : setSame(same.filter((x) => x.key !== key)))}
             act={act}
             imp={imp}
+            netOf={netOf}
+            group={(() => {
+              const gi = groups.findIndex((g) => g.members.includes(picked));
+              return gi >= 0 && groups[gi].sides.length > 2 ? { n: groups[gi].sides.length, open: () => (setPicked(null), setPickedGroup(gi)) } : null;
+            })()}
+          />
+        )}
+        {pickedGroup !== null && groups[pickedGroup] && (
+          <SameCard
+            group={groups[pickedGroup]}
+            at={(id) => byId.get(id)}
+            onPick={reveal}
+            onClose={() => setPickedGroup(null)}
+            onDone={(merged, keys) => {
+              setPickedGroup(null);
+              if (merged) reload();
+              else setSame(same.filter((x) => !keys.includes(x.key)));
+            }}
+            onUndone={() => void api<P.MatchesView>('/api/matches').then((v) => setSame(v.suggestions), () => {})}
           />
         )}
       </div>
@@ -336,7 +397,7 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
 }
 
 /** What the colours, sizes and shapes mean, with how many of each are shown. Folds away. */
-function Key({ graph, vis, me }: { graph: P.PeopleGraph; vis: Visible; me: boolean }) {
+function Key({ graph, ix, vis, me, same, netOf }: { graph: P.PeopleGraph; ix: Index; vis: Visible; me: boolean; same: boolean; netOf: (a: number) => P.Network | undefined }) {
   const [open, setOpen] = useState(() => {
     try {
       const v = localStorage.getItem(KEY_OPEN);
@@ -352,18 +413,20 @@ function Key({ graph, vis, me }: { graph: P.PeopleGraph; vis: Visible; me: boole
     } catch {}
   };
   const np = graph.people.length;
-  const { nets, known, multi } = useMemo(() => {
+  const { nets, known, multi, crossed } = useMemo(() => {
     const nets = new Map<P.Network, number>();
     let known = 0;
     let multi = 0;
+    let crossed = 0;
     for (const g of vis.nodes) {
       if (g >= np) continue;
       const p = graph.people[g];
       for (const n of p.networks) nets.set(n, (nets.get(n) ?? 0) + 1);
       if (p.dm.length) known++;
       if (p.networks.length > 1) multi++;
+      if (p.friend?.length && otherAccounts(ix, g, netOf).length) crossed++;
     }
-    return { nets: [...nets].sort((a, b) => b[1] - a[1]), known, multi };
+    return { nets: [...nets].sort((a, b) => b[1] - a[1]), known, multi, crossed };
   }, [graph, vis]);
   if (!open)
     return (
@@ -407,8 +470,18 @@ function Key({ graph, vis, me }: { graph: P.PeopleGraph; vis: Visible; me: boole
         </div>
       )}
       <div class="pg-key-row">
-        <i class="pg-key-shape square" /> Server <i class="pg-key-shape diamond" /> Group, bigger the more people
+        <i class="pg-key-shape square" /> Server <i class="pg-key-shape diamond" /> Group, bigger the more you are there and the more who matter to you are
       </div>
+      {crossed > 0 && (
+        <div class="pg-key-row">
+          <i class="pg-key-dot" /> Friends on one account seen in a server of another <em>{crossed.toLocaleString()}</em>
+        </div>
+      )}
+      {same && (
+        <div class="pg-key-row">
+          <i class="pg-key-blob" /> Shaded together: may be one person. Click the shading to merge
+        </div>
+      )}
     </div>
   );
 }
@@ -475,6 +548,8 @@ function Card({
   onSameDone,
   act,
   imp,
+  netOf,
+  group,
 }: {
   graph: P.PeopleGraph;
   ix: Index;
@@ -490,6 +565,9 @@ function Card({
   onSameDone: (key: string, merged: boolean) => void;
   act: P.GraphActivity | null;
   imp: Importance;
+  netOf: (a: number) => P.Network | undefined;
+  /** The Same person? group they are in, when it joins more than two: its card. */
+  group: { n: number; open: () => void } | null;
 }) {
   const np = graph.people.length;
   const isPerson = node < np;
@@ -542,7 +620,18 @@ function Card({
           {accts.map(accountName).join(', ')}
         </div>
       )}
-      {isPerson && <Talk act={act} imp={imp} node={node} id={graph.people[node].id} />}
+      {isPerson && graph.people[node].friend?.length ? <div class="pg-card-sub">Friend on {graph.people[node].friend!.map(accountName).join(', ')}</div> : null}
+      {isPerson &&
+        otherAccounts(ix, node, netOf).map(([a, n]) => (
+          <div class="pg-card-sub">
+            Also in {n === 1 ? 'a place' : `${n} places`} only {accountName(a)} sees
+          </div>
+        ))}
+      {isPerson ? (
+        <Talk act={act} flat={act?.people[graph.people[node].id]} friends={imp.friends[node]} what="between you" />
+      ) : (
+        <Talk act={act} flat={act?.places?.[graph.places[placeIx].id]} friends={0} what="of yours here (messages and minutes)" />
+      )}
       <div class="pg-card-actions">
         <button class="btn small" onClick={() => go(r.profile)}>
           {isPerson ? 'Profile' : 'About'}
@@ -561,6 +650,11 @@ function Card({
       {isPerson && same.length > 0 && (
         <>
           <h4>Maybe the same person as</h4>
+          {group && (
+            <button class="btn small" onClick={group.open}>
+              <Icon name="merge" size={14} /> All {group.n} together…
+            </button>
+          )}
           <div class="pg-card-list">
             {same.map(({ s, side, at }) => {
               return (
@@ -632,6 +726,155 @@ function Card({
   );
 }
 
+/** A Same person? group: the people it joins, their accounts, why. */
+interface Group {
+  sides: P.MatchSide[];
+  pairs: P.MatchSuggestion[];
+  p: number;
+}
+
+/** One of a side's accounts, short: its handle, else its name, else its network. */
+const accountLabel = (i: P.MatchSide['identities'][number]) => (i.handle && i.network !== 'email' ? i.handle : (i.name ?? netName(i.network)));
+const pct = (p: number) => `${Math.round(p * 100)}%`;
+
+/**
+ * The merge card for a Same person? group: everyone in it, ticked. Merge them all, or untick some and merge the rest
+ * (the unticked stay suggested); "Not them" turns down every pair with one person in it, and "Not the same" all of
+ * them, each with Undo.
+ */
+function SameCard({ group, at, onPick, onClose, onDone, onUndone }: { group: Group; at: (id: string) => number | undefined; onPick: (g: number) => void; onClose: () => void; onDone: (merged: boolean, keys: string[]) => void; onUndone: () => void }) {
+  const [ticked, setTicked] = useState(() => new Set(group.sides.map((x) => x.id)));
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setTicked(new Set(group.sides.map((x) => x.id))), [group]);
+  const chosen = group.sides.filter((x) => ticked.has(x.id));
+  const all = chosen.length === group.sides.length;
+  const n = group.sides.length;
+  const merge = async () => {
+    setBusy(true);
+    try {
+      await api('/api/matches/merge', { body: { sides: chosen.map((x) => x.id) } });
+      toast({ kind: 'info', title: 'Merged', body: `${chosen.map((x) => x.name).join(' and ')} are one person now. Split them again from their profile.` }, 4000);
+      onDone(true, []);
+    } catch (e) {
+      toast({ kind: 'error', title: 'Could not merge', body: (e as Error).message });
+    }
+    setBusy(false);
+  };
+  const turnDown = async (keys: string[], body: string) => {
+    setBusy(true);
+    try {
+      for (const key of keys) await api('/api/matches/decide', { body: { key, decision: 'no' } });
+    } catch (e) {
+      toast({ kind: 'error', title: 'Could not save that', body: (e as Error).message });
+      setBusy(false);
+      return;
+    }
+    setBusy(false);
+    onDone(false, keys);
+    toast(
+      {
+        kind: 'info',
+        title: 'Not the same',
+        body,
+        actionLabel: 'Undo',
+        action: () =>
+          void Promise.all(keys.map((key) => api('/api/matches/decide', { body: { key, undo: true } }))).then(onUndone, (e) => toast({ kind: 'error', title: 'Could not undo that', body: (e as Error).message })),
+      },
+      6000,
+    );
+  };
+  const notThem = (side: P.MatchSide) =>
+    turnDown(
+      group.pairs.filter((p) => p.a.id === side.id || p.b.id === side.id).map((p) => p.key),
+      `${side.name} won't be suggested with ${n === 2 ? group.sides.find((x) => x.id !== side.id)!.name : 'the others'} again.`,
+    );
+  return (
+    <aside class="pg-card pg-same-card" aria-label="May be one person">
+      <div class="pg-card-head">
+        <span class="pg-same-icon">
+          <Icon name="merge" size={20} />
+        </span>
+        <span class="pg-card-title">
+          <b class="pg-card-name">May be one person</b>
+          <span class="pg-card-sub">
+            {n === 2 ? `2 accounts · ${pct(group.p)} likely` : `${n} accounts · each pair ${pct(group.p)} likely or more`}
+          </span>
+        </span>
+        <button class="icon-btn small" aria-label="Close" onClick={onClose}>
+          <Icon name="x" size={14} />
+        </button>
+      </div>
+      <div class="pg-same-sides">
+        {group.sides.map((side) => {
+          const g = at(side.id);
+          return (
+            <div class="pg-same-side">
+              <input
+                type="checkbox"
+                checked={ticked.has(side.id)}
+                aria-label={`Merge ${side.name}`}
+                onChange={(e) => {
+                  const next = new Set(ticked);
+                  if ((e.target as HTMLInputElement).checked) next.add(side.id);
+                  else next.delete(side.id);
+                  setTicked(next);
+                }}
+              />
+              <button class="pg-row" title={g !== undefined ? 'Show them on the graph' : 'Open their profile'} onClick={() => (g !== undefined ? onPick(g) : go(side.id.startsWith('per_') ? { view: 'profile', person: side.id } : { view: 'profile', identity: side.id }))}>
+                <Avatar id={side.id} name={side.name} url={side.avatar} size={28} network={side.identities.length === 1 ? side.identities[0].network : undefined} />
+                <span class="pg-same-name">
+                  <span class="pg-row-name">{side.name}</span>
+                  <small>
+                    {side.identities.slice(0, 3).map((i) => (
+                      <span>
+                        <NetBadge network={i.network} size={11} /> {accountLabel(i)}
+                      </span>
+                    ))}
+                    {side.identities.length > 3 && <span>+{side.identities.length - 3}</span>}
+                    {g === undefined && <span>not on the graph</span>}
+                  </small>
+                </span>
+              </button>
+              {n > 2 && (
+                <button class="btn small ghost" disabled={busy} title={`${side.name} is not the same person as the others`} onClick={() => void notThem(side)}>
+                  Not them
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div class="pg-card-actions">
+        <button class="btn small" disabled={busy || chosen.length < 2} onClick={() => void merge()}>
+          <Icon name="merge" size={14} /> {all ? (n === 2 ? 'Merge' : `Merge all ${n}`) : `Merge the ${chosen.length} ticked`}
+        </button>
+        <button class="btn small ghost" disabled={busy} onClick={() => void turnDown(group.pairs.map((p) => p.key), n === 2 ? `${group.sides[0].name} and ${group.sides[1].name} won't be suggested again.` : `None of these ${n} will be suggested together again.`)}>
+          {n === 2 ? 'Not the same' : 'None are the same'}
+        </button>
+      </div>
+      {!all && chosen.length >= 2 && <div class="pg-card-sub">The unticked stay suggested; turn them down with Not them.</div>}
+      <h4>Why</h4>
+      <div class="pg-same-why">
+        {group.pairs.map((p) => (
+          <div class="pg-same-pair">
+            <div class="pg-same-pair-head">
+              <span>
+                {p.a.name} and {p.b.name}
+              </span>
+              <span class="pg-n">{pct(p.p)}</span>
+            </div>
+            <ul>
+              {p.evidence.slice(0, 4).map((e) => (
+                <li class={e.weight < 0 ? 'against' : ''}>{e.text}</li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </aside>
+  );
+}
+
 /** Find someone or somewhere by name. */
 function Finder({ graph, name, onPick }: { graph: P.PeopleGraph; name: (g: number) => string; onPick: (g: number) => void }) {
   const [q, setQ] = useState('');
@@ -667,10 +910,11 @@ function Finder({ graph, name, onPick }: { graph: P.PeopleGraph; name: (g: numbe
   );
 }
 
-/** How much you have talked with someone, and when: a bar a year, the past year's count, and friends you share. */
-function Talk({ act, imp, node, id }: { act: P.GraphActivity | null; imp: Importance; node: number; id: string }) {
-  const flat = act?.people[id];
-  const friends = imp.friends[node];
+/**
+ * How much you have talked with someone, or been in a place, and when: a bar a year, the past year's count, and
+ * friends you share.
+ */
+function Talk({ act, flat, friends, what }: { act: P.GraphActivity | null; flat: number[] | undefined; friends: number; what: string }) {
   const years = useMemo(() => {
     if (!act || !flat) return null;
     const y0 = Math.floor(act.from / 12);
@@ -692,7 +936,8 @@ function Talk({ act, imp, node, id }: { act: P.GraphActivity | null; imp: Import
     <div class="pg-talk">
       {flat && (
         <div class="pg-card-sub">
-          About {n(total)} messages between you{year >= 1 ? `, ${n(year)} in the past year` : ', none in the past year'}
+          About {n(total)} {what}
+          {year >= 1 ? `, ${n(year)} in the past year` : ', none in the past year'}
         </div>
       )}
       {years && years.out.length > 1 && (

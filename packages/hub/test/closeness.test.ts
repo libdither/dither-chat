@@ -88,3 +88,33 @@ test('the graph sends you apart, by your name, and everyone you have a direct ch
   expect(g.people.some((p) => p.name === 'Me')).toBe(false);
   expect(g.people.find((p) => p.id === store.ensurePerson(did('ann')))?.dm.length).toBeGreaterThan(0);
 });
+
+test('places: your own messages in a server (any channel) or a group, and the time you spent in them', () => {
+  const MAY24 = Date.UTC(2024, 4, 3);
+  const visit = (id: string, conv: string | null, space: string | null, active: number) =>
+    store.db
+      .query(`INSERT INTO visit (id, device, view, conversation_id, space_id, start_at, end_at, active, source, updated_at) VALUES (?, 'dev', 'conversation', ?, ?, ?, ?, ?, 'rail', ?)`)
+      .run(id, conv, space, MAY24, MAY24 + active * 1000, active, MAY24);
+  const ch = hubId('cnv', 'discord', 'ch');
+  const guild = hubId('spc', 'discord', 'g1');
+  const grp = hubId('cnv', 'signal', 'grp');
+  visit('v1', ch, null, 120);
+  visit('v2', null, guild, 60);
+  visit('v3', hubId('cnv', 'discord', 'dm-ann'), null, 300);
+  const run = closeness(store.db);
+  expect(run.byPlace[guild]).toEqual([month(2024, 2), 10, month(2024, 4), 30]);
+  expect(run.byPlace[grp]).toEqual([month(2023, 0), 10]);
+  // Time in a direct chat counts for the person in it.
+  expect(run.byIdentity[did('ann')]).toEqual([month(2024, 2), 30, month(2024, 4), 50]);
+  expect(activityView(store, run).places?.[guild]).toEqual(run.byPlace[guild]);
+  store.db.query('DELETE FROM visit').run();
+});
+
+test('the graph says which accounts list someone as a friend', () => {
+  const d = (store.db.query(`SELECT id FROM account WHERE network = 'discord'`).get() as { id: string }).id;
+  store.db.query(`INSERT INTO person_link (account_id, identity_id, relationship) VALUES (?, ?, 'friend')`).run(d, did('dee'));
+  const g = peopleGraph(store);
+  const ai = g.accounts.indexOf(d);
+  expect(g.people.find((p) => p.id === did('dee'))?.friend).toEqual([ai]);
+  expect(g.people.find((p) => p.id === store.ensurePerson(did('ann')))?.friend).toBeUndefined();
+});

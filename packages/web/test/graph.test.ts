@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
 import { Layout, seed } from '../src/graph/layout.ts';
 import { importance } from '../src/graph/importance.ts';
-import { DEFAULT_FILTERS, index, meNode, neighbours, sharesWith, visible } from '../src/graph/model.ts';
+import { DEFAULT_FILTERS, index, meNode, neighbours, otherAccounts, sharesWith, visible } from '../src/graph/model.ts';
 
 // Accounts: 0 Discord main, 1 Discord alt, 2 Signal. Places: 0 server A (main and alt), 1 server B (alt), 2 a
 // Signal group. Ann is in A and the group; Bob in A and B; Cy in B; Dee in the group; a bot in A.
@@ -168,5 +168,37 @@ describe('you and who matters', () => {
     for (let i = 0; i < 400 && !l.done; i++) l.tick();
     expect([l.pos[0], l.pos[1]]).toEqual([0, 0]);
     expect(Math.hypot(l.pos[2], l.pos[3])).toBeLessThan(Math.hypot(l.pos[4], l.pos[5]));
+  });
+
+  test('places: your time and messages there most, then the people in it who matter to you', () => {
+    const M = 2024 * 12;
+    const act: P.GraphActivity = { from: M - 12, to: M, people: { per_dee: [M, 500] }, mutual: {}, places: { spc_b: [M, 3000] } };
+    const now = importance(ix, act, M);
+    expect(now.place[1]).toBe(1);
+    // The group holds Dee, who matters most; server A no one you talk with.
+    expect(now.place[2]).toBeGreaterThan(now.place[0]);
+    // A year before you were in B, it is down to its people.
+    expect(importance(ix, act, M - 12).spent[1]).toBe(0);
+    for (const s of now.place) expect(s >= 0 && s <= 1).toBe(true);
+  });
+
+  test('a friend on one account seen in a server only another account of that network sees', () => {
+    const g3: P.PeopleGraph = { ...graph, people: graph.people.map((p, i) => (i === 0 || i === 1 ? { ...p, friend: [0] } : p)) };
+    const ix3 = index(g3);
+    const netOf = (a: number) => (['discord', 'discord', 'signal'] as const)[a];
+    // Bob: a friend on Discord main, in B, which only Discord alt sees.
+    expect(otherAccounts(ix3, 1, netOf)).toEqual([[1, 1]]);
+    // Ann: A is seen by main; the Signal group is on another network.
+    expect(otherAccounts(ix3, 0, netOf)).toEqual([]);
+    expect(otherAccounts(ix3, 2, netOf)).toEqual([]);
+  });
+
+  test('tied nodes (who may be one person) end up side by side', () => {
+    const pos = Float32Array.from([-200, 0, 200, 0, 0, 200]);
+    const l = new Layout({ n: 3, edges: new Uint32Array(0), pos, ties: Uint32Array.from([0, 1]) });
+    for (let i = 0; i < 400 && !l.done; i++) l.tick();
+    const tied = Math.hypot(l.pos[0] - l.pos[2], l.pos[1] - l.pos[3]);
+    expect(tied).toBeLessThan(Math.hypot(l.pos[0] - l.pos[4], l.pos[1] - l.pos[5]));
+    expect(tied).toBeLessThan(60);
   });
 });

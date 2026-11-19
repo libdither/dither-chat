@@ -1,8 +1,12 @@
 /**
  * How much each person matters to you, 0 to 1 (docs/people-graph.md "Who matters"): how much you have talked (from the
- * hub's closeness, by month, fading with time), how many places you share, and how many friends you share (as their
- * profile said, and the people you talk with who are in a small group with them). The graph sizes people by it, and
- * gives the most important ones the room it has: pictures, then names.
+ * hub's closeness, by month, fading with time), how many places you share, how many friends you share (as their
+ * profile said, and the people you talk with who are in a small group with them), and whether one of your accounts
+ * lists them as a friend or contact. The graph sizes people by it, and gives the most important ones the room it has:
+ * pictures, then names.
+ *
+ * And how much each place matters, 0 to 1: your own messages and time there (fading the same way), and how much the
+ * people in it matter to you.
  *
  * `asOf` replays it at a month in the past: talk up to then, fading from then; what you share counts for less, since
  * the hub does not know when you came to share it.
@@ -12,7 +16,9 @@ import type { Index } from './model.ts';
 
 /** Talk fades by e every this many months. */
 const FADE_MONTHS = 18;
-const W = { talk: 1, places: 0.5, friends: 0.45, networks: 0.3 };
+const W = { talk: 1, places: 0.5, friends: 0.45, networks: 0.3, listed: 0.6 };
+/** A place's: your time and messages there, and the people in it who matter to you. */
+const WP = { mine: 1, people: 0.7 };
 /** Groups this big or smaller count as friends in common. */
 const FRIENDS_GROUP_MAX = 30;
 
@@ -23,6 +29,21 @@ export interface Importance {
   talk: Float32Array;
   /** Per person, friends in common. */
   friends: Uint16Array;
+  /** Per place (graph place index), 0 to 1. */
+  place: Float32Array;
+  /** Per place, your messages and minutes there, faded. */
+  spent: Float32Array;
+}
+
+/** A flat [month, weight × 10] list summed up to a month, fading from it. */
+function faded(flat: number[] | undefined, at: number): number {
+  let t = 0;
+  for (let k = 0; flat && k < flat.length; k += 2) {
+    const mo = flat[k];
+    if (mo > at) break;
+    t += (flat[k + 1] / 10) * Math.exp(-(at - mo) / FADE_MONTHS);
+  }
+  return t;
 }
 
 export const thisMonth = () => {
@@ -42,18 +63,7 @@ export function importance(ix: Index, act: P.GraphActivity | null, asOf: number 
   const np = g.people.length;
   const at = asOf ?? thisMonth();
   const talk = new Float32Array(np);
-  if (act)
-    g.people.forEach((p, i) => {
-      const flat = act.people[p.id];
-      if (!flat) return;
-      let t = 0;
-      for (let k = 0; k < flat.length; k += 2) {
-        const mo = flat[k];
-        if (mo > at) break;
-        t += (flat[k + 1] / 10) * Math.exp(-(at - mo) / FADE_MONTHS);
-      }
-      talk[i] = t;
-    });
+  if (act) g.people.forEach((p, i) => (talk[i] = faded(act.people[p.id], at)));
   // Friends in common: the profile's count, and the people you talk with who share a small group with them.
   const friends = new Uint16Array(np);
   const close = new Set<number>();
@@ -79,14 +89,30 @@ export function importance(ix: Index, act: P.GraphActivity | null, asOf: number 
     const places = ix.pStart[i + 1] - ix.pStart[i];
     const s =
       W.talk * Math.log1p(talk[i]) +
-      shared * (W.places * Math.log1p(Math.max(0, places - 1)) + W.friends * Math.log1p(friends[i]) + W.networks * (g.people[i].networks.length > 1 ? 1 : 0)) +
+      shared * (W.places * Math.log1p(Math.max(0, places - 1)) + W.friends * Math.log1p(friends[i]) + W.networks * (g.people[i].networks.length > 1 ? 1 : 0) + W.listed * (g.people[i].friend?.length ? 1 : 0)) +
       // A direct chat with no talk counted yet (closeness still on its way) still counts for something.
       (!act && g.people[i].dm.length ? 1.5 : 0);
     score[i] = s;
     if (s > max) max = s;
   }
   if (max > 0) for (let i = 0; i < np; i++) score[i] /= max;
-  return { score, talk, friends };
+
+  // Places: your time and messages there, and the people in it who matter most (cubed, so a crowd of strangers adds
+  // up to less than a few friends).
+  const nq = g.places.length;
+  const spent = new Float32Array(nq);
+  const place = new Float32Array(nq);
+  let pmax = 0;
+  for (let q = 0; q < nq; q++) {
+    spent[q] = faded(act?.places?.[g.places[q].id], at);
+    let near = 0;
+    for (let k = ix.qStart[q]; k < ix.qStart[q + 1]; k++) near += score[ix.peopleOf[k]] ** 3;
+    const s = WP.mine * Math.log1p(spent[q]) + WP.people * Math.log1p(4 * near);
+    place[q] = s;
+    if (s > pmax) pmax = s;
+  }
+  if (pmax > 0) for (let q = 0; q < nq; q++) place[q] /= pmax;
+  return { score, talk, friends, place, spent };
 }
 
 /** A month number as "Mar 2021". */
