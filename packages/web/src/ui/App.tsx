@@ -433,7 +433,8 @@ export function App() {
         </div>
       )}
       {addingAccount.value && <AddAccount onClose={() => (addingAccount.value = false)} />}
-      <CallDock />
+      {/* The conversation on screen: on a phone, none while the list shows (a call there folds to the bar). */}
+      <CallDock shown={(p && tabs) || !('conv' in r) ? null : (r.conv ?? null)} listHidden={!p && full} />
       <RingCards />
       <ReactionLayer />
       <MessageHistoryLayer />

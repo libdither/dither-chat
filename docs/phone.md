@@ -18,6 +18,10 @@ slides in over them. A tab bar along the bottom shows whenever the lists do:
 | Search | Search with every filter; a search for a name also lists matching people, communities and channels |
 | You | Settings, with your accounts first and Add account |
 
+A call you're in shows as the call bar while you're anywhere but its own page: a slim strip above the tab bar (at
+the top of another open page), with who is talking, mute and leave; a tap opens the call ([calls.md](calls.md#the-call-bar)).
+On the call's page the dock shows at the top, as before. The bar replaced the whole dock floating over the lists.
+
 The card and the panels are moved by `src/ui/Pager.ts`; `src/gesture.ts` holds the arithmetic (axis lock,
 release velocity, when a swipe commits, rubber banding, a settle that starts at the finger's speed) and is unit
 tested. A swipe that commits starts the card settling first and changes the route a frame later, so the render the

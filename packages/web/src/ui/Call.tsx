@@ -6,6 +6,9 @@ import { callIn } from '../ringing.ts';
 import { db, isSelfIdentity, prefs, rev } from '../state.ts';
 import { convTitle } from '../model.ts';
 import { Icon } from './icons.tsx';
+import { BAR_UNDER, CallBar, callOpen, elapsed } from './CallBar.tsx';
+import { phone } from '../phone.ts';
+import { PANE_DEFAULT, paneWidths } from '../panes.ts';
 
 type PanelParts = typeof import('./CallPanel.tsx');
 let panel: PanelParts | null = null;
@@ -57,18 +60,26 @@ export function JoinCallButton({ c }: { c: P.ConversationView }) {
   );
 }
 
-function elapsed(since: number, now: number) {
-  const s = Math.max(0, Math.floor((now - since) / 1000));
-  const m = Math.floor(s / 60);
-  return `${m}:${String(s % 60).padStart(2, '0')}`;
-}
-
-/** The call in progress, wherever you are in the app. Tap it for the people in it. */
-export function CallDock() {
+/**
+ * The call in progress, wherever you are in the app. Tap it for the people in it. Where there's no room for the dock it
+ * is the call bar (CallBar.tsx): on a phone whenever `shown` (the conversation on screen) isn't the call's, on a computer
+ * when the list is hidden or narrow; opening it from the bar shows the dock until it's closed again.
+ */
+export function CallDock({ shown, listHidden }: { shown: string | null; listHidden: boolean }) {
   rev.value;
   const call = activeCall.value;
-  const [open, setOpen] = useState(false);
+  const open = callOpen.value;
+  const setOpen = (v: boolean) => (callOpen.value = v);
   const [now, setNow] = useState(Date.now());
+  const here = !!call && shown === call.conversationId;
+  const bar = phone.value ? !here : listHidden || (paneWidths.value.sidebar ?? PANE_DEFAULT.sidebar) <= BAR_UNDER;
+  // Leaving the call's conversation folds an open dock back to the bar, where the bar shows (a full dock stays as it was).
+  useEffect(() => {
+    if (call && !here && bar) callOpen.value = false;
+  }, [shown]);
+  useEffect(() => {
+    if (!call) callOpen.value = false;
+  }, [!!call]);
   // The open dock is a chunk of its own (CallPanel.tsx), loaded the first time it opens.
   const Panel = useCallPanel(open);
   useEffect(() => {
@@ -77,6 +88,13 @@ export function CallDock() {
     return () => clearInterval(t);
   }, [!!call]);
   if (!call) return null;
+  if (bar && !open)
+    return (
+      <>
+        <CallVideos />
+        <CallBar call={call} here={here} />
+      </>
+    );
   const c = db.conversations.get(call.conversationId);
   const title = c ? convTitle(c) : 'Call';
   const speaking = call.participants.filter((p) => p.speaking);

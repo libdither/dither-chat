@@ -32,7 +32,7 @@ resize, double-click it for the usual width again. Focused (Tab), the arrow keys
 Shift) and Home puts the usual width back.
 
 Widths are kept per device, in this browser's storage ([`panes.ts`](../packages/web/src/panes.ts)), and set as
-`--sidebar-w` and `--details-w` on `<html>`, so whatever lines up with the list (the call dock) follows. Each has
+`--sidebar-w` and `--details-w` on `<html>`, so whatever lines up with the list (the call dock; the call bar at 260 px or narrower, docs/calls.md) follows. Each has
 bounds (the list 220 to 640 px, the details 260 to 640) and the conversation keeps at least 380 px; a window made
 narrower later narrows the panels with it, back to the width kept when there is room again. A phone has no
 handles: it lays out its own way (docs/phone.md).

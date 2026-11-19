@@ -12,6 +12,8 @@
  * - watching the bot's Go Live;
  * - the second device leaving plays the leave sound on the first; leaving ends the call everywhere;
  * - a device with no microphone still joins, listening only;
+ * - the call bar on a phone: shown in the list and on another chat, not on the call's own; mute works from it; a tap
+ *   opens the call; the call's row has its mark; a computer's hidden list shows the bar too; leaving from it;
  * - no page errors.
  *
  *   bun packages/hub/src/main.ts --demo --data /tmp/x --port 8579 --web packages/web/dist
@@ -48,7 +50,8 @@ const a = await launch({ args: MEDIA });
 const b = await launch({ args: MEDIA });
 // No fake devices: getUserMedia finds no microphone.
 const c = await launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
-const browsers = [room, a, b, c];
+const d = await launch({ args: MEDIA });
+const browsers = [room, a, b, c, d];
 
 /** A device page as one demo account, in the voice channel's chat. */
 async function device(p: Page, account: string) {
@@ -143,7 +146,36 @@ try {
   check(await call(c.page, 'c && c.listenOnly && c.muted'), 'listening only, muted', await call(c.page, 'c && { listenOnly: c.listenOnly, muted: c.muted, note: c.note }'));
   await c.page.eval(`document.querySelector('.call-btn.leave').click()`);
 
-  for (const [n, x] of [['first device', a], ['second device', b], ['no-microphone device', c]] as const) check(x.page.errors.length === 0, `no page errors on the ${n}`, x.page.errors.slice(0, 3));
+  // ------------------------------------------------------------ the call bar, on a phone
+  const other = boot.conversations.find((x: any) => x.shape === 'direct' && x.vantages.some((v: any) => v.accountId === MAIN));
+  const space = voice.spaceIds?.[0] as string | undefined;
+  await d.page.size(390, 844, true);
+  await device(d.page, MAIN);
+  await d.page.eval(`document.querySelector('.call-join').click()`);
+  check(await wait(d.page, `!!document.querySelector('[data-call-connected]')`, 20_000), 'the phone joins');
+  const ui = () => d.page.eval<{ bar: boolean; dock: boolean; open: boolean; hash: string }>(`({ bar: !!document.querySelector('.call-bar'), dock: !!document.querySelector('.call-dock'), open: !!document.querySelector('.call-dock.open'), hash: location.hash })`);
+  check(await wait(d.page, `!!document.querySelector('.call-dock') && !document.querySelector('.call-bar')`, 3000), "on the call's own chat: the dock, no bar", await ui());
+  await d.page.eval(`location.hash = ${JSON.stringify(space ? `#/s/${space}` : '#/inbox')}`);
+  check(await wait(d.page, `!!document.querySelector('.call-bar') && !document.querySelector('.call-dock')`, 5000), 'in the list: the bar, no dock', await ui());
+  if (space) check(await wait(d.page, `!!document.querySelector('[data-call-mark="mine"]')`, 5000), "the call's row has its mark");
+  await d.page.eval(`document.querySelector('[data-track="call bar: mute"]').click()`);
+  check(await wait(d.page, `window.__activeCall.value.muted && document.querySelector('[data-track="call bar: mute"]').classList.contains('off')`, 3000), 'the bar mutes');
+  await d.page.eval(`document.querySelector('[data-track="call bar: mute"]').click()`);
+  check(await wait(d.page, `!window.__activeCall.value.muted`, 3000), 'and unmutes');
+  if (other) {
+    await d.page.eval(`location.hash = ${JSON.stringify(`#/c/${other.id}`)}`);
+    check(await wait(d.page, `location.hash.includes(${JSON.stringify(other.id)}) && !!document.querySelector('.call-bar')`, 5000), 'on another chat: the bar', await ui());
+  }
+  await d.page.eval(`document.querySelector('[data-track="call bar: open"]').click()`);
+  check(await wait(d.page, `location.hash.includes(${JSON.stringify(voice.id)}) && !!document.querySelector('.call-dock.open') && !document.querySelector('.call-bar')`, 5000), "a tap on the bar opens the call's chat with the dock open", await ui());
+  // A computer with the list hidden (all communities): the bar in the dock's place.
+  await d.page.size(1280, 800, false);
+  await d.page.eval(`location.hash = '#/directory'`);
+  check(await wait(d.page, `!!document.querySelector('.call-bar') && !document.querySelector('.call-dock')`, 5000), "a computer's hidden list: the bar", await ui());
+  await d.page.eval(`document.querySelector('[data-track="call bar: leave"]').click()`);
+  check(await wait(d.page, `window.__activeCall.value === null || window.__activeCall.value.phase === 'ended'`, 5000), 'leaving from the bar ends the call');
+
+  for (const [n, x] of [['first device', a], ['second device', b], ['no-microphone device', c], ['phone', d]] as const) check(x.page.errors.length === 0, `no page errors on the ${n}`, x.page.errors.slice(0, 3));
 } finally {
   for (const x of browsers) await x.close().catch(() => {});
 }
