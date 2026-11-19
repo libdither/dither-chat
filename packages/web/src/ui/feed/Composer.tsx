@@ -18,7 +18,7 @@ import { Fragment, h } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 // Its own path, so the rules ride in this chunk, not the app's start.
-import { composeState, postRulesFor, type PostRules } from '@dither-chat/protocol/compose';
+import { composeState, postRulesFor, rulesForReply, type PostRules } from '@dither-chat/protocol/compose';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { api } from '../../state.ts';
 import type { Kit } from './lazy.tsx';
@@ -94,7 +94,8 @@ export function PostComposer({
   /** Post as this account (the Feed page's), else the kit's, else the first that can. */
   account?: string;
 }) {
-  const rules = postRulesFor(network);
+  const base = postRulesFor(network);
+  const rules = base && target.replyTo ? rulesForReply(base) : base;
   const draftKey = `${network}:${target.quote ? `q${target.quote.id}` : target.replyTo ? `r${target.replyTo.id}` : 'new'}`;
   const [text, setText] = useState(() => readDraft(draftKey));
   const [open, setOpen] = useState(!collapsed || !!text);

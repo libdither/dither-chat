@@ -14,7 +14,7 @@ import type * as P from '@dither-chat/protocol';
 import type { AccountRow } from './store.ts';
 import type { InprocAdapter } from './supervisor.ts';
 
-export type PostsNet = 'mastodon' | 'reddit' | 'lemmy' | 'substack';
+type PostsNet = 'mastodon' | 'reddit' | 'lemmy' | 'substack';
 
 export const DEMO_POST_ACCOUNTS: { id: string; network: PostsNet; label: string; color: string }[] = [
   { id: 'acc_demo-mastodon', network: 'mastodon', label: 'toots', color: '#6364FF' },

@@ -193,7 +193,7 @@ export function namesPhrase(names: readonly string[], total = names.length): str
  * What liking and reposting are called on a network that names them otherwise than X (the composer's words are
  * compose.ts's POST_RULES; these are the feed's, kept here so the app's start does not carry the rules).
  */
-export interface ReactWords {
+interface ReactWords {
   liked: string;
   reposted: string;
   likedBy: string;
@@ -236,7 +236,7 @@ export function feedVerb(type: P.FeedItemType, network?: P.Network | null): stri
 }
 
 /** What they did, after their names, as X says it. */
-export const FEED_VERB: Record<P.FeedItemType, string> = {
+const FEED_VERB: Record<P.FeedItemType, string> = {
   like: 'liked your post',
   repost: 'reposted your post',
   reply: 'replied to your post',

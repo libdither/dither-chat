@@ -430,7 +430,7 @@ The rules are data (`POST_RULES`), one composer draws them all:
 
 | | X | Mastodon | Reddit | Lemmy | Substack |
 | --- | --- | --- | --- | --- | --- |
-| Limit | 280, weighted | 500 | 40,000 (body) | 10,000 | 10,000 |
+| Limit | 280, weighted | 500 | 40,000 in a post, 10,000 in a comment | 10,000 | 10,000 |
 | Counting | twitter-text v3: Latin, Greek, Cyrillic and common punctuation one, other characters (CJK) two, each emoji two (a ZWJ family, a flag: one emoji), every link 23 however long | graphemes, every link 23 | graphemes | graphemes | graphemes |
 | Counter | a ring that fills; from 20 left it grows and shows the number (yellow), at the limit red, past it a negative count in red, and the ring goes past -10 | a count from 50 left | "1,204 left" from 1,000 left | the same | the same |
 | Title and place | none | none | a new post needs a title (300) and a subreddit (r/…) | a title (200) and a community (!name or !name@server) | none |

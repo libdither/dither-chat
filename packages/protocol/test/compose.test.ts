@@ -1,6 +1,6 @@
 /** Writing a post (compose.ts, docs/feed.md "Answering"): X's count and counter, Mastodon's, Reddit's, Lemmy's, Substack's, from one set of rules. */
 import { describe, expect, test } from 'bun:test';
-import { composeState, LEMMY_RULES, MASTODON_RULES, placeName, POST_RULES, postFieldsProblem, postLength, postRulesFor, REDDIT_RULES, SUBSTACK_RULES, splitThread, timelineName } from '../src/compose.ts';
+import { composeState, LEMMY_RULES, MASTODON_RULES, placeName, POST_RULES, postFieldsProblem, postLength, postRulesFor, REDDIT_RULES, rulesForReply, SUBSTACK_RULES, splitThread, timelineName } from '../src/compose.ts';
 
 const X = POST_RULES.x;
 
@@ -128,4 +128,12 @@ describe('splitThread', () => {
     expect(parts.join('')).toBe('a'.repeat(700));
     for (const p of parts) expect(composeState(p, x).remaining).toBeGreaterThanOrEqual(0);
   });
+});
+
+test('a Reddit comment takes 10,000 characters, a post 40,000; other networks reply as they post', () => {
+  const comment = rulesForReply(REDDIT_RULES);
+  expect(comment.maxLength).toBe(10_000);
+  expect(composeState('a'.repeat(10_001), comment).sendable).toBe(false);
+  expect(composeState('a'.repeat(10_001), REDDIT_RULES).sendable).toBe(true);
+  expect(rulesForReply(MASTODON_RULES)).toBe(MASTODON_RULES);
 });

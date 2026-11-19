@@ -32,6 +32,8 @@ export interface PostRules {
   timelines: { following: string; foryou: string };
   /** At most this long, as `count` counts. */
   maxLength: number;
+  /** A reply or comment, where the network allows less than a new post (Reddit: 10,000 in a comment, 40,000 in a post). */
+  replyMaxLength?: number;
   /**
    * How length is counted. 'weighted' (X, twitter-text v3): most Latin, Cyrillic, Greek and punctuation count one,
    * other characters (CJK, most symbols) and each emoji two, every link `urlLength`; the limit is in those units.
@@ -109,12 +111,13 @@ export const MASTODON_RULES: PostRules = {
   warning: { maxLength: 500 },
 };
 
-/** Reddit's: a post needs a title (300) and a subreddit; a body or a comment up to 40,000 characters of Markdown; votes, no reposts. */
+/** Reddit's: a post needs a title (300) and a subreddit; a body up to 40,000 characters of Markdown, a comment 10,000; votes, no reposts. */
 export const REDDIT_RULES: PostRules = {
   words: { post: 'Post', reply: 'Comment', quote: 'Crosspost', placeholder: 'Body text (optional)', replyPlaceholder: 'Add a comment', quotePlaceholder: 'Add a comment', like: 'Upvote', unlike: 'Remove upvote', repost: 'Crosspost', unrepost: 'Undo crosspost', likedBy: 'Upvoted by', repostedBy: 'Crossposted by' },
   likeIcon: 'upvote',
   timelines: { following: 'New', foryou: 'Best' },
   maxLength: 40_000,
+  replyMaxLength: 10_000,
   count: 'chars',
   urlLength: 0,
   counter: 'text',
@@ -167,6 +170,9 @@ export const SUBSTACK_RULES: PostRules = {
 /** The rules of each network that has posts. */
 export const POST_RULES: Readonly<Record<string, PostRules>> = { x: X_RULES, mastodon: MASTODON_RULES, reddit: REDDIT_RULES, lemmy: LEMMY_RULES, substack: SUBSTACK_RULES };
 export const postRulesFor = (network: string): PostRules | null => (Object.hasOwn(POST_RULES, network) ? POST_RULES[network]! : null);
+
+/** The rules for a reply or comment: the network's, with its reply limit where it has one. */
+export const rulesForReply = (rules: PostRules): PostRules => (rules.replyMaxLength === undefined ? rules : { ...rules, maxLength: rules.replyMaxLength });
 
 /** A timeline's name on its network: X's "For you", Reddit's "Best", Substack's "Notes". */
 export const timelineName = (network: string, feed: 'following' | 'foryou'): string => postRulesFor(network)?.timelines[feed] ?? (feed === 'following' ? 'Following' : 'For you');

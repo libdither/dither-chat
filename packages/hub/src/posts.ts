@@ -11,7 +11,7 @@
  * check found it, read when your own reading did.
  */
 import type * as P from '@dither-chat/protocol';
-import { composeState, followNativeId, isPostId, NETWORK_META, placeName, POST_ACTS, postFieldsProblem, postIdOf, postNativeId, postRulesFor } from '@dither-chat/protocol';
+import { composeState, followNativeId, isPostId, NETWORK_META, placeName, POST_ACTS, postFieldsProblem, postIdOf, postNativeId, postRulesFor, rulesForReply } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { postAuthors, postView } from './feed.ts';
 import { rankReactors, type ReactorIn } from './reactors.ts';
@@ -363,9 +363,9 @@ export class Posts {
   }
 
   private async write(network: P.Network, b: PublishIn): Promise<P.PostView> {
-    const rules = postRulesFor(network);
+    const base = postRulesFor(network);
     const net = NETWORK_META[network].name;
-    if (!rules) throw new PostsError(`${net} has no posts here.`, 409);
+    if (!base) throw new PostsError(`${net} has no posts here.`, 409);
     const text = typeof b.text === 'string' ? b.text : '';
     const id = (v: unknown, what: string) => {
       if (v === undefined || v === null || v === '') return undefined;
@@ -374,6 +374,7 @@ export class Posts {
     };
     const replyTo = id(b.replyTo, 'replyTo');
     const quote = id(b.quote, 'quote');
+    const rules = replyTo ? rulesForReply(base) : base;
     if (replyTo && !rules.actions.reply) throw new PostsError(`${net} has no replies here.`, 409);
     if (quote && !rules.actions.quote) throw new PostsError(`${net} has no quotes here.`, 409);
     if (b.replies !== undefined && b.replies !== null && !(rules.replyGates as readonly unknown[]).includes(b.replies)) throw new PostsError(`replies: ${net} has no such choice`, 400);
