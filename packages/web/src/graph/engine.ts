@@ -145,7 +145,7 @@ export class Engine {
     const ps = this.placeScores;
     for (let i = 0; i < n; i++) {
       const g = vis.nodes[i];
-      if (i === vis.me) min[i] = Math.round(22 * f);
+      if (i === vis.me) min[i] = Math.round(30 * f);
       else if (g >= np) {
         places.push(i);
         min[i] = ps ? 3 : Math.max(2, Math.round(placeMin(vis.degree[i]) * f));
@@ -210,7 +210,7 @@ export class Engine {
     const np = ix.graph.people.length;
     for (let i = 0; i < vis.nodes.length; i++) {
       const g = vis.nodes[i];
-      if (i === vis.me) this.scene.size[i] = 18;
+      if (i === vis.me) this.scene.size[i] = 24;
       else if (g >= np) this.scene.size[i] = this.placeScores ? placeRadius(vis.degree[i], this.placeScores[g - np]) : radius(true, vis.degree[i], false);
       else this.scene.size[i] = this.scores ? radiusOf(this.scores[g]) : radius(false, vis.degree[i], !!ix.graph.people[g].dm.length);
     }
@@ -475,8 +475,14 @@ export class Engine {
     }
     if (!Number.isFinite(x0)) return;
     const pad = 40;
-    const k = Math.min((this.w - 2 * pad) / Math.max(x1 - x0, 1), (this.h - 2 * pad) / Math.max(y1 - y0, 1), 3);
-    this.view = { k, x: this.w / 2 - ((x0 + x1) / 2) * k, y: this.h / 2 - ((y0 + y1) / 2) * k };
+    // With you shown, the view is centred on you (held at 0, 0) and wide enough for the farthest node each way.
+    const me = (this.vis?.me ?? -1) >= 0;
+    const cx = me ? 0 : (x0 + x1) / 2;
+    const cy = me ? 0 : (y0 + y1) / 2;
+    const sx = me ? 2 * Math.max(-x0, x1) : x1 - x0;
+    const sy = me ? 2 * Math.max(-y0, y1) : y1 - y0;
+    const k = Math.min((this.w - 2 * pad) / Math.max(sx, 1), (this.h - 2 * pad) / Math.max(sy, 1), 3);
+    this.view = { k, x: this.w / 2 - cx * k, y: this.h / 2 - cy * k };
     this.dirty();
   }
 
@@ -675,9 +681,12 @@ export class Engine {
       const me = i === this.vis!.me;
       out.push({ x, y, r, shape: shape[i] as Shape, id: inf.id, name: this.name(g), pic: inf.pic, networks: inf.networks, strong: inf.strong || g >= np, dim: !me && !!this.near && !this.near.has(g), accent: me ? this.accent : undefined });
     }
+    // You last of all, so no one is drawn over you; then the biggest kept, drawn smallest first.
+    const meAt = out.findIndex((d) => d.accent);
+    const me = meAt >= 0 ? out.splice(meAt, 1) : [];
     out.sort((a, b) => b.r - a.r);
     if (out.length > PIC_MAX) out.length = PIC_MAX;
-    return out.reverse();
+    return [...out.reverse(), ...me];
   }
 
   /** Whether a group is the one picked or hovered, or holds the picked or hovered person. */
@@ -1025,27 +1034,18 @@ export class Engine {
       const g = this.pick(p.x, p.y);
       if (g !== null) this.ev.open(g);
     });
-    /** Wheel events from a touchpad until then: a stream keeps its kind, momentum and all. */
-    let padUntil = 0;
     on(
       'wheel',
       (e) => {
         e.preventDefault();
         const p = local(e);
         const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.h : 1;
-        const dx = e.deltaX * unit;
         const dy = e.deltaY * unit;
         // A touchpad pinch comes as the wheel with Ctrl held, deltaY = -100·ln(the fingers' scale) in Chrome and
         // about the same in Firefox: zoom by exactly that, so the graph stays under the fingers.
         if (e.ctrlKey) return this.zoom(Math.exp(-dy / 100), p.x, p.y);
-        // Two fingers moving on a touchpad: fine steps in pixels, often sideways too. They pan, as in a map. A mouse
-        // wheel's notches (whole lines, or whole and large in pixels) still zoom.
-        const now = performance.now();
-        if (e.deltaMode === 0 && (dx !== 0 || !Number.isInteger(dy) || Math.abs(dy) < 50)) padUntil = now + 400;
-        if (now < padUntil) {
-          padUntil = now + 400;
-          return this.panBy(-dx, -dy);
-        }
+        // Any other wheel zooms too, a mouse's notches and two fingers on a touchpad alike, about the pointer;
+        // sideways scrolling does nothing. Dragging pans.
         this.zoom(Math.exp(-dy * 0.0015), p.x, p.y);
       },
       { passive: false },
