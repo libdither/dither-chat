@@ -93,7 +93,7 @@
     "js/shared/rolldown-runtime.gzip": { "measured": 368, "budget": 376 },
     "js/shared/selfparts.bytes": { "measured": 602, "budget": 615 },
     "js/shared/selfparts.gzip": { "measured": 416, "budget": 425 },
-    "js/shared/startup.bytes": { "measured": 911865, "budget": 924851, "reason": "GIFs (docs/media-kinds.md \"GIFs\"): the plain-GIF setting and drawing a Discord link that is only a GIF as the GIF, in the chat view that opens at start" },
+    "js/shared/startup.bytes": { "measured": 924883, "budget": 925400, "reason": "Mastodon, Reddit, Lemmy and Substack on the Feed page (docs/feed.md \"A feed of posts, for any network\"): their brand glyphs, colours and words at start, and the shared post rules that hold a Reddit comment to 10,000 characters (rulesForReply)" },
     "js/shared/startup.gzip": { "measured": 310201, "budget": 314079, "reason": "Mastodon, Reddit, Lemmy and Substack on the Feed page (docs/feed.md \"A feed of posts, for any network\"): their brand glyphs and colours at start, their Add account help, and each network's words, titles, places and content warnings in the feed chunk" },
     "js/shared/TextView.bytes": { "measured": 8500, "budget": 8670 },
     "js/shared/TextView.gzip": { "measured": 3873, "budget": 3943 },
