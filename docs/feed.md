@@ -6,12 +6,15 @@ per post of yours. Everyone in it becomes a person on the hub with their profile
 person's recent posts. The same page puts your accounts' home timelines together in feeds of your own, in an order you
 swap at will, and posts as several accounts at once.
 
-Only X has a feed so far. The shapes are not X's own, so another network's notifications could arrive the same way.
+X, Mastodon, Reddit, Lemmy and Substack bring feeds (the last four by the accounts dither-accounts runs for them).
+The shapes are not X's own: each network's notifications and timelines arrive the same way, and the page names them
+in the network's own words (section "A feed of posts, for any network"). Mastodon, Reddit, Lemmy and Substack accounts
+bring posts only: they have no chats here, and the inbox and a direct send say so.
 
 Code: `packages/protocol/src/feed.ts` (the shapes), `packages/hub/src/feed.ts` (what makes a feed, its refusals, its
 messages' `feed` for the page), `people.ts` (`keepAbout`: unasked profiles), `triage.ts` (its notifications),
 `timelines.ts` (home timelines, your feeds, posting to several accounts, drafts), `demo-x.ts` (the demo's two X
-accounts); `packages/protocol/src/mix.ts` (a feed's orders, pure);
+accounts), `demo-posts.ts` (its Mastodon, Reddit, Lemmy and Substack accounts); `packages/protocol/src/mix.ts` (a feed's orders, pure);
 `packages/web/src/feed.ts` (units by post, pure), `ui/feed/` (the Feed page, threads and a profile's posts, a lazy
 chunk; `FeedPage.tsx` the page, `Units.tsx` the notification cards, `Post.tsx` a post). The X extractor is in
 dither-accounts.
@@ -37,7 +40,7 @@ dither-accounts.
 ## The hub
 
 **Read-only.** Nothing is sent to the network for a feed. A message, a reaction, an edit or a change of its settings
-is refused with "X's notifications are read-only here: answer on X" (409), which is also what the composer and a
+is refused with "X's notifications are read-only here: answer on X" (409, the network named: "Reddit's …"), which is also what the composer and a
 push's reply button would say. Forwarding to it is refused the same way. The reaction picker is told it cannot react,
 and the network is not asked. Typing there goes nowhere. Reading it, from the page or Mark all read, marks it read on
 the hub only: no `markRead` reaches the network, as with an unaccepted message request (docs/add.md). Fetching
@@ -228,7 +231,9 @@ A post card draws whatever a `PostFact` carries, so a network that brings these 
 (Reddit, Lemmy, Hacker News, a forum), shown over the words; `warning` (Mastodon's content warning, a spoiler), the
 words and pictures folded behind it until **Show**; `place` (a subreddit, a community, a channel), "in r/rust" over
 it; `replies`, who may reply. The composer reads the network's rules (`compose.ts`: limit, how it counts, pictures,
-reply gates, a title). Only X brings posts so far.
+reply gates, a title, a place, a content warning). X, Mastodon, Reddit, Lemmy and Substack bring posts. Post ids are
+the network's own, opaque to the hub (`POST_ID_PATTERN`: letters, digits and `_.~:-`, up to 120): Reddit's `t3_…`
+and `t1_…`, Lemmy's `post:…` and `comment:…`.
 
 ## The feed's page
 
@@ -278,8 +283,10 @@ that answer it), and who reacted and how (identity ids by kind, with the network
 | | The post | What people said | Who reacted |
 | --- | --- | --- | --- |
 | X | your post | replies, quotes | likes, reposts (named in notifications) |
-| Mastodon | your toot | replies, quote posts | favourites, boosts (named) |
-| Reddit | your post or comment | comments, as a tree | score only (no names) |
+| Mastodon | your toot | replies, as a tree | favourites, boosts (named) |
+| Reddit | your post or comment | comments, as a tree | upvotes, a score only (no names) |
+| Lemmy | your post or comment | comments, as a tree | upvotes, a score only (no names) |
+| Substack | your note or post | comments | likes, restacks (named) |
 | YouTube | your video or comment | comments, one level of replies | likes, a count only |
 | Discourse | your topic or post | replies | likes (named) |
 
@@ -287,6 +294,25 @@ The pieces are shared: `ui/feed/Post.tsx` draws a post the same in a thread, und
 posts the hub logged and on a profile (`Row`, `Pics`, `Counts`, `QuotedIn`); `feed.ts` `feedUnits` makes the units
 from a feed's messages, whatever network sent them; `PostThread` is a post's comment section. A network that names
 no one who reacted shows the count alone: the line opens no list.
+
+Each network's words are its own, on the bar, the counts, the cards and Activity (`compose.ts` `words`, `likeIcon`;
+`web/src/feed.ts` `reactWords`): Mastodon favourites (a star) and boosts, Reddit and Lemmy upvote (an arrow) and have
+no repost, so the bar has none and the hub refuses one (409) before anything is sent; Substack likes and restacks.
+Downvotes are not built yet: a press that downvotes, and a score that counts them, are open.
+
+Each account brings two timelines, named as the network names them (`timelineName`), in Tune, a timeline's header
+and the feeds:
+
+| | Following | For you |
+| --- | --- | --- |
+| X | Following | For you |
+| Mastodon | Home (the home timeline) | Trending |
+| Reddit | New (your subreddits, newest) | Best |
+| Lemmy | Subscribed (newest) | All (hot) |
+| Substack | Inbox | Notes |
+
+Deep comment trees come as `PostThread.replies` chains, as every network's do; a branch deeper than the page draws
+ends in "Continue this thread", which opens that comment as a thread of its own, read by its id.
 
 ## Profiles
 
@@ -393,23 +419,33 @@ bar X has**: Reply, Repost, Like, and the views X counts. Code: `protocol/src/co
   OP, and a toast offers View. **Cancel** (or Escape) closes a box, and what was written in it goes; the toast's
   **Undo** brings it back.
   `POST /api/posts/:network/publish` (`{ text, replyTo?, quote?, key }`, the `publish` command, capability `publish`)
-  checks the text with the same count the page shows, and posts once per `key` (a composer's own id): a double press or
+  (`title`, `place` and `warning` too, above) checks the text with the same count the page shows, and posts once per `key` (a composer's own id): a double press or
   a retried request within ten minutes is answered with the first post. Too long or empty is refused (422) before
   anything is sent.
 - **Nothing is sent but the press.** No like, view or read is sent on its own; reading a thread still tells X nothing.
 
-### The composer, as X counts
+### The composer, as each network counts
 
 The rules are data (`POST_RULES`), one composer draws them all:
 
-| | X | Reddit (for when a Reddit account comes) |
-| --- | --- | --- |
-| Limit | 280, weighted | 10,000 characters |
-| Counting | twitter-text v3: Latin, Greek, Cyrillic and common punctuation one, other characters (CJK) two, each emoji two (a ZWJ family, a flag: one emoji), every link 23 however long | graphemes |
-| Counter | a ring that fills; from 20 left it grows and shows the number (yellow), at the limit red, past it a negative count in red, and the ring goes past -10 | "1,204 left" from 1,000 left |
-| Past the limit | what is too much marked red in the text itself; Post greyed | the same |
-| Words | Post, Reply, Quote; "Post your reply" | Comment; "Add a comment"; Markdown |
-| Likers | only the author sees who liked (X since 2024) | nobody: a score only |
+| | X | Mastodon | Reddit | Lemmy | Substack |
+| --- | --- | --- | --- | --- | --- |
+| Limit | 280, weighted | 500 | 40,000 in a post, 10,000 in a comment | 10,000 | 10,000 |
+| Counting | twitter-text v3: Latin, Greek, Cyrillic and common punctuation one, other characters (CJK) two, each emoji two (a ZWJ family, a flag: one emoji), every link 23 however long | graphemes, every link 23 | graphemes | graphemes | graphemes |
+| Counter | a ring that fills; from 20 left it grows and shows the number (yellow), at the limit red, past it a negative count in red, and the ring goes past -10 | a count from 50 left | "1,204 left" from 1,000 left | the same | the same |
+| Title and place | none | none | a new post needs a title (300) and a subreddit (r/…) | a title (200) and a community (!name or !name@server) | none |
+| Content warning | none | CW, folding the post | none | none | none |
+| Words | Post, Reply, Quote; "Post your reply" | Publish, Favourite, Boost | Comment, Upvote; Markdown | Reply, Upvote; Markdown | Like, Restack |
+| Likers | only the author sees who liked (X since 2024) | named | nobody: a score only | nobody | named |
+
+Past the limit, what is too much is marked red in the text itself and Post greys. Choosing a Reddit or Lemmy account
+in the Feed page's composer adds a place field (plain text this round: `r/name`, `name`, `!name@server`) and a title;
+Post stays grey, with a note saying why, until both are there. A titled post may have no body. Mastodon's **CW**
+button adds the warning; a reply in a thread keeps the warning of the post it answers. A comment or reply takes no title
+or place, and a network without them refuses one (422), as it refuses a warning where there is none. Sending to
+several accounts at once sends each what it takes: the title and place only where they belong, who can reply only
+where the network has it. The `publish` command carries `title`, `place` (the name without its `r/` or `!`) and
+`warning`.
 
 Ctrl/Cmd+Enter posts, Escape closes; what you write is kept on the device per post answered until it is posted.
 
@@ -523,6 +559,14 @@ post when none is named) has someone answer a post now, first on its first page 
 follow has news. scripts/perf-world.ts leaves it out (`createDemoAccounts(store, { x: false })`): the perf
 baselines predate it.
 
+It also has one account each of Mastodon, Reddit, Lemmy and Substack (`demo-posts.ts`, made up throughout, on
+`.example` hosts): two timelines each, posts with titles, places and content warnings, a boost and restacks, a
+Reddit post whose comments go nine levels deep, Lemmy's ancestors, likers named where the network names them, a
+notifications feed in each network's words, profiles, and the logs (`writeLog`, `postLog`, `homeLog`,
+`publishLog`). It refuses a repost on Reddit and Lemmy, and a new Reddit or Lemmy post without its title and place.
+`DITHER_DEMO_POSTS=0` (or `createDemoAccounts(store, { posts: false })`) leaves them out: the X verify scripts
+count X's own.
+
 ## Checked by
 
 - `packages/hub/test/feed.test.ts`: messages carry `feed` with hub ids, it survives a resend and an edit, actors are
@@ -594,7 +638,19 @@ baselines predate it.
   opening a profile), like and repost reaching the demo X once each, Repost asking Repost or Quote, the counter at 100,
   15 left, 6 over (marked), CJK and links, a reply to the top of the tree, a reply to a reply, Escape, a quote with
   Ctrl+Enter, the style pictures, a long press on a phone showing a sheet, and X getting exactly the presses made.
+- `packages/hub/test/feed-networks.test.ts`: the four demo accounts of Mastodon, Reddit, Lemmy and Substack:
+  sources, Following and Discover with titles, places, a content warning, a boost and reasons; Reddit's comment tree
+  past six levels and a deep comment opened by its id, Lemmy's ancestors, a Mastodon reply's own warning; like
+  everywhere and repost refused on Reddit and Lemmy with nothing sent; a Reddit or Lemmy post refused without title
+  and place, posted with them; Mastodon's warning and limit with links counted 23; one press to several accounts
+  sending each what it takes; who favourited named, Reddit naming nobody; the notifications read-only.
+- `scripts/verify-feed-networks.ts`: in a real browser on a fresh demo hub, desktop and phone: Following mixing the
+  networks, Tune naming each timeline in its network's words, each network's cards (Reddit's title and subreddit,
+  Lemmy's community, Substack's publication, Mastodon's warning until Show and a boost) and bar (no Repost on Reddit
+  and Lemmy, Favourite and Boost, Restack), an upvote reaching Reddit once, a Reddit thread's tree and Continue this
+  thread, a Reddit post with its title and subreddit, a toot with a CW, Activity in Mastodon's words, and each
+  network's cards at phone width. `--shots <dir>` keeps screenshots.
 - `packages/web/test/tree.test.ts`: chains and logged branches as one tree, a post seen twice, posts outside the
   thread, cycles, what is hidden to load, the tree read back as chains.
 
-Not run against a real X account.
+Not run against a real X, Mastodon, Reddit, Lemmy or Substack account.

@@ -145,3 +145,55 @@ test("a flush whose attention part fails still sends what the store gave up", ()
   const room = store.one<{ id: string }>(`SELECT id FROM conversation WHERE native_id = 'room'`)!.id;
   expect(sent.flat().some((e) => e.t === 'conversation' && e.conversation.id === room)).toBe(true);
 });
+
+/** Another process writes to the database now and says how it went: 'wrote', or the error's code. */
+function writeFromAnotherProcess(file: string): string {
+  const script = `import { Database } from 'bun:sqlite';
+    const db = new Database(process.argv[1]);
+    db.exec('PRAGMA busy_timeout = 0');
+    try { db.exec("INSERT INTO meta (key, value) VALUES ('other', '1') ON CONFLICT (key) DO UPDATE SET value = value + 1"); console.log('wrote'); }
+    catch (e) { console.log(e.code); }
+    db.close();`;
+  return Bun.spawnSync(['bun', '-e', script, file], { stdout: 'pipe', stderr: 'inherit' }).stdout.toString().trim();
+}
+
+describe('a commit from another connection while a flush is under way', () => {
+  test('a transaction that read first cannot write after it, and fails at once: what the live hub saw at a stop', () => {
+    let code: string | undefined;
+    try {
+      store.db.transaction(() => {
+        store.db.query('SELECT count(*) FROM message').get();
+        expect(writeFromAnotherProcess(join(dir, 'hub.sqlite'))).toBe('wrote');
+        store.db.query("INSERT INTO meta (key, value) VALUES ('mine', '1') ON CONFLICT (key) DO UPDATE SET value = excluded.value").run();
+      })();
+    } catch (e) {
+      code = (e as { code?: string }).code;
+    }
+    expect(code).toBe('SQLITE_BUSY_SNAPSHOT');
+  });
+
+  test('a flush holds the write lock from its start: another write cannot come in between, and the flush commits whole', () => {
+    let other = '';
+    const attention = {
+      sync: () => {
+        // Inside the flush, after its reads: another process tries to commit.
+        store.db.query('SELECT count(*) FROM message').get();
+        other = writeFromAnotherProcess(join(dir, 'hub.sqlite'));
+        return [];
+      },
+    };
+    const hub = new HubServer(store, { authorize: () => null, online: () => false } as any, new Triage(store), { port: 0, hostname: '127.0.0.1', dataDir: dir, webDist: dir, open: true, secret: 's', attention: attention as any });
+    const failed: unknown[] = [];
+    const error = console.error;
+    console.error = (...a: unknown[]) => void failed.push(a);
+    try {
+      store.flush();
+      store.ingest(acc, msg('during-another-write'));
+      hub.flush();
+    } finally {
+      console.error = error;
+    }
+    expect(other).toBe('SQLITE_BUSY');
+    expect(failed).toEqual([]);
+  });
+});

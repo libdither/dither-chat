@@ -15,7 +15,7 @@ import { openPlaceMenu } from './menus.tsx';
 import { groups, useMenu, type MenuSpec } from './ContextMenu.tsx';
 import { accountsMenu } from './menus.tsx';
 import { useEffect, useRef } from 'preact/hooks';
-import { NETWORK_META } from '@dither-chat/protocol';
+import { NETWORK_META, POST_NETWORKS } from '@dither-chat/protocol';
 import { tipProps } from './Tooltip.tsx';
 import { arrangeDrop, arrangedFolderItems, arrangedRail, snapshot, sortOf, SORT_LABELS } from '../arrange.ts';
 import { OrganizeView, SortIcon, sortEntries, startOrganize, useFlip } from './Reorganize.tsx';
@@ -287,13 +287,13 @@ function RailMail({ active }: { active: boolean }) {
 }
 
 /**
- * The Feed (docs/feed.md "The Feed page"), once an account has posts (X): a dot while someone answered, quoted or
+ * The Feed (docs/feed.md "The Feed page"), once an account has posts (X, Mastodon, Reddit, Lemmy, Substack): a dot while someone answered, quoted or
  * mentioned you there and you have not looked; never for likes or follows.
  */
 function RailFeed({ active }: { active: boolean }) {
   rev.value;
   const feeds = [...db.conversations.values()].filter((c) => c.variant === 'feed');
-  if (!feeds.length && ![...db.accounts.values()].some((a) => a.network === 'x')) return null;
+  if (!feeds.length && ![...db.accounts.values()].some((a) => POST_NETWORKS.includes(a.network))) return null;
   const said = feeds.reduce((n, c) => n + c.vantages.reduce((m, v) => m + (v.mentions ?? 0), 0), 0);
   const sub = said ? `${said} ${said === 1 ? 'answer' : 'answers'} to your posts` : 'Posts from your networks, and what came of yours';
   return (

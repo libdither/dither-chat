@@ -5,7 +5,7 @@
  * nothing: a component reads `rev` or `metaRev` itself.
  */
 import type * as P from '@dither-chat/protocol';
-import { categoryThreshold, NETWORK_META, RULE_LABEL } from '@dither-chat/protocol';
+import { categoryThreshold, NETWORK_META, POST_NETWORKS, RULE_LABEL } from '@dither-chat/protocol';
 import { dataVersion, db, inbox, isSelfIdentity, mailTriage } from './state.ts';
 import { mailDataVersion, metaDataVersion } from './versions.ts';
 import { isMailItem, triageBoard, type Board, type BoardItem } from './board.ts';
@@ -98,9 +98,9 @@ export function convByNative(network: P.Network, nativeId: string): P.Conversati
 }
 
 /** A message body as one plain line, for quotes and previews. */
-/** A bio as one line, its links kept for Linked: X's is plain text as written (no Markdown to take out of it). */
+/** A bio as one line, its links kept for Linked: X's (and the other networks of posts') is plain text as written (no Markdown to take out of it). */
 export function bioText(bio: string, network: P.Network): string {
-  return network === 'x' ? bio.replace(/\s+/g, ' ').trim() : plainBody(bio, network, true);
+  return POST_NETWORKS.includes(network) ? bio.replace(/\s+/g, ' ').trim() : plainBody(bio, network, true);
 }
 
 export function plainBody(body: string, network: P.Network, keepLinks = false): string {

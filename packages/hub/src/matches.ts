@@ -105,12 +105,18 @@ const SITES: { re: RegExp; site: string; network?: Network }[] = [
   { re: /(?:^|[\s/(])github\.com\/([A-Za-z0-9-]{1,39})\b/g, site: 'github' },
   { re: /(?:^|[\s/(])(?:www\.)?instagram\.com\/([A-Za-z0-9_.]{1,30})\b/g, site: 'instagram' },
   { re: /(?:^|[\s/(])bsky\.app\/profile\/([A-Za-z0-9.:-]{3,64})\b/g, site: 'bluesky' },
-  { re: /(?:^|[\s/(])(?:www\.)?reddit\.com\/u(?:ser)?\/([A-Za-z0-9_-]{3,20})\b/g, site: 'reddit' },
+  { re: /(?:^|[\s/(])(?:www\.)?reddit\.com\/u(?:ser)?\/([A-Za-z0-9_-]{3,20})\b/g, site: 'reddit', network: 'reddit' },
+  { re: /(?:^|[\s(])\/?u\/([A-Za-z0-9_-]{3,20})\b/g, site: 'reddit', network: 'reddit' },
+  { re: /(?:^|[\s/(])substack\.com\/@([A-Za-z0-9_-]{2,40})\b/g, site: 'substack', network: 'substack' },
   { re: /(?:^|[\s/(])(?:www\.)?twitch\.tv\/([A-Za-z0-9_]{3,25})\b/g, site: 'twitch' },
   { re: /(?:^|[\s/(])(?:www\.)?youtube\.com\/@([A-Za-z0-9_.-]{3,30})\b/g, site: 'youtube' },
   { re: /(?:^|[\s/(])steamcommunity\.com\/(?:id|profiles)\/([A-Za-z0-9_-]{2,32})\b/g, site: 'steam' },
   { re: /(?:^|[\s/(])matrix\.to\/#\/(@[\w.=/-]+:[\w.-]+)/g, site: 'matrix', network: 'matrix' },
 ];
+
+/** "@name@server", or "https://server/@name" (not a site that puts @names in its paths for itself). */
+const FEDI = /(?:^|[\s(])@([A-Za-z0-9_]{1,30})@([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,})\b|(?:^|[\s(])(?:https?:\/\/)?([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,})\/@([A-Za-z0-9_]{1,30})\b/g;
+const NOT_FEDI = /(^|\.)(youtube\.com|medium\.com|tiktok\.com|x\.com|twitter\.com|threads\.net|substack\.com|bsky\.app)$/;
 
 /** A connected account's label as a site, and the network of ours it is. */
 const LABEL_SITES: Record<string, { site: string; network?: Network }> = {
@@ -120,13 +126,15 @@ const LABEL_SITES: Record<string, { site: string; network?: Network }> = {
   github: { site: 'github' },
   instagram: { site: 'instagram' },
   bluesky: { site: 'bluesky' },
-  reddit: { site: 'reddit' },
+  reddit: { site: 'reddit', network: 'reddit' },
+  substack: { site: 'substack', network: 'substack' },
+  lemmy: { site: 'lemmy', network: 'lemmy' },
   twitch: { site: 'twitch' },
   youtube: { site: 'youtube' },
   steam: { site: 'steam' },
   spotify: { site: 'spotify' },
   tiktok: { site: 'tiktok' },
-  mastodon: { site: 'mastodon' },
+  mastodon: { site: 'mastodon', network: 'mastodon' },
   domain: { site: 'domain' },
   website: { site: 'domain' },
   'battle.net': { site: 'battlenet' },
@@ -189,7 +197,15 @@ function claimsInText(text: string): Claim[] {
       const h = handleKey(m[1]);
       out.push({ key: `${site}:${h}`, text: `links ${site === 'x' ? 'x.com/' : site === 'telegram' ? 't.me/' : `${site} `}${m[1]}`, ...(network ? { network, handle: h } : {}) });
     }
+  // A fediverse handle (@name@server) or a profile link (server/@name): Mastodon's, as Mastodon writes them.
+  for (const m of text.matchAll(FEDI)) {
+    const h = `${m[1] ?? m[4]}@${m[2] ?? m[3]}`.toLowerCase();
+    if (NOT_FEDI.test(m[3] ?? '')) continue;
+    out.push({ key: `mastodon:${h}`, text: `links Mastodon @${h}`, network: 'mastodon', handle: h });
+  }
   for (const m of text.matchAll(EMAIL)) {
+    // "@name@server" is a fediverse handle, not an address.
+    if (text[m.index! - 1] === '@') continue;
     const e = m[0].toLowerCase();
     out.push({ key: `email:${e}`, text: `gives the address ${e}`, network: 'email', handle: e });
   }

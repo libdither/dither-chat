@@ -560,7 +560,9 @@ The profile, by hold:
   `.mime` again: 3 s on the live hub. It is now a generator, 512 names a slice (`pruneMediaCacheSteps`), and the same
   files go.
 - **A flush** commits once: attention's folds (a transaction for each conversation) and the journal are one
-  transaction, and the frame goes to devices after the commit.
+  transaction, and the frame goes to devices after the commit. It begins with the write lock (`BEGIN IMMEDIATE`):
+  begun as a read, a commit from another connection between its reads and its first write failed it at once with
+  `SQLITE_BUSY_SNAPSHOT`, which busy_timeout does not wait out.
 - **Attention's rescore of everything** (every five minutes, after the learned order refits, and the first scoring at
   each start) scores 64 conversations a slice. Devices get the whole list once the first scores are done; a bootstrap
   before then works them out as it did.

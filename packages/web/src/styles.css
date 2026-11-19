@@ -12704,8 +12704,9 @@ button.msg-edited.link:hover {
   position: absolute;
   z-index: 3;
   pointer-events: none;
-  display: grid;
-  gap: 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   max-width: 280px;
   background: var(--bg-raised);
   border: 1px solid var(--border);
@@ -12733,6 +12734,7 @@ button.msg-edited.link:hover {
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
   padding: 12px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
   align-content: start;
 }
@@ -12746,15 +12748,32 @@ button.msg-edited.link:hover {
 .pg-card-head {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: 10px;
+}
+.pg-card-pic {
+  flex: none;
+}
+.pg-card-title {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.pg-card-nets {
+  display: flex;
+  gap: 4px;
 }
 .pg-card-name {
-  flex: 1;
   text-align: left;
   font-size: 15px;
   font-weight: 650;
   color: var(--text);
   overflow-wrap: anywhere;
+}
+.pg-tip-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 .pg-card-name:hover {
   color: var(--link);

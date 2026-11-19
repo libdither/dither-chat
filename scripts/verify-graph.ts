@@ -1,7 +1,8 @@
 /**
  * The people graph (docs/people-graph.md), end to end against a demo hub in headless Chromium: /api/graph uses server
  * members only once their switch is on; the graph opens from the People header as a chunk of its own; it draws,
- * filters by network, account and server, finds someone, and a click on a node picks it and opens its page; an empty
+ * filters by network, account and server, finds someone, and a click on a node picks it and opens its page; a Same
+ * person? group opens its merge card from its badge, and merges; an empty
  * graph says how it fills in; and a synthetic graph of ~11k nodes stays responsive, capped with "showing N of M".
  *
  *   bun scripts/verify-graph.ts http://127.0.0.1:8670 [/tmp/shots]
@@ -68,7 +69,7 @@ const select = (label: string, value: string | number) =>
 const chunks = () => p.eval<string[]>(`performance.getEntriesByType('resource').map((e) => e.name.split('/').pop()).filter((n) => /\\.js$/.test(n))`);
 /** A graph the hub did not send: the page asks /api/graph and gets this. */
 const fake = (g: unknown) =>
-  p.eval(`(() => { const body = ${JSON.stringify(JSON.stringify(g))}; const f = window.__realFetch ??= window.fetch; window.fetch = (u, ...a) => String(u).includes('/api/graph') ? Promise.resolve(new Response(body, { headers: { 'content-type': 'application/json' } })) : f(u, ...a); })()`);
+  p.eval(`(() => { const body = ${JSON.stringify(JSON.stringify(g))}; const f = window.__realFetch ??= window.fetch; window.fetch = (u, ...a) => /\\/api\\/graph$/.test(String(u)) ? Promise.resolve(new Response(body, { headers: { 'content-type': 'application/json' } })) : f(u, ...a); })()`);
 
 try {
   await p.size(1360, 900);
@@ -107,8 +108,11 @@ try {
   for (let k = 0; k < on.links.length; k += 3) if (on.links[k + 1] === dither && !on.people[on.links[k]].bot) inDither.add(on.links[k]);
   check(byServer === inDither.size, 'by server: its people', { shown: byServer, members: inDither.size });
   await select('Server or group', '');
+  // Group chats go; the people in them stay when you talk with them (linked to you).
+  const places = (t: string) => Number(/([\d,]+) of [\d,]+ places/.exec(t)?.[1].replace(/,/g, '') ?? NaN);
+  const before = places(await status());
   await click('.pg-controls [aria-label="Show"] .chip-btn');
-  check((await shownPeople()) < all, 'groups off', await status());
+  check(places(await status()) < before, 'groups off', await status());
   await click('.pg-controls [aria-label="Show"] .chip-btn');
 
   // Find someone; they are picked and brought to the middle; a click there picks them on the canvas; a double-click opens.
@@ -154,6 +158,32 @@ try {
   await Bun.sleep(1500);
   if (shots) await p.shot(`${shots}/graph-light.png`);
   check((await p.eval('document.documentElement.dataset.theme')) === 'light', 'in the light theme', await p.eval('document.documentElement.dataset.theme'));
+
+  // Same person? groups: shaded on the graph with a badge; a click on the badge opens their merge card, and Merge
+  // makes them one person.
+  for (let i = 0; i < 80; i++) {
+    const m = (await fetch(`${hub}/api/matches`).then((r) => r.json())) as any;
+    if (!m.running && m.at) break;
+    await Bun.sleep(250);
+  }
+  await p.eval(`[...document.querySelectorAll('.pg-controls .chip-btn')].find((b) => b.textContent.includes('Same person?')).click()`);
+  await p.until(`!!document.querySelector('.pg-canvas').dataset.badge`, 15000).catch(() => {});
+  const badge = await p.eval<string>(`document.querySelector('.pg-canvas').dataset.badge || ''`);
+  check(!!badge, 'Same person? groups drawn, with a badge', badge);
+  if (badge) {
+    const b = await p.eval<{ x: number; y: number }>(`(() => { const b = document.querySelector('.pg-canvas').getBoundingClientRect(); return { x: b.x, y: b.y }; })()`);
+    const [bx, by] = badge.split(',').map(Number);
+    await clickAt(b.x + bx, b.y + by);
+    await p.until(`!!document.querySelector('.pg-same-card')`, 3000).catch(() => {});
+    const sameCard = await p.eval<string>(`document.querySelector('.pg-same-card')?.innerText ?? ''`);
+    check(/May be one person/.test(sameCard) && /Why/i.test(sameCard), 'a click on its badge opens the merge card', sameCard.split('\n').slice(0, 6));
+    const ticked = await p.eval<number>(`document.querySelectorAll('.pg-same-card input[type=checkbox]:checked').length`);
+    check(ticked >= 2, 'everyone in it ticked', ticked);
+    if (shots) await p.shot(`${shots}/graph-same.png`);
+    await p.eval(`document.querySelector('.pg-same-card .pg-card-actions .btn').click()`);
+    await p.until(`document.body.innerText.includes('are one person now')`, 5000).catch(() => {});
+    check(await p.eval<boolean>(`document.body.innerText.includes('are one person now') && !document.querySelector('.pg-same-card')`), 'Merge makes them one person, and the card closes');
+  }
 
   // Nothing to draw yet: it says how it fills in.
   await fake({ members: false, accounts: [], people: [], places: [], links: [] });

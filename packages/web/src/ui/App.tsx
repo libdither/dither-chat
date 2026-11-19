@@ -1,6 +1,7 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { effect, untracked } from '@preact/signals';
+import { POST_NETWORKS } from '@dither-chat/protocol';
 import { chatPersonOf, convsUnder, firstChannel, rootCommunity, totalUnread } from '../model.ts';
 import { adoptEntry, api, connected, db, go, loaded, prefs, previousRoute, readProgress, refresh, rev, route, setListUnder, setRouteFill, type Route } from '../state.ts';
 import { isPage, isTabRoot, listKey, listToWrite, ownList, restAfter, wayBack, type Places } from '../pages.ts';
@@ -305,8 +306,8 @@ function TabBar({ r }: { r: Route }) {
   );
 }
 
-/** Whether the Feed is offered: an account with posts (X), or its notifications already held. */
-const feedOn = () => [...db.accounts.values()].some((a) => a.network === 'x') || [...db.conversations.values()].some((c) => c.variant === 'feed');
+/** Whether the Feed is offered: an account with posts (X, Mastodon, Reddit, Lemmy, Substack), or its notifications already held. */
+const feedOn = () => [...db.accounts.values()].some((a) => POST_NETWORKS.includes(a.network)) || [...db.conversations.values()].some((c) => c.variant === 'feed');
 /** Answers, quotes and mentions not looked at, across the notifications (never likes). */
 const feedSaid = () => [...db.conversations.values()].filter((c) => c.variant === 'feed').reduce((n, c) => n + c.vantages.reduce((m, v) => m + (v.mentions ?? 0), 0), 0);
 
