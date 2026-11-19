@@ -125,6 +125,9 @@ Case and accents fold on both sides: `zoe` finds Zoë. (`from:` is still `LIKE`,
   letter typed in the inbox's box opens the search page, which takes the cursor and the letter. On a phone a tap on
   the inbox's box opens the search page with the keyboard up. A search goes into Recent on Enter or when you open
   one of its results, not at every key.
+- **Loading**: the search page is a chunk of its own (`ui/Search.tsx`, its styles in `ui/search.css`), loaded the
+  first time it opens; focusing the inbox's box starts loading it, so it is usually there by the first key. Ctrl+F
+  and the box's focus signal stay in the startup bundle (`ui/SearchLazy.tsx`).
 - **The box** (the search page and the inbox's) lists the operators when empty, under recent searches. Typing a word
   lists operators it starts; after `from:`, `in:` and the rest it lists values. Up and Down choose, Enter or Tab take
   (with a value half typed, the first is chosen already), Escape closes. A direct chat goes in as its id, shown as a

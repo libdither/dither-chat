@@ -1,11 +1,10 @@
 import type * as P from '@dither-chat/protocol';
 import { mailSearchable, NETWORKS, parseSearch, searchOp, searchOps, setSearchOp, toggleSearchOp } from '@dither-chat/protocol';
 import type { ComponentType } from 'preact';
-import { signal } from '@preact/signals';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { clock, dayLabel } from '../format.ts';
 import { authorName, communitiesOf, convLabel, convTitle, netName, plainBody, plainMarkdown, resolveTokens, visibleConv } from '../model.ts';
-import { api, back, db, go, mailRev, openMessage, openProfile, rev, route } from '../state.ts';
+import { api, back, db, go, mailRev, openMessage, openProfile, rev } from '../state.ts';
 import { retention } from '../history.ts';
 import { Avatar, Empty, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -15,10 +14,11 @@ import { Menuable } from './ContextMenu.tsx';
 import { identityMenu, messageMenu, personMenu } from './menus.tsx';
 import { readableSearch, recentSearches, rememberSearch, SearchBox } from './SearchBox.tsx';
 import { preloadMail } from './mail/lazy.tsx';
-import { countKey } from '../clicklog.ts';
 import { Loading } from './Loader.tsx';
 import { MoreResults } from './more.tsx';
 import { jumpMatches, jumpTargets, type JumpTarget } from '../jump.ts';
+import { focusSearch } from './SearchLazy.tsx';
+import './search.css';
 
 /** Split a snippet into text and matches. It is plain text, so it stays out of innerHTML. */
 function Snippet({ text, network }: { text: string; network: P.Network }) {
@@ -557,14 +557,11 @@ const TABS: [Tab, string][] = [
 /** What a tab adds to the query it sends. */
 const TAB_HAS: Partial<Record<Tab, string>> = { pictures: 'image', links: 'link', files: 'file' };
 
-/** Bumped to put the cursor in search's box: the phone's inbox box does, as the search page may already be mounted. */
-export const focusSearch = signal(0);
-
 /** How long after the last key the search goes out (docs/search.md, "In the app"). */
 const TYPE_PAUSE_MS = 150;
 
 /** `onBack` when searching is a page (one conversation's): App knows where that goes back to. */
-export function SearchPane({ q, onBack }: { q: string; onBack?: () => void }) {
+export default function SearchPane({ q, onBack }: { q: string; onBack?: () => void }) {
   rev.value;
   const [page, setPage] = useState<P.SearchPage | null>(null);
   const [hits, setHits] = useState<P.SearchHit[]>([]);
@@ -751,21 +748,3 @@ export function SearchPane({ q, onBack }: { q: string; onBack?: () => void }) {
   );
 }
 
-/** Ctrl+F: search the chat you are in, or with search open, go to its box. */
-export function FindShortcut() {
-  useEffect(() => {
-    const k = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'f') return;
-      e.preventDefault();
-      countKey('keys: Ctrl+F (search)');
-      const r = route.value;
-      const input = document.querySelector<HTMLInputElement>('.search-pane .search-main input');
-      if (r.view === 'search' && !r.conv && input) return (input.focus(), input.select());
-      const conv = r.view !== 'profile' && 'conv' in r ? r.conv : undefined;
-      go({ view: 'search', q: conv ? `in:${conv}` : '' });
-    };
-    window.addEventListener('keydown', k);
-    return () => window.removeEventListener('keydown', k);
-  }, []);
-  return null;
-}

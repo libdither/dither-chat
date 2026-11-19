@@ -29,7 +29,7 @@ import { MessageHistoryLayer } from './MessageHistory.tsx';
 import { ThreadsLayerLazy } from './ThreadsLazy.tsx';
 import { Rail } from './Rail.tsx';
 import { TitleBar } from './TitleBar.tsx';
-import { FindShortcut, SearchPane } from './Search.tsx';
+import { FindShortcut, SearchPane } from './SearchLazy.tsx';
 import { SECTIONS, SettingsPane } from './Settings.tsx';
 import { showSection } from './bits.tsx';
 import { FolderSidebar, InboxSidebar, PeopleSidebar, SpaceSidebar, SpacesSidebar } from './Sidebar.tsx';
