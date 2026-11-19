@@ -74,8 +74,11 @@ The Android app is tested in three layers, outside the required `check`:
   runner, its booted snapshot cached between runs. About 4 minutes of tests on a local emulator, plus the builds and
   the boot. It runs on pull requests that change `apps/android/`, the web files that talk to the app
   (`packages/web/src/android.ts`, `arrived.ts`) or these scripts, on main for the same, and every night on main.
-  Pushes reach the app through the debug build's `DebugPushReceiver`, which takes the same path as a UnifiedPush
-  message (`Push.arrived`): an emulator has no distributor. A failed run uploads its screenshots (`android-shots`).
+  The push test's pushes reach the app through the debug build's `DebugPushReceiver`, which takes the same path as a
+  UnifiedPush message (`Push.arrived`). The calls test's rings come through real push, so they need a distributor
+  (ntfy) on the device: CI's emulator has none, so there the calls half runs alone and the summary says
+  `NOT RUN rings`; they run on a local emulator with ntfy installed. A failed run uploads its screenshots
+  (`android-shots`).
 - **Required once steady.** The emulator job reports and does not block a merge until it has passed 20 runs on main
   in a row: `bun scripts/android-device-streak.ts` counts them. Making it required then means running it on every
   pull request, with a `changes`-style skip like ci.yml's, since a required check behind a `paths` filter never
@@ -89,8 +92,8 @@ bun run web:build
 bun scripts/verify-android.ts --serial emulator-5584
 ```
 
-What none of this covers: a real distributor (ntfy) delivering, Doze and phone makers' battery savers, and a phone's
-own WebView version. Those still need a phone.
+What none of this covers in CI: rings, and a real distributor (ntfy) delivering at all; Doze and phone makers'
+battery savers; and a phone's own WebView version. Rings run on a local emulator with ntfy; the rest needs a phone.
 
 ## Flaky tests
 

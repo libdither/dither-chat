@@ -511,7 +511,8 @@ For debugging, `./gradlew assembleDebug` builds an 8.8 MB debuggable APK, as its
 ## Testing on an emulator
 
 `scripts/verify-android.ts` runs every emulator test of the app, as CI's `android-device` workflow does
-([testing.md](testing.md#android-on-an-emulator)): the calls test below against a demo hub of its own, then
+([testing.md](testing.md#android-on-an-emulator)): the calls test below against a demo hub of its own (its rings
+only when the emulator has a UnifiedPush distributor such as ntfy; without one it says `NOT RUN rings`), then
 `scripts/verify-android-arrived.ts`, a push's copy of its message (docs/notifications.md, "A copy in the push"): kept
 with the app closed and the hub stopped, shown by an offline start from the notification's intent, a second push shown
 by the open page, and both gone with the app's records once the hub is back.

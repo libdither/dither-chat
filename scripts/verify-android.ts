@@ -1,6 +1,7 @@
 /**
- * Every emulator test of the Android app, in one run (CI's android-device workflow, docs/testing.md "Android"):
- * verify-android-call.ts against a demo hub of its own, then verify-android-arrived.ts, which starts its own.
+ * Every emulator test of the Android app, in one run (CI's android-device workflow, docs/testing.md "Android on an
+ * emulator"): verify-android-call.ts against a demo hub of its own (its rings only where the device has a UnifiedPush
+ * distributor), then verify-android-arrived.ts, which starts its own.
  *
  *   bun run web:build
  *   (cd apps/android && ./gradlew :app:assembleDebug :uitest:assembleDebug :uitest:assembleDebugAndroidTest)
@@ -25,6 +26,12 @@ const ADB = process.env.ADB || Bun.which('adb') || `${process.env.HOME}/Android/
 // Android's own "isn't responding" dialogs: the emulator's System UI is slow on a software GPU and can raise one over
 // the app. They change nothing the tests read (the page over DevTools, dumpsys, logcat), but they cover screenshots.
 Bun.spawnSync([ADB, '-s', serial, 'shell', 'settings put global hide_error_dialogs 1']);
+
+// Rings come through real push, so they need a UnifiedPush distributor on the device (ntfy, with its server).
+// CI's emulator has none: there the calls half runs alone, and the summary says rings were not run.
+const distributor = /Receiver #0/.test(
+  Bun.spawnSync([ADB, '-s', serial, 'shell', 'cmd package query-receivers --brief -a org.unifiedpush.android.distributor.REGISTER'], { stdout: 'pipe' }).stdout.toString(),
+);
 
 const results: { name: string; ok: boolean; s: number }[] = [];
 async function run(name: string, cmd: string[]) {
@@ -56,7 +63,7 @@ try {
     if (Date.now() > end) throw new Error('the demo hub did not answer in 60 s');
     await Bun.sleep(200);
   }
-  await run('calls and rings (verify-android-call.ts)', ['bun', 'scripts/verify-android-call.ts', hubUrl, '--serial', serial, ...(shots ? ['--shots', shots] : [])]);
+  await run(`${distributor ? 'calls and rings' : 'calls'} (verify-android-call.ts)`, ['bun', 'scripts/verify-android-call.ts', hubUrl, '--serial', serial, ...(distributor ? [] : ['--only', 'calls']), ...(shots ? ['--shots', shots] : [])]);
 } finally {
   hub.kill('SIGKILL');
   await hub.exited;
@@ -66,4 +73,5 @@ await run("a push's copy (verify-android-arrived.ts)", ['bun', 'scripts/verify-a
 
 console.log('\n== summary');
 for (const r of results) console.log(`${r.ok ? 'ok  ' : 'FAIL'} ${r.name}  ${r.s} s`);
+if (!distributor) console.log('NOT RUN rings: no UnifiedPush distributor on this device (docs/testing.md, "Android on an emulator")');
 process.exit(results.every((r) => r.ok) ? 0 : 1);

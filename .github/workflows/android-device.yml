@@ -1,5 +1,6 @@
 # The Android app on an emulator (docs/testing.md, "Android on an emulator"): the debug build against demo hubs,
-# through scripts/verify-android.ts (calls and rings, then a push's copy shown offline). About 8 to 12 minutes, so it
+# through scripts/verify-android.ts (calls, then a push's copy shown offline; rings need a push distributor, which this
+# emulator lacks, so they run only on a local one). About 5 minutes, so it
 # runs only when the app or the web files that talk to it change, on main, and every night. It is not part of the
 # required `check` yet: it reports, and becomes required once it has passed 20 runs on main in a row
 # (`bun scripts/android-device-streak.ts`).
