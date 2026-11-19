@@ -1,26 +1,27 @@
 /**
- * The demo world's Mastodon, Reddit, Lemmy and Substack accounts (docs/feed.md "The demo world"): networks of posts
+ * The demo world's Mastodon, Reddit, Lemmy, Substack and Bluesky accounts (docs/feed.md "The demo world"): networks of posts
  * only, as dither-accounts' extractors for them send them. Each has a home timeline in two (Mastodon's Home and
- * Trending, Reddit's New and Best, Lemmy's Subscribed and All, Substack's Inbox and Notes), threads with comment trees,
+ * Trending, Reddit's New and Best, Lemmy's Subscribed and All, Substack's Inbox and Notes, Bluesky's Following and Discover), threads with comment trees,
  * notifications in one `feed` conversation, profiles with posts, and what you do there (like, repost where the network
  * has one, posts with a title and a place, a content warning). Everyone and everything here is made up.
  *
  * What each exercises: Mastodon a content warning on a post and on a reply, a boost and Trending's reasons; Reddit a
  * title and a subreddit on every post, a comment tree deeper than six levels (Continue this thread) and votes with no
  * names; Lemmy `post:` and `comment:` ids, communities on other servers; Substack a publication as the place, a
- * long post's title, Notes and restacks.
+ * long post's title, Notes and restacks; Bluesky `<did>~<rkey>` ids, a quote post and a repost, a reply tree.
  */
 import type * as P from '@dither-chat/protocol';
 import type { AccountRow } from './store.ts';
 import type { InprocAdapter } from './supervisor.ts';
 
-type PostsNet = 'mastodon' | 'reddit' | 'lemmy' | 'substack';
+type PostsNet = 'mastodon' | 'reddit' | 'lemmy' | 'substack' | 'bluesky';
 
 export const DEMO_POST_ACCOUNTS: { id: string; network: PostsNet; label: string; color: string }[] = [
   { id: 'acc_demo-mastodon', network: 'mastodon', label: 'toots', color: '#6364FF' },
   { id: 'acc_demo-reddit', network: 'reddit', label: 'reddit', color: '#FF4500' },
   { id: 'acc_demo-lemmy', network: 'lemmy', label: 'lemmy', color: '#00BC8C' },
   { id: 'acc_demo-substack', network: 'substack', label: 'reading', color: '#FF6719' },
+  { id: 'acc_demo-bluesky', network: 'bluesky', label: 'sky', color: '#0085FF' },
 ];
 
 const MIN = 60_000;
@@ -34,6 +35,7 @@ const FIG = shot('#e8f3e0', `<g fill="#3f7d3a"><ellipse cx="320" cy="200" rx="90
 const COAST = shot('#9ec5e8', `<rect y="240" width="640" height="120" fill="#2f5d7c"/><rect x="470" y="90" width="40" height="160" fill="#f4f1ea"/><rect x="470" y="90" width="40" height="30" fill="#d9480f"/><circle cx="120" cy="80" r="36" fill="#ffd36e"/>`);
 const LOAF = shot('#f7e7c6', `<ellipse cx="320" cy="210" rx="220" ry="110" fill="#b5652b"/><path d="M160 180 Q320 120 480 180" stroke="#f3d29b" stroke-width="10" fill="none"/>`);
 const GRAPH = shot('#1f2a4a', `<g stroke="#5cc8ff" stroke-width="3">${[[80, 280, 200, 120], [200, 120, 340, 220], [340, 220, 480, 100], [480, 100, 580, 260], [200, 120, 480, 100]].map(([a, b, c, d]) => `<line x1="${a}" y1="${b}" x2="${c}" y2="${d}"/>`).join('')}</g><g fill="#f7d154">${[[80, 280], [200, 120], [340, 220], [480, 100], [580, 260]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="12"/>`).join('')}</g>`);
+const RIVER = shot('#dfe9d8', `<path d="M0 260 C160 200 220 320 360 250 S560 160 640 210 L640 360 L0 360 Z" fill="#3b82c4"/><path d="M0 290 C180 230 240 340 380 280 S560 200 640 240" stroke="#a5d8ff" stroke-width="6" fill="none"/><g fill="#5c940d"><circle cx="90" cy="150" r="40"/><circle cx="520" cy="110" r="34"/></g>`);
 
 interface Person {
   key: string;
@@ -294,7 +296,66 @@ function substack(epoch: number): World {
   };
 }
 
-const WORLDS: Record<PostsNet, (epoch: number) => World> = { mastodon, reddit, lemmy, substack };
+// ------------------------------------------------------------------ Bluesky
+
+function bluesky(epoch: number): World {
+  // A post id is the author's DID and the record key, joined by "~" (dither-accounts' bluesky kind); all made up.
+  const did = (name: string) => `did:plc:${`${name}demo`.padEnd(24, 'q')}`;
+  const rkey = (n: number) => `3lbx${String(n).padStart(9, '0').replace(/\d/g, (d) => 'abcdefghij'[Number(d)]!)}`;
+  const user = (key: string, handle: string, name: string, bg: string, bio: string, x: Partial<Person> = {}) => personOf(key, did(key), handle, name, bg, bio, `https://bsky.app/profile/${handle}`, x);
+  const me = user('me', 'zyan.example', 'Zyan', '#F7D154', 'Routing, sheaves, sheep. Trying the sky.');
+  const river = user('river', 'river.example', 'River Okoye', '#1971c2', 'Draws rivers from satellite pictures.', { followers: 2_300, following: 410, followsYou: true });
+  const quill = user('quill', 'quill.example', 'Quill', '#862e9c', 'Typesetting, kerning, small caps.', { followers: 640, following: 300 });
+  const hollis = user('hollis', 'hollis.example', 'Hollis Brandt', '#2b8a3e', 'Night trains and their timetables.', { followers: 9_800, following: 120 });
+  const idOf = (who: Person, n: number) => `${who.identity.nativeId}~${rkey(n)}`;
+  const url = (id: string) => {
+    const [d, r] = id.split('~');
+    const who = [me, river, quill, hollis].find((p) => p.identity.nativeId === d);
+    return `https://bsky.app/profile/${who?.identity.handle ?? d}/post/${r}`;
+  };
+  const post = (n: number, who: Person, min: number, text: string, x: Partial<P.PostFact> = {}): P.PostFact => ({ id: idOf(who, n), url: url(idOf(who, n)), ts: epoch - min * MIN, author: who.identity.nativeId, text, ...x });
+  const mine = post(1, me, 4 * H, 'Trying Bluesky in the hub. Three hundred characters feels roomy after two hundred and eighty.', { counts: { replies: 2, reposts: 1, likes: 9 } });
+  const delta = post(2, river, 7 * H, 'The delta at low water, drawn from this morning’s satellite pass. Every channel moved since spring.', { media: [{ kind: 'image', url: RIVER, width: 640, height: 360, alt: 'A river winding through green fields' }], counts: { replies: 0, reposts: 48, likes: 310 } });
+  const quoted = post(3, quill, 5 * H, 'This is what good map labels look like: the river names follow the water.', { quoteOf: delta, counts: { replies: 0, reposts: 3, likes: 27 } });
+  const trains = post(4, hollis, 20 * H, 'The winter night train timetable is out. Two new sleepers to the coast, and the dining car is back.', { counts: { replies: 0, reposts: 210, likes: 1_400 } });
+  const posts = [
+    delta,
+    quoted,
+    trains,
+    post(5, hollis, 3 * H, '', { repostOf: delta }),
+    ...tree(epoch, mine, [
+      [idOf(river, 20), mine.id, river, 3 * H + 30, 'Welcome! The custom feeds are the best part, ask if you want some.'],
+      [idOf(me, 21), idOf(river, 20), me, 3 * H, 'Yes please, anything with maps in it.'],
+      [idOf(hollis, 22), mine.id, hollis, 2 * H, 'Twenty extra characters, use them wisely.'],
+    ], url),
+    post(6, quill, 1 * H, 'Quoting this so I remember to try it.', { quoteOf: mine, counts: { replies: 0, reposts: 0, likes: 2 } }),
+  ];
+  const reply = posts.find((p) => p.id === idOf(river, 20))!;
+  const quote = posts.find((p) => p.id === idOf(quill, 6))!;
+  return {
+    network: 'bluesky',
+    me,
+    people: [river, quill, hollis],
+    posts,
+    home: {
+      following: [{ id: mine.id }, { id: quoted.id }, { id: idOf(hollis, 5) }],
+      foryou: [{ id: trains.id, reason: { text: 'Popular on Discover', kind: 'topic' } }, { id: delta.id }],
+    },
+    feed: [
+      { min: 3 * H + 40, who: 'river', nativeId: `like:${mine.id}:${river.identity.nativeId}`, body: 'liked your post', item: { type: 'like', post: mine, url: mine.url } },
+      { min: 3 * H + 30, who: 'river', nativeId: `reply:${reply.id}`, body: reply.text, item: { type: 'reply', post: mine, theirs: reply, url: reply.url } },
+      { min: 2 * H + 30, who: 'hollis', nativeId: `repost:${mine.id}:${hollis.identity.nativeId}`, body: 'reposted your post', item: { type: 'repost', post: mine, url: mine.url } },
+      { min: 1 * H, who: 'quill', nativeId: `quote:${quote.id}`, body: quote.text, item: { type: 'quote', post: mine, theirs: quote, url: quote.url } },
+      { min: 30, who: 'quill', nativeId: `follow:${quill.identity.nativeId}`, body: 'followed you', item: { type: 'follow', url: quill.url } },
+    ],
+    likers: { [mine.id]: ['river'] },
+    reposters: { [mine.id]: ['hollis'] },
+    newId: (n) => ({ id: idOf(me, 900 + n), url: url(idOf(me, 900 + n)) }),
+    capabilities: ['profile', 'posts', 'postActions', 'publish', 'postReactors', 'home', 'unpublish'],
+  };
+}
+
+const WORLDS: Record<PostsNet, (epoch: number) => World> = { mastodon, reddit, lemmy, substack, bluesky };
 
 /**
  * One network of posts, played: its feed conversation and notifications, home timelines, threads, profiles, and what
@@ -449,7 +510,8 @@ export class DemoPosts implements InprocAdapter {
           ...(cmd.title ? { title: cmd.title } : {}),
           ...(cmd.place && this.w.placeOf ? { place: this.w.placeOf(cmd.place) } : {}),
           ...(cmd.warning ? { warning: cmd.warning } : {}),
-          counts: { replies: 0, likes: net === 'reddit' || net === 'lemmy' ? 1 : 0, ...(net === 'mastodon' || net === 'substack' ? { reposts: 0 } : {}) },
+          ...(cmd.quote && this.known(cmd.quote) ? { quoteOf: this.known(cmd.quote)! } : {}),
+          counts: { replies: 0, likes: net === 'reddit' || net === 'lemmy' ? 1 : 0, ...(net === 'mastodon' || net === 'substack' || net === 'bluesky' ? { reposts: 0 } : {}) },
         };
         this.made.push(p);
         return reply(p satisfies P.PostFact);

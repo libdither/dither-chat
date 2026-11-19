@@ -1,10 +1,10 @@
 /**
- * The Feed page with Mastodon, Reddit, Lemmy and Substack (docs/feed.md "A feed of posts, for any network"), in a real
- * browser against a demo hub of its own on a fresh data dir, with the demo's four accounts of them (demo-posts.ts):
+ * The Feed page with Mastodon, Reddit, Lemmy, Substack and Bluesky (docs/feed.md "A feed of posts, for any network"), in
+ * a real browser against a demo hub of its own on a fresh data dir, with the demo's five accounts of them (demo-posts.ts):
  * the Feed offered and Following taking every network's posts, a Reddit or Lemmy post's title and place, Mastodon's
- * content warning folded until Show, Substack's publication; Tune naming each timeline in its network's words; a
+ * content warning folded until Show, Substack's publication, Bluesky's quote post with its picture; Tune naming each timeline in its network's words; a
  * Reddit thread's comment tree with Continue this thread opening the deep branch as a thread of its own; each
- * network's bar (Upvote and no Repost on Reddit and Lemmy, Favourite and Boost on Mastodon, Restack on Substack) and a
+ * network's bar (Upvote and no Repost on Reddit and Lemmy, Favourite and Boost on Mastodon, Restack on Substack, Repost and Like on Bluesky) and a
  * press reaching the network once; the composer asking a Reddit post for its title and subreddit, and Mastodon's
  * content warning; Activity in each network's words; and a phone.
  *
@@ -35,7 +35,7 @@ mkdirSync(work, { recursive: true });
 const shots = opt('shots', '');
 if (shots) mkdirSync(shots, { recursive: true });
 
-const ACC = { mastodon: 'acc_demo-mastodon', reddit: 'acc_demo-reddit', lemmy: 'acc_demo-lemmy', substack: 'acc_demo-substack' };
+const ACC = { mastodon: 'acc_demo-mastodon', reddit: 'acc_demo-reddit', lemmy: 'acc_demo-lemmy', substack: 'acc_demo-substack', bluesky: 'acc_demo-bluesky' };
 
 let failed = 0;
 const check = (name: string, ok: boolean, detail: unknown = '') => {
@@ -71,7 +71,7 @@ const hub = Bun.spawn(['bun', join(root, 'packages/hub/src/main.ts'), '--demo', 
 await until(async () => (await fetch(`${base}/api/health`).catch(() => null))?.ok ?? false, 30_000, 'the hub did not start');
 let boot = await json('/api/bootstrap');
 if (!boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub');
-await until(async () => (boot = await json('/api/bootstrap')).conversations.filter((c: any) => c.variant === 'feed').length === 6, 15_000, 'six feed conversations');
+await until(async () => (boot = await json('/api/bootstrap')).conversations.filter((c: any) => c.variant === 'feed').length === 7, 15_000, 'seven feed conversations');
 
 const { page, close } = await launch();
 const q = (s: string) => JSON.stringify(s);
@@ -116,7 +116,7 @@ try {
   await tap('.feed-main .feed-tune-btn');
   await page.until(`!!document.querySelector('.feed-tune-src small')`, 5000);
   const tune = await page.eval<string[]>(`[...document.querySelectorAll('.feed-tune-src small')].map((s) => s.textContent.trim())`);
-  check('Tune names the timelines as each network does', ['Home · Mastodon', 'New · Reddit', 'Subscribed · Lemmy', 'Inbox · Substack'].every((t) => tune.some((x) => x.includes(t))), tune);
+  check('Tune names the timelines as each network does', ['Home · Mastodon', 'New · Reddit', 'Subscribed · Lemmy', 'Inbox · Substack', 'Following · Bluesky'].every((t) => tune.some((x) => x.includes(t))), tune);
   if (shots) await page.shot(join(shots, 'networks-tune.png'));
 
   /** One account's own timeline. */
@@ -144,6 +144,19 @@ try {
   check('a Substack post: its title and its publication', /The Slow Graph/.test(await text(`${substack} .post-place`)), await text(`${substack} .post-place`));
   check('Substack’s bar: Reply, Restack, Like', JSON.stringify(await bar(substack)) === JSON.stringify(['Reply', 'Restack', 'Like']), await bar(substack));
   if (shots) await page.shot(join(shots, 'networks-substack-desktop.png'));
+
+  await open(ACC.bluesky);
+  const quoted = await entry('good map labels');
+  check('a Bluesky quote post: the post it quotes, with its picture, inside the card', /The delta at low water/.test(await text(quoted)) && (await count(`${quoted} img[alt="A river winding through green fields"]`)) >= 1, (await text(quoted)).slice(0, 120));
+  check('a Bluesky post: no title, no place, no warning', !(await count(`${quoted} .post-title, ${quoted} .post-place, ${quoted} .post-warning`)));
+  const skyBar = await bar(quoted);
+  check('Bluesky’s bar: Reply, Repost, Like', ['Reply', 'Repost', 'Like'].every((b) => skyBar.includes(b)), skyBar);
+  const skyRepost = await entry('Every channel moved since spring');
+  check('a Bluesky repost says reposted', /reposted/i.test(await text(skyRepost)), (await text(skyRepost)).slice(0, 80));
+  await tap(`${quoted} .pa-btn.like`);
+  await until(async () => (await writes(ACC.bluesky)).includes('postAct:like'), 10000, 'the like reaching Bluesky');
+  check('Like pressed: on, and Bluesky asked once', (await count(`${quoted} .pa-btn.like.on`)) === 1 && (await writes(ACC.bluesky)).filter((w) => w === 'postAct:like').length === 1, await writes(ACC.bluesky));
+  if (shots) await page.shot(join(shots, 'networks-bluesky-desktop.png'));
 
   await open(ACC.mastodon);
   const spoiler = await entry('Spoilers: the finale');

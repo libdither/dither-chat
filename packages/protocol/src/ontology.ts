@@ -15,7 +15,7 @@
  * (persons, folders, notification rules, triage) are never written back.
  */
 
-export type Network = 'discord' | 'signal' | 'matrix' | 'whatsapp' | 'telegram' | 'gmessages' | 'messenger' | 'instagram' | 'x' | 'email' | 'calendar' | 't3' | 'mastodon' | 'reddit' | 'lemmy' | 'substack';
+export type Network = 'discord' | 'signal' | 'matrix' | 'whatsapp' | 'telegram' | 'gmessages' | 'messenger' | 'instagram' | 'x' | 'email' | 'calendar' | 't3' | 'mastodon' | 'reddit' | 'lemmy' | 'substack' | 'bluesky';
 /**
  * The chat networks this hub offers. telegram, gmessages (Google Messages: SMS and RCS), messenger, instagram and x
  * (X's direct messages) run only in dither-accounts. `email` is a Network for people's addresses (identities) and the
@@ -23,18 +23,18 @@ export type Network = 'discord' | 'signal' | 'matrix' | 'whatsapp' | 'telegram' 
  * `calendar` is a calendar service beside the hub (dither-calendar, docs/calendar.md): its account brings the calendar's
  * own chats, and while one is on, the calendar's pane, plans and reminders are too. `t3` is T3 Code's coding threads
  * (dither-accounts' docs/t3.md): each thread a chat with its agent, its project a space; it too runs only there.
- * mastodon, reddit, lemmy and substack are networks of posts, not chats (docs/feed.md): their accounts bring a home
+ * mastodon, reddit, lemmy, substack and bluesky are networks of posts, not chats (docs/feed.md): their accounts bring a home
  * timeline, threads of comments and notifications to the Feed page, and run only in dither-accounts.
  */
-export const NETWORKS: readonly Network[] = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x', 'calendar', 't3', 'mastodon', 'reddit', 'lemmy', 'substack'];
+export const NETWORKS: readonly Network[] = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x', 'calendar', 't3', 'mastodon', 'reddit', 'lemmy', 'substack', 'bluesky'];
 
 /**
  * The networks of posts: an account of one brings the Feed page (docs/feed.md) its home timelines, threads and
  * notifications. X is also a chat network (its direct messages); the others are posts only.
  */
-export const POST_NETWORKS: readonly Network[] = ['x', 'mastodon', 'reddit', 'lemmy', 'substack'];
+export const POST_NETWORKS: readonly Network[] = ['x', 'mastodon', 'reddit', 'lemmy', 'substack', 'bluesky'];
 /** Posts only, no chats: an account of one has no inbox of its own. */
-export const POSTS_ONLY: readonly Network[] = ['mastodon', 'reddit', 'lemmy', 'substack'];
+export const POSTS_ONLY: readonly Network[] = ['mastodon', 'reddit', 'lemmy', 'substack', 'bluesky'];
 
 /** Where a conversation sits in the social structure, independent of network. */
 export type Shape =
@@ -179,6 +179,7 @@ export const REACTION_RULES: Record<Network, ReactionRules> = {
   reddit: { exclusive: true, freeText: false, maxDistinct: 0 },
   lemmy: { exclusive: true, freeText: false, maxDistinct: 0 },
   substack: { exclusive: true, freeText: false, maxDistinct: 0 },
+  bluesky: { exclusive: true, freeText: false, maxDistinct: 0 },
 };
 
 export function discordEmojiUrl(id: string, animated?: boolean): string {
@@ -250,6 +251,7 @@ export const ATTACHMENT_LIMITS: Record<Network, { bytes: number; files: number }
   reddit: { bytes: 0, files: 0 },
   lemmy: { bytes: 0, files: 0 },
   substack: { bytes: 0, files: 0 },
+  bluesky: { bytes: 0, files: 0 },
 };
 
 /**
@@ -285,4 +287,6 @@ export const NETWORK_META: Record<Network, { name: string; color: string; spaceN
   reddit: { name: 'Reddit', color: '#FF4500', spaceNoun: 'subreddit', sectionNoun: 'section' },
   lemmy: { name: 'Lemmy', color: '#00BC8C', spaceNoun: 'community', sectionNoun: 'section' },
   substack: { name: 'Substack', color: '#FF6719', spaceNoun: 'publication', sectionNoun: 'section' },
+  // Bluesky has no communities: a space is never made, the noun only names one if it were.
+  bluesky: { name: 'Bluesky', color: '#0085FF', spaceNoun: 'feed', sectionNoun: 'section' },
 };
