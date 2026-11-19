@@ -44,6 +44,7 @@ const P: Record<string, string> = {
   chevronRight: '<path d="m9 18 6-6-6-6"/>',
   chevronDown: '<path d="m6 9 6 6 6-6"/>',
   chevronUp: '<path d="m18 15-6-6-6 6"/>',
+  minus: '<path d="M5 12h14"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   reply: '<polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>',
   replyAll: '<polyline points="7 14 2 9 7 4"/><polyline points="12 14 7 9 12 4"/><path d="M22 20v-7a4 4 0 0 0-4-4H7"/>',
