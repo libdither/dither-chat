@@ -11,9 +11,9 @@
  * inbox, unless the hub's copy replaced them already. Kept pages never see it: their catch-up asks from their newest
  * message the hub sent (`heldEnds`), not from a copy.
  *
- * Only what is newer than the snapshot is shown. A copy is marked in the timeline (`isArrivedCopy`), with a line above
- * the first that says earlier messages may be missing: only messages that notify are pushed, so the ones between
- * may not be here yet.
+ * Only what is newer than the snapshot is shown, and nothing kept longer than KEEP_MS. A copy is marked in the timeline
+ * (`isArrivedCopy`), with a line above the first that says earlier messages may be missing: only messages that notify
+ * are pushed, so the ones between may not be here yet.
  */
 import type * as P from '@dither-chat/protocol';
 import { db, inbox, timelines, type Timeline } from './store.ts';
@@ -39,17 +39,21 @@ interface OverlayPlan {
 const isRecord = (r: any): r is ArrivedRecord =>
   !!r && typeof r.key === 'string' && typeof r.at === 'number' && typeof r.conv === 'string' && (r.kind === 'clear' || (r.kind === 'message' && typeof r.arrived?.message?.id === 'string' && r.arrived.message.conversationId === r.conv && Array.isArray(r.arrived.vantages)));
 
+/** As long as the worker and the Android app keep a record. */
+const KEEP_MS = 3 * 24 * 3600 * 1000;
+
 const readAll = (v: P.VantageView[], upTo: number | undefined): P.VantageView[] => v.map((x) => ({ ...x, unread: 0, mentions: 0, lastReadTs: upTo === undefined ? x.lastReadTs : Math.max(x.lastReadTs ?? 0, upTo) }));
 
 /**
  * What to show over the snapshot (pure). `conv` is the conversation as the snapshot has it. A message no newer than
  * the snapshot's last one is left out; a conversation's row takes the newest push's state when it is newer than the
- * snapshot's. A read elsewhere that came after that push, up to or past its last message, leaves it read.
+ * snapshot's. A read elsewhere that came after that push, up to or past its last message, leaves it read; a clear without
+ * `upTo` is not a read (the hub took a phone-list row back) and changes nothing.
  */
-export function planOverlay(records: unknown[], conv: (id: string) => P.ConversationView | undefined): OverlayPlan {
+export function planOverlay(records: unknown[], conv: (id: string) => P.ConversationView | undefined, now = Date.now()): OverlayPlan {
   const convs = new Map<string, ConvState>();
   const messages: P.MessageView[] = [];
-  const valid = records.filter(isRecord).sort((a, b) => a.at - b.at);
+  const valid = records.filter((r): r is ArrivedRecord => isRecord(r) && now - r.at <= KEEP_MS).sort((a, b) => a.at - b.at);
   const newest = new Map<string, { at: number; s: ConvState }>();
   for (const r of valid) {
     const c = conv(r.conv);
@@ -58,20 +62,23 @@ export function planOverlay(records: unknown[], conv: (id: string) => P.Conversa
     const m = a.message;
     const known = c.lastMessageAt ?? -Infinity;
     if (m.ts < known || (m.ts === known && c.lastMessage?.id === m.id)) continue;
-    messages.push(a.cut ? { ...m, body: `${m.body}…` } : m);
+    const body = a.cut ? `${m.body}…` : m.body;
+    messages.push(a.cut ? { ...m, body } : m);
+    // The hub leaves out the preview's text when it is the message's body (hub arrived.ts).
+    const lastMessage = a.lastMessage?.id === m.id && !a.lastMessage.text && body ? { ...a.lastMessage, text: body } : a.lastMessage;
     if ((a.lastMessageAt ?? -Infinity) > known && (a.lastMessageAt ?? -Infinity) >= (newest.get(r.conv)?.s.lastMessageAt ?? -Infinity))
-      newest.set(r.conv, { at: r.at, s: { lastMessage: a.lastMessage, lastMessageAt: a.lastMessageAt, vantages: a.vantages } });
+      newest.set(r.conv, { at: r.at, s: { lastMessage, lastMessageAt: a.lastMessageAt, vantages: a.vantages } });
   }
   for (const [id, n] of newest) convs.set(id, n.s);
   for (const r of valid) {
-    if (r.kind !== 'clear') continue;
+    if (r.kind !== 'clear' || r.upTo === undefined) continue;
     const c = conv(r.conv);
     if (!c) continue;
     const n = newest.get(r.conv);
     const state = convs.get(r.conv) ?? { lastMessage: c.lastMessage, lastMessageAt: c.lastMessageAt, vantages: c.vantages };
     // A read from before the newest push, or up to a time before its last message, leaves that message unread.
     if (n && r.at < n.at) continue;
-    if (r.upTo !== undefined && state.lastMessageAt !== null && r.upTo < state.lastMessageAt) continue;
+    if (state.lastMessageAt !== null && r.upTo < state.lastMessageAt) continue;
     convs.set(r.conv, { ...state, vantages: readAll(state.vantages, r.upTo) });
   }
   // One copy per message, oldest first.
@@ -89,13 +96,20 @@ let phase: Phase = 'waiting';
 let records: unknown[] = [];
 /** Each conversation it changed: the object before, and the one it put in. */
 const swapped = new Map<string, { before: P.ConversationView; put: P.ConversationView }>();
+/** Conversations the hub's own row replaced while the layer showed: it leaves them alone from then on. */
+const yielded = new Set<string>();
 const copies = new WeakSet<P.MessageView>();
 let shown: P.MessageView[] = [];
-/** When this start began asking the hub: records kept before then are covered by its answer. */
-let caughtUpTo = 0;
+/** What the copies pushed off the end of a full inbox, put back when they go. */
+let bumped: P.MessageView[] = [];
 
 /** A message on screen that is a push's copy, not yet the hub's. */
 export const isArrivedCopy = (m: P.MessageView) => copies.has(m);
+
+/** A copy changed in place (a reaction, a mark: state.ts patchMessage) is still a copy. */
+export function carryArrived(from: P.MessageView, to: P.MessageView) {
+  if (copies.has(from)) copies.add(to);
+}
 
 /** Records came (the worker's store, or the Android app's hello): shown if the snapshot is up and the hub is not. */
 export function addArrived(more: unknown[]) {
@@ -115,13 +129,17 @@ export function openArrived(fromSnapshot: boolean) {
 function apply() {
   const before = (id: string) => swapped.get(id)?.before ?? db.conversations.get(id);
   const plan = planOverlay(records, before);
-  // Rows: as the plan says now, and those it no longer changes as they were.
+  // Rows: as the plan says now, and those it no longer changes as they were. One the hub replaced meanwhile (frames
+  // released after a failed catch-up) is the hub's from then on.
   for (const [id, { before: b, put }] of swapped) {
-    if (plan.convs.has(id)) continue;
-    if (db.conversations.get(id) === put) db.conversations.set(id, b);
+    const now = db.conversations.get(id);
+    if (now !== put) yielded.add(id);
+    else if (!plan.convs.has(id)) db.conversations.set(id, b);
+    else continue;
     swapped.delete(id);
   }
   for (const [id, st] of plan.convs) {
+    if (yielded.has(id)) continue;
     const b = before(id);
     if (!b) continue;
     const put = { ...b, ...st };
@@ -133,7 +151,11 @@ function apply() {
   shown = [...shown, ...fresh];
   // Not over a copy the inbox already has from the hub.
   const inboxed = fresh.filter((m) => !inbox.value.some((x) => x.id === m.id));
-  if (inboxed.length) inbox.value = mergeInbox(inbox.value, inboxed);
+  if (inboxed.length) {
+    const next = mergeInbox(inbox.value, inboxed);
+    bumped.push(...inbox.value.filter((m) => !next.includes(m)));
+    inbox.value = next;
+  }
   for (const t of timelines.values()) arrivedInto(t);
   changed('list');
 }
@@ -152,24 +174,31 @@ export function arrivedInto(t: Timeline) {
 }
 
 /**
- * The hub's answer is about to be applied: the layer goes, in this same task. Returns when this start began catching up,
- * for `doneArrived`.
+ * The hub's answer is about to be applied: the layer goes, in this same task. A timeline still loading its own page
+ * (the chat a notification opened) keeps its copies until that page comes (`stripArrived`), so the message does not
+ * leave and come back.
  */
 export function dropArrived() {
   if (phase === 'closed') return;
   close();
   for (const [id, { before, put }] of swapped) if (db.conversations.get(id) === put) db.conversations.set(id, before);
   swapped.clear();
+  yielded.clear();
   if (shown.length) {
-    for (const t of timelines.values()) {
-      const n = t.messages.length;
-      t.messages = t.messages.filter((m) => !copies.has(m));
-      if (t.messages.length !== n) timelineChanged(t.key);
-    }
-    if (inbox.value.some((m) => copies.has(m))) inbox.value = inbox.value.filter((m) => !copies.has(m));
+    for (const t of timelines.values()) if (!t.loading) stripArrived(t);
+    if (inbox.value.some((m) => copies.has(m)) || bumped.length) inbox.value = mergeInbox(inbox.value.filter((m) => !copies.has(m)), bumped);
     changed('list');
   }
   shown = [];
+  bumped = [];
+}
+
+/** A timeline's copies leave, once the layer is gone and its page from the hub came (state.ts fillTimeline). */
+export function stripArrived(t: Timeline) {
+  if (phase !== 'closed') return;
+  const n = t.messages.length;
+  t.messages = t.messages.filter((m) => !copies.has(m));
+  if (t.messages.length !== n) timelineChanged(t.key);
 }
 
 function close() {
@@ -186,17 +215,19 @@ export function heldEnds(messages: P.MessageView[]): { newest: number; oldest: n
   return { newest: messages[i]?.ts ?? 0, oldest: messages[j]?.ts ?? 0 };
 }
 
-/** This start began asking the hub now: what was kept before it is covered by the answer. */
-export function markCatchingUp(now = Date.now()) {
-  caughtUpTo ||= now;
-}
-
 // ------------------------------------------------------------------ where they are kept
 
 const DB = 'dither-arrived';
 
-/** The records the worker kept (public/sw.js). */
-export function readKept(): Promise<unknown[]> {
+/** What the worker kept (public/sw.js), and what it keeps from now on while this page is open (main.tsx). */
+export function listenArrived() {
+  void readKept().then(addArrived);
+  navigator.serviceWorker?.addEventListener('message', (e) => {
+    if (e.data?.t === 'arrived' && Array.isArray(e.data.records)) addArrived(e.data.records);
+  });
+}
+
+function readKept(): Promise<unknown[]> {
   if (typeof indexedDB === 'undefined') return Promise.resolve([]);
   return new Promise((resolve) => {
     const q = indexedDB.open(DB, 1);
@@ -223,13 +254,11 @@ export function onArrivedDone(fn: (upTo: number) => void) {
 }
 
 /**
- * The hub caught this copy up: the records kept before it began asking go, from the worker's store and the Android
- * app's (`android` sends `arrived.done`). One that came while it was asking stays for the next start, which leaves it
- * out as no newer than its snapshot.
+ * The hub caught this copy up, from a request made at `upTo` (this device's clock): the records kept before then go,
+ * from the worker's store and the Android app's (`android` sends `arrived.done`). One that came while it was asking
+ * stays for the next start, which leaves it out as no newer than its snapshot.
  */
-export function doneArrived() {
-  const upTo = caughtUpTo;
-  if (!upTo) return;
+export function doneArrived(upTo: number) {
   tellApp?.(upTo);
   if (typeof indexedDB === 'undefined') return;
   const q = indexedDB.open(DB, 1);
@@ -253,11 +282,20 @@ export function doneArrived() {
   };
 }
 
+/** Signing out (login.ts): none of it outlives the session. */
+export function forgetArrived() {
+  tellApp?.(Number.MAX_SAFE_INTEGER);
+  try {
+    indexedDB.deleteDatabase(DB);
+  } catch {}
+}
+
 /** For tests: back to a fresh start. */
 export function resetArrived() {
   phase = 'waiting';
   records = [];
   swapped.clear();
+  yielded.clear();
   shown = [];
-  caughtUpTo = 0;
+  bumped = [];
 }

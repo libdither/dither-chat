@@ -527,26 +527,36 @@ which can be hours old, and the message showed only once the catch-up came back.
 - **What goes**: the message without embeds, reactions or the optional extras; its attachments only when they fit; the
   conversation's last message, its time and each account's unread and mention counts, as the hub has them when it
   sends. Only beside the notification's own fields, within 3,900 bytes of JSON (a push's encrypted record is at most
-  4,096): the attachments go first, then the body is cut to the longest that fits (`cut`, shown with "…"), and with
-  less than 40 characters left no copy goes. A held push (a reminder, a summary) carries none. The plain-text ntfy
-  topic never carries it.
+  4,096): the attachments go first, then the body is cut to the longest that fits; either way the copy is marked as not
+  whole (`cut`, shown with "…"). With less than 40 characters left, or a message of attachments alone that do not fit,
+  no copy goes. The list's preview of the same message carries no text of its own when it would repeat the body: the
+  device fills it in. A held push (a reminder, a summary) carries none. The plain-text ntfy topic never carries it.
 - **Kept on the device**: the service worker (`public/sw.js`) keeps each copy, and each read elsewhere a clear push
-  carries, in IndexedDB `dither-arrived`; the Android app, which has no service worker push, keeps the same records
-  in a file (`Arrived.kt`) and hands them to each page that says hello. At most 300, none older than three days.
+  carries (one per conversation, the furthest; a clear without `upTo` is the hub taking a phone-list row back, not a
+  read, and is not kept), in IndexedDB `dither-arrived`. It keeps the copy before anything else the push does, so a hub
+  that never answers the push's own requests (a phone off its network) cannot cut it short; those requests give up
+  after ten seconds. The Android app, which has no service worker push, keeps the same records in a file
+  (`Arrived.kt`, read and written off the main thread) and hands them to each page that says hello. Both also hand
+  each new one to a page that is open. At most 300, none older than three days, here or when shown. Signing out, or
+  a 401 asking to sign in, deletes them, in the app too.
 - **Shown as a layer** (`packages/web/src/arrived.ts`): a start from the snapshot lays them over it. A message no
   newer than the snapshot's last one in its conversation is left out; a conversation's row takes the newest push's
   state; a read elsewhere after that push, up to its last message, leaves it read. The copies go in the timelines and
   the inbox, marked, under a line that says earlier messages may be missing until the hub is back: only messages that
-  notify are pushed, so the ones between may not be here yet, and a reply typed then is typed without them.
+  notify are pushed, so the ones between may not be here yet, and a reply typed then is typed without them. A copy
+  changed in place (a reaction, a mark) stays one. A row the hub's own data replaced while the layer shows (frames
+  released after a failed catch-up) is left to the hub from then on.
 - **Never data**: nothing of the layer is saved (the snapshot is not written while it shows), a timeline's catch-up
   asks from the newest message the hub sent, not from a copy, and the layer is taken away whole right before the
   hub's answer is applied, in the same task: each row it changed gets its object from before back (unless something
-  else replaced it meanwhile), and copies the hub's own messages have not replaced leave the timelines and the inbox.
-  The hub's absolute counts then stand, so nothing is counted twice, and a copy of a message the hub no longer has
-  (deleted meanwhile) goes.
-- **Then deleted**: once the hub has caught the app up, the records kept before it began asking go, from the worker's
-  store and the app's (`arrived.done`). One that came while it was asking stays, and the next start leaves it out as
-  no newer than its snapshot.
+  else replaced it meanwhile), and copies the hub's own messages have not replaced leave the timelines and the inbox;
+  what they pushed off the end of a full inbox comes back. A chat still loading its own page (the one a notification
+  opened) keeps its copies until that page comes, so the message does not leave and come back. The hub's absolute
+  counts then stand, so nothing is counted twice, and a copy of a message the hub no longer has (deleted meanwhile)
+  goes.
+- **Then deleted**: each time the hub catches the app up, the records kept before that request was made go, from the
+  worker's store and the app's (`arrived.done`). One that came while it was asking stays, and the next start leaves it
+  out as no newer than its snapshot.
 - Sends typed on a copy (a reply to it) wait in the outbox as any offline send does, and go once the hub has
   answered; the copy's id is the message's real id, so a reply quotes it.
 - `scripts/verify-arrived.ts` (CI `boot`) checks it end to end in Chromium.

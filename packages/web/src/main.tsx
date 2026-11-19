@@ -14,7 +14,7 @@ import { registerServiceWorker } from './pwa.ts';
 import { dropPages, dropSnapshot, readSnapshot, restore } from './snapshot.ts';
 import { applyBootstrap, applyEvents, beforeSync, connect, loaded, restoreOutbox } from './state.ts';
 import { installErrorReports } from './errors.ts';
-import { addArrived, openArrived, readKept } from './arrived.ts';
+import { listenArrived, openArrived } from './arrived.ts';
 import './styles.css';
 
 const scriptAt = performance.now();
@@ -34,7 +34,7 @@ installDeskLinks();
 let source = 'hub';
 let readMs = -1;
 // What pushes brought while the app was closed (arrived.ts): shown over the snapshot until the hub answers.
-void readKept().then(addArrived);
+listenArrived();
 const restored = readSnapshot()
   .then((s) => {
     readMs = performance.now() - scriptAt;

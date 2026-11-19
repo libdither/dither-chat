@@ -41,6 +41,9 @@ test('the copy is the message without embeds, reactions or extras, with where it
   expect(a.vantages[0].unread).toBe(3);
   expect(a.lastMessageAt).toBe(1000);
   expect((a as any).participantIds).toBeUndefined();
+  // The preview says what the body says: its text is not sent twice.
+  expect(a.lastMessage!.text).toBe('');
+  expect(a.lastMessage!.id).toBe('msg_1');
   // None for a deleted message, one of another conversation, or one the store does not have.
   expect(arrivedCopy(storeOf(msg('x', { deleted: true })), 'cnv_1', 'msg_1')).toBeNull();
   expect(arrivedCopy(storeOf(msg('x')), 'cnv_2', 'msg_1')).toBeNull();
@@ -56,7 +59,8 @@ test('what does not fit goes: the attachments first, then the body is cut, and n
   const crowded = { ...payload, filler: 'y'.repeat(PUSH_BYTES - 1200) };
   const noAtt = fitArrived(crowded, small)!;
   expect(noAtt.message.attachments).toEqual([]);
-  expect(noAtt.cut).toBeUndefined();
+  // Marked as not whole, so the device does not show it as the whole message.
+  expect(noAtt.cut).toBe(true);
   expect(bytes({ ...crowded, arrived: noAtt })).toBeLessThanOrEqual(PUSH_BYTES);
   // A long body, in characters of several bytes: cut, and the list's preview with it.
   const long = arrivedCopy(storeOf(msg('日本語のメッセージ'.repeat(200))), 'cnv_1', 'msg_1')!;
@@ -65,6 +69,8 @@ test('what does not fit goes: the attachments first, then the body is cut, and n
   expect(long.message.body.startsWith(cut.message.body)).toBe(true);
   expect(cut.lastMessage!.text.length).toBeLessThanOrEqual(cut.message.body.length);
   expect(bytes({ ...payload, arrived: cut })).toBeLessThanOrEqual(PUSH_BYTES);
+  // Pictures alone that do not fit: nothing would be left, so no copy.
+  expect(fitArrived(crowded, arrivedCopy(storeOf(msg('', { attachments: [att] })), 'cnv_1', 'msg_1')!)).toBeNull();
   // No room at all: no copy.
   expect(fitArrived({ ...payload, filler: 'y'.repeat(PUSH_BYTES) }, long)).toBeNull();
 });

@@ -186,7 +186,9 @@ async function keepAccounts(ids) {
 function outcome(data, event) {
   if (!data?.nid) return Promise.resolve();
   const body = JSON.stringify({ events: [{ id: data.nid, device: data.device, event, at: Date.now() }] });
-  return fetch('/api/activity/notifications', { method: 'POST', headers: { 'content-type': 'application/json' }, body }).catch(() => {});
+  // A hub that takes the request and never answers (a phone off its network) must not hold the push's work open.
+  const signal = typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(10_000) : undefined;
+  return fetch('/api/activity/notifications', { method: 'POST', headers: { 'content-type': 'application/json' }, body, signal }).catch(() => {});
 }
 
 // ------------------------------------------------------------------ how a notification looks
@@ -412,20 +414,25 @@ async function clear(d) {
 }
 
 // Copies of the messages pushes were about, and reads elsewhere, kept for the page's next start (src/arrived.ts,
-// docs/notifications.md "A copy in the push"): it shows them before the hub answers, and deletes them once it has.
-// The newest ARRIVED_MAX, none older than ARRIVED_KEEP_MS. The key is the page's to agree with.
+// docs/notifications.md "A copy in the push"): it shows them before the hub answers, and deletes them once it has; an
+// open page gets them as they come. The newest ARRIVED_MAX, none older than ARRIVED_KEEP_MS. The key is the page's to
+// agree with.
 const ARRIVED_DB = 'dither-arrived';
 const ARRIVED_MAX = 300;
 const ARRIVED_KEEP_MS = 3 * 24 * 3600 * 1000;
 
-/** What a push leaves for the page: its message's copy, or each read it carries. */
+/**
+ * What a push leaves for the page: its message's copy, or each read it carries, one per conversation (a later read
+ * replaces it, keeping the furthest `upTo`). A clear without `upTo` is not a read (the hub took a phone-list row back),
+ * so it leaves nothing.
+ */
 function arrivedRecords(d, at) {
   const a = d.arrived;
   if (a && typeof a.message?.id === 'string' && a.message.conversationId === d.conversationId) return [{ key: `m:${a.message.id}`, kind: 'message', conv: d.conversationId, arrived: a, at }];
   if (typeof d.clear !== 'string') return [];
   return [{ clear: d.clear, upTo: d.upTo }, ...(Array.isArray(d.more) ? d.more : [])]
-    .filter((c) => typeof c?.clear === 'string')
-    .map((c, i) => ({ key: `c:${c.clear}:${at}:${i}`, kind: 'clear', conv: c.clear, ...(typeof c.upTo === 'number' ? { upTo: c.upTo } : {}), at }));
+    .filter((c) => typeof c?.clear === 'string' && typeof c.upTo === 'number')
+    .map((c) => ({ key: `c:${c.clear}`, kind: 'clear', conv: c.clear, upTo: c.upTo, at }));
 }
 
 function keepArrived(records) {
@@ -440,7 +447,13 @@ function keepArrived(records) {
       try {
         const t = d.transaction('arrived', 'readwrite');
         const st = t.objectStore('arrived');
-        for (const r of records) st.put(r, r.key);
+        for (const r of records) {
+          if (r.kind !== 'clear') st.put(r, r.key);
+          else {
+            const was = st.get(r.key);
+            was.onsuccess = () => st.put(was.result?.upTo > r.upTo ? { ...r, upTo: was.result.upTo } : r, r.key);
+          }
+        }
         const all = st.getAll();
         all.onsuccess = () => {
           const now = Date.now();
@@ -452,7 +465,12 @@ function keepArrived(records) {
         resolve();
       }
     };
-  });
+  }).then(() => tellPages(records));
+}
+
+/** An open page that has not heard from the hub yet shows them now (src/arrived.ts). */
+async function tellPages(records) {
+  for (const c of await self.clients.matchAll({ type: 'window' })) c.postMessage({ t: 'arrived', records });
 }
 
 self.addEventListener('push', (e) => {
@@ -467,6 +485,9 @@ self.addEventListener('push', (e) => {
     e.waitUntil(Promise.all([clear(d), keepArrived(arrivedRecords(d, Date.now()))]));
     return;
   }
+  // Kept first: a push's work can be cut short (the hub's requests below may never be answered off its network), and a
+  // tap can start the page at once.
+  const keeping = keepArrived(arrivedRecords(d, Date.now()));
   e.waitUntil(
     (async () => {
       await arrived;
@@ -477,7 +498,7 @@ self.addEventListener('push', (e) => {
       if (looking && !d.test) (await self.registration.getNotifications({ tag })).forEach((n) => n.close());
       await outcome(d, 'delivered');
       await outcome(d, looking ? 'suppressed' : 'shown');
-      await keepArrived(arrivedRecords(d, Date.now()));
+      await keeping;
     })(),
   );
 });

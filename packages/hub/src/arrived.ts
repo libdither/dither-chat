@@ -40,17 +40,21 @@ export function arrivedCopy(store: { messageView(id: string): P.MessageView | nu
     seenVia: m.seenVia,
     triage: m.triage,
   };
-  return { message, lastMessage: c.lastMessage, lastMessageAt: c.lastMessageAt, vantages: c.vantages };
+  // The list's preview of this same message says what its body says: sent once (the device fills it in).
+  const lastMessage = c.lastMessage && c.lastMessage.id === m.id && c.lastMessage.text === m.body ? { ...c.lastMessage, text: '' } : c.lastMessage;
+  return { message, lastMessage, lastMessageAt: c.lastMessageAt, vantages: c.vantages };
 }
 
 /**
  * The copy that fits beside `payload` (everything else the push carries) within PUSH_BYTES: whole, else without its
- * attachments, else with its body and the preview's text cut to fit; null when even that does not fit.
+ * attachments (marked `cut`), else with its body and the preview's text cut to fit; null when even that does not fit,
+ * or when nothing but an empty body would be left.
  */
 export function fitArrived(payload: object, copy: P.PushArrived, limit = PUSH_BYTES): P.PushArrived | null {
   const size = (a: P.PushArrived) => bytes({ ...payload, arrived: a });
   if (size(copy) <= limit) return copy;
-  const a: P.PushArrived = { ...copy, message: { ...copy.message, attachments: [] } };
+  if (!copy.message.body.trim()) return null;
+  const a: P.PushArrived = { ...copy, ...(copy.message.attachments.length ? { cut: true } : {}), message: { ...copy.message, attachments: [] } };
   if (size(a) <= limit) return a;
   // The longest body that fits, found by halving.
   const body = copy.message.body;
@@ -62,7 +66,7 @@ export function fitArrived(payload: object, copy: P.PushArrived, limit = PUSH_BY
       cut: true,
       message: { ...a.message, body: text },
       // The list's preview is the same message: no longer than its body.
-      ...(preview && preview.text.length > text.length ? { lastMessage: { ...preview, text: cutAt(preview.text, text.length) } } : {}),
+      ...(preview && preview.text && preview.text.length > text.length ? { lastMessage: { ...preview, text: cutAt(preview.text, text.length) } } : {}),
     };
   };
   let lo = MIN_BODY;
