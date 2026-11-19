@@ -1397,7 +1397,7 @@ export class HubServer {
         return bad((e as Error).message, 502);
       }
     }
-    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/thread$/)) && method === 'GET') {
+    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/([A-Za-z0-9_.~:-]{1,120})\/thread$/)) && method === 'GET') {
       const network = m[1] as P.Network;
       if (!(network in NETWORK_META)) return bad('no such network', 404);
       const cursor = url.searchParams.get('cursor') ?? undefined;
@@ -1411,7 +1411,7 @@ export class HubServer {
       }
     }
     // Answering on a network with posts (posts.ts, docs/feed.md "Answering"): like, repost, post. Each is one press.
-    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/act$/)) && method === 'POST') {
+    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/([A-Za-z0-9_.~:-]{1,120})\/act$/)) && method === 'POST') {
       const network = m[1] as P.Network;
       if (!(network in NETWORK_META)) return bad('no such network', 404);
       const b = await body<{ act?: unknown; account?: unknown }>();
@@ -1428,9 +1428,9 @@ export class HubServer {
     if ((m = path.match(/^\/api\/posts\/([a-z]+)\/publish$/)) && method === 'POST') {
       const network = m[1] as P.Network;
       if (!(network in NETWORK_META)) return bad('no such network', 404);
-      const b = await body<{ text?: unknown; replyTo?: unknown; quote?: unknown; key?: unknown; account?: unknown }>();
+      const b = await body<{ text?: unknown; replyTo?: unknown; quote?: unknown; key?: unknown; account?: unknown; warning?: unknown }>();
       try {
-        const v = await this.posts.publish(network, { text: b.text, replyTo: b.replyTo, quote: b.quote, key: b.key, account: b.account });
+        const v = await this.posts.publish(network, { text: b.text, replyTo: b.replyTo, quote: b.quote, key: b.key, account: b.account, warning: b.warning });
         this.flush();
         return ok(v);
       } catch (e) {
@@ -1439,7 +1439,7 @@ export class HubServer {
     }
     // Following a post (follows.ts, docs/feed.md "Following a post"): PUT follows (reading the thread first), DELETE
     // stops the checks and keeps the conversation, GET says how it stands and which replies are new since it was read.
-    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/follow$/)) && (method === 'PUT' || method === 'DELETE' || method === 'GET')) {
+    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/([A-Za-z0-9_.~:-]{1,120})\/follow$/)) && (method === 'PUT' || method === 'DELETE' || method === 'GET')) {
       const network = m[1] as P.Network;
       if (!(network in NETWORK_META)) return bad('no such network', 404);
       try {
@@ -1455,7 +1455,7 @@ export class HubServer {
       }
     }
     // Delete a post of yours (posts.ts unpublish).
-    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/delete$/)) && method === 'POST') {
+    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/([A-Za-z0-9_.~:-]{1,120})\/delete$/)) && method === 'POST') {
       const network = m[1] as P.Network;
       if (!(network in NETWORK_META)) return bad('no such network', 404);
       const b = await body<{ account?: unknown }>();
@@ -1522,7 +1522,7 @@ export class HubServer {
       }
     }
     // Who liked or reposted a post, ranked for you (reactors.ts).
-    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/reactors$/)) && method === 'GET') {
+    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/([A-Za-z0-9_.~:-]{1,120})\/reactors$/)) && method === 'GET') {
       const network = m[1] as P.Network;
       if (!(network in NETWORK_META)) return bad('no such network', 404);
       const kind = url.searchParams.get('kind') === 'repost' ? 'repost' : 'like';
@@ -1535,7 +1535,7 @@ export class HubServer {
       }
     }
     // Who liked, reposted, replied to or quoted a post, from the feeds the hub holds: nothing is asked of the network.
-    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/activity$/)) && method === 'GET') {
+    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/([A-Za-z0-9_.~:-]{1,120})\/activity$/)) && method === 'GET') {
       const network = m[1] as P.Network;
       if (!(network in NETWORK_META)) return bad('no such network', 404);
       return ok(s.postActivity(network, m[2]));

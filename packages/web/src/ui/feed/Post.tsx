@@ -129,14 +129,17 @@ export function Pics({ media }: { media?: P.PostMedia[] }) {
   );
 }
 
-export function Counts({ p, kit, big }: { p: P.PostFact; kit: Kit; big?: boolean }) {
+export function Counts({ p, kit, big, network }: { p: P.PostFact; kit: Kit; big?: boolean; network?: P.Network }) {
   const c = p.counts;
   if (!c) return null;
+  // In the network's words: Mastodon's favourites and boosts, Reddit's comments and upvotes, Substack's restacks.
+  const w = kit.feed.reactWords(network);
+  const one = (many: string) => many.toLowerCase().replace(/s$/, '');
   const items: [number | undefined, string, string][] = [
-    [c.replies, 'reply', 'replies'],
-    [c.reposts, 'repost', 'reposts'],
+    network === 'reddit' ? [c.replies, 'comment', 'comments'] : [c.replies, 'reply', 'replies'],
+    [c.reposts, one(w.reposts), w.reposts.toLowerCase()],
     [c.quotes, 'quote', 'quotes'],
-    [c.likes, 'like', 'likes'],
+    [c.likes, one(w.likes), w.likes.toLowerCase()],
     [c.views, 'view', 'views'],
   ];
   const shown = items.filter(([n]) => n !== undefined && (big || n > 0));
@@ -186,8 +189,25 @@ export function QuotedIn({ p, kit, network, still }: { p: P.PostFact; kit: Kit; 
   );
 }
 
+/** Where it was posted, when not on its author's profile: "in r/rust", "in !rust@lemmy.example", a publication. */
+export function Place({ p }: { p: P.PostFact }) {
+  if (!p.place) return null;
+  return (
+    <span class="post-mark post-place">
+      in{' '}
+      {p.place.url ? (
+        <a href={p.place.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+          {p.place.name}
+        </a>
+      ) : (
+        p.place.name
+      )}
+    </span>
+  );
+}
+
 /** A post behind its content warning (Mastodon, Misskey): the warning, and the words and pictures once opened. */
-function Folded({ warning, kit, children }: { warning?: string; kit: Kit; children: ComponentChildren }) {
+export function Folded({ warning, kit, children }: { warning?: string; kit: Kit; children: ComponentChildren }) {
   const [open, setOpen] = useState(false);
   if (!warning) return <>{children}</>;
   return (
@@ -246,7 +266,7 @@ export function Row({ p, kit, network, line, focal, size = 36, above, tag, aside
         {above}
         {p.repostOf && (
           <span class="post-mark">
-            <kit.Icon name="repeat" size={11} /> {kit.name(p.author ?? null)} reposted
+            <kit.Icon name="repeat" size={11} /> {kit.name(p.author ?? null)} {kit.feed.reactWords(network).reposted}
           </span>
         )}
         <div class="thread-head">
@@ -257,25 +277,14 @@ export function Row({ p, kit, network, line, focal, size = 36, above, tag, aside
           {tag && <span class={`post-tag ${tag === 'new' ? 'new' : ''}`}>{tag}</span>}
           {aside && <span class="post-aside">{aside}</span>}
         </div>
-        {shown.place && (
-          <span class="post-mark post-place">
-            in{' '}
-            {shown.place.url ? (
-              <a href={shown.place.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
-                {shown.place.name}
-              </a>
-            ) : (
-              shown.place.name
-            )}
-          </span>
-        )}
+        <Place p={shown} />
         {shown.title && <h3 class="post-title">{shown.title}</h3>}
         <Folded warning={shown.warning} kit={kit}>
           <Text p={shown} kit={kit} network={network} cls="post-text" />
           <Pics media={shown.media} />
         </Folded>
         {shown.quoteOf && shown.quoteOf.id !== hideQuote && <QuotedIn p={shown.quoteOf} kit={kit} network={network} />}
-        {below ?? <Counts p={shown} kit={kit} />}
+        {below ?? <Counts p={shown} kit={kit} network={network} />}
       </div>
     </article>
   );

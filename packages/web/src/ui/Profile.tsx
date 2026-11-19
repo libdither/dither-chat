@@ -42,13 +42,14 @@ const selfParts = signal<Self | null>(null);
 let selfLoading: Promise<unknown> | null = null;
 const loadSelf = () => (selfLoading ??= import('./ProfileSelf.tsx').then((m) => (selfParts.value = m), () => (selfLoading = null)));
 import { RecentPostsLazy } from './feed/lazy.tsx';
-import { clip, FEED_VERB } from '../feed.ts';
+import { clip, feedVerb } from '../feed.ts';
 
-/** A feed item in their Recent messages (docs/feed.md): "Liked your post: “…”", or what they wrote. */
-function feedLine(f: P.FeedItem, body: string): string {
-  if (f.type === 'reply' || f.type === 'mention' || f.type === 'quote') return `${FEED_VERB[f.type][0].toUpperCase()}${FEED_VERB[f.type].slice(1)}: ${clip(f.theirs?.text ?? body, 140)}`;
+/** A feed item in their Recent messages (docs/feed.md): "Liked your post: “…”" ("Favourited" on Mastodon), or what they wrote. */
+function feedLine(f: P.FeedItem, body: string, network: P.Network): string {
+  const said = feedVerb(f.type, network);
+  if (f.type === 'reply' || f.type === 'mention' || f.type === 'quote') return `${said[0]!.toUpperCase()}${said.slice(1)}: ${clip(f.theirs?.text ?? body, 140)}`;
   if (f.type === 'other') return f.text ?? body;
-  const verb = `${FEED_VERB[f.type][0].toUpperCase()}${FEED_VERB[f.type].slice(1)}`;
+  const verb = `${said[0]!.toUpperCase()}${said.slice(1)}`;
   return f.post?.text ? `${verb}: “${clip(f.post.text)}”` : verb;
 }
 
@@ -66,6 +67,10 @@ const WHAT_NETWORKS_SHARE: Record<P.Network, string> = {
   email: 'An address, and the name their mail is sent under. Mail has no profiles.',
   calendar: 'The calendar talks for itself: it has no profile.',
   t3: 'A coding agent in T3 Code: it has no profile.',
+  mastodon: 'Name, handle, bio, picture and profile fields, as their Mastodon profile shows them.',
+  reddit: 'Username, bio, picture and karma, as their Reddit profile shows them.',
+  lemmy: 'Name, handle, bio and picture, as their Lemmy profile shows them.',
+  substack: 'Name, handle, bio and picture, and the publications they write.',
 };
 
 /** What a network says when someone wrote nothing. */
@@ -925,7 +930,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
                   {c && !isQuietConv(c) ? <PlaceIcon c={c} size={28} /> : <NetBadge network={m.network} size={28} />}
                   <span class="pf-row-text">
                     <small class="pf-msg-where">{c ? (c.shape === 'direct' ? `Direct message · ${netName(c.network)}` : c.variant === 'feed' ? `${netName(c.network)} notifications` : c.variant === 'posts' ? `${netName(c.network)} posts` : convLabel(c)) : 'Unknown'}</small>
-                    <span class="pf-msg-body">{m.feed ? feedLine(m.feed, m.body) : plainBody(m.body, m.network) || (m.attachments.length ? 'Attachment' : m.kind === 'encrypted' ? 'Encrypted message' : '')}</span>
+                    <span class="pf-msg-body">{m.feed ? feedLine(m.feed, m.body, m.network) : plainBody(m.body, m.network) || (m.attachments.length ? 'Attachment' : m.kind === 'encrypted' ? 'Encrypted message' : '')}</span>
                   </span>
                   <span class="pf-row-time">{ago(m.ts)}</span>
                 </button>

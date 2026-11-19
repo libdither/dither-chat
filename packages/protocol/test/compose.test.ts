@@ -1,6 +1,6 @@
-/** Writing a post (compose.ts, docs/feed.md "Answering"): X's count and counter, Reddit's, from one set of rules. */
+/** Writing a post (compose.ts, docs/feed.md "Answering"): X's count and counter, Mastodon's, Reddit's, Lemmy's, Substack's, from one set of rules. */
 import { describe, expect, test } from 'bun:test';
-import { composeState, POST_RULES, postLength, postRulesFor, REDDIT_RULES, splitThread } from '../src/compose.ts';
+import { composeState, LEMMY_RULES, MASTODON_RULES, placeName, POST_RULES, postFieldsProblem, postLength, postRulesFor, REDDIT_RULES, SUBSTACK_RULES, splitThread, timelineName } from '../src/compose.ts';
 
 const X = POST_RULES.x;
 
@@ -33,12 +33,48 @@ test('where it goes over counts in weights: a CJK text goes over at 140 characte
   expect(s.remaining).toBe(-20);
 });
 
-test("Reddit's rules: 10,000 characters as read, a line from 1,000 left, Markdown", () => {
+test("Reddit's rules: 40,000 characters as read, a line from 1,000 left, Markdown, votes and no reposts", () => {
   expect(postLength('👨‍👩‍👧 日本', REDDIT_RULES)).toBe(4);
-  expect(composeState('a'.repeat(8_999), REDDIT_RULES)).toMatchObject({ level: 'ok', showCount: false });
-  expect(composeState('a'.repeat(9_500), REDDIT_RULES)).toMatchObject({ remaining: 500, level: 'warn', showCount: true, showRing: false });
+  expect(composeState('a'.repeat(38_999), REDDIT_RULES)).toMatchObject({ level: 'ok', showCount: false });
+  expect(composeState('a'.repeat(39_500), REDDIT_RULES)).toMatchObject({ remaining: 500, level: 'warn', showCount: true, showRing: false });
   expect(REDDIT_RULES.markdown).toBe(true);
   expect(REDDIT_RULES.likersVisible).toBe('none');
+  expect(REDDIT_RULES.actions).toMatchObject({ like: true, repost: false });
+  expect([REDDIT_RULES.words.like, REDDIT_RULES.likeIcon]).toEqual(['Upvote', 'upvote']);
+});
+
+test("Mastodon's: 500 as read, every link 23 however long, a content warning; favourites and boosts", () => {
+  expect(postLength('日本語 👨‍👩‍👧', MASTODON_RULES)).toBe(5);
+  expect(postLength('see https://example.com/a/very/long/path/that/goes/on', MASTODON_RULES)).toBe(4 + 23);
+  expect(composeState('a'.repeat(501), MASTODON_RULES)).toMatchObject({ remaining: -1, level: 'over', sendable: false, showRing: false });
+  expect(MASTODON_RULES.warning).toBeDefined();
+  expect([MASTODON_RULES.words.like, MASTODON_RULES.words.repost, MASTODON_RULES.likeIcon]).toEqual(['Favourite', 'Boost', 'star']);
+});
+
+test("each network's timelines by its own names; the rules of a network without posts are none", () => {
+  expect([timelineName('x', 'foryou'), timelineName('mastodon', 'following'), timelineName('reddit', 'foryou'), timelineName('lemmy', 'following'), timelineName('substack', 'foryou')]).toEqual(['For you', 'Home', 'Best', 'Subscribed', 'Notes']);
+  expect(timelineName('discord', 'following')).toBe('Following');
+  expect(postRulesFor('signal')).toBeNull();
+  expect(postRulesFor('toString')).toBeNull();
+  expect(SUBSTACK_RULES.actions).toMatchObject({ like: true, repost: true });
+  expect(LEMMY_RULES.actions.repost).toBe(false);
+});
+
+test('a subreddit or a community as written, and what a new post still needs', () => {
+  expect(['r/rust', '/r/rust', 'rust', 'r/a'].map((s) => placeName(s, REDDIT_RULES))).toEqual(['rust', 'rust', 'rust', null]);
+  expect(['!Gardening@lemmy.example', 'gardening', 'gardening@lemmy.example', '!no spaces'].map((s) => placeName(s, LEMMY_RULES))).toEqual(['gardening@lemmy.example', 'gardening', 'gardening@lemmy.example', null]);
+  expect(placeName('r/rust', MASTODON_RULES)).toBeNull();
+  expect(postFieldsProblem({}, REDDIT_RULES, false, 'Reddit')).toBe('A post on Reddit needs a title.');
+  expect(postFieldsProblem({ title: 'Hi' }, REDDIT_RULES, false, 'Reddit')).toContain('goes to a subreddit');
+  expect(postFieldsProblem({ title: 'Hi', place: 'r/x y' }, REDDIT_RULES, false, 'Reddit')).toContain('not a subreddit name');
+  expect(postFieldsProblem({ title: 'Hi', place: 'r/rust' }, REDDIT_RULES, false, 'Reddit')).toBeNull();
+  expect(postFieldsProblem({ title: 'x'.repeat(301), place: 'r/rust' }, REDDIT_RULES, false, 'Reddit')).toContain("Reddit's 300");
+  // A comment takes neither; a content warning only where the network has one.
+  expect(postFieldsProblem({}, REDDIT_RULES, true, 'Reddit')).toBeNull();
+  expect(postFieldsProblem({ title: 'Hi' }, REDDIT_RULES, true, 'Reddit')).toContain('takes no title');
+  expect(postFieldsProblem({ warning: 'cw' }, MASTODON_RULES, true, 'Mastodon')).toBeNull();
+  expect(postFieldsProblem({ warning: 'cw' }, POST_RULES.x!, false, 'X')).toBe('X posts take no content warning.');
+  expect(postFieldsProblem({}, MASTODON_RULES, false, 'Mastodon')).toBeNull();
 });
 
 test("what X does not link counts as written: emails, @handles, a bare country ending without a path", () => {

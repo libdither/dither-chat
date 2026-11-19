@@ -3,13 +3,13 @@
 /** @jsxFrag Fragment */
 /**
  * Writing a post, a reply or a quote (docs/feed.md "Answering"), drawn from the network's rules (protocol compose.ts):
- * one composer for X and, when one comes, Reddit.
+ * one composer for X, Mastodon, Reddit, Lemmy and Substack.
  *
  * As X does it: "Replying to @handle" over the box; a ring that fills as you write and, from 20 left, grows and says
  * how many are left (yellow), at the limit red, past it a negative count in red and the ring gone past -10; what is
  * past the limit marked in red in the text itself; Post greyed until there is something and it fits. Links count 23
- * and most CJK characters and every emoji two, as X counts them. As Reddit does it: 10,000 characters, a "N left"
- * line from 1,000 left, Markdown.
+ * and most CJK characters and every emoji two, as X counts them. As Reddit does it: 40,000 characters, a "N left"
+ * line from 1,000 left, Markdown. As Mastodon does it: 500, every link 23, and a content warning (CW) over the words.
  *
  * Ctrl/Cmd+Enter posts, Escape closes. What you write is kept on the device until it is posted or cleared, per post
  * answered. Each composer posts once: a key goes with it, so a double press or a retry is one post (posts.ts).
@@ -100,6 +100,8 @@ export function PostComposer({
   const [open, setOpen] = useState(!collapsed || !!text);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<{ text: string; unsure: boolean } | null>(null);
+  // Mastodon's content warning: none until CW is pressed. A reply to a post behind one starts with the same, as Mastodon does.
+  const [warning, setWarning] = useState<string | null>(() => (target.replyTo?.warning && postRulesFor(network)?.warning ? target.replyTo.warning : null));
   // This post's key: the same press again is the same post (posts.ts). A new one after each post, or when you choose
   // to post again after no answer.
   const fresh = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
@@ -137,7 +139,7 @@ export function PostComposer({
     setError(null);
     api<P.PostView>(`/api/posts/${network}/publish`, {
       method: 'POST',
-      body: { text, key, ...(target.replyTo ? { replyTo: target.replyTo.id } : {}), ...(target.quote ? { quote: target.quote.id } : {}), ...((account ?? kit.account) ? { account: account ?? kit.account } : {}) },
+      body: { text, key, ...(warning?.trim() ? { warning: warning.trim() } : {}), ...(target.replyTo ? { replyTo: target.replyTo.id } : {}), ...(target.quote ? { quote: target.quote.id } : {}), ...((account ?? kit.account) ? { account: account ?? kit.account } : {}) },
     }).then(
       (p) => {
         setSending(false);
@@ -192,6 +194,9 @@ export function PostComposer({
           Replying to <b>@{to}</b>
         </span>
       )}
+      {warning !== null && (
+        <input class="compose-warning" value={warning} placeholder="Content warning" aria-label="Content warning" maxLength={rules.warning?.maxLength} onInput={(e) => setWarning((e.currentTarget as HTMLInputElement).value)} disabled={sending} />
+      )}
       <div class="compose-box">
         <div class="compose-back" ref={back} aria-hidden="true">
           {overFrom === null ? (
@@ -227,6 +232,11 @@ export function PostComposer({
       </span>
       <div class="compose-foot">
         {rules.markdown && <span class="compose-hint">Markdown</span>}
+        {rules.warning && (
+          <button class={`link-btn compose-cw ${warning !== null ? 'on' : ''}`} aria-pressed={warning !== null} title={warning === null ? 'Add a content warning' : 'No content warning'} onClick={() => setWarning(warning === null ? '' : null)} disabled={sending}>
+            CW
+          </button>
+        )}
         {error && (
           <span class="compose-error" role="alert">
             {error.text}

@@ -50,7 +50,7 @@ if (Bun.spawnSync(['sh', '-c', `ss -ltn | grep -q ':${PORT} '`]).exitCode === 0)
 if ((await fetch(`${base}/api/health`).catch(() => null))?.ok) throw new Error(`something is already listening on ${PORT}`);
 const log = openSync(join(work, 'hub.log'), 'a');
 const hub = Bun.spawn(['bun', join(root, 'packages/hub/src/main.ts'), '--demo', '--data', join(work, 'data'), '--port', String(PORT), '--host', '127.0.0.1', '--web', web], {
-  env: { ...process.env, DITHER_DEMO_CHATTER: '0' },
+  env: { ...process.env, DITHER_DEMO_CHATTER: '0', DITHER_DEMO_POSTS: '0' },
   stdout: log,
   stderr: log,
 });

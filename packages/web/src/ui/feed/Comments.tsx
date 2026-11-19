@@ -22,7 +22,7 @@ import type * as P from '@dither-chat/protocol';
 import { openProfile } from '../../state.ts';
 import { useEffect, useRef } from 'preact/hooks';
 import type { Kit } from './lazy.tsx';
-import { Counts, Pics, QuotedIn, Row, Text, Who } from './Post.tsx';
+import { Counts, Folded, Pics, QuotedIn, Row, Text, Who } from './Post.tsx';
 import { REPLY_ICONS, Seg } from './Seg.tsx';
 import { runOf, runPair, treeChains, type TreeNode } from './tree.ts';
 import { freshReplies } from './fresh.ts';
@@ -145,10 +145,12 @@ function Head({ p, ctx, avatar, folded, size }: { p: P.PostView; ctx: CommentCtx
 function Body({ p, ctx }: { p: P.PostView; ctx: CommentCtx }) {
   return (
     <>
-      <Text p={p} kit={ctx.kit} network={ctx.network} cls="post-text ct-text" />
-      <Pics media={p.media} />
+      <Folded warning={p.warning} kit={ctx.kit}>
+        <Text p={p} kit={ctx.kit} network={ctx.network} cls="post-text ct-text" />
+        <Pics media={p.media} />
+      </Folded>
       {p.quoteOf && <QuotedIn p={p.quoteOf} kit={ctx.kit} network={ctx.network} />}
-      {ctx.below ? ctx.below(p) : <Counts p={{ ...p, counts: p.counts ? { likes: p.counts.likes, reposts: p.counts.reposts } : undefined }} kit={ctx.kit} />}
+      {ctx.below ? ctx.below(p) : <Counts p={{ ...p, counts: p.counts ? { likes: p.counts.likes, reposts: p.counts.reposts } : undefined }} kit={ctx.kit} network={ctx.network} />}
     </>
   );
 }

@@ -594,6 +594,7 @@ export class Timelines {
       if (seen.has(d.accountId)) throw new PostsError('An account is picked twice.', 400);
       seen.add(d.accountId);
       if (d.parts !== undefined && (!Array.isArray(d.parts) || d.parts.length > 24 || d.parts.some((x) => typeof x !== 'string'))) throw new PostsError('parts: the rest of a thread, as texts', 400);
+      for (const f of ['title', 'place', 'warning'] as const) if (d[f] !== undefined && typeof d[f] !== 'string') throw new PostsError(`${f}: text`, 400);
     }
     if (r.replies !== undefined && !REPLY_GATES.includes(r.replies)) throw new PostsError('replies: everyone, following, mentioned or verified', 400);
     const ids = Array.isArray(r.media) ? r.media.filter((x): x is string => typeof x === 'string') : [];
@@ -614,8 +615,13 @@ export class Timelines {
               key: `${key}:${acc.id}:${i}`,
               account: acc.id,
               ...(replyTo ? { replyTo } : {}),
-              ...(i === 0 && r.replies ? { replies: r.replies } : {}),
+              // Who can reply only where the network has such a choice: X's goes, Mastodon's has none to give.
+              ...(i === 0 && r.replies && postRulesFor(acc.network)?.replyGates.includes(r.replies) ? { replies: r.replies } : {}),
               ...(i === 0 && media?.length ? { media } : {}),
+              // A title and a place go with the first post; a content warning with every part, as it covers the words.
+              ...(i === 0 && d.title ? { title: d.title } : {}),
+              ...(i === 0 && d.place ? { place: d.place } : {}),
+              ...(d.warning ? { warning: d.warning } : {}),
             });
             made.push(v);
             replyTo = v.id;
@@ -659,6 +665,14 @@ export class Timelines {
     const own: Record<string, string> = {};
     if (b.own && typeof b.own === 'object') for (const [k, v] of Object.entries(b.own)) if (accounts.includes(k) && typeof v === 'string' && v.length <= 25_000) own[k] = v;
     const replies = b.replies && REPLY_GATES.includes(b.replies) ? b.replies : undefined;
+    const fields: Record<string, P.PostFields> = {};
+    if (b.fields && typeof b.fields === 'object')
+      for (const [k, v] of Object.entries(b.fields)) {
+        if (!accounts.includes(k) || !v || typeof v !== 'object') continue;
+        const f: P.PostFields = {};
+        for (const n of ['title', 'place', 'warning'] as const) if (typeof v[n] === 'string' && v[n]!.trim() && v[n]!.length <= 1_000) f[n] = v[n];
+        if (Object.keys(f).length) fields[k] = f;
+      }
     const scheduledAt = typeof b.scheduledAt === 'number' && Number.isFinite(b.scheduledAt) ? Math.round(b.scheduledAt) : null;
     if (scheduledAt !== null) {
       if (!accounts.length) throw new PostsError('Pick an account to post as before scheduling.', 400);
@@ -673,7 +687,7 @@ export class Timelines {
         `INSERT INTO post_draft (id, body, scheduled_at, failed, updated_at) VALUES (?, ?, ?, NULL, ?)
          ON CONFLICT (id) DO UPDATE SET body = excluded.body, scheduled_at = excluded.scheduled_at, failed = NULL, updated_at = excluded.updated_at`,
       )
-      .run(id, JSON.stringify({ text, accounts, ...(Object.keys(own).length ? { own } : {}), ...(replies ? { replies } : {}) }), scheduledAt, now);
+      .run(id, JSON.stringify({ text, accounts, ...(Object.keys(own).length ? { own } : {}), ...(Object.keys(fields).length ? { fields } : {}), ...(replies ? { replies } : {}) }), scheduledAt, now);
     this.d.changed?.();
     return this.draftOf(this.db.query('SELECT * FROM post_draft WHERE id = ?').get(id) as Row);
   }
@@ -698,7 +712,7 @@ export class Timelines {
         const text = d.own?.[a] ?? d.text;
         const rs = rules(a);
         const parts = rs ? splitThread(text, rs) : [text];
-        return { accountId: a, text: parts[0] ?? '', ...(parts.length > 1 ? { parts: parts.slice(1) } : {}) };
+        return { accountId: a, text: parts[0] ?? '', ...(parts.length > 1 ? { parts: parts.slice(1) } : {}), ...d.fields?.[a] };
       });
       try {
         const v = await this.publish({ key: `draft-${r.id}`, destinations, ...(d.replies ? { replies: d.replies } : {}) });

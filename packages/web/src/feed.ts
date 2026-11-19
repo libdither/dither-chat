@@ -173,7 +173,8 @@ export function reactionCounts(u: Extract<FeedUnit, { kind: 'post' }>): { like: 
 
 /** The reactions line's words: "Liked by Theo, Maya K. and 3 others" (or reposted, when nobody liked it). */
 export function reactorsPhrase(u: Extract<FeedUnit, { kind: 'post' }>, nameOf: (identityId: string) => string): string {
-  const [verb, ids] = u.reactors.like.length ? ['Liked by', u.reactors.like] : u.reactors.repost.length ? ['Reposted by', u.reactors.repost] : ['', []];
+  const w = reactWords(u.network);
+  const [verb, ids] = u.reactors.like.length ? [w.likedBy, u.reactors.like] : u.reactors.repost.length ? [w.repostedBy, u.reactors.repost] : ['', []];
   if (!ids.length) return '';
   return `${verb} ${namesPhrase(ids.slice(0, 3).map(nameOf), ids.length)}`;
 }
@@ -188,7 +189,53 @@ export function namesPhrase(names: readonly string[], total = names.length): str
   return `${names[0]}, ${names[1]} and ${others} other${others === 1 ? '' : 's'}`;
 }
 
-/** What they did, after their names. */
+/**
+ * What liking and reposting are called on a network that names them otherwise than X (the composer's words are
+ * compose.ts's POST_RULES; these are the feed's, kept here so the app's start does not carry the rules).
+ */
+export interface ReactWords {
+  liked: string;
+  reposted: string;
+  likedBy: string;
+  repostedBy: string;
+  /** The tabs of who reacted: "Likes" and "Reposts", "Favourites" and "Boosts". */
+  likes: string;
+  reposts: string;
+  /** The like's picture: a heart, Mastodon's star, Reddit's and Lemmy's arrow up. */
+  likeIcon: 'heart' | 'star' | 'upvote';
+}
+const X_REACT: ReactWords = { liked: 'liked', reposted: 'reposted', likedBy: 'Liked by', repostedBy: 'Reposted by', likes: 'Likes', reposts: 'Reposts', likeIcon: 'heart' };
+const REACT_WORDS: Partial<Record<P.Network, ReactWords>> = {
+  mastodon: { liked: 'favourited', reposted: 'boosted', likedBy: 'Favourited by', repostedBy: 'Boosted by', likes: 'Favourites', reposts: 'Boosts', likeIcon: 'star' },
+  reddit: { liked: 'upvoted', reposted: 'crossposted', likedBy: 'Upvoted by', repostedBy: 'Crossposted by', likes: 'Upvotes', reposts: 'Crossposts', likeIcon: 'upvote' },
+  lemmy: { liked: 'upvoted', reposted: 'crossposted', likedBy: 'Upvoted by', repostedBy: 'Crossposted by', likes: 'Upvotes', reposts: 'Crossposts', likeIcon: 'upvote' },
+  substack: { liked: 'liked', reposted: 'restacked', likedBy: 'Liked by', repostedBy: 'Restacked by', likes: 'Likes', reposts: 'Restacks', likeIcon: 'heart' },
+};
+export const reactWords = (network?: P.Network | null): ReactWords => (network && REACT_WORDS[network]) || X_REACT;
+
+/** What people do to your posts there, for "When people … your posts": X's like, repost, reply to or quote. */
+export function activityVerbs(network?: P.Network | null): string {
+  switch (network) {
+    case 'mastodon':
+      return 'favourite, boost or reply to';
+    case 'reddit':
+    case 'lemmy':
+      return 'upvote or reply to';
+    case 'substack':
+      return 'like, restack or reply to';
+    default:
+      return 'like, repost, reply to or quote';
+  }
+}
+
+/** What they did, after their names, in the network's words ("favourited your post" on Mastodon). */
+export function feedVerb(type: P.FeedItemType, network?: P.Network | null): string {
+  if (type === 'like') return `${reactWords(network).liked} your post`;
+  if (type === 'repost') return `${reactWords(network).reposted} your post`;
+  return FEED_VERB[type];
+}
+
+/** What they did, after their names, as X says it. */
 export const FEED_VERB: Record<P.FeedItemType, string> = {
   like: 'liked your post',
   repost: 'reposted your post',
@@ -202,7 +249,7 @@ export const FEED_VERB: Record<P.FeedItemType, string> = {
 /** A card in one sentence: "Alice, Bob and 3 others liked your post". */
 export function cardSentence(c: Pick<FeedCard, 'type' | 'actors' | 'text' | 'messages'>, nameOf: (identityId: string) => string): string {
   if (c.type === 'other') return c.text ?? c.messages[0]?.body ?? '';
-  const verb = c.type === 'reply' && !c.messages[0]?.feed?.post ? 'replied to you' : FEED_VERB[c.type];
+  const verb = c.type === 'reply' && !c.messages[0]?.feed?.post ? 'replied to you' : feedVerb(c.type, c.messages[0]?.network);
   return `${namesPhrase(c.actors.slice(0, 3).map(nameOf), c.actors.length)} ${verb}`;
 }
 
@@ -212,13 +259,27 @@ export function clip(text: string, max = 80): string {
   return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
 }
 
-/** Where the network shows its notifications, for "Open on X". */
-export function notificationsUrl(network: P.Network): string | null {
-  return network === 'x' ? 'https://x.com/notifications' : null;
+/**
+ * Where the network shows its notifications, for "Open on X". Mastodon's and Lemmy's are on the account's own server,
+ * which the account's notifications conversation names in its `url` when the extractor knows it; Reddit's inbox and
+ * Substack's activity are at one address.
+ */
+export function notificationsUrl(network: P.Network, own?: string | null): string | null {
+  if (own && /^https:\/\//.test(own)) return own;
+  switch (network) {
+    case 'x':
+      return 'https://x.com/notifications';
+    case 'reddit':
+      return 'https://www.reddit.com/notifications';
+    case 'substack':
+      return 'https://substack.com/activity';
+    default:
+      return null;
+  }
 }
 
 /** "Replies, likes and follows happen on X." */
-export const feedBarLine = (network: P.Network) => `Replies, likes and follows happen on ${NETWORK_META[network].name}.`;
+export const feedBarLine = (network: P.Network) => `Replies, ${{ favourited: 'favourites', upvoted: 'votes' }[reactWords(network).liked] ?? 'likes'} and follows happen on ${NETWORK_META[network].name}.`;
 
 /** A count as X writes it: 980, 3.1K, 15K, 1.2M. */
 export function shortCount(n: number): string {
@@ -241,7 +302,7 @@ export const isPostKey = (key: string | null | undefined) => !!key?.startsWith('
 export function parsePostKey(key: string): { network: P.Network; post: string } | { message: string } | null {
   const m = key.match(/^pst_m_([\w-]+)$/);
   if (m) return { message: m[1] };
-  const p = key.match(/^pst_([a-z]+)_(\d{1,25})$/);
+  const p = key.match(/^pst_([a-z]+)_([A-Za-z0-9_.~:-]{1,120})$/);
   return p && p[1] in NETWORK_META ? { network: p[1] as P.Network, post: p[2] } : null;
 }
 

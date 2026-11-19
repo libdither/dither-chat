@@ -18,7 +18,7 @@ import { languageName, needsTranslation } from '@dither-chat/protocol';
 import { Loading } from '../Loader.tsx';
 import { phone } from '../../phone.ts';
 import { uploadFile } from '../../upload.ts';
-import { clip, feedBarLine, feedUnits, namesPhrase, notificationsUrl, opensPost, parsePostKey, postHref, postKey, reactionCounts, reactorsPhrase, shortCount } from '../../feed.ts';
+import { activityVerbs, clip, feedBarLine, feedUnits, namesPhrase, notificationsUrl, opensPost, parsePostKey, postHref, postKey, reactionCounts, reactorsPhrase, reactWords, shortCount } from '../../feed.ts';
 
 type Chunk = typeof import('./FeedView.tsx');
 let chunk: Chunk | null = null;
@@ -66,7 +66,7 @@ export const kit = {
     else go({ view: 'inbox', conv });
   },
   /** feed.ts, which the row draws with too: imported by the chunk, rolldown would split it into a startup file. */
-  feed: { clip, feedBarLine, feedUnits, namesPhrase, notificationsUrl, reactionCounts, reactorsPhrase, shortCount, opensPost, parsePostKey, postHref, postKey },
+  feed: { activityVerbs, clip, feedBarLine, feedUnits, namesPhrase, notificationsUrl, reactionCounts, reactorsPhrase, reactWords, shortCount, opensPost, parsePostKey, postHref, postKey },
   /** A phone's layout, and a file sent to the hub (upload.ts): both in the app's start already. */
   phone,
   uploadFile,

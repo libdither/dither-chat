@@ -865,6 +865,17 @@ export interface PublishDestination {
   text: string;
   /** The rest of a thread, each posted as a reply to the one before. */
   parts?: string[];
+  /** A title, a place and a content warning for its first post, where its network has them (POST_RULES). */
+  title?: string;
+  place?: string;
+  warning?: string;
+}
+
+/** A new post's fields beyond its words, per account (POST_RULES `title`, `place`, `warning`). */
+export interface PostFields {
+  title?: string;
+  place?: string;
+  warning?: string;
 }
 
 /** POST /api/feed/publish: one press of Post, to several accounts at once. */
@@ -901,6 +912,8 @@ export interface DraftView {
   accounts: string[];
   /** Per account words, when written apart ("Customize per network"). */
   own?: Record<string, string>;
+  /** Per account title, place and content warning, where its network has them. */
+  fields?: Record<string, PostFields>;
   replies?: ReplyGate;
   /** Post it then (ms epoch); the hub posts it at that time. */
   scheduledAt?: number;

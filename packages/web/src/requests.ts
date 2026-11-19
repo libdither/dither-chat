@@ -201,15 +201,15 @@ export const PEOPLE_FILTERS: { id: 'chats' | 'friend' | 'contact' | 'following';
 ];
 export type PeopleFilter = (typeof PEOPLE_FILTERS)[number]['id'];
 
-/** Where each kind of list is: friends on Discord, address books, follows on X and Instagram (mutual ones are Friends too). */
+/** Where each kind of list is: friends on Discord, address books, follows on X, Instagram, Mastodon and Substack (mutual ones are Friends too). */
 const LIST_NETWORKS: Record<Exclude<PeopleFilter, 'chats'>, readonly P.Network[]> = {
   friend: ['discord'],
   contact: ['telegram', 'signal', 'whatsapp', 'gmessages'],
-  following: ['x', 'instagram'],
+  following: ['x', 'instagram', 'mastodon', 'substack'],
 };
 
 /** Networks of follows, whose accounts' profiles say whom you follow and who follows you back without a list. */
-const FOLLOW_NETWORKS: readonly P.Network[] = ['x', 'instagram'];
+export const FOLLOW_NETWORKS: readonly P.Network[] = ['x', 'instagram', 'mastodon', 'substack'];
 
 /**
  * The filters worth a chip: chats, and each kind some account here keeps a list of. An X or Instagram account's
