@@ -187,12 +187,14 @@ try {
 
   // ------------------------------------------------------------------ nothing went out
   // X: every command that is not a read (writeLog: markRead, send, add, remove…); the rest: what Add and Remove sent.
-  const writes = async () => (await action('acc_demo-x', 'writeLog')).result?.writes ?? null;
-  const others = boot.accounts.map((a: any) => a.id).filter((id: string) => id !== 'acc_demo-x');
+  // Every X account (the demo has two) keeps a writeLog; the other networks keep an addLog.
+  const xAccounts = boot.accounts.filter((a: any) => a.network === 'x').map((a: any) => a.id);
+  const writes = async () => (await Promise.all(xAccounts.map(async (id: string) => (await action(id, 'writeLog')).result?.writes ?? null))).flat();
+  const others = boot.accounts.map((a: any) => a.id).filter((id: string) => !xAccounts.includes(id));
   const addLogs = async () => Object.fromEntries(await Promise.all(others.map(async (id: string) => [id, (await action(id, 'addLog')).result] as const)));
   const counted = (r: any) => !!r && ['resolve', 'add', 'answer', 'remove'].every((k) => typeof r[k] === 'number');
   let xw = await writes();
-  check('nothing sent to X: no command but reads', Array.isArray(xw) && xw.length === 0, xw);
+  check('nothing sent to X: no command but reads', xAccounts.length >= 1 && !xw.includes(null) && xw.length === 0, xw);
   let logs = await addLogs();
   check('nothing added, answered or removed on any other account', others.length >= 5 && Object.values(logs).every((r: any) => counted(r) && !r.add && !r.answer && !r.remove), logs);
 
@@ -222,7 +224,7 @@ try {
   const want = (id: string) => [a1, a2].filter((a) => a === id).length;
   check('…and the networks were sent exactly those: a remove and an add each, nothing else', others.every((id: string) => sent(id).remove === want(id) && sent(id).add === want(id) && !sent(id).answer), logs);
   xw = await writes();
-  check('…and still nothing to X', Array.isArray(xw) && xw.length === 0, xw);
+  check('…and still nothing to X', !xw.includes(null) && xw.length === 0, xw);
 
   const errors = page.errors.filter((e) => !/WebSocket connection|Failed to load resource/.test(e));
   check('no script errors', !errors.length, errors);

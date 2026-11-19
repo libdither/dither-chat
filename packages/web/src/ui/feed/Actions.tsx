@@ -302,11 +302,18 @@ export function PostActions({ p, ctx, big }: { p: P.PostFact; ctx: AnswerCtx; bi
   const [counts, setCounts] = useState(kept?.counts ?? p.counts ?? {});
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const [menu, setMenu] = useState(false);
+  // A new read of the post (another post in its place, or its counts changed): drawn again from it, or from what was
+  // done to it here. Not at the first draw, which the states above start from: an effect runs after the paint, and
+  // run then it would undo a press made in between (a like on a thread just drawn, before this ran).
+  const facts = `${p.id}|${p.viewer?.liked}|${p.viewer?.reposted}|${p.counts?.likes}|${p.counts?.reposts}`;
+  const drawnFrom = useRef(facts);
   useEffect(() => {
+    if (drawnFrom.current === facts) return;
+    drawnFrom.current = facts;
     const k = ctx.acted?.get(p.id);
     setViewer(k?.viewer ?? p.viewer ?? {});
     setCounts(k?.counts ?? p.counts ?? {});
-  }, [p.id, p.viewer?.liked, p.viewer?.reposted, p.counts?.likes, p.counts?.reposts]);
+  }, [facts]);
   if (!rules) return null;
   const mine = kit.isSelf(p.author ?? null);
   const act = (act: P.PostAct) => {
