@@ -1295,6 +1295,8 @@ export interface RequestView {
   warning: string | null;
   /** The network filed it as spam: it never notifies, and sits last. */
   spam?: boolean;
+  /** Someone else answers it (a room's moderators): shown in a group of its own, never counted or notified. */
+  forOthers?: boolean;
 }
 
 export interface SearchHit {

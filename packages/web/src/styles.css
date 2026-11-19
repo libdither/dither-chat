@@ -14385,6 +14385,10 @@ button.msg-edited.link:hover {
 .requests-group {
   margin-bottom: 22px;
 }
+/* Requests for a room's moderators: a line on whose they are, above their cards. */
+.requests-others-note {
+  margin: -2px 0 10px;
+}
 .requests-group h3 {
   display: flex;
   align-items: center;
