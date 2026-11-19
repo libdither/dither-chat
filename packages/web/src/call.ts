@@ -10,6 +10,7 @@
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { BRIDGE_MIDS, CALL_INPUT_DEFAULT, callInput } from '@dither-chat/protocol';
+import { levelShown, smoothLevel, speakingHold } from './callmarks.ts';
 import { playCallSound, preloadCallSounds, soundLog } from './callsounds.ts';
 import { changed, db, prefs, toast } from './state.ts';
 
@@ -65,6 +66,17 @@ export interface ActiveCall {
 export const callMedia = signal<{ camera: MediaStream | null; screen: MediaStream | null; slots: Map<string, MediaStream> }>({ camera: null, screen: null, slots: new Map() });
 /** This device's microphone loudness, 0 to 1, about ten times a second while a call is on. */
 export const micLevel = signal(0);
+/**
+ * Who in the call counts as speaking, by identity id: what the network says, held through the gaps between words
+ * (callmarks.ts), so every mark on a person follows the same steady value.
+ */
+export const speakingNow = signal<ReadonlySet<string>>(new Set());
+/** How loud each speaking person is, 0 to 1, smoothed: only while the speaking mark is set to follow it (Settings → Calls). */
+export const speakingLevels = signal<ReadonlyMap<string, number>>(new Map());
+/** You are muted and your microphone hears you talking, held like speaking. */
+export const mutedTalking = signal(false);
+const speakingHeld = speakingHold((on) => (speakingNow.value = on));
+const mutedHeld = speakingHold((on) => (mutedTalking.value = on.size > 0));
 
 /** How long a sound or an emoji someone sent stays on the call's bar. */
 const EFFECT_MS = 6000;
@@ -87,6 +99,8 @@ export interface Transport {
   stats(): Promise<CallStats | null>;
   /** The microphone's level as the browser measures what it sends, 0 to 1 (no audio graph of its own). */
   micLevel?(): Promise<number | null>;
+  /** How loud the call's incoming audio is now, 0 to 1: one level for the mix (bridge), or by native user id (direct). */
+  levels?(): number | Map<string, number> | null;
   stop(): void;
 }
 
@@ -120,7 +134,9 @@ let clickAt = 0;
 const speakingLocal = new Map<string, boolean>();
 
 const patch = (p: Partial<ActiveCall>) => {
-  if (activeCall.value) activeCall.value = { ...activeCall.value, ...p };
+  if (!activeCall.value) return;
+  activeCall.value = { ...activeCall.value, ...p };
+  if (p.participants) speakingHeld.update(p.participants.filter((x) => x.speaking).map((x) => x.id));
 };
 
 /** The network a call goes over, from its account. */
@@ -269,6 +285,7 @@ async function onServer(m: P.CallServerMessage) {
       if (m.mode === 'direct') connected();
       if (activeCall.value?.muted) transport.setMuted(true);
       startMeter();
+      watchMutedMic();
       transport.setVolumes?.(volumesOf(activeCall.value?.participants ?? []));
       statsTimer = setInterval(async () => {
         const s = await transport?.stats().catch(() => null);
@@ -356,6 +373,7 @@ export function setMuted(muted: boolean) {
   else sound(muted ? 'mute' : 'unmute');
   patch({ muted, deafened });
   send({ op: 'mute', muted, deafened });
+  watchMutedMic();
 }
 
 export function setDeafened(deafened: boolean) {
@@ -367,6 +385,7 @@ export function setDeafened(deafened: boolean) {
   sound(deafened ? 'deafen' : 'undeafen');
   patch({ muted, deafened });
   send({ op: 'mute', muted, deafened });
+  watchMutedMic();
 }
 
 /** This device's microphone choices (Settings → Calls). */
@@ -531,11 +550,63 @@ export function watchStream(identityId: string, on: boolean) {
 function startMeter() {
   meterTimer = setInterval(async () => {
     const level = await transport?.micLevel?.().catch(() => null);
-    if (level === null || level === undefined) return;
-    // audioLevel is linear 0 to 1: shown as -60 dBFS to 0, in steps the eye can tell.
-    const shown = Math.round(Math.max(0, Math.min(1, (20 * Math.log10(level + 1e-9) + 60) / 60)) * 20) / 20;
-    if (shown !== micLevel.value) micLevel.value = shown;
+    if (level !== null && level !== undefined) {
+      // audioLevel is linear 0 to 1: shown as -60 dBFS to 0, in steps the eye can tell.
+      const shown = Math.round(levelShown(level) * 20) / 20;
+      if (shown !== micLevel.value) micLevel.value = shown;
+    }
+    if ((prefs.value.callSpeakingMark ?? 'ring') !== 'ring') readLevels();
   }, 250);
+}
+
+/** Each speaking person's loudness, for a mark that follows it: the mix's for everyone speaking in bridge mode, each person's own in direct mode, and the microphone's for you. */
+function readLevels() {
+  const a = activeCall.value;
+  const got = transport?.levels?.();
+  if (!a || got === null || got === undefined) return;
+  const next = new Map<string, number>();
+  for (const p of a.participants) {
+    if (!speakingNow.value.has(p.id)) continue;
+    const native = db.identities.get(p.id)?.nativeId;
+    const raw = isCallSelf(a, p.id) ? null : typeof got === 'number' ? got : native ? got.get(native) : undefined;
+    const level = raw === null ? micLevel.value : raw === undefined ? 0.6 : levelShown(raw);
+    next.set(p.id, Math.round(smoothLevel(speakingLevels.value.get(p.id) ?? 0, level) * 20) / 20);
+  }
+  speakingLevels.value = next;
+}
+
+/** The microphone while muted: off to the call, but listened to here (a clone of it), so you can be told you are talking into a muted mic. */
+let mutedWatch: (() => void) | null = null;
+function watchMutedMic() {
+  const a = activeCall.value;
+  const track = mic?.getAudioTracks()[0];
+  if (!a || !a.muted || a.phase !== 'live' || a.listenOnly || !track || !ctx) {
+    mutedWatch?.();
+    mutedWatch = null;
+    mutedHeld.clear();
+    return;
+  }
+  if (mutedWatch) return;
+  const copy = track.clone();
+  copy.enabled = true;
+  const src = ctx.createMediaStreamSource(new MediaStream([copy]));
+  const meter = ctx.createAnalyser();
+  meter.fftSize = 1024;
+  src.connect(meter);
+  const buf = new Float32Array(meter.fftSize);
+  const timer = setInterval(() => {
+    meter.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (const x of buf) sum += x * x;
+    const db = 10 * Math.log10(sum / buf.length + 1e-12);
+    const s = myInput().sensitivity;
+    mutedHeld.update(db > (s === 'auto' ? -50 : s) ? ['self'] : []);
+  }, 100);
+  mutedWatch = () => {
+    clearInterval(timer);
+    src.disconnect();
+    copy.stop();
+  };
 }
 
 /** The level of what a peer connection sends from the microphone, from its stats. */
@@ -564,6 +635,9 @@ function end(reason: string) {
   if (meterTimer) clearInterval(meterTimer);
   meterTimer = null;
   micLevel.value = 0;
+  watchMutedMic();
+  speakingHeld.clear();
+  speakingLevels.value = new Map();
   callMedia.value.camera?.getTracks().forEach((t) => t.stop());
   callMedia.value.screen?.getTracks().forEach((t) => t.stop());
   callMedia.value = { camera: null, screen: null, slots: new Map() };
@@ -636,11 +710,19 @@ function bridgeTransport(host: TransportHost): Transport {
     },
     stats: () => (pc ? peerStats(pc) : Promise.resolve(null)),
     micLevel: () => (pc ? sentAudioLevel(pc, host.mic.getAudioTracks()[0]) : Promise.resolve(null)),
+    levels: () => (t.audio ? receiverLevel(t.audio.receiver) : null),
     stop() {
       pc?.close();
       pc = null;
     },
   };
+}
+
+/** The loudest of what a receiver gets now, 0 to 1 (its RTP level header; no stats, no audio graph). */
+export function receiverLevel(r: RTCRtpReceiver): number {
+  let level = 0;
+  for (const s of r.getSynchronizationSources?.() ?? []) level = Math.max(level, s.audioLevel ?? 0);
+  return level;
 }
 
 /** Lazy: the direct client and its crypto load only when a direct call starts. */

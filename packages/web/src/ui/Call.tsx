@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
-import { activeCall, callMedia, callNetwork, canCall, canRing, canShareScreen, canVideo, leaveCall, micLevel, setCamera, setDeafened, setMuted, setScreen, startCall } from '../call.ts';
+import { activeCall, callMedia, callNetwork, canCall, canRing, canShareScreen, canVideo, isCallSelf, leaveCall, micLevel, mutedTalking, setCamera, setDeafened, setMuted, setScreen, speakingNow, startCall } from '../call.ts';
 import { callIn } from '../ringing.ts';
 import { db, isSelfIdentity, prefs, rev } from '../state.ts';
 import { convTitle } from '../model.ts';
@@ -79,7 +79,7 @@ export function CallDock() {
   if (!call) return null;
   const c = db.conversations.get(call.conversationId);
   const title = c ? convTitle(c) : 'Call';
-  const speaking = call.participants.filter((p) => p.speaking);
+  const speaking = call.participants.filter((p) => speakingNow.value.has(p.id));
   const effect = call.effects.at(-1)?.effect;
   // Bridge mode: live once the bridge is, but people hear you only once the account's own client has connected.
   const reaching = call.phase === 'live' && call.mode === 'bridge' && call.self && !call.self.connected;
@@ -136,13 +136,18 @@ export function CallDock() {
           </button>
         </div>
       </div>
+      {call.muted && mutedTalking.value && (
+        <p class="call-muted-talking" role="status">
+          You're muted. <button onClick={() => setMuted(false)}>Unmute</button>
+        </p>
+      )}
       {open && (Panel ? <Panel call={call} /> : <div class="call-dock-body call-empty">Loading…</div>)}
     </section>
   );
 }
 
 /** One video: a stream on a <video>, a tap for full screen. */
-function VideoTile({ stream, label, mirror, slot }: { stream: MediaStream; label: string; mirror?: boolean; slot?: string }) {
+function VideoTile({ stream, label, mirror, slot, who }: { stream: MediaStream; label: string; mirror?: boolean; slot?: string; who?: string }) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
     const v = ref.current;
@@ -152,7 +157,7 @@ function VideoTile({ stream, label, mirror, slot }: { stream: MediaStream; label
     }
   }, [stream]);
   return (
-    <figure class={`call-video ${mirror ? 'mirror' : ''}`} data-video-slot={slot}>
+    <figure class={`call-video ${mirror ? 'mirror' : ''} ${who && speakingNow.value.has(who) ? 'speaking' : ''}`} data-video-slot={slot}>
       <video ref={ref} autoplay playsInline muted onClick={(e) => void (e.currentTarget as HTMLVideoElement).requestFullscreen?.().catch(() => {})} />
       <figcaption>{label}</figcaption>
     </figure>
@@ -169,10 +174,10 @@ function CallVideos() {
   return (
     <div class="call-videos" aria-label="Video">
       {remote.map(({ v, stream }) => (
-        <VideoTile key={`${v.slot}:${v.who}:${v.source}`} stream={stream!} slot={v.slot} label={`${name(v.who)}${v.source === 'stream' ? ' · screen' : ''}`} />
+        <VideoTile key={`${v.slot}:${v.who}:${v.source}`} stream={stream!} slot={v.slot} who={v.source === 'stream' ? undefined : v.who} label={`${name(v.who)}${v.source === 'stream' ? ' · screen' : ''}`} />
       ))}
       {media.screen && <VideoTile key="my-screen" stream={media.screen} label="Your screen" />}
-      {media.camera && <VideoTile key="my-camera" stream={media.camera} label="You" mirror />}
+      {media.camera && <VideoTile key="my-camera" stream={media.camera} label="You" mirror who={call.participants.find((p) => isCallSelf(call, p.id))?.id} />}
     </div>
   );
 }

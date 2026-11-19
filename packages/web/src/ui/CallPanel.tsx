@@ -11,7 +11,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { type ActiveCall, askSounds, callCan, callNetwork, isCallSelf, playSound, setPersonVolume, stageAction, watchStream } from '../call.ts';
 import { convTitle } from '../model.ts';
 import { api, db, go, isSelfIdentity, toast } from '../state.ts';
-import { Avatar } from './bits.tsx';
+import { CallAvatar } from './CallAvatar.tsx';
 import { groups, type MenuEntry, openMenu } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
 import './CallPanel.css';
@@ -128,7 +128,6 @@ function personMenu(call: ActiveCall, p: P.CallParticipant, about: P.AboutView |
 }
 
 function Person({ call, p, about, setAbout }: { call: ActiveCall; p: P.CallParticipant; about: P.AboutView | null; setAbout: (v: P.AboutView) => void }) {
-  const idn = db.identities.get(p.id);
   const who = name(p.id);
   const states = [
     p.serverMuted ? 'muted by a moderator' : p.muted ? 'muted' : '',
@@ -145,16 +144,11 @@ function Person({ call, p, about, setAbout }: { call: ActiveCall; p: P.CallParti
   const watching = !!call.self?.watching?.includes(p.id);
   const canWatch = p.streaming && !isCallSelf(call, p.id) && call.mode === 'bridge' && callCan('watchStreams');
   return (
-    <li class={`${p.speaking ? 'speaking' : ''} ${p.localMute ? 'local-mute' : ''}`}>
+    <li class={p.localMute ? 'local-mute' : undefined}>
       <button class="call-person" onClick={open} disabled={isCallSelf(call, p.id)} title={states.length ? `${who}: ${states.join(', ')}` : who} aria-label={states.length ? `${who}, ${states.join(', ')}` : who}>
-        <span class="call-avatar">
-          <Avatar id={idn?.personId ?? p.id} name={who} url={idn?.avatar ?? null} size={40} network={callNetwork(call)} />
-        </span>
+        <CallAvatar p={p} name={who} size={40} />
         <span class="call-name">{who}</span>
-        {(p.muted || p.deafened || p.localMute) && <Icon name={p.deafened ? 'headphonesOff' : 'micOff'} size={14} class={`call-flag ${p.serverMuted || p.serverDeafened ? 'server' : ''}`} />}
         <span class="call-tags">
-          {p.stage === 'hand' && <span title="Asking to speak">✋</span>}
-          {p.video && <Icon name="camera" size={12} />}
           {p.streaming && <span class="live-tag">LIVE</span>}
           {p.volume !== undefined && p.volume !== 100 && !p.localMute && <span class="call-vol">{p.volume}%</span>}
         </span>

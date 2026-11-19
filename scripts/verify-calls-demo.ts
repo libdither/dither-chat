@@ -6,7 +6,8 @@
  * - joining: live, and connected, in good time; the join sound; the call room hears the device's microphone and the
  *   device hears the room's bot; the bot's camera shows on a video slot;
  * - a second device joining plays the join sound on the first, and each is in the other's people;
- * - mute and unmute reach the far end, with their sounds;
+ * - the bot's speaking ring: round, and held between its words;
+ * - mute and unmute reach the far end, with their sounds; talking while muted says so;
  * - the first device's camera reaches the far end and shows on the second device;
  * - the first device shares its screen: the far end gets it, the second device presses Watch and sees it;
  * - watching the bot's Go Live;
@@ -82,6 +83,17 @@ try {
   check(await wait(a.page, `[...document.querySelectorAll('.call-video[data-video-slot] video')].some((v) => v.videoWidth > 0)`, 20_000), 'the bot\'s camera shows on a video slot', await call(a.page, 'c && c.video'));
   check(await wait(a.page, `parseFloat(getComputedStyle(document.querySelector('.call-btn.mic')).getPropertyValue('--mic-level')) > 0`, 8000), 'the microphone meter moves');
 
+  // ------------------------------------------------------------ who is speaking
+  await a.page.eval(`document.querySelector('.call-dock-title').click()`);
+  const levAv = `[...document.querySelectorAll('.call-people li')].find((li) => /Lev/.test(li.textContent))?.querySelector('.call-av')`;
+  check(await wait(a.page, `!!${levAv}?.dataset.speaking`, 15_000), 'the bot gets the speaking ring while it talks');
+  const box = await a.page.eval<number[]>(`(() => { const r = ${levAv}.getBoundingClientRect(); return [r.width, r.height]; })()`);
+  check(box[0] === box[1] && box[0] > 0, 'the ring goes round a square box (round, not oval)', box);
+  // The bot talks in syllables with gaps: held, its ring stays on through them.
+  const flips = await a.page.eval<number>(`new Promise((done) => { let n = 0, was = !!${levAv}?.dataset.speaking; const t = setInterval(() => { const now = !!${levAv}?.dataset.speaking; if (now !== was) n++; was = now; }, 20); setTimeout(() => { clearInterval(t); done(n); }, 2000); })`);
+  check(flips <= 4, 'the ring holds between words (few changes in 2 s)', { flips });
+  await a.page.eval(`document.querySelector('.call-dock-title').click()`);
+
   // ------------------------------------------------------------ the second device joins
   await device(b.page, ALT);
   await b.page.eval(`document.querySelector('.call-join').click()`);
@@ -93,6 +105,7 @@ try {
   await a.page.eval(`document.querySelector('.call-btn.mic').click()`);
   check(await wait(room.page, `window.__room.summary().some((x) => x.muted)`, 5000), 'muting reaches the far end', await roomCalls());
   check(await wait(a.page, `window.__callSounds.some((s) => s.name === 'mute')`, 3000), 'the mute sound plays');
+  check(await wait(a.page, `!!document.querySelector('.call-muted-talking')`, 8000), 'talking into a muted microphone says so');
   check(await wait(b.page, `window.__activeCall.value.participants.some((p) => p.id === ${JSON.stringify(selfOf(MAIN))} && p.muted)`, 5000), 'the second device sees the first muted');
   await a.page.eval(`document.querySelector('.call-btn.mic').click()`);
   check(await wait(room.page, `!window.__room.summary().some((x) => x.muted)`, 5000), 'unmuting reaches the far end');

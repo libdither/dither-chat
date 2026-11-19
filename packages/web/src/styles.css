@@ -8997,33 +8997,38 @@ body.dragging * {
   position: relative;
   font-size: 12px;
 }
-.call-avatar {
-  border-radius: 50%;
-  padding: 3px;
-  box-shadow: 0 0 0 2px transparent;
-  transition: box-shadow 0.12s;
-}
-.call-people li.speaking .call-avatar {
-  box-shadow: 0 0 0 3px var(--good);
-}
 .call-name {
   max-width: 76px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.call-flag {
+/* A video tile's speaking mark: the call avatar's ring, drawn inside the edge, held the same way (call.ts speakingNow). */
+.call-video::after {
+  content: '';
   position: absolute;
-  top: 30px;
-  right: 14px;
-  color: var(--danger);
-  background: var(--bg-raised);
-  border-radius: 50%;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 2px var(--good);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease-out;
 }
-/* Muted or deafened by the server, not by them. */
-.call-flag.server {
-  color: var(--bg-raised);
-  background: var(--danger);
+.call-video.speaking::after {
+  opacity: 1;
+  transition: none;
+}
+/* You are muted and talking (call.ts mutedTalking). */
+.call-muted-talking {
+  margin: 0;
+  padding: 0 12px 8px;
+  font-size: 12px;
+  color: var(--warn);
+}
+.call-muted-talking button {
+  all: unset;
+  cursor: pointer;
+  text-decoration: underline;
 }
 .call-empty {
   grid-column: 1 / -1;
