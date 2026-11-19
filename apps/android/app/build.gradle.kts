@@ -55,4 +55,9 @@ android {
 dependencies {
     implementation("androidx.webkit:webkit:1.18.0")
     implementation("org.unifiedpush.android:connector:3.3.5")
+
+    // Unit tests on the JVM (src/test, `./gradlew :app:testDebugUnitTest`): the app's logic that needs no device.
+    // org.json is the real library here: android.jar's copy is stubs that throw off a device.
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }
