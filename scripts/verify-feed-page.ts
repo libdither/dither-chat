@@ -85,13 +85,14 @@ const { page, close } = await launch();
 const q = (s: string) => JSON.stringify(s);
 /** A real press at the middle of the first element matching, once nothing on the page is moving (a sheet sliding in
  * moves what it holds between finding it and pressing) and nothing else lies over that point (a toast stays six
- * seconds). */
+ * seconds). Centring one at the end of its scroller scrolls the window too, which the app puts back between the press
+ * and its release: the window goes back first. */
 async function tap(sel: string) {
   let r: { x: number; y: number; over?: string } | null = null;
   const end = Date.now() + 15_000;
   do {
     r = await page.eval<{ x: number; y: number; over?: string } | null>(
-      `(() => { const e = document.querySelector(${q(sel)}); if (!e) return null; const moving = document.getAnimations().find((a) => a.playState === 'running' && a.effect?.getTiming().iterations !== Infinity); if (moving) return { x: 0, y: 0, over: 'an animation still running' }; e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); const x = b.left + b.width / 2, y = b.top + b.height / 2; const at = document.elementFromPoint(x, y); return { x, y, ...(b.width && b.height && at && (at === e || e.contains(at)) ? {} : { over: at ? at.outerHTML.slice(0, 120) : 'nothing' }) }; })()`,
+      `(() => { const e = document.querySelector(${q(sel)}); if (!e) return null; const moving = document.getAnimations().find((a) => a.playState === 'running' && a.effect?.getTiming().iterations !== Infinity); if (moving) return { x: 0, y: 0, over: 'an animation still running' }; e.scrollIntoView({ block: 'center' }); window.scrollTo(0, 0); const b = e.getBoundingClientRect(); const x = b.left + b.width / 2, y = b.top + b.height / 2; const at = document.elementFromPoint(x, y); return { x, y, ...(b.width && b.height && at && (at === e || e.contains(at)) ? {} : { over: at ? at.outerHTML.slice(0, 120) : 'nothing' }) }; })()`,
     );
     if (r && !r.over) break;
     await Bun.sleep(50);
@@ -115,6 +116,10 @@ const settled = () =>
 /** A range moved as a drag ends: its value, then input and change. */
 const slide = (sel: string, v: number) =>
   page.eval(`(() => { const i = document.querySelector(${q(sel)}); i.value = ${v}; i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+/** The list done asking for pages: not reading, and either nothing more to ask for or its end out of reach (FeedPage's
+ * Scroll asks for more while its end is within 600 px). */
+const listSettled = () =>
+  page.until(`(() => { const s = document.querySelector('.feed-main .feed-scroll'); return !!s && !s.hasAttribute('data-reading') && (s.hasAttribute('data-end') || s.scrollHeight - s.scrollTop - s.clientHeight >= 600); })()`, 15000);
 /** The composer done with its last press: the box enabled and empty, so what is typed next lands in it. */
 const idle = () => page.until(`(() => { const t = document.querySelector('.feed-composer textarea'); return !!t && !t.disabled && t.value === ''; })()`, 15000);
 
@@ -140,9 +145,11 @@ try {
   const reasons = await page.eval<string[]>(`[...document.querySelectorAll('.feed-reason')].map((r) => r.textContent.trim())`);
   check('Discover says why a post is there, in X’s words', reasons.includes('Alice Chen liked') && reasons.includes('Popular in Distributed systems'), reasons);
   check('…its head says it takes turns', /Taking turns/.test(await text('.feed-main .conv-head-sub')), await text('.feed-main .conv-head-sub'));
+  // Snug fits more on the screen than one page of each: the list asks for the next pages first.
+  await listSettled();
   const homeLog = async () => [...((await action(X1, 'homeLog')).result?.home ?? []), ...((await action(X2, 'homeLog')).result?.home ?? [])];
   const asked = await homeLog();
-  check('X was asked for each account’s For you once, when Discover opened', asked.filter((h: any) => h.feed === 'foryou').length === 2, asked);
+  check('X was asked for each account’s For you once, when Discover opened', asked.filter((h: any) => h.feed === 'foryou' && !h.cursor).length === 2, asked);
   const vias = await page.eval<string[]>(`[...document.querySelectorAll('.feed-main .feed-via')].slice(0, 4).map((v) => v.textContent.replace(/ \\(.*/, ''))`);
   check('…the two accounts take turns', vias.length === 4 && vias[0] !== vias[1] && vias[0] === vias[2], vias);
 
@@ -199,6 +206,10 @@ try {
 
   // ---------------------------------------------------------------- posting as both accounts
   await tap('.feed-src[data-source="following"]');
+  // Snug, the page's spacing at first (look.ts): the composer is one line until it is used.
+  await page.until(`!!document.querySelector('.feed-main .feed-compose-closed')`, 10000);
+  check('snug at first: the composer one line until used', (await count('.feed-page.dens-snug')) === 1 && !(await count('.feed-composer textarea')));
+  await tap('.feed-main .feed-compose-closed');
   await page.until(`!!document.querySelector('.feed-composer textarea')`, 10000);
   const as = await page.eval<string[]>(`[...document.querySelectorAll('.feed-as-face')].map((b) => b.dataset.as + (b.classList.contains('on') ? '*' : ''))`);
   check('Post as: both accounts’ pictures, the first pressed in', as.length === 2 && as[0].endsWith('*') && !as[1].endsWith('*'), as);
@@ -297,13 +308,19 @@ try {
   await until(async () => (await writes(X2)).filter((w) => w === 'postAct:like').length === likesBefore.x2 + 1, 10000, 'a like as the work account');
   check('a like on a post only the work account follows goes as that account', (await writes(X1)).filter((w) => w === 'postAct:like').length === likesBefore.x1);
   await tap('.feed-entry[data-test="release"] .pa-btn.reply');
-  await page.until(`!!document.querySelector('.feed-entry[data-test="release"] .post-composer textarea')`, 5000);
+  await page.until(`document.activeElement === document.querySelector('.feed-entry[data-test="release"] .post-composer textarea')`, 5000);
   check('Reply opens a box under the card, replying to its author', /Replying to/.test(await text('.feed-entry[data-test="release"] .compose-to')), await text('.feed-entry[data-test="release"] .compose-to'));
   await typeText('Congrats on the release.');
+  await page.until(`document.querySelector('.feed-entry[data-test="release"] .post-composer textarea')?.value === 'Congrats on the release.'`, 5000);
   const x2posts = (await writes(X2)).filter((w) => w === 'publish').length;
   await tap('.feed-entry[data-test="release"] .post-composer .compose-send');
   await until(async () => (await writes(X2)).filter((w) => w === 'publish').length === x2posts + 1, 10000, 'the reply as the work account');
   check('…and the reply goes as that account too', true);
+
+  // ---------------------------------------------------------------- reading threads ahead
+  // A card with replies that stays on the screen has its thread read before it is opened, and says so by its count.
+  await page.until(`!!document.querySelector('.feed-main .pa-pre[data-pre="ready"]')`, 10000);
+  check('a card with replies on the screen has its thread read ahead, a dot by its count', true);
 
   // ---------------------------------------------------------------- a post's thread beside the list
   await tap('.feed-entry[data-test="release"] .post-text');
@@ -314,6 +331,92 @@ try {
   await page.eval(`history.back()`);
   await page.until(`!document.querySelector('.feed-thread')`, 5000);
   check('Back closes it', (await page.eval<string>(`location.hash`)) === '#/feed/following', await page.eval(`location.hash`));
+
+  // The long thread on Your posts: read ahead, so it opens with its replies at once. A fresh start, as reading ahead
+  // goes at twelve a minute and the steps above have had their share.
+  await page.eval(`(location.hash = '#/feed/mine', location.reload())`);
+  await page.until(`[...document.querySelectorAll('.feed-main .feed-entry')].some((e) => /Greedy routing in dither/.test(e.textContent))`, 10000);
+  // Read ahead once it is on the screen: brought there.
+  await page.eval(`(() => { const e = [...document.querySelectorAll('.feed-main .feed-entry')].find((e) => /Greedy routing in dither/.test(e.textContent)); e.setAttribute('data-test', 'routing'); e.scrollIntoView({ block: 'center' }); })()`);
+  await page.until(`!!document.querySelector('.feed-entry[data-test="routing"] .pa-pre[data-pre="ready"]')`, 10000);
+  // Watched from before the press: did the thread ever say it was still reading its replies?
+  await page.eval(`(() => { window.__coming = false; const o = new MutationObserver(() => { if (document.querySelector('.feed-thread .thread-coming')) window.__coming = true; if (document.querySelector('.feed-thread .ct [data-post]')) o.disconnect(); }); o.observe(document.body, { childList: true, subtree: true }); })()`);
+  await tap('.feed-entry[data-test="routing"] .post-text');
+  await page.until(`document.querySelectorAll('.feed-thread .ct [data-post]').length > 3`, 10000);
+  check('a thread read ahead opens with its replies, never “Reading the replies…”', !(await page.eval<boolean>(`window.__coming`)));
+  check('no Reply button on the post itself: its box is under it', !(await count('.feed-thread .thread-focal .pa-btn.reply')) && (await count('.feed-thread .thread-focal .compose-closed')) === 1);
+
+  // Show more replies, until there are none to show: then it is gone.
+  for (let i = 0; i < 5 && (await count('.feed-thread .thread-more')); i++) {
+    const n = await count('.feed-thread [data-post]');
+    await tap('.feed-thread .thread-more');
+    await page.until(`document.querySelectorAll('.feed-thread [data-post]').length > ${n} || !document.querySelector('.feed-thread .thread-more')`, 10000).catch(async (e) => {
+      throw new Error(`${e.message}\n  button: ${await page.eval<string>(`(() => { const b = document.querySelector('.feed-thread .thread-more'); return JSON.stringify({ text: b?.textContent, pre: b?.dataset.pre, disabled: b?.disabled, n: document.querySelectorAll('.feed-thread [data-post]').length }); })()`)}`);
+    });
+  }
+  const shown = await page.eval<any>(`({ more: !!document.querySelector('.feed-thread .thread-more'), n: document.querySelectorAll('.feed-thread .ct [data-post]').length, said: Number(/\\d+/.exec(document.querySelector('.feed-thread .thread-replies-bar')?.textContent ?? '')?.[0]) })`);
+  check('Show more replies goes once every reply is shown', !shown.more && shown.n >= shown.said, shown);
+
+  // The reply styles, as pictures: the replies move to their places.
+  for (const [st, sel] of [['compact', '.ct.compact'], ['flat', '.ct.ct-flatlist'], ['chains', '.thread-chain'], ['tree', '.ct.tree']]) {
+    await tap(`.feed-thread .ct-style [data-seg="${st}"]`);
+    await page.until(`!!document.querySelector('.feed-thread ${sel}') && document.querySelector('.feed-thread .ct-style [data-seg="${st}"]').getAttribute('aria-checked') === 'true'`, 5000);
+  }
+  check('the reply styles switch from their pictures', true);
+
+  // Check for new replies: asks the network again.
+  await tap('.feed-thread .thread-check');
+  await page.until(`[...document.querySelectorAll('.toast')].some((t) => /new repl/i.test(t.textContent))`, 10000);
+  check('Check for new replies asks again and says what came', true, await page.eval(`[...document.querySelectorAll('.toast')].map((t) => t.textContent).find((t) => /new repl/i.test(t))`));
+
+  // A reply begun and thought better of: Cancel, and Undo brings it back.
+  await tap('.feed-thread .thread-focal .compose-closed');
+  await page.until(`document.activeElement?.matches('.feed-thread .thread-focal textarea')`, 5000);
+  await typeText('A reply I think better of.');
+  await tap('.feed-thread .thread-focal .compose-cancel');
+  await page.until(`!!document.querySelector('.feed-thread .thread-focal .compose-closed')`, 5000);
+  check('Cancel closes the reply box', true);
+  await page.until(`[...document.querySelectorAll('.toast')].some((t) => /Reply discarded/.test(t.textContent))`, 5000);
+  await page.eval(`[...document.querySelectorAll('.toast')].find((t) => /Reply discarded/.test(t.textContent)).setAttribute('data-test', 'discarded')`);
+  await tap('.toast[data-test="discarded"] .toast-action');
+  await page.until(`document.querySelector('.feed-thread .thread-focal textarea')?.value === 'A reply I think better of.'`, 5000);
+  check('…and Undo brings back what was written', true);
+  await tap('.feed-thread .thread-focal .compose-cancel');
+  await page.eval(`history.back()`);
+  await page.until(`!document.querySelector('.feed-thread')`, 5000);
+
+  // A quote opens beside the list, and its words can be selected: one of yours quotes a post.
+  await page.until(`location.hash === '#/feed/mine' && !!document.querySelector('.feed-main .post-quoted .post-clip')`, 10000);
+  const qb = await page.eval<any>(`(() => { const e = document.querySelector('.feed-main .post-quoted .post-clip'); e.scrollIntoView({ block: 'center' }); window.scrollTo(0, 0); const b = e.getBoundingClientRect(); return { x: b.left + 3, y: b.top + 6, w: Math.min(b.width - 8, 160) }; })()`);
+  const mouse = (type: string, x: number, buttons: number) => page.send('Input.dispatchMouseEvent', { type, x, y: qb.y, button: 'left', buttons, clickCount: 1 });
+  await mouse('mousePressed', qb.x, 1);
+  for (let i = 1; i <= 8; i++) await mouse('mouseMoved', qb.x + (i * qb.w) / 8, 1);
+  await mouse('mouseReleased', qb.x + qb.w, 0);
+  const sel = await page.eval<any>(`({ sel: getSelection().toString().length, hash: location.hash })`);
+  check('words in a quote can be selected, and the drag opens nothing', sel.sel > 3 && sel.hash === '#/feed/mine', sel);
+  await page.eval(`getSelection().removeAllRanges()`);
+  const quoted = await page.eval<string>(`document.querySelector('.feed-main .post-quoted').dataset.quote`);
+  await tap('.feed-main .post-quoted .post-by');
+  await page.until(`!!document.querySelector('.feed-thread .thread-focal')`, 15000);
+  const qh = await page.eval<string>(`location.hash`);
+  check('a quote opens its post beside the list', qh === `#/feed/mine/p/pst_x_${quoted}` && (await count('.feed-main .feed-entry')) > 0, qh);
+  await page.eval(`history.back()`);
+  await page.until(`!document.querySelector('.feed-thread')`, 5000);
+
+  // The page's spacing, from its pictures in the head.
+  await tap('.feed-src[data-source="following"]');
+  await page.until(`document.querySelectorAll('.feed-main .feed-entry').length > 3`, 10000);
+  await tap('.feed-density [data-seg="dense"]');
+  await page.until(`!!document.querySelector('.dens-dense .feed-main')`, 3000);
+  const faces = await page.eval<number>(`Math.round(document.querySelector('.feed-main .feed-entry .thread-face').getBoundingClientRect().width)`);
+  check('Dense: small faces', faces <= 28, faces);
+  if (shots) await page.shot(join(shots, 'feed-dense.png'));
+  await tap('.feed-density [data-seg="roomy"]');
+  await page.until(`!!document.querySelector('.dens-roomy .feed-main .feed-composer textarea')`, 3000);
+  check('Roomy: the composer open', true);
+  await tap('.feed-density [data-seg="snug"]');
+  await page.until(`!!document.querySelector('.dens-snug .feed-main .feed-compose-closed')`, 3000);
+  check('…and back to snug, it closes to its line', true);
 
   // ---------------------------------------------------------------- Activity
   await tap('.feed-src[data-source="activity"]');

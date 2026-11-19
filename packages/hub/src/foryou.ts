@@ -320,7 +320,7 @@ export class ForYou {
       .get(id) as Row | null;
     let out: Candidate | null = null;
     const toYou = !!r && (r.mentions_self || (r.reply_author && this.store.isSelf(r.reply_author)));
-    if (r && !r.deleted && !toYou && !this.store.isSelf(r.author_id) && !QUIET_VARIANTS.has(r.variant) && (r.shape === 'channel' || r.shape === 'thread' || (r.shape === 'group' && this.bigGroup(r.conversation_id)))) {
+    if (r && !r.deleted && !toYou && !this.store.isSelf(r.author_id) && !QUIET_VARIANTS.has(r.variant) && r.variant !== 'follow' && (r.shape === 'channel' || r.shape === 'thread' || (r.shape === 'group' && this.bigGroup(r.conversation_id)))) {
       out = { id: r.id, conv: r.conversation_id, author: r.author_id ?? null, ts: r.ts, prior, decided, replyTo: r.reply_to_id ?? null, chars: r.chars ?? 0, text: r.head ? shortHash(String(r.head).trim().toLowerCase()) : '' };
     }
     this.details.set(id, out);

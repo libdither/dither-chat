@@ -9,10 +9,11 @@
  * So each test file starts with none of them; a test that needs one sets it itself. After T3 Code's
  * packages/shared/src/testing/providerEnv.ts.
  *
- * Kept: paths to tools this machine has, which tests look for and skip without (DITHER_CHROMIUM, DITHER_DAVE_DIR).
+ * Kept: paths to tools and checkouts this machine has, which tests look for and skip without (DITHER_CHROMIUM,
+ * DITHER_DAVE_DIR, DITHER_ACCOUNTS_REPO).
  * DITHER_TEST_KEEP_ENV=1 keeps them all, to try a test on a setting on purpose.
  */
-const KEEP = new Set(['DITHER_CHROMIUM', 'DITHER_DAVE_DIR', 'DITHER_TEST_KEEP_ENV']);
+const KEEP = new Set(['DITHER_CHROMIUM', 'DITHER_DAVE_DIR', 'DITHER_ACCOUNTS_REPO', 'DITHER_TEST_KEEP_ENV']);
 
 if (process.env.DITHER_TEST_KEEP_ENV !== '1') {
   for (const k of Object.keys(process.env)) if (k.startsWith('DITHER_') && !KEEP.has(k)) delete process.env[k];

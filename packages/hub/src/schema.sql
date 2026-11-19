@@ -1002,3 +1002,27 @@ CREATE TABLE IF NOT EXISTS profile_version (
   at          INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS profile_version_identity ON profile_version(identity_id, at);
+
+-- Posts you follow (follows.ts, docs/feed.md "Following a post"): each has a conversation of its own (variant
+-- 'follow') where its replies found from then on go, and the hub reads the thread again for them at a slowing pace.
+CREATE TABLE IF NOT EXISTS post_follow (
+  conversation_id TEXT PRIMARY KEY REFERENCES conversation(id) ON DELETE CASCADE,
+  account_id      TEXT NOT NULL REFERENCES account(id) ON DELETE CASCADE,   -- reads the thread
+  network         TEXT NOT NULL,
+  post            TEXT NOT NULL,            -- the network's id for the post
+  since           INTEGER NOT NULL,         -- followed (again)
+  last_new        INTEGER NOT NULL,         -- a check last found a new reply, or `since`
+  gap             INTEGER NOT NULL,         -- ms from the last check to the next
+  next_at         INTEGER,                  -- the next check; NULL once stopped
+  checked_at      INTEGER,
+  stopped         INTEGER,                  -- checks stopped then; NULL while they go on
+  why             TEXT                      -- 'unfollowed' | 'quiet' (a week with no new reply)
+) WITHOUT ROWID;
+CREATE UNIQUE INDEX IF NOT EXISTS post_follow_post ON post_follow(network, post);
+-- When each reply in a followed post's conversation was found: those found since it was last read are new there.
+CREATE TABLE IF NOT EXISTS post_follow_found (
+  message_id      TEXT PRIMARY KEY REFERENCES message(id) ON DELETE CASCADE,
+  conversation_id TEXT NOT NULL REFERENCES conversation(id) ON DELETE CASCADE,
+  at              INTEGER NOT NULL
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS post_follow_found_conv ON post_follow_found(conversation_id, at);

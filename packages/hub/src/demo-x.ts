@@ -213,9 +213,10 @@ function workFeed(epoch: number): Item[] {
  * second page), with a tree under it eight deep in places: Ravi and you on churn, Alice's question opening a branch on
  * the tail and landmarks that Nora, Lee, Sam and Maya carry on, Theo's on the browser. Each post is read as X reads
  * it: its replies, each with the first answers under it as a chain of up to three, so the tree's other branches come
- * only by opening them. Any other post the demo knows answers with what it answers.
+ * only by opening them. Any other post the demo knows answers with what it answers. `late`: replies that came after
+ * (the newReply action, for following a post): the newest first on a post's first page, as X puts a fresh reply.
  */
-function threads(epoch: number, made: readonly P.PostFact[] = []) {
+function threads(epoch: number, made: readonly P.PostFact[] = [], late: readonly P.PostFact[] = []) {
   const me = X.self;
   const mine = yourPosts(epoch);
   const r = mine.routing;
@@ -261,8 +262,9 @@ function threads(epoch: number, made: readonly P.PostFact[] = []) {
   ];
   turns.forEach(([w, min, text], i) => bf.push(under(51 + i, w === 'me' ? me : X[w], min, text, bf[i - 1] ?? theo2, { counts: { likes: i % 3 } })));
   // What you posted here (a reply goes under what it answers).
-  const tree = [cont1, cont2, raviIn, ans, ravi2, pulled, noraChurn, alice, tail, alice2, nora, land, nora2, lee, sam, maya2, lee2, maya, theo, wasm, theo2, ...bf, quinn, kenji, paula, toPaula, homePosts(epoch).theoA, ...made];
+  const tree = [cont1, cont2, raviIn, ans, ravi2, pulled, noraChurn, alice, tail, alice2, nora, land, nora2, lee, sam, maya2, lee2, maya, theo, wasm, theo2, ...bf, quinn, kenji, paula, toPaula, homePosts(epoch).theoA, ...made, ...late];
   const kids = (id: string) => tree.filter((p) => p.replyTo?.id === id);
+  const lateUnder = (id: string) => late.filter((p) => p.replyTo?.id === id).reverse();
   // Each post's reply count is what is under it, as X counts it.
   for (const p of [r, ...tree]) p.counts = { ...p.counts, replies: kids(p.id).length };
   // X counts a reply under Maya's that it never shows (a reply it filters out): "1 more reply" there brings nothing.
@@ -283,7 +285,7 @@ function threads(epoch: number, made: readonly P.PostFact[] = []) {
     if (id === r.id)
       return cursor === 'more-1'
         ? { focal: { ...r, root: r.id }, ancestors: [], replies: [chain(theo), chain(kenji), chain(paula), chain(quinn)], more: null }
-        : { focal: { ...r, root: r.id }, ancestors: [], replies: [cont1, raviIn, alice, maya].map(chain), more: 'more-1' };
+        : { focal: { ...r, root: r.id }, ancestors: [], replies: [...lateUnder(r.id), cont1, raviIn, alice, maya].map(chain), more: 'more-1' };
     const at = all.find((p) => p.id === id);
     const known = at ?? others().find((p) => p?.id === id);
     if (!known) return null;
@@ -294,8 +296,9 @@ function threads(epoch: number, made: readonly P.PostFact[] = []) {
       ancestors.unshift(up);
       p = up;
     }
-    // The author continuing first, as X shows it.
-    const replies = kids(id).sort((a, b) => Number(b.author === known.author) - Number(a.author === known.author));
+    // The author continuing first, as X shows it; then a late reply, newest first.
+    const fresh = lateUnder(id);
+    const replies = [...fresh, ...kids(id).filter((p) => !fresh.includes(p))].sort((a, b) => Number(b.author === known.author) - Number(a.author === known.author));
     return { focal: known, ancestors, replies: replies.map(chain), more: null };
   };
   return Object.assign(thread, { known: (id: string) => all.find((p) => p.id === id) ?? others().find((p) => p?.id === id) ?? null });
@@ -335,6 +338,8 @@ export class DemoX implements InprocAdapter {
   private liked = new Set<string>();
   private reposted = new Set<string>();
   private made: P.PostFact[] = [];
+  /** Replies written by others after the start (action newReply): a post you follow has news. */
+  private late: P.PostFact[] = [];
   /** The next like or repost is refused (action failNextAct): the verify script sees the page take it back. */
   private failNext = false;
   private postLog: { post: string; cursor?: string; at: number }[] = [];
@@ -414,7 +419,7 @@ export class DemoX implements InprocAdapter {
         return reply({ ...page, items: [...own, ...page.items].filter((i) => !this.deleted.has(i.post.id)).map((i) => ({ ...i, post: v(i.post) })) } satisfies P.HomePage);
       }
       case 'unpublish': {
-        const known = this.made.find((p) => p.id === cmd.post) ?? threads(this.epoch, this.made).known(cmd.post);
+        const known = this.made.find((p) => p.id === cmd.post) ?? threads(this.epoch, this.made, this.late).known(cmd.post);
         if (!known || this.deleted.has(cmd.post)) return reply({ deleted: true });
         if (known.author !== this.me.nativeId) return fail('You can delete only your own posts');
         this.deleted.add(cmd.post);
@@ -432,7 +437,7 @@ export class DemoX implements InprocAdapter {
       }
       case 'post': {
         this.postLog.push({ post: cmd.post, ...(cmd.cursor ? { cursor: cmd.cursor } : {}), at: Date.now() });
-        const t = threads(this.epoch, this.made)(cmd.post, cmd.cursor);
+        const t = threads(this.epoch, this.made, this.late)(cmd.post, cmd.cursor);
         if (!t) return fail('X did not give this post');
         // Authors from outside the demo's people (the fans who answer in other languages): their facts first.
         for (const i of FANS) if ([...t.replies.flat(), ...t.ancestors, t.focal].some((p) => p?.author === i.nativeId)) this.emit({ t: 'identity', identity: i });
@@ -451,7 +456,7 @@ export class DemoX implements InprocAdapter {
         return reply({ liked: this.liked.has(cmd.post), reposted: this.reposted.has(cmd.post) } satisfies P.PostViewer);
       }
       case 'publish': {
-        const known = threads(this.epoch, this.made).known;
+        const known = threads(this.epoch, this.made, this.late).known;
         const to = cmd.replyTo ? known(cmd.replyTo) : null;
         if (cmd.replyTo && !to) return fail('That post is gone');
         const quoted = cmd.quote ? known(cmd.quote) : null;
@@ -480,7 +485,7 @@ export class DemoX implements InprocAdapter {
         return reply({ text: TRANSLATED[n]!.text, from: TRANSLATED[n]!.from, by: 'Grok' } satisfies P.NetworkTranslation);
       }
       case 'postReactors': {
-        const known = threads(this.epoch, this.made).known(cmd.post);
+        const known = threads(this.epoch, this.made, this.late).known(cmd.post);
         if (!known) return fail('X did not give this post');
         // X names who liked a post only to its author.
         if (cmd.kind === 'like' && known.author !== X.self.nativeId) return reply({ who: [], more: null } satisfies P.ReactorsPage);
@@ -512,10 +517,29 @@ export class DemoX implements InprocAdapter {
         this.refused.push(`${cmd.t}:${cmd.conversation}`);
         return fail('the demo X account sends nothing');
       case 'action':
+        if (cmd.action === 'newReply') return this.newReply(cmd.args, reply, fail);
         return reply(cmd.action === 'readLog' ? { reads: this.readLog } : cmd.action === 'typingLog' ? { typing: this.typingLog } : cmd.action === 'sendLog' ? { sent: this.refused } : cmd.action === 'postLog' ? { posts: this.postLog } : cmd.action === 'translateLog' ? { translated: this.translateLog } : cmd.action === 'writeLog' ? { writes: this.writes } : cmd.action === 'homeLog' ? { home: this.homeLog } : cmd.action === 'failNextAct' ? ((this.failNext = true), { note: 'the next like or repost is refused' }) : { note: 'demo X has no such action' });
       default:
         if ('id' in cmd) fail('the demo X account cannot do that');
     }
+  }
+
+  /**
+   * Someone answers a post now (action newReply, `{ post?, text? }`; your routing post when none is named): the next
+   * read of its thread shows the reply first, as X shows a fresh one. For following a post (docs/feed.md).
+   */
+  private newReply(args: unknown, reply: (r?: unknown) => void, fail: (e: string) => void) {
+    const a = (args ?? {}) as { post?: unknown; text?: unknown };
+    const id = typeof a.post === 'string' && a.post ? a.post : yourPosts(this.epoch).routing.id;
+    const to = threads(this.epoch, this.made, this.late).known(id);
+    if (!to) return fail('X did not give this post');
+    const n = this.late.length;
+    const who = X[(['maya', 'quinn', 'theo', 'sam', 'nora'] as Who[])[n % 5]];
+    const said = ['Coming back to this: it held up on our testbed too.', 'One more question: does it take the seed from the command line?', 'Bookmarked, and sent to two people who will argue about it.'];
+    const rid = pid(5000 + n);
+    const p: P.PostFact = { id: rid, url: url(who, rid), ts: Date.now(), author: who.nativeId, text: typeof a.text === 'string' && a.text ? a.text : said[n % said.length]!, replyTo: { id: to.id, ...(to.author ? { author: to.author } : {}) }, root: to.root ?? to.id, counts: { replies: 0, likes: 0 } };
+    this.late.push(p);
+    return reply({ id: rid, post: to.id });
   }
 
   /** A post as you see it: what you did to it, and its counts with it. */

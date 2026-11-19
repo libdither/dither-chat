@@ -18,9 +18,11 @@
  * null for one of these means it stayed. Any `unknown` also asks what changed, as the hub's ids may be stale. 404 drops
  * the change and asks what changed. 403 undoes every change waiting for the account and makes it read-only. 422 (none
  * of it applied) undoes it. 501 undoes it and remembers its kind as unsupported, so it is refused at once next time
- * (Proton's `answered`). 410 catches up and tries again. Anything else is tried again from 2 s, doubling, ten times,
- * then undone. While the manager or the account is away, changes wait, through a restart too; when it is back, a
- * changes pass goes first (§3.6).
+ * (Proton's `answered`). 410 catches up and tries again. Trouble that may pass (backend.ts troubleOf: a 503, the
+ * extractor not ready yet, `offline`) uses up no try: the account's writes wait until its next status, or from 2 s,
+ * doubling to 5 min, whichever comes first. Anything else is tried again from 2 s, doubling, ten times, then undone.
+ * While the manager or the account is away, changes wait, through a restart too; when it is back, a changes pass goes
+ * first (§3.6).
  *
  * Kinds of write: `seen`, `flagged`, `move` (archive, Inbox, a folder or label), `trash` and `junk` (a move into
  * them). An account whose status lists the kinds it makes (`details.writes`, kept in mail_account.writes; Gmail's,
@@ -39,7 +41,7 @@ import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
 import type { MailWriteKind } from '@dither-chat/protocol/mail-iface';
 import { sleep, unref } from '../clock.ts';
-import { asMailError, MailCallError } from './backend.ts';
+import { asMailError, backoffMs, MailCallError, troubleOf } from './backend.ts';
 import type { MailHub } from './index.ts';
 import { P0 } from './queue.ts';
 import type { MailRouter } from './routes.ts';
@@ -121,6 +123,8 @@ class MailOps {
   private busy = new Set<string>();
   private lastCall = new Map<string, number>();
   private catchUpFirst = new Set<string>();
+  /** Accounts whose last write met trouble that may pass: writes wait until `until` or the next status. */
+  private notReady = new Map<string, { n: number; until: number }>();
   private errors = new Map<string, { message: string; at: number }>();
   private clients = new Map<string, P.MailOpResult>();
 
@@ -137,6 +141,13 @@ class MailOps {
       if (e.state === 'ended') this.dropAccount(e.accountId, 'dither-chat no longer has access to this account');
       else if (e.state === 'changed' && a?.level === 'read') this.dropAccount(e.accountId, 'dither-accounts lets dither-chat read this account now, not change it');
       if (this.waitingAccounts().includes(e.accountId)) this.kick(0);
+    });
+    // A status from an account that was not ready: its writes try again now.
+    hub.backend?.onEvents((accountId, events) => {
+      const w = this.notReady.get(accountId);
+      if (!w || !events.some((ev) => ev.t === 'status')) return;
+      w.until = 0;
+      this.kick(0);
     });
     hub.backend?.onConnection((up) => {
       if (!up) return;
@@ -586,7 +597,7 @@ class MailOps {
 
   private workable(accountId: string): boolean {
     const a = this.hub.store.account(accountId);
-    return !!this.hub.backend?.connected && !!a?.online && a.level === 'write' && !a.gone_at && !!this.hub.sync(accountId);
+    return !!this.hub.backend?.connected && !!a?.online && a.level === 'write' && !a.gone_at && !!this.hub.sync(accountId) && (this.notReady.get(accountId)?.until ?? 0) <= this.now();
   }
 
   private async runAccount(accountId: string) {
@@ -666,6 +677,7 @@ class MailOps {
   }
 
   private acked(op: Row, items: Item[], dest: Row | null, res: unknown, sync: AccountSync) {
+    this.notReady.delete(op.account_id);
     const touched = new Set<string>();
     const moved: string[] = [];
     let lost = false;
@@ -746,6 +758,12 @@ class MailOps {
       this.undo(op, e.message);
     } else if (s === 400 || s === 422) {
       this.undo(op, e.message);
+    } else if (troubleOf(e, { read: false }) === 'transient') {
+      // Not ready (Gmail's page not attached yet, the manager restarting): no try used up; the account waits.
+      const n = (this.notReady.get(op.account_id)?.n ?? 0) + 1;
+      this.notReady.set(op.account_id, { n, until: this.now() + backoffMs(n, 2_000, 300_000) });
+      this.run('UPDATE mail_op SET sent_at = NULL, error = ?, next_at = ? WHERE id = ?', e.message, this.now(), op.id);
+      this.hub.store.dirty.accounts.add(op.account_id);
     } else {
       const attempts = (op.attempts ?? 0) + 1;
       if (attempts >= MAX_ATTEMPTS) return this.undo(op, e.message);

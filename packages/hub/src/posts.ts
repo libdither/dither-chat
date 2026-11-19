@@ -5,9 +5,13 @@
  * message. A post's message id is `post:<id>` and its `replyTo` the post it answers, so a thread can be read back from
  * what the hub logged when the network cannot be asked. The conversation is quiet: no unread counts, no notifications,
  * no persons made for everyone in a thread, nothing sent to the network.
+ *
+ * A post you follow (follows.ts, docs/feed.md "Following a post") has a conversation of its own (variant 'follow'): a
+ * post logged for the first time whose reply chain reaches it goes there instead, as a chat's message: unread when a
+ * check found it, read when your own reading did.
  */
 import type * as P from '@dither-chat/protocol';
-import { composeState, NETWORK_META, POST_ACTS, postIdOf, postNativeId, postRulesFor } from '@dither-chat/protocol';
+import { composeState, followNativeId, NETWORK_META, POST_ACTS, postIdOf, postNativeId, postRulesFor } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { postAuthors, postView } from './feed.ts';
 import { rankReactors, type ReactorIn } from './reactors.ts';
@@ -30,9 +34,16 @@ interface PostsDeps {
   ) => Promise<T>;
   /** After posts were logged: devices hear of them. */
   changed?: () => void;
+  /** Replies a check found for a post you follow, new and live: triage decides how each is told (main.ts). */
+  fresh?: (messageIds: string[]) => void;
+  /** The time a reply to a followed post is found at (a test's clock). */
+  now?: () => number;
 }
 
 const caps = (store: Store, accountId: string): P.Capability[] => JSON.parse(store.account(accountId)?.capabilities ?? '[]');
+
+/** A reply this many posts or fewer under a followed post goes to its conversation. */
+const FOLLOW_DEPTH = 100;
 
 /** At most this many posts down one reply chain when the thread is read back from what was logged. */
 const STORED_CHAIN = 4;
@@ -63,6 +74,9 @@ function withInner(p: P.PostFact, out: { p: P.PostFact; inner: boolean }[] = [],
 
 /** A thread read is answered from the last read for this long: back and forth between posts asks X once. */
 const CACHE_MS = 2 * 60_000;
+/** A fresh read asked for (a thread's "Check for new replies") still takes an answer this new: a press after press
+ * asks X once. */
+const FRESH_MS = 10_000;
 /** The hub waits this long for X: the extractor paces its reads, and a read may wait behind a long history read. */
 const THREAD_TIMEOUT_MS = 150_000;
 
@@ -154,15 +168,28 @@ export class Posts {
    * a post the hub has is updated (its words if X shows them changed, its counts). Returns how many were new.
    */
   log(accountId: string, posts: readonly P.PostFact[]): number {
+    return this.record(accountId, posts, false).fresh;
+  }
+
+  /**
+   * log(), saying how many new posts went to a followed post's conversation. `live`: they were found by a check
+   * (follows.ts), so they are news, decided by triage like any chat's message; a thread you are reading shows them
+   * anyway, so they come in unread and silent.
+   */
+  private record(accountId: string, posts: readonly P.PostFact[], live: boolean): { fresh: number; followed: number } {
     const s = this.d.store;
     const acc = s.account(accountId);
-    if (!acc || !posts.length) return 0;
+    if (!acc || !posts.length) return { fresh: 0, followed: 0 };
     const conv = postsConvNative(s, acc);
     const cid = hubId('cnv', acc.network, conv);
     let fresh = 0;
+    let followed = 0;
+    const triage: string[] = [];
     // Whole posts first, so a post seen whole and quoted in one answer is logged whole.
     const all = posts.flatMap((p) => withInner(p)).sort((a, b) => Number(a.inner) - Number(b.inner));
     const seen = new Set<string>();
+    const follows = this.following(acc.network, all.map((x) => x.p));
+    const now = this.d.now?.() ?? Date.now();
     s.db.transaction(() => {
       if (!s.one('SELECT 1 FROM conversation WHERE id = ?', cid)) s.ingest(acc, { t: 'conversation', conversation: { nativeId: conv, shape: 'channel', variant: 'posts', name: `${NETWORK_META[acc.network].name} posts` } });
       for (const { p, inner } of all) {
@@ -175,12 +202,67 @@ export class Posts {
         // A copy from inside another post never replaces the post as logged: it may be clipped, and has lost its own quote.
         if (had && inner) continue;
         if (!had) fresh++;
+        // New under a post you follow: to its conversation, through the account that follows it.
+        const to = had ? null : follows?.(p);
+        const by = to ? (s.account(to.accountId) ?? acc) : acc;
+        if (to) {
+          followed++;
+          triage.push(...s.ingest(by, { t: 'message', ...(live ? { live: true } : {}), message: { ...f, conversation: followNativeId(to.post) } }));
+          // Found by a check: news, marked New until the chat is read. One your own reading brought in is on your
+          // screen as it is logged: in the chat, but neither unread (store.ts) nor New.
+          if (live) s.db.query('INSERT OR IGNORE INTO post_follow_found (message_id, conversation_id, at) VALUES (?, ?, ?)').run(mid, to.conversationId, now);
+          continue;
+        }
         // Logged by another account first: it stays where it is (one message per post).
         s.ingest(acc, { t: 'message', message: had && had.conversation_id !== cid ? { ...f, conversation: s.nativeOf('conversation', had.conversation_id)!.nativeId } : f });
       }
     })();
     this.d.changed?.();
-    return fresh;
+    if (triage.length) this.d.fresh?.(triage);
+    return { fresh, followed };
+  }
+
+  /**
+   * The followed post a new post answers, at any depth (to FOLLOW_DEPTH), through the posts of this answer and what
+   * was logged; null when none. Undefined when no post of the network is followed (the usual case: nothing to ask).
+   */
+  private following(network: P.Network, batch: readonly P.PostFact[]): ((p: P.PostFact) => { conversationId: string; accountId: string; post: string } | null) | undefined {
+    const s = this.d.store;
+    const rows = s.db.query('SELECT conversation_id, account_id, post FROM post_follow WHERE network = ? AND stopped IS NULL').all(network) as Row[];
+    if (!rows.length) return undefined;
+    const msg = (post: string) => hubId('msg', network, postNativeId(post));
+    const byMessage = new Map(rows.map((r) => [msg(r.post), { conversationId: r.conversation_id as string, accountId: r.account_id as string, post: r.post as string }]));
+    // What each post of this answer replies to, before any of them is logged.
+    const up = new Map(batch.filter((p) => p.replyTo).map((p) => [msg(p.id), msg(p.replyTo!.id)]));
+    return (p) => {
+      let at = p.replyTo ? msg(p.replyTo.id) : null;
+      for (let i = 0; at && i < FOLLOW_DEPTH; i++) {
+        const hit = byMessage.get(at);
+        if (hit) return hit;
+        at = up.get(at) ?? (s.one<Row>('SELECT reply_to_id FROM message WHERE id = ?', at)?.reply_to_id as string | undefined) ?? null;
+      }
+      return null;
+    };
+  }
+
+  /**
+   * A post's thread read from the network now, its first page only, past the short cache (follows.ts: following, and
+   * each check), and logged: new replies under a post you follow go to its conversation (`live`: as news). The answer
+   * is kept as the cache's too.
+   */
+  async reread(network: P.Network, post: string, accountId: string, live: boolean): Promise<{ thread: P.PostThread; read: number; followed: number }> {
+    const net = NETWORK_META[network].name;
+    let t: P.PostThread;
+    try {
+      t = await this.d.command<P.PostThread>(accountId, { t: 'post', post }, THREAD_TIMEOUT_MS);
+    } catch (e) {
+      throw new PostsError(`Could not ask ${net}: ${(e as Error).message}`, 502);
+    }
+    if (!t?.focal) throw new PostsError(`${net} did not give this post`, 502);
+    const all = [t.focal, ...t.ancestors, ...t.replies.flat()];
+    const r = this.record(accountId, all, live);
+    this.recent.set(`${network}:${post}:`, { at: Date.now(), t, accountId });
+    return { thread: t, read: all.length, followed: r.followed };
   }
 
   /**
@@ -409,14 +491,17 @@ export class Posts {
     return view(notified(), null, 'notifications', `${why} These are the people your notifications named.`);
   }
 
-  /** A post's thread: from the network when an account can ask (and logged), else what the hub logged. */
-  thread(network: P.Network, post: string, cursor?: string): Promise<P.PostThreadView> {
+  /**
+   * A post's thread: from the network when an account can ask (and logged), else what the hub logged. `fresh`: not
+   * the last answer unless it is a few seconds old (checking for new replies).
+   */
+  thread(network: P.Network, post: string, cursor?: string, fresh = false): Promise<P.PostThreadView> {
     const key = `${network}:${post}:${cursor ?? ''}`;
     const live = this.asking.get(key);
     if (live) return live;
     const hit = !cursor ? this.recent.get(key) : null;
     // What X said is reused; the view is made again, so the branches logged since (opened under a reply) come with it.
-    if (hit && Date.now() - hit.at < CACHE_MS) return Promise.resolve(this.view(network, post, hit.accountId, hit.t, undefined));
+    if (hit && Date.now() - hit.at < (fresh ? FRESH_MS : CACHE_MS)) return Promise.resolve(this.view(network, post, hit.accountId, hit.t, undefined));
     const p = this.ask(network, post, cursor).finally(() => this.asking.delete(key));
     this.asking.set(key, p);
     return p;
@@ -491,9 +576,17 @@ export class Posts {
       more: t.more,
       ...(logged.length ? { logged: logged.map(one) } : {}),
       conversationId: conv && s.one('SELECT 1 FROM conversation WHERE id = ?', conv) ? conv : null,
+      // Whether you follow it (follows.ts): the thread's bell says so. A page of more replies leaves it out.
+      ...(withLogged ? { follow: this.followOf(network, post) } : {}),
       ...(stored ? { stored } : {}),
       identities: s.identitiesByIds(named),
     };
+  }
+
+  /** The post's follow (follows.ts), or null. */
+  private followOf(network: P.Network, post: string): P.PostFollow | null {
+    const r = this.d.store.one<Row>('SELECT conversation_id FROM post_follow WHERE network = ? AND post = ?', network, post);
+    return r ? this.d.store.postFollow(r.conversation_id) : null;
   }
 
   /** Posts logged under a post, any depth to LOGGED_DEPTH, oldest first (through message_post_reply). */

@@ -46,7 +46,12 @@ export interface MailAccountView {
    * account answered a send with 501, so it is off until you ask again (POST /api/mail/accounts/:id/sending).
    */
   send: { ok: boolean | null; why: string | null; refused?: boolean };
-  sync: { phase: 'first' | 'backfill' | 'idle' | 'relist'; synced: number; oldest: number | null };
+  /**
+   * `stateAt`: the last time the followed mailbox longest without one had a changes pass that worked (null: one has
+   * never had one). `error` and `failures`: the last pass's failure and how many failed in a row since one worked (0 and
+   * null once one works). The page says "Hasn't synced in …" from these past half an hour.
+   */
+  sync: { phase: 'first' | 'backfill' | 'idle' | 'relist'; synced: number; oldest: number | null; stateAt?: number | null; error?: string | null; failures?: number };
   /** The account on the manager's page, when the hub knows the page's address. */
   managedUrl: string | null;
   /** Access ended (it left the manager's list, or the grant went): its mail here is deleted at this time. */

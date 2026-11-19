@@ -74,6 +74,7 @@ and not in your notes to self, and the first of these that holds:
 | | Its reason |
 | --- | --- |
 | it is in a DM | A direct message |
+| it is in a post you follow: a reply the hub's check found ([feed.md](feed.md#following-a-post)) | A reply to a post you follow |
 | it mentions you by name or replies to your message (`@everyone` does not count) | About you |
 | it says one of your keywords ([Rules](#rules)) | Says “…”, one of your keywords |
 | you wrote in its chat in the last 24 hours (`TOOK_PART`) | You wrote here in the last day |
@@ -398,7 +399,8 @@ conversation's unread lines, so the notification grows instead of being replaced
 - **What a push carries**, besides `title`, `body`, `icon` and the rest: `tier` (`push`, `quiet` or `digest`),
   `importance` (0 to 1, where known), `messageId` (so the row can be marked from where it shows), `lines` (the last
   six messages from others since you last read the conversation or wrote there, on the list or above, oldest first
-  and ending with this one; each `{ author, key, body, ts }`), `icons` (a picture per author `key`), `count` (unread
+  and ending with this one; each `{ author, key, body, ts }`, where a body's mentions and channels read as names,
+  `@Ann` and `#general`, never as their ids), `icons` (a picture per author `key`), `count` (unread
   from others), `conv` (`{ title, shape: 'direct' | 'group' | 'channel', icon }`, a channel's icon being its
   server's), `sender` (`{ name, key, icon }`), and `alert`. The oldest lines go first when the push would pass about
   3.5 KB. `level` is still sent for an app from before the tiers and is only ever `push` (an alert) or `quiet`

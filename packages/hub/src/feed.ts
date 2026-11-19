@@ -15,20 +15,21 @@ export const QUIET_VARIANTS_SQL = `('feed', 'posts')`;
 export const QUIET_CONVS_SQL = `(SELECT id FROM conversation WHERE variant IN ${QUIET_VARIANTS_SQL})`;
 
 /**
- * A feed conversation, or the posts the hub logged (variant 'posts', posts.ts): read-only, kept out of the inbox's
- * rows, People and unread totals; nothing goes to the network.
+ * A feed conversation, the posts the hub logged (variant 'posts', posts.ts), or a post you follow (variant 'follow',
+ * follows.ts): read-only, nothing goes to the network (no message, read mark, typing or reaction). The first two are
+ * also quiet (QUIET_VARIANTS); a followed post is a chat, unread and in the inbox.
  */
 export function isFeed(db: Database, conversationId: string): boolean {
-  return !!db.query(`SELECT 1 FROM conversation WHERE id = ? AND variant IN ('feed', 'posts')`).get(conversationId);
+  return !!db.query(`SELECT 1 FROM conversation WHERE id = ? AND variant IN ('feed', 'posts', 'follow')`).get(conversationId);
 }
 
 /** Why nothing can be written, reacted with or changed there, in words. */
-export const feedRefusal = (network: P.Network, variant: string = 'feed') =>
-  `${NETWORK_META[network].name}'s ${variant === 'posts' ? 'posts' : 'notifications'} are read-only here: answer on ${NETWORK_META[network].name}`;
+const feedRefusal = (network: P.Network, variant: string = 'feed') =>
+  `${NETWORK_META[network].name}'s ${variant === 'posts' || variant === 'follow' ? 'posts' : 'notifications'} are read-only here: answer on ${NETWORK_META[network].name}`;
 
-/** The refusal for a conversation that is a feed or logged posts, else null. */
+/** The refusal for a conversation that is a feed, logged posts or a followed post, else null. */
 export function feedRefusalFor(db: Database, conversationId: string): string | null {
-  const r = db.query(`SELECT network, variant FROM conversation WHERE id = ? AND variant IN ('feed', 'posts')`).get(conversationId) as { network: P.Network; variant: string } | null;
+  const r = db.query(`SELECT network, variant FROM conversation WHERE id = ? AND variant IN ('feed', 'posts', 'follow')`).get(conversationId) as { network: P.Network; variant: string } | null;
   return r ? feedRefusal(r.network, r.variant) : null;
 }
 

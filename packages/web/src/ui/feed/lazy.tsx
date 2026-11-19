@@ -109,6 +109,13 @@ export function ThreadLazy({ postKey: key, onBack }: { postKey: string; onBack?:
   return <section class="pane">{failed ? <Empty icon="alert" title="Could not load the post">Check the connection to the hub, then try again.</Empty> : <Loading fill />}</section>;
 }
 
+/** A post you follow (variant 'follow', docs/feed.md "Following a post"): its thread, what came since it was read marked New. */
+export function FollowChatLazy({ c, onBack }: { c: P.ConversationView; onBack?: () => void }) {
+  const { m, failed } = useChunk(true);
+  if (m) return <m.FollowChat c={c} kit={kit} onBack={onBack} />;
+  return <section class="pane">{failed ? <Empty icon="alert" title="Could not load the post">Check the connection to the hub, then try again.</Empty> : <Loading fill />}</section>;
+}
+
 /** The posts the hub logged (variant 'posts'), newest first. */
 export function PostsListLazy({ c }: { c: P.ConversationView }) {
   const { m, failed } = useChunk(true);

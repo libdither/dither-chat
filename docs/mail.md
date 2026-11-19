@@ -24,7 +24,9 @@ Email beside your chats, through dither-accounts' `mail` interface. The design, 
   server too, unless Settings says "only when I mark it".
 - **Accounts** lists the mail accounts with the others, one list ([accounts.md](accounts.md), "One list"): a mail icon,
   a dot on it when something is wrong; the account's page has its Mail section (what is wrong, "Sign in to Proton in
-  the live view" with the live view, "Sending is off: …", what is held). **Settings → Mail** links to those pages.
+  the live view" with the live view, "Sending is off: …", what is held, and "Hasn't synced in 3 h: <the last failure>"
+  once its followed mailboxes have gone half an hour without a changes pass that worked while passes fail, or an hour
+  with none failing; the account view's `sync.stateAt`, `error` and `failures`). **Settings → Mail** links to those pages.
   Proton Mail is added from Add account once dither-accounts lets the hub add it; the other kinds on the manager's page,
   or from Add account after asking ([accounts.md](accounts.md), "Adding mail").
 - **When access ends** (the account leaves the manager's list, or the hub's grant goes), its mail stays readable for
@@ -122,9 +124,12 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
   base64; a forward's files are fetched from the server (`mail.attachment`) then. What the account answers:
   - sent: "Sent", and Sent is asked what changed, so the copy shows in the thread (it threads by In-Reply-To);
   - a dry run: "Dry run: … did not reach the account";
-  - 503, `limited`, or the manager away: tried again, from 2 s up to every 15 min (at once when the manager is back),
-    for a day;
-  - no answer in time: "it may have been sent: look in Sent before sending it again";
+  - 503 (an extractor not ready yet, say), `limited`, the manager away or the account offline: tried again, from 2 s up
+    to every 15 min (at once when the manager is back), for a day. While the account is offline no call is made;
+  - no answer in time (504), a 502 (the page broke after the send), the manager's `unsure`, or `offline` once the call
+    was out: "it may have been sent: look in Sent before sending it again". It is never sent again by itself;
+  - `duplicate`: the manager had sent it already (a try whose answer was lost), so it shows as sent. Each try carries
+    the send's id as `idempotencyKey`, the same every time; a manager that does not know the field ignores it;
   - 501: sending is off for the account, with the extractor's words (Proton today). It stays off while the account's
     status still says it can send, until "Try sending again";
   - 422 `recipients`: the extractor won't send to someone on it (Proton: a pinned key in your contacts, say). Its
@@ -238,8 +243,10 @@ As built, where it differs from §7: "Always from" is its own table, `mail_sende
   the connection is back, once.
 - **When the server says no** (§3.7): 404 drops the change and fetches what changed; 403 undoes every change waiting
   for the account and makes it read only here; 422 (it applied none of it) undoes it; 501 undoes it and hides that
-  button for the account from then on (Proton's `answered`); 410 lists the mailbox again and tries again; anything
-  else is tried again, from 2 s, doubling, ten times, then undone. What failed shows above the list until you dismiss
+  button for the account from then on (Proton's `answered`); 410 lists the mailbox again and tries again. Trouble that
+  may pass (a 503, `offline`, an extractor not ready yet, as Gmail "not attached yet") uses up no try: the account's
+  changes wait for its next status, or from 2 s, doubling to 5 min, whichever comes first. Anything else is tried
+  again, from 2 s, doubling, ten times, then undone. What failed shows above the list until you dismiss
   it.
 - **In part.** A write may apply to some messages and not others (dither-accounts' google kind): the answer names
   the ids the server `refused` and those it could not find (`unknown`), and only those are undone here, with a line
@@ -925,6 +932,36 @@ gap, the account coming online and the hub starting each catch up the same way. 
 the mailbox again and drops what is no longer there. A message removed from one mailbox is deleted only after the
 others were asked, because an IMAP move is a removal there and an addition elsewhere.
 
+### When the account's side fails
+
+Each failed call is sorted once (`mail/backend.ts` troubleOf): **transient** (a 503; the codes `unavailable`,
+`offline`, `backoff`, `limited`, `paused`; an extractor saying it is not ready, as "not attached yet", "has not made a
+sync call", "not open in the sandbox", "still loading", "not connected"; a read that timed out), **layout** (a 502:
+the extractor could not read the service's page), **data** (any other 4xx: this one request) or **bug** (anything
+else).
+
+- **Backing off.** After a transient or layout failure the account's background work (everything but what a page
+  waits for) waits 2 s, doubling with each failure in a row to 10 min, spread ±25%; a call that works ends the wait.
+  A first sync that fails is tried again after a minute, doubling to 30 min. A failed changes pass leaves the
+  mailbox's state where it was, so the next one asks for the same changes.
+- **The bug watch** (`traces/errors.ndjson`, docs/tracing.md) hears of a bug at once, and of transient or layout
+  trouble only once it has lasted 15 min (`MAIL_LIMITS.troubleReportMs`), once for each streak, with `kind`, `status`,
+  `code`, `failures` and `minutes` in its `extra`. A 4xx about one request and an account stopping (`stopped`) are
+  not reported.
+- **On the account's page.** A failed changes pass or first sync is also counted (the account view's `sync.failures`
+  and `error`, cleared by the next changes pass that works), and the Mail section says "Hasn't synced in …" from them
+  and `sync.stateAt` (above).
+
+### Skipped messages
+
+An extractor may leave a message out of a `mail.changes`, `mail.list` or `mail.search` answer because it could not
+parse it, and name its id in the answer's optional `skipped` (dither-accounts' interface). The server still has it, so
+the hub keeps each such id pending (`mail_skipped`, schema-skipped.sql) per mailbox: a relist after a 410 never drops
+its location, and `mail.get` reads it (sync.ts `readSkipped`, on the minute timer and when one is noted), a minute
+after a failure, doubling to at most 6 hours; read, it is stored as its summary. A summary of it, the server's removing
+it, or a 404 from `mail.get` ends it. Keep-all audits count a skipped id as the server's: held here it is held, else it
+is fetched by id, and the window stays "missed" until it is read.
+
 ## Running it locally
 
 - A demo hub has a mail account of its own, on a fake server (`hub/src/mail/fake.ts`, seeded by `seedDemoMail` in
@@ -973,6 +1010,13 @@ others were asked, because an IMAP move is a removal there and an addition elsew
   and Dovecot (`DOVECOT_BIN`, or the binary dither-accounts' own imap tests found), and skips without them:
 
       DITHER_ACCOUNTS_REPO=~/Projects/dither-accounts bun test packages/hub/test/mail-remote.test.ts
+
+- `hub/test/mail-remote-google.test.ts` does the same with a `google` account on dither-accounts' fake Google
+  (test/fake-google.ts there): the first sync, a message arriving, and a Gmail page that stops answering and is
+  reloaded, with no errors.ndjson line meanwhile. The google kind runs Chromium on Xvfb (and x11vnc), so it skips
+  without them (and in CI); it takes a few minutes. `mail-gmail-web-contract.test.ts` runs one script of calls on the
+  fake's `gmail-web` mode and pins where it differs from the google kind (mailbox and message ids, Starred), reading
+  that extractor's protocol module when the checkout is there.
 
 ## Where later slices plug in
 

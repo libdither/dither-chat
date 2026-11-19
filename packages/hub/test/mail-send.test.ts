@@ -261,13 +261,13 @@ describe('when it does not go', () => {
     expect(w.hub.store.accountView(w.hub.store.account(ACC)!).send.ok).not.toBe(false);
   });
 
-  test('503 and limited: tried again, then sent', async () => {
+  test('503 (not ready) and limited: tried again, then sent', async () => {
     const w = await world();
     w.hub.outbox.retryMs = RETRY_MS;
-    w.fake.fail('mail.send', new MailCallError('the account is offline', 503, 'offline'));
+    w.fake.fail('mail.send', new MailCallError('Gmail is not attached yet', 503, 'unavailable'));
     w.fake.fail('mail.send', new MailCallError('slow down', 429, 'limited'));
     const { outboxId } = await clock.wait(w.hub.outbox.accept(reply(w)));
-    await until(() => w.hub.outbox.item(outboxId)!.error?.startsWith('Waiting: the account is offline'), 4000, 'waiting');
+    await until(() => w.hub.outbox.item(outboxId)!.error?.startsWith('Waiting: Gmail is not attached yet'), 4000, 'waiting');
     expect(state(w, outboxId)).toBe('queued');
     await until(() => state(w, outboxId) === 'sent', 8000, 'sent after retries');
     expect(w.fake.sent.length).toBe(1);
@@ -299,6 +299,56 @@ describe('when it does not go', () => {
     await until(() => state(w, outboxId) === 'failed');
     expect(w.hub.outbox.item(outboxId)).toMatchObject({ unsure: true, error: MAYBE_SENT });
     expect(w.hub.outbox.draft(req.draftKey!)!.draft.text).toBe('Maybe.');
+  });
+
+  for (const [what, e] of [
+    ['a 502 (the page broke after the send)', new MailCallError("could not read Gmail's answer", 502)],
+    ['`offline` while the call was out', new MailCallError('the account is not connected', 503, 'offline')],
+    ['`unsure`', new MailCallError('the send may have gone', 500, 'unsure')],
+  ] as const) {
+    test(`${what}: failed, "may have been sent", never sent again`, async () => {
+      const w = await world();
+      w.hub.outbox.retryMs = RETRY_MS;
+      w.fake.fail('mail.send', e);
+      const req = reply(w, { text: 'Once only.' });
+      const { outboxId } = await clock.wait(w.hub.outbox.accept(req));
+      await until(() => state(w, outboxId) === 'failed');
+      expect(w.hub.outbox.item(outboxId)).toMatchObject({ unsure: true, error: MAYBE_SENT });
+      expect(w.hub.outbox.draft(req.draftKey!)!.draft.text).toBe('Once only.');
+      await clock.advance(3_600_000);
+      expect(w.fake.calls.filter((c) => c.op === 'mail.send')).toHaveLength(1);
+    });
+  }
+
+  test('each try carries the send’s id as idempotencyKey; `duplicate` means it went', async () => {
+    const w = await world();
+    w.hub.outbox.retryMs = RETRY_MS;
+    w.fake.fail('mail.send', new MailCallError('Gmail is not attached yet', 503, 'unavailable'));
+    const { outboxId } = await clock.wait(w.hub.outbox.accept(reply(w)));
+    await until(() => state(w, outboxId) === 'sent', 8000, 'sent');
+    const keys = w.fake.calls.filter((c) => c.op === 'mail.send').map((c) => c.input.idempotencyKey);
+    expect(keys).toEqual([outboxId, outboxId]);
+    expect(w.fake.sent[0].mail.idempotencyKey).toBe(outboxId);
+    // The manager sent it on a try whose answer was lost: the next try hears `duplicate`, and it is sent, once.
+    const second = await clock.wait(w.hub.outbox.accept(reply(w, { text: 'Again?' })));
+    w.fake.fail('mail.send', new MailCallError('this message was sent already', 409, 'duplicate'));
+    await until(() => state(w, second.outboxId) === 'sent', 8000, 'sent by an earlier try');
+    expect(w.hub.outbox.item(second.outboxId)).toMatchObject({ state: 'sent', unsure: false });
+  });
+
+  test('the account offline: the send waits with no call, and goes once it is back', async () => {
+    const w = await world();
+    w.hub.outbox.retryMs = [1_000];
+    // The composer fetched the original when it opened.
+    await clock.wait(w.hub.outbox.compose('reply', msg('<dinner-1@x>'), null));
+    w.fake.setOnline(ACC, false);
+    await until(() => !w.hub.store.account(ACC)!.online, 2000, 'offline');
+    const { outboxId } = await clock.wait(w.hub.outbox.accept(reply(w)));
+    await until(() => w.hub.outbox.item(outboxId)!.error === 'Waiting: the account is offline', 4000, 'waiting');
+    expect(w.fake.calls.filter((c) => c.op === 'mail.send')).toHaveLength(0);
+    w.fake.setOnline(ACC, true);
+    await until(() => state(w, outboxId) === 'sent', 8000, 'sent');
+    expect(w.fake.sent).toHaveLength(1);
   });
 
   test('From must be one of the account’s addresses (422, before it is held); an alias goes as itself', async () => {

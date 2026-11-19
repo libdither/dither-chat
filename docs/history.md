@@ -126,7 +126,8 @@ deleted message's files, as Signal clients do, so for Signal the words stay and 
 
 Which settings apply, most specific first: the account's (`sources[accountId]`), its network's (`sources.signal`),
 then the global switch. Settings live in the hub (`meta.retention`, `GET/PUT /api/retention`) and reach every device
-(`{ t: 'retention' }`).
+(`{ t: 'retention' }`). A device asks for them again on every reconnect, so one that started out of the hub's reach, or
+was away while they changed, catches up without a reload.
 
 ## Changes
 

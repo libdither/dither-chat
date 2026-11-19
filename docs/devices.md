@@ -46,7 +46,9 @@ device's rules, so the phone can be set up from the laptop.
 A device is a page install: the random id the page keeps in localStorage (`dither-chat:device`), the same one the
 activity log uses ([activity.md](activity.md)). On every connect the page says hello (`POST /api/devices/hello`) with
 that id, a label ("Linux, Chrome", "Android app, Pixel") and the push endpoint it holds, if any. The hub then ties
-that push registration to the device.
+that push registration to the device. A hello the network lost (a phone waking or changing networks often loses the
+first requests of a new connection) is said again 5 s later, then at doubling waits up to 5 minutes, until one gets
+through; a refusal is not tried again.
 
 A push registration no page has claimed yet (the phone has not opened the app since it turned push on) is listed as a
 device of its own, under its push id, and rules can be set on it. When a page claims it, those rules move to the page's

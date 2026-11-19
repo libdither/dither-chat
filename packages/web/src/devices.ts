@@ -8,6 +8,7 @@ import { effect } from '@preact/signals';
 import { deviceId } from './activity.ts';
 import { android } from './android.ts';
 import { takesClear } from './appversion.ts';
+import { RetryLater } from './retrylater.ts';
 import { api, connected, db } from './state.ts';
 
 export { deviceId };
@@ -33,6 +34,13 @@ async function pushEndpoint(): Promise<string | null> {
 
 let said = '';
 
+/**
+ * A hello the network lost is said again soon, not at the next reconnect, which can be many minutes off: a phone that
+ * wakes or changes networks often loses the first requests of a connection that has just opened, while the socket
+ * stays up. A refusal (an answer with a status) is not tried again.
+ */
+const helloAgain = new RetryLater(5_000, 5 * 60_000);
+
 /** Tell the hub who this is. Again whenever the push endpoint may have changed; repeats are skipped. */
 export async function sayHello(force = false) {
   if (!connected.value) return;
@@ -42,7 +50,13 @@ export async function sayHello(force = false) {
   const key = JSON.stringify(body);
   if (!force && key === said) return;
   said = key;
-  await api('/api/devices/hello', { method: 'POST', body }).catch(() => (said = ''));
+  await api('/api/devices/hello', { method: 'POST', body }).then(
+    () => helloAgain.reset(),
+    (e: unknown) => {
+      said = '';
+      if (typeof (e as { status?: unknown } | null)?.status !== 'number') helloAgain.schedule(() => void sayHello());
+    },
+  );
 }
 
 export function startDevices() {

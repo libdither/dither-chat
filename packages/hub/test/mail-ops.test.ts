@@ -355,16 +355,52 @@ describe('what the server answers', () => {
 
   test('a failure that may pass is tried again, pending meanwhile', async () => {
     const { fake, st, ops } = await world({ seed });
-    fake.fail('mail.flag', new MailCallError('the account is busy', 503));
+    fake.fail('mail.flag', new MailCallError('Internal Server Error', 500));
     ops.flag({ messageIds: [mid('<n1@x>')], flagged: true });
     await clock.wait(ops.idle());
     const op = st.one('SELECT * FROM mail_op')!;
-    expect(op).toMatchObject({ attempts: 1, error: 'the account is busy' });
+    expect(op).toMatchObject({ attempts: 1, error: 'Internal Server Error' });
     expect(msg(st, '<n1@x>').flagged).toBe(1);
     st.db.query('UPDATE mail_op SET next_at = 0').run();
     await clock.wait(ops.idle());
     expect(onServer(fake, '<n1@x>').flags.flagged).toBe(true);
     expect(st.one<{ n: number }>('SELECT COUNT(*) AS n FROM mail_op')!.n).toBe(0);
+  });
+});
+
+describe('an account not ready', () => {
+  const notAttached = () => new MailCallError('Gmail is not attached yet', 503, 'unavailable');
+  const moves = (fake: FakeMailBackend) => fake.calls.filter((c) => c.op === 'mail.move');
+
+  test('503: no try used up; it waits, longer each time, past ten failures, and then goes', async () => {
+    const { fake, st, ops } = await world({ seed });
+    for (let i = 0; i < 12; i++) fake.fail('mail.move', notAttached());
+    ops.move({ threadIds: [thread(st, '<n1@x>').id], to: 'archive' });
+    await until(() => onServer(fake, '<n1@x>').mailboxId === 'Archive', 3_600_000, 'the archive');
+    expect(moves(fake)).toHaveLength(13);
+    expect(thread(st, '<n1@x>')).toMatchObject({ roles: ['archive'], pending: false });
+    expect(st.one<{ n: number }>('SELECT COUNT(*) AS n FROM mail_op')!.n).toBe(0);
+    // From 2 s, doubling (±25%), to 5 min.
+    const at = moves(fake).map((c) => c.at);
+    const gaps = at.slice(1).map((t, i) => t - at[i]);
+    expect(gaps[0]).toBeGreaterThanOrEqual(1_500);
+    expect(gaps[0]).toBeLessThanOrEqual(2_600);
+    expect(gaps[5]).toBeGreaterThanOrEqual(48_000);
+    expect(Math.max(...gaps)).toBeLessThanOrEqual(375_100);
+  });
+
+  test('a status from the account: its writes try again at once', async () => {
+    const { fake, st, ops } = await world({ seed });
+    for (let i = 0; i < 6; i++) fake.fail('mail.move', notAttached());
+    ops.move({ threadIds: [thread(st, '<n1@x>').id], to: 'archive' });
+    await until(() => moves(fake).length === 6, 3_600_000, 'six tries');
+    await clock.settle();
+    expect(st.one('SELECT attempts FROM mail_op')).toMatchObject({ attempts: 0 });
+    const before = clock.now();
+    // The extractor says it is ready (its status): the write goes now, not after the 1 min wait.
+    fake.setStatus(ACC, { status: 'online', self: { email: ME } });
+    await until(() => onServer(fake, '<n1@x>').mailboxId === 'Archive', 1_000, 'the archive');
+    expect(clock.now() - before).toBeLessThan(1_000);
   });
 });
 

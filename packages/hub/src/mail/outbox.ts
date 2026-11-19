@@ -8,14 +8,18 @@
  *   success           `sent`, with the Message-ID it went out with; Sent is asked what changed, so its copy shows
  *   dry run           `sent`, marked as a dry run: nothing reached the account
  *   503, limited      tried again later (2 s, doubling to 15 min), for up to a day
- *   timeout (504)     `failed`, "may have been sent": look in Sent before sending it again
+ *   timeout (504), 502, `unsure`, or `offline` once the call went out
+ *                     `failed`, "may have been sent": look in Sent before sending it again
+ *   `duplicate`       `sent`: the manager had sent this one already (its `idempotencyKey`)
  *   501               `failed`, and sending is off for the account with the extractor's words (Proton today)
  *   422 from          `failed`, "That From is not one of this account's addresses" (also with no code)
  *   422, other codes  `failed` with the extractor's sentence, each "recipient N" in it the address; sending stays on
  *   403, other        `failed` with why (a read grant; the extractor's words)
  *
  * Whatever fails goes back to the drafts, files and all: a failed send is never a lost message. A send the hub stopped
- * in the middle of may have gone, and says so.
+ * in the middle of may have gone, and says so. Each try carries the send's id as `idempotencyKey`, the same every time,
+ * so a manager that knows it answers `duplicate` instead of sending it twice (an older one ignores it). A send waits,
+ * without a call, while the account is offline: an `offline` answer then means it went away during the call.
  *
  * Drafts live here too (`mail_draft`): dither-accounts has no drafts op. Keys are `t:<thread>` for a reply or forward
  * and `new:<uuid>` for a new message.
@@ -492,12 +496,15 @@ export class MailOutbox {
       if (acc.level !== 'write') return this.fail(r, READ_ONLY);
       const sync = this.hub.sync(r.account_id);
       if (!this.hub.backend?.connected || !sync) return this.later(r, 'dither-accounts is not reachable');
+      if (!acc.online) return this.later(r, 'the account is offline');
       this.run(`UPDATE mail_outbox SET state = 'sending', attempts = attempts + 1, updated_at = ? WHERE id = ?`, this.now(), id);
       this.dirty = true;
       let res: { messageId?: string; sentId?: string | null; dryRun?: boolean };
       try {
         res = await sync.queue.run(P0, `send:${id}`, async () => {
           const out: M.OutgoingMail = json(r.outgoing, {} as M.OutgoingMail);
+          // The same on every try of this send.
+          out.idempotencyKey = r.id;
           // Where the original is now (an IMAP move changes its id).
           if (r.reply_to) {
             const at = this.store.nativeOf(r.reply_to);
@@ -580,7 +587,11 @@ export class MailOutbox {
       return this.fail(r, `Sending is off for this account: ${msg}.`);
     }
     if (s === 403 || e.code === 'denied') return this.fail(r, READ_ONLY);
-    if (s === 504 || e.code === 'timeout') return this.fail(r, MAYBE_SENT, { unsure: true });
+    // The manager sent this one already: a try before this one went through.
+    if (e.code === 'duplicate') return this.sent(r, {});
+    // It may have gone: no answer in time, the page broke after the send (502), the manager could not tell, or the
+    // account went away while the call was out (it was online when it started).
+    if (s === 504 || s === 502 || e.code === 'timeout' || e.code === 'unsure' || e.code === 'offline') return this.fail(r, MAYBE_SENT, { unsure: true });
     if (!s || s === 503 || s === 429 || e.code === 'limited' || e.code === 'offline') return this.later(r, msg);
     return this.fail(r, sentence(msg));
   }

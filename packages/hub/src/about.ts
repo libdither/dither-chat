@@ -9,7 +9,7 @@ import { hubId } from '@dither-chat/protocol/ids';
 import { addTables, givePace, takePace } from './add.ts';
 import type { Attempt } from './attempts.ts';
 import { lockedModeration, moderationView } from './moderation.ts';
-import { feedRefusal, isFeed } from './feed.ts';
+import { feedRefusalFor, isFeed } from './feed.ts';
 import type { Store } from './store.ts';
 
 interface AboutDeps {
@@ -65,6 +65,8 @@ export class Abouts {
     if (!t) throw new AboutError(`no such ${kind}`, 404);
     const accountId = this.account(kind, id, requested);
     const name = accountId ? this.d.store.account(accountId)?.label : null;
+    // A conversation the hub made (a feed, logged posts, a followed post): the network has no settings for it to ask.
+    if (kind === 'conversation' && isFeed(this.d.store.db, id)) return this.fallback(kind, id, t.network, accountId, feedRefusalFor(this.d.store.db, id)!);
     if (accountId && this.d.online(accountId) && caps(this.d.store, accountId).includes('about')) {
       try {
         const about = await this.d.command<P.About>(accountId, { t: 'about', target: { kind, nativeId: t.nativeId } }, 30_000);
@@ -99,7 +101,7 @@ export class Abouts {
   async configure(kind: Kind, id: string, change: P.AboutChange, requested?: string): Promise<P.AboutView> {
     const t = this.target(kind, id);
     if (!t) throw new AboutError(`no such ${kind}`, 404);
-    if (kind === 'conversation' && isFeed(this.d.store.db, id)) throw new AboutError(feedRefusal(t.network), 409);
+    if (kind === 'conversation' && isFeed(this.d.store.db, id)) throw new AboutError(feedRefusalFor(this.d.store.db, id)!, 409);
     if (!change || typeof change !== 'object' || typeof (change as { key?: unknown }).key !== 'string') throw new AboutError('what should change?', 400);
     const problem = aboutChangeProblem(t.network, kind, change);
     if (problem) throw new AboutError(problem, 400);
@@ -161,7 +163,7 @@ export class Abouts {
   async addMembers(id: string, b: { identities?: unknown; accountId?: unknown }, a?: Attempt): Promise<P.AddMembersView> {
     const t = this.target('conversation', id);
     if (!t) throw new AboutError('no such conversation', 404);
-    if (isFeed(this.d.store.db, id)) throw new AboutError(feedRefusal(t.network), 409);
+    if (isFeed(this.d.store.db, id)) throw new AboutError(feedRefusalFor(this.d.store.db, id)!, 409);
     // For the hub's log (attempts.ts), filled in as it becomes known.
     if (a) a.network = t.network;
     const wanted = Array.isArray(b.identities) ? [...new Set(b.identities)] : [];

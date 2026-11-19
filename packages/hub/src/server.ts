@@ -68,6 +68,7 @@ import { mailPeople } from './mail/people.ts';
 import { Adding, profileLinksOf, requestHeld, requestViews } from './add.ts';
 import { feedRefusalFor, isFeed } from './feed.ts';
 import { Posts, PostsError } from './posts.ts';
+import { Follows, type FollowConfig } from './follows.ts';
 import { Timelines } from './timelines.ts';
 import { TranslateError, Translator } from './translate.ts';
 import { calendarOff, type CalendarLink } from './calendar.ts';
@@ -179,6 +180,10 @@ interface ServerOpts {
   onSavedReminder?: (n: { title: string; body: string; conversationId: string; messageId: string }) => void;
   /** Same person? (samepeople.ts): the database file for its worker (none: worked out on this thread), and jev's address. */
   matches?: { file: string | null; jevUrl: string | null };
+  /** New live messages the hub made itself (a followed post's replies, follows.ts): triage decides them (main.ts). */
+  onFresh?: (messageIds: string[]) => void;
+  /** How often a followed post is read again (follows.ts FOLLOW unless told otherwise). */
+  follow?: FollowConfig;
 }
 
 // ------------------------------------------------------------------ access
@@ -341,6 +346,8 @@ export class HubServer {
   readonly collector: ProfileCollector;
   /** Public posts read and logged as messages (posts.ts, docs/feed.md "Threads"). */
   readonly posts: Posts;
+  /** Posts you follow, read again for new replies (follows.ts, docs/feed.md "Following a post"). */
+  readonly follows: Follows;
   readonly timelines: Timelines;
   /** Translating posts and messages: the network's own, or a translation server (translate.ts). */
   readonly translator: Translator;
@@ -415,7 +422,9 @@ export class HubServer {
       note: (a, line) => sup.note(a, line),
     });
     this.groups = new Groups({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line) });
-    this.posts = new Posts({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), changed: () => this.flush() });
+    this.posts = new Posts({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), changed: () => this.flush(), fresh: (ids) => this.opts.onFresh?.(ids) });
+    // Through the same pace: a check never reads while a job or the gap fill does on that account.
+    this.follows = new Follows({ store, posts: this.posts, online: (a) => sup.online(a), pace, config: opts.follow, changed: () => this.flush(), log: (l) => console.warn(l) });
     this.timelines = new Timelines({ store, posts: this.posts, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), files: (ids) => this.uploads.get(ids), changed: () => this.flush() });
     this.translator = new Translator({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
@@ -595,6 +604,7 @@ export class HubServer {
     this.pruneTimer = setInterval(() => this.store.journal.prune(), 3_600_000);
     this.sendExtras.later.start();
     this.timelines.start();
+    this.follows.start();
     return this.server;
   }
 
@@ -603,6 +613,7 @@ export class HubServer {
     clearInterval(this.pruneTimer);
     this.sendExtras.later.stop();
     this.timelines.stop();
+    this.follows.stop();
     this.importer.stop();
     this.gapfill.stopAll();
     this.jobs.stop();
@@ -1397,7 +1408,7 @@ export class HubServer {
       const cursor = url.searchParams.get('cursor') ?? undefined;
       if (cursor && cursor.length > 2000) return bad('cursor: too long');
       try {
-        const v = await this.posts.thread(network, m[2], cursor);
+        const v = await this.posts.thread(network, m[2], cursor, url.searchParams.get('fresh') === '1');
         this.flush();
         return ok(v);
       } catch (e) {
@@ -1427,6 +1438,23 @@ export class HubServer {
         const v = await this.posts.publish(network, { text: b.text, replyTo: b.replyTo, quote: b.quote, key: b.key, account: b.account });
         this.flush();
         return ok(v);
+      } catch (e) {
+        return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
+      }
+    }
+    // Following a post (follows.ts, docs/feed.md "Following a post"): PUT follows (reading the thread first), DELETE
+    // stops the checks and keeps the conversation, GET says how it stands and which replies are new since it was read.
+    if ((m = path.match(/^\/api\/posts\/([a-z]+)\/(\d{1,25})\/follow$/)) && (method === 'PUT' || method === 'DELETE' || method === 'GET')) {
+      const network = m[1] as P.Network;
+      if (!(network in NETWORK_META)) return bad('no such network', 404);
+      try {
+        if (method === 'GET') {
+          const f = this.follows.state(network, m[2], true);
+          return f ? ok(f) : bad('That post is not followed.', 404);
+        }
+        const f = method === 'PUT' ? await this.follows.follow(network, m[2]) : this.follows.unfollow(network, m[2]);
+        this.flush();
+        return ok(f);
       } catch (e) {
         return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
       }
