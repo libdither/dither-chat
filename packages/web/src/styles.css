@@ -14130,16 +14130,6 @@ button.msg-edited.link:hover {
   padding: 4px 8px;
   border-top: 1px solid var(--border-soft);
 }
-/* A phone: Preview is its eye alone, so the bar is one row. */
-@media (max-width: 480px) {
-  .mc-preview-btn span {
-    display: none;
-  }
-  .mc-fmt {
-    min-width: 30px;
-    padding: 0 5px;
-  }
-}
 .mc-fmt {
   flex: none;
   display: inline-flex;
@@ -14192,6 +14182,16 @@ button.msg-edited.link:hover {
 .mc-preview-btn.on {
   background: var(--bg-raised);
   color: var(--text);
+}
+/* A phone: Preview is its eye alone, so the bar is one row. */
+@media (max-width: 480px) {
+  .mc-preview-btn span {
+    display: none;
+  }
+  .mc-fmt {
+    min-width: 28px;
+    padding: 0 4px;
+  }
 }
 .mc-preview {
   min-height: 160px;
