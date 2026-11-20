@@ -6,10 +6,11 @@
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 import { applyCalls, ringingCalls, voice } from '../ringing.ts';
-import { startCall } from '../call.ts';
+import { activeCall, startCall } from '../call.ts';
 import { api, db, go, prefs, rev, toast } from '../state.ts';
 import { convTitle } from '../model.ts';
 import { Avatar } from './bits.tsx';
+import { CallAvatar, callMarks } from './CallAvatar.tsx';
 import { Icon } from './icons.tsx';
 
 /** Answer: join the call from this device (a click: the microphone needs it). */
@@ -90,16 +91,18 @@ export function RingCards() {
 export function VoicePeople({ conversationId, size = 18, names, class: cls = '', style }: { conversationId: string; size?: number; names?: boolean; class?: string; style?: Record<string, string> }) {
   const v = voice.value.get(conversationId);
   if (!v || (!v.members.length && !v.status)) return null;
+  const call = activeCall.value?.conversationId === conversationId && activeCall.value.phase !== 'ended' ? activeCall.value : null;
   return (
     <span class={`voice-people ${cls}`} style={style} data-voice={conversationId}>
       {v.status && <span class="voice-status">{v.status}</span>}
       {v.members.map((m) => {
-        const p = who(m.identityId);
+        // In the call you're in here, the call's own word on them (speaking, held); else what the channel says.
+        const inCall = call?.participants.find((p) => p.id === m.identityId);
+        const marks = callMarks(inCall ? call : null, inCall ?? { id: m.identityId, muted: m.muted, deafened: m.deafened });
         return (
-          <span class="voice-person" title={`${p.name}${m.muted ? ' (muted)' : ''}${m.deafened ? ' (deafened)' : ''}${m.video ? ' (camera on)' : ''}${m.streaming ? ' (live)' : ''}`}>
-            <Avatar id={p.personId ?? m.identityId} name={p.name} url={p.avatar} size={size} network="discord" />
-            {names && <span class="voice-name">{p.name}</span>}
-            {(m.muted || m.deafened) && <Icon name={m.deafened ? 'headphonesOff' : 'micOff'} size={12} class="call-flag" />}
+          <span class="voice-person" title={`${marks.name}${m.muted ? ' (muted)' : ''}${m.deafened ? ' (deafened)' : ''}${m.video ? ' (camera on)' : ''}${m.streaming ? ' (live)' : ''}`}>
+            <CallAvatar {...marks} size={size} />
+            {names && <span class="voice-name">{marks.name}</span>}
             {m.streaming && <span class="live-tag">LIVE</span>}
           </span>
         );
