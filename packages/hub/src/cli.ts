@@ -8,6 +8,8 @@ export {};
  *   bun packages/hub/src/cli.ts sessions                  # the signed-in devices
  *   bun packages/hub/src/cli.ts revoke-sessions [id]      # sign out one device, or every one
  *   bun packages/hub/src/cli.ts token [--rotate]          # where the service token is; --rotate makes a new one
+ *   bun packages/hub/src/cli.ts asker add <name> [--kinds rebuild,deploy] [--out F]   # an approvals asker's token
+ *   bun packages/hub/src/cli.ts asker list | asker remove <name>                      # (docs/approvals.md)
  *
  * Over the hub's HTTP API (the hub must be running; they send the service token):
  *
@@ -20,7 +22,9 @@ export {};
  * --data <dir> (or DITHER_DATA) is the hub's data dir: default ~/.local/share/dither-chat when it exists, else the
  * repo's .data. --hub http://127.0.0.1:8460 (or DITHER_HUB) picks the hub.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { Askers } from './approvals.ts';
+import { KINDS, type Kind } from '@dither-chat/approvals';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -49,6 +53,8 @@ const config = opt('config');
 const secret = opt('secret');
 const file = opt('file');
 const rotate = flag('rotate');
+const kindsOpt = opt('kinds');
+const out = opt('out');
 const [cmd, a, b, c] = args;
 
 const token = () => {
@@ -121,6 +127,25 @@ switch (cmd) {
     if (!existsSync(dataDir)) throw new Error(`no data dir at ${dataDir} (pass --data)`);
     ensureToken(dataDir, rotate);
     console.log(`${rotate ? 'a new service token is in' : 'the service token is in'} ${join(dataDir, TOKEN_FILE)} (0600). Send it as "Authorization: Bearer <token>".`);
+    break;
+  }
+  case 'asker': {
+    if (!existsSync(dataDir)) throw new Error(`no data dir at ${dataDir} (pass --data)`);
+    const askers = new Askers(dataDir);
+    if (a === 'add' && b) {
+      const kinds = kindsOpt ? kindsOpt.split(',').map((k) => k.trim()) : undefined;
+      const badKind = kinds?.find((k) => !KINDS.includes(k as Kind));
+      if (badKind) throw new Error(`no kind ${badKind} (have ${KINDS.join(', ')})`);
+      const t = askers.add(b, kinds as Kind[] | undefined);
+      if (out) {
+        writeFileSync(out, `${t}\n`, { mode: 0o600 });
+        chmodSync(out, 0o600);
+        console.log(`asker ${b}: its token is in ${out} (0600); give it to the service as DITHER_ASK_TOKEN_FILE`);
+      } else console.log(`asker ${b}'s token (shown once; the hub keeps only its hash):\n${t}`);
+    } else if (a === 'list') {
+      for (const x of askers.list()) console.log(`${x.name.padEnd(20)} ${x.kinds.join(',')}  since ${when(x.createdAt)}`);
+    } else if (a === 'remove' && b) console.log(askers.remove(b) ? `asker ${b} removed` : `no asker ${b}`);
+    else throw new Error('asker add <name> [--kinds k1,k2] [--out file] | asker list | asker remove <name>');
     break;
   }
   case 'accounts': {

@@ -98,6 +98,8 @@ without being a contact (Signal, Instagram, Messenger, X), or asks to join a gro
   is accepted: on Signal, Instagram, Messenger and X, opening a request tells the sender. The adapter still sends the
   conversation and its messages as usual.
 - Answering: POST /api/requests/:id with one of the answers the request offers.
+- **Someone else's to answer** (`forOthers`): a knock on a Matrix room you are in but don't moderate (you can't both
+  invite and kick there). It is kept to see who is asking, with no answers; it never notifies and waits on nobody here.
 
 ## Protocol (packages/protocol/src/add.ts, adapter.ts)
 
@@ -172,9 +174,9 @@ What each network will do once its adapter has it. **None of the real adapters d
 | `chat.whatsapp.com/MapleGardenSwap26` | a WhatsApp group: Join |
 | any `signal.group/#…` link | partial; Join adds a group |
 
-After connecting, the demo sends five requests: a Discord friend request to main, two to alt that Discord flagged (one
+After connecting, the demo sends six requests: a Discord friend request to main, two to alt that Discord flagged (one
 as possible spam, one from someone it shares nothing with: Accept without confirm comes back with Discord's confirm
-sentence, and Message to the spam one is refused), a Matrix room invite, and a Signal message request whose
+sentence, and Message to the spam one is refused), a Matrix room invite, a knock on the Matrix room Rust for its moderators, and a Signal message request whose
 conversation stays out of the inbox. The Discord and Telegram accounts send their lists: main's friends and a block,
 alt's friends and a request it sent (Mara), Telegram's contacts and a block; each can be removed. Add friend on a
 Discord username nobody in the demo has (`kestrel.dev`) wants a confirm first. A demo account's `capabilities` action
@@ -291,7 +293,9 @@ someone you know notifies once; and a profile has the buttons for how you stand 
 - **The Requests row.** While anything waits, the one-list inbox has a **Requests** row at its top, under "Needs you",
   whatever the filter: how many, who asked, and when the newest came. It counts on no badge: a request is not unread.
   What a network filed as spam (Discord's spam DMs) is not counted or named there either, only said ("2 filed as
-  spam"), and waits last in the view under "Filed as spam"; it never notifies.
+  spam"), and waits last in the view under "Filed as spam"; it never notifies. A request someone else answers (a
+  room's moderators) brings no row and no count; the view lists it after everything else, under "For the moderators
+  of groups you're in", with no buttons.
   Under it, a network's notifications about you have a row of their own built the same way (X's likes, reposts,
   replies and follows: [feed.md](feed.md)).
   Opening it is the Requests view (`#/requests`; `#/requests/<id>` shows one card, outlined). On a desktop it is the

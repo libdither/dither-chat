@@ -1,3 +1,4 @@
+import { isArrivedCopy } from '../arrived.ts';
 import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, durationLabel, NETWORK_META, RULE_LABEL, RULE_LEVELS, sendBlocker, showsGone, showsInline, type PictureLayout } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -1091,6 +1092,13 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     const m = all[i];
     if (!prev || !sameDay(prev.ts, m.ts)) items.push(<div class="day-sep"><span>{dayLabel(m.ts)}</span></div>);
     if (i === unreadFrom) items.push(<div class="new-sep"><span>New</span></div>);
+    // A push's copy, before the hub has answered (arrived.ts): what came before it may not be here yet.
+    if (isArrivedCopy(m) && !(prev && isArrivedCopy(prev)))
+      items.push(
+        <div class="day-sep arrived-sep" role="note">
+          <span>From notifications · earlier messages may be missing until the hub is back</span>
+        </div>,
+      );
     const run = runs.get(m.id);
     const ends = !!run && run[run.length - 1] === m;
     if (run && !ends && onlyPictures(m)) {

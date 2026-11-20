@@ -158,7 +158,7 @@ object Notifications {
      * The push's tier: "push" an alert, "quiet" a Conversation, "digest" a row of the ranked list. A hub from before
      * the tiers sends only `level`, which knows the first two.
      */
-    private fun tierOf(d: JSONObject): String = when (val tier = d.optString("tier")) {
+    internal fun tierOf(d: JSONObject): String = when (val tier = d.optString("tier")) {
         "push", "quiet", "digest" -> tier
         else -> if (d.optString("level") == "quiet") "quiet" else "push"
     }
@@ -202,7 +202,7 @@ object Notifications {
      * The marks by tier: an alert can be called not urgent, a Conversation one that should have alerted, a list row
      * either less like this or one that should have alerted. Mail has no alert marks, only "Less like this".
      */
-    private fun marksOf(d: JSONObject, tier: String): Marks? {
+    internal fun marksOf(d: JSONObject, tier: String): Marks? {
         val id = d.optString("messageId").ifEmpty { return null }
         val mail = d.optString("mailThreadId").isNotEmpty()
         val offered = when {
@@ -215,10 +215,10 @@ object Notifications {
     }
 
     /** One message in a notification, from the payload's `lines`. */
-    private class Line(val author: String, val key: String, val body: String, val ts: Long)
+    internal class Line(val author: String, val key: String, val body: String, val ts: Long)
 
     /** What a push says of its chat: its name, whether it is a group, its unread lines and where its pictures are. */
-    private class Chat(private val d: JSONObject) {
+    internal class Chat(private val d: JSONObject) {
         private val title = d.optString("title", "dither-chat")
         private val cv = d.optJSONObject("conv")
         val group = cv != null && cv.optString("shape", "direct") != "direct"

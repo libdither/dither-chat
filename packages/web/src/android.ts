@@ -9,8 +9,9 @@ import { effect, signal } from '@preact/signals';
 import { activeCall, leaveCall, setMuted, startCall } from './call.ts';
 import { noteOpen } from './activity.ts';
 import { reportAppCrashes } from './errors.ts';
+import { addArrived, onArrivedDone } from './arrived.ts';
 import { db, go, parseHash, prefs } from './state.ts';
-import { rev } from './versions.ts';
+import { onceListed } from './versions.ts';
 import { api } from './api.ts';
 import type * as P from '@dither-chat/protocol';
 import { onIme, keepKeyboardRoom } from './phone.ts';
@@ -204,6 +205,10 @@ function receive(d: any) {
     case 'crashes':
       reportAppCrashes(Array.isArray(d.list) ? d.list : [], android!.info.value?.version);
       break;
+    // What pushes brought while the app was closed (Arrived.kt, arrived.ts).
+    case 'arrived':
+      addArrived(Array.isArray(d.list) ? d.list : []);
+      break;
     case 'call.answer':
       answer(d);
       break;
@@ -235,6 +240,7 @@ export function startAndroid() {
     }
   });
   android.send({ t: 'hello' });
+  onArrivedDone((upTo) => android!.send({ t: 'arrived.done', upTo }));
   // The call keeps going with the screen off only inside a foreground service, which the app starts and stops here.
   let last = '';
   effect(() => {
@@ -269,14 +275,5 @@ async function answer(d: { call?: string; conversationId?: string; accountId?: s
     account = r?.calls.find((c) => c.id === d.call)?.accountId ?? '';
   }
   if (!account) return;
-  const join = () => void startCall(conv, account, prefs.value.callMode);
-  if (db.accounts.has(account)) return join();
-  const giveUp = setTimeout(() => stop(), 60_000);
-  const stop = effect(() => {
-    rev.value;
-    if (!db.accounts.has(account)) return;
-    clearTimeout(giveUp);
-    queueMicrotask(() => stop());
-    join();
-  });
+  onceListed(() => db.accounts.has(account), () => void startCall(conv, account, prefs.value.callMode), 60_000);
 }

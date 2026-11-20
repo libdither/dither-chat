@@ -1,0 +1,139 @@
+# The Android app on an emulator (docs/testing.md, "Android on an emulator"): the debug build against demo hubs,
+# through scripts/verify-android.ts (calls and rings, then a push's copy shown offline; rings come through the test's
+# own push distributor, apps/android/testpush). About 5 minutes, so it runs only when the app or the web files that
+# talk to it change, on main, and every night. It is not part of the
+# required `check` yet: it reports, and becomes required once it has passed 20 runs on main in a row
+# (`bun scripts/android-device-streak.ts`).
+name: Android device
+
+on:
+  pull_request:
+    paths:
+      - 'apps/android/**'
+      - 'packages/web/src/android.ts'
+      - 'packages/web/src/arrived.ts'
+      - 'scripts/android-device.ts'
+      - 'scripts/android-testpush.ts'
+      - 'scripts/verify-android*.ts'
+      - '.github/workflows/android-device.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/android/**'
+      - 'packages/web/src/android.ts'
+      - 'packages/web/src/arrived.ts'
+      - 'scripts/android-device.ts'
+      - 'scripts/android-testpush.ts'
+      - 'scripts/verify-android*.ts'
+      - '.github/workflows/android-device.yml'
+  # Every night on main, whatever changed: the hub and the web app change under the app too, and the nightly runs are
+  # the streak that shows whether it is steady enough to require.
+  schedule:
+    - cron: '23 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-device-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  API_LEVEL: 35
+  TARGET: default
+  ARCH: x86_64
+  # The emulator's build, pinned: a snapshot only loads in the build that made it, and the runner action would
+  # otherwise install the latest, so a new release would leave the cached snapshot unusable (a cold boot each run).
+  EMULATOR_BUILD: 16970787
+  # Software GPU, as on the machines it was written on (docs/android.md); no audio or cameras, which the tests fake.
+  EMULATOR_OPTIONS: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -camera-back none -camera-front none
+
+jobs:
+  emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # The browser's files from a cold disk in the background, as in ci.yml's boot: the calls test's far end is Chrome.
+      - run: b=$(command -v chromium || command -v google-chrome) && (find -L "$(dirname "$(readlink -f "$b")")" -type f -print0 | xargs -0 cat > /dev/null 2>&1 &) || true
+      - uses: actions/checkout@v4
+
+      # Hardware acceleration for the emulator: standard Linux runners have KVM, behind this one rule.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun run web:build
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-36.1 build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build the debug app, the shade presser and the test push distributor
+        working-directory: apps/android
+        run: ./gradlew --no-daemon :app:assembleDebug :uitest:assembleDebug :uitest:assembleDebugAndroidTest :testpush:assembleDebug
+
+      # A booted emulator's snapshot, kept between runs: a boot from it takes seconds, a cold one a minute or two. It is
+      # saved straight after it is made, before any test runs: saved at the end of the job, as actions/cache does by
+      # itself, it would hold that run's app, signed with that runner's debug key, and the next runner's install of its
+      # own build over it fails (INSTALL_FAILED_UPDATE_INCOMPATIBLE).
+      - name: Emulator snapshot cache
+        uses: actions/cache/restore@v4
+        id: avd-cache
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-${{ env.API_LEVEL }}-${{ env.TARGET }}-${{ env.ARCH }}-${{ env.EMULATOR_BUILD }}-v2
+      - name: Make the emulator snapshot
+        if: steps.avd-cache.outputs.cache-hit != 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ env.API_LEVEL }}
+          target: ${{ env.TARGET }}
+          arch: ${{ env.ARCH }}
+          emulator-build: ${{ env.EMULATOR_BUILD }}
+          ram-size: 4096M
+          force-avd-creation: false
+          emulator-options: ${{ env.EMULATOR_OPTIONS }}
+          disable-animations: false
+          script: echo "Snapshot made for the cache."
+      - name: Save the emulator snapshot
+        if: steps.avd-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: ${{ steps.avd-cache.outputs.cache-primary-key }}
+
+      - name: The app on the emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ env.API_LEVEL }}
+          target: ${{ env.TARGET }}
+          arch: ${{ env.ARCH }}
+          emulator-build: ${{ env.EMULATOR_BUILD }}
+          ram-size: 4096M
+          force-avd-creation: false
+          emulator-options: -no-snapshot-save ${{ env.EMULATOR_OPTIONS }}
+          disable-animations: true
+          # One line: the action runs each line of `script` as a command of its own.
+          script: bun scripts/verify-android.ts --serial emulator-5554 --shots ${{ runner.temp }}/android-shots
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: android-shots
+          path: ${{ runner.temp }}/android-shots
+          if-no-files-found: ignore

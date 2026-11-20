@@ -1732,7 +1732,12 @@ class DemoAdd {
         { nativeId: `friend-${D.drops.nativeId}`, kind: 'friend', from: D.drops.nativeId, ts: now - 40 * 60_000, answers: ['accept', 'decline', 'block'], warning: 'Discord filed this request as possible spam' },
         { nativeId: `friend-${D.wren.nativeId}`, kind: 'friend', from: D.wren.nativeId, ts: now - 5 * 3_600_000, answers: ['accept', 'decline', 'block'], warning: 'Discord says you share no server or friend with them' },
       ];
-    if (this.key === 'mx') return [{ nativeId: room('nix-hack', 'matrix.org'), kind: 'invite', from: M.jules.nativeId, target: { kind: 'conversation', nativeId: room('nix-hack', 'matrix.org'), name: 'Nix Hackathon 2026', members: 23 }, ts: now - 26 * 3_600_000, answers: ['accept', 'decline'] }];
+    if (this.key === 'mx')
+      return [
+        { nativeId: room('nix-hack', 'matrix.org'), kind: 'invite', from: M.jules.nativeId, target: { kind: 'conversation', nativeId: room('nix-hack', 'matrix.org'), name: 'Nix Hackathon 2026', members: 23 }, ts: now - 26 * 3_600_000, answers: ['accept', 'decline'] },
+        // A knock on a room you are in but don't moderate: its moderators answer it.
+        { nativeId: `knock|${room('rust-mx', 'matrix.org')}|${M.mira.nativeId}`, kind: 'join', from: M.mira.nativeId, target: { kind: 'conversation', nativeId: room('rust-mx', 'matrix.org'), name: 'Rust', members: 412 }, ts: now - 2 * 3_600_000, answers: [], forOthers: true },
+      ];
     if (this.key === 'sig') return [{ nativeId: `msgreq-${S.jamie.nativeId}`, kind: 'message', from: S.jamie.nativeId, target: { kind: 'conversation', nativeId: sdm(S.jamie).nativeId }, ts: now - 95 * 60_000, answers: ['accept', 'decline', 'block'] }];
     return [];
   }
