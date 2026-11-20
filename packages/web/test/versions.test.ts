@@ -1,8 +1,8 @@
 /** src/versions.ts, and what decides which version a change moves: syncmodel.ts's identity and conversation checks, memo.ts's props. */
 import { expect, test } from 'bun:test';
-import { effect } from '@preact/signals';
+import { effect, signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { changed, dataVersion, flush, metaDataVersion, metaRev, rev, timelineChanged, timelineRev } from '../src/versions.ts';
+import { changed, dataVersion, flush, metaDataVersion, metaRev, onceListed, rev, timelineChanged, timelineRev } from '../src/versions.ts';
 import { conversationMetaChanged, emptyDb, identityVersion, putIdentity } from '../src/syncmodel.ts';
 import { sameProps } from '../src/ui/memo.ts';
 
@@ -106,4 +106,37 @@ test('props are the same when each value is, arrays item by item', () => {
   expect(sameProps({ m }, { m: {} })).toBe(false);
   expect(sameProps({ m, f }, { m, f: () => {} })).toBe(false);
   expect(sameProps({ m }, { m, active: undefined })).toBe(false);
+});
+
+test('onceListed runs once when the list has it, even when what it runs reads and sets signals', async () => {
+  // As android.ts's Answer: startCall reads the call and sets it, which must not run the wait again.
+  const call = signal(0);
+  let listed = false;
+  let runs = 0;
+  onceListed(() => listed, () => void (call.value = call.value + 1, runs++), 60_000);
+  changed('list');
+  flush();
+  expect(runs).toBe(0);
+  listed = true;
+  changed('list');
+  flush();
+  expect(runs).toBe(1);
+  call.value++;
+  changed('list');
+  flush();
+  await Promise.resolve();
+  changed('list');
+  flush();
+  expect(runs).toBe(1);
+});
+
+test('onceListed runs at once when the list has it already, and only then', async () => {
+  let runs = 0;
+  const call = signal(0);
+  onceListed(() => true, () => void (call.value = call.value + 1, runs++), 60_000);
+  expect(runs).toBe(1);
+  await Promise.resolve();
+  changed('list');
+  flush();
+  expect(runs).toBe(1);
 });

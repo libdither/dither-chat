@@ -60,9 +60,9 @@ export function androidDevice(o: { serial: string; pkg: string; hub: string; adb
   /**
    * Answers Android's permission prompts until each of `expect` has been asked for, then for 2 s more to catch one asked
    * twice; returns what each prompt was for, in order. Not by tapping: uiautomator cannot read a screen while the page
-   * animates, so "Allow" is the grant made from here while the prompt is up and then Back, which closes it with that
-   * answer (the app reads the permission as it stands), and "Don't allow" is Back alone. `allow`: the permissions to
-   * allow; the rest are refused. The prompts still come in the middle of the call's start, the case that took the app down.
+   * animates, so "Allow" is the grant made from here while the prompt is up, which closes it with that answer (the app
+   * reads the permission as it stands), and "Don't allow" is Back. `allow`: the permissions to allow; the rest are
+   * refused. The prompts still come in the middle of the call's start, the case that took the app down.
    */
   async function answerPrompts(allow: string[], expect: string[], maxMs = 40_000): Promise<string[]> {
     const asked: string[] = [];
@@ -73,9 +73,12 @@ export function androidDevice(o: { serial: string; pkg: string; hub: string; adb
         // What this prompt is for: the app logs each request as it makes it, one at a time (MainActivity.ask).
         const which = [...adb('logcat', '-d', '-s', 'DitherStartup:I').matchAll(/asking for (.+)/g)].pop()?.[1]?.trim().split(', ').map((p) => p.replace('android.permission.', '')) ?? [];
         for (const p of which) if (allow.includes(p)) sh(`pm grant ${PKG} android.permission.${p}`);
-        sh('input keyevent KEYCODE_BACK');
+        // A prompt whose permissions are all granted now closes by itself, and a Back after that goes to the app,
+        // whose WebView then goes back a page and reloads it, ending the call. So Back only to refuse.
+        const allowed = which.length > 0 && which.every((p) => allow.includes(p));
+        if (!allowed) sh('input keyevent KEYCODE_BACK');
         asked.push(which.join('+') || 'unknown');
-        for (let i = 0; i < 20 && prompt(); i++) await Bun.sleep(150);
+        await waitFor(() => !prompt(), 10_000);
       } else await Bun.sleep(300);
       if (!doneAt && expect.every((e) => asked.includes(e))) doneAt = Date.now();
     }

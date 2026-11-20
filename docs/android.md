@@ -103,7 +103,10 @@ A push whose data has a `call` (`{id, tag, accountId, canAnswer, canDecline}`, f
   posts "Call not declined").
 - **Answer** opens the app on the chat with the call (`MainActivity`, `EXTRA_ANSWER`), which hands the page
   `{t: 'call.answer', call, conversationId, accountId}` once it says hello (warm or cold). The page joins the call from
-  that account in the device's call mode (`src/android.ts`), waiting for its data on a cold start.
+  that account in the device's call mode (`src/android.ts`), waiting for its data on a cold start, and joins once
+  (`onceListed` in `src/versions.ts`). Until 2026-11-20 the wait ran again on every change the join itself made to the
+  call: a cold Answer joined a hundred times, each asking for the microphone and opening a socket, and the last socket
+  could stay connecting, leaving the call at *Connecting* while the network still rang.
 
 ## Crashes
 
@@ -551,9 +554,11 @@ and the far end's call; that a refused microphone still gives a live call, liste
 
 The prompts are answered without tapping: uiautomator cannot read a screen while the call's page animates (it waits
 for an idle screen that never comes). A prompt is seen in `dumpsys activity` (`GrantPermissionsActivity` on top), what
-it asks for is the app's own `asking for` log line (tag `DitherStartup`), "Allow" is `pm grant` while the prompt is up
-and then Back, and "Don't allow" is Back alone. `--account` and `--conversation` point it at another account that
-makes calls, on a hub with its own far end (a lab hub), so the same run covers another network's call body.
+it asks for is the app's own `asking for` log line (tag `DitherStartup`), "Allow" is `pm grant` while the prompt is up,
+which closes it by itself, and "Don't allow" is Back. Never Back after a grant: on a slow machine it lands after the
+prompt has gone, on the app, whose page goes back a page and reloads, ending the call. `--account` and
+`--conversation` point it at another account that makes calls, on a hub with its own far end (a lab hub), so the same
+run covers another network's call body.
 
 Then the rings: the demo account is rung (the demo's `ring` action), and the run checks the ring notification
 (channel, call style, Answer and Decline, insistent, full-screen) and presses its buttons: Decline is declined on the
