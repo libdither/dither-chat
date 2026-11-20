@@ -54,8 +54,8 @@ export interface Sanitized {
   quotes: number;
   /**
    * Plain: only text, paragraphs, line breaks, links, lists, quotes, bold, italic, underline, struck-through text,
-   * headings, code and rules (what Markdown makes, mail-markdown.ts). No images, tables, colours, backgrounds, fonts,
-   * alignment or style sheets (margins and a quote's bar are fine). The reader shows such a mail in the app's theme
+   * headings, code, rules and tables with no attributes but their lines (what Markdown makes, mail-markdown.ts). No
+   * images, layout tables, colours, backgrounds, fonts, alignment or style sheets (margins and a quote's bar are fine). The reader shows such a mail in the app's theme
    * instead of on the white sheet (parts.ts): its text part, or this HTML when it is `formatted`.
    */
   plain: boolean;
@@ -121,20 +121,24 @@ const ATTRS: Record<string, string[]> = {
 };
 
 /** What a plain mail (Sanitized.plain) is made of. `meta` and `title` show nothing, so they do not count. */
-const PLAIN_TAGS = new Set('html head body meta title p div span br wbr a b strong i em u s del strike code pre h1 h2 h3 h4 h5 h6 hr ul ol li blockquote'.split(' '));
+const PLAIN_TAGS = new Set('html head body meta title p div span br wbr a b strong i em u s del strike code pre h1 h2 h3 h4 h5 h6 hr ul ol li blockquote table thead tbody tr th td'.split(' '));
 /** Plain tags whose looks a text part loses: a mail with one reads as its HTML, in the app's theme. */
-const FORMAT_TAGS = new Set('b strong i em u s del strike code pre h1 h2 h3 h4 h5 h6 hr'.split(' '));
+const FORMAT_TAGS = new Set('b strong i em u s del strike code pre h1 h2 h3 h4 h5 h6 hr table'.split(' '));
 /** The attributes a plain mail's elements may keep; `style` only as plainStyle allows. */
 const PLAIN_ATTRS = new Set(['href', 'class', 'id', 'dir', 'lang', 'title', 'role', 'type', 'start', 'value', 'reversed']);
 /** Style that changes no looks: spacing, how lines wrap, the direction. */
 const PLAIN_CSS = /^(margin|padding)(-(top|right|bottom|left|block|inline)(-(start|end))?)?$|^(overflow-wrap|word-wrap|word-break|line-break|-webkit-nbsp-mode|direction|unicode-bidi)$/;
 
-/** A kept style attribute that leaves a mail plain: PLAIN_CSS only, and a quote's bar on a blockquote. */
+/** A kept style attribute that leaves a mail plain: PLAIN_CSS only, a quote's bar on a blockquote, a table's lines. */
 export function plainStyle(tag: string, style: string): boolean {
   for (const decl of style.split(';')) {
     if (!decl.trim()) continue;
     const prop = decl.split(':')[0].trim().toLowerCase();
-    if (!PLAIN_CSS.test(prop) && !(tag === 'blockquote' && /^border-left(-(width|style|color))?$/.test(prop))) return false;
+    if (PLAIN_CSS.test(prop) || (tag === 'blockquote' && /^border-left(-(width|style|color))?$/.test(prop))) continue;
+    // A table's lines and its cells' alignment, as mail-markdown.ts draws them; a colour of its own is not plain.
+    if (tag === 'table' && prop === 'border-collapse') continue;
+    if ((tag === 'td' || tag === 'th') && (/^border(-(top|right|bottom|left))?(-(width|style|color))?$/.test(prop) || prop === 'text-align' || prop === 'vertical-align')) continue;
+    return false;
   }
   return true;
 }

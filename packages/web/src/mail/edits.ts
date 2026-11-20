@@ -13,7 +13,7 @@ export interface Sel {
 
 // ------------------------------------------------------------------ formatting
 
-export type Format = 'bold' | 'italic' | 'strike' | 'code' | 'link' | 'bullets' | 'numbers' | 'quote';
+export type Format = 'bold' | 'italic' | 'strike' | 'code' | 'link' | 'bullets' | 'numbers' | 'quote' | 'heading' | 'clear';
 
 const MARKS: Record<'bold' | 'italic' | 'strike' | 'code', string> = { bold: '**', italic: '_', strike: '~~', code: '`' };
 const PREFIX: Record<'bullets' | 'numbers' | 'quote', RegExp> = { bullets: /^[-*+] /, numbers: /^\d+[.)] /, quote: /^> ?/ };
@@ -23,7 +23,134 @@ const URL_RE = /^(https?:\/\/|mailto:)\S+$/i;
 export function applyFormat(s: Sel, f: Format): Sel {
   if (f === 'link') return link(s);
   if (f === 'bullets' || f === 'numbers' || f === 'quote') return lines(s, f);
+  if (f === 'heading') return heading(s);
+  if (f === 'clear') return clear(s);
+  if (f === 'code' && (s.text.slice(s.start, s.end).includes('\n') || inFence(s.text, s.start))) return fence(s);
   return wrap(s, MARKS[f]);
+}
+
+/** The whole lines the selection touches: [from, to) in the text. */
+function lineSpan(text: string, start: number, end: number): [number, number] {
+  const a = text.lastIndexOf('\n', start - 1) + 1;
+  const e = end > start && text[end - 1] === '\n' ? end - 1 : end;
+  const nl = text.indexOf('\n', e);
+  return [a, nl < 0 ? text.length : nl];
+}
+
+/** The lines as Gmail's text sizes go: plain, then `#`, `##`, `###`, then plain again. */
+function heading({ text, start, end }: Sel): Sel {
+  const [a, b] = lineSpan(text, start, end);
+  const ls = text.slice(a, b).split('\n');
+  const level = ls.find((l) => l.trim())?.match(/^(#{1,6}) /)?.[1].length ?? 0;
+  const next = level >= 3 ? 0 : level + 1;
+  const out = ls.map((l) => (l.trim() ? `${next ? '#'.repeat(next) + ' ' : ''}${l.replace(/^#{1,6} +/, '')}` : l)).join('\n');
+  return { text: text.slice(0, a) + out + text.slice(b), start: start === end ? a + out.length : a, end: a + out.length };
+}
+
+/** Inside a ``` block: an odd number of fence lines before the caret. */
+function inFence(text: string, at: number): boolean {
+  return (text.slice(0, text.lastIndexOf('\n', at - 1) + 1).match(/^```/gm)?.length ?? 0) % 2 === 1;
+}
+
+/** Code over several lines is a ``` block; inside one, Code takes the block's fences off. */
+function fence(s: Sel): Sel {
+  const { text } = s;
+  if (inFence(text, s.start)) {
+    // The fence lines around the caret: the last one before its line, the first one after.
+    const lineAt = text.lastIndexOf('\n', s.start - 1) + 1;
+    const open = text.slice(0, lineAt).search(/^```[^\n]*\n(?![\s\S]*^```)/m);
+    const openEnd = text.indexOf('\n', open) + 1;
+    const m = /^```[^\n]*(\n|$)/m.exec(text.slice(lineAt));
+    if (open < 0 || !m) return s;
+    const close = lineAt + m.index;
+    const inner = text.slice(openEnd, close).replace(/\n$/, '');
+    const out = text.slice(0, open) + inner + (close + m[0].length < text.length || m[1] ? '\n' : '') + text.slice(close + m[0].length);
+    return { text: out.replace(/\n$/, text.endsWith('\n') ? '\n' : ''), start: open, end: open + inner.length };
+  }
+  const [a, b] = lineSpan(text, s.start, s.end);
+  const body = text.slice(a, b);
+  const ins = `\`\`\`\n${body}\n\`\`\``;
+  return { text: text.slice(0, a) + ins + text.slice(b), start: a + 4, end: a + 4 + body.length };
+}
+
+/**
+ * Formatting taken off (Gmail's Ctrl+\\): marks and links (their text stays) in what is selected, and the marks just
+ * around it; headings, quotes and list markers on the lines it starts. Nothing selected: the caret's whole line.
+ */
+function clear({ text, start, end }: Sel): Sel {
+  let [a, b] = start === end ? lineSpan(text, start, end) : [start, end];
+  // Marks hugging the selection go too: **[bold]** is cleared whole.
+  for (let again = true; again; ) {
+    again = false;
+    for (const m of ['**', '~~', '_', '`']) {
+      if (text.slice(a - m.length, a) === m && text.slice(b, b + m.length) === m) (a -= m.length), (b += m.length), (again = true);
+    }
+  }
+  const lineStart = text.lastIndexOf('\n', a - 1) + 1;
+  const bare = text
+    .slice(a, b)
+    .split('\n')
+    .filter((l) => !/^```/.test(l))
+    .map((l, i) =>
+      (i > 0 || a === lineStart ? l.replace(/^(\s*)(#{1,6} +|> ?|[-*+] +(\[[ xX]\] +)?|\d+[.)] +)+/, '') : l)
+        .replace(/!?\[([^\]]*)\]\([^)\s]*\)/g, '$1')
+        .replace(/(\*\*|~~)(?=\S)(.+?)(?<=\S)\1/g, '$2')
+        .replace(/(^|[^\w*])([*_])(?=\S)(.+?)(?<=\S)\2(?![\w*])/g, '$1$3')
+        .replace(/`([^`\n]+)`/g, '$1'),
+    )
+    .join('\n');
+  return { text: text.slice(0, a) + bare + text.slice(b), start: a, end: a + bare.length };
+}
+
+/** A list's item one level in (Tab) or out (Shift+Tab): three spaces, as a pasted list nests. Null: not in a list. */
+export function indentList({ text, start, end }: Sel, out: boolean): Sel | null {
+  const [a, b] = lineSpan(text, start, end);
+  const ls = text.slice(a, b).split('\n');
+  const item = /^\s*([-*+]|\d+[.)]) /;
+  if (!ls.some((l) => item.test(l))) return null;
+  let first = 0;
+  let total = 0;
+  const next = ls.map((l, i) => {
+    if (!item.test(l)) return l;
+    const was = l;
+    const now = out ? l.replace(/^ {1,3}/, '') : `   ${l}`;
+    if (i === 0) first = now.length - was.length;
+    total += now.length - was.length;
+    return now;
+  });
+  if (!total) return null;
+  const outText = next.join('\n');
+  // A selection from the line's start keeps it whole; a caret moves with its text.
+  const from = start === a && end > start ? a : Math.max(a, start + first);
+  return { text: text.slice(0, a) + outText + text.slice(b), start: from, end: end + total };
+}
+
+/** Which formats the caret (or the selection's start) sits in: the buttons show them pressed. */
+export function formatsAt({ text, start }: Sel): Set<Format> {
+  const on = new Set<Format>();
+  const a = text.lastIndexOf('\n', start - 1) + 1;
+  const nl = text.indexOf('\n', start);
+  const line = text.slice(a, nl < 0 ? text.length : nl);
+  const at = start - a;
+  if (inFence(text, start) && !/^```/.test(line)) return on.add('code');
+  if (/^\s*[-*+] /.test(line)) on.add('bullets');
+  if (/^\s*\d+[.)] /.test(line)) on.add('numbers');
+  if (/^> ?/.test(line)) on.add('quote');
+  if (/^#{1,6} /.test(line)) on.add('heading');
+  const before = line.slice(0, at);
+  const after = line.slice(at);
+  const open = (m: string) => {
+    const n = before.split(m).length - 1;
+    return n % 2 === 1 && after.includes(m);
+  };
+  if (open('**')) on.add('bold');
+  if (open('~~')) on.add('strike');
+  if (open('`')) on.add('code');
+  // _ only as a mark (a word's own _, as in snake_case, is not).
+  const us = (s: string) => (s.match(/(^|[^\w])_(?=\S)|(?<=\S)_(?![\w])/g) ?? []).length;
+  if (us(before) % 2 === 1 && us(after) > 0) on.add('italic');
+  if (/\[[^\]]*$/.test(before) && /^[^\[]*\]\(/.test(after)) on.add('link');
+  return on;
 }
 
 function wrap({ text, start, end }: Sel, m: string): Sel {

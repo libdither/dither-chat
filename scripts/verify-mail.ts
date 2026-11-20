@@ -513,6 +513,35 @@ async function composerDesktop(themeName: string, full: boolean) {
   await key('.mc-body', 'z', { ctrlKey: true });
   await Bun.sleep(150);
   check(`${tag}: Ctrl+Z takes the bold back`, (await page.eval(`document.querySelector('.mc-body').value`)) === 'Here they are.');
+  // More of the bar: a list item nests with Tab and its button shows pressed; Heading; Remove formatting; a table.
+  const bodyNow = () => page.eval<string>(`document.querySelector('.mc-body').value`);
+  const caretEnd = () => page.eval(`(() => { const t = document.querySelector('.mc-body'); t.focus(); t.setSelectionRange(t.value.length, t.value.length); })()`);
+  await type('.mc-body', '- one\n- two');
+  await caretEnd();
+  await key('.mc-body', 'Tab');
+  await Bun.sleep(150);
+  check(`${tag}: Tab nests a list item`, (await bodyNow()) === '- one\n   - two', await bodyNow());
+  await caretEnd();
+  await page.until(`document.querySelector('.mc-fmt-bullets')?.getAttribute('aria-pressed') === 'true'`, 3000).catch(() => {});
+  check(`${tag}: the bullets button shows pressed in a list`, (await page.eval(`document.querySelector('.mc-fmt-bullets').getAttribute('aria-pressed')`)) === 'true');
+  await key('.mc-body', 'Tab', { shiftKey: true });
+  await Bun.sleep(150);
+  check(`${tag}: Shift+Tab takes it back out`, (await bodyNow()) === '- one\n- two', await bodyNow());
+  await type('.mc-body', 'Plan for **Friday**');
+  await caretEnd();
+  await click(await at('.mc-fmt-heading'));
+  check(`${tag}: Heading makes the line a heading`, (await bodyNow()) === '# Plan for **Friday**', await bodyNow());
+  await caretEnd();
+  await click(await at('.mc-fmt-clear'));
+  check(`${tag}: Remove formatting takes the heading and the bold off`, (await bodyNow()) === 'Plan for Friday', await bodyNow());
+  await type('.mc-body', 'Plan:\n\n| Day | Who |\n|---|---|\n| Fri | **Sam** |');
+  await click(await at('.mc-preview-btn'));
+  await page.until(`!!document.querySelector('.mc-preview-frame')?.contentDocument?.querySelector('td strong')`, 6000).catch(() => {});
+  const cell = await page.eval<{ th: string; border: string }>(`(() => { const d = document.querySelector('.mc-preview-frame')?.contentDocument; const td = d?.querySelector('td'); return { th: d?.querySelector('th')?.textContent ?? '', border: td ? getComputedStyle(td).borderTopWidth + ' ' + getComputedStyle(td).borderTopStyle : '' }; })()`);
+  check(`${tag}: a table shows in Preview with its lines`, cell.th === 'Day' && cell.border === '1px solid', cell);
+  await shot(`mail-${tag.replace(/ /g, '-')}-table`);
+  await click(await at('.mc-preview-btn'));
+  await type('.mc-body', 'Here they are.');
   // Closed: kept as a draft, which the Drafts line opens again.
   await Bun.sleep(300);
   await click(await at('.mc-head .icon-btn'));

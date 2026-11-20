@@ -118,15 +118,28 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
 - **Formatting** is Markdown, as in chat (`protocol/src/mail-markdown.ts`): the text part goes as you wrote it, which
   reads well as text, and the HTML part is it made into HTML, on the hub, the same whichever account sends (Gmail on
   the web, Proton and IMAP all send the HTML they are given). **bold**, _italic_, ~~struck~~, `code` and fenced code,
-  [links](https://example.com) and bare addresses, lists, `>` quotes and `#` headings; a line break is a line break.
-  Not taken as Markdown: a signature's `--` under a line (no setext headings), a line indented four spaces (no
-  indented code), HTML you type (it is text), links other than http(s) and mailto, pictures (a link to them). Aa shows
-  the format bar: B, I, S, code, link, bullets, numbers, quote (each takes itself off again), and Preview, the HTML part
-  as it will arrive, in a frame without scripts. Keys: Ctrl+B, Ctrl+I, Ctrl+K (link), Ctrl+Shift+7, 8 and 9 (numbers,
-  bullets, quote), Ctrl+Shift+X (struck), as Gmail's are where it has them. Enter goes on with a list (Enter on an empty
-  item ends it). A web address pasted over selected text links it; rich text pasted from a page or a document keeps
-  its bold, italic, links, headings, lists, quotes and code as Markdown (`web/src/mail/paste.ts`, read from the
-  clipboard's HTML in an inert document; colours, fonts and pictures stay behind); Ctrl+Shift+V pastes it plain.
+  [links](https://example.com) and bare addresses, lists, `>` quotes, `#` headings and tables (`| a | b |`, drawn with
+  their grey lines inline, since a mail app has no style sheet for them); a line break is a line break. Not taken as
+  Markdown: a signature's `--` under a line (no setext headings), a line indented four spaces (no indented code), HTML
+  you type (it is text), links other than http(s) and mailto, pictures (a link to them). Aa shows the format bar: B, I,
+  S, code, link, bullets, numbers, quote, Heading and Remove formatting, then Preview, the HTML part as it will arrive,
+  in a frame without scripts. Each button takes its format off again, and shows pressed while the caret is in it.
+  Code on several lines makes a ``` block (and inside one, takes the fences off). Heading goes larger, then smaller,
+  then off (`#`, `##`, `###`), as Gmail's text sizes do. Remove formatting takes the marks and links off what is
+  selected (and marks just around it) and headings, quotes and list markers off the lines it starts; with nothing
+  selected, off the caret's whole line. Keys: Ctrl+B, Ctrl+I, Ctrl+K (link), Ctrl+Shift+7, 8 and 9 (numbers, bullets,
+  quote), Ctrl+Shift+X (struck), Ctrl+\\ (remove formatting), as Gmail's are where it has them. Enter goes on with a
+  list (Enter on an empty item ends it); in a list, Tab and Shift+Tab (or Ctrl+] and Ctrl+[) move items in and out a
+  level, and elsewhere Tab moves on as usual. A web address pasted over selected text links it; rich text pasted from
+  a page or a document keeps its bold, italic, links, headings, lists, quotes and code as Markdown, and a table of data
+  (two columns and two rows or more, no cells spanning others, as a spreadsheet copies) as a Markdown table, its first
+  row the header (`web/src/mail/paste.ts`, read from the clipboard's HTML in an inert document; colours, fonts,
+  pictures and layout tables stay behind); Ctrl+Shift+V pastes it plain. The reader shows a table sent this way in the
+  app's theme (`hub/src/mail/sanitize.ts` calls it plain: only its lines and cells' alignment; a table with widths,
+  colours or `border=` is a styled mail, on the white sheet).
+  Not here, and why: underline, colours, fonts, sizes and alignment (Markdown has no way to write them, and a mail
+  written here reads in every app's own theme); pictures inside the text (a pasted picture is attached: putting it
+  in the text needs dither-accounts' `mail.send` to take inline parts with a Content-ID, on all three kinds).
 - **Undo a send.** Send gives the message to the hub's outbox (`hub/src/mail/outbox.ts`), once per `clientId`, after checking
   it: someone to send to (To, Cc and Bcc together at most the account's `details.maxRecipients`, else 500, 100 on
   Proton), From one of the account's addresses (422 otherwise), 25 MB a file and the files together at most its
