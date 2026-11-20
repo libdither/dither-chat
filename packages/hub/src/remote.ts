@@ -160,13 +160,13 @@ export function noticesAccessOf(info: AppSelf | null | undefined): 'granted' | '
   return null;
 }
 
+/** The manager's built-in account that answers `approvals`. */
+const APPROVER_ACCOUNT = 'approver';
 /**
  * The hub's request for approvals (docs/approvals.md): asking your paired devices what services ask you, through the
  * manager's built-in account `approver`.
  */
-const APPROVALS_REQUEST = { interface: 'approvals', level: 'write', accounts: '*', reason: 'Ask you, on your phone or laptop, to approve what services on your machines ask; get your signed answers back' } as const;
-/** The manager's built-in account that answers `approvals`. */
-const APPROVER_ACCOUNT = 'approver';
+const APPROVALS_REQUEST = { interface: 'approvals', level: 'write', accounts: [APPROVER_ACCOUNT], reason: 'Ask you, on your phone or laptop, to approve what services on your machines ask; get your signed answers back' } as const;
 const approvalsAsked = (info: AppSelf | null | undefined): boolean => !!info?.grants?.some((g) => g.interface === 'approvals') || (info?.requests ?? []).some((r) => r.interface === 'approvals');
 
 /** Ask for notices once, as mail. */

@@ -287,9 +287,25 @@ approvals.ask       write  { ask, display, expiresAt }       → { devices: n } 
 approvals.cancel    write  { id, reason? }                   → {}
 approvals.intent    write  { id, action, message? }          → { sent: n }     (desk devices online that hold it)
 approvals.answers   read   { ids: [...] }                    → { answers: [answer…] }  (kept a day: catch-up after a gap)
-event approvals.answer     { id, ok:true, action, message, signed, signature?, device, deviceName, deviceKind }
-                         | { id, ok:false, reason, device, deviceName }
+event approvals.answer     { id, ok:true, action, message, signed, signature?, statement?, device, deviceName,
+                             deviceKind: "phone"|"desk" }
+                         | { id, ok:false, reason: "refused"|"expired"|"error", message?, device, deviceName }
 ```
+
+The hub's request for it is `{ interface: "approvals", level: "write", accounts: ["approver"] }`.
+
+- `signed` is a time in ms on every answer (the device's, or the manager's when the device sent none); a signed
+  answer also carries `statement`, the whole signed text. The hub rebuilds the statement itself and checks the
+  signature again with the key from `approvals.devices`.
+- A device's `ok:false` goes out as an event but doesn't end the request: other devices can still answer. After
+  `refused` or `expired` that device isn't sent it again; after `error` (the desk signer's finger didn't match) it
+  keeps it, so the page can ask again.
+- Asking again for an id is safe: one still waiting is not sent twice (different words under the same id are
+  refused), and one already answered returns `{ devices: 0, answered: true }` and sends nothing. The manager holds
+  requests in memory only, so after it restarts the hub sends what waits again (on its link coming back).
+- `expiresAt` is optional and must equal the ask's `expires`. A `deny` marked `signed` is refused. Kinds are checked by
+  format (`[a-z0-9-]{1,32}`), not a list, so the hub can add kinds alone. A device message over 1000 characters is
+  dropped, not cut. `approvals.intent` for an id the manager doesn't hold fails `invalid`.
 
 `approvals.ask` refuses (`invalid`) an `ask` that doesn't parse, whose hashes don't match `display`, or that has
 expired. The manager keeps no request past its expiry, and keeps no body or payload in its audit (the `approval`

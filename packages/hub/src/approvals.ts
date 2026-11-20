@@ -67,8 +67,8 @@ export interface ApprovalDevice {
 }
 
 export type DeviceAnswer =
-  | { id: string; ok: true; action: string; message: string | null; signed: number; signature?: string; device: string; deviceName?: string; deviceKind?: string }
-  | { id: string; ok: false; reason: string; device?: string; deviceName?: string };
+  | { id: string; ok: true; action: string; message: string | null; signed: number; signature?: string; statement?: string; device: string; deviceName?: string; deviceKind?: string }
+  | { id: string; ok: false; reason: string; message?: string; device?: string; deviceName?: string };
 
 /** The manager's side (remote.ts), or a test's. */
 export interface ApprovalLink {
