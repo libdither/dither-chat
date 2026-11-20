@@ -186,7 +186,7 @@ describe('answers', () => {
     await approvals.waitFor(v.id, 0); // let the poll register
     setTimeout(() => void phoneAnswers(v.id, 'deny', null, { sign: false }), 100);
     expect((await polled).state).toBe('answered');
-    expect(Date.now() - t).toBeLessThan(10_000);
+    expect(Date.now() - t).toBeLessThan(10_000); // wall-clock: the poll returns on the answer, long before its 20 s
   });
 
   test('expired and cancelled requests end, and say so', async () => {
