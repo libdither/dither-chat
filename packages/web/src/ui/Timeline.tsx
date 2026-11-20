@@ -129,6 +129,7 @@ import { EmbedVideo, RichFoot, RichHead, RichMarks, Veil, veiled, Voice } from '
 import { VoicePeople } from './Ringing.tsx';
 import { ForumLazy } from './ThreadsLazy.tsx';
 import { CallRoomLazy, roomCall, roomHasChat, roomSide, RoomSwitch } from './CallRoomLazy.tsx';
+import { CallSlot, fillsPage } from './CallSlot.tsx';
 import { ScheduledStrip, useSendExtras } from './SendExtras.tsx';
 import { FeedViewLazy, FollowChatLazy, PostsListLazy, ThreadLazy } from './feed/lazy.tsx';
 import { postMessageKey } from '../feed.ts';
@@ -1882,10 +1883,12 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
         </div>
       </section>
     );
+  // The call's own chat: the call window's slot under the header (docked, or the whole page for Fill).
   return (
     <section class="pane">
       <ConvHeader c={c} onBack={onBack} />
-      {body}
+      <CallSlot c={c} />
+      {!fillsPage(c) && body}
     </section>
   );
 }

@@ -54,6 +54,14 @@
   grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
   gap: 16px 10px;
 }
+/* The speakers: the call window's tiles (CallWindow.tsx) once it is in here. */
+.croom-stage .croom-slot {
+  position: relative;
+}
+.croom-stage .croom-slot.filled {
+  height: clamp(200px, 46vh, 480px);
+  margin: 0 -12px;
+}
 .croom-audience {
   grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
   gap: 12px 6px;

@@ -47,6 +47,7 @@ const P: Record<string, string> = {
   minus: '<path d="M5 12h14"/>',
   expand: '<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>',
   shrink: '<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>',
+  move: '<path d="M12 2v20M2 12h20"/><path d="m9 5 3-3 3 3M9 19l3 3 3-3M5 9l-3 3 3 3M19 9l3 3-3 3"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   reply: '<polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>',
   replyAll: '<polyline points="7 14 2 9 7 4"/><polyline points="12 14 7 9 12 4"/><path d="M22 20v-7a4 4 0 0 0-4-4H7"/>',

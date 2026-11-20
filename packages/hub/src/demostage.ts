@@ -1,7 +1,7 @@
 /**
  * The demo world's stage (docs/calls.md "Demo calls"): a stage channel in the libdither server with a topic, the call
  * room's bot and two more people speaking, an audience of invented people, two hands up, and the main demo account a
- * moderator there, sound only (no cameras). The call room (democalls.ts) carries the devices' audio as for any call; this lays the stage over
+ * moderator there. The call room (democalls.ts) carries the devices' audio and video as for any call; this lays the stage over
  * the room's state: everyone's role, the people who are only simulated (their speaking flags take turns), and the
  * stage actions, which change roles as Discord's would and are allowed by the same rule the device's buttons follow
  * (protocol stageRights). A simulated person invited to speak accepts a moment later.
@@ -153,8 +153,9 @@ export class DemoStage {
     const inRoom = new Set(room.participants.map((p) => p.id));
     const roomPeople = room.participants.map((p): P.CallParticipant => {
       const stage = this.roleOf(p.id);
-      // Only a speaker is heard on a stage, and the demo's stage is sound only: the bot's camera and Go Live stay off.
-      const { video: _v, streaming: _s, ...rest } = p;
+      // Only a speaker is heard or seen on a stage: a listener's camera and Go Live are not theirs to show.
+      const { video: _v, streaming: _s, ...quiet } = p;
+      const rest = stage === 'speaker' ? p : quiet;
       const rank = this.rankOf(p.id);
       const askedAt = stage === 'hand' ? this.askedOf(p.id) : undefined;
       return { ...rest, stage, speaking: stage === 'speaker' && p.speaking, ...(stage !== 'speaker' ? { muted: true } : {}), ...(rank ? { stageRank: rank } : {}), ...(askedAt !== undefined ? { askedAt } : {}) };
@@ -171,7 +172,7 @@ export class DemoStage {
         ...(p.role === 'hand' && p.askedAt !== undefined ? { askedAt: p.askedAt } : {}),
       }));
     // What this device's account may do now, by the one rule (stageRights), said outright as an adapter does.
-    return { ...room, participants: [...roomPeople, ...simulated], video: [], stage: { topic: this.seed.topic, ...this.rights(c.self) } };
+    return { ...room, participants: [...roomPeople, ...simulated], video: (room.video ?? []).filter((v) => this.roleOf(v.who) === 'speaker'), stage: { topic: this.seed.topic, ...this.rights(c.self) } };
   }
 
   private rights(self: string): { can: P.StageSelfAction[]; canOn: P.StageMove[] } {

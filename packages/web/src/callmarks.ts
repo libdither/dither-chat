@@ -82,6 +82,8 @@ export function speakingHold(onChange: (on: ReadonlySet<string>) => void, holdMs
 
 /** The least time one person stays featured before another takes their place. */
 export const FEATURE_KEEP_MS = 1500;
+/** How long someone else talks before they take the featured place from whoever has it. */
+export const FEATURE_TAKE_MS = 1000;
 
 interface FeaturedPicker {
   /** Who is speaking now (held), and you, who is never featured. */
@@ -92,32 +94,43 @@ interface FeaturedPicker {
 }
 
 /**
- * Whose face to feature (the call bar's, the video window's Speaker): the latest person to start talking, never you,
- * kept at least `keepMs` before switching to someone else (or to nobody), so a quick "yeah" doesn't snatch it.
- * `onChange` gets each new pick, including a switch that waited out the keep.
+ * Whose face to feature (the call bar's, the call window's Speaker): the latest person to start talking, never you.
+ * While the featured one still talks, someone else takes over only after `takeMs` of talking, and never before the
+ * featured one has had `keepMs`, so a quick "yeah" doesn't snatch it. While nobody is featured, or the featured one has
+ * gone quiet, the latest to start takes it at once (after the keep). `onChange` gets each new pick.
  */
-export function featuredPicker(onChange: (id: string | null) => void, keepMs = FEATURE_KEEP_MS, clock: Clock = realClock): FeaturedPicker {
+export function featuredPicker(onChange: (id: string | null) => void, keepMs = FEATURE_KEEP_MS, clock: Clock = realClock, takeMs = FEATURE_TAKE_MS): FeaturedPicker {
   let shown: string | null = null;
   let since = 0;
   let wait: unknown;
   let seq = 0;
-  /** Who is speaking, with the order they started in. */
-  const started = new Map<string, number>();
+  /** Who is speaking, with the order they started in and when. */
+  const started = new Map<string, { n: number; at: number }>();
   const decide = () => {
     if (wait !== undefined) clock.cancel(wait);
     wait = undefined;
+    const now = clock.now();
+    const holding = shown !== null && started.has(shown);
     let want: string | null = null;
     let latest = -1;
-    for (const [id, n] of started) if (n > latest) (want = id), (latest = n);
-    if (want === shown) return;
-    const left = since + keepMs - clock.now();
-    if (shown !== null && left > 0) {
-      wait = clock.after(decide, left);
-      return;
+    let soonest = Infinity;
+    for (const [id, s] of started) {
+      if (holding && id !== shown && now - s.at < takeMs) {
+        soonest = Math.min(soonest, s.at + takeMs - now);
+        continue;
+      }
+      if (s.n > latest) (want = id), (latest = s.n);
     }
-    shown = want;
-    since = clock.now();
-    onChange(shown);
+    if (want !== shown) {
+      const left = since + keepMs - now;
+      if (shown !== null && left > 0) soonest = Math.min(soonest, left);
+      else {
+        shown = want;
+        since = now;
+        onChange(shown);
+      }
+    }
+    if (soonest < Infinity) wait = clock.after(decide, soonest);
   };
   return {
     get shown() {
@@ -127,7 +140,7 @@ export function featuredPicker(onChange: (id: string | null) => void, keepMs = F
       const now = new Set(speaking);
       if (self) now.delete(self);
       for (const id of [...started.keys()]) if (!now.has(id)) started.delete(id);
-      for (const id of now) if (!started.has(id)) started.set(id, seq++);
+      for (const id of now) if (!started.has(id)) started.set(id, { n: seq++, at: clock.now() });
       decide();
     },
     clear() {

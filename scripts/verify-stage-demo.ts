@@ -4,18 +4,19 @@
  * far end of both. The main account moderates the stage. Checks, through the app's own buttons:
  *
  * - joining a stage opens the room beside the channel's real chat on a wide pane, with no Room / Chat switch there;
- * - the zones: the topic and counts, speakers with their ranks, who asks to speak, the audience with "+N more";
+ * - the zones: the topic and counts, speakers with their ranks (the call window's tiles, at the room's size), who asks
+ *   to speak, the audience with "+N more";
  * - a listener has no microphone open (the browser was never asked), no camera or screen, and one Leave on screen;
  * - "+N more" opens the whole audience, searchable; a moderator invites from it;
  * - a moderator gets Speak and no Ask to speak, sees the requests oldest first, and faces that open a menu;
  * - the listener asks to speak; the moderator invites; "You're invited to speak" is said; Speak opens the microphone;
- *   the moderator moves them back from their face's menu, and the microphone closes;
+ *   the moderator moves them back from their tile's menu, and the microphone closes;
  * - a simulated hand, invited, becomes a speaker;
  * - on a narrow pane: Room / Chat, one of them at a time, the requests' count on Room for a moderator, the requests
  *   above the audience, one Leave on screen either way; a call left from Chat opens as a room next time;
  * - Leave quietly ends the call; no page errors.
  *
- *   bun packages/hub/src/main.ts --demo --data /tmp/x --port 8579 --web packages/web/dist
+ *   bun packages/hub/src/main.ts --demo --host 127.0.0.1 --data /tmp/x --port 8579 --web packages/web/dist
  *   bun scripts/verify-stage-demo.ts http://127.0.0.1:8579 [screenshot dir]
  *
  * Use a fresh demo world each run. With a screenshot dir it saves the room listening (beside the chat), with a hand up,
@@ -108,15 +109,16 @@ try {
   check(await wait(b.page, `!!document.querySelector('.croom') && !!document.querySelector('[data-call-connected]')`, 20_000), 'joining the stage opens the room');
   check(await wait(b.page, `${shown('.room-chat')} && /slides are pinned/.test(document.querySelector('.room-chat').textContent) && !!document.querySelector('.room-chat .composer, .room-chat [contenteditable], .room-chat textarea')`, 8000), "the channel's real chat and its composer beside the room");
   check(!(await b.page.eval<boolean>(shown('.room-switch'))), 'no Room / Chat switch on a wide pane');
-  check(await wait(b.page, `document.querySelectorAll('.croom-speakers [data-role=speaker]').length === 3`), 'three speakers', await b.page.eval(`document.querySelectorAll('.croom-speakers [data-role=speaker]').length`));
+  check(await wait(b.page, `document.querySelectorAll('.croom-slot .call-videos .call-video[data-role=speaker]').length === 3`), "three speakers, as the call window's tiles in the room", await b.page.eval(`document.querySelectorAll('.croom-stage [data-role=speaker]').length`));
+  check(await b.page.eval(`(() => { const t = [...document.querySelectorAll('.croom-slot .call-video')]; return t.every((x) => !!x.querySelector('video') !== !!x.querySelector('.call-av')) && t.some((x) => x.classList.contains('face')); })()`), "each speaker's tile is their camera (the bot's) or their picture with its ring");
   check(/Office hours/.test(await text(b.page, '.croom-title b')), 'the topic is the title', await text(b.page, '.croom-title'));
   check(/3 speakers · 21 listening/.test(await text(b.page, '.croom-title span')), 'the counts', await text(b.page, '.croom-title span'));
-  check(/Moderator/.test(await text(b.page, '.croom-speakers')) && /Speaker/.test(await text(b.page, '.croom-speakers')), 'speakers show Moderator and Speaker', await text(b.page, '.croom-speakers'));
+  check(/Moderator/.test(await text(b.page, '.croom-stage')) && /Speaker/.test(await text(b.page, '.croom-stage')), 'speakers show Moderator and Speaker', await text(b.page, '.croom-stage'));
   check(/^\+3/.test(await text(b.page, '.croom-more')), 'the audience shows "+N more"', await text(b.page, '.croom-more'));
   check((await me(b.page)) === 'audience' && (await b.page.eval(`document.querySelector('.croom-audience [data-who]')?.dataset.who`)) === altSelf, 'you listen, first in the audience');
   check(/Hands up · 2/.test(await text(b.page, '.croom-requests h4')) && /Calla/.test(await text(b.page, '.croom-requests')), 'hands up by name, for a listener', await text(b.page, '.croom-requests'));
   check((await b.page.eval<number>(`document.querySelectorAll('.croom button.croom-person').length`)) === 0, "a listener's faces are not buttons (nothing to do to them)");
-  check(await wait(b.page, `[...document.querySelectorAll('.croom-speakers .call-av')].some((x) => x.classList.contains('speaking'))`, 8000), 'someone is ringed as speaking');
+  check(await wait(b.page, `[...document.querySelectorAll('.croom-stage .call-av')].some((x) => x.classList.contains('speaking'))`, 8000), 'someone is ringed as speaking');
   check((await micsAsked(b.page)) === 0 && (await micsOpen(b.page)) === 0, 'listening, no microphone was asked for or is open', { asked: await micsAsked(b.page), open: await micsOpen(b.page) });
   check(!(await b.page.eval<boolean>(`!!document.querySelector('.call-btn.camera, .call-btn.share, .call-btn.mic')`)), 'a listener has no microphone, camera or screen button');
   check((await b.page.eval<number>(LEAVES)) === 1, 'one Leave on screen (wide)', await b.page.eval(LEAVES));
@@ -139,7 +141,8 @@ try {
   check(await wait(a.page, `document.querySelector('.croom')?.dataset.moderator === '1'`, 20_000), 'the moderator joins, as a moderator');
   check(/Asking to speak · 2/.test(await text(a.page, '.croom-requests h4')), 'the moderator sees the requests', await text(a.page, '.croom-requests h4'));
   check(await wait(a.page, `!!document.querySelector('[data-track="stage speak"]') && !document.querySelector('[data-track="stage raise hand"]')`, 3000), 'a moderator listening gets Speak, and no Ask to speak');
-  check((await a.page.eval<number>(`document.querySelectorAll('.croom-speakers button.croom-person[aria-haspopup=menu]').length`)) >= 2, "a moderator's faces open a menu");
+  check((await a.page.eval<number>(`document.querySelectorAll('.croom-stage button.call-tile-menu[aria-haspopup=menu]').length`)) >= 2, "a moderator's speaker tiles have a menu");
+  check((await b.page.eval<number>(`document.querySelectorAll('.croom-stage .call-tile-menu').length`)) === 0, "a listener's speaker tiles have none"); 
   check((await micsAsked(a.page)) === 0, 'the moderator listening has no microphone either');
 
   // ------------------------------------------------------------ a hand, an invite, speaking
@@ -156,14 +159,14 @@ try {
   await press(b.page, '[data-track="stage speak"]');
   check(await wait(b.page, `document.querySelector('.croom')?.dataset.me === 'speaker'`, 5000), 'the invited speaks', await me(b.page));
   check(await wait(b.page, `window.__mics.open() === 1`, 5000), 'speaking opens the microphone', await micsOpen(b.page));
-  check(await wait(a.page, `!!document.querySelector('.croom-speakers [data-who="${altSelf}"]')`, 5000), 'the moderator sees them among the speakers');
+  check(await wait(a.page, `!!document.querySelector('.croom-stage [data-who="${altSelf}"]')`, 5000), 'the moderator sees them among the speakers');
   check(await wait(b.page, `!!document.querySelector('.croom-controls .call-btn.mic') && !!document.querySelector('[data-track="stage listen"]')`, 2000), "a speaker's buttons: the mic and Move to the audience");
   check((await b.page.eval<number>(LEAVES)) === 1, 'one Leave on screen as a speaker');
   await shot(b.page, 'speaking');
 
   // The moderator moves them back from their face's menu; their microphone closes.
-  await press(a.page, `.croom-speakers [data-who="${altSelf}"] .croom-person`);
-  check(await wait(a.page, `!!document.querySelector('[data-track="stage audience"]')`, 3000), "a moderator's tap on a speaker offers Move to the audience");
+  await press(a.page, `.croom-stage .call-tile-menu[data-who="${altSelf}"]`);
+  check(await wait(a.page, `!!document.querySelector('[data-track="stage audience"]')`, 3000), "a moderator's menu on a speaker's tile offers Move to the audience");
   await press(a.page, '[data-track="stage audience"]');
   check(await wait(b.page, `document.querySelector('.croom')?.dataset.me === 'audience'`, 5000), 'the moderator moves them to the audience', await me(b.page));
   check(await wait(b.page, `window.__mics.open() === 0`, 5000), 'back in the audience, the microphone closes', await micsOpen(b.page));
@@ -171,7 +174,7 @@ try {
   // A simulated hand, invited, says yes.
   const hand = await a.page.eval<string>(`[...document.querySelectorAll('.croom-request')].map((r) => r.dataset.who).find((w) => w !== ${JSON.stringify(altSelf)})`);
   await press(a.page, `.croom-request[data-who="${hand}"] .croom-invite`);
-  check(await wait(a.page, `!!document.querySelector('.croom-speakers [data-who="${hand}"]')`, 6000), 'an invited person with a hand up becomes a speaker');
+  check(await wait(a.page, `!!document.querySelector('.croom-stage [data-who="${hand}"]')`, 6000), 'an invited person with a hand up becomes a speaker');
 
   // A moderator invites from the whole audience.
   await press(a.page, '.croom-more');
@@ -181,7 +184,7 @@ try {
   await shot(a.page, 'audience-list');
   const odile = await a.page.eval<string>(`document.querySelector('.croom-all-row').dataset.who`);
   await press(a.page, '.croom-all-row .croom-invite');
-  check(await wait(a.page, `!!document.querySelector('.croom-speakers [data-who="${odile}"]')`, 6000), 'invited from the list, they become a speaker');
+  check(await wait(a.page, `!!document.querySelector('.croom-stage [data-who="${odile}"]')`, 6000), 'invited from the list, they become a speaker');
   await press(a.page, '.croom-all-head .chip-btn');
 
   // ------------------------------------------------------------ a narrow pane: the moderator

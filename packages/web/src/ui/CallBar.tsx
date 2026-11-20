@@ -25,13 +25,15 @@ import './CallBar.css';
 
 /** The call expanded: the dock open, or (from the bar) the phone's sheet or a computer's dock over the bar. */
 export const callOpen = signal(false);
+/** The bar shows now (App.tsx says, as it lays the bar's row out). */
+export const callBarOn = signal(false);
 
 /** The call's conversation, while you're in one: what the layout reads, so a word or a mute does not draw it again. */
 const callConv = computed(() => activeCall.value?.conversationId ?? null);
 const listWidth = computed(() => paneWidths.value.sidebar ?? PANE_DEFAULT.sidebar);
 
 /** Is `shown` (the conversation on screen) the call's chat? Any route of the same chat counts (docs/chats.md). */
-function isCallChat(shown: string | null, conv: string): boolean {
+export function isCallChat(shown: string | null, conv: string): boolean {
   return !!shown && (shown === conv || inboxKeyOf(shown) === inboxKeyOf(conv));
 }
 
