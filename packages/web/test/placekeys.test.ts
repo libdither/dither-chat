@@ -39,22 +39,28 @@ describe('G then a letter', () => {
   });
 });
 
-describe('Alt and a number', () => {
-  test("each place's number on the rail, read from the physical key", () => {
-    for (const p of PLACES) expect(readKey(k('¡', { alt: true, code: `Digit${p.digit}` }), false, all)).toEqual({ kind: 'go', place: p.place, how: 'alt' });
+describe('Ctrl+Shift and a number', () => {
+  const cs = { ctrl: true, shift: true };
+  test("each numbered place's number on the rail, read from the physical key", () => {
+    for (const p of PLACES.filter((x) => x.digit)) expect(readKey(k('!', { ...cs, code: `Digit${p.digit}` }), false, all)).toEqual({ kind: 'go', place: p.place, how: 'chord' });
   });
   test('works while typing in the message box', () => {
-    expect(readKey(k('1', { alt: true, code: 'Digit1', typing: true }), false, all)).toEqual({ kind: 'go', place: 'inbox', how: 'alt' });
+    expect(readKey(k('!', { ...cs, code: 'Digit1', typing: true }), false, all)).toEqual({ kind: 'go', place: 'inbox', how: 'chord' });
   });
   test('the numbers stay put when a place is missing', () => {
-    expect(readKey(k('3', { alt: true, code: 'Digit3' }), false, noMail)).toBeNull();
-    expect(readKey(k('4', { alt: true, code: 'Digit4' }), false, noMail)).toEqual({ kind: 'go', place: 'calendar', how: 'alt' });
+    expect(readKey(k('#', { ...cs, code: 'Digit3' }), false, noMail)).toBeNull();
+    expect(readKey(k('$', { ...cs, code: 'Digit4' }), false, noMail)).toEqual({ kind: 'go', place: 'calendar', how: 'chord' });
   });
-  test('not with other modifiers, a number past the places, under a menu, or held down', () => {
-    expect(readKey(k('1', { alt: true, ctrl: true, code: 'Digit1' }), false, all)).toBeNull();
-    expect(readKey(k('!', { alt: true, shift: true, code: 'Digit1' }), false, all)).toBeNull();
-    expect(readKey(k('9', { alt: true, code: 'Digit9' }), false, all)).toBeNull();
-    expect(readKey(k('1', { alt: true, code: 'Digit1', covered: true }), false, all)).toBeNull();
-    expect(readKey(k('1', { alt: true, code: 'Digit1', repeat: true }), false, all)).toBeNull();
+  test("Alt is the window manager's: Alt+number does nothing", () => {
+    expect(readKey(k('1', { alt: true, code: 'Digit1' }), false, all)).toBeNull();
+  });
+  test('not with Alt or Meta too, Ctrl or Shift alone, a number past the places, under a menu, or held down', () => {
+    expect(readKey(k('!', { ...cs, alt: true, code: 'Digit1' }), false, all)).toBeNull();
+    expect(readKey(k('!', { ...cs, meta: true, code: 'Digit1' }), false, all)).toBeNull();
+    expect(readKey(k('1', { ctrl: true, code: 'Digit1' }), false, all)).toBeNull();
+    expect(readKey(k('!', { shift: true, code: 'Digit1' }), false, all)).toBeNull();
+    expect(readKey(k('(', { ...cs, code: 'Digit9' }), false, all)).toBeNull();
+    expect(readKey(k('!', { ...cs, code: 'Digit1', covered: true }), false, all)).toBeNull();
+    expect(readKey(k('!', { ...cs, code: 'Digit1', repeat: true }), false, all)).toBeNull();
   });
 });
