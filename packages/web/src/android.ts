@@ -9,6 +9,7 @@ import { effect, signal } from '@preact/signals';
 import { activeCall, leaveCall, setMuted, startCall } from './call.ts';
 import { noteOpen } from './activity.ts';
 import { reportAppCrashes } from './errors.ts';
+import { addArrived, onArrivedDone } from './arrived.ts';
 import { db, go, parseHash, prefs } from './state.ts';
 import { rev } from './versions.ts';
 import { api } from './api.ts';
@@ -204,6 +205,10 @@ function receive(d: any) {
     case 'crashes':
       reportAppCrashes(Array.isArray(d.list) ? d.list : [], android!.info.value?.version);
       break;
+    // What pushes brought while the app was closed (Arrived.kt, arrived.ts).
+    case 'arrived':
+      addArrived(Array.isArray(d.list) ? d.list : []);
+      break;
     case 'call.answer':
       answer(d);
       break;
@@ -235,6 +240,7 @@ export function startAndroid() {
     }
   });
   android.send({ t: 'hello' });
+  onArrivedDone((upTo) => android!.send({ t: 'arrived.done', upTo }));
   // The call keeps going with the screen off only inside a foreground service, which the app starts and stops here.
   let last = '';
   effect(() => {

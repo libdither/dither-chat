@@ -350,7 +350,8 @@ These live in the web app, so the PWA gets them too.
    unread counts and last messages) and the inbox, and beside it the newest 40 messages of the 60 conversations opened
    or fetched ahead most recently, a record each with their authors, reactors and quoted messages
    ([sync.md](sync.md#kept-pages), [perf.md](perf.md#fetching-ahead-and-kept-pages-2026-11-11)).
-   It is read before the network and painted at once. It also keeps its place in the hub's change journal, so the app then asks only for what changed since
+   It is read before the network and painted at once, with what pushes brought since laid over it (the app keeps
+   each push's copy of its message, `Arrived.kt`; [notifications.md](notifications.md#a-copy-in-the-push)). It also keeps its place in the hub's change journal, so the app then asks only for what changed since
    ([sync.md](sync.md)); a full bootstrap replaces it only when the hub cannot say. A kept conversation catches up
    the same way when opened. It is saved when the bootstrap arrives (the hub's own text, without
    serializing it again; at once when the device keeps none, so a device opened once can start offline) and again

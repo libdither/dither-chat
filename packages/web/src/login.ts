@@ -9,6 +9,7 @@
  * (localStorage: the theme, layout choices).
  */
 import { signal } from '@preact/signals';
+import { forgetArrived } from './arrived.ts';
 
 /** Set while this device has to sign in: `setup` when the hub has no password yet. */
 export const login = signal<{ setup: boolean } | null>(null);
@@ -26,6 +27,8 @@ export function needLogin(setup = false) {
 
 /** What this device kept of the hub's answers: gone, so nothing of it outlives a session. */
 async function forgetLocal(): Promise<void> {
+  // Pushes' copies of messages, here and in the Android app (arrived.ts).
+  forgetArrived();
   try {
     // An open connection holds the deletion until the page goes; signing in reloads it.
     indexedDB.deleteDatabase(DB_NAME);

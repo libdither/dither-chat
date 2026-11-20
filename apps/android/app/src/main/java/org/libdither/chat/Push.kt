@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import org.json.JSONArray
 import org.json.JSONObject
 import org.unifiedpush.android.connector.FailedReason
 import org.unifiedpush.android.connector.PushService
@@ -104,10 +105,16 @@ class PushReceiver : PushService() {
         }
         val d = runCatching { JSONObject(String(message.content)) }.getOrNull() ?: return
         Notifications.show(this, d)
+        // The message's copy, or the reads, for the page's next start, and for one open now (Arrived.kt).
+        val app = applicationContext
+        Arrived.work.execute {
+            runCatching { Arrived.keep(app, d) }
+                .onSuccess { r -> if (r.isNotEmpty()) Push.toPage(JSONObject().put("t", "arrived").put("list", JSONArray().also { a -> r.forEach { a.put(it) } })) }
+                .onFailure { Log.w("DitherPush", "arrived not kept", it) }
+        }
         // A test asks to be confirmed, so Settings can tell "ntfy took it" from "it reached the phone".
         val device = d.optString("device")
         if (d.optBoolean("test") && device.isNotEmpty()) {
-            val app = applicationContext
             Thread { runCatching { Hub.request(app, "POST", "/api/push/arrived", JSONObject().put("id", device)) } }.start()
         }
     }
