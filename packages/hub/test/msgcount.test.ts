@@ -170,11 +170,13 @@ describe('the store and the endpoint', () => {
   let port = 0;
   let store: Store;
   let hub: HubServer;
-  const GUILD = sf(NOW - 400 * DAY);
-  const GENERAL = sf(NOW - 100 * DAY, 1);
+  const now = Date.now();
+  // The server and channel are dated from today, as the messages are: dated from NOW, the channel would grow a day
+  // older each day the test is run, and the estimate with it.
+  const GUILD = sf(now - 400 * DAY);
+  const GENERAL = sf(now - 100 * DAY, 1);
   const ROOM = '!room:x.org';
   const ann = hubId('idn', 'discord', sf(NOW - 3000 * DAY, 2));
-  const now = Date.now();
   // Held from 50 days ago to now in a channel made 100 days ago: 10 a day, every tenth from ann.
   const shift = now - NOW;
 
