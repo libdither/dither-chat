@@ -69,6 +69,7 @@ import { memo } from './memo.ts';
 import { convKind, rowTrack } from '../clicks.ts';
 import { useShown } from './more.tsx';
 import { VoicePeople } from './Ringing.tsx';
+import { CallMark } from './CallBar.tsx';
 
 // ------------------------------------------------------------------ navigation helpers
 
@@ -220,6 +221,7 @@ const ConvRow = memo(function ConvRow({
             {isChannel && <Icon name={variantIcon(c.variant, c.shape)} size={13} class="row-kind" />}
             {isChannel ? convTitle(c) : convLabel(c)}
           </span>
+          <CallMark convIds={chat ? chat.routes.map((r) => r.id) : [c.id]} />
           {c.encrypted && <Icon name="lock" size={11} class="row-lock" />}
           <span class="row-time">
             <Ago ts={c.lastMessageAt} />
@@ -503,6 +505,7 @@ const PersonRow = memo(function PersonRow({ person, directs, active, onClick }: 
           <span class="row-title">
             {person.name}
           </span>
+          <CallMark convIds={directs.map((d) => d.id)} />
           <span class="row-nets">
             {directs.map((d) => (
               <span class="row-net" title={`${netName(d.network)}${d.vantages.length ? ' · ' + d.vantages.map((v) => db.accounts.get(v.accountId)?.label).join(', ') : ''}`}>
@@ -647,6 +650,7 @@ function ChannelRow({ c, active, depth, onOpen, alsoIn, dots = true }: { c: P.Co
       >
         <Icon name={variantIcon(c.variant)} size={16} class="chan-icon" />
         <span class="chan-name">{convTitle(c)}</span>
+        <CallMark convIds={[c.id]} />
         {alsoIn && alsoIn.length > 0 && (
           <span class="chan-also" title={`Also in ${alsoIn.join(', ')}`}>
             <Icon name="link" size={11} />

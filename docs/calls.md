@@ -150,7 +150,11 @@ devices, and checks joining (and how fast), hearing and being heard, the bot's s
 reader hears), the join, leave, mute and camera sounds, the mic button's note when talking while muted (moving
 nothing else), mute
 reaching the far end and the other device, the camera both ways, sharing a screen and watching it from the other
-device, watching the bot's Go Live, leaving, and a device with no microphone joining to listen.
+device, watching the bot's Go Live, leaving, and a device with no microphone joining to listen. A last device, at
+phone size, checks the call bar (below): the dock on the call's own chat and the bar elsewhere, in one place at the top
+with nothing under it, no Leave on it and 44 px buttons, the row's mark, mute from the bar, a tap opening the sheet in
+place, back folding it, Go to chat; then at computer size with the list hidden, the bar under the page, the dock over it
+on a tap, Escape folding it, and leaving from there.
 
 A demo account can also be rung: the account action `ring` (`{conversation, caller?, video?}`, the conversation's
 native id) makes the caller ring it there, as a network's ring would, and `ringStop` is the caller giving up
@@ -296,6 +300,35 @@ client's own `CHANNEL_INFO`) is the channel's, kept whatever the setting. `GET /
 
 Not built: voice history and hangouts (`/channels/{id}/voice-history`): a request of ours, not something the client is
 sent.
+
+## The call bar
+
+One call has several sizes, smallest first: a mark on its chat row, the bar, the dock, the video window. The dock (the
+call's name, its buttons, and when open its people; `CallDock` in `ui/Call.tsx`) is the call while you chat beside it.
+The bar (`ui/CallBar.tsx`, its choices in `callbar.ts`) is the call while you look at something else, like a music
+player: a slim row with whoever is talking (call.ts `featuredSpeaker`, drawn with `CallAvatar` and the shared speaking
+ring), how long the call has gone (`callStatus`, so also Connecting to Discord… and the still-muted hint), and at most
+two buttons from `callControls`. Nobody talking, the face is a few of the others' pictures overlapping (the call's
+own picture when nobody else is in it), with the call's phase as a dot in the corner.
+
+- **Its buttons, by role.** Never Leave: that is in the expanded call, away from where a thumb rests. A speaker (or
+  anyone in a call without an audience) gets mute and deafen, or mute and the camera or the screen while one is on, so
+  it can be turned off from anywhere. With no microphone, deafen alone. A stage's audience gets deafen and its hand,
+  or Speak once invited. Mute and deafen keep one name with `aria-pressed`; their tooltips say what a press does.
+- **A row of the layout.** It never sits over anything. On a computer the app's grid gives it a row of its own under
+  the list (`.app.with-bar`), the rail and the page running down beside it; with the list hidden (All communities, the
+  calendar) the row is under the page. The call's video stands above it. On a phone it is the top of the screen
+  wherever you are, the lists, a page and the details all starting below it, so it is in one place whether over the
+  lists or on another chat.
+- **A tap expands it in place.** On a phone a sheet hangs from the bar over the page you're on: every button (Leave
+  among them), Go to chat, and the people. On a computer the dock stands on the bar. Back, Escape or another tap folds
+  it; it never changes the page.
+- **Where it shows.** Phone: whenever you're in a call and the page on screen isn't the call's chat (any route of the
+  same chat counts, docs/chats.md); on the call's own page the dock shows at the top, as before. Computer: the dock as
+  before, except where the list is hidden or dragged to 260 px or narrower.
+- **The mark:** on the call's row in the lists (a DM, a chat's row, a voice channel), three small bars, green in your
+  call and moving while anyone talks. A conversation with a call going on that you aren't in (the hub's calls,
+  `callIn`) gets them in grey.
 
 ## In a call: what each of Discord's call features takes here
 

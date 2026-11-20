@@ -6092,6 +6092,21 @@ textarea.chip-box {
   .app.tabs > .sidebar {
     bottom: var(--tabbar-h);
   }
+  /* The call bar is the top of the screen (ui/CallBar.css): the lists, the page and the details start below it, so
+     it is in one place wherever you are and covers nothing. */
+  .app.with-bar > .rail,
+  .app.with-bar > .sidebar,
+  .app.with-bar > .center,
+  .app.with-bar > .details {
+    top: var(--call-bar-top);
+    padding-top: 0;
+  }
+  .app.with-bar > .rail {
+    padding-top: 10px;
+  }
+  .app.with-bar > .sidebar {
+    border-radius: 0;
+  }
   .app > .center {
     position: absolute;
     inset: 0;
@@ -8802,8 +8817,17 @@ body.dragging * {
   box-shadow: 0 -6px 18px rgb(0 0 0 / 0.25);
   color: var(--text);
 }
-.app:has(.call-dock) > .sidebar {
+.app:not(.with-bar):has(.call-dock) > .sidebar {
   padding-bottom: 60px;
+}
+/* Expanded from the call bar on a computer: the dock stands on the bar, over the list or the page, until folded. */
+.call-dock.over-bar {
+  bottom: var(--call-bar-h);
+  width: max(var(--sidebar-w), 340px);
+  border: 1px solid var(--bg-active);
+  border-bottom: 0;
+  border-radius: 12px 12px 0 0;
+  box-shadow: 0 -8px 24px rgb(0 0 0 / 0.3);
 }
 .call-dock-bar {
   display: flex;
@@ -9037,6 +9061,13 @@ body.dragging * {
   width: auto;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
 }
+.app.phone.with-bar .call-videos {
+  top: calc(var(--call-bar-top) + 8px);
+}
+/* On a computer the video stands on the call bar's row, not over its buttons. */
+.app.with-bar:not(.phone) .call-videos {
+  bottom: calc(var(--call-bar-h) + 12px);
+}
 .call-dock-body {
   padding: 4px 12px 12px;
   max-height: 50vh;
@@ -9183,6 +9214,29 @@ body.dragging * {
 .app:not(.phone) > .sidebar,
 .app:not(.phone) > .center,
 .app:not(.phone) > .details {
+  grid-row: 2;
+}
+/* The call bar (ui/CallBar.tsx, docs/calls.md "The call bar") is a row of its own under the list, or under the page
+   with the list hidden; the rail, the page and the details run down beside it. */
+:root {
+  --call-bar-h: 52px;
+  --call-bar-top: var(--call-bar-h);
+}
+@media (max-width: 820px) {
+  :root {
+    --call-bar-h: 56px;
+    --call-bar-top: calc(var(--call-bar-h) + env(safe-area-inset-top));
+  }
+}
+.app.with-bar:not(.phone) {
+  grid-template-rows: var(--titlebar-h) minmax(0, 1fr) auto;
+}
+.app.with-bar:not(.phone) > .rail,
+.app.with-bar:not(.phone) > .center,
+.app.with-bar:not(.phone) > .details {
+  grid-row: 2 / 4;
+}
+.app.with-bar.full:not(.phone) > .center {
   grid-row: 2;
 }
 .titlebar {

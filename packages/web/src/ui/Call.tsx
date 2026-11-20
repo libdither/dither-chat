@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
-import { activeCall, callMedia, callName, callStatus, canCall, canRing, featuredSpeaker, isCallSelf, leaveCall, startCall } from '../call.ts';
+import { type ActiveCall, activeCall, callMedia, callName, callStatus, canCall, canRing, featuredSpeaker, isCallSelf, leaveCall, startCall } from '../call.ts';
 import { callIn } from '../ringing.ts';
 import { db, prefs, rev } from '../state.ts';
 import { convTitle } from '../model.ts';
 import { CallControls } from './CallControls.tsx';
 import { Icon } from './icons.tsx';
+import { BarLayer, CallBar, CallSheet, callOpen } from './CallBar.tsx';
+import { phone } from '../phone.ts';
 
 type PanelParts = typeof import('./CallPanel.tsx');
 let panel: PanelParts | null = null;
@@ -60,12 +62,20 @@ export function JoinCallButton({ c }: { c: P.ConversationView }) {
 /** The dock's bar has the round buttons; a stage's Speak and Move to the audience are in its open body. */
 const DOCK_BUTTONS = ['mute', 'deafen', 'camera', 'share', 'hand', 'leave'] as const;
 
-/** The call in progress, wherever you are in the app. Tap it for the people in it. */
-export function CallDock() {
+/**
+ * The call in progress, wherever you are in the app. Tap it for the people in it. `bar`: there's no room for the dock
+ * here (CallBar.tsx barShown): the call is the call bar, a row of the layout, and expanding it shows a phone's sheet
+ * under it or, on a computer, the dock over it, until it's folded again.
+ */
+export function CallDock({ bar }: { bar: boolean }) {
   rev.value;
   const call = activeCall.value;
-  const [open, setOpen] = useState(false);
+  const open = callOpen.value;
   const [now, setNow] = useState(Date.now());
+  // The bar coming or going (a page changed) folds whatever was expanded: the dock, or the bar's sheet.
+  useEffect(() => {
+    callOpen.value = false;
+  }, [bar, !!call]);
   // The open dock is a chunk of its own (CallPanel.tsx), loaded the first time it opens.
   const Panel = useCallPanel(open);
   useEffect(() => {
@@ -74,6 +84,24 @@ export function CallDock() {
     return () => clearInterval(t);
   }, [!!call]);
   if (!call) return null;
+  if (bar)
+    return (
+      <>
+        <CallVideos />
+        <CallBar call={call} now={now} />
+        {open && (phone.value ? <CallSheet call={call} Panel={Panel} /> : <Dock call={call} now={now} open Panel={Panel} overBar />)}
+      </>
+    );
+  return (
+    <>
+      <CallVideos />
+      <Dock call={call} now={now} open={open} Panel={Panel} />
+    </>
+  );
+}
+
+/** The dock: the call's name, status and buttons; open, its people too. `overBar`: shown over the call bar, folded by back. */
+function Dock({ call, now, open, Panel, overBar }: { call: ActiveCall; now: number; open: boolean; Panel: PanelParts['CallPanel'] | null; overBar?: boolean }) {
   const c = db.conversations.get(call.conversationId);
   const title = c ? convTitle(c) : 'Call';
   // Whoever talks, the featured one (the latest to start, call.ts featuredSpeaker) first.
@@ -83,16 +111,16 @@ export function CallDock() {
   const status = callStatus(call, now);
   return (
     <section
-      class={`call-dock ${open ? 'open' : ''} ${call.phase}`}
+      class={`call-dock ${open ? 'open' : ''} ${overBar ? 'over-bar' : ''} ${call.phase}`}
       aria-label="Call"
       data-call-stats={call.stats ? JSON.stringify(call.stats) : undefined}
       data-call-phase={call.phase}
       data-call-connected={call.self?.connected || call.timing.connected !== undefined ? '1' : undefined}
       data-call-timing={JSON.stringify(call.timing)}
     >
-      <CallVideos />
+      {overBar && <BarLayer />}
       <div class="call-dock-bar">
-        <button class="call-dock-title" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <button class="call-dock-title" onClick={() => (callOpen.value = !open)} aria-expanded={open}>
           <span class={`call-dot ${status.phase === 'reaching' ? 'connecting' : call.phase}`} />
           <span class="call-dock-text">
             <b>{title}</b>
