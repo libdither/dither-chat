@@ -2,7 +2,7 @@
  * Discord-style tooltips: a dark bubble beside the thing you point at, with an arrow, shown at once and without the
  * browser's delay. Any element with `data-tip` gets one (`data-tip-sub` adds a dim second line,
  * `data-tip-side="right|top|bottom"` picks the side, right by default, and `data-tip-keys` its keyboard shortcuts, as
- * `Alt+2|G P`: chords with +, keys pressed one after another with a space). Pointer and keyboard focus show it; touch
+ * `Ctrl+Shift+2|G P`: chords with +, keys pressed one after another with a space). Pointer and keyboard focus show it; touch
  * does not.
  */
 import { signal } from '@preact/signals';
@@ -27,7 +27,7 @@ export const tipProps = (text: string, sub?: string | null, side?: Side, keys?: 
   'data-tip-keys': keys,
   'aria-label': sub ? `${text}, ${sub}` : text,
   // Only chords: aria-keyshortcuts has no way to write keys pressed one after another (G then P).
-  'aria-keyshortcuts': keys?.split('|').filter((c) => !c.includes(' ')).join(' ') || undefined,
+  'aria-keyshortcuts': keys?.split('|').filter((c) => !c.includes(' ')).map((c) => c.replace(/\bCtrl\b/g, 'Control')).join(' ') || undefined,
 });
 
 function show(el: HTMLElement | null) {

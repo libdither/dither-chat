@@ -1,5 +1,5 @@
 /**
- * Keys to the places (docs/desktop.md "Keys to the places"): G then I, P, M, C or F, and Alt+1 to Alt+5. After a G, a
+ * Keys to the places (docs/desktop.md "Keys to the places"): G then a letter, and Ctrl+Shift+1 to 5. After a G, a
  * small card says which letters there are. The calendar's frame passes its keys here too (CalendarPane.tsx), so the
  * keys work with the calendar in focus, and its own M and C do not take a letter that followed G.
  */
@@ -28,12 +28,15 @@ const ROUTES: Record<Place, Route> = {
   mail: { view: 'mail' },
   calendar: { view: 'calendar' },
   feed: { view: 'feed' },
+  foryou: { view: 'foryou' },
+  settings: { view: 'settings' },
+  accounts: { view: 'accounts' },
 };
 
-/** For a place's tooltip: its keys, as `Alt+2|G P`. */
+/** For a place's tooltip: its keys, as `Ctrl+Shift+2|G P`. */
 export function placeKeys(p: Place): string {
   const x = PLACES.find((y) => y.place === p)!;
-  return `Alt+${x.digit}|G ${x.letter.toUpperCase()}`;
+  return `${x.digit ? `Ctrl+Shift+${x.digit}|` : ''}G ${x.letter.toUpperCase()}`;
 }
 
 /** True between a G and its letter: the card shows. */
@@ -66,7 +69,7 @@ function onKey(e: KeyboardEvent) {
   }
   stopWaiting();
   const x = PLACES.find((p) => p.place === out.place)!;
-  countKey(out.how === 'alt' ? `keys: Alt+${x.digit} (${out.place})` : `keys: G ${x.letter.toUpperCase()} (${out.place})`);
+  countKey(out.how === 'chord' ? `keys: Ctrl+Shift+${x.digit} (${out.place})` : `keys: G ${x.letter.toUpperCase()} (${out.place})`);
   go(ROUTES[out.place]);
 }
 

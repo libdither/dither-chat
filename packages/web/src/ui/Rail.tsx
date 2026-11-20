@@ -401,13 +401,13 @@ export function Rail() {
       </div>
       <OrganizeView />
       <div class="rail-sep rail-foot" />
-      <RailItem class="rail-foot" active={is((r) => r.view === 'accounts')} title="Accounts and connections" track="accounts" onClick={() => go({ view: 'accounts' })} menu={accountsMenu}>
+      <RailItem class="rail-foot" active={is((r) => r.view === 'accounts')} title="Accounts and connections" track="accounts" keys={placeKeys('accounts')} onClick={() => go({ view: 'accounts' })} menu={accountsMenu}>
         <span class="rail-acc">
           <Icon name="power" size={20} />
           {attention && <span class="rail-alert" />}
         </span>
       </RailItem>
-      <RailItem class="rail-foot" active={is((r) => r.view === 'settings')} title="Settings" track="settings" sub="Notification rules and everything else" onClick={() => go({ view: 'settings' })}>
+      <RailItem class="rail-foot" active={is((r) => r.view === 'settings')} title="Settings" track="settings" keys={placeKeys('settings')} sub="Notification rules and everything else" onClick={() => go({ view: 'settings' })}>
         <Icon name="settings" size={20} />
       </RailItem>
     </nav>
