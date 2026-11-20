@@ -1,8 +1,9 @@
 /**
  * Rich text pasted into the composer (a web page, a document, another mail) kept as Markdown, the composer's own
  * formatting (docs/mail.md, "Formatting"): bold, italic, struck-through text, code, links, headings, lists and quotes.
- * Colours, fonts, sizes, pictures and tables' lines are left behind. Works on any DOM-like tree, so the test runs
- * without a browser; the composer hands it DOMParser's body, an inert document (nothing in it loads or runs).
+ * Colours, fonts, sizes, pictures and tables' lines are left behind (a picture pasted on its own is attached: see
+ * pastedFiles). Works on any DOM-like tree, so the test runs without a browser; the composer hands it DOMParser's body,
+ * an inert document (nothing in it loads or runs).
  */
 
 /** What is read of a node: the DOM's own names. */
@@ -137,4 +138,30 @@ export function pastedMarkdown(body: PasteNode): string | null {
   const md = tidy(kids(body, 0));
   if (!md) return null;
   return /\*\*|(^|\W)_\S|~~|`|\]\(|^#{1,6} |^\s*(- |\d+\. |> )/m.test(md) ? md : null;
+}
+
+// ------------------------------------------------------------------ pictures and files
+
+const EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/avif': 'avif', 'image/bmp': 'bmp', 'image/svg+xml': 'svg', 'image/heic': 'heic' };
+/** The names browsers give a picture with no file behind it (a screenshot, "Copy image"). */
+const GENERIC = /^(image|unknown|blob|clipboard)?(\.[a-z0-9]+)?$/i;
+const two = (n: number) => String(n).padStart(2, '0');
+
+/**
+ * What a paste attaches: the clipboard's files when it holds no text, else null and the paste is text. (A document's
+ * copy carries a picture of the selection beside its text: the text is what was meant.) A picture with no name of its
+ * own gets "Pasted picture <date> <time>.png", numbered when there are more.
+ */
+export function pastedFiles(files: File[], plain: string, now = new Date()): File[] | null {
+  if (!files.length || plain.trim()) return null;
+  const stamp = `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())} ${two(now.getHours())}.${two(now.getMinutes())}.${two(now.getSeconds())}`;
+  const unnamed = files.filter((f) => GENERIC.test(f.name)).length;
+  let k = 0;
+  return files.map((f) => {
+    if (!GENERIC.test(f.name)) return f;
+    const ext = EXT[f.type] ?? f.name.match(/\.([a-z0-9]+)$/i)?.[1] ?? 'png';
+    const what = f.type.startsWith('image/') || !f.type ? 'picture' : 'file';
+    const name = `Pasted ${what} ${stamp}${unnamed > 1 ? ` (${++k})` : ''}.${ext}`;
+    return new File([f], name, { type: f.type || 'image/png', lastModified: f.lastModified });
+  });
 }

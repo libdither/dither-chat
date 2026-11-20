@@ -454,6 +454,48 @@ async function composerDesktop(themeName: string, full: boolean) {
   await key('#mc-to', 'Enter');
   await Bun.sleep(150);
   check(`${tag}: Enter puts it back where it was, with its name`, (await page.eval<string[]>(`[...document.querySelectorAll('.mc-chip-name')].map((c) => c.textContent)`)).join(',') === 'Sam Rivera,Dana Okafor');
+  // Resized by its bottom right corner with the mouse: the top left stays put.
+  const rect = () => page.eval<{ x: number; y: number; w: number; h: number }>(`(() => { const r = document.querySelector('.mc-layer.dock').getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }; })()`);
+  const was = await rect();
+  const [gx, gy] = await at('.mc-grip.se');
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: gx, y: gy, button: 'none', buttons: 0 });
+  await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: gx, y: gy, button: 'left', buttons: 1, clickCount: 1 });
+  for (const k of [1, 2, 3]) await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: gx - 20 * k, y: gy - 30 * k, button: 'left', buttons: 1 });
+  await page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: gx - 60, y: gy - 90, button: 'left', buttons: 0, clickCount: 1 });
+  await Bun.sleep(150);
+  const now = await rect();
+  check(`${tag}: the bottom right corner resizes it, the top left staying`, now.x === was.x && now.y === was.y && now.w === was.w - 60 && now.h === was.h - 90, { was, now });
+  // Maximized: the window but a gap; again: back to that size.
+  await click(await at('.mc-max'));
+  const big = await rect();
+  check(`${tag}: maximize fills the window`, big.x === 16 && big.y === 16 && big.w === 1400 - 32 && big.h === 900 - 32, big);
+  await shot(`mail-${tag.replace(/ /g, '-')}-maximized`);
+  await click(await at('.mc-max'));
+  const back = await rect();
+  check(`${tag}: and back to the size it was`, back.w === now.w && back.h === now.h && back.x === now.x, back);
+  // A screenshot pasted into the text is attached, with a picture of itself and a name of its own.
+  await page.eval(`(async () => {
+    const c = document.createElement('canvas'); c.width = 40; c.height = 30;
+    const g = c.getContext('2d'); g.fillStyle = '#c63'; g.fillRect(0, 0, 40, 30);
+    const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+    const dt = new DataTransfer(); dt.items.add(new File([blob], 'image.png', { type: 'image/png' }));
+    const t = document.querySelector('.mc-body'); t.focus();
+    t.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  })()`);
+  await page.until(`!!document.querySelector('.mc-files .composer-file[data-status="done"] img')`, 15000).catch(() => {});
+  const pasted = await page.eval<{ name: string; img: boolean; text: string }>(`(() => { const f = document.querySelector('.mc-files .composer-file'); return { name: f?.querySelector('.composer-file-name')?.textContent ?? '', img: !!f?.querySelector('img')?.naturalWidth, text: document.querySelector('.mc-body').value }; })()`);
+  check(`${tag}: a pasted picture is attached with its thumbnail and a name, nothing typed`, /^Pasted picture \d{4}-\d\d-\d\d \d\d\.\d\d\.\d\d\.png$/.test(pasted.name) && pasted.img && pasted.text === '', pasted);
+  // A file dropped on it is attached too.
+  await page.eval(`(() => {
+    const dt = new DataTransfer(); dt.items.add(new File(['notes'], 'notes.txt', { type: 'text/plain' }));
+    const m = document.querySelector('.mc-scroll');
+    for (const type of ['dragenter', 'dragover', 'drop']) m.dispatchEvent(new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true }));
+  })()`);
+  await page.until(`[...document.querySelectorAll('.mc-files .composer-file-name')].some((n) => n.textContent === 'notes.txt')`, 15000).catch(() => {});
+  check(`${tag}: a dropped file is attached`, await page.eval<boolean>(`[...document.querySelectorAll('.mc-files .composer-file-name')].some((n) => n.textContent === 'notes.txt')`));
+  await shot(`mail-${tag.replace(/ /g, '-')}-pasted`);
+  // Taken off again, so the draft below is as it was.
+  for (let i = 0; i < 2; i++) await click(await at('.mc-files .composer-file .icon-btn[aria-label^="Remove"]'));
   await type('#mc-subject', 'Photos from Friday');
   await type('.mc-body', 'Here they are.');
   // Formatting: Aa shows the bar; B makes the selection bold; Preview shows it as it will arrive; Ctrl+Z takes it back.
