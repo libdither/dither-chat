@@ -170,13 +170,14 @@ describe('the store and the endpoint', () => {
   let port = 0;
   let store: Store;
   let hub: HubServer;
-  const GUILD = sf(NOW - 400 * DAY);
-  const GENERAL = sf(NOW - 100 * DAY, 1);
-  const ROOM = '!room:x.org';
-  const ann = hubId('idn', 'discord', sf(NOW - 3000 * DAY, 2));
+  // Everything here is dated from the real clock, as the hub reads it: the channel's age (its snowflake) and its
+  // messages alike. A fixed date for one and the clock for the other grew the unseen stretch by a day each day.
   const now = Date.now();
+  const GUILD = sf(now - 400 * DAY);
+  const GENERAL = sf(now - 100 * DAY, 1);
+  const ROOM = '!room:x.org';
+  const ann = hubId('idn', 'discord', sf(now - 3000 * DAY, 2));
   // Held from 50 days ago to now in a channel made 100 days ago: 10 a day, every tenth from ann.
-  const shift = now - NOW;
 
   beforeAll(() => {
     store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
@@ -191,9 +192,9 @@ describe('the store and the endpoint', () => {
       store.ingest(m, { t: 'space', space: { nativeId: '!space:x.org', kind: 'community', name: 'Matrix space' } });
       store.ingest(m, { t: 'conversation', conversation: { nativeId: ROOM, shape: 'channel', name: 'room', spaces: [{ nativeId: '!space:x.org' }] } });
       for (let i = 0; i < 500; i++) {
-        const ts = NOW - 50 * DAY + Math.floor(i * (50 * DAY / 500)) + shift;
-        const author = i % 10 === 0 ? sf(NOW - 3000 * DAY, 2) : `u${i % 7}`;
-        store.ingest(d, { t: 'message', message: { nativeId: sf(ts - shift, 100 + i), conversation: GENERAL, author, ts, body: 'x' } });
+        const ts = now - 50 * DAY + Math.floor(i * (50 * DAY / 500));
+        const author = i % 10 === 0 ? sf(now - 3000 * DAY, 2) : `u${i % 7}`;
+        store.ingest(d, { t: 'message', message: { nativeId: sf(ts, 100 + i), conversation: GENERAL, author, ts, body: 'x' } });
       }
       for (let i = 0; i < 30; i++) store.ingest(m, { t: 'message', message: { nativeId: `$e${i}`, conversation: ROOM, author: i < 3 ? '@ann:x.org' : '@bob:x.org', ts: now - i * DAY, body: 'y' } });
     })();
