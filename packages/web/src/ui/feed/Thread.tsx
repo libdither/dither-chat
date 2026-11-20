@@ -29,7 +29,7 @@ import { PostActions, type AnswerCtx } from './Actions.tsx';
 import { Comments, COMMENT_STYLES, StyleMenu, type CommentStyle } from './Comments.tsx';
 import { PostComposer } from './Composer.tsx';
 import { FollowButton } from './Follow.tsx';
-import { Counts, Pics, QuotedIn, Row, Text, Who } from './Post.tsx';
+import { Counts, Folded, Pics, Place, QuotedIn, Row, Text, Who } from './Post.tsx';
 import { flip, snap } from './Seg.tsx';
 import { heldThread, readThread, seedPost } from './threadcache.ts';
 import { replyTree, treeSize, type TreeNode } from './tree.ts';
@@ -83,7 +83,7 @@ interface Crumb {
 const trail: Crumb[] = [];
 let leaving: { crumb: Crumb; at: number } | null = null;
 
-/** The post asked for, large: who, its words, pictures, the quote, its full time, counts, and Open on X. */
+/** The post asked for, large: who, where, its title, its words (behind a content warning), pictures, the quote, its full time, counts, and Open on its network. */
 function Focal({ p, kit, network, joined, answer, children }: { p: P.PostView; kit: Kit; network: P.Network; joined: boolean; answer: AnswerCtx; children?: preact.ComponentChildren }) {
   const shown = p.repostOf ?? p;
   const who = shown.author ?? null;
@@ -97,15 +97,21 @@ function Focal({ p, kit, network, joined, answer, children }: { p: P.PostView; k
         <Who id={who} kit={kit} />
       </div>
       {shown.replyTo && !joined && <span class="post-mark">Replying to {replyTo ? `@${replyTo}` : 'a post'}</span>}
-      <Text p={shown} kit={kit} network={network} cls="thread-focal-text" />
-      <Pics media={shown.media} />
+      <Place p={shown} />
+      {shown.title && <h2 class="post-title thread-focal-title">{shown.title}</h2>}
+      <Folded warning={shown.warning} kit={kit}>
+        <Text p={shown} kit={kit} network={network} cls="thread-focal-text" />
+        <Pics media={shown.media} />
+      </Folded>
       {shown.quoteOf && <QuotedIn p={shown.quoteOf} kit={kit} network={network} />}
       <div class="thread-focal-time">{kit.fullTime(shown.ts)}</div>
       <div class="thread-focal-foot">
-        <Counts p={shown} kit={kit} big />
-        <a class="post-open" href={shown.url} target="_blank" rel="noreferrer">
-          <kit.Icon name="external" size={12} /> Open on {NETWORK_META[network].name}
-        </a>
+        <Counts p={shown} kit={kit} big network={network} />
+        {shown.url && (
+          <a class="post-open" href={shown.url} target="_blank" rel="noreferrer">
+            <kit.Icon name="external" size={12} /> Open on {NETWORK_META[network].name}
+          </a>
+        )}
       </div>
       {/* No Reply in its bar: the box under it is where a reply is written. */}
       <PostActions p={shown} ctx={{ ...answer, onReply: undefined }} big />
@@ -477,7 +483,7 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
         </div>
         <kit.HeadOrb />
         <FollowButton t={t} kit={kit} />
-        {shownFocal && (
+        {shownFocal && (shownFocal.repostOf ?? shownFocal).url && (
           <a class="icon-btn" href={(shownFocal.repostOf ?? shownFocal).url} target="_blank" rel="noreferrer" title={`Open on ${net}`} aria-label={`Open on ${net}`}>
             <kit.Icon name="external" size={16} />
           </a>

@@ -20,6 +20,7 @@ import { DEMO_SELF_CAPS, DemoSelf } from './demoself.ts';
 import type { InprocAdapter } from './supervisor.ts';
 import { DEMO_CALL_CAPS, DemoRings, demoCallRoom } from './democalls.ts';
 import { DEMO_X2_ACCOUNT, DEMO_X_ACCOUNT, DemoX } from './demo-x.ts';
+import { DEMO_POST_ACCOUNTS, DemoPosts } from './demo-posts.ts';
 import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
 import { DEMO_SERVER_CAPS, DemoServers } from './demoservers.ts';
@@ -1721,7 +1722,12 @@ class DemoAdd {
         { nativeId: `friend-${D.drops.nativeId}`, kind: 'friend', from: D.drops.nativeId, ts: now - 40 * 60_000, answers: ['accept', 'decline', 'block'], warning: 'Discord filed this request as possible spam' },
         { nativeId: `friend-${D.wren.nativeId}`, kind: 'friend', from: D.wren.nativeId, ts: now - 5 * 3_600_000, answers: ['accept', 'decline', 'block'], warning: 'Discord says you share no server or friend with them' },
       ];
-    if (this.key === 'mx') return [{ nativeId: room('nix-hack', 'matrix.org'), kind: 'invite', from: M.jules.nativeId, target: { kind: 'conversation', nativeId: room('nix-hack', 'matrix.org'), name: 'Nix Hackathon 2026', members: 23 }, ts: now - 26 * 3_600_000, answers: ['accept', 'decline'] }];
+    if (this.key === 'mx')
+      return [
+        { nativeId: room('nix-hack', 'matrix.org'), kind: 'invite', from: M.jules.nativeId, target: { kind: 'conversation', nativeId: room('nix-hack', 'matrix.org'), name: 'Nix Hackathon 2026', members: 23 }, ts: now - 26 * 3_600_000, answers: ['accept', 'decline'] },
+        // A knock on a room you are in but don't moderate: its moderators answer it.
+        { nativeId: `knock|${room('rust-mx', 'matrix.org')}|${M.mira.nativeId}`, kind: 'join', from: M.mira.nativeId, target: { kind: 'conversation', nativeId: room('rust-mx', 'matrix.org'), name: 'Rust', members: 412 }, ts: now - 2 * 3_600_000, answers: [], forOthers: true },
+      ];
     if (this.key === 'sig') return [{ nativeId: `msgreq-${S.jamie.nativeId}`, kind: 'message', from: S.jamie.nativeId, target: { kind: 'conversation', nativeId: sdm(S.jamie).nativeId }, ts: now - 95 * 60_000, answers: ['accept', 'decline', 'block'] }];
     return [];
   }
@@ -3300,18 +3306,23 @@ class DemoAdapter implements InprocAdapter {
 export function demoFactory(acc: AccountRow, dir: string): InprocAdapter | null {
   if (acc.adapter !== 'demo') return null;
   if (acc.id === DEMO_X_ACCOUNT.id || acc.id === DEMO_X2_ACCOUNT.id) return new DemoX(acc, dir);
+  if (DEMO_POST_ACCOUNTS.some((d) => d.id === acc.id)) return new DemoPosts(acc, dir);
   const key = DEMO_ACCOUNTS.find((d) => d.id === acc.id)?.key;
   return key ? new DemoAdapter(key, acc, dir) : null;
 }
 
-/** `x: false` leaves out the X account and its feed (docs/feed.md): scripts/perf-world.ts's world predates it. */
-export function createDemoAccounts(store: Store, o: { x?: boolean } = {}): AccountRow[] {
+/**
+ * `x: false` leaves out the X accounts and their feed (docs/feed.md), and the Mastodon, Reddit, Lemmy, Substack and Bluesky
+ * ones with them: scripts/perf-world.ts's world predates them. `posts: false` (or DITHER_DEMO_POSTS=0, for the verify
+ * scripts written for X alone) leaves out only those five.
+ */
+export function createDemoAccounts(store: Store, o: { x?: boolean; posts?: boolean } = {}): AccountRow[] {
   // A new world (a fresh hub, Reset demo, each test): names and settings changed in the last one start over.
   demoPlaces.clear();
   for (const [c, f] of FIRST_CONVS) c.fact = f;
   for (const [x, f] of FIRST_SPACES) x.fact = f;
   const epoch = Date.now();
-  return [...DEMO_ACCOUNTS, ...(o.x === false ? [] : [DEMO_X_ACCOUNT, DEMO_X2_ACCOUNT])].map((d) => store.createAccount({ id: d.id, network: d.network, label: d.label, color: d.color, adapter: 'demo', demo: true, config: { epoch } }));
+  return [...DEMO_ACCOUNTS, ...(o.x === false ? [] : [DEMO_X_ACCOUNT, DEMO_X2_ACCOUNT]), ...(o.x === false || (o.posts ?? process.env.DITHER_DEMO_POSTS !== '0') === false ? [] : DEMO_POST_ACCOUNTS)].map((d) => store.createAccount({ id: d.id, network: d.network, label: d.label, color: d.color, adapter: 'demo', demo: true, config: { epoch } }));
 }
 
 /** Hub-side organisation for the demo: merged people, folders, rules. Applied once. */

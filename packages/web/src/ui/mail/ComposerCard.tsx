@@ -24,6 +24,7 @@ import { discardLater, goneKeys } from './discard.ts';
 import { mailCompose, type ComposeOpen } from './lazy.tsx';
 import { Loading } from '../Loader.tsx';
 import { themeFrame } from './frameTheme.ts';
+import { clampDock, defaultDock, loadDock, moveDock, resizeDock, saveDock, BAR_W, type Dock, type DockSaved } from '../../mail/dock.ts';
 
 const MB = 1024 * 1024;
 const FILE_CAP = 25 * MB;
@@ -378,6 +379,65 @@ function Preview({ text }: { text: string }) {
   );
 }
 
+// ------------------------------------------------------------------ where it sits on a computer
+
+const view = () => ({ vw: window.innerWidth, vh: window.innerHeight });
+
+/**
+ * The dock (mail/dock.ts): dragged by its header, resized by its top and left edges, minimized to a bar; remembered.
+ * A double-click on the header puts it back where it starts.
+ */
+function useDock(on: boolean) {
+  const [saved, setSaved] = useState<DockSaved>(loadDock);
+  const [, redraw] = useState(0);
+  useEffect(() => {
+    if (!on) return;
+    const r = () => redraw((x) => x + 1);
+    window.addEventListener('resize', r);
+    return () => window.removeEventListener('resize', r);
+  }, [on]);
+  const { vw, vh } = typeof window === 'undefined' ? { vw: 1280, vh: 800 } : view();
+  const at = saved.at ? clampDock(saved.at, vw, vh) : defaultDock(vw, vh);
+  const put = (s: DockSaved, keep = true) => (setSaved(s), keep && saveDock(s));
+  /** A pointer held down on the header or an edge: `step` says where it goes for the distance moved. */
+  const follow = (e: PointerEvent, step: (d: Dock, dx: number, dy: number, vw: number, vh: number) => Dock) => {
+    if (e.button !== 0) return;
+    const el = e.currentTarget as HTMLElement;
+    const from = at;
+    const x0 = e.clientX;
+    const y0 = e.clientY;
+    let last: Dock | null = null;
+    e.preventDefault();
+    el.setPointerCapture?.(e.pointerId);
+    const move = (m: PointerEvent) => {
+      const v = view();
+      last = step(from, m.clientX - x0, m.clientY - y0, v.vw, v.vh);
+      put({ at: last, min: false }, false);
+    };
+    const up = () => {
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', up);
+      el.removeEventListener('pointercancel', up);
+      if (last) saveDock({ at: last, min: false });
+    };
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+  };
+  const style = saved.min ? { right: `${Math.min(at.r, Math.max(0, vw - BAR_W))}px`, bottom: '0px', width: `${Math.min(BAR_W, vw)}px`, height: 'auto' } : { right: `${at.r}px`, bottom: `${at.b}px`, width: `${at.w}px`, height: `${at.h}px` };
+  return {
+    min: saved.min,
+    style,
+    setMin: (min: boolean) => put({ ...saved, min }),
+    reset: () => put({ at: null, min: false }),
+    drag: (e: PointerEvent) => {
+      if ((e.target as Element | null)?.closest('button, a, input, select, textarea')) return;
+      follow(e, moveDock);
+    },
+    grip: (e: PointerEvent, sides: 'tl' | 't' | 'l') => follow(e, (d, dx, dy, w, h) => resizeDock(d, sides === 't' ? 0 : dx, sides === 'l' ? 0 : dy, w, h)),
+  };
+}
+
 // ------------------------------------------------------------------ the composer
 
 export function Composer({ open }: { open: ComposeOpen }) {
@@ -409,6 +469,9 @@ export function Composer({ open }: { open: ComposeOpen }) {
   const made = useRef(new Set<NewFile>());
   const d = ed?.d ?? null;
   const files = ed?.files ?? [];
+  const dock = useDock(!p);
+  const min = !p && dock.min;
+  const minBtn = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     let live = true;
@@ -538,6 +601,14 @@ export function Composer({ open }: { open: ComposeOpen }) {
   };
   const closeRef = useRef(close);
   closeRef.current = close;
+  const minRef = useRef(min);
+  minRef.current = min;
+  /** Minimized to a bar at the bottom edge, or open again; the draft goes on saving either way. */
+  const setMin = (v: boolean) => {
+    dock.setMin(v);
+    // What had focus is hidden now: it moves to the button that brings it back.
+    if (v) requestAnimationFrame(() => minBtn.current?.focus());
+  };
 
   /** Thrown away, with Undo in the strip for a few seconds; then the draft and its files go. */
   const discard = () => {
@@ -554,7 +625,8 @@ export function Composer({ open }: { open: ComposeOpen }) {
   }, [p]);
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !e.defaultPrevented && box.current?.contains(document.activeElement)) closeRef.current();
+      // Minimized, it stays as it is: Escape neither closes nor throws away.
+      if (e.key === 'Escape' && !e.defaultPrevented && !minRef.current && box.current?.contains(document.activeElement)) closeRef.current();
     };
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
@@ -641,16 +713,41 @@ export function Composer({ open }: { open: ComposeOpen }) {
   );
 
   return (
-    <div class={`mc-layer ${p ? 'phone' : 'dock'}`}>
+    <div class={`mc-layer ${p ? 'phone' : `dock${min ? ' min' : ''}`}`} style={p ? undefined : dock.style}>
+      {!p && !min && (
+        <>
+          <div class="mc-grip t" aria-hidden="true" onPointerDown={(e) => dock.grip(e, 't')} />
+          <div class="mc-grip l" aria-hidden="true" onPointerDown={(e) => dock.grip(e, 'l')} />
+          <div class="mc-grip tl" aria-hidden="true" title="Drag to resize" onPointerDown={(e) => dock.grip(e, 'tl')} />
+        </>
+      )}
       <section class="mc" ref={box} role="dialog" aria-modal={p} aria-label={title} onKeyDownCapture={onKeyDownCapture} onBeforeInput={onBeforeInput}>
-        <header class="mc-head">
+        <header
+          class="mc-head"
+          title={p ? undefined : min ? 'Open the message again' : 'Drag to move; double-click to put it back'}
+          onPointerDown={p || min ? undefined : dock.drag}
+          onClick={min ? (e) => !(e.target as Element).closest('button') && setMin(false) : undefined}
+          onDblClick={p || min ? undefined : (e) => !(e.target as Element).closest('button, input, select') && dock.reset()}
+        >
           <button class="icon-btn" onClick={close} aria-label="Close; the draft is kept" title="Close (the draft is kept)">
             <Icon name="x" />
           </button>
-          <h2 class="mc-title">{title}</h2>
+          <h2 class="mc-title">{min && d?.subject ? d.subject : title}</h2>
           <span class="mc-saved" role="status">
             {state === 'saving' ? 'Saving…' : state === 'saved' ? 'Draft saved' : state === 'local' ? 'Saved on this device' : resumed ? 'Draft' : ''}
           </span>
+          {!p && (
+            <button
+              ref={minBtn}
+              class="icon-btn mc-min"
+              onClick={() => setMin(!min)}
+              aria-expanded={!min}
+              aria-label={min ? 'Open the message again' : 'Minimize; the draft is kept'}
+              title={min ? 'Open the message again' : 'Minimize (the draft is kept)'}
+            >
+              <Icon name={min ? 'chevronUp' : 'minus'} size={16} />
+            </button>
+          )}
           <button class="icon-btn mc-discard" onClick={discard} disabled={!d} aria-label="Discard the draft" title="Discard the draft (Undo in the strip below)">
             <Icon name="trash" size={16} />
           </button>

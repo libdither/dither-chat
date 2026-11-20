@@ -343,6 +343,16 @@ const upkeepNow = async () => {
 };
 setTimeout(() => void upkeep(), 60_000);
 setInterval(() => void upkeep(), 6 * 3_600_000);
+
+// Search's time index (docs/search.md) for the messages from before it: once per database, newest first, a slice at a
+// time, after the first minutes' work. Until it is done search goes the old way.
+if (!store.searchIndexReady)
+  setTimeout(() => {
+    const t = Date.now();
+    sliced('search: fill time index', store.fillSearchIndexSteps())
+      .then(() => console.log(`search: time index filled in ${Math.round((Date.now() - t) / 1000)} s`))
+      .catch((e) => (console.error('search: time index fill failed', e), jobFailed('search index', e)));
+  }, 90_000);
 // The scorecard, in slices (slices.ts): a few minutes after the start (backfilling every day the data covers, the
 // first time), then every hour, which finds the day that matured since.
 setTimeout(() => void scorecard.run(), 3 * 60_000);

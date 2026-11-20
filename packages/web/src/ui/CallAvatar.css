@@ -1,0 +1,47 @@
+/* A person in a call (CallAvatar.tsx). A fixed square box, so the ring around it (.speak-ring, styles.css) is round at any size. */
+.call-av {
+  display: block;
+  flex: none;
+  width: var(--s, 40px);
+  height: var(--s, 40px);
+  border-radius: 50%;
+}
+.call-av.square {
+  --ring-r: calc(var(--s, 40px) * 0.3 + var(--ring-out, 4px));
+  border-radius: calc(var(--s, 40px) * 0.3);
+}
+.call-av > .avatar {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+/* One badge, bottom right: the most important state (callmarks.ts callBadge), sized with the face (badgeSize). */
+.call-av-badge {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: var(--corner, 14px);
+  height: var(--corner, 14px);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--bg-raised);
+  box-shadow: 0 0 0 2px var(--bg-raised);
+  color: var(--danger);
+  font-size: calc(var(--corner, 14px) * 0.6);
+  line-height: 1;
+}
+.call-av-badge.serverMuted,
+.call-av-badge.serverDeafened {
+  background: var(--danger);
+  color: #fff;
+}
+.call-av-badge.hand {
+  color: var(--warn);
+}
+.call-av-badge.invited {
+  color: var(--good);
+}
+.call-av-badge.mutedForYou {
+  color: var(--text-dim);
+}

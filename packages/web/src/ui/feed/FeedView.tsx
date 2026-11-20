@@ -63,7 +63,7 @@ export function FeedView({ c, kit }: { c: P.ConversationView; kit: Kit }) {
           {t?.loading && <kit.Loading inline label="Loading notifications…" />}
           {!t?.loading && !t?.hasMore && !units.length && (
             <kit.Empty icon="bell" title="Nothing yet">
-              When people like, repost, reply to or quote your posts on {net}, mention you or follow you, it shows here.
+              When people {kit.feed.activityVerbs(c.network)} your posts on {net}, mention you or follow you, it shows here.
             </kit.Empty>
           )}
         </div>

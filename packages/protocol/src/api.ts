@@ -588,6 +588,8 @@ export interface PeopleGraph {
   accounts: string[];
   people: GraphPerson[];
   places: GraphPlace[];
+  /** You, drawn in the middle: your name and picture. */
+  me?: { name: string; pic?: string };
   /** Person–place links as flat triples: person index, place index, GRAPH_SOURCE bits. Each pair once. */
   links: number[];
 }
@@ -599,7 +601,11 @@ export interface GraphPerson {
   networks: Network[];
   /** Accounts that have a direct chat with them. */
   dm: number[];
+  /** Accounts that list them as a friend or a contact. */
+  friend?: number[];
   bot?: true;
+  /** Their picture (a signed media link), when one of their accounts has one. */
+  pic?: string;
 }
 export interface GraphPlace {
   /** A community space (`space`) or a group conversation (`group`). */
@@ -611,6 +617,54 @@ export interface GraphPlace {
   accounts: number[];
   /** The network's member count, when it gave one (members setting on). */
   total?: number;
+  /** A server's icon or a group's picture (a signed media link). */
+  pic?: string;
+}
+/**
+ * GET /api/graph/activity: how much you have had to do with each person, month by month (closeness.ts), for sizing
+ * people by it and replaying it over time. Months are year × 12 + month (0-based), UTC.
+ */
+export interface GraphActivity {
+  from: number;
+  to: number;
+  /** A graph person's id → flat [month, weight × 10] pairs, months ascending. */
+  people: Record<string, number[]>;
+  /** A graph person's id → friends you share, as a profile said. */
+  mutual: Record<string, number>;
+  /**
+   * A graph place's id → flat [month, weight × 10] pairs: your own messages there (1 each) and the time you spent in
+   * it (1 a minute, since the hub kept track). Absent from an older hub.
+   */
+  places?: Record<string, number[]>;
+  /** Ties between people, neither of them you (closeness.ts, docs/people-graph.md "Ties and circles"). Absent from an older hub. */
+  ties?: GraphTies;
+}
+
+/**
+ * Ties between two people, neither of them you, keyed by graph person id: `ids` lists the people, and the rest index it.
+ *  - `links`: runs of [a, b, n, then n pairs of month and weight × 10], months ascending. A month's weight is replies
+ *    between them (1 each, either way), reactions to each other's messages (0.3 each), and turns one right after the
+ *    other within five minutes in a group chat of 60 people or fewer (0.5 each). Pairs under 2 in all are left out.
+ *  - `friends`: flat [a, b] pairs that a fetched profile says are friends (its friends in common with you).
+ */
+export interface GraphTies {
+  ids: string[];
+  links: number[];
+  friends: number[];
+}
+
+/** What the people graph's importance weighs, and how much (docs/people-graph.md "Who matters"). */
+export const GRAPH_WEIGHT_KEYS = ['talk', 'places', 'friends', 'listed', 'networks', 'circle'] as const;
+export type GraphWeightKey = (typeof GRAPH_WEIGHT_KEYS)[number];
+
+/** Your own tuning of importance, kept by the hub (GET/PUT /api/graph/tuning); null when never tuned. */
+export interface GraphTuning {
+  /** Each signal's weight, 0 to 3. */
+  weights: Record<GraphWeightKey, number>;
+  /** Talk fades by e every this many months (3 to 60). */
+  fade: number;
+  /** Set when the weights were fitted to what came next (Fit to me): when, and how well before and after. */
+  fitted?: { at: number; before: number; after: number };
 }
 /** Where a link came from: members seen (adversarial), a profile's mutual servers, a conversation's participants. */
 export const GRAPH_SOURCE = { members: 1, profile: 2, participant: 4 } as const;
@@ -880,6 +934,17 @@ export interface PublishDestination {
   text: string;
   /** The rest of a thread, each posted as a reply to the one before. */
   parts?: string[];
+  /** A title, a place and a content warning for its first post, where its network has them (POST_RULES). */
+  title?: string;
+  place?: string;
+  warning?: string;
+}
+
+/** A new post's fields beyond its words, per account (POST_RULES `title`, `place`, `warning`). */
+export interface PostFields {
+  title?: string;
+  place?: string;
+  warning?: string;
 }
 
 /** POST /api/feed/publish: one press of Post, to several accounts at once. */
@@ -916,6 +981,8 @@ export interface DraftView {
   accounts: string[];
   /** Per account words, when written apart ("Customize per network"). */
   own?: Record<string, string>;
+  /** Per account title, place and content warning, where its network has them. */
+  fields?: Record<string, PostFields>;
   replies?: ReplyGate;
   /** Post it then (ms epoch); the hub posts it at that time. */
   scheduledAt?: number;
@@ -1272,6 +1339,8 @@ export interface RequestView {
   warning: string | null;
   /** The network filed it as spam: it never notifies, and sits last. */
   spam?: boolean;
+  /** Someone else answers it (a room's moderators): shown in a group of its own, never counted or notified. */
+  forOthers?: boolean;
 }
 
 export interface SearchHit {
@@ -1281,6 +1350,8 @@ export interface SearchHit {
   /** With &context=n: the messages just before and after it in its conversation, oldest first. */
   before?: MessageView[];
   after?: MessageView[];
+  /** A top match's reason in a few words ("DM · you talk often"), from what ranked it (docs/search.md, "Ranking"). */
+  why?: string;
 }
 
 /** Someone found by a name, a handle, a name they had before, your nickname or note, their status or bio. */
@@ -1302,6 +1373,11 @@ export interface SearchPage {
   mode: 'fulltext' | 'substring' | 'filters';
   /** Nothing matched as typed, so these hits are for this query instead, a misspelt word corrected. Page with it. */
   corrected?: string;
+  /**
+   * With no sort: the best few matches, ranked by how well, how lately and how close to you (docs/search.md,
+   * "Ranking"), shown above the newest. First page only; they also appear in `hits` where they fall.
+   */
+  top?: SearchHit[];
 }
 
 /** A message with what surrounds it, for jumping to it. */
