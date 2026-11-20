@@ -1,7 +1,7 @@
 /** The composer's edits (mail/edits.ts, mail/paste.ts): formatting as Markdown, lists, undo, chips back to text, paste. */
 import { describe, expect, test } from 'bun:test';
 import { applyFormat, caretAfter, chipText, continueList, EditHistory, keptName, mergeHits, pasteLink, type Format, type Sel } from '../src/mail/edits.ts';
-import { pastedMarkdown, type PasteNode } from '../src/mail/paste.ts';
+import { pastedFiles, pastedMarkdown, type PasteNode } from '../src/mail/paste.ts';
 
 /** Text with its selection written in: [ and ] around it, or | for the caret. */
 function sel(s: string): Sel {
@@ -153,6 +153,26 @@ describe('pasting rich text', () => {
   test('links only to the web and mail; script and style are left behind', () => {
     const md = pastedMarkdown(body(el('p', null, el('a', { href: 'javascript:alert(1)' }, 'click'), ' ', el('a', { href: 'https://a.example/x' }, 'https://a.example/x'), ' ', el('b', null, 'ok')), el('script', null, 'alert(1)'), el('style', null, 'p{}')));
     expect(md).toBe('click https://a.example/x **ok**');
+  });
+});
+
+describe('pasting pictures and files', () => {
+  const at = new Date(2026, 10, 20, 9, 5, 7);
+  const png = (name: string) => new File([new Uint8Array([137, 80, 78, 71])], name, { type: 'image/png' });
+
+  test('a screenshot is attached under a name of its own', () => {
+    const got = pastedFiles([png('image.png')], '', at)!;
+    expect(got.map((f) => [f.name, f.type, f.size])).toEqual([['Pasted picture 2026-11-20 09.05.07.png', 'image/png', 4]]);
+  });
+
+  test('several unnamed are numbered; a file with a name keeps it', () => {
+    const got = pastedFiles([png('image.png'), new File(['x'], '', { type: 'image/jpeg' }), png('holiday.png')], '  ', at)!;
+    expect(got.map((f) => f.name)).toEqual(['Pasted picture 2026-11-20 09.05.07 (1).png', 'Pasted picture 2026-11-20 09.05.07 (2).jpg', 'holiday.png']);
+  });
+
+  test('text on the clipboard wins (a document copies a picture of itself beside it), and no files is no paste of files', () => {
+    expect(pastedFiles([png('image.png')], 'the copied paragraph', at)).toBeNull();
+    expect(pastedFiles([], '', at)).toBeNull();
   });
 });
 
