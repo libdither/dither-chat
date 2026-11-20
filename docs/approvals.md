@@ -18,7 +18,8 @@ and nothing else. The hub that carries it is not trusted for the decision: it on
 ```
 
 Code: `packages/approvals` (the formats, signing and checking, `dither-ask`, the review watcher and merge bot),
-`packages/hub/src/approvals.ts` (the queue, the routes, the page's answers), `packages/web/src/ui/Approvals*.tsx`;
+`packages/hub/src/approvals.ts` (the queue, the routes, the page's answers; kept in `<data>/approvals.sqlite`),
+`approvals-demo.ts` (a demo world's devices), `packages/web/src/ui/ApprovalCard.tsx`;
 in dither-accounts: `packages/manager/src/approvers.ts` and `approvals.ts`, `apps/android` (the phone),
 `apps/desk-signer` (the laptop).
 
@@ -117,8 +118,8 @@ dither-ask status  ID [--wait SECONDS] [--keys FILE]
 dither-ask cancel  ID [--reason TEXT]
 dither-ask keys                                    the paired devices' approval keys, as a keys file (below)
 dither-ask verify  --keys FILE (--statement-file F --signature SIG | --json F)     one answer
-dither-ask verify-commit REV  --keys FILE [--repo NAME] [--policies DIR] [--json]
-dither-ask verify-range BASE TIP --keys FILE [--repo NAME] [--policies DIR] [--json]
+dither-ask verify-commit REV  --keys FILE [--repo NAME] [--git-dir DIR] [--json]
+dither-ask verify-range BASE TIP --keys FILE [--repo NAME] [--git-dir DIR] [--json]
 dither-ask diff-hash DIR [--base REV]              the rebuild payload's diff-sha256
 dither-ask policy  --name N --repo R --target T --path P... --line RE... --max-lines N --expires-days D
                    [--wait SECONDS] --out FILE           ask for a standing approval; writes its trailers
@@ -203,8 +204,10 @@ GET  /api/approvals/keys                                                  the de
 - **The phone** (dither-accounts' approver app): a wake-up opens its link; it shows the title, body, payload lines,
   asker, the actions and a box for a message; an action marked `signed` runs the approval key behind the fingerprint
   prompt. It checks `payload-sha256` and `display-sha256` against what it shows before it signs.
-- **The page** (`#/approvals`, and each request as a notice under Notices, so it reaches your phone's and browsers'
-  notifications): every request, its body and payload, the actions and a message box. `deny` and actions marked `any`
+- **The page**: each request is a notice under Notices (source "Approval", account `approvals`, urgency as asked:
+  `high` unless the asker says otherwise), so it reaches your phone's and browsers' notifications; opened, its card
+  shows the body, the payload ("What a signature covers"), a message box and the actions, and follows the request
+  while it waits. An answer, a cancel or an expiry reads the notice. `deny` and actions marked `any`
   are answered from the page directly (unsigned). An action marked `signed` asks the laptop signer, when one is paired
   and online: the page says "Touch the fingerprint reader", the desk signer checks your finger through fprintd and
   signs; otherwise the page says to answer on the phone.
@@ -294,7 +297,9 @@ repository every minute:
 1. A new head on `review/<name>`: it waits for the repo's **CI source** to have a result for that commit, then asks a
    `merge` request: title "Merge review/<name> into <target> (<repo>)", body the commits (`git log --oneline
    base..head`), `git diff --stat` and the CI's lines, payload `dither-merge-v1` with the tree of
-   `git merge-tree --write-tree <base> <head>` (a conflict is reported as a `merge` that only offers `deny`, saying so).
+   `git merge-tree --write-tree <base> <head>`. A CI that failed is said in the title ("[CI failed]"), still
+   answerable. A conflict is said as an `alert` on the same topic ("review/<name> conflicts with main"), nothing to
+   approve, until a new head.
 2. A newer head on the same branch cancels the request for the older one and asks again. A deleted branch cancels it.
 3. **Approve** (signed): the bot fetches again; if the target's tip is still `base` and the branch's head still
    `head`, it makes the merge commit (parents `base`, `head`, tree `tree`; checked equal), signed with the bot's own
@@ -302,8 +307,9 @@ repository every minute:
    target moved, it asks again for the new base (the old approval covers a tree that is no longer the result). After
    the push it deletes `review/<name>`.
 4. **Deny**: the request closes with your message; the branch stays for the agent to push a fix. The agent reads the
-   outcome with `dither-ask review status <name> [--repo R]` (the latest request for that branch: state, action,
-   message).
+   outcome with `dither-ask review status <name> --repo R`: the latest request for that branch (every request the bot
+   makes has the topic `<repo>:review/<name>`, and any asker's token may read a topic), its state, action and message;
+   exit 0 approved, 77 sent back, 75 waiting, expired or a conflict.
 
 **CI sources** are per repository in the watcher's config:
 
@@ -373,6 +379,14 @@ It writes the three trailers (plus `Approval-Policy: app-bump`) to `app-bump.app
 commit message (`git commit -F` with the message and that file). The verifier then checks each bump against the
 policy's lines. What it still trusts: the release the hashes come from (the URL in those files is unchanged by the
 policy, so only a release published under the same repository can be pinned).
+
+## Checking it
+
+`packages/approvals/test` (the statement, the verifier, the policy check, the review bot against a temp git remote
+and an in-memory hub), `packages/hub/test/approvals.test.ts` (asker tokens, signed and forged answers, the page's
+answers, expiry, long polls, the keys file, and `dither-ask` against a real hub with its exit codes), and
+`scripts/verify-approvals.ts` on a demo hub in headless Chromium (a request as a notice, signing on the demo laptop
+with real clicks, `dither-ask` verified, Deny from the page, a phone's width).
 
 ## Not done
 

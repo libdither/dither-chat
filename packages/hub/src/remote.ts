@@ -347,7 +347,8 @@ export class RoutedSupervisor extends Supervisor implements ManagerLink {
     if (known && info && this.approvals && !approvalsAsked(info) && mod.requestAccess)
       await mod.requestAccess(url, this.saved!.app, this.saved!.token, [APPROVALS_REQUEST]).then(
         () => console.log("dither-accounts: asked to send approval requests to your devices; approve it on the manager's page"),
-        (e) => (console.error('dither-accounts: asking for approvals failed:', e), jobFailed('dither-accounts: ask for approvals', e)),
+        // A manager without approvals yet (an older release) refuses the interface: said, not a bug.
+        (e) => console.warn(`dither-accounts: asking for approvals failed: ${(e as Error)?.message ?? e}`),
       );
     if (!known) {
       const reg = await mod.register(url, {

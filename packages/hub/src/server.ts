@@ -837,8 +837,9 @@ export class HubServer {
     const https = overHttps(req, ip);
     if (path === '/api/login' || path === '/api/logout') return this.loginRoute(req, path, who, https);
     const me = this.whoIs(req, who);
-    // An asker's token (approvals.ts) reaches /api/approvals and nothing else: no session, no service token.
-    if (!me && this.opts.approvals && (path === '/api/approvals' || path.startsWith('/api/approvals/'))) {
+    // An asker's token (approvals.ts) reaches /api/approvals and nothing else, and is that asker even on a hub open
+    // without a login (a demo world).
+    if (this.opts.approvals && (path === '/api/approvals' || path.startsWith('/api/approvals/'))) {
       const asker = this.opts.approvals.askers.of(bearerOf(req));
       if (asker) return this.opts.approvals.route(req, url, asker);
     }
