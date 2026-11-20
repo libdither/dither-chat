@@ -129,6 +129,8 @@ export function SearchBox({
   placeholder,
   inputRef,
   onDown,
+  busy,
+  onFocusBox,
   ...rest
 }: {
   value: string;
@@ -138,6 +140,10 @@ export function SearchBox({
   inputRef?: Ref<HTMLInputElement>;
   /** Down with no list open: into the results. */
   onDown?: () => void;
+  /** A search is on its way: a small spinner at the box's end. */
+  busy?: boolean;
+  /** The box was focused (the phone's inbox box opens the search page from here). */
+  onFocusBox?: () => void;
   class?: string;
   enterkeyhint?: string;
 }) {
@@ -184,7 +190,7 @@ export function SearchBox({
         placeholder={placeholder}
         enterkeyhint={(rest.enterkeyhint ?? 'search') as any}
         value={value}
-        onFocus={(e) => (setOpen(true), track(e))}
+        onFocus={(e) => (setOpen(true), track(e), onFocusBox?.())}
         onBlur={() => setTimeout(() => setOpen(false), 120)}
         onClick={track}
         onKeyUp={track}
@@ -209,6 +215,7 @@ export function SearchBox({
           }
         }}
       />
+      {busy && <span class="search-spin" aria-hidden="true" />}
       {open && items.length > 0 && (
         <div class="search-suggest" role="listbox" onMouseDown={(e) => e.preventDefault()}>
           {!value.trim() && recentSearches().length > 0 && (

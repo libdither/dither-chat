@@ -16,6 +16,7 @@ import { lateNews } from '../src/latenews.ts';
 import { setNativeMute } from '../src/nativemute.ts';
 import { ReadQueue } from '../src/readqueue.ts';
 import { judgeRequest } from '../src/requestnotify.ts';
+import { requestViews } from '../src/add.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
 import { markUnreadFrom } from '../src/unread.ts';
@@ -168,6 +169,17 @@ describe('a request the network filed as spam', () => {
     expect(judgeRequest(store, d.id, 'message:1', ts + 30_000)).toBeNull();
     store.ingest(d, { t: 'request', request: { nativeId: 'friend:ann', kind: 'friend', from: 'ann', ts, answers: ['accept'] } });
     expect(judgeRequest(store, d.id, 'friend:ann', ts + 30_000)).not.toBeNull();
+  });
+});
+
+describe("a knock for a room's moderators", () => {
+  test('never notifies, keeps no answers, and says whose it is', () => {
+    store.ingest(d, { t: 'conversation', conversation: { nativeId: 'mods', shape: 'group', participants: ['me', 'ann'] } });
+    const ts = Date.now();
+    store.ingest(d, { t: 'request', request: { nativeId: 'knock:ann', kind: 'join', from: 'ann', target: { kind: 'conversation', nativeId: 'mods', name: 'Mods' }, ts, answers: ['accept'], forOthers: true } });
+    expect(judgeRequest(store, d.id, 'knock:ann', ts + 30_000)).toBeNull();
+    const v = requestViews(store).find((r) => r.nativeId === 'knock:ann')!;
+    expect([v.forOthers, v.answers]).toEqual([true, []]);
   });
 });
 

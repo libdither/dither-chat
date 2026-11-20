@@ -5,7 +5,7 @@
 import { expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
 import { canMuteOnNetwork, canUnmute, networkMuteLine } from '../src/nativemute.ts';
-import { groupRequests, requestsRow, SPAM_TITLE } from '../src/requests.ts';
+import { groupRequests, OTHERS_TITLE, requestLine, requestsRow, SPAM_TITLE, waitingOnYou } from '../src/requests.ts';
 
 const req = (id: string, kind: P.RequestView['kind'], ts: number, spam = false): P.RequestView => ({
   id,
@@ -35,6 +35,22 @@ test("the Requests row counts no spam and names no spammer, but says it is there
   expect(requestsRow([req('m', 'message', 5), req('s', 'message', 9, true)], (id) => names[id!]!)).toEqual({ count: 1, names: ['Jules'], lastAt: 5, spam: 1 });
   expect(requestsRow([req('s', 'message', 9, true)], (id) => names[id!]!)).toEqual({ count: 0, names: [], lastAt: 9, spam: 1 });
   expect(requestsRow([req('m', 'message', 5)], (id) => names[id!]!)).toEqual({ count: 1, names: ['Jules'], lastAt: 5 });
+});
+
+const others = (id: string, ts: number): P.RequestView => ({ ...req(id, 'join', ts), network: 'matrix', target: { kind: 'conversation', id: null, name: 'Rust', members: 412 }, answers: [], forOthers: true });
+
+test("a knock for a room's moderators: in a last group of its own, never counted as waiting on you", () => {
+  const all = [others('k1', 3), req('f', 'friend', 1), req('s', 'message', 9, true), others('k2', 7)];
+  expect(groupRequests(all).map((x) => [x.title, x.requests.map((r) => r.id), !!x.forOthers])).toEqual([
+    ['Friend requests', ['f'], false],
+    [SPAM_TITLE, ['s'], false],
+    [OTHERS_TITLE, ['k2', 'k1'], true],
+  ]);
+  expect(waitingOnYou(all).map((r) => r.id)).toEqual(['f', 's']);
+  expect(requestsRow(all, (id) => id!)).toEqual({ count: 1, names: ['f'], lastAt: 1, spam: 1 });
+  // Only theirs: no Requests row at all.
+  expect(requestsRow([others('k1', 3)], (id) => id!)).toBeNull();
+  expect(requestLine({ ...others('k', 1), target: null })).toBe('asks to join a group');
 });
 
 test('Mute on Discord is offered only where an account can', () => {

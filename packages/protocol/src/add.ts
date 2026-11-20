@@ -95,6 +95,11 @@ export interface RequestFact {
   warning?: string;
   /** The network filed it as spam (Discord's spam folder): it never notifies, and sits last under Requests. */
   spam?: boolean;
+  /**
+   * Someone else answers it, not this account: a knock on a Matrix room you are in but don't moderate. Shown so you
+   * can see who is asking; it never notifies, waits on nobody here, and offers no answers.
+   */
+  forOthers?: boolean;
 }
 
 /** How you stand with someone that an account's list holds (capability 'relationships'). Incoming requests are RequestFacts. */
@@ -300,7 +305,8 @@ function sourceOf(r: AddRef): string {
     case 'name':
       return `@${r.name}`;
     case 'person':
-      if (r.network === 'x' || r.network === 'instagram') return `@${r.handle}`;
+      if (r.network === 'x' || r.network === 'instagram' || r.network === 'mastodon' || r.network === 'substack' || r.network === 'lemmy' || r.network === 'bluesky') return `@${r.handle}`;
+      if (r.network === 'reddit') return `u/${r.handle}`;
       if (r.network === 'messenger') return `https://m.me/${r.handle}`;
       return r.handle;
   }
@@ -357,7 +363,8 @@ export function describeAddRef(r: AddRef): string {
     case 'name':
       return `${net} @${r.name}`;
     case 'person':
-      if (r.network === 'x' || r.network === 'instagram') return `${net} @${r.handle}`;
+      if (r.network === 'x' || r.network === 'instagram' || r.network === 'mastodon' || r.network === 'substack' || r.network === 'lemmy' || r.network === 'bluesky') return `${net} @${r.handle}`;
+      if (r.network === 'reddit') return `Reddit u/${r.handle}`;
       if (r.network === 'signal' && r.handle.startsWith('https://')) return 'Signal username link';
       if (r.network === 'signal' && !r.handle.startsWith('+')) return `Signal username ${r.handle}`;
       if (r.network === 'discord') return SNOWFLAKE.test(r.handle) ? `Discord user ${r.handle}` : `Discord username ${r.handle}`;

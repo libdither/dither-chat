@@ -1512,6 +1512,56 @@
   line-height: 1.4;
   outline: none;
 }
+/* A Reddit or Lemmy post's place and title, and a content warning (docs/feed.md "The composer"). */
+.feed-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0 6px;
+}
+.feed-fields .feed-own-who {
+  flex-basis: 100%;
+}
+.feed-place,
+.feed-title,
+.feed-warning,
+.compose-warning {
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+.feed-place {
+  flex: 0 1 190px;
+}
+.feed-title {
+  flex: 1 1 240px;
+  font-weight: 600;
+}
+.feed-warning,
+.compose-warning {
+  display: block;
+  width: 100%;
+  margin: 2px 0 6px;
+  box-sizing: border-box;
+}
+.feed-place:focus,
+.feed-title:focus,
+.feed-warning:focus,
+.compose-warning:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.feed-cw.on,
+.compose-cw.on {
+  color: var(--accent);
+  font-weight: 700;
+}
 .feed-own {
   display: flex;
   flex-direction: column;

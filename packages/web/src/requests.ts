@@ -19,16 +19,29 @@ const REQUEST_GROUPS: { kind: Kind; title: string }[] = [
 /** Where what a network filed as spam waits: last, under a heading of its own. */
 export const SPAM_TITLE = 'Filed as spam';
 
-/** One group per kind that has any, newest first in each; what the network filed as spam in a last group of its own. */
-export function groupRequests(rs: readonly P.RequestView[]): { kind: Kind; title: string; requests: P.RequestView[] }[] {
-  const plain = rs.filter((r) => !r.spam);
-  const spam = rs.filter((r) => r.spam).sort((a, b) => b.ts - a.ts);
-  const groups = REQUEST_GROUPS.map((g) => ({ ...g, requests: plain.filter((r) => r.kind === g.kind).sort((a, b) => b.ts - a.ts) })).filter((g) => g.requests.length);
-  return spam.length ? [...groups, { kind: spam[0]!.kind, title: SPAM_TITLE, requests: spam }] : groups;
+/** Where requests for someone else to answer go (a room's moderators): after the rest, to see only. */
+export const OTHERS_TITLE = 'For the moderators of groups you’re in';
+
+/** Requests that wait on you: not what someone else answers. */
+export const waitingOnYou = (rs: readonly P.RequestView[]) => rs.filter((r) => !r.forOthers);
+
+/**
+ * One group per kind that has any, newest first in each; what the network filed as spam in a group of its own, then
+ * what someone else answers.
+ */
+export function groupRequests(rs: readonly P.RequestView[]): { kind: Kind; title: string; requests: P.RequestView[]; forOthers?: boolean }[] {
+  const mine = waitingOnYou(rs);
+  const plain = mine.filter((r) => !r.spam);
+  const spam = mine.filter((r) => r.spam).sort((a, b) => b.ts - a.ts);
+  const others = rs.filter((r) => r.forOthers).sort((a, b) => b.ts - a.ts);
+  const groups: { kind: Kind; title: string; requests: P.RequestView[]; forOthers?: boolean }[] = REQUEST_GROUPS.map((g) => ({ ...g, requests: plain.filter((r) => r.kind === g.kind).sort((a, b) => b.ts - a.ts) })).filter((g) => g.requests.length);
+  if (spam.length) groups.push({ kind: spam[0]!.kind, title: SPAM_TITLE, requests: spam });
+  if (others.length) groups.push({ kind: others[0]!.kind, title: OTHERS_TITLE, requests: others, forOthers: true });
+  return groups;
 }
 
 /** What it asks, after their name: "wants to be friends", "invited you to Nix Hackathon 2026". */
-export function requestLine(r: Pick<P.RequestView, 'kind' | 'network' | 'target'>): string {
+export function requestLine(r: Pick<P.RequestView, 'kind' | 'network' | 'target' | 'forOthers'>): string {
   const place = r.target?.name ?? null;
   const noun = r.target?.kind === 'space' ? NETWORK_META[r.network].spaceNoun : 'group';
   switch (r.kind) {
@@ -41,7 +54,7 @@ export function requestLine(r: Pick<P.RequestView, 'kind' | 'network' | 'target'
     case 'message':
       return 'sent you a message request';
     case 'join':
-      return place ? `asks to join ${place}` : `asks to join your ${noun}`;
+      return place ? `asks to join ${place}` : `asks to join ${r.forOthers ? 'a' : 'your'} ${noun}`;
   }
 }
 
@@ -76,7 +89,9 @@ export const ANSWER_LABEL: Record<P.RequestAnswer, string> = { accept: 'Accept',
  * The inbox's Requests row: how many, who, and the newest. Null when nothing waits. What the network filed as spam is
  * quieter: not in the count or the names, only said (`spam`), and its time counts only when nothing else waits.
  */
-export function requestsRow(rs: readonly P.RequestView[], nameOf: (identityId: string | null) => string): { count: number; names: string[]; lastAt: number; spam?: number } | null {
+export function requestsRow(all: readonly P.RequestView[], nameOf: (identityId: string | null) => string): { count: number; names: string[]; lastAt: number; spam?: number } | null {
+  // What someone else answers waits on nobody here: it brings no row.
+  const rs = waitingOnYou(all);
   if (!rs.length) return null;
   const plain = rs.filter((r) => !r.spam);
   const spam = rs.length - plain.length;
@@ -201,15 +216,15 @@ export const PEOPLE_FILTERS: { id: 'chats' | 'friend' | 'contact' | 'following';
 ];
 export type PeopleFilter = (typeof PEOPLE_FILTERS)[number]['id'];
 
-/** Where each kind of list is: friends on Discord, address books, follows on X and Instagram (mutual ones are Friends too). */
+/** Where each kind of list is: friends on Discord, address books, follows on X, Instagram, Mastodon, Substack and Bluesky (mutual ones are Friends too). */
 const LIST_NETWORKS: Record<Exclude<PeopleFilter, 'chats'>, readonly P.Network[]> = {
   friend: ['discord'],
   contact: ['telegram', 'signal', 'whatsapp', 'gmessages'],
-  following: ['x', 'instagram'],
+  following: ['x', 'instagram', 'mastodon', 'substack', 'bluesky'],
 };
 
 /** Networks of follows, whose accounts' profiles say whom you follow and who follows you back without a list. */
-const FOLLOW_NETWORKS: readonly P.Network[] = ['x', 'instagram'];
+export const FOLLOW_NETWORKS: readonly P.Network[] = ['x', 'instagram', 'mastodon', 'substack', 'bluesky'];
 
 /**
  * The filters worth a chip: chats, and each kind some account here keeps a list of. An X or Instagram account's

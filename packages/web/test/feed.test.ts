@@ -84,7 +84,12 @@ test('post keys: a post and a logged message, there and back', () => {
     expect(parsePostKey(postKey('x', '1900000000000000001'))).toEqual({ network: 'x', post: '1900000000000000001' });
     expect(parsePostKey(postMessageKey('msg_abc-D_9'))).toEqual({ message: 'msg_abc-D_9' });
     expect(parsePostKey('pst_nowhere_1')).toBeNull();
-    expect(parsePostKey('pst_x_12ab')).toBeNull();
+    // Ids are the network's own, opaque: Reddit's t1_…, Lemmy's comment:…, Bluesky's did:…~rkey; nothing that would leave a path.
+    expect(parsePostKey(postKey('reddit', 't1_abc12'))).toEqual({ network: 'reddit', post: 't1_abc12' });
+    expect(parsePostKey(postKey('lemmy', 'comment:9001'))).toEqual({ network: 'lemmy', post: 'comment:9001' });
+    expect(parsePostKey(postKey('bluesky', 'did:plc:riverdemoqqqqqqqqqqqqqqq~3lbxaaaaaaaab'))).toEqual({ network: 'bluesky', post: 'did:plc:riverdemoqqqqqqqqqqqqqqq~3lbxaaaaaaaab' });
+    expect(parsePostKey('pst_x_12/ab')).toBeNull();
+    expect(parsePostKey('pst_x_')).toBeNull();
     expect(isPostKey('cnv_x')).toBe(false);
     expect(postHref('x', '5')).toBe('#/inbox/c/pst_x_5');
 });

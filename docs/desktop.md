@@ -1,4 +1,4 @@
-# On a desktop: themes, panel widths, the title bar, and opening things elsewhere
+# On a desktop: themes, panel widths, keys to the places, the title bar, and opening things elsewhere
 
 ## Themes
 
@@ -38,6 +38,37 @@ narrower later narrows the panels with it, back to the width kept when there is 
 handles: it lays out its own way (docs/phone.md).
 
 `bun scripts/verify-panes.ts <demo hub>` drags both edges in headless Chromium with real mouse input.
+
+## Keys to the places
+
+Two ways to go to the rail's top places with the keyboard
+([`placekeys.ts`](../packages/web/src/placekeys.ts), [`ui/PlaceKeys.tsx`](../packages/web/src/ui/PlaceKeys.tsx)):
+
+| Place    | G then | Alt and |
+| -------- | ------ | ------- |
+| Inbox    | I      | 1       |
+| People   | P      | 2       |
+| Mail     | M      | 3       |
+| Calendar | C      | 4       |
+| Feed     | F      | 5       |
+
+- **G then a letter**, as in Gmail and GitHub: press G, let go, then the letter, within 1.5 s. A card at the
+  bottom of the window lists the letters while it waits; any other key puts it away and does what it always did.
+  G is an ordinary letter while you type, with a menu, sheet or dialog open, or in the picture viewer.
+- **Alt and the place's number on the rail**: one chord that works while you type too, which matters because
+  opening a chat puts you in its message box. The number is read from the physical key (`Digit1`), so a layout
+  where Alt changes what a number types still works. Firefox and Chromium on Linux and Windows switch tabs with
+  Alt+number; the app takes the chord first, so in a tab it no longer switches tabs while the app has focus.
+- A place this hub doesn't offer (Mail without mail access, the Calendar without its account, the Feed without an
+  account with posts) has no key, and the numbers don't move up to fill its gap.
+- The calendar's frame passes its keys on, so both ways work with the calendar in focus, and the calendar's own M
+  (month) and C (new event) don't take the letter that followed a G.
+- Each place's tooltip on the rail lists its keys, and the buttons carry their Alt chord in `aria-keyshortcuts`
+  (which has no way to write a G then a letter).
+- Ctrl+K (docs/palette.md) still jumps to anything else.
+
+`bun scripts/verify-place-keys.ts <demo hub>` presses them in headless Chromium with real key input: G then P and
+G then I, a stray key after G, G typed in a chat's box, Alt+2 from the box, and the rail's tooltip.
 
 ## The title bar
 

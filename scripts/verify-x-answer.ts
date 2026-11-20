@@ -50,7 +50,7 @@ if (Bun.spawnSync(['sh', '-c', `ss -ltn | grep -q ':${PORT} '`]).exitCode === 0)
 if ((await fetch(`${base}/api/health`).catch(() => null))?.ok) throw new Error(`something is already listening on ${PORT}`);
 const log = openSync(join(work, 'hub.log'), 'a');
 const hub = Bun.spawn(['bun', join(root, 'packages/hub/src/main.ts'), '--demo', '--data', join(work, 'data'), '--port', String(PORT), '--host', '127.0.0.1', '--web', web], {
-  env: { ...process.env, DITHER_DEMO_CHATTER: '0' },
+  env: { ...process.env, DITHER_DEMO_CHATTER: '0', DITHER_DEMO_POSTS: '0' },
   stdout: log,
   stderr: log,
 });
@@ -109,12 +109,19 @@ try {
   await page.eval(`[...document.querySelectorAll('.pa-pop .post-reactor')].find((r) => /Ravi/.test(r.textContent)).click()`);
   await page.until(`location.hash.startsWith('#/i/') || location.hash.startsWith('#/p/')`, 10000);
   check('a name in it opens their profile', true);
-  await page.eval(`history.back()`);
-  await page.until(`!!document.querySelector('${focalLike}')`, 20000);
 
   // ------------------------------------------------------------------ like and repost: one press each
+  // Back to the thread, drawn afresh, and Like pressed the moment its button is drawn: before the page's effects
+  // have run, as a quick press can be on a busy machine. The press stands (the bar's first effect once undid it).
   let w0 = (await writes())!.length;
-  await page.eval(`document.querySelector('${focalLike}').click()`);
+  await page.eval(`(() => {
+    const o = new MutationObserver(() => {
+      const b = document.querySelector('${focalLike}');
+      if (b) (o.disconnect(), b.click());
+    });
+    o.observe(document.body, { subtree: true, childList: true });
+    history.back();
+  })()`);
   await page.until(`document.querySelector('${focalLike}').classList.contains('on') && /42/.test(document.querySelector('${focalLike}').textContent)`, 5000);
   await until(async () => (await writes())!.length > w0, 5000, 'the like did not reach X');
   check('a like shows at once (42) and reaches X once', (await writes())!.slice(w0).join() === 'postAct:like', (await writes())!.slice(w0));
@@ -232,7 +239,8 @@ try {
   await Bun.sleep(150);
   await page.eval(`document.querySelector('.thread-chain .thread-post.line .pa-btn.repost').click()`);
   await page.until(`!!document.querySelector('.pa-float.pa-menu')`, 3000);
-  const vis = await page.eval<any>(`(() => { const m = document.querySelector('.pa-float.pa-menu').getBoundingClientRect(); const hit = document.elementFromPoint(m.x + m.width / 2, m.y + m.height / 2); return { h: Math.round(m.height), onTop: !!hit?.closest('.pa-menu'), inWindow: m.bottom <= innerHeight && m.top >= 0 }; })()`);
+  // On top of the page: toasts (the demo's urgent notices, the refused like) stand over everything, menus included.
+  const vis = await page.eval<any>(`(() => { const m = document.querySelector('.pa-float.pa-menu').getBoundingClientRect(); const hit = document.elementsFromPoint(m.x + m.width / 2, m.y + m.height / 2).find((e) => !e.closest('.toast, .toasts')); return { h: Math.round(m.height), onTop: !!hit?.closest('.pa-menu'), hit: hit?.className ?? null, inWindow: m.bottom <= innerHeight && m.top >= 0 }; })()`);
   check('in Chains the repost menu is whole and on top (not clipped by the chain)', vis.h > 50 && vis.onTop && vis.inWindow, vis);
   await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 30, y: 300, button: 'left', clickCount: 1 });
   await page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 30, y: 300, button: 'left', clickCount: 1 });

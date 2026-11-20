@@ -63,6 +63,7 @@ import { NoticesRow } from './Notices.tsx';
 import { nameMatches, peopleFilters, type PeopleFilter } from '../requests.ts';
 import { SortButton, SortIcon, useFlip } from './Reorganize.tsx';
 import { rememberSearch, SearchBox } from './SearchBox.tsx';
+import { focusSearch, preloadSearch } from './SearchLazy.tsx';
 import { counting, rendered } from '../perf.ts';
 import { memo } from './memo.ts';
 import { convKind, rowTrack } from '../clicks.ts';
@@ -426,7 +427,17 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
       <div class="inbox-search">
         <SearchBox
           value={q}
-          setValue={setQ}
+          setValue={(t) => {
+            // Results come as you type (docs/search.md): the first letter opens the search page, whose box takes the
+            // cursor and what was typed.
+            if (t.trim()) {
+              go({ view: 'search', q: t });
+              setQ('');
+            } else setQ(t);
+          }}
+          // A phone opens the search page at the tap, keyboard and all, with what Ctrl+K would jump to as you type. A
+          // computer starts loading the page (a chunk of its own), so it is there by the first key.
+          onFocusBox={() => (phone.value ? (go({ view: 'search', q: '' }), focusSearch.value++) : preloadSearch())}
           placeholder={phone.value || filter !== 'all' ? 'Search all messages' : 'Search all messages (Ctrl+K)'}
           submit={(t) => {
             if (!t) return;

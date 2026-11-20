@@ -825,6 +825,15 @@ export type AdapterCommand =
       replies?: ReplyGate;
       /** Pictures or a video with it (capability 'postMedia'): up to 4 images, or one GIF or video. */
       media?: OutgoingAttachment[];
+      /** A new post's title, where the network has them (Reddit, Lemmy: POST_RULES `title`). Never with `replyTo`. */
+      title?: string;
+      /**
+       * Where a new post goes (POST_RULES `place`): a subreddit's name without "r/", a community's as `name` or
+       * `name@instance` without "!". Never with `replyTo`.
+       */
+      place?: string;
+      /** A content warning over it (Mastodon's spoiler text: POST_RULES `warning`), on a new post or a reply. */
+      warning?: string;
     }
   /**
    * Delete a post of the account's own (capability 'unpublish'): what the post's Delete does. Sent only when you press
