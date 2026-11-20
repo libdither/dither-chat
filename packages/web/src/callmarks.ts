@@ -5,6 +5,7 @@
  * buttons your role gets, and the call's status line. No app state here, and every clock can be a test's own.
  */
 import type * as P from '@dither-chat/protocol';
+import { stageRights } from '@dither-chat/protocol';
 
 /** Now, later, and calling off later: the browser's own, or a test's hand-moved clock. */
 export interface Clock {
@@ -260,7 +261,7 @@ interface CallLike {
   since: number;
   note?: string;
   self?: Pick<P.CallSelf, 'connected' | 'muted'>;
-  stage?: Pick<P.CallStage, 'moderator'>;
+  stage?: Pick<P.CallStage, 'can' | 'canOn'>;
   camera: boolean;
   screen: boolean;
   listenOnly?: boolean;
@@ -303,6 +304,8 @@ export interface CallControl {
 interface CallAbilities {
   /** Your role on a stage, or null in a call without an audience. */
   role: P.StageRole | null;
+  /** Your rank on a stage (host, co-host, moderator), when it has one for you. */
+  rank?: P.StageRank;
   /** Video goes through this call (bridge mode, an account that sends it). */
   video: boolean;
   /** This browser can share a screen. */
@@ -312,13 +315,24 @@ interface CallAbilities {
 }
 
 /**
+ * What you may do on this stage now (protocol stageRights): what the room says, else what your role and rank give.
+ * Nothing without the capability 'stage' or outside a stage. The one rule every surface's buttons and menus read.
+ */
+export function stageCan(call: Pick<CallLike, 'stage'>, can: Pick<CallAbilities, 'role' | 'rank' | 'stage'>): { can: P.StageSelfAction[]; canOn: P.StageMove[] } {
+  if (!can.stage || !can.role || !call.stage) return { can: [], canOn: [] };
+  return stageRights(call.stage, can.role, can.rank);
+}
+
+/**
  * The buttons your role and the call's state give you, in order. A speaker (or anyone in a call without an audience)
- * gets mute, deafen, camera and share where video goes, and leave; on a stage also Move to the audience. The audience
- * gets deafen, a hand, Speak when invited (or as a moderator), and Leave quietly.
+ * gets mute, deafen, camera and share where video goes, and leave. On a stage the rest are what you may do there
+ * (stageCan): a hand to raise or lower, Speak, Move to the audience (Stay in the audience, when invited). The audience
+ * never gets the microphone, a camera or a screen, and leaves quietly.
  */
 export function controlsFor(call: CallLike, can: CallAbilities): CallControl[] {
   const ended = call.phase === 'ended';
   const role = can.role;
+  const may = new Set(stageCan(call, can).can);
   const speaking = role === null || role === 'speaker';
   const out: CallControl[] = [];
   if (speaking)
@@ -332,9 +346,10 @@ export function controlsFor(call: CallLike, can: CallAbilities): CallControl[] {
   out.push({ kind: 'deafen', label: call.deafened ? 'Undeafen' : 'Deafen', off: call.deafened, disabled: ended });
   if (speaking && can.video) out.push({ kind: 'camera', label: call.camera ? 'Turn camera off' : 'Turn camera on', on: call.camera, disabled: ended });
   if (speaking && can.video && can.share) out.push({ kind: 'share', label: call.screen ? 'Stop sharing' : 'Share your screen or a window', on: call.screen, disabled: ended });
-  if (can.stage && (role === 'audience' || role === 'hand')) out.push({ kind: 'hand', label: role === 'hand' ? 'Lower hand' : 'Ask to speak', on: role === 'hand', disabled: ended });
-  if (can.stage && (role === 'invited' || (!!call.stage?.moderator && (role === 'audience' || role === 'hand')))) out.push({ kind: 'speak', label: 'Speak', disabled: ended });
-  if (can.stage && (role === 'speaker' || role === 'invited')) out.push({ kind: 'listen', label: role === 'invited' ? 'Stay in the audience' : 'Move to the audience', disabled: ended });
+  if (may.has('lowerHand')) out.push({ kind: 'hand', label: 'Lower hand', on: true, disabled: ended });
+  else if (may.has('raiseHand')) out.push({ kind: 'hand', label: 'Ask to speak', on: false, disabled: ended });
+  if (may.has('speak')) out.push({ kind: 'speak', label: 'Speak', disabled: ended });
+  if (may.has('listen')) out.push({ kind: 'listen', label: role === 'invited' ? 'Stay in the audience' : 'Move to the audience', disabled: ended });
   out.push({ kind: 'leave', label: speaking ? 'Leave' : 'Leave quietly', title: 'Leave the call', disabled: ended });
   return out;
 }

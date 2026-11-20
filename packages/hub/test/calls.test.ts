@@ -4,7 +4,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createHmac } from 'node:crypto';
 import { hubId } from '@dither-chat/protocol/ids';
-import { Calls } from '../src/calls.ts';
+import { Calls, hubStage } from '../src/calls.ts';
 
 type Sent = any[];
 
@@ -179,8 +179,15 @@ describe('calls', () => {
     calls.onAdapterEvent('acc_a', { t: 'call', call: id, state: { conversation: 'c', participants: [{ id: '42', muted: false, deafened: false, speaking: false, stage: 'hand', volume: 50 }], stage: { topic: 'Town hall', moderator: true } } });
     expect(ws.sent.find((m) => m.t === 'effect')).toEqual({ t: 'effect', effect: { who: hubId('idn', 'discord', '42'), emoji: '🎉' } });
     const st = ws.sent.find((m) => m.t === 'state').state;
-    expect(st.stage).toEqual({ topic: 'Town hall', moderator: true });
+    // An adapter from before `can` says `moderator`: the device gets it as what this account may do to others.
+    expect(st.stage).toEqual({ topic: 'Town hall', canOn: ['invite', 'audience'] });
     expect(st.participants[0]).toMatchObject({ id: hubId('idn', 'discord', '42'), stage: 'hand', volume: 50 });
+  });
+
+  test("a stage's facts reach the device checked: what you may do, the listeners' count", () => {
+    expect(hubStage({ topic: 'T', can: ['speak', 'fly' as any], canOn: ['invite'], listeners: 4210.4 })).toEqual({ topic: 'T', can: ['speak'], canOn: ['invite'], listeners: 4210 });
+    expect(hubStage({ topic: null, moderator: false } as any)).toEqual({ topic: null, canOn: [] });
+    expect(hubStage({ topic: 3 as any, listeners: -1 })).toEqual({ topic: null });
   });
 
   test('video and watching go to the adapter only in bridge mode, only where it can, with native ids', async () => {

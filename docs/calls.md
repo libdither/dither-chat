@@ -154,21 +154,26 @@ device, watching the bot's Go Live, leaving, and a device with no microphone joi
 
 The libdither server also has a stage, `office-hours` (`demostage.ts`), with the topic "Office hours: routing
 questions": the room's bot and two invented people speaking (their speaking takes turns), an audience of twenty
-invented people, two of them with a hand up, and the main demo account a moderator there. The stage is sound only (no
-cameras). The call room carries the devices' audio as for any call; the demo stage lays the roles over the room's
-state and answers the stage actions as Discord would, so a hand, an invitation, speaking and moving back to the audience
-all work from either device, and a simulated person invited to speak says yes a moment later. Everyone joins in the
-audience, and the stage starts over once the last device leaves.
+invented people, two of them with a hand up (each with when it went up), and the main demo account a moderator there.
+The stage is sound only (no cameras). The call room carries the devices' audio as for any call; the demo stage lays the
+roles and ranks over the room's state, tells each device what it may do (`can`, `canOn`), and answers the stage
+actions by the same rule the device's buttons follow (`stageRights`), so a hand, an invitation, speaking and moving back
+to the audience all work from either device, and a simulated person invited to speak says yes a moment later. Everyone
+joins in the audience, and the stage starts over once the last device leaves.
 
 ```sh
 bun scripts/verify-stage-demo.ts http://127.0.0.1:8579 [screenshot dir]
 ```
 
-It joins the stage from both demo Discord accounts and checks the room's zones, the counts and the roles, the side
-column's hands and chat, a hand going up, the moderator's invitation from the side column, speaking, the moderator
-moving the speaker back from their face's menu, a simulated person accepting, the Room / Chat switch and Leave quietly.
-With a directory it saves the room as a listener, with a hand up, as a speaker, as the moderator with requests, at
-phone width, and the dock's stage section.
+It joins the stage from both demo Discord accounts and checks the room beside the channel's chat, the zones, the
+counts and the ranks, that a listener has no microphone open (the browser is never asked until they speak) and no
+camera or screen button, one Leave on screen at each width, "+N more" opening the whole audience (search, Esc, a
+moderator's Invite there), a moderator's Speak without Ask to speak, the requests oldest first, a hand going up, the
+invitation said aloud, Speak opening the microphone, the moderator moving the speaker back (the microphone closes), a
+simulated person accepting, and on a narrow pane the Room / Chat switch with the requests' count, the requests above
+the audience, a call left from Chat opening as a room next time, and Leave quietly. With a directory it saves the room
+listening (beside the chat), with a hand up, invited, speaking, as the moderator with requests, the whole audience, and
+at phone width (the room and the chat).
 
 A demo account can also be rung: the account action `ring` (`{conversation, caller?, video?}`, the conversation's
 native id) makes the caller ring it there, as a network's ring would, and `ringStop` is the caller giving up
@@ -366,16 +371,31 @@ checks the shape, turns hub identity ids into native ones and refuses the rest i
 | `join` with `input` | `callInput` | the microphone's handling from the start (bridge: the account client's voice settings) |
 | `{op: 'local', user, volume?, muted?}` | `callVolume` | one person's volume (0 to 200 %) or mute, for this account only |
 | `{op: 'input', input}` | `callInput` | noise suppression on or off; sensitivity automatic or a level in dB |
-| `{op: 'stage', action, user?}` | `stage` | `raiseHand`, `lowerHand`, `speak` (when invited, or as a moderator), `listen`; a moderator's `invite` and `audience` for `user` |
+| `{op: 'stage', action, user?}` | `stage` | `raiseHand`, `lowerHand`, `speak` (when invited, or with a rank), `listen`; a moderator's `invite` and `audience` for `user` (each only as the stage's `can` and `canOn` allow) |
 | `{op: 'sounds'}` → `{t: 'sounds', sounds, reason?}` | `soundboard` | this server's sounds and Discord's defaults, as the client has them, where Use Soundboard allows |
 | `{op: 'sound', sound, guild}` | `soundboard` | play one to everyone in the call |
 | `{op: 'video', camera, screen, screenAudio?}` | `callVideo` | this device's camera and screen are on or off (bridge mode only) |
 | `{op: 'watch', user, on}` | `watchStreams` | watch someone's Go Live, or stop (bridge mode only) |
 
 The call's state adds, per person: `streaming`, `serverMuted`, `serverDeafened`, `volume` and `localMute` (the
-client's own values, so the device and the client agree), `stage` (`speaker`, `audience`, `hand`, `invited`) and
-`stageModerator` (they moderate the stage, where the adapter knows); and
-for a stage `stage: {topic, moderator}`. `{t: 'effect', effect: {who, emoji?, sound?}}` is a sound or emoji someone
+client's own values, so the device and the client agree), `stage` (`speaker`, `audience`, `hand`, `invited`),
+`stageRank` (`host`, `cohost` or `moderator`, where the adapter knows) and `askedAt` (ms epoch a hand went up, so
+requests are answered oldest first); and for a stage:
+
+```ts
+stage: {
+  topic: string | null;
+  can?: ('raiseHand' | 'lowerHand' | 'speak' | 'listen')[]; // what this account may do now, for itself
+  canOn?: ('invite' | 'audience')[];                         // what it may do to others (each where it fits their role)
+  listeners?: number;                                        // how many listen in all, when only some are sent (a Space)
+}
+```
+
+The device draws its buttons from `can` and `canOn` alone. An adapter that leaves them out gets them worked out from
+your role and rank (`stageRights`, protocol call.ts): listening, Ask to speak, or Speak with a rank; hand up, Lower hand
+(and Speak, with a rank); invited, Speak or Stay in the audience; speaking, Move to the audience; any rank invites and
+moves others. An adapter from before `can` sent `moderator: boolean`; the hub reads that as `canOn` (`hubStage`,
+calls.ts). `{t: 'effect', effect: {who, emoji?, sound?}}` is a sound or emoji someone
 sent in the call. Server mute, deafen, move and disconnect are `moderate` actions (docs/moderation.md), offered from
 the voice channel's About.
 
@@ -420,30 +440,45 @@ pieces, so none works these out again:
   beside the button, always there, says it to a screen reader.
 - **The buttons and the status line** (`callControls`, `callStatus` in `call.ts`; `ui/CallControls.tsx` draws them).
   Your role gets its buttons: a speaker, or anyone in a call without an audience, gets mute, deafen, camera and share
-  where video goes, and Leave (on a stage also Move to the audience); the audience gets deafen, a hand, Speak when
-  invited (or as a moderator) and Leave quietly. The status line is Connecting…, Connecting to Discord… (bridge mode
+  where video goes, and Leave; on a stage the rest are what the stage lets you do (`stageCan`, from `can` and
+  `canOn`): a hand to raise or lower, Speak, Move to the audience (Stay in the audience when invited). The audience
+  never gets the microphone, a camera or a screen, and leaves quietly. The status line is Connecting…, Connecting to Discord… (bridge mode
   before the account's own client is in), the time (1:15:03 past the hour) or why it ended, with "The account is still
   muted: tap to try again" when it is.
 
 ### The room view
 
-Every live audio thing is a room with roles: a call is a room where everyone speaks, a stage (and later an X Space) one
-where a few speak and the rest listen. `web/src/room.ts` sorts a call's people into the room's zones by role
-(`CallParticipant.stage`), with nothing network-specific in it, and `ui/CallRoom.tsx` (a chunk of its own) draws them:
+Every live audio thing is a room with roles: a call is a room where everyone speaks, a stage (a Discord stage, later an
+X Space) one where a few speak and the rest listen. `web/src/room.ts` sorts a call's people into the room's zones by
+role (`CallParticipant.stage`), with nothing network-specific in it, and `ui/CallRoom.tsx` (a chunk of its own, with Try
+again when it could not load) draws them:
 
-- the header: the network, the stage's topic, "N speaking · N listening";
-- Speakers: 64 px faces, ringed while speaking, a badge when muted, each named Moderator (`stageModerator`, when the
-  adapter says so) or Speaker;
-- Audience: 32 px faces, you first, then hands up, then the invited, then the rest; past 18, "+N more";
-- the side column: for a moderator, "Asking to speak" with Invite on each (the `invite` stage action); for others,
-  "Hands up · N" as faces; and the channel's newest messages, when it has any, with Open the chat;
-- the buttons, by your role: listening, Ask to speak and Leave quietly (a moderator also has Speak); hand up, Lower
-  hand; invited, Speak and Stay in the audience; speaking, the microphone, Move to audience and Leave.
+- the header: the network, the stage's topic, "N speakers · N listening" (the stage's `listeners` when it sends only
+  some of them);
+- Speakers: 64 px faces (`CallAvatar`, ringed while speaking, its one badge), each named by rank (Host, Co-host,
+  Moderator) or Speaker;
+- who asks to speak, oldest first (`askedAt`): for someone who may invite, "Asking to speak" with Invite on each; for
+  others, "Hands up" by name. Above the audience at every width;
+- Audience: 32 px faces, you first, then hands up, then the invited, then the rest; past 18, "+N more" opens everyone
+  listening, searchable, people you know first (starred, then those you have a direct chat with), with Invite on each
+  for a moderator; Esc or Done closes it;
+- the buttons: the call's own (`CallControls`, by your role and what the stage lets you do), with "You're invited to
+  speak" said in a status line above them.
 
-A moderator's tap on a face offers Invite to speak or Move to the audience. Joining a stage channel (the header's Join,
-where the account has `calls` and `stage`) makes the room the conversation's page, with a Room / Chat switch above it;
-the dock keeps its compact stage section. Opening a stage you are not in shows its chat, as before. Each face is a
-square box with the ring as its own `::after`; it moves to the shared call avatar once that lands.
+A face with something you may do to them (a moderator's Invite to speak or Move to the audience) is a button that opens
+a menu; otherwise it is a plain element. Joining a stage channel (the header's Join, where the account has `calls` and
+`stage`) makes the room the conversation's page. On a wide pane the channel's chat (the real timeline and composer)
+sits beside it; on a narrow pane (a container query on the pane, not the screen) a Room / Chat switch shows one of
+them, and Room carries a count of the requests for someone who may invite (`roomRequests`, call.ts, for a call bar
+too). A room with no chat has only the room. Opening a stage you are not in shows its chat, as before.
+
+One set of buttons at a time: while the room is on screen the dock leaves out its buttons (and its open body's Speak or
+Move), and the header has no Join or Leave for a room you are in; on a narrow pane showing Chat the dock has them back.
+
+A stage is joined listening, without the microphone: the browser is not asked for one, and the call sends a silent
+track. Speak asks for it (from the click) and goes ahead once it is open; being made a speaker opens it too. Going back
+to the audience, by your own button or a moderator's move, closes it again (`takeMic`, `releaseMic`, call.ts; the
+transports swap the track they send, `setMic`).
 
 Direct mode's sensitivity is the device's own level gate: the level in dB is the microphone's loudness (RMS, dBFS);
 "automatic" is the gate's own −36 dB. Discord's own slider is on its own scale, so the same number may not feel the
