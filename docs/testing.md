@@ -75,10 +75,12 @@ The Android app is tested in three layers, outside the required `check`:
   the boot. It runs on pull requests that change `apps/android/`, the web files that talk to the app
   (`packages/web/src/android.ts`, `arrived.ts`) or these scripts, on main for the same, and every night on main.
   The push test's pushes reach the app through the debug build's `DebugPushReceiver`, which takes the same path as a
-  UnifiedPush message (`Push.arrived`). The calls test's rings come through real push, so they need a distributor
-  (ntfy) on the device: CI's emulator has none, so there the calls half runs alone and the summary says
-  `NOT RUN rings`; they run on a local emulator with ntfy installed. A failed run uploads its screenshots
-  (`android-shots`).
+  UnifiedPush message (`Push.arrived`). The calls test's rings come through real push: the hub's Web Push request,
+  the app's UnifiedPush connector registering, decrypting and handing it on. Where the device has no distributor
+  (CI's emulator) the test brings one, `apps/android/testpush`, whose server runs in the test
+  (`scripts/android-testpush.ts`): the hub sends to it as to ntfy's server, and each body goes to the device over adb.
+  A device with its own distributor (ntfy on a local emulator) uses that instead. A failed run uploads its
+  screenshots (`android-shots`).
 - **Required once steady.** The emulator job reports and does not block a merge until it has passed 20 runs on main
   in a row: `bun scripts/android-device-streak.ts` counts them. Making it required then means running it on every
   pull request, with a `changes`-style skip like ci.yml's, since a required check behind a `paths` filter never
@@ -88,12 +90,13 @@ Locally (docs/android.md, "Testing on an emulator"):
 
 ```sh
 bun run web:build
-(cd apps/android && ./gradlew :app:testDebugUnitTest :app:assembleDebug :uitest:assembleDebug :uitest:assembleDebugAndroidTest)
+(cd apps/android && ./gradlew :app:testDebugUnitTest :app:assembleDebug :uitest:assembleDebug :uitest:assembleDebugAndroidTest :testpush:assembleDebug)
 bun scripts/verify-android.ts --serial emulator-5584
 ```
 
-What none of this covers in CI: rings, and a real distributor (ntfy) delivering at all; Doze and phone makers'
-battery savers; and a phone's own WebView version. Rings run on a local emulator with ntfy; the rest needs a phone.
+What none of this covers in CI: a real distributor (ntfy) and its server delivering, and what can hold them up (a
+connection that dropped, ntfy's 507 before it has connected); Doze and phone makers' battery savers; and a phone's
+own WebView version. ntfy runs on a local emulator with it installed; the rest needs a phone.
 
 ## Flaky tests
 

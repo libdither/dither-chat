@@ -1,7 +1,7 @@
 # The Android app on an emulator (docs/testing.md, "Android on an emulator"): the debug build against demo hubs,
-# through scripts/verify-android.ts (calls, then a push's copy shown offline; rings need a push distributor, which this
-# emulator lacks, so they run only on a local one). About 5 minutes, so it
-# runs only when the app or the web files that talk to it change, on main, and every night. It is not part of the
+# through scripts/verify-android.ts (calls and rings, then a push's copy shown offline; rings come through the test's
+# own push distributor, apps/android/testpush). About 5 minutes, so it runs only when the app or the web files that
+# talk to it change, on main, and every night. It is not part of the
 # required `check` yet: it reports, and becomes required once it has passed 20 runs on main in a row
 # (`bun scripts/android-device-streak.ts`).
 name: Android device
@@ -13,6 +13,7 @@ on:
       - 'packages/web/src/android.ts'
       - 'packages/web/src/arrived.ts'
       - 'scripts/android-device.ts'
+      - 'scripts/android-testpush.ts'
       - 'scripts/verify-android*.ts'
       - '.github/workflows/android-device.yml'
   push:
@@ -22,6 +23,7 @@ on:
       - 'packages/web/src/android.ts'
       - 'packages/web/src/arrived.ts'
       - 'scripts/android-device.ts'
+      - 'scripts/android-testpush.ts'
       - 'scripts/verify-android*.ts'
       - '.github/workflows/android-device.yml'
   # Every night on main, whatever changed: the hub and the web app change under the app too, and the nightly runs are
@@ -77,9 +79,9 @@ jobs:
         with:
           packages: 'platforms;android-36.1 build-tools;36.0.0'
       - uses: gradle/actions/setup-gradle@v4
-      - name: Build the debug app and the shade presser
+      - name: Build the debug app, the shade presser and the test push distributor
         working-directory: apps/android
-        run: ./gradlew --no-daemon :app:assembleDebug :uitest:assembleDebug :uitest:assembleDebugAndroidTest
+        run: ./gradlew --no-daemon :app:assembleDebug :uitest:assembleDebug :uitest:assembleDebugAndroidTest :testpush:assembleDebug
 
       # A booted emulator's snapshot, kept between runs: a boot from it takes seconds, a cold one a minute or two. It is
       # saved straight after it is made, before any test runs: saved at the end of the job, as actions/cache does by
