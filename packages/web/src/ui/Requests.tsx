@@ -13,7 +13,7 @@ import { identityPeer } from '../direct.ts';
 import { ago } from '../format.ts';
 import { directsOf, identityName, netName } from '../model.ts';
 import { CONNECTION_KINDS, CONNECTION_TITLE, connectionLine, linkKind, linksLine, type Connection } from '../connections.ts';
-import { accountLine, ANSWER_LABEL, canRemove, FOLLOW_NETWORKS, groupRequests, linkRows, linkSinceLine, messageRequestNote, nameMatches, relation, removeNote, removeQuestion, requestLine, requestsRow, sentence, sortLinkRows, talkedLine, targetMembers, type LinkSort } from '../requests.ts';
+import { accountLine, ANSWER_LABEL, canRemove, FOLLOW_NETWORKS, groupRequests, linkRows, linkSinceLine, messageRequestNote, nameMatches, relation, removeNote, removeQuestion, requestLine, requestsRow, sentence, waitingOnYou, sortLinkRows, talkedLine, targetMembers, type LinkSort } from '../requests.ts';
 import { api, applyEvents, db, go, openDirect, openProfile, rev, toast } from '../state.ts';
 import { LiveView } from './Accounts.tsx';
 import { Avatar, Empty, Modal, NetBadge, NetGlyph } from './bits.tsx';
@@ -106,7 +106,7 @@ export function RequestsRow() {
 export function RequestsPane({ focus, onBack }: { focus?: string; onBack?: () => void }) {
   rev.value;
   const groups = groupRequests(db.requests);
-  const count = db.requests.length;
+  const count = waitingOnYou(db.requests).length;
   useEffect(() => {
     if (focus) document.querySelector(`[data-request="${CSS.escape(focus)}"]`)?.scrollIntoView({ block: 'center' });
   }, [focus, count > 0]);
@@ -130,7 +130,7 @@ export function RequestsPane({ focus, onBack }: { focus?: string; onBack?: () =>
         <HeadOrb />
       </header>
       <div class="requests-scroll">
-        {!groups.length && (
+        {!count && (
           <Empty icon="check" title="Nothing waiting on you">
             When someone asks to be friends, invites you somewhere or writes to you without being a contact, it waits here.
           </Empty>
@@ -140,6 +140,7 @@ export function RequestsPane({ focus, onBack }: { focus?: string; onBack?: () =>
             <h3>
               {g.title} <span class="section-count">{g.requests.length}</span>
             </h3>
+            {g.forOthers && <p class="set-help requests-others-note">Asked in groups you’re in. Their moderators answer these, not you.</p>}
             {g.requests.map((r) => (
               <RequestCard key={r.id} r={r} focused={r.id === focus} />
             ))}
@@ -195,7 +196,7 @@ function RequestCard({ r, focused }: { r: P.RequestView; focused: boolean }) {
           )}
         </>
       )}
-      <Answers r={r} name={name} message={r.kind === 'friend' || r.kind === 'follow'} />
+      {!r.forOthers && <Answers r={r} name={name} message={r.kind === 'friend' || r.kind === 'follow'} />}
     </article>
   );
 }

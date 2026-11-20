@@ -9,7 +9,7 @@ phone it is a page of its own over the People list.
 
 Code: `packages/hub/src/graph.ts` (`GET /api/graph`), `packages/hub/src/closeness.ts` (`GET /api/graph/activity`,
 worked out on `closeness-worker.ts`), `packages/web/src/graph/` (the view: `GraphView.tsx`, the filters in
-`model.ts`, who matters in `importance.ts`, the force layout in `layout.ts` run by `layout.worker.ts`, WebGL drawing in
+`model.ts`, who matters in `importance.ts`, ties between people and their circles in `ties.ts`, the force layout in `layout.ts` run by `layout.worker.ts`, WebGL drawing in
 `render.ts`, `pictures.ts` the pictures and rings, `engine.ts` tying them to the canvas),
 `packages/web/src/ui/GraphPane.tsx` (loads it). Checked end to end by `scripts/verify-graph.ts`.
 
@@ -50,15 +50,22 @@ be are drawn only when asked ("Same person?", below).
 
 How much each person matters to you is a score from 0 to 1 (`importance.ts`), from:
 
+Each person's score is a sum of signals, each times its weight, divided by the most anyone has. The defaults are below
+(talk 1, places 0.5, friends in common 0.45, on a friend list 0.6, several networks 0.3, close to your people 0.8);
+"Tuning", further down, changes them.
+
 - **Talk** (most of it): the hub's closeness (`closeness.ts`), by month. A month's weight for someone is every message
   in your direct chat, theirs and yours (1 each); their messages in a group chat you are in, less the bigger the group
   (2 / people in it, groups up to 50); and in a server's channels, a reply between you either way (1.5) and their
   mentions of you by name (1). Bots count for nothing (one bot's direct chat can send thousands of messages a month).
-  Each month fades by e every 18 months, then the sum is taken on a log scale.
+  Each month fades by e every 18 months (the tuning's fade), then the sum is taken on a log scale.
   Time spent in your direct chat with them counts too (1 a minute, from the hub's record of visits).
-- **Places you share** (log scale), **friends in common** (a fetched profile's count, or the people you talk with who
-  share a group of 30 or fewer with them, whichever is more), being on **several networks**, and being on one of your
-  accounts' **friend or contact lists**.
+- **Places you share** past the first (log scale), **friends in common** (a fetched profile's count, or the people you
+  talk with who share a group of 30 or fewer with them, whichever is more, log scale), being on **several networks**,
+  and being on one of your accounts' **friend or contact lists**.
+- **Close to your people**: how tied they are (below) to the people you talk with most, each tie times that person's
+  talk (on a log scale, against the most), on a log scale. Someone your close friends all answer counts, even if you
+  have never spoken.
 
 Places get a score from 0 to 1 too: **your own messages** there (1 each, in any of a server's channels and threads,
 or a group chat) and **the time you spent** in it (1 a minute: in its chats or on its page, since the hub kept a
@@ -74,7 +81,7 @@ an icon, or a marker (6, 30 and 120). Each size also asks for a score (0.2, 0.1,
 places) divided by the square root of the screen's area against that canvas, so a big screen shows more and a phone
 fewer. Zoomed in, there is room for more. The places that matter most in view are named on pills (about 8 on that
 canvas, any drawn big, at most 20). The people most
-important in view are named (about 22 on that canvas, the first 8 bold), and anyone drawn big enough. In the layout,
+important in view are named (about 22 on that canvas, the first 8 bold), and anyone drawn big enough. With Rings off,
 your link to each is as long as room round you for everyone ranked before them, and the ones drawn big push harder,
 so their pictures do not pile up.
 
@@ -84,10 +91,66 @@ count for less, as the hub does not know when you came to share them. People and
 change size as you go; Now goes back. A person's card says about how many messages you have had with them, how many in
 the past year, a bar a year, and how many friends you have in common; a place's, your messages and minutes there.
 
-`GET /api/graph/activity` answers `{from, to, people, mutual, places}`: months as year × 12 + month, and per person
-(keyed as the graph keys them) and per place flat `[month, weight × 10]` pairs. Counts only, never message text. The page asks for it after
-the graph, so the graph opens at once; the hub works it out on a worker on a read-only connection (about 12 s for
-~1,200 people over ten years) and keeps it for 30 minutes, answering with what it has while a new run is under way.
+`GET /api/graph/activity` answers `{from, to, people, mutual, places, ties}`: months as year × 12 + month, and per person
+(keyed as the graph keys them) and per place flat `[month, weight × 10]` pairs. `ties` is `{ids, links, friends}`:
+the people keys it uses, `links` as runs of `[a, b, n]` (indexes into `ids`) followed by n `[month, weight × 10]`
+pairs, and `friends` as flat `[a, b]` pairs. Counts only, never message text. The page asks for it after
+the graph, so the graph opens at once; the hub works it out on a worker on a read-only connection (about 14 s for
+~1,200 people over ten years, ties between people included) and keeps it for 30 minutes, answering with what it has while a new run is under way.
+
+### Ties and circles
+
+A tie between two people, neither of them you (`ties.ts`), adds up:
+
+- **their talk with each other**, from the hub: a reply either way (1), a reaction (0.3), and a turn, one speaking
+  within 5 minutes of the other in a group chat of 60 or fewer (0.5), by month and fading as talk with you does. Bots
+  count for nothing, and pairs with less than 2 in all are left out;
+- **friends**: a fetched profile's friends in common with you are that person's friends too (6 each);
+- **small places they share**: a group or server of 60 people or fewer here adds 4 / (its people − 1).
+
+Each tie is then divided by how much both people have of it all (association strength: raw / √((Tₐ + 6)(T_b + 6))),
+so someone who answers everyone in a busy server is not tied to all of them, and two people with one reply between
+them are not tied fully.
+
+**Circles** are groups of the people shown tied more to each other than to the rest (Louvain's modularity), three
+people or more. Each is named after the place most of it shares (a place at least 40% of it is in, counting a big place
+for less), else "Name's circle" after its most important person.
+
+How much this finds depends on what the hub has: talk between others is only seen in chats your accounts are in, and
+friendships only for profiles that were fetched.
+
+### Rings
+
+With **Rings** on (the default, remembered on this device), the graph is laid out round you:
+
+- **Distance** is by rank: the more someone matters, the nearer, on a log scale, so the first few dozen get most of
+  the room. Dashed rings mark the 10, 50, 250 and 1,000 nearest. A place sits by the people of its rank.
+- **Angle** is by circle: each circle gets a slice, wider the bigger and more important it is, circles tied to each
+  other side by side, the most important starting at the top; the people in no circle share what is left. Circle
+  names are written past the outer ring.
+- Within that, each person's five strongest ties pull them toward each other, so a circle's people sit together. Your
+  own links pull no one (the rings set how near).
+
+Off, the graph is the force layout described above.
+
+### How it is worked out, and tuning it
+
+A person's card says **Why this size**: a bar for each signal, what it added, and the score as a percentage of the
+most anyone has, then their circle and who they are most tied to.
+
+The key's **How, and tune it** opens a panel that explains each signal and has a slider for each weight (0 to 3) and
+for how fast talk fades (3 to 60 months). The graph changes as they move. **Save** keeps the tuning on the hub, for
+every device; **Defaults** forgets it.
+
+**Fit to me** finds the weights that would have best picked out who you went on to talk with. It looks back from 6
+and from 12 months ago, scores everyone with what was known then, and judges each set of weights by how high the
+people you then talked with (3 or more weighted messages in the next 6 months) were ranked (average precision). It
+tries each weight in turn over a few values with talk held at 1, and each fade, until nothing improves. It says how
+many of those people were in the top 50 on the latest window before and after; Save keeps the result.
+
+`GET /api/graph/tuning` answers `{tuning}` (null when none is saved); `PUT /api/graph/tuning` with `{tuning}` saves it
+(`{weights, fade, fitted?}`, weights 0 to 3 for each signal, fade 3 to 60 months, else 400) or forgets it with
+`{tuning: null}`.
 
 ## Using it
 
