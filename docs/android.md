@@ -247,10 +247,11 @@ one bundle in the Silent section in the order of their sort keys, the summary li
 replacing the last; a chat moving between the list and a conversation notification, one row each time; a clear; a
 swipe of one row and of the whole bundle; every mark; a reply appended, and one refused.
 
-**Trying it without a hub's push.** A debug build (`src/debug`, never in a release) has a receiver that shows a
-payload from adb: `adb shell am broadcast -a org.libdither.chat.DEBUG_PUSH -n org.libdither.chat/.DebugPushReceiver
---es b64 <the payload's JSON in base64>`. `--es hub <origin>` sets the hub (for Reply and the marks), `--es cancel
-<tag>` cancels a notification.
+**Trying it without a hub's push.** A debug build (`src/debug`, never in a release) has a receiver that takes a
+payload from adb as if it had come through UnifiedPush (`Push.arrived`: its notification, its copy kept, a test
+confirmed): `adb shell am broadcast --include-stopped-packages -a org.libdither.chat.DEBUG_PUSH -n
+org.libdither.chat.verify/org.libdither.chat.DebugPushReceiver --es b64 <the payload's JSON in base64>`. `--es hub
+<origin>` sets the hub (for Reply and the marks), `--es cancel <tag>` cancels a notification.
 
 ### Which servers the hub sends to
 
@@ -506,6 +507,27 @@ For debugging, `./gradlew assembleDebug` builds an 8.8 MB debuggable APK, as its
 (`org.libdither.chat.verify`), so it installs beside a release build without touching it. Its WebView shows up in
 `chrome://inspect`, and it logs the page's console under the tag `DitherWeb`. Both builds log start-up timings under
 `DitherStartup`, and the activity reports itself fully drawn when content shows (`ActivityTaskManager: Fully drawn`).
+
+## Testing on an emulator
+
+`scripts/verify-android.ts` runs every emulator test of the app, as CI's `android-device` workflow does
+([testing.md](testing.md#android-on-an-emulator)): the calls test below against a demo hub of its own (its rings
+only when the emulator has a UnifiedPush distributor such as ntfy; without one it says `NOT RUN rings`), then
+`scripts/verify-android-arrived.ts`, a push's copy of its message (docs/notifications.md, "A copy in the push"): kept
+with the app closed and the hub stopped, shown by an offline start from the notification's intent, a second push shown
+by the open page, and both gone with the app's records once the hub is back.
+
+```sh
+emulator -avd <avd> -port 5584 -read-only -no-snapshot -no-window -no-audio \
+  -no-boot-anim -gpu swiftshader_indirect          # wait for `getprop sys.boot_completed`
+bun run web:build
+(cd apps/android && ./gradlew :app:assembleDebug :uitest:assembleDebug :uitest:assembleDebugAndroidTest)
+bun scripts/verify-android.ts --serial emulator-5584 [--shots <dir>]
+```
+
+The debug build is its own package (`org.libdither.chat.verify`), so a release build on the same emulator is never
+touched; each test clears its data first. The app's own logic that needs no device has unit tests on the JVM:
+`./gradlew :app:testDebugUnitTest`.
 
 ## Testing calls
 

@@ -28,32 +28,39 @@ object Arrived {
      * replaces the conversation's last one, keeping the furthest `upTo`; one without `upTo` (a phone-list row the hub
      * took back, not a read) is not kept.
      */
+    fun keep(c: Context, d: JSONObject, at: Long = System.currentTimeMillis()): List<JSONObject> = keep(c.filesDir, d, at)
+
+    /** [keep] in `dir`, the app's files directory; tests pass a temporary one (src/test/.../ArrivedTest.kt). */
     @Synchronized
-    fun keep(c: Context, d: JSONObject, at: Long = System.currentTimeMillis()): List<JSONObject> {
+    internal fun keep(dir: File, d: JSONObject, at: Long): List<JSONObject> {
         val records = records(d, at)
         if (records.isEmpty()) return records
         val byKey = LinkedHashMap<String, JSONObject>()
-        for (r in read(c)) byKey[r.getString("key")] = r
+        for (r in read(dir)) byKey[r.getString("key")] = r
         for (r in records) {
             val was = byKey[r.getString("key")]
             if (was != null && r.optString("kind") == "clear" && was.optLong("upTo") > r.optLong("upTo")) r.put("upTo", was.optLong("upTo"))
             byKey[r.getString("key")] = r
         }
         val kept = byKey.values.filter { at - it.optLong("at") <= KEEP_MS }.sortedByDescending { it.optLong("at") }.take(MAX)
-        write(c, kept)
+        write(dir, kept)
         return records
     }
 
     /** Everything kept, for a page that said hello; none older than [KEEP_MS]. */
+    fun list(c: Context, now: Long = System.currentTimeMillis()): JSONArray = list(c.filesDir, now)
+
     @Synchronized
-    fun list(c: Context, now: Long = System.currentTimeMillis()): JSONArray = JSONArray().also { a -> read(c).filter { now - it.optLong("at") <= KEEP_MS }.forEach { a.put(it) } }
+    internal fun list(dir: File, now: Long): JSONArray = JSONArray().also { a -> read(dir).filter { now - it.optLong("at") <= KEEP_MS }.forEach { a.put(it) } }
 
     /** The page caught up with the hub as of `upTo` (its clock, which is this phone's): what came before goes. */
+    fun done(c: Context, upTo: Long) = done(c.filesDir, upTo)
+
     @Synchronized
-    fun done(c: Context, upTo: Long) {
-        val all = read(c)
+    internal fun done(dir: File, upTo: Long) {
+        val all = read(dir)
         val left = all.filter { it.optLong("at") > upTo }
-        if (left.size != all.size) write(c, left)
+        if (left.size != all.size) write(dir, left)
     }
 
     private fun records(d: JSONObject, at: Long): List<JSONObject> {
@@ -72,21 +79,21 @@ object Arrived {
         }
     }
 
-    private fun read(c: Context): List<JSONObject> {
-        val f = File(c.filesDir, FILE)
+    private fun read(dir: File): List<JSONObject> {
+        val f = File(dir, FILE)
         if (!f.exists()) return emptyList()
         val a = runCatching { JSONArray(f.readText()) }.getOrNull() ?: return emptyList()
         return (0 until a.length()).mapNotNull { a.optJSONObject(it) }
     }
 
-    private fun write(c: Context, list: List<JSONObject>) {
-        val f = File(c.filesDir, FILE)
+    private fun write(dir: File, list: List<JSONObject>) {
+        val f = File(dir, FILE)
         if (list.isEmpty()) {
             f.delete()
             return
         }
         // Written aside and moved in place: a push and the page can't leave half a file.
-        val tmp = File(c.filesDir, "$FILE.tmp")
+        val tmp = File(dir, "$FILE.tmp")
         FileOutputStream(tmp).use { o ->
             o.write(JSONArray().also { a -> list.forEach { a.put(it) } }.toString().toByteArray())
             o.fd.sync()

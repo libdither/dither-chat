@@ -565,7 +565,10 @@ which can be hours old, and the message showed only once the catch-up came back.
   out as no newer than its snapshot.
 - Sends typed on a copy (a reply to it) wait in the outbox as any offline send does, and go once the hub has
   answered; the copy's id is the message's real id, so a reply quotes it.
-- `scripts/verify-arrived.ts` (CI `boot`) checks it end to end in Chromium.
+- `scripts/verify-arrived.ts` (CI `boot`) checks it end to end in Chromium, and `scripts/verify-android-arrived.ts`
+  (CI `android-device`) in the Android app on an emulator: the copy kept with the app closed, shown by an offline
+  start from the notification's intent, a second push shown by the open page, and both gone with the records once the
+  hub answers.
 
 ## The phone's list
 
