@@ -9,7 +9,9 @@ Code: `packages/hub/src/notices/` (`index.ts`: keeping, catch-up, reads, the rou
 `triage.ts`: the decision; `fake.ts`: the demo's source), `remote.ts` (the grant and the events), `notify.ts`
 (`Notifier.notice`); `packages/protocol/src/notices.ts`; `packages/web/src/notices.ts`, `ui/Notices.tsx` (the row),
 `ui/NoticesPane.tsx` (the page, a lazy chunk). The sources are in dither-accounts: `extractors/github`,
-`extractors/telegram` (Telegram Desktop's notifications) and the manager's own account of kind `notices`.
+`extractors/telegram` (Telegram Desktop's notifications) and the manager's own account of kind `notices`. The hub
+raises its own too: each approval request ([approvals.md](approvals.md)) is a notice of account `approvals`
+(`Notices.local`), read when it is answered, cancelled or expires, and its card answers it.
 
 ```
  GitHub API ──────────▶ extractors/github ──┐  notify.new { notification (+ urgency) }

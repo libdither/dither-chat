@@ -4,7 +4,7 @@
  *
  *   - G then P goes to People, G then I back to the inbox, and the card shows while G waits;
  *   - another key after G puts the card away and goes nowhere;
- *   - G typed in the message box is just a letter; Alt+2 from the box goes to People;
+ *   - G typed in the message box is just a letter; Ctrl+Shift+2 from the box goes to People, Alt+2 nowhere;
  *   - the rail's tooltips list the keys.
  *
  *   bun packages/hub/src/main.ts --demo --data <fresh dir> --port <port> --web <built web>
@@ -29,6 +29,7 @@ if (!boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub: r
 
 const { page, close } = await launch();
 const ALT = 1;
+const CTRL_SHIFT = 2 | 8;
 /** A real key press: down (with its text, so a field types it) and up. */
 const press = async (key: string, code: string, vk: number, modifiers = 0) => {
   const text = modifiers ? {} : { text: key };
@@ -59,6 +60,14 @@ try {
   check('G then I goes to the inbox', (await hash()).startsWith('#/inbox'), await hash());
 
   await letter('g');
+  await letter('s');
+  await page.until(`location.hash.startsWith('#/settings')`, 3000).catch(() => {});
+  check('G then S goes to Settings', (await hash()).startsWith('#/settings'), await hash());
+  await letter('g');
+  await letter('i');
+  await page.until(`location.hash.startsWith('#/inbox')`, 3000).catch(() => {});
+
+  await letter('g');
   await letter('x');
   check('another key after G puts the card away', !(await card()));
   check('…and goes nowhere', (await hash()).startsWith('#/inbox'), await hash());
@@ -75,15 +84,18 @@ try {
   check('in the box, G and P are just letters', typed.endsWith('gp') && (await hash()).startsWith('#/inbox'), { typed, hash: await hash() });
   check('…and no card', !(await card()));
   await press('2', 'Digit2', 50, ALT);
+  // The key's handlers run before dispatchKeyEvent answers, and go() sets the address at once.
+  check('Alt+2 is left to the window manager', (await hash()).startsWith('#/inbox'), await hash());
+  await press('@', 'Digit2', 50, CTRL_SHIFT);
   await page.until(`location.hash.startsWith('#/people')`, 3000).catch(() => {});
-  check('Alt+2 from the box goes to People', (await hash()).startsWith('#/people'), await hash());
+  check('Ctrl+Shift+2 from the box goes to People', (await hash()).startsWith('#/people'), await hash());
 
   // The rail's tooltips.
   const rect = await page.eval<{ x: number; y: number }>(`(() => { const r = document.querySelector('.rail-btn[data-track="people"]').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
   await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rect.x, y: rect.y });
   await page.until(`!!document.querySelector('.tooltip .tip-keys')`, 3000).catch(() => {});
   const tip = await page.eval<string>(`document.querySelector('.tooltip .tip-keys')?.textContent ?? ''`);
-  check("People's tooltip lists Alt+2 and G P", tip.replace(/\s/g, '') === 'Alt+2orGP', tip);
+  check("People's tooltip lists Ctrl+Shift+2 and G P", tip.replace(/\s/g, '') === 'Ctrl+Shift+2orGP', tip);
   if (shots) await page.shot(`${shots}/tooltip.png`);
   check('no page errors', page.errors.length === 0, page.errors);
 } finally {

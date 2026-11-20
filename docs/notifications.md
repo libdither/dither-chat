@@ -472,6 +472,12 @@ Their notifications go:
   shows nothing newer than `upTo` (its `ts`), so a clear that comes late never closes an alert that came after the
   read; one without `upTo` (from an older hub) closes whatever shows.
 
+Chromium's `getNotifications()` lists only what it sees on screen, or what was written after the call began: one
+written just before it and still on its way to the screen is deleted from the list for good, though it still shows,
+and then no read closes it. A page's tidy that runs while a push is being shown can do that, rarely; nothing here
+works around it. `sw.js` marks `dither:shown` (with the tag) once a notification is on screen, and
+`scripts/verify-clear.ts` reads the worker's notifications only after the marks of what it pushed.
+
 A browser must show something for every push (`userVisibleOnly`), and a clear shows nothing, so each browser's rules
 decide what one costs, and the hub sends them only where they are cheap or capped:
 
