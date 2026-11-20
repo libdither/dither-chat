@@ -14,7 +14,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { bytes } from '../../format.ts';
 import { details } from '../../mail/held.ts';
 import { cannotSend, deleteDraft, draftState, findAddresses, findContacts, flushDraft, isBlank, openDraft, saveDraft, send, sendingAgain } from '../../mail/drafts.ts';
-import { applyFormat, caretAfter, chipText, continueList, EditHistory, keptName, mergeHits, pasteLink, type Format, type Sel } from '../../mail/edits.ts';
+import { applyFormat, caretAfter, chipText, continueList, EditHistory, formatsAt, indentList, keptName, mergeHits, pasteLink, type Format, type Sel } from '../../mail/edits.ts';
 import { pastedFiles, pastedMarkdown } from '../../mail/paste.ts';
 import { dropLayer, phone, pushLayer } from '../../phone.ts';
 import { connected, db, mailRev, startUpload } from '../../state.ts';
@@ -331,11 +331,13 @@ const FORMATS: { f: Format; label: ComponentChildren; title: string }[] = [
   { f: 'bullets', label: <Icon name="list" size={15} />, title: 'Bulleted list (Ctrl+Shift+8)' },
   { f: 'numbers', label: <span class="mc-fmt-num">1.</span>, title: 'Numbered list (Ctrl+Shift+7)' },
   { f: 'quote', label: <Icon name="quote" size={15} />, title: 'Quote (Ctrl+Shift+9)' },
+  { f: 'heading', label: <span class="mc-fmt-h">H</span>, title: 'Heading: larger, then smaller, then off' },
+  { f: 'clear', label: <span class="mc-fmt-clear">T<sub>x</sub></span>, title: 'Remove formatting (Ctrl+\\)' },
 ];
 /** The keys that format, as Gmail's are where it has them. */
 function formatKey(e: KeyboardEvent): Format | null {
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
-  if (!e.shiftKey) return ({ b: 'bold', i: 'italic', k: 'link' } as const)[e.key.toLowerCase() as 'b' | 'i' | 'k'] ?? null;
+  if (!e.shiftKey) return ({ b: 'bold', i: 'italic', k: 'link', '\\': 'clear' } as const)[e.key.toLowerCase() as 'b' | 'i' | 'k' | '\\'] ?? null;
   return ({ Digit7: 'numbers', Digit8: 'bullets', Digit9: 'quote', KeyX: 'strike' } as const)[e.code as 'Digit7'] ?? null;
 }
 const BAR_KEY = 'dither.mail.formatBar';
@@ -471,6 +473,8 @@ export function Composer({ open }: { open: ComposeOpen }) {
   const [error, setError] = useState<string | null>(null);
   const [bar, setBar] = useState(barWanted);
   const [preview, setPreview] = useState(false);
+  /** The formats at the caret, as a key ("bold,bullets"), so the bar's buttons show them pressed. */
+  const [onAt, setOnAt] = useState('');
   const clientId = useRef<string | null>(null);
   const loadedSig = useRef('');
   const fileInput = useRef<HTMLInputElement>(null);
@@ -564,6 +568,17 @@ export function Composer({ open }: { open: ComposeOpen }) {
     const s = bodySel();
     if (s) putBody(applyFormat(s, f));
   };
+  // The bar follows the caret: a format it sits in shows pressed.
+  useEffect(() => {
+    if (!bar) return;
+    const read = () => {
+      const s = document.activeElement === body.current ? bodySel() : null;
+      const k = s ? [...formatsAt(s)].sort().join(',') : '';
+      setOnAt((was) => (was === k ? was : k));
+    };
+    document.addEventListener('selectionchange', read);
+    return () => document.removeEventListener('selectionchange', read);
+  }, [bar]);
 
   const account = d ? db.mail.accounts.get(d.accountId) : undefined;
   const why = d ? cannotSend(account) : null;
@@ -916,6 +931,14 @@ export function Composer({ open }: { open: ComposeOpen }) {
                   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) return (e.preventDefault(), void doSend());
                   const f = formatKey(e);
                   if (f) return (e.preventDefault(), format(f));
+                  // In a list, Tab and Shift+Tab (or Ctrl+] and Ctrl+[) move its items in and out; elsewhere Tab moves on.
+                  const tab = e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey;
+                  const bracket = (e.ctrlKey || e.metaKey) && !e.altKey && (e.key === ']' || e.key === '[');
+                  if (tab || bracket) {
+                    const s = bodySel();
+                    const next = s && indentList(s, tab ? e.shiftKey : e.key === '[');
+                    if (next) return (e.preventDefault(), putBody(next));
+                  }
                   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
                     const s = bodySel();
                     const next = s && continueList(s);
@@ -988,7 +1011,16 @@ export function Composer({ open }: { open: ComposeOpen }) {
         {bar && (
           <div class="mc-format" role="toolbar" aria-label="Formatting">
             {FORMATS.map((x) => (
-              <button class={`mc-fmt mc-fmt-${x.f}`} type="button" disabled={!d || preview} title={x.title} aria-label={x.title} onMouseDown={(e) => e.preventDefault()} onClick={() => format(x.f)}>
+              <button
+                class={`mc-fmt mc-fmt-${x.f}${onAt.split(',').includes(x.f) ? ' on' : ''}`}
+                type="button"
+                disabled={!d || preview}
+                title={x.title}
+                aria-label={x.title}
+                aria-pressed={x.f === 'clear' ? undefined : onAt.split(',').includes(x.f)}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => format(x.f)}
+              >
                 {x.label}
               </button>
             ))}

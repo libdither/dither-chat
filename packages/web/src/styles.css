@@ -14124,12 +14124,11 @@ button.msg-edited.link:hover {
 /* The format bar, over the footer when Aa is on. */
 .mc-format {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 2px;
   padding: 4px 8px;
   border-top: 1px solid var(--border-soft);
-  overflow-x: auto;
-  scrollbar-width: none;
 }
 .mc-fmt {
   flex: none;
@@ -14160,6 +14159,20 @@ button.msg-edited.link:hover {
   font-size: 12.5px;
   font-weight: 600;
 }
+.mc-fmt.on {
+  background: var(--bg-raised);
+  color: var(--accent);
+}
+.mc-fmt-h {
+  font-weight: 700;
+  font-size: 14px;
+}
+.mc-fmt-clear {
+  font-size: 14px;
+}
+.mc-fmt-clear sub {
+  font-size: 9px;
+}
 .mc-fmt-gap {
   flex: 1;
 }
@@ -14169,6 +14182,16 @@ button.msg-edited.link:hover {
 .mc-preview-btn.on {
   background: var(--bg-raised);
   color: var(--text);
+}
+/* A phone: Preview is its eye alone, so the bar is one row. */
+@media (max-width: 480px) {
+  .mc-preview-btn span {
+    display: none;
+  }
+  .mc-fmt {
+    min-width: 28px;
+    padding: 0 4px;
+  }
 }
 .mc-preview {
   min-height: 160px;
