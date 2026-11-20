@@ -41,34 +41,42 @@ handles: it lays out its own way (docs/phone.md).
 
 ## Keys to the places
 
-Two ways to go to the rail's top places with the keyboard
+Two ways to go to the app's places with the keyboard
 ([`placekeys.ts`](../packages/web/src/placekeys.ts), [`ui/PlaceKeys.tsx`](../packages/web/src/ui/PlaceKeys.tsx)):
 
-| Place    | G then | Alt and |
-| -------- | ------ | ------- |
-| Inbox    | I      | 1       |
-| People   | P      | 2       |
-| Mail     | M      | 3       |
-| Calendar | C      | 4       |
-| Feed     | F      | 5       |
+| Place    | G then | Ctrl+Shift and |
+| -------- | ------ | -------------- |
+| Inbox    | I      | 1              |
+| People   | P      | 2              |
+| Mail     | M      | 3              |
+| Calendar | C      | 4              |
+| Feed     | F      | 5              |
+| For you  | Y      |                |
+| Settings | S      |                |
+| Accounts | A      |                |
 
 - **G then a letter**, as in Gmail and GitHub: press G, let go, then the letter, within 1.5 s. A card at the
   bottom of the window lists the letters while it waits; any other key puts it away and does what it always did.
   G is an ordinary letter while you type, with a menu, sheet or dialog open, or in the picture viewer.
-- **Alt and the place's number on the rail**: one chord that works while you type too, which matters because
-  opening a chat puts you in its message box. The number is read from the physical key (`Digit1`), so a layout
-  where Alt changes what a number types still works. Firefox and Chromium on Linux and Windows switch tabs with
-  Alt+number; the app takes the chord first, so in a tab it no longer switches tabs while the app has focus.
+- **Ctrl+Shift and the place's number on the rail**: one chord that works while you type too, which matters because
+  opening a chat puts you in its message box. The number is read from the physical key (`Digit1`), since Shift
+  turns it into a symbol. No browser or window manager we know of uses Ctrl+Shift+number.
+- Why not other chords: Alt is a window manager's (niri's default mod key, and GNOME's and KDE's for window
+  keys), and Firefox and Chromium switch tabs with Alt+number on Linux and Ctrl+number everywhere. Ctrl+Shift with
+  a place's letter hits the browsers' own keys: I (developer tools), C (inspect), M (responsive design), P
+  (Firefox's private window) and N, T and W, which a page can't take at all. Super belongs to the desktop
+  elsewhere (GNOME, KDE and Windows open docked apps with Super+number).
 - A place this hub doesn't offer (Mail without mail access, the Calendar without its account, the Feed without an
   account with posts) has no key, and the numbers don't move up to fill its gap.
-- The calendar's frame passes its keys on, so both ways work with the calendar in focus, and the calendar's own M
-  (month) and C (new event) don't take the letter that followed a G.
-- Each place's tooltip on the rail lists its keys, and the buttons carry their Alt chord in `aria-keyshortcuts`
+- The calendar's frame passes its keys on, so both ways work with the calendar in focus, and the calendar's own
+  letters (M for month, C for a new event, A for the agenda) don't take the letter that followed a G.
+- Each place's tooltip on the rail lists its keys, and the buttons carry their chord in `aria-keyshortcuts`
   (which has no way to write a G then a letter).
 - Ctrl+K (docs/palette.md) still jumps to anything else.
 
-`bun scripts/verify-place-keys.ts <demo hub>` presses them in headless Chromium with real key input: G then P and
-G then I, a stray key after G, G typed in a chat's box, Alt+2 from the box, and the rail's tooltip.
+`bun scripts/verify-place-keys.ts <demo hub>` presses them in headless Chromium with real key input: G then P, G
+then I and G then S, a stray key after G, G typed in a chat's box, Ctrl+Shift+2 from the box, Alt+2 doing nothing,
+and the rail's tooltip.
 
 ## The title bar
 

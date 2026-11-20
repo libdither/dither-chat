@@ -37,7 +37,7 @@ One number per day, key, page and kind of device:
 - A click on no control (text, empty space) counts as nothing. A click on a `label` counts as the click on its
   control that the browser sends next.
 - Shortcuts and gestures that are not clicks are counted where they are handled, with `countKey`: Ctrl+K, Ctrl+F,
-  Enter and Esc in the composer, a context menu's letter keys, mail's keys, the keys to the places (`keys: G I (inbox)`, `keys: Alt+1 (inbox)`), Enter in a search box, and on a phone
+  Enter and Esc in the composer, a context menu's letter keys, mail's keys, the keys to the places (`keys: G I (inbox)`, `keys: Ctrl+Shift+1 (inbox)`), Enter in a search box, and on a phone
   the swipes (back, to and from the details, forward, to reply, and, from 2026-11-13 to 11-14, an inbox row's swipe left for a reply mark) and
   pull to refresh, and For you's keys.
 
