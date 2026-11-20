@@ -6,7 +6,7 @@
 # A pull request that only changes docs (*.md, docs/) or the Android app skips the work (scripts/ci-changes.ts); a push
 # to main and a manual run always run everything. The same locally: bun run typecheck, bun run test, bun run web:build,
 # bun run check:boot, bun scripts/verify-login.ts, bun scripts/verify-clear.ts, bun run check:offline,
-# bun scripts/verify-offline.ts, bun scripts/verify-back.ts, bun scripts/verify-perf.ts --ci.
+# bun scripts/verify-offline.ts, bun scripts/verify-arrived.ts, bun scripts/verify-back.ts, bun scripts/verify-perf.ts --ci.
 name: CI
 
 on:
@@ -152,6 +152,9 @@ jobs:
       # The hub out of reach (docs/sync.md, "Quiet"), on the same build: a demo hub stopped and started again, the amber
       # orb and its popover on a phone and a computer, the line over the message box, a send that waits and goes out once.
       - run: bun scripts/verify-offline.ts
+      # A push's copy of its message, kept by the service worker with the hub gone, shown by the next start and replaced
+      # once the hub answers (docs/notifications.md, "A copy in the push").
+      - run: bun scripts/verify-arrived.ts
 
   # Back from every kind of page and layer, by Escape and the browser's back, on a computer and a phone, against a demo
   # hub of its own (scripts/verify-back.ts, docs/desktop.md "Escape and back").

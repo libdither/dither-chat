@@ -12,7 +12,7 @@
 | `test-hub-mail` | the hub's mail-load tests (60k messages; 20 to 30 s, as long as the rest of the hub's) | `bun scripts/test-all.ts hub -- test/mail-load.test.ts` |
 | `test-packages` | every other package's tests, all at once | `bun scripts/test-all.ts --except hub` |
 | `web` | the web app's vite build | `bun run web:build` |
-| `boot` | the built web app in Chrome against a demo hub (scripts/check-boot.ts), then the sign-in screen against a hub behind the login, clicked and typed into (scripts/verify-login.ts), then notifications closing once their chat is read, pushed to the service worker over DevTools (scripts/verify-clear.ts), then the start with the hub out of reach right after a deploy (scripts/check-offline.ts), then the hub out of reach and back, tapped and clicked (scripts/verify-offline.ts) | `bun run check:boot`, `bun run web:build && bun scripts/verify-login.ts`, `bun scripts/verify-clear.ts`, `bun run web:build && bun scripts/check-offline.ts --web packages/web/dist`, `bun run web:build && bun scripts/verify-offline.ts` |
+| `boot` | the built web app in Chrome against a demo hub (scripts/check-boot.ts), then the sign-in screen against a hub behind the login, clicked and typed into (scripts/verify-login.ts), then notifications closing once their chat is read, pushed to the service worker over DevTools (scripts/verify-clear.ts), then the start with the hub out of reach right after a deploy (scripts/check-offline.ts), then the hub out of reach and back, tapped and clicked (scripts/verify-offline.ts), then a push's copy of its message shown offline and replaced once the hub answers (scripts/verify-arrived.ts) | `bun run check:boot`, `bun run web:build && bun scripts/verify-login.ts`, `bun scripts/verify-clear.ts`, `bun run web:build && bun scripts/check-offline.ts --web packages/web/dist`, `bun run web:build && bun scripts/verify-offline.ts`, `bun run web:build && bun scripts/verify-arrived.ts` |
 | `back` | back from every kind of page and layer, by Escape and the browser's back, on a computer and a phone, against a demo hub of its own (scripts/verify-back.ts, docs/desktop.md "Escape and back") | `bun run web:build && bun scripts/verify-back.ts` |
 | `perf` | load and chat switching on a tenth-size world, a warm-up and one run, its counts against a baseline (docs/perf.md) | `bun scripts/verify-perf.ts --ci` |
 | `check` | passes only when each job above passed, or was skipped because `changes` said so | |
@@ -24,7 +24,8 @@
 - `perf`, the longest job, does not wait for `changes`: it starts at once, runs the same script itself, and skips its
   steps when `changes` would skip it, so on such a pull request it passes rather than reads as skipped.
 - A new push to a pull request cancels its older run. Runs on main never cancel each other.
-- The Android app has its own workflow (android.yml), which runs only when apps/android changes.
+- The Android app has workflows of its own, outside `check`: android.yml (unit tests and the APK, when apps/android
+  changes) and android-device.yml (the app on an emulator; [below](#android-on-an-emulator)).
 - The run takes as long as its slowest job, and every job sets up in a few seconds, so a long step gets a job of its
   own rather than waiting behind another: `perf` (about 50 s of browser runs), `test-hub-mail` (one file of 20 to
   30 s) and `test-hub` (the other 69 files) run side by side. A code pull request's run took about 70 s on 2026-11-10,
@@ -57,6 +58,46 @@ but those, as CI splits the hub. The hub in one process, as before: `cd packages
   the database aside, migrate, log `startup: ready` and read back what the old hub stored. `bun scripts/old-db-fixture.ts
   <commit> <name>` adds a fixture from another commit's demo hub (demo data only; it checks), for a migration that
   should be tried from a new schema era. docs/deploy.md has the startup line.
+
+## Android on an emulator
+
+The Android app is tested in three layers, outside the required `check`:
+
+- **Unit tests on the JVM** (`apps/android/app/src/test`, `./gradlew :app:testDebugUnitTest`, in android.yml): the
+  app's logic that needs no device, such as the records `Arrived.kt` keeps for a push's copy and what a push's payload
+  means to `Notifications.kt` (its tier, marks, chat, lines and pictures). A few seconds. `org.json` is the real
+  library there (a test dependency): android.jar's copy is stubs that throw off a device. Logic that wants a test
+  takes a `File` or a `JSONObject` rather than a `Context`, as `Arrived` does.
+- **The app on an emulator** (`.github/workflows/android-device.yml`): `scripts/verify-android.ts` runs
+  `verify-android-call.ts` (calls and rings: prompts, the call service, the shade's buttons; docs/android.md,
+  "Testing calls") against a demo hub, then `verify-android-arrived.ts` (a push's copy kept and shown offline;
+  docs/notifications.md, "A copy in the push"). The debug build, an API 35 x86_64 emulator with KVM on a standard
+  runner, its booted snapshot cached between runs. About 4 minutes of tests on a local emulator, plus the builds and
+  the boot. It runs on pull requests that change `apps/android/`, the web files that talk to the app
+  (`packages/web/src/android.ts`, `arrived.ts`) or these scripts, on main for the same, and every night on main.
+  The push test's pushes reach the app through the debug build's `DebugPushReceiver`, which takes the same path as a
+  UnifiedPush message (`Push.arrived`). The calls test's rings come through real push: the hub's Web Push request,
+  the app's UnifiedPush connector registering, decrypting and handing it on. Where the device has no distributor
+  (CI's emulator) the test brings one, `apps/android/testpush`, whose server runs in the test
+  (`scripts/android-testpush.ts`): the hub sends to it as to ntfy's server, and each body goes to the device over adb.
+  A device with its own distributor (ntfy on a local emulator) uses that instead. A failed run uploads its
+  screenshots (`android-shots`).
+- **Required once steady.** The emulator job reports and does not block a merge until it has passed 20 runs on main
+  in a row: `bun scripts/android-device-streak.ts` counts them. Making it required then means running it on every
+  pull request, with a `changes`-style skip like ci.yml's, since a required check behind a `paths` filter never
+  reports on a pull request outside those paths and holds it forever.
+
+Locally (docs/android.md, "Testing on an emulator"):
+
+```sh
+bun run web:build
+(cd apps/android && ./gradlew :app:testDebugUnitTest :app:assembleDebug :uitest:assembleDebug :uitest:assembleDebugAndroidTest :testpush:assembleDebug)
+bun scripts/verify-android.ts --serial emulator-5584
+```
+
+What none of this covers in CI: a real distributor (ntfy) and its server delivering, and what can hold them up (a
+connection that dropped, ntfy's 507 before it has connected); Doze and phone makers' battery savers; and a phone's
+own WebView version. ntfy runs on a local emulator with it installed; the rest needs a phone.
 
 ## Flaky tests
 

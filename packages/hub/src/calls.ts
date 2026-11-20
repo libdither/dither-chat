@@ -295,7 +295,7 @@ export class Calls {
     return {
       conversation: call.conversation,
       participants,
-      ...(st.stage ? { stage: st.stage } : {}),
+      ...(st.stage ? { stage: hubStage(st.stage) } : {}),
       ...(video ? { video } : {}),
       ...(self ? { self } : {}),
       identities: this.store.identitiesByIds([...new Set([...participants.map((p) => p.id), ...(video ?? []).map((v) => v.who)])]),
@@ -371,4 +371,23 @@ function send(ws: ServerWebSocket<CallSocketData>, m: P.CallServerMessage | (Omi
   try {
     ws.send(JSON.stringify(m));
   } catch {}
+}
+
+const SELF_ACTIONS: readonly P.StageSelfAction[] = ['raiseHand', 'lowerHand', 'speak', 'listen'];
+const MOVES: readonly P.StageMove[] = ['invite', 'audience'];
+
+/**
+ * A stage's facts as the device gets them: only what the protocol has, each checked. An adapter from before `can`
+ * sent `moderator: boolean`; that becomes `canOn` (both moves, or none), so its stages keep their moderator's buttons.
+ */
+export function hubStage(st: P.CallStage & { moderator?: unknown }): P.CallStage {
+  const list = <T extends string>(x: unknown, ok: readonly T[]): T[] | undefined => (Array.isArray(x) ? x.filter((a): a is T => ok.includes(a)) : undefined);
+  const can = list(st.can, SELF_ACTIONS);
+  const canOn = list(st.canOn, MOVES) ?? (typeof st.moderator === 'boolean' ? (st.moderator ? [...MOVES] : []) : undefined);
+  return {
+    topic: typeof st.topic === 'string' ? st.topic : null,
+    ...(can ? { can } : {}),
+    ...(canOn ? { canOn } : {}),
+    ...(typeof st.listeners === 'number' && Number.isFinite(st.listeners) && st.listeners >= 0 ? { listeners: Math.round(st.listeners) } : {}),
+  };
 }

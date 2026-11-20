@@ -20,7 +20,7 @@
     "check:css": "bun scripts/check-css.ts",
     "check:cycles": "bun scripts/check-cycles.ts",
     "check:escape": "bun scripts/check-escape.ts",
-    "knip": "knip --include files,dependencies,unlisted,unresolved,binaries --no-progress --treat-config-hints-as-errors && knip --exports --workspace . --workspace packages/hub --workspace packages/web --workspace packages/protocol --workspace packages/desk --workspace packages/deploy --no-progress --no-config-hints"
+    "knip": "knip --include files,dependencies,unlisted,unresolved,binaries --no-progress --treat-config-hints-as-errors && knip --exports --workspace . --workspace packages/hub --workspace packages/web --workspace packages/protocol --workspace packages/desk --workspace packages/deploy --workspace packages/approvals --no-progress --no-config-hints"
   },
   "devDependencies": {
     "@dither-chat/protocol": "workspace:*",

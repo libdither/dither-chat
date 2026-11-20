@@ -146,9 +146,41 @@ bun scripts/verify-calls-demo.ts http://127.0.0.1:8579
 ```
 
 The script runs two devices as the two demo Discord accounts and the room, each in headless Chromium with fake
-devices, and checks joining (and how fast), hearing and being heard, the join, leave, mute and camera sounds, mute
+devices, and checks joining (and how fast), hearing and being heard, the bot's speaking ring (round, with words a screen
+reader hears), the join, leave, mute and camera sounds, the mic button's note when talking while muted (moving
+nothing else), mute
 reaching the far end and the other device, the camera both ways, sharing a screen and watching it from the other
-device, watching the bot's Go Live, leaving, and a device with no microphone joining to listen.
+device, watching the bot's Go Live, leaving, and a device with no microphone joining to listen. A last device, at
+phone size, checks the call bar (below): the dock on the call's own chat and the bar elsewhere, in one place at the top
+with nothing under it, no Leave on it and 44 px buttons, the row's mark, mute from the bar, a tap opening the sheet in
+place, back folding it, Go to chat; then at computer size with the list hidden, the bar under the page, the dock over it
+on a tap, Escape folding it, and leaving from there.
+
+The libdither server also has a stage, `office-hours` (`demostage.ts`), with the topic "Office hours: routing
+questions": the room's bot and two invented people speaking (their speaking takes turns), an audience of twenty
+invented people, two of them with a hand up (each with when it went up), and the main demo account a moderator there.
+A speaker's camera and Go Live show (the bot's camera is on); a listener's never do. The call room carries the devices'
+audio and video as for any call; the demo stage lays the
+roles and ranks over the room's state, tells each device what it may do (`can`, `canOn`), and answers the stage
+actions by the same rule the device's buttons follow (`stageRights`), so a hand, an invitation, speaking and moving back
+to the audience all work from either device, and a simulated person invited to speak says yes a moment later. Everyone
+joins in the audience, and the stage starts over once the last device leaves.
+
+```sh
+bun scripts/verify-stage-demo.ts http://127.0.0.1:8579 [screenshot dir]
+```
+
+It joins the stage from both demo Discord accounts and checks the room beside the channel's chat, the zones, the
+counts and the ranks, that a listener has no microphone open (the browser is never asked until they speak) and no
+camera or screen button, one Leave on screen at each width, "+N more" opening the whole audience (search, Esc, a
+moderator's Invite there), a moderator's Speak without Ask to speak, the requests oldest first, a hand going up, the
+invitation said aloud, Speak opening the microphone, the moderator moving the speaker back (the microphone closes), a
+simulated person accepting, and on a narrow pane the Room / Chat switch with the requests' count, the requests above
+the audience, a call left from Chat opening as a room next time, and Leave quietly. With a directory it saves the room
+listening (beside the chat), with a hand up, invited, speaking, as the moderator with requests, the whole audience, and
+at phone width (the room and the chat).
+
+`bun scripts/verify-call-window.ts <hub>` checks the video window the same way ("The video window" below).
 
 A demo account can also be rung: the account action `ring` (`{conversation, caller?, video?}`, the conversation's
 native id) makes the caller ring it there, as a network's ring would, and `ringStop` is the caller giving up
@@ -295,6 +327,35 @@ client's own `CHANNEL_INFO`) is the channel's, kept whatever the setting. `GET /
 Not built: voice history and hangouts (`/channels/{id}/voice-history`): a request of ours, not something the client is
 sent.
 
+## The call bar
+
+One call has several sizes, smallest first: a mark on its chat row, the bar, the dock, the video window. The dock (the
+call's name, its buttons, and when open its people; `CallDock` in `ui/Call.tsx`) is the call while you chat beside it.
+The bar (`ui/CallBar.tsx`, its choices in `callbar.ts`) is the call while you look at something else, like a music
+player: a slim row with whoever is talking (call.ts `featuredSpeaker`, drawn with `CallAvatar` and the shared speaking
+ring), how long the call has gone (`callStatus`, so also Connecting to Discord… and the still-muted hint), and at most
+two buttons from `callControls`. Nobody talking, the face is a few of the others' pictures overlapping (the call's
+own picture when nobody else is in it), with the call's phase as a dot in the corner.
+
+- **Its buttons, by role.** Never Leave: that is in the expanded call, away from where a thumb rests. A speaker (or
+  anyone in a call without an audience) gets mute and deafen, or mute and the camera or the screen while one is on, so
+  it can be turned off from anywhere. With no microphone, deafen alone. A stage's audience gets deafen and its hand,
+  or Speak once invited. Mute and deafen keep one name with `aria-pressed`; their tooltips say what a press does.
+- **A row of the layout.** It never sits over anything. On a computer the app's grid gives it a row of its own under
+  the list (`.app.with-bar`), the rail and the page running down beside it; with the list hidden (All communities, the
+  calendar) the row is under the page. The call's video stands above it. On a phone it is the top of the screen
+  wherever you are, the lists, a page and the details all starting below it, so it is in one place whether over the
+  lists or on another chat.
+- **A tap expands it in place.** On a phone a sheet hangs from the bar over the page you're on: every button (Leave
+  among them), Go to chat, and the people. On a computer the dock stands on the bar. Back, Escape or another tap folds
+  it; it never changes the page.
+- **Where it shows.** Phone: whenever you're in a call and the page on screen isn't the call's chat (any route of the
+  same chat counts, docs/chats.md); on the call's own page the dock shows at the top, as before. Computer: the dock as
+  before, except where the list is hidden or dragged to 260 px or narrower.
+- **The mark:** on the call's row in the lists (a DM, a chat's row, a voice channel), three small bars, green in your
+  call and moving while anyone talks. A conversation with a call going on that you aren't in (the hub's calls,
+  `callIn`) gets them in grey.
+
 ## In a call: what each of Discord's call features takes here
 
 Plan and state for the rows of docs/research/discord-gaps.md "Voice, video, calls, streaming" beyond ringing and
@@ -346,24 +407,117 @@ checks the shape, turns hub identity ids into native ones and refuses the rest i
 | `join` with `input` | `callInput` | the microphone's handling from the start (bridge: the account client's voice settings) |
 | `{op: 'local', user, volume?, muted?}` | `callVolume` | one person's volume (0 to 200 %) or mute, for this account only |
 | `{op: 'input', input}` | `callInput` | noise suppression on or off; sensitivity automatic or a level in dB |
-| `{op: 'stage', action, user?}` | `stage` | `raiseHand`, `lowerHand`, `speak` (when invited, or as a moderator), `listen`; a moderator's `invite` and `audience` for `user` |
+| `{op: 'stage', action, user?}` | `stage` | `raiseHand`, `lowerHand`, `speak` (when invited, or with a rank), `listen`; a moderator's `invite` and `audience` for `user` (each only as the stage's `can` and `canOn` allow) |
 | `{op: 'sounds'}` → `{t: 'sounds', sounds, reason?}` | `soundboard` | this server's sounds and Discord's defaults, as the client has them, where Use Soundboard allows |
 | `{op: 'sound', sound, guild}` | `soundboard` | play one to everyone in the call |
 | `{op: 'video', camera, screen, screenAudio?}` | `callVideo` | this device's camera and screen are on or off (bridge mode only) |
 | `{op: 'watch', user, on}` | `watchStreams` | watch someone's Go Live, or stop (bridge mode only) |
 
 The call's state adds, per person: `streaming`, `serverMuted`, `serverDeafened`, `volume` and `localMute` (the
-client's own values, so the device and the client agree), and `stage` (`speaker`, `audience`, `hand`, `invited`); and
-for a stage `stage: {topic, moderator}`. `{t: 'effect', effect: {who, emoji?, sound?}}` is a sound or emoji someone
+client's own values, so the device and the client agree), `stage` (`speaker`, `audience`, `hand`, `invited`),
+`stageRank` (`host`, `cohost` or `moderator`, where the adapter knows) and `askedAt` (ms epoch a hand went up, so
+requests are answered oldest first); and for a stage:
+
+```ts
+stage: {
+  topic: string | null;
+  can?: ('raiseHand' | 'lowerHand' | 'speak' | 'listen')[]; // what this account may do now, for itself
+  canOn?: ('invite' | 'audience')[];                         // what it may do to others (each where it fits their role)
+  listeners?: number;                                        // how many listen in all, when only some are sent (a Space)
+}
+```
+
+The device draws its buttons from `can` and `canOn` alone. An adapter that leaves them out gets them worked out from
+your role and rank (`stageRights`, protocol call.ts): listening, Ask to speak, or Speak with a rank; hand up, Lower hand
+(and Speak, with a rank); invited, Speak or Stay in the audience; speaking, Move to the audience; any rank invites and
+moves others. An adapter from before `can` sent `moderator: boolean`; the hub reads that as `canOn` (`hubStage`,
+calls.ts). `{t: 'effect', effect: {who, emoji?, sound?}}` is a sound or emoji someone
 sent in the call. Server mute, deafen, move and disconnect are `moderate` actions (docs/moderation.md), offered from
 the voice channel's About.
 
 The web: the open call dock is a chunk of its own (`ui/CallPanel.tsx`): tap someone for their volume and mute for you,
 a stage moderator's invite or move to the audience, and a server moderator's actions, each after a confirm; a stage's
-topic and your own hand at the top; the soundboard below. Someone's camera and Go Live show as a camera and a LIVE tag
-there and on the voice channel's people. Settings → Calls has this device's noise suppression and sensitivity, its
-microphone and camera (with a six-second microphone test), and the call sounds on or off. The dock's mute button has a
-ring that follows the microphone's level (from what WebRTC says it sends), so a silent microphone shows.
+topic, your role and Speak or Move to the audience at the top (your hand is a button on the dock's bar); the
+soundboard below. Someone's Go Live shows as a LIVE tag there and on the voice channel's people (cameras show in the
+video window, so the dock has no camera icon). Settings → Calls has this device's noise suppression and sensitivity,
+its microphone and camera (with a six-second microphone test), and the call sounds on or off. The dock's mute button
+has a ring that follows the microphone's level (from what WebRTC says it sends), so a silent microphone shows.
+
+### Who is speaking
+
+Every place that shows a call (the dock now; the call bar, a room and the video window as they come) reads the same
+pieces, so none works these out again:
+
+- **Held, so it doesn't blink** (`speakingHold`, `callmarks.ts`). Voice activity switches off between words. `call.ts`
+  holds what the network says where it changes the call's people: each participant's `speaking` in `activeCall` is
+  the held value, on at once and still on 250 ms after the last word; then the ring fades over 180 ms (CSS). Nothing
+  else needs to remember a hold.
+- **Who to feature** (`featuredPicker`, `call.ts` `featuredSpeaker`): the latest person to start talking, never you,
+  kept at least 1.5 s before someone else (or nobody) takes it, and while they still talk someone else takes over only
+  after a second of talking (`FEATURE_TAKE_MS`), so a quick "yeah" doesn't snatch it. The dock names
+  them first in its "is talking" line; the call bar's face and the video window's Speaker use it.
+- **The face** (`ui/CallAvatar.tsx`): `CallAvatar` draws only what it's given (id, name, picture, size, speaking,
+  level, tone, badge): the picture in a fixed square box with the ring 4 px around it, so it's round at every size.
+  `callMarks(call, person)` works those out for someone in the call you're in, or (with no call) for someone a voice
+  channel lists, as the list's voice channels do. Its words ("Lev, speaking, muted") are what a screen reader hears.
+- **One ring** (`.speak-ring`, styles.css): a layer around its element, or inside its edge (`--ring-inset: inset`, as
+  video tiles have it), with its distance, width, colour, corner and strength as CSS variables.
+- **Its strength**: in direct mode each person has a receive slot of their own, so while someone speaks their ring's
+  strength follows their level (read on the microphone meter's own tick, only while someone speaks; yours is your
+  microphone's). Bridge mode gets one mixed stream, so it never shows a level per person: the ring is on or off.
+- **One badge**, bottom right, the most important way someone differs from their role's default (`callBadge`): in a
+  stage's audience, where muted is normal, a hand up and then an invitation; for a speaker, or anyone in a call without
+  an audience, muted or deafened by a moderator (filled red), deafened, muted, then muted for you. It grows with the
+  face (`badgeSize`, a third of it). No network badge: the call already names its network. The dock also keeps a ✋
+  beside the name of someone asking to speak.
+- **Muted but talking**, for you only: while you are muted, a copy of your microphone is listened to here (a Web Audio
+  analyser, only while muted) against your sensitivity, or the automatic gate's −36 dB (`AUTO_GATE_DB`). After about
+  half a second of talk (`talkGate`; gaps between words don't restart it) the mic button gets an amber ring and a
+  small "You're muted" note anchored to it, which moves nothing else; three seconds of quiet clears it. A live region
+  beside the button, always there, says it to a screen reader.
+- **The buttons and the status line** (`callControls`, `callStatus` in `call.ts`; `ui/CallControls.tsx` draws them).
+  Your role gets its buttons: a speaker, or anyone in a call without an audience, gets mute, deafen, camera and share
+  where video goes, and Leave; on a stage the rest are what the stage lets you do (`stageCan`, from `can` and
+  `canOn`): a hand to raise or lower, Speak, Move to the audience (Stay in the audience when invited). The audience
+  never gets the microphone, a camera or a screen, and leaves quietly. The status line is Connecting…, Connecting to Discord… (bridge mode
+  before the account's own client is in), the time (1:15:03 past the hour) or why it ended, with "The account is still
+  muted: tap to try again" when it is.
+
+### The room view
+
+Every live audio thing is a room with roles: a call is a room where everyone speaks, a stage (a Discord stage, later an
+X Space) one where a few speak and the rest listen. `web/src/room.ts` sorts a call's people into the room's zones by
+role (`CallParticipant.stage`), with nothing network-specific in it, and `ui/CallRoom.tsx` (a chunk of its own, with Try
+again when it could not load) draws them:
+
+- the header: the network, the stage's topic, "N speakers · N listening" (the stage's `listeners` when it sends only
+  some of them);
+- Speakers: the call window's tiles ("The video window" below), moved into the room at its size: each speaker's
+  camera, or their face (`CallAvatar`, ringed while speaking, its one badge), named by rank (Host, Co-host, Moderator)
+  or Speaker, with a moderator's moves in a menu on each tile; 64 px faces while the window floats instead or is still
+  loading;
+- who asks to speak, oldest first (`askedAt`): for someone who may invite, "Asking to speak" with Invite on each; for
+  others, "Hands up" by name. Above the audience at every width;
+- Audience: 32 px faces, you first, then hands up, then the invited, then the rest; past 18, "+N more" opens everyone
+  listening, searchable, people you know first (starred, then those you have a direct chat with), with Invite on each
+  for a moderator; Esc or Done closes it;
+- the buttons: the call's own (`CallControls`, by your role and what the stage lets you do), with "You're invited to
+  speak" said in a status line above them.
+
+A face with something you may do to them (a moderator's Invite to speak or Move to the audience) is a button that opens
+a menu; otherwise it is a plain element. Joining a stage channel (the header's Join, where the account has `calls` and
+`stage`) makes the room the conversation's page. On a wide pane the channel's chat (the real timeline and composer)
+sits beside it; on a narrow pane (a container query on the pane, not the screen) a Room / Chat switch shows one of
+them, and Room carries a count of the requests for someone who may invite (`roomRequests`, call.ts, for a call bar
+too). A room with no chat has only the room. Opening a stage you are not in shows its chat, as before.
+
+One set of buttons at a time: while the room is on screen the dock leaves out its buttons (and its open body's Speak or
+Move), and the header has no Join or Leave for a room you are in; on a narrow pane showing Chat the dock has them back.
+
+A stage is joined listening, without the microphone: the browser is not asked for one, and the call sends a silent
+track. Speak asks for it (from the click) and goes ahead once it is open; being made a speaker opens it too. Going back
+to the audience, by your own button or a moderator's move, closes it again (`takeMic`, `releaseMic`, call.ts; the
+transports swap the track they send, `setMic`).
 
 Direct mode's sensitivity is the device's own level gate: the level in dB is the microphone's loudness (RMS, dBFS);
 "automatic" is the gate's own −36 dB. Discord's own slider is on its own scale, so the same number may not feel the
@@ -401,12 +555,63 @@ up front, so turning a camera on or a remote video changing never renegotiates:
   `<user>-<ssrc>`), and the connection says what (context `default`: a camera, `stream`: a Go Live). The hook puts
   them on the slots, streams first, then cameras, keeping what plays where it is, and the state's `video` says whose is
   on which; a camera turned off or a stream no longer watched frees its slot.
-- **On the device.** Video floats beside the dock (on a phone, at the top): others' cameras and streams with their
-  names, and what it sends (its own camera mirrored). A tap goes full screen. Someone LIVE has Watch in the open dock.
+- **On the device.** Video shows in one window ("The video window" below): others' cameras and streams with their
+  names, and what it sends (its own camera mirrored). A click shows a tile big. Someone LIVE has Watch in the open dock.
   The dock's camera and screen buttons show only in bridge mode, where the account can (`callVideo`); screen sharing
   only where the browser has `getDisplayMedia` (not phones).
 - **Cost.** The sandbox decodes and encodes each video again (measured above). Discord's own clients send H.264; the
   bridge sends the device VP8.
+
+### The video window
+
+The call is one window of tiles (`ui/CallWindow.tsx`, a chunk of its own loaded once the call has video or a room is on
+the page; the layout itself is `src/callLayout.ts`, pure and unit-tested). A tile is a person, not a video: everyone in
+the call (on a stage, its speakers), drawn as their camera when it is on and otherwise as their face (`CallAvatar`, with
+the same speaking ring and badge), and a tile for each screen being shared. A camera's ring is drawn inside its edge
+(`.call-video.speak-ring`); its badge sits in the caption. Your own tile and your own screen are yours (`mine`), so
+neither is ever the big tile by itself.
+
+It has no title bar. Its buttons sit at its top right, shown on hover (always on a touch screen): Move (a grip that
+takes the arrow keys), Full screen, and the layout menu, which opens upward when there is no room below it. The menu
+has three rows of radios (one tab stop a row, the arrow keys move through it):
+
+- **Arrange**: Auto, Grid (everyone the same size, in the columns that make them largest) or Speaker (one fills the
+  window, the rest in a strip below). Speaker's big tile is someone else's shared screen, else whom the call features
+  (`featuredSpeaker`, call.ts: the latest to start talking, never you, kept at least 1.5 s, and while they still talk
+  someone else takes over only after a second of talking), else the one it showed last, else the first that isn't
+  yours. Auto is Grid, or Speaker while someone shares a screen, and on a phone.
+- **Your camera**: your tile like the others, a small inset in a corner (drag it; it settles in the nearest corner), or
+  hidden. When it is the only tile, it is shown whatever the choice.
+- **Place**: Floating over the app (drag it anywhere on it; resize from its lower right corner, or by the arrow keys on
+  that corner; it stays on screen and never covers the call bar), Above chat, or Fill. Above chat and Fill apply on the
+  call's own chat only: there the page has a slot under its header (`ui/CallSlot.tsx`), and the window moves into it,
+  animating from where it was. Above chat is a strip in the chat's flow, the header and its buttons above it and the
+  messages below, with a divider at its foot (a separator in the tab order that takes the arrow keys) for its height.
+  Fill is the whole page under the header. On a stage the room is the window at full size: Above chat, Fill and Auto
+  put it in the room's speakers zone. On any other page (another chat, Settings) the window steps down: to the floating
+  window on a computer, to the call bar on a phone. Dragging the floating window to the top of the call's chat docks
+  it; dragging a docked or filling window down floats it.
+
+A click on a tile (or Enter on it) shows it big, as Speaker, and another puts it back; the tile is marked with a pin
+and its name says "shown big". That is never kept as a choice: Arrange stays what you picked. F on a tile, or the
+Full screen button, puts the whole window full screen, with its captions, your inset and the call's buttons. A resize
+or a divider drag ends with the height that fits the tiles with no bars around them (of the heights that do, the
+nearest). Filling a page or the screen, cameras are cropped to fill their tiles; a shared screen never is.
+
+On a phone the window carries the call's buttons (`CallControls`) and a button for the call's people and settings, so
+the dock's strip steps aside while it shows. A phone starts as Speaker, docked under the chat's header, you in the
+corner.
+
+Every change moves the same tile elements to their new places with a transition, so a switch morphs rather than
+redraws. The choices are kept on the device (`dither-chat:call-window` in localStorage, with the floating window's
+place and size and the docked height); each is absent until you pick it, and Auto takes it out again.
+
+`scripts/verify-call-window.ts` checks it on a demo hub: tiles as people, the menu and its keys, each arrangement and
+camera choice moving the tiles, showing a tile big by click and by Enter without keeping it, full screen, moving,
+resizing (by pointer and keys), the menu opening upward, docking into the chat's slot under the header, the divider,
+another chat floating it, Fill, floating again, the choices kept, a call ending mid-drag, and a phone (docked with the
+call's buttons, the bar on another page). `--shots <dir>` saves screenshots of each. `scripts/verify-stage-demo.ts`
+checks the room's speakers as the window's tiles.
 
 ### Sounds
 

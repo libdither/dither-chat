@@ -33,6 +33,8 @@ export interface NoticeView {
   actors: { name: string; url: string | null }[];
   at: number;
   unread: boolean;
+  /** One of the hub's approval requests (`apv_…`, docs/approvals.md): the page shows it to answer. */
+  approval?: string;
   /** Absent until triage decided. */
   triage?: TriageView;
 }

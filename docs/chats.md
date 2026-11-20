@@ -248,6 +248,12 @@ holds the message (up to 10 pages of 60, `jumpInChat` in `state.ts`), then shows
 no page around a message across conversations, so one further back opens in its route alone, as if picked from the
 list (which then says so; one pick returns to all). A click on a reply's quote does the same for the quoted message.
 
+**A reply's quote** is one line above it (`ReplyQuote` in `ui/MessageExtras.tsx`): who it answers and as much of their
+text as the row has room for, ending in "…", with the whole of it as the line's tooltip. On a phone it takes up to two
+lines. A reply to you that pinged you (`mentionsSelf`) shows your name as a mention, "@You", in the same colours as an
+@mention of you in the text. Whether a reply to someone else pinged them is not known yet: the hub keeps only whether
+a message pinged you.
+
 ## Not yet
 
 - **Groups as one chat.** The same group on two networks (every member on both) needs a stored link, `group_link`,

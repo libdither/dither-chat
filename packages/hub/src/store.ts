@@ -2839,6 +2839,7 @@ export class Store {
     return added;
   }
 
+  /** Enough across every network that the picker's 36 frequent emoji fill up once it keeps only one network's. */
   reactionUsage(): P.ReactionUsage[] {
     const rows = this.db
       .query(
@@ -2848,7 +2849,7 @@ export class Store {
          JOIN identity i ON i.id = r.identity_id
          LEFT JOIN custom_emoji e ON e.network = i.network AND e.key = r.key
          WHERE a.demo = 0 OR NOT EXISTS (SELECT 1 FROM account WHERE demo = 0)
-         GROUP BY r.key, i.network ORDER BY n DESC LIMIT 60`,
+         GROUP BY r.key, i.network ORDER BY n DESC LIMIT 120`,
       )
       .all() as Row[];
     return rows.map((r) => ({

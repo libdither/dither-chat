@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import org.json.JSONArray
 import org.json.JSONObject
 import org.unifiedpush.android.connector.FailedReason
 import org.unifiedpush.android.connector.PushService
@@ -91,6 +92,26 @@ object Push {
         forget(c)
         toPage(status(c))
     }
+
+    /**
+     * A push's payload, decrypted: its notification, its copy or reads kept, a test confirmed. The debug build's
+     * DebugPushReceiver hands its payloads here too, so the emulator tests take the same path as a real push.
+     */
+    fun arrived(c: Context, d: JSONObject) {
+        Notifications.show(c, d)
+        // The message's copy, or the reads, for the page's next start, and for one open now (Arrived.kt).
+        val app = c.applicationContext
+        Arrived.work.execute {
+            runCatching { Arrived.keep(app, d) }
+                .onSuccess { r -> if (r.isNotEmpty()) toPage(JSONObject().put("t", "arrived").put("list", JSONArray().also { a -> r.forEach { a.put(it) } })) }
+                .onFailure { Log.w(TAG, "arrived not kept", it) }
+        }
+        // A test asks to be confirmed, so Settings can tell "ntfy took it" from "it reached the phone".
+        val device = d.optString("device")
+        if (d.optBoolean("test") && device.isNotEmpty()) {
+            Thread { runCatching { Hub.request(app, "POST", "/api/push/arrived", JSONObject().put("id", device)) } }.start()
+        }
+    }
 }
 
 /** The connector's callbacks. It has already decrypted the message with this app's keys. */
@@ -103,13 +124,7 @@ class PushReceiver : PushService() {
             return
         }
         val d = runCatching { JSONObject(String(message.content)) }.getOrNull() ?: return
-        Notifications.show(this, d)
-        // A test asks to be confirmed, so Settings can tell "ntfy took it" from "it reached the phone".
-        val device = d.optString("device")
-        if (d.optBoolean("test") && device.isNotEmpty()) {
-            val app = applicationContext
-            Thread { runCatching { Hub.request(app, "POST", "/api/push/arrived", JSONObject().put("id", device)) } }.start()
-        }
+        Push.arrived(this, d)
     }
 
     override fun onRegistrationFailed(reason: FailedReason, instance: String) = Push.onFailed(this, reason)

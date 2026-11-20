@@ -15,7 +15,7 @@ import { bytes } from '../../format.ts';
 import { details } from '../../mail/held.ts';
 import { cannotSend, deleteDraft, draftState, findAddresses, findContacts, flushDraft, isBlank, openDraft, saveDraft, send, sendingAgain } from '../../mail/drafts.ts';
 import { applyFormat, caretAfter, chipText, continueList, EditHistory, keptName, mergeHits, pasteLink, type Format, type Sel } from '../../mail/edits.ts';
-import { pastedMarkdown } from '../../mail/paste.ts';
+import { pastedFiles, pastedMarkdown } from '../../mail/paste.ts';
 import { dropLayer, phone, pushLayer } from '../../phone.ts';
 import { connected, db, mailRev, startUpload } from '../../state.ts';
 import { readable, refusalOf, type UploadJob } from '../../upload.ts';
@@ -24,7 +24,7 @@ import { discardLater, goneKeys } from './discard.ts';
 import { mailCompose, type ComposeOpen } from './lazy.tsx';
 import { Loading } from '../Loader.tsx';
 import { themeFrame } from './frameTheme.ts';
-import { clampDock, defaultDock, loadDock, moveDock, resizeDock, saveDock, BAR_W, type Dock, type DockSaved } from '../../mail/dock.ts';
+import { clampDock, defaultDock, EDGES, loadDock, maxDock, moveDock, resizeDock, saveDock, BAR_W, type Dock, type DockSaved, type Edge } from '../../mail/dock.ts';
 
 const MB = 1024 * 1024;
 const FILE_CAP = 25 * MB;
@@ -51,15 +51,27 @@ interface NewFile {
 let fileKeys = 0;
 const asDraftFile = (f: NewFile): P.MailDraftFile => ({ uploadId: f.job!.result!.id, name: f.file.name || 'file', mime: f.file.type || 'application/octet-stream', size: f.file.size });
 
+/** A small picture of a picture being attached, from the file itself (nothing is fetched). */
+function Thumb({ file }: { file: File }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const u = URL.createObjectURL(file);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [file]);
+  return url ? <img src={url} alt="" /> : <Icon name="file" size={20} />;
+}
+const isPicture = (f: File | undefined) => !!f && /^image\/(png|jpeg|gif|webp|avif|bmp)$/.test(f.type);
+
 /** A file's chip: its name, its size or how far it uploaded, or why it cannot go; × takes it off. */
-function FileChip({ name, size, why, job, remove }: { name: string; size: number; why?: string | null; job?: UploadJob; remove: () => void }) {
+function FileChip({ name, size, why, job, file, remove }: { name: string; size: number; why?: string | null; job?: UploadJob; file?: File; remove: () => void }) {
   const p = job?.progress.value;
   const status = why ? 'refused' : (p?.status ?? 'done');
   const pct = p && size ? Math.min(100, Math.floor((p.sent / size) * 100)) : 0;
   const note = why ?? (p?.status === 'failed' ? (p.offline ? 'Waiting for the hub' : `Upload failed: ${p.error}`) : null);
   return (
     <div class={`composer-file ${status}`} data-status={status} title={note ? `${name}: ${note}` : name}>
-      <Icon name="file" size={20} />
+      {isPicture(file) ? <Thumb file={file!} /> : <Icon name="file" size={20} />}
       <div class="composer-file-text">
         <span class="composer-file-name">{name}</span>
         {note ? (
@@ -384,8 +396,8 @@ function Preview({ text }: { text: string }) {
 const view = () => ({ vw: window.innerWidth, vh: window.innerHeight });
 
 /**
- * The dock (mail/dock.ts): dragged by its header, resized by its top and left edges, minimized to a bar; remembered.
- * A double-click on the header puts it back where it starts.
+ * The dock (mail/dock.ts): dragged by its header, resized by any edge or corner, maximized to the window or minimized
+ * to a bar; remembered. A double-click on the header puts it back where it starts.
  */
 function useDock(on: boolean) {
   const [saved, setSaved] = useState<DockSaved>(loadDock);
@@ -397,7 +409,8 @@ function useDock(on: boolean) {
     return () => window.removeEventListener('resize', r);
   }, [on]);
   const { vw, vh } = typeof window === 'undefined' ? { vw: 1280, vh: 800 } : view();
-  const at = saved.at ? clampDock(saved.at, vw, vh) : defaultDock(vw, vh);
+  const placed = saved.at ? clampDock(saved.at, vw, vh) : defaultDock(vw, vh);
+  const at = saved.max ? maxDock(vw, vh) : placed;
   const put = (s: DockSaved, keep = true) => (setSaved(s), keep && saveDock(s));
   /** A pointer held down on the header or an edge: `step` says where it goes for the distance moved. */
   const follow = (e: PointerEvent, step: (d: Dock, dx: number, dy: number, vw: number, vh: number) => Dock) => {
@@ -424,17 +437,20 @@ function useDock(on: boolean) {
     el.addEventListener('pointerup', up);
     el.addEventListener('pointercancel', up);
   };
-  const style = saved.min ? { right: `${Math.min(at.r, Math.max(0, vw - BAR_W))}px`, bottom: '0px', width: `${Math.min(BAR_W, vw)}px`, height: 'auto' } : { right: `${at.r}px`, bottom: `${at.b}px`, width: `${at.w}px`, height: `${at.h}px` };
+  const style = saved.min && !saved.max ? { right: `${Math.min(at.r, Math.max(0, vw - BAR_W))}px`, bottom: '0px', width: `${Math.min(BAR_W, vw)}px`, height: 'auto' } : { right: `${at.r}px`, bottom: `${at.b}px`, width: `${at.w}px`, height: `${at.h}px` };
   return {
     min: saved.min,
+    max: !!saved.max,
     style,
     setMin: (min: boolean) => put({ ...saved, min }),
+    /** Maximized, or back where it was (minimizing first opens it). */
+    setMax: (max: boolean) => put({ at: saved.at, min: false, ...(max ? { max } : {}) }),
     reset: () => put({ at: null, min: false }),
     drag: (e: PointerEvent) => {
       if ((e.target as Element | null)?.closest('button, a, input, select, textarea')) return;
       follow(e, moveDock);
     },
-    grip: (e: PointerEvent, sides: 'tl' | 't' | 'l') => follow(e, (d, dx, dy, w, h) => resizeDock(d, sides === 't' ? 0 : dx, sides === 'l' ? 0 : dy, w, h)),
+    grip: (e: PointerEvent, edge: Edge) => follow(e, (d, dx, dy, w, h) => resizeDock(d, edge, dx, dy, w, h)),
   };
 }
 
@@ -471,6 +487,8 @@ export function Composer({ open }: { open: ComposeOpen }) {
   const files = ed?.files ?? [];
   const dock = useDock(!p);
   const min = !p && dock.min;
+  const max = !p && !min && dock.max;
+  const [dropping, setDropping] = useState(false);
   const minBtn = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -684,6 +702,30 @@ export function Composer({ open }: { open: ComposeOpen }) {
     if (online && sending === 'waiting') void doSend();
   }, [online]);
 
+  /** A picture (a screenshot, "Copy image") or files pasted anywhere in the composer are attached. */
+  const onPasteFiles = (e: ClipboardEvent) => {
+    const cd = e.clipboardData;
+    const got = cd && d ? pastedFiles([...cd.files], cd.getData('text/plain')) : null;
+    if (!got) return;
+    e.preventDefault();
+    void attach(got);
+  };
+  /** Files dragged over it: it says it takes them. */
+  const hasFiles = (e: DragEvent) => !!d && [...(e.dataTransfer?.types ?? [])].includes('Files');
+  const onDrag = (e: DragEvent) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    if (!dropping) setDropping(true);
+  };
+  const onDrop = (e: DragEvent) => {
+    setDropping(false);
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    const list = [...(e.dataTransfer?.files ?? [])];
+    if (list.length) void attach(list);
+  };
+
   /** Undo and redo anywhere in the composer: its own history, not each box's. */
   const onKeyDownCapture = (e: KeyboardEvent) => {
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
@@ -713,19 +755,29 @@ export function Composer({ open }: { open: ComposeOpen }) {
   );
 
   return (
-    <div class={`mc-layer ${p ? 'phone' : `dock${min ? ' min' : ''}`}`} style={p ? undefined : dock.style}>
-      {!p && !min && (
-        <>
-          <div class="mc-grip t" aria-hidden="true" onPointerDown={(e) => dock.grip(e, 't')} />
-          <div class="mc-grip l" aria-hidden="true" onPointerDown={(e) => dock.grip(e, 'l')} />
-          <div class="mc-grip tl" aria-hidden="true" title="Drag to resize" onPointerDown={(e) => dock.grip(e, 'tl')} />
-        </>
-      )}
-      <section class="mc" ref={box} role="dialog" aria-modal={p} aria-label={title} onKeyDownCapture={onKeyDownCapture} onBeforeInput={onBeforeInput}>
+    <div class={`mc-layer ${p ? 'phone' : `dock${min ? ' min' : max ? ' max' : ''}`}`} style={p ? undefined : dock.style}>
+      {!p &&
+        !min &&
+        !max &&
+        EDGES.map((g) => <div key={g} class={`mc-grip ${g}`} data-edge={g} aria-hidden="true" title={g.length === 2 ? 'Drag to resize' : undefined} onPointerDown={(e) => dock.grip(e, g)} />)}
+      <section
+        class={`mc${dropping ? ' dropping' : ''}`}
+        ref={box}
+        role="dialog"
+        aria-modal={p}
+        aria-label={title}
+        onKeyDownCapture={onKeyDownCapture}
+        onBeforeInput={onBeforeInput}
+        onPasteCapture={onPasteFiles}
+        onDragEnter={onDrag}
+        onDragOver={onDrag}
+        onDragLeave={(e) => !(e.currentTarget as Element).contains(e.relatedTarget as Node | null) && setDropping(false)}
+        onDrop={onDrop}
+      >
         <header
           class="mc-head"
-          title={p ? undefined : min ? 'Open the message again' : 'Drag to move; double-click to put it back'}
-          onPointerDown={p || min ? undefined : dock.drag}
+          title={p ? undefined : min ? 'Open the message again' : max ? 'Double-click to put it back' : 'Drag to move; double-click to put it back'}
+          onPointerDown={p || min || max ? undefined : dock.drag}
           onClick={min ? (e) => !(e.target as Element).closest('button') && setMin(false) : undefined}
           onDblClick={p || min ? undefined : (e) => !(e.target as Element).closest('button, input, select') && dock.reset()}
         >
@@ -746,6 +798,17 @@ export function Composer({ open }: { open: ComposeOpen }) {
               title={min ? 'Open the message again' : 'Minimize (the draft is kept)'}
             >
               <Icon name={min ? 'chevronUp' : 'minus'} size={16} />
+            </button>
+          )}
+          {!p && (
+            <button
+              class="icon-btn mc-max"
+              onClick={() => dock.setMax(!max)}
+              aria-pressed={max}
+              aria-label={max ? 'Back to its size' : 'Maximize'}
+              title={max ? 'Back to its size' : 'Maximize: as big as the window'}
+            >
+              <Icon name={max ? 'shrink' : 'expand'} size={15} />
             </button>
           )}
           <button class="icon-btn mc-discard" onClick={discard} disabled={!d} aria-label="Discard the draft" title="Discard the draft (Undo in the strip below)">
@@ -860,6 +923,7 @@ export function Composer({ open }: { open: ComposeOpen }) {
                   }
                 }}
                 onPaste={(e) => {
+                  if (e.defaultPrevented) return;
                   const s = bodySel();
                   const cd = e.clipboardData;
                   if (!s || !cd) return;
@@ -915,7 +979,7 @@ export function Composer({ open }: { open: ComposeOpen }) {
                   <FileChip name={f.name} size={f.size} remove={() => set({ files: d.files.filter((x) => x !== f) })} />
                 ))}
                 {files.map((f) => (
-                  <FileChip key={f.key} name={f.file.name || 'file'} size={f.file.size} why={f.refused} job={f.job} remove={() => edit((e) => ({ ...e, files: e.files.filter((x) => x !== f) }))} />
+                  <FileChip key={f.key} name={f.file.name || 'file'} size={f.file.size} why={f.refused} job={f.job} file={f.file} remove={() => edit((e) => ({ ...e, files: e.files.filter((x) => x !== f) }))} />
                 ))}
               </div>
             )}

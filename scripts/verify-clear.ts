@@ -10,7 +10,8 @@
  *      a reminder, and shows nothing.
  * Pushes go to the worker over DevTools (ServiceWorker.deliverPushMessage): headless Chromium cannot reach a relay.
  * Every line says when it was printed; a wait that runs out says what the worker held then (its windows and its
- * notifications).
+ * notifications). The worker's notifications are read only once each push has shown its own (sw.js marks
+ * `dither:shown`): Chromium's getNotifications() drops one written but not yet on screen from its list for good.
  *
  *   bun run web:build && bun scripts/verify-clear.ts
  * Starts its own hub on a free port with a throwaway data dir. DITHER_WEB_DIST serves another web build.
@@ -95,6 +96,23 @@ try {
   const reg = regs.find((r) => r.scopeURL.startsWith(url));
   if (!reg) throw new Error('no service worker registration');
   const deliver = (d: unknown) => p.send('ServiceWorker.deliverPushMessage', { origin: url, registrationId: reg.registrationId, data: JSON.stringify(d) });
+  /**
+   * Pushes these and waits until the worker has shown each (DevTools answers once a push is handed over, not once it
+   * is handled). Reading the notifications sooner is a race the reading loses: Chromium's getNotifications() keeps
+   * only those it sees on screen or written after the call, so one written just before it and still on its way to
+   * the screen is deleted from its list, while it still shows (content/browser/notifications,
+   * PlatformNotificationContextImpl::DoReadAllNotificationDataForServiceWorkerRegistration).
+   */
+  const show = async (...ds: ({ conversationId: string } & Record<string, unknown>)[]) => {
+    await p.evalWorker('/sw.js', `performance.clearMarks('dither:shown')`);
+    for (const d of ds) await deliver(d);
+    const want = ds.map((d) => d.conversationId);
+    const marks = () => p.evalWorker<string[]>('/sw.js', `performance.getEntriesByName('dither:shown').map((m) => m.detail)`);
+    await until(`the worker to show ${want.length}`, async () => {
+      const got = await marks();
+      return want.every((t) => got.includes(t));
+    }, 20_000, marks);
+  };
   type Shown = { tag: string; ts?: number; title: string; keep?: boolean };
   const SHOWN = `(ns) => ns.map((n) => ({ tag: n.tag, ts: n.data?.ts, title: n.title, keep: n.data?.keep }))`;
   const inWorker = () => p.evalWorker<Shown[]>('/sw.js', `self.registration.getNotifications().then(${SHOWN})`);
@@ -144,7 +162,7 @@ try {
 
   await away();
   const alert = { title: notify.title, body: notify.body, conversationId: conv, messageId: notify.messageId, tier: 'push', alert: true, lines: [{ author: notify.title, key: 'k', body: notify.body, ts }] };
-  await deliver(alert);
+  await show(alert);
   check(await until('the alert to show', async () => (await inWorker()).some((n) => n.tag === conv && n.ts === ts), 20_000, inWorker), 'pushed with no window of the app open, the alert shows, with the time of its newest message');
 
   // 2. The app opens (the chat still unread: its tidy leaves the alert), then the chat is read on another device.
@@ -165,10 +183,12 @@ try {
   const readTo = Date.now();
   for (const c of [newer, reminded]) check((await call('POST', `/api/conversations/${c.id}/read`, { upToTs: readTo })).ok, 'another chat is read on another device', c.id);
   await away();
-  await deliver(alert);
-  await deliver({ ...alert, conversationId: unread!.id, lines: [{ ...alert.lines[0], ts: Date.now() }] });
-  await deliver({ ...alert, conversationId: newer.id, lines: [{ ...alert.lines[0], ts: readTo + 60_000 }] });
-  await deliver({ title: 'A reminder you set', body: 'about this', conversationId: reminded.id, tier: 'push', alert: true, keep: true });
+  await show(
+    alert,
+    { ...alert, conversationId: unread!.id, lines: [{ ...alert.lines[0], ts: Date.now() }] },
+    { ...alert, conversationId: newer.id, lines: [{ ...alert.lines[0], ts: readTo + 60_000 }] },
+    { title: 'A reminder you set', body: 'about this', conversationId: reminded.id, tier: 'push', alert: true, keep: true },
+  );
   const four = [conv, unread!.id, newer.id, reminded.id];
   check(await until('all four to show', async () => (await inWorker()).filter((n) => four.includes(n.tag)).length === 4, 20_000, inWorker), 'four notifications up while the app is closed: a read chat’s, one unread, one newer than its read, a reminder');
   await fresh('dither:tidied');
@@ -180,8 +200,7 @@ try {
   // nothing shown.
   await away();
   const [a, b] = [conv, unread!.id];
-  await deliver({ ...alert, conversationId: a, lines: [{ ...alert.lines[0], ts: 1000 }] });
-  await deliver({ ...alert, conversationId: b, lines: [{ ...alert.lines[0], ts: 5000 }] });
+  await show({ ...alert, conversationId: a, lines: [{ ...alert.lines[0], ts: 1000 }] }, { ...alert, conversationId: b, lines: [{ ...alert.lines[0], ts: 5000 }] });
   await until('both to show', async () => (await inWorker()).filter((n) => n.tag === a || n.tag === b).length === 2, 20_000, inWorker);
   const before = (await inWorker()).length;
   await deliver({ clear: a, upTo: 2000, more: [{ clear: b, upTo: 4000 }, { clear: reminded.id, upTo: Date.now() }], device: 'test' });

@@ -81,12 +81,19 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
   Sam" puts it back); a forward carries the original's text and its files, each of which can be taken off. Ctrl+Enter
   sends; ✕, Esc or back closes it and keeps the draft.
 - **Out of the way, on a desktop** (`web/src/mail/dock.ts`, tested in `web/test/mail-dock.test.ts`): the header drags
-  the panel anywhere on screen, its top and left edges and the corner between resize it (at least 360 × 260, at most
-  the window), and − in the header minimizes it to a bar on the bottom edge with the subject; a click on the bar or ⌃
-  opens it again. Minimized, the draft goes on saving, and Escape neither closes nor discards. A double-click on the
-  header puts it back at the bottom right. Where it was, its size and whether it was minimized are kept per browser
-  (`localStorage` `dither.mail.dock`, measured from the window's right and bottom edges) and it is kept wholly on screen
-  as the window changes size. The phone's card does none of this.
+  the panel anywhere on screen, and any edge or corner resizes it, the opposite edges staying put (at least 360 × 260,
+  at most the window). ⤢ in the header maximizes it to the window, less a 16 px gap (none on a window under 720 × 520),
+  and ⤡ puts it back at the size and place it had. − minimizes it to a bar on the bottom edge with the subject; a click
+  on the bar or ⌃ opens it again. Minimized, the draft goes on saving, and Escape neither closes nor discards. A
+  double-click on the header puts it back at the bottom right. Where it was, its size and whether it was minimized or
+  maximized are kept per browser (`localStorage` `dither.mail.dock`, measured from the window's right and bottom edges)
+  and it is kept wholly on screen as the window changes size. The phone's card does none of this.
+- **Pictures and files, pasted or dropped**: a picture pasted anywhere in the composer (a screenshot, a picture's "Copy
+  image") is attached, with a small picture of itself on its chip; one with no name of its own (browsers call them
+  `image.png`) is "Pasted picture 2026-11-20 09.05.07.png", numbered when there are several (`web/src/mail/paste.ts`
+  `pastedFiles`). When the clipboard also has text, the text is pasted: a document's copy carries a picture of the
+  selection beside its text. Files dragged onto the composer are attached too (a dashed outline says it takes them).
+  They go as attachments, under the same caps as Attach; not yet in the text (see "Formatting").
 - **Recipients** are text until they are chips: Enter, a comma or leaving the box makes them chips, and what is not an
   address stays, marked. A chip opens back into text: Backspace at the start of the box opens the last one with its
   last letter gone (as if it had been text all along), a click opens any one whole; Enter puts it back in its place,

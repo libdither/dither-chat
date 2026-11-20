@@ -9,9 +9,11 @@
 
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { BRIDGE_MIDS, CALL_INPUT_DEFAULT, callInput } from '@dither-chat/protocol';
+import { BRIDGE_MIDS, CALL_INPUT_DEFAULT, callInput, NETWORK_META } from '@dither-chat/protocol';
+import { AUTO_GATE_DB, type CallControl, type CallStatus, controlsFor, featuredPicker, levelShown, smoothLevel, speakingHold, stageCan, statusFor, talkGate } from './callmarks.ts';
+import { requestsOf } from './room.ts';
 import { playCallSound, preloadCallSounds, soundLog } from './callsounds.ts';
-import { changed, db, prefs, toast } from './state.ts';
+import { changed, db, isSelfIdentity, prefs, toast } from './state.ts';
 
 export interface CallStats {
   /** Media bytes this device sent and received so far. */
@@ -65,6 +67,60 @@ export interface ActiveCall {
 export const callMedia = signal<{ camera: MediaStream | null; screen: MediaStream | null; slots: Map<string, MediaStream> }>({ camera: null, screen: null, slots: new Map() });
 /** This device's microphone loudness, 0 to 1, about ten times a second while a call is on. */
 export const micLevel = signal(0);
+/**
+ * Direct mode only: how loud each person speaking is, 0 to 1, by identity id (their own receive slot's level). Bridge
+ * mode gets one mixed stream, so it has no level per person and this stays empty.
+ */
+export const callLevels = signal<ReadonlyMap<string, number>>(new Map());
+/** You are muted and your microphone hears you talking: on after half a second of talk, off after three of quiet. */
+export const mutedTalking = signal(false);
+/**
+ * Whom to feature (the call bar's face, the video window's Speaker): the latest to start talking, never you, kept
+ * 1.5 s at least (callmarks.ts featuredPicker). Null when nobody else talks.
+ */
+export const featuredSpeaker = signal<string | null>(null);
+/**
+ * The conversation whose room is on screen now (ui/CallRoom.tsx says, as its box comes and goes; a narrow pane's Chat
+ * hides it): the call's other surfaces leave out the buttons the room has, so one Leave shows.
+ */
+export const roomOnPage = signal<string | null>(null);
+
+/**
+ * Speaking, held (callmarks.ts speakingHold): every participant's `speaking` in activeCall is the held value, so each
+ * mark that reads it (rings, the status line, video tiles, the featured face) is steady through the gaps between words.
+ * What the network said last, before the hold, is `rawSpeaking`.
+ */
+let rawSpeaking = new Set<string>();
+let patching = false;
+const speakingHeld = speakingHold(() => {
+  const a = activeCall.value;
+  if (a && !patching) activeCall.value = { ...a, participants: withHeld(a.participants) };
+  feature();
+});
+const picker = featuredPicker((id) => (featuredSpeaker.value = id));
+const mutedGate = talkGate((on) => (mutedTalking.value = on));
+
+function withHeld(list: P.CallParticipant[]): P.CallParticipant[] {
+  const on = speakingHeld.on;
+  return list.map((p) => (p.speaking === on.has(p.id) ? p : { ...p, speaking: on.has(p.id) }));
+}
+
+function feature() {
+  const a = activeCall.value;
+  if (!a || a.phase === 'ended') picker.clear();
+  else picker.update(speakingHeld.on, db.accounts.get(a.accountId)?.selfIdentityId);
+}
+
+/** What the network says now about who speaks (identity ids), before the hold. */
+function heard(ids: Set<string>) {
+  rawSpeaking = ids;
+  patching = true;
+  try {
+    speakingHeld.update(ids);
+  } finally {
+    patching = false;
+  }
+}
 
 /** How long a sound or an emoji someone sent stays on the call's bar. */
 const EFFECT_MS = 6000;
@@ -87,11 +143,16 @@ export interface Transport {
   stats(): Promise<CallStats | null>;
   /** The microphone's level as the browser measures what it sends, 0 to 1 (no audio graph of its own). */
   micLevel?(): Promise<number | null>;
+  /** Direct mode: how loud each person is now, 0 to 1, by native user id (each has a receive slot of their own). */
+  peerLevels?(): Map<string, number>;
+  /** The host's microphone changed (a stage's listener began speaking, or went back to listening): send the new one. */
+  setMic?(): Promise<void>;
   stop(): void;
 }
 
 export interface TransportHost {
-  mic: MediaStream;
+  /** The microphone as it is now: a silent one while you only listen on a stage (setMic says when it changes). */
+  readonly mic: MediaStream;
   speaker: HTMLAudioElement;
   /** Started with the click that started the call, so it may play: where a person at another volume plays from. */
   ctx: AudioContext | null;
@@ -111,6 +172,11 @@ export interface TransportHost {
 let ws: WebSocket | null = null;
 let transport: Transport | null = null;
 let mic: MediaStream | null = null;
+/**
+ * The microphone is a real one, from the browser. On a stage you join listening with a silent one instead, and the
+ * browser's microphone opens only when you speak (takeMic) and closes when you go back to listening (releaseMic).
+ */
+let micOpen = false;
 let speaker: HTMLAudioElement | null = null;
 let ctx: AudioContext | null = null;
 let statsTimer: ReturnType<typeof setInterval> | null = null;
@@ -119,8 +185,11 @@ let clickAt = 0;
 /** Direct mode's own speaking news, laid over the sandbox's participant list. */
 const speakingLocal = new Map<string, boolean>();
 
+/** Change the call. Participants always carry the held speaking value; what the network said goes through heard(). */
 const patch = (p: Partial<ActiveCall>) => {
-  if (activeCall.value) activeCall.value = { ...activeCall.value, ...p };
+  if (!activeCall.value) return;
+  activeCall.value = { ...activeCall.value, ...p, ...(p.participants ? { participants: withHeld(p.participants) } : {}) };
+  if (p.participants || p.phase) feature();
 };
 
 /** The network a call goes over, from its account. */
@@ -128,10 +197,13 @@ export function callNetwork(call: Pick<ActiveCall, 'accountId'>): P.Network {
   return db.accounts.get(call.accountId)?.network ?? 'discord';
 }
 
-/** A voice channel's account to call from: the one chosen to send as in this chat, else the first online one that can. */
+/**
+ * A voice or stage channel's account to call from: the one chosen to send as in this chat, else the first online one
+ * that can (on a stage, one with the capability 'stage', so it can take part beyond listening).
+ */
 export function canCall(c: P.ConversationView): string | null {
-  const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && a.capabilities.includes('calls') && a.status === 'online');
-  if (c.variant !== 'voice') return null;
+  if (c.variant !== 'voice' && c.variant !== 'stage') return null;
+  const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && a.capabilities.includes('calls') && (c.variant !== 'stage' || a.capabilities.includes('stage')) && a.status === 'online');
   return (accounts.find((a) => a.id === prefs.value.sendAs[c.id]) ?? accounts[0])?.id ?? null;
 }
 
@@ -176,11 +248,17 @@ export async function startCall(conversationId: string, accountId: string, mode:
   }
   activeCall.value = { conversationId, accountId, mode, phase: 'connecting', muted: false, deafened: false, participants: [], since: Date.now(), effects: [], video: [], camera: false, screen: false, timing: {} };
   callMedia.value = { camera: null, screen: null, slots: new Map() };
+  stageWas = null;
+  speakAsked = false;
   const input = myInput();
-  const micReady = navigator.mediaDevices
-    .getUserMedia({ audio: micConstraints(input), video: false })
+  // A stage is joined listening: no microphone until you speak (takeMic), so nothing is open that nobody hears.
+  const listening = db.conversations.get(conversationId)?.variant === 'stage';
+  if (listening) mic = silentMic();
+  const micReady = (listening ? Promise.resolve(null) : navigator.mediaDevices.getUserMedia({ audio: micConstraints(input), video: false }))
     .then((m) => {
+      if (!m) return true;
       mic = m;
+      micOpen = true;
       mark('mic');
       return true;
     })
@@ -234,7 +312,9 @@ async function onServer(m: P.CallServerMessage) {
       await pendingMic;
       if (!activeCall.value || activeCall.value.phase === 'ended') return;
       const host: TransportHost = {
-        mic: mic!,
+        get mic() {
+          return mic!;
+        },
         speaker: speaker!,
         ctx,
         input: myInput(),
@@ -249,7 +329,11 @@ async function onServer(m: P.CallServerMessage) {
         setSpeaking: (id, on) => {
           speakingLocal.set(id, on);
           const a = activeCall.value;
-          if (a) patch({ participants: a.participants.map((p) => (p.id === id || db.identities.get(p.id)?.nativeId === id ? { ...p, speaking: on } : p)) });
+          if (!a) return;
+          const next = new Set(rawSpeaking);
+          for (const p of a.participants) if (p.id === id || db.identities.get(p.id)?.nativeId === id) on ? next.add(p.id) : next.delete(p.id);
+          heard(next);
+          patch({ participants: a.participants });
         },
         fail: (message) => {
           patch({ note: message });
@@ -269,6 +353,7 @@ async function onServer(m: P.CallServerMessage) {
       if (m.mode === 'direct') connected();
       if (activeCall.value?.muted) transport.setMuted(true);
       startMeter();
+      watchMutedMic();
       transport.setVolumes?.(volumesOf(activeCall.value?.participants ?? []));
       statsTimer = setInterval(async () => {
         const s = await transport?.stats().catch(() => null);
@@ -289,7 +374,9 @@ async function onServer(m: P.CallServerMessage) {
         return cur.mode === 'direct' && local !== undefined ? { ...p, speaking: local } : p;
       });
       const before = cur.participants;
+      heard(new Set(participants.filter((p) => p.speaking).map((p) => p.id)));
       patch({ participants, stage: st.stage, video: st.video ?? [], ...(st.self ? { self: st.self } : {}) });
+      followStageRole();
       transport?.setVolumes?.(volumesOf(participants));
       if (st.self?.connected) connected();
       // Others coming and going, once this account is in (the list it finds on joining plays nothing).
@@ -321,6 +408,11 @@ async function onServer(m: P.CallServerMessage) {
       end(m.reason);
       return;
     case 'error':
+      // A Speak the network refused: back to listening, microphone closed.
+      if (speakAsked) {
+        speakAsked = false;
+        if (activeCall.value && callRole(activeCall.value) !== 'speaker') releaseMic();
+      }
       toast({ kind: 'error', title: 'Call', body: m.message });
       patch({ note: m.message });
       return;
@@ -356,6 +448,7 @@ export function setMuted(muted: boolean) {
   else sound(muted ? 'mute' : 'unmute');
   patch({ muted, deafened });
   send({ op: 'mute', muted, deafened });
+  watchMutedMic();
 }
 
 export function setDeafened(deafened: boolean) {
@@ -367,6 +460,7 @@ export function setDeafened(deafened: boolean) {
   sound(deafened ? 'deafen' : 'undeafen');
   patch({ muted, deafened });
   send({ op: 'mute', muted, deafened });
+  watchMutedMic();
 }
 
 /** This device's microphone choices (Settings → Calls). */
@@ -390,6 +484,44 @@ function volumesOf(participants: P.CallParticipant[]): Map<string, { volume: num
  */
 export function isCallSelf(call: Pick<ActiveCall, 'accountId'>, identityId: string): boolean {
   return db.accounts.get(call.accountId)?.selfIdentityId === identityId;
+}
+
+/** A person in a call, by name: another of the owner's own accounts is named as that account, not "You". */
+export function callName(identityId: string): string {
+  const i = db.identities.get(identityId);
+  const person = i?.personId && !isSelfIdentity(identityId) ? db.persons.get(i.personId) : null;
+  return person?.name ?? i?.displayName ?? i?.handle ?? 'Someone';
+}
+
+/** Your role in the call: a stage role, or null in a call without an audience. */
+export function callRole(call: ActiveCall): P.StageRole | null {
+  if (!call.stage) return null;
+  return call.participants.find((p) => isCallSelf(call, p.id))?.stage ?? 'audience';
+}
+
+/** What you may do on this stage now, for yourself and to others (callmarks.ts stageCan): nothing outside a stage. */
+export function callStageCan(call: ActiveCall): { can: P.StageSelfAction[]; canOn: P.StageMove[] } {
+  return stageCan(call, { role: callRole(call), rank: call.participants.find((p) => isCallSelf(call, p.id))?.stageRank, stage: !!db.accounts.get(call.accountId)?.capabilities.includes('stage') });
+}
+
+/**
+ * Who asks to speak, oldest first, when you may invite them (an empty list otherwise): what a room's Room tab counts
+ * and a call bar can show to a moderator who isn't looking at the room.
+ */
+export function roomRequests(call: ActiveCall | null): P.CallParticipant[] {
+  if (!call?.stage || call.phase === 'ended' || !callStageCan(call).canOn.includes('invite')) return [];
+  return requestsOf(call.participants, (id) => isCallSelf(call, id));
+}
+
+/** The call's status line (callmarks.ts statusFor): Connecting…, Connecting to Discord…, 1:15:03, why it ended; and a hint. */
+export function callStatus(call: ActiveCall, now: number): CallStatus {
+  return statusFor(call, now, NETWORK_META[callNetwork(call)].name);
+}
+
+/** The buttons your role and the call's state give you (callmarks.ts controlsFor); ui/CallControls.tsx draws them. */
+export function callControls(call: ActiveCall): CallControl[] {
+  const rank = call.participants.find((p) => isCallSelf(call, p.id))?.stageRank;
+  return controlsFor(call, { role: callRole(call), ...(rank ? { rank } : {}), video: activeCall.value === call && canVideo(), share: canShareScreen(), stage: !!db.accounts.get(call.accountId)?.capabilities.includes('stage') });
 }
 
 /** Can the account in this call do it? */
@@ -416,9 +548,79 @@ export function applyCallInput(input: P.CallInput) {
   send({ op: 'input', input });
 }
 
-/** A stage action; `user` (an identity id) for a moderator's invite or move to the audience. */
-export function stageAction(action: P.StageAction, user?: string) {
+/**
+ * A stage action; `user` (an identity id) for a moderator's invite or move to the audience. Speak opens the
+ * microphone first (from the click, so the browser may ask), and goes ahead only once it is open; going back to
+ * listening closes it.
+ */
+export async function stageAction(action: P.StageAction, user?: string) {
+  if (action === 'speak') {
+    if (!(await takeMic())) return;
+    speakAsked = true;
+  }
   send({ op: 'stage', action, ...(user ? { user } : {}) });
+  if (action === 'listen') releaseMic();
+}
+
+/** Your stage role as the last state said it, to see it change. */
+let stageWas: P.StageRole | null = null;
+/** A Speak went out and the stage has not made you a speaker yet. */
+let speakAsked = false;
+
+/** Your role changed on the stage: made a speaker, the microphone opens; moved back to the audience, it closes. */
+function followStageRole() {
+  const a = activeCall.value;
+  const role = a && a.phase !== 'ended' ? callRole(a) : null;
+  const was = stageWas;
+  stageWas = role;
+  if (!role || role === was) return;
+  if (role === 'speaker') {
+    speakAsked = false;
+    if (!micOpen) void takeMic();
+  } else if (was === 'speaker') releaseMic();
+}
+
+let micTaking: Promise<boolean> | null = null;
+
+/** The browser's microphone into the call, in place of the silent one. False when there is none (said in a toast). */
+function takeMic(): Promise<boolean> {
+  if (micOpen) return Promise.resolve(true);
+  return (micTaking ??= (async () => {
+    const t = transport;
+    let m: MediaStream;
+    try {
+      m = await navigator.mediaDevices.getUserMedia({ audio: micConstraints(myInput()), video: false });
+    } catch (e: any) {
+      toast({ kind: 'error', title: 'No microphone', body: `${e?.message ?? e}. You can still listen.` });
+      return false;
+    }
+    // The call ended (or another began) while the browser asked.
+    if (!t || !sameCall(t)) {
+      m.getTracks().forEach((x) => x.stop());
+      return false;
+    }
+    const silent = mic;
+    mic = m;
+    micOpen = true;
+    const muted = !!activeCall.value?.muted;
+    m.getAudioTracks().forEach((x) => (x.enabled = !muted));
+    await t.setMic?.();
+    silent?.getTracks().forEach((x) => x.stop());
+    if (activeCall.value?.listenOnly) patch({ listenOnly: false, note: undefined });
+    watchMutedMic();
+    return true;
+  })().finally(() => (micTaking = null)));
+}
+
+/** Back to the silent microphone: the browser's closes, so nothing listens while you only listen. */
+function releaseMic() {
+  if (!micOpen) return;
+  const real = mic;
+  mic = silentMic();
+  micOpen = false;
+  void transport?.setMic?.();
+  real?.getTracks().forEach((x) => x.stop());
+  watchMutedMic();
 }
 
 /** Ask once for the sounds this account may play here. */
@@ -434,7 +636,7 @@ export function playSound(s: P.CallSound) {
 }
 
 /** Video goes through bridge mode, from an account whose adapter can send it. */
-export function canVideo(): boolean {
+function canVideo(): boolean {
   const a = activeCall.value;
   return !!a && a.mode === 'bridge' && a.phase === 'live' && callCan('callVideo') && !!transport?.setCamera;
 }
@@ -478,7 +680,7 @@ export async function setCamera(on: boolean) {
 }
 
 /** Can this browser share a screen or a window at all (phones' browsers cannot). */
-export const canShareScreen = () => typeof navigator.mediaDevices?.getDisplayMedia === 'function';
+const canShareScreen = () => typeof navigator.mediaDevices?.getDisplayMedia === 'function';
 
 /** This device's screen, a window or a tab into the call, as the account's Go Live; or off. */
 export async function setScreen(on: boolean) {
@@ -531,11 +733,72 @@ export function watchStream(identityId: string, on: boolean) {
 function startMeter() {
   meterTimer = setInterval(async () => {
     const level = await transport?.micLevel?.().catch(() => null);
-    if (level === null || level === undefined) return;
-    // audioLevel is linear 0 to 1: shown as -60 dBFS to 0, in steps the eye can tell.
-    const shown = Math.round(Math.max(0, Math.min(1, (20 * Math.log10(level + 1e-9) + 60) / 60)) * 20) / 20;
-    if (shown !== micLevel.value) micLevel.value = shown;
+    if (level !== null && level !== undefined) {
+      // audioLevel is linear 0 to 1: shown as -60 dBFS to 0, in steps the eye can tell.
+      const shown = Math.round(levelShown(level) * 20) / 20;
+      if (shown !== micLevel.value) micLevel.value = shown;
+    }
+    readLevels();
   }, 250);
+}
+
+/**
+ * Direct mode, on the meter's own tick and only while someone speaks: each speaking person's loudness, so their ring's
+ * strength follows it; yours is the microphone's. Bridge mode has one mixed stream, so no level per person.
+ */
+function readLevels() {
+  const a = activeCall.value;
+  const speaking = a?.participants.filter((p) => p.speaking) ?? [];
+  if (!a || a.mode !== 'direct' || !transport?.peerLevels || !speaking.length) {
+    if (callLevels.value.size) callLevels.value = new Map();
+    return;
+  }
+  const got = transport.peerLevels();
+  const next = new Map<string, number>();
+  for (const p of speaking) {
+    const native = db.identities.get(p.id)?.nativeId;
+    const raw = isCallSelf(a, p.id) ? micLevel.value : native !== undefined && got.has(native) ? levelShown(got.get(native)!) : null;
+    if (raw !== null) next.set(p.id, Math.round(smoothLevel(callLevels.value.get(p.id) ?? 0, raw) * 20) / 20);
+  }
+  callLevels.value = next;
+}
+
+/**
+ * The microphone while muted: off to the call, but listened to here (a clone of it, through a Web Audio analyser only
+ * while muted), against your sensitivity or the automatic gate's level, so you can be told you are talking into a muted
+ * microphone (callmarks.ts talkGate: after half a second of talk, until three seconds of quiet).
+ */
+let mutedWatch: (() => void) | null = null;
+function watchMutedMic() {
+  const a = activeCall.value;
+  const track = mic?.getAudioTracks()[0];
+  if (!a || !a.muted || a.phase !== 'live' || a.listenOnly || !micOpen || !track || !ctx) {
+    mutedWatch?.();
+    mutedWatch = null;
+    mutedGate.clear();
+    return;
+  }
+  if (mutedWatch) return;
+  const copy = track.clone();
+  copy.enabled = true;
+  const src = ctx.createMediaStreamSource(new MediaStream([copy]));
+  const meter = ctx.createAnalyser();
+  meter.fftSize = 1024;
+  src.connect(meter);
+  const buf = new Float32Array(meter.fftSize);
+  const timer = setInterval(() => {
+    meter.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (const x of buf) sum += x * x;
+    const db = 10 * Math.log10(sum / buf.length + 1e-12);
+    const s = myInput().sensitivity;
+    mutedGate.update(db > (s === 'auto' ? AUTO_GATE_DB : s));
+  }, 100);
+  mutedWatch = () => {
+    clearInterval(timer);
+    src.disconnect();
+    copy.stop();
+  };
 }
 
 /** The level of what a peer connection sends from the microphone, from its stats. */
@@ -561,9 +824,17 @@ function end(reason: string) {
   statsTimer = null;
   mic?.getTracks().forEach((t) => t.stop());
   mic = null;
+  micOpen = false;
+  stageWas = null;
+  speakAsked = false;
   if (meterTimer) clearInterval(meterTimer);
   meterTimer = null;
   micLevel.value = 0;
+  watchMutedMic();
+  rawSpeaking = new Set();
+  speakingHeld.clear();
+  picker.clear();
+  callLevels.value = new Map();
   callMedia.value.camera?.getTracks().forEach((t) => t.stop());
   callMedia.value.screen?.getTracks().forEach((t) => t.stop());
   callMedia.value = { camera: null, screen: null, slots: new Map() };
@@ -634,6 +905,9 @@ function bridgeTransport(host: TransportHost): Transport {
       await t.screen?.sender.replaceTrack(video);
       await t.screenAudio?.sender.replaceTrack(audio);
     },
+    async setMic() {
+      await t.audio?.sender.replaceTrack(host.mic.getAudioTracks()[0] ?? null);
+    },
     stats: () => (pc ? peerStats(pc) : Promise.resolve(null)),
     micLevel: () => (pc ? sentAudioLevel(pc, host.mic.getAudioTracks()[0]) : Promise.resolve(null)),
     stop() {
@@ -641,6 +915,13 @@ function bridgeTransport(host: TransportHost): Transport {
       pc = null;
     },
   };
+}
+
+/** The loudest of what a receiver gets now, 0 to 1 (its RTP level header; no stats, no audio graph). */
+export function receiverLevel(r: RTCRtpReceiver): number {
+  let level = 0;
+  for (const s of r.getSynchronizationSources?.() ?? []) level = Math.max(level, s.audioLevel ?? 0);
+  return level;
 }
 
 /** Lazy: the direct client and its crypto load only when a direct call starts. */

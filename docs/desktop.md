@@ -1,4 +1,4 @@
-# On a desktop: themes, panel widths, the title bar, Escape and back, and opening things elsewhere
+# On a desktop: themes, panel widths, keys to the places, the title bar, Escape and back, and opening things elsewhere
 
 ## Themes
 
@@ -32,12 +32,51 @@ resize, double-click it for the usual width again. Focused (Tab), the arrow keys
 Shift) and Home puts the usual width back.
 
 Widths are kept per device, in this browser's storage ([`panes.ts`](../packages/web/src/panes.ts)), and set as
-`--sidebar-w` and `--details-w` on `<html>`, so whatever lines up with the list (the call dock) follows. Each has
+`--sidebar-w` and `--details-w` on `<html>`, so whatever lines up with the list (the call dock; at 260 px or narrower the call bar, a row of its own under the list, docs/calls.md) follows. Each has
 bounds (the list 220 to 640 px, the details 260 to 640) and the conversation keeps at least 380 px; a window made
 narrower later narrows the panels with it, back to the width kept when there is room again. A phone has no
 handles: it lays out its own way (docs/phone.md).
 
 `bun scripts/verify-panes.ts <demo hub>` drags both edges in headless Chromium with real mouse input.
+
+## Keys to the places
+
+Two ways to go to the app's places with the keyboard
+([`placekeys.ts`](../packages/web/src/placekeys.ts), [`ui/PlaceKeys.tsx`](../packages/web/src/ui/PlaceKeys.tsx)):
+
+| Place    | G then | Ctrl+Shift and |
+| -------- | ------ | -------------- |
+| Inbox    | I      | 1              |
+| People   | P      | 2              |
+| Mail     | M      | 3              |
+| Calendar | C      | 4              |
+| Feed     | F      | 5              |
+| For you  | Y      |                |
+| Settings | S      |                |
+| Accounts | A      |                |
+
+- **G then a letter**, as in Gmail and GitHub: press G, let go, then the letter, within 1.5 s. A card at the
+  bottom of the window lists the letters while it waits; any other key puts it away and does what it always did.
+  G is an ordinary letter while you type, with a menu, sheet or dialog open, or in the picture viewer.
+- **Ctrl+Shift and the place's number on the rail**: one chord that works while you type too, which matters because
+  opening a chat puts you in its message box. The number is read from the physical key (`Digit1`), since Shift
+  turns it into a symbol. No browser or window manager we know of uses Ctrl+Shift+number.
+- Why not other chords: Alt is a window manager's (niri's default mod key, and GNOME's and KDE's for window
+  keys), and Firefox and Chromium switch tabs with Alt+number on Linux and Ctrl+number everywhere. Ctrl+Shift with
+  a place's letter hits the browsers' own keys: I (developer tools), C (inspect), M (responsive design), P
+  (Firefox's private window) and N, T and W, which a page can't take at all. Super belongs to the desktop
+  elsewhere (GNOME, KDE and Windows open docked apps with Super+number).
+- A place this hub doesn't offer (Mail without mail access, the Calendar without its account, the Feed without an
+  account with posts) has no key, and the numbers don't move up to fill its gap.
+- The calendar's frame passes its keys on, so both ways work with the calendar in focus, and the calendar's own
+  letters (M for month, C for a new event, A for the agenda) don't take the letter that followed a G.
+- Each place's tooltip on the rail lists its keys, and the buttons carry their chord in `aria-keyshortcuts`
+  (which has no way to write a G then a letter).
+- Ctrl+K (docs/palette.md) still jumps to anything else.
+
+`bun scripts/verify-place-keys.ts <demo hub>` presses them in headless Chromium with real key input: G then P, G
+then I and G then S, a stray key after G, G typed in a chat's box, Ctrl+Shift+2 from the box, Alt+2 doing nothing,
+and the rail's tooltip.
 
 ## The title bar
 

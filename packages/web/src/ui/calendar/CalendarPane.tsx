@@ -7,6 +7,7 @@
  */
 import { useEffect, useRef } from 'preact/hooks';
 import { go } from '../../state.ts';
+import { listenPlaceKeys } from '../PlaceKeys.tsx';
 
 export function CalendarPane({ at }: { at?: string }) {
   const frame = useRef<HTMLIFrameElement>(null);
@@ -28,16 +29,21 @@ export function CalendarPane({ at }: { at?: string }) {
     const f = frame.current;
     if (!f) return;
     let win: Window | null = null;
+    // The app's keys to its places work with the calendar in focus too (PlaceKeys.tsx).
+    let unkeys = () => {};
     const follow = () => {
       const h = win?.location.hash.replace(/^#\/?/, '') ?? '';
       if (h !== (at ?? '')) go(h ? { view: 'calendar', at: h } : { view: 'calendar' }, true);
     };
     const attach = () => {
       win?.removeEventListener('hashchange', follow);
+      unkeys();
+      unkeys = () => {};
       try {
         // Same origin through the hub; a page that is not the calendar's (an error page) has no hash to follow.
         win = f.contentWindow;
         win?.addEventListener('hashchange', follow);
+        if (win) unkeys = listenPlaceKeys(win);
       } catch {
         win = null;
       }
@@ -47,6 +53,7 @@ export function CalendarPane({ at }: { at?: string }) {
     return () => {
       f.removeEventListener('load', attach);
       win?.removeEventListener('hashchange', follow);
+      unkeys();
     };
   }, [at]);
   return (

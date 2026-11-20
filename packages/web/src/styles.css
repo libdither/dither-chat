@@ -1318,6 +1318,12 @@ code {
 .new-sep {
   color: var(--danger);
 }
+/* Above a push's copy, before the hub has answered (arrived.ts). */
+.arrived-sep {
+  color: var(--warn);
+  font-weight: 500;
+  text-align: center;
+}
 .new-sep::before,
 .new-sep::after {
   content: '';
@@ -1617,6 +1623,38 @@ code {
 .reply-quote:hover b,
 .reply-quote:hover span {
   color: var(--text);
+}
+/* A reply that pinged you: your name as a mention of you, as in the text (.msg-body .mention.self). */
+.reply-quote b.reply-pinged,
+.reply-quote:hover b.reply-pinged {
+  background: var(--mention-bg);
+  color: var(--mention-text);
+  border-radius: 4px;
+  padding: 0 3px;
+}
+/* A phone's row is narrow: the quote takes up to two lines, the name and its line staying by the first. */
+.app.phone .reply-quote {
+  align-items: flex-start;
+  text-align: left;
+}
+/* Its line runs from the first line's middle down to the quote's foot, so it still reaches the picture under two lines. */
+.app.phone .reply-quote::before {
+  align-self: stretch;
+  height: auto;
+  margin-top: 3px;
+  margin-bottom: 3px;
+}
+.app.phone .reply-quote svg {
+  margin-top: 2px;
+  flex: none;
+}
+.app.phone .reply-quote span {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow-wrap: anywhere;
 }
 
 .atts {
@@ -3648,6 +3686,93 @@ textarea.chip-box {
   font-size: 13px;
   opacity: 0.7;
   padding: 12px;
+}
+/*
+  A stage you are in (CallRoomLazy.tsx, Timeline.tsx): the room beside the channel's chat on a wide pane; on a narrow
+  one a Room / Chat switch and one of them. A container query, so a narrow pane on a wide screen counts as narrow.
+  The room's own styles are CallRoom.css.
+*/
+.room-pane {
+  container: room / inline-size;
+}
+.room-split {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 38%);
+}
+.room-split.alone {
+  grid-template-columns: minmax(0, 1fr);
+}
+.room-col,
+.room-chat {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.room-chat {
+  border-left: 1px solid var(--border-soft);
+}
+.room-switch {
+  display: none;
+  gap: 4px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-center);
+}
+.room-switch button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.room-switch button.on {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.room-switch-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--warn);
+  color: #000;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+@container room (max-width: 760px) {
+  .room-switch {
+    display: flex;
+  }
+  .room-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .room-split[data-show='room'] > .room-chat,
+  .room-split[data-show='chat'] > .room-col {
+    display: none;
+  }
+  .room-chat {
+    border-left: 0;
+  }
+}
+.room-loading {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-dim);
 }
 .voice-note {
   display: flex;
@@ -6085,6 +6210,21 @@ textarea.chip-box {
   .app.tabs > .rail,
   .app.tabs > .sidebar {
     bottom: var(--tabbar-h);
+  }
+  /* The call bar is the top of the screen (ui/CallBar.css): the lists, the page and the details start below it, so
+     it is in one place wherever you are and covers nothing. */
+  .app.with-bar > .rail,
+  .app.with-bar > .sidebar,
+  .app.with-bar > .center,
+  .app.with-bar > .details {
+    top: var(--call-bar-top);
+    padding-top: 0;
+  }
+  .app.with-bar > .rail {
+    padding-top: 10px;
+  }
+  .app.with-bar > .sidebar {
+    border-radius: 0;
   }
   .app > .center {
     position: absolute;
@@ -8785,6 +8925,10 @@ body.dragging * {
    The call in progress docks where Discord's voice panel sits: at the foot of the list on a desktop.
    A phone keeps it above the tab bar, or at the top of an open page so it never covers the composer. */
 
+/* The call window carries the buttons on a phone (ui/Call.tsx): the strip steps aside, keeping the call's state. */
+.call-dock[hidden] {
+  display: none;
+}
 .call-dock {
   position: fixed;
   left: var(--rail-w);
@@ -8796,8 +8940,17 @@ body.dragging * {
   box-shadow: 0 -6px 18px rgb(0 0 0 / 0.25);
   color: var(--text);
 }
-.app:has(.call-dock) > .sidebar {
+.app:not(.with-bar):has(.call-dock) > .sidebar {
   padding-bottom: 60px;
+}
+/* Expanded from the call bar on a computer: the dock stands on the bar, over the list or the page, until folded. */
+.call-dock.over-bar {
+  bottom: var(--call-bar-h);
+  width: max(var(--sidebar-w), 340px);
+  border: 1px solid var(--bg-active);
+  border-bottom: 0;
+  border-radius: 12px 12px 0 0;
+  box-shadow: 0 -8px 24px rgb(0 0 0 / 0.3);
 }
 .call-dock-bar {
   display: flex;
@@ -8911,70 +9064,90 @@ body.dragging * {
     transform 0.1s,
     box-shadow 0.08s linear;
 }
+/* Talking into a muted microphone (call.ts mutedTalking): an amber ring, and a note anchored to the button that moves
+   nothing else (CallControls.tsx). */
+.call-mic {
+  position: relative;
+  display: grid;
+}
+.call-btn.mic.muted-talking {
+  box-shadow: 0 0 0 3px var(--warn);
+}
+.call-mic-note {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--warn);
+  color: #000;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.3);
+}
+.call-mic-note::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-left: -5px;
+  border: 5px solid transparent;
+  border-top-color: var(--warn);
+}
+/* At a phone's top (an open page), there is no room above: the note hangs below. */
+.app.phone:not(.tabs) .call-mic-note {
+  bottom: auto;
+  top: calc(100% + 8px);
+}
+.app.phone:not(.tabs) .call-mic-note::after {
+  top: auto;
+  bottom: 100%;
+  border-top-color: transparent;
+  border-bottom-color: var(--warn);
+}
+.call-btn.hand {
+  font-size: 17px;
+}
+.call-btn.hand.on {
+  background: color-mix(in srgb, var(--warn) 25%, transparent);
+  color: var(--warn);
+}
+.call-word {
+  align-self: center;
+}
 .call-dock:has(.call-btn.on) .call-btn,
 .call-dock-buttons:has(> :nth-child(5)) .call-btn {
   width: 34px;
   height: 34px;
 }
-/* Video floats over the conversation, beside the dock: others' cameras and streams, and what this device sends. */
-.call-videos {
-  position: fixed;
-  right: 16px;
-  bottom: 16px;
-  z-index: 41;
-  width: min(680px, calc(100vw - var(--rail-w) - var(--sidebar-w) - 48px));
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 8px;
-  padding: 8px;
-  background: var(--bg-raised);
-  border: 1px solid var(--bg-active);
-  border-radius: 12px;
-  box-shadow: 0 6px 24px rgb(0 0 0 / 0.35);
-}
-.call-video {
+/* The call window is ui/CallWindow.css, loaded with its chunk. Its slot on the call's chat (ui/CallSlot.tsx) is here,
+   so the page makes room for it before the chunk comes: docked, a strip under the header; Fill, the whole page. */
+.call-slot {
   position: relative;
-  margin: 0;
-  aspect-ratio: 16 / 9;
-  background: #000;
-  border-radius: 8px;
-  overflow: hidden;
+  flex: none;
 }
-.call-video video {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  cursor: zoom-in;
-  display: block;
+.call-slot.dock {
+  height: 280px;
+  max-height: calc(100% - 160px);
+  transition: height 0.28s cubic-bezier(0.3, 0.7, 0.3, 1);
 }
-.call-video.mirror video {
-  transform: scaleX(-1);
+.app.phone .call-slot.dock {
+  height: min(42vh, calc(100vw * 0.5625 + 24px));
 }
-.call-video figcaption {
-  position: absolute;
-  left: 6px;
-  bottom: 6px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 12px;
-  color: #fff;
-  background: rgb(0 0 0 / 0.55);
-  max-width: calc(100% - 12px);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.call-slot.dock.live {
+  transition: none;
+}
+.call-slot.fill {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .call-watch {
   margin-top: 4px;
   font-size: 12px;
-}
-.app.phone .call-videos {
-  left: 8px;
-  right: 8px;
-  top: calc(8px + env(safe-area-inset-top));
-  bottom: auto;
-  width: auto;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
 }
 .call-dock-body {
   padding: 4px 12px 12px;
@@ -8997,33 +9170,43 @@ body.dragging * {
   position: relative;
   font-size: 12px;
 }
-.call-avatar {
-  border-radius: 50%;
-  padding: 3px;
-  box-shadow: 0 0 0 2px transparent;
-  transition: box-shadow 0.12s;
-}
-.call-people li.speaking .call-avatar {
-  box-shadow: 0 0 0 3px var(--good);
-}
 .call-name {
   max-width: 76px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.call-flag {
-  position: absolute;
-  top: 30px;
-  right: 14px;
-  color: var(--danger);
-  background: var(--bg-raised);
-  border-radius: 50%;
+/*
+  The speaking ring, one for every surface that marks who talks (CallAvatar, video tiles, the call bar, a room): a
+  layer around its element, or inside it. On at once while .speaking; when that goes (after the 250 ms hold, call.ts)
+  it fades over 180 ms. Set on the element:
+  --ring-out how far outside (0 with --ring-inset: inset for inside an edge), --ring-w its width, --ring-c its colour,
+  --ring-r its corner radius, --ring-on its strength 0 to 1 (the person's level, where one is known). .warn: amber.
+*/
+.speak-ring {
+  position: relative;
 }
-/* Muted or deafened by the server, not by them. */
-.call-flag.server {
-  color: var(--bg-raised);
-  background: var(--danger);
+.speak-ring::after {
+  content: '';
+  position: absolute;
+  inset: calc(-1 * var(--ring-out, 4px));
+  border-radius: var(--ring-r, 50%);
+  box-shadow: var(--ring-inset, ) 0 0 0 var(--ring-w, 2px) var(--ring-c, var(--good));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease-out;
+}
+.speak-ring.speaking::after {
+  opacity: var(--ring-on, 1);
+  transition: none;
+}
+.speak-ring.warn {
+  --ring-c: var(--warn);
+}
+.call-video.speak-ring {
+  --ring-out: 0px;
+  --ring-inset: inset;
+  --ring-r: 8px;
 }
 .call-empty {
   grid-column: 1 / -1;
@@ -9112,6 +9295,29 @@ body.dragging * {
 .app:not(.phone) > .sidebar,
 .app:not(.phone) > .center,
 .app:not(.phone) > .details {
+  grid-row: 2;
+}
+/* The call bar (ui/CallBar.tsx, docs/calls.md "The call bar") is a row of its own under the list, or under the page
+   with the list hidden; the rail, the page and the details run down beside it. */
+:root {
+  --call-bar-h: 52px;
+  --call-bar-top: var(--call-bar-h);
+}
+@media (max-width: 820px) {
+  :root {
+    --call-bar-h: 56px;
+    --call-bar-top: calc(var(--call-bar-h) + env(safe-area-inset-top));
+  }
+}
+.app.with-bar:not(.phone) {
+  grid-template-rows: var(--titlebar-h) minmax(0, 1fr) auto;
+}
+.app.with-bar:not(.phone) > .rail,
+.app.with-bar:not(.phone) > .center,
+.app.with-bar:not(.phone) > .details {
+  grid-row: 2 / 4;
+}
+.app.with-bar.full:not(.phone) > .center {
   grid-row: 2;
 }
 .titlebar {
@@ -13661,26 +13867,67 @@ button.msg-edited.link:hover {
   z-index: 1;
   touch-action: none;
 }
-.mc-grip.t {
-  top: -4px;
+.mc-grip.n,
+.mc-grip.s {
   left: 12px;
   right: 12px;
   height: 8px;
   cursor: ns-resize;
 }
-.mc-grip.l {
-  left: -4px;
+.mc-grip.n {
+  top: -4px;
+}
+.mc-grip.s {
+  bottom: -4px;
+}
+.mc-grip.e,
+.mc-grip.w {
   top: 12px;
   bottom: 12px;
   width: 8px;
   cursor: ew-resize;
 }
-.mc-grip.tl {
-  top: -4px;
+.mc-grip.w {
   left: -4px;
+}
+.mc-grip.e {
+  right: -4px;
+}
+.mc-grip.nw,
+.mc-grip.ne,
+.mc-grip.sw,
+.mc-grip.se {
+  z-index: 2;
   width: 16px;
   height: 16px;
+}
+.mc-grip.nw {
+  top: -4px;
+  left: -4px;
   cursor: nwse-resize;
+}
+.mc-grip.se {
+  bottom: -4px;
+  right: -4px;
+  cursor: nwse-resize;
+}
+.mc-grip.ne {
+  top: -4px;
+  right: -4px;
+  cursor: nesw-resize;
+}
+.mc-grip.sw {
+  bottom: -4px;
+  left: -4px;
+  cursor: nesw-resize;
+}
+.mc-layer.dock.max .mc-head {
+  cursor: default;
+}
+/* Files dragged over the composer: it takes them. */
+.mc.dropping {
+  outline: 2px dashed var(--accent);
+  outline-offset: -6px;
 }
 .mc-layer.phone {
   inset: 0;
@@ -16942,4 +17189,60 @@ h1:hover > .pair-nick-edit,
   display: flex;
   gap: 6px;
   padding-left: 6px;
+}
+
+/* A tooltip's keys (Tooltip.tsx data-tip-keys), and the card a G brings up (PlaceKeys.tsx). */
+.tooltip .tip-keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: #b5bac1;
+}
+.tooltip .tip-or {
+  margin-right: 6px;
+}
+.tooltip kbd,
+.place-keys kbd {
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 0 5px;
+  margin-right: 2px;
+  border-radius: 4px;
+}
+.tooltip kbd {
+  color: #f2f3f5;
+  border: 1px solid rgb(255 255 255 / 0.18);
+  background: rgb(255 255 255 / 0.06);
+}
+.place-keys {
+  position: fixed;
+  z-index: 1000;
+  left: 50%;
+  bottom: 64px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  max-width: calc(100vw - 32px);
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.3);
+  font-size: 13px;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+.place-keys-head {
+  color: var(--text-faint);
+}
+.place-keys kbd {
+  color: var(--text);
+  border: 1px solid var(--border);
+  background: var(--bg);
 }

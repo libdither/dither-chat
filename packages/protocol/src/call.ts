@@ -44,6 +44,10 @@ export interface CallParticipant {
   localMute?: boolean;
   /** On a stage: what they are there (StageRole). Absent outside a stage. */
   stage?: StageRole;
+  /** On a stage: their rank there beyond their role (StageRank). Absent: none, or not known. */
+  stageRank?: StageRank;
+  /** On a stage with a hand up: ms epoch it went up, so requests can be answered oldest first. Absent: not known. */
+  askedAt?: number;
 }
 
 /**
@@ -52,12 +56,53 @@ export interface CallParticipant {
  */
 export type StageRole = 'speaker' | 'audience' | 'hand' | 'invited';
 
-/** A stage call's own facts (CallState.stage). */
+/**
+ * Who runs a room besides speaking in it: a Space's host and co-hosts, a Discord stage's moderators (Mute Members
+ * there). Any rank may invite people to speak and move speakers back to the audience, unless the room says otherwise
+ * (CallStage.canOn).
+ */
+export type StageRank = 'host' | 'cohost' | 'moderator';
+
+/** What a stage action does to you (the rest, StageMove, are a moderator's on someone else). */
+export type StageSelfAction = 'raiseHand' | 'lowerHand' | 'speak' | 'listen';
+/** A moderator's action on someone else: invite them to speak, or move them back to the audience. */
+export type StageMove = 'invite' | 'audience';
+
+/**
+ * A stage call's own facts (CallState.stage): a Discord stage, an X Space, any room where a few speak and the rest
+ * listen. The adapter says what this account may do now; the device draws its buttons from that alone. (An adapter
+ * from before `can` sent `moderator: boolean`; the hub reads that as `canOn`, calls.ts hubStage.)
+ */
 export interface CallStage {
   /** What the stage is about, when someone started it with a topic. */
   topic: string | null;
-  /** This account may invite people to speak and move speakers back to the audience (Discord: Mute Members there). */
-  moderator: boolean;
+  /** What this account may do now on its own behalf. Absent: worked out from its role and rank (stageRights). */
+  can?: StageSelfAction[];
+  /** What it may do to others (each only to someone whose role it fits, stageMoveFits). Absent: from its rank. */
+  canOn?: StageMove[];
+  /**
+   * How many are listening in all, when the room sends only some of them (a Space with thousands sends a sample).
+   * Absent: everyone listening is in the participants.
+   */
+  listeners?: number;
+}
+
+/**
+ * What an account with this role and rank may do on a stage, unless the stage says (`can`, `canOn`): one rule for the
+ * device's buttons and the demo's stage alike. Listening, you ask to speak, or with a rank you just speak; with a hand
+ * up you lower it (or speak, with a rank); invited, you speak or stay in the audience; speaking, you go back to
+ * listening. Any rank invites and moves people.
+ */
+export function stageRights(stage: Pick<CallStage, 'can' | 'canOn'> | undefined, role: StageRole, rank?: StageRank): { can: StageSelfAction[]; canOn: StageMove[] } {
+  // Someone the room lets move others runs it, rank said or not.
+  const ranked = !!rank || !!stage?.canOn?.length;
+  const can: StageSelfAction[] = role === 'speaker' ? ['listen'] : role === 'invited' ? ['speak', 'listen'] : role === 'hand' ? (ranked ? ['speak', 'lowerHand'] : ['lowerHand']) : ranked ? ['speak'] : ['raiseHand'];
+  return { can: stage?.can ?? can, canOn: stage?.canOn ?? (ranked ? ['invite', 'audience'] : []) };
+}
+
+/** Whom a move fits: you invite someone listening (a hand up or not); you move someone speaking or invited back down. */
+export function stageMoveFits(move: StageMove, role: StageRole): boolean {
+  return move === 'invite' ? role === 'audience' || role === 'hand' : role === 'speaker' || role === 'invited';
 }
 
 export interface CallState {
@@ -141,7 +186,7 @@ export function callInput(x: unknown): CallInput {
  * as a moderator yourself); go back to listening; and, as a moderator, invite `user` to speak or move them to the
  * audience.
  */
-export type StageAction = 'raiseHand' | 'lowerHand' | 'speak' | 'listen' | 'invite' | 'audience';
+export type StageAction = StageSelfAction | StageMove;
 export const STAGE_ACTIONS: readonly StageAction[] = ['raiseHand', 'lowerHand', 'speak', 'listen', 'invite', 'audience'];
 
 /** A sound someone played or an emoji they sent in the call you are in (Discord's soundboard and voice effects). */
