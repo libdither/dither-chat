@@ -512,7 +512,7 @@ For debugging, `./gradlew assembleDebug` builds an 8.8 MB debuggable APK, as its
 
 `scripts/verify-android.ts` runs every emulator test of the app, as CI's `android-device` workflow does
 ([testing.md](testing.md#android-on-an-emulator)): the calls test below against a demo hub of its own (its rings
-only when the emulator has a UnifiedPush distributor such as ntfy; without one it says `NOT RUN rings`), then
+through the emulator's UnifiedPush distributor, such as ntfy, or through the test's own where it has none), then
 `scripts/verify-android-arrived.ts`, a push's copy of its message (docs/notifications.md, "A copy in the push"): kept
 with the app closed and the hub stopped, shown by an offline start from the notification's intent, a second push shown
 by the open page, and both gone with the app's records once the hub is back.
@@ -521,7 +521,7 @@ by the open page, and both gone with the app's records once the hub is back.
 emulator -avd <avd> -port 5584 -read-only -no-snapshot -no-window -no-audio \
   -no-boot-anim -gpu swiftshader_indirect          # wait for `getprop sys.boot_completed`
 bun run web:build
-(cd apps/android && ./gradlew :app:assembleDebug :uitest:assembleDebug :uitest:assembleDebugAndroidTest)
+(cd apps/android && ./gradlew :app:assembleDebug :uitest:assembleDebug :uitest:assembleDebugAndroidTest :testpush:assembleDebug)
 bun scripts/verify-android.ts --serial emulator-5584 [--shots <dir>]
 ```
 
@@ -560,6 +560,13 @@ Then the rings: the demo account is rung (the demo's `ring` action), and the run
 network and the ring goes; a ring the caller gives up goes as missed; Answer with the app in the background brings it
 up in the call; and Answer after Android killed the app (as for memory) starts it and joins. In those calls it also
 presses the call notification's Mute and Hang up and checks the far end sees them. `--only calls|rings` runs one half.
+
+Rings come through real push. An emulator with a distributor installed (ntfy, signed in to its server) uses it. One
+without gets `apps/android/testpush` (`./gradlew :testpush:assembleDebug`; `--testpush <apk>`), a distributor with no
+server of its own that the run installs and takes off again: it answers the app's connector as ntfy's app would, and
+its server is in the test (`scripts/android-testpush.ts`), allowed on the hub from the app's page as a typed server
+on a private address would be. The hub's encrypted request goes to the device over adb, and the connector decrypts
+it, so only ntfy and its server are stood in for.
 
 The notification's buttons are pressed through `apps/android/uitest`, a small test app that drives the shade with
 UiAutomator with its idle wait turned off (`Shade#press`, run with `am instrument`): uiautomator's own `dump` waits
