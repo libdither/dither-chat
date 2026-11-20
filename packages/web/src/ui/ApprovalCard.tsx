@@ -8,6 +8,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { api } from '../api.ts';
 import { ago } from '../format.ts';
 import { Icon } from './icons.tsx';
+import './approval.css';
 
 interface ActionDef {
   id: string;
