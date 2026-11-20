@@ -11,10 +11,13 @@ import type { PhoneList } from './phonelist.ts';
 import type { PushService } from './push.ts';
 import type { HubServer } from './server.ts';
 import type { Store } from './store.ts';
+import { arrivedCopy, fitArrived } from './arrived.ts';
 import { jobFailed } from './errors.ts';
+import { pushPayload } from './webpush.ts';
 
 interface NotifierDeps {
-  store: Pick<Store, 'notifyLook' | 'one'>;
+  /** With messageView and conversationView, a message's push carries a copy of it (arrived.ts). */
+  store: Pick<Store, 'notifyLook' | 'one'> & Partial<Pick<Store, 'messageView' | 'conversationView'>>;
   activity: Pick<ActivityStore, 'notification' | 'sent'>;
   devices: Pick<Devices, 'addressed' | 'quietOn'>;
   push: Pick<PushService, 'desktops' | 'notify'>;
@@ -30,6 +33,9 @@ export type Tier = 'push' | 'quiet' | 'digest';
 function pictures(look: { icon?: string } | undefined, g: { conv?: { icon?: string }; sender?: { icon?: string }; icons?: Record<string, string> } | null): (string | undefined)[] {
   return [look?.icon, g?.conv?.icon, g?.sender?.icon, ...Object.values(g?.icons ?? {})];
 }
+
+/** Room for the device id push.ts adds to each device's payload, when measuring what fits. */
+const DEVICE_ROOM = 'x'.repeat(40);
 
 export class Notifier {
   /** Each push, once sent: for tests, which wait for it. */
@@ -71,9 +77,14 @@ export class Notifier {
     const grouped = kind === 'message' ? delivery.plan(conversationId, messageId, tier, addressed) : null;
     // The row keeps the highest tier of what it shows (delivery.ts `Grouped.tier`); only this message's own tier sounds.
     if (grouped?.tier && kind === 'message') Object.assign(vote, { tier: grouped.tier, level: grouped.tier === 'push' ? 'push' : 'quiet' });
+    const extra: Record<string, unknown> = { ...pushExtra, ...look, ...vote, ...grouped, ...keep, ...(nid ? { nid } : {}) };
+    // A copy of the message, so the device shows it before it reaches the hub, where it fits (arrived.ts).
+    const copy = kind === 'message' && store.messageView && store.conversationView ? arrivedCopy(store as Required<NotifierDeps['store']>, conversationId, messageId) : null;
+    const arrived = copy && fitArrived(pushPayload(title, body, conversationId, { ...extra, device: DEVICE_ROOM }), copy);
+    if (arrived) extra.arrived = arrived;
     this.last = server
       .warm(pictures(look, grouped))
-      .then(() => push.notify(title, body, conversationId, { ...pushExtra, ...look, ...vote, ...grouped, ...keep, ...(nid ? { nid } : {}) }, skip, level))
+      .then(() => push.notify(title, body, conversationId, extra, skip, level))
       .then((r) => nid && activity.sent(nid, r))
       .catch((e) => (console.error('push failed', e), jobFailed('push: request', e)));
   }

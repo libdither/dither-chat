@@ -6,7 +6,9 @@
  * - joining: live, and connected, in good time; the join sound; the call room hears the device's microphone and the
  *   device hears the room's bot; the bot's camera shows on a video slot;
  * - a second device joining plays the join sound on the first, and each is in the other's people;
- * - mute and unmute reach the far end, with their sounds;
+ * - the bot's speaking ring: round, and what the call says (the hold itself is unit-tested, test/callmarks.test.ts);
+ * - mute and unmute reach the far end, with their sounds; talking while muted marks the mic button, without moving
+ *   the dock;
  * - the first device's camera reaches the far end and shows on the second device;
  * - the first device shares its screen: the far end gets it, the second device presses Watch and sees it;
  * - watching the bot's Go Live;
@@ -21,6 +23,9 @@
  *
  * Use a fresh demo world each run (it joins a call; nothing in it changes otherwise).
  */
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { launch, type Page } from './browser.ts';
 
 const hub = (process.argv[2] ?? 'http://127.0.0.1:8579').replace(/\/$/, '');
@@ -45,8 +50,38 @@ const check = (ok: unknown, what: string, detail: unknown = '') => {
 const wait = async (p: Page, expr: string, ms = 15_000) => p.until(expr, ms).then(() => true, () => false);
 
 const MEDIA = ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--autoplay-policy=no-user-gesture-required', '--auto-accept-this-tab-capture', '--enable-usermedia-screen-capturing'];
+/**
+ * Talk, as a microphone hears it: 300 ms "syllables" of a tone at about -15 dBFS with 100 ms gaps, for 4 s (Chromium
+ * loops it). Chromium's own fake microphone only beeps briefly once a second, too short to count as talking.
+ */
+function talkWav(file: string) {
+  const rate = 48_000;
+  const n = rate * 4;
+  const buf = Buffer.alloc(44 + n * 2);
+  buf.write('RIFF', 0);
+  buf.writeUInt32LE(36 + n * 2, 4);
+  buf.write('WAVEfmt ', 8);
+  buf.writeUInt32LE(16, 16);
+  buf.writeUInt16LE(1, 20);
+  buf.writeUInt16LE(1, 22);
+  buf.writeUInt32LE(rate, 24);
+  buf.writeUInt32LE(rate * 2, 28);
+  buf.writeUInt16LE(2, 32);
+  buf.writeUInt16LE(16, 34);
+  buf.write('data', 36);
+  buf.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) {
+    const on = (i / rate) % 0.4 < 0.3;
+    buf.writeInt16LE(on ? Math.round(Math.sin((2 * Math.PI * 220 * i) / rate) * 0.25 * 32767) : 0, 44 + i * 2);
+  }
+  writeFileSync(file, buf);
+  return file;
+}
+const scratch = mkdtempSync(join(tmpdir(), 'calls-demo-'));
+const talk = talkWav(join(scratch, 'talk.wav'));
+
 const room = await launch({ args: MEDIA });
-const a = await launch({ args: MEDIA });
+const a = await launch({ args: [...MEDIA, `--use-file-for-fake-audio-capture=${talk}`] });
 const b = await launch({ args: MEDIA });
 // No fake devices: getUserMedia finds no microphone.
 const c = await launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
@@ -85,6 +120,15 @@ try {
   check(await wait(a.page, `[...document.querySelectorAll('.call-video[data-video-slot] video')].some((v) => v.videoWidth > 0)`, 20_000), 'the bot\'s camera shows on a video slot', await call(a.page, 'c && c.video'));
   check(await wait(a.page, `parseFloat(getComputedStyle(document.querySelector('.call-btn.mic')).getPropertyValue('--mic-level')) > 0`, 8000), 'the microphone meter moves');
 
+  // ------------------------------------------------------------ who is speaking
+  await a.page.eval(`document.querySelector('.call-dock-title').click()`);
+  const levAv = `[...document.querySelectorAll('.call-people li')].find((li) => /Lev/.test(li.textContent))?.querySelector('.call-av')`;
+  // In one look: the ring and its words come from the same render.
+  check(await wait(a.page, `!!${levAv}?.dataset.speaking && /speaking/.test(${levAv}.getAttribute('aria-label'))`, 15_000), 'the bot gets the speaking ring while it talks, with words a screen reader hears');
+  const box = await a.page.eval<number[]>(`(() => { const r = ${levAv}.getBoundingClientRect(); return [r.width, r.height]; })()`);
+  check(box[0] === box[1] && box[0] > 0, 'the ring goes round a square box (round, not oval)', box);
+  await a.page.eval(`document.querySelector('.call-dock-title').click()`);
+
   // ------------------------------------------------------------ the second device joins
   await device(b.page, ALT);
   await b.page.eval(`document.querySelector('.call-join').click()`);
@@ -93,9 +137,16 @@ try {
   check(await wait(a.page, `window.__callSounds.filter((s) => s.name === 'user_join').length >= 2`, 5000), 'someone joining plays the join sound', await sounds(a.page));
 
   // ------------------------------------------------------------ mute
+  const dockHeight = `document.querySelector('.call-dock').getBoundingClientRect().height`;
+  const before = await a.page.eval<number>(dockHeight);
   await a.page.eval(`document.querySelector('.call-btn.mic').click()`);
   check(await wait(room.page, `window.__room.summary().some((x) => x.muted)`, 5000), 'muting reaches the far end', await roomCalls());
   check(await wait(a.page, `window.__callSounds.some((s) => s.name === 'mute')`, 3000), 'the mute sound plays');
+  check(await wait(a.page, `!!document.querySelector('.call-btn.mic.muted-talking') && !!document.querySelector('.call-mic-note')`, 8000), 'talking into a muted microphone marks the mic button');
+  const muted = await a.page.eval<{ height: number; said: string }>(`({ height: ${dockHeight}, said: document.querySelector('.call-mic [aria-live]').textContent })`);
+  check(muted.height === before && /muted/.test(muted.said), 'its note moves nothing, and a screen reader hears it', { before, ...muted });
+  // The copy listened to while muted stays on this device: the far end hears nothing from it.
+  check(await wait(room.page, `window.__room.summary().some((x) => x.muted && x.micLevel < 0.005)`, 5000), 'while muted the far end hears silence, talking or not', await roomCalls());
   check(await wait(b.page, `window.__activeCall.value.participants.some((p) => p.id === ${JSON.stringify(selfOf(MAIN))} && p.muted)`, 5000), 'the second device sees the first muted');
   await a.page.eval(`document.querySelector('.call-btn.mic').click()`);
   check(await wait(room.page, `!window.__room.summary().some((x) => x.muted)`, 5000), 'unmuting reaches the far end');
@@ -178,6 +229,7 @@ try {
   for (const [n, x] of [['first device', a], ['second device', b], ['no-microphone device', c], ['phone', d]] as const) check(x.page.errors.length === 0, `no page errors on the ${n}`, x.page.errors.slice(0, 3));
 } finally {
   for (const x of browsers) await x.close().catch(() => {});
+  rmSync(scratch, { recursive: true, force: true });
 }
 console.log(failures ? `\n${failures} failed` : '\nall passed');
 process.exit(failures ? 1 : 0);

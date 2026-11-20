@@ -1318,6 +1318,12 @@ code {
 .new-sep {
   color: var(--danger);
 }
+/* Above a push's copy, before the hub has answered (arrived.ts). */
+.arrived-sep {
+  color: var(--warn);
+  font-weight: 500;
+  text-align: center;
+}
 .new-sep::before,
 .new-sep::after {
   content: '';
@@ -8911,6 +8917,61 @@ body.dragging * {
     transform 0.1s,
     box-shadow 0.08s linear;
 }
+/* Talking into a muted microphone (call.ts mutedTalking): an amber ring, and a note anchored to the button that moves
+   nothing else (CallControls.tsx). */
+.call-mic {
+  position: relative;
+  display: grid;
+}
+.call-btn.mic.muted-talking {
+  box-shadow: 0 0 0 3px var(--warn);
+}
+.call-mic-note {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--warn);
+  color: #000;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.3);
+}
+.call-mic-note::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-left: -5px;
+  border: 5px solid transparent;
+  border-top-color: var(--warn);
+}
+/* At a phone's top (an open page), there is no room above: the note hangs below. */
+.app.phone:not(.tabs) .call-mic-note {
+  bottom: auto;
+  top: calc(100% + 8px);
+}
+.app.phone:not(.tabs) .call-mic-note::after {
+  top: auto;
+  bottom: 100%;
+  border-top-color: transparent;
+  border-bottom-color: var(--warn);
+}
+.call-btn.hand {
+  font-size: 17px;
+}
+.call-btn.hand.on {
+  background: color-mix(in srgb, var(--warn) 25%, transparent);
+  color: var(--warn);
+}
+.call-word {
+  align-self: center;
+}
 .call-dock:has(.call-btn.on) .call-btn,
 .call-dock-buttons:has(> :nth-child(5)) .call-btn {
   width: 34px;
@@ -8997,33 +9058,43 @@ body.dragging * {
   position: relative;
   font-size: 12px;
 }
-.call-avatar {
-  border-radius: 50%;
-  padding: 3px;
-  box-shadow: 0 0 0 2px transparent;
-  transition: box-shadow 0.12s;
-}
-.call-people li.speaking .call-avatar {
-  box-shadow: 0 0 0 3px var(--good);
-}
 .call-name {
   max-width: 76px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.call-flag {
-  position: absolute;
-  top: 30px;
-  right: 14px;
-  color: var(--danger);
-  background: var(--bg-raised);
-  border-radius: 50%;
+/*
+  The speaking ring, one for every surface that marks who talks (CallAvatar, video tiles, the call bar, a room): a
+  layer around its element, or inside it. On at once while .speaking; when that goes (after the 250 ms hold, call.ts)
+  it fades over 180 ms. Set on the element:
+  --ring-out how far outside (0 with --ring-inset: inset for inside an edge), --ring-w its width, --ring-c its colour,
+  --ring-r its corner radius, --ring-on its strength 0 to 1 (the person's level, where one is known). .warn: amber.
+*/
+.speak-ring {
+  position: relative;
 }
-/* Muted or deafened by the server, not by them. */
-.call-flag.server {
-  color: var(--bg-raised);
-  background: var(--danger);
+.speak-ring::after {
+  content: '';
+  position: absolute;
+  inset: calc(-1 * var(--ring-out, 4px));
+  border-radius: var(--ring-r, 50%);
+  box-shadow: var(--ring-inset, ) 0 0 0 var(--ring-w, 2px) var(--ring-c, var(--good));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease-out;
+}
+.speak-ring.speaking::after {
+  opacity: var(--ring-on, 1);
+  transition: none;
+}
+.speak-ring.warn {
+  --ring-c: var(--warn);
+}
+.call-video.speak-ring {
+  --ring-out: 0px;
+  --ring-inset: inset;
+  --ring-r: 8px;
 }
 .call-empty {
   grid-column: 1 / -1;
@@ -12645,6 +12716,8 @@ button.msg-edited.link:hover {
   cursor: grab;
   touch-action: none;
   outline: none;
+  /* A double-click opens a node; it must not select the page's text. */
+  user-select: none;
 }
 .pg-canvas canvas {
   position: absolute;
@@ -13627,6 +13700,59 @@ button.msg-edited.link:hover {
   width: min(560px, calc(100vw - 32px));
   height: min(660px, calc(100vh - 32px));
 }
+/* Moved, resized and minimized by ComposerCard.tsx (mail/dock.ts): its place and size come inline. */
+.mc-layer.dock.min .mc > :not(.mc-head),
+.mc-layer.dock.min .mc-discard {
+  display: none;
+}
+.mc-layer.dock.min .mc-head {
+  cursor: pointer;
+  border-bottom: 0;
+}
+.mc-layer.dock.min .mc-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mc-layer.dock.min .mc {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-bottom: 0;
+  animation: none;
+}
+.mc-layer.dock:not(.min) .mc-head {
+  cursor: move;
+  touch-action: none;
+  user-select: none;
+}
+.mc-grip {
+  position: absolute;
+  z-index: 1;
+  touch-action: none;
+}
+.mc-grip.t {
+  top: -4px;
+  left: 12px;
+  right: 12px;
+  height: 8px;
+  cursor: ns-resize;
+}
+.mc-grip.l {
+  left: -4px;
+  top: 12px;
+  bottom: 12px;
+  width: 8px;
+  cursor: ew-resize;
+}
+.mc-grip.tl {
+  top: -4px;
+  left: -4px;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+}
 .mc-layer.phone {
   inset: 0;
   z-index: 105;
@@ -14331,6 +14457,10 @@ button.msg-edited.link:hover {
 }
 .requests-group {
   margin-bottom: 22px;
+}
+/* Requests for a room's moderators: a line on whose they are, above their cards. */
+.requests-others-note {
+  margin: -2px 0 10px;
 }
 .requests-group h3 {
   display: flex;
@@ -16883,4 +17013,60 @@ h1:hover > .pair-nick-edit,
   display: flex;
   gap: 6px;
   padding-left: 6px;
+}
+
+/* A tooltip's keys (Tooltip.tsx data-tip-keys), and the card a G brings up (PlaceKeys.tsx). */
+.tooltip .tip-keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: #b5bac1;
+}
+.tooltip .tip-or {
+  margin-right: 6px;
+}
+.tooltip kbd,
+.place-keys kbd {
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 0 5px;
+  margin-right: 2px;
+  border-radius: 4px;
+}
+.tooltip kbd {
+  color: #f2f3f5;
+  border: 1px solid rgb(255 255 255 / 0.18);
+  background: rgb(255 255 255 / 0.06);
+}
+.place-keys {
+  position: fixed;
+  z-index: 1000;
+  left: 50%;
+  bottom: 64px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  max-width: calc(100vw - 32px);
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.3);
+  font-size: 13px;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+.place-keys-head {
+  color: var(--text-faint);
+}
+.place-keys kbd {
+  color: var(--text);
+  border: 1px solid var(--border);
+  background: var(--bg);
 }

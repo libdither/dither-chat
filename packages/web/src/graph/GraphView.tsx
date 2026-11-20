@@ -3,7 +3,7 @@
  * a place with whom, across networks and accounts. Opened from the People header; loaded only then (its own chunk).
  */
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META } from '@dither-chat/protocol';
+import { GRAPH_WEIGHT_KEYS, NETWORK_META } from '@dither-chat/protocol';
 import { signal, type Signal } from '@preact/signals';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { convTitle, netName } from '../model.ts';
@@ -14,7 +14,8 @@ import { Icon } from '../ui/icons.tsx';
 import { HeadOrb } from '../ui/Offline.tsx';
 import { components } from '../same/merge.ts';
 import { Engine } from './engine.ts';
-import { importance, monthName, talkedWith, thisMonth, totals, type Importance } from './importance.ts';
+import { DEFAULT_TUNING, fit, importance, monthName, SIGNALS, talkedWith, thisMonth, tiesAt, totals, type Fit, type Importance } from './importance.ts';
+import { circles, describe as circlesOf, slices, type Circle, type Ties } from './ties.ts';
 import { DEFAULT_FILTERS, index, neighbours, otherAccounts, sharesWith, visible, type Filters, type Index, type Visible } from './model.ts';
 import { Loading } from '../ui/Loader.tsx';
 import './graph.css';
@@ -47,6 +48,20 @@ const loadSameOn = () => {
 const saveSameOn = (on: boolean) => {
   try {
     localStorage.setItem(SAME_KEY, on ? '1' : '0');
+  } catch {}
+};
+
+const RINGS_KEY = 'dither-chat:graph-rings';
+const loadRingsOn = () => {
+  try {
+    return localStorage.getItem(RINGS_KEY) !== '0';
+  } catch {
+    return true;
+  }
+};
+const saveRingsOn = (on: boolean) => {
+  try {
+    localStorage.setItem(RINGS_KEY, on ? '1' : '0');
   } catch {}
 };
 
@@ -139,7 +154,41 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
   const vis = useMemo(() => visible(ix, f, talked), [ix, f, talked]);
   /** The month the graph is replayed at (the time bar); null for now. */
   const [asOf, setAsOf] = useState<number | null>(null);
-  const imp = useMemo(() => importance(ix, act, asOf), [ix, act, asOf]);
+  // Your tuning of importance (kept by the hub), and what it is while being tried in the panel.
+  const [tuning, setTuning] = useState<P.GraphTuning>(DEFAULT_TUNING);
+  const [saved, setSaved] = useState<P.GraphTuning | null>(null);
+  useEffect(() => {
+    api<P.GraphTuning | null>('/api/graph/tuning')
+      .then((t) => {
+        setSaved(t);
+        if (t) setTuning(t);
+      })
+      .catch(() => {});
+  }, []);
+  const [tuneOpen, setTuneOpen] = useState(false);
+  // Ties between people now (circles keep to them as the time bar moves), and at the month replayed.
+  const tiesNow = useMemo(() => tiesAt(ix, act, null, tuning), [ix, act, tuning.fade]);
+  const tiesThen = useMemo(() => (asOf === null ? tiesNow : tiesAt(ix, act, asOf, tuning)), [tiesNow, asOf]);
+  const impNow = useMemo(() => importance(ix, act, null, tuning, tiesNow), [ix, act, tuning, tiesNow]);
+  const imp = useMemo(() => (asOf === null ? impNow : importance(ix, act, asOf, tuning, tiesThen)), [impNow, asOf, tiesThen]);
+  // Circles among the people shown, and each one's slice of the rings.
+  const [ringsOn, setRingsOn] = useState(loadRingsOn);
+  // Worked out after the graph is first drawn (a tenth of a second on thousands of people), then the rings follow.
+  const [circ, setCirc] = useState<{ of: Int32Array; list: Circle[]; at: Float32Array; half: Float32Array } | null>(null);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const frame = requestAnimationFrame(
+      () =>
+        (timer = setTimeout(() => {
+          const people = [...vis.nodes].filter((g) => g < graph.people.length);
+          const of = circles(tiesNow, people);
+          const list = circlesOf(ix, of, impNow.score, (p) => personName(graph.people[p]), (q) => placeName(graph.places[q]));
+          const loose = people.filter((p) => of[p] < 0).length;
+          setCirc({ of, list, ...slices(tiesNow, of, list, loose) });
+        })),
+    );
+    return () => (cancelAnimationFrame(frame), clearTimeout(timer));
+  }, [tiesNow, vis, impNow]);
   const [picked, setPicked] = useState<number | null>(null);
   /** A Same person? group picked (an index into groups), for its merge card. */
   const [pickedGroup, setPickedGroup] = useState<number | null>(null);
@@ -186,6 +235,10 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
   }, []);
   useEffect(() => engine.current?.setData(ix, vis), [ix, vis]);
   useEffect(() => engine.current?.setScores(imp.score, imp.place), [imp, vis]);
+  useEffect(() => {
+    saveRingsOn(ringsOn);
+    engine.current?.setRings(ringsOn && circ ? { of: circ.of, at: circ.at, half: circ.half, names: circ.list.map((c) => c.name), ties: tiesNow } : null);
+  }, [ringsOn, circ, vis]);
   // A new graph (after a merge) numbers everyone afresh.
   const first = useRef(true);
   useEffect(() => {
@@ -297,6 +350,14 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
           <button class={`chip-btn ${f.bots ? 'on' : ''}`} aria-pressed={f.bots} onClick={() => set({ bots: !f.bots })}>
             Bots
           </button>
+          <button
+            class={`chip-btn ${ringsOn ? 'on' : ''}`}
+            aria-pressed={ringsOn}
+            title="You in the middle, everyone nearer the more they matter to you; circles of people tied to each other, each in a slice"
+            onClick={() => setRingsOn(!ringsOn)}
+          >
+            Rings
+          </button>
           <button class={`chip-btn ${sameOn ? 'on' : ''}`} aria-pressed={sameOn} title="People who may be one person on several accounts, as dashed links" onClick={() => setSameOn(!sameOn)}>
             <Icon name="merge" size={13} /> Same person?
           </button>
@@ -347,8 +408,24 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
             <Icon name="grid" size={15} />
           </button>
         </div>
-        <Key graph={graph} ix={ix} vis={vis} me={vis.me >= 0} same={sameOn && shownSame > 0} netOf={netOf} />
+        <Key graph={graph} ix={ix} vis={vis} me={vis.me >= 0} same={sameOn && shownSame > 0} netOf={netOf} rings={ringsOn && vis.me >= 0 ? (circ?.list.length ?? 0) : null} onHow={() => (setPicked(null), setPickedGroup(null), setTuneOpen(true))} />
         <Tip hover={hover} picked={picked} graph={graph} ix={ix} name={name} />
+        {tuneOpen && picked === null && pickedGroup === null && (
+          <Tuning
+            tuning={tuning}
+            saved={saved}
+            onTry={setTuning}
+            onSaved={(t) => {
+              setSaved(t);
+              setTuning(t ?? DEFAULT_TUNING);
+            }}
+            onClose={() => {
+              setTuning(saved ?? DEFAULT_TUNING);
+              setTuneOpen(false);
+            }}
+            fitNow={() => (act ? fit(ix, act, tuning) : null)}
+          />
+        )}
         {picked !== null && (
           <Card
             graph={graph}
@@ -369,6 +446,10 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
             onSameDone={(key, merged) => (merged ? reload() : setSame(same.filter((x) => x.key !== key)))}
             act={act}
             imp={imp}
+            tuning={tuning}
+            circle={circ && picked < graph.people.length && circ.of[picked] >= 0 ? circ.list[circ.of[picked]] : null}
+            ties={tiesThen}
+            onHow={() => (setPicked(null), setTuneOpen(true))}
             netOf={netOf}
             group={(() => {
               const gi = groups.findIndex((g) => g.members.includes(picked));
@@ -397,7 +478,26 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
 }
 
 /** What the colours, sizes and shapes mean, with how many of each are shown. Folds away. */
-function Key({ graph, ix, vis, me, same, netOf }: { graph: P.PeopleGraph; ix: Index; vis: Visible; me: boolean; same: boolean; netOf: (a: number) => P.Network | undefined }) {
+function Key({
+  graph,
+  ix,
+  vis,
+  me,
+  same,
+  netOf,
+  rings,
+  onHow,
+}: {
+  graph: P.PeopleGraph;
+  ix: Index;
+  vis: Visible;
+  me: boolean;
+  same: boolean;
+  netOf: (a: number) => P.Network | undefined;
+  /** With rings on: how many circles; null with rings off. */
+  rings: number | null;
+  onHow: () => void;
+}) {
   const [open, setOpen] = useState(() => {
     try {
       const v = localStorage.getItem(KEY_OPEN);
@@ -451,14 +551,25 @@ function Key({ graph, ix, vis, me, same, netOf }: { graph: P.PeopleGraph; ix: In
         ))}
       </div>
       <div class="pg-key-row">
-        <i class="pg-key-dot big" /> Bigger the more they matter to you: talk, places and friends you share
+        <i class="pg-key-dot big" />
+        <span>
+          Bigger{rings !== null ? ' and nearer you' : ''} the more they matter to you: talk, places and friends you share, and ties to your people.{' '}
+          <button class="link-btn" onClick={onHow}>
+            How, and tune it
+          </button>
+        </span>
       </div>
+      {rings !== null && (
+        <div class="pg-key-row">
+          <i class="pg-key-ring" /> Rings: the 10, 50, 250 nearest. Slices: circles of people tied to each other (replies, reactions, friends, small places), named by the place they share <em>{rings.toLocaleString()}</em>
+        </div>
+      )}
       <div class="pg-key-row">
         <i class="pg-key-dot" /> Only seen in a server or group <em>{(vis.shown.people - known).toLocaleString()}</em>
       </div>
       {me && (
         <div class="pg-key-row">
-          <i class="pg-key-line" /> You, in the middle, linked to who you talk with; nearer and brighter the more you do
+          <i class="pg-key-line" /> You, in the middle, linked to who you talk with; brighter the more you do
         </div>
       )}
       <div class="pg-key-row">
@@ -548,6 +659,10 @@ function Card({
   onSameDone,
   act,
   imp,
+  tuning,
+  circle,
+  ties,
+  onHow,
   netOf,
   group,
 }: {
@@ -565,6 +680,11 @@ function Card({
   onSameDone: (key: string, merged: boolean) => void;
   act: P.GraphActivity | null;
   imp: Importance;
+  tuning: P.GraphTuning;
+  /** The circle they are in, if any. */
+  circle: Circle | null;
+  ties: Ties;
+  onHow: () => void;
   netOf: (a: number) => P.Network | undefined;
   /** The Same person? group they are in, when it joins more than two: its card. */
   group: { n: number; open: () => void } | null;
@@ -632,6 +752,7 @@ function Card({
       ) : (
         <Talk act={act} flat={act?.places?.[graph.places[placeIx].id]} friends={0} what="of yours here (messages and minutes)" />
       )}
+      {isPerson && <Why imp={imp} node={node} tuning={tuning} circle={circle} ties={ties} name={name} onPick={onPick} onHow={onHow} />}
       <div class="pg-card-actions">
         <button class="btn small" onClick={() => go(r.profile)}>
           {isPerson ? 'Profile' : 'About'}
@@ -722,6 +843,150 @@ function Card({
           </div>
         </>
       )}
+    </aside>
+  );
+}
+
+/**
+ * Why someone is the size they are: each signal's part of their importance, as a bar against the most anyone has, with
+ * what it counted; their circle, and who they are most tied to.
+ */
+function Why({ imp, node, tuning, circle, ties, name, onPick, onHow }: { imp: Importance; node: number; tuning: P.GraphTuning; circle: Circle | null; ties: Ties; name: (g: number) => string; onPick: (g: number) => void; onHow: () => void }) {
+  const K = GRAPH_WEIGHT_KEYS.length;
+  const parts = GRAPH_WEIGHT_KEYS.map((k, i) => ({ k, v: imp.parts[node * K + i] })).filter((x) => x.v > 0.005);
+  const top = imp.top || 1;
+  const tied = useMemo(() => {
+    const out: [number, number][] = [];
+    for (let k = ties.start[node]; k < ties.start[node + 1]; k++) out.push([ties.to[k], ties.w[k]]);
+    return out.sort((a, b) => b[1] - a[1]).slice(0, 4);
+  }, [ties, node]);
+  const what: Record<P.GraphWeightKey, string> = {
+    talk: `${Math.round(imp.talk[node]).toLocaleString()} counted`,
+    places: '',
+    friends: `${imp.friends[node]}`,
+    listed: '',
+    networks: '',
+    circle: '',
+  };
+  return (
+    <div class="pg-why">
+      <h4>
+        Why this size <span class="pg-n">{Math.round(imp.score[node] * 100)}% of the most</span>
+      </h4>
+      {parts.length === 0 ? (
+        <div class="pg-card-sub">Nothing counted for them yet: no talk with you, and nothing shared but this place.</div>
+      ) : (
+        parts.map(({ k, v }) => (
+          <div class="pg-why-row" title={SIGNALS[k].about}>
+            <span class="pg-why-label">{SIGNALS[k].label}</span>
+            <span class="pg-why-bar">
+              <i style={{ width: `${Math.min(100, (v / top) * 100).toFixed(1)}%` }} />
+            </span>
+            <span class="pg-n">{what[k] || `+${Math.round((v / top) * 100)}`}</span>
+          </div>
+        ))
+      )}
+      {circle && <div class="pg-card-sub">In the circle {circle.name} ({circle.members.length.toLocaleString()} people)</div>}
+      {tied.length > 0 && (
+        <div class="pg-card-sub">
+          Most tied to{' '}
+          {tied.map(([g], i) => (
+            <>
+              {i > 0 && ', '}
+              <button class="link-btn" onClick={() => onPick(g)}>
+                {name(g)}
+              </button>
+            </>
+          ))}
+        </div>
+      )}
+      <button class="link-btn pg-why-how" onClick={onHow}>
+        How importance works{tuning.fitted ? ' (fitted to you)' : ''}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * How importance is worked out, and your weights for it: a slider per signal and for how fast talk fades, tried on the
+ * graph as they move; Fit to me finds the weights that best picked out, six months ago, who you went on to talk with.
+ * Save keeps them on the hub; Defaults forgets them.
+ */
+function Tuning({ tuning, saved, onTry, onSaved, onClose, fitNow }: { tuning: P.GraphTuning; saved: P.GraphTuning | null; onTry: (t: P.GraphTuning) => void; onSaved: (t: P.GraphTuning | null) => void; onClose: () => void; fitNow: () => Fit | null }) {
+  const [fitting, setFitting] = useState(false);
+  const [result, setResult] = useState<Fit | null | 'none'>(null);
+  const changed = JSON.stringify(tuning) !== JSON.stringify(saved ?? DEFAULT_TUNING);
+  const save = (t: P.GraphTuning | null) =>
+    void api<P.GraphTuning | null>('/api/graph/tuning', { method: 'PUT', body: { tuning: t } })
+      .then((v) => {
+        onSaved(v);
+        toast({ kind: 'info', title: t ? 'Importance tuned' : 'Importance back to the defaults', body: t ? 'Your weights are kept on the hub, for every device.' : 'The weights everyone starts with.' });
+      })
+      .catch((e) => toast({ kind: 'error', title: 'Could not save', body: (e as Error).message }));
+  const runFit = () => {
+    setFitting(true);
+    // Let the button show it is working before the fit holds the page for a moment.
+    setTimeout(() => {
+      const f = fitNow();
+      setFitting(false);
+      setResult(f ?? 'none');
+      if (f) onTry(f.tuning);
+    }, 30);
+  };
+  return (
+    <aside class="pg-card pg-tune" aria-label="How importance works">
+      <div class="pg-card-head">
+        <span class="pg-card-title">
+          <b class="pg-card-name">How importance works</b>
+        </span>
+        <button class="icon-btn small" aria-label="Close" onClick={onClose}>
+          <Icon name="x" size={14} />
+        </button>
+      </div>
+      <div class="pg-card-sub">
+        Each person's importance adds up these signals, each times its weight, and is shown against the most anyone has. It sizes them, and on rings puts them nearer you. Move a weight to try it on the
+        graph.
+      </div>
+      {result === 'none' && <div class="pg-card-sub">Too little talk in the last six months to fit to.</div>}
+      {result && result !== 'none' && (
+        <div class="pg-card-sub pg-tune-fit">
+          Of the {result.of} people you talked with most in the last six months, the weights you had put {result.before} of them in the top {result.of} six months before; these put {result.after}. Save to keep
+          them.
+        </div>
+      )}
+      {!result && tuning.fitted && (
+        <div class="pg-card-sub pg-tune-fit">
+          Fitted {new Date(tuning.fitted.at).toLocaleDateString()}: they found {Math.round(tuning.fitted.after * 100)}% of who you went on to talk with most, against {Math.round(tuning.fitted.before * 100)}% before.
+        </div>
+      )}
+      <div class="pg-card-actions">
+        <button class="btn small" disabled={fitting} onClick={runFit} title="Find the weights that best picked out, six months ago, who you went on to talk with most">
+          {fitting ? 'Fitting…' : 'Fit to me'}
+        </button>
+        <button class="btn small" disabled={!changed} onClick={() => save(tuning)}>
+          Save
+        </button>
+        <button class="btn small ghost" disabled={!saved} onClick={() => save(null)}>
+          Defaults
+        </button>
+      </div>
+      {GRAPH_WEIGHT_KEYS.map((k) => (
+        <label class="pg-tune-row">
+          <span class="pg-tune-head">
+            <b>{SIGNALS[k].label}</b>
+            <span class="pg-n">{tuning.weights[k].toFixed(2)}</span>
+          </span>
+          <input type="range" min={0} max={3} step={0.05} value={tuning.weights[k]} aria-label={`${SIGNALS[k].label} weight`} onInput={(e) => onTry({ ...tuning, weights: { ...tuning.weights, [k]: Number((e.target as HTMLInputElement).value) }, fitted: undefined })} />
+          <span class="pg-tune-about">{SIGNALS[k].about}</span>
+        </label>
+      ))}
+      <label class="pg-tune-row">
+        <span class="pg-tune-head">
+          <b>Talk fades</b>
+          <span class="pg-n">by two thirds every {tuning.fade} months</span>
+        </span>
+        <input type="range" min={3} max={60} step={1} value={tuning.fade} aria-label="Months for talk to fade" onInput={(e) => onTry({ ...tuning, fade: Number((e.target as HTMLInputElement).value), fitted: undefined })} />
+      </label>
     </aside>
   );
 }

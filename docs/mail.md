@@ -80,6 +80,13 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
   text. A reply's quote is one quiet line under the text ("··· Quoting Sam ×": ··· shows it, × leaves it out, "Quote
   Sam" puts it back); a forward carries the original's text and its files, each of which can be taken off. Ctrl+Enter
   sends; ✕, Esc or back closes it and keeps the draft.
+- **Out of the way, on a desktop** (`web/src/mail/dock.ts`, tested in `web/test/mail-dock.test.ts`): the header drags
+  the panel anywhere on screen, its top and left edges and the corner between resize it (at least 360 × 260, at most
+  the window), and − in the header minimizes it to a bar on the bottom edge with the subject; a click on the bar or ⌃
+  opens it again. Minimized, the draft goes on saving, and Escape neither closes nor discards. A double-click on the
+  header puts it back at the bottom right. Where it was, its size and whether it was minimized are kept per browser
+  (`localStorage` `dither.mail.dock`, measured from the window's right and bottom edges) and it is kept wholly on screen
+  as the window changes size. The phone's card does none of this.
 - **Recipients** are text until they are chips: Enter, a comma or leaving the box makes them chips, and what is not an
   address stays, marked. A chip opens back into text: Backspace at the start of the box opens the last one with its
   last letter gone (as if it had been text all along), a click opens any one whole; Enter puts it back in its place,

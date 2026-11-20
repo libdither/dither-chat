@@ -173,6 +173,21 @@ export interface MessagePreview {
   text: string;
 }
 
+/**
+ * A copy of the message a push is about, and where its conversation stands, for the device to show before it reaches
+ * the hub (docs/notifications.md, "A copy in the push"). Only what fits beside the notification under a push's 4 KB:
+ * `message` has no embeds or reactions, its attachments only when they fit, and its body is cut when it is long; `cut`
+ * says it is not whole (attachments or the body's end left out). `lastMessage.text` is empty when it would repeat
+ * `message.body`: the device fills it in. The hub's own data replaces it once the device has it.
+ */
+export interface PushArrived {
+  message: MessageView;
+  cut?: true;
+  lastMessage: MessagePreview | null;
+  lastMessageAt: number | null;
+  vantages: VantageView[];
+}
+
 export interface ConversationView {
   id: string;
   network: Network;
@@ -621,6 +636,35 @@ export interface GraphActivity {
    * it (1 a minute, since the hub kept track). Absent from an older hub.
    */
   places?: Record<string, number[]>;
+  /** Ties between people, neither of them you (closeness.ts, docs/people-graph.md "Ties and circles"). Absent from an older hub. */
+  ties?: GraphTies;
+}
+
+/**
+ * Ties between two people, neither of them you, keyed by graph person id: `ids` lists the people, and the rest index it.
+ *  - `links`: runs of [a, b, n, then n pairs of month and weight × 10], months ascending. A month's weight is replies
+ *    between them (1 each, either way), reactions to each other's messages (0.3 each), and turns one right after the
+ *    other within five minutes in a group chat of 60 people or fewer (0.5 each). Pairs under 2 in all are left out.
+ *  - `friends`: flat [a, b] pairs that a fetched profile says are friends (its friends in common with you).
+ */
+export interface GraphTies {
+  ids: string[];
+  links: number[];
+  friends: number[];
+}
+
+/** What the people graph's importance weighs, and how much (docs/people-graph.md "Who matters"). */
+export const GRAPH_WEIGHT_KEYS = ['talk', 'places', 'friends', 'listed', 'networks', 'circle'] as const;
+export type GraphWeightKey = (typeof GRAPH_WEIGHT_KEYS)[number];
+
+/** Your own tuning of importance, kept by the hub (GET/PUT /api/graph/tuning); null when never tuned. */
+export interface GraphTuning {
+  /** Each signal's weight, 0 to 3. */
+  weights: Record<GraphWeightKey, number>;
+  /** Talk fades by e every this many months (3 to 60). */
+  fade: number;
+  /** Set when the weights were fitted to what came next (Fit to me): when, and how well before and after. */
+  fitted?: { at: number; before: number; after: number };
 }
 /** Where a link came from: members seen (adversarial), a profile's mutual servers, a conversation's participants. */
 export const GRAPH_SOURCE = { members: 1, profile: 2, participant: 4 } as const;
@@ -1295,6 +1339,8 @@ export interface RequestView {
   warning: string | null;
   /** The network filed it as spam: it never notifies, and sits last. */
   spam?: boolean;
+  /** Someone else answers it (a room's moderators): shown in a group of its own, never counted or notified. */
+  forOthers?: boolean;
 }
 
 export interface SearchHit {

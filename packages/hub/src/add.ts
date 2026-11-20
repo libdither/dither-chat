@@ -68,6 +68,8 @@ export function addTables(db: Database) {
   if (!(db.query(`SELECT 1 FROM pragma_table_info('add_request') WHERE name = 'warning'`).get())) db.exec('ALTER TABLE add_request ADD COLUMN warning TEXT');
   // The network filed it as spam (RequestFact.spam): it never notifies.
   if (!(db.query(`SELECT 1 FROM pragma_table_info('add_request') WHERE name = 'spam'`).get())) db.exec('ALTER TABLE add_request ADD COLUMN spam INTEGER NOT NULL DEFAULT 0');
+  // Someone else answers it (RequestFact.forOthers): shown, never notified, no answers.
+  if (!(db.query(`SELECT 1 FROM pragma_table_info('add_request') WHERE name = 'for_others'`).get())) db.exec('ALTER TABLE add_request ADD COLUMN for_others INTEGER NOT NULL DEFAULT 0');
   // Each account's list: friends, requests it sent, blocks, contacts, follows (the relationships events). Replaced
   // by a `relationships` event, changed by a `relationship` one; 'stranger' is no row.
   db.exec(`CREATE TABLE IF NOT EXISTS person_link (
@@ -134,6 +136,7 @@ export function requestViews(store: Store): P.RequestView[] {
     answers: JSON.parse(r.answers),
     warning: r.warning ?? null,
     ...(r.spam ? { spam: true } : {}),
+    ...(r.for_others ? { forOthers: true } : {}),
   }));
 }
 
@@ -155,7 +158,7 @@ const heldBy = (db: Database, accountId: string, nativeId?: string): string[] =>
 /** A fact the adapter sent, if it is one: anything else is dropped. */
 function validRequest(f: unknown): f is P.RequestFact {
   const r = f as P.RequestFact;
-  return !!r && typeof r.nativeId === 'string' && !!r.nativeId && REQUEST_KINDS.includes(r.kind) && typeof r.ts === 'number' && Array.isArray(r.answers) && (r.from === undefined || typeof r.from === 'string') && (r.warning === undefined || typeof r.warning === 'string') && (r.spam === undefined || typeof r.spam === 'boolean') &&
+  return !!r && typeof r.nativeId === 'string' && !!r.nativeId && REQUEST_KINDS.includes(r.kind) && typeof r.ts === 'number' && Array.isArray(r.answers) && (r.from === undefined || typeof r.from === 'string') && (r.warning === undefined || typeof r.warning === 'string') && (r.spam === undefined || typeof r.spam === 'boolean') && (r.forOthers === undefined || typeof r.forOthers === 'boolean') &&
     (r.target === undefined || ((r.target.kind === 'space' || r.target.kind === 'conversation') && typeof r.target.nativeId === 'string'));
 }
 
@@ -164,11 +167,11 @@ function putRequest(store: Store, acc: AccountRow, f: P.RequestFact) {
   const targetId = t ? hubId(t.kind === 'space' ? 'spc' : 'cnv', acc.network, t.nativeId) : null;
   store.db
     .query(
-      `INSERT INTO add_request (id, account_id, native_id, kind, from_id, target_kind, target_native, target_id, target_name, target_members, ts, answers, warning, spam)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO add_request (id, account_id, native_id, kind, from_id, target_kind, target_native, target_id, target_name, target_members, ts, answers, warning, spam, for_others)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO UPDATE SET kind = excluded.kind, from_id = excluded.from_id, target_kind = excluded.target_kind, target_native = excluded.target_native,
          target_id = excluded.target_id, target_name = excluded.target_name, target_members = excluded.target_members, ts = excluded.ts, answers = excluded.answers,
-         warning = excluded.warning, spam = excluded.spam`,
+         warning = excluded.warning, spam = excluded.spam, for_others = excluded.for_others`,
     )
     .run(
       requestId(acc.id, f.nativeId),
@@ -182,9 +185,10 @@ function putRequest(store: Store, acc: AccountRow, f: P.RequestFact) {
       typeof t?.name === 'string' ? t.name.slice(0, 200) : null,
       typeof t?.members === 'number' ? t.members : null,
       f.ts,
-      JSON.stringify(f.answers.filter((a) => REQUEST_ANSWERS.includes(a))),
+      JSON.stringify(f.forOthers === true ? [] : f.answers.filter((a) => REQUEST_ANSWERS.includes(a))),
       f.warning?.trim() ? f.warning.trim().slice(0, 300) : null,
       f.spam === true ? 1 : 0,
+      f.forOthers === true ? 1 : 0,
     );
   return targetId;
 }

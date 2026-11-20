@@ -373,7 +373,7 @@ export function candidatePool(store: Store, accountId: string, network: P.Networ
       .query(`SELECT DISTINCT p.identity_id AS id FROM vantage v JOIN conversation c ON c.id = v.target_id AND c.shape = 'group' JOIN participant p ON p.conversation_id = c.id WHERE v.account_id = ? AND v.target_kind = 'conversation'`)
       .all(accountId) as { id: string }[])
       pool.add(r.id);
-  const asking = new Set((db.query('SELECT from_id FROM add_request WHERE account_id = ? AND from_id IS NOT NULL').all(accountId) as { from_id: string }[]).map((r) => r.from_id));
+  const asking = new Set((db.query('SELECT from_id FROM add_request WHERE account_id = ? AND from_id IS NOT NULL AND for_others = 0').all(accountId) as { from_id: string }[]).map((r) => r.from_id));
   const ids = [...pool].filter((i) => !inIt.has(i) && !asking.has(i) && i !== acc.self_identity && !store.isSelf(i));
   const rows = store.identitiesByIds(ids).filter((i) => i.network === network && !i.isBot);
   const name = (i: P.IdentityView) => (i.personId ? store.one<{ name: string }>('SELECT name FROM person WHERE id = ?', i.personId)?.name : null) ?? i.nickname ?? i.displayName ?? i.handle ?? i.nativeId;

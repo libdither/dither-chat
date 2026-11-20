@@ -116,6 +116,15 @@
         "test/**/*.ts"
       ]
     },
+    "packages/approvals": {
+      "entry": [
+        "test/**/*.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "test/**/*.ts"
+      ]
+    },
     "packages/deploy": {
       "entry": [
         "test/**/*.ts"
