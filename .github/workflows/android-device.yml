@@ -41,6 +41,9 @@ env:
   API_LEVEL: 35
   TARGET: default
   ARCH: x86_64
+  # The emulator's build, pinned: a snapshot only loads in the build that made it, and the runner action would
+  # otherwise install the latest, so a new release would leave the cached snapshot unusable (a cold boot each run).
+  EMULATOR_BUILD: 16970787
   # Software GPU, as on the machines it was written on (docs/android.md); no audio or cameras, which the tests fake.
   EMULATOR_OPTIONS: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -camera-back none -camera-front none
 
@@ -78,15 +81,18 @@ jobs:
         working-directory: apps/android
         run: ./gradlew --no-daemon :app:assembleDebug :uitest:assembleDebug :uitest:assembleDebugAndroidTest
 
-      # A booted emulator's snapshot, kept between runs: a boot from it takes seconds, a cold one a minute or two.
+      # A booted emulator's snapshot, kept between runs: a boot from it takes seconds, a cold one a minute or two. It is
+      # saved straight after it is made, before any test runs: saved at the end of the job, as actions/cache does by
+      # itself, it would hold that run's app, signed with that runner's debug key, and the next runner's install of its
+      # own build over it fails (INSTALL_FAILED_UPDATE_INCOMPATIBLE).
       - name: Emulator snapshot cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         id: avd-cache
         with:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-${{ env.API_LEVEL }}-${{ env.TARGET }}-${{ env.ARCH }}-v1
+          key: avd-${{ env.API_LEVEL }}-${{ env.TARGET }}-${{ env.ARCH }}-${{ env.EMULATOR_BUILD }}-v2
       - name: Make the emulator snapshot
         if: steps.avd-cache.outputs.cache-hit != 'true'
         uses: reactivecircus/android-emulator-runner@v2
@@ -94,11 +100,20 @@ jobs:
           api-level: ${{ env.API_LEVEL }}
           target: ${{ env.TARGET }}
           arch: ${{ env.ARCH }}
+          emulator-build: ${{ env.EMULATOR_BUILD }}
           ram-size: 4096M
           force-avd-creation: false
           emulator-options: ${{ env.EMULATOR_OPTIONS }}
           disable-animations: false
           script: echo "Snapshot made for the cache."
+      - name: Save the emulator snapshot
+        if: steps.avd-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: ${{ steps.avd-cache.outputs.cache-primary-key }}
 
       - name: The app on the emulator
         uses: reactivecircus/android-emulator-runner@v2
@@ -106,6 +121,7 @@ jobs:
           api-level: ${{ env.API_LEVEL }}
           target: ${{ env.TARGET }}
           arch: ${{ env.ARCH }}
+          emulator-build: ${{ env.EMULATOR_BUILD }}
           ram-size: 4096M
           force-avd-creation: false
           emulator-options: -no-snapshot-save ${{ env.EMULATOR_OPTIONS }}
