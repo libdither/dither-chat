@@ -296,3 +296,8 @@ export async function checkSigned(text: string, signature: string, keys: DeviceK
   if (expect.ask && askText(expect.ask) !== askText(s)) return { ok: false, statement: s, device, reason: 'signed for another request' };
   return { ok: true, statement: s, device };
 }
+
+/** The commit trailers that carry an approval (docs/approvals.md, "Approvals in commits"), a line each. */
+export function approvalTrailers(a: { statement: string; payload: string; signature: string; policy?: string }): string {
+  return [...(a.policy ? [`Approval-Policy: ${a.policy}`] : []), `Approval-Statement: ${b64u(a.statement)}`, `Approval-Payload: ${b64u(a.payload)}`, `Approval-Signature: ${a.signature}`].join('\n') + '\n';
+}

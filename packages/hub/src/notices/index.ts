@@ -101,6 +101,8 @@ interface NoticesOpts {
 }
 
 const digest = (s: string) => Buffer.from(new Bun.CryptoHasher('sha256').update(s).digest().subarray(0, 12)).toString('base64url');
+/** The account this hub's own approval requests are kept under (approvals.ts). */
+export const APPROVALS_ACCOUNT = 'approvals';
 /** A notice's id: per account, from the extractor's own id. */
 export const noticeId = (account: string, nativeId: string) => `ntc_${digest(`${account}\0${nativeId}`)}`;
 /** Its group: per account, its context (a repository, an app), else its source. */
@@ -216,6 +218,19 @@ export class Notices implements NoticeSink {
       else if (e.t === 'notify.read' && Array.isArray(e.ids)) this.run('a read', () => this.readThere(account, e.ids as unknown[]));
     }
     return true;
+  }
+
+  /**
+   * A notice this hub raises itself (approvals.ts: `account` is `approvals`): kept, triaged and notified as a live one,
+   * with nothing upstream to mark read.
+   */
+  local(account: string, notification: Record<string, unknown>) {
+    this.run('a local notice', () => this.arrived(account, notification));
+  }
+
+  /** One of this hub's own notices is done (answered, cancelled, expired): read, and its notification goes. */
+  localRead(account: string, nativeId: string) {
+    this.run('a local read', () => this.readThere(account, [nativeId]));
   }
 
   gap(account: string): boolean {
@@ -682,6 +697,8 @@ function viewOf(r: Row): P.NoticeView {
     actors: json(r.actors, []),
     at: r.at,
     unread: !!r.unread,
+    // One of this hub's approval requests (approvals.ts): the page answers it.
+    ...(r.account === APPROVALS_ACCOUNT ? { approval: r.native_id } : {}),
     ...(r.decision
       ? {
           triage: {

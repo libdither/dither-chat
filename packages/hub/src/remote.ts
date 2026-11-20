@@ -30,6 +30,7 @@ import { Supervisor } from './supervisor.ts';
 import type { MailSink } from './mail/backend.ts';
 import { ASK_LEVEL, ASK_REASON, type ManagerLink, publishManager } from './accounts-manager.ts';
 import type { NoticeSink } from './notices/index.ts';
+import type { ApprovalLink, Approvals, DeviceAnswer } from './approvals.ts';
 import { jobFailed } from './errors.ts';
 import { Stagger } from './stagger.ts';
 
@@ -159,6 +160,15 @@ export function noticesAccessOf(info: AppSelf | null | undefined): 'granted' | '
   return null;
 }
 
+/**
+ * The hub's request for approvals (docs/approvals.md): asking your paired devices what services ask you, through the
+ * manager's built-in account `approver`.
+ */
+const APPROVALS_REQUEST = { interface: 'approvals', level: 'write', accounts: '*', reason: 'Ask you, on your phone or laptop, to approve what services on your machines ask; get your signed answers back' } as const;
+/** The manager's built-in account that answers `approvals`. */
+const APPROVER_ACCOUNT = 'approver';
+const approvalsAsked = (info: AppSelf | null | undefined): boolean => !!info?.grants?.some((g) => g.interface === 'approvals') || (info?.requests ?? []).some((r) => r.interface === 'approvals');
+
 /** Ask for notices once, as mail. */
 export const noticesToAsk = (info: AppSelf | null | undefined): boolean => noticesAccessOf(info) === null;
 
@@ -235,6 +245,8 @@ export class RoutedSupervisor extends Supervisor implements ManagerLink {
   mail?: MailSink;
   /** Notices (notices/index.ts): the notifications interface's accounts and events; a chat account's still go to chat too. */
   notices?: NoticeSink;
+  /** Approvals (approvals.ts): the devices' answers come as the `approver` account's events. */
+  approvals?: Approvals;
   private mod: ClientModule | null = null;
   private mailTimer: Timer | null = null;
 
@@ -331,6 +343,12 @@ export class RoutedSupervisor extends Supervisor implements ManagerLink {
         () => ((info = { ...info, requests: [...(info?.requests ?? []), { interface: 'notifications', state: 'pending' }] }), console.log("dither-accounts: asked to read your accounts' notifications; approve it on the manager's page")),
         (e) => (console.error('dither-accounts: asking for notices failed:', e), jobFailed('dither-accounts: ask for notices', e)),
       );
+    // Registered before approvals (docs/approvals.md): ask for them once too.
+    if (known && info && this.approvals && !approvalsAsked(info) && mod.requestAccess)
+      await mod.requestAccess(url, this.saved!.app, this.saved!.token, [APPROVALS_REQUEST]).then(
+        () => console.log("dither-accounts: asked to send approval requests to your devices; approve it on the manager's page"),
+        (e) => (console.error('dither-accounts: asking for approvals failed:', e), jobFailed('dither-accounts: ask for approvals', e)),
+      );
     if (!known) {
       const reg = await mod.register(url, {
         name: 'dither-chat',
@@ -340,6 +358,7 @@ export class RoutedSupervisor extends Supervisor implements ManagerLink {
           { interface: 'accounts', level: 'manage', kinds: ASKED_KINDS, reason: 'Add, sign in and remove the chat and mail accounts you set up in the hub' },
           ...(this.mail ? [MAIL_REQUEST] : []),
           ...(this.notices ? [NOTICES_REQUEST] : []),
+          ...(this.approvals ? [APPROVALS_REQUEST] : []),
         ],
       });
       info = { requests: [...(this.mail ? [{ interface: 'mail', state: 'pending' }] : []), ...(this.notices ? [{ interface: 'notifications', state: 'pending' }] : [])] };
@@ -381,12 +400,18 @@ export class RoutedSupervisor extends Supervisor implements ManagerLink {
               console.error(`[${account}] notices events failed:`, e);
               jobFailed('notices: events', e, { account });
             }
+            if (account === APPROVER_ACCOUNT && this.approvals) {
+              for (const e of events) if (e.t === 'approvals.answer') void this.approvals.answered(e as unknown as DeviceAnswer).catch((err) => jobFailed('approvals: an answer', err));
+              return;
+            }
             if (!this.remote.has(account)) return;
             void this.apply(account, events as P.AdapterEvent[]);
           },
           { note: `adapter events (${events.length})` },
         ),
       onGap: (account, dropped) => {
+        // Answers lost in the gap are asked for again (approvals.answers).
+        if (account === APPROVER_ACCOUNT && this.approvals) return void this.approvals.connected();
         // A mail account catches up with mail.changes, and notices with notify.list; nothing restarts, unless it is
         // a chat account too.
         const notices = this.notices?.gap(account) ?? false;
@@ -398,6 +423,7 @@ export class RoutedSupervisor extends Supervisor implements ManagerLink {
       onConnection: (up) => {
         this.mail?.connection(up);
         this.notices?.connection(up);
+        if (up) void this.approvals?.connected();
         this.kindsCache = null;
         this.publish();
         if (up) return;
@@ -537,6 +563,18 @@ export class RoutedSupervisor extends Supervisor implements ManagerLink {
   callMail(account: string, op: string, input: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
     if (!this.client) return Promise.reject(Object.assign(new Error('dither-accounts is not reachable'), { code: 'offline' }));
     return this.client.callRaw(account, op, input, timeoutMs);
+  }
+
+  /** The manager's side of approvals (approvals.ts), through the built-in `approver` account. */
+  approvalLink(): ApprovalLink {
+    const call = <T>(op: string, input: Record<string, unknown>) => this.callMail(APPROVER_ACCOUNT, op, input, 30_000) as Promise<T>;
+    return {
+      devices: async () => (await call<{ devices: Awaited<ReturnType<ApprovalLink['devices']>> }>('approvals.devices', {})).devices ?? [],
+      ask: (i) => call('approvals.ask', i as unknown as Record<string, unknown>),
+      cancel: async (id, reason) => void (await call('approvals.cancel', { id, ...(reason ? { reason } : {}) })),
+      intent: (id, action, message) => call('approvals.intent', { id, action, ...(message ? { message } : {}) }),
+      answers: (ids) => call('approvals.answers', { ids }),
+    };
   }
 
   /** A notices call (notices/index.ts): the same path as mail's. */

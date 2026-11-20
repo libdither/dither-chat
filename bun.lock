@@ -53,6 +53,7 @@
     "packages/hub": {
       "name": "@dither-chat/hub",
       "dependencies": {
+        "@dither-chat/approvals": "workspace:*",
         "@dither-chat/protocol": "workspace:*",
       },
     },
