@@ -17,6 +17,7 @@ import { accountsMenu } from './menus.tsx';
 import { useEffect, useRef } from 'preact/hooks';
 import { NETWORK_META, POST_NETWORKS } from '@dither-chat/protocol';
 import { tipProps } from './Tooltip.tsx';
+import { placeKeys } from './PlaceKeys.tsx';
 import { arrangeDrop, arrangedFolderItems, arrangedRail, snapshot, sortOf, SORT_LABELS } from '../arrange.ts';
 import { OrganizeView, SortIcon, sortEntries, startOrganize, useFlip } from './Reorganize.tsx';
 import { startInbox } from '../inbox.ts';
@@ -27,12 +28,12 @@ import { openShelves, shelve, toggleShelf } from '../quiet.ts';
 import { offline, OfflineOrb, toggleOfflinePop } from './Offline.tsx';
 
 /** `track`: its key for button counts (clicks.ts), never the title, which may be a name. */
-function RailItem({ active, unread, badge, title, sub, onClick, children, dnd, menu, class: cls, track }: { active: boolean; unread?: boolean; badge?: number; title: string; sub?: string; onClick: (e: { currentTarget: HTMLElement }) => void; children: any; dnd?: Record<string, unknown>; menu?: () => MenuSpec | null; class?: string; track: string }) {
+function RailItem({ active, unread, badge, title, sub, keys, onClick, children, dnd, menu, class: cls, track }: { active: boolean; unread?: boolean; badge?: number; title: string; sub?: string; keys?: string; onClick: (e: { currentTarget: HTMLElement }) => void; children: any; dnd?: Record<string, unknown>; menu?: () => MenuSpec | null; class?: string; track: string }) {
   const ctx = useMenu(menu ?? (() => null));
   return (
     <div class={`rail-item ${active ? 'active' : ''} ${cls ?? ''}`} {...dnd}>
       <span class={`rail-pill ${active ? 'active' : unread ? 'unread' : ''}`} />
-      <button class="rail-btn" data-track={track} {...tipProps(title, sub)} onClick={onClick} {...(menu ? ctx : {})}>
+      <button class="rail-btn" data-track={track} {...tipProps(title, sub, undefined, keys)} onClick={onClick} {...(menu ? ctx : {})}>
         {children}
       </button>
       {!!badge && (
@@ -277,7 +278,7 @@ function RailMail({ active }: { active: boolean }) {
   if (s.access.state === 'off') return null;
   const unread = unreadInbox(s);
   return (
-    <RailItem active={active} unread={unread > 0} title="Mail" track="mail" sub={unread ? `${unread} unread ${unread === 1 ? 'thread' : 'threads'} in Inbox` : 'Your email, through dither-accounts'} onClick={() => go({ view: 'mail' })}>
+    <RailItem active={active} unread={unread > 0} title="Mail" track="mail" keys={placeKeys('mail')} sub={unread ? `${unread} unread ${unread === 1 ? 'thread' : 'threads'} in Inbox` : 'Your email, through dither-accounts'} onClick={() => go({ view: 'mail' })}>
       <span class="rail-mail" onPointerEnter={() => void preloadMail().catch(() => {})}>
         <Icon name="mail" size={21} />
         {unread > 0 && <span class="rail-mail-dot" />}
@@ -297,7 +298,7 @@ function RailFeed({ active }: { active: boolean }) {
   const said = feeds.reduce((n, c) => n + c.vantages.reduce((m, v) => m + (v.mentions ?? 0), 0), 0);
   const sub = said ? `${said} ${said === 1 ? 'answer' : 'answers'} to your posts` : 'Posts from your networks, and what came of yours';
   return (
-    <RailItem active={active} unread={said > 0} title="Feed" track="feed" sub={sub} onClick={() => go({ view: 'feed' })}>
+    <RailItem active={active} unread={said > 0} title="Feed" track="feed" keys={placeKeys('feed')} sub={sub} onClick={() => go({ view: 'feed' })}>
       <span class="rail-mail" onPointerEnter={() => void preloadFeed().catch(() => {})}>
         <Icon name="rss" size={20} />
         {said > 0 && <span class="rail-mail-dot" />}
@@ -313,7 +314,7 @@ function RailCalendar({ active }: { active: boolean }) {
   const waiting = link?.waiting ?? 0;
   const sub = link && !link.reachable ? 'The calendar is not answering' : waiting ? `${waiting} ${waiting === 1 ? 'plan' : 'plans'} from chats waiting` : 'Your calendar, beside the chats';
   return (
-    <RailItem active={active} unread={waiting > 0} title="Calendar" track="calendar" sub={sub} onClick={() => go({ view: 'calendar' })}>
+    <RailItem active={active} unread={waiting > 0} title="Calendar" track="calendar" keys={placeKeys('calendar')} sub={sub} onClick={() => go({ view: 'calendar' })}>
       <span class="rail-mail">
         <Icon name="calendar" size={21} />
         {waiting > 0 && <span class="rail-mail-dot" />}
@@ -351,6 +352,7 @@ export function Rail() {
       <RailItem
         active={inInbox}
         title="Inbox"
+        keys={placeKeys('inbox')}
         sub={off ? "Can't reach the hub" : undefined}
         track="inbox"
         badge={priorityCount}
@@ -362,7 +364,7 @@ export function Rail() {
       >
         <span class="rail-logo">{off ? <OfflineOrb size={26} /> : <DitherMark size={26} />}</span>
       </RailItem>
-      <RailItem active={is((r) => r.view === 'people')} title="People" track="people" sub="Every DM, merged per person" badge={peopleBadge} onClick={() => go({ view: 'people' })}>
+      <RailItem active={is((r) => r.view === 'people')} title="People" track="people" keys={placeKeys('people')} sub="Every DM, merged per person" badge={peopleBadge} onClick={() => go({ view: 'people' })}>
         <Icon name="users" size={22} />
       </RailItem>
       <RailMail active={r.view === 'mail'} />
