@@ -13,8 +13,9 @@ import { Empty } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { HeadOrb } from './Offline.tsx';
 import { accessLine } from './Notices.tsx';
+import { ApprovalCard } from './ApprovalCard.tsx';
 
-const SOURCES: Record<string, string> = { github: 'GitHub', telegram: 'Telegram' };
+const SOURCES: Record<string, string> = { github: 'GitHub', telegram: 'Telegram', approvals: 'Approval' };
 const sourceName = (s: string) => SOURCES[s] ?? s;
 const tierOf = (n: P.NoticeView) => n.triage?.decision ?? null;
 const tierLabel = (t: P.TriageDecision | null) => (!t ? 'Not decided yet' : t === 'silent' ? 'Muted' : TIER_LABEL[t]);
@@ -123,6 +124,7 @@ function NoticeRow({ n, open, focused, onToggle }: { n: P.NoticeView; open: bool
       </button>
       {open && (
         <div class="notice-more">
+          {n.approval && <ApprovalCard id={n.approval} />}
           {reasons.length > 1 && (
             <ul class="notice-reasons">
               {reasons.map((r) => (

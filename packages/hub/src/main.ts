@@ -12,7 +12,9 @@ import { FakeMailBackend, MailHub, ManagerMailBackend } from './mail/index.ts';
 import { mailPeople } from './mail/people.ts';
 import { mailAttention } from './mail/attention.ts';
 import { mailTriage, type MailNotice } from './mail/triage.ts';
-import { Notices, type NoticeDelivery } from './notices/index.ts';
+import { APPROVALS_ACCOUNT, Notices, type NoticeDelivery } from './notices/index.ts';
+import { Approvals } from './approvals.ts';
+import { DemoApprovalLink } from './approvals-demo.ts';
 import { FakeNoticeSource, seedDemoNotices } from './notices/fake.ts';
 import { clearRead } from './clears.ts';
 import { Delivery } from './delivery.ts';
@@ -450,6 +452,21 @@ const noticeLink = demoNotices ?? (sup instanceof RoutedSupervisor ? { call: (a:
 const notices = noticeLink ? new Notices({ store, triage, votes, link: noticeLink, deliver: (n) => deliverNotice(n), managerUrl: accountsPage, access: demoNotices ? 'granted' : 'unreachable' }) : null;
 if (notices) noticeChain = (id) => notices.chain(id);
 if (sup instanceof RoutedSupervisor && notices) sup.notices = notices;
+// Approvals (docs/approvals.md): what services ask you, answered on a paired device (through the manager's `approver`
+// account) or on the page; each request is a notice too, so it notifies. A demo world has invented devices.
+const demoApprovals = demo ? new DemoApprovalLink() : null;
+const approvals = new Approvals({
+  dataDir,
+  link: demoApprovals ?? (sup instanceof RoutedSupervisor ? sup.approvalLink() : null),
+  notices: notices
+    ? {
+        raise: (n) => notices.local(APPROVALS_ACCOUNT, { id: n.id, source: 'approvals', title: n.title, body: n.body.slice(0, 600) || null, url: null, reason: n.kind, context: n.asker, subject: null, actors: [], at: n.at, unread: true, urgency: n.urgency }),
+        read: (id) => notices.localRead(APPROVALS_ACCOUNT, id),
+      }
+    : null,
+});
+if (demoApprovals) demoApprovals.approvals = approvals;
+if (sup instanceof RoutedSupervisor) sup.approvals = approvals;
 // Mail threads and groups of notices: their lines, and when they were read (delivery.ts).
 delivery.other = {
   gather: (id, m) => mailTriaged?.gather(id, m) ?? notices?.gather(id, m) ?? null,
@@ -498,6 +515,7 @@ const server = new HubServer(store, sup, triage, {
   follow: followFromEnv(),
   mail,
   notices: notices ?? undefined,
+  approvals,
   calendar: calendars,
   // A reminder you set on a network (Discord's "Remind me") notifies like an alert; quiet hours hold it quiet (saved.ts).
   onSavedReminder: (n) => deliver(n.title, n.body, n.conversationId, n.messageId, ['A reminder you set on Discord'], server.replyFields(n.conversationId, n.messageId), 'held', inQuietHours(store.quietHours(), Date.now()) ? 'quiet' : 'push'),
