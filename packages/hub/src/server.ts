@@ -64,6 +64,7 @@ import { activityView, Closeness } from './closeness.ts';
 import { ProfileCollector, SameMatches } from './samepeople.ts';
 import type { MailHub } from './mail/index.ts';
 import type { Notices } from './notices/index.ts';
+import type { Approvals } from './approvals.ts';
 import { mailPeople } from './mail/people.ts';
 import { Adding, profileLinksOf, requestHeld, requestViews } from './add.ts';
 import { feedRefusalFor, isFeed } from './feed.ts';
@@ -169,6 +170,8 @@ interface ServerOpts {
   mail?: MailHub;
   /** Notices (notices/, docs/notices.md): /api/notices, the bootstrap's `notices`. */
   notices?: Notices;
+  /** Approvals (approvals.ts, docs/approvals.md): /api/approvals, which askers reach with their own tokens. */
+  approvals?: Approvals;
   /** dither-accounts for the accounts page (accounts-manager.ts): its kinds, asking, adding mail accounts, those without a chat account. */
   manager?: ManagerLink;
   /**
@@ -434,8 +437,9 @@ export class HubServer {
     store.contactNotesOut = (id, change) => this.people.pushContactNotes(id, change);
     this.matches = new SameMatches({ store, file: opts.matches?.file ?? null, jevUrl: opts.matches?.jevUrl ?? null, log: (l) => console.log(l), flush: () => this.flush() });
     this.closeness = new Closeness({ store, file: opts.matches?.file ?? null, log: (l) => console.log(l) });
+    // Its timer starts in start() with the others: a hub built and never started (a test's) runs nothing after its
+    // store closes.
     this.collector = new ProfileCollector({ store, people: this.people, online: (a) => sup.online(a), log: (l) => console.log(l) });
-    this.collector.start();
     this.adding = new Adding({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), liveView: (a) => !!sup.liveViewUrl?.(a) || !!store.account(a)?.live_view });
     this.threads = new Threads({
       store,
@@ -605,6 +609,7 @@ export class HubServer {
     this.sendExtras.later.start();
     this.timelines.start();
     this.follows.start();
+    this.collector.start();
     return this.server;
   }
 
@@ -834,6 +839,12 @@ export class HubServer {
     const https = overHttps(req, ip);
     if (path === '/api/login' || path === '/api/logout') return this.loginRoute(req, path, who, https);
     const me = this.whoIs(req, who);
+    // An asker's token (approvals.ts) reaches /api/approvals and nothing else, and is that asker even on a hub open
+    // without a login (a demo world).
+    if (this.opts.approvals && (path === '/api/approvals' || path.startsWith('/api/approvals/'))) {
+      const asker = this.opts.approvals.askers.of(bearerOf(req));
+      if (asker) return this.opts.approvals.route(req, url, asker);
+    }
     if (path === '/api/health' && !me) return Response.json({ ok: true, now: Date.now() }, { headers: { 'cache-control': 'no-store' } });
     if (!me) {
       const ticketed = (path.startsWith('/media/') || path.startsWith('/emoji/')) && (req.method === 'GET' || req.method === 'HEAD') && ticketGood(this.opts.secret, path, url.searchParams.get('ticket'));
@@ -931,6 +942,11 @@ export class HubServer {
       return link ? link.proxy(req, url) : calendarOff(path);
     }
     if (path.startsWith('/api/sessions')) return this.sessionsRoute(req, path, me);
+    // Approvals (approvals.ts): you, by your session (the page answers) or the service token.
+    if (path === '/api/approvals' || path.startsWith('/api/approvals/')) {
+      if (!this.opts.approvals) return Response.json({ error: 'approvals are off on this hub' }, { status: 404 });
+      return this.opts.approvals.route(req, url, { admin: true, page: me?.kind === 'session' || me?.kind === 'open' });
+    }
     // A link a program without the cookie may fetch for a few minutes (the desktop helper: docs/desktop.md).
     if (path === '/api/ticket' && req.method === 'POST') {
       const b = (await req.json().catch(() => ({}))) as { url?: unknown };
