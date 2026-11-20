@@ -333,8 +333,8 @@ describe('pacing', () => {
 describe('requests', () => {
   const ids = () => requestViews(store).map((r) => `${r.accountId}:${r.kind}`).sort();
 
-  test('the demo says what waits after connect: friends, a room invite, a message request', async () => {
-    expect(ids()).toEqual([`${MX}:invite`, `${SIG}:message`, `${MAIN}:friend`, `${ALT}:friend`, `${ALT}:friend`].sort());
+  test('the demo says what waits after connect: friends, a room invite, a message request, a knock for the moderators', async () => {
+    expect(ids()).toEqual([`${MX}:invite`, `${MX}:join`, `${SIG}:message`, `${MAIN}:friend`, `${ALT}:friend`, `${ALT}:friend`].sort());
     const list = (await call('GET', '/api/requests')).json.requests as P.RequestView[];
     const friend = list.find((r) => r.kind === 'friend' && r.accountId === MAIN)!;
     expect(friend.id).toStartWith('req_');
@@ -346,6 +346,8 @@ describe('requests', () => {
     expect(invite.target).toEqual({ kind: 'conversation', id: null, name: 'Nix Hackathon 2026', members: 23 });
     const msg = list.find((r) => r.kind === 'message')!;
     expect(msg.target!.id).toStartWith('cnv_');
+    const knock = list.find((r) => r.kind === 'join' && r.accountId === MX)!;
+    expect([knock.forOthers, knock.answers]).toEqual([true, []]);
   });
 
   test('one new, one gone, and a snapshot replaces only its own account', () => {
@@ -358,7 +360,7 @@ describe('requests', () => {
     store.ingest(acc, { t: 'requestGone', nativeId: 'w2' });
     expect(ids().filter((x) => x.startsWith(WA))).toEqual([`${WA}:join`]);
     store.ingest(acc, { t: 'requests', requests: [] });
-    expect(ids()).toEqual([`${MX}:invite`, `${SIG}:message`, `${MAIN}:friend`, `${ALT}:friend`, `${ALT}:friend`].sort());
+    expect(ids()).toEqual([`${MX}:invite`, `${MX}:join`, `${SIG}:message`, `${MAIN}:friend`, `${ALT}:friend`, `${ALT}:friend`].sort());
     const events = store.flush();
     expect(events.filter((e) => e.t === 'requests')).toHaveLength(1);
   });

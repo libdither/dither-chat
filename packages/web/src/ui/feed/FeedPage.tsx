@@ -18,7 +18,7 @@ import { Fragment, h, type ComponentChildren } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 // Their own paths, so the rules and the orders ride in this chunk, not the app's start.
-import { composeState, postRulesFor, splitThread, type PostRules } from '@dither-chat/protocol/compose';
+import { composeState, postFieldsProblem, postRulesFor, splitThread, timelineName, type PostRules } from '@dither-chat/protocol/compose';
 import { MIX_ORDERS, SHARE_WEIGHTS } from '@dither-chat/protocol/mix';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { api, db, go, loadTimeline, markRead, previousRoute, timelineKey, timelines } from '../../state.ts';
@@ -75,7 +75,8 @@ const ORDER: Record<P.MixOrder, { name: string; line: string; icon: string }> = 
   spread: { name: 'Spread out', line: 'Newest first, but no one person fills the list: each further post of theirs sinks three hours.', icon: 'users' },
 };
 const SHARE_WORDS = ['Off', 'Less', 'Even', 'More', 'Most'];
-const FEED_WORDS: Record<P.HomeFeed, string> = { following: 'Following', foryou: 'For you' };
+/** A timeline's name on its account's network: X's Following and For you, Reddit's New and Best, Substack's Inbox and Notes. */
+const lineName = (account: string | undefined, feed: P.HomeFeed) => timelineName(accountOf(account)?.network ?? 'x', feed);
 const mixIcon = (id: string) => (id === 'following' ? 'users' : id === 'discover' ? 'sparkles' : 'rss');
 const onOf = (m: P.FeedMixView) => m.sources.filter((x) => x.share > 0);
 /** A timeline's colour in a feed's tuning and its mark on a card. */
@@ -89,7 +90,7 @@ function titleOf(kit: Kit, s: Src): { title: string; sub: string; icon: string }
       return { title: s.mix?.name ?? 'Feed', sub: s.mix ? `${n} timeline${n === 1 ? '' : 's'} · ${ORDER[s.mix.order].name}` : '', icon: mixIcon(s.id) };
     }
     case 'line':
-      return { title: FEED_WORDS[s.feed], sub: `${who} alone, in ${NETWORK_META[accountOf(s.account)?.network ?? 'x'].name}'s own order`, icon: s.feed === 'following' ? 'users' : 'sparkles' };
+      return { title: lineName(s.account, s.feed), sub: `${who} alone, in ${NETWORK_META[accountOf(s.account)?.network ?? 'x'].name}'s own order`, icon: s.feed === 'following' ? 'users' : 'sparkles' };
     case 'activity':
       return { title: 'Activity', sub: who || 'Likes, replies, quotes and follows, from every account', icon: 'bell' };
     case 'mine':
@@ -513,7 +514,7 @@ function TunePanel({ mix, kit, entries, onClose }: { mix: P.FeedMixView; kit: Ki
                 <button class="feed-tune-who" title="This timeline alone" onClick={() => toFeed(keyOf(x))}>
                   <b>{handleOf(kit, a)}</b>
                   <small>
-                    {FEED_WORDS[x.feed]} · {NETWORK_META[a?.network ?? 'x'].name}
+                    {lineName(x.accountId, x.feed)} · {NETWORK_META[a?.network ?? 'x'].name}
                   </small>
                 </button>
                 <span class="feed-tune-share">{SHARE_WORDS[share]}</span>
@@ -523,7 +524,7 @@ function TunePanel({ mix, kit, entries, onClose }: { mix: P.FeedMixView; kit: Ki
                   max={SHARE_WEIGHTS.length - 1}
                   step={1}
                   value={share}
-                  aria-label={`How much of ${handleOf(kit, a)}'s ${FEED_WORDS[x.feed]}`}
+                  aria-label={`How much of ${handleOf(kit, a)}'s ${lineName(x.accountId, x.feed)}`}
                   aria-valuetext={SHARE_WORDS[share]}
                   onInput={(e) => setDragging({ ...dragging, [keyOf(x)]: Number((e.currentTarget as HTMLInputElement).value) })}
                   onChange={(e) => {
@@ -543,7 +544,7 @@ function TunePanel({ mix, kit, entries, onClose }: { mix: P.FeedMixView; kit: Ki
             <div class="feed-tune-bar" role="img" aria-label={`Where the ${total} posts showing now came from`}>
               {mix.sources.map((x, i) => {
                 const n = from.get(keyOf(x)) ?? 0;
-                return n ? <span style={{ flexGrow: n, background: hue(i) }} title={`${handleOf(kit, accountOf(x.accountId))} · ${FEED_WORDS[x.feed]}: ${n}`} /> : null;
+                return n ? <span style={{ flexGrow: n, background: hue(i) }} title={`${handleOf(kit, accountOf(x.accountId))} · ${lineName(x.accountId, x.feed)}: ${n}`} /> : null;
               })}
             </div>
             <p class="feed-tune-hint">Where the {total} posts showing now came from.</p>
@@ -740,7 +741,7 @@ function EntryCard({ e, kit, via, acted, onActed, answering, setAnswering }: {
     <span class="post-mark feed-via" title="The timeline it came through: likes and replies go as its account">
       <span class="feed-via-dot" style={{ background: hue(via.find((x) => x.accountId === e.seenBy[0].accountId && x.feed === e.seenBy[0].feed)?.i ?? 0) }} aria-hidden="true" />
       <span class="feed-via-text">
-        {handleOf(kit, accountOf(e.seenBy[0].accountId))} · {e.seenBy[0].feed === 'mine' ? 'Posts' : FEED_WORDS[e.seenBy[0].feed]}
+        {handleOf(kit, accountOf(e.seenBy[0].accountId))} · {e.seenBy[0].feed === 'mine' ? 'Posts' : lineName(e.seenBy[0].accountId, e.seenBy[0].feed)}
         {e.seenBy.length > 1 && ` (+${e.seenBy.length - 1})`}
       </span>
     </span>
@@ -831,7 +832,7 @@ function ActivityList({ account, kit }: { account?: string; kit: Kit }) {
       {loading && <kit.Loading inline label="Loading notifications…" />}
       {!loading && !units.length && (
         <kit.Empty icon="bell" title="Nothing yet">
-          {convs.length ? 'When people like, repost, reply to or quote your posts, mention you or follow you, it shows here.' : 'An account that has notifications (X) shows them here.'}
+          {convs.length ? 'When people like, answer or share your posts, mention you or follow you, it shows here.' : 'An account that has notifications (X, Mastodon, Reddit, Lemmy, Substack, Bluesky) shows them here.'}
         </kit.Empty>
       )}
     </Scroll>
@@ -926,6 +927,9 @@ function partsFor(text: string, rules: PostRules, split: boolean): { parts: stri
   return { parts: splitThread(text, rules), over: 0 };
 }
 
+/** A post's fields with what is blank left out. */
+const trimmed = (f: P.PostFields): P.PostFields => Object.fromEntries(Object.entries(f).filter(([, v]) => typeof v === 'string' && v.trim()).map(([k, v]) => [k, (v as string).trim()]));
+
 /** The local time a datetime-local field shows, for a ms epoch. */
 const localInput = (ms: number) => {
   const d = new Date(ms - new Date(ms).getTimezoneOffset() * 60_000);
@@ -943,6 +947,9 @@ function FeedComposer({ kit, fixed, sheet, onDone }: { kit: Kit; fixed?: string;
   const [as, setAs] = useState<string[]>(first);
   const [text, setText] = useState(() => read(TEXT) ?? '');
   const [own, setOwn] = useState<Record<string, string> | null>(null);
+  // A title and a place per account whose network has them (Reddit, Lemmy); one content warning for those that take one.
+  const [fields, setFields] = useState<Record<string, P.PostFields>>({});
+  const [warning, setWarning] = useState<string | null>(null);
   const [split, setSplit] = useState(true);
   const [gate, setGate] = useState<P.ReplyGate>('everyone');
   const [pics, setPics] = useState<Pic[]>([]);
@@ -958,7 +965,7 @@ function FeedComposer({ kit, fixed, sheet, onDone }: { kit: Kit; fixed?: string;
   const file = useRef<HTMLInputElement>(null);
   const area = useRef<HTMLTextAreaElement>(null);
   const box = useRef<HTMLDivElement>(null);
-  const blank = !text.trim() && !own && !pics.length && when === null;
+  const blank = !text.trim() && !own && !pics.length && when === null && !Object.values(fields).some((f) => f.title || f.place) && !warning;
   // Roomy opens it; snug or dense closes it to its line, when nothing is written in it.
   useEffect(() => void (roomy ? setOpen(true) : blank && !sheet && setOpen(false)), [roomy]);
   // Snug or dense: a click outside it with nothing written closes it to its line again. On the click, not the press:
@@ -982,6 +989,8 @@ function FeedComposer({ kit, fixed, sheet, onDone }: { kit: Kit; fixed?: string;
     setAs(ed.accounts.length ? ed.accounts : first());
     setText(ed.text);
     setOwn(ed.own && Object.keys(ed.own).length ? ed.own : null);
+    setFields(ed.fields ?? {});
+    setWarning(Object.values(ed.fields ?? {}).find((f) => f.warning)?.warning ?? null);
     setGate(ed.replies ?? 'everyone');
     setWhen(ed.scheduledAt ? localInput(ed.scheduledAt) : null);
     setDraftId(ed.id);
@@ -1011,9 +1020,15 @@ function FeedComposer({ kit, fixed, sheet, onDone }: { kit: Kit; fixed?: string;
   const canAddPic = !noMedia.length && pics.length < (video ? 1 : maxPics);
   const uploading = pics.some((p) => !p.id && !p.error);
   const offline = chosen.filter((a) => !a.online);
-  const empty = plans.some((p) => !p.parts.join('').trim()) && !pics.length;
+  // A titled post (Reddit, Lemmy) may have no words of its own.
+  const empty = plans.some((p) => !p.parts.join('').trim() && !(p.rules.title && fields[p.a.accountId]?.title?.trim())) && !pics.length;
   const over = plans.filter((p) => p.over > 0);
-  const sendable = chosen.length > 0 && !empty && !over.length && !uploading && !pics.some((p) => p.error) && !offline.length && !(pics.length && noMedia.length);
+  const fieldsOf = (a: P.FeedAccountView): P.PostFields => ({ ...fields[a.accountId], ...(warning?.trim() && rulesOf(a).warning ? { warning: warning.trim() } : {}) });
+  const fieldProblems = chosen.map((a) => ({ a, why: postFieldsProblem(fieldsOf(a), rulesOf(a), false, NETWORK_META[a.network].name) })).filter((x) => x.why);
+  const needsFields = chosen.filter((a) => rulesOf(a).title || rulesOf(a).place);
+  const takesWarning = chosen.some((a) => rulesOf(a).warning);
+  const setField = (id: string, k: keyof P.PostFields, v: string) => setFields((f) => ({ ...f, [id]: { ...f[id], [k]: v } }));
+  const sendable = chosen.length > 0 && !empty && !over.length && !fieldProblems.length && !uploading && !pics.some((p) => p.error) && !offline.length && !(pics.length && noMedia.length);
   const scheduleAt = when ? new Date(when).getTime() : null;
 
   const toggle = (id: string) => {
@@ -1028,6 +1043,8 @@ function FeedComposer({ kit, fixed, sheet, onDone }: { kit: Kit; fixed?: string;
     setPics([]);
     setWhen(null);
     setGate('everyone');
+    setFields({});
+    setWarning(null);
     setDraftId(fresh());
     setKey(fresh());
   };
@@ -1048,7 +1065,7 @@ function FeedComposer({ kit, fixed, sheet, onDone }: { kit: Kit; fixed?: string;
   const destinations = (only?: string[]): P.PublishDestination[] =>
     plans
       .filter((p) => !only || only.includes(p.a.accountId))
-      .map((p) => ({ accountId: p.a.accountId, text: p.parts[0] ?? '', ...(p.parts.length > 1 ? { parts: p.parts.slice(1) } : {}) }));
+      .map((p) => ({ accountId: p.a.accountId, text: p.parts[0] ?? '', ...(p.parts.length > 1 ? { parts: p.parts.slice(1) } : {}), ...trimmed(fieldsOf(p.a)) }));
   const post = async (only?: string[]) => {
     if (sending) return;
     setSending(true);
@@ -1099,6 +1116,7 @@ function FeedComposer({ kit, fixed, sheet, onDone }: { kit: Kit; fixed?: string;
         text,
         accounts: as,
         ...(own ? { own } : {}),
+        ...(chosen.some((a) => Object.keys(trimmed(fieldsOf(a))).length) ? { fields: Object.fromEntries(chosen.map((a) => [a.accountId, trimmed(fieldsOf(a))])) } : {}),
         ...(gate !== 'everyone' ? { replies: gate } : {}),
         ...(schedule && scheduleAt ? { scheduledAt: scheduleAt } : {}),
       });
@@ -1126,7 +1144,7 @@ function FeedComposer({ kit, fixed, sheet, onDone }: { kit: Kit; fixed?: string;
   );
   const send =
     when !== null ? (
-      <button class="btn primary compose-send" disabled={!chosen.length || empty || !!over.length || !scheduleAt || scheduleAt < Date.now()} onClick={() => void save(true)}>
+      <button class="btn primary compose-send" disabled={!chosen.length || empty || !!over.length || !!fieldProblems.length || !scheduleAt || scheduleAt < Date.now()} onClick={() => void save(true)}>
         Schedule
       </button>
     ) : (
@@ -1181,6 +1199,40 @@ function FeedComposer({ kit, fixed, sheet, onDone }: { kit: Kit; fixed?: string;
           )}
         </span>
       </div>
+      {/* Where a post goes and its title, on a network that has them: a subreddit or community, as text this round. */}
+      {needsFields.map((a) => {
+        const r = rulesOf(a);
+        const f = fields[a.accountId] ?? {};
+        return (
+          <div class="feed-fields" data-fields={a.network}>
+            {needsFields.length + chosen.length > 2 && <span class="feed-own-who">{handleOf(kit, a)}</span>}
+            {r.place && (
+              <input
+                class="feed-place"
+                value={f.place ?? ''}
+                placeholder={r.place.example}
+                aria-label={`${r.place.noun[0]!.toUpperCase()}${r.place.noun.slice(1)} on ${NETWORK_META[a.network].name}`}
+                onInput={(e) => setField(a.accountId, 'place', (e.currentTarget as HTMLInputElement).value)}
+                disabled={sending}
+              />
+            )}
+            {r.title && (
+              <input
+                class="feed-title"
+                value={f.title ?? ''}
+                placeholder="Title"
+                maxLength={r.title.maxLength + 50}
+                aria-label={`Title on ${NETWORK_META[a.network].name}`}
+                onInput={(e) => setField(a.accountId, 'title', (e.currentTarget as HTMLInputElement).value)}
+                disabled={sending}
+              />
+            )}
+          </div>
+        );
+      })}
+      {warning !== null && (
+        <input class="feed-warning" value={warning} placeholder="Content warning" aria-label="Content warning" onInput={(e) => setWarning((e.currentTarget as HTMLInputElement).value)} disabled={sending} />
+      )}
       {own ? (
         chosen.map((a) => (
           <label class="feed-own">
@@ -1232,6 +1284,11 @@ function FeedComposer({ kit, fixed, sheet, onDone }: { kit: Kit; fixed?: string;
           </button>
         </p>
       )}
+      {fieldProblems.length > 0 && (text.trim() || Object.values(fields).some((f) => f.title || f.place)) && (
+        <p class="feed-note" role="note" data-fields-problem>
+          <kit.Icon name="info" size={13} /> {fieldProblems.map((x) => x.why).join(' ')}
+        </p>
+      )}
       {offline.length > 0 && (
         <p class="feed-note error" role="note">
           <kit.Icon name="alert" size={13} /> {offline.map((a) => handleOf(kit, a)).join(', ')} {offline.length > 1 ? 'are' : 'is'} not connected.
@@ -1269,6 +1326,11 @@ function FeedComposer({ kit, fixed, sheet, onDone }: { kit: Kit; fixed?: string;
         <button class="icon-btn" disabled={!canAddPic || sending} title={noMedia.length ? `Pictures cannot be posted from ${noMedia.map((a) => handleOf(kit, a)).join(', ')} yet` : 'Add pictures or a video'} aria-label="Add pictures" onClick={() => file.current?.click()}>
           <kit.Icon name="image" size={18} />
         </button>
+        {takesWarning && (
+          <button class={`icon-btn feed-cw ${warning !== null ? 'on' : ''}`} aria-pressed={warning !== null} title={warning === null ? 'Add a content warning' : 'No content warning'} aria-label="Content warning" onClick={() => setWarning(warning === null ? '' : null)} disabled={sending}>
+            CW
+          </button>
+        )}
         {gates.length > 1 && (
           <select class="feed-gate" value={gate} aria-label="Who can reply" onChange={(e) => setGate((e.currentTarget as HTMLSelectElement).value as P.ReplyGate)}>
             {gates.map((g) => (

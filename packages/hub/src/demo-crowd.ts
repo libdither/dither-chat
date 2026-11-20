@@ -7,7 +7,8 @@
  *  - Dana: a Discord profile links her Telegram (claims);
  *  - Felix: one phone number on Signal and WhatsApp (contact);
  *  - Gus: a Matrix bridge's stand-in for his Discord account (bridge);
- *  - Moth: the same handle and the same picture on Discord and Matrix (name, picture);
+ *  - Moth: the same handle and the same picture on Discord, Matrix and Telegram (name, picture): three accounts, one
+ *    group to merge in full or in part;
  *  - Pippa: a Discord handle that is her Signal name, and the Discord chat went quiet as the Signal one began (name, handoff);
  *  - fernweh and Juno: the same picture, and nothing else (picture);
  *  - nightjar and Rosa: a similar picture and two friends in common (picture, friends);
@@ -140,6 +141,7 @@ export function crowd(self: Record<AccKey, P.IdentityFact>): Crowd {
     gusM: mx(`@discord_${snow('c-gus')}:bridge.example.org`, 'Gus (Discord)'),
     mothD: dc('moth', 'mothlight', 'Moth', PICS.moth),
     mothM: mx('@mothlight:matrix.org', 'moth', PICS.moth),
+    mothT: tg('moth', 'mothlight', 'moth', PICS.moth),
     pippaD: dc('pippa', 'pippa22', 'pip'),
     pippaS: sg('pippa', 'Pippa'),
     fernD: dc('fernweh', 'fernweh', 'fernweh', PICS.fern),
@@ -200,7 +202,7 @@ export function crowd(self: Record<AccKey, P.IdentityFact>): Crowd {
   group('dalt', snow('c-gdm-zine'), 'zine swap', [X.fernD, ...crowdOf.discord.slice(0, 3)], 4 * DAY);
   group('tg', 'chat:5810001', 'Hiking Thursdays', [X.danaT, K.tess.t, K.rhea.t, ...crowdOf.telegram.slice(0, 5)], 5 * H);
   group('tg', 'chat:5810002', 'Board games 🎲', [X.rosaT, K.wyatt.t, K.odette.t, K.vera.t, ...crowdOf.telegram.slice(5, 7)], DAY);
-  group('tg', 'chat:5810003', 'Flat 4B', [X.junoT, ...crowdOf.telegram.slice(7, 10)], 3 * DAY);
+  group('tg', 'chat:5810003', 'Flat 4B', [X.junoT, X.mothT, ...crowdOf.telegram.slice(7, 10)], 3 * DAY);
   group('sig', sgid('dinners'), 'Thursday dinners', [X.wesS, K.odette.s, K.pavel.s], 7 * H, { encrypted: true });
   group('sig', sgid('band'), 'Band practice', [X.wesS, K.umar.s, K.yara.s], 2 * DAY, { encrypted: true });
   group('sig', sgid('books'), 'Book swap', [X.felixS, X.pippaS, K.tess.s, ...crowdOf.signal.slice(0, 6)], 6 * DAY, { encrypted: true });

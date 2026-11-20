@@ -115,6 +115,8 @@ export function judgeRequest(store: Store, accountId: string, nativeId: string, 
   if (r.ts < now - REQUEST_NOTICE.recentMs || !r.from_id) return null;
   // Filed as spam by the network (Discord's spam folder): quieter still, never a notification, whoever it is.
   if (r.spam) return null;
+  // Someone else's to answer (a room's moderators): there to see, never a notification.
+  if (r.for_others) return null;
   const held = r.kind === 'message' && r.target_kind === 'conversation' ? r.target_id : null;
   if (!knownTo(db, accountId, r.from_id, held)) return null;
   if (silenced(store, accountId, r.network, r.person_id)) return null;

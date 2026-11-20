@@ -1,5 +1,5 @@
 /** Who a new direct conversation can be addressed to on each network. Shared so the composer and the hub agree. */
-import type { Network } from './ontology.ts';
+import { NETWORK_META, POSTS_ONLY, type Network } from './ontology.ts';
 
 const MXID = /^@[^\s:]+:[^\s:]+(:\d+)?$/;
 const ACI = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -50,6 +50,8 @@ export function directTarget(network: Network, input: string): { peer: string } 
   if (network === 't3') return { error: 'New T3 threads start in T3 Code for now; they show up here once they exist' };
   if (network === 'gmessages') return PHONE.test(phone(s)) ? { peer: phone(s) } : { error: 'A phone number needs its country code, like +15551234567' };
   // Their extractors read and answer chats but can't open a new one yet: start it in the account's live view.
+  // Networks of posts only: no chats to start (docs/feed.md).
+  if (POSTS_ONLY.includes(network)) return { error: `${NETWORK_META[network].name} accounts bring posts to the Feed page; they have no chats here` };
   if (network === 'messenger' || network === 'instagram' || network === 'x') {
     const name = network === 'x' ? 'X' : network === 'instagram' ? 'Instagram' : 'Messenger';
     return { error: `New ${name} chats start in the account's live view for now; they show up here once they exist` };

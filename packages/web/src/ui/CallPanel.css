@@ -15,7 +15,7 @@
 .call-person:disabled {
   cursor: default;
 }
-.call-people li.local-mute .call-avatar {
+.call-people li.local-mute .call-av {
   opacity: 0.5;
 }
 .call-tags {
@@ -89,4 +89,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Room above the first row for the speaking ring, which sits 4px outside each picture (CallAvatar.css). */
+.call-dock-body .call-people {
+  padding-top: 6px;
 }
