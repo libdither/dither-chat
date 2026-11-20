@@ -288,7 +288,7 @@ function AddressField(props: {
               e.preventDefault();
               if (e.ctrlKey || e.altKey || e.metaKey) onEdit({ list: list.slice(0, -1), text });
               else open(list.length - 1, true);
-            } else if (e.key === 'Escape' && hits.length) (e.stopPropagation(), setHits([]));
+            } else if (e.key === 'Escape' && hits.length) (e.preventDefault(), e.stopPropagation(), setHits([]));
           }}
           onBlur={() => text.trim() && commit()}
         />
@@ -626,7 +626,7 @@ export function Composer({ open }: { open: ComposeOpen }) {
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       // Minimized, it stays as it is: Escape neither closes nor throws away.
-      if (e.key === 'Escape' && !e.defaultPrevented && !minRef.current && box.current?.contains(document.activeElement)) closeRef.current();
+      if (e.key === 'Escape' && !e.defaultPrevented && !minRef.current && box.current?.contains(document.activeElement)) (e.preventDefault(), closeRef.current());
     };
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);

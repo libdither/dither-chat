@@ -87,7 +87,7 @@ function StoryViewer({ list, at, setAt, onSeen, onClose }: { list: P.StoryView[]
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if (document.activeElement === input.current) return;
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') (e.preventDefault(), onClose());
       else if (e.key === 'ArrowRight' && at < list.length - 1) setAt(at + 1);
       else if (e.key === 'ArrowLeft' && at > 0) setAt(at - 1);
     };

@@ -261,7 +261,7 @@ function OwnBio({ identity, about, account, label, onSaved }: { identity: P.Iden
           aria-invalid={left !== null && left < 0}
           onInput={(e) => setDraft((e.target as HTMLTextAreaElement).value)}
           onKeyDown={(e) => {
-            if (e.key === 'Escape') (e.stopPropagation(), setDraft(null), setError(null));
+            if (e.key === 'Escape') (e.preventDefault(), e.stopPropagation(), setDraft(null), setError(null));
             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing) (e.preventDefault(), void save());
           }}
           ref={(el) => void (el && document.activeElement !== el && !busy && el.focus())}

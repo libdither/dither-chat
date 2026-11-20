@@ -1,4 +1,4 @@
-# On a desktop: themes, panel widths, the title bar, and opening things elsewhere
+# On a desktop: themes, panel widths, the title bar, Escape and back, and opening things elsewhere
 
 ## Themes
 
@@ -81,6 +81,27 @@ What to expect when the app runs as a Chromium window on niri:
 
 None of this was tried on niri itself: the overlay can only be checked in an installed app with a visible
 window, which headless Chromium is not.
+
+## Escape and back
+
+Escape is the back button of a keyboard (packages/web/src/escape.ts). One Escape does one thing, the first of these:
+
+1. **Something took it.** A list of suggestions under a box closes, an edit or a reply is cancelled, a box is cleared, a
+   popover that is no layer (search's filter chips, the theme picker) closes. Each such handler calls
+   `preventDefault()`, and the Escape goes no further.
+2. **A layer is open**: a sheet, menu, dialog, picker, the viewer or Ctrl+K. The top one closes, as the back button
+   closes it (phone.ts `pushLayer`), and its history entry goes with it.
+3. **The page has a way back**: a conversation, a person, a profile, an account, the directory, requests, notices,
+   How it sorts, search and Settings go where their back button goes (pages.ts `wayBack`), or for search and Settings,
+   where you came from.
+
+A list (the inbox, People, a server, a folder, the calendar, the Feed, Mail) has nowhere to go and stays. Neither does a
+page while the cursor is in text being written (a message, a bio): a half-written message stays on screen. A one-line
+box is no such place, so Escape in search's box leaves search once its suggestions are closed.
+
+The browser's back and a phone's back do the same as 2 and 3. `bun scripts/verify-back.ts` checks every kind of page and
+layer both ways, on a computer and a phone, and `bun run check:escape` keeps it covering every route view and every
+component that opens a layer (docs/testing.md "Escape and back").
 
 ## Opening links and files in your own apps
 

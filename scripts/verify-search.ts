@@ -42,6 +42,8 @@ const box = `.search-pane .search-main input`;
 const clearBox = () => p.eval(`(() => { const i = document.querySelector('${box}'); i.focus(); i.select(); })()`).then(() => key('Backspace'));
 const rows = () => p.eval<string[]>(`[...document.querySelectorAll('.search-suggest-row')].map((r) => r.querySelector('.search-suggest-label').textContent)`);
 const hash = () => p.eval<string>(`decodeURIComponent(location.hash)`);
+/** Escape for the box's list only while it is open: with it closed, Escape leaves search (docs/desktop.md "Escape and back"). */
+const closeList = async () => void ((await rows()).length && (await key('Escape')));
 const recentSearches = () => p.eval<string[]>(`JSON.parse(localStorage.getItem('dc.recentSearches') ?? '[]')`);
 
 try {
@@ -76,7 +78,7 @@ try {
   check((await rows()).length === 0, 'Escape closes the list');
 
   await clearBox();
-  await key('Escape');
+  await closeList();
   await type('hackaton');
   await p.until(`document.querySelectorAll('.search-hit').length > 0`, 8000);
   check((await hash()).includes('q=hackaton'), 'results come as you type, with no Enter', await hash());
@@ -98,7 +100,7 @@ try {
 
   // From the box, Down walks into the results; Up from the first goes back.
   await p.eval(`document.querySelector('${box}').focus()`);
-  await key('Escape');
+  await closeList();
   await key('ArrowDown');
   const at = () => p.eval<number>(`[...document.querySelectorAll('.search-jump-row, .search-hit')].indexOf(document.activeElement)`);
   check((await at()) === 0, 'Down from the box reaches the first result');

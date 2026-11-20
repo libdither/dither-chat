@@ -61,7 +61,7 @@ export function NicknameInput({ i, onDone, class: cls = 'pair-nick-input' }: { i
       }}
       onKeyDown={(e) => {
         if (e.key === 'Enter') save((e.target as HTMLInputElement).value);
-        if (e.key === 'Escape') onDone();
+        if (e.key === 'Escape') (e.preventDefault(), onDone());
       }}
       onBlur={(e) => save((e.target as HTMLInputElement).value)}
     />

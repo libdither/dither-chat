@@ -19,7 +19,7 @@ export function Sheet({ onClose, label, class: cls, tall, children }: { onClose:
     onClose();
   });
   useEffect(() => {
-    const k = (e: KeyboardEvent) => e.key === 'Escape' && dismiss();
+    const k = (e: KeyboardEvent) => e.key === 'Escape' && (e.preventDefault(), dismiss());
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, []);

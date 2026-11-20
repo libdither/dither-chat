@@ -482,6 +482,7 @@ export function PairDropdown({ person, directs, focus, view: v, onPick }: { pers
     const away = (e: PointerEvent) => root.current && !root.current.contains(e.target as Node) && setOpen(false);
     const esc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      e.preventDefault();
       const inside = !!root.current?.contains(document.activeElement);
       setOpen(false);
       if (inside) btn.current?.focus();

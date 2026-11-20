@@ -50,7 +50,7 @@ function LinkCode({ account, at }: { account: P.AccountView; at: P.Attention }) 
   }, []);
   useEffect(() => {
     if (!full) return;
-    const k = (e: KeyboardEvent) => e.key === 'Escape' && setFull(false);
+    const k = (e: KeyboardEvent) => e.key === 'Escape' && (e.preventDefault(), setFull(false));
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, [full]);

@@ -7,12 +7,13 @@
 | Job | What it runs | The same locally |
 |---|---|---|
 | `changes` | decides what the pull request needs (scripts/ci-changes.ts) | `git diff --name-only origin/main... \| bun scripts/ci-changes.ts` |
-| `typecheck` | tsc on every project at once (scripts/typecheck.ts), then the checks below: test hygiene, stylesheets, import cycles, unused code | `bun run typecheck`, `bun run check:tests`, `bun run check:css`, `bun run check:cycles`, `bun run knip` |
+| `typecheck` | tsc on every project at once (scripts/typecheck.ts), then the checks below: test hygiene, stylesheets, import cycles, unused code, Escape handlers | `bun run typecheck`, `bun run check:tests`, `bun run check:css`, `bun run check:cycles`, `bun run knip`, `bun run check:escape` |
 | `test-hub` | the hub's tests but mail-load's, its files on 4 workers (`bun test --parallel=4`) | `bun scripts/test-all.ts hub -- --path-ignore-patterns=test/mail-load.test.ts` |
 | `test-hub-mail` | the hub's mail-load tests (60k messages; 20 to 30 s, as long as the rest of the hub's) | `bun scripts/test-all.ts hub -- test/mail-load.test.ts` |
 | `test-packages` | every other package's tests, all at once | `bun scripts/test-all.ts --except hub` |
 | `web` | the web app's vite build | `bun run web:build` |
 | `boot` | the built web app in Chrome against a demo hub (scripts/check-boot.ts), then the sign-in screen against a hub behind the login, clicked and typed into (scripts/verify-login.ts), then notifications closing once their chat is read, pushed to the service worker over DevTools (scripts/verify-clear.ts), then the start with the hub out of reach right after a deploy (scripts/check-offline.ts), then the hub out of reach and back, tapped and clicked (scripts/verify-offline.ts) | `bun run check:boot`, `bun run web:build && bun scripts/verify-login.ts`, `bun scripts/verify-clear.ts`, `bun run web:build && bun scripts/check-offline.ts --web packages/web/dist`, `bun run web:build && bun scripts/verify-offline.ts` |
+| `back` | back from every kind of page and layer, by Escape and the browser's back, on a computer and a phone, against a demo hub of its own (scripts/verify-back.ts, docs/desktop.md "Escape and back") | `bun run web:build && bun scripts/verify-back.ts` |
 | `perf` | load and chat switching on a tenth-size world, a warm-up and one run, its counts against a baseline (docs/perf.md) | `bun scripts/verify-perf.ts --ci` |
 | `check` | passes only when each job above passed, or was skipped because `changes` said so | |
 
@@ -192,6 +193,14 @@ The way out is a module of its own for what both sides need, that imports neithe
 The web build fails on a cycle between its output chunks too (vite.config.ts `chunkCycleGuard`): rolldown can make one
 from modules that have none, and a chunk that runs before one it imports from blanks the app at load, in a production
 build only.
+
+### Escape and back
+
+`bun run check:escape` (scripts/check-escape.ts, about a second) holds two things (docs/desktop.md "Escape and back"):
+every handler in the web app that acts on Escape calls `preventDefault()`, or says why not in a comment starting
+`escape:` just before it; and scripts/verify-back.ts covers every route view in routes.ts and every component that
+opens a layer (`pushLayer` or `useLayer`), or names it in its `UNCOVERED` with the reason. A new page or overlay
+fails the check until its way back is checked, or the reason it cannot be is written down.
 
 ### Unused code
 

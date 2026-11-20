@@ -132,7 +132,7 @@ function useDialog(onClose: () => void) {
   useLayer(dismiss);
   useSheetDrag(box, () => close.current(), phone.value);
   useEffect(() => {
-    const k = (e: KeyboardEvent) => e.key === 'Escape' && close.current();
+    const k = (e: KeyboardEvent) => e.key === 'Escape' && (e.preventDefault(), close.current());
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, []);

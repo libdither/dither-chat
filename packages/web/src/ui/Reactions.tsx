@@ -579,7 +579,7 @@ function Shell({ sheet, inline, box, onClose, label = 'Add a reaction', children
 function Popover({ box, onClose, class: cls, label, children }: { box: { current: HTMLDivElement | null }; onClose: () => void; class: string; label?: string; children: any }) {
   useLayer(onClose);
   useEffect(() => {
-    const h = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const h = (e: KeyboardEvent) => e.key === 'Escape' && (e.preventDefault(), onClose());
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
   }, []);

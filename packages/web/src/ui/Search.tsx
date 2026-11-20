@@ -141,7 +141,7 @@ function FilterBar({ q, set }: { q: string; set: (q: string) => void }) {
   useEffect(() => {
     if (!open) return;
     const away = (e: PointerEvent) => !bar.current?.contains(e.target as Node) && setOpen(null);
-    const esc = (e: KeyboardEvent) => e.key === 'Escape' && (e.stopPropagation(), setOpen(null));
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && (e.preventDefault(), e.stopPropagation(), setOpen(null));
     document.addEventListener('pointerdown', away, true);
     document.addEventListener('keydown', esc, true);
     return () => (document.removeEventListener('pointerdown', away, true), document.removeEventListener('keydown', esc, true));

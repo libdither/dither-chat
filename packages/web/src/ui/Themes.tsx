@@ -162,7 +162,7 @@ export function ThemeButton({ class: cls }: { class?: string }) {
   useEffect(() => {
     if (!open || phone.value) return;
     const down = (e: MouseEvent) => box.current && !box.current.contains(e.target as Node) && setOpen(false);
-    const key = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    const key = (e: KeyboardEvent) => e.key === 'Escape' && (e.preventDefault(), setOpen(false));
     document.addEventListener('mousedown', down);
     window.addEventListener('keydown', key);
     return () => {

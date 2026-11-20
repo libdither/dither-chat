@@ -76,6 +76,7 @@ function Floating({ anchor, onClose, children, label, role = 'dialog', hover }: 
     };
     const key = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      e.preventDefault();
       onClose();
       anchor?.focus();
     };

@@ -210,7 +210,7 @@ function Timeline({ v, self }: { v: P.ActivityChartView; self: boolean }) {
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       e.preventDefault();
       setSel({ bar: Math.max(0, Math.min(g.n - 1, cur + (e.key === 'ArrowLeft' ? -1 : 1))) });
-    } else if (e.key === 'Escape') setSel(null);
+    } else if (e.key === 'Escape' && sel) (e.preventDefault(), setSel(null));
   };
 
   return (

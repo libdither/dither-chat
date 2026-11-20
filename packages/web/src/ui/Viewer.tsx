@@ -83,7 +83,7 @@ function FileBox({ att }: { att: FileSource }) {
     };
   }, [att.infoUrl]);
   useEffect(() => {
-    const k = (e: KeyboardEvent) => e.key === 'Escape' && close();
+    const k = (e: KeyboardEvent) => e.key === 'Escape' && (e.preventDefault(), close());
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, []);
@@ -304,7 +304,7 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
 
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
+      if (e.key === 'Escape') (e.preventDefault(), close());
       if (e.key === 'ArrowLeft') page(-1);
       if (e.key === 'ArrowRight') page(1);
       const ms = reducedMotion() ? 0 : 160;
