@@ -2,7 +2,23 @@
  * A force layout for the people graph, in typed arrays so it keeps up at ~11k nodes: Barnes–Hut repulsion (heavier
  * nodes push harder), springs along links, and a pull toward the middle so loose parts stay near. Runs in a worker
  * (layout.worker.ts); one tick() is one step, and it cools to a stop.
+ *
+ * Rings (docs/people-graph.md "Rings"): each node is also held at a distance from you, nearer the more it matters, and
+ * a person in a circle within that circle's slice; the pull to the middle goes, and ties between people pull them
+ * together. The forces then only sort out who sits where within a ring and a slice.
  */
+
+/** Rings: where each node settles, as LayoutInput's rings. */
+export interface Rings {
+  /** Per node: its distance from you, or -1 for none. */
+  radius: Float32Array;
+  /** Per node: the middle of its circle's slice (radians), NaN for none; and the slice's half-width. */
+  angle: Float32Array;
+  spread: Float32Array;
+  /** Pairs of node indexes pulled together (ties between people), and each pull's strength, 0 to 1. */
+  springs: Uint32Array;
+  pull: Float32Array;
+}
 
 interface LayoutInput {
   n: number;
@@ -18,6 +34,7 @@ interface LayoutInput {
   mass?: Float32Array;
   /** Pairs of node indexes held close, not drawn: people who may be one person (Same person?), side by side. */
   ties?: Uint32Array;
+  rings?: Rings | null;
 }
 
 const THETA2 = 0.81;
@@ -33,6 +50,12 @@ const ALPHA_MIN = 0.004;
 const TIE = 16;
 const TIE_PULL = 2;
 const TIE_MOST = 0.45;
+/** Rings: how hard a node is held at its distance and in its slice, how much links (but yours) still pull, and ties. */
+const RING_PULL = 0.6;
+const SLICE_PULL = 0.25;
+const RING_LINKS = 0.15;
+const SPRING = 0.6;
+const SPRING_MOST = 0.3;
 
 export class Layout {
   readonly n: number;
@@ -49,6 +72,7 @@ export class Layout {
   private baseMass: Float32Array;
   private fixed: number;
   private ties: Uint32Array;
+  private rings: Rings | null;
   // The quadtree, rebuilt each tick: per cell its square, children, body (-1 none, -2 split), mass and its centre.
   private cap = 0;
   private x0 = new Float32Array(0);
@@ -90,6 +114,7 @@ export class Layout {
       this.rest[k] = Math.min(a, b) <= 1 ? LINK * 0.45 : LINK;
     }
     this.ties = inp.ties ?? new Uint32Array(0);
+    this.rings = inp.rings ?? null;
     this.base = this.rest.slice();
     this.baseMass = this.mass.slice();
     this.tune(inp.len, inp.mass);
@@ -109,6 +134,11 @@ export class Layout {
   /** Hold these pairs close instead (as LayoutInput's ties); heat() after. */
   setTies(ties: Uint32Array) {
     this.ties = ties;
+  }
+
+  /** Rings, or none (free); heat() after. */
+  setRings(rings: Rings | null) {
+    this.rings = rings;
   }
 
   /** Warm it up again, after the layout changed under it. */
@@ -152,15 +182,16 @@ export class Layout {
       vel[2 * i] += fx * alpha;
       vel[2 * i + 1] += fy * alpha;
     }
-    // Links.
+    // Links. On rings, yours pull no one: the rings say how near you each is.
     const e = this.edges;
     for (let k = 0; k < e.length / 2; k++) {
       const a = e[2 * k];
       const b = e[2 * k + 1];
+      if (this.rings && (a === this.fixed || b === this.fixed)) continue;
       let dx = pos[2 * b] + vel[2 * b] - pos[2 * a] - vel[2 * a];
       let dy = pos[2 * b + 1] + vel[2 * b + 1] - pos[2 * a + 1] - vel[2 * a + 1];
       const l = Math.sqrt(dx * dx + dy * dy) || 1e-3;
-      const f = ((l - this.rest[k]) / l) * alpha * this.strength[k];
+      const f = ((l - this.rest[k]) / l) * alpha * this.strength[k] * (this.rings ? RING_LINKS : 1);
       dx *= f;
       dy *= f;
       const bb = this.bias[k];
@@ -189,10 +220,13 @@ export class Layout {
         vel[2 * b + 1] -= dy;
       }
     }
-    // Toward the middle, then move.
+    const rg = this.rings;
+    if (rg) this.ringForces(rg, alpha);
+    // Toward the middle (unless on rings), then move.
+    const gravity = rg ? 0 : GRAVITY;
     for (let i = 0; i < n; i++) {
-      vel[2 * i] -= pos[2 * i] * GRAVITY * alpha;
-      vel[2 * i + 1] -= pos[2 * i + 1] * GRAVITY * alpha;
+      vel[2 * i] -= pos[2 * i] * gravity * alpha;
+      vel[2 * i + 1] -= pos[2 * i + 1] * gravity * alpha;
       vel[2 * i] *= DECAY;
       vel[2 * i + 1] *= DECAY;
       pos[2 * i] += vel[2 * i];
@@ -203,6 +237,49 @@ export class Layout {
       vel[2 * this.fixed] = vel[2 * this.fixed + 1] = 0;
     }
     this.alpha += (0 - this.alpha) * 0.02;
+  }
+
+  /** Each node toward its ring and into its slice; ties between people as springs. */
+  private ringForces(rg: Rings, alpha: number) {
+    const { n, pos, vel } = this;
+    for (let i = 0; i < n; i++) {
+      if (i === this.fixed) continue;
+      const x = pos[2 * i];
+      const y = pos[2 * i + 1];
+      const r = Math.sqrt(x * x + y * y) || 1e-3;
+      const want = rg.radius[i];
+      if (want >= 0) {
+        const f = ((want - r) / r) * RING_PULL * alpha;
+        vel[2 * i] += x * f;
+        vel[2 * i + 1] += y * f;
+      }
+      const a = rg.angle[i];
+      if (a === a) {
+        // How far round from the slice's middle, -π..π; past its edge pulled in hard, inside it only a little.
+        let d = a - Math.atan2(y, x);
+        d -= Math.round(d / (2 * Math.PI)) * 2 * Math.PI;
+        const hw = rg.spread[i];
+        const over = Math.abs(d) > hw ? d - Math.sign(d) * hw * 0.8 : d * 0.08;
+        const f = over * SLICE_PULL * alpha;
+        vel[2 * i] += (-y / r) * f * r;
+        vel[2 * i + 1] += (x / r) * f * r;
+      }
+    }
+    const s = rg.springs;
+    for (let k = 0; k < s.length; k += 2) {
+      const a = s[k];
+      const b = s[k + 1];
+      let dx = pos[2 * b] - pos[2 * a];
+      let dy = pos[2 * b + 1] - pos[2 * a + 1];
+      const l = Math.sqrt(dx * dx + dy * dy) || 1e-3;
+      const f = ((l - LINK) / l) * Math.min(SPRING_MOST, alpha * SPRING * rg.pull[k / 2]);
+      dx *= f / 2;
+      dy *= f / 2;
+      vel[2 * a] += dx;
+      vel[2 * a + 1] += dy;
+      vel[2 * b] -= dx;
+      vel[2 * b + 1] -= dy;
+    }
   }
 
   private grow(cap: number) {

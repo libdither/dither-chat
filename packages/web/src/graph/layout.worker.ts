@@ -1,7 +1,7 @@
 /** Runs the people graph's layout off the page's thread (layout.ts), sending positions back about once a frame. */
-import { Layout } from './layout.ts';
+import { Layout, type Rings } from './layout.ts';
 
-export type ToWorker = { t: 'start'; n: number; edges: Uint32Array; pos: Float32Array; fixed?: number; len?: Float32Array; mass?: Float32Array; ties?: Uint32Array } | { t: 'tune'; len: Float32Array; mass: Float32Array } | { t: 'ties'; ties: Uint32Array } | { t: 'heat' } | { t: 'stop' };
+export type ToWorker = { t: 'start'; n: number; edges: Uint32Array; pos: Float32Array; fixed?: number; len?: Float32Array; mass?: Float32Array; ties?: Uint32Array; rings?: Rings | null } | { t: 'rings'; rings: Rings | null } | { t: 'tune'; len: Float32Array; mass: Float32Array } | { t: 'ties'; ties: Uint32Array } | { t: 'heat' } | { t: 'stop' };
 export type FromWorker = { t: 'pos'; pos: Float32Array; done: boolean };
 
 const scope = self as unknown as { onmessage: ((e: MessageEvent<ToWorker>) => void) | null; postMessage(m: FromWorker, t: Transferable[]): void };
@@ -21,8 +21,11 @@ function run() {
 
 scope.onmessage = (e) => {
   const m = e.data;
-  if (m.t === 'start') layout = new Layout({ n: m.n, edges: m.edges, pos: m.pos, fixed: m.fixed, len: m.len, mass: m.mass, ties: m.ties });
-  else if (m.t === 'ties') {
+  if (m.t === 'start') layout = new Layout({ n: m.n, edges: m.edges, pos: m.pos, fixed: m.fixed, len: m.len, mass: m.mass, ties: m.ties, rings: m.rings });
+  else if (m.t === 'rings') {
+    layout?.setRings(m.rings);
+    layout?.heat(0.6);
+  } else if (m.t === 'ties') {
     layout?.setTies(m.ties);
     layout?.heat(0.3);
   } else if (m.t === 'tune') {

@@ -103,7 +103,10 @@ A push whose data has a `call` (`{id, tag, accountId, canAnswer, canDecline}`, f
   posts "Call not declined").
 - **Answer** opens the app on the chat with the call (`MainActivity`, `EXTRA_ANSWER`), which hands the page
   `{t: 'call.answer', call, conversationId, accountId}` once it says hello (warm or cold). The page joins the call from
-  that account in the device's call mode (`src/android.ts`), waiting for its data on a cold start.
+  that account in the device's call mode (`src/android.ts`), waiting for its data on a cold start, and joins once
+  (`onceListed` in `src/versions.ts`). Until 2026-11-20 the wait ran again on every change the join itself made to the
+  call: a cold Answer joined a hundred times, each asking for the microphone and opening a socket, and the last socket
+  could stay connecting, leaving the call at *Connecting* while the network still rang.
 
 ## Crashes
 
@@ -247,10 +250,11 @@ one bundle in the Silent section in the order of their sort keys, the summary li
 replacing the last; a chat moving between the list and a conversation notification, one row each time; a clear; a
 swipe of one row and of the whole bundle; every mark; a reply appended, and one refused.
 
-**Trying it without a hub's push.** A debug build (`src/debug`, never in a release) has a receiver that shows a
-payload from adb: `adb shell am broadcast -a org.libdither.chat.DEBUG_PUSH -n org.libdither.chat/.DebugPushReceiver
---es b64 <the payload's JSON in base64>`. `--es hub <origin>` sets the hub (for Reply and the marks), `--es cancel
-<tag>` cancels a notification.
+**Trying it without a hub's push.** A debug build (`src/debug`, never in a release) has a receiver that takes a
+payload from adb as if it had come through UnifiedPush (`Push.arrived`: its notification, its copy kept, a test
+confirmed): `adb shell am broadcast --include-stopped-packages -a org.libdither.chat.DEBUG_PUSH -n
+org.libdither.chat.verify/org.libdither.chat.DebugPushReceiver --es b64 <the payload's JSON in base64>`. `--es hub
+<origin>` sets the hub (for Reply and the marks), `--es cancel <tag>` cancels a notification.
 
 ### Which servers the hub sends to
 
@@ -350,7 +354,8 @@ These live in the web app, so the PWA gets them too.
    unread counts and last messages) and the inbox, and beside it the newest 40 messages of the 60 conversations opened
    or fetched ahead most recently, a record each with their authors, reactors and quoted messages
    ([sync.md](sync.md#kept-pages), [perf.md](perf.md#fetching-ahead-and-kept-pages-2026-11-11)).
-   It is read before the network and painted at once. It also keeps its place in the hub's change journal, so the app then asks only for what changed since
+   It is read before the network and painted at once, with what pushes brought since laid over it (the app keeps
+   each push's copy of its message, `Arrived.kt`; [notifications.md](notifications.md#a-copy-in-the-push)). It also keeps its place in the hub's change journal, so the app then asks only for what changed since
    ([sync.md](sync.md)); a full bootstrap replaces it only when the hub cannot say. A kept conversation catches up
    the same way when opened. It is saved when the bootstrap arrives (the hub's own text, without
    serializing it again; at once when the device keeps none, so a device opened once can start offline) and again
@@ -506,6 +511,27 @@ For debugging, `./gradlew assembleDebug` builds an 8.8 MB debuggable APK, as its
 `chrome://inspect`, and it logs the page's console under the tag `DitherWeb`. Both builds log start-up timings under
 `DitherStartup`, and the activity reports itself fully drawn when content shows (`ActivityTaskManager: Fully drawn`).
 
+## Testing on an emulator
+
+`scripts/verify-android.ts` runs every emulator test of the app, as CI's `android-device` workflow does
+([testing.md](testing.md#android-on-an-emulator)): the calls test below against a demo hub of its own (its rings
+through the emulator's UnifiedPush distributor, such as ntfy, or through the test's own where it has none), then
+`scripts/verify-android-arrived.ts`, a push's copy of its message (docs/notifications.md, "A copy in the push"): kept
+with the app closed and the hub stopped, shown by an offline start from the notification's intent, a second push shown
+by the open page, and both gone with the app's records once the hub is back.
+
+```sh
+emulator -avd <avd> -port 5584 -read-only -no-snapshot -no-window -no-audio \
+  -no-boot-anim -gpu swiftshader_indirect          # wait for `getprop sys.boot_completed`
+bun run web:build
+(cd apps/android && ./gradlew :app:assembleDebug :uitest:assembleDebug :uitest:assembleDebugAndroidTest :testpush:assembleDebug)
+bun scripts/verify-android.ts --serial emulator-5584 [--shots <dir>]
+```
+
+The debug build is its own package (`org.libdither.chat.verify`), so a release build on the same emulator is never
+touched; each test clears its data first. The app's own logic that needs no device has unit tests on the JVM:
+`./gradlew :app:testDebugUnitTest`.
+
 ## Testing calls
 
 `scripts/verify-android-call.ts` runs calls in the app itself on an emulator: its WebView, its call service and
@@ -528,15 +554,24 @@ and the far end's call; that a refused microphone still gives a live call, liste
 
 The prompts are answered without tapping: uiautomator cannot read a screen while the call's page animates (it waits
 for an idle screen that never comes). A prompt is seen in `dumpsys activity` (`GrantPermissionsActivity` on top), what
-it asks for is the app's own `asking for` log line (tag `DitherStartup`), "Allow" is `pm grant` while the prompt is up
-and then Back, and "Don't allow" is Back alone. `--account` and `--conversation` point it at another account that
-makes calls, on a hub with its own far end (a lab hub), so the same run covers another network's call body.
+it asks for is the app's own `asking for` log line (tag `DitherStartup`), "Allow" is `pm grant` while the prompt is up,
+which closes it by itself, and "Don't allow" is Back. Never Back after a grant: on a slow machine it lands after the
+prompt has gone, on the app, whose page goes back a page and reloads, ending the call. `--account` and
+`--conversation` point it at another account that makes calls, on a hub with its own far end (a lab hub), so the same
+run covers another network's call body.
 
 Then the rings: the demo account is rung (the demo's `ring` action), and the run checks the ring notification
 (channel, call style, Answer and Decline, insistent, full-screen) and presses its buttons: Decline is declined on the
 network and the ring goes; a ring the caller gives up goes as missed; Answer with the app in the background brings it
 up in the call; and Answer after Android killed the app (as for memory) starts it and joins. In those calls it also
 presses the call notification's Mute and Hang up and checks the far end sees them. `--only calls|rings` runs one half.
+
+Rings come through real push. An emulator with a distributor installed (ntfy, signed in to its server) uses it. One
+without gets `apps/android/testpush` (`./gradlew :testpush:assembleDebug`; `--testpush <apk>`), a distributor with no
+server of its own that the run installs and takes off again: it answers the app's connector as ntfy's app would, and
+its server is in the test (`scripts/android-testpush.ts`), allowed on the hub from the app's page as a typed server
+on a private address would be. The hub's encrypted request goes to the device over adb, and the connector decrypts
+it, so only ntfy and its server are stood in for.
 
 The notification's buttons are pressed through `apps/android/uitest`, a small test app that drives the shade with
 UiAutomator with its idle wait turned off (`Shade#press`, run with `am instrument`): uiautomator's own `dump` waits

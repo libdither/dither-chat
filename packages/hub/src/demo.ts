@@ -19,6 +19,7 @@ import type { AccountRow, Store } from './store.ts';
 import { DEMO_SELF_CAPS, DemoSelf } from './demoself.ts';
 import type { InprocAdapter } from './supervisor.ts';
 import { DEMO_CALL_CAPS, DemoRings, demoCallRoom } from './democalls.ts';
+import { DemoStage, demoStageSeed } from './demostage.ts';
 import { DEMO_X2_ACCOUNT, DEMO_X_ACCOUNT, DemoX } from './demo-x.ts';
 import { DEMO_POST_ACCOUNTS, DemoPosts } from './demo-posts.ts';
 import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
@@ -838,6 +839,15 @@ const CONVS: DemoConv[] = [
     unread: 1,
   },
   { acc: ['dmain', 'dalt'], fact: dch(['dmain', 'dalt'], 'dither-hangout', 'hangout', 'dither-voice', 0, { variant: 'voice' }), msgs: [] },
+  // A stage (demostage.ts): Lev and two more speaking, an audience, hands up; the main account moderates it.
+  {
+    acc: ['dmain', 'dalt'],
+    fact: dch(['dmain', 'dalt'], 'dither-stage', 'office-hours', 'dither-voice', 1, { variant: 'stage' }),
+    msgs: [
+      [3 * H, D.lev, 'office hours start in a bit: bring routing questions'],
+      [3 * H - 2, D.quinn, 'slides are pinned in #general'],
+    ],
+  },
 
   // ---------------- Discord: Hollow Knight Speedrunning (alt only)
   {
@@ -1722,7 +1732,12 @@ class DemoAdd {
         { nativeId: `friend-${D.drops.nativeId}`, kind: 'friend', from: D.drops.nativeId, ts: now - 40 * 60_000, answers: ['accept', 'decline', 'block'], warning: 'Discord filed this request as possible spam' },
         { nativeId: `friend-${D.wren.nativeId}`, kind: 'friend', from: D.wren.nativeId, ts: now - 5 * 3_600_000, answers: ['accept', 'decline', 'block'], warning: 'Discord says you share no server or friend with them' },
       ];
-    if (this.key === 'mx') return [{ nativeId: room('nix-hack', 'matrix.org'), kind: 'invite', from: M.jules.nativeId, target: { kind: 'conversation', nativeId: room('nix-hack', 'matrix.org'), name: 'Nix Hackathon 2026', members: 23 }, ts: now - 26 * 3_600_000, answers: ['accept', 'decline'] }];
+    if (this.key === 'mx')
+      return [
+        { nativeId: room('nix-hack', 'matrix.org'), kind: 'invite', from: M.jules.nativeId, target: { kind: 'conversation', nativeId: room('nix-hack', 'matrix.org'), name: 'Nix Hackathon 2026', members: 23 }, ts: now - 26 * 3_600_000, answers: ['accept', 'decline'] },
+        // A knock on a room you are in but don't moderate: its moderators answer it.
+        { nativeId: `knock|${room('rust-mx', 'matrix.org')}|${M.mira.nativeId}`, kind: 'join', from: M.mira.nativeId, target: { kind: 'conversation', nativeId: room('rust-mx', 'matrix.org'), name: 'Rust', members: 412 }, ts: now - 2 * 3_600_000, answers: [], forOthers: true },
+      ];
     if (this.key === 'sig') return [{ nativeId: `msgreq-${S.jamie.nativeId}`, kind: 'message', from: S.jamie.nativeId, target: { kind: 'conversation', nativeId: sdm(S.jamie).nativeId }, ts: now - 95 * 60_000, answers: ['accept', 'decline', 'block'] }];
     return [];
   }
@@ -1929,6 +1944,9 @@ function networkMessages(c: DemoConv, network: P.Network, ago: (min: number) => 
   });
   return [...archive, ...seeded].sort((a, b) => a.ts - b.ts);
 }
+
+/** The libdither server's stage (demostage.ts): one per hub process, as the call room is; the main account moderates it. */
+const demoStage = new DemoStage(demoStageSeed(ch('dither-stage'), [D.zyan.nativeId], D.lev.nativeId));
 
 /** A big server's members beyond the few the client saw: 270 made-up people. */
 const WALKABLE: P.IdentityFact[] = MEMBER_FIRST.flatMap((f, i) => MEMBER_LAST.map((l, j) => ({ nativeId: snow(`member-${i}-${j}`), displayName: `${f}${l}`, handle: `${f}${l}` })));
@@ -2907,14 +2925,32 @@ class DemoAdapter implements InprocAdapter {
           this.emit({ t: 'reply', id: cmd.id, ok: false, error: 'Calls are on the demo Discord accounts.' });
           return;
         }
+        // A stage's roles are the demo stage's (demostage.ts); the room carries the audio as for any call.
+        if (cmd.op === 'stage') {
+          const no = demoStage.has(cmd.call) ? demoStage.action(cmd.call, cmd.action, cmd.user) : 'This call is not a stage.';
+          if (no) this.emit({ t: 'reply', id: cmd.id, ok: false, error: no });
+          else reply({ ok: true });
+          return;
+        }
+        let toHub = (ev: P.AdapterEvent) => this.emit(ev);
+        if (cmd.op === 'join' && cmd.conversation === demoStage.seed.channel) {
+          for (const i of demoStage.identities) this.emit({ t: 'identity', identity: i });
+          toHub = demoStage.join(cmd.call, this.self.nativeId, toHub);
+        }
         // Joining a chat that rings you answers its ring; leaving it ends that call.
         if (cmd.op === 'join') this.rings.answered(cmd.call, cmd.conversation);
-        else if (cmd.op === 'leave') this.rings.left(cmd.call);
+        else if (cmd.op === 'leave') {
+          this.rings.left(cmd.call);
+          demoStage.leave(cmd.call);
+        }
         demoCallRoom
-          .command((ev) => this.emit(ev), { self: this.self.nativeId, bot: { id: D.lev.nativeId, name: D.lev.displayName ?? 'Lev' } }, cmd)
+          .command(toHub, { self: this.self.nativeId, bot: { id: D.lev.nativeId, name: D.lev.displayName ?? 'Lev' } }, cmd)
           .then(
             (result) => reply(result),
-            (e) => this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message }),
+            (e) => {
+              if (cmd.op === 'join') demoStage.leave(cmd.call);
+              this.emit({ t: 'reply', id: cmd.id, ok: false, error: (e as Error).message });
+            },
           );
         return;
       case 'send': {

@@ -6,24 +6,18 @@
  * topic and your own hand, and the soundboard where the account may play sounds.
  */
 import type * as P from '@dither-chat/protocol';
-import { modVerb, NETWORK_META, VOLUME_MAX } from '@dither-chat/protocol';
+import { modVerb, NETWORK_META, stageMoveFits, VOLUME_MAX } from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
-import { type ActiveCall, askSounds, callCan, callNetwork, isCallSelf, playSound, setPersonVolume, stageAction, watchStream } from '../call.ts';
+import { type ActiveCall, askSounds, callCan, callName as name, callNetwork, callRole, callStageCan, isCallSelf, playSound, roomOnPage, setPersonVolume, stageAction, watchStream } from '../call.ts';
 import { convTitle } from '../model.ts';
-import { api, db, go, isSelfIdentity, toast } from '../state.ts';
-import { Avatar } from './bits.tsx';
+import { api, db, go, toast } from '../state.ts';
+import { CallAvatar, callMarks } from './CallAvatar.tsx';
+import { CallControls } from './CallControls.tsx';
 import { groups, type MenuEntry, openMenu } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
 import './CallPanel.css';
 
 const STAGE_WORDS: Record<P.StageRole, string> = { speaker: 'Speaking', audience: 'Listening', hand: 'Asking to speak', invited: 'Invited to speak' };
-
-export function name(identityId: string): string {
-  const i = db.identities.get(identityId);
-  // Another of the owner's own accounts is named as that account, not "You".
-  const person = i?.personId && !isSelfIdentity(identityId) ? db.persons.get(i.personId) : null;
-  return person?.name ?? i?.displayName ?? i?.handle ?? 'Someone';
-}
 
 function kb(n: number) {
   return n > 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.round(n / 1e3)} kB`;
@@ -70,7 +64,8 @@ function personMenu(call: ActiveCall, p: P.CallParticipant, about: P.AboutView |
   const who = name(p.id);
   const volume = p.volume ?? 100;
   const mod = about?.moderation;
-  const stageMod = !!call.stage?.moderator && callCan('stage');
+  const canOn = callStageCan(call).canOn;
+  const role = p.stage ?? 'audience';
   const moves = mod?.voiceMove?.can ? moveTargets(call.conversationId) : [];
   return groups(
     callCan('callVolume')
@@ -94,8 +89,8 @@ function personMenu(call: ActiveCall, p: P.CallParticipant, about: P.AboutView |
           { label: p.localMute ? 'Unmute for you' : 'Mute for you', icon: p.localMute ? 'mic' : 'micOff', checked: !!p.localMute, track: 'call local mute', run: () => setPersonVolume(p.id, { muted: !p.localMute }) },
         ]
       : [],
-    stageMod && p.stage && p.stage !== 'speaker' && p.stage !== 'invited' ? [{ label: 'Invite to speak', icon: 'stage', track: 'stage invite', run: () => stageAction('invite', p.id) }] : [],
-    stageMod && (p.stage === 'speaker' || p.stage === 'invited') ? [{ label: 'Move to the audience', icon: 'users', track: 'stage audience', run: () => stageAction('audience', p.id) }] : [],
+    p.stage && canOn.includes('invite') && stageMoveFits('invite', role) ? [{ label: 'Invite to speak', icon: 'stage', track: 'stage invite', run: () => void stageAction('invite', p.id) }] : [],
+    p.stage && canOn.includes('audience') && stageMoveFits('audience', role) ? [{ label: 'Move to the audience', icon: 'users', track: 'stage audience', run: () => void stageAction('audience', p.id) }] : [],
     [
       mod?.voiceMute?.can && {
         label: p.serverMuted ? 'Server unmute' : 'Server mute',
@@ -128,9 +123,9 @@ function personMenu(call: ActiveCall, p: P.CallParticipant, about: P.AboutView |
 }
 
 function Person({ call, p, about, setAbout }: { call: ActiveCall; p: P.CallParticipant; about: P.AboutView | null; setAbout: (v: P.AboutView) => void }) {
-  const idn = db.identities.get(p.id);
   const who = name(p.id);
   const states = [
+    p.speaking ? 'speaking' : '',
     p.serverMuted ? 'muted by a moderator' : p.muted ? 'muted' : '',
     p.serverDeafened ? 'deafened by a moderator' : p.deafened ? 'deafened' : '',
     p.video ? (call.mode === 'bridge' ? 'camera on' : 'camera on (video shows in bridge mode)') : '',
@@ -145,16 +140,12 @@ function Person({ call, p, about, setAbout }: { call: ActiveCall; p: P.CallParti
   const watching = !!call.self?.watching?.includes(p.id);
   const canWatch = p.streaming && !isCallSelf(call, p.id) && call.mode === 'bridge' && callCan('watchStreams');
   return (
-    <li class={`${p.speaking ? 'speaking' : ''} ${p.localMute ? 'local-mute' : ''}`}>
+    <li class={p.localMute ? 'local-mute' : undefined}>
       <button class="call-person" onClick={open} disabled={isCallSelf(call, p.id)} title={states.length ? `${who}: ${states.join(', ')}` : who} aria-label={states.length ? `${who}, ${states.join(', ')}` : who}>
-        <span class="call-avatar">
-          <Avatar id={idn?.personId ?? p.id} name={who} url={idn?.avatar ?? null} size={40} network={callNetwork(call)} />
-        </span>
+        <CallAvatar {...callMarks(call, p)} size={40} />
         <span class="call-name">{who}</span>
-        {(p.muted || p.deafened || p.localMute) && <Icon name={p.deafened ? 'headphonesOff' : 'micOff'} size={14} class={`call-flag ${p.serverMuted || p.serverDeafened ? 'server' : ''}`} />}
         <span class="call-tags">
           {p.stage === 'hand' && <span title="Asking to speak">✋</span>}
-          {p.video && <Icon name="camera" size={12} />}
           {p.streaming && <span class="live-tag">LIVE</span>}
           {p.volume !== undefined && p.volume !== 100 && !p.localMute && <span class="call-vol">{p.volume}%</span>}
         </span>
@@ -168,39 +159,17 @@ function Person({ call, p, about, setAbout }: { call: ActiveCall; p: P.CallParti
   );
 }
 
-/** A stage: its topic, and your own hand, speaking and listening. */
+/** A stage: its topic, what you are there, and Speak or Move to the audience (your hand is on the dock's bar). */
 function StageBar({ call }: { call: ActiveCall }) {
-  const me = call.participants.find((p) => isCallSelf(call, p.id));
-  const role = me?.stage ?? 'audience';
-  const s = call.stage!;
-  const can = callCan('stage');
+  const role = callRole(call) ?? 'audience';
   return (
     <div class="call-stage">
       <div class="call-stage-topic">
-        <Icon name="stage" size={14} /> {s.topic ?? 'Stage'}
+        <Icon name="stage" size={14} /> {call.stage!.topic ?? 'Stage'}
       </div>
       <div class="call-stage-you">
         <span>{STAGE_WORDS[role]}</span>
-        {can && role === 'audience' && (
-          <button class="chip-btn" onClick={() => stageAction('raiseHand')}>
-            ✋ Raise hand
-          </button>
-        )}
-        {can && role === 'hand' && (
-          <button class="chip-btn" onClick={() => stageAction('lowerHand')}>
-            Lower hand
-          </button>
-        )}
-        {can && (role === 'invited' || ((role === 'audience' || role === 'hand') && s.moderator)) && (
-          <button class="chip-btn on" onClick={() => stageAction('speak')}>
-            Speak
-          </button>
-        )}
-        {can && (role === 'speaker' || role === 'invited') && (
-          <button class="chip-btn" onClick={() => stageAction('listen')}>
-            {role === 'invited' ? 'Stay in the audience' : 'Move to the audience'}
-          </button>
-        )}
+        {roomOnPage.value !== call.conversationId && <CallControls call={call} only={['speak', 'listen']} />}
       </div>
     </div>
   );

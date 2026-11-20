@@ -105,8 +105,8 @@ export class DemoCallRoom {
 /** The one room of this hub process (a demo hub has one demo world). */
 export const demoCallRoom = new DemoCallRoom();
 
-/** What demo Discord accounts can do in a call: everything the bridge carries, and calls that ring them. */
-export const DEMO_CALL_CAPS = ['calls', 'callVideo', 'watchStreams', 'callStates', 'declineCall'] as const satisfies readonly P.Capability[];
+/** What demo Discord accounts can do in a call: everything the bridge carries, calls that ring them, and the stage (demostage.ts). */
+export const DEMO_CALL_CAPS = ['calls', 'callVideo', 'watchStreams', 'callStates', 'declineCall', 'stage'] as const satisfies readonly P.Capability[];
 
 /**
  * Calls that ring a demo account (docs/calls.md "Ringing"), told by a script (the account action `ring`) since a demo

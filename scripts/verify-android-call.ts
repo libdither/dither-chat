@@ -20,6 +20,7 @@
  * far end instead of the demo call room.
  */
 import { androidDevice, TYPE_MICROPHONE, TYPE_PHONE_CALL } from './android-device.ts';
+import { distributors, testPush } from './android-testpush.ts';
 import { launch } from './browser.ts';
 
 const args = process.argv.slice(2);
@@ -33,6 +34,8 @@ const apk = opt('apk', 'apps/android/app/build/outputs/apk/debug/app-debug.apk')
 const PKG = opt('package', 'org.libdither.chat.verify')!;
 /** apps/android/uitest's outputs: `./gradlew :uitest:assembleDebug :uitest:assembleDebugAndroidTest`. */
 const UITEST = opt('uitest', 'apps/android/uitest/build/outputs/apk')!;
+/** apps/android/testpush's APK (`./gradlew :testpush:assembleDebug`): the distributor where the device has none. */
+const TESTPUSH = opt('testpush', 'apps/android/testpush/build/outputs/apk/debug/testpush-debug.apk')!;
 const ADB = opt('adb', process.env.ADB ?? (Bun.which('adb') || `${process.env.HOME}/Android/Sdk/platform-tools/adb`))!;
 const ACCOUNT = opt('account', 'acc_demo-discord-main')!;
 /** `--only calls` or `--only rings`: one part of the run. */
@@ -96,6 +99,10 @@ const conversation =
   opt('conversation') ?? boot.conversations.find((c: any) => c.variant === 'voice' && c.vantages.some((v: any) => v.accountId === ACCOUNT))?.id;
 if (!conversation) throw new Error(`no voice conversation for ${ACCOUNT}: pass --conversation`);
 
+/** The test's distributor and push server, where the device has no distributor of its own (rings()). */
+type TestPush = Awaited<ReturnType<typeof testPush>>;
+let testpush: TestPush | null = null;
+
 const room = demo ? await launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--autoplay-policy=no-user-gesture-required'] }) : null;
 const roomCalls = async () => (room ? ((await room.page.eval<any[]>(`window.__room.summary()`)) ?? []) : []);
 
@@ -122,6 +129,8 @@ try {
   check(!waiting || waiting === '[]', 'no crash report waiting in the app', waiting.slice(0, 300));
 } finally {
   await room?.close().catch(() => {});
+  // Set inside rings(), which the compiler does not follow from here.
+  await (testpush as TestPush | null)?.stop().catch(() => {});
   try {
     closeShade();
     sh(`am force-stop ${PKG}`);
@@ -196,9 +205,9 @@ async function calls() {
 
 /**
  * A call ringing the app's account (docs/calls.md "Ringing"), through real push: the app registered with the hub through
- * the emulator's UnifiedPush distributor. The ring rings with Answer and Decline; Decline declines it on the network;
- * Answer opens the app and joins, with the app open in the background and with its process gone; and a ring the caller
- * gives up is taken back.
+ * the emulator's UnifiedPush distributor, or, where it has none, the test's own (android-testpush.ts). The ring rings
+ * with Answer and Decline; Decline declines it on the network; Answer opens the app and joins, with the app open in the
+ * background and with its process gone; and a ring the caller gives up is taken back.
  */
 async function rings() {
   const dm = boot.conversations.find((c: any) => c.shape === 'direct' && c.vantages.some((v: any) => v.accountId === ACCOUNT));
@@ -206,23 +215,32 @@ async function rings() {
   if (!dm || !peer) throw new Error('no direct chat with someone for the account to be rung in');
   const devicesNow = async () => ((await fetch(`${hub}/api/push`).then((r) => r.json())) as any).devices.length as number;
 
+  // The device's own distributor where it has one (ntfy, on a local emulator), else the test's. Never both: with two,
+  // the app would ask which to use. A test distributor left by a run that died is taken off first.
+  if (distributors(sh).some((p) => p === 'org.libdither.chat.testpush')) adb('uninstall', 'org.libdither.chat.testpush');
+  const own = distributors(sh);
+  if (!own.length) testpush = await testPush({ adb: [ADB, '-s', serial], apk: TESTPUSH });
+  console.log(`     push through ${own.length ? own.join(', ') : `the test's distributor, its server at ${testpush!.url}`}`);
+
   await freshApp();
   sh(`pm grant ${PKG} android.permission.POST_NOTIFICATIONS`);
   sh(`pm grant ${PKG} android.permission.RECORD_AUDIO`);
   await until(`document.querySelector('#app > .app')`, 60_000);
+  if (testpush && !check(await testpush.approve(page), "the hub is allowed to send to the test's push server", testpush.url)) return;
   const had = await devicesNow();
   const vapid = ((await fetch(`${hub}/api/push`).then((r) => r.json())) as any).publicKey;
   await page(`(window.DitherAndroid.postMessage(JSON.stringify({ t: 'push.register', vapid: ${JSON.stringify(vapid)} })), true)`);
   if (!check(await waitFor(async () => (await devicesNow()) > had, 30_000), 'the app registers for push through the distributor')) return;
-  // The distributor must hold its connection before a message for the new topic is taken (ntfy answers 507 until then).
-  await Bun.sleep(3000);
+  // ntfy must hold its connection before a message for the new topic is taken (it answers 507 until then). The test's
+  // distributor takes one at once.
+  if (!testpush) await Bun.sleep(3000);
 
   // ------------------------------------------------------------ Decline, the app in the background
   sh('input keyevent KEYCODE_HOME');
   await waitFor(() => !sh('dumpsys activity activities | grep -m1 topResumedActivity || true').includes(PKG), 5000);
   let id = await ring(dm.nativeId, peer.nativeId);
   const n = await poll(() => notification(`call:${id}`), 15_000);
-  check(n, 'a ring comes up as a notification of its own', n);
+  check(n, 'a ring comes up as a notification of its own', n ?? { pushes: testpush?.seen });
   if (SHOTS) {
     await Bun.sleep(1000);
     shot('ring');

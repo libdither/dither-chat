@@ -1,0 +1,225 @@
+/* The room view (CallRoom.tsx): loaded with its chunk. The page around it (room-pane, the switch) is in styles.css;
+   faces are CallAvatar's (CallAvatar.css), the buttons CallControls'. */
+.croom {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px 22px 14px;
+  background: var(--bg-center);
+  overflow-y: auto;
+}
+.croom-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.croom-title {
+  flex: 1;
+  min-width: 0;
+}
+.croom-title b {
+  display: block;
+  font-size: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.croom-title span {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.croom-zone h4 {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.croom-speakers,
+.croom-audience,
+.croom-request-list,
+.croom-all-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.croom-speakers,
+.croom-audience {
+  display: grid;
+}
+.croom-speakers {
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 16px 10px;
+}
+.croom-audience {
+  grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+  gap: 12px 6px;
+}
+.croom-listener {
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
+.croom-person,
+.croom-more {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 2px 0;
+  border: 0;
+  border-radius: var(--radius-sm, 6px);
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+button.croom-person,
+.croom-more {
+  cursor: pointer;
+}
+button.croom-person:hover,
+.croom-more:hover {
+  background: var(--bg-hover);
+}
+.croom-listener .croom-person,
+.croom-more {
+  gap: 4px;
+}
+.croom-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.croom-listener .croom-name {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.croom-role {
+  margin-top: -4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.croom-more-n {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bg-hover);
+  font-size: 11px;
+  font-weight: 600;
+}
+.croom-quiet {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* Who asks to speak, above the audience. */
+.croom-request-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.croom-request,
+.croom-all-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-raised);
+}
+.croom-request .croom-name,
+.croom-all-row .croom-name {
+  flex: 1;
+}
+/* Invite: the text in the page's own colour on a green tint, so it reads; and a size a finger finds. */
+.croom-invite {
+  min-height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--good);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--good) 22%, transparent);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.croom-invite:hover {
+  background: color-mix(in srgb, var(--good) 35%, transparent);
+}
+@media (pointer: coarse) {
+  .croom-invite {
+    min-height: 40px;
+    padding: 0 18px;
+  }
+}
+
+/* The whole audience, searchable (after "+N more"). */
+.croom-all-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.croom-all-head h4 {
+  margin: 0;
+}
+.croom-search {
+  width: 100%;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+.croom-all-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+.croom-all-row {
+  background: none;
+}
+
+.croom-controls {
+  position: sticky;
+  bottom: -14px;
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0 14px;
+  background: var(--bg-center);
+}
+.croom-note {
+  width: 100%;
+  margin: 0;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+@container room (max-width: 760px) {
+  .croom {
+    padding: 14px 16px;
+  }
+  .croom-speakers {
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  }
+}

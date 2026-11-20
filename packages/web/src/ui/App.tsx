@@ -1,7 +1,6 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { effect, untracked } from '@preact/signals';
-import { POST_NETWORKS } from '@dither-chat/protocol';
 import { chatPersonOf, convsUnder, firstChannel, rootCommunity, totalUnread } from '../model.ts';
 import { adoptEntry, api, connected, db, go, loaded, prefs, previousRoute, readProgress, refresh, rev, route, setListUnder, setRouteFill, type Route } from '../state.ts';
 import { isPage, isTabRoot, listKey, listToWrite, ownList, restAfter, wayBack, type Places } from '../pages.ts';
@@ -13,6 +12,7 @@ import { DragLayer } from './dnd.tsx';
 import { Icon } from './icons.tsx';
 import { ContextMenuLayer } from './ContextMenu.tsx';
 import { TooltipLayer } from './Tooltip.tsx';
+import { feedOn, PlaceKeys } from './PlaceKeys.tsx';
 import { ForwardLayer } from './Forward.tsx';
 import { AppsHostLazy } from './apps/lazy.tsx';
 import { SendingLayer } from './SendExtras.tsx';
@@ -39,6 +39,7 @@ import { Toasts } from './Toasts.tsx';
 import { OfflineLayer } from './Offline.tsx';
 import { PaneEdge, usePaneWidths } from './PaneEdge.tsx';
 import { CallDock } from './Call.tsx';
+import { barShown } from './CallBar.tsx';
 import { RingCards } from './Ringing.tsx';
 import { Viewer } from './Viewer.tsx';
 import { PEEK, panel, usePager, type Rest } from './Pager.ts';
@@ -306,8 +307,6 @@ function TabBar({ r }: { r: Route }) {
   );
 }
 
-/** Whether the Feed is offered: an account with posts (X, Mastodon, Reddit, Lemmy, Substack, Bluesky), or its notifications already held. */
-const feedOn = () => [...db.accounts.values()].some((a) => POST_NETWORKS.includes(a.network)) || [...db.conversations.values()].some((c) => c.variant === 'feed');
 /** Answers, quotes and mentions not looked at, across the notifications (never likes). */
 const feedSaid = () => [...db.conversations.values()].filter((c) => c.variant === 'feed').reduce((n, c) => n + c.vantages.reduce((m, v) => m + (v.mentions ?? 0), 0), 0);
 
@@ -388,10 +387,13 @@ export function App() {
   const tabs = p && (tabRoot || rest === 'peek' || rest === 'away');
   // While a page is open or peeking, the list beside it leaves room for its edge.
   const narrow = p && (detailRoute || rest === 'peek');
+  // The call bar is a row of the layout where it shows (CallBar.tsx). The conversation on screen: on a phone, none while
+  // the lists show, so a call there is the bar.
+  const bar = barShown((p && tabs) || !('conv' in r) ? null : (r.conv ?? null), p, !p && full);
   return (
     <div
       ref={app}
-      class={`app ${p ? `phone rest-${rest}` : ''} ${!p && details ? 'with-details' : ''} ${full ? 'full' : ''} ${tabs ? 'tabs' : ''} ${tabRoot ? 'tab-root' : ''} ${narrow ? 'narrow' : ''}`}
+      class={`app ${p ? `phone rest-${rest}` : ''} ${!p && details ? 'with-details' : ''} ${full ? 'full' : ''} ${tabs ? 'tabs' : ''} ${tabRoot ? 'tab-root' : ''} ${narrow ? 'narrow' : ''} ${bar ? 'with-bar' : ''}`}
       style={{ '--peek': `${PEEK}px` } as any}
     >
       {updateReady.value && (
@@ -433,7 +435,7 @@ export function App() {
         </div>
       )}
       {addingAccount.value && <AddAccount onClose={() => (addingAccount.value = false)} />}
-      <CallDock />
+      <CallDock bar={bar} />
       <RingCards />
       <ReactionLayer />
       <MessageHistoryLayer />
@@ -444,6 +446,7 @@ export function App() {
       <DragLayer />
       <ContextMenuLayer />
       <TooltipLayer />
+      <PlaceKeys />
       <ForwardLayer />
       <AppsHostLazy />
       <SendingLayer />

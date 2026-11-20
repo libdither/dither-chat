@@ -1,3 +1,4 @@
+import { isArrivedCopy } from '../arrived.ts';
 import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, durationLabel, NETWORK_META, RULE_LABEL, RULE_LEVELS, sendBlocker, showsGone, showsInline, type PictureLayout } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -127,6 +128,7 @@ import { PlanChipLazy } from './calendar/lazy.tsx';
 import { EmbedVideo, RichFoot, RichHead, RichMarks, Veil, veiled, Voice } from './rich/parts.tsx';
 import { VoicePeople } from './Ringing.tsx';
 import { ForumLazy } from './ThreadsLazy.tsx';
+import { CallRoomLazy, roomCall, roomHasChat, roomSide, RoomSwitch } from './CallRoomLazy.tsx';
 import { ScheduledStrip, useSendExtras } from './SendExtras.tsx';
 import { FeedViewLazy, FollowChatLazy, PostsListLazy, ThreadLazy } from './feed/lazy.tsx';
 import { postMessageKey } from '../feed.ts';
@@ -1090,6 +1092,13 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     const m = all[i];
     if (!prev || !sameDay(prev.ts, m.ts)) items.push(<div class="day-sep"><span>{dayLabel(m.ts)}</span></div>);
     if (i === unreadFrom) items.push(<div class="new-sep"><span>New</span></div>);
+    // A push's copy, before the hub has answered (arrived.ts): what came before it may not be here yet.
+    if (isArrivedCopy(m) && !(prev && isArrivedCopy(prev)))
+      items.push(
+        <div class="day-sep arrived-sep" role="note">
+          <span>From notifications · earlier messages may be missing until the hub is back</span>
+        </div>,
+      );
     const run = runs.get(m.id);
     const ends = !!run && run[run.length - 1] === m;
     if (run && !ends && onlyPictures(m)) {
@@ -1822,16 +1831,19 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
   const sendAsValue = prefs.value.sendAs[c.id] ?? accounts.find((a) => a.status === 'online')?.id ?? accounts[0]?.id;
   const voice = c.variant === 'voice' || c.variant === 'stage';
   const held = heldRequest(db.requests, c.id);
-  return (
-    <section class="pane">
-      <ConvHeader c={c} onBack={onBack} />
+  // A stage you are in is a room (docs/calls.md "The room view"): beside the chat on a wide pane, a Room / Chat switch
+  // on a narrow one (a container query on .room-pane), only the room where there is no chat.
+  const room = roomCall(c);
+  const chat = !room || roomHasChat(c);
+  const body = chat && (
+    <>
       {!held && c.pending && <LinkBanner c={c} />}
       {/* A forum's or media channel's messages are its posts (ui/Threads.tsx, docs/threads.md). */}
       {c.variant === 'forum' || c.variant === 'media' ? (
         <ForumLazy c={c} />
       ) : (
         <>
-          {voice && <div class="voice-note"><Icon name="voice" size={14} /> Voice isn't relayed. This shows the channel's text chat.</div>}
+          {voice && !room && <div class="voice-note"><Icon name="voice" size={14} /> Voice isn't relayed. This shows the channel's text chat.</div>}
           {voice && <VoicePeople conversationId={c.id} size={22} names class="voice-here" />}
           <NotStartedNote c={c} />
           <Timeline tkey={timelineKey('c', c.id)} convIds={[c.id]} onReply={setReply} firstUnreadTs={unreadAt} focus={focus} />
@@ -1862,6 +1874,25 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
           disabledReason={composerBlocker(c, sendAsValue)}
         />
       )}
+    </>
+  );
+  if (room)
+    return (
+      <section class="pane room-pane">
+        <ConvHeader c={c} onBack={onBack} />
+        <RoomSwitch c={c} />
+        <div class={`room-split ${chat ? '' : 'alone'}`} data-show={roomSide(c)}>
+          <div class="room-col">
+            <CallRoomLazy c={c} />
+          </div>
+          {chat && <div class="room-chat">{body}</div>}
+        </div>
+      </section>
+    );
+  return (
+    <section class="pane">
+      <ConvHeader c={c} onBack={onBack} />
+      {body}
     </section>
   );
 }

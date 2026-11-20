@@ -472,6 +472,12 @@ Their notifications go:
   shows nothing newer than `upTo` (its `ts`), so a clear that comes late never closes an alert that came after the
   read; one without `upTo` (from an older hub) closes whatever shows.
 
+Chromium's `getNotifications()` lists only what it sees on screen, or what was written after the call began: one
+written just before it and still on its way to the screen is deleted from the list for good, though it still shows,
+and then no read closes it. A page's tidy that runs while a push is being shown can do that, rarely; nothing here
+works around it. `sw.js` marks `dither:shown` (with the tag) once a notification is on screen, and
+`scripts/verify-clear.ts` reads the worker's notifications only after the marks of what it pushed.
+
 A browser must show something for every push (`userVisibleOnly`), and a clear shows nothing, so each browser's rules
 decide what one costs, and the hub sends them only where they are cheap or capped:
 
@@ -516,6 +522,53 @@ decide what one costs, and the hub sends them only where they are cheap or cappe
 - **Counted before it goes,** so a slow push service cannot let two clears past one cap; one the push service did not
   take is not counted and its notification is still known to show. What an alert shows is noted as each browser's
   push is taken, not once every push server has answered, so a tap or a swipe reported meanwhile is not lost.
+
+### A copy in the push
+
+A message's push carries a copy of the message and where its conversation stands (`arrived`, protocol
+`PushArrived`, hub `src/arrived.ts`), so that tapping the notification opens a chat that already has it, before
+the hub answers and offline too. Without it, the app started from its snapshot (docs/android.md, "Starting fast"),
+which can be hours old, and the message showed only once the catch-up came back.
+
+- **What goes**: the message without embeds, reactions or the optional extras; its attachments only when they fit; the
+  conversation's last message, its time and each account's unread and mention counts, as the hub has them when it
+  sends. Only beside the notification's own fields, within 3,900 bytes of JSON (a push's encrypted record is at most
+  4,096): the attachments go first, then the body is cut to the longest that fits; either way the copy is marked as not
+  whole (`cut`, shown with "…"). With less than 40 characters left, or a message of attachments alone that do not fit,
+  no copy goes. The list's preview of the same message carries no text of its own when it would repeat the body: the
+  device fills it in. A held push (a reminder, a summary) carries none. The plain-text ntfy topic never carries it.
+- **Kept on the device**: the service worker (`public/sw.js`) keeps each copy, and each read elsewhere a clear push
+  carries (one per conversation, the furthest; a clear without `upTo` is the hub taking a phone-list row back, not a
+  read, and is not kept), in IndexedDB `dither-arrived`. It keeps the copy before anything else the push does, so a hub
+  that never answers the push's own requests (a phone off its network) cannot cut it short; those requests give up
+  after ten seconds. The Android app, which has no service worker push, keeps the same records in a file
+  (`Arrived.kt`, read and written off the main thread) and hands them to each page that says hello. Both also hand
+  each new one to a page that is open. At most 300, none older than three days, here or when shown. Signing out, or
+  a 401 asking to sign in, deletes them, in the app too.
+- **Shown as a layer** (`packages/web/src/arrived.ts`): a start from the snapshot lays them over it. A message no
+  newer than the snapshot's last one in its conversation is left out; a conversation's row takes the newest push's
+  state; a read elsewhere after that push, up to its last message, leaves it read. The copies go in the timelines and
+  the inbox, marked, under a line that says earlier messages may be missing until the hub is back: only messages that
+  notify are pushed, so the ones between may not be here yet, and a reply typed then is typed without them. A copy
+  changed in place (a reaction, a mark) stays one. A row the hub's own data replaced while the layer shows (frames
+  released after a failed catch-up) is left to the hub from then on.
+- **Never data**: nothing of the layer is saved (the snapshot is not written while it shows), a timeline's catch-up
+  asks from the newest message the hub sent, not from a copy, and the layer is taken away whole right before the
+  hub's answer is applied, in the same task: each row it changed gets its object from before back (unless something
+  else replaced it meanwhile), and copies the hub's own messages have not replaced leave the timelines and the inbox;
+  what they pushed off the end of a full inbox comes back. A chat still loading its own page (the one a notification
+  opened) keeps its copies until that page comes, so the message does not leave and come back. The hub's absolute
+  counts then stand, so nothing is counted twice, and a copy of a message the hub no longer has (deleted meanwhile)
+  goes.
+- **Then deleted**: each time the hub catches the app up, the records kept before that request was made go, from the
+  worker's store and the app's (`arrived.done`). One that came while it was asking stays, and the next start leaves it
+  out as no newer than its snapshot.
+- Sends typed on a copy (a reply to it) wait in the outbox as any offline send does, and go once the hub has
+  answered; the copy's id is the message's real id, so a reply quotes it.
+- `scripts/verify-arrived.ts` (CI `boot`) checks it end to end in Chromium, and `scripts/verify-android-arrived.ts`
+  (CI `android-device`) in the Android app on an emulator: the copy kept with the app closed, shown by an offline
+  start from the notification's intent, a second push shown by the open page, and both gone with the records once the
+  hub answers.
 
 ## The phone's list
 

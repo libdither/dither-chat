@@ -623,6 +623,10 @@ The body is Markdown, sent as `text` as written plus the `html` it makes (as bui
 with the account's limits shown. Drafts save to the hub every 2 s, keyed by thread or `new:<uuid>`. Send shows
 "Sending… Undo" for 10 s.
 
+On a desktop the panel moves out of the way (as built: docs/mail.md, "Out of the way"): dragged by its header, resized
+by any edge or corner, maximized to the window, minimized to a bar at the bottom edge, remembered per browser; a
+double-click on the header docks it again. A picture pasted or a file dropped on it is attached.
+
 ### 6.5 Desktop
 
 ```

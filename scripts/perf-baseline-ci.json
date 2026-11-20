@@ -16,7 +16,7 @@
  },
  "metrics": {
   "hub.bootstrap.bytes": {
-   "v": 541207,
+   "v": 547518,
    "kind": "bytes",
    "gate": true
   },
@@ -60,7 +60,7 @@
    "gate": true
   },
   "1x.cold.bootstrapBytes": {
-   "v": 541504,
+   "v": 547617,
    "kind": "bytes",
    "gate": true
   },

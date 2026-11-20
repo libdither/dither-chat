@@ -1,7 +1,9 @@
 /**
  * Discord-style tooltips: a dark bubble beside the thing you point at, with an arrow, shown at once and without the
  * browser's delay. Any element with `data-tip` gets one (`data-tip-sub` adds a dim second line,
- * `data-tip-side="right|top|bottom"` picks the side, right by default). Pointer and keyboard focus show it; touch does not.
+ * `data-tip-side="right|top|bottom"` picks the side, right by default, and `data-tip-keys` its keyboard shortcuts, as
+ * `Ctrl+Shift+2|G P`: chords with +, keys pressed one after another with a space). Pointer and keyboard focus show it; touch
+ * does not.
  */
 import { signal } from '@preact/signals';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
@@ -11,19 +13,28 @@ interface Tip {
   el: HTMLElement;
   text: string;
   sub: string | null;
+  keys: string | null;
   side: Side;
 }
 
 const tip = signal<Tip | null>(null);
 
 /** Props for an element with a tooltip. The label doubles as its accessible name. */
-export const tipProps = (text: string, sub?: string | null, side?: Side) => ({ 'data-tip': text, 'data-tip-sub': sub || undefined, 'data-tip-side': side, 'aria-label': sub ? `${text}, ${sub}` : text });
+export const tipProps = (text: string, sub?: string | null, side?: Side, keys?: string) => ({
+  'data-tip': text,
+  'data-tip-sub': sub || undefined,
+  'data-tip-side': side,
+  'data-tip-keys': keys,
+  'aria-label': sub ? `${text}, ${sub}` : text,
+  // Only chords: aria-keyshortcuts has no way to write keys pressed one after another (G then P).
+  'aria-keyshortcuts': keys?.split('|').filter((c) => !c.includes(' ')).map((c) => c.replace(/\bCtrl\b/g, 'Control')).join(' ') || undefined,
+});
 
 function show(el: HTMLElement | null) {
   const t = el?.closest<HTMLElement>('[data-tip]');
   if (!t) return void (tip.value = null);
   if (tip.value?.el === t) return;
-  tip.value = { el: t, text: t.dataset.tip!, sub: t.dataset.tipSub ?? null, side: (t.dataset.tipSide as Side) ?? 'right' };
+  tip.value = { el: t, text: t.dataset.tip!, sub: t.dataset.tipSub ?? null, keys: t.dataset.tipKeys ?? null, side: (t.dataset.tipSide as Side) ?? 'right' };
 }
 
 let started = false;
@@ -64,6 +75,16 @@ export function TooltipLayer() {
     <div ref={box} class={`tooltip tip-${t.side} ${pos ? 'shown' : ''}`} role="tooltip" style={pos ? { left: `${pos.x}px`, top: `${pos.y}px` } : { left: '-9999px', top: '-9999px' }}>
       <b>{t.text}</b>
       {t.sub && <small>{t.sub}</small>}
+      {t.keys && (
+        <span class="tip-keys">
+          {t.keys.split('|').map((combo, i) => (
+            <span>
+              {i > 0 && <span class="tip-or">or</span>}
+              {combo.split(' ').map((step) => step.split('+').map((k, j) => (j ? ['+', <kbd>{k}</kbd>] : <kbd>{k}</kbd>)))}
+            </span>
+          ))}
+        </span>
+      )}
     </div>
   );
 }
