@@ -257,9 +257,16 @@ server  {t:"intent", id, action, message}       desk devices only: the page aske
   asked, and to the others when they connect, until it is answered, cancelled or expires. Passkey requests keep their
   one-at-a-time queue. A device without a link is woken (`{"t":"wake"}`) as for passkeys.
 - Before it shows anything, a device checks: `ask` parses as the eight asker lines; its `id` is the request's; its
-  `payload-sha256` is SHA-256 of `display.payload`, its `display-sha256` of `title + "\n\n" + body`; `kind` and
-  `asker` equal `display`'s; `expires` is in the future; the actions are well formed and include `deny`. A failed
-  check answers `refused`.
+  `payload-sha256` is SHA-256 of `display.payload`, its `display-sha256` of `title + "\n\n" + body`; the title is one
+  line of at most 200 characters (so no text can move between title and body); `kind` and `asker` equal `display`'s;
+  the payload is in the line format (a merge payload with its six fields and full ids); `expires` (the ask's, not the
+  frame's `expiresAt`) is in the future; the actions are well formed, each id once, `needs` `signed` or `any`, and
+  `deny` among them. A failed check answers `refused`.
+- Fields: the keys frame's `sig` is DER, base64url (as the hello's). A response's `signed` is the statement's
+  `signed` time (ms), sent with every answer, signed or not; `message` is `null` when empty (hashed as `""`), at most
+  1000 characters. `deny` never asks for a fingerprint and never carries a signature. A signing that fails after the
+  prompt answers `{ok:false, reason:"error", message}`.
+- The phone keeps one approval key per paired manager; unpairing deletes it.
 - The manager checks each answer before it passes it on: the action is one offered; a `signed` action carries a
   signature that verifies with the device's approval key over the full statement it rebuilds; an answer to a
   request it no longer holds is dropped. A good answer cancels the request on every other device.
