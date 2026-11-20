@@ -200,6 +200,7 @@ const initials = (name: string) =>
 
 /** How many emoji the picker's first frame draws: a few screens of it. */
 const FIRST_DRAWN = 200;
+const FREQUENT_SHOWN = 36;
 
 /** The cells of a grid. Each one's index into `flat` is how a click or hover over the grid finds its emoji. */
 function cells(items: Item[], flat: Item[], mine: Set<string>) {
@@ -295,7 +296,8 @@ function Picker({ target, anchor, onClose, inline }: { target: Target; anchor: D
     if (onMessage.length) sections.push({ id: 'here', title: 'On this message', kind: 'here', items: onMessage.map((r) => item(r.key, r.emoji)) });
     if (!existingOnly) {
       // Your usage is counted per network; here one emoji is one button, and only what works on this network shows.
-      const frequent = db.reactionUsage.filter((u, i, all) => (u.network === network || !u.emoji) && (!isCustomKey(u.key) || customs.has(u.key)) && all.findIndex((x) => x.key === u.key) === i).slice(0, 18);
+      // Four rows of the computer picker's nine.
+      const frequent = db.reactionUsage.filter((u, i, all) => (u.network === network || !u.emoji) && (!isCustomKey(u.key) || customs.has(u.key)) && all.findIndex((x) => x.key === u.key) === i).slice(0, FREQUENT_SHOWN);
       if (frequent.length) sections.push({ id: 'frequent', title: 'Frequently used', kind: 'custom', icon: 'clock', items: frequent.map((u) => item(u.key, u.emoji)) });
       groups.forEach((g) => sections.push({ id: `custom:${g.id}`, title: g.name, kind: 'custom', img: g.icon, items: g.emoji.map((e) => item(e.key, e)) }));
       for (const c of catalog ?? []) sections.push({ id: c.id, title: c.name, kind: 'unicode', icon: CATEGORY_ICON[c.id] ?? 'smile', items: c.emoji.map((e) => ({ key: skinOf(e, tone), name: `:${e.id}:` })) });
