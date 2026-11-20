@@ -434,8 +434,9 @@ export class HubServer {
     store.contactNotesOut = (id, change) => this.people.pushContactNotes(id, change);
     this.matches = new SameMatches({ store, file: opts.matches?.file ?? null, jevUrl: opts.matches?.jevUrl ?? null, log: (l) => console.log(l), flush: () => this.flush() });
     this.closeness = new Closeness({ store, file: opts.matches?.file ?? null, log: (l) => console.log(l) });
+    // Its timer starts in start() with the others: a hub built and never started (a test's) runs nothing after its
+    // store closes.
     this.collector = new ProfileCollector({ store, people: this.people, online: (a) => sup.online(a), log: (l) => console.log(l) });
-    this.collector.start();
     this.adding = new Adding({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), liveView: (a) => !!sup.liveViewUrl?.(a) || !!store.account(a)?.live_view });
     this.threads = new Threads({
       store,
@@ -605,6 +606,7 @@ export class HubServer {
     this.sendExtras.later.start();
     this.timelines.start();
     this.follows.start();
+    this.collector.start();
     return this.server;
   }
 
