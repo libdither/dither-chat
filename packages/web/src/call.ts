@@ -9,10 +9,10 @@
 
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { BRIDGE_MIDS, CALL_INPUT_DEFAULT, callInput } from '@dither-chat/protocol';
-import { levelShown, smoothLevel, speakingHold } from './callmarks.ts';
+import { BRIDGE_MIDS, CALL_INPUT_DEFAULT, callInput, NETWORK_META } from '@dither-chat/protocol';
+import { AUTO_GATE_DB, type CallControl, type CallStatus, controlsFor, featuredPicker, levelShown, smoothLevel, speakingHold, statusFor, talkGate } from './callmarks.ts';
 import { playCallSound, preloadCallSounds, soundLog } from './callsounds.ts';
-import { changed, db, prefs, toast } from './state.ts';
+import { changed, db, isSelfIdentity, prefs, toast } from './state.ts';
 
 export interface CallStats {
   /** Media bytes this device sent and received so far. */
@@ -67,16 +67,54 @@ export const callMedia = signal<{ camera: MediaStream | null; screen: MediaStrea
 /** This device's microphone loudness, 0 to 1, about ten times a second while a call is on. */
 export const micLevel = signal(0);
 /**
- * Who in the call counts as speaking, by identity id: what the network says, held through the gaps between words
- * (callmarks.ts), so every mark on a person follows the same steady value.
+ * Direct mode only: how loud each person speaking is, 0 to 1, by identity id (their own receive slot's level). Bridge
+ * mode gets one mixed stream, so it has no level per person and this stays empty.
  */
-export const speakingNow = signal<ReadonlySet<string>>(new Set());
-/** How loud each speaking person is, 0 to 1, smoothed: only while the speaking mark is set to follow it (Settings → Calls). */
-export const speakingLevels = signal<ReadonlyMap<string, number>>(new Map());
-/** You are muted and your microphone hears you talking, held like speaking. */
+export const callLevels = signal<ReadonlyMap<string, number>>(new Map());
+/** You are muted and your microphone hears you talking: on after half a second of talk, off after three of quiet. */
 export const mutedTalking = signal(false);
-const speakingHeld = speakingHold((on) => (speakingNow.value = on));
-const mutedHeld = speakingHold((on) => (mutedTalking.value = on.size > 0));
+/**
+ * Whom to feature (the call bar's face, the video window's Speaker): the latest to start talking, never you, kept
+ * 1.5 s at least (callmarks.ts featuredPicker). Null when nobody else talks.
+ */
+export const featuredSpeaker = signal<string | null>(null);
+
+/**
+ * Speaking, held (callmarks.ts speakingHold): every participant's `speaking` in activeCall is the held value, so each
+ * mark that reads it (rings, the status line, video tiles, the featured face) is steady through the gaps between words.
+ * What the network said last, before the hold, is `rawSpeaking`.
+ */
+let rawSpeaking = new Set<string>();
+let patching = false;
+const speakingHeld = speakingHold(() => {
+  const a = activeCall.value;
+  if (a && !patching) activeCall.value = { ...a, participants: withHeld(a.participants) };
+  feature();
+});
+const picker = featuredPicker((id) => (featuredSpeaker.value = id));
+const mutedGate = talkGate((on) => (mutedTalking.value = on));
+
+function withHeld(list: P.CallParticipant[]): P.CallParticipant[] {
+  const on = speakingHeld.on;
+  return list.map((p) => (p.speaking === on.has(p.id) ? p : { ...p, speaking: on.has(p.id) }));
+}
+
+function feature() {
+  const a = activeCall.value;
+  if (!a || a.phase === 'ended') picker.clear();
+  else picker.update(speakingHeld.on, db.accounts.get(a.accountId)?.selfIdentityId);
+}
+
+/** What the network says now about who speaks (identity ids), before the hold. */
+function heard(ids: Set<string>) {
+  rawSpeaking = ids;
+  patching = true;
+  try {
+    speakingHeld.update(ids);
+  } finally {
+    patching = false;
+  }
+}
 
 /** How long a sound or an emoji someone sent stays on the call's bar. */
 const EFFECT_MS = 6000;
@@ -99,8 +137,8 @@ export interface Transport {
   stats(): Promise<CallStats | null>;
   /** The microphone's level as the browser measures what it sends, 0 to 1 (no audio graph of its own). */
   micLevel?(): Promise<number | null>;
-  /** How loud the call's incoming audio is now, 0 to 1: one level for the mix (bridge), or by native user id (direct). */
-  levels?(): number | Map<string, number> | null;
+  /** Direct mode: how loud each person is now, 0 to 1, by native user id (each has a receive slot of their own). */
+  peerLevels?(): Map<string, number>;
   stop(): void;
 }
 
@@ -133,10 +171,11 @@ let clickAt = 0;
 /** Direct mode's own speaking news, laid over the sandbox's participant list. */
 const speakingLocal = new Map<string, boolean>();
 
+/** Change the call. Participants always carry the held speaking value; what the network said goes through heard(). */
 const patch = (p: Partial<ActiveCall>) => {
   if (!activeCall.value) return;
-  activeCall.value = { ...activeCall.value, ...p };
-  if (p.participants) speakingHeld.update(p.participants.filter((x) => x.speaking).map((x) => x.id));
+  activeCall.value = { ...activeCall.value, ...p, ...(p.participants ? { participants: withHeld(p.participants) } : {}) };
+  if (p.participants || p.phase) feature();
 };
 
 /** The network a call goes over, from its account. */
@@ -265,7 +304,11 @@ async function onServer(m: P.CallServerMessage) {
         setSpeaking: (id, on) => {
           speakingLocal.set(id, on);
           const a = activeCall.value;
-          if (a) patch({ participants: a.participants.map((p) => (p.id === id || db.identities.get(p.id)?.nativeId === id ? { ...p, speaking: on } : p)) });
+          if (!a) return;
+          const next = new Set(rawSpeaking);
+          for (const p of a.participants) if (p.id === id || db.identities.get(p.id)?.nativeId === id) on ? next.add(p.id) : next.delete(p.id);
+          heard(next);
+          patch({ participants: a.participants });
         },
         fail: (message) => {
           patch({ note: message });
@@ -306,6 +349,7 @@ async function onServer(m: P.CallServerMessage) {
         return cur.mode === 'direct' && local !== undefined ? { ...p, speaking: local } : p;
       });
       const before = cur.participants;
+      heard(new Set(participants.filter((p) => p.speaking).map((p) => p.id)));
       patch({ participants, stage: st.stage, video: st.video ?? [], ...(st.self ? { self: st.self } : {}) });
       transport?.setVolumes?.(volumesOf(participants));
       if (st.self?.connected) connected();
@@ -411,6 +455,29 @@ export function isCallSelf(call: Pick<ActiveCall, 'accountId'>, identityId: stri
   return db.accounts.get(call.accountId)?.selfIdentityId === identityId;
 }
 
+/** A person in a call, by name: another of the owner's own accounts is named as that account, not "You". */
+export function callName(identityId: string): string {
+  const i = db.identities.get(identityId);
+  const person = i?.personId && !isSelfIdentity(identityId) ? db.persons.get(i.personId) : null;
+  return person?.name ?? i?.displayName ?? i?.handle ?? 'Someone';
+}
+
+/** Your role in the call: a stage role, or null in a call without an audience. */
+export function callRole(call: ActiveCall): P.StageRole | null {
+  if (!call.stage) return null;
+  return call.participants.find((p) => isCallSelf(call, p.id))?.stage ?? 'audience';
+}
+
+/** The call's status line (callmarks.ts statusFor): Connecting…, Connecting to Discord…, 1:15:03, why it ended; and a hint. */
+export function callStatus(call: ActiveCall, now: number): CallStatus {
+  return statusFor(call, now, NETWORK_META[callNetwork(call)].name);
+}
+
+/** The buttons your role and the call's state give you (callmarks.ts controlsFor); ui/CallControls.tsx draws them. */
+export function callControls(call: ActiveCall): CallControl[] {
+  return controlsFor(call, { role: callRole(call), video: activeCall.value === call && canVideo(), share: canShareScreen(), stage: !!db.accounts.get(call.accountId)?.capabilities.includes('stage') });
+}
+
 /** Can the account in this call do it? */
 export function callCan(cap: P.Capability): boolean {
   const a = activeCall.value;
@@ -453,7 +520,7 @@ export function playSound(s: P.CallSound) {
 }
 
 /** Video goes through bridge mode, from an account whose adapter can send it. */
-export function canVideo(): boolean {
+function canVideo(): boolean {
   const a = activeCall.value;
   return !!a && a.mode === 'bridge' && a.phase === 'live' && callCan('callVideo') && !!transport?.setCamera;
 }
@@ -497,7 +564,7 @@ export async function setCamera(on: boolean) {
 }
 
 /** Can this browser share a screen or a window at all (phones' browsers cannot). */
-export const canShareScreen = () => typeof navigator.mediaDevices?.getDisplayMedia === 'function';
+const canShareScreen = () => typeof navigator.mediaDevices?.getDisplayMedia === 'function';
 
 /** This device's screen, a window or a tab into the call, as the account's Go Live; or off. */
 export async function setScreen(on: boolean) {
@@ -555,27 +622,36 @@ function startMeter() {
       const shown = Math.round(levelShown(level) * 20) / 20;
       if (shown !== micLevel.value) micLevel.value = shown;
     }
-    if ((prefs.value.callSpeakingMark ?? 'ring') !== 'ring') readLevels();
+    readLevels();
   }, 250);
 }
 
-/** Each speaking person's loudness, for a mark that follows it: the mix's for everyone speaking in bridge mode, each person's own in direct mode, and the microphone's for you. */
+/**
+ * Direct mode, on the meter's own tick and only while someone speaks: each speaking person's loudness, so their ring's
+ * strength follows it; yours is the microphone's. Bridge mode has one mixed stream, so no level per person.
+ */
 function readLevels() {
   const a = activeCall.value;
-  const got = transport?.levels?.();
-  if (!a || got === null || got === undefined) return;
-  const next = new Map<string, number>();
-  for (const p of a.participants) {
-    if (!speakingNow.value.has(p.id)) continue;
-    const native = db.identities.get(p.id)?.nativeId;
-    const raw = isCallSelf(a, p.id) ? null : typeof got === 'number' ? got : native ? got.get(native) : undefined;
-    const level = raw === null ? micLevel.value : raw === undefined ? 0.6 : levelShown(raw);
-    next.set(p.id, Math.round(smoothLevel(speakingLevels.value.get(p.id) ?? 0, level) * 20) / 20);
+  const speaking = a?.participants.filter((p) => p.speaking) ?? [];
+  if (!a || a.mode !== 'direct' || !transport?.peerLevels || !speaking.length) {
+    if (callLevels.value.size) callLevels.value = new Map();
+    return;
   }
-  speakingLevels.value = next;
+  const got = transport.peerLevels();
+  const next = new Map<string, number>();
+  for (const p of speaking) {
+    const native = db.identities.get(p.id)?.nativeId;
+    const raw = isCallSelf(a, p.id) ? micLevel.value : native !== undefined && got.has(native) ? levelShown(got.get(native)!) : null;
+    if (raw !== null) next.set(p.id, Math.round(smoothLevel(callLevels.value.get(p.id) ?? 0, raw) * 20) / 20);
+  }
+  callLevels.value = next;
 }
 
-/** The microphone while muted: off to the call, but listened to here (a clone of it), so you can be told you are talking into a muted mic. */
+/**
+ * The microphone while muted: off to the call, but listened to here (a clone of it, through a Web Audio analyser only
+ * while muted), against your sensitivity or the automatic gate's level, so you can be told you are talking into a muted
+ * microphone (callmarks.ts talkGate: after half a second of talk, until three seconds of quiet).
+ */
 let mutedWatch: (() => void) | null = null;
 function watchMutedMic() {
   const a = activeCall.value;
@@ -583,7 +659,7 @@ function watchMutedMic() {
   if (!a || !a.muted || a.phase !== 'live' || a.listenOnly || !track || !ctx) {
     mutedWatch?.();
     mutedWatch = null;
-    mutedHeld.clear();
+    mutedGate.clear();
     return;
   }
   if (mutedWatch) return;
@@ -600,7 +676,7 @@ function watchMutedMic() {
     for (const x of buf) sum += x * x;
     const db = 10 * Math.log10(sum / buf.length + 1e-12);
     const s = myInput().sensitivity;
-    mutedHeld.update(db > (s === 'auto' ? -50 : s) ? ['self'] : []);
+    mutedGate.update(db > (s === 'auto' ? AUTO_GATE_DB : s));
   }, 100);
   mutedWatch = () => {
     clearInterval(timer);
@@ -636,8 +712,10 @@ function end(reason: string) {
   meterTimer = null;
   micLevel.value = 0;
   watchMutedMic();
+  rawSpeaking = new Set();
   speakingHeld.clear();
-  speakingLevels.value = new Map();
+  picker.clear();
+  callLevels.value = new Map();
   callMedia.value.camera?.getTracks().forEach((t) => t.stop());
   callMedia.value.screen?.getTracks().forEach((t) => t.stop());
   callMedia.value = { camera: null, screen: null, slots: new Map() };
@@ -710,7 +788,6 @@ function bridgeTransport(host: TransportHost): Transport {
     },
     stats: () => (pc ? peerStats(pc) : Promise.resolve(null)),
     micLevel: () => (pc ? sentAudioLevel(pc, host.mic.getAudioTracks()[0]) : Promise.resolve(null)),
-    levels: () => (t.audio ? receiverLevel(t.audio.receiver) : null),
     stop() {
       pc?.close();
       pc = null;

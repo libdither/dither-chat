@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META } from '@dither-chat/protocol';
-import { activeCall, callMedia, callNetwork, canCall, canRing, canShareScreen, canVideo, isCallSelf, leaveCall, micLevel, mutedTalking, setCamera, setDeafened, setMuted, setScreen, speakingNow, startCall } from '../call.ts';
+import { activeCall, callMedia, callName, callStatus, canCall, canRing, featuredSpeaker, isCallSelf, leaveCall, startCall } from '../call.ts';
 import { callIn } from '../ringing.ts';
-import { db, isSelfIdentity, prefs, rev } from '../state.ts';
+import { db, prefs, rev } from '../state.ts';
 import { convTitle } from '../model.ts';
+import { CallControls } from './CallControls.tsx';
 import { Icon } from './icons.tsx';
 
 type PanelParts = typeof import('./CallPanel.tsx');
@@ -57,11 +57,8 @@ export function JoinCallButton({ c }: { c: P.ConversationView }) {
   );
 }
 
-function elapsed(since: number, now: number) {
-  const s = Math.max(0, Math.floor((now - since) / 1000));
-  const m = Math.floor(s / 60);
-  return `${m}:${String(s % 60).padStart(2, '0')}`;
-}
+/** The dock's bar has the round buttons; a stage's Speak and Move to the audience are in its open body. */
+const DOCK_BUTTONS = ['mute', 'deafen', 'camera', 'share', 'hand', 'leave'] as const;
 
 /** The call in progress, wherever you are in the app. Tap it for the people in it. */
 export function CallDock() {
@@ -79,12 +76,11 @@ export function CallDock() {
   if (!call) return null;
   const c = db.conversations.get(call.conversationId);
   const title = c ? convTitle(c) : 'Call';
-  const speaking = call.participants.filter((p) => speakingNow.value.has(p.id));
+  // Whoever talks, the featured one (the latest to start, call.ts featuredSpeaker) first.
+  const lead = featuredSpeaker.value;
+  const speaking = call.participants.filter((p) => p.speaking).sort((x, y) => Number(y.id === lead) - Number(x.id === lead));
   const effect = call.effects.at(-1)?.effect;
-  // Bridge mode: live once the bridge is, but people hear you only once the account's own client has connected.
-  const reaching = call.phase === 'live' && call.mode === 'bridge' && call.self && !call.self.connected;
-  const status = call.phase === 'connecting' ? 'Connecting…' : call.phase === 'ended' ? (call.note ?? 'Call ended') : reaching ? `Connecting to ${NETWORK_META[callNetwork(call)].name}…` : elapsed(call.since, now);
-  const video = canVideo();
+  const status = callStatus(call, now);
   return (
     <section
       class={`call-dock ${open ? 'open' : ''} ${call.phase}`}
@@ -97,57 +93,27 @@ export function CallDock() {
       <CallVideos />
       <div class="call-dock-bar">
         <button class="call-dock-title" onClick={() => setOpen(!open)} aria-expanded={open}>
-          <span class={`call-dot ${call.phase}`} />
+          <span class={`call-dot ${status.phase === 'reaching' ? 'connecting' : call.phase}`} />
           <span class="call-dock-text">
             <b>{title}</b>
             <small>
-              {status}
+              {status.text}
               {call.phase === 'live' && ` · ${call.mode === 'direct' ? 'direct' : 'bridge'}`}
-              {effect ? ` · ${name(effect.who)}: ${effect.sound ? `${effect.emoji ? `${effect.emoji} ` : '🔊 '}${effect.sound.name}` : effect.emoji}` : speaking.length > 0 && ` · ${speaking.map((p) => name(p.id)).join(', ')}`}
+              {status.hint ? ` · ${status.hint}` : effect ? ` · ${callName(effect.who)}: ${effect.sound ? `${effect.emoji ? `${effect.emoji} ` : '🔊 '}${effect.sound.name}` : effect.emoji}` : speaking.length > 0 && ` · ${speaking.map((p) => callName(p.id)).join(', ')} ${speaking.length === 1 ? 'is' : 'are'} talking`}
             </small>
           </span>
         </button>
         <div class="call-dock-buttons">
-          <button
-            class={`call-btn mic ${call.muted ? 'off' : ''}`}
-            onClick={() => setMuted(!call.muted)}
-            aria-label={call.muted ? 'Unmute' : 'Mute'}
-            title={call.listenOnly ? 'No microphone: listening only' : call.self?.muted && !call.muted ? 'The account is still muted: tap to try again' : call.muted ? 'Unmute' : 'Mute'}
-            disabled={call.phase === 'ended' || call.listenOnly}
-            style={{ '--mic-level': call.muted ? 0 : micLevel.value }}
-          >
-            <Icon name={call.muted ? 'micOff' : 'mic'} size={18} />
-          </button>
-          <button class={`call-btn ${call.deafened ? 'off' : ''}`} onClick={() => setDeafened(!call.deafened)} aria-label={call.deafened ? 'Undeafen' : 'Deafen'} title={call.deafened ? 'Undeafen' : 'Deafen'} disabled={call.phase === 'ended'}>
-            <Icon name={call.deafened ? 'headphonesOff' : 'headphones'} size={18} />
-          </button>
-          {video && (
-            <button class={`call-btn ${call.camera ? 'on' : ''}`} onClick={() => void setCamera(!call.camera)} aria-label={call.camera ? 'Turn camera off' : 'Turn camera on'} title={call.camera ? 'Turn camera off' : 'Turn camera on'} data-track="call camera">
-              <Icon name="camera" size={18} />
-            </button>
-          )}
-          {video && canShareScreen() && (
-            <button class={`call-btn ${call.screen ? 'on' : ''}`} onClick={() => void setScreen(!call.screen)} aria-label={call.screen ? 'Stop sharing' : 'Share your screen or a window'} title={call.screen ? 'Stop sharing' : 'Share your screen or a window'} data-track="call screen">
-              <Icon name="monitor" size={18} />
-            </button>
-          )}
-          <button class="call-btn leave" onClick={leaveCall} aria-label="Leave the call" title="Leave the call" disabled={call.phase === 'ended'}>
-            <Icon name="phoneOff" size={18} />
-          </button>
+          <CallControls call={call} only={DOCK_BUTTONS} />
         </div>
       </div>
-      {call.muted && mutedTalking.value && (
-        <p class="call-muted-talking" role="status">
-          You're muted. <button onClick={() => setMuted(false)}>Unmute</button>
-        </p>
-      )}
       {open && (Panel ? <Panel call={call} /> : <div class="call-dock-body call-empty">Loading…</div>)}
     </section>
   );
 }
 
 /** One video: a stream on a <video>, a tap for full screen. */
-function VideoTile({ stream, label, mirror, slot, who }: { stream: MediaStream; label: string; mirror?: boolean; slot?: string; who?: string }) {
+function VideoTile({ stream, label, mirror, slot, speaking }: { stream: MediaStream; label: string; mirror?: boolean; slot?: string; speaking?: boolean }) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
     const v = ref.current;
@@ -157,9 +123,12 @@ function VideoTile({ stream, label, mirror, slot, who }: { stream: MediaStream; 
     }
   }, [stream]);
   return (
-    <figure class={`call-video ${mirror ? 'mirror' : ''} ${who && speakingNow.value.has(who) ? 'speaking' : ''}`} data-video-slot={slot}>
+    <figure class={`call-video speak-ring ${mirror ? 'mirror' : ''} ${speaking ? 'speaking' : ''}`} data-video-slot={slot}>
       <video ref={ref} autoplay playsInline muted onClick={(e) => void (e.currentTarget as HTMLVideoElement).requestFullscreen?.().catch(() => {})} />
-      <figcaption>{label}</figcaption>
+      <figcaption>
+        {label}
+        {speaking && <span class="sr-only">, speaking</span>}
+      </figcaption>
     </figure>
   );
 }
@@ -171,21 +140,14 @@ function CallVideos() {
   if (!call || call.phase === 'ended') return null;
   const remote = call.video.map((v) => ({ v, stream: media.slots.get(v.slot) })).filter((x) => !!x.stream);
   if (!remote.length && !media.camera && !media.screen) return null;
+  const talks = (who: string) => !!call.participants.find((p) => p.id === who)?.speaking;
   return (
     <div class="call-videos" aria-label="Video">
       {remote.map(({ v, stream }) => (
-        <VideoTile key={`${v.slot}:${v.who}:${v.source}`} stream={stream!} slot={v.slot} who={v.source === 'stream' ? undefined : v.who} label={`${name(v.who)}${v.source === 'stream' ? ' · screen' : ''}`} />
+        <VideoTile key={`${v.slot}:${v.who}:${v.source}`} stream={stream!} slot={v.slot} speaking={v.source !== 'stream' && talks(v.who)} label={`${callName(v.who)}${v.source === 'stream' ? ' · screen' : ''}`} />
       ))}
       {media.screen && <VideoTile key="my-screen" stream={media.screen} label="Your screen" />}
-      {media.camera && <VideoTile key="my-camera" stream={media.camera} label="You" mirror who={call.participants.find((p) => isCallSelf(call, p.id))?.id} />}
+      {media.camera && <VideoTile key="my-camera" stream={media.camera} label="You" mirror speaking={call.participants.some((p) => p.speaking && isCallSelf(call, p.id))} />}
     </div>
   );
-}
-
-
-function name(identityId: string): string {
-  const i = db.identities.get(identityId);
-  // Another of the owner's own accounts is named as that account, not "You".
-  const person = i?.personId && !isSelfIdentity(identityId) ? db.persons.get(i.personId) : null;
-  return person?.name ?? i?.displayName ?? i?.handle ?? 'Someone';
 }

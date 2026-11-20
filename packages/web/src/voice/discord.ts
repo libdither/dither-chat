@@ -423,7 +423,7 @@ export function discordTransport(host: TransportHost): Transport {
       return { ...s, dave: { version: secureVersion, ...counts, sandboxed: workerOrigin === 'null' } } as any;
     },
     micLevel: () => (pc ? sentAudioLevel(pc, host.mic.getAudioTracks()[0]) : Promise.resolve(null)),
-    levels() {
+    peerLevels() {
       const out = new Map<string, number>();
       for (const t of pc?.getTransceivers() ?? []) {
         const who = t.mid ? assigned.get(t.mid) : undefined;

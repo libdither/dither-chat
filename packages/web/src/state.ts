@@ -128,8 +128,6 @@ interface Prefs {
   callCameraId?: string;
   /** Call sounds on this device: someone joins or leaves, you mute (default on). */
   callSounds?: boolean;
-  /** How a speaking person is marked in calls: a ring (default), a ring whose brightness follows how loud they are, or bars. */
-  callSpeakingMark?: 'ring' | 'level' | 'bars';
   /** The inbox's filter (its menu beside the search box). */
   inboxFilter: InboxFilter;
   /** People's filter chip: chats, or one kind of list (docs/add.md "Relationships"). */

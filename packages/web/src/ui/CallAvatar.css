@@ -1,57 +1,34 @@
-/* A person in a call (CallAvatar.tsx). A fixed square box, so the ring around it is round at any size. */
+/* A person in a call (CallAvatar.tsx). A fixed square box, so the ring around it (.speak-ring, styles.css) is round at any size. */
 .call-av {
-  position: relative;
   display: block;
   flex: none;
   width: var(--s, 40px);
   height: var(--s, 40px);
+  border-radius: 50%;
+}
+.call-av.square {
+  --ring-r: calc(var(--s, 40px) * 0.3 + var(--ring-out, 4px));
+  border-radius: calc(var(--s, 40px) * 0.3);
 }
 .call-av > .avatar {
   display: block;
   width: 100%;
   height: 100%;
 }
-/* The speaking mark: a ring on a layer around the box. On at once; it fades when the hold ends (call.ts speakingNow). */
-.call-av::after {
-  content: '';
-  position: absolute;
-  inset: -4px;
-  border-radius: 50%;
-  box-shadow: 0 0 0 2px var(--good);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 180ms ease-out;
-}
-.call-av.speaking:not(.mark-bars)::after {
-  opacity: 1;
-  transition: none;
-}
-/* Ring + level: brightness follows how loud they are, never the width. */
-.call-av.mark-level.speaking::after {
-  opacity: calc(0.35 + var(--lv, 1) * 0.65);
-  transition: opacity 120ms linear;
-}
-/* You, talking into a muted microphone. */
-.call-av.muted-talking::after {
-  opacity: 1;
-  box-shadow: 0 0 0 2px var(--warn);
-  transition: none;
-}
-/* One badge, bottom right: the most important state (callmarks.ts callBadge), or Bars while speaking. */
-.call-av-badge,
-.call-av-bars {
+/* One badge, bottom right: the most important state (callmarks.ts callBadge), sized with the face (badgeSize). */
+.call-av-badge {
   position: absolute;
   right: -3px;
   bottom: -3px;
-  width: var(--corner, 18px);
-  height: var(--corner, 18px);
+  width: var(--corner, 14px);
+  height: var(--corner, 14px);
   border-radius: 50%;
   display: grid;
   place-items: center;
   background: var(--bg-raised);
   box-shadow: 0 0 0 2px var(--bg-raised);
   color: var(--danger);
-  font-size: calc(var(--corner, 18px) * 0.6);
+  font-size: calc(var(--corner, 14px) * 0.6);
   line-height: 1;
 }
 .call-av-badge.serverMuted,
@@ -62,23 +39,9 @@
 .call-av-badge.hand {
   color: var(--warn);
 }
+.call-av-badge.invited {
+  color: var(--good);
+}
 .call-av-badge.mutedForYou {
   color: var(--text-dim);
-}
-.call-av-bars {
-  display: flex;
-  gap: 2px;
-  align-items: center;
-  justify-content: center;
-  background: var(--good);
-}
-.call-av-bars s {
-  width: 2px;
-  border-radius: 1px;
-  background: #fff;
-  text-decoration: none;
-  height: calc(var(--corner, 18px) * (0.18 + var(--lv, 0.6) * 0.4));
-}
-.call-av-bars s:nth-child(2) {
-  height: calc(var(--corner, 18px) * (0.18 + var(--lv, 0.6) * 0.5));
 }

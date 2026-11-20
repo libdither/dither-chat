@@ -560,23 +560,6 @@ function CallInputSettings() {
         </div>
       </div>
       <p class="set-help">Someone joining or leaving, muting, a camera or a stream starting: Discord's own sounds when the hub has them, short chimes otherwise.</p>
-      <div class="set-rule">
-        <span class="set-rule-label">Who is speaking</span>
-        <div class="level-picker">
-          {(
-            [
-              ['ring', 'Ring'],
-              ['level', 'Ring + level'],
-              ['bars', 'Bars'],
-            ] as const
-          ).map(([m, label]) => (
-            <button class={`chip-btn ${(prefs.value.callSpeakingMark ?? 'ring') === m ? 'on' : ''}`} onClick={() => setPrefs({ callSpeakingMark: m })}>
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <p class="set-help">The mark on someone talking. It holds a moment between words, so it does not blink. Ring + level brightens with how loud they are; Bars show the level in the corner of their picture.</p>
     </>
   );
 }

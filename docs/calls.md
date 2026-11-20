@@ -146,8 +146,9 @@ bun scripts/verify-calls-demo.ts http://127.0.0.1:8579
 ```
 
 The script runs two devices as the two demo Discord accounts and the room, each in headless Chromium with fake
-devices, and checks joining (and how fast), hearing and being heard, the bot's speaking ring (round, and held between
-its words), the join, leave, mute and camera sounds, a note when talking while muted, mute
+devices, and checks joining (and how fast), hearing and being heard, the bot's speaking ring (round, with words a screen
+reader hears), the join, leave, mute and camera sounds, the mic button's note when talking while muted (moving
+nothing else), mute
 reaching the far end and the other device, the camera both ways, sharing a screen and watching it from the other
 device, watching the bot's Go Live, leaving, and a device with no microphone joining to listen.
 
@@ -361,30 +362,49 @@ the voice channel's About.
 
 The web: the open call dock is a chunk of its own (`ui/CallPanel.tsx`): tap someone for their volume and mute for you,
 a stage moderator's invite or move to the audience, and a server moderator's actions, each after a confirm; a stage's
-topic and your own hand at the top; the soundboard below. Someone's Go Live shows as a LIVE tag there and on the voice
-channel's people (cameras show in the video window, so the dock has no camera icon). Settings → Calls has this
-device's noise suppression and sensitivity, its microphone and camera (with a six-second microphone test), the call
-sounds on or off, and how speaking is marked (below). The dock's mute button has a ring that follows the microphone's
-level (from what WebRTC says it sends), so a silent microphone shows.
+topic, your role and Speak or Move to the audience at the top (your hand is a button on the dock's bar); the
+soundboard below. Someone's Go Live shows as a LIVE tag there and on the voice channel's people (cameras show in the
+video window, so the dock has no camera icon). Settings → Calls has this device's noise suppression and sensitivity,
+its microphone and camera (with a six-second microphone test), and the call sounds on or off. The dock's mute button
+has a ring that follows the microphone's level (from what WebRTC says it sends), so a silent microphone shows.
 
 ### Who is speaking
 
-Each person in the dock is a `CallAvatar` (`ui/CallAvatar.tsx`, meant for any place that shows people in a call): the
-picture in a fixed square box, with the speaking ring drawn on a layer 4 px around it, so it is round at every size.
+Every place that shows a call (the dock now; the call bar, a room and the video window as they come) reads the same
+pieces, so none works these out again:
 
-- **Held, so it doesn't blink.** Voice activity switches off between words. `call.ts` passes what the network says
-  through `speakingHold` (`callmarks.ts`) into `speakingNow`: on at once, still on 250 ms after the last word, then the
-  ring fades over 180 ms (CSS). The dock's "who is talking" line, the avatars and the video tiles' green edge all read
-  `speakingNow`.
-- **One badge**, bottom right: the most important of muted or deafened by a moderator (filled red), deafened, muted,
-  a hand up on a stage, and muted for you (`callBadge`). No network badge: the call already names its network.
-- **Muted but talking**, for you only: while you are muted, the dock listens to a copy of your microphone (a Web Audio
-  analyser, only while muted) against your sensitivity (or −50 dBFS on automatic). Talking turns your ring amber and
-  puts "You're muted. Unmute" under the dock's bar, held like speaking.
-- **The mark** (Settings → Calls, "Who is speaking"): Ring (the default); Ring + level, whose brightness (never its
-  width) follows how loud the person is; or Bars, three bars in the badge's corner. The level is read four times a
-  second, only for those two: each person's own in direct mode (their receive slot's RTP level), the call's mix for
-  everyone speaking in bridge mode (it is one stream), and your microphone for you.
+- **Held, so it doesn't blink** (`speakingHold`, `callmarks.ts`). Voice activity switches off between words. `call.ts`
+  holds what the network says where it changes the call's people: each participant's `speaking` in `activeCall` is
+  the held value, on at once and still on 250 ms after the last word; then the ring fades over 180 ms (CSS). Nothing
+  else needs to remember a hold.
+- **Who to feature** (`featuredPicker`, `call.ts` `featuredSpeaker`): the latest person to start talking, never you,
+  kept at least 1.5 s before someone else (or nobody) takes it, so a quick "yeah" doesn't snatch it. The dock names
+  them first in its "is talking" line; the call bar's face and the video window's Speaker use it.
+- **The face** (`ui/CallAvatar.tsx`): `CallAvatar` draws only what it's given (id, name, picture, size, speaking,
+  level, tone, badge): the picture in a fixed square box with the ring 4 px around it, so it's round at every size.
+  `callMarks(call, person)` works those out for someone in the call you're in, or (with no call) for someone a voice
+  channel lists, as the list's voice channels do. Its words ("Lev, speaking, muted") are what a screen reader hears.
+- **One ring** (`.speak-ring`, styles.css): a layer around its element, or inside its edge (`--ring-inset: inset`, as
+  video tiles have it), with its distance, width, colour, corner and strength as CSS variables.
+- **Its strength**: in direct mode each person has a receive slot of their own, so while someone speaks their ring's
+  strength follows their level (read on the microphone meter's own tick, only while someone speaks; yours is your
+  microphone's). Bridge mode gets one mixed stream, so it never shows a level per person: the ring is on or off.
+- **One badge**, bottom right, the most important way someone differs from their role's default (`callBadge`): in a
+  stage's audience, where muted is normal, a hand up and then an invitation; for a speaker, or anyone in a call without
+  an audience, muted or deafened by a moderator (filled red), deafened, muted, then muted for you. It grows with the
+  face (`badgeSize`, a third of it). No network badge: the call already names its network. The dock also keeps a ✋
+  beside the name of someone asking to speak.
+- **Muted but talking**, for you only: while you are muted, a copy of your microphone is listened to here (a Web Audio
+  analyser, only while muted) against your sensitivity, or the automatic gate's −36 dB (`AUTO_GATE_DB`). After about
+  half a second of talk (`talkGate`; gaps between words don't restart it) the mic button gets an amber ring and a
+  small "You're muted" note anchored to it, which moves nothing else; three seconds of quiet clears it. A live region
+  beside the button, always there, says it to a screen reader.
+- **The buttons and the status line** (`callControls`, `callStatus` in `call.ts`; `ui/CallControls.tsx` draws them).
+  Your role gets its buttons: a speaker, or anyone in a call without an audience, gets mute, deafen, camera and share
+  where video goes, and Leave (on a stage also Move to the audience); the audience gets deafen, a hand, Speak when
+  invited (or as a moderator) and Leave quietly. The status line is Connecting…, Connecting to Discord… (bridge mode
+  before the account's own client is in), the time (1:15:03 past the hour) or why it ended, with "The account is still
+  muted: tap to try again" when it is.
 
 Direct mode's sensitivity is the device's own level gate: the level in dB is the microphone's loudness (RMS, dBFS);
 "automatic" is the gate's own −36 dB. Discord's own slider is on its own scale, so the same number may not feel the
