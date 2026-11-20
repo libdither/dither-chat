@@ -12,7 +12,7 @@
  * Changes are counted at once (`dataVersion`, which model.ts memoizes on); the signals move once the task that made
  * them is done.
  */
-import { batch, signal, type Signal } from '@preact/signals';
+import { batch, effect, signal, untracked, type Signal } from '@preact/signals';
 
 export const rev = signal(0);
 export const metaRev = signal(0);
@@ -84,6 +84,27 @@ export function flush() {
       const s = timelineRevs.get(k);
       if (s) s.value++;
     }
+  });
+}
+
+/**
+ * Runs `run` once, as soon as `ready()` holds: at once, or after a change to the list (`rev`) makes it so; never after
+ * `ms`. `run` is not watched: whatever signals it reads and writes do not run the wait again. (Android's Answer on a
+ * cold start joined the call from inside its wait, and `startCall` reads and sets the call, so each join ran the wait
+ * again: a hundred joins, each asking for the microphone and opening a socket, until Preact gave up on the cycle.)
+ */
+export function onceListed(ready: () => boolean, run: () => void, ms: number): void {
+  let done = false;
+  let stop: (() => void) | null = null;
+  const giveUp = setTimeout(() => stop?.(), ms);
+  stop = effect(() => {
+    rev.value;
+    if (done || !ready()) return;
+    done = true;
+    clearTimeout(giveUp);
+    // Not from inside the effect's own run, which may be its first, before `stop` is set.
+    queueMicrotask(() => stop?.());
+    untracked(run);
   });
 }
 
