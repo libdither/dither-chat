@@ -1,3 +1,4 @@
+import { whole } from './slices.ts';
 import { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
@@ -134,6 +135,9 @@ export const SHOWN = `COALESCE(NULLIF(i.nickname, ''), i.display_name, i.handle,
 const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => '\\' + c);
 
 /** A snippet for a match SQLite's tokens could not see. */
+/** A message's key in search_time: when it was sent, with room for 1024 in one millisecond (schema.sql). */
+export const searchKey = (ts: number, rowid: number) => Math.floor(ts) * 1024 + (rowid % 1024);
+
 const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 
 /**
@@ -262,6 +266,8 @@ export class Store {
   /** What changed at which position, for clients that come back (journal.ts, docs/sync.md). */
   readonly journal: Journal;
   private selfIdentities = new Set<string>();
+  /** search_time holds every message (fillSearchIndexSteps has run, or the database began with it). */
+  private searchTimeReady = false;
   /** Accounts whose adapter speaks another protocol version, and what to tell you about it. */
   private protocolWarnings = new Map<string, string>();
   /** A channel's bin counts for msgcount.ts, by channel, count and newest message: a new message makes a new key. */
@@ -342,6 +348,10 @@ export class Store {
     for (const r of this.db.query('SELECT self_identity FROM account WHERE self_identity IS NOT NULL').all() as Row[]) {
       this.selfIdentities.add(r.self_identity);
     }
+    // A database with no messages yet gets every one through the triggers: nothing to fill in.
+    if (!this.db.query(`SELECT 1 FROM meta WHERE key = 'search_time_ready'`).get() && !this.db.query('SELECT 1 FROM message LIMIT 1').get())
+      this.db.exec(`INSERT INTO meta (key, value) VALUES ('search_time_ready', '1')`);
+    this.searchTimeReady = !!this.db.query(`SELECT 1 FROM meta WHERE key = 'search_time_ready'`).get();
   }
 
   /** The schema this database was last opened with: '' for one from before it was recorded, null for a new one. */
@@ -3334,39 +3344,66 @@ export class Store {
    * landed, the name first and a bio last, then by whether they are a person of yours, starred, and how much they
    * post. One identity per person; `match` says what matched when the name shown does not.
    */
-  findPeople(needle: string, limit = 12): P.PersonHit[] {
-    // SQL's LIKE folds ASCII case only, so it gets the words as typed; ranking folds accents too.
-    const typed = [...new Set(needle.toLowerCase().split(/\s+/).filter(Boolean))];
-    const words = typed.map(fold);
-    if (!words.length) return [];
-    const byWord = (w: string) => {
-      const like = `%${likeEscape(w)}%`;
-      const ids = this.db
-        .query(
-          `SELECT i.id FROM identity i LEFT JOIN person p ON p.id = i.person_id
-           WHERE i.display_name LIKE ?1 ESCAPE '\\' OR i.handle LIKE ?1 ESCAPE '\\' OR i.nickname LIKE ?1 ESCAPE '\\' OR i.net_nickname LIKE ?1 ESCAPE '\\'
-             OR i.net_note LIKE ?1 ESCAPE '\\' OR json_extract(i.status, '$.text') LIKE ?1 ESCAPE '\\' OR p.name LIKE ?1 ESCAPE '\\' OR p.note LIKE ?1 ESCAPE '\\'
-           UNION SELECT target_id FROM about WHERE target_id LIKE 'idn\\_%' ESCAPE '\\' AND json_extract(data, '$.bio') LIKE ?1 ESCAPE '\\'
-           UNION SELECT target_id FROM change_log WHERE target_kind = 'identity' AND field IN ('displayName', 'handle') AND old LIKE ?1 ESCAPE '\\'`,
-        )
-        .all(like) as Row[];
-      return new Set(ids.map((r) => r.id as string));
-    };
-    let ids = byWord(typed[0]);
-    for (const w of typed.slice(1)) {
-      const next = byWord(w);
-      ids = new Set([...ids].filter((id) => next.has(id)));
-    }
-    if (!ids.size) return [];
-    const rows = this.db
-      .query(
-        `SELECT i.*, p.name AS person_name, p.note, p.starred, p.is_self,
+  /** Every identity with what people search reads, by id, folded into one string to look in (findPeople). */
+  private people: Map<string, { r: Row; hay: string }> | null = null;
+  /** How much each identity has posted, up to 1000: a tie-breaker in people search, an hour old at most. */
+  private postedCache = new Map<string, { n: number; at: number }>();
+  private static PEOPLE_SQL = `SELECT i.*, p.name AS person_name, p.note, p.starred, p.is_self,
            (SELECT group_concat(json_extract(c.old, '$'), char(31)) FROM change_log c WHERE c.target_kind = 'identity' AND c.target_id = i.id AND c.field IN ('displayName', 'handle')) AS past,
            (SELECT group_concat(json_extract(a.data, '$.bio'), char(31)) FROM about a WHERE a.target_id = i.id) AS bio
-         FROM identity i LEFT JOIN person p ON p.id = i.person_id
-         WHERE i.id IN (SELECT value FROM json_each(?)) AND COALESCE(p.is_self, 0) = 0 ORDER BY p.id IS NULL LIMIT 2000`,
-      )
-      .all(JSON.stringify([...ids])) as Row[];
+         FROM identity i LEFT JOIN person p ON p.id = i.person_id`;
+
+  private peopleEntry(r: Row) {
+    const hay = [r.display_name, r.handle, r.nickname, r.net_nickname, r.net_note, statusText(r.status), r.person_name, r.note, r.past, r.bio].filter(Boolean).map((x) => fold(String(x))).join('\u001f');
+    return { r, hay };
+  }
+
+  /**
+   * The list people search looks in, loaded once (loadPeopleSteps, or at the first search) and then kept current
+   * from people_dirty: only the identities written since are read again.
+   */
+  private peopleList(): Map<string, { r: Row; hay: string }> {
+    if (!this.people) whole(this.loadPeopleSteps());
+    const dirty = (this.db.query('SELECT id FROM people_dirty').all() as Row[]).map((r) => r.id as string);
+    if (dirty.length) {
+      const one = this.db.query(`${Store.PEOPLE_SQL} WHERE i.id = ?`);
+      for (const id of dirty) {
+        const r = one.get(id) as Row | null;
+        if (r) this.people!.set(id, this.peopleEntry(r));
+        else this.people!.delete(id);
+      }
+      this.db.query('DELETE FROM people_dirty WHERE id IN (SELECT value FROM json_each(?))').run(JSON.stringify(dirty));
+    }
+    return this.people!;
+  }
+
+  /** People search's list, 2000 identities to a slice. Run once after start (main.ts), so no search waits for it. */
+  *loadPeopleSteps(): Generator<number, void> {
+    if (this.people) return;
+    this.db.exec('DELETE FROM people_dirty');
+    const list = new Map<string, { r: Row; hay: string }>();
+    const page = this.db.query(`${Store.PEOPLE_SQL} WHERE i.rowid > ? ORDER BY i.rowid LIMIT 2000`.replace('SELECT i.*', 'SELECT i.rowid AS rid, i.*'));
+    for (let after = 0; ; ) {
+      const rows = page.all(after) as Row[];
+      for (const r of rows) list.set(r.id, this.peopleEntry(r));
+      if (rows.length < 2000) break;
+      after = rows[rows.length - 1].rid;
+      yield rows.length;
+    }
+    this.people ??= list;
+  }
+
+  findPeople(needle: string, limit = 12): P.PersonHit[] {
+    // Accents and case fold on both sides: "zoe" finds Zoë.
+    const words = [...new Set(fold(needle).split(/\s+/).filter(Boolean))];
+    if (!words.length) return [];
+    const list = this.peopleList();
+    const rows: Row[] = [];
+    for (const e of list.values()) if (!e.r.is_self && words.every((w) => e.hay.includes(w))) rows.push(e.r);
+    if (!rows.length) return [];
+    // A person before an identity nobody linked, as the old query had it.
+    rows.sort((a, b) => Number(!a.person_id) - Number(!b.person_id));
+    rows.length = Math.min(rows.length, 2000);
 
     const scored: { r: Row; score: number; match: string | null }[] = [];
     for (const r of rows) {
@@ -3413,8 +3450,11 @@ export class Store {
     // whose name starts with the word, not one whose name is the word.
     const top = scored.slice(0, limit * 4);
     const posted = this.db.query('SELECT COUNT(*) AS n FROM (SELECT 1 FROM message WHERE author_id = ? LIMIT 1000)');
+    const now = Date.now();
     for (const s of top) {
-      const n = (posted.get(s.r.id) as Row).n as number;
+      let c = this.postedCache.get(s.r.id);
+      if (!c || now - c.at > 3_600_000) this.postedCache.set(s.r.id, (c = { n: (posted.get(s.r.id) as Row).n as number, at: now }));
+      const n = c.n;
       s.score += (s.r.person_id ? 40 : 0) + (s.r.starred ? 30 : 0) + 6 * Math.log10(1 + n);
     }
     top.sort((a, b) => b.score - a.score);
@@ -3484,15 +3524,17 @@ export class Store {
     const filtered = where.length > 1 || gone !== 'm.deleted = 0';
     const offset = q.relevance && cursor ? parseInt(cursor) || 0 : 0;
     const dir = q.oldest ? 'ASC' : 'DESC';
-    if (cursor && !q.relevance) {
+    const fts = this.ftsQuery(q);
+    const texts = [...q.phrases, ...q.terms];
+    // By time through search_time: a walk along its keys that stops at the page's end (docs/search.md).
+    const timed = !!fts && this.searchTimeReady && !q.relevance && !texts.some((t) => CJK.test(t)) && (!cursor || cursor.startsWith('t'));
+    if (cursor && !q.relevance && !timed) {
       const [ts, rowid] = cursor.split(':').map(Number);
       where.push(`(m.ts, m.rowid) ${q.oldest ? '>' : '<'} (?, ?)`);
       args.push(ts, rowid);
     }
-    const fts = this.ftsQuery(q);
     const take = limit + 1;
     const order = `m.ts ${dir}, m.rowid ${dir}`;
-    const texts = [...q.phrases, ...q.terms];
 
     // Tokens miss the middle of a word, and unspaced CJK text is one long token, so a hit in FTS is no proof there are no others.
     let substring = !!fts && (!!cursor?.endsWith(':s') || texts.some((t) => CJK.test(t)));
@@ -3501,7 +3543,22 @@ export class Store {
 
     let rows: Row[] = [];
     let mode: P.SearchPage['mode'] = fts ? 'fulltext' : 'filters';
-    if (fts && !substring) {
+    if (timed && !substring) {
+      const at = cursor ? Number(cursor.slice(1)) : null;
+      rows = (this.db
+        .query(
+          `SELECT m.*, m.rowid AS rid, s.rowid AS skey FROM search_time s CROSS JOIN search_key k ON k.key = s.rowid CROSS JOIN message m ON m.id = k.msg
+           WHERE search_time MATCH ? ${at !== null ? `AND s.rowid ${q.oldest ? '>' : '<'} ?` : ''} AND ${where.join(' AND ')} ORDER BY s.rowid ${dir} LIMIT ?`,
+        )
+        .all(fts, ...(at !== null ? [at] : []), ...args, take) as Row[]).map((r) => ({ ...r, snip: markSnippet(r.body, texts) }));
+      substring = !rows.length && !cursor;
+    } else if (fts && q.relevance && !substring) {
+      // Best match: the newest matches ranked by how well, how lately and how close (rankMatches).
+      rows = this.rankMatches(this.matchPool(fts, where, args, 2000), q)
+        .slice(offset, offset + take)
+        .map(({ r, why }) => ({ ...r, why, snip: markSnippet(r.body, texts) }));
+      substring = !rows.length && !cursor;
+    } else if (fts && !substring) {
       rows = this.db
         .query(
           `SELECT m.*, m.rowid AS rid, snippet(message_fts, 0, char(1), char(2), '…', 28) AS snip FROM message_fts JOIN message m ON m.rowid = message_fts.rowid
@@ -3529,13 +3586,24 @@ export class Store {
     const last = page[page.length - 1];
     const needle = [...q.phrases, ...q.terms].join(' ').trim();
     const people = needle.length >= 2 ? this.findPeople(needle) : [];
-    const shownIds = this.identitiesOf(views).map((i) => i.id);
+    const whys = new Map(page.filter((r) => r.why).map((r) => [r.id, r.why as string]));
+    // With no sort and more than a screen's worth: the best few above the newest.
+    let top: P.SearchHit[] = [];
+    // Not for a word or two of one or two letters: ranking every word they start is slow, and says little.
+    const worded = texts.some((t) => t.length >= 3);
+    if (fts && worded && !cursor && !q.relevance && !q.oldest && !q.newest && mode === 'fulltext' && rows.length > 3) {
+      const best = this.rankMatches(this.matchPool(fts, where.filter((w) => !w.startsWith('(m.ts, m.rowid)')), args, 600), q).slice(0, 3);
+      const tv = new Map(this.messageViews(best.map((b) => b.r)).map((m) => [m.id, m]));
+      top = best.map(({ r, why }) => ({ message: tv.get(r.id)!, snippet: markSnippet(r.body, texts), ...(why ? { why } : {}) })).filter((h) => h.message);
+    }
+    const shownIds = this.identitiesOf([...views, ...top.map((h) => h.message)]).map((i) => i.id);
     return {
-      hits: views.map((m) => ({ message: m, snippet: snips.get(m.id) ?? '' })),
+      hits: views.map((m) => ({ message: m, snippet: snips.get(m.id) ?? '', ...(whys.has(m.id) ? { why: whys.get(m.id) } : {}) })),
       identities: this.identitiesByIds([...shownIds, ...people.map((p) => p.id)]),
       people,
-      next: !more ? null : (q.relevance ? String(offset + limit) : `${last.ts}:${last.rid}`) + (substring ? ':s' : ''),
+      next: !more ? null : q.relevance ? String(offset + limit) + (substring ? ':s' : '') : timed && !substring ? `t${last.skey}` : `${last.ts}:${last.rid}` + (substring ? ':s' : ''),
       mode,
+      ...(top.length ? { top } : {}),
     };
   }
 
@@ -3548,14 +3616,124 @@ export class Store {
            WHERE t.id = ? AND o.deleted = 0 AND (o.ts, o.rowid) ${op} (t.ts, t.rowid) ORDER BY o.ts ${op === '<' ? 'DESC' : 'ASC'}, o.rowid ${op === '<' ? 'DESC' : 'ASC'} LIMIT ?`,
         )
         .all(id, n) as Row[];
-    const sides = page.hits.map((h) => [near(h.message.id, '<').reverse(), near(h.message.id, '>')]);
+    const all = [...page.hits, ...(page.top ?? [])];
+    const sides = all.map((h) => [near(h.message.id, '<').reverse(), near(h.message.id, '>')]);
     const views = new Map(this.messageViews(sides.flat(2)).map((m) => [m.id, m]));
-    page.hits.forEach((h, i) => {
+    all.forEach((h, i) => {
       h.before = sides[i][0].map((r) => views.get(r.id)!);
       h.after = sides[i][1].map((r) => views.get(r.id)!);
     });
     const shown = new Set(page.identities.map((i) => i.id));
     page.identities.push(...this.identitiesOf([...views.values()]).filter((i) => !shown.has(i.id)));
+  }
+
+  /**
+   * The newest `n` matches, filters applied: what Best match and the top matches rank. Through search_time a walk of
+   * n keys; before it is filled in, the older index sorted by time. No bm25: for a short last word it scores every
+   * word that word starts, 100 to 800 ms on a big hub, where rankMatches' own count of the words takes none.
+   */
+  private matchPool(fts: string, where: string[], args: unknown[], n: number): Row[] {
+    const sql = this.searchTimeReady
+      ? `SELECT m.*, m.rowid AS rid FROM search_time s CROSS JOIN search_key k ON k.key = s.rowid CROSS JOIN message m ON m.id = k.msg
+         WHERE search_time MATCH ? AND ${where.join(' AND ')} ORDER BY s.rowid DESC LIMIT ?`
+      : `SELECT m.*, m.rowid AS rid FROM message_fts JOIN message m ON m.rowid = message_fts.rowid
+         WHERE message_fts MATCH ? AND ${where.join(' AND ')} ORDER BY m.ts DESC LIMIT ?`;
+    return this.db.query(sql).all(fts, ...(args as any[]), n) as Row[];
+  }
+
+  /**
+   * Matches best first (docs/search.md, "Ranking"): how well the words match, times how lately it was said, times
+   * how close the chat is to you. Each with its reason in a few words.
+   */
+  rankMatches(rows: Row[], q: P.SearchQuery, now = Date.now()): { r: Row; score: number; why: string }[] {
+    if (!rows.length) return [];
+    const words = [...q.phrases, ...q.terms].map(fold).filter(Boolean);
+    const convs = [...new Set(rows.map((r) => r.conversation_id as string))];
+    const close = new Map<string, { shape: string; sent: number; lastSent: number | null }>();
+    for (const c of this.db
+      .query(
+        `SELECT c.id, c.shape, COALESCE(json_extract(f.state, '$.totalSent'), 0) AS sent, json_extract(f.state, '$.lastSent') AS last_sent
+         FROM conversation c LEFT JOIN conv_feature f ON f.conversation_id = c.id WHERE c.id IN (SELECT value FROM json_each(?))`,
+      )
+      .all(JSON.stringify(convs)) as Row[])
+      close.set(c.id, { shape: c.shape, sent: c.sent ?? 0, lastSent: c.last_sent ?? null });
+    const authors = [...new Set(rows.map((r) => r.author_id as string).filter(Boolean))];
+    const known = new Set(
+      (this.db.query(`SELECT id FROM identity WHERE person_id IS NOT NULL AND id IN (SELECT value FROM json_each(?))`).all(JSON.stringify(authors)) as Row[]).map((r) => r.id as string),
+    );
+    const DAY = 86_400_000;
+    // How much of a message is the words (as bm25 would have it: a short message about them over a long one that
+    // mentions them), against the most of any in the pool.
+    const parsed = rows.map((r) => {
+      const body = fold(r.body ?? '');
+      const list = body.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+      const hits = list.filter((t) => words.some((w) => t.startsWith(w))).length;
+      return { body, tokens: new Set(list), density: hits / (list.length + 4) };
+    });
+    const densest = Math.max(1e-9, ...parsed.map((p) => p.density));
+    const out = rows.map((r, k) => {
+      const { body, tokens, density } = parsed[k];
+      // Whole words count fully; the last word, still being typed, half when only a longer word starts with it.
+      const whole = words.length ? words.reduce((n, w, i) => n + (tokens.has(w) || w.includes(' ') ? 1 : i === words.length - 1 ? 0.5 : 0), 0) / words.length : 0;
+      const together = words.length > 1 && body.includes(words.join(' ')) ? 1 : 0;
+      const text = 0.45 * (density / densest) + 0.4 * whole + 0.15 * (words.length > 1 ? together : whole);
+      const age = Math.max(0, now - r.ts) / DAY;
+      const lately = 0.3 + 0.7 * 2 ** (-age / 60);
+      const c = close.get(r.conversation_id) ?? { shape: 'channel', sent: 0, lastSent: null };
+      const direct = c.shape === 'direct' || c.shape === 'self';
+      const talk = 1 - Math.exp(-c.sent / 20);
+      const there = c.lastSent ? 2 ** (-Math.max(0, now - c.lastSent) / (30 * DAY)) : 0;
+      const closeness = (direct ? 0.4 : c.shape === 'group' ? 0.25 : 0.1) + 0.35 * talk + 0.25 * there;
+      const mine = this.selfIdentities.has(r.author_id);
+      const who = mine || known.has(r.author_id) ? 0.1 : 0;
+      const score = text * lately * (0.5 + closeness + who);
+      const why = [
+        age < 7 ? 'recent' : null,
+        direct ? 'DM' : null,
+        talk > 0.5 ? (direct ? 'you talk often' : 'a chat you write in') : null,
+        mine ? 'you said it' : null,
+        together ? 'these words together' : null,
+      ].filter(Boolean);
+      return { r, score, why: why.slice(0, 3).join(' · ') };
+    });
+    return out.sort((a, b) => b.score - a.score || b.r.ts - a.r.ts);
+  }
+
+  /** Whether every message is in search_time yet (fillSearchIndexSteps). */
+  get searchIndexReady(): boolean {
+    return this.searchTimeReady;
+  }
+
+  /**
+   * Messages from before search_time existed, into it, newest first, 128 to a slice (sliced() in main.ts).
+   * Where it got to is kept in meta, so a restart goes on from there. Until it is done search uses message_fts.
+   */
+  *fillSearchIndexSteps(): Generator<number, void> {
+    if (this.searchTimeReady) return;
+    const meta = (k: string) => (this.db.query('SELECT value FROM meta WHERE key = ?').get(k) as Row | null)?.value as string | undefined;
+    const save = this.db.query(`INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`);
+    let below = Number(meta('search_time_rowid') ?? ((this.db.query('SELECT MAX(rowid) AS n FROM message').get() as Row).n ?? 0) + 1);
+    const pick = this.db.query(`SELECT m.rowid AS rid, m.id, m.ts, m.body FROM message m WHERE m.rowid < ? AND m.rowid >= ? AND NOT EXISTS (SELECT 1 FROM search_key k WHERE k.msg = m.id)`);
+    const taken = this.db.query('SELECT 1 FROM search_key WHERE key = ?');
+    const addKey = this.db.query('INSERT INTO search_key (key, msg) VALUES (?, ?)');
+    const addText = this.db.query('INSERT INTO search_time (rowid, body) VALUES (?, ?)');
+    while (below > 0) {
+      const lo = Math.max(0, below - 128);
+      const rows = pick.all(below, lo) as Row[];
+      this.db.transaction(() => {
+        for (const r of rows) {
+          let key = searchKey(r.ts, r.rid);
+          while (taken.get(key)) key++;
+          addKey.run(key, r.id);
+          addText.run(key, r.body ?? '');
+        }
+        save.run('search_time_rowid', String(lo));
+      })();
+      below = lo;
+      yield Math.max(1, rows.length);
+    }
+    save.run('search_time_ready', '1');
+    this.searchTimeReady = true;
   }
 
   /**

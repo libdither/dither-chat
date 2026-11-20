@@ -1,7 +1,8 @@
 /**
  * The people graph (docs/people-graph.md), end to end against a demo hub in headless Chromium: /api/graph uses server
  * members only once their switch is on; the graph opens from the People header as a chunk of its own; it draws,
- * filters by network, account and server, finds someone, and a click on a node picks it and opens its page; an empty
+ * filters by network, account and server, finds someone, and a click on a node picks it and opens its page; a Same
+ * person? group opens its merge card from its badge, and merges; an empty
  * graph says how it fills in; and a synthetic graph of ~11k nodes stays responsive, capped with "showing N of M".
  *
  *   bun scripts/verify-graph.ts http://127.0.0.1:8670 [/tmp/shots]
@@ -58,6 +59,14 @@ const click = async (sel: string) => {
   if (!r) throw new Error(`nothing matches ${sel}`);
   await clickAt(r.x, r.y);
 };
+/** The first shown match whose text has this in it. */
+const clickText = async (sel: string, text: string) => {
+  const r = await p.eval<{ x: number; y: number } | null>(
+    `(() => { const e = [...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => x.getBoundingClientRect().width > 0 && x.textContent.includes(${JSON.stringify(text)})); if (!e) return null; e.scrollIntoView({ block: 'nearest' }); const b = e.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; })()`,
+  );
+  if (!r) throw new Error(`nothing matches ${sel} with ${text}`);
+  await clickAt(r.x, r.y);
+};
 const clickAt = async (x: number, y: number, clickCount = 1) => {
   for (const type of ['mousePressed', 'mouseReleased']) await p.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount });
 };
@@ -68,7 +77,7 @@ const select = (label: string, value: string | number) =>
 const chunks = () => p.eval<string[]>(`performance.getEntriesByType('resource').map((e) => e.name.split('/').pop()).filter((n) => /\\.js$/.test(n))`);
 /** A graph the hub did not send: the page asks /api/graph and gets this. */
 const fake = (g: unknown) =>
-  p.eval(`(() => { const body = ${JSON.stringify(JSON.stringify(g))}; const f = window.__realFetch ??= window.fetch; window.fetch = (u, ...a) => String(u).includes('/api/graph') ? Promise.resolve(new Response(body, { headers: { 'content-type': 'application/json' } })) : f(u, ...a); })()`);
+  p.eval(`(() => { const body = ${JSON.stringify(JSON.stringify(g))}; const f = window.__realFetch ??= window.fetch; window.fetch = (u, ...a) => /\\/api\\/graph$/.test(String(u)) ? Promise.resolve(new Response(body, { headers: { 'content-type': 'application/json' } })) : f(u, ...a); })()`);
 
 try {
   await p.size(1360, 900);
@@ -107,8 +116,11 @@ try {
   for (let k = 0; k < on.links.length; k += 3) if (on.links[k + 1] === dither && !on.people[on.links[k]].bot) inDither.add(on.links[k]);
   check(byServer === inDither.size, 'by server: its people', { shown: byServer, members: inDither.size });
   await select('Server or group', '');
+  // Group chats go; the people in them stay when you talk with them (linked to you).
+  const places = (t: string) => Number(/([\d,]+) of [\d,]+ places/.exec(t)?.[1].replace(/,/g, '') ?? NaN);
+  const before = places(await status());
   await click('.pg-controls [aria-label="Show"] .chip-btn');
-  check((await shownPeople()) < all, 'groups off', await status());
+  check(places(await status()) < before, 'groups off', await status());
   await click('.pg-controls [aria-label="Show"] .chip-btn');
 
   // Find someone; they are picked and brought to the middle; a click there picks them on the canvas; a double-click opens.
@@ -120,6 +132,12 @@ try {
   check((await p.eval<string>(`document.querySelector('.pg-card-name').textContent`)) === 'Alice Chen', 'find picks them');
   const card = await p.eval<string>(`document.querySelector('.pg-card').innerText`);
   check(/shares places with/i.test(card) && /in (\d+ places|one place)/i.test(card), 'the card: where they are and who they share it with', card.split('\n').slice(0, 8));
+  // Rings, and why someone is the size they are.
+  check((await p.eval<string>(`[...document.querySelectorAll('.pg-controls .chip-btn')].find((b) => b.textContent.trim() === 'Rings')?.getAttribute('aria-pressed')`)) === 'true', 'rings on at first');
+  const circlesShown = Number(await p.eval<string>(`document.querySelector('.pg-canvas').dataset.circles`));
+  check(circlesShown > 0, 'circles of people tied to each other, each in a slice', circlesShown);
+  const why = await p.eval<string[]>(`[...document.querySelectorAll('.pg-why-row .pg-why-label')].map((e) => e.textContent)`);
+  check(/why this size/i.test(card) && why.includes('Talk with you'), 'the card says why they are this size, signal by signal', why);
   await p.until(`document.querySelector('.pg-canvas').dataset.settled === '1'`, 15000);
   if (shots) await p.shot(`${shots}/graph-picked.png`);
   const mid = await p.eval<{ x: number; y: number }>(`(() => { const b = document.querySelector('.pg-canvas').getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; })()`);
@@ -129,10 +147,9 @@ try {
   await p.until(`!!document.querySelector('.pg-card')`, 3000);
   check((await p.eval<string>(`document.querySelector('.pg-card-name')?.textContent`)) === 'Alice Chen', 'a click on a node picks it');
   await clickAt(mid.x, mid.y, 2);
-  await p.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: mid.x, y: mid.y, button: 'left', clickCount: 2 });
-  await p.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: mid.x, y: mid.y, button: 'left', clickCount: 2 });
   await p.until(`location.hash.startsWith('#/p/')`, 3000).catch(() => {});
   check((await p.eval('location.hash')) === `#/p/${alice.id}`, 'a double-click opens their page', await p.eval('location.hash'));
+  check((await p.eval<number>(`getSelection()?.toString().length ?? 0`)) === 0, 'a double-click selects no text');
   await p.eval('history.back()');
   await p.until(`!!document.querySelector('.pg-card') || !!document.querySelector('.pg-canvas')`, 5000);
   // A place's card opens its About.
@@ -145,6 +162,28 @@ try {
   await p.until(`location.hash.startsWith('#/about/s/')`, 3000).catch(() => {});
   check((await p.eval('location.hash')) === `#/about/s/${on.places[dither].id}`, 'a server’s name opens its About', await p.eval('location.hash'));
 
+  // How importance works: tune a weight, save it on the hub, back to the defaults; fit to what came next.
+  await p.goto(`${hub}/#/people/graph`);
+  await p.until(`!!document.querySelector('.pg-key .link-btn')`, 15000);
+  await click('.pg-key .link-btn');
+  await p.until(`!!document.querySelector('.pg-tune')`, 3000);
+  const sliders = await p.eval<number>(`document.querySelectorAll('.pg-tune input[type=range]').length`);
+  check(sliders === 7, 'how importance works: a weight for each signal, and the fade', sliders);
+  await p.eval(`(() => { const i = document.querySelector('.pg-tune input[aria-label="Places you share weight"]'); i.value = '2'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await clickText('.pg-tune .btn', 'Save');
+  await p.until(`fetch('/api/graph/tuning').then((r) => r.json()).then((t) => t?.weights?.places === 2)`, 5000).catch(() => {});
+  const kept = await p.eval<any>(`fetch('/api/graph/tuning').then((r) => r.json())`);
+  check(kept?.weights?.places === 2 && kept?.weights?.talk === 1, 'a weight tried and saved is kept on the hub', kept?.weights);
+  await clickText('.pg-tune .btn', 'Defaults');
+  await p.until(`fetch('/api/graph/tuning').then((r) => r.json()).then((t) => t === null)`, 5000).catch(() => {});
+  check((await p.eval<any>(`fetch('/api/graph/tuning').then((r) => r.json())`)) === null, 'Defaults forgets it');
+  await clickText('.pg-tune .btn', 'Fit to me');
+  await p.until(`/Too little talk|Of the \\d+ people/.test(document.querySelector('.pg-tune').innerText)`, 15000).catch(() => {});
+  const fitted = await p.eval<string>(`document.querySelector('.pg-tune').innerText`);
+  check(/Too little talk|Of the \d+ people/.test(fitted), 'Fit to me says how it did, or that there is too little to go by', fitted.split('\n').slice(-6));
+  if (shots) await p.shot(`${shots}/graph-tune.png`);
+  await click('.pg-tune .pg-card-head .icon-btn');
+
   // Light theme too.
   await p.eval(`localStorage.setItem('dither-chat:prefs', JSON.stringify({ ...JSON.parse(localStorage.getItem('dither-chat:prefs') || '{}'), theme: 'light' }))`);
   await p.goto(`${hub}/#/people/graph`);
@@ -154,6 +193,32 @@ try {
   await Bun.sleep(1500);
   if (shots) await p.shot(`${shots}/graph-light.png`);
   check((await p.eval('document.documentElement.dataset.theme')) === 'light', 'in the light theme', await p.eval('document.documentElement.dataset.theme'));
+
+  // Same person? groups: shaded on the graph with a badge; a click on the badge opens their merge card, and Merge
+  // makes them one person.
+  for (let i = 0; i < 80; i++) {
+    const m = (await fetch(`${hub}/api/matches`).then((r) => r.json())) as any;
+    if (!m.running && m.at) break;
+    await Bun.sleep(250);
+  }
+  await p.eval(`[...document.querySelectorAll('.pg-controls .chip-btn')].find((b) => b.textContent.includes('Same person?')).click()`);
+  await p.until(`!!document.querySelector('.pg-canvas').dataset.badge`, 15000).catch(() => {});
+  const badge = await p.eval<string>(`document.querySelector('.pg-canvas').dataset.badge || ''`);
+  check(!!badge, 'Same person? groups drawn, with a badge', badge);
+  if (badge) {
+    const b = await p.eval<{ x: number; y: number }>(`(() => { const b = document.querySelector('.pg-canvas').getBoundingClientRect(); return { x: b.x, y: b.y }; })()`);
+    const [bx, by] = badge.split(',').map(Number);
+    await clickAt(b.x + bx, b.y + by);
+    await p.until(`!!document.querySelector('.pg-same-card')`, 3000).catch(() => {});
+    const sameCard = await p.eval<string>(`document.querySelector('.pg-same-card')?.innerText ?? ''`);
+    check(/May be one person/.test(sameCard) && /Why/i.test(sameCard), 'a click on its badge opens the merge card', sameCard.split('\n').slice(0, 6));
+    const ticked = await p.eval<number>(`document.querySelectorAll('.pg-same-card input[type=checkbox]:checked').length`);
+    check(ticked >= 2, 'everyone in it ticked', ticked);
+    if (shots) await p.shot(`${shots}/graph-same.png`);
+    await p.eval(`document.querySelector('.pg-same-card .pg-card-actions .btn').click()`);
+    await p.until(`document.body.innerText.includes('are one person now')`, 5000).catch(() => {});
+    check(await p.eval<boolean>(`document.body.innerText.includes('are one person now') && !document.querySelector('.pg-same-card')`), 'Merge makes them one person, and the card closes');
+  }
 
   // Nothing to draw yet: it says how it fills in.
   await fake({ members: false, accounts: [], people: [], places: [], links: [] });

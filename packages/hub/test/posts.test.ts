@@ -338,7 +338,7 @@ describe('answering (docs/feed.md "Answering")', () => {
     // CJK counts two: 141 characters is over.
     await expect(posts.publish('x', { text: '語'.repeat(141) })).rejects.toBeInstanceOf(PostsError);
     await expect(posts.publish('x', { text: '   ' })).rejects.toMatchObject({ status: 422 });
-    await expect(posts.publish('x', { text: 'hi', replyTo: 'abc' })).rejects.toMatchObject({ status: 400 });
+    await expect(posts.publish('x', { text: 'hi', replyTo: 'not a post' })).rejects.toMatchObject({ status: 400 });
     expect(sent.length).toBe(n);
     const q = await posts.publish('x', { text: 'Still the best summary.', quote: routingId() });
     expect(sent.at(-1)).toMatchObject({ t: 'publish', quote: routingId() });
@@ -419,7 +419,7 @@ describe('the hub', () => {
     const t = (await res.json()) as P.PostThreadView;
     expect(t.focal!.id).toBe(routingId());
     expect(hubSent.filter((c) => c.t === 'post')).toHaveLength(1);
-    expect((await req('/api/posts/x/abc/thread')).status).toBe(404);
+    expect((await req('/api/posts/x/a%20b/thread')).status).toBe(404);
     expect((await req(`/api/posts/nowhere/1/thread`)).status).toBe(404);
   });
 

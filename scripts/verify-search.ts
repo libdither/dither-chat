@@ -1,7 +1,9 @@
 /**
  * Search, end to end against a demo hub in headless Chromium: the box's operator suggestions (people with pictures),
- * picking one by keyboard, a misspelt search corrected, hits grouped by conversation with context, recent searches,
- * walking the results with the arrow keys, the sort control, Ctrl+F in a chat, and more results loading on scroll.
+ * picking one by keyboard, results as you type with no Enter, a misspelt search corrected, Jump to (Ctrl+K's matches),
+ * top matches above the newest, hits grouped by conversation with context, the tabs and filter chips, recent searches,
+ * walking the results with the arrow keys, Ctrl+F in a chat, the inbox box handing over to the search page, and more
+ * results loading on scroll.
  *
  *   bun scripts/verify-search.ts http://127.0.0.1:8791 /tmp/dc-search-shots
  * Only reads; still, point it at a demo hub (--demo) with its own data dir.
@@ -40,6 +42,7 @@ const box = `.search-pane .search-main input`;
 const clearBox = () => p.eval(`(() => { const i = document.querySelector('${box}'); i.focus(); i.select(); })()`).then(() => key('Backspace'));
 const rows = () => p.eval<string[]>(`[...document.querySelectorAll('.search-suggest-row')].map((r) => r.querySelector('.search-suggest-label').textContent)`);
 const hash = () => p.eval<string>(`decodeURIComponent(location.hash)`);
+const recentSearches = () => p.eval<string[]>(`JSON.parse(localStorage.getItem('dc.recentSearches') ?? '[]')`);
 
 try {
   await p.size(1280, 800);
@@ -73,10 +76,13 @@ try {
   check((await rows()).length === 0, 'Escape closes the list');
 
   await clearBox();
+  await key('Escape');
   await type('hackaton');
-  await key('Enter');
   await p.until(`document.querySelectorAll('.search-hit').length > 0`, 8000);
-  check((await hash()).includes('q=hackaton'), 'Enter searches', await hash());
+  check((await hash()).includes('q=hackaton'), 'results come as you type, with no Enter', await hash());
+  check(!(await recentSearches()).includes('hackaton'), 'a search typed is not yet a recent one');
+  // Enter keeps it among the recent searches (so does opening a result).
+  await key('Enter');
   const note = await p.eval<string>(`document.querySelector('.search-note')?.textContent ?? ''`);
   check(note.includes('hackathon'), 'a misspelt word is corrected, and says so', note);
 
@@ -84,6 +90,8 @@ try {
   await type('the');
   await key('Enter');
   await p.until(`document.querySelectorAll('.search-hit').length > 3`, 8000);
+  const top = await p.eval<{ head: boolean; why: number }>(`({ head: [...document.querySelectorAll('.search-sec')].some((h) => h.textContent === 'Top matches'), why: document.querySelectorAll('.search-hit-why').length })`);
+  check(top.head, 'the best matches come first, above the newest', top);
   const groups = await p.eval<{ n: number; heads: number; ctx: number }>(`({ n: document.querySelectorAll('.search-group').length, heads: document.querySelectorAll('.search-group-head').length, ctx: document.querySelectorAll('.search-ctx').length })`);
   check(groups.n > 1 && groups.heads === groups.n && groups.ctx > 0, 'hits come grouped by conversation, with lines around them', groups);
   await p.shot(join(shots, 'results.png'));
@@ -92,17 +100,42 @@ try {
   await p.eval(`document.querySelector('${box}').focus()`);
   await key('Escape');
   await key('ArrowDown');
-  const at = () => p.eval<number>(`[...document.querySelectorAll('.search-hit')].indexOf(document.activeElement)`);
-  check((await at()) === 0, 'Down from the box reaches the first hit');
+  const at = () => p.eval<number>(`[...document.querySelectorAll('.search-jump-row, .search-hit')].indexOf(document.activeElement)`);
+  check((await at()) === 0, 'Down from the box reaches the first result');
   await key('ArrowDown');
   check((await at()) === 1, 'Down again, the second');
   await key('ArrowUp');
   await key('ArrowUp');
   check((await p.eval(`document.activeElement === document.querySelector('${box}')`)) === true, 'Up from the first goes back to the box');
 
-  await p.eval(`[...document.querySelectorAll('.search-sort button')].find((b) => b.textContent === 'Oldest').click()`);
-  await Bun.sleep(400);
-  check((await hash()).includes('sort:oldest'), 'the sort control sets sort:oldest', await hash());
+  await p.eval(`document.querySelector('.search-chip-sort .search-chip-main').click()`);
+  await p.until(`!!document.querySelector('.search-chip-pop')`, 3000);
+  await p.eval(`[...document.querySelectorAll('.search-chip-pop .search-pick-row')].find((b) => b.textContent.trim() === 'Oldest').click()`);
+  await p.until(`decodeURIComponent(location.hash).includes('sort:oldest')`, 3000).catch(() => {});
+  check((await hash()).includes('sort:oldest'), 'the sort chip sets sort:oldest', await hash());
+
+  // The filter chips: From picks a person as Ctrl+K would find them, and shows them on the chip.
+  await p.eval(`[...document.querySelectorAll('.search-chip-main')].find((b) => b.textContent.trim().startsWith('From')).click()`);
+  await p.until(`!!document.querySelector('.search-chip-pop .search-pick-row')`, 3000);
+  await p.shot(join(shots, 'chip-from.png'));
+  await p.eval(`document.querySelector('.search-chip-pop .search-pick-row').click()`);
+  await p.until(`decodeURIComponent(location.hash).includes('from:')`, 3000).catch(() => {});
+  check((await hash()).includes('from:') && (await p.eval<string>(`document.querySelector('.search-chip.on')?.textContent ?? ''`)).startsWith('From:'), 'the From chip sets from: and shows who', await hash());
+  await p.eval(`document.querySelector('.search-chip.on .search-chip-x').click()`);
+  await p.until(`!decodeURIComponent(location.hash).includes('from:')`, 3000).catch(() => {});
+  check(!(await hash()).includes('from:'), 'its × clears it', await hash());
+
+  // Jump to: Ctrl+K's matches, from the first letter, before the hub answers.
+  await clearBox();
+  await type('lib');
+  await p.until(`document.querySelectorAll('.search-jump-row').length > 0`, 3000).catch(() => {});
+  const jumps = await p.eval<string[]>(`[...document.querySelectorAll('.search-jump-row .search-jump-label')].map((r) => r.textContent)`);
+  check(jumps.some((j) => j.toLowerCase().includes('libdither')), 'Jump to lists places Ctrl+K would', jumps);
+  await p.shot(join(shots, 'jump-to.png'));
+  await p.eval(`[...document.querySelectorAll('.search-tabs button')].find((b) => b.textContent === 'Chats').click()`);
+  await Bun.sleep(200);
+  check((await p.eval<number>(`document.querySelectorAll('.search-hit').length`)) === 0 && (await p.eval<number>(`document.querySelectorAll('.search-jump-row').length`)) > 0, 'the Chats tab shows places, not messages');
+  await p.eval(`[...document.querySelectorAll('.search-tabs button')].find((b) => b.textContent === 'All').click()`);
 
   await p.goto(`${hub}/#/search`);
   await p.until(`!!document.querySelector('${box}')`, 8000);
@@ -128,7 +161,10 @@ try {
   await p.until(`!!document.querySelector('.sidebar .search-box input')`, 8000);
   await p.eval(`document.querySelector('.sidebar .search-box input').focus()`);
   await type('in:gen');
-  check((await rows()).some((r) => r.includes('general')) && (await onTop()), 'the inbox box suggests too, on top of the list below it', await rows());
+  await p.until(`document.activeElement === document.querySelector('${box}')`, 3000).catch(() => {});
+  check((await p.eval<string>(`document.querySelector('${box}')?.value ?? ''`)) === 'in:gen' && (await p.eval(`document.activeElement === document.querySelector('${box}')`)) === true, 'typing in the inbox box opens search, the cursor and the words carried over', await hash());
+  await p.until(`document.querySelectorAll('.search-suggest-row').length > 0`, 3000).catch(() => {});
+  check((await rows()).some((r) => r.includes('general')) && (await onTop()), 'its suggestions follow, on top of the list below', await rows());
   await p.shot(join(shots, 'sidebar-suggest.png'));
 
   // More results load as the list nears its end, no tap needed.
@@ -141,6 +177,16 @@ try {
   check(after > before, 'scrolling to the end loads more results', { before, after });
 
   await p.size(390, 844, true);
+  // On a phone the inbox box opens the search page at the tap.
+  await p.goto(`${hub}/#/`);
+  await p.until(`!!document.querySelector('.sidebar .search-box input')`, 8000);
+  await p.eval(`document.querySelector('.sidebar .search-box input').focus()`);
+  await p.until(`document.activeElement === document.querySelector('${box}')`, 3000).catch(() => {});
+  check((await hash()).includes('search') && (await p.eval(`document.activeElement === document.querySelector('${box}')`)) === true, 'on a phone a tap on the inbox box opens search, ready to type', await hash());
+  await type('lib');
+  await p.until(`document.querySelectorAll('.search-jump-row').length > 0 && document.querySelectorAll('.search-hit').length > 0`, 5000).catch(() => {});
+  await key('Escape');
+  await p.shot(join(shots, 'phone-results.png'));
   await p.goto(`${hub}/#/search`);
   await p.until(`!!document.querySelector('${box}')`, 8000);
   await p.eval(`document.querySelector('${box}').focus()`);

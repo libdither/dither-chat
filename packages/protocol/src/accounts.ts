@@ -32,6 +32,12 @@ export const NETWORK_FEATURES: Record<Network, AccountFeature[]> = {
   t3: ['chat'],
   email: ['mail'],
   calendar: ['chat', 'calendar'],
+  // Posts only, on the Feed page (docs/feed.md): no chats.
+  mastodon: ['feed'],
+  reddit: ['feed'],
+  lemmy: ['feed'],
+  substack: ['feed'],
+  bluesky: ['feed'],
 };
 
 /** The features a kind of dither-accounts' offers here, from its interfaces. */

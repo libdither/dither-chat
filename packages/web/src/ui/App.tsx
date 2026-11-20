@@ -12,6 +12,7 @@ import { DragLayer } from './dnd.tsx';
 import { Icon } from './icons.tsx';
 import { ContextMenuLayer } from './ContextMenu.tsx';
 import { TooltipLayer } from './Tooltip.tsx';
+import { feedOn, PlaceKeys } from './PlaceKeys.tsx';
 import { ForwardLayer } from './Forward.tsx';
 import { AppsHostLazy } from './apps/lazy.tsx';
 import { SendingLayer } from './SendExtras.tsx';
@@ -28,7 +29,7 @@ import { MessageHistoryLayer } from './MessageHistory.tsx';
 import { ThreadsLayerLazy } from './ThreadsLazy.tsx';
 import { Rail } from './Rail.tsx';
 import { TitleBar } from './TitleBar.tsx';
-import { FindShortcut, SearchPane } from './Search.tsx';
+import { FindShortcut, SearchPane } from './SearchLazy.tsx';
 import { SECTIONS, SettingsPane } from './Settings.tsx';
 import { showSection } from './bits.tsx';
 import { FolderSidebar, InboxSidebar, PeopleSidebar, SpaceSidebar, SpacesSidebar } from './Sidebar.tsx';
@@ -305,8 +306,6 @@ function TabBar({ r }: { r: Route }) {
   );
 }
 
-/** Whether the Feed is offered: an account with posts (X), or its notifications already held. */
-const feedOn = () => [...db.accounts.values()].some((a) => a.network === 'x') || [...db.conversations.values()].some((c) => c.variant === 'feed');
 /** Answers, quotes and mentions not looked at, across the notifications (never likes). */
 const feedSaid = () => [...db.conversations.values()].filter((c) => c.variant === 'feed').reduce((n, c) => n + c.vantages.reduce((m, v) => m + (v.mentions ?? 0), 0), 0);
 
@@ -443,6 +442,7 @@ export function App() {
       <DragLayer />
       <ContextMenuLayer />
       <TooltipLayer />
+      <PlaceKeys />
       <ForwardLayer />
       <AppsHostLazy />
       <SendingLayer />

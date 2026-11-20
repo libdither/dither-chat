@@ -134,7 +134,11 @@ describe('with members not recorded', () => {
         ['DEE', G, GRAPH_SOURCE.participant],
         ['FAY', GROUP, GRAPH_SOURCE.participant],
       ]);
-      expect(g.people.find((p) => p.name === 'EVE' || p.name === 'BOB')).toBeUndefined();
+      expect(g.people.find((p) => p.name === 'EVE')).toBeUndefined();
+      // Bob has no place left, but you have a direct chat with him: he is sent, with no links.
+      const bob = g.people.findIndex((p) => p.name === 'BOB');
+      expect(g.people[bob]?.dm).toEqual([1]);
+      expect(named(g).some(([n]) => n === 'BOB')).toBe(false);
       expect(g.places.find((p) => p.id === G)!.total).toBeUndefined();
     }
   });
