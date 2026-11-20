@@ -18,14 +18,43 @@ export function QuoteFallback({ m }: { m: P.MessageView }) {
   if (!q) return null;
   const who = q.authorId ? (isSelfIdentity(q.authorId) ? 'You' : authorName(q.authorId)) : (q.authorName ?? 'Someone');
   const files = q.attachments.length ? (q.attachments.length === 1 ? kindWord(q.attachments[0].kind) : `${q.attachments.length} files`) : '';
-  const text = plainBody(q.text, m.network).slice(0, 120);
+  const text = plainBody(q.text, m.network).slice(0, QUOTE_CHARS);
+  const pinged = !!q.authorId && isSelfIdentity(q.authorId) && m.mentionsSelf;
   return (
-    <div class="reply-quote reply-quote-own" title="Quoted from the reply itself: the message is not on this hub">
+    <div class="reply-quote reply-quote-own" title={`${text ? `${text}\n\n` : ''}Quoted from the reply itself: the message is not on this hub`}>
       <Icon name="reply" size={12} />
-      <b>{who}</b>
+      <b class={pinged ? 'reply-pinged' : undefined} title={pinged ? PINGED_TITLE : undefined}>
+        {pinged ? '@You' : who}
+      </b>
       {q.thumbnail && <img class="reply-quote-thumb" src={q.thumbnail} alt="" loading="lazy" onError={(e) => e.currentTarget.remove()} />}
       <span>{text || files || 'Message'}</span>
     </div>
+  );
+}
+
+/**
+ * How much of the quoted text a reply's quote line carries: enough to fill a wide row, cut by CSS with "…" (two lines
+ * on a phone). The whole of it is the line's tooltip.
+ */
+const QUOTE_CHARS = 600;
+const PINGED_TITLE = 'This reply pinged you';
+
+/**
+ * What a reply replies to, on a line of its own above the picture and the name: its line bends up from the picture. A
+ * reply to you that pinged you shows your name as a mention, "@You", like an @mention of you in the text.
+ */
+export function ReplyQuote({ m, target, onQuote }: { m: P.MessageView; target: P.MessageView; onQuote: (id: string) => void }) {
+  const mine = isSelfIdentity(target.authorId);
+  const pinged = mine && m.mentionsSelf;
+  const text = target.deleted ? 'Message deleted' : plainBody(target.body, target.network).slice(0, QUOTE_CHARS) || 'Attachment';
+  return (
+    <button class="reply-quote" title={text} onClick={() => onQuote(target.id)}>
+      <Icon name="reply" size={12} />
+      <b class={pinged ? 'reply-pinged' : undefined} title={pinged ? PINGED_TITLE : undefined}>
+        {pinged ? '@You' : mine ? 'You' : authorName(target.authorId)}
+      </b>
+      <span>{text}</span>
+    </button>
   );
 }
 

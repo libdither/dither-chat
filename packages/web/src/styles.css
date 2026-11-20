@@ -1624,6 +1624,38 @@ code {
 .reply-quote:hover span {
   color: var(--text);
 }
+/* A reply that pinged you: your name as a mention of you, as in the text (.msg-body .mention.self). */
+.reply-quote b.reply-pinged,
+.reply-quote:hover b.reply-pinged {
+  background: var(--mention-bg);
+  color: var(--mention-text);
+  border-radius: 4px;
+  padding: 0 3px;
+}
+/* A phone's row is narrow: the quote takes up to two lines, the name and its line staying by the first. */
+.app.phone .reply-quote {
+  align-items: flex-start;
+  text-align: left;
+}
+/* Its line runs from the first line's middle down to the quote's foot, so it still reaches the picture under two lines. */
+.app.phone .reply-quote::before {
+  align-self: stretch;
+  height: auto;
+  margin-top: 3px;
+  margin-bottom: 3px;
+}
+.app.phone .reply-quote svg {
+  margin-top: 2px;
+  flex: none;
+}
+.app.phone .reply-quote span {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow-wrap: anywhere;
+}
 
 .atts {
   display: flex;

@@ -109,7 +109,7 @@ import { ForwardCard, forwarding } from './Forward.tsx';
 import { InviteCards } from './InviteCard.tsx';
 import { PollCardLazy, PollMakerLazy } from './PollLazy.tsx';
 import { pollMaker } from '../polls.ts';
-import { AttachmentNote, ContactCards, MissingFiles, played, QuoteFallback, SendFailures, StoryReplyLine, withoutCardLines } from './MessageExtras.tsx';
+import { AttachmentNote, ContactCards, MissingFiles, played, QuoteFallback, ReplyQuote, SendFailures, StoryReplyLine, withoutCardLines } from './MessageExtras.tsx';
 import { attachmentMenu, conversationMenu, identityMenu, imageMenu, linkMenu, messageMenu, openAttachment, personMenu } from './menus.tsx';
 import { fileFacts, fileIcon, fileKind, openFileViewer, VIEWABLE } from '../files.ts';
 import { desk } from '../desk.ts';
@@ -688,14 +688,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
       ref={(el) => void (el && swipeReply.set(el, () => onReply(m)))}
       {...menuProps}
     >
-      {/* What it replies to, on a line of its own above the picture and the name: its line bends up from the picture. */}
-      {target && (
-        <button class="reply-quote" onClick={() => onQuote(target.id)}>
-          <Icon name="reply" size={12} />
-          <b>{isSelfIdentity(target.authorId) ? 'You' : authorName(target.authorId)}</b>
-          <span>{target.deleted ? 'Message deleted' : plainBody(target.body, target.network).slice(0, 120) || 'Attachment'}</span>
-        </button>
-      )}
+      {target && <ReplyQuote m={m} target={target} onQuote={onQuote} />}
       {!target && m.quote && <QuoteFallback m={m} />}
       <div class="msg-gutter">
         {grouped ? (
