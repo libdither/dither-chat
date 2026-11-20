@@ -3655,6 +3655,93 @@ textarea.chip-box {
   opacity: 0.7;
   padding: 12px;
 }
+/*
+  A stage you are in (CallRoomLazy.tsx, Timeline.tsx): the room beside the channel's chat on a wide pane; on a narrow
+  one a Room / Chat switch and one of them. A container query, so a narrow pane on a wide screen counts as narrow.
+  The room's own styles are CallRoom.css.
+*/
+.room-pane {
+  container: room / inline-size;
+}
+.room-split {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 38%);
+}
+.room-split.alone {
+  grid-template-columns: minmax(0, 1fr);
+}
+.room-col,
+.room-chat {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.room-chat {
+  border-left: 1px solid var(--border-soft);
+}
+.room-switch {
+  display: none;
+  gap: 4px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-center);
+}
+.room-switch button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.room-switch button.on {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.room-switch-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--warn);
+  color: #000;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+@container room (max-width: 760px) {
+  .room-switch {
+    display: flex;
+  }
+  .room-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .room-split[data-show='room'] > .room-chat,
+  .room-split[data-show='chat'] > .room-col {
+    display: none;
+  }
+  .room-chat {
+    border-left: 0;
+  }
+}
+.room-loading {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-dim);
+}
 .voice-note {
   display: flex;
   align-items: center;

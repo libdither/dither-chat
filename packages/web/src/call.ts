@@ -10,7 +10,8 @@
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { BRIDGE_MIDS, CALL_INPUT_DEFAULT, callInput, NETWORK_META } from '@dither-chat/protocol';
-import { AUTO_GATE_DB, type CallControl, type CallStatus, controlsFor, featuredPicker, levelShown, smoothLevel, speakingHold, statusFor, talkGate } from './callmarks.ts';
+import { AUTO_GATE_DB, type CallControl, type CallStatus, controlsFor, featuredPicker, levelShown, smoothLevel, speakingHold, stageCan, statusFor, talkGate } from './callmarks.ts';
+import { requestsOf } from './room.ts';
 import { playCallSound, preloadCallSounds, soundLog } from './callsounds.ts';
 import { changed, db, isSelfIdentity, prefs, toast } from './state.ts';
 
@@ -78,6 +79,11 @@ export const mutedTalking = signal(false);
  * 1.5 s at least (callmarks.ts featuredPicker). Null when nobody else talks.
  */
 export const featuredSpeaker = signal<string | null>(null);
+/**
+ * The conversation whose room is on screen now (ui/CallRoom.tsx says, as its box comes and goes; a narrow pane's Chat
+ * hides it): the call's other surfaces leave out the buttons the room has, so one Leave shows.
+ */
+export const roomOnPage = signal<string | null>(null);
 
 /**
  * Speaking, held (callmarks.ts speakingHold): every participant's `speaking` in activeCall is the held value, so each
@@ -139,11 +145,14 @@ export interface Transport {
   micLevel?(): Promise<number | null>;
   /** Direct mode: how loud each person is now, 0 to 1, by native user id (each has a receive slot of their own). */
   peerLevels?(): Map<string, number>;
+  /** The host's microphone changed (a stage's listener began speaking, or went back to listening): send the new one. */
+  setMic?(): Promise<void>;
   stop(): void;
 }
 
 export interface TransportHost {
-  mic: MediaStream;
+  /** The microphone as it is now: a silent one while you only listen on a stage (setMic says when it changes). */
+  readonly mic: MediaStream;
   speaker: HTMLAudioElement;
   /** Started with the click that started the call, so it may play: where a person at another volume plays from. */
   ctx: AudioContext | null;
@@ -163,6 +172,11 @@ export interface TransportHost {
 let ws: WebSocket | null = null;
 let transport: Transport | null = null;
 let mic: MediaStream | null = null;
+/**
+ * The microphone is a real one, from the browser. On a stage you join listening with a silent one instead, and the
+ * browser's microphone opens only when you speak (takeMic) and closes when you go back to listening (releaseMic).
+ */
+let micOpen = false;
 let speaker: HTMLAudioElement | null = null;
 let ctx: AudioContext | null = null;
 let statsTimer: ReturnType<typeof setInterval> | null = null;
@@ -183,10 +197,13 @@ export function callNetwork(call: Pick<ActiveCall, 'accountId'>): P.Network {
   return db.accounts.get(call.accountId)?.network ?? 'discord';
 }
 
-/** A voice channel's account to call from: the one chosen to send as in this chat, else the first online one that can. */
+/**
+ * A voice or stage channel's account to call from: the one chosen to send as in this chat, else the first online one
+ * that can (on a stage, one with the capability 'stage', so it can take part beyond listening).
+ */
 export function canCall(c: P.ConversationView): string | null {
-  const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && a.capabilities.includes('calls') && a.status === 'online');
-  if (c.variant !== 'voice') return null;
+  if (c.variant !== 'voice' && c.variant !== 'stage') return null;
+  const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && a.capabilities.includes('calls') && (c.variant !== 'stage' || a.capabilities.includes('stage')) && a.status === 'online');
   return (accounts.find((a) => a.id === prefs.value.sendAs[c.id]) ?? accounts[0])?.id ?? null;
 }
 
@@ -231,11 +248,17 @@ export async function startCall(conversationId: string, accountId: string, mode:
   }
   activeCall.value = { conversationId, accountId, mode, phase: 'connecting', muted: false, deafened: false, participants: [], since: Date.now(), effects: [], video: [], camera: false, screen: false, timing: {} };
   callMedia.value = { camera: null, screen: null, slots: new Map() };
+  stageWas = null;
+  speakAsked = false;
   const input = myInput();
-  const micReady = navigator.mediaDevices
-    .getUserMedia({ audio: micConstraints(input), video: false })
+  // A stage is joined listening: no microphone until you speak (takeMic), so nothing is open that nobody hears.
+  const listening = db.conversations.get(conversationId)?.variant === 'stage';
+  if (listening) mic = silentMic();
+  const micReady = (listening ? Promise.resolve(null) : navigator.mediaDevices.getUserMedia({ audio: micConstraints(input), video: false }))
     .then((m) => {
+      if (!m) return true;
       mic = m;
+      micOpen = true;
       mark('mic');
       return true;
     })
@@ -289,7 +312,9 @@ async function onServer(m: P.CallServerMessage) {
       await pendingMic;
       if (!activeCall.value || activeCall.value.phase === 'ended') return;
       const host: TransportHost = {
-        mic: mic!,
+        get mic() {
+          return mic!;
+        },
         speaker: speaker!,
         ctx,
         input: myInput(),
@@ -351,6 +376,7 @@ async function onServer(m: P.CallServerMessage) {
       const before = cur.participants;
       heard(new Set(participants.filter((p) => p.speaking).map((p) => p.id)));
       patch({ participants, stage: st.stage, video: st.video ?? [], ...(st.self ? { self: st.self } : {}) });
+      followStageRole();
       transport?.setVolumes?.(volumesOf(participants));
       if (st.self?.connected) connected();
       // Others coming and going, once this account is in (the list it finds on joining plays nothing).
@@ -382,6 +408,11 @@ async function onServer(m: P.CallServerMessage) {
       end(m.reason);
       return;
     case 'error':
+      // A Speak the network refused: back to listening, microphone closed.
+      if (speakAsked) {
+        speakAsked = false;
+        if (activeCall.value && callRole(activeCall.value) !== 'speaker') releaseMic();
+      }
       toast({ kind: 'error', title: 'Call', body: m.message });
       patch({ note: m.message });
       return;
@@ -468,6 +499,20 @@ export function callRole(call: ActiveCall): P.StageRole | null {
   return call.participants.find((p) => isCallSelf(call, p.id))?.stage ?? 'audience';
 }
 
+/** What you may do on this stage now, for yourself and to others (callmarks.ts stageCan): nothing outside a stage. */
+export function callStageCan(call: ActiveCall): { can: P.StageSelfAction[]; canOn: P.StageMove[] } {
+  return stageCan(call, { role: callRole(call), rank: call.participants.find((p) => isCallSelf(call, p.id))?.stageRank, stage: !!db.accounts.get(call.accountId)?.capabilities.includes('stage') });
+}
+
+/**
+ * Who asks to speak, oldest first, when you may invite them (an empty list otherwise): what a room's Room tab counts
+ * and a call bar can show to a moderator who isn't looking at the room.
+ */
+export function roomRequests(call: ActiveCall | null): P.CallParticipant[] {
+  if (!call?.stage || call.phase === 'ended' || !callStageCan(call).canOn.includes('invite')) return [];
+  return requestsOf(call.participants, (id) => isCallSelf(call, id));
+}
+
 /** The call's status line (callmarks.ts statusFor): Connecting…, Connecting to Discord…, 1:15:03, why it ended; and a hint. */
 export function callStatus(call: ActiveCall, now: number): CallStatus {
   return statusFor(call, now, NETWORK_META[callNetwork(call)].name);
@@ -475,7 +520,8 @@ export function callStatus(call: ActiveCall, now: number): CallStatus {
 
 /** The buttons your role and the call's state give you (callmarks.ts controlsFor); ui/CallControls.tsx draws them. */
 export function callControls(call: ActiveCall): CallControl[] {
-  return controlsFor(call, { role: callRole(call), video: activeCall.value === call && canVideo(), share: canShareScreen(), stage: !!db.accounts.get(call.accountId)?.capabilities.includes('stage') });
+  const rank = call.participants.find((p) => isCallSelf(call, p.id))?.stageRank;
+  return controlsFor(call, { role: callRole(call), ...(rank ? { rank } : {}), video: activeCall.value === call && canVideo(), share: canShareScreen(), stage: !!db.accounts.get(call.accountId)?.capabilities.includes('stage') });
 }
 
 /** Can the account in this call do it? */
@@ -502,9 +548,79 @@ export function applyCallInput(input: P.CallInput) {
   send({ op: 'input', input });
 }
 
-/** A stage action; `user` (an identity id) for a moderator's invite or move to the audience. */
-export function stageAction(action: P.StageAction, user?: string) {
+/**
+ * A stage action; `user` (an identity id) for a moderator's invite or move to the audience. Speak opens the
+ * microphone first (from the click, so the browser may ask), and goes ahead only once it is open; going back to
+ * listening closes it.
+ */
+export async function stageAction(action: P.StageAction, user?: string) {
+  if (action === 'speak') {
+    if (!(await takeMic())) return;
+    speakAsked = true;
+  }
   send({ op: 'stage', action, ...(user ? { user } : {}) });
+  if (action === 'listen') releaseMic();
+}
+
+/** Your stage role as the last state said it, to see it change. */
+let stageWas: P.StageRole | null = null;
+/** A Speak went out and the stage has not made you a speaker yet. */
+let speakAsked = false;
+
+/** Your role changed on the stage: made a speaker, the microphone opens; moved back to the audience, it closes. */
+function followStageRole() {
+  const a = activeCall.value;
+  const role = a && a.phase !== 'ended' ? callRole(a) : null;
+  const was = stageWas;
+  stageWas = role;
+  if (!role || role === was) return;
+  if (role === 'speaker') {
+    speakAsked = false;
+    if (!micOpen) void takeMic();
+  } else if (was === 'speaker') releaseMic();
+}
+
+let micTaking: Promise<boolean> | null = null;
+
+/** The browser's microphone into the call, in place of the silent one. False when there is none (said in a toast). */
+function takeMic(): Promise<boolean> {
+  if (micOpen) return Promise.resolve(true);
+  return (micTaking ??= (async () => {
+    const t = transport;
+    let m: MediaStream;
+    try {
+      m = await navigator.mediaDevices.getUserMedia({ audio: micConstraints(myInput()), video: false });
+    } catch (e: any) {
+      toast({ kind: 'error', title: 'No microphone', body: `${e?.message ?? e}. You can still listen.` });
+      return false;
+    }
+    // The call ended (or another began) while the browser asked.
+    if (!t || !sameCall(t)) {
+      m.getTracks().forEach((x) => x.stop());
+      return false;
+    }
+    const silent = mic;
+    mic = m;
+    micOpen = true;
+    const muted = !!activeCall.value?.muted;
+    m.getAudioTracks().forEach((x) => (x.enabled = !muted));
+    await t.setMic?.();
+    silent?.getTracks().forEach((x) => x.stop());
+    if (activeCall.value?.listenOnly) patch({ listenOnly: false, note: undefined });
+    watchMutedMic();
+    return true;
+  })().finally(() => (micTaking = null)));
+}
+
+/** Back to the silent microphone: the browser's closes, so nothing listens while you only listen. */
+function releaseMic() {
+  if (!micOpen) return;
+  const real = mic;
+  mic = silentMic();
+  micOpen = false;
+  void transport?.setMic?.();
+  real?.getTracks().forEach((x) => x.stop());
+  watchMutedMic();
 }
 
 /** Ask once for the sounds this account may play here. */
@@ -656,7 +772,7 @@ let mutedWatch: (() => void) | null = null;
 function watchMutedMic() {
   const a = activeCall.value;
   const track = mic?.getAudioTracks()[0];
-  if (!a || !a.muted || a.phase !== 'live' || a.listenOnly || !track || !ctx) {
+  if (!a || !a.muted || a.phase !== 'live' || a.listenOnly || !micOpen || !track || !ctx) {
     mutedWatch?.();
     mutedWatch = null;
     mutedGate.clear();
@@ -708,6 +824,9 @@ function end(reason: string) {
   statsTimer = null;
   mic?.getTracks().forEach((t) => t.stop());
   mic = null;
+  micOpen = false;
+  stageWas = null;
+  speakAsked = false;
   if (meterTimer) clearInterval(meterTimer);
   meterTimer = null;
   micLevel.value = 0;
@@ -785,6 +904,9 @@ function bridgeTransport(host: TransportHost): Transport {
     async setScreen(video, audio) {
       await t.screen?.sender.replaceTrack(video);
       await t.screenAudio?.sender.replaceTrack(audio);
+    },
+    async setMic() {
+      await t.audio?.sender.replaceTrack(host.mic.getAudioTracks()[0] ?? null);
     },
     stats: () => (pc ? peerStats(pc) : Promise.resolve(null)),
     micLevel: () => (pc ? sentAudioLevel(pc, host.mic.getAudioTracks()[0]) : Promise.resolve(null)),

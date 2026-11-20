@@ -23,18 +23,18 @@ describe('barKinds', () => {
   });
 
   test('a stage: the audience has deafen and its hand, the invited Speak', () => {
-    const stage = { ...call, stage: { moderator: false } };
+    const stage = { ...call, stage: {} };
     expect(bar(stage, { ...can, role: 'speaker' })).toEqual(['mute', 'deafen']);
     expect(bar(stage, { ...can, role: 'audience' })).toEqual(['deafen', 'hand']);
     expect(bar(stage, { ...can, role: 'hand' })).toEqual(['deafen', 'hand']);
     expect(bar(stage, { ...can, role: 'invited' })).toEqual(['deafen', 'speak']);
-    expect(bar({ ...stage, stage: { moderator: true } }, { ...can, role: 'audience' })).toEqual(['deafen', 'speak']);
+    expect(bar({ ...stage, stage: { canOn: ['invite', 'audience'] as const } }, { ...can, role: 'audience' })).toEqual(['deafen', 'speak']);
     expect(bar(stage, { ...can, role: 'audience', stage: false })).toEqual(['deafen']);
   });
 
   test('no role ever gets leave on the bar', () => {
     for (const role of [null, 'speaker', 'audience', 'hand', 'invited'] as const) {
-      const stage = role ? { ...call, stage: { moderator: true } } : call;
+      const stage = role ? { ...call, stage: { canOn: ['invite', 'audience'] as const } } : call;
       expect(bar(stage, { ...can, role })).not.toContain('leave');
     }
   });

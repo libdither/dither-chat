@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
-import { type ActiveCall, activeCall, callMedia, callName, callStatus, canCall, canRing, featuredSpeaker, isCallSelf, leaveCall, startCall } from '../call.ts';
+import { type ActiveCall, activeCall, callMedia, callName, callStatus, canCall, canRing, featuredSpeaker, isCallSelf, leaveCall, roomOnPage, startCall } from '../call.ts';
+import { roomCall } from './CallRoomLazy.tsx';
 import { callIn } from '../ringing.ts';
 import { db, prefs, rev } from '../state.ts';
 import { convTitle } from '../model.ts';
@@ -31,7 +32,8 @@ function useCallPanel(want: boolean): PanelParts['CallPanel'] | null {
 
 /**
  * The header's call button: Join on voice channels an online account can call in; Call on a DM or group whose account
- * can ring the others (or Join, when a call is going on there already).
+ * can ring the others (or Join, when a call is going on there already). Not on a room you are in: its own buttons, or
+ * the dock's, have Leave.
  */
 export function JoinCallButton({ c }: { c: P.ConversationView }) {
   rev.value;
@@ -39,7 +41,7 @@ export function JoinCallButton({ c }: { c: P.ConversationView }) {
   const ringAccount = voiceAccount ? null : canRing(c);
   const accountId = voiceAccount ?? ringAccount;
   const call = activeCall.value;
-  if (!accountId) return null;
+  if (!accountId || roomCall(c)) return null;
   const here = call && call.conversationId === c.id && call.phase !== 'ended';
   const going = !!ringAccount && !!callIn(c.id);
   const ring = !!ringAccount && !going;
@@ -131,9 +133,12 @@ function Dock({ call, now, open, Panel, overBar }: { call: ActiveCall; now: numb
             </small>
           </span>
         </button>
-        <div class="call-dock-buttons">
-          <CallControls call={call} only={DOCK_BUTTONS} />
-        </div>
+        {/* The room on screen has the buttons: one set of them at a time. */}
+        {roomOnPage.value !== call.conversationId && (
+          <div class="call-dock-buttons">
+            <CallControls call={call} only={DOCK_BUTTONS} />
+          </div>
+        )}
       </div>
       {open && (Panel ? <Panel call={call} /> : <div class="call-dock-body call-empty">Loading…</div>)}
     </section>
