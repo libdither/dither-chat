@@ -1,153 +1,176 @@
 /**
  * The call bar and the call's mark on a chat row (docs/calls.md "The call bar"): the two smallest sizes of a call
- * you're in. The bar is a slim strip like a music player's: who is talking (or the call's name), how long it has gone,
- * mute and leave; a tap opens the call's conversation with the dock open. A phone shows it whenever the call's own
- * conversation isn't the page on screen; a computer shows it in the dock's place when the list is narrow or hidden.
- * The mark is a small sign on the call's row in the list: the face of whoever talks, or three small bars.
+ * you're in. The bar is a slim row of the app's layout, like a music player's: whoever is talking (or the call's faces
+ * while nobody does), how long it has gone, and the buttons your role needs most. A tap expands it in place: on a
+ * phone a sheet under it with every button and Go to chat, on a computer the dock above it. A phone keeps it at the
+ * top of the screen wherever the call's own chat isn't the page on screen; a computer shows it under the list (or the
+ * page, with the list hidden) where the list has no room for the dock.
+ * The mark is a small sign on a chat row with a call going on: three small bars, green when it's your call.
  */
-import { computed, effect, signal } from '@preact/signals';
-import { useEffect, useState } from 'preact/hooks';
+import { computed, signal } from '@preact/signals';
+import type { JSX } from 'preact';
+import { useEffect } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
-import { type ActiveCall, activeCall, isCallSelf, leaveCall, micLevel, setMuted } from '../call.ts';
-import { convTitle } from '../model.ts';
-import { reducedMotion } from '../phone.ts';
+import { type ActiveCall, activeCall, callControls, callName, callStatus, featuredSpeaker } from '../call.ts';
+import { barKinds, barShows, idleFaces } from '../callbar.ts';
+import { communitiesOf, convTitle, inboxKeyOf } from '../model.ts';
+import { PANE_DEFAULT, paneWidths } from '../panes.ts';
+import { useLayer } from '../phone.ts';
 import { callIn } from '../ringing.ts';
-import { db, go, isSelfIdentity } from '../state.ts';
+import { db, go } from '../state.ts';
 import { Avatar } from './bits.tsx';
-import { Icon } from './icons.tsx';
+import { CallAvatar, callMarks } from './CallAvatar.tsx';
+import { CallControls } from './CallControls.tsx';
 import './CallBar.css';
 
-/** The dock is open (its people and controls showing). The bar opens it; closing it brings the bar back where it shows. */
+/** The call expanded: the dock open, or (from the bar) the phone's sheet or a computer's dock over the bar. */
 export const callOpen = signal(false);
 
-/** A computer's list at or under this width is too narrow for the dock: the bar takes its place. */
-export const BAR_UNDER = 260;
+/** The call's conversation, while you're in one: what the layout reads, so a word or a mute does not draw it again. */
+const callConv = computed(() => activeCall.value?.conversationId ?? null);
+const listWidth = computed(() => paneWidths.value.sidebar ?? PANE_DEFAULT.sidebar);
 
-/** How long a talker stays on the bar after they stop, so the name doesn't flicker between words. */
-const HOLD_MS = 900;
+/** Is `shown` (the conversation on screen) the call's chat? Any route of the same chat counts (docs/chats.md). */
+function isCallChat(shown: string | null, conv: string): boolean {
+  return !!shown && (shown === conv || inboxKeyOf(shown) === inboxKeyOf(conv));
+}
+
+/** Does the bar show (callbar.ts barShows)? App.tsx gives it a row of the layout when it does. */
+export function barShown(shown: string | null, phone: boolean, listHidden: boolean): boolean {
+  const conv = callConv.value;
+  return barShows({ inCall: !!conv, phone, here: !!conv && isCallChat(shown, conv), listHidden, listWidth: listWidth.value });
+}
+
+/** The call's own picture, as its row in the list shows it: the person, the group, or the server. */
+function ConvFace({ c, size }: { c: P.ConversationView; size: number }) {
+  const com = c.shape === 'direct' ? null : communitiesOf(c)[0];
+  if (com) return <Avatar id={com.id} name={com.name} url={com.icon} size={size} square />;
+  const url = c.shape === 'direct' && c.peerPersonId ? (db.persons.get(c.peerPersonId)?.avatar ?? c.avatar) : c.avatar;
+  return <Avatar id={c.peerPersonId ?? c.id} name={convTitle(c)} url={url} size={size} square={c.shape !== 'direct'} />;
+}
+
+/** Whose face the bar shows: whoever talks (call.ts featuredSpeaker), else a few of the others (or the chat's picture) with the call's phase. */
+function BarFace({ call, phase }: { call: ActiveCall; phase: string }) {
+  const lead = featuredSpeaker.value;
+  const talker = lead ? call.participants.find((p) => p.id === lead) : undefined;
+  if (talker) return <CallAvatar {...callMarks(call, talker)} size={32} />;
+  const c = db.conversations.get(call.conversationId);
+  const faces = idleFaces(
+    call.participants.map((p) => p.id),
+    db.accounts.get(call.accountId)?.selfIdentityId,
+  );
+  return (
+    <span class={`call-bar-idle n${faces.length}`}>
+      {faces.length
+        ? faces.map((id) => {
+            const i = db.identities.get(id);
+            return <Avatar id={i?.personId ?? id} name={callName(id)} url={i?.avatar ?? null} size={faces.length === 1 ? 32 : 22} />;
+          })
+        : c && <ConvFace c={c} size={32} />}
+      <i class={`call-bar-phase call-dot ${phase === 'reaching' ? 'connecting' : phase}`} />
+    </span>
+  );
+}
 
 /**
- * Who the bar and the mark show as talking: someone else in the call who speaks, held a little after they stop, and the
- * same talker kept while they go on even when others start too. Null when nobody (but maybe you) talks.
+ * The call as a slim row: who talks, how long, and two buttons at most. Never Leave: it is in the expanded call, away
+ * from where a thumb rests. `now` ticks once a second (CallDock).
  */
-const callSpeaker = signal<string | null>(null);
-let held: ReturnType<typeof setTimeout> | null = null;
-effect(() => {
-  const call = activeCall.value;
-  const now = call && call.phase !== 'ended' ? call.participants.filter((p) => p.speaking && !isCallSelf(call, p.id)).map((p) => p.id) : [];
-  const shown = callSpeaker.peek();
-  if (shown && now.includes(shown)) {
-    if (held) clearTimeout(held), (held = null);
-    return;
-  }
-  if (now.length) {
-    if (held) clearTimeout(held), (held = null);
-    callSpeaker.value = now[0]!;
-    return;
-  }
-  if (!call) {
-    if (held) clearTimeout(held), (held = null);
-    callSpeaker.value = null;
-    return;
-  }
-  if (shown && !held) held = setTimeout(() => ((held = null), (callSpeaker.value = null)), HOLD_MS);
-});
-
-export function elapsed(since: number, now: number) {
-  const s = Math.max(0, Math.floor((now - since) / 1000));
-  const m = Math.floor(s / 60);
-  return `${m}:${String(s % 60).padStart(2, '0')}`;
-}
-
-function person(identityId: string) {
-  const i = db.identities.get(identityId);
-  // Another of the owner's own accounts is named as that account, not "You".
-  const p = i?.personId && !isSelfIdentity(identityId) ? db.persons.get(i.personId) : null;
-  return { id: i?.personId ?? identityId, name: p?.name ?? i?.displayName ?? i?.handle ?? 'Someone', avatar: i?.avatar ?? null };
-}
-
-/** Open the call's conversation with the dock open; the bar grows into the dock where the browser can show it. */
-function openCall(call: ActiveCall, here: boolean) {
-  const run = () => {
-    callOpen.value = true;
-    if (!here) go({ view: 'inbox', conv: call.conversationId });
-  };
-  const doc = document as Document & { startViewTransition?: (f: () => Promise<void>) => unknown };
-  if (reducedMotion() || !doc.startViewTransition) return run();
-  doc.startViewTransition(async () => {
-    run();
-    // Preact draws on the next tick: the new state is on the page once it has.
-    await new Promise((r) => setTimeout(r, 16));
-  });
-}
-
-/** The call as a slim strip: who talks, how long, mute, leave. `here`: the call's conversation is the page on screen. */
-export function CallBar({ call, here }: { call: ActiveCall; here: boolean }) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, []);
+export function CallBar({ call, now }: { call: ActiveCall; now: number }) {
   const c = db.conversations.get(call.conversationId);
   const title = c ? convTitle(c) : 'Call';
-  const talker = callSpeaker.value;
-  const who = talker ? person(talker) : null;
-  const status = call.phase === 'connecting' ? 'Connecting…' : call.phase === 'ended' ? (call.note ?? 'Call ended') : elapsed(call.since, now);
+  const status = callStatus(call, now);
+  const lead = featuredSpeaker.value;
+  const talker = lead && call.participants.some((p) => p.id === lead) ? lead : null;
+  const open = callOpen.value;
   return (
     <section
-      class={`call-bar ${call.phase}`}
-      aria-label="Call"
+      class={`call-bar ${status.phase}`}
+      aria-label="Call bar"
       data-call-bar={call.conversationId}
       data-call-phase={call.phase}
       data-call-connected={call.self?.connected || call.timing.connected !== undefined ? '1' : undefined}
     >
-      <button class="call-bar-open" onClick={() => openCall(call, here)} data-track="call bar: open" aria-label={`Open the call in ${title}`} title={`Open the call in ${title}`}>
-        {/* TODO: CallAvatar (the speaking ring on a square box) once it lands; this draws the same shape for now. */}
-        <span class={`call-bar-face ${who ? 'speaking' : ''}`}>
-          {who ? <Avatar id={who.id} name={who.name} url={who.avatar} size={30} square /> : <span class={`call-dot ${call.phase}`} />}
+      <button class="call-bar-open" onClick={() => (callOpen.value = !open)} aria-expanded={open} title={open ? 'Fold the call' : `The call in ${title}: everyone in it and every button`} data-track="call bar: open">
+        <span class="call-bar-face" aria-hidden="true">
+          <BarFace call={call} phase={status.phase} />
         </span>
         <span class="call-bar-text">
-          <b>{who ? who.name : title}</b>
+          <b>{talker ? callName(talker) : title}</b>
           <small>
-            <span class="call-bar-time">{status}</span>
-            {who && ` · ${title}`}
+            {talker && <span class="sr-only">is talking, </span>}
+            <span class="call-bar-time">{status.text}</span>
+            {talker && ` · ${title}`}
+            {status.hint && ` · ${status.hint}`}
           </small>
         </span>
       </button>
-      <button
-        class={`call-btn mic call-bar-btn ${call.muted ? 'off' : ''}`}
-        onClick={() => setMuted(!call.muted)}
-        aria-label={call.muted ? 'Unmute' : 'Mute'}
-        title={call.listenOnly ? 'No microphone: listening only' : call.muted ? 'Unmute' : 'Mute'}
-        disabled={call.phase === 'ended' || call.listenOnly}
-        data-track="call bar: mute"
-        style={{ '--mic-level': call.muted ? 0 : micLevel.value }}
-      >
-        <Icon name={call.muted ? 'micOff' : 'mic'} size={18} />
-      </button>
-      <button class="call-btn leave call-bar-btn" onClick={leaveCall} aria-label="Leave the call" title="Leave the call" disabled={call.phase === 'ended'} data-track="call bar: leave">
-        <Icon name="phoneOff" size={18} />
-      </button>
+      <div class="call-bar-buttons">
+        <CallControls call={call} only={barKinds(callControls(call), !!call.listenOnly)} track="call bar" />
+      </div>
     </section>
   );
 }
 
-/** What a row's mark shows: the call you're in there and who talks in it, or a call going on there you're not in. */
+/** While the bar's call is expanded, back and Escape fold it. */
+export function BarLayer() {
+  const fold = () => (callOpen.value = false);
+  useLayer(fold);
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => e.key === 'Escape' && fold();
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  }, []);
+  return null;
+}
+
+/**
+ * A phone's call, expanded from the bar: a sheet over the page you're on, hanging from the bar, with every button
+ * (Leave among them), Go to chat, and the people in it (`Panel`, the dock's open body, a chunk of its own).
+ */
+export function CallSheet({ call, Panel }: { call: ActiveCall; Panel: ((p: { call: ActiveCall }) => JSX.Element) | null }) {
+  const c = db.conversations.get(call.conversationId);
+  const title = c ? convTitle(c) : 'Call';
+  const fold = () => (callOpen.value = false);
+  return (
+    <>
+      <BarLayer />
+      <div class="call-sheet-back" onClick={fold} aria-hidden="true" />
+      <section class="call-sheet" role="dialog" aria-label={`Call in ${title}`}>
+        <div class="call-sheet-buttons">
+          <CallControls call={call} track="call sheet" />
+        </div>
+        <button
+          class="chip-btn call-sheet-go"
+          data-track="call sheet: go to chat"
+          onClick={() => {
+            callOpen.value = false;
+            go({ view: 'inbox', conv: call.conversationId });
+          }}
+        >
+          Go to chat
+        </button>
+        {Panel ? <Panel call={call} /> : <div class="call-dock-body call-empty">Loading…</div>}
+      </section>
+    </>
+  );
+}
+
+/** What a row's mark shows: the call you're in there and whether anyone talks, or a call going on there you're not in. */
 const yourCall = computed(() => {
   const call = activeCall.value;
   if (!call || call.phase === 'ended') return null;
-  const someone = call.participants.some((p) => p.speaking);
-  return { conv: call.conversationId, talker: callSpeaker.value, someone };
+  return { conv: call.conversationId, someone: call.participants.some((p) => p.speaking) };
 });
 
-/** A small sign on a chat row with a call going on: the talker's face with a ring, or three bars (moving while anyone talks). */
+/** A small sign on a chat row with a call going on: three small bars, green in your call and moving while anyone talks. */
 export function CallMark({ convIds }: { convIds: readonly string[] }) {
   const mine = yourCall.value;
   if (mine && convIds.includes(mine.conv)) {
-    const who = mine.talker ? person(mine.talker) : null;
+    const words = mine.someone ? 'Your call is here: someone is talking' : 'Your call is here';
     return (
-      <span class={`call-mark mine ${who ? 'talker' : ''} ${mine.someone ? 'speaking' : ''}`} data-call-mark="mine" title={who ? `In your call: ${who.name} is talking` : 'Your call is here'} aria-label={who ? `In your call: ${who.name} is talking` : 'Your call is here'}>
-        {who ? <Avatar id={who.id} name={who.name} url={who.avatar} size={14} square /> : <Bars />}
+      <span class={`call-mark mine ${mine.someone ? 'speaking' : ''}`} data-call-mark="mine" role="img" title={words} aria-label={words}>
+        <Bars />
       </span>
     );
   }
@@ -155,7 +178,7 @@ export function CallMark({ convIds }: { convIds: readonly string[] }) {
   const going: P.CallView | null = convIds.map((id) => callIn(id)).find((x) => !!x && !x.ringing) ?? null;
   if (!going) return null;
   return (
-    <span class="call-mark" data-call-mark="going" title="A call is going on" aria-label="A call is going on">
+    <span class="call-mark" data-call-mark="going" role="img" title="A call is going on" aria-label="A call is going on">
       <Bars />
     </span>
   );

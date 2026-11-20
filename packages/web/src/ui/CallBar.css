@@ -1,36 +1,27 @@
 /* ---------------------------------------------------------------- the call bar (CallBar.tsx)
 
-   The call as a slim strip, like a music player's: on a phone above the tab bar (or at the top of an open page, which
-   has a composer at its foot), on a computer at the foot of a narrow list. docs/calls.md "The call bar". */
+   The call as a slim row of the layout, like a music player's (docs/calls.md "The call bar"). On a computer the
+   app's grid gives it a row of its own under the list (or under the page, with the list hidden); on a phone it is the
+   top of the screen, everything else starting below it (styles.css ".app.with-bar"). Nothing sits over it or under it. */
 
 .call-bar {
-  position: fixed;
-  z-index: 40;
-  left: calc(var(--rail-w) + 8px);
-  bottom: 8px;
-  width: calc(var(--sidebar-w) - 16px);
-  min-width: 240px;
-  height: 48px;
+  grid-row: 3;
+  grid-column: 2;
+  min-width: 0;
+  height: var(--call-bar-h);
   box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 6px 0 4px;
+  padding: 0 8px 0 4px;
   background: var(--bg-raised);
-  border: 1px solid var(--bg-active);
-  border-radius: 14px;
-  box-shadow: 0 6px 20px rgb(0 0 0 / 0.35);
+  border-top: 1px solid var(--bg-active);
   color: var(--text);
-  view-transition-name: call;
-}
-/* css-scope: the list leaves room at its foot for the bar, as it does for the dock. */
-.app:has(.call-bar) > .sidebar {
-  padding-bottom: 60px;
 }
 .call-bar-open {
   flex: 1;
   min-width: 0;
-  height: 40px;
+  height: calc(var(--call-bar-h) - 8px);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -42,37 +33,45 @@
   text-align: left;
   cursor: pointer;
 }
-.call-bar-open:hover {
+.call-bar-open:hover,
+.call-bar-open[aria-expanded='true'] {
   background: var(--bg-hover);
 }
-/* A square box with the speaking ring drawn around it. TODO: CallAvatar once it lands. */
 .call-bar-face {
-  position: relative;
   flex: none;
-  width: 30px;
-  height: 30px;
+  min-width: 36px;
+  height: 36px;
   display: grid;
   place-items: center;
-  border-radius: 8px;
 }
-.call-bar-face::after {
-  content: '';
+/* Nobody talking: a few of the others' faces overlapping (or the chat's picture), the call's phase in the corner. */
+.call-bar-idle {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.call-bar-idle > .avatar + .avatar {
+  margin-left: -9px;
+}
+.call-bar-idle.n2 > .avatar,
+.call-bar-idle.n3 > .avatar {
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--bg-raised);
+}
+.call-bar-phase.call-dot {
   position: absolute;
-  inset: -3px;
-  border-radius: 10px;
-  box-shadow: 0 0 0 2px var(--good);
-  opacity: 0;
-  transition: opacity 0.15s;
-  pointer-events: none;
-}
-.call-bar-face.speaking::after {
-  opacity: 1;
+  right: -3px;
+  bottom: -3px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--bg-raised);
+  box-shadow: none;
 }
 .call-bar-text {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  line-height: 1.2;
+  line-height: 1.25;
 }
 .call-bar-text b,
 .call-bar-text small {
@@ -90,70 +89,88 @@
 .call-bar-time {
   font-variant-numeric: tabular-nums;
 }
-.call-btn.call-bar-btn {
+.call-bar-buttons {
   flex: none;
-  width: 36px;
-  height: 36px;
-}
-
-/* The bar grows into the dock and back (openCall's view transition). */
-/* css-scope: the dock is the bar's other size: they share one transition name. */
-.call-dock {
-  view-transition-name: call;
-}
-/* css-scope: the transition's own pseudo-elements, named after the bar. */
-::view-transition-group(call) {
-  animation-duration: 0.24s;
-  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-/* css-scope: as above. */
-::view-transition-old(call),
-::view-transition-new(call) {
-  height: 100%;
-  object-fit: cover;
-  object-position: top;
-}
-@media (prefers-reduced-motion: reduce) {
-  /* css-scope: as above. */
-  ::view-transition-group(call),
-  ::view-transition-old(call),
-  ::view-transition-new(call) {
-    animation: none;
-  }
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 @media (max-width: 820px) {
   .call-bar {
-    left: 8px;
-    right: 8px;
-    width: auto;
-    min-width: 0;
-    bottom: calc(var(--tabbar-h) + 8px);
-    border-radius: 16px;
-    box-shadow: 0 8px 28px rgb(0 0 0 / 0.4);
+    position: absolute;
+    z-index: 35;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--call-bar-top);
+    padding: env(safe-area-inset-top) 8px 0 4px;
+    border-top: 0;
+    border-bottom: 1px solid var(--bg-active);
   }
-  /* css-scope: a phone's list has the tab bar under it, and the bar floats over the list's foot. */
-  .app:has(.call-bar) > .sidebar {
-    padding-bottom: 56px;
-  }
-  /* An open page has no tab bar and a composer at its foot: the bar moves to the top. */
-  /* css-scope: placed by the phone layout's own classes on .app. */
-  .app.phone:not(.tabs) .call-bar {
+  /* The bar is at the top of a phone: the muted-and-talking note hangs below its microphone. */
+  .call-bar .call-mic-note {
     bottom: auto;
-    top: calc(env(safe-area-inset-top) + 6px);
+    top: calc(100% + 8px);
   }
-  /* css-scope: the open page leaves room at its top for the bar. */
-  .app.phone:not(.tabs):has(.call-bar) > .center {
-    padding-top: 60px;
+  .call-bar .call-mic-note::after {
+    top: auto;
+    bottom: 100%;
+    border-top-color: transparent;
+    border-bottom-color: var(--warn);
   }
-  /* css-scope: the call's video, at the top of a phone, goes under the bar instead of over it. */
-  .app.phone:not(.tabs):has(.call-bar) .call-videos {
-    top: calc(env(safe-area-inset-top) + 62px);
-  }
-  .call-btn.call-bar-btn {
-    width: 40px;
-    height: 40px;
-  }
+}
+
+/* ---------------------------------------------------------------- the bar expanded on a phone: a sheet under it */
+
+/* Over the call's video (z-index 41), which floats at a phone's top. */
+.call-sheet-back {
+  position: absolute;
+  z-index: 42;
+  inset: var(--call-bar-top) 0 0 0;
+  background: rgb(0 0 0 / 0.4);
+}
+.call-sheet {
+  position: absolute;
+  z-index: 43;
+  top: var(--call-bar-top);
+  left: 0;
+  right: 0;
+  max-height: calc(100% - var(--call-bar-top) - 48px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
+  padding: 10px 12px 14px;
+  background: var(--bg-raised);
+  border-radius: 0 0 18px 18px;
+  box-shadow: 0 12px 28px rgb(0 0 0 / 0.4);
+  color: var(--text);
+}
+.call-sheet-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 4px 0 10px;
+}
+.call-sheet-go {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 44px;
+  margin-bottom: 6px;
+}
+/* css-scope: the dock's open body (CallPanel.tsx) inside the sheet: no box of its own, and Go to chat is above. */
+.call-sheet .call-dock-body {
+  padding: 0;
+  max-height: none;
+  overflow: visible;
+}
+/* css-scope: as above. */
+.call-sheet .call-goto {
+  display: none;
 }
 
 /* ---------------------------------------------------------------- a call's mark on a chat row */
@@ -170,17 +187,6 @@
 }
 .call-mark.mine {
   color: var(--good);
-}
-.call-mark.talker {
-  position: relative;
-}
-.call-mark.talker::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: 5px;
-  box-shadow: 0 0 0 1.5px var(--good);
-  pointer-events: none;
 }
 .call-mark-bars {
   display: inline-flex;

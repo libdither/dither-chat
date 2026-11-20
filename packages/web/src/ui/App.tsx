@@ -39,6 +39,7 @@ import { Toasts } from './Toasts.tsx';
 import { OfflineLayer } from './Offline.tsx';
 import { PaneEdge, usePaneWidths } from './PaneEdge.tsx';
 import { CallDock } from './Call.tsx';
+import { barShown } from './CallBar.tsx';
 import { RingCards } from './Ringing.tsx';
 import { Viewer } from './Viewer.tsx';
 import { PEEK, panel, usePager, type Rest } from './Pager.ts';
@@ -386,10 +387,13 @@ export function App() {
   const tabs = p && (tabRoot || rest === 'peek' || rest === 'away');
   // While a page is open or peeking, the list beside it leaves room for its edge.
   const narrow = p && (detailRoute || rest === 'peek');
+  // The call bar is a row of the layout where it shows (CallBar.tsx). The conversation on screen: on a phone, none while
+  // the lists show, so a call there is the bar.
+  const bar = barShown((p && tabs) || !('conv' in r) ? null : (r.conv ?? null), p, !p && full);
   return (
     <div
       ref={app}
-      class={`app ${p ? `phone rest-${rest}` : ''} ${!p && details ? 'with-details' : ''} ${full ? 'full' : ''} ${tabs ? 'tabs' : ''} ${tabRoot ? 'tab-root' : ''} ${narrow ? 'narrow' : ''}`}
+      class={`app ${p ? `phone rest-${rest}` : ''} ${!p && details ? 'with-details' : ''} ${full ? 'full' : ''} ${tabs ? 'tabs' : ''} ${tabRoot ? 'tab-root' : ''} ${narrow ? 'narrow' : ''} ${bar ? 'with-bar' : ''}`}
       style={{ '--peek': `${PEEK}px` } as any}
     >
       {updateReady.value && (
@@ -431,8 +435,7 @@ export function App() {
         </div>
       )}
       {addingAccount.value && <AddAccount onClose={() => (addingAccount.value = false)} />}
-      {/* The conversation on screen: on a phone, none while the list shows (a call there folds to the bar). */}
-      <CallDock shown={(p && tabs) || !('conv' in r) ? null : (r.conv ?? null)} listHidden={!p && full} />
+      <CallDock bar={bar} />
       <RingCards />
       <ReactionLayer />
       <MessageHistoryLayer />

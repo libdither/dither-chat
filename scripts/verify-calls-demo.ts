@@ -14,8 +14,10 @@
  * - watching the bot's Go Live;
  * - the second device leaving plays the leave sound on the first; leaving ends the call everywhere;
  * - a device with no microphone still joins, listening only;
- * - the call bar on a phone: shown in the list and on another chat, not on the call's own; mute works from it; a tap
- *   opens the call; the call's row has its mark; a computer's hidden list shows the bar too; leaving from it;
+ * - the call bar on a phone: shown at the top of the list and of another chat, in one place, nothing under it, not on the
+ *   call's own; no Leave on it, 44 px buttons; mute from it; the row's mark is bars; a tap opens a sheet in place, back
+ *   folds it, Go to chat opens the call's chat; a computer's hidden list: the bar under the page, the dock over it on a
+ *   tap, Escape folds it, Leave from there;
  * - no page errors.
  *
  *   bun packages/hub/src/main.ts --demo --data /tmp/x --port 8579 --web packages/web/dist
@@ -204,27 +206,58 @@ try {
   await device(d.page, MAIN);
   await d.page.eval(`document.querySelector('.call-join').click()`);
   check(await wait(d.page, `!!document.querySelector('[data-call-connected]')`, 20_000), 'the phone joins');
-  const ui = () => d.page.eval<{ bar: boolean; dock: boolean; open: boolean; hash: string }>(`({ bar: !!document.querySelector('.call-bar'), dock: !!document.querySelector('.call-dock'), open: !!document.querySelector('.call-dock.open'), hash: location.hash })`);
+  const ui = () => d.page.eval<{ bar: boolean; dock: boolean; sheet: boolean; hash: string }>(`({ bar: !!document.querySelector('.call-bar'), dock: !!document.querySelector('.call-dock'), sheet: !!document.querySelector('.call-sheet'), hash: location.hash })`);
   check(await wait(d.page, `!!document.querySelector('.call-dock') && !document.querySelector('.call-bar')`, 3000), "on the call's own chat: the dock, no bar", await ui());
   await d.page.eval(`location.hash = ${JSON.stringify(space ? `#/s/${space}` : '#/inbox')}`);
   check(await wait(d.page, `!!document.querySelector('.call-bar') && !document.querySelector('.call-dock')`, 5000), 'in the list: the bar, no dock', await ui());
-  if (space) check(await wait(d.page, `!!document.querySelector('[data-call-mark="mine"]')`, 5000), "the call's row has its mark");
-  await d.page.eval(`document.querySelector('[data-track="call bar: mute"]').click()`);
-  check(await wait(d.page, `window.__activeCall.value.muted && document.querySelector('[data-track="call bar: mute"]').classList.contains('off')`, 3000), 'the bar mutes');
-  await d.page.eval(`document.querySelector('[data-track="call bar: mute"]').click()`);
-  check(await wait(d.page, `!window.__activeCall.value.muted`, 3000), 'and unmutes');
+  /** Where the bar is, and whether the list starts below it (a row of the layout: nothing under it). */
+  const place = () => d.page.eval<{ top: number; bottom: number; under: number }>(`(() => { const b = document.querySelector('.call-bar').getBoundingClientRect(); return { top: Math.round(b.top), bottom: Math.round(b.bottom), under: Math.round(document.querySelector('.app > .sidebar').getBoundingClientRect().top) }; })()`);
+  const inList = await place();
+  check(inList.top === 0 && inList.under >= inList.bottom, 'the bar is the top of the screen, the list starting below it', inList);
+  check(await d.page.eval(`!document.querySelector('.call-bar [data-track="call bar: leave"], .call-bar .call-btn.leave')`), 'the bar has no Leave');
+  check(await d.page.eval(`[...document.querySelectorAll('.call-bar button')].every((x) => { const r = x.getBoundingClientRect(); return r.width >= 44 && r.height >= 44; })`), 'every button on the bar is 44 px or more');
+  if (space) {
+    check(await wait(d.page, `!!document.querySelector('[data-call-mark="mine"]')`, 5000), "the call's row has its mark");
+    check(await d.page.eval(`!document.querySelector('[data-call-mark] .avatar') && document.querySelector('[data-call-mark="mine"]').getAttribute('role') === 'img'`), 'the mark is bars, no face, and a screen reader hears it');
+  }
+  const mute = `document.querySelector('.call-bar [data-track="call bar: mute"]')`;
+  await d.page.eval(`${mute}.click()`);
+  check(await wait(d.page, `window.__activeCall.value.muted && ${mute}.classList.contains('off') && ${mute}.getAttribute('aria-pressed') === 'true'`, 3000), 'the bar mutes (aria-pressed)');
+  await d.page.eval(`${mute}.click()`);
+  check(await wait(d.page, `!window.__activeCall.value.muted && ${mute}.getAttribute('aria-pressed') === 'false'`, 3000), 'and unmutes');
   if (other) {
     await d.page.eval(`location.hash = ${JSON.stringify(`#/c/${other.id}`)}`);
-    check(await wait(d.page, `location.hash.includes(${JSON.stringify(other.id)}) && !!document.querySelector('.call-bar')`, 5000), 'on another chat: the bar', await ui());
+    check(await wait(d.page, `location.hash.includes(${JSON.stringify(other.id)}) && !!document.querySelector('.call-bar') && !document.querySelector('.call-dock')`, 5000), 'on another chat: the bar', await ui());
+    const onPage = await place();
+    check(onPage.top === inList.top && onPage.bottom === inList.bottom, 'in the same place as over the lists', { inList, onPage });
+    check(await d.page.eval(`document.querySelector('.app > .center').getBoundingClientRect().top >= ${onPage.bottom}`), 'the page starts below it');
   }
+  const pageWas = await d.page.eval<string>(`location.hash`);
   await d.page.eval(`document.querySelector('[data-track="call bar: open"]').click()`);
-  check(await wait(d.page, `location.hash.includes(${JSON.stringify(voice.id)}) && !!document.querySelector('.call-dock.open') && !document.querySelector('.call-bar')`, 5000), "a tap on the bar opens the call's chat with the dock open", await ui());
-  // A computer with the list hidden (all communities): the bar in the dock's place.
+  check(await wait(d.page, `!!document.querySelector('.call-sheet') && document.querySelector('[data-track="call bar: open"]').getAttribute('aria-expanded') === 'true'`, 3000), 'a tap on the bar opens the sheet in place', await ui());
+  check((await d.page.eval<string>(`location.hash`)) === pageWas, 'without going anywhere');
+  check(await wait(d.page, `['call sheet: deafen', 'call sheet: leave'].every((t) => document.querySelector('.call-sheet [data-track="' + t + '"]'))`, 3000), 'the sheet has every button, Leave among them');
+  check(await wait(d.page, `!!document.querySelector('.call-sheet .call-people')`, 5000), 'and the people in the call');
+  await d.page.eval(`history.back()`);
+  check(await wait(d.page, `!document.querySelector('.call-sheet') && !!document.querySelector('.call-bar')`, 3000), 'back folds the sheet', await ui());
+  check(await wait(d.page, `location.hash === ${JSON.stringify(pageWas)}`, 3000), 'and stays on the page');
+  await d.page.eval(`document.querySelector('[data-track="call bar: open"]').click()`);
+  await wait(d.page, `!!document.querySelector('.call-sheet-go')`, 3000);
+  await d.page.eval(`document.querySelector('.call-sheet-go').click()`);
+  check(await wait(d.page, `location.hash.includes(${JSON.stringify(voice.id)}) && !!document.querySelector('.call-dock') && !document.querySelector('.call-bar') && !document.querySelector('.call-sheet')`, 5000), "Go to chat opens the call's chat, with the dock", await ui());
+  // A computer with the list hidden (all communities): the bar in a row under the page; a tap shows the dock over it.
   await d.page.size(1280, 800, false);
   await d.page.eval(`location.hash = '#/directory'`);
   check(await wait(d.page, `!!document.querySelector('.call-bar') && !document.querySelector('.call-dock')`, 5000), "a computer's hidden list: the bar", await ui());
-  await d.page.eval(`document.querySelector('[data-track="call bar: leave"]').click()`);
-  check(await wait(d.page, `window.__activeCall.value === null || window.__activeCall.value.phase === 'ended'`, 5000), 'leaving from the bar ends the call');
+  check(await d.page.eval(`(() => { const b = document.querySelector('.call-bar').getBoundingClientRect(), c = document.querySelector('.app > .center').getBoundingClientRect(); return c.bottom <= b.top + 1 && Math.round(b.bottom) === innerHeight; })()`), 'under the page, not over it');
+  await d.page.eval(`document.querySelector('[data-track="call bar: open"]').click()`);
+  check(await wait(d.page, `!!document.querySelector('.call-dock.over-bar') && location.hash === '#/directory'`, 3000), 'a tap shows the dock over the bar, staying on the page', await ui());
+  await d.page.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  check(await wait(d.page, `!document.querySelector('.call-dock') && !!document.querySelector('.call-bar')`, 3000), 'Escape folds it', await ui());
+  await d.page.eval(`document.querySelector('[data-track="call bar: open"]').click()`);
+  await wait(d.page, `!!document.querySelector('.call-dock.over-bar .call-btn.leave')`, 3000);
+  await d.page.eval(`document.querySelector('.call-dock.over-bar .call-btn.leave').click()`);
+  check(await wait(d.page, `window.__activeCall.value === null || window.__activeCall.value.phase === 'ended'`, 5000), 'leaving from the expanded bar ends the call');
 
   for (const [n, x] of [['first device', a], ['second device', b], ['no-microphone device', c], ['phone', d]] as const) check(x.page.errors.length === 0, `no page errors on the ${n}`, x.page.errors.slice(0, 3));
 } finally {
