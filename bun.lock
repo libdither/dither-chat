@@ -38,6 +38,12 @@
         "@dither-chat/protocol": "workspace:*",
       },
     },
+    "packages/approvals": {
+      "name": "@dither-chat/approvals",
+      "bin": {
+        "dither-ask": "./src/cli.ts",
+      },
+    },
     "packages/deploy": {
       "name": "@dither-chat/deploy",
     },
@@ -130,6 +136,8 @@
     "@dither-chat/adapter-signal": ["@dither-chat/adapter-signal@workspace:packages/adapter-signal"],
 
     "@dither-chat/adapter-whatsapp": ["@dither-chat/adapter-whatsapp@workspace:packages/adapter-whatsapp"],
+
+    "@dither-chat/approvals": ["@dither-chat/approvals@workspace:packages/approvals"],
 
     "@dither-chat/deploy": ["@dither-chat/deploy@workspace:packages/deploy"],
 
