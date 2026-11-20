@@ -371,6 +371,9 @@ async function show(d) {
     data: { conversationId: d.conversationId, request: d.requestId, notice: d.noticeId, inbox: d.inbox, test: d.test, replyTo: d.replyTo, nid: d.nid, device: d.device, messageId: d.messageId, calendar: cal, ts: newest(d), keep: d.keep === true || undefined },
     actions: actions.slice(0, self.Notification?.maxActions ?? 2),
   });
+  // On screen now. Chromium drops one still on its way from what getNotifications() lists (docs/notifications.md,
+  // "Read elsewhere, gone here"), so scripts/verify-clear.ts waits for this mark before it looks.
+  performance.mark('dither:shown', { detail: tag });
   return tag;
 }
 
