@@ -4,11 +4,26 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
-import { Layout, seed } from './layout.ts';
+import { Layout, seed, type Rings } from './layout.ts';
 import type { FromWorker, ToWorker } from './layout.worker.ts';
 import { neighbours, type Index, type Visible } from './model.ts';
 import { drawDiscs, Pictures, type Disc, type Shape } from './pictures.ts';
 import { cssColor, drawLabels, renderer, screenR, type Label, type Palette, type Renderer, type RGBA, type Scene, type View } from './render.ts';
+import type { Ties } from './ties.ts';
+
+/**
+ * The rings, from the pane (docs/people-graph.md "Rings"): each person's circle, each circle's slice and name, and the
+ * ties between people. The engine puts everyone at a distance from you by their rank, and each circle in its slice.
+ */
+interface RingsInput {
+  /** Graph person index → circle, -1 for none. */
+  of: Int32Array;
+  /** Per circle: its slice's middle and half-width (radians), and its name. */
+  at: Float32Array;
+  half: Float32Array;
+  names: string[];
+  ties: Ties;
+}
 
 interface EngineEvents {
   hover(node: number | null, x: number, y: number): void;
@@ -66,6 +81,13 @@ const BLOB_PAD = 7;
 /** Pictures show once a node is drawn at least this wide, in CSS pixels; at most this many a frame, biggest first. */
 const PIC_MIN_R = 6.5;
 const PIC_MAX = 700;
+/** Rings: the innermost ring's distance from you, and how much farther out each node adds (by its square root). */
+const RING_IN = 70;
+const RING_STEP = 24;
+/** The ranks marked by a ring, with what each says. */
+const RING_MARKS = [10, 50, 250, 1000];
+/** Ties pulled together in the layout: each person's strongest few. */
+const RING_TIES = 5;
 
 export class Engine {
   private r: Renderer;
@@ -126,6 +148,10 @@ export class Engine {
   private pics = new Pictures(() => this.dirty());
   /** Each node's smallest size when nothing is picked; a picked node and its neighbours are drawn bigger. */
   private baseMinR = new Uint8Array(0);
+  /** The rings, or null for the free layout; and where they put each rank this time (radius by rank). */
+  private ringsIn: RingsInput | null = null;
+  private ringOut = 0;
+  private ringPeople = 0;
 
   /**
    * Who gets the room: people ranked by how much they matter, the top so many (more on a bigger screen) drawn big
@@ -201,7 +227,138 @@ export class Engine {
       this.inline.tune(len, mass);
       this.inline.heat(0.25);
     }
+    if (this.ringsIn) this.sendRings();
     this.dirty();
+  }
+
+  /** Rings on (with circles and ties), or off for the free layout. */
+  setRings(r: RingsInput | null) {
+    if (!r && !this.ringsIn) return;
+    this.ringsIn = r;
+    // For scripts: how many circles the rings show.
+    this.host.dataset.circles = r ? String(r.names.length) : '';
+    this.sendRings();
+    if (this.autoFit) this.fit();
+    this.dirty();
+  }
+
+  private sendRings() {
+    const rings = this.rings();
+    if (this.worker) this.worker.postMessage({ t: 'rings', rings } satisfies ToWorker);
+    else if (this.inline) {
+      this.inline.setRings(rings);
+      this.inline.heat(0.6);
+    }
+  }
+
+  /**
+   * A rank's distance from you on the rings, on a log scale: the 10, 50, 250 and 1,000 nearest each get a band about as
+   * wide, so the few who matter most have room, and the thousands only seen in a server share the outside.
+   */
+  private ringAt(rank: number, of: number) {
+    return RING_IN + (this.ringOut - RING_IN) * (Math.log1p((rank + 0.5) / 4) / Math.log1p(Math.max(of, 1) / 4));
+  }
+
+  /**
+   * Where the rings put each node: people at a distance by their rank (the most important nearest), places by theirs;
+   * a person in a circle within its slice; and each person's strongest ties as springs. Null with rings off, or with
+   * you not shown (nothing to be round).
+   */
+  private rings(): Rings | null {
+    const { ix, vis, ringsIn: ri } = this;
+    if (!ri || !ix || !vis || vis.me < 0) return null;
+    const np = ix.graph.people.length;
+    const n = this.scene.n;
+    const radius = new Float32Array(n).fill(-1);
+    const angle = new Float32Array(n).fill(NaN);
+    const spread = new Float32Array(n);
+    let people = 0;
+    let places = 0;
+    for (let i = 0; i < n; i++) if (i !== vis.me) vis.nodes[i] < np ? people++ : places++;
+    this.ringPeople = people;
+    this.ringOut = RING_IN + RING_STEP * Math.sqrt(people + places);
+    const springs: number[] = [];
+    const pull: number[] = [];
+    for (let i = 0; i < n; i++) {
+      if (i === vis.me) continue;
+      const g = vis.nodes[i];
+      if (g >= np) {
+        // A place a little outside its people of the same rank: it is drawn bigger, and they gather round it.
+        radius[i] = this.ringAt(this.rank[i] ?? places, places) * 1.04;
+        continue;
+      }
+      radius[i] = this.ringAt(this.rank[i] ?? people, people);
+      const c = ri.of[g];
+      if (c >= 0) {
+        angle[i] = ri.at[c];
+        spread[i] = ri.half[c];
+      }
+      const t = ri.ties;
+      const mine: [number, number][] = [];
+      for (let k = t.start[g]; k < t.start[g + 1]; k++) {
+        const j = this.local.get(t.to[k]);
+        if (j !== undefined) mine.push([j, t.w[k]]);
+      }
+      mine.sort((a, b) => b[1] - a[1]);
+      for (const [j, w] of mine.slice(0, RING_TIES)) {
+        springs.push(i, j);
+        pull.push(Math.min(1, w * 2));
+      }
+    }
+    return { radius, angle, spread, springs: Uint32Array.from(springs), pull: Float32Array.from(pull) };
+  }
+
+  /** The rings' guides: a ring at a few ranks, each circle's name at the end of its slice, faint lines between slices. */
+  private drawRings(x: CanvasRenderingContext2D) {
+    const { ringsIn: ri, vis } = this;
+    if (!ri || !vis || vis.me < 0 || !this.ringOut) return;
+    const k = this.view.k;
+    const [cx, cy] = this.screen(vis.me);
+    x.save();
+    x.strokeStyle = this.ink;
+    x.fillStyle = this.ink;
+    x.lineWidth = 1;
+    x.font = `500 11px ${this.font}`;
+    x.textAlign = 'center';
+    x.textBaseline = 'bottom';
+    for (const mark of RING_MARKS) {
+      if (mark >= this.ringPeople) break;
+      const r = this.ringAt(mark, this.ringPeople) * k;
+      if (r < 40) continue;
+      x.globalAlpha = 0.12;
+      x.setLineDash([3, 5]);
+      x.beginPath();
+      x.arc(cx, cy, r, 0, 2 * Math.PI);
+      x.stroke();
+      x.setLineDash([]);
+      x.globalAlpha = 0.45;
+      x.fillText(`${mark} nearest`, cx, cy - r - 2);
+    }
+    const out = this.ringOut * k;
+    x.font = `600 12px ${this.font}`;
+    x.textBaseline = 'middle';
+    ri.names.forEach((name, c) => {
+      const a = ri.at[c];
+      const h = ri.half[c];
+      // A line at the slice's start, from the inner ring out.
+      x.globalAlpha = 0.07;
+      x.beginPath();
+      x.moveTo(cx + Math.cos(a - h) * RING_IN * k, cy + Math.sin(a - h) * RING_IN * k);
+      x.lineTo(cx + Math.cos(a - h) * (out + 12), cy + Math.sin(a - h) * (out + 12));
+      x.stroke();
+      // Its name past the outer ring, if the slice is wide enough on screen to hold it.
+      if (2 * h * out < 50) return;
+      const tx = cx + Math.cos(a) * (out + 18);
+      const ty = cy + Math.sin(a) * (out + 18);
+      if (tx < -100 || ty < -20 || tx > this.w + 100 || ty > this.h + 20) return;
+      x.globalAlpha = 0.75;
+      x.textAlign = Math.cos(a) > 0.3 ? 'left' : Math.cos(a) < -0.3 ? 'right' : 'center';
+      const max = Math.max(60, Math.min(200, 2 * h * out));
+      let t = name;
+      while (t.length > 4 && x.measureText(t).width > max) t = t.slice(0, -2);
+      x.fillText(t === name ? t : `${t.trimEnd()}…`, tx, ty);
+    });
+    x.restore();
   }
 
   private sizes() {
@@ -551,7 +708,7 @@ export class Engine {
     const len = this.lengths();
     const mass = this.masses();
     const ties = this.ties();
-    const msg: ToWorker & { t: 'start' } = { t: 'start', n: this.scene.n, edges: this.scene.edges.slice(), pos: pos.slice(), fixed, len, mass, ties };
+    const msg: ToWorker & { t: 'start' } = { t: 'start', n: this.scene.n, edges: this.scene.edges.slice(), pos: pos.slice(), fixed, len, mass, ties, rings: this.rings() };
     if (!this.inline && !this.worker)
       try {
         this.worker = new Worker(new URL('./layout.worker.ts', import.meta.url), { type: 'module' });
@@ -575,7 +732,7 @@ export class Engine {
 
   /** Where workers are not allowed: a few steps a frame on this thread. */
   private startInline(pos: Float32Array, fixed?: number, len?: Float32Array, mass?: Float32Array) {
-    this.inline = new Layout({ n: this.scene.n, edges: this.scene.edges, pos, fixed, len, mass, ties: this.ties() });
+    this.inline = new Layout({ n: this.scene.n, edges: this.scene.edges, pos, fixed, len, mass, ties: this.ties(), rings: this.rings() });
     this.scene.pos = pos;
     this.dirty();
   }
@@ -654,6 +811,7 @@ export class Engine {
     drawLabels(this.text, this.labels(), this.dpr, this.ink, this.halo, this.font, (x) => {
       this.blobs = [];
       this.badges = [];
+      if (this.ringsIn) this.drawRings(x);
       if (this.groups.length) this.drawBlobs(x);
       drawDiscs(x, this.discs(), this.pics, this.halo);
       if (this.same.length) this.drawSame(x);
