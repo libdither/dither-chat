@@ -8893,6 +8893,10 @@ body.dragging * {
    The call in progress docks where Discord's voice panel sits: at the foot of the list on a desktop.
    A phone keeps it above the tab bar, or at the top of an open page so it never covers the composer. */
 
+/* The call window carries the buttons on a phone (ui/Call.tsx): the strip steps aside, keeping the call's state. */
+.call-dock[hidden] {
+  display: none;
+}
 .call-dock {
   position: fixed;
   left: var(--rail-w);
@@ -9088,7 +9092,27 @@ body.dragging * {
   width: 34px;
   height: 34px;
 }
-/* The video window is ui/CallWindow.css, loaded with its chunk. */
+/* The call window is ui/CallWindow.css, loaded with its chunk. Its slot on the call's chat (ui/CallSlot.tsx) is here,
+   so the page makes room for it before the chunk comes: docked, a strip under the header; Fill, the whole page. */
+.call-slot {
+  position: relative;
+  flex: none;
+}
+.call-slot.dock {
+  height: 280px;
+  max-height: calc(100% - 160px);
+  transition: height 0.28s cubic-bezier(0.3, 0.7, 0.3, 1);
+}
+.app.phone .call-slot.dock {
+  height: min(42vh, calc(100vw * 0.5625 + 24px));
+}
+.call-slot.dock.live {
+  transition: none;
+}
+.call-slot.fill {
+  flex: 1 1 auto;
+  min-height: 0;
+}
 .call-watch {
   margin-top: 4px;
   font-size: 12px;

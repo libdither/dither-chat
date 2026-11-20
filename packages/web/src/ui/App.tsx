@@ -39,7 +39,7 @@ import { Toasts } from './Toasts.tsx';
 import { OfflineLayer } from './Offline.tsx';
 import { PaneEdge, usePaneWidths } from './PaneEdge.tsx';
 import { CallDock } from './Call.tsx';
-import { barShown } from './CallBar.tsx';
+import { barShown, callBarOn } from './CallBar.tsx';
 import { RingCards } from './Ringing.tsx';
 import { Viewer } from './Viewer.tsx';
 import { PEEK, panel, usePager, type Rest } from './Pager.ts';
@@ -390,6 +390,8 @@ export function App() {
   // The call bar is a row of the layout where it shows (CallBar.tsx). The conversation on screen: on a phone, none while
   // the lists show, so a call there is the bar.
   const bar = barShown((p && tabs) || !('conv' in r) ? null : (r.conv ?? null), p, !p && full);
+  // A phone's bar means the call's chat is not the page (it may still peek): the call window leaves its slot.
+  useLayoutEffect(() => void (callBarOn.value = bar), [bar]);
   return (
     <div
       ref={app}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
-import { type ActiveCall, activeCall, callMedia, callName, callStatus, canCall, canRing, featuredSpeaker, leaveCall, roomOnPage, startCall } from '../call.ts';
+import { type ActiveCall, activeCall, callName, callStatus, canCall, canRing, featuredSpeaker, leaveCall, roomOnPage, startCall } from '../call.ts';
 import { roomCall } from './CallRoomLazy.tsx';
 import { callIn } from '../ringing.ts';
 import { db, prefs, rev } from '../state.ts';
@@ -9,6 +9,7 @@ import { CallControls } from './CallControls.tsx';
 import { Icon } from './icons.tsx';
 import { BarLayer, CallBar, CallSheet, callOpen } from './CallBar.tsx';
 import { phone } from '../phone.ts';
+import { callHasVideo, winControls, winPlace, winSlot } from './CallSlot.tsx';
 
 type PanelParts = typeof import('./CallPanel.tsx');
 let panel: PanelParts | null = null;
@@ -94,16 +95,20 @@ export function CallDock({ bar }: { bar: boolean }) {
         {open && (phone.value ? <CallSheet call={call} Panel={Panel} /> : <Dock call={call} now={now} open Panel={Panel} overBar />)}
       </>
     );
+  // On a phone the window carries the call's buttons while it shows: the dock's strip steps aside until opened.
   return (
     <>
       <CallVideos />
-      <Dock call={call} now={now} open={open} Panel={Panel} />
+      <Dock call={call} now={now} open={open} Panel={Panel} hidden={winControls.value && !open} />
     </>
   );
 }
 
-/** The dock: the call's name, status and buttons; open, its people too. `overBar`: shown over the call bar, folded by back. */
-function Dock({ call, now, open, Panel, overBar }: { call: ActiveCall; now: number; open: boolean; Panel: PanelParts['CallPanel'] | null; overBar?: boolean }) {
+/**
+ * The dock: the call's name, status and buttons; open, its people too. `overBar`: shown over the call bar, folded by
+ * back. `hidden`: the call window carries the buttons (a phone), so the strip is not drawn; it keeps the call's state.
+ */
+function Dock({ call, now, open, Panel, overBar, hidden }: { call: ActiveCall; now: number; open: boolean; Panel: PanelParts['CallPanel'] | null; overBar?: boolean; hidden?: boolean }) {
   const c = db.conversations.get(call.conversationId);
   const title = c ? convTitle(c) : 'Call';
   // Whoever talks, the featured one (the latest to start, call.ts featuredSpeaker) first.
@@ -115,6 +120,7 @@ function Dock({ call, now, open, Panel, overBar }: { call: ActiveCall; now: numb
     <section
       class={`call-dock ${open ? 'open' : ''} ${overBar ? 'over-bar' : ''} ${call.phase}`}
       aria-label="Call"
+      hidden={hidden}
       data-call-stats={call.stats ? JSON.stringify(call.stats) : undefined}
       data-call-phase={call.phase}
       data-call-connected={call.self?.connected || call.timing.connected !== undefined ? '1' : undefined}
@@ -149,7 +155,7 @@ type WindowParts = typeof import('./CallWindow.tsx');
 let videoWindow: WindowParts | null = null;
 let loadingWindow: Promise<WindowParts> | null = null;
 
-/** The video window's chunk (CallWindow.tsx), asked for only once a call has video. */
+/** The call window's chunk (CallWindow.tsx), asked for only once the call has video or a room. */
 function useCallWindow(want: boolean): WindowParts['CallWindow'] | null {
   const [w, setW] = useState(videoWindow);
   useEffect(() => {
@@ -165,21 +171,14 @@ function useCallWindow(want: boolean): WindowParts['CallWindow'] | null {
   return w?.CallWindow ?? null;
 }
 
-/** Video in the call: others' cameras and streams on the bridge's slots, and what this device sends, in one window. */
+/**
+ * The call's window (CallWindow.tsx): once the call has video, and wherever a room is on the page (its speakers are
+ * the window's tiles, with video or without).
+ */
 function CallVideos() {
   const call = activeCall.value;
-  const media = callMedia.value;
-  const live = !!call && call.phase !== 'ended';
-  const remote = live ? call.video.map((v) => ({ v, stream: media.slots.get(v.slot) })).filter((x) => !!x.stream) : [];
-  const any = live && (remote.length > 0 || !!media.camera || !!media.screen);
-  const Window = useCallWindow(any);
-  if (!any || !Window) return null;
-  const me = db.accounts.get(call.accountId)?.selfIdentityId ?? '';
-  const tiles = [
-    ...remote.map(({ v, stream }) => ({ id: `${v.slot}:${v.who}:${v.source}`, stream: stream!, slot: v.slot, who: v.who, share: v.source === 'stream', label: `${callName(v.who)}${v.source === 'stream' ? ' · screen' : ''}` })),
-    ...(media.screen ? [{ id: 'my-screen', stream: media.screen, who: me, share: true, label: 'Your screen' }] : []),
-    ...(media.camera ? [{ id: 'my-camera', stream: media.camera, who: me, self: true, label: 'You' }] : []),
-  ];
-  const speaking = new Set(call.participants.filter((p) => p.speaking).map((p) => p.id));
-  return <Window tiles={tiles} speaking={speaking} people={call.participants.length} />;
+  const want = !!call && call.phase !== 'ended' && (callHasVideo.value || (winSlot.value?.kind === 'room' && winPlace('room') === 'fill'));
+  const Window = useCallWindow(want);
+  if (!want || !Window) return null;
+  return <Window call={call} />;
 }

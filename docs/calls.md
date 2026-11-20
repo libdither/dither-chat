@@ -159,7 +159,8 @@ on a tap, Escape folding it, and leaving from there.
 The libdither server also has a stage, `office-hours` (`demostage.ts`), with the topic "Office hours: routing
 questions": the room's bot and two invented people speaking (their speaking takes turns), an audience of twenty
 invented people, two of them with a hand up (each with when it went up), and the main demo account a moderator there.
-The stage is sound only (no cameras). The call room carries the devices' audio as for any call; the demo stage lays the
+A speaker's camera and Go Live show (the bot's camera is on); a listener's never do. The call room carries the devices'
+audio and video as for any call; the demo stage lays the
 roles and ranks over the room's state, tells each device what it may do (`can`, `canOn`), and answers the stage
 actions by the same rule the device's buttons follow (`stageRights`), so a hand, an invitation, speaking and moving back
 to the audience all work from either device, and a simulated person invited to speak says yes a moment later. Everyone
@@ -452,7 +453,8 @@ pieces, so none works these out again:
   the held value, on at once and still on 250 ms after the last word; then the ring fades over 180 ms (CSS). Nothing
   else needs to remember a hold.
 - **Who to feature** (`featuredPicker`, `call.ts` `featuredSpeaker`): the latest person to start talking, never you,
-  kept at least 1.5 s before someone else (or nobody) takes it, so a quick "yeah" doesn't snatch it. The dock names
+  kept at least 1.5 s before someone else (or nobody) takes it, and while they still talk someone else takes over only
+  after a second of talking (`FEATURE_TAKE_MS`), so a quick "yeah" doesn't snatch it. The dock names
   them first in its "is talking" line; the call bar's face and the video window's Speaker use it.
 - **The face** (`ui/CallAvatar.tsx`): `CallAvatar` draws only what it's given (id, name, picture, size, speaking,
   level, tone, badge): the picture in a fixed square box with the ring 4 px around it, so it's round at every size.
@@ -490,8 +492,10 @@ again when it could not load) draws them:
 
 - the header: the network, the stage's topic, "N speakers · N listening" (the stage's `listeners` when it sends only
   some of them);
-- Speakers: 64 px faces (`CallAvatar`, ringed while speaking, its one badge), each named by rank (Host, Co-host,
-  Moderator) or Speaker;
+- Speakers: the call window's tiles ("The video window" below), moved into the room at its size: each speaker's
+  camera, or their face (`CallAvatar`, ringed while speaking, its one badge), named by rank (Host, Co-host, Moderator)
+  or Speaker, with a moderator's moves in a menu on each tile; 64 px faces while the window floats instead or is still
+  loading;
 - who asks to speak, oldest first (`askedAt`): for someone who may invite, "Asking to speak" with Invite on each; for
   others, "Hands up" by name. Above the audience at every width;
 - Audience: 32 px faces, you first, then hands up, then the invited, then the rest; past 18, "+N more" opens everyone
@@ -552,7 +556,7 @@ up front, so turning a camera on or a remote video changing never renegotiates:
   them on the slots, streams first, then cameras, keeping what plays where it is, and the state's `video` says whose is
   on which; a camera turned off or a stream no longer watched frees its slot.
 - **On the device.** Video shows in one window ("The video window" below): others' cameras and streams with their
-  names, and what it sends (its own camera mirrored). A click goes full screen. Someone LIVE has Watch in the open dock.
+  names, and what it sends (its own camera mirrored). A click shows a tile big. Someone LIVE has Watch in the open dock.
   The dock's camera and screen buttons show only in bridge mode, where the account can (`callVideo`); screen sharing
   only where the browser has `getDisplayMedia` (not phones).
 - **Cost.** The sandbox decodes and encodes each video again (measured above). Discord's own clients send H.264; the
@@ -560,31 +564,54 @@ up front, so turning a camera on or a remote video changing never renegotiates:
 
 ### The video window
 
-All the call's video is in one window (`ui/CallWindow.tsx`, a chunk of its own loaded once the call has video; the
-layout itself is `src/callLayout.ts`, pure and unit-tested). It has no title bar: a round button at its top right,
-shown on hover (always on a touch screen), opens a small menu of three rows:
+The call is one window of tiles (`ui/CallWindow.tsx`, a chunk of its own loaded once the call has video or a room is on
+the page; the layout itself is `src/callLayout.ts`, pure and unit-tested). A tile is a person, not a video: everyone in
+the call (on a stage, its speakers), drawn as their camera when it is on and otherwise as their face (`CallAvatar`, with
+the same speaking ring and badge), and a tile for each screen being shared. A camera's ring is drawn inside its edge
+(`.call-video.speak-ring`); its badge sits in the caption. Your own tile and your own screen are yours (`mine`), so
+neither is ever the big tile by itself.
 
-- **Arrange**: Grid (everyone the same size, in the columns that make them largest) or Speaker (one fills the window,
-  the rest in a strip below). Speaker shows the pinned video, else a shared screen, else whoever is talking (their
-  camera over their stream), else the one it showed last. Double-click a video to pin it big; double-click the pinned
-  one to go back to Grid. A pin mark shows which is pinned.
-- **Your camera**: a tile like the others, a small inset in a corner (drag it; it settles in the nearest corner), or
-  hidden. When it is the only video, it is shown as a tile whatever the choice.
-- **Place**: floating over the conversation (drag it anywhere on the video, past 5 px so a double-click still pins;
-  resize from its lower right corner; it stays on screen), or docked above the conversation, the messages pushed down,
-  with a divider at its foot to drag for its height. Dragging the floating window to the conversation's top docks it;
-  dragging the docked video down floats it.
+It has no title bar. Its buttons sit at its top right, shown on hover (always on a touch screen): Move (a grip that
+takes the arrow keys), Full screen, and the layout menu, which opens upward when there is no room below it. The menu
+has three rows of radios (one tab stop a row, the arrow keys move through it):
 
-Every change moves the same video elements to their new places with a transition, so a switch morphs rather than
+- **Arrange**: Auto, Grid (everyone the same size, in the columns that make them largest) or Speaker (one fills the
+  window, the rest in a strip below). Speaker's big tile is someone else's shared screen, else whom the call features
+  (`featuredSpeaker`, call.ts: the latest to start talking, never you, kept at least 1.5 s, and while they still talk
+  someone else takes over only after a second of talking), else the one it showed last, else the first that isn't
+  yours. Auto is Grid, or Speaker while someone shares a screen, and on a phone.
+- **Your camera**: your tile like the others, a small inset in a corner (drag it; it settles in the nearest corner), or
+  hidden. When it is the only tile, it is shown whatever the choice.
+- **Place**: Floating over the app (drag it anywhere on it; resize from its lower right corner, or by the arrow keys on
+  that corner; it stays on screen and never covers the call bar), Above chat, or Fill. Above chat and Fill apply on the
+  call's own chat only: there the page has a slot under its header (`ui/CallSlot.tsx`), and the window moves into it,
+  animating from where it was. Above chat is a strip in the chat's flow, the header and its buttons above it and the
+  messages below, with a divider at its foot (a separator in the tab order that takes the arrow keys) for its height.
+  Fill is the whole page under the header. On a stage the room is the window at full size: Above chat, Fill and Auto
+  put it in the room's speakers zone. On any other page (another chat, Settings) the window steps down: to the floating
+  window on a computer, to the call bar on a phone. Dragging the floating window to the top of the call's chat docks
+  it; dragging a docked or filling window down floats it.
+
+A click on a tile (or Enter on it) shows it big, as Speaker, and another puts it back; the tile is marked with a pin
+and its name says "shown big". That is never kept as a choice: Arrange stays what you picked. F on a tile, or the
+Full screen button, puts the whole window full screen, with its captions, your inset and the call's buttons. A resize
+or a divider drag ends with the height that fits the tiles with no bars around them (of the heights that do, the
+nearest). Filling a page or the screen, cameras are cropped to fill their tiles; a shared screen never is.
+
+On a phone the window carries the call's buttons (`CallControls`) and a button for the call's people and settings, so
+the dock's strip steps aside while it shows. A phone starts as Speaker, docked under the chat's header, you in the
+corner.
+
+Every change moves the same tile elements to their new places with a transition, so a switch morphs rather than
 redraws. The choices are kept on the device (`dither-chat:call-window` in localStorage, with the floating window's
-place and size and the docked height). Before you pick, the window chooses: two people in the call, Grid with you in
-the corner; a screen being shared, Speaker on it; a phone, Speaker docked at the top, you in the corner. A video's
-edge is green while its person talks. A single click goes full screen (a moment after the click, so a double-click
-pins instead); a click that ends a drag does not.
+place and size and the docked height); each is absent until you pick it, and Auto takes it out again.
 
-`scripts/verify-call-window.ts` checks it on a demo hub: the menu,
-each arrangement and camera choice moving the tiles, pinning, moving, resizing, docking and floating again, the choices
-kept, and a phone's start. `--shots <dir>` saves screenshots of each.
+`scripts/verify-call-window.ts` checks it on a demo hub: tiles as people, the menu and its keys, each arrangement and
+camera choice moving the tiles, showing a tile big by click and by Enter without keeping it, full screen, moving,
+resizing (by pointer and keys), the menu opening upward, docking into the chat's slot under the header, the divider,
+another chat floating it, Fill, floating again, the choices kept, a call ending mid-drag, and a phone (docked with the
+call's buttons, the bar on another page). `--shots <dir>` saves screenshots of each. `scripts/verify-stage-demo.ts`
+checks the room's speakers as the window's tiles.
 
 ### Sounds
 

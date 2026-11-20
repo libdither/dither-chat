@@ -19,6 +19,7 @@ import { db } from '../state.ts';
 import { NetBadge } from './bits.tsx';
 import { CallAvatar, callMarks } from './CallAvatar.tsx';
 import { CallControls } from './CallControls.tsx';
+import { RoomSlot, roomTiles } from './CallSlot.tsx';
 import { openMenu, type MenuEntry } from './ContextMenu.tsx';
 import './CallRoom.css';
 
@@ -231,6 +232,21 @@ export function CallRoom({ call }: { call: ActiveCall }) {
     };
   }, [call.conversationId]);
   const rank = (p: P.CallParticipant) => (room.staged ? (p.stageRank ? RANK_WORDS[p.stageRank] : 'Speaker') : undefined);
+  // The window's tiles here: each speaker's rank, and what a moderator may do to them.
+  useLayoutEffect(() => {
+    const byId = new Map(call.participants.map((p) => [p.id, p]));
+    roomTiles.value = {
+      role: (id) => {
+        const p = byId.get(id);
+        return p ? rank(p) : undefined;
+      },
+      moves: (id) => {
+        const p = byId.get(id);
+        return p ? movesOn(can, p) : [];
+      },
+    };
+  });
+  useEffect(() => () => void (roomTiles.value = null), []);
   return (
     <div class="croom" ref={box} data-me={room.staged ? callRole(call) ?? 'audience' : 'speaker'} data-moderator={can.canOn.length ? '1' : undefined}>
       <header class="croom-head">
@@ -243,16 +259,25 @@ export function CallRoom({ call }: { call: ActiveCall }) {
           </span>
         </div>
       </header>
-      <section class="croom-zone" aria-label={room.staged ? 'Speakers' : 'In the call'}>
+      <section class="croom-zone croom-stage" aria-label={room.staged ? 'Speakers' : 'In the call'}>
         <h4>{room.staged ? 'Speakers' : 'In the call'}</h4>
-        <ul class="croom-speakers">
-          {room.speakers.map((p) => (
-            <li key={p.id} class="croom-speaker" data-role="speaker" data-who={p.id}>
-              <Person can={can} p={p} size={64} role={rank(p)} />
-            </li>
-          ))}
-          {room.speakers.length === 0 && <li class="croom-quiet">Nobody is speaking yet.</li>}
-        </ul>
+        {room.speakers.length === 0 ? (
+          <p class="croom-quiet">Nobody is speaking yet.</p>
+        ) : (
+          // The speakers are the call window's tiles (CallWindow.tsx), moved in here; their faces while it is elsewhere.
+          <RoomSlot
+            label={room.staged ? 'Speakers' : 'In the call'}
+            fallback={
+              <ul class="croom-speakers">
+                {room.speakers.map((p) => (
+                  <li key={p.id} class="croom-speaker" data-role="speaker" data-who={p.id}>
+                    <Person can={can} p={p} size={64} role={rank(p)} />
+                  </li>
+                ))}
+              </ul>
+            }
+          />
+        )}
       </section>
       {room.staged && <Requests can={can} room={room} />}
       {room.staged && room.audience.length > 0 && !all && (

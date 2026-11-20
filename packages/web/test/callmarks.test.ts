@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { badgeSize, callBadge, callTime, type Clock, controlsFor, FEATURE_KEEP_MS, featuredPicker, MUTED_TALK, SPEAKING_HOLD_MS, speakingHold, stageCan, statusFor, talkGate } from '../src/callmarks.ts';
+import { badgeSize, callBadge, callTime, type Clock, controlsFor, FEATURE_KEEP_MS, FEATURE_TAKE_MS, featuredPicker, MUTED_TALK, SPEAKING_HOLD_MS, speakingHold, stageCan, statusFor, talkGate } from '../src/callmarks.ts';
 
 /** A clock the test moves by hand: timers fire only when it is advanced past them. */
 function fakeClock() {
@@ -132,11 +132,34 @@ describe('featuredPicker', () => {
     expect(picks).toEqual(['a', 'b']);
   });
 
-  test('a talker who started long after the keep takes it at once', () => {
+  test('after the keep, someone else takes it once they have talked a second, while the featured one still talks', () => {
     const { picker, advance } = pickerSetup();
     picker.update(['a']);
     advance(FEATURE_KEEP_MS + 1000);
     picker.update(['a', 'b']);
+    expect(picker.shown).toBe('a');
+    advance(FEATURE_TAKE_MS - 1);
+    expect(picker.shown).toBe('a');
+    advance(1);
+    expect(picker.shown).toBe('b');
+  });
+
+  test('a quick word after the keep does not take it from someone still talking', () => {
+    const { picker, picks, advance } = pickerSetup();
+    picker.update(['a']);
+    advance(FEATURE_KEEP_MS + 1000);
+    picker.update(['a', 'b']);
+    advance(400);
+    picker.update(['a']);
+    advance(FEATURE_TAKE_MS * 3);
+    expect(picks).toEqual(['a']);
+  });
+
+  test('the featured one gone quiet: whoever talks takes it at once', () => {
+    const { picker, advance } = pickerSetup();
+    picker.update(['a']);
+    advance(FEATURE_KEEP_MS + 1000);
+    picker.update(['b']);
     expect(picker.shown).toBe('b');
   });
 
