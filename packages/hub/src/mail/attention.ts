@@ -40,7 +40,7 @@ const DAY = 24 * HOUR;
  * How long a turn by mail stays owed before it runs out unanswered: two weeks, not chat's three days (owed.ts
  * MAIL_OWED_AGES says why). Its own reply rates and its own owed table follow from it.
  */
-export const MAIL_WINDOW = windowOf(DEFAULT_MAIL_OWED_TABLE);
+const MAIL_WINDOW = windowOf(DEFAULT_MAIL_OWED_TABLE);
 /** Bumped when the fold changes meaning: every thread from a person folds again, in the background. 2: MAIL_WINDOW. */
 const FOLD_VERSION = 2;
 

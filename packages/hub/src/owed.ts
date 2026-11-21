@@ -81,7 +81,7 @@ export const DEFAULT_OWED_TABLE: OwedTable = {
 };
 
 /** The ages a table's chances are at. */
-export const agesOf = (t: Pick<OwedTable, 'ages'>): readonly number[] => t.ages ?? OWED_AGES;
+const agesOf = (t: Pick<OwedTable, 'ages'>): readonly number[] => t.ages ?? OWED_AGES;
 /** A table's window: past it nothing is owed, and an answer later than it did not answer. */
 export const windowOf = (t: Pick<OwedTable, 'ages'>): number => {
   const a = agesOf(t);
@@ -95,7 +95,7 @@ export const windowOf = (t: Pick<OwedTable, 'ages'>): number => {
  */
 export const MAIL_OWED_AGES: readonly number[] = [0, HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR, DAY, 2 * DAY, 3 * DAY, 5 * DAY, 7 * DAY, 10 * DAY, 14 * DAY];
 /** Mail's reply-rate buckets: far lower than chat's, as most mail from a person is never answered. */
-export const MAIL_RATE_EDGES: readonly number[] = [0.1, 0.25, 0.5, 0.75];
+const MAIL_RATE_EDGES: readonly number[] = [0.1, 0.25, 0.5, 0.75];
 
 /**
  * Mail's table before the hub has fitted its own. Measured on one person's mail in 2024-26 where it could be (turns in
