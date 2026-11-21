@@ -2,7 +2,7 @@ import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, RULE_LABEL, RULE_LEVELS } from '@dither-chat/protocol';
 import { useState } from 'preact/hooks';
 import { AUTOMATIC, AUTOMATIC_HELP, RULE_HELP, communitiesOf, convLabel, convTitle, deepLink, directsOf, effectiveLevel, identityName, kindLabel, netName, placeConv, ruleHelp, ruleIcon, ruleName, ruleOn, threadsOf } from '../model.ts';
-import { api, db, go, isSelfIdentity, openProfile, prefs, rev, setRule } from '../state.ts';
+import { api, db, go, isSelfIdentity, openProfile, rev, setRule } from '../state.ts';
 import { AccountChip, Avatar, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { HeadOrb } from './Offline.tsx';
@@ -303,7 +303,7 @@ export function PersonDetails({ personId }: { personId: string }) {
               <NetGlyph network={d.network} size={12} /> {kindLabel(d)}
               {d.vantages.map((v) => {
                 const a = db.accounts.get(v.accountId);
-                return a && prefs.value ? <AccountChip account={a} small /> : null;
+                return a ? <AccountChip account={a} small /> : null;
               })}
             </button>
           ))}

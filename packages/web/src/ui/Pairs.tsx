@@ -18,7 +18,7 @@ import { badgeDiffers, cameFromThem, headIdents, lastRouteTells, leadTells, pick
 import { ago, hueOf, initials } from '../format.ts';
 import { convLabel, identityName, netColor, netName, visibleAccount } from '../model.ts';
 import { phone } from '../phone.ts';
-import { api, db, go, isSelfIdentity, prefs, route, setPrefs, timelineKey, timelines } from '../state.ts';
+import { api, db, go, isSelfIdentity, pref, route, setPrefs, timelineKey, timelines } from '../state.ts';
 import { Avatar, Count, FromChips, Menu, NetBadge, NetGlyph } from './bits.tsx';
 import { TimerLabel } from './Disappearing.tsx';
 import { Icon } from './icons.tsx';
@@ -147,9 +147,9 @@ export async function loadChat(personId: string) {
   if (!c) return;
   chats.value = { ...chats.value, [personId]: c };
   // A route this browser kept before the hub kept them (prefs.via, a conversation id): moved there once.
-  const old = prefs.value.via[personId];
+  const old = pref('via')[personId];
   if (old !== undefined) {
-    const { [personId]: _, ...rest } = prefs.value.via;
+    const { [personId]: _, ...rest } = pref('via');
     setPrefs({ via: rest });
     const r = c.routes.find((x) => x.conversationId === old);
     if (r && c.route?.why !== 'chosen') void chooseRoute(personId, r.conversationId, r.accountId);

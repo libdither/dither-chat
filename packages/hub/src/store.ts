@@ -2517,7 +2517,7 @@ export class Store {
     const r = this.db.query('SELECT * FROM conversation WHERE id = ?').get(id) as Row | null;
     if (!r) return null;
     const spaceIds = (this.db.query(`SELECT parent_id FROM space_edge WHERE child_kind = 'conversation' AND child_id = ?`).all(id) as Row[]).map((x) => x.parent_id);
-    const parts = (this.db.query('SELECT identity_id FROM participant WHERE conversation_id = ?').all(id) as Row[]).map((x) => x.identity_id);
+    const parts = (this.db.query('SELECT identity_id FROM participant WHERE conversation_id = ? ORDER BY identity_id').all(id) as Row[]).map((x) => x.identity_id);
     const vs = this.db.query(`SELECT * FROM vantage WHERE target_kind = 'conversation' AND target_id = ?`).all(id) as Row[];
     const last = r.last_message_id ? (this.db.query('SELECT * FROM message WHERE id = ?').get(r.last_message_id) as Row) : null;
     const other = r.shape === 'direct' ? parts.find((p) => !this.isSelf(p)) : undefined;
@@ -2550,7 +2550,8 @@ export class Store {
       return m;
     };
     const edges = group(q(`SELECT parent_id, child_id FROM space_edge WHERE child_kind = 'conversation' AND child_id IN (SELECT value FROM json_each(?))`), 'child_id');
-    const parts = group(q(`SELECT conversation_id, identity_id FROM participant WHERE conversation_id IN (SELECT value FROM json_each(?))`), 'conversation_id');
+    // In one order, as conversationView's: the app takes members in another order for a change of names (syncmodel.ts).
+    const parts = group(q(`SELECT conversation_id, identity_id FROM participant WHERE conversation_id IN (SELECT value FROM json_each(?)) ORDER BY conversation_id, identity_id`), 'conversation_id');
     const vants = group(q(`SELECT * FROM vantage WHERE target_kind = 'conversation' AND target_id IN (SELECT value FROM json_each(?))`), 'target_id');
     const lasts = new Map(
       q(`SELECT m.* FROM message m WHERE m.id IN (SELECT last_message_id FROM conversation WHERE id IN (SELECT value FROM json_each(?)))`).map((m) => [m.id as string, m]),
@@ -3838,7 +3839,8 @@ export class Store {
     const db = this.db;
     const convRows = db.query('SELECT * FROM conversation').all() as Row[];
     const edges = (db.query('SELECT * FROM space_edge').all() as Row[]).map(edgeView);
-    const parts = db.query('SELECT * FROM participant').all() as Row[];
+    // Members in conversationView's order (by id): an event's copy in another order reads to the app as new names.
+    const parts = db.query('SELECT * FROM participant ORDER BY conversation_id, identity_id').all() as Row[];
     const vants = db.query('SELECT * FROM vantage').all() as Row[];
     const lastIds = convRows.map((c) => c.last_message_id).filter(Boolean);
     const lasts = new Map<string, Row>();

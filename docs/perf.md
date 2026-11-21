@@ -4,6 +4,8 @@
 makes it slower. Run it before and after a change that touches rendering, the sync model or the hub's hot queries. CI
 runs a small version on every push that judges its counts, never its times ([In CI](#in-ci---ci)), and ordinary tests
 hold sizes and counts of what the hub sends and the web build weighs ([Budgets](#budgets-sizes-and-counts-in-every-test-run)).
+`scripts/verify-response.ts` clicks every control on each kind of page and fails on a click that draws a whole list
+again ([Every click](#every-click-2026-11-20)).
 
 ```sh
 bun scripts/verify-perf.ts                 # 3 runs each at 1× and 4× CPU, compared with scripts/perf-baseline.json
@@ -187,6 +189,12 @@ written again:
   Its detail has the timeline's key and how many messages it holds.
 - With `?perf=1` in the address, `window.__ditherPerf.renders` counts renders of `App`, `InboxSidebar`, `Timeline`
   and `MessageItem` (`packages/web/src/perf.ts`). Without it, each of those pays one check of a constant.
+- Also with `?perf=1`, `window.__ditherPerf.components` counts every component's renders by its name, from preact's
+  own render hook: `mounts` (first renders), `updates` (renders again), `live` (how many are on the page) and
+  `again` (how many of those on the page at `__ditherPerf.fresh()` rendered again since, each counted once however
+  often). A build
+  with `--minify false` keeps the names; a minified one counts the same under short ones. Without `?perf=1` the hook
+  is not installed.
 
 The harness adds a long-task observer before the app's scripts run, and reads `LayoutCount` and `TaskDuration` from
 the DevTools `Performance.getMetrics`.
@@ -929,6 +937,75 @@ did not name; these two are the likely ones, not checked).
 
 `test/model-memo.test.ts` holds it: a read changes the counts and the order at once, with the same walk; the walk is
 done again on a meta change; a level holds until a rule changes or a mute runs out.
+
+## One setting at a time (2026-11-20)
+
+Opening the details panel (the chat header's panel button) was slow: on the full-size world at 4× CPU, 160 to 260 ms
+from the click to the next frame, and 120 to 135 ms to close it. The panel itself drew in 6 ms. Its open state is a
+setting (`details`, kept on the device), and every setting lived in one signal, `prefs`: whatever read any setting
+while it rendered rendered again on every `setPrefs`. Every message read one (`plainGifs`, and the hover bar's skin
+tone), and so did the list, the rail and the app's badge, so one click drew all 60 messages on screen, the list and
+the rail again. The theme's effect read the whole signal too, so it set every one of the theme's colours on the
+page's root again and wrote them to localStorage, which restyles the whole page.
+
+`prefs` is now private to state.ts. A setting is read with `pref('details')`, a computed signal per setting, so what
+reads it renders again only when that setting changes. Opening the panel now renders App and the open timeline
+(its header's button) and nothing else: at 1× on this machine 18 to 42 ms where it was 32 to 85, with 2 to 6 ms of
+script where it was 16 to 60. What is left is the browser laying out the narrower conversation: style, layout, paint
+and layers, 15 to 20 ms at 1×. Leaving the messages out of view unpainted (`content-visibility: auto`) saved little
+and is not done.
+
+The first run of [Every click](#every-click-2026-11-20) found another: a chat's members came in another order in
+the hub's bootstrap (`SELECT * FROM participant`, in the order they were written) than in its events
+(`conversationView`, by id), so the app read the first event about a chat (its read state, after opening it) as new
+names, and every message and row on the screen drew again. Both read by id now, and the app compares members as a set
+(packages/hub/test/conversation-view.test.ts, packages/web/test/versions.test.ts).
+
+## Every click (2026-11-20)
+
+`scripts/verify-response.ts` (CI's `response` job, in four parts) builds the app without minifying, so components
+keep their names, and seeds the perf world at a tenth of its size behind a demo hub. On each kind of page (a channel,
+a DM and a group with and without the details panel, a message hovered, For you, a server, a folder, People, a
+person, a profile, About, Search, Notices, Requests, Accounts, Settings, the directory, Mail, Feed) it finds every
+control on screen and clicks each kind once, with a real mouse, in the same order every run. The first page's
+controls (the rail's, the list's) are clicked there only. Each page has a hub of its own on a fresh copy of one
+settled world (its hub has looked at every attachment, which a hub does 15 s after it starts and sends the messages
+again with), at a new address, so what an earlier page's clicks changed is not there and a page reads the same in
+any of CI's four parts. Nothing that sends,
+deletes, leaves, calls or signs out is pressed. After each click it waits until nothing has rendered, no request is
+out, no timeout a moment away (100 ms to 3 s) is pending and nothing has come on the socket for 700 ms, so what the
+click set off counts with it: a chat read 600 ms after it opens, the hub's answers, and the lists' re-sort, which
+waits until 4 s after the last touch and while the pointer is on a list, and asks again every 1.5 s (so the mouse
+leaves after each click, as a hand does). A page that is not still within 12 s fails, since
+what it was doing would land in the next click. Then it waits until the hub has no scores still to come
+(`GET /api/attention/waiting`: a conversation folded again waits 5 s first) and for the page to be still again. Then Escape or the address takes the click back, and the page is
+loaded again only when that did not get back to where it was.
+
+The app's own clocks would land in whichever click is running when they strike, so the page holds them: every
+`setInterval` of 5 s or more (the usage tick that counts a visit 3 s into a place, the minute's re-sort, the ping),
+and the usage tracker's visits, which it answers itself instead of sending to the hub. Each page then has two cases of
+its own before its clicks: "held: the app's clocks" runs every held interval once, and "hub: a visit counted" posts a
+visit to the hub as another device would, and counts what the hub's event draws. A case that could not run fails.
+
+For each click it counts every component's renders (`window.__ditherPerf.components`), layouts and style
+recalculations, and times the click to the next frame and the longest task. A click fails when it renders again at
+least half of a component there are ten or more of on the page: every message, every row, every server in the rail.
+Each one already on the page counts once however often it rendered (`again`): the hub's answer comes in one frame or
+three depending on timing, a list drawn three times is no wider than one drawn once, and rows the click put on the
+page render once or twice depending on when their data came. Its line also names the hub's events that came
+while it settled (`[hub: attention sync×2]`).
+Counts, not times (docs/testing.md, "No timing gates"); the slowest clicks go in the job's summary.
+
+`scripts/response-known.json` lists the clicks that drew a list again when the check began, so that it fails only on
+a new one. When one is fixed the run says so, and `--update` writes the list again; a pull request that adds to it
+says why that click has to draw a whole list.
+
+```sh
+bun scripts/verify-response.ts                     # every page, about 12 minutes
+bun scripts/verify-response.ts --only "a DM"       # pages whose name has this in it
+bun scripts/verify-response.ts --only control:react  # controls whose name has this in it
+bun scripts/verify-response.ts --cpu 4 --out x.json  # slower, and every click's numbers
+```
 
 ## Next
 

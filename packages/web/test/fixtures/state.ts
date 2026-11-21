@@ -19,6 +19,9 @@ export const asked: string[] = [];
 /** What `api` answers for any path, for a test that asks the hub (threadcache.test.ts); `answers` comes first. */
 export const hub: { answer: ((path: string) => Promise<unknown>) | null } = { answer: null };
 
+/** This device's settings, as state.ts's pref() reads them and setPrefs() sets them. */
+const settings: Record<string, unknown> = {};
+
 export const stateMock = () => ({
   db,
   // No hub in a test: what asks one fails, as it does offline.
@@ -29,7 +32,8 @@ export const stateMock = () => ({
   eventHooks: new Set(),
   inbox: { value: [] },
   mailTriage: { value: [] },
-  prefs: { value: {} },
+  pref: (k: string) => settings[k],
+  setPrefs: (p: Record<string, unknown>) => void Object.assign(settings, p),
   isSelfIdentity: (id: string | null | undefined) => !!id && selfIds.has(id),
   api: async () => ({}),
   toast: () => {},

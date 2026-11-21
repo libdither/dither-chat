@@ -377,6 +377,29 @@ describe('incremental features in the hub', () => {
     expect(state('dm').totalReceived).toBe(1);
   });
 
+  test('waiting while a message is to be folded or a stale conversation waits out its quiet; not once scored', () => {
+    expect(att.waiting).toBe(false);
+    clock += MIN;
+    say('dm', 'sam', clock - 1000);
+    expect(att.waiting).toBe(true);
+    flush();
+    expect(att.waiting).toBe(false);
+    // Folded again from the start, but only once it has been quiet for a while (QUIET, 5 s).
+    att.invalidate([cid('dm')]);
+    while (att.pump() > 0);
+    flush();
+    expect(att.waiting).toBe(true);
+    clock += 6000;
+    while (att.pump() > 0);
+    flush();
+    expect(att.waiting).toBe(false);
+    // A last message time with no message past the cursor (a request accepted into it): nothing to fold, not waiting.
+    store.db.query('UPDATE conversation SET last_message_at = ? WHERE id = ?').run(clock + HOUR, cid('dm'));
+    while (att.pump() > 0);
+    flush();
+    expect(att.waiting).toBe(false);
+  });
+
   test('message by message gives the same features as folding everything at once', () => {
     for (let i = 0; i < 30; i++) {
       say('trio', i % 3 === 0 ? 'me' : i % 3 === 1 ? 'kim' : 'lee', T0 + 2 * HOUR + i * 7 * MIN, { mentionsSelf: i % 5 === 0 });

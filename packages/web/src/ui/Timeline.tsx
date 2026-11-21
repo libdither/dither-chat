@@ -40,7 +40,7 @@ import {
   markRead,
   pending,
   toast,
-  prefs,
+  pref,
   quoted,
   metaRev,
   rev,
@@ -1874,7 +1874,7 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
   // A post you follow (docs/feed.md "Following a post"): its thread, what came since it was read marked new.
   if (c.variant === 'follow') return <FollowChatLazy c={c} onBack={onBack} />;
   const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && visibleAccount(a.id));
-  const sendAsValue = prefs.value.sendAs[c.id] ?? accounts.find((a) => a.status === 'online')?.id ?? accounts[0]?.id;
+  const sendAsValue = pref('sendAs')[c.id] ?? accounts.find((a) => a.status === 'online')?.id ?? accounts[0]?.id;
   const voice = c.variant === 'voice' || c.variant === 'stage';
   const held = heldRequest(db.requests, c.id);
   // A stage you are in is a room (docs/calls.md "The room view"): beside the chat on a wide pane, a Room / Chat switch
@@ -1901,7 +1901,7 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
           !held &&
           (accounts.length > 1 ? (
             <>
-              <SendAsLead c={c} accounts={accounts} value={sendAsValue!} onPick={(v) => setPrefs({ sendAs: { ...prefs.value.sendAs, [c.id]: v } })} />
+              <SendAsLead c={c} accounts={accounts} value={sendAsValue!} onPick={(v) => setPrefs({ sendAs: { ...pref('sendAs'), [c.id]: v } })} />
               <TimerLabel conv={c} accountId={sendAsValue} />
             </>
           ) : (

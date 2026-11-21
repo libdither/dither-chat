@@ -7,7 +7,7 @@ import { signal } from '@preact/signals';
 import type { ClickCount, ClicksView } from '@dither-chat/protocol';
 import { areaOf, ClickTally, fullKey, pageOf, recordClick } from './clicks.ts';
 import { phone } from './phone.ts';
-import { api, prefs, route, setPrefs } from './state.ts';
+import { api, pref, route, setPrefs } from './state.ts';
 
 const OUTBOX_KEY = 'dither-chat:clicks-outbox';
 /** Entries per POST: well inside the hub's limit and a keepalive request's 64 KB. */
@@ -34,7 +34,7 @@ function save() {
   } catch {}
 }
 
-export const countingClicks = () => !!prefs.value.countClicks;
+export const countingClicks = () => !!pref('countClicks');
 const device = () => (phone.value ? 'phone' : 'desktop');
 
 /** A press that is not a click: a keyboard shortcut or a gesture. `key` is complete ("keys: Ctrl+K (switcher)"). */

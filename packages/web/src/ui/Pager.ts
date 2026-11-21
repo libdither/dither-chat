@@ -8,7 +8,7 @@ import { signal } from '@preact/signals';
 import { useLayoutEffect, useRef } from 'preact/hooks';
 import { clampDrag, commits, lockAxis, rubber, settleEase, settleMs, velocity } from '../gesture.ts';
 import { haptic, layerCount, phone, reducedMotion } from '../phone.ts';
-import { prefs, setPrefs } from '../state.ts';
+import { pref, setPrefs } from '../state.ts';
 import { drag } from './dnd.tsx';
 import { countKey } from '../clicklog.ts';
 
@@ -418,7 +418,7 @@ export function usePager(app: { current: HTMLElement | null }, card: { current: 
 
 /** On a phone the details are a panel beside the page; on a desktop a column you keep open. */
 export const panel = signal<'main' | 'details'>('main');
-export const detailsShown = () => (phone.value ? panel.value === 'details' : prefs.value.details);
+export const detailsShown = () => (phone.value ? panel.value === 'details' : pref('details'));
 export function showDetails(open: boolean) {
   if (phone.value) panel.value = open ? 'details' : 'main';
   else setPrefs({ details: open });
