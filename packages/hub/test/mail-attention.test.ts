@@ -376,8 +376,12 @@ describe('Mail’s ranked Inbox (docs/mail.md "Ranked")', () => {
     do {
       const p = w.hub.store.listThreads('v:inbox:*', next, 1)!;
       pages.push(...p.threads.map((t) => t.subject));
-      // Read after the first page: Sam's thread scores less.
-      if (pages.length === 1) w.hub.readHere([sam]);
+      // After the first page, Sam's thread needs no reply: it scores less. (Reading it would not: what you will answer
+      // weighs more than what you have to read, and the two count as one need.)
+      if (pages.length === 1) {
+        new ReplyMarks(w.chat).setMailRow(sam, 'none');
+        mailAttention(w.hub)!.marked(sam);
+      }
       next = p.next;
     } while (next);
     expect(pages).toEqual(['Stranger', 'Owed and unread', 'Read, owed long ago', 'Old']);
