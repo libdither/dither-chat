@@ -26,6 +26,7 @@ import { type Clock, realClock, sleep, unref } from './clock.ts';
 import type { Store } from './store.ts';
 import { jobFailed } from './errors.ts';
 import { READING, ReadingPace } from './readingpace.ts';
+import { addSpan, spanAt } from './historyspan.ts';
 
 type Row = Record<string, any>;
 
@@ -353,22 +354,12 @@ export class Jobs {
 
   /** The span the ts falls in, from its top (exclusive of from_ts, inclusive of to_ts). */
   private spanAt(cid: string, ts: number): Row | null {
-    return this.store.one<Row>('SELECT * FROM history_span WHERE conversation_id = ? AND from_ts < ? AND to_ts >= ? ORDER BY from_ts LIMIT 1', cid, ts, ts);
+    return spanAt(this.store, cid, ts);
   }
 
   /** [from, to] is known whole: merged with any span it touches. */
   addSpan(cid: string, from: number, to: number) {
-    this.store.db.transaction(() => {
-      const touching = this.store.raw<Row>('SELECT * FROM history_span WHERE conversation_id = ? AND from_ts <= ? AND to_ts >= ?', cid, to, from);
-      let lo = from;
-      let hi = to;
-      for (const s of touching) {
-        lo = Math.min(lo, s.from_ts);
-        hi = Math.max(hi, s.to_ts);
-      }
-      this.store.db.query('DELETE FROM history_span WHERE conversation_id = ? AND from_ts <= ? AND to_ts >= ?').run(cid, to, from);
-      this.store.db.query('INSERT INTO history_span (conversation_id, from_ts, to_ts) VALUES (?, ?, ?)').run(cid, lo, hi);
-    })();
+    addSpan(this.store, cid, from, to);
   }
 
   /** One page back, skipping what spans say the hub has whole: the messages it held and whether the conversation is done. */

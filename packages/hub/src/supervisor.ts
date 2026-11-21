@@ -17,6 +17,7 @@ import { sliced, type SliceOptions } from './slices.ts';
 import { timedWrite } from './stalls.ts';
 import { span } from './trace.ts';
 import { jobFailed, reportError } from './errors.ts';
+import type { EventWatch } from './catchup.ts';
 
 export interface InprocAdapter {
   start(emit: (ev: P.AdapterEvent) => void): void;
@@ -353,6 +354,8 @@ export class Supervisor {
   slices: SliceOptions = {};
   /** Told how many events each transaction applied (a test's). */
   onApplied?: (events: number) => void;
+  /** Told what comes, waits and is lost, so missing messages can be found and fetched (catchup.ts). */
+  watch?: EventWatch;
 
   /**
    * An account's events, from its socket, an in-process adapter, or (remote.ts) dither-accounts' manager, in order.
@@ -365,12 +368,15 @@ export class Supervisor {
    * what it could not (`settle`, `resume`).
    */
   apply(accountId: string, events: P.AdapterEvent[]) {
+    this.watch?.heard(accountId);
     const waiting = this.held.get(accountId);
     if (waiting) {
+      this.watch?.queued(accountId, events);
       waiting.push(...events);
       return;
     }
     if (!this.inbox.length && events.length <= EVENTS_STEP) return this.applyNow(accountId, events);
+    this.watch?.queued(accountId, events);
     this.inbox.push({ account: accountId, events: [...events] });
     this.work();
   }
@@ -426,6 +432,7 @@ export class Supervisor {
           } catch (e) {
             console.error(`[${accountId}] ${events[i].t} failed:`, e);
             jobFailed('adapter event', e, { account: accountId, event: events[i].t });
+            this.watch?.lost(accountId, [events[i]], String((e as Error)?.message ?? e).slice(0, 200));
             continue;
           }
           if (r === 'busy') {
@@ -666,6 +673,10 @@ export class Supervisor {
       this.calls?.onAdapterEvent(accountId, ev);
       return;
     }
+    if (ev.t === 'gap') {
+      this.watch?.gap(accountId, ev);
+      return;
+    }
     const acc = this.store.account(accountId);
     if (!acc) return;
     let fresh: string[];
@@ -676,8 +687,10 @@ export class Supervisor {
       if (isBusy(e)) return 'busy';
       console.error(`[${accountId}] ingest ${ev.t} failed:`, e);
       jobFailed('ingest', e, { account: accountId, event: ev.t });
+      this.watch?.lost(accountId, [ev], String((e as Error)?.message ?? e).slice(0, 200));
       return;
     }
+    if (ev.t === 'conversation') this.watch?.conversation(accountId, ev.conversation);
     try {
       if (fresh.length) this.opts.onFresh(fresh);
     } catch (e) {

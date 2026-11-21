@@ -665,7 +665,9 @@ const shutdown = async () => {
   // Adapter events still queued or held (a backlog after a gap, a locked database): the manager handed them over and
   // keeps no copy, so they are applied now, and what does not make it by stopBy is carried over to the next start.
   // From here to exit nothing awaits, so no event can come in between.
-  sup.settle(stopBy);
+  const settled = sup.settle(stopBy);
+  // What the catch-up must know at the next start: when the hub last heard each account, and events it lost now.
+  server.catchup.stopping(settled.lost);
   // What stopping changed is in the journal too; then the next start can trust it (journal.ts).
   server.flush();
   store.journal.close();

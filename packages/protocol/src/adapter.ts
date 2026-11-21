@@ -493,6 +493,13 @@ export type AdapterEvent =
        */
       layers?: StatusLayer[];
     }
+  /**
+   * The adapter may have missed messages from `from` to `to` (ms; absent: until now): a gateway session it could not
+   * resume, a sync the server cut short. `conversations`: only these chats (native ids); absent: any of the account's.
+   * The hub checks and fetches what is missing through `history` (docs/catch-up.md). An adapter that fills the hole
+   * itself (Matrix pages back after a limited sync) need not say.
+   */
+  | { t: 'gap'; from: number; to?: number; conversations?: string[]; note?: string }
   | { t: 'identity'; identity: IdentityFact }
   | { t: 'space'; space: SpaceFact }
   | { t: 'conversation'; conversation: ConversationFact }

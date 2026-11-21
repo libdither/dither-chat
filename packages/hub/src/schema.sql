@@ -909,6 +909,55 @@ CREATE TABLE IF NOT EXISTS history_span (
   PRIMARY KEY (conversation_id, from_ts)
 ) WITHOUT ROWID;
 
+-- Catching up (catchup.ts, docs/catch-up.md): a stretch of time where the hub may be missing messages, across an
+-- account's chats (scope 'account') or in one chat ('chat'), and what it did about it.
+CREATE TABLE IF NOT EXISTS catchup_hole (
+  id              TEXT PRIMARY KEY,
+  scope           TEXT NOT NULL CHECK (scope IN ('account', 'chat')),
+  account_id      TEXT NOT NULL,
+  conversation_id TEXT,                   -- a chat hole's chat
+  from_ts         INTEGER NOT NULL,
+  to_ts           INTEGER NOT NULL,
+  strength        TEXT NOT NULL CHECK (strength IN ('possible', 'likely', 'sure')),
+  causes          TEXT NOT NULL,          -- JSON CatchUpCause[], first first
+  notes           TEXT NOT NULL,          -- JSON string[], newest last
+  state           TEXT NOT NULL,          -- CatchUpState; 'planning' until its chats are planned
+  plan_at         INTEGER NOT NULL,       -- planned no sooner (reports a few minutes apart merge first)
+  all_chats       INTEGER NOT NULL DEFAULT 0, -- asked to check the chats a plan leaves out too
+  left_out        TEXT,                   -- JSON [{why, count}]: chats the plan left out
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS catchup_hole_account ON catchup_hole(account_id, state);
+
+-- One chat a hole fetches: paged back from to_ts to from_ts, jumping over history_span.
+CREATE TABLE IF NOT EXISTS catchup_task (
+  hole_id         TEXT NOT NULL REFERENCES catchup_hole(id) ON DELETE CASCADE,
+  conversation_id TEXT NOT NULL,
+  account_id      TEXT NOT NULL,
+  rank            INTEGER NOT NULL,       -- the order it goes in, 0 first
+  probe           INTEGER NOT NULL DEFAULT 0, -- one of the few a 'possible' hole checks first
+  expected        REAL NOT NULL DEFAULT 0,    -- messages the hub expected in the stretch
+  why             TEXT NOT NULL,
+  state           TEXT NOT NULL DEFAULT 'queued', -- queued, done, failed, skipped, unfetchable
+  from_ts         INTEGER NOT NULL,
+  to_ts           INTEGER NOT NULL,
+  cursor          INTEGER,                -- the next page ends before this ts; NULL: from to_ts
+  walk            TEXT,                   -- JSON {next, at}: the adapter's own cursor for that place
+  pages           INTEGER NOT NULL DEFAULT 0,
+  found           INTEGER NOT NULL DEFAULT 0,
+  error           TEXT,
+  updated_at      INTEGER NOT NULL,
+  PRIMARY KEY (hole_id, conversation_id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS catchup_task_account ON catchup_task(account_id, state);
+
+-- The latest a network said a chat's newest message was, once checked: the same claim does not open a hole twice.
+CREATE TABLE IF NOT EXISTS catchup_claim (
+  conversation_id TEXT PRIMARY KEY,
+  ts              INTEGER NOT NULL
+) WITHOUT ROWID;
+
 -- Remote media (an attachment's URL) the archiver could not keep, so it stops asking (mediaarchive.ts).
 CREATE TABLE IF NOT EXISTS media_archive_fail (
   key     TEXT PRIMARY KEY,               -- sha256 of the URL, as the media cache names it

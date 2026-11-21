@@ -8,7 +8,8 @@
  *
  * The manager keeps nothing: while the hub restarts, the remote adapters keep running and their events wait in the
  * manager's memory. If too many wait, the manager drops them and says so (a gap); the hub then restarts that account's
- * adapter, whose fresh snapshot fills the hole. Once handed over, events are the hub's alone: the manager keeps no copy
+ * adapter, whose fresh snapshot brings its chats and their state back, and the catch-up (catchup.ts) fetches the
+ * messages of the time the hub was away, which no snapshot carries. Once handed over, events are the hub's alone: the manager keeps no copy
  * and never sends them again. So a stop closes the client first, applies what is still queued, and writes what it could
  * not apply to `<data>/pending-events.ndjson`, which the next start applies before anything else (supervisor.ts
  * `settle`, `resume`). For Signal, whose history cannot be fetched again, an event lost here is lost for good.
@@ -421,10 +422,12 @@ export class RoutedSupervisor extends Supervisor implements ManagerLink {
         const notices = this.notices?.gap(account) ?? false;
         if (this.mail?.gap(account)) return;
         if (notices && !this.remote.has(account)) return;
-        console.warn(`[${account}] the manager dropped ${dropped} events while the hub was away; restarting the adapter for a fresh snapshot (one of a kind at a time: ${this.gapRestarts.size} waiting)`);
+        console.warn(`[${account}] the manager dropped ${dropped} events while the hub was away; restarting the adapter for a fresh snapshot (one of a kind at a time: ${this.gapRestarts.size} waiting), and catching up on its messages`);
+        this.watch?.dropped(account, dropped);
         this.gapRestarts.add(account, this.remote.get(account)?.kind ?? '');
       },
       onConnection: (up) => {
+        this.watch?.connection(up);
         this.mail?.connection(up);
         this.notices?.connection(up);
         if (up) void this.approvals?.connected();
