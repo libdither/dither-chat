@@ -662,7 +662,7 @@ searches.
 | granted, no mail accounts | "No mail accounts in dither-accounts. Add Email (IMAP) or Proton Mail there." [Open] |
 | first sync | skeleton rows, then the first 50; "Syncing · 2,300 of about 14,000" |
 | empty mailbox | "Nothing in Archive." / Inbox at zero: "Inbox is empty." |
-| account problem | one line under the header (the account and its problem line) opening the account menu, which says it per account with [Open in dither-accounts]; a layer still coming up is quiet for 3 minutes; cached mail stays readable |
+| account problem | a small muted ⚠ beside the account (and its platform) on the wheels under the header, the problem line in its tooltip, after 10 s; the account menu says it per account with [Open in dither-accounts]; cached mail stays readable |
 | read grant | reader footer: "dither-accounts lets dither-chat read this account, not change it. Read here only." No archive, star or send. [Change] |
 | can't send | reply bar and ✎ off for that account: "me@proton.me can't send from here: Proton's send path was not found in the page (dither-accounts answered 501). Reading, archiving and starring work." |
 | dry run | composer banner: "Dry run: nothing reaches the account." |

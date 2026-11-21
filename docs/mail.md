@@ -9,16 +9,20 @@ Email beside your chats, through dither-accounts' `mail` interface. The design, 
   sits in Home with the rest; Ctrl+K finds Mail, its views and each mailbox.
 - **The list**: Inbox, Unread, Starred and Sent across every account, and any mailbox from the folder button. The views
   are one row of chips that scrolls sideways, without a scrollbar: its edge fades while more chips lie past it, and the
-  chosen one is scrolled into view. With several accounts, the line under "Mail" ("All accounts", or the account) is
-  the picker: a menu of All accounts and each account, each with its colour's dot, the dot rows show before the
-  sender's name when every account shows (the menu says so), its Inbox unread count, and a second line: its kind, or in
-  the warning colour what is wrong with it, with a way to it in dither-accounts.
-- **Accounts that aren't working** get one quiet line under the header ("⚠ address: what is wrong", or "2 accounts aren't
-  working"), not a card each: it opens the account menu, or with one account the account in dither-accounts, and the
-  picker's dot is ringed. A layer still coming up (signing in, the page loading: the problem's `state` is `waiting`) is
-  left unsaid for its first 3 minutes (`PROBLEM_GRACE_MS`, counted from the problem's `since`), so a restart says
-  nothing; a failed layer, an account asking for you and lost access are said at once. Threads newest first, bold while unread, with who wrote
-  ("Alex, Jo, me"), how many messages, the subject, a star and a paper clip; each line ends in an ellipsis.
+  chosen one is scrolled into view. Under "Mail", **whose mail** is two wheels (`ui/mail/ScopeWheel.tsx`):
+  the platform (All mail, then Gmail, Proton, Outlook, Email: `mailPlatform`, by kind and address) when there is more
+  than one, then the account (All of that platform's, or one) when it has more than one. Each shows the choice in use
+  with dots for how many there are; a click turns it to the next (Shift+click back), as do the mouse wheel, a drag up or
+  down and the arrow keys, and the words slide as it turns. A platform is the list key `v:<view>:k.<platform>`, paged by
+  the hub over that platform's accounts. A right-click or long press opens the account menu: All accounts and each
+  account with its colour's dot, the dot rows show before the sender's name when every account shows (the menu says
+  so), its Inbox unread count, and a second line, its kind or what is wrong with it, with a way to it in dither-accounts.
+- **Accounts that aren't working** get a small muted warning sign beside their name on the wheels (and beside the
+  platform and All that hold them), the problem in its tooltip; with one account it links to dither-accounts. A problem
+  says nothing for its first 10 seconds (`PROBLEM_GRACE_MS`, from the problem's `since`), so one that comes and goes
+  never shows; lost access shows at once.
+- **Rows**: threads newest first, bold while unread, with who wrote ("Alex, Jo, me"), how many messages, the subject, a
+  star and a paper clip; each line ends in an ellipsis.
 - **The reader**: a thread's messages oldest first. Unread messages and the latest are open, the rest fold to a line:
   who and the start of the text. Bodies ahead skip what you sent (and older mail), so when a thread opens the reader
   asks for the bodies of its folded messages that have no preview yet (the newest 20, after the open ones), which the

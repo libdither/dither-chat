@@ -10,7 +10,7 @@
 import type { Database } from 'bun:sqlite';
 import { readdirSync, readFileSync } from 'node:fs';
 import type * as P from '@dither-chat/protocol';
-import { interfaceTrouble, mailPreview, parseMailList, parseWithList, quoteStart } from '@dither-chat/protocol';
+import { interfaceTrouble, mailPlatform, mailPreview, parseMailList, parseWithList, quoteStart } from '@dither-chat/protocol';
 import { mailId } from '@dither-chat/protocol/ids';
 import type * as M from '@dither-chat/protocol/mail-iface';
 import { ACCOUNT_COLORS } from '../store.ts';
@@ -185,6 +185,12 @@ export class MailStore {
 
   accounts(): Row[] {
     return this.all('SELECT * FROM mail_account ORDER BY created_at, id');
+  }
+  /** The ids of the accounts on a platform (mailPlatform): a `k.<platform>` list's. */
+  platformAccounts(platform: string): string[] {
+    return this.accounts()
+      .filter((a) => mailPlatform({ kind: a.kind, address: a.address }) === platform)
+      .map((a) => a.id);
   }
   account(id: string): Row | null {
     return this.one('SELECT * FROM mail_account WHERE id = ?', id);
@@ -1216,7 +1222,7 @@ export class MailStore {
     if (!list && withWho === null) return null;
     const where: string[] = [];
     const args: unknown[] = [];
-    let scope: { accounts: string | null; role: string | null; mailbox: string | null };
+    let scope: { accounts: string | string[] | null; role: string | null; mailbox: string | null };
     if (withWho !== null) {
       // Everything with someone (slice 6): any mailbox, any account.
       where.push('t.id IN (SELECT thread_id FROM mail_party WHERE address IN (SELECT value FROM json_each(?)))');
@@ -1238,6 +1244,11 @@ export class MailStore {
         where.push('t.account_id = ?');
         args.push(list.accountId);
       }
+      const platform = list.platform ? this.platformAccounts(list.platform) : null;
+      if (platform) {
+        where.push('t.account_id IN (SELECT value FROM json_each(?))');
+        args.push(JSON.stringify(platform));
+      }
       const role = list.view === 'sent' ? 'sent' : 'inbox';
       if (list.view === 'inbox' || list.view === 'sent' || list.view === 'people' || list.view === 'updates') where.push(`EXISTS (SELECT 1 FROM json_each(t.roles) WHERE value = '${role}')`);
       // Classification (slice 8, classify.ts): an unclassified thread stays in Inbox.
@@ -1246,7 +1257,7 @@ export class MailStore {
       if (list.view === 'updates') where.push(`t.class = 'bulk'`);
       if (list.view === 'unread') where.push(`t.unread > 0 AND NOT EXISTS (SELECT 1 FROM json_each(t.roles) WHERE value IN ('junk', 'trash')) AND json_array_length(t.roles) > 0`);
       if (list.view === 'starred') where.push('t.flagged = 1');
-      scope = { accounts: list.accountId, role: list.view === 'sent' ? 'sent' : 'inbox', mailbox: null };
+      scope = { accounts: platform ?? list.accountId, role: list.view === 'sent' ? 'sent' : 'inbox', mailbox: null };
     }
     where.push('t.account_id IN (SELECT id FROM mail_account WHERE hidden = 0)');
     const cur = before?.match(/^(\d+):([\w-]+)$/);
@@ -1260,7 +1271,7 @@ export class MailStore {
     const more = rows.length > n;
     const boxes = scope.mailbox
       ? [this.mailbox(scope.mailbox)!]
-      : this.all(`SELECT complete FROM mailbox WHERE role = ? ${scope.accounts ? 'AND account_id = ?' : ''}`, scope.role, ...(scope.accounts ? [scope.accounts] : []));
+      : this.all(`SELECT complete FROM mailbox WHERE role = ? ${scope.accounts ? 'AND account_id IN (SELECT value FROM json_each(?))' : ''}`, scope.role, ...(scope.accounts ? [JSON.stringify([scope.accounts].flat())] : []));
     return {
       threads: page.map((r) => this.threadView(r)),
       next: more ? `${page[page.length - 1].last_at}:${page[page.length - 1].id}` : null,

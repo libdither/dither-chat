@@ -9,7 +9,7 @@ import { categoryThreshold, NETWORK_META, POST_NETWORKS, RULE_LABEL } from '@dit
 import { dataVersion, db, inbox, isSelfIdentity, mailTriage } from './state.ts';
 import { mailDataVersion, metaDataVersion } from './versions.ts';
 import { isMailItem, triageBoard, type Board, type BoardItem } from './board.ts';
-import { mailInboxRows, mailNames } from './mail/model.ts';
+import { mailInboxRows, mailNames, scopeAccounts } from './mail/model.ts';
 import { accountName, chatKey, groupChats } from './chatroutes.ts';
 import { isQuietConv } from './feed.ts';
 
@@ -131,6 +131,7 @@ export function identityName(id: string | null | undefined): string {
 }
 
 // "Mail with Sam": a `w:` list's heading names the person (mail/model.ts).
+scopeAccounts.of = (id) => db.mail.accounts.get(id) ?? null;
 mailNames.of = (who) => db.persons.get(who)?.name ?? (db.identities.has(who) ? identityName(who) : null);
 
 export function personOf(identityId: string | null | undefined): P.PersonView | null {
