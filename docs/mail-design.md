@@ -80,7 +80,8 @@ and into a label it leaves Inbox only, as its `mail.move` names no source.
 - Rule 4 also counts a sender who wrote in a thread you took part in, and rule 5 a person you know by another address
   (`mailPeople(hub).sender()`'s `tookPart` and `known`). Rule 6 counts a move to Junk still waiting for the server.
 - §10's listing window is bounded: unread with its last message within 30 days, owed to a message within 14 days
-  (`MAIL_INBOX`), so a year of synced mail is not a year of inbox. `mail_feature` holds the fold and `owed_since`,
+  (`MAIL_INBOX`, the same as `MAIL_WINDOW`: mail's turns stay owed for two weeks, docs/inbox.md "Mail owes for two
+  weeks"), so a year of synced mail is not a year of inbox. `mail_feature` holds the fold and `owed_since`,
   `unknown` and `sent_at` (a send from here, until Sent's copy comes); `mail_author_feature` is keyed by address and
   summed by person at scoring time, so a merge needs no new fold. Tallies are summed both ways (`Attention.otherTallies`).
 - Mail rows reach the client through `Attention.sources`, so `server.ts` and `sync.ts` are unchanged.

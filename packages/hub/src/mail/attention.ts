@@ -11,7 +11,9 @@
  *
  * **The score**: each listed thread's messages fold with attention.ts's `foldMessage` (you and one other is `direct`,
  * else a `group` of everyone on it; you in To is a mention; a reply to one of yours replies to you), and
- * `scoreConversation` scores it. How you answer the author is their mail and chat tallies summed. The views go out as
+ * `scoreConversation` scores it. How you answer the author is their mail and chat tallies summed. An email is answered
+ * more slowly than a chat, so a turn by mail stays owed for two weeks (MAIL_WINDOW), not three days, and weighs what
+ * mail's own owed table says (owed.ts DEFAULT_MAIL_OWED_TABLE, fitted on this hub's mail turns once a day). The views go out as
  * `AttentionView`s with `kind: 'mail'` in the same `attention` events as the chats', through `Attention.sources`. Until
  * the learned order is trained with mail (slice 10), a mail row keeps its formula points.
  *
@@ -19,9 +21,10 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { decayed } from '@dither-chat/protocol';
-import { ALERT_PIN, emptyTally, foldMessage, freshState, PIN_FOR, scoreConversation, sumTallies, type Attention, type AttentionSource, type ConvState, type FoldMessage, type Place, type ScoreInput, type Scored, type Tally } from '../attention.ts';
+import { ALERT_PIN, emptyTally, foldMessage, freshState, PIN_FOR, scoreConversation, sumTallies, type Attention, type AttentionSource, type ConvState, type FoldMessage, type Place, type ScoreInput, type Scored, type Settled, type Tally } from '../attention.ts';
 import type { Store } from '../store.ts';
 import { foldMark } from '../replymarks.ts';
+import { DEFAULT_MAIL_OWED_TABLE, fitOwedTable, MAIL_OWED_AGES, validTable, windowOf, type OwedTable, type OwedTurn } from '../owed.ts';
 import { mailClassifier } from './classify.ts';
 import type { MailHub } from './index.ts';
 import type { MailRouter } from './routes.ts';
@@ -33,14 +36,22 @@ const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
+/**
+ * How long a turn by mail stays owed before it runs out unanswered: two weeks, not chat's three days (owed.ts
+ * MAIL_OWED_AGES says why). Its own reply rates and its own owed table follow from it.
+ */
+export const MAIL_WINDOW = windowOf(DEFAULT_MAIL_OWED_TABLE);
+/** Bumped when the fold changes meaning: every thread from a person folds again, in the background. 2: MAIL_WINDOW. */
+const FOLD_VERSION = 2;
+
 /** When a thread from a person is in the one-list inbox (§10). */
 export const MAIL_INBOX = {
   /** Its last message is newer than this. */
   recent: 7 * DAY,
   /** You opened it this recently. */
   opened: 2 * DAY,
-  /** You owe a reply to a message no older than this (after that, owing weighs nothing: attention.ts owedCurve). */
-  owed: 14 * DAY,
+  /** You owe a reply to a message no older than this (after that, owing weighs nothing: MAIL_WINDOW). */
+  owed: MAIL_WINDOW,
   /** Unread, with its last message no older than this: a year of synced mail is not a year of inbox. */
   unread: 30 * DAY,
 };
@@ -79,8 +90,8 @@ class MailAttention implements AttentionSource {
   /** Threads to score again. */
   private pending = new Set<string>();
   private chat: Store | null = null;
-  /** The chat inbox's: its owed table (owed.ts) weighs what you owe by mail too. */
-  private attention: Attention | null = null;
+  /** What an unanswered email weighs as it ages (owed.ts): fitted on this hub's mail turns once a day, else mail's default. */
+  owedTable: OwedTable = DEFAULT_MAIL_OWED_TABLE;
   private now: () => number = Date.now;
   /** Whether any mail tally exists: chat's scoring asks nothing of mail until one does. */
   private tallies = false;
@@ -112,6 +123,21 @@ class MailAttention implements AttentionSource {
       for (const id of this.views.keys()) this.pending.add(id);
     });
     hub.on('override', (e) => e.threadId && this.touch(e.threadId, true));
+    const version = s.one<{ value: string }>(`SELECT value FROM mail_setting WHERE key = 'attentionVersion'`)?.value;
+    if (version !== String(FOLD_VERSION)) {
+      // Folds from another version mean something else: each thread folds again (backfill), its tallies and turns with it.
+      s.db.transaction(() => {
+        s.db.exec('UPDATE mail_feature SET state = NULL, owed_since = NULL; DELETE FROM mail_author_feature; DELETE FROM mail_owed_turn;');
+        s.db.query(`INSERT INTO mail_setting (key, value) VALUES ('attentionVersion', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(String(FOLD_VERSION));
+        s.db.exec(`DELETE FROM mail_setting WHERE key = 'owedTable'`);
+      })();
+    }
+    try {
+      const t = JSON.parse(s.one<{ value: string }>(`SELECT value FROM mail_setting WHERE key = 'owedTable'`)?.value ?? 'null');
+      if (validTable(t, MAIL_OWED_AGES)) this.owedTable = t;
+    } catch {
+      // A table of another shape: the default until the next fit.
+    }
     this.tallies = !!s.one('SELECT 1 FROM mail_author_feature LIMIT 1');
     s.threadExtras.push((r, v) => {
       if (r.class === 'personal') v.owedSince = s.one<{ o: number | null }>('SELECT owed_since AS o FROM mail_feature WHERE thread_id = ?', r.id)?.o ?? null;
@@ -121,7 +147,6 @@ class MailAttention implements AttentionSource {
   /** Into the chat inbox: listed and sent with the conversations, author tallies summed both ways. */
   connect(chat: Store, attention: Attention, now: () => number = Date.now) {
     this.chat = chat;
-    this.attention = attention;
     this.now = now;
     if (!attention.sources.includes(this)) attention.sources.push(this);
     attention.otherTallies = (key) => this.mailTallies(key);
@@ -150,7 +175,15 @@ class MailAttention implements AttentionSource {
     let ids: string[];
     try {
       ids = this.hub.store.all<{ id: string }>(`SELECT t.id FROM mail_thread t LEFT JOIN mail_feature f ON f.thread_id = t.id WHERE t.class = 'personal' AND f.state IS NULL LIMIT 300`).map((r) => r.id);
-      if (!ids.length) return;
+      if (!ids.length) {
+        // Every thread folded: the owed table, once a day, then a look again in an hour.
+        if (this.owedDue(this.now())) {
+          this.fitOwed();
+          for (const id of this.views.keys()) this.pending.add(id);
+        }
+        this.later(HOUR);
+        return;
+      }
       this.hub.store.db.transaction(() => ids.forEach((id) => this.fold(id)))();
     } catch (e) {
       // A closed database (the hub stopping).
@@ -161,6 +194,34 @@ class MailAttention implements AttentionSource {
     // Their tallies may move what the listed rows say.
     for (const id of [...ids, ...this.views.keys()]) this.pending.add(id);
     if (ids.length === 300) this.later(20);
+  }
+
+  // ---------------------------------------------------------- the owed table (owed.ts)
+
+  /** Every turn the folds closed, and those still open: what mail's owed table is fitted on. */
+  owedTurns(): OwedTurn[] {
+    const st = this.hub.store;
+    const out = st
+      .all<Row>('SELECT thread_id, shape, author_key, addressed, answered_at, timed, dismissed FROM mail_owed_turn')
+      .map((r): OwedTurn => ({ conversationId: r.thread_id, shape: r.shape, authorKey: r.author_key, addressed: r.addressed, answeredAt: r.answered_at, timed: !!r.timed, ...(r.dismissed ? { dismissed: true } : {}) }));
+    const open = st.all<Row>(
+      `SELECT f.thread_id, json_extract(f.state, '$.turn.authorKey') AS author_key, json_extract(f.state, '$.turn.addressed') AS addressed, t.participants, t.account_id
+       FROM mail_feature f JOIN mail_thread t ON t.id = f.thread_id WHERE t.class = 'personal' AND json_extract(f.state, '$.turn.addressed') IS NOT NULL`,
+    );
+    for (const r of open) out.push({ conversationId: r.thread_id, shape: this.place(r).shape, authorKey: r.author_key, addressed: r.addressed, answeredAt: null, timed: true });
+    return out;
+  }
+
+  /** Fit mail's owed table on this hub's mail turns, keep it, and use it. */
+  fitOwed(now = this.now()): OwedTable {
+    const t = fitOwedTable(this.owedTurns(), { now, prior: DEFAULT_MAIL_OWED_TABLE });
+    this.owedTable = t;
+    this.hub.store.db.query(`INSERT INTO mail_setting (key, value) VALUES ('owedTable', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(JSON.stringify(t));
+    return t;
+  }
+
+  private owedDue(now: number) {
+    return this.owedTable.fittedAt === null || now - this.owedTable.fittedAt >= DAY;
   }
 
   /** A reply mark on this thread changed: fold it again at the next flush. */
@@ -179,7 +240,7 @@ class MailAttention implements AttentionSource {
   private place(t: Row): Place {
     const self = this.hub.store.selfAddresses(t.account_id);
     const others = json<{ e: string }[]>(t.participants, []).filter((p) => p.e && !self.has(p.e)).length;
-    return others <= 1 ? { shape: 'direct', members: 2 } : { shape: 'group', members: others + 1 };
+    return others <= 1 ? { shape: 'direct', members: 2, window: MAIL_WINDOW } : { shape: 'group', members: others + 1, window: MAIL_WINDOW };
   }
 
   /** Fold a thread's messages from the start; only a thread from a person is folded. */
@@ -189,6 +250,7 @@ class MailAttention implements AttentionSource {
     if (!t || t.class !== 'personal') {
       if (t) db.query('UPDATE mail_feature SET state = NULL, owed_since = NULL WHERE thread_id = ?').run(threadId);
       db.query('DELETE FROM mail_author_feature WHERE thread_id = ?').run(threadId);
+      db.query('DELETE FROM mail_owed_turn WHERE thread_id = ?').run(threadId);
       return null;
     }
     const ms = this.hub.store.all(`SELECT id, received_at, from_addr, addressed, draft, in_reply_to, message_id_hdr, class FROM mail_message WHERE thread_id = ? ORDER BY received_at, id`, threadId);
@@ -228,13 +290,17 @@ class MailAttention implements AttentionSource {
     const s = freshState();
     const authors = new Map<string, Tally>();
     const tallyOf = (key: string) => authors.get(key) ?? authors.set(key, emptyTally()).get(key)!;
-    for (const m of list) foldMessage(s, tallyOf, m, place);
+    const turns: Settled[] = [];
+    for (const m of list) foldMessage(s, tallyOf, m, place, (x) => turns.push(x));
     const owed = s.turn?.addressed ?? null;
     db.transaction(() => {
       db.query('INSERT INTO mail_feature (thread_id, state, owed_since) VALUES (?, ?, ?) ON CONFLICT (thread_id) DO UPDATE SET state = excluded.state, owed_since = excluded.owed_since').run(threadId, JSON.stringify(s), owed);
       db.query('DELETE FROM mail_author_feature WHERE thread_id = ?').run(threadId);
       const put = db.query('INSERT INTO mail_author_feature (thread_id, author_key, tally) VALUES (?, ?, ?)');
       for (const [key, tally] of authors) put.run(threadId, key, JSON.stringify(tally));
+      db.query('DELETE FROM mail_owed_turn WHERE thread_id = ?').run(threadId);
+      const turn = db.query('INSERT OR REPLACE INTO mail_owed_turn (thread_id, addressed, shape, author_key, answered_at, timed, dismissed) VALUES (?, ?, ?, ?, ?, ?, ?)');
+      for (const x of turns) turn.run(threadId, x.addressed, place.shape, x.authorKey, x.answeredAt, x.timed ? 1 : 0, x.dismissed ? 1 : 0);
     })();
     if (authors.size) this.tallies = true;
     return s;
@@ -338,7 +404,8 @@ class MailAttention implements AttentionSource {
       // You were here: opened_at (MailStore.opened), and the time spent there once something counts it.
       usage: t.opened_at ? { score: (t.opened_ms ?? 0) / 1000, visitScore: 1, at: t.opened_at, lastVisit: t.opened_at } : null,
       judged: null,
-      owedTable: this.attention?.owedTable ?? null,
+      // Mail's own: two weeks, its own reply rates (MAIL_WINDOW).
+      owedTable: this.owedTable,
     };
   }
 

@@ -127,6 +127,8 @@ export interface Place {
   shape: P.Shape;
   /** Listed members, you included; 0 when the network does not list them (big channels). */
   members: number;
+  /** How long a turn stays owed before it runs out unanswered: REPLY_WINDOW, three days; mail's is two weeks. */
+  window?: number;
 }
 
 
@@ -170,13 +172,13 @@ export interface Settled {
 type OnSettle = (t: Settled) => void;
 
 /** The open turn is over: answered at `answeredAt`, or (null) it ran out. `timed`: whether that is when you answered. */
-function settle(s: ConvState, tallyOf: (key: string) => Tally, answeredAt: number | null, timed = true, onSettle?: OnSettle) {
+function settle(s: ConvState, tallyOf: (key: string) => Tally, answeredAt: number | null, timed = true, onSettle?: OnSettle, window = REPLY_WINDOW) {
   const t = s.turn;
   if (!t || t.addressed === null) return;
   const latency = answeredAt === null ? null : answeredAt - t.addressed;
-  const when = answeredAt ?? t.addressed + REPLY_WINDOW;
-  record(s.tally, when, latency, timed);
-  if (t.authorKey) record(tallyOf(t.authorKey), when, latency, timed);
+  const when = answeredAt ?? t.addressed + window;
+  record(s.tally, when, latency, timed, window);
+  if (t.authorKey) record(tallyOf(t.authorKey), when, latency, timed, window);
   onSettle?.({ addressed: t.addressed, kind: t.kind, authorKey: t.authorKey, answeredAt, timed });
 }
 
@@ -190,7 +192,7 @@ export function foldMessage(s: ConvState, tallyOf: (key: string) => Tally, m: Fo
     s.sent += advance(s, m.ts);
     s.totalSent++;
     s.lastSent = Math.max(s.lastSent ?? 0, m.ts);
-    settle(s, tallyOf, m.ts, true, onSettle);
+    settle(s, tallyOf, m.ts, true, onSettle, place.window);
     s.turn = null;
     s.lastWasMine = true;
     return;
@@ -208,14 +210,14 @@ export function foldMessage(s: ConvState, tallyOf: (key: string) => Tally, m: Fo
   s.lastWasMine = false;
   s.turn ??= { since: m.ts, count: 0, addressed: null, kind: null, author: null, authorKey: null };
   s.turn.count++;
-  if (!kind) return acknowledge(s, tallyOf, m, onSettle);
+  if (!kind) return acknowledge(s, tallyOf, m, onSettle, place.window);
   // Unanswered for so long it ran out: that turn is over, and this one starts the clock again.
-  if (s.turn.addressed !== null && m.ts - s.turn.addressed > REPLY_WINDOW) {
-    settle(s, tallyOf, null, true, onSettle);
+  if (s.turn.addressed !== null && m.ts - s.turn.addressed > (place.window ?? REPLY_WINDOW)) {
+    settle(s, tallyOf, null, true, onSettle, place.window);
     s.turn = { since: m.ts, count: 1, addressed: null, kind: null, author: null, authorKey: null };
   }
   if (s.turn.addressed === null) Object.assign(s.turn, { addressed: m.ts, kind, author: m.author, authorKey: m.authorKey });
-  acknowledge(s, tallyOf, m, onSettle);
+  acknowledge(s, tallyOf, m, onSettle, place.window);
   if (m.neededByMe != null && s.turn) s.turn.held = Math.max(s.turn.held ?? 0, m.neededByMe);
 }
 
@@ -224,10 +226,10 @@ export function foldMessage(s: ConvState, tallyOf: (key: string) => Tally, m: Fo
  * It counts where the message is, since reactions carry no time, so what they wrote after it is owed afresh. It
  * counts toward how often you answer, not how fast.
  */
-function acknowledge(s: ConvState, tallyOf: (key: string) => Tally, m: FoldMessage, onSettle?: OnSettle) {
+function acknowledge(s: ConvState, tallyOf: (key: string) => Tally, m: FoldMessage, onSettle?: OnSettle, window?: number) {
   if (s.turn?.addressed == null) return;
   if (m.reactedByMe) {
-    settle(s, tallyOf, m.ts, false, onSettle);
+    settle(s, tallyOf, m.ts, false, onSettle, window);
     s.turn = null;
   } else if (m.clearedByMe) dismiss(s, tallyOf, m, onSettle);
 }

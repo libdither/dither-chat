@@ -13,6 +13,7 @@ import { hubId, mailId } from '@dither-chat/protocol/ids';
 import { ReplyMarks } from '../src/replymarks.ts';
 import { Attention } from '../src/attention.ts';
 import { mailAttention, MAIL_INBOX } from '../src/mail/attention.ts';
+import { DEFAULT_MAIL_OWED_TABLE, MAIL_OWED_AGES } from '../src/owed.ts';
 import { mailClassifier } from '../src/mail/classify.ts';
 import { FakeMailBackend, type FakeInput } from '../src/mail/fake.ts';
 import { MailHub } from '../src/mail/index.ts';
@@ -107,6 +108,55 @@ describe('owed and unread', () => {
     w.fake.deliver(ACC, { mailboxId: 'INBOX', messageId: '<s2@x>', inReplyTo: '<s1@x>', references: ['<s1@x>'], from: [ME], to: [SAM], subject: 'Re: Dinner?', receivedAt: w.clock.now, flags: { seen: true } });
     await until(() => w.mail().get(t)?.owedSince === null, 3000, 'the answer');
     expect(w.hub.store.threadView(w.hub.store.thread(t)!).owedSince).toBeNull();
+  });
+
+  test('an email stays owed for longer than a chat: at five days still, run out at two weeks', async () => {
+    const at = T0 + 10 * DAY;
+    const w = await world((put) => put({ messageId: '<s5@x>', from: [SAM], to: [ME], subject: 'The lease', receivedAt: at - 5 * DAY, flags: { seen: true } }), at);
+    const t = tid(w.hub, '<s5@x>');
+    const v = w.mail().get(t)!;
+    // A chat's turn would weigh nothing past three days.
+    expect(v.owedSince).toBe(at - 5 * DAY);
+    expect(v.reasons.some((r) => r.startsWith('Sam Rivera wrote to you 5 days ago; not answered yet'))).toBe(true);
+    // Two weeks on, nothing is owed, and it leaves the list (no longer recent, owed or opened).
+    w.clock.now = at + 10 * DAY;
+    w.attention.rescoreAll();
+    expect(w.mail().get(t)).toBeUndefined();
+  });
+
+  test("a second email ten days after the first is the same turn by mail, which a chat's three days would have ended", async () => {
+    const at = T0 + 20 * DAY;
+    const w = await world((put) => {
+      put({ messageId: '<l1@x>', from: [SAM], to: [ME], subject: 'Plans', receivedAt: at - 12 * DAY });
+      put({ messageId: '<l2@x>', inReplyTo: '<l1@x>', references: ['<l1@x>'], from: [SAM], to: [ME], subject: 'Re: Plans', receivedAt: at - 2 * DAY });
+    }, at);
+    const t = tid(w.hub, '<l1@x>');
+    const since = () => w.hub.store.one<{ o: number | null }>('SELECT owed_since AS o FROM mail_feature WHERE thread_id = ?', t)?.o;
+    // Listed (recent), the turn open since the first; at twelve days it weighs too little to show.
+    expect(w.mail().get(t)?.owedSince).toBeNull();
+    expect(since()).toBe(at - 12 * DAY);
+    // No turn closed yet: none ran out.
+    expect(w.hub.store.all('SELECT * FROM mail_owed_turn WHERE thread_id = ?', t)).toEqual([]);
+    // Answered: the turn is kept, answered after twelve days, for mail's own table.
+    w.clock.now = at;
+    w.fake.deliver(ACC, { mailboxId: 'INBOX', messageId: '<l3@x>', inReplyTo: '<l2@x>', references: ['<l1@x>', '<l2@x>'], from: [ME], to: [SAM], subject: 'Re: Plans', receivedAt: at, flags: { seen: true } });
+    await until(() => (w.mail(), since() === null), 3000, 'the answer');
+    expect(w.hub.store.all<{ addressed: number; answered_at: number; shape: string }>('SELECT addressed, answered_at, shape FROM mail_owed_turn WHERE thread_id = ?', t)).toEqual([{ addressed: at - 12 * DAY, answered_at: at, shape: 'direct' }]);
+  });
+
+  test("mail's owed table is fitted on mail's turns, kept, and read back; a fold of another version is made again", async () => {
+    const w = await world((put) => put({ messageId: '<f1@x>', from: [SAM], to: [ME], subject: 'Hi', receivedAt: T0 + 9 * DAY }));
+    const a = mailAttention(w.hub)!;
+    const t = a.fitOwed(w.clock.now);
+    expect(t.ages).toEqual([...MAIL_OWED_AGES]);
+    const kept = JSON.parse(w.hub.store.one<{ value: string }>(`SELECT value FROM mail_setting WHERE key = 'owedTable'`)!.value);
+    expect(kept).toEqual(t);
+    // An older fold: its threads fold again in the background, and the table is fitted afresh.
+    w.hub.store.db.query(`UPDATE mail_setting SET value = '1' WHERE key = 'attentionVersion'`).run();
+    const again = new MailHub({ db: w.chat.db, backend: w.fake, log: () => {}, now: () => w.clock.now });
+    expect(w.hub.store.one<{ n: number }>('SELECT COUNT(*) AS n FROM mail_feature WHERE state IS NOT NULL')!.n).toBe(0);
+    expect(w.hub.store.one(`SELECT 1 FROM mail_setting WHERE key = 'owedTable'`)).toBeNull();
+    expect(mailAttention(again)!.owedTable).toBe(DEFAULT_MAIL_OWED_TABLE);
   });
 
   test('marks on mail: "No reply needed" settles the thread, "Reply needed" holds it, as in a chat', async () => {
