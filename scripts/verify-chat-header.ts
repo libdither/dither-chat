@@ -1,7 +1,9 @@
 /**
  * The chat header (docs/chats.md, The page), end to end against a multiaccount demo hub in headless Chromium: the line
- * under the name says where your message goes in the same words for a one-route DM and a person's chat (network ·
- * via your account), with no "Direct messages › Name" crumb; a group channel keeps its crumbs; the picture's badge is
+ * under the name says where your message goes in the same words for a one-route DM and a person's chat (your account
+ * as one chip with the network's icon in it), with no "Direct messages › Name" crumb; a server channel keeps its
+ * server and section but not the network's name or its own; a group says how many people, not "Groups"; the
+ * title starts where the line under it does; the picture's badge is
  * the network you send on; a chat of several routes adds one pill (`+N ▾`, `only this ✕` while filtered); the route
  * list is a card (the person, counts, All, routes by network, sending, the profile link); picking a row by click, by
  * press-and-drag and by the keyboard; a message sent while filtered lands on the picked route; a phone of 390 and
@@ -35,6 +37,7 @@ const sam = person('Sam Rivera', 2);
 const mo = person('Mo', 2);
 const kit = person('Kit', 8);
 const channel = boot.conversations.find((c: any) => c.shape === 'channel' && c.spaceIds?.length && c.name === 'rules') ?? boot.conversations.find((c: any) => c.shape === 'channel' && c.spaceIds?.length);
+const group = boot.conversations.find((c: any) => c.shape === 'group' && c.participantIds?.length > 1);
 const netName: Record<string, string> = { discord: 'Discord', signal: 'Signal', matrix: 'Matrix', telegram: 'Telegram', whatsapp: 'WhatsApp' };
 
 let failures = 0;
@@ -68,6 +71,10 @@ const key = async (k: string, code = k) => {
 };
 const text = (sel: string) => p.eval<string>(`(document.querySelector(${JSON.stringify(sel)})?.innerText ?? '').replace(/\\s+/g, ' ').trim()`);
 const has = (sel: string) => p.eval<boolean>(`!!document.querySelector(${JSON.stringify(sel)})`);
+/** The network the line's first chip stands for: its icon's label (the chip shows the account's name, not the network's). */
+const lineNet = (sel: string) => p.eval<string>(`document.querySelector(${JSON.stringify(sel)})?.querySelector('.acc-chip.with-net svg')?.getAttribute('aria-label') ?? ''`);
+/** Where the title's text starts and where the line under it does. */
+const starts = () => p.eval<{ name: number; line: number }>(`(() => { const n = document.querySelector('.conv-head-text h2 > :first-child'); const l = document.querySelector('.conv-head-sub > :first-child'); const x = (e) => Math.round(e.getBoundingClientRect().left + parseFloat(getComputedStyle(e).paddingLeft)); return { name: x(n), line: x(l) }; })()`);
 const badge = () => p.eval<string>(`document.querySelector('.conv-head .conv-head-who .avatar-net')?.getAttribute('title') ?? ''`);
 const open = async (hash: string) => {
   await p.goto(`${hub}/${hash}`);
@@ -109,7 +116,9 @@ await open(`#/c/${directs(jordan.id)[0].id}`);
 const jLine = await text('.conv-head-sub');
 check(await has('.conv-head-sub > .send-line'), 'a one-route DM: the line under the name is where your message goes', jLine);
 check(!(await has('.conv-head .crumbs')) && !jLine.includes('Direct messages') && !jLine.includes('Jordan'), 'no "Direct messages › Name" crumb', jLine);
-check(/^Discord · via \S+/.test(jLine), 'it reads "Discord · via <your account>"', jLine);
+check((await lineNet('.conv-head-sub')) === 'Discord' && (await has('.conv-head-sub .acc-chip.with-net')) && !jLine.includes('Discord') && !jLine.includes('via'), 'it is your account, as one chip with Discord’s icon in it', jLine);
+const lined = await starts();
+check(lined.name === lined.line, 'the title starts where the line under it does', lined);
 check((await badge()) === 'Discord', 'the picture’s badge is the network', await badge());
 check(await has('.conv-head .pair-nick-edit'), 'the nickname pencil stays');
 await shot('1-one-route-dm');
@@ -117,14 +126,23 @@ await shot('1-one-route-dm');
 // ---- A group channel: its crumbs, exactly.
 await open(`#/c/${channel.id}`);
 const cLine = await text('.conv-head-sub');
-check((await has('.conv-head .crumbs')) && !(await has('.conv-head .send-line')) && cLine.includes('›'), 'a group channel keeps its crumbs', cLine);
+check((await has('.conv-head .crumbs')) && !(await has('.conv-head .send-line')) && cLine.includes('›'), 'a server channel keeps its crumbs', cLine);
+check(!!(await lineNet('.conv-head-sub')) && !cLine.includes(netName[channel.network]) && !cLine.includes(`#${channel.name}`), 'led by your account’s chip, with neither the network’s name nor the channel’s own', cLine);
 await shot('7-group-channel');
+
+// ---- A group: your account, then how many people; no "Groups", no name again.
+if (group) {
+  await open(`#/c/${group.id}`);
+  const gLine = await text('.conv-head-sub');
+  check(gLine.endsWith(`${group.participantIds.length} people`) && !gLine.includes('Groups') && (!group.name || !gLine.includes(group.name)) && !!(await lineNet('.conv-head-sub')), 'a group: your account’s chip and how many people', gLine);
+  await shot('8-group');
+}
 
 // ---- Sam: two networks. The same line, the badge, and one pill.
 await open(`#/people/${sam.id}`);
 let line = await text('.pair-dd-btn .send-line');
-let net = line.split(' ')[0];
-check(['Signal', 'Matrix'].includes(net) && line.includes('· via'), 'Sam’s chat: the same line, for the route messages go to', line);
+let net = await lineNet('.pair-dd-btn .send-line');
+check(['Signal', 'Matrix'].includes(net) && !line.includes(net), 'Sam’s chat: the same line, for the route messages go to', [net, line]);
 check((await badge()) === net, 'the picture’s badge is the network you send on', await badge());
 check((await text('.pair-more')).replace(/\s/g, '') === '+1▾', 'one pill: +1 ▾', await text('.pair-more'));
 await shot('2-sam-header');
@@ -132,7 +150,7 @@ await shot('2-sam-header');
 // ---- Mo: two routes on one network, differing in their account: the line says which.
 await open(`#/people/${mo.id}`);
 line = await text('.pair-dd-btn .send-line');
-check(/^Discord · to mo\.\w+ · via \S+/.test(line), 'Mo: "Discord · to mo.x · via you"', line);
+check((await lineNet('.pair-dd-btn .send-line')) === 'Discord' && /^\S+ · to mo\.\w+$/.test(line), 'Mo: "[Discord icon] you · to mo.x"', line);
 await openList();
 let k = await card();
 check(k?.heads.length === 1 && k.heads[0].toUpperCase() === 'DISCORD' && k.rows.length === 2 && k.rows.every((r) => /mo\.(codes|draws)/.test(r.text)), 'Mo’s list: one Discord heading, each row with its handle', k);
@@ -142,7 +160,7 @@ await key('Escape');
 // ---- Kit: eight routes on four networks.
 await open(`#/people/${kit.id}`);
 line = await text('.pair-dd-btn .send-line');
-net = line.split(' ')[0];
+net = await lineNet('.pair-dd-btn .send-line');
 check(Object.values(netName).includes(net) && (await badge()) === net, 'Kit’s chat: the line and the badge say the network you send on', [line, await badge()]);
 const pill = await p.eval<{ text: string; glyphs: number }>(`(() => { const e = document.querySelector('.pair-more'); return { text: e?.innerText.replace(/\\s/g, '') ?? '', glyphs: e?.querySelectorAll('svg').length ?? 0 }; })()`);
 check(pill.text === '+7▾' && pill.glyphs >= 1 && pill.glyphs <= 3, 'the pill: other networks’ glyphs (at most 3) and +7', pill);
@@ -168,7 +186,7 @@ if (before) {
   check((await text('.pair-only')).replace(/\s/g, '') === 'onlythis✕', 'picked: the pill says only this ✕', await text('.pair-only'));
   check(!(await has('.pair-more:not(.pair-only)')), 'and the +N pill gives way to it');
   const tconv = boot.conversations.find((c: any) => c.id === target.id);
-  check((await text('.pair-dd-btn .send-line')).startsWith(netName[tconv.network]) && (await badge()) === netName[tconv.network], 'the line and badge describe the picked route', await text('.pair-dd-btn .send-line'));
+  check((await lineNet('.pair-dd-btn .send-line')) === netName[tconv.network] && (await badge()) === netName[tconv.network], 'the line and badge describe the picked route', await text('.pair-dd-btn .send-line'));
   await shot('5-kit-filtered');
   await openList();
   k = await card();
@@ -196,10 +214,13 @@ if (before) {
   for (let i = 1; i <= 5; i++) await mouse('mouseMoved', b.x + ((r.x - b.x) * i) / 5, b.y + ((r.y - b.y) * i) / 5);
   await mouse('mouseReleased', r.x, r.y, 0);
   await Bun.sleep(250);
-  check(!(await has('.pair-card')) && (await text('.pair-dd-btn .send-line')).startsWith('Telegram') && (await has('.pair-only')), 'press, drag to Telegram and let go: picked', await text('.pair-dd-btn .send-line'));
+  check(!(await has('.pair-card')) && (await lineNet('.pair-dd-btn .send-line')) === 'Telegram' && (await has('.pair-only')), 'press, drag to Telegram and let go: picked', await text('.pair-dd-btn .send-line'));
   // The keyboard: Enter opens on the row shown, the arrows move, Enter picks, Escape returns focus to the line.
   await p.eval(`document.querySelector('.pair-dd-btn').focus()`);
   await key('Enter');
+  // The card puts the focus on a row once it is drawn: wait for that, not a fixed time.
+  const rowFocused = `!!document.activeElement?.dataset?.pairRow`;
+  await p.until(rowFocused, 3000);
   const f1 = await p.eval<string>(`document.activeElement?.dataset?.pairRow ?? ''`);
   check(f1 === r.id, 'Enter on the line opens the card on the route shown', f1);
   await key('ArrowUp');
@@ -208,6 +229,7 @@ if (before) {
   await key('Escape');
   check(!(await has('.pair-card')) && (await p.eval<boolean>(`document.activeElement?.classList.contains('pair-dd-btn')`)), 'Escape closes and gives the line the focus back');
   await key('Enter');
+  await p.until(rowFocused, 3000);
   for (let i = 0; i < 12; i++) await key('ArrowUp');
   const f3 = await p.eval<string>(`document.activeElement?.dataset?.pairRow ?? ''`);
   await key('Enter');
