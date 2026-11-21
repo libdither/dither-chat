@@ -37,7 +37,7 @@
   },
   "web": {
     "startup.bytes": { "measured": 1186073, "budget": 1209795, "reason": "The call bar (docs/calls.md \"The call bar\"): a row of the layout with the shared call face and buttons, its sheet on a phone and the dock over it on a computer, in the startup bundle because the bar shows wherever you are" },
-    "startup.gzip": { "measured": 362878, "budget": 370136, "reason": "The call bar (docs/calls.md \"The call bar\"): a row of the layout with the shared call face and buttons, its sheet on a phone and the dock over it on a computer, in the startup bundle because the bar shows wherever you are" },
+    "startup.gzip": { "measured": 370185, "budget": 377589, "reason": "Settings → Catching up (docs/catch-up.md): its row in the sections list and the small loader that fetches the CatchUp chunk when Settings draws it" },
     "startup.files": { "measured": 4, "budget": 4 },
     "html/index.html.bytes": { "measured": 5733, "budget": 5848, "reason": "index.html asks the hub again and reloads by itself when the app's script could not load (the hub out of reach, a file not kept), instead of staying on the logo for good, and says so under the logo when the hub answers but a file it lists is missing (docs/android.md, Starting fast)" },
     "html/index.html.gzip": { "measured": 2315, "budget": 2362, "reason": "index.html asks the hub again and reloads by itself when the app's script could not load (the hub out of reach, a file not kept), instead of staying on the logo for good, and says so under the logo when the hub answers but a file it lists is missing (docs/android.md, Starting fast)" },
@@ -110,7 +110,7 @@
     "js/shared/selfparts.bytes": { "measured": 602, "budget": 615 },
     "js/shared/selfparts.gzip": { "measured": 416, "budget": 425 },
     "js/shared/startup.bytes": { "measured": 936258, "budget": 954984, "reason": "The call bar (docs/calls.md \"The call bar\"): a row of the layout with the shared call face and buttons, its sheet on a phone and the dock over it on a computer, in the startup bundle because the bar shows wherever you are" },
-    "js/shared/startup.gzip": { "measured": 314646, "budget": 320939, "reason": "The call bar (docs/calls.md \"The call bar\"): a row of the layout with the shared call face and buttons, its sheet on a phone and the dock over it on a computer, in the startup bundle because the bar shows wherever you are" },
+    "js/shared/startup.gzip": { "measured": 321023, "budget": 327444, "reason": "Settings → Catching up (docs/catch-up.md): its row in the sections list and the small loader that fetches the CatchUp chunk when Settings draws it" },
     "js/shared/TextView.bytes": { "measured": 8500, "budget": 8670 },
     "js/shared/TextView.gzip": { "measured": 3868, "budget": 3943 },
     "js/src/graph/GraphView.tsx.bytes": { "measured": 85425, "budget": 87134, "reason": "People graph rings (docs/people-graph.md \"Rings\", \"Ties and circles\", \"How it is worked out, and tuning it\"): ties between people and their circles, the rings layout in the graph's chunk and its worker, a card that says why each person is the size they are, and the tuning panel with Fit to me" },
