@@ -12,13 +12,19 @@ import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import type { Store } from '../store.ts';
 import { DCE_HTML_READER } from './discord-html.ts';
+import { SIGNAL_DESKTOP_READER } from './signal-desktop.ts';
 import { SIGNAL_LEGACY_READER } from './signal-legacy.ts';
 import { SIGNAL_V2_READER } from './signal-v2.ts';
 import type { ReadStats } from './read-worker.ts';
 import type { ImportSources } from './sources.ts';
 
 const SLICE = 150;
-const READERS: Partial<Record<P.ImportSourceKind, string>> = { 'dce-html': DCE_HTML_READER, 'signal-folder': SIGNAL_V2_READER, 'signal-backup': SIGNAL_LEGACY_READER };
+const READERS: Partial<Record<P.ImportSourceKind, string>> = {
+  'dce-html': DCE_HTML_READER,
+  'signal-folder': SIGNAL_V2_READER,
+  'signal-backup': SIGNAL_LEGACY_READER,
+  'signal-desktop': SIGNAL_DESKTOP_READER,
+};
 
 export const importable = (kind: P.ImportSourceKind) => kind in READERS;
 
@@ -29,6 +35,7 @@ const add = (a: P.ImportCounts, b: P.ImportCounts) => {
 
 export class ImportRunner {
   private current: { sourceId: string; stop: boolean } | null = null;
+  private job: Promise<void> = Promise.resolve();
 
   constructor(
     private store: Store,
@@ -45,6 +52,11 @@ export class ImportRunner {
 
   stop() {
     if (this.current) this.current.stop = true;
+  }
+
+  /** Settles when the run in progress (if any) has finished. */
+  idle(): Promise<void> {
+    return this.job;
   }
 
   /** Start an import (or a dry run) of a ready source. Resolves when it has started; progress is in the source's view. */
@@ -68,7 +80,7 @@ export class ImportRunner {
     this.store.db
       .query('INSERT INTO import_run (id, source_id, source_sha, account_id, reader, dry_run, started_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .run(runId, sourceId, v.sha256, acc.id, READERS[v.kind]!, o.dryRun ? 1 : 0, run.startedAt, 'running');
-    void this.go(sourceId, v, acc.id, self, run).finally(() => (this.current = null));
+    this.job = this.go(sourceId, v, acc.id, self, run).finally(() => (this.current = null));
     return this.sources.view(sourceId)!;
   }
 
@@ -119,6 +131,8 @@ export class ImportRunner {
     if (v.kind === 'signal-folder' && !backupKey) throw new Error('give the recovery key first');
     const legacy = v.kind === 'signal-backup' ? this.sources.legacyBackup(sourceId) : null;
     if (v.kind === 'signal-backup' && !legacy?.passphrase) throw new Error('give the passphrase first');
+    const desktop = v.kind === 'signal-desktop' ? this.sources.desktopSource(sourceId) : null;
+    if (v.kind === 'signal-desktop' && !desktop) throw new Error('give the database key first');
     const mediaDir = join(this.dataDir, 'imports', 'media');
     mkdirSync(mediaDir, { recursive: true, mode: 0o700 });
     const stats = await new Promise<ReadStats>((resolve, reject) => {
@@ -131,7 +145,16 @@ export class ImportRunner {
         else if (e.data.error) (w.terminate(), reject(new Error(e.data.error)));
       };
       w.onerror = (e) => (w.terminate(), reject(new Error(e.message || 'reader failed')));
-      w.postMessage({ kind: v.kind, rawDir, selfId: self, mediaDir, out, backupKey: backupKey?.toString('hex'), legacy: legacy ? { ...legacy, sourceSha: v.sha256 } : undefined });
+      w.postMessage({
+        kind: v.kind,
+        rawDir,
+        selfId: self,
+        mediaDir,
+        out,
+        backupKey: backupKey?.toString('hex'),
+        legacy: legacy ? { ...legacy, sourceSha: v.sha256 } : undefined,
+        desktop: desktop ? { profile: desktop.profile, key: desktop.key.toString('hex'), sourceSha: v.sha256 } : undefined,
+      });
     });
     if (!stats.selfMessages) throw new Error('this account wrote nothing in this export: it looks like someone else’s history');
     run.files = stats.files;

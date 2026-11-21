@@ -6,7 +6,9 @@ reading one and merging it into the hub; the shared pipeline (sources, readers, 
 `docs/import.md`. Built: uploading a backup from the Signal account's History section, a census that reads its
 structure and counts (`packages/hub/src/imports/signal-backup.ts`, also `scripts/signal-backup-probe.ts`), and readers
 for both formats: new-format snapshots (`signal-v2.ts`, *Reading it* below) and legacy `.backup` files
-(`signal-legacy.ts`, *Reading a .backup*), which also brings in what Molly keepmsg kept (*Kept content*).
+(`signal-legacy.ts`, *Reading a .backup*), which also brings in what Molly keepmsg kept (*Kept content*). A Signal
+Desktop linked to the same account is a source too (`signal-desktop.ts`, *Reading a Signal Desktop profile*): it fills
+what the hub missed while it was down.
 
 ## Sources
 
@@ -15,7 +17,7 @@ for both formats: new-format snapshots (`signal-v2.ts`, *Reading it* below) and 
 | **Legacy `.backup`** (Signal/Molly "on-device backups", also phone-to-phone transfer) | The whole SQLite database as SQL statements, plus every attachment, sticker and avatar | 30-digit passphrase, AES-256-CTR plus truncated HMAC per frame | **Primary.** It's the only format the keepmsg fork writes kept messages into |
 | **Backup v2, local folder** (`SignalBackups/signal-backup-<time>/{metadata,main}` + shared `files/`) | Typed protobuf frames (`lib/archive/.../Backup.proto`). Attachments live in `files/`, named by content hash | `main`: AES-CBC + HMAC under keys derived from the account entropy pool (the 64-character recovery key) and the ACI. Each attachment has its own key, stored in its frame | **Second.** Cleaner to map, but it holds no keepmsg content (see below) |
 | **Molly's live database** | Everything | SQLCipher, with the key wrapped by the Android keystore (and Molly's passphrase lock) | **No.** It can't be read off the device without root and the keystore |
-| **Signal Desktop profile** (`~/.config/Signal`, on this machine) | Only what Desktop saw while it was linked. Here that's a ~4 MB `sql/db.sqlite`, ~180 attachment dirs, last written 2024–2026 | SQLCipher. The key in `config.json` (`encryptedKey`) is wrapped by the desktop keyring (`safeStorageBackend`) | **Optional extra.** Same message identity, so it merges the same way |
+| **Signal Desktop profile** (`~/.config/Signal`-style folder) | Only what Desktop saw while it was linked | SQLCipher 4 under a raw key in `config.json`: plain `key`, or `encryptedKey` wrapped by Electron's safeStorage (`safeStorageBackend`) | **Built** (`signal-desktop@1`). Same message identity, so it merges the same way. The way to fill a gap the hub missed while a Desktop kept running |
 | signal-cli data dir | Keys and contacts. It keeps no message history | n/a | Nothing to import |
 
 I only checked file names, sizes and dates. **No `.backup` file or `SignalBackups` folder exists on this machine**
@@ -120,6 +122,47 @@ No native library: the derivations are ported and checked against libsignal-clie
   `extra.sms = 'mms'`, the rest `'sms'`. It has no MMS groups (`Recipient` has no kind for them), so a group text
   never reaches the backup.
 - The newest snapshot is read; older ones in the same folder are ignored.
+
+### Reading a Signal Desktop profile (built: `packages/hub/src/imports/sqlcipher.ts`, `signal-desktop.ts`, reader `signal-desktop@1`)
+
+A profile folder holds `config.json`, `sql/db.sqlite` (with `db.sqlite-wal` while Desktop runs) and
+`attachments.noindex/`. Nothing else in it is read.
+
+1. **The key.** `config.json`'s `key` (64 hex digits) is the database's raw key. An `encryptedKey` is Electron's
+   safeStorage: `v10` is the `basic_text` store (AES-128-CBC under a key from the fixed password Chromium uses when
+   there is no keyring), which the hub opens itself; `v11` is wrapped by gnome-libsecret or kwallet, which only that
+   computer can open. Then the source asks for the key ("needs a passphrase", census `needs: 'desktop-key'`): give the
+   64 hex digits (`x'…'` works too) with `POST /api/imports/:id/passphrase`. It is kept as `<source>/key` (0600); one
+   that doesn't open the database is forgotten.
+2. **Unpack.** No SQLCipher at run time: the pages are decrypted in a worker. SQLCipher 4 defaults, raw key: the salt
+   is page 1's first 16 bytes; each page is AES-256-CBC with its IV in the 80 reserved bytes at its end, followed by
+   HMAC-SHA512 over ciphertext ‖ IV ‖ page number (little-endian) under PBKDF2-HMAC-SHA512(key, salt ⊕ 0x3a, 2 rounds).
+   Every page's MAC is checked; a key that doesn't open page 1 is a wrong key. Committed frames of the write-ahead
+   log (checked by its own checksums and salts) are applied over the file, as a checkpoint would, so the newest
+   messages are in. The plain copy is `<data>/imports/work/<source>/desktop.sqlite` (0600), stamped with the source's
+   hash in `desktop.json`. The census makes it and the reader reuses it; it goes when the source is removed.
+3. **Map.** `conversations`: private ones by `serviceId` (an ACI; PNI-only chats are left out), groups by `groupId`
+   (new-style groups only). The self ACI is `items.uuid_id` ("`<aci>.<device>`"); a Desktop linked to another account
+   is refused. `messages`: the `json` column, with the columns newer Desktops keep apart (`body`, `isViewOnce`, …).
+   Incoming and outgoing messages are `<author>:<sent_at>` (outgoing: the self ACI), words through `fromSignal` with
+   `bodyRanges` (styles by the protobuf's numbers, mentions by `mentionAci`), edits by `editMessageTimestamp` with the
+   latest words, quotes, reactions (`fromId` names the reactor's conversation) with their times, stickers, shared
+   contacts, polls, view-once as a placeholder, and pins as live sync words them.
+4. **Attachments** are rows of `message_attachments` (Desktop 7 on; older ones are in the message's `json`): the
+   message's own files, its long text (`long-message` becomes the body) and its sticker. Link previews and quote
+   thumbnails are left out, as live sync leaves them. Version 2 files are sealed at rest with the row's `localKey`
+   (IV ‖ AES-256-CBC ‖ HMAC-SHA256, padded): checked, trimmed to `size` and checked against `plaintextHash`, then put in
+   the media store under their SHA-256 like the other readers' files.
+5. **Left out, and counted:** deleted messages (Desktop keeps nothing of them), stories, safety-number, profile and
+   message-request lines, and **group changes, timer changes and calls**. Desktop writes those lines at its own time,
+   seconds off the message live sync got, so they would meet no hub row and come in a second time beside the live
+   one. Checked on a real profile against the hub: the text messages, stickers and pins all met their live rows.
+
+To add one: upload the profile folder from the Signal account's History section (any upload holding `sql/db.sqlite`
+is one), or copy it in: `raw/<folder>/` with `config.json`, `sql/` and `attachments.noindex/`, and a `source.json`
+with `"network": "signal", "kind": "signal-desktop"` and the account. Copy it while Desktop is closed, or copy `sql/`
+twice and keep a copy that matches: a database and log copied while Desktop writes can disagree, and a page that
+doesn't authenticate stops the census. Then Dry run and Import as for any source.
 
 ### Reading a .backup (built: `packages/hub/src/imports/signal-legacy.ts`, reader `signal-legacy@3`)
 
@@ -297,7 +340,7 @@ from live sync.
    stays deleted after an import that contains its content.
 5. v2: decrypt `main` with libsignal (or a small HKDF + AES-CBC port, cross-checked against libsignal's test
    vectors) and derive group ids with zkgroup. Map it with the same fact builders.
-6. Optional: a Signal Desktop source, through the same mapper. Desktop's `messages` table has `sent_at` and
+6. **Done:** a Signal Desktop source (*Reading a Signal Desktop profile*). Desktop's `messages` table has `sent_at` and
    `sourceServiceId`, which give the same native ids.
 
 ## Open questions for the user
@@ -307,8 +350,7 @@ from live sync.
 2. **Kept content:** should disappeared messages and deleted-message content from the fork come into the hub at
    all? If yes, hidden behind a reveal, or shown normally?
 3. **Media:** import all attachments, a size cap, or text only?
-4. **Signal Desktop:** `~/.config/Signal` holds a separate, older linked-device history. Import it too? That
-   needs unlocking its key from the desktop keyring once.
+4. **Signal Desktop:** answered by building it. A profile whose key is in a desktop keyring needs the key given once.
 5. **Which hub account** do imported messages belong to, if a second Signal account is ever added? The plan
    assumes the one linked account, whose self ACI must match `account.aci` in the backup. The importer refuses
    on a mismatch.
