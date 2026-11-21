@@ -835,6 +835,10 @@ code {
   color: var(--text-dim);
   border: 1px solid var(--border-soft);
 }
+/* The chip stands for the network too: its icon in place of the account's dot. */
+.acc-chip.with-net {
+  gap: 4px;
+}
 .acc-chip.small {
   font-size: 11px;
   padding: 0 7px 0 5px;
@@ -1100,7 +1104,7 @@ code {
 .conv-head {
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: 10px;
   padding: 11px 16px;
   border-bottom: 1px solid var(--border);
   flex: none;
@@ -1271,18 +1275,15 @@ code {
   overflow: hidden;
   white-space: nowrap;
 }
-.send-line .via,
 .send-to {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   min-width: 0;
-}
-.send-to {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.send-line .acc-chip {
+.conv-head-sub .acc-chip {
   flex: none;
 }
 .send-sep {
@@ -1295,14 +1296,13 @@ code {
 .conv-head-sub:has(> .crumbs) {
   flex-wrap: nowrap;
 }
-.conv-head-sub > .via {
+.head-count {
   flex: none;
 }
-/* One line: the places in between give way first (ellipsis), the network and the conversation itself last. */
+/* One line: the places in between give way first (ellipsis). Plain text, so its ellipsis shows (a flex box would only
+   clip). */
 .crumb {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+  display: inline-block;
   padding: 0;
   color: var(--text-faint);
   white-space: nowrap;
@@ -1311,28 +1311,19 @@ code {
   text-overflow: ellipsis;
   flex: 0 1 auto;
 }
-/* Plain text, so its ellipsis shows (a flex box would only clip). */
-.crumb:not(.net) {
-  display: inline-block;
-}
 /* Never shrunk to nothing: a few letters and the ellipsis still say where. */
 .crumb.link {
   min-width: 3em;
 }
-.crumb.net,
 .crumb-sep {
   flex: none;
 }
 /* The server's name gives way first; a category's is short, and the conversation's own matters most. */
-.crumb:where(:not(.link, .last, .net)) {
+.crumb:where(:not(.link, .last)) {
   flex-shrink: 0;
 }
 .crumb.last {
   flex-shrink: 0.2;
-}
-.crumb.net {
-  color: color-mix(in oklab, var(--net) var(--net-ink, 100%), var(--text));
-  font-weight: 600;
 }
 .crumb.link:hover {
   color: var(--text);
@@ -6484,17 +6475,10 @@ textarea.chip-box {
     -webkit-mask-image: none;
     mask-image: none;
   }
-  /* Where an account follows, the network is its icon alone (the picture's badge says it too), so "to kit.work"
-     keeps its room beside the +7. */
-  .conv-head .send-line:has(.send-to) .send-net-name,
-  .conv-head .send-line:has(.send-to) .send-to > .send-sep {
-    display: none;
-  }
   .conv-head .send-to {
     flex-shrink: 0;
   }
   .conv-head .hdr-btn-label,
-  .conv-head .via,
   .conv-head .hdr-btn.phone-hide {
     display: none;
   }
@@ -8904,8 +8888,7 @@ body.dragging * {
 }
 
 @media (max-width: 820px) {
-  .conv-head .hdr-btn-label,
-  .conv-head .via {
+  .conv-head .hdr-btn-label {
     display: none;
   }
 }
@@ -10985,7 +10968,9 @@ html[data-theme='light'] .acc-dot {
 
 /* ------------------------------------------------------------------ profile pages (docs/profile.md) */
 
+/* No padding on the picture or the name, so the name starts where the line under it does. */
 .conv-head-who {
+  padding: 0;
   border-radius: 10px;
   transition: transform 0.12s;
 }
@@ -10995,6 +10980,7 @@ html[data-theme='light'] .acc-dot {
 .conv-head-name {
   font: inherit;
   color: inherit;
+  padding: 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

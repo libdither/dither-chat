@@ -49,12 +49,34 @@ export function AccountDots({ network, accountIds, size = 8, force }: { network:
   );
 }
 
-export function AccountChip({ account, small }: { account: P.AccountView; small?: boolean }) {
+/** One of your accounts. `net`: its network's icon in place of its colour dot, where the chip stands for the network too. */
+export function AccountChip({ account, small, net }: { account: P.AccountView; small?: boolean; net?: boolean }) {
   return (
-    <span class={`acc-chip ${small ? 'small' : ''}`} title={`${netName(account.network)} account “${account.label}”`} onContextMenu={onMenu(() => accountMenu(account))}>
-      <span class="acc-dot" style={{ background: account.color }} />
+    <span class={`acc-chip ${small ? 'small' : ''} ${net ? 'with-net' : ''}`} title={`${netName(account.network)} account “${account.label}”`} onContextMenu={onMenu(() => accountMenu(account))}>
+      {net ? <NetGlyph network={account.network} size={11} color={netColor(account.network)} /> : <span class="acc-dot" style={{ background: account.color }} />}
       {account.label}
     </span>
+  );
+}
+
+/**
+ * Under a chat's name: the account of yours it goes through, as one chip with its network's icon in it (docs/chats.md).
+ * With no account of yours to show, the network's name in its place.
+ */
+export function FromChips({ network, accounts }: { network: P.Network; accounts: P.AccountView[] }) {
+  if (accounts.length === 0)
+    return (
+      <span class="acc-chip small with-net" title={netName(network)}>
+        <NetGlyph network={network} size={11} color={netColor(network)} decorative />
+        {netName(network)}
+      </span>
+    );
+  return (
+    <>
+      {accounts.map((a) => (
+        <AccountChip account={a} small net />
+      ))}
+    </>
   );
 }
 
