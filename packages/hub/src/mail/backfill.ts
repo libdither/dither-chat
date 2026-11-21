@@ -301,7 +301,8 @@ function sources(hub: MailHub, key: string): Row[] {
     return b ? [b] : [];
   }
   if (l.view !== 'inbox' && l.view !== 'sent') return [];
-  return hub.store.all(`SELECT b.* FROM mailbox b JOIN mail_account a ON a.id = b.account_id WHERE b.role = ? AND a.hidden = 0 ${l.accountId ? 'AND a.id = ?' : ''}`, l.view, ...(l.accountId ? [l.accountId] : []));
+  const ids = l.accountId ? [l.accountId] : l.platform ? hub.store.platformAccounts(l.platform) : null;
+  return hub.store.all(`SELECT b.* FROM mailbox b JOIN mail_account a ON a.id = b.account_id WHERE b.role = ? AND a.hidden = 0 ${ids ? 'AND a.id IN (SELECT value FROM json_each(?))' : ''}`, l.view, ...(ids ? [JSON.stringify(ids)] : []));
 }
 
 /**

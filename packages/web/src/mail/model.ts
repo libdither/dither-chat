@@ -8,7 +8,7 @@
  * longer does comes out.
  */
 import type * as P from '@dither-chat/protocol';
-import { parseMailList, parseWithList, viewList } from '@dither-chat/protocol';
+import { MAIL_PLATFORM_NAMES, mailPlatform, parseMailList, parseWithList, platformScope, viewList } from '@dither-chat/protocol';
 
 interface MailList {
   key: string;
@@ -46,6 +46,9 @@ export function emptyMail(): MailState {
 /** Newest first; ties by id, as the hub pages them. */
 const threadOrder = (a: P.MailThreadView, b: P.MailThreadView) => b.lastAt - a.lastAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 
+/** The page's mail accounts, for a platform's list (set where the state lives, so inList stays a plain function). */
+export const scopeAccounts = { of: (_id: string): P.MailAccountView | null => null };
+
 /** Whether a thread belongs in a list. */
 export function inList(key: string, t: P.MailThreadView): boolean {
   // Everything with someone (slice 6): the hub's page says which; a changed thread joins by its people.
@@ -55,6 +58,10 @@ export function inList(key: string, t: P.MailThreadView): boolean {
   if (!l) return false;
   if ('mailbox' in l) return t.mailboxIds.includes(l.mailbox);
   if (l.accountId && t.accountId !== l.accountId) return false;
+  if (l.platform) {
+    const a = scopeAccounts.of(t.accountId);
+    if (!a || mailPlatform(a) !== l.platform) return false;
+  }
   switch (l.view) {
     case 'inbox':
       // Mail not from a person folds into Updates (slice 8); an unclassified thread stays.
@@ -113,7 +120,7 @@ export interface UpdatesFold {
 export function updatesFold(s: MailState, key: string): UpdatesFold | null {
   const l = parseMailList(key);
   if (!l || 'mailbox' in l || l.view !== 'inbox') return null;
-  const ukey = viewList('updates', l.accountId);
+  const ukey = viewList('updates', l.platform ? platformScope(l.platform) : l.accountId);
   const ts = listThreads(s, ukey);
   if (!ts.length) return null;
   const names: string[] = [];
@@ -271,6 +278,7 @@ export function listTitle(s: MailState, key: string): string {
   if ('mailbox' in l) return s.mailboxes.get(l.mailbox)?.name ?? 'Mailbox';
   const names: Record<string, string> = { inbox: 'Inbox', unread: 'Unread', starred: 'Starred', sent: 'Sent', people: 'People', updates: 'Updates' };
   const acc = l.accountId ? s.accounts.get(l.accountId) : null;
+  if (l.platform) return `${names[l.view]} · ${MAIL_PLATFORM_NAMES[l.platform] ?? l.platform}`;
   return acc ? `${names[l.view]} · ${acc.address ?? acc.label}` : names[l.view];
 }
 
@@ -327,19 +335,19 @@ export function syncLine(accounts: P.MailAccountView[], now = Date.now()): strin
   return `Syncing older mail · ${n}${Number.isFinite(oldest) ? `, back to ${day(oldest, now)}` : ''}`;
 }
 
-/** A layer still coming up (signing in, the page loading) is left unsaid this long: it usually passes by itself. */
-export const PROBLEM_GRACE_MS = 3 * 60_000;
+/** A problem is left unsaid this long: most come and go (a page loading, a restart signing in again). */
+export const PROBLEM_GRACE_MS = 10_000;
 
 /**
- * What to say about an account that is not working, or null while there is nothing to say yet: access ended, the
- * account asks for you, a layer failed, or a layer has been coming up for longer than PROBLEM_GRACE_MS. `at`: when a
+ * What to say about an account that is not working, or null while there is nothing to say yet: access ended, or a
+ * problem that has lasted PROBLEM_GRACE_MS. `at`: when a
  * problem kept quiet now becomes one to say (null when that is already so, or never).
  */
 export function accountTrouble(a: P.MailAccountView, now = Date.now()): { message: string; at: null } | { message: null; at: number | null } {
   if (a.level === null) return { message: 'dither-chat no longer has access to it.', at: null };
   const p = a.problem;
   if (!p) return { message: null, at: null };
-  if (p.state === 'waiting' && p.since != null && now - p.since < PROBLEM_GRACE_MS) return { message: null, at: p.since + PROBLEM_GRACE_MS };
+  if (p.since != null && now - p.since < PROBLEM_GRACE_MS) return { message: null, at: p.since + PROBLEM_GRACE_MS };
   return { message: p.message, at: null };
 }
 

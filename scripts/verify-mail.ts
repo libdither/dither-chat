@@ -111,6 +111,11 @@ async function click([x, y]: Pt) {
     await page.send('Input.dispatchMouseEvent', { type, x, y, button: type === 'mouseMoved' ? 'none' : 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: type === 'mouseMoved' ? 0 : 1 });
   await Bun.sleep(350);
 }
+/** A right-click, or a long press on a phone: the element's own menu. */
+async function openMenuOn(sel: string) {
+  await page.eval(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); const b = el.getBoundingClientRect(); el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.x + 4, clientY: b.y + b.height / 2 })); })()`);
+  await Bun.sleep(350);
+}
 async function at(sel: string, pick = 'el => true'): Promise<Pt> {
   const r = await page.eval(`(() => {
     const el = [...document.querySelectorAll(${JSON.stringify(sel)})].find(${pick});
@@ -573,8 +578,24 @@ async function headerless(themeName: string, onPhone: boolean, first: boolean) {
   const press = onPhone ? tap : click;
   const bar = await chipRows();
   check(`${tag}: the views are one row of chips`, bar.rows === 1, bar);
-  check(`${tag}: the line under "Mail" says All accounts`, (await page.eval<string>(`document.querySelector('.sidebar .side-head .mail-acc-btn')?.textContent ?? ''`)) === 'All accounts');
-  await press(await at('.sidebar .mail-acc-btn'));
+  // Two platforms (plain email and Proton): the wheel under "Mail" turns through All mail and each, a click at a time.
+  const wheel = () => page.eval<string>(`[...document.querySelectorAll('.sidebar .side-head .scope-wheel .scope-win .scope-row:not(.dim)')].map((r) => r.textContent).join(' › ')`);
+  // All mail spans both accounts, so its account wheel shows too; a platform with one account needs none.
+  check(`${tag}: the wheels under "Mail" say All mail, All accounts`, (await wheel()) === 'All mail › All accounts', await wheel());
+  await press(await at('.sidebar .scope-wheel'));
+  await page.until(`location.hash.includes(${JSON.stringify(encodeURIComponent('v:inbox:k.email'))})`, 5000).catch(() => {});
+  check(`${tag}: a click turns it to the next platform`, (await wheel()) === 'Email', await wheel());
+  await press(await at('.sidebar .scope-wheel'));
+  await page.until(`location.hash.includes(${JSON.stringify(encodeURIComponent('v:inbox:k.proton'))})`, 5000);
+  await page.until(`[...document.querySelectorAll('.sidebar .mail-row[data-thread]')].some((r) => r.textContent.includes('Found your scarf'))`, 10000);
+  check(`${tag}: and the next, whose mail only shows`, (await wheel()) === 'Proton' && !(await rows()).some((r) => r.includes('Dinner')), await wheel());
+  await shot(`mail-${onPhone ? 'phone' : 'desktop'}-${themeName}-one-account`);
+  await press(await at('.sidebar .scope-wheel'));
+  await page.until(`location.hash.includes(${JSON.stringify(encodeURIComponent('v:inbox:*'))})`, 5000).catch(() => {});
+  check(`${tag}: and round to All mail`, (await wheel()) === 'All mail › All accounts', await wheel());
+
+  // A right-click (a long press on a phone) opens the account menu, which says what the rows' dots are.
+  await openMenuOn('.sidebar .scope-wheel');
   await page.until(`!!document.querySelector('.cm, .cm-sheet')`, 5000);
   const menu = await page.eval<{ text: string; dots: string[] }>(
     `(() => { const m = document.querySelector('.cm-sheet') ?? document.querySelector('.cm'); return { text: m.textContent, dots: [...m.querySelectorAll('.cm-dot')].map((d) => getComputedStyle(d).backgroundColor) }; })()`,
@@ -587,27 +608,13 @@ async function headerless(themeName: string, onPhone: boolean, first: boolean) {
   );
   check(`${tag}: no sideways overflow: the account menu`, !(await overflow()).length, await overflow());
   await shot(`mail-${onPhone ? 'phone' : 'desktop'}-${themeName}-account-menu`);
-  if (!onPhone) {
-    // The button that opened it closes it again, like a dropdown, and opens it once more.
-    await press(await at('.sidebar .mail-acc-btn'));
-    await page.until(`!document.querySelector('.cm')`, 3000).catch(() => {});
-    check(`${tag}: the account button closes its menu again`, !(await has('.cm')));
-    await press(await at('.sidebar .mail-acc-btn'));
-    await page.until(`!!document.querySelector('.cm')`, 3000).catch(() => {});
-    check(`${tag}: and opens it again`, await has('.cm'));
-  }
   await press(await menuItem('zyan@proton.example'));
   await page.until(`location.hash.includes(${JSON.stringify(encodeURIComponent(`v:inbox:${PROTON}`))})`, 5000);
-  await page.until(`[...document.querySelectorAll('.sidebar .mail-row[data-thread]')].some((r) => r.textContent.includes('Found your scarf'))`, 10000);
-  check(
-    `${tag}: picking an account shows its mail only, and the line says which`,
-    (await page.eval<string>(`document.querySelector('.sidebar .mail-acc-btn').textContent`)) === 'zyan@proton.example' && !(await rows()).some((r) => r.includes('Dinner')),
-  );
-  await shot(`mail-${onPhone ? 'phone' : 'desktop'}-${themeName}-one-account`);
-  await press(await at('.sidebar .mail-acc-btn'));
+  check(`${tag}: picking an account there shows its platform on the wheel`, (await wheel()) === 'Proton', await wheel());
+  await openMenuOn('.sidebar .scope-wheel');
   await press(await menuItem('All accounts'));
-  await page.until(`document.querySelector('.sidebar .mail-acc-btn')?.textContent === 'All accounts'`, 5000).catch(() => {});
-  check(`${tag}: and All accounts again`, (await page.eval<string>(`document.querySelector('.sidebar .mail-acc-btn')?.textContent ?? ''`)) === 'All accounts');
+  await page.until(`location.hash.includes(${JSON.stringify(encodeURIComponent('v:inbox:*'))})`, 5000).catch(() => {});
+  check(`${tag}: and All accounts again`, (await wheel()) === 'All mail › All accounts', await wheel());
 }
 
 // ------------------------------------------------------------------ a Gmail account (--gmail)
@@ -652,7 +659,7 @@ async function gmail(themeName: string, onPhone: boolean, step: 'archive' | 'tra
   const rows = () => page.eval<string[]>(`[...document.querySelectorAll('.sidebar .mail-row[data-thread]')].map((r) => r.dataset.thread)`);
 
   // The account menu under "Mail".
-  await press(await at('.sidebar .mail-acc-btn'));
+  await openMenuOn('.sidebar .scope-wheel');
   await page.until(`!!document.querySelector('.cm, .cm-sheet')`, 5000);
   const accMenu = await page.eval<string>(`(document.querySelector('.cm-sheet') ?? document.querySelector('.cm')).textContent`);
   check(`${tag}: the account menu has the Gmail account`, accMenu.includes(GMAIL_ME) && accMenu.includes('All accounts'), accMenu);
