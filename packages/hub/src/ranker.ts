@@ -69,6 +69,8 @@ export class InboxRanker implements AttentionJudge {
   onFit?: () => void;
   /** The inbox's owed table (owed.ts, attention.ts): history is scored with it, as the live rows are. */
   owedTable?: () => OwedTable;
+  /** Mail's owed table (mail/attention.ts), for the mail rows of the replays. */
+  mailOwedTable?: () => OwedTable | undefined;
   /** The needs-reply model the live scores use (needsreply.ts), so the replays score as the hub does. */
   needsModel?: () => NeedsModel | null;
   /** The order with mail (DITHER_INBOX_MAIL), fitted beside `model`; the prior until it has been. */
@@ -269,6 +271,7 @@ export class InboxRanker implements AttentionJudge {
       // Two more weeks of stays before the window, for where you had been by its first open.
       const w = loadWorld(db, mutedBy(this.triage), since - 14 * DAY, await run(flagged(db)), { mail, bonds });
       w.owedTable = this.owedTable?.();
+      w.mailOwedTable = this.mailOwedTable?.();
       w.needsModel = this.needsModel?.() ?? null;
       if (w.bonds) this.personBonds = w.bonds;
       const opens = w.stays.filter((s) => isChoice(s) && s.targets.length && s.start >= since && s.start + HORIZON <= now).slice(-MAX_MOMENTS);

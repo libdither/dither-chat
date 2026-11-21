@@ -449,6 +449,7 @@ const mail = new MailHub({ db: store.db, backend: mailBackend, managerUrl: accou
 mailPeople(mail)?.connect(store);
 // Mail from people in the one-list inbox, scored with the chats (mail/attention.ts).
 mailAttention(mail)?.connect(store, attention);
+ranker.mailOwedTable = () => mailAttention(mail)?.owedTable;
 // New mail from people triaged by chat's model, with chat's votes, and notified the same way (mail/triage.ts).
 const mailTriaged = mailTriage(mail);
 if (mailTriaged) {

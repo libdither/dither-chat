@@ -35,13 +35,15 @@ const bucketOf = (latency: number) => {
 /**
  * Count one addressed turn, answered after `latency` or (null) not at all. Order-independent, like usage.ts. An
  * answer of unknown speed (a reaction, which carries no time) counts as answered but not in the latency histogram.
+ * `window`: an answer later than this did not answer (mail's is two weeks: mail/attention.ts); one past the last
+ * latency edge counts in the last bucket.
  */
-export function record(t: Tally, when: number, latency: number | null, timed = true) {
+export function record(t: Tally, when: number, latency: number | null, timed = true, window = REPLY_WINDOW) {
   let w = 1;
   if (when >= t.at) decayTo(t, when);
   else w = toward(when, t.at);
   t.addressed += w;
-  if (latency !== null && latency <= REPLY_WINDOW) {
+  if (latency !== null && latency <= window) {
     t.replied += w;
     if (timed) t.latency[bucketOf(Math.max(0, latency))] += w;
   }

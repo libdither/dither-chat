@@ -18,9 +18,9 @@ import type * as P from '@dither-chat/protocol';
 import { decayed } from '@dither-chat/protocol';
 import { emptyTally, foldMessage, freshState, PIN_FOR, scoreConversation, sumTallies, voteDirection, votesAt, type ConvState, type ScoreInput, type Scored, type Tally } from './attention.ts';
 import { bondAt, HORIZON, mailRankFeatures, rankFeatures, type MailFacts, type Moment, type Opened } from './rank.ts';
-import { MAIL_INBOX } from './mail/attention.ts';
+import { MAIL_INBOX, MAIL_WINDOW } from './mail/attention.ts';
 import type { Triage } from './triage.ts';
-import type { OwedTable } from './owed.ts';
+import { DEFAULT_MAIL_OWED_TABLE, type OwedTable } from './owed.ts';
 import { FACTS_SQL, factsOf, type MessageFacts, type NeedsModel } from './needsreply.ts';
 
 type Row = Record<string, any>;
@@ -105,6 +105,8 @@ export interface World {
   votes: Map<string, { at: number; dir: number }[]>;
   /** The owed table to score with (owed.ts): the hub's, else the default. */
   owedTable?: OwedTable;
+  /** Mail's, as mail/attention.ts weighs its rows: the hub's, else DEFAULT_MAIL_OWED_TABLE. */
+  mailOwedTable?: OwedTable;
   /** The needs-reply model over it (needsreply.ts): the hub's, else the table alone. */
   needsModel?: NeedsModel | null;
   /** With mail: how you answer each mail correspondent, per thread, keyed by their person (else address). */
@@ -191,7 +193,8 @@ function mailSeen(w: World, c: Conv, m: MailConv, t: number, usage: Map<string, 
       muted: null,
       usage: u,
       level,
-      owedTable: w.owedTable ?? null,
+      // Mail's own table and two weeks, as the live mail rows (mail/attention.ts MAIL_WINDOW).
+      owedTable: w.mailOwedTable ?? DEFAULT_MAIL_OWED_TABLE,
       needsModel: null,
       turnMessages: null,
     },
@@ -504,7 +507,7 @@ export class Rebuild {
         pushed: !!r.delivered,
         ignore: false,
       },
-      { shape: c.shape, members: c.members },
+      { shape: c.shape, members: c.members, window: MAIL_WINDOW },
     );
     c.lastMessageAt = Math.max(c.lastMessageAt ?? 0, r.ts);
     if (me) {

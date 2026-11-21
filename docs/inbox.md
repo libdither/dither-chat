@@ -125,6 +125,17 @@ While a turn is open, `age` is the time since its first addressed message, and
   lowest bucket it falls to 0 at a rate of 0. A bucket with few turns leans on its shape's row, and a shape with
   fewer than 200 on the default table (DEFAULT_OWED_TABLE, fitted on one person's history before 2025).
 
+**Mail owes for two weeks.** An email is answered more slowly than a chat: of the emails one person answered in
+2024-26, 87% were answered within 3 days, 94% within a week and 97% within two weeks, and in threads they had answered
+before, 8% of the turns still open at 3 days were answered later. So a mail thread's turns (mail/attention.ts) settle
+within 14 days (`MAIL_WINDOW`, passed to the fold as `Place.window`), its reply rates count an answer up to then, and
+its chance is mail's own table (`DEFAULT_MAIL_OWED_TABLE`): ages from 0 to 14 days (0, 1, 3, 6 and 12 hours, 1, 2, 3,
+5, 7 and 10 days) and rate buckets far lower than chat's (edges 0.1, 0.25, 0.5, 0.75), since most mail from a person
+is never answered. The hub fits it once a day on its own mail turns (`mail_owed_turn`, and those still open) as it
+fits chat's, and keeps it in `mail_setting`. Someone new (a rate of ½) is still shown as owed after 5 days and not
+after 10; someone you never answer about never. Changing the window folds every mail thread again (its version in
+`mail_setting`).
+
 With the default table, someone you answer 97 times in 100 is worth about 57 points as soon as they write and about
 40 six hours later, and needs you; after a day and a half about 20, after two and a half days under 10. Someone you
 answer 1 time in 10 stays under 10 and does not.
