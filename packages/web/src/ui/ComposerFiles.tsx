@@ -4,14 +4,12 @@
  * large for the network or the hub, empty, unreadable), rather than being left out without a word. More files than
  * the network takes in one message go as several messages (state.ts send), and the row says how many.
  *
- * Photos and videos show as tiles at their own shape, and a click on one opens it large to look at before it goes:
- * the picture viewer, zoom and all, paging through the photos attached; a video plays in the file viewer. On a
- * phone a tap opens the send screen at that one instead (Attach.tsx).
+ * Photos and videos show as tiles at their own shape, and a click on one opens it in a box over the chat (Peek.tsx,
+ * a chunk of its own). On a phone a tap opens the send screen at that one instead (Attach.tsx).
  */
 import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, splitsFiles } from '@dither-chat/protocol';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { openFileSource } from '../files.ts';
 import { bytes } from '../format.ts';
 import { netName } from '../model.ts';
 import { connected, startUpload, uploadsOf } from '../state.ts';
@@ -19,6 +17,9 @@ import { readable, refusalOf, type UploadJob } from '../upload.ts';
 import { isMedia } from '../camera.ts';
 import { viewer } from '../viewer.ts';
 import { Icon } from './icons.tsx';
+
+type PeekBox = typeof import('./Peek.tsx').Peek;
+let peekBox: PeekBox | null = null;
 
 export interface Attached {
   key: number;
@@ -81,19 +82,29 @@ export function useAttached(network: P.Network | undefined, convId: string) {
   return { files, add, remove, clear, sendable, failed };
 }
 
-/** `open`: a photo or video's tile clicked; `inspect` unless the composer has its own (the phone's send screen). */
-export function AttachedFiles({ files, remove, network, open = (f) => inspect(files, f) }: { files: Attached[]; remove: (key: number) => void; network?: P.Network; open?: (f: Attached) => void }) {
+/** `open`: a photo or video's tile clicked; the box over the chat unless the composer has its own (the phone's send screen). */
+export function AttachedFiles({ files, remove, network, open }: { files: Attached[]; remove: (key: number) => void; network?: P.Network; open?: (f: Attached) => void }) {
+  const [peek, setPeek] = useState<number | null>(null);
+  const [Peek, setBox] = useState(() => peekBox);
   if (!files.length) return null;
   const split = splitNote(files, network);
+  const show =
+    open ??
+    ((f: Attached) => {
+      setPeek(f.key);
+      // The box is a chunk of its own, loaded the first time.
+      if (!Peek) import('./Peek.tsx').then((m) => setBox(() => (peekBox = m.Peek)), () => setPeek(null));
+    });
   return (
     <div class="composer-files">
       {/* One line that scrolls sideways, so many photos never push the chat up out of sight. */}
       <div class="composer-files-row">
         {files.map((f) =>
-          f.url ? <AttachedMedia key={f.key} f={f} remove={() => remove(f.key)} open={() => open(f)} /> : <AttachedFile key={f.key} f={f} remove={() => remove(f.key)} />,
+          f.url ? <AttachedMedia key={f.key} f={f} remove={() => remove(f.key)} open={() => show(f)} /> : <AttachedFile key={f.key} f={f} remove={() => remove(f.key)} />,
         )}
       </div>
       {split && <div class="composer-files-split">{split}</div>}
+      {peek !== null && Peek && <Peek files={files} start={peek} remove={remove} onClose={() => setPeek(null)} />}
     </div>
   );
 }
@@ -139,10 +150,9 @@ function AttachedFile({ f, remove }: { f: Attached; remove: () => void }) {
   );
 }
 
-/** A photo or video attached, large: a photo in the picture viewer with the others attached, a video in the file viewer. */
+/** A photo attached, full screen in the picture viewer to pinch and zoom, with the other photos attached (the phone's send screen). */
 export function inspect(files: Attached[], f: Attached) {
   if (!f.url) return;
-  if (f.file.type.startsWith('video/')) return openFileSource({ url: f.url, infoUrl: null, name: f.file.name || null, mime: f.file.type, size: f.file.size, kind: 'video' });
   const photos = files.filter((x) => x.url && !x.file.type.startsWith('video/'));
   viewer.value = { images: photos.map((x) => ({ url: x.url!, name: x.file.name || null })), index: Math.max(0, photos.indexOf(f)) };
 }

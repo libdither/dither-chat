@@ -23,10 +23,11 @@ on the hub's disk until it is sent, and through a restart of either end.
 - **Send while files are still uploading**, and the message goes to the outbox as any send does (docs/sync.md) and
   waits for them. Its pending copy says "Uploading…", with each file's percentage. The composer is free at once.
 - **Look before it goes.** Photos and videos in the row are tiles at their own shape (112px high, 84px on a phone,
-  up to 220px wide), × in the corner, the name and size on a hover. A click opens one large: a photo in the picture
-  viewer, zoom and pan and all, paging through the photos attached; a video plays in the file viewer. On a phone a
-  tap opens the send screen at that one. The row is one line that scrolls sideways, so many files never push the
-  chat out of sight.
+  up to 220px wide), × in the corner, the name and size on a hover. A click opens one in a box over the chat, as
+  other files open on a computer: as large as the window lets it be and never past its own size, with its name,
+  type, pixels and size, arrows (and ← →) to the others attached, and Remove; a click on a photo the box shrank
+  shows it at its own pixels to scroll about. ×, Escape or a click beside the box closes it. On a phone a tap opens the send screen at that one.
+  The row is one line that scrolls sideways, so many files never push the chat out of sight.
 
 ## More files than a message takes
 
