@@ -18,9 +18,9 @@
  */
 import { createHash } from 'node:crypto';
 
-export type PictureClass = 'shared' | 'personal' | 'tracker';
+type PictureClass = 'shared' | 'personal' | 'tracker';
 
-export interface PictureVerdict {
+interface PictureVerdict {
   class: PictureClass;
   /** Why, in a few words, for the reader's details ("carries your address", "an open pixel's address"). */
   why: string;
@@ -77,7 +77,7 @@ export function addressForms(emails: string[]): string[] {
   return [...out];
 }
 
-export interface ClassifyContext {
+interface ClassifyContext {
   /** addressForms() of the addresses this copy went to that are yours. */
   you: string[];
   /**

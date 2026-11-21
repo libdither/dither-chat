@@ -193,7 +193,8 @@ async function attach(wsUrl: string, port: number): Promise<{ page: Page; ws: We
   await page.send('Runtime.enable');
   await page.send('Network.enable');
   page.on('Runtime.exceptionThrown', (p) => errors.push(p.exceptionDetails?.exception?.description ?? p.exceptionDetails?.text));
-  page.on('Log.entryAdded', (p) => p.entry?.level === 'error' && errors.push(p.entry.text));
+  // A failed load says which address (the browser's line alone does not).
+  page.on('Log.entryAdded', (p) => p.entry?.level === 'error' && errors.push(p.entry.url ? `${p.entry.text} ${p.entry.url}` : p.entry.text));
   await page.send('Log.enable');
   return { page, ws };
 }

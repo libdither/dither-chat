@@ -515,10 +515,12 @@ export function Composer({ open }: { open: ComposeOpen }) {
   });
 
   /** The editor's text and HTML: its own undo has them, so they are not steps of the composer's. */
-  const setBody = (out: { html: string; text: string }) => {
+  const setBody = (out: { html: string; text: string }, initial: boolean) => {
     const e = cur.current;
     if (!e || (e.d.html === out.html && e.d.text === out.text)) return;
     const n = { ...e, d: { ...e.d, html: out.html, text: out.text } };
+    // The editor's first say (the quote it put in): still the draft as opened, so closing it untouched keeps nothing.
+    if (initial && JSON.stringify(e.d) === loadedSig.current) loadedSig.current = JSON.stringify(n.d);
     cur.current = n;
     setEd(n);
   };

@@ -23,7 +23,9 @@
  *     reply joins the thread with its file and its Markdown bold, drawn in the app's theme (its plain, formatted HTML
  *     part is not put on a white sheet); a chip opens back into text with Backspace and Ctrl+Z makes it a chip again.
  *     On a desktop, ✎ docks a new message whose To completes from your mail and from the account's server; a clicked
- *     chip opens to edit and goes back in its place; B and Preview; Ctrl+Z; closing keeps a draft that opens again
+ *     chip opens to edit and goes back in its place; the editor's bar (B, lists, heading, table), its Markdown and HTML
+ *     views; Ctrl+Z; a picture pasted into the text; closing keeps a draft that opens again; a forward of a big
+ *     newsletter keeps its layout and sends its pictures inside the mail when asked
  *     from the Drafts line; discarding offers Undo, then the draft is gone.
  *
  * With --html (slice 3, htmlChecks below), the HTML frame in Chromium: no script runs in it, even put there by hand;
@@ -112,8 +114,9 @@ async function click([x, y]: Pt) {
   await Bun.sleep(350);
 }
 async function at(sel: string, pick = 'el => true'): Promise<Pt> {
-  const r = await page.eval(`(() => {
-    const el = [...document.querySelectorAll(${JSON.stringify(sel)})].find(${pick});
+  const find = `[...document.querySelectorAll(${JSON.stringify(sel)})].find(${pick})`;
+  const r = await page.eval<Pt | null>(`(() => {
+    const el = ${find};
     if (!el) return null;
     el.scrollIntoView({ block: 'center' });
     const b = el.getBoundingClientRect();
@@ -121,6 +124,16 @@ async function at(sel: string, pick = 'el => true'): Promise<Pt> {
   })()`);
   if (!r) throw new Error(`nothing matches ${sel}`);
   await Bun.sleep(150);
+  // The demo world's people write in on their own, and a toast for it can sit over the target: a tap would close the
+  // toast instead. Dismiss the ones in the way first.
+  const covered = `(() => { const top = document.elementFromPoint(${r[0]}, ${r[1]}); return !!top?.closest('.toasts') && !${find}?.contains(top); })()`;
+  if (await page.eval<boolean>(covered)) {
+    await page.eval(`document.querySelectorAll('.toasts .toast-x').forEach((x) => x.click())`);
+    await page.until(`!${covered}`, 5000);
+  }
+  // Anything else there (it moved, or something sits over it): say so here, not as a press that did nothing.
+  const top = await page.eval<string | null>(`(() => { const top = document.elementFromPoint(${r[0]}, ${r[1]}); return ${find}?.contains(top) ? null : (top ? top.tagName + '.' + (top.className?.baseVal ?? top.className) : 'nothing'); })()`);
+  if (top) throw new Error(`${sel} is not at ${r} (${top} is)`);
   return r;
 }
 const has = (sel: string) => page.eval<boolean>(`!!document.querySelector(${JSON.stringify(sel)})`);
@@ -318,6 +331,25 @@ const type = (sel: string, text: string) =>
   page.eval(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); el.focus(); el.value = ${JSON.stringify(text)}; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
 const key = (sel: string, k: string, mods: { ctrlKey?: boolean; shiftKey?: boolean } = {}) =>
   page.eval(`document.querySelector(${JSON.stringify(sel)}).dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, ...${JSON.stringify(mods)}, bubbles: true, cancelable: true }))`);
+/** The editor's text, as it reads. */
+const bodyText = () => page.eval<string>(`(document.querySelector('.me-rich-doc')?.innerText ?? '').trim()`);
+/** A key pressed for real (DevTools input) on what has focus; mods: 2 Ctrl, 8 Shift. */
+async function press(key: string, code: string, vk: number, modifiers = 0) {
+  await page.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key, code, windowsVirtualKeyCode: vk, modifiers });
+  await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: vk, modifiers });
+}
+/**
+ * Text typed into the editor as a person would: in place of everything there (`all`), or at the start, above a
+ * reply's quote (`start`).
+ */
+async function typeBody(text: string, where: 'all' | 'start' = 'all') {
+  await page.eval(`(() => { const d = document.querySelector('.me-rich-doc'); d.focus(); ${where === 'all' ? "document.execCommand('selectAll');" : "getSelection().collapse(d.querySelector('p') ?? d, 0);"} })()`);
+  if (where === 'all') await press('Delete', 'Delete', 46);
+  await page.send('Input.insertText', { text });
+}
+/** The text "Here they are." with `word` selected (ProseMirror follows the page's selection). */
+const selectWord = (word: string) =>
+  page.eval(`(() => { const d = document.querySelector('.me-rich-doc'); d.focus(); const w = document.createTreeWalker(d, NodeFilter.SHOW_TEXT); for (let n; (n = w.nextNode()); ) { const i = n.data.indexOf(${JSON.stringify(word)}); if (i >= 0) { const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + ${word.length}); getSelection().removeAllRanges(); getSelection().addRange(r); return true; } } return false; })()`);
 const chipped = (email: string) => page.eval<boolean>(`[...document.querySelectorAll('.mc-chip')].some((c) => c.textContent.includes(${JSON.stringify(email)}))`);
 const outbox = async () => ((await fetch(`${base}/api/mail/outbox`).then((r) => r.json())) as any).items as any[];
 const threadNow = async (id: string) => (await fetch(`${base}/api/mail/threads/${id}`).then((r) => r.json())) as any;
@@ -335,9 +367,9 @@ async function composer(themeName: string, full: boolean) {
   const before = (await threadNow(dinner.id)).messages.length;
   check(`${tag}: the reader's bar answers`, (await page.eval<string>(`document.querySelector('.mail-reader-bar')?.textContent ?? ''`)).includes('Reply'));
   await tap(await at('.mail-reader-bar .hdr-btn', `el => el.textContent.trim() === 'Reply'`));
-  await page.until(`!!document.querySelector('.mc-layer.phone .mc-body')`, 15000);
+  await page.until(`!!document.querySelector('.mc-layer.phone .me-rich-doc')`, 15000);
   check(`${tag}: Reply opens the composer full screen`, await inView('.mc-layer.phone .mc'));
-  const filled = await page.eval<{ to: string; subject: string; quote: boolean }>(`({ to: [...document.querySelectorAll('.mc-chip')].map((c) => c.textContent).join(','), subject: document.querySelector('.mc-subject').value, quote: !!document.querySelector('.mc-quote .mail-quote-toggle') })`);
+  const filled = await page.eval<{ to: string; subject: string; quote: boolean }>(`({ to: [...document.querySelectorAll('.mc-chip')].map((c) => c.textContent).join(','), subject: document.querySelector('.mc-subject').value, quote: !!document.querySelector('.me-island[data-kind="quote"]') })`);
   check(`${tag}: To, the subject and the quote are filled in`, filled.to.includes('Sam Rivera') && filled.subject === 'Re: Dinner on Friday?' && filled.quote, filled);
   check(`${tag}: no sideways overflow`, !(await overflow()).length, await overflow());
   await shot(`mail-${tag.replace(/ /g, '-')}`);
@@ -360,8 +392,13 @@ async function composer(themeName: string, full: boolean) {
   await key('#mc-cc', 'z', { ctrlKey: true });
   await Bun.sleep(150);
   check(`${tag}: Ctrl+Z makes it a chip again`, (await page.eval(`document.querySelector('#mc-cc').value`)) === '' && (await chipped('jo@park.example')));
-  // Markdown, as in chat: the reply goes with its bold.
-  await type('.mc-body', 'See you at **7:30**!');
+  // The reply goes with its bold (Ctrl+B, as in any mail app), written above the quote.
+  await typeBody('See you at ', 'start');
+  await press('b', 'KeyB', 66, 2);
+  await page.send('Input.insertText', { text: '7:30' });
+  await press('b', 'KeyB', 66, 2);
+  await page.send('Input.insertText', { text: '!' });
+  check(`${tag}: Ctrl+B writes bold`, (await page.eval<string>(`document.querySelector('.me-rich-doc strong')?.textContent ?? ''`)) === '7:30');
   const file = join(tmpdir(), `verify-mail-ticket-${process.pid}.txt`);
   writeFileSync(file, 'Table for two, 7:30, under Rivera.');
   await pickFile('.mc-foot input[type=file]', file);
@@ -374,7 +411,7 @@ async function composer(themeName: string, full: boolean) {
   check(`${tag}: no sideways overflow: the strip`, !(await overflow()).length, await overflow());
   await shot(`mail-${tag.replace(/ /g, '-')}-held`);
   await tap(await at('.mc-strip .mc-undo'));
-  await page.until(`document.querySelector('.mc-body')?.value === 'See you at **7:30**!'`, 10000);
+  await page.until(`(document.querySelector('.me-rich-doc')?.innerText ?? '').startsWith('See you at 7:30!')`, 10000);
   check(`${tag}: Undo brings the draft back, file and all`, (await has('.mc-files .composer-file')) && (await chipped('jo@park.example')));
   check(`${tag}: nothing went`, !(await outbox()).some((o: any) => o.state === 'sent' && o.threadId === dinner.id));
   // Send again, and let it go.
@@ -473,18 +510,25 @@ async function composerDesktop(themeName: string, full: boolean) {
   await click(await at('.mc-max'));
   const back = await rect();
   check(`${tag}: and back to the size it was`, back.w === now.w && back.h === now.h && back.x === now.x, back);
-  // A screenshot pasted into the text is attached, with a picture of itself and a name of its own.
-  await page.eval(`(async () => {
+  // A screenshot pasted into the text goes in place; pasted elsewhere (the subject) it is attached, with a name.
+  const paste = (sel: string) =>
+    page.eval(`(async () => {
     const c = document.createElement('canvas'); c.width = 40; c.height = 30;
     const g = c.getContext('2d'); g.fillStyle = '#c63'; g.fillRect(0, 0, 40, 30);
     const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
     const dt = new DataTransfer(); dt.items.add(new File([blob], 'image.png', { type: 'image/png' }));
-    const t = document.querySelector('.mc-body'); t.focus();
+    const t = document.querySelector(${JSON.stringify(sel)}); t.focus();
     t.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
   })()`);
+  await page.until(`!!document.querySelector('.me-rich-doc')`, 15000);
+  await paste('.me-rich-doc');
+  await page.until(`!!document.querySelector('.me-rich-doc img[src^="data:image/png"]')`, 8000).catch(() => {});
+  check(`${tag}: a picture pasted into the text sits in the text, not attached`, (await has('.me-rich-doc img[src^="data:image/png"]')) && !(await has('.mc-files .composer-file')));
+  await paste('#mc-subject');
   await page.until(`!!document.querySelector('.mc-files .composer-file[data-status="done"] img')`, 15000).catch(() => {});
-  const pasted = await page.eval<{ name: string; img: boolean; text: string }>(`(() => { const f = document.querySelector('.mc-files .composer-file'); return { name: f?.querySelector('.composer-file-name')?.textContent ?? '', img: !!f?.querySelector('img')?.naturalWidth, text: document.querySelector('.mc-body').value }; })()`);
-  check(`${tag}: a pasted picture is attached with its thumbnail and a name, nothing typed`, /^Pasted picture \d{4}-\d\d-\d\d \d\d\.\d\d\.\d\d\.png$/.test(pasted.name) && pasted.img && pasted.text === '', pasted);
+  const pasted = await page.eval<{ name: string; img: boolean }>(`(() => { const f = document.querySelector('.mc-files .composer-file'); return { name: f?.querySelector('.composer-file-name')?.textContent ?? '', img: !!f?.querySelector('img')?.naturalWidth }; })()`);
+  check(`${tag}: pasted outside the text, it is attached with its thumbnail and a name`, /^Pasted picture \d{4}-\d\d-\d\d \d\d\.\d\d\.\d\d\.png$/.test(pasted.name) && pasted.img, pasted);
+  check(`${tag}: the size counts the picture in the text`, /^≈ \d/.test(await page.eval<string>(`document.querySelector('.mc-size-btn')?.textContent ?? ''`)));
   // A file dropped on it is attached too.
   await page.eval(`(() => {
     const dt = new DataTransfer(); dt.items.add(new File(['notes'], 'notes.txt', { type: 'text/plain' }));
@@ -497,71 +541,119 @@ async function composerDesktop(themeName: string, full: boolean) {
   // Taken off again, so the draft below is as it was.
   for (let i = 0; i < 2; i++) await click(await at('.mc-files .composer-file .icon-btn[aria-label^="Remove"]'));
   await type('#mc-subject', 'Photos from Friday');
-  await type('.mc-body', 'Here they are.');
-  // Formatting: Aa shows the bar; B makes the selection bold; Preview shows it as it will arrive; Ctrl+Z takes it back.
-  await click(await at('.mc-fmt-toggle'));
-  await page.eval(`(() => { const t = document.querySelector('.mc-body'); t.focus(); t.setSelectionRange(5, 9); })()`);
+  await typeBody('Here they are.');
+  // The bar shows by default; B makes the selection bold; the Markdown and HTML views show it; Ctrl+Z takes it back.
+  check(`${tag}: the formatting bar shows`, await has('.me-bar .mc-fmt-bold'));
+  await selectWord('they');
   await click(await at('.mc-fmt-bold'));
   await Bun.sleep(150);
-  check(`${tag}: B makes the selection bold (Markdown)`, (await page.eval(`document.querySelector('.mc-body').value`)) === 'Here **they** are.');
-  await click(await at('.mc-preview-btn'));
-  await page.until(`document.querySelector('.mc-preview-frame')?.contentDocument?.querySelector('strong')?.textContent === 'they'`, 6000).catch(() => {});
-  check(`${tag}: Preview shows it as it will arrive`, (await page.eval(`document.querySelector('.mc-preview-frame')?.contentDocument?.querySelector('strong')?.textContent ?? ''`)) === 'they');
-  check(`${tag}: no sideways overflow: the format bar and preview`, !(await overflow()).length, await overflow());
-  await shot(`mail-${tag.replace(/ /g, '-')}-preview`);
-  await click(await at('.mc-preview-btn'));
-  await key('.mc-body', 'z', { ctrlKey: true });
+  check(`${tag}: B makes the selection bold`, (await page.eval(`document.querySelector('.me-rich-doc strong')?.textContent ?? ''`)) === 'they');
+  await click(await at('.me-mode', `el => el.textContent === 'Markdown'`));
+  await page.until(`!!document.querySelector('.me-markdown.shown .cm-content')`, 15000).catch(() => {});
+  const md = await page.eval<string>(`[...document.querySelectorAll('.me-markdown .cm-line')].map((l) => l.textContent).join('\\n')`);
+  // Live: the bold shows bold, its ** marks shown only on the caret's line.
+  check(`${tag}: the Markdown view says it as Markdown, drawn as it will look`, md.replace(/\*\*/g, '') === 'Here they are.' && (await page.eval(`document.querySelector('.me-markdown .md-strong')?.textContent.replace(/\\*/g, '') ?? ''`)) === 'they', md);
+  await shot(`mail-${tag.replace(/ /g, '-')}-markdown`);
+  await click(await at('.me-mode', `el => el.textContent === 'HTML'`));
+  await page.until(`document.querySelector('.me-html-preview iframe')?.contentDocument?.querySelector('strong')?.textContent === 'they'`, 15000).catch(() => {});
+  check(`${tag}: the HTML view shows the HTML and the mail as it arrives`, (await page.eval(`document.querySelector('.me-html .cm-content')?.textContent ?? ''`)).includes('<strong>they</strong>') && (await page.eval(`document.querySelector('.me-html-preview iframe')?.contentDocument?.querySelector('strong')?.textContent ?? ''`)) === 'they');
+  check(`${tag}: no sideways overflow: the HTML view`, !(await overflow()).length, await overflow());
+  await shot(`mail-${tag.replace(/ /g, '-')}-html`);
+  await click(await at('.me-mode', `el => el.textContent === 'Rich'`));
+  await page.until(`!!document.querySelector('.me-rich.shown')`, 5000).catch(() => {});
+  check(`${tag}: back in Rich, nothing lost`, (await bodyText()) === 'Here they are.' && (await page.eval(`document.querySelector('.me-rich-doc strong')?.textContent ?? ''`)) === 'they', await bodyText());
+  await page.eval(`document.querySelector('.me-rich-doc').focus()`);
+  await press('z', 'KeyZ', 90, 2);
   await Bun.sleep(150);
-  check(`${tag}: Ctrl+Z takes the bold back`, (await page.eval(`document.querySelector('.mc-body').value`)) === 'Here they are.');
+  check(`${tag}: Ctrl+Z takes the bold back`, !(await has('.me-rich-doc strong')) && (await bodyText()) === 'Here they are.', await bodyText());
   // More of the bar: a list item nests with Tab and its button shows pressed; Heading; Remove formatting; a table.
-  const bodyNow = () => page.eval<string>(`document.querySelector('.mc-body').value`);
-  const caretEnd = () => page.eval(`(() => { const t = document.querySelector('.mc-body'); t.focus(); t.setSelectionRange(t.value.length, t.value.length); })()`);
-  await type('.mc-body', '- one\n- two');
-  await caretEnd();
-  await key('.mc-body', 'Tab');
+  // "- " starts a list as it is typed.
+  await typeBody('-');
+  await page.send('Input.insertText', { text: ' ' });
+  await page.send('Input.insertText', { text: 'one' });
+  await press('Enter', 'Enter', 13);
+  await page.send('Input.insertText', { text: 'two' });
+  await press('Tab', 'Tab', 9);
   await Bun.sleep(150);
-  check(`${tag}: Tab nests a list item`, (await bodyNow()) === '- one\n   - two', await bodyNow());
-  await caretEnd();
-  await page.until(`document.querySelector('.mc-fmt-bullets')?.getAttribute('aria-pressed') === 'true'`, 3000).catch(() => {});
-  check(`${tag}: the bullets button shows pressed in a list`, (await page.eval(`document.querySelector('.mc-fmt-bullets').getAttribute('aria-pressed')`)) === 'true');
-  await key('.mc-body', 'Tab', { shiftKey: true });
+  check(`${tag}: Tab nests a list item`, (await page.eval(`document.querySelector('.me-rich-doc ul ul li')?.textContent ?? ''`)) === 'two');
+  await page.until(`document.querySelector('.me-bar .mc-fmt-bullets')?.getAttribute('aria-pressed') === 'true'`, 3000).catch(() => {});
+  check(`${tag}: the bullets button shows pressed in a list`, (await page.eval(`document.querySelector('.me-bar .mc-fmt-bullets').getAttribute('aria-pressed')`)) === 'true');
+  await press('Tab', 'Tab', 9, 8);
   await Bun.sleep(150);
-  check(`${tag}: Shift+Tab takes it back out`, (await bodyNow()) === '- one\n- two', await bodyNow());
-  await type('.mc-body', 'Plan for **Friday**');
-  await caretEnd();
+  check(`${tag}: Shift+Tab takes it back out`, !(await has('.me-rich-doc ul ul')) && (await page.eval<number>(`document.querySelectorAll('.me-rich-doc ul li').length`)) === 2);
+  await typeBody('Plan for Friday');
   await click(await at('.mc-fmt-heading'));
-  check(`${tag}: Heading makes the line a heading`, (await bodyNow()) === '# Plan for **Friday**', await bodyNow());
-  await caretEnd();
+  check(`${tag}: Heading makes the line a heading`, (await page.eval(`document.querySelector('.me-rich-doc h1')?.textContent ?? ''`)) === 'Plan for Friday');
   await click(await at('.mc-fmt-clear'));
-  check(`${tag}: Remove formatting takes the heading and the bold off`, (await bodyNow()) === 'Plan for Friday', await bodyNow());
-  await type('.mc-body', 'Plan:\n\n| Day | Who |\n|---|---|\n| Fri | **Sam** |');
-  await click(await at('.mc-preview-btn'));
-  await page.until(`!!document.querySelector('.mc-preview-frame')?.contentDocument?.querySelector('td strong')`, 6000).catch(() => {});
-  const cell = await page.eval<{ th: string; border: string }>(`(() => { const d = document.querySelector('.mc-preview-frame')?.contentDocument; const td = d?.querySelector('td'); return { th: d?.querySelector('th')?.textContent ?? '', border: td ? getComputedStyle(td).borderTopWidth + ' ' + getComputedStyle(td).borderTopStyle : '' }; })()`);
-  check(`${tag}: a table shows in Preview with its lines`, cell.th === 'Day' && cell.border === '1px solid', cell);
+  check(`${tag}: Remove formatting takes the heading off`, !(await has('.me-rich-doc h1')) && (await bodyText()) === 'Plan for Friday');
+  await typeBody('Plan:');
+  await press('Enter', 'Enter', 13);
+  await click(await at('.mc-fmt-table'));
+  await page.until(`!!document.querySelector('.me-rich-doc table')`, 3000).catch(() => {});
+  await page.send('Input.insertText', { text: 'Day' });
+  await click(await at('.me-mode', `el => el.textContent === 'HTML'`));
+  await page.until(`!!document.querySelector('.me-html-preview iframe')?.contentDocument?.querySelector('th')`, 15000).catch(() => {});
+  const cell = await page.eval<{ th: string; border: string }>(`(() => { const d = document.querySelector('.me-html-preview iframe')?.contentDocument; const td = d?.querySelector('td'); return { th: d?.querySelector('th')?.textContent ?? '', border: td ? getComputedStyle(td).borderTopWidth + ' ' + getComputedStyle(td).borderTopStyle : '' }; })()`);
+  check(`${tag}: a table goes with its lines`, cell.th.trim() === 'Day' && cell.border === '1px solid', cell);
   await shot(`mail-${tag.replace(/ /g, '-')}-table`);
-  await click(await at('.mc-preview-btn'));
-  await type('.mc-body', 'Here they are.');
+  await click(await at('.me-mode', `el => el.textContent === 'Rich'`));
+  await page.until(`!!document.querySelector('.me-rich.shown')`, 5000).catch(() => {});
+  await typeBody('Here they are.');
   // Closed: kept as a draft, which the Drafts line opens again.
   await Bun.sleep(300);
   await click(await at('.mc-head .icon-btn'));
   await page.until(`!!document.querySelector('.mail-drafts-line')`, 8000).catch(() => {});
-  check(`${tag}: closing keeps a draft`, (await page.eval<string>(`document.querySelector('.mail-drafts-line')?.textContent ?? ''`)).includes('1 draft'));
+  const draftsLine = await page.eval<string>(`document.querySelector('.mail-drafts-line')?.textContent ?? ''`);
+  check(`${tag}: closing keeps a draft`, draftsLine.includes('1 draft'), { draftsLine, drafts: ((await fetch(`${base}/api/mail/drafts`).then((r) => r.json())) as any).drafts.map((d: any) => [d.key, d.draft.kind, d.draft.subject, d.draft.text.slice(0, 40), d.draft.html?.slice(0, 80)]) });
   await click(await at('.mail-drafts-line'));
   await click(await at('.cm-item, .context-menu button, [role=menuitem]', `el => el.textContent.includes('Photos from Friday')`));
-  await page.until(`document.querySelector('.mc-body')?.value === 'Here they are.'`, 8000).catch(() => {});
-  check(`${tag}: the draft opens again as it was`, (await page.eval(`document.querySelector('.mc-subject')?.value`)) === 'Photos from Friday');
+  await page.until(`(document.querySelector('.me-rich-doc')?.innerText ?? '').trim() === 'Here they are.'`, 8000).catch(() => {});
+  check(`${tag}: the draft opens again as it was`, (await page.eval(`document.querySelector('.mc-subject')?.value`)) === 'Photos from Friday' && (await bodyText()) === 'Here they are.');
   // Discarded: Undo in the strip brings it back; once that is over, the draft is gone.
   await click(await at('.mc-discard'));
   await page.until(`!document.querySelector('.mc-layer') && !!document.querySelector('.mc-out.discarded .mc-undo')`, 8000).catch(() => {});
   check(`${tag}: discarding offers Undo, and the Drafts line leaves it out`, (await has('.mc-out.discarded .mc-undo')) && !(await has('.mail-drafts-line')));
   await click(await at('.mc-out.discarded .mc-undo'));
-  await page.until(`document.querySelector('.mc-subject')?.value === 'Photos from Friday'`, 8000).catch(() => {});
-  check(`${tag}: Undo brings the discarded draft back`, (await page.eval(`document.querySelector('.mc-body')?.value`)) === 'Here they are.');
+  await page.until(`(document.querySelector('.me-rich-doc')?.innerText ?? '').trim() === 'Here they are.'`, 8000).catch(() => {});
+  check(`${tag}: Undo brings the discarded draft back`, (await bodyText()) === 'Here they are.');
   await click(await at('.mc-discard'));
   await Bun.sleep(9_500);
   const left = ((await fetch(`${base}/api/mail/drafts`).then((r) => r.json())) as any).drafts as any[];
   check(`${tag}: after its Undo, the draft is gone`, !(await has('.mail-drafts-line')) && !(await has('.mc-out.discarded')) && !left.length, left.length);
+  await forwardWithPictures(tag);
+}
+
+/** A big newsletter forwarded: its layout comes along, trackers gone; Embed sends its pictures inside the mail. */
+async function forwardWithPictures(tag: string) {
+  const sale = (await page1('v:updates:*')).find((t) => t.subject.includes('winter sale'));
+  if (!sale) return check(`${tag}: the store newsletter is in Updates`, false);
+  await page.eval(`location.hash = '#/mail/t/${sale.id}'`);
+  // This thread's reader, not the one shown before the hash changed.
+  // Its HTML drawn (the frame grows as it lays out, moving what is below it).
+  await page.until(`document.querySelector('.mail-reader .mail-subject')?.textContent === ${JSON.stringify(sale.subject)} && !!document.querySelector('.mail-reader .mail-msg.open .mail-html.ready')`, 15000);
+  await click(await at('.mail-reader-bar .hdr-btn, .mail-msg-actions .hdr-btn', `el => el.textContent.trim() === 'Forward'`));
+  await page.until(`!!document.querySelector('.me-island[data-kind="forward"] iframe')?.contentDocument?.querySelector('img[data-dc-src]')`, 15000).catch(() => {});
+  const isl = await page.eval<{ styled: boolean; pictures: number; trackers: number }>(`(() => { const d = document.querySelector('.me-island[data-kind="forward"] iframe')?.contentDocument; return { styled: !!d?.querySelector('.card[style*="border"]'), pictures: d?.querySelectorAll('img[data-dc-src]').length ?? 0, trackers: d ? [...d.querySelectorAll('img[data-dc-src]')].filter((i) => /track|\\/o\\//.test(i.dataset.dcSrc)).length : -1 }; })()`);
+  check(`${tag}: a forward keeps its layout (style sheets inlined), its pictures, and none of its trackers`, isl.styled && isl.pictures > 60 && isl.trackers === 0, isl);
+  check(`${tag}: it says how its pictures from the web go`, (await page.eval<string>(`document.querySelector('.mc-pics')?.textContent ?? ''`)).includes('pictures from the web'));
+  await click(await at('.mc-seg-btn', `el => el.textContent === 'Embed'`));
+  await click(await at('.mc-size-btn'));
+  check(`${tag}: the size breakdown counts the embedded pictures`, (await page.eval<string>(`document.querySelector('.mc-size-pop')?.textContent ?? ''`)).includes('embedded'));
+  await shot(`mail-${tag.replace(/ /g, '-')}-forward`);
+  await type('#mc-to', 'jo@park.example');
+  await key('#mc-to', 'Enter');
+  await click(await at('.mc-send'));
+  const end = Date.now() + 30_000;
+  let sent: any = null;
+  while (Date.now() < end && !sent) {
+    await Bun.sleep(300);
+    sent = (await threadNow(sale.id)).messages.find((m: any) => m.addressed === 'self' && m.subject.startsWith('Fwd:'));
+  }
+  check(`${tag}: the forward goes`, !!sent);
+  if (!sent) return;
+  const b = (await fetch(`${base}/api/mail/messages/${sent.id}/body`).then((r) => r.json())) as any;
+  const doc = b.html ? await fetch(`${base}${b.html.url}`).then((r) => r.text()) : '';
+  check(`${tag}: its pictures went inside the mail, as parts, none linked`, (doc.match(/\/cid\//g)?.length ?? 0) > 60 && !/<img[^>]+src="https?:/.test(doc) && (b.attachments ?? []).filter((a: any) => !a.inline).length === 0, { cid: doc.match(/\/cid\//g)?.length, files: b.attachments?.length });
 }
 
 // ------------------------------------------------------------------ summaries without headers (--proton)

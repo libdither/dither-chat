@@ -38,6 +38,8 @@
         "src/ui/CallWindow.tsx",
         "src/ui/ChipLayer.ts",
         "src/ui/mail/ComposerCard.tsx",
+        "src/ui/mail/editor/MailEditor.tsx",
+        "src/ui/mail/editor/code.ts",
         "src/ui/feed/FeedView.tsx",
         "src/ui/files/ArchiveView.tsx",
         "src/ui/files/JsonView.tsx",

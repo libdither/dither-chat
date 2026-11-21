@@ -42,7 +42,8 @@ export interface MailEditorProps {
   bar: boolean;
   placeholder: string;
   /** Every change: the mail's HTML, and its text part (Markdown, with stand-ins the hub fills in). */
-  onChange: (out: { html: string; text: string }) => void;
+  /** `initial`: the document as the editor first makes it (the quote or the forward added, old Markdown read), not an edit. */
+  onChange: (out: { html: string; text: string }, initial: boolean) => void;
   onSend: () => void;
   /** Files it does not take in the text (not pictures, or too big for one): the composer attaches them. */
   onFiles: (files: File[]) => void;
@@ -61,9 +62,23 @@ const dataUrl = (f: File) =>
   });
 
 /** The document's JSON in place of what is there: one step of undo, or none. */
+/**
+ * The document made `json`, changing only the stretch that differs: undo history from before (a word made bold, then a
+ * trip through the Markdown view) maps through a small change, where a whole-document replace would wipe it out.
+ */
 function replaceDoc(editor: Editor, json: JSONContent, undoable: boolean) {
-  const doc = editor.schema.nodeFromJSON(json);
-  const tr = editor.state.tr.replaceWith(0, editor.state.doc.content.size, doc.content);
+  const cur = editor.state.doc;
+  const next = editor.schema.nodeFromJSON(json);
+  const start = cur.content.findDiffStart(next.content);
+  if (start == null) return;
+  let { a: endA, b: endB } = cur.content.findDiffEnd(next.content)!;
+  // Where the same text repeats around the change, the two ends can cross: move them past the start.
+  const overlap = start - Math.min(endA, endB);
+  if (overlap > 0) {
+    endA += overlap;
+    endB += overlap;
+  }
+  const tr = editor.state.tr.replace(start, endA, next.slice(start, endB));
   if (!undoable) tr.setMeta('addToHistory', false);
   editor.view.dispatch(tr);
 }
@@ -113,7 +128,7 @@ function own(el: Element): boolean {
 const escapeText = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
 
 /** HTML (the HTML view's, or pasted whole) into the document: what it can't hold as its own becomes islands. */
-export function htmlJson(editor: Editor, html: string): JSONContent {
+function htmlJson(editor: Editor, html: string): JSONContent {
   const doc = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html');
   // A style sheet of your own applies to everything: a mail that has one is kept whole (an island's is its own).
   if ([...doc.querySelectorAll('style, link[rel=stylesheet]')].some((el) => !el.closest('div[data-dc-island]'))) return { type: 'doc', content: [{ type: 'island', attrs: { kind: 'html', html, label: '', from: null, ref: newRef() } }] };
@@ -201,6 +216,8 @@ export function MailEditor(p: MailEditorProps) {
   const cm = useRef<EditorView | null>(null);
   /** What the document was when a Markdown or HTML session began: undo takes the whole session back to it. */
   const before = useRef<JSONContent | null>(null);
+  /** The view's text as the session began: unchanged, leaving it changes nothing. */
+  const entered = useRef<string | null>(null);
   const refs = useRef<Refs | null>(null);
   const typingTimer = useRef<number | undefined>(undefined);
   const [shown, setShown] = useState<EditorMode>('rich');
@@ -216,10 +233,11 @@ export function MailEditor(p: MailEditorProps) {
   props.current = p;
   const pictureInput = useRef<HTMLInputElement>(null);
 
+  const mounting = useRef(false);
   const emit = () => {
     const e = editor.current;
     if (!e) return;
-    props.current.onChange({ html: docHtml(e), text: docMarkdown(e) });
+    props.current.onChange({ html: docHtml(e), text: docMarkdown(e) }, mounting.current);
   };
 
   /** Pictures into the text (at the caret, or as stand-ins in Markdown); anything else goes to the composer. */
@@ -290,10 +308,12 @@ export function MailEditor(p: MailEditorProps) {
       onTransaction: ({ editor: ed }) => setActive(richActive(ed)),
     });
     editor.current = e;
+    mounting.current = true;
     // A draft kept before there was HTML: Markdown, read once and kept as HTML from now on.
     if (!p.initial.html && p.initial.markdown) replaceDoc(e, markdownJson(e, p.initial.markdown, { islands: new Map(), pictures: new Map() }), false);
     if (!p.initial.html && p.initial.island) appendIsland(e, p.initial.island.island, p.initial.island.from, false);
     if (!p.initial.html && (p.initial.markdown || p.initial.island)) emit();
+    mounting.current = false;
     if (p.apiRef)
       p.apiRef.current = {
         focus: () => (shownRef.current === 'rich' ? void e.commands.focus() : cm.current?.focus()),
@@ -353,6 +373,7 @@ export function MailEditor(p: MailEditorProps) {
     refs.current = refsOf(e);
     const r = refs.current;
     const text = mode === 'markdown' ? docMarkdown(e) : prettyHtml(docHtml(e));
+    entered.current = text;
     cm.current = code.codeView({
       parent: mode === 'markdown' ? mdHost.current! : htmlHost.current!,
       mode,
@@ -385,7 +406,10 @@ export function MailEditor(p: MailEditorProps) {
     const v = cm.current;
     if (!v) return;
     clearTimeout(typingTimer.current);
-    putBack(mode, v.state.doc.toString(), true);
+    // Only looked at: the document stays exactly as it was (no round trip through the text, no undo step).
+    const text = v.state.doc.toString();
+    if (text !== entered.current) putBack(mode, text, true);
+    else if (before.current) replaceDoc(editor.current!, before.current, false);
     before.current = null;
     refs.current = null;
     v.destroy();

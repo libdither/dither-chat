@@ -152,7 +152,7 @@ export function MessageCard({ message: m, thread, account, open, onToggle }: { m
  * "188 KB (HTML 150 KB, files 20 KB) · pictures: 9 from 4 hosts, 1.2 MB, 2 not fetched yet; 3 not loaded": the mail
  * as the server keeps it, and what showing its pictures fetches on top (docs/mail.md "Sizes").
  */
-export function sizeLine(b: P.MailBodyView): string {
+function sizeLine(b: P.MailBodyView): string {
   const z = b.sizes!;
   const total = z.raw ?? z.text + z.html + z.files;
   const parts = [z.html && `HTML ${bytes(z.html)}`, z.text && `text ${bytes(z.text)}`, z.files && `files ${bytes(z.files)}`].filter(Boolean);

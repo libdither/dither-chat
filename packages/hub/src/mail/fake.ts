@@ -1106,7 +1106,7 @@ export class FakeMailBackend implements MailBackend {
         return { filename: f.filename, mime: f.mime, bytes: new Uint8Array(readFileSync(f.path)), by: 'path' as const };
       }
       return { filename: f.filename, mime: f.mime, bytes: new Uint8Array(Buffer.from(f.base64 ?? '', 'base64')), by: 'base64' as const };
-    });
+    }).map((f, i) => ({ ...f, contentId: typeof mail.attachments?.[i]?.contentId === 'string' ? mail.attachments[i].contentId! : null }));
     const original = mail.replyTo ? a.messages.get(mail.replyTo) : undefined;
     if (mail.replyTo && !original) throw new MailCallError('no such message to reply to', 404);
     const messageId = `<${crypto.randomUUID()}@${from.email.split('@')[1] ?? 'fake.example'}>`;
@@ -1125,7 +1125,10 @@ export class FakeMailBackend implements MailBackend {
       inReplyTo: original?.messageId ?? null,
       references: original ? [...original.references, ...(original.messageId ? [original.messageId] : [])] : [],
       flags: { seen: true },
-      attachments: files.map((f, i) => ({ id: `out-${i}`, filename: f.filename, mime: f.mime, size: f.bytes.length, inline: false, contentId: null })),
+      // A picture the HTML shows in place (contentId) is an inline part, as a mail app's copy has it.
+      attachments: files.map((f, i) => ({ id: `out-${i}`, filename: f.filename, mime: f.mime, size: f.bytes.length, inline: !!f.contentId, contentId: f.contentId })),
+      // The sent copy's parts are the bytes that went (a picture shown in it reads back as itself).
+      files: Object.fromEntries(files.map((f, i) => [`out-${i}`, f.bytes])),
     });
     if (original) this.setFlags(a.view.id, original.id, { answered: true });
     this.sent.push({ account: a.view.id, mail, files, messageId });

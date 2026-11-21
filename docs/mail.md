@@ -115,31 +115,46 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
   once, so a draft written without the hub, or cut off by a reload, is still there. One per thread (`t:<thread>`:
   answering a thread that has one opens it) or `new:<uuid>`. "N drafts" under the views opens them. A draft's files
   stay on the hub an hour after it was last saved or opened (the uploads' own limit).
-- **Formatting** is Markdown, as in chat (`protocol/src/mail-markdown.ts`): the text part goes as you wrote it, which
-  reads well as text, and the HTML part is it made into HTML, on the hub, the same whichever account sends (Gmail on
-  the web, Proton and IMAP all send the HTML they are given). **bold**, _italic_, ~~struck~~, `code` and fenced code,
-  [links](https://example.com) and bare addresses, lists, `>` quotes, `#` headings and tables (`| a | b |`, drawn with
-  their grey lines inline, since a mail app has no style sheet for them); a line break is a line break. Not taken as
-  Markdown: a signature's `--` under a line (no setext headings), a line indented four spaces (no indented code), HTML
-  you type (it is text), links other than http(s) and mailto, pictures (a link to them). Aa shows the format bar: B, I,
-  S, code, link, bullets, numbers, quote, Heading and Remove formatting, then Preview, the HTML part as it will arrive,
-  in a frame without scripts. Each button takes its format off again, and shows pressed while the caret is in it.
-  Code on several lines makes a ``` block (and inside one, takes the fences off). Heading goes larger, then smaller,
-  then off (`#`, `##`, `###`), as Gmail's text sizes do. Remove formatting takes the marks and links off what is
-  selected (and marks just around it) and headings, quotes and list markers off the lines it starts; with nothing
-  selected, off the caret's whole line. Keys: Ctrl+B, Ctrl+I, Ctrl+K (link), Ctrl+Shift+7, 8 and 9 (numbers, bullets,
-  quote), Ctrl+Shift+X (struck), Ctrl+\\ (remove formatting), as Gmail's are where it has them. Enter goes on with a
-  list (Enter on an empty item ends it); in a list, Tab and Shift+Tab (or Ctrl+] and Ctrl+[) move items in and out a
-  level, and elsewhere Tab moves on as usual. A web address pasted over selected text links it; rich text pasted from
-  a page or a document keeps its bold, italic, links, headings, lists, quotes and code as Markdown, and a table of data
-  (two columns and two rows or more, no cells spanning others, as a spreadsheet copies) as a Markdown table, its first
-  row the header (`web/src/mail/paste.ts`, read from the clipboard's HTML in an inert document; colours, fonts,
-  pictures and layout tables stay behind); Ctrl+Shift+V pastes it plain. The reader shows a table sent this way in the
-  app's theme (`hub/src/mail/sanitize.ts` calls it plain: only its lines and cells' alignment; a table with widths,
-  colours or `border=` is a styled mail, on the white sheet).
-  Not here, and why: underline, colours, fonts, sizes and alignment (Markdown has no way to write them, and a mail
-  written here reads in every app's own theme); pictures inside the text (a pasted picture is attached: putting it
-  in the text needs dither-accounts' `mail.send` to take inline parts with a Content-ID, on all three kinds).
+- **Writing** (`web/src/ui/mail/editor/`): one document, three ways to see and edit it, switched at the right of the
+  format bar (Rich · Markdown · HTML, remembered on the device). The old view fades and lifts away as the new one
+  settles in, at the same place in the text (no animation with reduced motion). The rich document (Tiptap, a
+  ProseMirror document, `schema.ts`) is the one truth: the other views are made from it when opened and put back into
+  it when left, as one step of the editor's undo.
+  - **Rich** (the default): text as it will look. Bold, italic, underline, struck, colour (eight swatches), link
+    (Ctrl+K, or paste an address over the text), bullets, numbers, quote, heading (larger, then smaller, then off),
+    code (in the line, or a block over several lines), alignment, a table, Remove formatting (Ctrl+\\). Markdown's
+    shortcuts work as you type (`**`, `# `, `- `, `> `). A picture pasted, dropped or chosen goes in the text where the
+    caret is (a `data:` URL in the draft; over 5 MB, or not PNG, JPEG, GIF or WebP, it is attached instead); pasted
+    anywhere else in the composer, it is attached. The bar shows unless Aa hides it.
+  - **Markdown** (CodeMirror, `livemd.ts`): the same document as Markdown, drawn as you type, as Obsidian does:
+    headings big, bold bold, and the marks that make them fold away on every line but the caret's. A pasted picture
+    stands in as `![name](dc-picture:id)` and shows as itself; a forward or a quote as a chip (`[[island:id]]`). What
+    Markdown can't say (colour, underline, alignment, tables with styles) stays as small pieces of HTML.
+  - **HTML**: the mail's whole HTML, a forward's or a quote's inside folded, with the mail as it arrives beside it (under
+    it on a phone). What you write there that the rich document can't hold as its own (a layout, a style sheet) stays
+    exactly as written, as a block of its own.
+  - **A forward or a quote** is such a block (an island), drawn in a sandboxed frame with a bar: its name, size, Hide
+    and ✕. The hub makes it (`hub/src/mail/island.ts`, `MailComposeStart.island`): the original's HTML with its style
+    sheets written into each element's own `style`, so it keeps its look in mail apps that drop style sheets (Gmail);
+    what can't go into one element (`@media`, `:hover`) stays in a sheet scoped to the block. Trackers are gone. Each
+    picture from the web keeps its address, shown as your picture setting shows it in the reader (a held one as a
+    striped box). A reply's quote starts folded; taken out, "Quote <name>" puts it back.
+  - **Pictures from the web** in it (a forward's, a quote's, an address written in the HTML view) go as the line under
+    the text says: **Link** (the default: their app fetches them when they open it, and a personal one can tell the
+    original sender), **Embed** (the hub fetches them now, through its image proxy, and sends them inside the mail:
+    nothing is fetched on their end; one that can't be fetched stays linked) or **Leave out**. Each says what it does
+    to the size. Pictures inside the mail go as parts the HTML shows (`cid:`) when the account's status says
+    `details.inlineParts` (dither-accounts' `OutgoingFile.contentId`), else as `data:` pictures, which Gmail hides.
+  - **The text part** is the Markdown, with a forward's or a quote's text as a plain-text mail has it and pictures as
+    `[picture: name]`. **Plain text only** (in the size breakdown) sends that alone: no HTML part.
+  - Drafts keep the HTML (`MailDraft.html`, with `pictures` and `plainOnly`); a draft from before it opens from its
+    Markdown and is kept as HTML from then on. The hub takes scripts, frames, forms, `on…` attributes and the editor's
+    own marks out before it goes, and never sends one of its own addresses (its proxy's, a part's): each is the
+    picture's own address, or the picture.
+- **Sizes.** The footer says "≈ 188 KB of 25 MB": the mail as it goes, pictures and files counted as base64 (a third
+  bigger). It opens the breakdown: the text part, the HTML part, the pictures pasted in, the ones embedded, the files,
+  the total, and what their app loads on their end (linked pictures, with the bytes the hub knows of them:
+  `POST /api/mail/pictures/sizes`, which fetches nothing). The account's cap counts files and pictures inside it.
 - **Undo a send.** Send gives the message to the hub's outbox (`hub/src/mail/outbox.ts`), once per `clientId`, after checking
   it: someone to send to (To, Cc and Bcc together at most the account's `details.maxRecipients`, else 500, 100 on
   Proton), From one of the account's addresses (422 otherwise), 25 MB a file and the files together at most its
@@ -221,13 +236,28 @@ files made without the hub surviving a reload of the page (its draft does).
   follows one. A link whose text names another site ("paypal.com" going to evil.example) asks first, showing where it
   really goes; the message's ▾ details say so too, with a Reply-To that goes elsewhere and a name that is itself
   another address.
-- **Remote images** are held back: "4 remote images hidden · Load · Always from Sam", with placeholders of their size.
-  Allowed, they come through the hub (`GET /api/mail/img/<token>`, `hub/src/mail/images.ts`): the token is an HMAC of
-  the message and the URL with the hub's key, so the proxy fetches only what that message names. Public addresses
-  only, checked for every address a name resolves to, and the request goes to the address that was checked (a name
-  that changes its answer meanwhile gets nowhere); redirects checked again; no cookies or referrer; 10 MB at most;
-  kept only if the bytes are an image (not SVG); 7 days in the media cache. A tracker (1-2 px, or hidden by its
-  style) is dropped even when images are allowed: a pixel fetched through the hub still reports the open.
+- **Pictures and trackers** (`hub/src/mail/pictures.ts`). Each picture from the web is one of three kinds:
+  - a **tracker**: a 1-2 px or hidden image, or a known open-tracking service or path (`/track/open.php`, `/wf/open`,
+    …). Removed, by default; "Trackers: Keep" in Settings → Mail treats them as personal pictures instead.
+  - **personal** ("can tell"): its address carries your address (plain, encoded, or hashed with MD5 or SHA), or an
+    opaque id made for one recipient (16+ characters of mixed letters and digits in the query, 20-24+ in the path), so
+    fetching it can tell the sender you opened the mail.
+  - **shared** ("can't tell"): the same address in every copy; seen from another sender too counts as shared.
+  Settings → Mail, **Load pictures**: None, **Ones that can't tell** (the default) or All. A sender's rule (Always or
+  Never from them) and a choice for one mail come first. The bar over a mail says what happened ("12 pictures loaded ·
+  3 held back · 2 trackers removed (they would tell Sam you opened it)"), with Load all, and ⋯ for the sender's rule,
+  this mail's, and **Details**: every host, its kind, why, what happened to it and its size once the hub has it. Links
+  are not changed: a link can still tell the sender you clicked it.
+  Allowed pictures come through the hub (`GET /api/mail/img/<token>`, `hub/src/mail/images.ts`): the token is an HMAC
+  of the message and the URL with the hub's key, so the proxy fetches only what that message names, and only while
+  the message's policy still loads it. Public addresses only, checked for every address a name resolves to, and the
+  request goes to the address that was checked (a name that changes its answer meanwhile gets nowhere); redirects
+  checked again; no cookies or referrer; 10 MB at most; kept only if the bytes are an image (not SVG); 7 days in the
+  media cache. A picture the cache already has loads under "Ones that can't tell" whatever its kind (fetching it again
+  would tell no one).
+- **Sizes of a mail you got.** The message's ▾ details have a Size row: the raw message as the server counts it, its
+  HTML, text and files, and its pictures: how many loaded from how many hosts and their bytes, how many not fetched yet,
+  how many not loaded.
 - **`cid:` pictures** come from the message's own parts and always show.
 - **Files** show under the message as chat's cards; pictures the HTML shows itself are not listed again. They come
   from the server with `mail.attachment` the first time they are opened, go into the media cache, and are looked at
@@ -1028,8 +1058,9 @@ is fetched by id, and the window stays "missed" until it is read.
   files by path and by their bytes, a forward's files, From, a recipient or settings refused (422), a clientId sent
   once, a restart mid-send, the server's recipient suggestions).
   `mail-remote.test.ts` sends a reply through the SMTP sink and checks its headers and its copy in the thread.
-  `verify-mail.ts` writes, undoes and sends on a phone (a chip opened and undone, a Markdown reply drawn in the
-  theme) and docks a new message on a desktop (the server's suggestions, a chip edited in place, B, Preview, Ctrl+Z,
+  `verify-mail.ts` writes, undoes and sends on a phone (a chip opened and undone, a bold reply drawn in the
+  theme) and docks a new message on a desktop (the server's suggestions, a chip edited in place, B, the Markdown and
+  HTML views, Ctrl+Z, a picture pasted in the text, a big newsletter forwarded with its pictures embedded,
   discard and its Undo), last, since it sends. Start it a few seconds after the demo hub: the demo's two live notices
   arrive 4 s in, and their toasts would take its taps on a phone.
 - `hub/test/mail-remote.test.ts` runs against a real manager with an `imap` account on dither-accounts' Dovecot and

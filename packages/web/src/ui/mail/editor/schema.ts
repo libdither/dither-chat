@@ -13,7 +13,7 @@
  * In the Markdown view, islands and pictures stand in as `[[island:id]]` and `dc-picture:id`: the view shows them as
  * chips, and the bytes never pass through the text.
  */
-import { type Editor, getHTMLFromFragment, type JSONContent, type MarkdownRendererHelpers, mergeAttributes, Node } from '@tiptap/core';
+import { type Editor, type JSONContent, type MarkdownRendererHelpers, mergeAttributes, Node } from '@tiptap/core';
 import Image from '@tiptap/extension-image';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import TextAlign from '@tiptap/extension-text-align';
@@ -89,7 +89,7 @@ export interface IslandAttrs {
   ref: string;
 }
 
-export const Island = Node.create({
+const Island = Node.create({
   name: 'island',
   group: 'block',
   atom: true,
@@ -181,7 +181,7 @@ export const Island = Node.create({
 });
 
 /** A picture: `src` a data: URL (pasted, dropped) or a web address; `ref` names it in the Markdown view. */
-export const Picture = Image.extend({
+const Picture = Image.extend({
   addAttributes() {
     return {
       ...this.parent?.(),
@@ -261,31 +261,8 @@ export function docHtml(editor: Editor): string {
   return editor.getHTML().replace(/<div data-dc-island="[^"]*"[^>]*><\/div>/g, (m) => m.replace('></div>', `>${islands[i++] ?? ''}</div>`));
 }
 
-/** One fragment of the document as HTML (a cell, a paragraph), for writing what Markdown can't say. */
-export function fragmentHtml(editor: Editor, node: PMNode): string {
-  return getHTMLFromFragment(node.content, editor.schema);
-}
-
 /** Markdown of the document, with islands and pasted pictures as their stand-ins. */
 export function docMarkdown(editor: Editor): string {
   refsOf(editor);
   return editor.getMarkdown();
-}
-
-/** Markdown (with stand-ins) back into the document: stand-ins become their islands and pictures again. */
-export function markdownIn(editor: Editor, md: string, refs: { islands: Map<string, IslandAttrs>; pictures: Map<string, string> }) {
-  const json = editor.markdown!.parse(md);
-  const fix = (n: any): any => {
-    if (n.type === 'paragraph' && n.content?.length === 1 && n.content[0].type === 'text') {
-      const m = /^\[\[island:([\w-]+)\]\]$/.exec(String(n.content[0].text).trim());
-      const isl = m && refs.islands.get(m[1]);
-      if (isl) return { type: 'island', attrs: isl };
-    }
-    if (n.type === 'image') {
-      const m = /^dc-picture:([\w-]+)$/.exec(n.attrs?.src ?? '');
-      if (m) return { ...n, attrs: { ...n.attrs, src: refs.pictures.get(m[1]) ?? '', ref: m[1] } };
-    }
-    return n.content ? { ...n, content: n.content.map(fix) } : n;
-  };
-  editor.commands.setContent(fix(json), { emitUpdate: true });
 }

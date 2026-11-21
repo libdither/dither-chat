@@ -9,7 +9,7 @@ import { EditorState } from '@codemirror/state';
 import { EditorView, keymap, placeholder } from '@codemirror/view';
 import { liveMarkdown, type Stands } from './livemd.ts';
 
-export interface CodeViewOpts {
+interface CodeViewOpts {
   parent: HTMLElement;
   mode: 'markdown' | 'html';
   doc: string;

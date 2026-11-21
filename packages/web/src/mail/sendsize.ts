@@ -5,7 +5,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 
-export interface DraftPictures {
+interface DraftPictures {
   /** Pasted or dropped: inside the mail whatever happens. */
   inside: { n: number; bytes: number };
   /** From the web (a forward's, a quote's, or an address you wrote): their addresses, each once. */

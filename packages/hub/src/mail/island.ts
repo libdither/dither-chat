@@ -18,7 +18,7 @@
 import type * as P from '@dither-chat/protocol';
 import { QUOTE_STYLE } from '@dither-chat/protocol/mail-markdown';
 import { attribution, forwardBlock, quoteLines, textHtml, type ComposeOriginal } from './compose.ts';
-import { HELD_PICTURE, sanitizeCss } from './sanitize.ts';
+import { sanitizeCss } from './sanitize.ts';
 import { htmlText } from './store.ts';
 
 // ------------------------------------------------------------------ style sheets into style attributes
@@ -231,7 +231,7 @@ export function islandOf(kind: 'forward' | 'quote', o: ComposeOriginal, content:
 // ------------------------------------------------------------------ the mail that goes
 
 /** One picture that goes inside the mail. */
-export interface InlinePart {
+interface InlinePart {
   contentId: string;
   mime: string;
   bytes: Buffer;
@@ -252,7 +252,7 @@ export interface OutgoingCtx {
   id: string;
 }
 
-export interface Outgoing {
+interface Outgoing {
   html: string;
   inline: InlinePart[];
   /** What happened to the pictures, for the outbox's log and the tests. */
@@ -432,4 +432,3 @@ export function outgoingText(markdown: string, html: string, o: ComposeOriginal 
   return text.replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/\s+$/, '');
 }
 
-export { HELD_PICTURE };
