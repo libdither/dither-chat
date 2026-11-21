@@ -8,7 +8,7 @@ import type * as P from '@dither-chat/protocol';
 import { MAIL_PLATFORM_NAMES, mailboxList, mailPlatform, platformScope, searchList, searchOfList, viewList } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { accountTrouble, DEFAULT_LIST, holdsOnlyMailboxes, inboxUnread, listTitle, MAIL_FOLDER_VIEWS, MAIL_VIEWS } from '../../mail/model.ts';
-import { db, go, mailRev, prefs, setPrefs } from '../../state.ts';
+import { db, go, mailRev, pref, setPrefs } from '../../state.ts';
 import { openMenu, type MenuEntry } from '../ContextMenu.tsx';
 import { Icon } from '../icons.tsx';
 import { ComposeButton, DraftsLine } from './Composer.tsx';
@@ -153,7 +153,7 @@ export function MailSidebar({ list, active }: { list?: string; active?: string }
   const view = key.startsWith('v:') ? key.split(':')[1] : null;
   const pick = (v: string, acc: string) => go({ view: 'mail', list: viewList(v as P.MailView, acc === '*' ? null : acc) });
   const search = searchOfList(key);
-  const newest = prefs.value.mailOrder === 'newest';
+  const newest = pref('mailOrder') === 'newest';
   const trouble = useTrouble(accounts);
   const openPicker = (from: HTMLElement) => openAccountMenu(from, accounts, scoped, trouble, (acc) => pick(view ?? 'inbox', acc));
   const chips = search === null && accounts.length > 0;

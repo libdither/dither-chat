@@ -2,7 +2,7 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { effect, untracked } from '@preact/signals';
 import { chatPersonOf, convsUnder, firstChannel, rootCommunity, totalUnread } from '../model.ts';
-import { adoptEntry, api, back, connected, db, go, loaded, prefs, previousRoute, readProgress, refresh, rev, route, setListUnder, setRouteFill, type Route } from '../state.ts';
+import { adoptEntry, api, back, connected, db, go, loaded, pref, previousRoute, readProgress, refresh, rev, route, setListUnder, setRouteFill, type Route } from '../state.ts';
 import { installEscape } from '../escape.ts';
 import { isPage, isTabRoot, listKey, listToWrite, ownList, restAfter, wayBack, type Places } from '../pages.ts';
 import { dropLayer, layerCount, phone, pushLayer } from '../phone.ts';
@@ -357,7 +357,7 @@ export function App() {
   else if (!tabRoot && tabOf(r) === 'home') lastHome = r;
   const shown = p && !detailRoute && !tabRoot && lastDetail ? lastDetail : r;
   const { pane, detail } = centerFor(shown, () => leave(shown));
-  const details = p ? panel.value === 'details' && !!detail : prefs.value.details && !!detail;
+  const details = p ? panel.value === 'details' && !!detail : pref('details') && !!detail;
   const rest: Rest = !p ? 'open' : detailRoute || tabRoot ? (details ? 'details' : 'open') : lastDetail && listKey(lastDetail, places) === listKey(r, places) ? 'peek' : 'away';
   // Exactly where leave(r) will land, so the card goes the way the page does.
   const backRest: Rest | null = detailRoute ? restAfter(r, wayBack(r, previousRoute(), places).to, places) : null;

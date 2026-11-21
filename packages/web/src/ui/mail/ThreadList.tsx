@@ -9,7 +9,7 @@ import { useEffect, useRef } from 'preact/hooks';
 import { loadList } from '../../mail/api.ts';
 import { inboxSnap } from '../../inbox.ts';
 import { hasMore, listThreads, listTitle, rankable, rankedThreads, syncLine, updatesFold, type UpdatesFold } from '../../mail/model.ts';
-import { db, go, mailRev, prefs } from '../../state.ts';
+import { db, go, mailRev, pref } from '../../state.ts';
 import { mailChanged } from '../../versions.ts';
 import { Empty } from '../bits.tsx';
 import { Icon } from '../icons.tsx';
@@ -59,7 +59,7 @@ export function ThreadList({ list, active }: { list: string; active?: string }) 
     if (now?.stale && !now.loading) void loadList(list);
   }, [list]);
   // Ranked: the one-list inbox's scored threads first, in its snapshot's order (inbox.ts), then the rest by date.
-  const ranked = rankable(list) && prefs.value.mailOrder !== 'newest' ? rankedThreads(s, list, db.attention.values(), inboxSnap.value.snap) : null;
+  const ranked = rankable(list) && pref('mailOrder') !== 'newest' ? rankedThreads(s, list, db.attention.values(), inboxSnap.value.snap) : null;
   const threads = ranked ? ranked.threads : listThreads(s, list);
   const head = ranked?.head ?? 0;
   const parsed = parseMailList(list);

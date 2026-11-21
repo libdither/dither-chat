@@ -4,7 +4,7 @@ import { NETWORK_META, NETWORKS } from '@dither-chat/protocol';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { ago } from '../format.ts';
 import { activityOfSpace, allCommunities, categoriesOf, convsUnder, convTitle, folderConvs, kindLabel, memberOf, netName, placePref, railEntries, spaceUnread, sumUnread, unreadOf, visibleConv, type RailEntry } from '../model.ts';
-import { api, db, go, prefs, rev, setPrefs, toast, type DirectorySort } from '../state.ts';
+import { api, db, go, pref, rev, setPrefs, toast, type DirectorySort } from '../state.ts';
 import { AccountChip, Avatar, Count, Empty, Modal, NetBadge } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
@@ -211,7 +211,7 @@ function ManageCategories({ onClose }: { onClose: () => void }) {
 
 export function DirectoryPane({ onBack }: { onBack: () => void }) {
   rev.value;
-  const sort = prefs.value.directorySort;
+  const sort = pref('directorySort');
   const [q, setQ] = useState('');
   const [net, setNet] = useState<P.Network | null>(null);
   const [showHidden, setShowHidden] = useState(false);
