@@ -1,7 +1,8 @@
 /**
  * Stretches of a conversation's history known whole (`history_span`): each page an index job or a catch-up fetched
  * covers from its oldest message to where it started, and spans that touch are merged. A walk back jumps over them,
- * so what was fetched once is not fetched again (docs/indexing.md "History, and why a repeat is cheap";
+ * so what was fetched once is not fetched again. Each change is one immediate transaction: its read and its write
+ * cannot have another connection's write between them (docs/indexing.md "History, and why a repeat is cheap";
  * docs/catch-up.md).
  */
 import type { Store } from './store.ts';
@@ -25,7 +26,7 @@ export function addSpan(store: Store, cid: string, from: number, to: number) {
     }
     store.db.query('DELETE FROM history_span WHERE conversation_id = ? AND from_ts <= ? AND to_ts >= ?').run(cid, to, from);
     store.db.query('INSERT INTO history_span (conversation_id, from_ts, to_ts) VALUES (?, ?, ?)').run(cid, lo, hi);
-  })();
+  }).immediate();
 }
 
 /** [from, to] is no longer known whole: each span over it is cut in two around it, the rest kept. */
@@ -37,5 +38,5 @@ export function cutSpan(store: Store, cid: string, from: number, to: number) {
       if (s.from_ts < from) store.db.query('INSERT OR REPLACE INTO history_span (conversation_id, from_ts, to_ts) VALUES (?, ?, ?)').run(cid, s.from_ts, from);
       if (s.to_ts > to) store.db.query('INSERT OR REPLACE INTO history_span (conversation_id, from_ts, to_ts) VALUES (?, ?, ?)').run(cid, to, s.to_ts);
     }
-  })();
+  }).immediate();
 }

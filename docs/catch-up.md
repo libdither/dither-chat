@@ -54,8 +54,9 @@ times the stretch's length. Then:
 - Channels you do not read (not opened here, and not read on the network, in 30 days) are left out: there are
   hundreds of them on Discord, and the reading pace allows 3,000 messages a day.
 - Channels expected to have had fewer than 0.3 messages are left out as quiet.
-- The rest are ranked by expected count, a direct chat or group counting three times a channel's, and the first 60
-  kept.
+- The rest are ranked by expected count, a direct chat or group counting three times a channel you read (and a
+  channel you do not read, asked for, a third), and the first 60 kept. Among chats as quiet, a direct chat comes first.
+  So eighty nearly silent direct chats do not push out the channels you read that were busy.
 
 What was left out is counted, with why, and **Check every chat** plans the hole again with all of them.
 
@@ -74,16 +75,21 @@ chat, so its list shows which chats were actually missing messages.
 an index job pages (docs/indexing.md). It jumps over what is known whole (`history_span`), so a chat that two holes, or
 a hole and an index job, both cover is fetched once. A page that reaches the chat's start ends it. One chat stops after
 60 pages (3,000 messages) and says so. A stretch that grows starts its pages again: grown further back, the walk goes
-on from where it was; grown at the end, it reads the new end and then jumps to where it was.
+on from where it was; grown at the end, it reads the new end and then jumps to where it was (each earlier end is
+kept, so growing at the end twice still skips what was read).
 
 A page's messages come as events, and a remote account's come after its answer (the manager sends events on a short
 timer and the answer at once; the supervisor applies a big batch in slices). So after each answer the worker waits for
-them to land: nothing queued in the supervisor, the chat's count below the cursor holding still, and, when the answer
-said where the page ended (`oldest`), at least as many held in that stretch as the page had. Only then does it count
-what it found, and only inside the stretch (older history a page reaches is not missing). Looks while the queue is busy
-do not count against it; after 10 s of quiet looks, or 5 minutes in all, the page is asked again 30 s later, nothing
-recorded, and what it brings is counted from what was held before the first asking. A page that held fewer than it
-said, with nothing changing for 2 s, is taken as in (kinds the hub does not keep).
+them to land: nothing queued in the supervisor, and what the page covered holding still (from `oldest` to the cursor
+when the answer said where the page ended, so an import writing older history meanwhile does not hold it up; else the
+whole chat below the cursor). With `oldest`, it also needs that stretch to hold as many as the page had, and the chat
+to have changed since it was asked: a stretch that already held enough (messages deleted on the network but kept
+here) proves nothing. Only then does it count what it found, and only inside the stretch (older history a page
+reaches is not missing). Looks while the queue is busy do not count against it; after 10 s of quiet looks, or 5
+minutes in all, the page is asked again 30 s later, nothing recorded, and what it brings is counted from what was held
+before the first asking (unless the stretch grew meanwhile: then afresh). After three such askings what came is
+counted and nothing of that page recorded whole. Each asking counts against the reading pace. A page that held fewer
+than it said, with nothing changing for 2 s, is taken as in (kinds the hub does not keep).
 
 Only a page that says where it ended (`oldest`: Discord, Matrix, T3) is recorded in `history_span` as whole. From one
 that does not (Telegram, WhatsApp, X, Meta, Google Messages), the hub cannot tell which held messages were the page's,
@@ -96,7 +102,7 @@ just now (`deferMs`) is asked again later; an account that goes offline pauses i
 
 **Done, with what failed.** A hole ends when no chat is left to fetch, said each tick too, so a restart or a check
 whose only chats were its first ones cannot leave it open. A hole whose chats could not be read says how many. A hole
-reported while its account is turned off waits to be planned until it is on again.
+reported while its account is turned off waits to be planned until it is on again, and says so.
 
 **Unfetchable.** An account without the `history` capability (Signal: its servers keep no old messages) cannot fetch.
 Its holes are planned all the same, listing the chats likely to have had messages then (expected 0.3 or more), and
@@ -121,7 +127,10 @@ The supervisor tells it what comes, waits and is lost through `EventWatch` (supe
 `gap`, `conversation`), and remote.ts what the manager does (`dropped`, `connection`). These touch memory only, never
 the database, and the supervisor drops whatever they throw: a locked database must never cost an event. The catch-up
 saves and turns them into reports on its next tick (every 5 s), each step on its own, so one that fails (a locked
-database) delays only itself; reports and the marker's removal wait for the next tick rather than being lost. The waiting events' marker is saved when it changes and every 30 s while events wait,
+database) delays only itself; reports, claims and the marker's removal wait for the next tick rather than being lost.
+Writes that read first (spans, planning) take the write lock at their start, so another connection's write cannot
+land between their read and their write. If the save at a stop fails while events were lost there, the journal is left
+open, so the next start counts as unclean and checks from the marker. The waiting events' marker is saved when it changes and every 30 s while events wait,
 so a crash's time is known to within that.
 
 ## Routes

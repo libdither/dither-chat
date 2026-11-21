@@ -710,6 +710,7 @@ describe('review, round 2', () => {
     const v = c.reportFrom({ conversationId: hub('d1'), from: S0, to: S1, note: 'Sam says they wrote' });
     await clock.advance(MIN);
     expect(c.get(v.id)!.state).not.toBe('unfetchable');
+    expect(c.get(v.id)!.notes.at(-1)).toBe('Waiting for the account to be turned on');
     store.db.query('UPDATE account SET enabled = 1 WHERE id = ?').run(acc.id);
     up = true;
     await clock.until(() => c.get(v.id)!.state === 'done', DAY, 'the hole');
@@ -724,6 +725,76 @@ describe('review, round 2', () => {
     c.report({ scope: 'chat', conversationId: hub('d1'), from: S1, to: S1 + 5 * MIN, strength: 'sure', cause: 'report', note: 'again' });
     await clock.until(() => c.get(id)!.state === 'done', DAY, 'the hole');
     expect(asked.length).toBeLessThanOrEqual(5);
+    expect(count(store, hub('d1'), S0, S1)).toBe(180);
+  });
+});
+
+describe('review, round 3', () => {
+  test('a page whose chat something else keeps writing older history into still lands, and is not asked over and over', async () => {
+    const { store, acc, net, hub } = world({ held: ['g1', 'cr'] });
+    const { c, clock, asked } = catchUp(store, acc, net, { late: true });
+    // An import writes d1's old history a message at a time, all along.
+    let i = 0;
+    const writeOld = () => {
+      store.ingest(acc, { t: 'message', message: { nativeId: `d1-import${i}`, conversation: 'd1', author: PEER, ts: S0 - 20 * DAY + i++ * 1000, body: 'old' }, live: false });
+      clock.setTimeout(writeOld, 100);
+    };
+    writeOld();
+    const id = c.report({ scope: 'account', accountId: acc.id, from: S0, to: S1, strength: 'possible', cause: 'offline', note: 'offline' })!;
+    await clock.until(() => ['clear', 'done'].includes(c.get(id)!.state), DAY, 'the hole');
+    expect(c.get(id)).toMatchObject({ state: 'done', found: 12 });
+    expect(asked.filter((a) => a.conversation === 'd1').length).toBe(1);
+    expect(count(store, hub('d1'), S0, S1)).toBe(12);
+  });
+
+  test('many quiet direct chats do not push out the channels you read that were busy', async () => {
+    const { store, acc, net, hub } = world({ quiet: 80, held: ['d1', 'd2', 'g1', 'cu', 'cq'], after: false });
+    const { c, clock } = catchUp(store, acc, net, { start: false });
+    const id = c.report({ scope: 'account', accountId: acc.id, from: S0, to: S1, strength: 'sure', cause: 'dropped', note: 'dropped' })!;
+    await clock.advance(PLAN_DELAY_MS);
+    c.tick();
+    c.stop();
+    const h = c.get(id)!;
+    expect(h.chats).toBe(60);
+    expect(h.list!.map((t) => t.conversationId).slice(0, 2)).toEqual([hub('d1'), hub('cr')]);
+  });
+
+  test('a stretch that grows further back while a page waits to land counts afresh', async () => {
+    const { store, acc, net, hub } = world({ held: ['g1', 'cr'] });
+    let waiting = 0;
+    let first = true;
+    const { c, clock, onAsk } = catchUp(store, acc, net, {
+      late: true,
+      backlog: () => waiting,
+      onLand: () => (waiting = 0),
+      get lateMs() {
+        const ms = first ? 10 * MIN : 5;
+        first = false;
+        return ms;
+      },
+    });
+    const id = c.report({ scope: 'chat', conversationId: hub('d1'), from: S0, to: S1, strength: 'sure', cause: 'report', note: 'x' })!;
+    // The first page waits past its limit and is to be asked again; before it is, the stretch grows back three hours,
+    // over messages the hub already held.
+    onAsk(() => {
+      waiting = 500;
+      clock.setTimeout(() => c.report({ scope: 'chat', conversationId: hub('d1'), from: S0 - 3 * HOUR, to: S1, strength: 'sure', cause: 'report', note: 'earlier too' }), 5 * MIN + 10_000);
+    });
+    await clock.until(() => c.get(id)!.state === 'done' && c.get(id)!.from === S0 - 3 * HOUR, DAY, 'the hole');
+    expect(c.get(id)!.found).toBe(12);
+  });
+
+  test('a stretch that grows at its end twice still goes on from where its walk was', async () => {
+    const { store, acc, net, hub } = world({ inside: { d1: 180 } });
+    const { c, clock, asked } = catchUp(store, acc, net, { late: true, oldest: false });
+    const id = c.report({ scope: 'chat', conversationId: hub('d1'), from: S0, to: S1, strength: 'sure', cause: 'report', note: 'x' })!;
+    await clock.until(() => asked.length === 3, DAY, 'three pages');
+    c.report({ scope: 'chat', conversationId: hub('d1'), from: S1, to: S1 + 5 * MIN, strength: 'sure', cause: 'report', note: 'again' });
+    c.tick();
+    c.report({ scope: 'chat', conversationId: hub('d1'), from: S1, to: S1 + 8 * MIN, strength: 'sure', cause: 'report', note: 'and again' });
+    await clock.until(() => c.get(id)!.state === 'done', DAY, 'the hole');
+    // The third page, out while the stretch grew, is read again; the first walk is not (that would be 7).
+    expect(asked.length).toBeLessThanOrEqual(6);
     expect(count(store, hub('d1'), S0, S1)).toBe(180);
   });
 });
