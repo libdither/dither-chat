@@ -15,6 +15,7 @@
     "budgets": "bun scripts/budgets.ts",
     "check:boot": "bun scripts/check-boot.ts",
     "check:offline": "bun scripts/check-offline.ts",
+    "check:overflow": "bun scripts/check-overflow.ts",
     "check:tests": "bun scripts/check-tests.ts",
     "accounts:check": "bun scripts/accounts-sync.ts --check",
     "check:css": "bun scripts/check-css.ts",

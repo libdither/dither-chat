@@ -2,7 +2,7 @@
  * Sending mail (docs/mail.md, docs/mail-design.md §8): the hub's outbox and drafts.
  *
  * `POST /api/mail/send` checks the message and keeps it (once per `clientId`), `held` for MAIL_LIMITS.holdMs (10 s),
- * when Undo puts it back in the drafts. Then it is `queued`: its files are copied out of the uploads into the outbox's
+ * when Undo puts it back in the drafts. Then it is `queued`: its files are moved out of the uploads into the outbox's
  * folder (an upload left an hour goes), and it goes to `mail.send` ahead of background work. The answers:
  *
  *   success           `sent`, with the Message-ID it went out with; Sent is asked what changed, so its copy shows
@@ -24,7 +24,7 @@
  * Drafts live here too (`mail_draft`): dither-accounts has no drafts op. Keys are `t:<thread>` for a reply or forward
  * and `new:<uuid>` for a new message.
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { mailId } from '@dither-chat/protocol/ids';
@@ -542,9 +542,21 @@ export class MailOutbox {
         return false;
       }
       mkdirSync(this.folder(r.id), { recursive: true, mode: 0o700 });
+      // Moved, not copied: the upload goes next anyway. A copy here runs on the event loop and, on a filesystem that
+      // clones (ZFS, btrfs), can wait for the disk to commit the just-written upload: tenths of a second, seconds
+      // under load. Copied only across filesystems. The same upload attached twice is one file, named twice.
+      const moved = new Map<string, string>();
       have.forEach((f, i) => {
-        const path = join(this.folder(r.id), `${i}`);
-        copyFileSync(f.path, path);
+        let path = moved.get(f.path);
+        if (!path) {
+          path = join(this.folder(r.id), `${i}`);
+          try {
+            renameSync(f.path, path);
+          } catch {
+            copyFileSync(f.path, path);
+          }
+          moved.set(f.path, path);
+        }
         files.push({ name: draft.files[i].name || f.name, mime: cleanMime(draft.files[i].mime || f.mime), size: f.size, path });
       });
       this.files!.remove(draft.files.map((f) => f.uploadId));

@@ -70,7 +70,7 @@ import {
 import { openPalette } from './Palette.tsx';
 import { reactionContext } from '../reactions.ts';
 import { openAbout } from '../opening.ts';
-import { AccountChip, Avatar, Empty, Menu, NetGlyph, variantIcon } from './bits.tsx';
+import { Avatar, Empty, FromChips, Menu, variantIcon } from './bits.tsx';
 import { HoverReactions, InsertPicker, ReactionBar } from './Reactions.tsx';
 import { useLongPress } from './longpress.ts';
 import { Icon } from './icons.tsx';
@@ -137,25 +137,26 @@ import { postMessageKey } from '../feed.ts';
 
 // ------------------------------------------------------------------ header
 
+/**
+ * Where a place is, under its name: its server and the sections or parent chat in between. The network is the chip
+ * before it (FromChips), and a chat's own name is the title, so neither repeats here; nor does "Groups".
+ */
 function Crumbs({ c }: { c: P.ConversationView }) {
-  metaRev.value; // a DM's crumb is the person's name, which changes without `c` changing
+  metaRev.value; // names change without `c` changing
   const r = route.value;
   const within = r.view === 'space' ? r.space : undefined;
-  const cs = crumbs(c, within);
+  const cs = crumbs(c, within).filter((x) => x.kind !== 'network' && x.id && x.id !== c.id);
+  if (cs.length === 0) return null;
   return (
-    <span class="crumbs" style={{ '--net': NETWORK_META[c.network].color } as any}>
+    <span class="crumbs">
       {cs.map((x, i) => (
         <>
           {i > 0 && <span class="crumb-sep">›</span>}
-          {x.kind === 'network' ? (
-            <span class="crumb net">
-              <NetGlyph network={c.network} size={11} /> {x.label}
-            </span>
-          ) : x.kind === 'space' && x.id ? (
+          {x.kind === 'space' ? (
             <button class="crumb link" data-track="crumb (community)" onClick={() => go({ view: 'space', space: x.id! })}>
               {x.label}
             </button>
-          ) : x.kind === 'conversation' && x.id && x.id !== c.id ? (
+          ) : x.kind === 'conversation' ? (
             <button class="crumb link" data-track="crumb (parent)" onClick={() => openConv(db.conversations.get(x.id!)!)}>
               {x.label}
             </button>
@@ -370,15 +371,9 @@ function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () =>
             <SendLine c={c} accounts={accounts} />
           ) : (
             <>
+              <FromChips network={c.network} accounts={accounts} />
               <Crumbs c={c} />
-              {accounts.length > 0 && (accounts.length > 1 || db.accounts.size > 1) && (
-                <span class="via">
-                  via
-                  {accounts.map((a) => (
-                    <AccountChip account={a} small />
-                  ))}
-                </span>
-              )}
+              {c.shape === 'group' && c.participantIds.length > 1 && <span class="head-count">{c.participantIds.length} people</span>}
             </>
           )}
           {isDirect && <RequestSentMark convs={chat ? [c, ...chat.directs] : [c]} />}
@@ -771,6 +766,12 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
               </span>
             )}
             {author?.isBot && <span class="bot-tag">BOT</span>}
+            {/* A text from a Signal backup (SMS or MMS) heads its own run, so the mark covers each of them. */}
+            {m.sms && (
+              <span class="msg-sms" title={`Sent as ${m.sms.toUpperCase()}, not over ${netName(m.network)}`}>
+                {m.sms.toUpperCase()}
+              </span>
+            )}
             <span class="msg-time" title={hover ? fullTime(m.ts) : undefined}>
               {clock(m.ts)}
             </span>
@@ -1127,7 +1128,7 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   const heads = chat ? headNames(convIds) : null;
   const unreadFrom = firstUnreadTs === null ? -1 : all.findIndex((m) => m.ts > firstUnreadTs && !isSelfIdentity(m.authorId));
   const groups = (prev: P.MessageView | null, m: P.MessageView) =>
-    !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId;
+    !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId && prev.sms === m.sms;
   // One person's pictures one after another are one run, drawn by its last message (docs/pictures.md); a message of
   // it that is nothing but pictures has no row of its own. How each chat draws them, once per chat.
   const runs = pictureRuns(all, start, end, (p, m, i) => groups(p, m) && i !== unreadFrom);

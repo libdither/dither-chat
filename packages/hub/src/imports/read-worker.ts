@@ -4,11 +4,12 @@
  * <data>/imports/media/<sha256[0:2]>/<sha256><ext>: hardlinked from the source when it can be (no extra space),
  * copied otherwise. The facts' file:// URLs point at the store, so deleting a source never breaks an attachment.
  *
- * In: { kind, rawDir, selfId, mediaDir, out, backupKey?, legacy? }. Out: { progress }, then { done, stats } or { error }.
+ * In: { kind, rawDir, selfId, mediaDir, out, backupKey?, legacy?, desktop? }. Out: { progress }, then { done, stats } or { error }.
  */
 import { copyFileSync, existsSync, linkSync, mkdirSync, openSync, closeSync, readSync, renameSync, writeSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { authorIndex, readFile } from './discord-html.ts';
+import { readSignalDesktop } from './signal-desktop.ts';
 import { readSignalLegacy } from './signal-legacy.ts';
 import { readSignalV2 } from './signal-v2.ts';
 import { readdirSync } from 'node:fs';
@@ -40,9 +41,23 @@ function hashFile(path: string): string {
   return h.digest('hex');
 }
 
-self.onmessage = (e: MessageEvent<{ kind: string; rawDir: string; selfId: string; mediaDir: string; out: string; backupKey?: string; legacy?: { file: string; passphrase: string; sourceSha: string } }>) => {
-  const { kind, rawDir, selfId, mediaDir, out, backupKey, legacy } = e.data;
+self.onmessage = (
+  e: MessageEvent<{ kind: string; rawDir: string; selfId: string; mediaDir: string; out: string; backupKey?: string; legacy?: { file: string; passphrase: string; sourceSha: string }; desktop?: { profile: string; key: string; sourceSha: string } }>,
+) => {
+  const { kind, rawDir, selfId, mediaDir, out, backupKey, legacy, desktop } = e.data;
   try {
+    if (kind === 'signal-desktop') {
+      if (!desktop) throw new Error('give the database key first');
+      const tmp = out + '.tmp';
+      const fd = openSync(tmp, 'w', 0o600);
+      const stats = readSignalDesktop({ profile: desktop.profile, key: Buffer.from(desktop.key, 'hex'), workDir: dirname(out), selfId, mediaDir, sourceSha: desktop.sourceSha, progress: (p) => postMessage({ progress: p }) }, (x) =>
+        writeSync(fd, JSON.stringify(x) + '\n'),
+      );
+      closeSync(fd);
+      renameSync(tmp, out);
+      postMessage({ done: true, stats });
+      return;
+    }
     if (kind === 'signal-backup') {
       if (!legacy) throw new Error('give the passphrase first');
       const tmp = out + '.tmp';

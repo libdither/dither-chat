@@ -99,6 +99,17 @@ export const SCORE_CHARTS: ScoreChart[] = [
     metrics: [{ key: 'inbox.mrr', label: 'Mean 1 ÷ row', kind: 'rank', better: true }],
   },
   {
+    id: 'inbox-mail',
+    title: 'Mail in the inbox: the order now against the order with mail',
+    about: 'For rows opened from the inbox while the order with mail runs in shadow: the mean of 1 ÷ row as they stood, and as they would have stood in that order; then the same for mail rows alone.',
+    metrics: [
+      { key: 'inbox.mrr_live', label: 'All rows, as shown', kind: 'rank', better: true },
+      { key: 'inbox.mrr_shadow', label: 'All rows, order with mail', kind: 'rank', better: true },
+      { key: 'inbox.mail_mrr', label: 'Mail rows, as shown', kind: 'rank', better: true },
+      { key: 'inbox.mail_mrr_shadow', label: 'Mail rows, order with mail', kind: 'rank', better: true },
+    ],
+  },
+  {
     id: 'needs-reply',
     title: 'Needs a reply: shown against answered',
     about: 'For owed replies whose three days ended that day: the mean chance shown that they needed a reply, and the share you answered. Close together is well calibrated.',

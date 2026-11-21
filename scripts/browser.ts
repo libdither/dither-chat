@@ -167,7 +167,13 @@ async function attach(wsUrl: string, port: number): Promise<{ page: Page; ws: We
       }
     },
     async goto(url) {
-      await page.send('Page.navigate', { url });
+      // A change of the #fragment alone is the app's own routing, done in the page: DevTools' answer to a Page.navigate
+      // within the same document sometimes never comes (right after a reload to the same address, say), and held a
+      // run until CI cancelled it.
+      const here = await page.eval<string>('location.href').catch(() => '');
+      const sameDoc = url.includes('#') && here.split('#')[0] === url.split('#')[0];
+      if (sameDoc) await page.eval(`location.href = ${JSON.stringify(url)}`);
+      else await page.send('Page.navigate', { url });
       await Bun.sleep(300);
     },
     async shot(path) {

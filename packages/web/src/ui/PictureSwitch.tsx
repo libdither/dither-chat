@@ -1,10 +1,11 @@
 /**
  * Switching a run of pictures to another way where it is (docs/pictures.md, "Switching in the chat"). On a computer,
- * a rail of the five ways stands beside the run: invisible until you point at the message, faint while you do, full
- * when you point at it. On a phone, a chip at the top right of the message (its words wrap round it) is a wheel of the
- * five: drag it up or down, scroll on it, or pinch the pictures, and the run slides from one way to the next in
- * PICTURE_ORDER, sticky near each (pictures.ts slidePosition) and undone by going back, until you let go. A tap opens
- * the list. Either way the choice is saved for that chat (place_pref.pictures), with no toast: the run shows it.
+ * a rail of the five ways stands beside the run: invisible until you point at the message, then only the way in use,
+ * faint; pointing at that brings in the other four. On a phone, a chip at the top right of the message (its words
+ * wrap round it) is a wheel of the five: drag it up or down, scroll on it, or pinch the pictures, and the run slides
+ * from one way to the next in PICTURE_ORDER, sticky near each (pictures.ts slidePosition) and undone by going back,
+ * until you let go. A tap opens the list. Either way the choice is saved for that chat (place_pref.pictures), with no
+ * toast: the run shows it.
  */
 import { signal, type Signal } from '@preact/signals';
 import type { PictureLayout } from '@dither-chat/protocol';

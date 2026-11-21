@@ -217,7 +217,9 @@ hold a lock for a moment, mostly while it opens or closes, and the hub's writes 
 on the hub's one thread). A copy by a script that opens it read-only from bun locked out the live hub's writes 26
 times in one 30 s backup (2026-11-13) before the hub waited; the sqlite3 shell did not in the same test. Past 2 s a
 write fails as before: an adapter's event then waits with those after it and is applied again a second later
-(`packages/hub/src/supervisor.ts`), and other writes log the failure.
+(`packages/hub/src/supervisor.ts`), and other writes log the failure. A stop applies what still waits, and carries
+what it cannot over to the next start in `pending-events.ndjson` ([accounts.md](accounts.md), "While the hub
+restarts").
 
 Every six hours it clears partial downloads from `media-cache/`. The cache itself is kept indefinitely: the media
 archive (`packages/hub/src/mediaarchive.ts`) fills it with every remote attachment soon after it arrives, because Discord's links
@@ -264,7 +266,7 @@ Once it answers requests, the hub logs one line with how long each part of its s
 startup: ready in 1.1 s (code 81 ms, data dir 1 ms, db open 6 ms, pre-migrate copy 16 ms, migrations 13 ms, journal 1 ms, activity log 1 ms, models 14 ms, categories 3 ms, mail 14 ms, server 30 ms, mail start 9 ms, adapters 813 ms, http listen 3 ms, attention 17 ms, the rest 1 ms, queued work 30 ms)
 ```
 
-`pre-migrate copy` and `search backfill` show only when they ran, `accounts manager` only with dither-accounts.
+`pre-migrate copy`, `search backfill` and `carried-over events` show only when they ran, `accounts manager` only with dither-accounts.
 `queued work` is what the start left for the event loop before it could answer. Restarts have taken 86–332 s to come
 back; `journalctl --user -u dither-chat | grep 'startup: ready'` shows where a start's time went. The old process's
 stop is not in it. Nothing waits on it or fails on it.

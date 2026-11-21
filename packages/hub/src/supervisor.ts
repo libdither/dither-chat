@@ -7,7 +7,7 @@
  */
 
 import type { ServerWebSocket, Subprocess } from 'bun';
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
+import { appendFileSync, chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { writeSecretFile } from '@dither-chat/protocol/secret-file';
@@ -86,6 +86,30 @@ export const EVENTS_STEP = 32;
 /** How long held events wait before they are tried again, and how many times in a row. */
 const HELD_RETRY_MS = 1000;
 const HELD_TRIES = 60;
+/** After HELD_TRIES, how long held events wait between tries: they are kept, never dropped. */
+const HELD_SLOW_MS = 30_000;
+/** At a stop or a start, how many times in a row held events are tried again (busy_timeout waits in each). */
+const SETTLE_TRIES = 5;
+/**
+ * Events a stop could not apply, carried over to the next start (`settle`, `resume`): one line per account batch,
+ * `{"account": id, "events": [...]}`, in the order they go in.
+ */
+export const PENDING_EVENTS = 'pending-events.ndjson';
+
+type Batch = { account: string; events: P.AdapterEvent[] };
+
+/** `n events (message×3, reaction)`: a count and its kinds, for the log. */
+function summary(batches: Batch[]): string {
+  const kinds = new Map<string, number>();
+  let n = 0;
+  for (const b of batches)
+    for (const e of b.events) {
+      n++;
+      kinds.set(e.t, (kinds.get(e.t) ?? 0) + 1);
+    }
+  return `${n} events (${[...kinds].map(([k, c]) => (c > 1 ? `${k}×${c}` : k)).join(', ')})`;
+}
+const count = (batches: Batch[]) => batches.reduce((n, b) => n + b.events.length, 0);
 
 export class Supervisor {
   protected running = new Map<string, Running>();
@@ -321,8 +345,10 @@ export class Supervisor {
   private heldTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Batches not applied yet, in the order they came: a long one, and whatever came behind it. */
-  private inbox: { account: string; events: P.AdapterEvent[] }[] = [];
+  private inbox: Batch[] = [];
   private applying: Promise<void> | null = null;
+  /** PENDING_EVENTS holds events still queued here: removed once nothing is (`tidyPending`). */
+  private pendingOnDisk = false;
   /** How a long batch shares the hub's thread (slices.ts); a test's clock and pauses. */
   slices: SliceOptions = {};
   /** Told how many events each transaction applied (a test's). */
@@ -334,7 +360,9 @@ export class Supervisor {
    * what an event costs). More (a history page, a snapshot, a member list: hundreds or thousands), or behind others:
    * queued, and applied EVENTS_STEP at a time, each slice one transaction, with a turn of the event loop between.
    * One that fails is logged with its type and skipped; the rest go on. One the database was locked for (another
-   * process held it past busy_timeout, store.ts) is held with everything after it, and tried again a second later.
+   * process held it past busy_timeout, store.ts), or whose commit failed (a full disk), is held with everything after
+   * it, and tried again a second later. A stop applies what is still queued or held, and carries over to the next start
+   * what it could not (`settle`, `resume`).
    */
   apply(accountId: string, events: P.AdapterEvent[]) {
     const waiting = this.held.get(accountId);
@@ -344,9 +372,17 @@ export class Supervisor {
     }
     if (!this.inbox.length && events.length <= EVENTS_STEP) return this.applyNow(accountId, events);
     this.inbox.push({ account: accountId, events: [...events] });
+    this.work();
+  }
+
+  /** The queue's worker, in slices, if it is not running already. */
+  private work() {
     this.applying ??= sliced('adapter events: backlog', this.applySteps(), this.slices)
       .catch((e) => (console.error('applying adapter events failed', e), jobFailed('adapter events: backlog', e)))
-      .finally(() => (this.applying = null));
+      .finally(() => {
+        this.applying = null;
+        this.tidyPending();
+      });
   }
 
   /** Once what is queued is applied (held events aside): a test's wait. */
@@ -356,24 +392,31 @@ export class Supervisor {
 
   private *applySteps(): Generator<number, void> {
     while (this.inbox.length) {
-      const b = this.inbox[0];
-      // Its account is held for a locked database: this waits behind what is held.
-      const waiting = this.held.get(b.account);
-      if (waiting) {
-        waiting.push(...b.events);
-        this.inbox.shift();
-        continue;
-      }
-      const part = b.events.splice(0, EVENTS_STEP);
-      if (!b.events.length) this.inbox.shift();
-      this.applyNow(b.account, part);
-      yield part.length;
+      const n = this.step();
+      if (n) yield n;
     }
   }
 
-  /** These events in one transaction; from the first the database was locked for, held. */
+  /** The inbox's next slice, in one transaction; how many events it took (0: it only moved a batch behind held ones). */
+  private step(): number {
+    const b = this.inbox[0];
+    // Its account is held for a locked database: this waits behind what is held.
+    const waiting = this.held.get(b.account);
+    if (waiting) {
+      waiting.push(...b.events);
+      this.inbox.shift();
+      return 0;
+    }
+    const part = b.events.splice(0, EVENTS_STEP);
+    if (!b.events.length) this.inbox.shift();
+    this.applyNow(b.account, part);
+    return part.length;
+  }
+
+  /** These events in one transaction; from the first the database was locked for, held. Never throws. */
   private applyNow(accountId: string, events: P.AdapterEvent[]) {
     let busyAt = -1;
+    let why = 'the database is locked';
     try {
       timedWrite(`adapter events (${events.length})`, () => this.store.db.transaction(() => {
         for (let i = 0; i < events.length; i++) {
@@ -392,39 +435,59 @@ export class Supervisor {
         }
       })());
     } catch (e) {
-      // The commit itself met the lock: none of them is in.
-      if (!isBusy(e)) throw e;
+      // The transaction itself failed (the lock at its commit, a full disk): none of them is in. Held, not lost.
       busyAt = 0;
+      if (!isBusy(e)) {
+        why = `their commit failed (${(e as Error)?.message ?? e})`;
+        console.error(`[${accountId}] applying ${events.length} events failed:`, e);
+      }
     }
     this.onApplied?.(busyAt < 0 ? events.length : busyAt);
     if (busyAt < 0) return;
-    this.held.set(accountId, events.slice(busyAt));
-    console.warn(`[${accountId}] the database is locked: ${events.length - busyAt} events wait to be applied again`);
-    reportError({ source: 'job', where: 'adapter events', name: 'SQLiteError', message: 'database is locked: events wait to be applied again', extra: { account: accountId, events: events.length - busyAt } });
+    // After anything already held for it (none: a held account's events wait in `held` and never reach here).
+    const held = events.slice(busyAt);
+    this.held.set(accountId, [...(this.held.get(accountId) ?? []), ...held]);
+    console.warn(`[${accountId}] ${why}: ${held.length} events wait to be applied again`);
+    reportError({ source: 'job', where: 'adapter events', name: 'SQLiteError', message: `${why}: events wait to be applied again`, extra: { account: accountId, events: held.length } });
     this.heldTimer ??= setTimeout(() => this.retryHeld(), HELD_RETRY_MS);
     (this.heldTimer as { unref?: () => void }).unref?.();
   }
 
-  /** The held events, again (a timer's, or a test's). After HELD_TRIES in a row the database is taken to be stuck. */
+  /** Held events back to the front of the inbox, each account's before what it has queued there. */
+  private requeueHeld() {
+    const held = [...this.held].map(([account, events]) => ({ account, events }));
+    this.held.clear();
+    this.inbox.unshift(...held);
+  }
+
+  /**
+   * The held events, again (a timer's, or a test's). After HELD_TRIES in a row the database is taken to be stuck: they
+   * are said loudly, written to PENDING_EVENTS so that a crash cannot lose them, kept, and tried every HELD_SLOW_MS.
+   */
   retryHeld() {
+    if (this.heldTimer) clearTimeout(this.heldTimer);
     this.heldTimer = null;
     const held = [...this.held];
     this.held.clear();
-    if (++this.heldTries > HELD_TRIES) {
-      for (const [id, evs] of held) {
-        console.error(`[${id}] the database stayed locked: ${evs.length} events not applied (${[...new Set(evs.map((e) => e.t))].join(', ')})`);
-        reportError({ source: 'job', where: 'adapter events', name: 'SQLiteError', message: 'the database stayed locked: events not applied', extra: { account: id, events: evs.length } });
-      }
-      this.heldTries = 0;
-      return;
-    }
     for (const [id, evs] of held) {
       // What came for the account while it was held and is still queued comes after it.
       for (const b of this.inbox) if (b.account === id) evs.push(...b.events.splice(0));
       this.inbox = this.inbox.filter((b) => b.events.length);
       this.apply(id, evs);
     }
-    if (!this.held.size) this.heldTries = 0;
+    if (!this.held.size) {
+      this.heldTries = 0;
+      return this.tidyPending();
+    }
+    if (++this.heldTries < HELD_TRIES) return;
+    const left = this.queued();
+    console.error(`adapter events: the database stayed locked for ${HELD_TRIES} tries: ${summary(left)} kept, tried again every ${HELD_SLOW_MS / 1000} s, and saved to ${PENDING_EVENTS}`);
+    reportError({ source: 'job', where: 'adapter events', name: 'SQLiteError', message: 'the database stayed locked: events kept and saved for the next start', extra: { events: count(left) } });
+    this.savePending(left);
+    this.heldTries = 0;
+    if (this.heldTimer) clearTimeout(this.heldTimer);
+    this.heldTimer = setTimeout(() => this.retryHeld(), HELD_SLOW_MS);
+    (this.heldTimer as { unref?: () => void }).unref?.();
   }
 
   /** Events queued to be applied, held ones included (a test waits for 0). */
@@ -436,6 +499,149 @@ export class Supervisor {
   get heldEvents(): number {
     let n = 0;
     for (const evs of this.held.values()) n += evs.length;
+    return n;
+  }
+
+  /** What is held and queued, as batches in the order they go in: each account's held events before its queued ones. */
+  private queued(): Batch[] {
+    const out: Batch[] = [];
+    for (const [account, events] of this.held) if (events.length) out.push({ account, events: [...events] });
+    for (const b of this.inbox) if (b.events.length) out.push({ account: b.account, events: [...b.events] });
+    return out;
+  }
+
+  private pendingPath() {
+    return join(this.opts.dataDir, PENDING_EVENTS);
+  }
+
+  /**
+   * `batches` to PENDING_EVENTS, in place of what it held: a new file, fsynced, then renamed over it, so the file is
+   * either the old one or the whole new one. Private to the hub's user (it holds messages). False, said loudly, if it
+   * could not be written: those events are then lost.
+   */
+  private savePending(batches: Batch[]): boolean {
+    const p = this.pendingPath();
+    const tmp = `${p}.tmp`;
+    try {
+      const fd = openSync(tmp, 'w', 0o600);
+      try {
+        for (const b of batches) writeSync(fd, `${JSON.stringify(b)}\n`);
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      chmodSync(tmp, 0o600);
+      renameSync(tmp, p);
+      this.pendingOnDisk = true;
+      return true;
+    } catch (e) {
+      rmSync(tmp, { force: true });
+      console.error(`adapter events: LOST ${summary(batches)}: they could not be saved to ${PENDING_EVENTS}:`, e);
+      reportError({ source: 'job', where: 'adapter events', name: 'EventsLost', message: `adapter events lost: they could not be saved for the next start (${(e as Error)?.message ?? e})`, extra: { events: count(batches), accounts: new Set(batches.map((b) => b.account)).size } });
+      return false;
+    }
+  }
+
+  /** Once nothing is queued or held, PENDING_EVENTS holds nothing that is not in the database: it goes. */
+  private tidyPending() {
+    if (!this.pendingOnDisk || this.backlog) return;
+    rmSync(this.pendingPath(), { force: true });
+    this.pendingOnDisk = false;
+  }
+
+  /**
+   * Everything queued and held, applied straight through on this thread until `untilMs` (on `now`'s clock), held ones
+   * tried again up to SETTLE_TRIES times. How many events went through (a failed one, logged, counts too).
+   */
+  private drainNow(untilMs: number, now: () => number): number {
+    const before = this.backlog;
+    let tries = 0;
+    while (now() < untilMs) {
+      if (this.inbox.length) {
+        this.step();
+        continue;
+      }
+      if (!this.held.size || ++tries > SETTLE_TRIES) break;
+      this.requeueHeld();
+    }
+    return before - this.backlog;
+  }
+
+  /**
+   * At a stop (main.ts), once nothing new can come (adapters stopped, the manager's client closed): what is queued and
+   * held goes in now, straight through, until `untilMs`. What is left (time ran out, the database stayed locked) is
+   * written to PENDING_EVENTS, for the next start to apply first (`resume`). Said in the log, with counts, either way.
+   */
+  settle(untilMs: number, now: () => number = Date.now): { applied: number; carried: number; lost: number } {
+    if (this.heldTimer) clearTimeout(this.heldTimer);
+    this.heldTimer = null;
+    const queued = this.backlog;
+    let applied = 0;
+    try {
+      applied = this.drainNow(untilMs, now);
+    } catch (e) {
+      // drainNow does not throw (applyNow holds what fails); if it did, what is left is still saved below.
+      console.error('adapter events: applying what was queued at the stop failed', e);
+      jobFailed('adapter events: stop', e);
+    }
+    const left = this.queued();
+    if (!left.length) {
+      if (queued) console.log(`adapter events: applied the ${applied} queued at the stop`);
+      this.tidyPending();
+      return { applied, carried: 0, lost: 0 };
+    }
+    const saved = this.savePending(left);
+    if (saved) console.warn(`adapter events: applied ${applied} at the stop; ${summary(left)} for ${new Set(left.map((b) => b.account)).size} accounts carried over to the next start in ${PENDING_EVENTS}`);
+    return { applied, carried: saved ? count(left) : 0, lost: saved ? 0 : count(left) };
+  }
+
+  /**
+   * At a start, before any adapter or the manager can send anything: the events the last run carried over
+   * (PENDING_EVENTS) are applied first, straight through until `untilMs`, then the file goes. What is still left
+   * (the database is locked) stays queued and held in front of anything newer for the same account, and stays in the
+   * file until it is in. How many events the file had.
+   */
+  resume(untilMs = Date.now() + 30_000, now: () => number = Date.now): number {
+    const p = this.pendingPath();
+    if (!existsSync(p)) return 0;
+    const batches: Batch[] = [];
+    let bad = 0;
+    for (const line of readFileSync(p, 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const b = JSON.parse(line) as Batch;
+        if (typeof b.account !== 'string' || !Array.isArray(b.events)) throw new Error('not a batch');
+        batches.push({ account: b.account, events: b.events });
+      } catch {
+        bad++;
+      }
+    }
+    if (bad) {
+      // Kept beside it as it was, for a person to look at: the rest is applied.
+      const aside = `${p}.unreadable-${Date.now()}`;
+      renameSync(p, aside);
+      console.error(`adapter events: ${bad} lines of ${PENDING_EVENTS} could not be read: NOT applied, kept in ${aside}`);
+      reportError({ source: 'job', where: 'adapter events', name: 'EventsLost', message: `carried-over adapter events could not be read: ${bad} lines not applied`, extra: { lines: bad } });
+    }
+    // Nothing is queued yet at a start; were it, the carried-over events still go first.
+    this.inbox.unshift(...batches);
+    this.pendingOnDisk = true;
+    const n = count(batches);
+    console.log(`adapter events: applying ${summary(batches)} carried over from the last run`);
+    const applied = this.drainNow(untilMs, now);
+    const left = this.queued();
+    if (!left.length) {
+      this.tidyPending();
+      console.log(`adapter events: the ${applied} carried over are in`);
+      return n;
+    }
+    this.savePending(left);
+    console.warn(`adapter events: ${applied} carried over are in; ${summary(left)} still wait, in front of anything newer for their accounts`);
+    if (this.inbox.length) this.work();
+    if (this.held.size) {
+      this.heldTimer ??= setTimeout(() => this.retryHeld(), HELD_RETRY_MS);
+      (this.heldTimer as { unref?: () => void }).unref?.();
+    }
     return n;
   }
 

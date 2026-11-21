@@ -23,11 +23,15 @@ import { createDecipheriv, createHash, createHmac } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
+import { attachmentKind } from '@dither-chat/protocol';
 import { fromSignal } from '../../../adapter-signal/src/markdown.ts';
+import { describeTimer, directConversation, groupConvId, msgId } from '../../../adapter-signal/src/mapping.ts';
 import { groupIdFromMasterKey } from './signal-keys.ts';
 import { BadPassphrase, fields, normalizePassphrase, streamKeys } from './signal-backup.ts';
+import { addMessage, type ChatFacts, contactLine, distinctFiles, emitChats, joinName, mailtoId, MISSING_FILE_BODY, pollBody, smsConversation, telId, VIEW_ONCE_BODY } from './signal-common.ts';
 
-export const SIGNAL_LEGACY_READER = 'signal-legacy@2';
+/** @3: story replies and story reactions as extra.storyReply. */
+export const SIGNAL_LEGACY_READER = 'signal-legacy@3';
 /** The unpacked database's own version: a new one unpacks again, a new mapping alone does not. */
 const LEGACY_UNPACK = 1;
 
@@ -289,32 +293,17 @@ const KEY_EXCHANGE_MASK = 0xff00;
 const GROUP_UPDATE = 0x10000;
 const TIMER_UPDATE = 0x40000;
 const ENCRYPTION_FAILED = 0x10000000 | 0x08000000 | 0x04000000 | 0x02000000;
+const STORY_REACTION = 0x1;
 const SPECIAL: Record<number, string> = {
   0x1: 'story reaction', 0x2: 'gift badge', 0x3: 'payment', 0x4: 'payments request', 0x5: 'reported spam', 0x6: 'message request accepted',
   0x8: 'payments activated', 0x9: 'payment tombstone', 0xa: 'blocked', 0xb: 'unblocked', 0xc: 'poll ended', 0xd: 'pin',
 };
 const STYLES: Record<number, string> = { 0: 'BOLD', 1: 'ITALIC', 2: 'SPOILER', 3: 'STRIKETHROUGH', 4: 'MONOSPACE' };
 
-const joinName = (...parts: (string | null | undefined)[]) => parts.filter((p) => p && p.trim()).join(' ').trim() || undefined;
-
-function attachmentKind(mime?: string | null): P.AttachmentKind {
-  const m = (mime ?? '').toLowerCase();
-  if (m.startsWith('image/')) return 'image';
-  if (m.startsWith('video/')) return 'video';
-  if (m.startsWith('audio/')) return 'audio';
-  return 'file';
-}
-
-function describeTimer(seconds: number): string {
-  const units: [number, string][] = [[604800, 'week'], [86400, 'day'], [3600, 'hour'], [60, 'minute'], [1, 'second']];
-  for (const [n, name] of units) if (seconds >= n && seconds % n === 0) return `${seconds / n} ${name}${seconds / n === 1 ? '' : 's'}`;
-  return `${seconds} seconds`;
-}
-
 /** Someone without an ACI, by the number or email SMS reached them at. Short codes stay as they are (no "+"). */
 function smsAddress(r: Row): string | null {
-  if (typeof r.e164 === 'string' && r.e164.trim()) return `tel:${r.e164.trim()}`;
-  if (typeof r.email === 'string' && r.email.trim()) return `mailto:${r.email.trim().toLowerCase()}`;
+  if (typeof r.e164 === 'string' && r.e164.trim()) return telId(r.e164.trim());
+  if (typeof r.email === 'string' && r.email.trim()) return mailtoId(r.email.trim());
   return null;
 }
 
@@ -390,16 +379,10 @@ export function mapLegacy(dbPath: string, o: { selfId: string; mediaDir: string;
       }
     for (const r of db.query('SELECT _id, type, aci, group_id FROM recipient').all() as Row[]) {
       const aci = aciText(r.aci);
-      if (r.type === 0 && aci) {
-        conversations.set(
-          r._id,
-          aci === self ? { nativeId: `dm:${self}:${self}`, shape: 'self', name: 'Note to Self', participants: [self], encrypted: true } : { nativeId: `dm:${self}:${aci}`, shape: 'direct', participants: [self, aci], encrypted: true },
-        );
-      } else if (r.type === 0 && idOf.has(r._id)) {
-        // SMS with someone not on Signal. Not a conversation Signal can send to: the adapter refuses anything but dm: and group:.
-        const peer = idOf.get(r._id)!;
-        conversations.set(r._id, { nativeId: `sms:${self}:${peer}`, shape: 'direct', participants: [self, peer], encrypted: false });
-      } else if (r.type === 1) {
+      if (r.type === 0 && aci) conversations.set(r._id, directConversation(self, aci));
+      // SMS with someone not on Signal.
+      else if (r.type === 0 && idOf.has(r._id)) conversations.set(r._id, smsConversation(self, idOf.get(r._id)!));
+      else if (r.type === 1) {
         // An MMS group: SMS to several people at once.
         const g = groups.get(r._id);
         const hex = typeof r.group_id === 'string' ? r.group_id.match(/^__signal_mms_group__!([0-9a-f]+)$/i)?.[1] : undefined;
@@ -415,14 +398,14 @@ export function mapLegacy(dbPath: string, o: { selfId: string; mediaDir: string;
         const hex = typeof r.group_id === 'string' ? r.group_id.match(/^__signal_group__v2__!([0-9a-f]+)$/i)?.[1] : undefined;
         const gid = mk ? groupIdFromMasterKey(mk) : hex ? Buffer.from(hex, 'hex') : null;
         if (!gid) continue;
-        const conv: P.ConversationFact = { nativeId: `group:${gid.toString('base64')}`, shape: 'group', encrypted: true };
+        const conv: P.ConversationFact = { nativeId: groupConvId(gid.toString('base64')), shape: 'group', encrypted: true };
         if (g?.title) conv.name = g.title;
         const ms = g ? members.get(g.group_id) : undefined;
         if (ms?.length) conv.participants = [...new Set(ms)];
         conversations.set(r._id, conv);
       }
     }
-    const chats = new Map<number, { conversation: P.ConversationFact; messages: ImportMessageFact[]; people: Set<string> }>();
+    const chats = new Map<number, ChatFacts<ImportMessageFact>>();
     for (const t of db.query('SELECT _id, recipient_id, archived FROM thread').all() as Row[]) {
       const conv = conversations.get(t.recipient_id);
       if (conv) chats.set(t._id, { conversation: { ...conv, ...(t.archived ? { archived: true } : {}) }, messages: [], people: new Set() });
@@ -448,6 +431,14 @@ export function mapLegacy(dbPath: string, o: { selfId: string; mediaDir: string;
           options: (db.query('SELECT option_text FROM poll_option WHERE poll_id = ? ORDER BY option_order').all(p._id) as Row[]).map((x) => x.option_text ?? ''),
         });
     const byId = db.query('SELECT * FROM message WHERE _id = ?');
+    /** Whose story a reply or reaction answers, and when it was posted (parent_story_id is negative for a group's). */
+    const storyOf = (row: Row): { author: string | null; ts: number } | null => {
+      if (!row.parent_story_id) return null;
+      const story = byId.get(Math.abs(Number(row.parent_story_id))) as Row | null;
+      if (!story) return { author: null, ts: 0 };
+      const author = OUTGOING.has(Number(story.type ?? 0) & BASE) ? self : (idOf.get(story.from_recipient_id) ?? null);
+      return { author, ts: Number(story.date_sent ?? 0) };
+    };
 
     const fileFact = (a: Row): P.AttachmentFact | null => {
       if (!a.sha) {
@@ -460,7 +451,7 @@ export function mapLegacy(dbPath: string, o: { selfId: string; mediaDir: string;
         return null;
       }
       stats.files.linked++;
-      const f: P.AttachmentFact = { nativeId: a.sha, kind: attachmentKind(a.content_type), url: `file://${dest}`, name: a.file_name || a.sha + a.ext };
+      const f: P.AttachmentFact = { nativeId: a.sha, kind: attachmentKind(String(a.content_type ?? '').toLowerCase()), url: `file://${dest}`, name: a.file_name || a.sha + a.ext };
       if (a.content_type) f.mime = a.content_type;
       const size = a.data_size || a.blob_size;
       if (size) f.size = size;
@@ -521,17 +512,7 @@ export function mapLegacy(dbPath: string, o: { selfId: string; mediaDir: string;
         continue;
       }
       const m = mapRow(row);
-      if (!m) continue;
-      if (seen.has(m.nativeId)) {
-        stats.duplicates++;
-        continue;
-      }
-      seen.add(m.nativeId);
-      m.conversation = chat.conversation.nativeId;
-      chat.messages.push(m);
-      chat.people.add(m.author);
-      if (m.author === self) stats.selfMessages++;
-      if (m.gone) stats.gone[m.gone.how]++;
+      if (m && addMessage(chat, m, seen, self, stats) && m.gone) stats.gone[m.gone.how]++;
     }
 
     function mapRow(row: Row): ImportMessageFact | null {
@@ -543,14 +524,14 @@ export function mapLegacy(dbPath: string, o: { selfId: string; mediaDir: string;
       if (row.m_type === MMS_NOTIFICATION) return (skip('mms never downloaded'), null);
       if (QUIET[base]) return (skip(QUIET[base]), null);
       if (type & END_SESSION || type & KEY_EXCHANGE_MASK || type & ENCRYPTION_FAILED) return (skip('session or safety number'), null);
-      if (special && special !== 0x2 && special !== 0x3) return (skip(SPECIAL[special] ?? 'other update'), null);
+      if (special && special !== STORY_REACTION && special !== 0x2 && special !== 0x3) return (skip(SPECIAL[special] ?? 'other update'), null);
 
       const outgoing = OUTGOING.has(base);
       const author = outgoing ? self : (idOf.get(row.from_recipient_id) ?? null);
       if (!author) return (skip('author without an ACI or number'), null);
       const orig = row.original_message_id ? (byId.get(row.original_message_id) as Row | null) : null;
       const ts = Number(orig?.date_sent ?? row.date_sent ?? 0);
-      const m: ImportMessageFact = { nativeId: `${author}:${ts}`, conversation: '', author, ts, body: '' };
+      const m: ImportMessageFact = { nativeId: msgId(author, ts), conversation: '', author, ts, body: '' };
       if (orig && Number(row.date_sent) !== ts) m.editedTs = Number(row.date_sent);
       const extra: Record<string, unknown> = {};
       if (sms) extra.sms = row.m_type === MMS_SEND || row.m_type === MMS_RETRIEVED ? 'mms' : 'sms';
@@ -567,7 +548,7 @@ export function mapLegacy(dbPath: string, o: { selfId: string; mediaDir: string;
       if (row.view_once) {
         // Respect the sender: view-once media stays on the phone, as live sync does.
         m.kind = 'media';
-        m.body = '📷 View-once media (open it on your phone)';
+        m.body = VIEW_ONCE_BODY;
         extra.viewOnce = true;
       } else if (type & TIMER_UPDATE) {
         const secs = Math.round(Number(row.expires_in ?? 0) / 1000);
@@ -584,11 +565,16 @@ export function mapLegacy(dbPath: string, o: { selfId: string; mediaDir: string;
       } else if (type & GROUP_UPDATE) {
         m.kind = 'system';
         m.body = `${who} updated the group.`;
+      } else if (special === STORY_REACTION) {
+        // A reaction to a story: the emoji is its body.
+        const story = storyOf(row);
+        if (!story || !row.body) return (skip('story reaction'), null);
+        extra.storyReply = { ...story, emoji: String(row.body) };
       } else if (special === 0x2) m.body = '🎁 Gift badge';
       else if (special === 0x3) m.body = '💸 Payment';
       else if (polls.has(row._id) || (orig && polls.has(orig._id))) {
         const p = polls.get(row._id) ?? polls.get(orig!._id)!;
-        m.body = [`📊 **${p.question}**${p.multiple ? ' (multiple choice)' : ''}`, ...p.options.map((x) => `• ${x}`)].join('\n');
+        m.body = pollBody(p.question, p.options, p.multiple);
         extra.poll = { question: p.question, options: p.options, allowMultiple: p.multiple };
       } else if (row.shared_contacts) {
         m.body = sharedContact(row.shared_contacts);
@@ -611,13 +597,10 @@ export function mapLegacy(dbPath: string, o: { selfId: string; mediaDir: string;
           const files = own.filter((a) => !a.quote && a !== long);
           const facts = files.map(fileFact).filter((a): a is P.AttachmentFact => !!a);
           m.kind = facts.length ? 'media' : 'text';
-          const used = new Set<string>();
-          for (const [i, a] of facts.entries()) {
-            if (used.has(a.nativeId!)) a.nativeId = `${a.nativeId}#${i}`;
-            used.add(a.nativeId!);
-          }
+          distinctFiles(facts);
           if (facts.length) m.attachments = facts;
-          if (row.parent_story_id) extra.storyReply = true;
+          const story = storyOf(row);
+          if (story) extra.storyReply = story;
           if (row.quote_id) {
             const qa = aciOf.get(row.quote_author) ?? null;
             const qts = Number(row.quote_id);
@@ -626,7 +609,7 @@ export function mapLegacy(dbPath: string, o: { selfId: string; mediaDir: string;
             extra.quote = { author: qa, ts: qts || null, text: fromSignal(row.quote_body ?? ''), ...(qatts.length ? { attachments: qatts.map((a) => ({ mime: a.content_type ?? null, name: a.file_name ?? null })) } : {}) };
           }
           if (!m.body && !facts.length) {
-            if (files.length) m.body = '📎 Attachment (not in the backup)';
+            if (files.length) m.body = MISSING_FILE_BODY;
             else if (m.gone) return (skip(`${m.gone.how}, nothing kept`), null);
             else return (skip('empty'), null);
           }
@@ -638,14 +621,7 @@ export function mapLegacy(dbPath: string, o: { selfId: string; mediaDir: string;
       return m;
     }
 
-    for (const c of chats.values()) {
-      if (!c.messages.length) continue;
-      stats.conversations++;
-      stats.messages += c.messages.length;
-      const people = new Set([...c.people, ...(c.conversation.participants ?? [])]);
-      emit({ t: 'conversation', conversation: c.conversation, identities: [...people].map((p) => identities.get(p)).filter(Boolean), messages: c.messages.length });
-      for (const m of c.messages) emit({ t: 'message', m });
-    }
+    emitChats(chats.values(), identities, stats, emit);
     return stats;
   } finally {
     db.close();
@@ -659,7 +635,7 @@ function sharedContact(json: string): string {
     const nm = c.name ?? {};
     const name = joinName(nm.prefix, nm.givenName, nm.middleName, nm.familyName, nm.suffix) ?? nm.nickname ?? c.organization ?? 'Contact';
     const values = [...(c.phoneNumbers ?? []).map((x: Row) => x.number), ...(c.emails ?? []).map((x: Row) => x.email)].filter(Boolean);
-    return `👤 ${name}${values.length ? ' · ' + values.join(', ') : ''}`;
+    return contactLine(name, values);
   } catch {
     return '👤 Contact';
   }

@@ -492,6 +492,18 @@ describe('files', () => {
     expect(readdirSync(join(w.dir, 'mail-outbox'))).toEqual([]);
   });
 
+  test('the same upload attached twice goes twice', async () => {
+    const w = await world();
+    const up = w.uploads.put(new TextEncoder().encode('twice'), 'twice.txt', 'text/plain');
+    const file = { uploadId: up.id, name: 'twice.txt', mime: 'text/plain', size: 5 };
+    const { outboxId } = await clock.wait(w.hub.outbox.accept(reply(w, { files: [file, { ...file, name: 'again.txt' }] })));
+    await until(() => state(w, outboxId) === 'sent');
+    expect(w.fake.sent[0].files.map((f) => [f.filename, new TextDecoder().decode(f.bytes)])).toEqual([
+      ['twice.txt', 'twice'],
+      ['again.txt', 'twice'],
+    ]);
+  });
+
   test('as base64 when the manager is elsewhere', async () => {
     const w = await world();
     w.fake.localFiles = false;

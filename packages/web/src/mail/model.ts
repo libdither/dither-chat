@@ -8,7 +8,8 @@
  * longer does comes out.
  */
 import type * as P from '@dither-chat/protocol';
-import { parseMailList, parseWithList, viewList } from '@dither-chat/protocol';
+import { MAIL_PLATFORM_NAMES, mailPlatform, parseMailList, parseWithList, platformScope, viewList } from '@dither-chat/protocol';
+import { inboxView, type Ranked } from '../ordering.ts';
 
 interface MailList {
   key: string;
@@ -46,6 +47,9 @@ export function emptyMail(): MailState {
 /** Newest first; ties by id, as the hub pages them. */
 const threadOrder = (a: P.MailThreadView, b: P.MailThreadView) => b.lastAt - a.lastAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 
+/** The page's mail accounts, for a platform's list (set where the state lives, so inList stays a plain function). */
+export const scopeAccounts = { of: (_id: string): P.MailAccountView | null => null };
+
 /** Whether a thread belongs in a list. */
 export function inList(key: string, t: P.MailThreadView): boolean {
   // Everything with someone (slice 6): the hub's page says which; a changed thread joins by its people.
@@ -55,10 +59,16 @@ export function inList(key: string, t: P.MailThreadView): boolean {
   if (!l) return false;
   if ('mailbox' in l) return t.mailboxIds.includes(l.mailbox);
   if (l.accountId && t.accountId !== l.accountId) return false;
+  if (l.platform) {
+    const a = scopeAccounts.of(t.accountId);
+    if (!a || mailPlatform(a) !== l.platform) return false;
+  }
   switch (l.view) {
     case 'inbox':
       // Mail not from a person folds into Updates (slice 8); an unclassified thread stays.
       return t.roles.includes('inbox') && t.class !== 'bulk';
+    case 'all':
+      return t.roles.includes('inbox');
     case 'people':
       return t.roles.includes('inbox') && t.class === 'personal';
     case 'updates':
@@ -113,7 +123,7 @@ export interface UpdatesFold {
 export function updatesFold(s: MailState, key: string): UpdatesFold | null {
   const l = parseMailList(key);
   if (!l || 'mailbox' in l || l.view !== 'inbox') return null;
-  const ukey = viewList('updates', l.accountId);
+  const ukey = viewList('updates', l.platform ? platformScope(l.platform) : l.accountId);
   const ts = listThreads(s, ukey);
   if (!ts.length) return null;
   const names: string[] = [];
@@ -229,6 +239,32 @@ export function hasMore(l: MailList | undefined): boolean {
   return !!l?.loaded && !l.dry && (!!l.next || (!l.complete && !l.pending && l.ids.length > 0));
 }
 
+/** Whether a list key sorts by rank when this device ranks: Inbox, of any scope. Everything else is by date. */
+export function rankable(key: string): boolean {
+  const l = parseMailList(key);
+  return !!l && !('mailbox' in l) && l.view === 'inbox';
+}
+
+/**
+ * Inbox ranked (docs/mail.md "Ranked"): first the threads in it the hub scores for the one-list inbox (each mail
+ * `AttentionView`), in the inbox's own snapshot order (`snap`, inbox.ts), so a row moves only when the inbox's rows
+ * would, never under the pointer; then the rest, newest first, as the hub pages them. `head`: how many are ranked.
+ */
+export function rankedThreads(s: MailState, key: string, attention: Iterable<P.AttentionView>, snap: { keys: string[] } | null): { threads: P.MailThreadView[]; head: number } {
+  const dated = listThreads(s, key);
+  const scored: Ranked[] = [];
+  const byId = new Map<string, P.MailThreadView>();
+  for (const a of attention) {
+    if (a.kind !== 'mail') continue;
+    const t = s.threads.get(a.id);
+    if (!t || !s.accounts.has(t.accountId) || !inList(key, t)) continue;
+    scored.push({ key: t.id, score: a.score, last: t.lastAt, muted: t.muted });
+    byId.set(t.id, t);
+  }
+  const head = inboxView(snap, scored).map((id) => byId.get(id)!);
+  return { threads: [...head, ...dated.filter((t) => !byId.has(t.id))], head: head.length };
+}
+
 /** What a list shows: the loaded pages, or before they come, what the threads at hand say of it. */
 export function listThreads(s: MailState, key: string): P.MailThreadView[] {
   const l = s.lists.get(key);
@@ -269,17 +305,23 @@ export function listTitle(s: MailState, key: string): string {
   const l = parseMailList(key);
   if (!l) return 'Mail';
   if ('mailbox' in l) return s.mailboxes.get(l.mailbox)?.name ?? 'Mailbox';
-  const names: Record<string, string> = { inbox: 'Inbox', unread: 'Unread', starred: 'Starred', sent: 'Sent', people: 'People', updates: 'Updates' };
+  const names: Record<string, string> = { inbox: 'Inbox', all: 'Everything', unread: 'Unread', starred: 'Starred', sent: 'Sent', people: 'People', updates: 'Updates' };
   const acc = l.accountId ? s.accounts.get(l.accountId) : null;
+  if (l.platform) return `${names[l.view]} · ${MAIL_PLATFORM_NAMES[l.platform] ?? l.platform}`;
   return acc ? `${names[l.view]} · ${acc.address ?? acc.label}` : names[l.view];
 }
 
-/** The views the Mail section offers. Updates is also Inbox's folded row (slice 8). */
+/**
+ * The Mail section's chips: Inbox, ranked or newest first (its label follows `prefs.mailOrder`), the whole of Inbox, and its
+ * mail not from a person, which is also Inbox's folded row (slice 8).
+ */
 export const MAIL_VIEWS: { view: P.MailView; label: string }[] = [
-  { view: 'inbox', label: 'Inbox' },
-  { view: 'people', label: 'People' },
+  { view: 'inbox', label: 'Ranked' },
+  { view: 'all', label: 'Everything' },
   { view: 'updates', label: 'Updates' },
-  { view: 'unread', label: 'Unread' },
+];
+/** Views in the folder menu, above each account's mailboxes: newest first, of the scope in use. */
+export const MAIL_FOLDER_VIEWS: { view: P.MailView; label: string }[] = [
   { view: 'starred', label: 'Starred' },
   { view: 'sent', label: 'Sent' },
 ];
@@ -325,4 +367,26 @@ export function syncLine(accounts: P.MailAccountView[], now = Date.now()): strin
   if (busy.some((a) => a.sync.phase === 'relist')) return 'Refreshing…';
   const oldest = Math.min(...busy.map((a) => a.sync.oldest ?? Infinity));
   return `Syncing older mail · ${n}${Number.isFinite(oldest) ? `, back to ${day(oldest, now)}` : ''}`;
+}
+
+/** A problem is left unsaid this long: most come and go (a page loading, a restart signing in again). */
+export const PROBLEM_GRACE_MS = 10_000;
+
+/**
+ * What to say about an account that is not working, or null while there is nothing to say yet: access ended, or a
+ * problem that has lasted PROBLEM_GRACE_MS. `at`: when a
+ * problem kept quiet now becomes one to say (null when that is already so, or never).
+ */
+export function accountTrouble(a: P.MailAccountView, now = Date.now()): { message: string; at: null } | { message: null; at: number | null } {
+  if (a.level === null) return { message: 'dither-chat no longer has access to it.', at: null };
+  const p = a.problem;
+  if (!p) return { message: null, at: null };
+  if (p.since != null && now - p.since < PROBLEM_GRACE_MS) return { message: null, at: p.since + PROBLEM_GRACE_MS };
+  return { message: p.message, at: null };
+}
+
+/** An account's Inbox unread count, when its server says. */
+export function inboxUnread(s: { mailboxes: Map<string, P.MailboxView> }, accountId: string): number | null {
+  for (const b of s.mailboxes.values()) if (b.accountId === accountId && b.role === 'inbox') return b.unread;
+  return null;
 }

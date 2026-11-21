@@ -215,14 +215,17 @@ describe('in the hub', () => {
     att = new Attention(store, new Triage(store), () => clock);
     // Two years of turns, each person every four days (so each message starts a turn of its own): Ari and Cy ask and
     // get an answer; Bo and Di sign off and do not.
+    // One transaction: about 1,080 messages, each its own commit and fsync, took over 5 s on a busy machine's disk.
     const r = rng(4);
-    for (let i = 0; i < 720; i++) {
-      const at = T0 + i * DAY;
-      const who = ['ari', 'bo', 'cy', 'di'][i % 4];
-      const asks = who === 'ari' || who === 'cy';
-      say(`dm-${who}`, who, at, asks ? 'can you check this later?' : 'ok thanks');
-      if (asks ? r() < 0.9 : r() < 0.1) say(`dm-${who}`, 'me', at + (1 + 6 * r()) * HOUR, 'sure');
-    }
+    store.db.transaction(() => {
+      for (let i = 0; i < 720; i++) {
+        const at = T0 + i * DAY;
+        const who = ['ari', 'bo', 'cy', 'di'][i % 4];
+        const asks = who === 'ari' || who === 'cy';
+        say(`dm-${who}`, who, at, asks ? 'can you check this later?' : 'ok thanks');
+        if (asks ? r() < 0.9 : r() < 0.1) say(`dm-${who}`, 'me', at + (1 + 6 * r()) * HOUR, 'sure');
+      }
+    })();
     clock = T0 + 725 * DAY;
     settle();
     att.rescoreAll(clock);

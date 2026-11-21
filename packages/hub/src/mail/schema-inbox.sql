@@ -32,3 +32,17 @@ CREATE TABLE IF NOT EXISTS mail_author_feature (
 CREATE INDEX IF NOT EXISTS mail_author_feature_key ON mail_author_feature(author_key);
 
 CREATE INDEX IF NOT EXISTS mail_thread_listed ON mail_thread(listed) WHERE listed = 1;
+
+-- Every turn the fold of a thread from a person closed (attention.ts's onSettle), as owed_turn for chats: mail's owed
+-- table (owed.ts DEFAULT_MAIL_OWED_TABLE's shape) is fitted on them and on the turns still open (mail_feature.state).
+-- Folding a thread again writes its turns again.
+CREATE TABLE IF NOT EXISTS mail_owed_turn (
+  thread_id    TEXT NOT NULL REFERENCES mail_thread(id) ON DELETE CASCADE,
+  addressed    INTEGER NOT NULL,
+  shape        TEXT NOT NULL,
+  author_key   TEXT,
+  answered_at  INTEGER,                         -- NULL: it ran out (two weeks)
+  timed        INTEGER NOT NULL DEFAULT 1,
+  dismissed    INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (thread_id, addressed)
+) WITHOUT ROWID;

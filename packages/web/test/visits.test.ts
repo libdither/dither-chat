@@ -1,6 +1,6 @@
 /** The visit recorder behind activity.ts (docs/activity.md): stays, how they began, what happened, what gets sent. */
-import { expect, test } from 'bun:test';
-import { firstTap, TAPS_KEPT, VisitLog } from '../src/visits.ts';
+import { describe, expect, test } from 'bun:test';
+import { firstTap, shadowRankOf, TAPS_KEPT, VisitLog } from '../src/visits.ts';
 
 const T0 = Date.UTC(2026, 9, 1, 9);
 const S = 1000;
@@ -151,4 +151,29 @@ test('a push opened from again is not a tap: the Android app made again starts f
   for (let i = 0; i < TAPS_KEPT; i++) open(`x${i}`);
   expect(seen).toHaveLength(TAPS_KEPT);
   expect(open('n1')).toBe(true);
+});
+
+describe('where an inbox row would stand in the shadow order', () => {
+  const row = (shadow: number | null, score: number, muted = false) => ({ shadow, score, muted });
+  test('by the shadow score, muted last, ties in the list’s order; the score where a row has none', () => {
+    const rows = [row(10, 90), row(50, 80), row(null, 70), row(99, -50, true), row(50, 60)];
+    expect(shadowRankOf(rows, 0)).toBe(3);
+    expect(shadowRankOf(rows, 1)).toBe(1);
+    // No shadow of its own: its score, 70, stands above 50 and 10.
+    expect(shadowRankOf(rows, 2)).toBe(0);
+    expect(shadowRankOf(rows, 3)).toBe(4);
+    expect(shadowRankOf(rows, 4)).toBe(2);
+  });
+
+  test('null when the hub works out no shadow order, or there is no such row', () => {
+    expect(shadowRankOf([row(null, 1), row(null, 2)], 1)).toBeNull();
+    expect(shadowRankOf([row(3, 1)], 5)).toBeNull();
+  });
+});
+
+test('a mail thread opened from an inbox row keeps its id, its row, and where the shadow order had it', () => {
+  const log = fresh();
+  log.enter(T0, { view: 'mail', conversationId: 'mth_1' }, { source: 'inbox', rank: 4, score: 30, needs: true, shadowRank: 1 }, true);
+  log.update(T0 + 10 * S, true);
+  expect(log.take()[0]).toMatchObject({ view: 'mail', conversationId: 'mth_1', source: 'inbox', rank: 4, shadowRank: 1 });
 });

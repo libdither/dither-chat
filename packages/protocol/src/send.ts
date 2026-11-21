@@ -2,7 +2,9 @@
 import type { AccountView, ConversationView } from './api.ts';
 import { NETWORK_META } from './ontology.ts';
 
-export function sendBlocker(c: Pick<ConversationView, 'network' | 'encrypted' | 'variant'>, acc: Pick<AccountView, 'network' | 'label' | 'status' | 'capabilities'> | null | undefined): string | null {
+export function sendBlocker(c: Pick<ConversationView, 'network' | 'encrypted' | 'variant'> & { nativeId?: string }, acc: Pick<AccountView, 'network' | 'label' | 'status' | 'capabilities'> | null | undefined): string | null {
+  // Texts a Signal backup brought in, with someone not on Signal or an MMS group: Signal can't send SMS.
+  if (c.network === 'signal' && /^(sms|mms):/.test(c.nativeId ?? '')) return 'History only: Signal can’t send SMS';
   if (!acc) return 'No account can send here';
   if (acc.status !== 'online' && acc.status !== 'connecting') return `${NETWORK_META[acc.network].name} · ${acc.label} is ${acc.status === 'attention' ? 'waiting for you (see Accounts)' : acc.status}`;
   if (c.variant === 'forum') return c.network === 'telegram' ? 'Open a topic to reply' : 'Open a post to reply';

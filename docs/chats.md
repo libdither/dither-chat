@@ -199,13 +199,17 @@ What it adds to a conversation's page:
   account, the one most of its chats come through (`usualAccount` in `model.ts`). So a second account added for
   testing marks only its own chats, not every chat on that network.
 - **Under the name, where your message goes**, in the same words as a direct conversation of one route says it
-  (`SendLine` in `Pairs.tsx`): the network's icon and name, then `via` and your account's chip where you have more
-  than one account (the rule every conversation's header has, and a window under 820 px wide leaves the chip out, as
-  everywhere). Where their accounts on that network differ, it names theirs too (`Discord · to mo.draws · via
-  zyansheep`), by the same rule as the tags. It is the route messages go to now, the one the message box's line names.
-  The picture's badge in the header is that route's network, always. A direct conversation's header says no more
-  (until 2026-11-11 it had a crumb, `Discord › Direct messages › Ahzek`, that repeated the name; groups, channels and
-  servers keep their crumbs). **A chat of several routes adds one control after the line**, a pill of the other
+  (`SendLine` in `Pairs.tsx`): your account, as one chip with the network's icon in it (`FromChips` in `bits.tsx`;
+  the network's name in its place where no account of yours shows), on a computer and a phone alike. Where their
+  accounts on that network differ, it names theirs too (`[Discord icon] main · to mo.draws`), by the same rule
+  as the tags. It is the route messages go to now, the one the message box's line names. The picture's badge in the
+  header is that route's network, always. A direct conversation's header says no more (until 2026-11-11 it had a
+  crumb, `Discord › Direct messages › Ahzek`, that repeated the name). A group or channel's line has the same chip,
+  then where it is: its server and section for a channel (`libdither › General`), its parent for a thread, and for a
+  group how many people are in it (`6 people`). Until 2026-11-20 that line was `Discord › Groups › <the name again>
+  via ● account`, the network's name spelled out and the account only where you had more than one, and the
+  picture and name had a button's padding, so the name started 6 px right of the line under it; now they line up.
+  **A chat of several routes adds one control after the line**, a pill of the other
   routes' networks (their icons, at most three, left out on a phone) and how many routes more: `+7 ▾`. The whole line
   opens the list: press and drag down to a row and let go, click and click again, or Enter (or ↓) then the arrows,
   Enter and Escape. Picking a route shows its history alone and sends through it, without leaving the address; the

@@ -23,13 +23,14 @@ Devices only send to it.
 |---|---|
 | `id` | made by the device; the device sends the same visit again while it lasts |
 | `device`, `device_label` | a random id per install (localStorage), and "Firefox on Linux" / "Android app" |
-| `view` | `inbox`, `triage`, `conversation` (any open timeline: DM, group, channel, thread), `space`, `person`, `people`, `profile`, `folder`, `spaces`, `search`, `settings`, `accounts`, `directory` |
+| `view` | `inbox`, `triage`, `conversation` (any open timeline: DM, group, channel, thread), `space`, `person`, `people`, `profile`, `folder`, `spaces`, `search`, `settings`, `accounts`, `directory`, `mail` (the Mail page, or a thread with its id as `conversation_id`, since 2026-11-20) |
 | `conversation_id`, `space_id`, `person_id` | the place: the open conversation, its community, and for a DM the person |
 | `start_at`, `end_at` | when the stay began, and when it was last in use |
 | `active` | seconds in use, by the usage rules: page visible, window focused, input in the last 5 minutes, at most 30 s per tick |
 | `source` | how you got there (below) |
 | `push_id` | the notification tapped, for `notification` and `toast` |
 | `rank`, `score`, `needs` | from an inbox row: its position (0 = top), its attention score, and whether it needed you (before 2026-11-07, whether it was above the "caught up" line: the same thing) |
+| `shadow_rank` | from an inbox row, while the order with mail runs in shadow: where the row would have stood had the inbox been sorted by it (0 = top; [inbox.md](inbox.md#mail-in-the-learned-order), since 2026-11-20) |
 | `depth` | the deepest inbox row on screen during the stay (0 = top, counted as `rank` is), when the inbox's list was on screen: how far down you could have looked. A number, never which rows (since 2026-11-10) |
 | `read_to_id`, `read_to_ts` | the latest message when the conversation was marked read during the stay |
 | `sent`, `reactions`, `history`, `threads`, `attachments` | messages sent, reactions added, older pages loaded, threads and attachments opened |

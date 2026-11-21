@@ -36,9 +36,14 @@ export type OwedShape = 'direct' | 'group';
 export const owedShape = (shape: P.Shape): OwedShape => (shape === 'direct' ? 'direct' : 'group');
 
 export interface OwedTable {
+  /**
+   * The ages its chances are at, the last its window (nothing is owed from it on); absent: OWED_AGES, chat's three
+   * days. Mail's run to two weeks (MAIL_OWED_AGES).
+   */
+  ages?: number[];
   /** Upper edges of its reply-rate buckets (RATE_EDGES when fitted here). */
   rateEdges: number[];
-  /** P(answered within the window | still open at OWED_AGES[i]), by shape, then bucket, then age. */
+  /** P(answered within the window | still open at its ages[i]), by shape, then bucket, then age. */
   chance: Record<OwedShape, number[][]>;
   /** The mean reply rate of each bucket's turns, by shape: between two, the chance is drawn straight by rate. */
   rateMids: Record<OwedShape, number[]>;
@@ -75,6 +80,44 @@ export const DEFAULT_OWED_TABLE: OwedTable = {
   fittedAt: null,
 };
 
+/** The ages a table's chances are at. */
+const agesOf = (t: Pick<OwedTable, 'ages'>): readonly number[] => t.ages ?? OWED_AGES;
+/** A table's window: past it nothing is owed, and an answer later than it did not answer. */
+export const windowOf = (t: Pick<OwedTable, 'ages'>): number => {
+  const a = agesOf(t);
+  return a[a.length - 1];
+};
+
+/**
+ * Mail's ages (mail/attention.ts): an email is answered more slowly than a chat. Of the emails one person answered in
+ * 2024-26, 87% were answered within 3 days, 94% within a week and 97% within two weeks; in threads they had answered
+ * before, 8% of turns still open at 3 days were answered later, 3% of those open at a week.
+ */
+export const MAIL_OWED_AGES: readonly number[] = [0, HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR, DAY, 2 * DAY, 3 * DAY, 5 * DAY, 7 * DAY, 10 * DAY, 14 * DAY];
+/** Mail's reply-rate buckets: far lower than chat's, as most mail from a person is never answered. */
+const MAIL_RATE_EDGES: readonly number[] = [0.1, 0.25, 0.5, 0.75];
+
+/**
+ * Mail's table before the hub has fitted its own. Measured on one person's mail in 2024-26 where it could be (turns in
+ * threads never answered: about the lowest bucket; in threads answered before: about the middle one), the other
+ * buckets drawn between them and above; the hub fits its own once it has MIN_TURNS of a shape.
+ */
+const MAIL_ROWS = [
+  [0.05, 0.035, 0.025, 0.02, 0.015, 0.01, 0.006, 0.004, 0.002, 0.001, 0.0005, 0],
+  [0.2, 0.15, 0.12, 0.1, 0.08, 0.06, 0.04, 0.03, 0.02, 0.01, 0.005, 0],
+  [0.45, 0.36, 0.3, 0.26, 0.22, 0.18, 0.12, 0.08, 0.06, 0.033, 0.017, 0],
+  [0.65, 0.55, 0.48, 0.43, 0.38, 0.32, 0.23, 0.16, 0.12, 0.07, 0.035, 0],
+  [0.85, 0.75, 0.68, 0.62, 0.56, 0.48, 0.36, 0.26, 0.19, 0.12, 0.06, 0],
+];
+export const DEFAULT_MAIL_OWED_TABLE: OwedTable = {
+  ages: [...MAIL_OWED_AGES],
+  rateEdges: [...MAIL_RATE_EDGES],
+  chance: { direct: MAIL_ROWS.map((r) => [...r]), group: MAIL_ROWS.map((r) => r.map((c) => Math.round(c * 0.8 * 1000) / 1000)) },
+  rateMids: { direct: midpoints(MAIL_RATE_EDGES), group: midpoints(MAIL_RATE_EDGES) },
+  turns: { direct: [0, 0, 0, 0, 0], group: [0, 0, 0, 0, 0] },
+  fittedAt: null,
+};
+
 /** How often you answer this turn's author here: this conversation's rate, pulled toward theirs everywhere. */
 export function turnRate(conv: Tally | null, person: Tally | null): number {
   return replyRate(conv, replyRate(person, 0.5));
@@ -105,8 +148,9 @@ function between(xs: readonly number[], x: number): [number, number] {
  */
 export function owedChance(table: OwedTable, shape: P.Shape, rate: number, age: number): number {
   const rows = table.chance[owedShape(shape)];
-  if (!rows?.length || age >= OWED_AGES[OWED_AGES.length - 1]) return 0;
-  const [i, f] = between(OWED_AGES, Math.max(0, age));
+  const ages = agesOf(table);
+  if (!rows?.length || age >= ages[ages.length - 1]) return 0;
+  const [i, f] = between(ages, Math.max(0, age));
   const at = (row: number[]) => row[i] + (row[i + 1] - row[i]) * f;
   const mids = table.rateMids?.[owedShape(shape)] ?? midpoints(table.rateEdges);
   // Below the lowest bucket's middle, down to nothing at a rate of 0: someone you never answer is owed nothing.
@@ -139,7 +183,7 @@ interface FitOptions {
   /** The time it is: a turn not answered and younger than the window is still open, and says nothing yet. */
   now: number;
   prior?: OwedTable;
-  /** The reply-rate buckets' edges; RATE_EDGES by default. Another than the prior's leans on the prior's middle bucket. */
+  /** The reply-rate buckets' edges; the prior's by default. Another than the prior's leans on the prior's middle bucket. */
   edges?: readonly number[];
 }
 
@@ -152,10 +196,10 @@ export interface RatedTurn extends OwedTurn {
  * Each turn's reply rate as of its first message, from the turns that were over by then: the same tallies and the
  * same pull toward the author's rate everywhere as scoring uses (attention.ts `scoreConversation`).
  */
-export function rateTurns(turns: OwedTurn[]): RatedTurn[] {
+export function rateTurns(turns: OwedTurn[], window = WINDOW): RatedTurn[] {
   const byStart = [...turns].sort((a, b) => a.addressed - b.addressed);
   // A dismissed turn counts toward no rate, as in the fold (attention.ts `dismiss`).
-  const over = byStart.filter((t) => !t.dismissed).map((t) => ({ t, at: t.answeredAt ?? t.addressed + WINDOW })).sort((a, b) => a.at - b.at);
+  const over = byStart.filter((t) => !t.dismissed).map((t) => ({ t, at: t.answeredAt ?? t.addressed + window })).sort((a, b) => a.at - b.at);
   const conv = new Map<string, Tally>();
   const person = new Map<string, Tally>();
   const get = (m: Map<string, Tally>, k: string) => m.get(k) ?? m.set(k, emptyTally()).get(k)!;
@@ -165,8 +209,8 @@ export function rateTurns(turns: OwedTurn[]): RatedTurn[] {
     for (; j < over.length && over[j].at < t.addressed; j++) {
       const d = over[j].t;
       const latency = d.answeredAt === null ? null : d.answeredAt - d.addressed;
-      record(get(conv, d.conversationId), over[j].at, latency, d.timed);
-      if (d.authorKey) record(get(person, d.authorKey), over[j].at, latency, d.timed);
+      record(get(conv, d.conversationId), over[j].at, latency, d.timed, window);
+      if (d.authorKey) record(get(person, d.authorKey), over[j].at, latency, d.timed, window);
     }
     const c = conv.get(t.conversationId);
     const p = t.authorKey ? person.get(t.authorKey) : undefined;
@@ -178,19 +222,20 @@ export function rateTurns(turns: OwedTurn[]): RatedTurn[] {
 /** How long a turn was open: until your answer, else for good. */
 export const openFor = (t: OwedTurn) => (t.answeredAt === null ? Infinity : Math.max(0, t.answeredAt - t.addressed));
 /** Answered in time. */
-export const answeredInTime = (t: OwedTurn) => t.answeredAt !== null && t.answeredAt - t.addressed <= WINDOW;
+export const answeredInTime = (t: OwedTurn, window = WINDOW) => t.answeredAt !== null && t.answeredAt - t.addressed <= window;
 /** Whether a turn says anything about how open turns end: timed, and either answered or over its window. */
-export const settled = (t: OwedTurn, now: number) => t.timed && (t.answeredAt !== null || now - t.addressed >= WINDOW);
+export const settled = (t: OwedTurn, now: number, window = WINDOW) => t.timed && (t.answeredAt !== null || now - t.addressed >= window);
 
 /** Of these turns, how many were open at each age, and how many of those were answered in time. */
-function survival(ts: RatedTurn[]): { open: number[]; answered: number[] } {
-  const open = OWED_AGES.map(() => 0);
-  const answered = OWED_AGES.map(() => 0);
+function survival(ts: RatedTurn[], ages: readonly number[]): { open: number[]; answered: number[] } {
+  const open = ages.map(() => 0);
+  const answered = ages.map(() => 0);
+  const window = ages[ages.length - 1];
   for (const t of ts) {
     const o = openFor(t);
-    const y = answeredInTime(t);
-    for (let i = 0; i < OWED_AGES.length; i++) {
-      if (i > 0 && o <= OWED_AGES[i]) break;
+    const y = answeredInTime(t, window);
+    for (let i = 0; i < ages.length; i++) {
+      if (i > 0 && o <= ages[i]) break;
       open[i]++;
       if (y) answered[i]++;
     }
@@ -201,8 +246,8 @@ function survival(ts: RatedTurn[]): { open: number[]; answered: number[] } {
 /** Chances that lean on `prior` where there are few turns, and never rise with age. The last age owes nothing. */
 function smooth(s: { open: number[]; answered: number[] }, prior: number[]): number[] {
   let min = 1;
-  return OWED_AGES.map((_, i) => {
-    if (i === OWED_AGES.length - 1) return 0;
+  return s.open.map((_, i) => {
+    if (i === s.open.length - 1) return 0;
     const c = (s.answered[i] + PRIOR_TURNS * prior[i]) / (s.open[i] + PRIOR_TURNS);
     min = Math.min(min, c);
     return Math.round(min * 1000) / 1000;
@@ -215,9 +260,12 @@ function smooth(s: { open: number[]; answered: number[] }, prior: number[]): num
  */
 export function fitOwedTable(turns: OwedTurn[], o: FitOptions): OwedTable {
   const prior = o.prior ?? DEFAULT_OWED_TABLE;
-  const edges = [...(o.edges ?? RATE_EDGES)];
-  const rated = rateTurns(turns).filter((t) => settled(t, o.now) && (o.until === undefined || t.addressed < o.until));
-  const out: OwedTable = { rateEdges: edges, chance: { direct: [], group: [] }, rateMids: { direct: [], group: [] }, turns: { direct: [], group: [] }, fittedAt: o.now };
+  // The prior's ages and window: chat's, or mail's (DEFAULT_MAIL_OWED_TABLE).
+  const ages = [...agesOf(prior)];
+  const window = ages[ages.length - 1];
+  const edges = [...(o.edges ?? prior.rateEdges)];
+  const rated = rateTurns(turns, window).filter((t) => settled(t, o.now, window) && (o.until === undefined || t.addressed < o.until));
+  const out: OwedTable = { ...(prior.ages ? { ages } : {}), rateEdges: edges, chance: { direct: [], group: [] }, rateMids: { direct: [], group: [] }, turns: { direct: [], group: [] }, fittedAt: o.now };
   // The prior's row for a bucket: its own where the edges agree, else the prior's bucket for the middle of this one.
   const same = edges.length === prior.rateEdges.length && edges.every((e, i) => e === prior.rateEdges[i]);
   const priorRows = (shape: OwedShape) =>
@@ -237,11 +285,11 @@ export function fitOwedTable(turns: OwedTurn[], o: FitOptions): OwedTable {
       continue;
     }
     // The shape's own rows, from the prior's bucket rows averaged by how many turns each bucket has.
-    const whole = survival(mine);
+    const whole = survival(mine, ages);
     const weights = buckets.map((b) => b.length / mine.length);
-    const priorRow = OWED_AGES.map((_, i) => pr.reduce((a, r, b) => a + r[i] * weights[b], 0));
+    const priorRow = ages.map((_, i) => pr.reduce((a, r, b) => a + r[i] * weights[b], 0));
     const shapeRow = smooth(whole, priorRow);
-    out.chance[shape] = buckets.map((b) => smooth(survival(b), shapeRow));
+    out.chance[shape] = buckets.map((b) => smooth(survival(b, ages), shapeRow));
     // Nor fall as the rate rises: a bucket below its neighbour takes the neighbour's chance.
     for (let b = 1; b < out.chance[shape].length; b++) out.chance[shape][b] = out.chance[shape][b].map((c, i) => Math.max(c, out.chance[shape][b - 1][i]));
     out.turns[shape] = buckets.map((b) => b.length);
@@ -249,12 +297,14 @@ export function fitOwedTable(turns: OwedTurn[], o: FitOptions): OwedTable {
   return out;
 }
 
-/** Whether a stored table still fits this code: the same ages, a row per bucket. */
-export function validTable(t: unknown): t is OwedTable {
+/** Whether a stored table still fits this code: these ages (chat's, or `ages`: mail's), a row per bucket. */
+export function validTable(t: unknown, ages: readonly number[] = OWED_AGES): t is OwedTable {
   const x = t as OwedTable;
   if (!x || typeof x !== 'object' || !Array.isArray(x.rateEdges) || !x.chance) return false;
+  const own = agesOf(x);
+  if (own.length !== ages.length || own.some((a, i) => a !== ages[i])) return false;
   const ok = (rows: unknown) =>
-    Array.isArray(rows) && rows.length === x.rateEdges.length + 1 && rows.every((r) => Array.isArray(r) && r.length === OWED_AGES.length && r.every((v) => typeof v === 'number' && v >= 0 && v <= 1));
+    Array.isArray(rows) && rows.length === x.rateEdges.length + 1 && rows.every((r) => Array.isArray(r) && r.length === ages.length && r.every((v) => typeof v === 'number' && v >= 0 && v <= 1));
   const mids = (m: unknown) => Array.isArray(m) && m.length === x.rateEdges.length + 1 && m.every((v) => typeof v === 'number');
   return ok(x.chance.direct) && ok(x.chance.group) && !!x.rateMids && mids(x.rateMids.direct) && mids(x.rateMids.group);
 }

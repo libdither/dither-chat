@@ -10,7 +10,7 @@
 import type { Database } from 'bun:sqlite';
 import { readdirSync, readFileSync } from 'node:fs';
 import type * as P from '@dither-chat/protocol';
-import { interfaceTrouble, mailPreview, parseMailList, parseWithList, quoteStart } from '@dither-chat/protocol';
+import { interfaceTrouble, mailPlatform, mailPreview, parseMailList, parseWithList, quoteStart } from '@dither-chat/protocol';
 import { mailId } from '@dither-chat/protocol/ids';
 import type * as M from '@dither-chat/protocol/mail-iface';
 import { ACCOUNT_COLORS } from '../store.ts';
@@ -186,6 +186,12 @@ export class MailStore {
   accounts(): Row[] {
     return this.all('SELECT * FROM mail_account ORDER BY created_at, id');
   }
+  /** The ids of the accounts on a platform (mailPlatform): a `k.<platform>` list's. */
+  platformAccounts(platform: string): string[] {
+    return this.accounts()
+      .filter((a) => mailPlatform({ kind: a.kind, address: a.address }) === platform)
+      .map((a) => a.id);
+  }
   account(id: string): Row | null {
     return this.one('SELECT * FROM mail_account WHERE id = ?', id);
   }
@@ -264,16 +270,20 @@ export class MailStore {
     // With tagged layers, mail is fine when none of its own (or the shared ones) is waiting or failed, whatever the
     // account says of itself: its attention may be about the other interface.
     const mailFine = tagged && !interfaceTrouble(all, 'mail');
-    const problem =
+    const found: Omit<P.MailProblem, 'since'> | null =
       (st.status === 'online' && !att) || mailFine
         ? null
         : att?.message && (!tagged || !bad?.interface)
-          ? { layer: failed?.name ?? bad?.name ?? null, message: att.message }
+          ? { layer: failed?.name ?? bad?.name ?? null, message: att.message, state: 'attention' }
           : bad
-            ? { layer: bad.name, message: bad.note ? `${bad.name}: ${bad.note}` : `${bad.name}: ${bad.state}` }
+            ? { layer: bad.name, message: bad.note ? `${bad.name}: ${bad.note}` : `${bad.name}: ${bad.state}`, state: bad.state === 'waiting' ? 'waiting' : 'failed' }
             : att?.message
-              ? { layer: null, message: att.message }
+              ? { layer: null, message: att.message, state: 'attention' }
               : null;
+    // `since`: when the account last stopped working, kept while its trouble only changes its words (a start-up walks
+    // through several waiting layers), so the page can leave a short wait unsaid.
+    const hadSince = json<P.MailProblem | null>(was.problem, null)?.since;
+    const problem: P.MailProblem | null = found && { ...found, since: hadSince ?? Date.now() };
     const details = (st.details ?? {}) as Record<string, unknown>;
     const sendLayer = layers.find((l) => /send path|smtp/i.test(l.name));
     const prevSend = json<{ ok: boolean | null; why: string | null; at?: number; refused?: boolean }>(was.send, { ok: null, why: null });
@@ -631,9 +641,10 @@ export class MailStore {
         const { id, key } = this.identify(accountId, mailbox, s);
         const at = this.one<{ message_id: string }>('SELECT message_id FROM mail_location WHERE mailbox_id = ? AND native_id = ?', mailbox.id, s.id);
         if (at && at.message_id !== id) out.orphans.push(at.message_id);
-        const known = this.one('SELECT id, thread_id, thread_by, in_reply_to, refs, pending, seen, email_id FROM mail_message WHERE id = ?', id);
+        const known = this.one('SELECT id, account_id, thread_id, thread_by, in_reply_to, refs, pending, seen, email_id, from_addr, to_json, cc_json FROM mail_message WHERE id = ?', id);
         if (known) {
           if (s.emailId && !known.email_id) this.run('UPDATE mail_message SET email_id = ? WHERE id = ?', s.emailId, id);
+          this.fillRecipients(known, s.to, s.cc);
           this.applyFlags(known, s.flags, s.labels);
           // The extractor gives threading headers on summaries now (§13): a provisional thread may be wrong.
           if ((s.inReplyTo || s.references?.length) && !known.in_reply_to && !json<string[]>(known.refs, []).length) {
@@ -1053,6 +1064,7 @@ export class MailStore {
         now,
         now,
       );
+      this.fillRecipients(m, msg.to, msg.cc);
       const hasFiles = (msg.attachments ?? []).some((a) => !a.inline) ? 1 : m.has_attachments;
       this.run('UPDATE mail_message SET preview = ?, has_attachments = ? WHERE id = ?', mailPreview(text) ?? m.preview, hasFiles, messageId);
       const bulk = msg.bulk ? JSON.stringify(msg.bulk) : null;
@@ -1069,6 +1081,19 @@ export class MailStore {
       }
       for (const t of touched) this.recompute(t);
     })();
+  }
+
+  /**
+   * To and Cc for a message stored without either: Gmail on the web's list rows carry no recipients, its mail.get
+   * answers do. Who it was addressed to follows (a message to you, not a Bcc), and the thread's recompute after it
+   * (participants, class, what you owe) sees them. Recipients already here are kept as they are.
+   */
+  private fillRecipients(m: Row, to: M.MailAddress[] | undefined, cc: M.MailAddress[] | undefined) {
+    if (!to?.length && !cc?.length) return;
+    if (json<unknown[]>(m.to_json, []).length || json<unknown[]>(m.cc_json, []).length) return;
+    const addressed = addressedOf(this.selfAddresses(m.account_id), m.from_addr, to ?? [], cc ?? []);
+    this.run('UPDATE mail_message SET to_json = ?, cc_json = ?, addressed = ? WHERE id = ?', JSON.stringify(to ?? []), JSON.stringify(cc ?? []), addressed, m.id);
+    this.dirty.threads.add(m.thread_id);
   }
 
   touchBody(messageId: string) {
@@ -1206,7 +1231,9 @@ export class MailStore {
 
   /**
    * A page of a list, newest first. `before`: the cursor a page gave (`<lastAt>:<id>`). Inbox leaves out mail that is
-   * not from a person (its Updates row is the `updates` view); People is the rest of Inbox from people (slice 8).
+   * not from a person (its Updates row is the `updates` view); People is the rest of Inbox from people (slice 8); All is
+   * the whole of Inbox. Inbox's ranked order is the page's (web mail/model.ts `rankedThreads`): it pages by date here,
+   * and puts the threads the one-list inbox scores first.
    */
   listThreads(key: string, before: string | null, limit: number): P.MailThreadPage | null {
     const list = parseMailList(key);
@@ -1214,7 +1241,7 @@ export class MailStore {
     if (!list && withWho === null) return null;
     const where: string[] = [];
     const args: unknown[] = [];
-    let scope: { accounts: string | null; role: string | null; mailbox: string | null };
+    let scope: { accounts: string | string[] | null; role: string | null; mailbox: string | null };
     if (withWho !== null) {
       // Everything with someone (slice 6): any mailbox, any account.
       where.push('t.id IN (SELECT thread_id FROM mail_party WHERE address IN (SELECT value FROM json_each(?)))');
@@ -1236,15 +1263,20 @@ export class MailStore {
         where.push('t.account_id = ?');
         args.push(list.accountId);
       }
+      const platform = list.platform ? this.platformAccounts(list.platform) : null;
+      if (platform) {
+        where.push('t.account_id IN (SELECT value FROM json_each(?))');
+        args.push(JSON.stringify(platform));
+      }
       const role = list.view === 'sent' ? 'sent' : 'inbox';
-      if (list.view === 'inbox' || list.view === 'sent' || list.view === 'people' || list.view === 'updates') where.push(`EXISTS (SELECT 1 FROM json_each(t.roles) WHERE value = '${role}')`);
+      if (list.view === 'inbox' || list.view === 'all' || list.view === 'sent' || list.view === 'people' || list.view === 'updates') where.push(`EXISTS (SELECT 1 FROM json_each(t.roles) WHERE value = '${role}')`);
       // Classification (slice 8, classify.ts): an unclassified thread stays in Inbox.
       if (list.view === 'inbox') where.push(`(t.class IS NULL OR t.class != 'bulk')`);
       if (list.view === 'people') where.push(`t.class = 'personal'`);
       if (list.view === 'updates') where.push(`t.class = 'bulk'`);
       if (list.view === 'unread') where.push(`t.unread > 0 AND NOT EXISTS (SELECT 1 FROM json_each(t.roles) WHERE value IN ('junk', 'trash')) AND json_array_length(t.roles) > 0`);
       if (list.view === 'starred') where.push('t.flagged = 1');
-      scope = { accounts: list.accountId, role: list.view === 'sent' ? 'sent' : 'inbox', mailbox: null };
+      scope = { accounts: platform ?? list.accountId, role: list.view === 'sent' ? 'sent' : 'inbox', mailbox: null };
     }
     where.push('t.account_id IN (SELECT id FROM mail_account WHERE hidden = 0)');
     const cur = before?.match(/^(\d+):([\w-]+)$/);
@@ -1258,7 +1290,7 @@ export class MailStore {
     const more = rows.length > n;
     const boxes = scope.mailbox
       ? [this.mailbox(scope.mailbox)!]
-      : this.all(`SELECT complete FROM mailbox WHERE role = ? ${scope.accounts ? 'AND account_id = ?' : ''}`, scope.role, ...(scope.accounts ? [scope.accounts] : []));
+      : this.all(`SELECT complete FROM mailbox WHERE role = ? ${scope.accounts ? 'AND account_id IN (SELECT value FROM json_each(?))' : ''}`, scope.role, ...(scope.accounts ? [JSON.stringify([scope.accounts].flat())] : []));
     return {
       threads: page.map((r) => this.threadView(r)),
       next: more ? `${page[page.length - 1].last_at}:${page[page.length - 1].id}` : null,

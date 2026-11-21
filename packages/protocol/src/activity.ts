@@ -22,7 +22,10 @@ export type VisitView =
   | 'settings'
   | 'accounts'
   | 'directory'
-  /** Mail (docs/mail.md): the list or a thread, with no ids yet. */
+  /**
+   * Mail (docs/mail.md): the list, or a thread with its id as `conversationId` (`mth_`), from the Mail page or an
+   * inbox row. Before 2026-11-20 no ids, and a thread opened from the inbox was a `conversation` stay with its id.
+   */
   | 'mail'
   /** Requests waiting on you (docs/add.md). */
   | 'requests'
@@ -68,6 +71,11 @@ export interface VisitRecord {
   rank?: number | null;
   score?: number | null;
   needs?: boolean | null;
+  /**
+   * From an inbox row, while the order with mail is worked out in shadow (docs/inbox.md, "Mail in the learned order"):
+   * where the row would have stood among the same rows sorted by that order instead (0 = top).
+   */
+  shadowRank?: number | null;
   /** The deepest inbox row on screen during the stay (0 = top), when the inbox's list was on screen: how far you looked. */
   depth?: number | null;
   /** The latest message on screen when the conversation was marked read here. */

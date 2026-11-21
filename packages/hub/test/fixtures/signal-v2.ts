@@ -80,29 +80,38 @@ export function writeSyntheticV2(dir: string, o: { snapshot?: string } = {}) {
     [[2, [[1, 1], [5, []]]]], // Recipient: self
     [[2, [[1, 2], [2, [[1, id16(ALICE)], [4, 15550100001], [11, 'Alice'], [12, 'Liddell']]]]]],
     [[2, [[1, 3], [2, [[1, id16(BOB)], [3, 'bob.01'], [16, [[1, 'Bobby']]]]]]]],
-    [[2, [[1, 4], [2, [[4, 15550100009]]]]]], // a contact known only by number
+    [[2, [[1, 4], [2, [[4, 15550100009], [18, 'Dr'], [19, 'Dentist']]]]]], // a contact known only by number (SMS)
+    [[2, [[1, 6], [2, [[4, 72975]]]]]], // a short code
     [[2, [[1, 5], [3, [[1, MASTER_KEY], [5, [[2, [[1, 'Tea club']]], [7, [[1, id16(SELF)]]], [7, [[1, id16(ALICE)]]], [7, [[1, id16(BOB)]]]]]]]]]],
     [[3, [[1, 10], [2, 2]]]], // Chat with Alice
     [[3, [[1, 11], [2, 5]]]], // the group
     [[3, [[1, 12], [2, 1]]]], // Note to Self
     [[3, [[1, 13], [2, 4]]]], // the number-only contact
+    [[3, [[1, 14], [2, 6]]]], // the short code
     // Alice: text with bold and a mention of me.
     [[4, [[1, 10], [2, 2], [3, T + 1000], [8, [[1, T + 1001]]], [11, [[2, text('hey you, look', [[[1, 0], [2, 3], [4, 1]], [[1, 4], [2, 3], [3, id16(SELF)]]])]]]]]],
     // Me: a reply with the picture, Alice reacts.
     [[4, [[1, 10], [2, 1], [3, T + 2000], [9, []], [11, [[1, [[1, T + 1000], [2, 2], [3, text('hey you, look')]]], [2, text('a cat')], [3, [[1, pointer]]], [6, [[1, '❤️'], [2, 2], [3, T + 2500]]]]]]]],
     // Alice, edited once: the outer item is the latest, revisions the earlier ones.
     [[4, [[1, 10], [2, 2], [3, T + 3500], [6, [[1, 10], [2, 2], [3, T + 3000], [11, [[2, text('teh')]]]]], [11, [[2, text('the')]]]]]],
-    // Deleted, and an SMS: left out.
+    // Deleted: left out. An SMS from Alice before she was on Signal: in her chat, marked.
     [[4, [[1, 10], [2, 2], [3, T + 4000], [14, []]]]],
-    [[4, [[1, 10], [2, 2], [3, T + 4100], [7, true], [11, [[2, text('sms')]]]]]],
+    [[4, [[1, 10], [2, 2], [3, T + 4100], [7, true], [11, [[2, text('an old text')]]]]]],
+    // I reply to Alice's story; she reacts to mine.
+    [[4, [[1, 10], [2, 1], [3, T + 4200], [19, [[1, [[1, text('nice view')]]]]]]]],
+    [[4, [[1, 10], [2, 2], [3, T + 4300], [19, [[2, '🔥']]]]]],
     // The group: Bob writes, a missed call, a timer change.
     [[4, [[1, 11], [2, 3], [3, T + 5000], [11, [[2, text('hello club')]]]]]],
     [[4, [[1, 10], [2, 2], [3, T + 6000], [15, [[7, [[2, 1], [3, 1], [4, 3]]]]]]]],
     [[4, [[1, 11], [2, 1], [3, T + 7000], [15, [[2, [[1, []]]]]]]]],
     // Note to Self, with the same picture twice.
     [[4, [[1, 12], [2, 1], [3, T + 8000], [11, [[2, text('remember milk')], [3, [[1, pointer]]], [3, [[1, pointer]]]]]]]],
-    // From someone with no ACI: left out.
-    [[4, [[1, 13], [2, 4], [3, T + 9000], [11, [[2, text('who')]]]]]],
+    // Texts with someone not on Signal: theirs, my MMS with the picture, and a Signal message from no ACI (left out).
+    [[4, [[1, 13], [2, 4], [3, T + 9000], [7, true], [11, [[2, text('your appointment')]]]]]],
+    [[4, [[1, 13], [2, 1], [3, T + 9100], [7, true], [11, [[2, text('x-ray')], [3, [[1, pointer]]]]]]]],
+    [[4, [[1, 13], [2, 4], [3, T + 9200], [11, [[2, text('who')]]]]]],
+    // A short code.
+    [[4, [[1, 14], [2, 6], [3, T + 9500], [7, true], [11, [[2, text('your code is 000000')]]]]]],
   ];
   const gz = Bun.gzipSync(delimited(frames));
   const mainIv = randomBytes(16);

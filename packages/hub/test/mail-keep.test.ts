@@ -54,6 +54,8 @@ interface WorldOpts {
   /** The budget as it is (2 calls a second, a pause after a page's call); else lifted, for speed. */
   budget?: boolean;
   db?: Database;
+  /** More of the fake account's options. */
+  opts?: FakeOpts;
 }
 
 async function world(o: WorldOpts = {}): Promise<World> {
@@ -64,7 +66,7 @@ async function world(o: WorldOpts = {}): Promise<World> {
   const fake = new FakeMailBackend();
   fake.clock = clock;
   const details = o.details ? { ...(o.ids === 'gmail-web' ? GMAIL_WEB_DETAILS : {}), ...o.details } : undefined;
-  fake.addAccount(ACC, { email: ME, opts: { ids: o.ids ?? 'imap', ...(details ? { details } : {}) } });
+  fake.addAccount(ACC, { email: ME, opts: { ids: o.ids ?? 'imap', ...(details ? { details } : {}), ...o.opts } });
   if (o.other) fake.addAccount(OTHER, { email: 'other@example.com', opts: { ids: 'imap' } });
   o.seed?.(fake);
   const db = o.db ?? new Database(':memory:', { strict: true });
@@ -270,6 +272,50 @@ describe('the walk and the bodies', () => {
     const w2 = await world({ ids: 'gmail-web', seed, db, budget: true, details: { backgroundLane: true } });
     await clock.until(() => w2.fake.calls.some((c) => c.op === 'mail.list' && c.input.mailboxId === GMAIL_WEB.all && c.input.before), 600_000, 'the walk going on');
     expect(w2.fake.calls.find((c) => c.op === 'mail.list' && c.input.mailboxId === GMAIL_WEB.all && c.input.before)!.input.before).toBe(cursor);
+  });
+});
+
+describe('recipients', () => {
+  const addressed = (w: World) => w.hub.store.all<{ addressed: string; n: number }>("SELECT addressed, COUNT(*) AS n FROM mail_message WHERE account_id = ? GROUP BY addressed ORDER BY addressed", ACC);
+  const gets = (w: World) => w.fake.calls.filter((c) => c.op === 'mail.get').length;
+
+  test("summaries without To and Cc (Gmail on the web's list rows): each body brings them, and who it was addressed to follows", async () => {
+    const w = await world({ opts: { listRecipients: false }, seed: (f) => fillMailbox(f, ACC, 'INBOX', 9, { newest: NOW - 60_000, oldest: NOW - 30 * DAY, self: ME }) });
+    await kept(w);
+    expect(addressed(w)).toEqual([{ addressed: 'to', n: 9 }]);
+    expect(count(w, "mail_message WHERE account_id = ? AND to_json = '[]'", ACC)).toBe(0);
+    // Its thread's participants have you in them, as a message to you.
+    const t = w.hub.store.all<{ participants: string }>('SELECT participants FROM mail_thread WHERE account_id = ?', ACC);
+    expect(t.every((r) => r.participants.includes(ME))).toBe(true);
+    // Nothing is read twice: every message had its recipients from its first read.
+    expect(keeper(w).nextRecipients(ACC)).toEqual([]);
+  });
+
+  test("mail kept before without them is read again once each, a person's first, newest first", async () => {
+    const w = await world({ opts: { listRecipients: false }, seed: (f) => fillMailbox(f, ACC, 'INBOX', 9, { newest: NOW - 60_000, oldest: NOW - 30 * DAY, self: ME }) });
+    await kept(w);
+    // As a hub from before kept them: bodies here, no recipients.
+    w.db.exec(`UPDATE mail_message SET to_json = '[]', cc_json = '[]', addressed = 'hidden'`);
+    w.db.query("UPDATE mail_thread SET class = 'bulk' WHERE account_id = ?").run(ACC);
+    const person = w.hub.store.one<{ thread_id: string }>('SELECT thread_id FROM mail_message WHERE account_id = ? ORDER BY received_at LIMIT 1', ACC)!.thread_id;
+    w.db.query("UPDATE mail_thread SET class = 'personal' WHERE id = ?").run(person);
+    const order = keeper(w).nextRecipients(ACC);
+    expect(order.length).toBe(9);
+    const personal = w.hub.store.all<{ id: string }>('SELECT id FROM mail_message WHERE thread_id = ? ORDER BY received_at DESC, id DESC', person).map((r) => r.id);
+    expect(order.slice(0, personal.length)).toEqual(personal);
+    const before = gets(w);
+    keeper(w).arrived(ACC);
+    keeper(w).kick(ACC);
+    await clock.until(() => count(w, 'mail_recipients_read') === 9, 3_600_000, 'every message read again');
+    expect(gets(w) - before).toBe(9);
+    expect(addressed(w)).toEqual([{ addressed: 'to', n: 9 }]);
+    // Each once: none is asked again, even one whose server copy has no To or Cc.
+    w.db.exec(`UPDATE mail_message SET to_json = '[]', cc_json = '[]'`);
+    keeper(w).arrived(ACC);
+    keeper(w).kick(ACC);
+    await clock.advance(10 * 60_000);
+    expect(gets(w) - before).toBe(9);
+    expect(keeper(w).nextRecipients(ACC)).toEqual([]);
   });
 });
 
