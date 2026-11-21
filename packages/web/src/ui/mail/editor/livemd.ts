@@ -12,7 +12,8 @@ import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate
 
 /** What a chip shows: an island's kind and label, a picture's bytes. */
 export interface Stands {
-  island: (ref: string) => { kind: string; label: string; size: number } | null;
+  /** `text`: what it adds to the text part (the Plain view shows it). */
+  island: (ref: string) => { kind: string; label: string; size: number; text?: string } | null;
   picture: (ref: string) => string | null;
 }
 
@@ -48,6 +49,36 @@ class Chip extends WidgetType {
     s.className = `md-chip md-chip-${this.kind}`;
     s.textContent = this.text;
     s.title = 'Kept as it is: open the HTML view to change it, or delete the line to take it out';
+    return s;
+  }
+  ignoreEvent() {
+    return false;
+  }
+}
+
+/** Plain: a forward's or a quote's text as it goes, read-only, with its name over it. */
+class IslandText extends WidgetType {
+  constructor(
+    readonly label: string,
+    readonly text: string,
+    readonly kind: string,
+  ) {
+    super();
+  }
+  eq(o: IslandText) {
+    return o.label === this.label && o.text === this.text;
+  }
+  toDOM() {
+    const s = document.createElement('span');
+    s.className = `md-island-text md-chip-${this.kind}`;
+    const head = document.createElement('span');
+    head.className = 'md-island-text-head';
+    head.textContent = this.label;
+    const body = document.createElement('span');
+    body.className = 'md-island-text-body';
+    body.textContent = this.text;
+    s.append(head, body);
+    s.title = 'Goes as it is: delete the line in Rich to take it out';
     return s;
   }
   ignoreEvent() {
@@ -163,8 +194,9 @@ function buildPlain(view: EditorView, stands: Stands): DecorationSet {
     const re = /^\[\[island:([\w-]+)\]\]$/gm;
     for (let m; (m = re.exec(text)); ) {
       const isl = stands.island(m[1]);
-      const label = isl ? `${isl.kind === 'forward' ? 'Forwarded message, as its text' : isl.kind === 'quote' ? 'Quoted text' : 'HTML, as its text'}${isl.label ? ` · ${isl.label}` : ''}` : 'Missing part';
-      out.push(Decoration.replace({ widget: new Chip(label, isl?.kind ?? 'gone') }).range(from + m.index, from + m.index + m[0].length));
+      const label = isl ? `${isl.kind === 'forward' ? 'Forwarded message' : isl.kind === 'quote' ? 'Quoted text' : 'HTML, as its text'}${isl.label ? ` · ${isl.label}` : ''} · goes as below` : 'Missing part';
+      const widget = isl?.text ? new IslandText(label, isl.text, isl.kind) : new Chip(label, isl?.kind ?? 'gone');
+      out.push(Decoration.replace({ widget }).range(from + m.index, from + m.index + m[0].length));
     }
   }
   return Decoration.set(out.sort((a, b) => a.from - b.from), true);

@@ -669,16 +669,24 @@ async function forwardWithPictures(tag: string) {
   // This thread's reader, not the one shown before the hash changed.
   // Its HTML drawn (the frame grows as it lays out, moving what is below it).
   await page.until(`document.querySelector('.mail-reader .mail-subject')?.textContent === ${JSON.stringify(sale.subject)} && !!document.querySelector('.mail-reader .mail-msg.open .mail-html.ready')`, 15000);
-  // Its picture bar: this mail's own choice (none, the ones that can't tell, all), from ⋯.
+  // Its picture bar: this mail's own choice (none, the ones unlikely to tell, all), from ⋯.
   await click(await at('.mail-img-more'));
   const picMenu = await page.eval<string[]>(`[...document.querySelectorAll('[role=menuitemradio]')].map((e) => e.textContent.trim())`);
-  check(`${tag}: the picture bar's ⋯ offers this mail none, only the ones that can't tell, or all`, ['No pictures', 'Only the ones that can’t tell', 'All pictures'].every((x) => picMenu.includes(x)), picMenu);
+  check(`${tag}: the picture bar's ⋯ offers this mail none, only the ones unlikely to tell, or all`, ['No pictures', 'Only the ones unlikely to tell', 'All pictures'].every((x) => picMenu.includes(x)), picMenu);
+  // A choice serves the mail again: its frame loads the new page and lays out, moving what is around it.
+  const frameSrc = `document.querySelector('.mail-reader .mail-msg.open .mail-frame')?.src ?? ''`;
+  const redrawn = async (before: string) =>
+    page.until(`${frameSrc} !== ${JSON.stringify(before)} && !!document.querySelector('.mail-reader .mail-msg.open .mail-html.ready')`, 10000).catch(() => {});
+  let before = await page.eval<string>(frameSrc);
   await click(await at('[role=menuitemradio]', `el => el.textContent.trim() === 'No pictures'`));
   await page.until(`/not loaded/.test(document.querySelector('.mail-img-banner')?.textContent ?? '')`, 8000).catch(() => {});
+  await redrawn(before);
   check(`${tag}: No pictures, for this mail only`, /not loaded/.test(await page.eval<string>(`document.querySelector('.mail-img-banner')?.textContent ?? ''`)));
   await click(await at('.mail-img-more'));
+  before = await page.eval<string>(frameSrc);
   await click(await at('[role=menuitem]', `el => el.textContent.trim() === 'Back to the usual'`));
   await page.until(`!/not loaded|your choice/.test(document.querySelector('.mail-img-banner')?.textContent ?? '')`, 8000).catch(() => {});
+  await redrawn(before);
   await click(await at('.mail-reader-bar .hdr-btn, .mail-msg-actions .hdr-btn', `el => el.textContent.trim() === 'Forward'`));
   await page.until(`!!document.querySelector('.me-island[data-kind="forward"] iframe')?.contentDocument?.querySelector('img[data-dc-src]')`, 15000).catch(() => {});
   const isl = await page.eval<{ styled: boolean; pictures: number; trackers: number }>(`(() => { const d = document.querySelector('.me-island[data-kind="forward"] iframe')?.contentDocument; return { styled: !!d?.querySelector('.card[style*="border"]'), pictures: d?.querySelectorAll('img[data-dc-src]').length ?? 0, trackers: d ? [...d.querySelectorAll('img[data-dc-src]')].filter((i) => /track|\\/o\\//.test(i.dataset.dcSrc)).length : -1 }; })()`);
@@ -687,13 +695,23 @@ async function forwardWithPictures(tag: string) {
   // The hub's answer on which can tell (the newsletter's personal header) comes after the button draws, and widens it.
   await page.until(`!!document.querySelector('.mc-foot .mc-pics-btn .mc-seg-warn')`, 10000).catch(() => {});
   const picsBtn = await page.eval<string>(`document.querySelector('.mc-foot .mc-pics-btn')?.textContent ?? ''`);
-  check(`${tag}: the footer says how its pictures from the web go, and how many can tell`, /^\d+ · Link · 1 can tell$/.test(picsBtn), picsBtn);
+  // Link leaves out the one that can tell unless asked: the footer counts what goes.
+  check(`${tag}: the footer says how its pictures from the web go, and that the one that can tell is left out`, /^69 · Link · 1 left out$/.test(picsBtn), picsBtn);
+  // Plain shows the forward's text as it goes, not a chip.
+  await click(await at('.me-mode', `el => el.textContent === 'Plain'`));
+  await page.until(`!!document.querySelector('.me-plain.shown .md-island-text')`, 15000).catch(() => {});
+  const plainFwd = await page.eval<string>(`document.querySelector('.me-plain .md-island-text')?.textContent ?? ''`);
+  check(`${tag}: Plain shows the forwarded message's text`, plainFwd.includes('Forwarded message') && plainFwd.includes('Northbound Outfitters'), plainFwd.slice(0, 160));
+  await click(await at('.me-mode', `el => el.textContent === 'Rich'`));
+  await page.until(`!!document.querySelector('.me-rich.shown') && !!document.querySelector('.mc-pics-btn')`, 10000).catch(() => {});
   await click(await at('.mc-pics-btn'));
+  check(`${tag}: under Link, leaving out the one that can tell is on`, await page.eval<boolean>(`!!document.querySelector('.mc-pics-tell input')?.checked`));
   check(`${tag}: it opens the choice`, (await page.eval<string>(`document.querySelector('.mc-pics-pop')?.textContent ?? ''`)).includes('pictures from the web'));
   const linkLabel = await page.eval<string>(`[...document.querySelectorAll('.mc-seg-btn')].find((b) => b.textContent.startsWith('Link'))?.textContent ?? ''`);
   check(`${tag}: Link says on itself how many pictures can tell the original sender`, linkLabel === 'Link · 1 can tell', linkLabel);
   await click(await at('.mc-seg-btn', `el => el.textContent === 'Embed'`));
-  check(`${tag}: the footer button follows the choice`, / · Embed$/.test(await page.eval<string>(`document.querySelector('.mc-pics-btn')?.textContent ?? ''`)));
+  const embedBtn = await page.eval<string>(`document.querySelector('.mc-pics-btn')?.textContent ?? ''`);
+  check(`${tag}: the footer button follows the choice and counts what goes`, embedBtn === '69 · Embed · 1 left out', embedBtn);
   // The one that can tell was held in the reader, so the hub has not got it: Embed leaves it out rather than fetch it.
   const embedNote = await page.eval<string>(`document.querySelector('.mc-pics-note')?.textContent ?? ''`);
   check(`${tag}: Embed says it leaves out the picture that can tell`, embedNote.includes('1 picture that can tell is left out'), embedNote);

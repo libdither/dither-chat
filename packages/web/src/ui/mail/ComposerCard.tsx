@@ -324,6 +324,18 @@ function AddressField(props: {
 // ------------------------------------------------------------------ the editor
 
 const BAR_KEY = 'dither.mail.formatBar';
+/** How the last forward's pictures from the web went (Link, Embed, Leave out), for the next one on this device. */
+const PICTURES_KEY = 'dither.mail.pictures';
+const LINK_TELL_KEY = 'dither.mail.linkCanTell';
+const PICTURE_MODES = new Set(['link', 'embed', 'drop']);
+/** How a draft's pictures from the web go: its own choice, else the last one made here, else Link. */
+const picturesOf = (d: { pictures?: P.MailOutgoingPictures; linkCanTell?: boolean } | null | undefined): { pictures: P.MailOutgoingPictures; linkCanTell: boolean } => {
+  const last = pref(PICTURES_KEY);
+  return {
+    pictures: d?.pictures ?? (last && PICTURE_MODES.has(last) ? (last as P.MailOutgoingPictures) : 'link'),
+    linkCanTell: d?.linkCanTell ?? pref(LINK_TELL_KEY) === '1',
+  };
+};
 const pref = (k: string) => {
   try {
     return localStorage.getItem(k);
@@ -539,7 +551,10 @@ export function Composer({ open }: { open: ComposeOpen }) {
   }, [sig]);
 
   const total = (all?.files ?? []).reduce((n, f) => n + f.size, 0) + (d?.forwardParts ?? []).reduce((n, f) => n + f.size, 0) + files.filter((f) => f.job && f.job.status.value !== 'done').reduce((n, f) => n + f.file.size, 0);
-  const size = useDraftSize({ html: d?.html, text: d?.text ?? '', plainOnly: !!d?.plainOnly, mode: d?.pictures ?? 'link', files: total, accountId: d?.accountId ?? '', island: start?.island });
+  // A draft with no choice of its own goes as the last one made on this device (written into it only when it is sent,
+  // so a composer opened and closed leaves no draft).
+  const pics = picturesOf(d);
+  const size = useDraftSize({ html: d?.html, text: d?.text ?? '', plainOnly: !!d?.plainOnly, mode: pics.pictures, linkCanTell: pics.linkCanTell, files: total, accountId: d?.accountId ?? '', island: start?.island });
   // The hub counts files and the pictures inside the mail against the account's cap (base64 aside).
   const over = total + size.inside.bytes + size.embedded.bytes > totalCap(account);
 
@@ -648,7 +663,7 @@ export function Composer({ open }: { open: ComposeOpen }) {
       return;
     }
     clientId.current ??= newId();
-    const r = await send(key, { ...d, files: [...d.files, ...uploaded] }, clientId.current);
+    const r = await send(key, { ...d, ...picturesOf(d), files: [...d.files, ...uploaded] }, clientId.current);
     if (r.ok) {
       dropOrphans();
       mailCompose.value = null;
@@ -947,7 +962,16 @@ export function Composer({ open }: { open: ComposeOpen }) {
           >
             <span class="mc-fmt-aa">Aa</span>
           </button>
-          {d && !d.plainOnly && <PicturesChoice s={size} mode={d.pictures ?? 'link'} onMode={(m) => set({ pictures: m })} inlineParts={!!start?.inlineParts} />}
+          {d && !d.plainOnly && (
+            <PicturesChoice
+              s={size}
+              mode={pics.pictures}
+              onMode={(m) => (set({ pictures: m }), keepPref(PICTURES_KEY, m))}
+              linkCanTell={pics.linkCanTell}
+              onLinkCanTell={(v) => (set({ linkCanTell: v }), keepPref(LINK_TELL_KEY, v ? '1' : '0'))}
+              inlineParts={!!start?.inlineParts}
+            />
+          )}
           <SizeMeter s={size} cap={totalCap(account)} plainOnly={!!d?.plainOnly} />
           {sendBtn}
           <input

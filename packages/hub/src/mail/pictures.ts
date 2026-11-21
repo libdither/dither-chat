@@ -154,7 +154,12 @@ export function classifyPicture(url: string, ctx: ClassifyContext, shapedLikeTra
   // The host's own labels, but its last two (`a1b2c3d4e5f6a7b8.img.example.com`).
   if (!/^[\d.]+$|:/.test(host) && host.split('.').slice(0, -2).some(tokenIn)) return token;
   for (const [k, v] of u.searchParams) {
-    if (SAME_FOR_ALL.test(k)) continue;
+    // A version or cache key is the same for everyone only when it is short: a long one (a send's own millisecond
+    // stamp, a hash) can name the copy.
+    if (SAME_FOR_ALL.test(k)) {
+      if (tokenIn(v)) return token;
+      continue;
+    }
     if (ID_KEYS.test(k) && v.trim()) return { class: 'personal', why: `an id in its address (${k}=)` };
     if (tokenIn(v) || randomRun(k, 16)) return token;
   }

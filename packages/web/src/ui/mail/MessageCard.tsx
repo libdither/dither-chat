@@ -149,7 +149,7 @@ export function MessageCard({ message: m, thread, account, open, onToggle }: { m
 }
 
 /**
- * "188 KB (HTML 150 KB, files 20 KB) · pictures: 9 from 4 hosts, 1.2 MB, 2 not fetched yet; 3 not loaded": the mail
+ * "188 KB (HTML 150 KB, files 20 KB) · pictures: 9 from 4 hosts, 1.2 MB, 2 load when shown; 3 held back": the mail
  * as the server keeps it, and what showing its pictures fetches on top (docs/mail.md "Sizes").
  */
 function sizeLine(b: P.MailBodyView): string {
@@ -159,8 +159,8 @@ function sizeLine(b: P.MailBodyView): string {
   let out = `${bytes(total) || '0 B'}${parts.length ? ` (${parts.join(', ')})` : ''}`;
   const p = b.html?.pictures;
   if (p && p.items.length) {
-    const shown = [`${p.loaded} loaded from ${p.hosts} ${p.hosts === 1 ? 'host' : 'hosts'}`, p.bytes && bytes(p.bytes), p.unknown && `${p.unknown} not fetched yet`].filter(Boolean);
-    out += ` · pictures: ${shown.join(', ')}${p.held ? `; ${p.held} not loaded` : ''}`;
+    const shown = [`${p.loaded} loaded from ${p.hosts} ${p.hosts === 1 ? 'host' : 'hosts'}`, p.bytes && bytes(p.bytes), p.unknown && `${p.unknown} load when shown`].filter(Boolean);
+    out += ` · pictures: ${shown.join(', ')}${p.held ? `; ${p.held} held back` : ''}`;
   }
   return out;
 }

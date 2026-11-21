@@ -141,7 +141,7 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
     write there that the rich document can't hold as its own (a layout, a style sheet) stays exactly as written, as a
     block of its own.
   - **Plain**: plain text only, no HTML part (`MailDraft.plainOnly`): the text part exactly as it goes, a forward or a
-    quote as a chip for its text. No formatting buttons; pictures in the text are left out, and one pasted or dropped
+    quote as its text, exactly as it goes, read-only under its name. No formatting buttons; pictures in the text are left out, and one pasted or dropped
     here is attached. Markdown's marks stay as written; the bits of HTML it keeps (colour, alignment) go, their words
     kept, as the hub does for every text part. Rich again makes it HTML.
   - **A forward or a quote** is such a block (an island), drawn in a sandboxed frame with a bar: its name, size, Hide
@@ -154,10 +154,12 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
     A block of HTML of your own has **Edit HTML** on its bar, which opens the HTML view.
   - **Pictures from the web** in it (a forward's, a quote's, an address written in the HTML view) go as the footer's
     button says ("70 · Link · 1 can tell", beside the size, in sight however long the forward is), which opens the
-    choice: **Link** (the default: their app fetches them when they open it, and a personal one can tell the
-    original sender; Link says how many on itself, "Link · 2 can tell"), **Embed** (the hub fetches them now, through its image proxy, and sends them inside the mail:
+    choice (the last one made on the device is where a new mail starts): **Link** (the default: their app fetches them when they open it; one that can tell the
+    original sender is left out unless you untick "Leave out the ones that can tell", `MailDraft.linkCanTell`; Link
+    says how many can tell on itself, "Link · 2 can tell", and the footer counts what goes, "69 · Link · 1 left out"), **Embed** (the hub fetches them now, through its image proxy, and sends them inside the mail:
     nothing is fetched on their end; never linked instead: one that can't be fetched is left out, and so is one that can
-    tell unless the hub has it already, since fetching it now would tell the original sender; the choice says how many)
+    tell unless the hub has it already, since fetching it now would tell the original sender; the choice says how many,
+    and that loading it in the reader first lets it go inside)
     or **Leave out**.
     Backgrounds (a `background` attribute, a style's or a sheet's `url()` and `image-set()`'s first choice), an SVG
     `<image>` and a video's poster go the same way. Video and audio are linked as they are with Link, and taken out
@@ -266,7 +268,7 @@ files made without the hub surviving a reload of the page (its draft does).
 - **Pictures and trackers** (`hub/src/mail/pictures.ts`). Each picture from the web is one of three kinds:
   - a **tracker**: a 1-2 px or hidden image, or a known open-tracking service or path (`/track/open.php`, `/wf/open`,
     …). Removed, by default; kept ("Trackers: Keep" in Settings → Mail), they load whenever any pictures load (Ones
-    that can't tell or All) and are held under None. One
+    unlikely to tell or All) and are held under None. One
     mail's own choice comes first (`POST /api/mail/images { messageId, trackers: 'keep' | 'remove' | null }`; the
     reader's `pictures.trackersSource` says whether it was the mail's or the setting's).
   - **personal** ("can tell"): its address carries your address (plain, encoded, or hashed with MD5 or SHA), or an
@@ -275,13 +277,13 @@ files made without the hub surviving a reload of the page (its draft does).
     case, or 16+ in a random mix of cases; or an id-like query key (`uid`, `u`, `e`, `r`, `id`, `user`, `mc_eid`, …)
     with any value. Years (`/2024/`) and sizes (`1200x800`) are not ids. Fetching it can tell the sender you opened the mail. The rule leans this
     way: a file named by its content's hash is held needlessly, never the other way round.
-  - **shared** ("can't tell"): the same address in every copy; seen in mail from another sender too counts as shared
+  - **shared** ("unlikely to tell": a short id can slip through, so None is the only sure choice): the same address in every copy; seen in mail from another sender too counts as shared
     (not your own mail: your Sent copy of a forward carries the original's personal pictures).
-  Settings → Mail, **Load pictures**: None, **Ones that can't tell** (the default) or All. A sender's rule (Always or
+  Settings → Mail, **Load pictures**: None, **Ones unlikely to tell** (the default) or All. A sender's rule (Always or
   Never from them) and a choice for one mail come first. The bar over a mail says what happened ("12 pictures loaded ·
   3 held back (they would tell Sam you opened it) · 2 trackers removed"; on a phone without the why), with Load all,
   and ⋯ for this mail's own
-  choice (No pictures, Only the ones that can't tell, All pictures, or back to the usual), its trackers (kept or
+  choice (No pictures, Only the ones unlikely to tell, All pictures, or back to the usual), its trackers (kept or
   removed), the sender's rule, and **Details**: how many hosts the loaded ones come from, then every host, its kind,
   why, what happened to it and its size once the hub has it ("loads when shown" before). Links
   are not changed: a link can still tell the sender you clicked it. The bar stays when pictures that can tell were
@@ -291,7 +293,7 @@ files made without the hub surviving a reload of the page (its draft does).
   the message's policy still loads it. Public addresses only, checked for every address a name resolves to, and the
   request goes to the address that was checked (a name that changes its answer meanwhile gets nowhere); redirects
   checked again; no cookies or referrer; 10 MB at most; kept only if the bytes are an image (not SVG); 7 days in the
-  media cache. A picture the cache already has loads under "Ones that can't tell" whatever its kind (fetching it again
+  media cache. A picture the cache already has loads under "Ones unlikely to tell" whatever its kind (fetching it again
   would tell no one).
 - **Sizes of a mail you got.** The message's ▾ details have a Size row: the raw message as the server counts it, its
   HTML, text and files, and its pictures: how many loaded from how many hosts (`pictures.hosts`: the hosts of the

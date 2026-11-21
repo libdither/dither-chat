@@ -167,6 +167,9 @@ function picturesIn(html: string, r: Refs): string {
  */
 function plainText(md: string): string {
   const bare = md
+    // Lines of nothing but spaces (empty paragraphs) are blank lines; none at the start.
+    .replace(/^[ \t\u00a0]+$/gm, '')
+    .replace(/^(&nbsp;|\s)+/, '')
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/(p|h[1-6]|div|li|tr|blockquote)>/gi, '\n')
     .replace(/<\/?[a-z][^>]*>/gi, '')
@@ -174,6 +177,19 @@ function plainText(md: string): string {
   const t = document.createElement('textarea');
   t.innerHTML = bare;
   return t.value.replace(/\u00a0/g, ' ');
+}
+
+/** An island's words, a block a line, as near as the page can tell what the hub's text part will hold. */
+function islandWords(html: string): string {
+  const d = new DOMParser().parseFromString(html, 'text/html');
+  d.querySelectorAll('style, script, title').forEach((x) => x.remove());
+  d.querySelectorAll('br').forEach((x) => x.replaceWith('\n'));
+  d.querySelectorAll('p, div, h1, h2, h3, h4, h5, h6, li, tr, blockquote, table').forEach((x) => x.append('\n'));
+  return (d.body.textContent ?? '')
+    .replace(/[ \t\u00a0]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 /** The mail's HTML laid out to be read and edited: one block a line. */
@@ -455,7 +471,11 @@ export function MailEditor(p: MailEditorProps) {
       stands: {
         island: (ref) => {
           const i = r.islands.get(ref);
-          return i ? { kind: i.kind, label: i.label, size: new Blob([i.html]).size } : null;
+          if (!i) return null;
+          // The hub's own text while the island is as it made it; else its words, read from the HTML.
+          const made = props.current.initial.island?.island;
+          const text = made?.text && made.html === i.html ? made.text : islandWords(i.html);
+          return { kind: i.kind, label: i.label, size: new Blob([i.html]).size, text };
         },
         picture: (ref) => r.pictures.get(ref) ?? null,
       },

@@ -103,7 +103,7 @@ const draftHtml =
 
 describe('outgoingHtml', () => {
   test('link: pasted pictures become parts, web pictures keep their own addresses, the hub never shows', async () => {
-    const r = await outgoingHtml(draftHtml, ctx());
+    const r = await outgoingHtml(draftHtml, ctx({ linkCanTell: true }));
     expect(r.inline).toHaveLength(1);
     expect(r.html).toContain(`src="cid:${r.inline[0].contentId}"`);
     expect(r.html).toContain('src="https://cdn.store.example/a.png"');
@@ -114,6 +114,18 @@ describe('outgoingHtml', () => {
     expect(r.html).not.toContain('onclick');
     expect(r.html).not.toContain('dc-quote');
     expect([r.linked, r.embedded, r.dropped]).toEqual([2, 1, 0]);
+  });
+
+  test('link: the ones that can tell are left out unless asked for, and counted', async () => {
+    const r = await outgoingHtml(draftHtml, ctx());
+    expect(r.html).toContain('src="https://cdn.store.example/a.png"');
+    expect(r.html).not.toContain('img.store.example');
+    expect([r.linked, r.embedded, r.dropped]).toEqual([1, 1, 1]);
+    expect(r.leftOut).toEqual({ failed: 0, canTell: 1 });
+    // One the classifier says can tell, though the island did not hold it, goes the same way.
+    const c = await outgoingHtml(draftHtml, ctx({ canTell: (u) => u.includes('cdn.store') }));
+    expect(c.html).not.toContain('cdn.store.example');
+    expect(c.leftOut.canTell).toBe(2);
   });
 
   test('embed: pictures go inside the mail; one that can tell only when the hub has it, else it is left out', async () => {

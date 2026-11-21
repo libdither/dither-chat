@@ -70,7 +70,8 @@ export interface SizeLine {
   inside: { n: number; bytes: number };
   /** `leftOut`: ones Embed leaves out because fetching them now would tell the original sender (the hub has not got them). */
   embedded: { n: number; bytes: number; unknown: number; leftOut: number };
-  linked: { n: number; bytes: number; unknown: number; canTell: number };
+  /** `leftOut`: ones Link leaves out because they can tell (unless linkCanTell). */
+  linked: { n: number; bytes: number; unknown: number; canTell: number; leftOut: number };
   files: number;
   /** About what goes over the wire: the parts, the pictures and files as base64. */
   sent: number;
@@ -87,6 +88,8 @@ export function sizeLine(o: {
   plainOnly: boolean;
   pictures: DraftPictures;
   mode: P.MailOutgoingPictures;
+  /** With Link, the ones that can tell are linked too (MailDraft.linkCanTell). */
+  linkCanTell?: boolean;
   known: Map<string, { size: number | null; class: string; cached?: boolean }>;
   files: number;
 }): SizeLine {
@@ -94,13 +97,18 @@ export function sizeLine(o: {
   const html = o.plainOnly ? 0 : o.html;
   const inside = o.plainOnly ? { n: 0, bytes: 0 } : o.pictures.inside;
   const embedded = { n: 0, bytes: 0, unknown: 0, leftOut: 0 };
-  const linked = { n: 0, bytes: 0, unknown: 0, canTell: 0 };
+  const linked = { n: 0, bytes: 0, unknown: 0, canTell: 0, leftOut: 0 };
   if (!o.plainOnly && o.mode !== 'drop')
     for (const u of o.pictures.web) {
       const k = o.known.get(u);
       // Embed fetches no picture that can tell: one the hub has not got already is left out (docs/mail.md "Writing").
       if (o.mode === 'embed' && k && k.class !== 'shared' && k.cached === false) {
         embedded.leftOut++;
+        continue;
+      }
+      // Link leaves out the ones that can tell, unless asked to link them too.
+      if (o.mode === 'link' && !o.linkCanTell && k && k.class !== 'shared') {
+        linked.leftOut++;
         continue;
       }
       const into = o.mode === 'embed' ? embedded : linked;

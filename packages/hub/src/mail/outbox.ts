@@ -166,6 +166,7 @@ function cleanDraft(d: any): P.MailDraft {
     // The editor's (docs/mail.md "Writing"): kept only when given, so a draft from before it stays as it was.
     ...(typeof d?.html === 'string' && d.html.length <= HTML_MAX ? { html: d.html } : {}),
     ...(PICTURE_MODES.has(d?.pictures) ? { pictures: d.pictures } : {}),
+    ...(d?.linkCanTell === true ? { linkCanTell: true } : {}),
     ...(d?.plainOnly === true ? { plainOnly: true } : {}),
   };
 }
@@ -401,6 +402,7 @@ export class MailOutbox {
         ? null
         : await outgoingHtml(draft.html, {
             pictures: draft.pictures ?? 'link',
+            linkCanTell: draft.linkCanTell === true,
             inlineParts: !!acc!.inline_parts,
             resolve: (src) => this.pictures?.resolve(src) ?? null,
             fetchPicture: (url) => this.pictures?.fetchPicture(url) ?? Promise.resolve(null),

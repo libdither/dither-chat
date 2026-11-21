@@ -28,6 +28,7 @@ export function useDraftSize(o: {
   text: string;
   plainOnly: boolean;
   mode: P.MailOutgoingPictures;
+  linkCanTell?: boolean;
   files: number;
   accountId: string;
   /** The forward or quote as the hub made it (its text part's share). */
@@ -55,7 +56,7 @@ export function useDraftSize(o: {
       asking.current = false;
     };
   }, [key]);
-  const line = sizeLine({ text: o.text, islandText: m.islandText, html: m.html, plainOnly: o.plainOnly, pictures: m.pictures, mode: o.mode, known, files: o.files });
+  const line = sizeLine({ text: o.text, islandText: m.islandText, html: m.html, plainOnly: o.plainOnly, pictures: m.pictures, mode: o.mode, linkCanTell: o.linkCanTell, known, files: o.files });
   const canTellAll = m.pictures.web.filter((u) => known.get(u)?.class === 'personal').length;
   return { ...line, webCount: m.pictures.web.length, canTellAll };
 }
@@ -85,29 +86,54 @@ function usePopover() {
 }
 
 /** How the pictures from the web go, with what each choice does. */
-export function PicturesChoice({ s, mode, onMode, inlineParts }: { s: ReturnType<typeof useDraftSize>; mode: P.MailOutgoingPictures; onMode: (m: P.MailOutgoingPictures) => void; inlineParts: boolean }) {
+export function PicturesChoice({
+  s,
+  mode,
+  onMode,
+  linkCanTell,
+  onLinkCanTell,
+  inlineParts,
+}: {
+  s: ReturnType<typeof useDraftSize>;
+  mode: P.MailOutgoingPictures;
+  onMode: (m: P.MailOutgoingPictures) => void;
+  linkCanTell: boolean;
+  onLinkCanTell: (v: boolean) => void;
+  inlineParts: boolean;
+}) {
   const { open, setOpen, box } = usePopover();
   if (!s.webCount) return null;
+  const them = (n: number) => (n === 1 ? 'it' : 'them');
   const note =
     mode === 'link'
-      ? `Their app fetches ${s.webCount === 1 ? 'it' : 'them'} when they open it${s.linked.bytes || s.linked.unknown ? ` (${about(s.linked.bytes, s.linked.unknown)})` : ''}.${s.canTellAll ? ` ${plural(s.canTellAll, 'picture')} can tell the original sender it was opened.` : ''}`
+      ? `Their app fetches ${them(s.linked.n)} when they open it${s.linked.bytes || s.linked.unknown ? ` (${about(s.linked.bytes, s.linked.unknown)})` : ''}.${
+          s.linked.leftOut ? '' : s.canTellAll ? ` ${plural(s.canTellAll, 'picture')} can tell the original sender it was opened.` : ''
+        }`
       : mode === 'embed'
-        ? `Fetched now and sent inside the mail (${about(s.embedded.bytes, s.embedded.unknown)}, a third more as sent): nothing is fetched on their end.${s.embedded.leftOut ? ` ${plural(s.embedded.leftOut, 'picture')} that can tell ${s.embedded.leftOut === 1 ? 'is' : 'are'} left out: fetching ${s.embedded.leftOut === 1 ? 'it' : 'them'} would tell the original sender you opened it.` : ''} One that can’t be fetched is left out too.${inlineParts ? '' : ' This account sends them as data: pictures, which Gmail hides.'}`
+        ? `Fetched now and sent inside the mail (${about(s.embedded.bytes, s.embedded.unknown)}, a third more as sent): nothing is fetched on their end.${
+            s.embedded.leftOut
+              ? ` ${plural(s.embedded.leftOut, 'picture')} that can tell ${s.embedded.leftOut === 1 ? 'is' : 'are'} left out: fetching ${them(s.embedded.leftOut)} would tell the original sender you opened it. Load ${them(s.embedded.leftOut)} in the reader first to send ${them(s.embedded.leftOut)} inside.`
+              : ''
+          } One that can’t be fetched is left out too.${inlineParts ? '' : ' This account sends them as data: pictures, which Gmail hides.'}`
         : 'They are left out; their places close up.';
   const label = MODES.find((x) => x.m === mode)!.label;
+  // What goes, and what of it can tell or is left out, said on the button.
+  const leftOut = mode === 'link' ? s.linked.leftOut : mode === 'embed' ? s.embedded.leftOut : 0;
+  const goes = mode === 'drop' ? s.webCount : s.webCount - leftOut;
+  const warn = leftOut ? `${leftOut} left out` : mode === 'link' && s.canTellAll ? `${s.canTellAll} can tell` : '';
   return (
     <div class="mc-pics" ref={box}>
       <button
         type="button"
-        class={`mc-limit mc-pics-btn${mode === 'link' && s.canTellAll ? ' warn' : ''}`}
+        class={`mc-limit mc-pics-btn${warn ? ' warn' : ''}`}
         aria-expanded={open}
         title="How the pictures from the web go"
         onClick={() => setOpen(!open)}
       >
         <Icon name="image" size={13} />
-        <span class="mc-pics-n">{s.webCount} · </span>
+        <span class="mc-pics-n">{goes} · </span>
         {label}
-        {mode === 'link' && s.canTellAll > 0 && <span class="mc-seg-warn"> · {s.canTellAll} can tell</span>}
+        {warn && <span class="mc-seg-warn"> · {warn}</span>}
       </button>
       {open && (
         <div class="mc-size-pop mc-pics-pop" role="dialog" aria-label="Pictures from the web">
@@ -121,6 +147,12 @@ export function PicturesChoice({ s, mode, onMode, inlineParts }: { s: ReturnType
               </button>
             ))}
           </span>
+          {mode === 'link' && s.canTellAll > 0 && (
+            <label class="mc-pics-tell">
+              <input type="checkbox" checked={!linkCanTell} onChange={(e) => onLinkCanTell(!(e.currentTarget as HTMLInputElement).checked)} />
+              Leave out the {s.canTellAll === 1 ? 'one' : s.canTellAll} that can tell
+            </label>
+          )}
           <p class="mc-pics-note">{note}</p>
         </div>
       )}

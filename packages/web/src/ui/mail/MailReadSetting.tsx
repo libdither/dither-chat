@@ -51,7 +51,7 @@ export function MailReadSetting() {
           {(
             [
               ['none', 'None'],
-              ['shared', 'Ones that can’t tell'],
+              ['shared', 'Ones unlikely to tell'],
               ['all', 'All'],
             ] as const
           ).map(([v, label]) => (

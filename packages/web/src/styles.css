@@ -14722,6 +14722,21 @@ button.msg-edited.link:hover {
   vertical-align: middle;
   border-radius: 4px;
 }
+/* Plain: a forward's or a quote's text, as it goes, under its name; read-only, set off by a rule at its side. */
+.md-island-text {
+  display: block;
+  margin: 4px 0;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid var(--border);
+  color: var(--text-dim);
+  white-space: pre-wrap;
+}
+.md-island-text-head {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
 .md-chip {
   display: inline-block;
   padding: 2px 10px;
@@ -14930,6 +14945,13 @@ button.msg-edited.link:hover {
 }
 .mc-pics-what {
   margin: 0 0 6px;
+  color: var(--text);
+}
+.mc-pics-tell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
   color: var(--text);
 }
 .mc-pics-note {

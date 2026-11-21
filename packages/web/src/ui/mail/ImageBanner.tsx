@@ -1,7 +1,7 @@
 /**
  * The picture bar over a mail (docs/mail.md "Pictures and trackers"): what loaded, what is held back because loading it
  * would tell the sender you opened the mail, and the trackers that went: "3 loaded · 1 held back · 1 tracker removed ·
- * Load all · ⋯". The ⋯ menu sets this mail's own choice (none, only the ones that can't tell, or all; or back to the
+ * Load all · ⋯". The ⋯ menu sets this mail's own choice (none, only the ones unlikely to tell, or all; or back to the
  * usual), the sender's rule (Always or Never from them, or back to the setting), and opens Details: every picture's host, why it counts as what it is, what
  * happened to it and, once the hub has it, its size.
  *
@@ -33,7 +33,7 @@ async function refresh(ids: string[]) {
 }
 
 const CLASS_LABEL: Record<P.MailPicturesView['items'][number]['class'], string> = {
-  shared: 'can’t tell',
+  shared: 'unlikely to tell',
   personal: 'can tell',
   tracker: 'tracker',
 };
@@ -84,7 +84,7 @@ function PictureDetails({ p }: { p: P.MailPicturesView }) {
         </tbody>
       </table>
       <p class="mail-pic-note">
-        “Can’t tell”: the address is the same in every copy of the mail, so fetching it says someone opened some copy, not that you did. Everything comes through your hub, so no sender sees your
+        “Unlikely to tell”: the address looks the same in every copy of the mail, so fetching it says someone opened some copy, not that you did. A short id can slip through: No pictures is the only sure choice. Everything comes through your hub, so no sender sees your
         address. Links are not changed: a link can still tell the sender you clicked it.
       </p>
     </div>
@@ -94,7 +94,7 @@ function PictureDetails({ p }: { p: P.MailPicturesView }) {
 /** This mail's choice, from the ⋯ menu. */
 const THIS_MAIL: { v: P.MailSettings['pictures']; label: string }[] = [
   { v: 'none', label: 'No pictures' },
-  { v: 'shared', label: 'Only the ones that can’t tell' },
+  { v: 'shared', label: 'Only the ones unlikely to tell' },
   { v: 'all', label: 'All pictures' },
 ];
 

@@ -27,6 +27,13 @@ describe('classes', () => {
     expect(cls('https://blog.example/wp-content/uploads/2024/05/photo-1200x800.jpg')).toBe('shared');
     expect(cls('https://cdn.example/banners/summer-sale-2024-hero.png?v=3')).toBe('shared');
     expect(cls('https://cdn.example/email/WinterBanner2.png?width=600&utm_campaign=winter')).toBe('shared');
+    expect(cls('https://cdn.example/logo.png?v=3&t=2024&cb=12')).toBe('shared');
+  });
+
+  test('a version or cache key with a long value can name the copy', () => {
+    expect(cls('https://cdn.example/logo.png?t=1795282482751')).toBe('personal');
+    expect(cls('https://cdn.example/logo.png?v=a1b2c3d4e5f6a7b8')).toBe('personal');
+    expect(cls('https://cdn.example/logo.png?_=Zq81mXc2LpR7Tk4w')).toBe('personal');
   });
 
   test('when in doubt, personal: a long hex name or a UUID, though it may be a content hash', () => {

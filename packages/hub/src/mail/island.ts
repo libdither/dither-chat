@@ -295,7 +295,8 @@ export function islandOf(kind: 'forward' | 'quote', o: ComposeOriginal, content:
   const body = kind === 'forward' ? root : `<blockquote type="cite" style="${QUOTE_STYLE}">${root}</blockquote>`;
   // The fingerprint is of the text alone, so writing it into the head changes nothing it covers.
   const html = `${head.replace(/^<div /, `<div data-dc-text="${islandPrint(head + body)}" `)}${body}`;
-  return { kind, label: `${who}, ${when}`, html, textBytes: Buffer.byteLength(islandText({ kind, html }, o, tz)) };
+  const text = islandText({ kind, html }, o, tz);
+  return { kind, label: `${who}, ${when}`, html, text, textBytes: Buffer.byteLength(text) };
 }
 
 // ------------------------------------------------------------------ the mail that goes
@@ -310,6 +311,8 @@ interface InlinePart {
 
 export interface OutgoingCtx {
   pictures: P.MailOutgoingPictures;
+  /** With Link, link the ones that can tell too; else they are left out (counted in leftOut.canTell). */
+  linkCanTell?: boolean;
   /** The account takes inline parts (details.inlineParts); else pictures inside the mail are data: URLs. */
   inlineParts: boolean;
   /** A picture of this hub's (its proxy, an original's cid: part) as the address it stands for, or its bytes. */
@@ -337,8 +340,9 @@ interface Outgoing {
   dropped: number;
   failed: number;
   /**
-   * Pictures that were to go inside the mail and were left out instead: their bytes could not be had (`failed`), or
-   * fetching them now would tell the original sender (`canTell`: a personal one the hub did not have).
+   * Pictures that were to go and were left out instead: their bytes could not be had (`failed`), or they would tell the
+   * original sender (`canTell`: with Embed, a personal one the hub did not have; with Link, every one that can tell,
+   * unless `linkCanTell`).
    */
   leftOut: { failed: number; canTell: number };
 }
@@ -495,7 +499,14 @@ export async function outgoingHtml(html: string, ctx: OutgoingCtx): Promise<Outg
         return void made.set(k, got ? part(got.bytes, got.mime) : failed());
       }
       if (ctx.pictures === 'drop') return void made.set(k, null);
-      if (ctx.pictures === 'link') return void made.set(k, p.url);
+      if (ctx.pictures === 'link') {
+        // Linking one that can tell lets the original sender know it was opened: left out unless asked for.
+        if (!ctx.linkCanTell && (heldTells.has(k) || ctx.canTell(p.url))) {
+          out.leftOut.canTell++;
+          return void made.set(k, null);
+        }
+        return void made.set(k, p.url);
+      }
       // Embed: one that can tell only from the cache (fetching it now would tell); none linked instead.
       if (heldTells.has(k) || ctx.canTell(p.url)) {
         const got = await ctx.cachedPicture(p.url).catch(() => null);

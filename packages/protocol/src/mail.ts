@@ -349,6 +349,11 @@ export interface MailDraft {
   html?: string | null;
   /** Pictures from the web in it, when sent: linked as they are, embedded (fetched now and sent in the mail), or left out. */
   pictures?: MailOutgoingPictures;
+  /**
+   * With Link, the ones that can tell the original sender it was opened are linked too. Unset, they are left out: the
+   * rest are linked (docs/mail.md "Writing").
+   */
+  linkCanTell?: boolean;
   /** Sent as plain text only: no HTML part. */
   plainOnly?: boolean;
 }
@@ -372,6 +377,8 @@ export interface MailIsland {
    * makes its text from the HTML instead.
    */
   textBytes?: number;
+  /** That text itself, which the editor's Plain view shows (while the island is as made). */
+  text?: string;
 }
 
 /**
