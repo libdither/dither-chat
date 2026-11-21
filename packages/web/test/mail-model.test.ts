@@ -2,7 +2,7 @@
 import { expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
 import { mailPlatform, parseMailList, platformScope, viewList } from '@dither-chat/protocol';
-import { accountTrouble, applyMailBootstrap, PROBLEM_GRACE_MS, scopeAccounts, listTitle, applyMailEvent, emptyMail, inList, listThreads, mergePage, senderLine, unreadInbox, updatesFold } from '../src/mail/model.ts';
+import { accountTrouble, applyMailBootstrap, PROBLEM_GRACE_MS, scopeAccounts, listTitle, applyMailEvent, emptyMail, inList, listThreads, mergePage, rankable, rankedThreads, senderLine, unreadInbox, updatesFold } from '../src/mail/model.ts';
 
 const ACC = 'acc_a';
 const t = (id: string, lastAt: number, x: Partial<P.MailThreadView> = {}): P.MailThreadView => ({
@@ -161,4 +161,33 @@ test('a platform list: the threads of its accounts, by kind and address', () => 
   expect(parseMailList(viewList('inbox', 'acc_g1'))).toEqual({ view: 'inbox', accountId: 'acc_g1', platform: null });
   expect(['acc_g1', 'acc_g2', 'acc_p', 'acc_i'].filter((id) => inList(key, t(id, 1, { accountId: id })))).toEqual(['acc_g1', 'acc_g2']);
   expect(listTitle(s, key)).toBe('Inbox · Gmail');
+});
+
+test('Ranked: the scored threads first, by score, then the rest by date; Everything is all of Inbox', () => {
+  const s = boot([
+    t('new', 50),
+    t('owed', 40, { class: 'personal' }),
+    t('recent', 30, { class: 'personal' }),
+    t('news', 45, { class: 'bulk' }),
+    t('old', 10),
+    t('sentonly', 60, { roles: ['sent'], mailboxIds: ['mbx_sent'], class: 'personal' }),
+  ]);
+  const view = (id: string, score: number): P.AttentionView => ({ id, kind: 'mail', score, needs: false, reasons: [], owedSince: null, at: 0 });
+  // A chat's view and a thread not in Inbox (Sent only) are left out.
+  const attention = [view('recent', 20), view('owed', 60), { ...view('conv_x', 99), kind: undefined }, view('sentonly', 90)];
+  const r = rankedThreads(s, 'v:inbox:*', attention, null);
+  expect(ids(r.threads)).toEqual(['owed', 'recent', 'new', 'old']);
+  expect(r.head).toBe(2);
+  // The inbox's snapshot holds the order until it is taken again: a new score moves nothing yet; a newly scored one goes after.
+  const snap = { keys: ['conv_y', 'owed', 'recent'] };
+  expect(ids(rankedThreads(s, 'v:inbox:*', [view('recent', 80), view('owed', 60), view('new', 70)], snap).threads)).toEqual(['owed', 'recent', 'new', 'old']);
+  // Paged by date underneath: a loaded list's tail is its pages, whatever is ranked.
+  mergePage(s, 'v:inbox:*', { threads: [t('new', 50), t('owed', 40, { class: 'personal' })], next: '40:owed', complete: false, pending: false }, false);
+  expect(ids(rankedThreads(s, 'v:inbox:*', attention, null).threads)).toEqual(['owed', 'recent', 'new']);
+  // One account's: only its threads.
+  expect(rankedThreads(s, 'v:inbox:acc_other', attention, null).head).toBe(0);
+  // Only Inbox ranks; Everything holds the bulk too, newest first.
+  expect([rankable('v:inbox:*'), rankable(`v:inbox:${ACC}`), rankable('v:all:*'), rankable('v:updates:*'), rankable('mb:mbx_in')]).toEqual([true, true, false, false, false]);
+  expect(ids(listThreads(s, 'v:all:*'))).toEqual(['new', 'news', 'owed', 'recent', 'old']);
+  expect(listTitle(s, 'v:all:*')).toBe('Everything');
 });

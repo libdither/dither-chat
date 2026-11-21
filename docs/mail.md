@@ -7,9 +7,11 @@ Email beside your chats, through dither-accounts' `mail` interface. The design, 
 
 - **Mail in the rail**, after People, once the hub can read mail. A dot while Inbox has unread threads. On a phone it
   sits in Home with the rest; Ctrl+K finds Mail, its views and each mailbox.
-- **The list**: Inbox, Unread, Starred and Sent across every account, and any mailbox from the folder button. The views
-  are one row of chips that scrolls sideways, without a scrollbar: its edge fades while more chips lie past it, and the
-  chosen one is scrolled into view. Under "Mail", **whose mail** is two wheels (`ui/mail/ScopeWheel.tsx`):
+- **The list**: Inbox (ranked, or newest first), Everything and Updates across every account as one row of chips that
+  scrolls sideways, without a scrollbar: its edge fades while more chips lie past it, and the chosen one is scrolled
+  into view. The folder button has Starred and Sent (newest first, of the accounts showing) above each account's
+  mailboxes. **Everything** is the whole of Inbox, Updates too, newest first (`v:all:<scope>`); the old People and
+  Unread views have no chip but their links (`v:people:*`, `v:unread:*`) still list. Under "Mail", **whose mail** is two wheels (`ui/mail/ScopeWheel.tsx`):
   the platform (All mail, then Gmail, Proton, Outlook, Email: `mailPlatform`, by kind and address) when there is more
   than one, then the account (All of that platform's, or one) when it has more than one. Each shows the choice in use
   with dots for how many there are; a click turns it to the next (Shift+click back), as do the mouse wheel, a drag up or
@@ -21,6 +23,17 @@ Email beside your chats, through dither-accounts' `mail` interface. The design, 
   platform and All that hold them), the problem in its tooltip; with one account it links to dither-accounts. A problem
   says nothing for its first 10 seconds (`PROBLEM_GRACE_MS`, from the problem's `since`), so one that comes and goes
   never shows; lost access shows at once.
+- **Ranked** (`web/src/mail/model.ts` `rankedThreads`): Inbox puts first the threads the one-list inbox scores (each
+  mail `AttentionView`, below), in that inbox's own snapshot (`inbox.ts`), so a row moves only when the inbox's rows
+  would: never while a pointer, a finger, a menu or the keyboard is on a list, and the thread open in the reader keeps
+  its place until you leave it. Whatever score the hub sends is used, the learned order's too once it ranks mail. Under
+  a faint "The rest, newest first" line come the threads with no score (mail you have not had for a week and owe
+  nothing on, a sender nobody knows, anything not classified yet) by date, with the Updates row where its newest sorts
+  among them. They get no made-up score: a cheap one would only reorder old mail by guesswork, and by date it pages
+  as it always has. The hub pages Inbox by date (`<lastAt>:<id>` cursors) as before, and every scored thread comes in
+  the bootstrap's window, so the ranked rows are all there from the start and paging never meets a moving score.
+  **Newest**: tap the Ranked chip again (its two arrows say it turns) and Inbox is by date, the chip says Newest; tap it again to rank.
+  The choice is this device's (`prefs.mailOrder`). Everything, Updates, Starred, Sent and mailboxes are always by date.
 - **Rows**: threads newest first, bold while unread, with who wrote ("Alex, Jo, me"), how many messages, the subject, a
   star and a paper clip; each line ends in an ellipsis.
 - **The reader**: a thread's messages oldest first. Unread messages and the latest are open, the rest fold to a line:
@@ -300,7 +313,7 @@ follows mailboxes you open), so what happens to it there later reaches the hub o
   person nobody knows yet (`unknown`). People come before the bulk rules, so a newsletter's author you write to is a
   person. A thread is from a person if any message in it is. The rule that decided is kept (`class_why`).
 - **Mail → Inbox** leaves newsletters and notifications out: they fold into one **Updates** row ("Updates · 3 new",
-  who from), where its newest sorts; it opens the Updates view. **People** is the rest of Inbox, from people.
+  who from), where its newest sorts; it opens the Updates view. **Everything** has them in place, by date.
 - **"Not a person"** on a thread (its menu in Mail, the reader's ⋯, its row in the inbox) sends the thread and its
   latest sender to Updates, from now on. **"This is a person"** brings a sender back, and is offered for Updates and
   for a sender nobody knows. Nothing moves on the server: Updates is a view of Inbox. The hub emits `override`.
@@ -334,7 +347,9 @@ Opening a thread, from a mail row or the Mail page, is in the activity log as a 
 its row and where the shadow order had it when it came from the inbox. The learned order with mail (slice 10) learns
 from those (inbox.md, "Mail in the learned order").
 Tests: `hub/test/mail-classify.test.ts`, `mail-attention.test.ts`, `web/test/inbox-mail.test.ts`; `verify-inbox.ts`
-(mixed rows) and `verify-mail.ts` (Updates and People on a phone and a desktop in both themes, Not a person).
+(mixed rows) and `verify-mail.ts` (Updates, Ranked, Newest, Everything and an old People link on a phone and a desktop
+in both themes, Not a person). Ranked: `mail-attention.test.ts` ("Mail's ranked Inbox": every scored thread in the
+window, Inbox paged by date while a score changes), `web/test/mail-model.test.ts` (`rankedThreads`).
 
 ## Search (slice 7)
 

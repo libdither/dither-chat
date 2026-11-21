@@ -4,7 +4,8 @@
  * phone (390x844, touch) and a desktop, in the dark and the light theme:
  *
  *   - no errors on the page, and nothing runs sideways off the screen;
- *   - the rail's Mail entry, the list, the views in one row of chips (on a phone too);
+ *   - the rail's Mail entry, the list (Inbox ranked: the scored threads first), the views in one row of chips (on a
+ *     phone too);
  *   - on a phone: the list, a thread over it, and back (the button and the browser's back);
  *   - the reader: the latest and unread messages open, the quote folded behind ···, read here after a second; each
  *     folded message (yours too) with the start of its text; on a phone the subject whole, or on two lines with an
@@ -12,7 +13,9 @@
  *   - an HTML-only message shows (its HTML in the frame, or its text part), and none of its script;
  *   - the Accounts screen's Mail group;
  *   - from a person (slice 8): Inbox folds newsletters and notifications into one Updates row that opens Updates;
- *     People; on a desktop, "Not a person" and "This is a person" from a row's menu.
+ *     Ranked puts the threads the one-list inbox scores first, by score, and the Newest switch (the Ranked chip tapped
+ *     again) sorts by date and stays so after a reload; Everything has the newsletters too; an old People link still
+ *     lists; on a desktop, "Not a person" and "This is a person" from a row's menu.
  *   - filing (slice 4): read in view reaches the server; on a phone a swipe right archives and Undo brings it back,
  *     a swipe left marks unread and read, a long press picks threads and their bar stars them; on a desktop the
  *     reader's star and archive, the `e` key, a row's right-click menu, Ctrl-click picking, and the read setting.
@@ -215,10 +218,15 @@ async function phone(themeName: string, first: boolean) {
   await tap(await at('.rail .rail-btn', `el => !!el.querySelector('.rail-mail')`));
   await page.until(`document.querySelectorAll('.sidebar .mail-row').length >= 5`, 10000);
   check(`${tag}: the Mail list shows`, (await hash()).startsWith('#/mail'), await hash());
-  check(`${tag}: rows are in the hub's order`, (await page.eval<string[]>(`[...document.querySelectorAll('.sidebar .mail-row[data-thread]')].map((r) => r.dataset.thread)`)).slice(0, 5).join() === inboxThreads.slice(0, 5).map((t) => t.id).join());
+  // Ranked: the threads the one-list inbox scores first (classification checks their order), then the hub's, by date.
+  const scored = new Set<string>((((await fetch(`${base}/api/attention`).then((r) => r.json())) as any).items as any[]).filter((v) => v.kind === 'mail').map((v) => v.id));
+  const shownRows = await page.eval<string[]>(`[...document.querySelectorAll('.sidebar .mail-row[data-thread]')].map((r) => r.dataset.thread)`);
+  const top = shownRows.slice(0, scored.size);
+  const rest = inboxThreads.filter((t) => !scored.has(t.id)).map((t) => t.id);
+  check(`${tag}: rows: the scored ones, then the rest in the hub's order`, scored.size > 0 && top.every((id) => scored.has(id)) && shownRows.slice(scored.size, scored.size + 3).join() === rest.slice(0, 3).join(), { shown: shownRows.length, scored: scored.size });
   check(`${tag}: no sideways overflow: list`, !(await overflow()).length, await overflow());
   const bar = await chipRows();
-  check(`${tag}: the views are one row of chips`, bar.rows === 1 && bar.chips >= 5, bar);
+  check(`${tag}: the views are one row of chips: Ranked, Everything, Updates`, bar.rows === 1 && bar.chips === 3, bar);
   await shot(`mail-${tag.replace(' ', '-')}-list`);
 
   // List, then the thread over it, then back.
@@ -279,8 +287,10 @@ async function phone(themeName: string, first: boolean) {
     await Bun.sleep(500);
   }
 
-  // A view chip, then the mail account in Accounts' one list (docs/accounts.md).
-  await tap(await at('.sidebar .mail-chips .chip-btn', `el => el.textContent === 'Sent'`));
+  // Sent from the folder menu, then the mail account in Accounts' one list (docs/accounts.md).
+  await tap(await at('.sidebar .mail-boxes-btn'));
+  await page.until(`!!document.querySelector('.cm, .cm-sheet')`, 5000);
+  await tap(await menuItem('Sent'));
   await page.until(`location.hash.includes('v%3Asent')`, 5000);
   check(`${tag}: Sent lists what you sent`, (await page.eval<number>(`document.querySelectorAll('.sidebar .mail-row').length`)) >= 3);
   await page.goto(`${base}/#/accounts`);
@@ -296,7 +306,7 @@ async function desktop(themeName: string) {
   await page.until(`document.querySelectorAll('.sidebar .mail-row').length >= 5`, 15000);
   check(`${tag}: no thread open yet: the welcome pane`, await has('.center .welcome'));
   const bar = await chipRows();
-  check(`${tag}: the views are one row of chips`, bar.rows === 1 && bar.chips >= 5, bar);
+  check(`${tag}: the views are one row of chips: Ranked, Everything, Updates`, bar.rows === 1 && bar.chips === 3, bar);
   await click(await at(`.sidebar .mail-row[data-thread="${lease.id}"]`));
   await page.until(`!!document.querySelector('.mail-reader .mail-msg.open .mail-text')`, 15000);
   check(`${tag}: the list and the reader side by side`, (await inView('.sidebar .mail-list')) && (await inView('.center .mail-reader')));
@@ -784,11 +794,45 @@ async function classification(themeName: string, onPhone: boolean) {
   check(`${tag}: Updates has its chip while you are in it`, await has('.sidebar .mail-chips .chip-btn.on'));
   check(`${tag}: no sideways overflow: Updates`, !(await overflow()).length, await overflow());
   await shot(`mail-${onPhone ? 'phone' : 'desktop'}-${themeName}-updates`);
-  await go(await at('.sidebar .mail-chips .chip-btn', `el => el.textContent === 'People'`));
+  // Ranked: the scored threads first, by the hub's score, then the rest by date.
+  await go(await at('.sidebar .mail-chips .chip-btn', `el => el.textContent.startsWith('Ranked')`));
+  await page.until(`location.hash.includes('v%3Ainbox')`, 5000);
+  await Bun.sleep(600);
+  const scores = new Map<string, number>((((await fetch(`${base}/api/attention`).then((r) => r.json())) as any).items as any[]).filter((v) => v.kind === 'mail').map((v) => [v.id, v.score]));
+  const ranked = await page.eval<string[]>(`(() => { const out = []; for (const el of document.querySelectorAll('.sidebar .mail-list > *')) { if (el.matches('.mail-list-divider')) break; const r = el.matches('[data-thread]') ? el : el.querySelector('[data-thread]'); if (r) out.push(r.dataset.thread); } return out; })()`);
+  const desc = ranked.every((id, i) => i === 0 || scores.get(ranked[i - 1])! >= scores.get(id)!);
+  check(`${tag}: Ranked: the scored threads first, highest first, then a divider`, ranked.length > 0 && ranked.every((id) => scores.has(id)) && desc && (await has('.sidebar .mail-list-divider')), { ranked: ranked.length, scored: scores.size });
+  check(`${tag}: no sideways overflow: Ranked`, !(await overflow()).length, await overflow());
+  await shot(`mail-${onPhone ? 'phone' : 'desktop'}-${themeName}-ranked`);
+  // Tapped again: newest first, the chip says so, and it stays after a reload.
+  await go(await at('.sidebar .mail-chips .chip-btn.on'));
+  await page.until(`document.querySelector('.sidebar .mail-chips .chip-btn.on')?.textContent === 'Newest'`, 5000);
+  const lastAt = new Map(threads.map((t) => [t.id, t.lastAt as number]));
+  const byDate = async () => {
+    const ids = (await shownIds()).filter((id) => lastAt.has(id));
+    return ids.length > 3 && ids.every((id, i) => i === 0 || lastAt.get(ids[i - 1])! >= lastAt.get(id)!) && !(await has('.sidebar .mail-list-divider'));
+  };
+  check(`${tag}: Newest: Inbox by date, no divider`, await byDate());
+  await shot(`mail-${onPhone ? 'phone' : 'desktop'}-${themeName}-newest`);
+  await page.eval(`location.reload()`).catch(() => {});
+  await page.until(`document.querySelector('.sidebar .mail-chips .chip-btn.on')?.textContent === 'Newest'`, 15000);
+  await Bun.sleep(600);
+  check(`${tag}: Newest stays after a reload`, await byDate());
+  await go(await at('.sidebar .mail-chips .chip-btn.on'));
+  await page.until(`document.querySelector('.sidebar .mail-chips .chip-btn.on')?.textContent === 'Ranked'`, 5000);
+  // Everything: all of Inbox, the newsletters too.
+  await go(await at('.sidebar .mail-chips .chip-btn', `el => el.textContent === 'Everything'`));
+  await page.until(`location.hash.includes('v%3Aall')`, 5000);
+  await page.until(`document.querySelectorAll('.sidebar .mail-row[data-thread]').length >= 8`, 10000);
+  const all = await shownIds();
+  check(`${tag}: Everything: Dinner, the lease and the newsletters`, all.includes(dinner.id) && all.includes(lease.id) && all.some((id) => bulk.has(id)) && !(await has('.sidebar .mail-updates-row')), all.length);
+  check(`${tag}: no sideways overflow: Everything`, !(await overflow()).length, await overflow());
+  // People has no chip any more; its links still list.
+  await page.eval(`location.hash = ${JSON.stringify(`#/mail/l/${encodeURIComponent('v:people:*')}`)}`);
   await page.until(`location.hash.includes('v%3Apeople')`, 5000);
   await Bun.sleep(600);
   const ppl = await shownIds();
-  check(`${tag}: People: Dinner and the lease, no newsletters`, ppl.includes(dinner.id) && ppl.includes(lease.id) && !ppl.some((id) => bulk.has(id)), ppl.length);
+  check(`${tag}: an old People link: Dinner and the lease, no newsletters`, ppl.includes(dinner.id) && ppl.includes(lease.id) && !ppl.some((id) => bulk.has(id)), ppl.length);
   if (onPhone) return;
   // Theo's climbing mail: nobody knows him (rule 11). Not a person, then a person after all.
   const climb = byTitle('Climbing on Sunday');
