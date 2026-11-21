@@ -1874,7 +1874,9 @@ code {
   flex: none;
 }
 /* A computer: a rail of the five ways beside the run, in the space the chat leaves there. Invisible until you point
-   at the message, faint while you do, full when you point at the rail. */
+   at the message; then only the way in use shows, faint, in its place on the rail. Pointing at it (or tabbing to it)
+   brings the other four in around it, in full. The hidden four take no pointer, so passing beside the run doesn't
+   open the rail. */
 .pics.has-rail {
   max-width: calc(100% - 40px);
 }
@@ -1899,6 +1901,25 @@ code {
 .msg .pics-rail:hover,
 .pics-rail:focus-within {
   opacity: 1;
+}
+.pics-rail {
+  pointer-events: none;
+}
+.pics-rail-btn[aria-pressed='true'] {
+  pointer-events: auto;
+}
+.pics-rail-btn:not([aria-pressed='true']) {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.pics-rail:hover,
+.pics-rail:focus-within {
+  pointer-events: auto;
+}
+.pics-rail:hover .pics-rail-btn,
+.pics-rail:focus-within .pics-rail-btn {
+  opacity: 1;
+  pointer-events: auto;
 }
 .pics-rail-btn {
   position: relative;
