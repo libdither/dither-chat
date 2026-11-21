@@ -11,7 +11,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { baseType, clockOf, HOLD_MS, nextCamera, photoName, recorderType, videoName, type Cam } from '../camera.ts';
 import { bytes } from '../format.ts';
 import { useLayer } from '../phone.ts';
-import { splitNote, statusOf, Thumb, type Attached } from './ComposerFiles.tsx';
+import { viewer } from '../viewer.ts';
+import { inspect, splitNote, statusOf, Thumb, type Attached } from './ComposerFiles.tsx';
 import { useGrow } from './grow.ts';
 import { Icon } from './icons.tsx';
 
@@ -256,14 +257,17 @@ export function SendScreen(props: {
   extra?: ComponentChildren;
   /** For saying when they go as several messages. */
   network?: P.Network;
+  /** The key of the one to show first (its tile tapped in the composer's row); else the first. */
+  start?: number;
 }) {
   const { files, remove, text, onText, onSend, onClose } = props;
-  const [at, setAt] = useState(0);
+  const [at, setAt] = useState(() => Math.max(0, files.findIndex((f) => f.key === props.start)));
   const caption = useRef<HTMLTextAreaElement>(null);
   useLayer(onClose);
   useGrow(caption, text);
   useLayoutEffect(() => {
-    const k = (e: KeyboardEvent) => e.key === 'Escape' && (e.preventDefault(), onClose());
+    // The picture viewer over it, opened from the photo, closes first.
+    const k = (e: KeyboardEvent) => e.key === 'Escape' && !viewer.peek() && (e.preventDefault(), onClose());
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, []);
@@ -277,8 +281,9 @@ export function SendScreen(props: {
   const { status, why, pct } = statusOf(cur);
   const name = cur.file.name || 'file';
   const isVideo = cur.file.type.startsWith('video/');
+  // The picture viewer lives in the app, under this portal: while it is open from the photo, this steps aside.
   return createPortal(
-    <div class="send-screen" role="dialog" aria-modal="true" aria-label="Send photos and videos" data-track-area="send screen">
+    <div class={`send-screen ${viewer.value ? 'under-viewer' : ''}`} role="dialog" aria-modal="true" aria-label="Send photos and videos" data-track-area="send screen">
       <div class="ss-bar">
         <button class="icon-btn" data-track="back" onClick={onClose} aria-label="Back to the message">
           <Icon name="x" size={22} />
@@ -286,7 +291,12 @@ export function SendScreen(props: {
         <span class="ss-title">{files.length > 1 ? `${i + 1} of ${files.length}` : name}</span>
       </div>
       <div class="ss-stage">
-        {cur.url ? isVideo ? <video key={cur.key} class="ss-media" src={cur.url} controls playsInline /> : <img key={cur.key} class="ss-media" src={cur.url} alt={name} /> : (
+        {cur.url ? isVideo ? <video key={cur.key} class="ss-media" src={cur.url} controls playsInline /> : (
+          // A tap on the photo opens it in the picture viewer, to pinch and look closer.
+          <button class="ss-zoom" data-track="look closer" onClick={() => inspect(files, cur)} aria-label={`Look closer at ${name}`}>
+            <img key={cur.key} class="ss-media" src={cur.url} alt={name} />
+          </button>
+        ) : (
           <div class="ss-file">
             <Icon name="file" size={48} />
             <span>{name}</span>
