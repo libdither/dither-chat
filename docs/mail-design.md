@@ -393,7 +393,8 @@ about 960 bytes a summary with its indexes and slice 6's people rows, so about 4
 - **Manager down** (`connected=false`). Background calls stop, and cached lists and bodies are still served. Ops and
   outbox items persist. On reconnect: changes, then ops, then the outbox.
 - **Account offline** (status `offline` or `attention`). Its background work pauses. A user call answers 503, and the
-  page shows the account's problem line from its status, e.g. "Proton Bridge running: not running" or "Sign in to Proton
+  page shows the account's problem line from its status (with its `state`, waiting, failed or attention, and `since`, when
+  the account stopped working, kept while only the words change), e.g. "Proton Bridge running: not running" or "Sign in to Proton
   in the live view", with a link to the account on the manager's page.
 - **The page offline.** The snapshot keeps the mail state window and the last 50 opened bodies (IndexedDB). Sends wait
   in the page's outbox, as chat sends do (`outbox.ts`), and go when the socket returns. They carry a `clientId`, so a
@@ -661,7 +662,7 @@ searches.
 | granted, no mail accounts | "No mail accounts in dither-accounts. Add Email (IMAP) or Proton Mail there." [Open] |
 | first sync | skeleton rows, then the first 50; "Syncing · 2,300 of about 14,000" |
 | empty mailbox | "Nothing in Archive." / Inbox at zero: "Inbox is empty." |
-| account problem | a strip over its threads: the problem line and [Open in dither-accounts]; cached mail stays readable |
+| account problem | one line under the header (the account and its problem line) opening the account menu, which says it per account with [Open in dither-accounts]; a layer still coming up is quiet for 3 minutes; cached mail stays readable |
 | read grant | reader footer: "dither-accounts lets dither-chat read this account, not change it. Read here only." No archive, star or send. [Change] |
 | can't send | reply bar and ✎ off for that account: "me@proton.me can't send from here: Proton's send path was not found in the page (dither-accounts answered 501). Reading, archiving and starring work." |
 | dry run | composer banner: "Dry run: nothing reaches the account." |

@@ -1,7 +1,7 @@
 /** The page's copy of mail (mail/model.ts): bootstrap, events, lists kept in order, sender lines. */
 import { expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
-import { applyMailBootstrap, applyMailEvent, emptyMail, inList, listThreads, mergePage, senderLine, unreadInbox, updatesFold } from '../src/mail/model.ts';
+import { accountTrouble, applyMailBootstrap, PROBLEM_GRACE_MS, applyMailEvent, emptyMail, inList, listThreads, mergePage, senderLine, unreadInbox, updatesFold } from '../src/mail/model.ts';
 
 const ACC = 'acc_a';
 const t = (id: string, lastAt: number, x: Partial<P.MailThreadView> = {}): P.MailThreadView => ({
@@ -134,4 +134,16 @@ test('classification (slice 8): Inbox leaves bulk to its Updates row; People is 
   applyMailEvent(s, { t: 'mail.threads', threads: [t('sam', 50, { class: 'bulk', unread: 1 })], removed: [] });
   expect(ids(listThreads(s, 'v:inbox:*'))).toEqual(['new']);
   expect(updatesFold(s, 'v:inbox:*')!.count).toBe(4);
+});
+
+test('accountTrouble: a layer still coming up is left unsaid for a while; failures, asks and lost access are said at once', () => {
+  const now = 10_000_000;
+  const acc = (x: Partial<P.MailAccountView>) => ({ level: 'read', problem: null, ...x }) as P.MailAccountView;
+  const waiting = (since: number) => acc({ problem: { layer: 'browser', message: 'browser: starting', state: 'waiting', since } });
+  expect(accountTrouble(acc({}), now)).toEqual({ message: null, at: null });
+  expect(accountTrouble(waiting(now - 20_000), now)).toEqual({ message: null, at: now - 20_000 + PROBLEM_GRACE_MS });
+  expect(accountTrouble(waiting(now - PROBLEM_GRACE_MS - 1), now).message).toBe('browser: starting');
+  expect(accountTrouble(acc({ problem: { layer: 'x', message: 'x failed', state: 'failed', since: now } }), now).message).toBe('x failed');
+  expect(accountTrouble(acc({ problem: { layer: null, message: 'Sign in' } }), now).message).toBe('Sign in');
+  expect(accountTrouble(acc({ level: null }), now).message).toContain('no longer has access');
 });

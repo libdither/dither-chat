@@ -11,7 +11,13 @@ Email beside your chats, through dither-accounts' `mail` interface. The design, 
   are one row of chips that scrolls sideways, without a scrollbar: its edge fades while more chips lie past it, and the
   chosen one is scrolled into view. With several accounts, the line under "Mail" ("All accounts", or the account) is
   the picker: a menu of All accounts and each account, each with its colour's dot, the dot rows show before the
-  sender's name when every account shows (the menu says so). Threads newest first, bold while unread, with who wrote
+  sender's name when every account shows (the menu says so), its Inbox unread count, and a second line: its kind, or in
+  the warning colour what is wrong with it, with a way to it in dither-accounts.
+- **Accounts that aren't working** get one quiet line under the header ("⚠ address: what is wrong", or "2 accounts aren't
+  working"), not a card each: it opens the account menu, or with one account the account in dither-accounts, and the
+  picker's dot is ringed. A layer still coming up (signing in, the page loading: the problem's `state` is `waiting`) is
+  left unsaid for its first 3 minutes (`PROBLEM_GRACE_MS`, counted from the problem's `since`), so a restart says
+  nothing; a failed layer, an account asking for you and lost access are said at once. Threads newest first, bold while unread, with who wrote
   ("Alex, Jo, me"), how many messages, the subject, a star and a paper clip; each line ends in an ellipsis.
 - **The reader**: a thread's messages oldest first. Unread messages and the latest are open, the rest fold to a line:
   who and the start of the text. Bodies ahead skip what you sent (and older mail), so when a thread opens the reader

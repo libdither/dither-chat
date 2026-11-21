@@ -24,6 +24,19 @@ export interface MailAccess {
   managerUrl: string | null;
 }
 
+/** What stops a mail account working (MailAccountView.problem). */
+export interface MailProblem {
+  layer: string | null;
+  message: string;
+  /**
+   * `waiting`: a layer is still coming up (signing in, the page loading), which usually passes by itself; `failed`: a
+   * layer failed; `attention`: the account asks for you. Absent from rows written before it was kept: read as `attention`.
+   */
+  state?: 'waiting' | 'failed' | 'attention';
+  /** When it last stopped working (kept while only the words change). Absent on old rows. */
+  since?: number;
+}
+
 export interface MailAccountView {
   /** The manager's account id. */
   id: string;
@@ -40,7 +53,7 @@ export interface MailAccountView {
   dryRun: boolean;
   online: boolean;
   /** Why it cannot work now: the account's attention, else its first layer that is not ok. */
-  problem: { layer: string | null; message: string } | null;
+  problem: MailProblem | null;
   /**
    * Whether sending works: false with why, true after a send, null before anyone knows (slice 5 sends). `refused`: the
    * account answered a send with 501, so it is off until you ask again (POST /api/mail/accounts/:id/sending).

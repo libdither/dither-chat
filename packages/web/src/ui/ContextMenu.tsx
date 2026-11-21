@@ -29,6 +29,11 @@ export type MenuEntry =
       sub?: MenuEntry[];
       /** A dot of this colour (any CSS background) before the label: a mail account's colour. */
       dot?: string;
+      /** A second, smaller line under the label (a mail account's state); `warn` colours it and rings the dot. */
+      detail?: string;
+      warn?: boolean;
+      /** A count at the right, such as unread mail. */
+      count?: number;
       run?: () => void;
       /** Its key for button counts (clicks.ts): a fixed string, never the label, which may hold a name. */
       track?: string;
@@ -40,6 +45,17 @@ export type MenuEntry =
   | { kind: 'row'; render: (close: () => void, sheet: boolean) => ComponentChildren };
 
 type Item = Extract<MenuEntry, { label: string; kind?: 'item' }>;
+
+/** An item's label, with its second line when it has one. */
+const Label = ({ e }: { e: Item }) =>
+  e.detail ? (
+    <span class="cm-text cm-two">
+      <span class="cm-text">{e.label}</span>
+      <span class={`cm-detail ${e.warn ? 'warn' : ''}`}>{e.detail}</span>
+    </span>
+  ) : (
+    <span class="cm-text">{e.label}</span>
+  );
 
 export interface MenuSpec {
   items: MenuEntry[];
@@ -225,8 +241,9 @@ function Panel({ items, x, y, flipX, depth, onClose, onBack, autoFocus, track }:
               }}
               onClick={() => activate(i)}
             >
-              {e.dot && <span class="cm-dot" style={{ background: e.dot }} aria-hidden="true" />}
-              <span class="cm-text">{e.label}</span>
+              {e.dot && <span class={`cm-dot ${e.warn ? 'warn' : ''}`} style={{ background: e.dot }} aria-hidden="true" />}
+              <Label e={e} />
+              {!!e.count && <span class="cm-count">{e.count}</span>}
               {e.hint && <kbd class="cm-hint">{e.hint}</kbd>}
               {e.checked !== undefined && <span class={`cm-check ${e.radio ? 'radio' : ''} ${e.checked ? 'on' : ''}`} aria-hidden="true">{!e.radio && e.checked && <Icon name="check" size={13} />}</span>}
               {e.sub ? <Icon name="chevronRight" size={14} class="cm-icon" /> : e.icon && e.checked === undefined && <Icon name={e.icon} size={16} class="cm-icon" />}
@@ -319,8 +336,9 @@ function SheetMenu({ spec, onClose }: { spec: MenuSpec; onClose: () => void }) {
               }}
             >
               <Icon name={e.sub ? 'chevronRight' : e.checked ? 'check' : (e.icon ?? 'chevronRight')} size={20} class={e.checked === false || (!e.icon && !e.sub && !e.checked) ? 'cm-blank' : ''} />
-              {e.dot && <span class="cm-dot" style={{ background: e.dot }} aria-hidden="true" />}
-              <span class="cm-text">{e.label}</span>
+              {e.dot && <span class={`cm-dot ${e.warn ? 'warn' : ''}`} style={{ background: e.dot }} aria-hidden="true" />}
+              <Label e={e} />
+              {!!e.count && <span class="cm-count">{e.count}</span>}
             </button>
           );
         })}
