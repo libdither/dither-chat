@@ -1412,6 +1412,8 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
   const panelUp = onPhone && !!panelMod && (panelOpen.value || panelShown.value > 0);
   const [camera, setCamera] = useState(false);
   const [review, setReview] = useState(false);
+  // The tile tapped in the row, for the send screen to open at.
+  const [reviewAt, setReviewAt] = useState<number | undefined>();
   // The emoji button's picker, beside what opened it (Reactions.tsx).
   const [emojiAt, setEmojiAt] = useState<DOMRect | null>(null);
   // Stickers, recording and view-once, where the sending account has them (ComposerMedia.tsx).
@@ -1760,7 +1762,19 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
           </button>
         </div>
       )}
-      <AttachedFiles files={att.files} remove={att.remove} network={conv?.network} />
+      <AttachedFiles
+        files={att.files}
+        remove={att.remove}
+        network={conv?.network}
+        open={
+          onPhone
+            ? (f) => {
+                setReviewAt(f.key);
+                setReview(true);
+              }
+            : undefined
+        }
+      />
       {viewOnceChip}
       <EmojiComplete ta={ta} convId={targets.convId} network={conv?.network} />
       {!edit && <SlashCommandsLazy ta={ta} convId={targets.convId} accountId={sender?.id} text={text} />}
@@ -1929,10 +1943,14 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
           sendTitle={sendTitle}
           onSend={submit}
           onAddMore={() => photos.current?.click()}
-          onClose={() => setReview(false)}
+          onClose={() => {
+            setReview(false);
+            setReviewAt(undefined);
+          }}
           enterSends={() => !touchKeyboard()}
           extra={viewOnceChip}
           network={conv?.network}
+          start={reviewAt}
         />
       )}
     </div>
