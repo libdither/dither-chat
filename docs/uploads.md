@@ -22,6 +22,11 @@ on the hub's disk until it is sent, and through a restart of either end.
   shows "Waiting for the hub" instead: it tries again when the hub is back, and does not hold a send.
 - **Send while files are still uploading**, and the message goes to the outbox as any send does (docs/sync.md) and
   waits for them. Its pending copy says "Uploading…", with each file's percentage. The composer is free at once.
+- **Look before it goes.** Photos and videos in the row are tiles at their own shape (112px high, 84px on a phone,
+  up to 220px wide), × in the corner, the name and size on a hover. A click opens one large: a photo in the picture
+  viewer, zoom and pan and all, paging through the photos attached; a video plays in the file viewer. On a phone a
+  tap opens the send screen at that one. The row is one line that scrolls sideways, so many files never push the
+  chat out of sight.
 
 ## More files than a message takes
 
@@ -59,7 +64,8 @@ right, and send (`ui/Attach.tsx`, pure parts in `camera.ts`). The desktop keeps 
 - **The send screen.** A photo or video taken, or photos and videos picked, open a full-screen preview: the media
   large, a strip of thumbnails when there are several (tap one to see it, × on each to remove it, + to add more), a
   caption box, which is the message's text, and send. × goes back to the composer with the files and the text still
-  there. A picked file that is not a photo or video goes to the composer's row as on a desktop.
+  there. A tap on the photo opens it in the picture viewer, to pinch and look closer; back or × returns to the send
+  screen. A picked file that is not a photo or video goes to the composer's row as on a desktop.
 - **The files are the composer's own.** Each starts uploading as soon as it is attached, before the send screen
   shows, so send is quick. A refused file says why on the send screen as it does in the row (`refusalOf`); a failed
   upload has Retry, and send waits for it.

@@ -3124,6 +3124,151 @@ code {
 .composer-file.refused > svg {
   opacity: 0.5;
 }
+.composer-files-row {
+  flex: 1 1 100%;
+  min-width: 0;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.app.phone .composer-files-row {
+  scrollbar-width: none;
+}
+.composer-files-row > .composer-file {
+  flex: none;
+}
+/* A photo or video attached: a tile at its own shape, within bounds, that opens it large (ComposerFiles.tsx). Its
+   name and size show over its foot on a hover; × in its corner. */
+.composer-media {
+  position: relative;
+  flex: none;
+  height: 112px;
+  border-radius: 10px;
+}
+.app.phone .composer-media {
+  height: 84px;
+}
+.composer-media-open {
+  position: relative;
+  display: block;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: inherit;
+  background: var(--bg-raised);
+  cursor: zoom-in;
+}
+.composer-media-open img,
+.composer-media-open video {
+  display: block;
+  height: 100%;
+  width: auto;
+  min-width: 64px;
+  max-width: 220px;
+  object-fit: cover;
+}
+.app.phone .composer-media-open img,
+.app.phone .composer-media-open video {
+  min-width: 56px;
+  max-width: 150px;
+}
+.composer-media-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.composer-media-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin: -16px 0 0 -16px;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.55);
+  color: #fff;
+}
+.composer-media-play svg {
+  fill: currentColor;
+}
+.composer-media-cap {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 16px 8px 5px;
+  background: linear-gradient(transparent, rgb(0 0 0 / 0.7));
+  color: #fff;
+  font-size: 11px;
+  text-align: left;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.composer-media-cap > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.composer-media-cap > small {
+  flex: none;
+  color: rgb(255 255 255 / 0.75);
+  font-size: 10px;
+}
+.composer-media-open:hover .composer-media-cap,
+.composer-media-open:focus-visible .composer-media-cap {
+  opacity: 1;
+}
+.composer-media-remove {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+}
+.composer-media-remove:hover {
+  background: rgb(0 0 0 / 0.85);
+}
+.composer-media-bar {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  background: rgb(0 0 0 / 0.45);
+}
+.composer-media-why {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--danger) 82%, #000);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.3;
+}
+.composer-media.failed .composer-media-open {
+  border-color: var(--danger);
+}
 .upload-bar {
   display: block;
   height: 4px;
@@ -15377,6 +15522,19 @@ button.msg-edited.link:hover {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+/* The picture viewer open from its photo: it is in the app, under this, so this goes until the viewer closes. */
+.send-screen.under-viewer {
+  visibility: hidden;
+}
+/* The photo, a button that opens it in the picture viewer. */
+.ss-zoom {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: zoom-in;
 }
 .ss-file {
   display: flex;
