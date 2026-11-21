@@ -5,7 +5,7 @@
 import type * as P from '@dither-chat/protocol';
 import { mailAddressText, mailPreview } from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
-import { clock, dayLabel, fullTime, sameDay } from '../../format.ts';
+import { bytes, clock, dayLabel, fullTime, sameDay } from '../../format.ts';
 import { bodies, bodyState, loadBody, retryBody } from '../../mail/api.ts';
 import { openProfile } from '../../state.ts';
 import { Avatar } from '../bits.tsx';
@@ -104,6 +104,12 @@ export function MessageCard({ message: m, thread, account, open, onToggle }: { m
           )}
           <dt>Date</dt>
           <dd>{fullTime(m.date)}</dd>
+          {body?.sizes && (
+            <>
+              <dt>Size</dt>
+              <dd class="mail-msg-size">{sizeLine(body)}</dd>
+            </>
+          )}
           {m.labels.length > 0 && (
             <>
               <dt>Labels</dt>
@@ -140,6 +146,23 @@ export function MessageCard({ message: m, thread, account, open, onToggle }: { m
       )}
     </article>
   );
+}
+
+/**
+ * "188 KB (HTML 150 KB, files 20 KB) · pictures: 9 from 4 hosts, 1.2 MB, 2 not fetched yet; 3 not loaded": the mail
+ * as the server keeps it, and what showing its pictures fetches on top (docs/mail.md "Sizes").
+ */
+export function sizeLine(b: P.MailBodyView): string {
+  const z = b.sizes!;
+  const total = z.raw ?? z.text + z.html + z.files;
+  const parts = [z.html && `HTML ${bytes(z.html)}`, z.text && `text ${bytes(z.text)}`, z.files && `files ${bytes(z.files)}`].filter(Boolean);
+  let out = `${bytes(total) || '0 B'}${parts.length ? ` (${parts.join(', ')})` : ''}`;
+  const p = b.html?.pictures;
+  if (p && p.items.length) {
+    const shown = [`${p.loaded} loaded from ${p.hosts} ${p.hosts === 1 ? 'host' : 'hosts'}`, p.bytes && bytes(p.bytes), p.unknown && `${p.unknown} not fetched yet`].filter(Boolean);
+    out += ` · pictures: ${shown.join(', ')}${p.held ? `; ${p.held} not loaded` : ''}`;
+  }
+  return out;
 }
 
 function Body(p: { message: P.MailMessageView; body: P.MailBodyView; account: P.MailAccountView | undefined }) {

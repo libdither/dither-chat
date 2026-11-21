@@ -21,7 +21,7 @@
 import { hostsDiffer, shownHost } from '@dither-chat/protocol';
 
 /** Bump when the output changes: cached copies made by an older pass are made again. */
-export const SANITIZE_VERSION = 1;
+export const SANITIZE_VERSION = 2;
 
 export interface SanitizeOpts {
   /**
@@ -37,6 +37,19 @@ export interface SanitizeOpts {
   styles?: boolean;
   /** Keep data: images. */
   dataImages?: boolean;
+  /**
+   * Each remote picture's fate, when given (pictures.ts): `load` through `proxy`, `hold` as a placeholder, `drop`
+   * gone. `shaped` is isTracker's answer from its size and style (CSS backgrounds have none). Without it, `images`
+   * decides for all of them and pixel-shaped ones go.
+   */
+  decide?: (url: string, shaped: boolean) => PictureDecision;
+}
+
+/** What `decide` says of one remote picture, as the reader's details list it. */
+export interface PictureDecision {
+  action: 'load' | 'hold' | 'drop';
+  class: 'shared' | 'personal' | 'tracker';
+  why: string;
 }
 
 export interface Sanitized {
@@ -61,6 +74,8 @@ export interface Sanitized {
   plain: boolean;
   /** Plain, with formatting its text part cannot show: bold, italic, headings, code and the like (FORMAT_TAGS). */
   formatted: boolean;
+  /** With `decide`: each remote picture once, by address, in the order met. */
+  pictures?: (PictureDecision & { url: string })[];
 }
 
 // ------------------------------------------------------------------ the lists
@@ -311,16 +326,38 @@ export function sanitizeMail(input: string, o: SanitizeOpts): Sanitized {
       return o.cid?.(id) ?? null;
     }
     const web = webUrl(raw);
+    if (web && o.decide) {
+      const d = decided(web, false);
+      if (d.action === 'load') return o.proxy ? o.proxy(web) : null;
+      if (d.action === 'hold') out.remoteImages++;
+      else if (d.class === 'tracker') out.trackers++;
+      return '';
+    }
     if (web && o.images === 'proxy' && o.proxy) return o.proxy(web);
     return null;
   };
+  const seen = new Map<string, PictureDecision & { url: string }>();
+  /** `decide`, once per address and shape. */
+  const decided = (url: string, shaped: boolean): PictureDecision => {
+    const key = `${shaped ? 1 : 0}${url}`;
+    let d = seen.get(key);
+    if (!d) {
+      d = { url, ...o.decide!(url, shaped) };
+      seen.set(key, d);
+    }
+    return d;
+  };
   const css = (text: string) => {
-    const r = sanitizeCss(text, cssUrl);
-    if (o.images === 'block') out.remoteImages += r.remote;
+    // '' from cssUrl: decided, and counted there.
+    const r = sanitizeCss(text, (u) => {
+      const to = cssUrl(u);
+      return to === '' ? null : to;
+    });
+    if (o.images === 'block' && !o.decide) out.remoteImages += r.remote;
     return r.css;
   };
   /** A remote image's new address, or null when it goes. */
-  const image = (raw: string): { src: string | null; remote: boolean } => {
+  const image = (raw: string): { src: string | null; remote: boolean; web?: string } => {
     const u = cleanUrl(raw);
     if (/^cid:/i.test(u)) {
       const id = contentId(u.slice(4));
@@ -330,7 +367,7 @@ export function sanitizeMail(input: string, o: SanitizeOpts): Sanitized {
     if (/^data:/i.test(u)) return { src: o.dataImages !== false && DATA_IMAGE.test(u) ? u : null, remote: false };
     const web = webUrl(u);
     if (!web) return { src: null, remote: false };
-    return { src: o.images === 'proxy' && o.proxy ? o.proxy(web) : null, remote: true };
+    return { src: o.images === 'proxy' && o.proxy ? o.proxy(web) : null, remote: true, web };
   };
 
   // The link being read, for its text.
@@ -358,7 +395,22 @@ export function sanitizeMail(input: string, o: SanitizeOpts): Sanitized {
         const get = (n: string) => (raw.has(n) ? decodeEntities(raw.get(n)!) : null);
         let style = get('style') ?? '';
 
-        if (tag === 'img') {
+        if (tag === 'img' && o.decide) {
+          const r = image(raw.get('src') ?? '');
+          if (r.web) {
+            const d = decided(r.web, isTracker(get('width'), get('height'), style));
+            if (d.action === 'drop') {
+              if (d.class === 'tracker') out.trackers++;
+              return void el.remove();
+            }
+            if (d.action === 'hold' || !o.proxy) {
+              out.remoteImages++;
+              return void el.replace(placeholder(get('width'), get('height'), get('alt')), { html: true });
+            }
+            keep.push(['src', o.proxy(r.web)]);
+          } else if (r.src) keep.push(['src', r.src]);
+          else return void el.remove();
+        } else if (tag === 'img') {
           const src = raw.get('src') ?? '';
           const r = image(src);
           if (r.remote && isTracker(get('width'), get('height'), style)) {
@@ -374,7 +426,10 @@ export function sanitizeMail(input: string, o: SanitizeOpts): Sanitized {
         }
         if (raw.has('background') && allowed.has('background')) {
           const r = image(raw.get('background')!);
-          if (r.src) keep.push(['background', r.src]);
+          if (r.web && o.decide) {
+            const to = cssUrl(r.web);
+            if (to) keep.push(['background', to]);
+          } else if (r.src) keep.push(['background', r.src]);
           else if (r.remote && o.images === 'block') out.remoteImages++;
         }
 
@@ -452,6 +507,7 @@ export function sanitizeMail(input: string, o: SanitizeOpts): Sanitized {
   const cut = danglingTag(html);
   out.html = cut === null ? html : html.slice(0, cut);
   out.cids = [...cids];
+  if (o.decide) out.pictures = [...new Map([...seen.values()].map((d) => [d.url, d])).values()];
   out.formatted &&= out.plain;
   return out;
 }

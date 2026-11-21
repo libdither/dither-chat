@@ -29,7 +29,8 @@ afterEach(() => {
   if (dir) rmSync(dir, { recursive: true, force: true });
 });
 
-async function world(msgs: FakeInput[]) {
+/** `pictures`: the setting (these tests mostly start from none, as the hub did before `shared` was the default). */
+async function world(msgs: FakeInput[], pictures: P.MailSettings['pictures'] | null = 'none') {
   dir = mkdtempSync(join(tmpdir(), 'mail-parts-'));
   const fake = new FakeMailBackend();
   fake.addAccount(ACC, { email: ME });
@@ -52,6 +53,7 @@ async function world(msgs: FakeInput[]) {
     },
   });
   hub.start();
+  if (pictures) db.query(`INSERT INTO mail_setting (key, value) VALUES ('pictures', ?)`).run(pictures);
   await hub.sync(ACC)!.whenSynced();
   const get = async (path: string, init: RequestInit = {}) => (await hub!.route(new Request(ORIGIN + path, init), new URL(ORIGIN + path)))!;
   const post = (path: string, body: unknown) => get(path, { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } });
@@ -86,7 +88,8 @@ describe('the frame’s document', () => {
   test('sanitised, with the CSP, nosniff and no referrer', async () => {
     const { get } = await world([NEWSLETTER]);
     const body = (await (await get(`/api/mail/messages/${mid('<news@x>')}/body`)).json()) as P.MailBodyView;
-    expect(body.html).toEqual({ url: `/api/mail/messages/${mid('<news@x>')}/html?images=0&v=1`, remoteImages: 1, trackers: 1, imagesShown: false, plain: false });
+    expect(body.html).toMatchObject({ url: `/api/mail/messages/${mid('<news@x>')}/html?p=none&t=0&v=2`, remoteImages: 1, trackers: 1, imagesShown: false, plain: false });
+    expect(body.html!.pictures).toMatchObject({ policy: 'none', source: 'setting', loaded: 0, held: 1, removed: 1, hosts: 2 });
     expect(body.warnings).toEqual(['A link that shows shop.example goes to evil.example.']);
     const r = await get(body.html!.url);
     expect(r.status).toBe(200);
@@ -113,10 +116,10 @@ describe('the frame’s document', () => {
   test('images=1 is honoured only once images are allowed', async () => {
     const { get, post, fetched } = await world([NEWSLETTER]);
     const id = mid('<news@x>');
-    expect(await (await get(`/api/mail/messages/${id}/html?images=1`)).text()).not.toContain('/api/mail/img/');
+    expect(await (await get(`/api/mail/messages/${id}/html?p=all`)).text()).not.toContain('/api/mail/img/');
     const r = (await (await post('/api/mail/images', { messageId: id })).json()) as { body: P.MailBodyView };
     expect(r.body.html!.imagesShown).toBe(true);
-    expect(r.body.html!.url).toContain('images=1');
+    expect(r.body.html!.url).toContain('p=all');
     const doc = await (await get(r.body.html!.url)).text();
     const src = doc.match(/src="(\/api\/mail\/img\/[^"]+)"/)![1];
     expect(doc).not.toContain('t.example');
@@ -129,7 +132,7 @@ describe('the frame’s document', () => {
   test('a token for one message does not open another’s images, nor one whose images are not allowed', async () => {
     const { get, post } = await world([NEWSLETTER, { ...NEWSLETTER, messageId: '<news2@x>', from: [{ name: null, email: 'other@shop.example' }] }]);
     await post('/api/mail/images', { messageId: mid('<news@x>') });
-    const doc = await (await get(`/api/mail/messages/${mid('<news@x>')}/html?images=1`)).text();
+    const doc = await (await get(`/api/mail/messages/${mid('<news@x>')}/html?p=all`)).text();
     const src = doc.match(/src="\/api\/mail\/img\/([^"]+)"/)![1];
     const [, url, sig] = src.split('.');
     expect((await get(`/api/mail/img/${mid('<news2@x>')}.${url}.${sig}`)).status).toBe(403);

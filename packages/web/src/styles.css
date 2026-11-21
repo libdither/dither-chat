@@ -13805,8 +13805,7 @@ button.msg-edited.link:hover {
 }
 .mail-img-banner {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
   gap: 4px 8px;
   padding: 6px 10px;
   border: 1px solid var(--border);
@@ -13823,6 +13822,56 @@ button.msg-edited.link:hover {
   gap: 6px;
 }
 .mail-img-banner-faint {
+  color: var(--text-faint);
+}
+.mail-img-banner-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.mail-img-banner-text {
+  flex: 1 1 200px;
+}
+.mail-img-more {
+  width: 24px;
+  height: 24px;
+}
+.mail-pic-details {
+  overflow-x: auto;
+}
+.mail-pic-details table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.mail-pic-details td {
+  padding: 3px 8px 3px 0;
+  border-top: 1px solid var(--border);
+  vertical-align: top;
+}
+.mail-pic-details .pic-host {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mail-pic-details .pic-n,
+.mail-pic-details .pic-size {
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.mail-pic-details .pic-personal,
+.mail-pic-details .pic-tracker {
+  color: var(--warn);
+}
+.mail-pic-details tr.pic-drop td {
+  text-decoration: line-through;
+  text-decoration-color: var(--text-faint);
+}
+.mail-pic-details tr.pic-drop td.pic-act {
+  text-decoration: none;
+}
+.mail-pic-note {
+  margin: 6px 0 0;
   color: var(--text-faint);
 }
 .mail-files {

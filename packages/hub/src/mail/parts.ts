@@ -7,7 +7,7 @@
  *   GET  /api/mail/messages/:id/cid/:cid           an inline part the HTML shows (images only)
  *   GET  /api/mail/messages/:id/attachments/:aid   a file's bytes; /info what it is (FileInfo)
  *   GET  /api/mail/img/:token                      a remote image
- *   POST /api/mail/images                          { messageId } or { sender, allow }
+ *   POST /api/mail/images                          { messageId, pictures? } or { sender, allow | forget }
  *
  * It also fills a body's view (MailStore.bodyExtras): the HTML's URL and what was held back, the files, and warnings.
  * A reply's quote of the HTML is compose.ts quotedHtml (sanitize.ts quoteFragment).
@@ -23,12 +23,16 @@ import { inlineType, PLAYER_CSP, SANDBOX_CSP, safeFilename, safeMime, sniffMime 
 import { MailCallError } from './backend.ts';
 import type { MailHub, MailMediaOpts } from './index.ts';
 import { ImageProxy, imageToken, imageType, readImageToken } from './images.ts';
+import { addressForms, classifyPicture, pictureAction, type PicturePolicy } from './pictures.ts';
 import { P0 } from './queue.ts';
 import type { MailRouter } from './routes.ts';
-import { contentId, mailDocument, SANITIZE_VERSION, sanitizeMail, type Sanitized } from './sanitize.ts';
+import { contentId, mailDocument, type PictureDecision, SANITIZE_VERSION, sanitizeMail, type Sanitized } from './sanitize.ts';
 import { htmlText } from './store.ts';
 
 type Row = Record<string, any>;
+/** Which pictures load for one message, and what decided it. */
+type Policy = { pictures: PicturePolicy; trackers: boolean; source: 'message' | 'sender' | 'setting' };
+const urlHash = (url: string) => createHash('sha256').update(url).digest('base64url').slice(0, 22);
 
 const json = <T>(s: string | null | undefined, fallback: T): T => {
   try {
@@ -74,19 +78,53 @@ class Parts {
   }
 
   message(id: string): Row | null {
-    return this.store.one('SELECT id, account_id, from_addr, from_name, images_allowed FROM mail_message WHERE id = ?', id);
+    return this.store.one('SELECT id, account_id, from_addr, from_name, images_allowed, size FROM mail_message WHERE id = ?', id);
   }
 
-  /** Remote images show for this message: allowed for it, or always for its sender. */
-  imagesAllowed(m: Row): boolean {
-    if (m.images_allowed) return true;
+  /**
+   * Which of this message's pictures load (docs/mail.md "Pictures and trackers"): all when you loaded them for it;
+   * else the sender's rule (Always or Never from them); else the setting. Trackers: the setting.
+   */
+  policy(m: Row): Policy {
+    const setting = (k: string) => this.store.one<{ value: string }>('SELECT value FROM mail_setting WHERE key = ?', k)?.value;
+    const trackers = setting('trackers') === 'keep';
+    // For this message: 1 all, 2 shared only, 3 none (POST /api/mail/images { messageId, pictures }).
+    const own = ({ 1: 'all', 2: 'shared', 3: 'none' } as const)[Number(m.images_allowed) as 1 | 2 | 3];
+    if (own) return { pictures: own, trackers, source: 'message' };
     const from = String(m.from_addr ?? '').toLowerCase();
-    return !!from && !!this.store.one('SELECT 1 FROM mail_sender_images WHERE address = ? AND allow = 1', from);
+    const rule = from ? this.store.one<{ allow: number }>('SELECT allow FROM mail_sender_images WHERE address = ?', from) : null;
+    if (rule) return { pictures: rule.allow ? 'all' : 'none', trackers, source: 'sender' };
+    const p = setting('pictures');
+    return { pictures: p === 'none' || p === 'all' ? p : 'shared', trackers, source: 'setting' };
   }
 
-  /** The HTML made safe, from the cache when it is there. */
-  sanitized(messageId: string, html: string, images: boolean): Sanitized {
-    const key = `${messageId}:${SANITIZE_VERSION}:${images ? 1 : 0}`;
+  /** The forms your addresses take in a URL (pictures.ts addressForms), per account. */
+  private yours = new Map<string, string[]>();
+  you(accountId: string): string[] {
+    let f = this.yours.get(accountId);
+    if (!f) {
+      const a = this.store.one<{ address: string | null; addresses: string | null }>('SELECT address, addresses FROM mail_account WHERE id = ?', accountId);
+      const list = [a?.address ?? '', ...json<{ email: string }[]>(a?.addresses, []).map((x) => x.email)].filter(Boolean);
+      f = addressForms(list);
+      this.yours.set(accountId, f);
+    }
+    return f;
+  }
+
+  /** Each picture's fate for this message under `pol`. */
+  decider(m: Row, pol: Policy): (url: string, shaped: boolean) => PictureDecision {
+    const from = String(m.from_addr ?? '').toLowerCase();
+    const seenElsewhere = (url: string) => !!this.store.one('SELECT 1 FROM mail_picture_seen WHERE url_hash = ? AND sender != ? LIMIT 1', urlHash(url), from);
+    const you = this.you(m.account_id);
+    return (url, shaped) => {
+      const v = classifyPicture(url, { you, seenElsewhere }, shaped);
+      return { ...v, action: pictureAction(v.class, pol.pictures, pol.trackers, this.images.cachedSize(url) !== null) };
+    };
+  }
+
+  /** The HTML made safe under `pol`, from the cache when it is there. */
+  sanitized(m: Row, html: string, pol: Policy): Sanitized {
+    const key = `${m.id}:${SANITIZE_VERSION}:${pol.pictures}:${pol.trackers ? 1 : 0}`;
     const have = this.cache.get(key);
     if (have) {
       this.cache.delete(key);
@@ -94,10 +132,17 @@ class Parts {
       return have;
     }
     const s = sanitizeMail(html, {
-      images: images ? 'proxy' : 'block',
-      proxy: (url) => `/api/mail/img/${imageToken(this.media.key, messageId, url)}`,
-      cid: (cid) => `/api/mail/messages/${messageId}/cid/${encodeURIComponent(cid)}`,
+      images: 'block',
+      decide: this.decider(m, pol),
+      proxy: (url) => `/api/mail/img/${imageToken(this.media.key, m.id, url)}`,
+      cid: (cid) => `/api/mail/messages/${m.id}/cid/${encodeURIComponent(cid)}`,
     });
+    // Remembered by sender, so the next sender's mail with the same address knows it is shared.
+    const from = String(m.from_addr ?? '').toLowerCase();
+    if (from) {
+      const q = this.store.db.query('INSERT OR IGNORE INTO mail_picture_seen (url_hash, sender) VALUES (?, ?)');
+      for (const p of s.pictures ?? []) if (p.class !== 'tracker') q.run(urlHash(p.url), from);
+    }
     this.cache.set(key, s);
     while (this.cache.size > 64) this.cache.delete(this.cache.keys().next().value!);
     return s;
@@ -131,19 +176,19 @@ class Parts {
     let cids = new Set<string>();
     const warnings: string[] = [];
     if (b.html) {
-      const shown = this.imagesAllowed(m);
-      // The counts are those of the blocked pass: what the banner offers to load.
-      const held = this.sanitized(messageId, b.html, false);
-      cids = new Set(held.cids);
+      const pol = this.policy(m);
+      const san = this.sanitized(m, b.html, pol);
+      cids = new Set(san.cids);
       out.html = {
-        url: `/api/mail/messages/${messageId}/html?images=${shown ? 1 : 0}&v=${SANITIZE_VERSION}`,
-        remoteImages: held.remoteImages,
-        trackers: held.trackers,
-        imagesShown: shown,
-        plain: held.plain && hasTextPart(b),
-        ...(held.formatted ? { formatted: true } : {}),
+        url: `/api/mail/messages/${messageId}/html?p=${pol.pictures}&t=${pol.trackers ? 1 : 0}&v=${SANITIZE_VERSION}`,
+        remoteImages: san.remoteImages,
+        trackers: san.trackers,
+        imagesShown: pol.pictures === 'all',
+        plain: san.plain && hasTextPart(b),
+        ...(san.formatted ? { formatted: true } : {}),
+        pictures: this.picturesView(san, pol),
       };
-      for (const x of dedupe(held.mismatched).slice(0, 3)) warnings.push(`A link that shows ${x.shown} goes to ${x.goes}.`);
+      for (const x of dedupe(san.mismatched).slice(0, 3)) warnings.push(`A link that shows ${x.shown} goes to ${x.goes}.`);
     }
     out.attachments = parts
       .filter((a) => !(a.inline && a.contentId && cids.has(contentId(a.contentId))))
@@ -153,9 +198,46 @@ class Parts {
         const info = this.infoOf(this.partFile(m, a));
         return { id, name: a.filename ?? null, mime: a.mime || 'application/octet-stream', size: a.size, inline: a.inline, url: base, infoUrl: `${base}/info`, ...(info ? { info } : {}) };
       });
+    out.sizes = {
+      raw: Number(m.size) > 0 ? Number(m.size) : null,
+      text: b.text ? Buffer.byteLength(b.text) : 0,
+      html: b.html ? Buffer.byteLength(b.html) : 0,
+      files: parts.reduce((n, a) => n + (a.size || 0), 0),
+    };
     warnings.push(...senderWarnings(m, json<M.MailAddress[]>(b.reply_to, [])));
     if (warnings.length) out.warnings = warnings;
     return out;
+  }
+
+  /** What the reader's banner and details say of the pictures: counts, the hosts, and bytes the hub already has. */
+  picturesView(san: Sanitized, pol: Policy): P.MailPicturesView {
+    const list = san.pictures ?? [];
+    let bytes = 0;
+    let unknown = 0;
+    const items = list.map((p) => {
+      let host = '';
+      try {
+        host = new URL(p.url).hostname;
+      } catch {}
+      const size = this.images.cachedSize(p.url);
+      if (p.action === 'load') {
+        if (size === null) unknown++;
+        else bytes += size;
+      }
+      return { host, class: p.class, why: p.why, action: p.action, ...(size !== null ? { size } : {}) };
+    });
+    return {
+      policy: pol.pictures,
+      source: pol.source,
+      keepTrackers: pol.trackers,
+      loaded: items.filter((x) => x.action === 'load').length,
+      held: items.filter((x) => x.action === 'hold').length,
+      removed: items.filter((x) => x.action === 'drop').length,
+      hosts: new Set(items.map((x) => x.host).filter(Boolean)).size,
+      bytes,
+      unknown,
+      items: items.slice(0, 200),
+    };
   }
 
   // ---------------------------------------------------------------- parts
@@ -290,8 +372,7 @@ export const partRoutes: MailRouter = (hub) => {
           b = hub.store.body(m.id);
         }
         if (!b?.html) throw new MailCallError('this message has no HTML', 404);
-        const images = url.searchParams.get('images') === '1' && parts.imagesAllowed(m);
-        const doc = mailDocument(parts.sanitized(m.id, b.html, images));
+        const doc = mailDocument(parts.sanitized(m, b.html, parts.policy(m)));
         return new Response(doc, {
           headers: {
             'content-type': 'text/html; charset=utf-8',
@@ -341,8 +422,10 @@ export const partRoutes: MailRouter = (hub) => {
         const t = readImageToken(parts.media.key, params[0]);
         if (!t) return new Response('bad token', { status: 403 });
         const m = parts.message(t.messageId);
-        // Allowed when the page was made; still allowed now.
-        if (!m || !parts.imagesAllowed(m)) return new Response('images are not allowed for this message', { status: 403 });
+        // Loaded when the page was made; still loaded now.
+        const b = m ? hub.store.body(m.id) : null;
+        const p = m && b?.html ? parts.sanitized(m, b.html, parts.policy(m)).pictures?.find((x) => x.url === t.url) : null;
+        if (!p || p.action !== 'load') return new Response('this picture is not loaded for this message', { status: 403 });
         return parts.images.serve(t.url);
       },
     },
@@ -351,17 +434,23 @@ export const partRoutes: MailRouter = (hub) => {
       method: 'POST',
       path: /^\/api\/mail\/images$/,
       handle: async ({ body }) => {
-        const b = await body<{ messageId?: string; sender?: string; allow?: boolean }>();
+        const b = await body<{ messageId?: string; pictures?: 'all' | 'shared' | 'none' | null; sender?: string; allow?: boolean; forget?: boolean }>();
         if (typeof b.messageId === 'string') {
           need(b.messageId);
-          hub.store.db.query('UPDATE mail_message SET images_allowed = 1 WHERE id = ?').run(b.messageId);
+          // { messageId } alone loads all, as before; pictures: null goes back to the sender's rule or the setting.
+          const v = b.pictures === null ? 0 : b.pictures === undefined || b.pictures === 'all' ? 1 : b.pictures === 'shared' ? 2 : b.pictures === 'none' ? 3 : -1;
+          if (v < 0) throw new MailCallError('pictures: all, shared, none or null', 400);
+          hub.store.db.query('UPDATE mail_message SET images_allowed = ? WHERE id = ?').run(v, b.messageId);
           return Response.json({ ok: true, body: hub.store.bodyView(b.messageId) });
         }
         const sender = typeof b.sender === 'string' ? b.sender.trim().toLowerCase() : '';
         if (!/^[^\s@]+@[^\s@]+$/.test(sender)) throw new MailCallError('give a messageId, or a sender address', 400);
-        hub.store.db
-          .query('INSERT INTO mail_sender_images (address, allow, at) VALUES (?, ?, ?) ON CONFLICT (address) DO UPDATE SET allow = excluded.allow, at = excluded.at')
-          .run(sender, b.allow === false ? 0 : 1, Date.now());
+        // A sender's rule: Always (allow), Never (allow false), or none (forget: the setting decides again).
+        if (b.forget) hub.store.db.query('DELETE FROM mail_sender_images WHERE address = ?').run(sender);
+        else
+          hub.store.db
+            .query('INSERT INTO mail_sender_images (address, allow, at) VALUES (?, ?, ?) ON CONFLICT (address) DO UPDATE SET allow = excluded.allow, at = excluded.at')
+            .run(sender, b.allow === false ? 0 : 1, Date.now());
         return Response.json({ ok: true });
       },
     },

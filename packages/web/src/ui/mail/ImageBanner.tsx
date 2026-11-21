@@ -1,16 +1,23 @@
 /**
- * "3 remote images hidden · Load · Always from Sam" (docs/mail-design.md §7). Remote images are held back until you
- * ask, because loading them tells the sender you opened the mail; when you do, they come through the hub's proxy, so
- * the sender never sees your address. Trackers (1-2 px images) stay out either way.
+ * The picture bar over a mail (docs/mail.md "Pictures and trackers"): what loaded, what is held back because loading it
+ * would tell the sender you opened the mail, and the trackers that went: "3 loaded · 1 held back · 1 tracker removed ·
+ * Load all · ⋯". The ⋯ menu sets the sender's own rule (Always or Never from them, or back to the setting), this mail's
+ * (only the ones that can't tell, or back), and opens Details: every picture's host, why it counts as what it is, what
+ * happened to it and, once the hub has it, its size.
+ *
+ * Pictures come through the hub's proxy whatever happens, so a sender never sees your address. The bar is quiet when
+ * there is nothing to say: everything loaded and nothing removed.
  */
 import type * as P from '@dither-chat/protocol';
 import { useState } from 'preact/hooks';
+import { bytes as bytesText } from '../../format.ts';
 import { bodies, details } from '../../mail/api.ts';
-import { api, toast } from '../../state.ts';
+import { api, go, toast } from '../../state.ts';
 import { mailChanged } from '../../versions.ts';
+import { openMenu } from '../ContextMenu.tsx';
 import { Icon } from '../icons.tsx';
 
-const plural = (n: number, one: string, many: string) => (n === 1 ? one : `${n} ${many}`);
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** Reloads the body views of open messages: what the hub serves changed. */
 async function refresh(ids: string[]) {
@@ -24,49 +31,147 @@ async function refresh(ids: string[]) {
   mailChanged();
 }
 
+const CLASS_LABEL: Record<P.MailPicturesView['items'][number]['class'], string> = {
+  shared: 'can’t tell',
+  personal: 'can tell',
+  tracker: 'tracker',
+};
+const ACTION_LABEL: Record<P.MailPicturesView['items'][number]['action'], string> = {
+  load: 'loaded',
+  hold: 'held back',
+  drop: 'removed',
+};
+
+/** One row per host and kind, with how many of them and the bytes the hub has. */
+function PictureDetails({ p }: { p: P.MailPicturesView }) {
+  const rows = new Map<string, { host: string; item: P.MailPicturesView['items'][number]; n: number; size: number; sized: number }>();
+  for (const x of p.items) {
+    const key = `${x.host} ${x.class} ${x.action} ${x.why}`;
+    const r = rows.get(key) ?? { host: x.host, item: x, n: 0, size: 0, sized: 0 };
+    r.n++;
+    if (x.size !== undefined) {
+      r.size += x.size;
+      r.sized++;
+    }
+    rows.set(key, r);
+  }
+  return (
+    <div class="mail-pic-details">
+      <table>
+        <tbody>
+          {[...rows.values()].map((r) => (
+            <tr class={`pic-${r.item.action}`}>
+              <td class="pic-host">
+                {r.host || 'unreadable address'}
+                {r.n > 1 && <span class="pic-n"> ×{r.n}</span>}
+              </td>
+              <td class={`pic-class pic-${r.item.class}`}>{CLASS_LABEL[r.item.class]}</td>
+              <td class="pic-why">{r.item.why}</td>
+              <td class="pic-act">{ACTION_LABEL[r.item.action]}</td>
+              <td class="pic-size">{r.sized ? bytesText(r.size) : r.item.action === 'load' ? 'not fetched yet' : ''}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p class="mail-pic-note">
+        “Can’t tell”: the address is the same in every copy of the mail, so fetching it says someone opened some copy, not that you did. Everything comes through your hub, so no sender sees your
+        address. Links are not changed: a link can still tell the sender you clicked it.
+      </p>
+    </div>
+  );
+}
+
+/** Settings, at Mail. */
+function openPictureSettings() {
+  go({ view: 'settings' });
+  // Once the page has drawn its sections.
+  setTimeout(() => document.getElementById('set-mail')?.scrollIntoView({ block: 'start' }), 250);
+}
+
 export function ImageBanner({ message, body }: { message: P.MailMessageView; body: P.MailBodyView }) {
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
   const h = body.html;
-  if (!h || h.imagesShown || !h.remoteImages) return null;
+  const p = h?.pictures;
+  if (!h || !p) return null;
+  const quiet = !p.held && !p.removed && p.source === 'setting';
+  if (quiet) return null;
   const who = message.from.name || message.from.email;
   const run = (fn: () => Promise<unknown>) => async () => {
     setBusy(true);
     try {
       await fn();
     } catch (e) {
-      toast({ kind: 'error', title: 'Could not load the images', body: (e as Error).message });
+      toast({ kind: 'error', title: 'Could not change that', body: (e as Error).message });
     } finally {
       setBusy(false);
     }
   };
-  const load = run(async () => {
-    const r = await api<{ body: P.MailBodyView | null }>('/api/mail/images', { body: { messageId: message.id } });
-    if (r.body) bodies.set(message.id, r.body);
-    mailChanged();
-  });
-  const always = run(async () => {
-    await api('/api/mail/images', { body: { sender: message.from.email, allow: true } });
-    // Every open message from them.
-    const from = message.from.email.toLowerCase();
-    const ids = [...details.values()].flatMap((d) => d.messages).filter((m) => m.from.email.toLowerCase() === from && bodies.has(m.id)).map((m) => m.id);
-    await refresh([...new Set([message.id, ...ids])]);
-  });
+  const forMessage = (pictures: P.MailSettings['pictures'] | null) =>
+    run(async () => {
+      const r = await api<{ body: P.MailBodyView | null }>('/api/mail/images', { body: { messageId: message.id, pictures } });
+      if (r.body) bodies.set(message.id, r.body);
+      mailChanged();
+    });
+  const forSender = (rule: { allow: boolean } | { forget: true }) =>
+    run(async () => {
+      await api('/api/mail/images', { body: { sender: message.from.email, ...rule } });
+      // Every open message from them.
+      const from = message.from.email.toLowerCase();
+      const ids = [...details.values()].flatMap((d) => d.messages).filter((m) => m.from.email.toLowerCase() === from && bodies.has(m.id)).map((m) => m.id);
+      await refresh([...new Set([message.id, ...ids])]);
+    });
+  const canTellHeld = p.items.some((x) => x.action === 'hold' && x.class !== 'shared');
+  const safeHeld = p.items.some((x) => x.action === 'hold' && x.class === 'shared');
+  const parts: string[] = [];
+  if (p.loaded) parts.push(`${plural(p.loaded, 'picture')} loaded`);
+  if (p.held) parts.push(p.policy === 'none' ? `${plural(p.held, 'picture')} not loaded` : `${p.held} held back`);
+  if (p.removed) parts.push(`${plural(p.removed, 'tracker')} removed`);
+  const because = p.source === 'sender' ? (p.policy === 'none' ? `Never from ${who}` : `Always from ${who}`) : p.source === 'message' ? 'your choice for this mail' : null;
+  const menu = (e: MouseEvent) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    openMenu(
+      { x: r.right, y: r.bottom },
+      {
+        label: 'Pictures',
+        items: [
+          ...(p.source === 'message' ? [{ label: 'Back to the usual for this mail', icon: 'refresh' as const, run: forMessage(null) }] : []),
+          ...(p.policy === 'none' && safeHeld ? [{ label: 'Load the ones that can’t tell', icon: 'image' as const, run: forMessage('shared') }] : []),
+          ...(p.source === 'sender'
+            ? [{ label: `Use my setting for ${who}`, icon: 'refresh' as const, run: forSender({ forget: true }) }]
+            : [
+                { label: `Always load from ${who}`, icon: 'eye' as const, run: forSender({ allow: true }) },
+                { label: `Never load from ${who}`, icon: 'eyeOff' as const, run: forSender({ allow: false }) },
+              ]),
+          { label: open ? 'Hide details' : 'Details', icon: 'info' as const, run: () => setOpen(!open) },
+          { label: 'Picture settings', icon: 'settings' as const, run: openPictureSettings },
+        ],
+      },
+      e.currentTarget,
+    );
+  };
   return (
     <div class="mail-img-banner" role="note">
-      <Icon name="image" size={15} />
-      <span class="mail-img-banner-text">
-        {plural(h.remoteImages, 'A remote image', 'remote images')} hidden
-        {h.trackers > 0 && <span class="mail-img-banner-faint"> · {plural(h.trackers, 'a tracker', 'trackers')} removed</span>}
-      </span>
-      <span class="mail-img-banner-acts">
-        <button class="link-btn" disabled={busy} onClick={load} title="Load this message's images through your hub">
-          Load
-        </button>
-        <span aria-hidden="true">·</span>
-        <button class="link-btn" disabled={busy} onClick={always} title={`Always load images from ${message.from.email}`}>
-          Always from {who}
-        </button>
-      </span>
+      <div class="mail-img-banner-row">
+        <Icon name="image" size={15} />
+        <span class="mail-img-banner-text">
+          {parts.join(' · ') || 'Pictures'}
+          {canTellHeld && p.policy !== 'none' && <span class="mail-img-banner-faint"> (they would tell {who} you opened it)</span>}
+          {because && <span class="mail-img-banner-faint"> · {because}</span>}
+          {p.bytes > 0 && <span class="mail-img-banner-faint"> · {bytesText(p.bytes)}</span>}
+        </span>
+        <span class="mail-img-banner-acts">
+          {p.held > 0 && (
+            <button class="link-btn" disabled={busy} onClick={forMessage('all')} title="Load every picture of this mail, through your hub">
+              Load all
+            </button>
+          )}
+          <button class="icon-btn mail-img-more" disabled={busy} onClick={menu} aria-label="Picture choices" title="Picture choices">
+            <Icon name="more" size={15} />
+          </button>
+        </span>
+      </div>
+      {open && <PictureDetails p={p} />}
     </div>
   );
 }

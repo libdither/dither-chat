@@ -112,6 +112,25 @@ export class ImageProxy {
   private inflight = new Map<string, Promise<Response>>();
   constructor(private o: ImageProxyOpts) {}
 
+  /** The bytes of a picture the hub has, or null: showing it again makes no request. */
+  cachedSize(url: string): number | null {
+    const file = this.file(url);
+    try {
+      if (!existsSync(file + '.mime')) return null;
+      if ((this.o.now ?? Date.now)() - statSync(file + '.mime').mtimeMs >= IMAGE_KEEP_MS) return null;
+      return statSync(file).size;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The bytes and type of a picture, fetched now when the hub does not have it (a forward that embeds it). */
+  async bytes(url: string): Promise<{ bytes: Buffer; mime: string } | { error: string; status: number }> {
+    const r = await this.serve(url);
+    if (!r.ok) return { error: await r.text(), status: r.status };
+    return { bytes: Buffer.from(await r.arrayBuffer()), mime: r.headers.get('content-type') ?? 'application/octet-stream' };
+  }
+
   private file(url: string) {
     return join(this.o.dir, `mailimg-${new Bun.CryptoHasher('sha256').update(url).digest('hex')}`);
   }

@@ -201,13 +201,37 @@ export interface MailBodyView {
    * `formatted`: plain HTML with bold, italic, headings or code, which `text` would lose: the reader shows this HTML,
    * in the app's theme.
    */
-  html: { url: string; remoteImages: number; trackers: number; imagesShown: boolean; plain?: boolean; formatted?: boolean } | null;
+  html: { url: string; remoteImages: number; trackers: number; imagesShown: boolean; plain?: boolean; formatted?: boolean; pictures?: MailPicturesView } | null;
+  /**
+   * Sizes in bytes: `raw` the whole message as the server keeps it (null when it did not say), `text` and `html` its
+   * two bodies, `files` its attachments together.
+   */
+  sizes?: { raw: number | null; text: number; html: number; files: number };
   bcc: MailAddressView[];
   replyTo: MailAddressView[];
   /** Slice 3. */
   attachments: MailAttachmentView[];
   /** Display-name spoofing, Reply-To elsewhere, links whose text names another site (slice 3). */
   warnings: string[];
+}
+
+/**
+ * A mail's remote pictures (docs/mail.md "Pictures and trackers"): which load, which are held back and which trackers
+ * went, under which rule. `bytes`: what the loaded ones weigh, of those the hub has fetched; `unknown` loaded ones it
+ * has not fetched yet (sizes are never fetched just to measure: a fetch can report the open).
+ */
+export interface MailPicturesView {
+  policy: 'none' | 'shared' | 'all';
+  /** What chose the policy: you, for this message; the sender's rule; or the setting. */
+  source: 'message' | 'sender' | 'setting';
+  keepTrackers: boolean;
+  loaded: number;
+  held: number;
+  removed: number;
+  hosts: number;
+  bytes: number;
+  unknown: number;
+  items: { host: string; class: 'shared' | 'personal' | 'tracker'; why: string; action: 'load' | 'hold' | 'drop'; size?: number }[];
 }
 
 export interface MailAttachmentView {
@@ -387,9 +411,16 @@ export interface MailOpResult {
   messages: number;
 }
 
-/** GET/PUT /api/mail/settings. `markRead`: on the server after a second in view, or only when you mark it (§14 Q3). */
+/**
+ * GET/PUT /api/mail/settings. `markRead`: on the server after a second in view, or only when you mark it (§14 Q3).
+ * `pictures`: which remote pictures load by themselves (docs/mail.md "Pictures and trackers"): none, only those unlikely
+ * to report an open (`shared`), or all; a sender's own rule (Always / Never from them) comes first. `trackers`: open
+ * pixels are removed, or kept as pictures that report the open (they load only when all pictures do).
+ */
 export interface MailSettings {
   markRead: 'view' | 'manual';
+  pictures: 'none' | 'shared' | 'all';
+  trackers: 'remove' | 'keep';
 }
 
 // ------------------------------------------------------------------ search (slice 7)
