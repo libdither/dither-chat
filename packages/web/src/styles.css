@@ -13489,6 +13489,20 @@ button.msg-edited.link:hover {
   color: var(--text-faint);
   text-align: center;
 }
+/* Where Inbox's ranked rows end (docs/mail.md "Ranked"): a faint line, the rest by date under it. */
+.mail-list-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 4px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.mail-list-divider::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
 
 /* Filing (slice 4, ui/mail/Filing.tsx): a row slides over what its swipe does; picked rows; the selection's bar;
    what still waits; Undo. */

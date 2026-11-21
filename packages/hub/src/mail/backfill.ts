@@ -300,9 +300,11 @@ function sources(hub: MailHub, key: string): Row[] {
     const b = hub.store.mailbox(l.mailbox);
     return b ? [b] : [];
   }
-  if (l.view !== 'inbox' && l.view !== 'sent') return [];
+  // Everything is Inbox's mailbox too.
+  const role = l.view === 'all' ? 'inbox' : l.view;
+  if (role !== 'inbox' && role !== 'sent') return [];
   const ids = l.accountId ? [l.accountId] : l.platform ? hub.store.platformAccounts(l.platform) : null;
-  return hub.store.all(`SELECT b.* FROM mailbox b JOIN mail_account a ON a.id = b.account_id WHERE b.role = ? AND a.hidden = 0 ${ids ? 'AND a.id IN (SELECT value FROM json_each(?))' : ''}`, l.view, ...(ids ? [JSON.stringify(ids)] : []));
+  return hub.store.all(`SELECT b.* FROM mailbox b JOIN mail_account a ON a.id = b.account_id WHERE b.role = ? AND a.hidden = 0 ${ids ? 'AND a.id IN (SELECT value FROM json_each(?))' : ''}`, role, ...(ids ? [JSON.stringify(ids)] : []));
 }
 
 /**
@@ -339,7 +341,7 @@ export async function pageOnDemand(hub: MailHub, key: string, before: string | n
 
 // ---------------------------------------------------------------- the live window
 
-const VIEWS: P.MailView[] = ['inbox', 'unread', 'starred', 'sent', 'people', 'updates'];
+const VIEWS: P.MailView[] = ['inbox', 'all', 'unread', 'starred', 'sent', 'people', 'updates'];
 
 /** Which changed threads go to the pages as they are, and which only make their lists stale. */
 class LiveWindow {

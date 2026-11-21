@@ -298,3 +298,44 @@ describe('with the chats', () => {
     expect(ev[0]).toMatchObject({ t: 'attention', items: [{ id: t, kind: 'mail' }], removed: [] });
   });
 });
+
+describe('Mail’s ranked Inbox (docs/mail.md "Ranked")', () => {
+  const at = T0 + 100 * DAY;
+  test('every scored thread is in Inbox and the bootstrap, and Inbox pages by date whatever the scores do', async () => {
+    const w = await world((put) => {
+      put({ messageId: '<s1@x>', from: [SAM], to: [ME], subject: 'Owed and unread', receivedAt: at - 3 * H, flags: { seen: false } });
+      put({ messageId: '<a1@x>', from: [ALICE], to: [ME], subject: 'Read, owed long ago', receivedAt: at - 10 * DAY });
+      put({ messageId: '<j1@x>', from: [JO], to: [ME], subject: 'Old', receivedAt: at - 60 * DAY });
+      put({ messageId: '<t1@x>', from: [THEO], to: [ME], subject: 'Stranger', receivedAt: at - H, flags: { seen: false } });
+      put({ messageId: '<n1@x>', from: [{ name: 'News', email: 'news@weekly.example' }], to: [ME], subject: 'Issue 1', receivedAt: at - 2 * H, bulk: { listId: '<weekly.example>', unsubscribe: null, precedence: null, autoSubmitted: null } });
+    }, at);
+    const scored = w.mail();
+    const subject = (id: string) => w.hub.store.thread(id)!.subject;
+    expect([...scored.keys()].map(subject).sort()).toEqual(['Owed and unread', 'Read, owed long ago']);
+    // The page ranks what it holds: each scored thread is in the bootstrap's window and in Inbox's list.
+    const window = new Set(w.hub.store.bootstrap({ state: 'granted', managerUrl: null }).threads.map((t) => t.id));
+    const inbox = w.hub.store.listThreads('v:inbox:*', null, 50)!.threads.map((t) => t.id);
+    for (const id of scored.keys()) {
+      expect(window.has(id)).toBe(true);
+      expect(inbox).toContain(id);
+    }
+    // One row a page: Inbox comes newest first and each thread once, though a score changes between pages.
+    const sam = tid(w.hub, '<s1@x>');
+    const pages: string[] = [];
+    let next: string | null = null;
+    do {
+      const p = w.hub.store.listThreads('v:inbox:*', next, 1)!;
+      pages.push(...p.threads.map((t) => t.subject));
+      // Read after the first page: Sam's thread scores less.
+      if (pages.length === 1) w.hub.readHere([sam]);
+      next = p.next;
+    } while (next);
+    expect(pages).toEqual(['Stranger', 'Owed and unread', 'Read, owed long ago', 'Old']);
+    expect(w.mail().get(sam)!.score).toBeLessThan(scored.get(sam)!.score);
+    // Everything is the whole of Inbox, Updates too, by the same cursor.
+    const all = w.hub.store.listThreads('v:all:*', null, 2)!;
+    expect(all.threads.map((t) => t.subject)).toEqual(['Stranger', 'Issue 1']);
+    expect(w.hub.store.listThreads('v:all:*', all.next, 50)!.threads.map((t) => t.subject)).toEqual(['Owed and unread', 'Read, owed long ago', 'Old']);
+    expect(w.hub.store.listThreads(`v:all:${ACC}`, null, 50)!.threads).toHaveLength(5);
+  });
+});

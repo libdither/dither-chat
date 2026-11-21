@@ -525,8 +525,12 @@ export const searchOfList = (key: string): string | null => (key.startsWith('s:'
 
 // ------------------------------------------------------------------ lists
 
-/** The views a list key can name. `people` and `updates` come with classification (slice 8). */
-export type MailView = 'inbox' | 'unread' | 'starred' | 'sent' | 'people' | 'updates';
+/**
+ * The views a list key can name. `people` and `updates` come with classification (slice 8). `inbox` is Inbox without
+ * Updates (the page ranks it: docs/mail.md "Ranked"); `all` is the whole of Inbox, Updates too, newest first.
+ * `people` and `unread` have no chip any more, but their keys still list.
+ */
+export type MailView = 'inbox' | 'all' | 'unread' | 'starred' | 'sent' | 'people' | 'updates';
 
 /**
  * A list of threads: `mb:<mailbox id>`, or `v:<view>:<account id or *>`. The page keeps lists by these keys, and
@@ -568,7 +572,7 @@ export function parseWithList(key: string): string | null {
 export function parseMailList(key: string): { mailbox: string } | { view: MailView; accountId: string | null; platform: string | null } | null {
   const m = key.match(/^mb:([\w-]+)$/);
   if (m) return { mailbox: m[1] };
-  const v = key.match(/^v:(inbox|unread|starred|sent|people|updates):(k\.[a-z]+|[\w-]+|\*)$/);
+  const v = key.match(/^v:(inbox|all|unread|starred|sent|people|updates):(k\.[a-z]+|[\w-]+|\*)$/);
   if (!v) return null;
   const platform = v[2].startsWith('k.') ? v[2].slice(2) : null;
   return { view: v[1] as MailView, accountId: v[2] === '*' || platform ? null : v[2], platform };

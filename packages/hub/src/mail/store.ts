@@ -1229,7 +1229,9 @@ export class MailStore {
 
   /**
    * A page of a list, newest first. `before`: the cursor a page gave (`<lastAt>:<id>`). Inbox leaves out mail that is
-   * not from a person (its Updates row is the `updates` view); People is the rest of Inbox from people (slice 8).
+   * not from a person (its Updates row is the `updates` view); People is the rest of Inbox from people (slice 8); All is
+   * the whole of Inbox. Inbox's ranked order is the page's (web mail/model.ts `rankedThreads`): it pages by date here,
+   * and puts the threads the one-list inbox scores first.
    */
   listThreads(key: string, before: string | null, limit: number): P.MailThreadPage | null {
     const list = parseMailList(key);
@@ -1265,7 +1267,7 @@ export class MailStore {
         args.push(JSON.stringify(platform));
       }
       const role = list.view === 'sent' ? 'sent' : 'inbox';
-      if (list.view === 'inbox' || list.view === 'sent' || list.view === 'people' || list.view === 'updates') where.push(`EXISTS (SELECT 1 FROM json_each(t.roles) WHERE value = '${role}')`);
+      if (list.view === 'inbox' || list.view === 'all' || list.view === 'sent' || list.view === 'people' || list.view === 'updates') where.push(`EXISTS (SELECT 1 FROM json_each(t.roles) WHERE value = '${role}')`);
       // Classification (slice 8, classify.ts): an unclassified thread stays in Inbox.
       if (list.view === 'inbox') where.push(`(t.class IS NULL OR t.class != 'bulk')`);
       if (list.view === 'people') where.push(`t.class = 'personal'`);

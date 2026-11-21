@@ -790,6 +790,11 @@ It has the person's avatar with an envelope badge in the network-badge spot, the
 ↩ owed mark and the same reasons on hover. Chips: All and Unread include mail, People includes one-to-one threads,
 Groups the rest. Tapping a row opens the reader.
 
+**Mail's own Inbox, ranked** (owner, 2026-11-20: "Sort Inbox by the same score, with a 'Newest' switch, and keep Sent
+and Starred by date"). Mail's Inbox shows the threads this section scores first, in the one-list inbox's own order, then
+the rest by date; docs/mail.md "Ranked" says how. Its chips shrank to Ranked (or Newest), Everything and Updates;
+Starred and Sent moved to the folder menu.
+
 **Triage.** `mail/triage.ts` builds learn.ts `Facts` per new personal message: `network: 'email'`, `shape: 'mail'`,
 `conversation: <thread>`, `spaces: [<mail account>]`, `author` (person, else identity), `known`, `mention` (in To),
 `everyone` (Cc or a list), `reply` (to you), `question`/`urgent` from subject and text, `link`, `long`, `media`. Its

@@ -1,5 +1,5 @@
 /**
- * A list of threads, newest first (docs/mail.md). It shows what is at hand at once (the bootstrap's window), loads its
+ * A list of threads, newest first (docs/mail.md); Inbox ranked unless this device sorts it newest first (rankedThreads). It shows what is at hand at once (the bootstrap's window), loads its
  * first page from the hub, and the next ones as it is scrolled near its end; past what the hub holds, the hub fetches
  * them from the server. A list the hub made stale while it was away loads again when it shows. The last line says how
  * the sync is going.
@@ -7,8 +7,9 @@
 import { parseMailList } from '@dither-chat/protocol';
 import { useEffect, useRef } from 'preact/hooks';
 import { loadList } from '../../mail/api.ts';
-import { hasMore, listThreads, listTitle, syncLine, updatesFold, type UpdatesFold } from '../../mail/model.ts';
-import { db, go, mailRev } from '../../state.ts';
+import { inboxSnap } from '../../inbox.ts';
+import { hasMore, listThreads, listTitle, rankable, rankedThreads, syncLine, updatesFold, type UpdatesFold } from '../../mail/model.ts';
+import { db, go, mailRev, prefs } from '../../state.ts';
 import { mailChanged } from '../../versions.ts';
 import { Empty } from '../bits.tsx';
 import { Icon } from '../icons.tsx';
@@ -57,7 +58,10 @@ export function ThreadList({ list, active }: { list: string; active?: string }) 
     const now = db.mail.lists.get(list);
     if (now?.stale && !now.loading) void loadList(list);
   }, [list]);
-  const threads = listThreads(s, list);
+  // Ranked: the one-list inbox's scored threads first, in its snapshot's order (inbox.ts), then the rest by date.
+  const ranked = rankable(list) && prefs.value.mailOrder !== 'newest' ? rankedThreads(s, list, db.attention.values(), inboxSnap.value.snap) : null;
+  const threads = ranked ? ranked.threads : listThreads(s, list);
+  const head = ranked?.head ?? 0;
   const parsed = parseMailList(list);
   const scope = parsed && !('mailbox' in parsed) ? parsed.accountId : null;
   const showAccount = !scope && s.accounts.size > 1;
@@ -82,10 +86,17 @@ export function ThreadList({ list, active }: { list: string; active?: string }) 
     void loadList(list, true);
   };
   const fold = updatesFold(s, list);
-  // Where it sorts among the rows shown; after them when it is older than all of them.
-  const foldAt = fold ? threads.findIndex((t) => t.lastAt < fold.lastAt) : -1;
+  // Where it sorts among the rows by date (after the ranked ones); after them when it is older than all of them.
+  const foldAt = fold ? threads.findIndex((t, i) => i >= head && t.lastAt < fold.lastAt) : -1;
   const rows = threads.map((t) => <ThreadRow key={t.id} thread={t} active={t.id === active} account={s.accounts.get(t.accountId)} showAccount={showAccount} list={list} />);
   if (fold) rows.splice(foldAt < 0 ? rows.length : foldAt, 0, <UpdatesRow key={fold.key} fold={fold} />);
+  // Where the ranked rows end: the rest are by date.
+  if (head > 0 && rows.length > head)
+    rows.splice(head, 0, (
+      <div key="ranked-end" class="mail-list-divider" role="separator">
+        The rest, newest first
+      </div>
+    ));
   return (
     <div class="mail-list" aria-label={listTitle(s, list)}>
       {rows}
