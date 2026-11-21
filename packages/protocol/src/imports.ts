@@ -10,6 +10,7 @@ export type ImportSourceKind =
   | 'signal-backup' //    Signal/Molly legacy .backup (encrypted, needs the 30-digit passphrase)
   | 'signal-backup-v2' // a SignalBackups/ folder (backup v2)
   | 'signal-folder' //    a Molly backup folder: SignalBackups/ and, with "Include kept messages", .backup files
+  | 'signal-desktop' //   a Signal Desktop profile folder: config.json, sql/db.sqlite (SQLCipher), attachments.noindex/
   | 'discord-package' //  Discord's own data package (zip)
   | 'dce-html' //         DiscordChatExporter HTML, with downloaded media
   | 'dce-json' //         DiscordChatExporter JSON

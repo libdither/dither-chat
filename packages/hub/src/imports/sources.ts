@@ -8,6 +8,7 @@
  *   unpacked/     a zipped upload unpacked (a Molly folder zipped on the phone). Derived from raw/'s zip; deleting
  *                 it unpacks again.
  *   passphrase    a backup's passphrase, if given (0600).
+ *   key           a Signal Desktop database key given by hand, when config.json's is wrapped by a keyring (0600).
  *
  * The directory is the truth and needs no database row, so a source copied in by rsync appears on the
  * next listing, and the import itself can be redone from sources alone.
@@ -20,8 +21,10 @@ import { MAX_IMPORT } from '@dither-chat/protocol';
 import { cleanFileName, cleanRelPath } from '../uploads.ts';
 import { importable } from './engine.ts';
 import { isPassphrase, normalizePassphrase, sniffLegacy } from './signal-backup.ts';
+import { desktopKey, desktopProfile } from './signal-desktop.ts';
 import { backupKeyFromRecoveryKey, parseRecoveryKey } from './signal-keys.ts';
 import { snapshots } from './signal-v2.ts';
+import { parseRawKey } from './sqlcipher.ts';
 
 interface SourceFile {
   v: 1;
@@ -194,7 +197,7 @@ export class ImportSources {
       sha256: st?.sha256 ?? null,
       addedAt: src.addedAt ?? 0,
       addedBy: src.addedBy ?? 'unknown',
-      hasPassphrase: existsSync(join(this.root, id, 'passphrase')) || existsSync(join(this.root, id, 'backup-key')),
+      hasPassphrase: ['passphrase', 'backup-key', 'key'].some((f) => existsSync(join(this.root, id, f))),
       progress: this.progress.get(id) ?? null,
       census: st?.census ?? null,
       error: st?.error ?? null,
@@ -241,7 +244,9 @@ export class ImportSources {
     const kind: P.ImportSourceKind =
       o.network === 'signal' && files.length === 1 && /\.backup$/i.test(first)
         ? 'signal-backup'
-        : o.network === 'signal'
+        : o.network === 'signal' && files.some((f) => /(^|\/)sql\/db\.sqlite$/.test(f.path))
+          ? 'signal-desktop'
+          : o.network === 'signal'
           ? 'signal-folder'
           : o.network === 'discord' && files.length === 1 && /\.zip$/i.test(first)
             ? 'discord-package'
@@ -339,6 +344,10 @@ export class ImportSources {
         this.setState(id, { unpackedFrom: sha256 });
       }
     }
+    // A Signal Desktop profile (copied in, uploaded as a folder, or zipped): its database, opened with its key.
+    const profile = kind === 'signal-desktop' || kind === 'signal-folder' || (src.network === 'signal' && !up) ? desktopProfile(root) : null;
+    if (profile) return this.countDesktop(id, profile, sha256);
+    if (kind === 'signal-desktop') throw new Error('there is no sql/db.sqlite here: this is not a Signal Desktop profile');
     if (kind === 'signal-folder' || (src.network === 'signal' && !up)) {
       // A Molly backup folder: new-format snapshots under SignalBackups/, and with "Include kept messages", .backup
       // files beside it. The newest .backup is the one counted.
@@ -402,6 +411,63 @@ export class ImportSources {
       };
       w.onerror = (e) => end(new Error(`unpacking the zip: ${e.message || 'failed'}`));
       w.postMessage({ zip, outDir: tmp, maxBytes: MAX_IMPORT });
+    });
+  }
+
+  /** The key for a Desktop profile's database: one given by hand, else config.json's. */
+  private desktopKeyFor(id: string, profile: string): { key: Buffer; given: boolean } | { missing: 'keyring' | 'config' } {
+    const p = join(this.root, id, 'key');
+    const given = existsSync(p) ? parseRawKey(readFileSync(p, 'utf8')) : null;
+    if (given) return { key: given, given: true };
+    const k = desktopKey(profile);
+    return 'key' in k ? { key: k.key, given: false } : k;
+  }
+
+  /** A Signal Desktop source's profile folder and key, for its reader. */
+  desktopSource(id: string): { profile: string; key: Buffer } | null {
+    const root = this.contentDir(id);
+    const profile = root ? desktopProfile(root) : null;
+    const k = profile ? this.desktopKeyFor(id, profile) : null;
+    return profile && k && 'key' in k ? { profile, key: k.key } : null;
+  }
+
+  /**
+   * Open a Desktop profile's database in a worker: decrypted into the source's work folder, then counted. A key given
+   * by hand that does not open it is forgotten and asked for again.
+   */
+  private countDesktop(id: string, profile: string, sourceSha: string): Promise<void> {
+    const base: P.ImportCensus = { format: 'signal-desktop' };
+    const k = this.desktopKeyFor(id, profile);
+    if (!('key' in k)) {
+      const error =
+        k.missing === 'keyring'
+          ? 'config.json’s key is wrapped by the desktop keyring, which only that computer can open. Give the 64-digit database key.'
+          : 'config.json has no database key. Give the 64-digit database key.';
+      this.setState(id, { kind: 'signal-desktop', status: 'needs-passphrase', census: { ...base, needs: 'desktop-key' }, error });
+      return Promise.resolve();
+    }
+    this.setState(id, { kind: 'signal-desktop', status: 'counting', census: base, error: null });
+    this.progress.set(id, 0);
+    return new Promise((done) => {
+      const w = new Worker(new URL('./census-worker.ts', import.meta.url).href);
+      this.workers.set(id, w);
+      const finish = (patch: Partial<StateFile>) => {
+        w.terminate();
+        this.workers.delete(id);
+        if (this.dir(id)) this.setState(id, patch);
+        done();
+      };
+      w.onmessage = (e: MessageEvent<any>) => {
+        if (typeof e.data.progress === 'number') this.progress.set(id, e.data.progress);
+        else if (e.data.census) finish({ status: 'ready', census: e.data.census, error: null });
+        else if (e.data.badKey && k.given) {
+          rmSync(join(this.root, id, 'key'), { force: true });
+          finish({ status: 'needs-passphrase', census: { ...base, needs: 'desktop-key' }, error: 'That key does not open this database.' });
+        } else if (e.data.badKey) finish({ status: 'needs-passphrase', census: { ...base, needs: 'desktop-key' }, error: 'config.json’s key does not open sql/db.sqlite. Give the 64-digit database key.' });
+        else finish({ status: 'error', error: e.data.error ?? 'reading the database failed' });
+      };
+      w.onerror = (e) => finish({ status: 'error', error: e.message || 'reading the database failed' });
+      w.postMessage({ desktop: { profile, key: k.key.toString('hex'), dbPath: join(this.root, '..', 'work', id, 'desktop.sqlite'), sourceSha } });
     });
   }
 
@@ -478,8 +544,16 @@ export class ImportSources {
     if (!d) throw Object.assign(new Error('no such source'), { status: 404 });
     const st = this.readState(id);
     if (st?.status === 'uploading') throw Object.assign(new Error('the upload is not complete yet'), { status: 409 });
-    if (st?.kind !== 'signal-backup' && st?.kind !== 'signal-folder') throw new Error('only a Signal backup has a passphrase');
+    if (st?.kind !== 'signal-backup' && st?.kind !== 'signal-folder' && st?.kind !== 'signal-desktop') throw new Error('only a Signal backup or Desktop profile has a passphrase');
     if (this.jobs.has(id)) throw Object.assign(new Error('still checking this source'), { status: 409 });
+    if (st.kind === 'signal-desktop') {
+      // The raw database key, as config.json's `key` holds it.
+      const key = parseRawKey(passphrase);
+      if (!key) throw new Error('A Signal Desktop database key is 64 hex digits.');
+      writeFileSync(join(d, 'key'), key.toString('hex'), { mode: 0o600 });
+      this.check(id);
+      return this.view(id)!;
+    }
     const pool = st.kind === 'signal-folder' ? parseRecoveryKey(passphrase) : null;
     // The recovery key itself is never written down: only the backup key derived from it, which opens backups
     // and nothing else.
