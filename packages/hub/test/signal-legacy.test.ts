@@ -71,7 +71,7 @@ function backup(): Buffer {
   const m = (id: number, at: number, thread: number, from: number, type: number, body: string | null, more: Partial<Record<string, number | string | Uint8Array | null>> = {}) =>
     w.insert('message', [
       id, T + at, thread, from, type, body, more.expires_in ?? 0, more.expire_started ?? 0, more.quote_id ?? 0, more.quote_author ?? 0, more.quote_body ?? null, null,
-      0, 0, 0, more.message_ranges ?? null, more.story_type ?? 0, 0, more.latest_revision_id ?? null, more.original_message_id ?? null, more.deleted_by ?? null, more.keepmsg_expired ?? 0, more.keepmsg_deleted_at ?? null, more.m_type ?? null,
+      0, 0, 0, more.message_ranges ?? null, more.story_type ?? 0, more.parent_story_id ?? 0, more.latest_revision_id ?? null, more.original_message_id ?? null, more.deleted_by ?? null, more.keepmsg_expired ?? 0, more.keepmsg_deleted_at ?? null, more.m_type ?? null,
     ]);
   m(1, 1000, 1, 2, SECURE_IN, 'hello there', { message_ranges: BOLD5 });
   m(2, 2000, 1, 1, SECURE_OUT, 'a photo back', { quote_id: T + 1000, quote_author: 2, quote_body: 'hello there' });
@@ -95,6 +95,10 @@ function backup(): Buffer {
   m(18, 17_000, 4, 6, 20, null, { m_type: 130 });
   // Your own message whose timer ran out: a timer took it, not you, so what Molly kept comes back.
   m(19, 18_000, 1, 1, SECURE_OUT, 'my words that disappeared', { expires_in: 60_000, expire_started: T + 18_500, keepmsg_expired: 1 });
+  // A reply to Pat's story (15), and Pat's reaction to mine (22): the emoji is the body, the type's special bits say so.
+  m(20, 19_000, 1, 1, SECURE_OUT, 'nice story', { parent_story_id: 15 });
+  m(21, 20_000, 1, 2, SECURE_IN + 0x100000000, '🔥', { parent_story_id: 22 });
+  m(22, 18_500, 1, 1, SECURE_OUT, 'my story', { story_type: 1 });
   w.insert('attachment', [1, 2, 'image/png', 'photo.png', PHOTO.length, 4, 3, 0, null, null, null, 0]);
   w.attachment(1, PHOTO);
   w.insert('attachment', [2, 2, 'image/jpeg', null, 99, 0, 0, 1, null, null, null, 0]); // the quote's thumbnail
@@ -125,7 +129,7 @@ describe('legacy .backup reader', () => {
 
   test('unpacks the tables an import reads, and files by their hash', () => {
     const s = unpackLegacy(file, SYNTHETIC_PASSPHRASE, dbPath, media);
-    expect(s.rows.message).toBe(19);
+    expect(s.rows.message).toBe(22);
     expect(s.rows.sessions).toBeUndefined();
     expect(s.attachments).toEqual({ count: 1, bytes: PHOTO.length, stored: 1 });
     expect((statSync(dbPath).mode & 0o777).toString(8)).toBe('600');
@@ -176,10 +180,14 @@ describe('legacy .backup reader', () => {
       { author: SELF, body: 'and back', extra: { sms: 'mms' } },
     ]);
 
+    // Story replies and reactions say whose story and when it was posted; the stories themselves stay out.
+    expect(by.get(19_000)).toMatchObject({ author: SELF, body: 'nice story', extra: { storyReply: { author: PEER, ts: T + 14_000 } } });
+    expect(by.get(20_000)).toMatchObject({ author: PEER, body: '', extra: { storyReply: { author: SELF, ts: T + 18_500, emoji: '🔥' } } });
+
     expect(mapped.gone).toEqual({ deleted: 1, disappeared: 3 });
-    expect(mapped.skipped).toEqual({ 'deleted by you': 1, 'deleted, nothing kept': 1, story: 1, 'mms never downloaded': 1 });
+    expect(mapped.skipped).toEqual({ 'deleted by you': 1, 'deleted, nothing kept': 1, story: 2, 'mms never downloaded': 1 });
     expect(mapped.files).toEqual({ linked: 1, missing: 0 });
-    expect(mapped.selfMessages).toBe(3);
+    expect(mapped.selfMessages).toBe(4);
   });
 });
 
@@ -244,13 +252,13 @@ describe('a .backup through the hub', () => {
   test('a dry run counts the kept messages and writes nothing', async () => {
     const r = await run(true);
     expect(r.stage).toBe('done');
-    expect(r.counts).toMatchObject({ messages: 13, new: 9, filled: 4, kept: 4, conflicts: 0, conversationsNew: 3 });
+    expect(r.counts).toMatchObject({ messages: 15, new: 11, filled: 4, kept: 4, conflicts: 0, conversationsNew: 3 });
     expect(row(3000)).toBeNull();
   });
 
   test('kept messages come in as gone, and the hub’s emptied copy gets its words back', async () => {
     const r = await run(false);
-    expect(r.counts).toMatchObject({ new: 9, filled: 4, kept: 4, conflicts: 0 });
+    expect(r.counts).toMatchObject({ new: 11, filled: 4, kept: 4, conflicts: 0 });
     expect(row(1000)).toMatchObject({ body: '**hello** there', deleted: 0, imported: 1 });
     expect(row(3000)).toMatchObject({ body: 'this one disappeared', deleted: 1, gone_how: 'disappeared', gone_at: T + 63_500, imported: 1 });
     expect(row(4000)).toMatchObject({ body: 'they deleted this', deleted: 1, gone_how: 'deleted', imported: 0 });
