@@ -12,6 +12,7 @@
  *   bun scripts/inbox-replay.ts ... --calibrate    (the learned order's prior: open chance against the formula alone)
  *   bun scripts/inbox-replay.ts ... --prefetch     (pages kept on the device and fetched ahead: how many opens they serve, at what cost)
  *   bun scripts/inbox-replay.ts ... --needs        (owed replies weighed by the needs-reply model, fitted on the turns over before the log began)
+ *   bun scripts/inbox-replay.ts ... --mail         (mail threads in the inbox too: the order with mail against chats' learned order and mail's formula)
  *
  * It never opens the live database for writing: it copies it with VACUUM INTO (read-only) and works on the copy. It
  * writes `inbox-replay.md` and `inbox-replay.json` to --out: counts, ranks and rates, never message text, names or ids.
@@ -25,12 +26,18 @@
  * horizon had passed, starting from the prior, and asked at every open of the day. `sectioned` is the same model in the
  * three sections the inbox had on 2026-11-09 (a reply you owe that needs you, then unread, then the rest), to measure
  * what hard sections cost against the one order.
+ *
+ * With --mail, mail threads from a person are candidates too (rankhistory.ts), and `learned` is the order with mail
+ * (ranker.ts, DITHER_INBOX_MAIL): one model over chats and mail, mail's own features among its features. `learned-now`
+ * is the inbox while it runs in shadow: chats by the learned order fitted on chats alone, mail rows by the formula's
+ * points. The report compares the two on mail opens and on chat opens.
  */
 import { Database } from 'bun:sqlite';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { scoreConversation, WEIGHTS } from '../packages/hub/src/attention.ts';
-import { drawZ, epochOf, EXAM_AT, EXAMINATION_ETA, EXPLORE_FLOOR, EXPLORE_SCALE, FEATURES, FIT, fitRank, FLOORED, GUESSED_CURVE, logit, pointsOf, SEND_VALUE, sigmoid, spread, TRIAGE_FEATURES, HORIZON, LAMBDA, MAX_IPW, predict, PRIOR, rankFeatures, type Feature, type Features, type FitOptions, type Moment, type RankModel } from '../packages/hub/src/rank.ts';
+import { drawZ, epochOf, EXAM_AT, EXAMINATION_ETA, EXPLORE_FLOOR, EXPLORE_SCALE, FEATURES, FIT, fitRank, FLOORED, GUESSED_CURVE, logit, mailRankFeatures, MAIL_FEATURES, pointsOf, SEND_VALUE, sigmoid, spread, TRIAGE_FEATURES, HORIZON, LAMBDA, MAX_IPW, predict, PRIOR, rankFeatures, type Feature, type Features, type FitOptions, type Moment, type RankModel } from '../packages/hub/src/rank.ts';
+import { closeness } from '../packages/hub/src/closeness.ts';
 import { isChoice, loadWorld, momentOf, mutedBy, Rebuild, seenAt, type Seen, type World } from '../packages/hub/src/rankhistory.ts';
 import { Store } from '../packages/hub/src/store.ts';
 import { fitNeedsModelSteps } from '../packages/hub/src/needsreply.ts';
@@ -75,7 +82,8 @@ function copyLive(): string {
 
 function load(path: string): World & { db: Database; store: Store } {
   const store = new Store(path, () => null);
-  const w = loadWorld(store.db, mutedBy(new Triage(store)));
+  const mail = flag('mail');
+  const w = loadWorld(store.db, mutedBy(new Triage(store)), 0, undefined, { mail, bonds: mail ? closeness(store.db).byIdentity : null });
   if (flag('needs')) w.needsModel = fitNeeds(store.db, w.logStart);
   return { ...w, db: store.db, store };
 }
@@ -160,6 +168,8 @@ export interface Open {
   back: boolean;
   /** You wrote during the stay. */
   sent: boolean;
+  /** It opened a mail thread (--mail). */
+  mail: boolean;
   ranks: Record<string, number>;
 }
 
@@ -169,7 +179,7 @@ interface Snap {
   targets: string[];
   sent: boolean;
   /** `section`: where the sectioned inbox put it: 0 a reply you owe that needs you, 1 unread, 2 the rest. */
-  cands: { id: string; x: Features; muted: boolean; section: number }[];
+  cands: { id: string; x: Features; muted: boolean; section: number; mail: boolean; formula: number }[];
 }
 
 export interface Summary {
@@ -198,11 +208,13 @@ export function summarize(ranks: number[]): Summary {
  * Replay `policies` over every open: the rank of what you opened under each, and what the learned order learns from.
  * `wide`: moments built with a longer horizon too, for the grid to try shorter ones on.
  */
-function measure(l: ReturnType<typeof load>, policies: Policy[], wideHorizon = 0): { opens: Open[]; snaps: Snap[]; moments: Moment[]; wide: Moment[]; skipped: Record<string, number> } {
+function measure(l: ReturnType<typeof load>, policies: Policy[], wideHorizon = 0): { opens: Open[]; snaps: Snap[]; moments: Moment[]; chatMoments: Moment[]; wide: Moment[]; skipped: Record<string, number> } {
   const choices = l.stays.filter(isChoice);
   const opens: Open[] = [];
   const snaps: Snap[] = [];
   const moments: Moment[] = [];
+  /** With --mail: the moments of chats alone, as the first model learns while the order with mail runs in shadow. */
+  const chatMoments: Moment[] = [];
   const wide: Moment[] = [];
   const skipped: Record<string, number> = { notListed: 0, noTarget: 0 };
   let i = 0;
@@ -223,22 +235,28 @@ function measure(l: ReturnType<typeof load>, policies: Policy[], wideHorizon = 0
         ranks[p.id] = Math.min(...stay.targets.map((x) => order.indexOf(x)).filter((r) => r >= 0));
       }
       const back = seen.some((s) => stay.targets.includes(s.conv.id) && s.lastThere !== null && t - s.lastThere <= 2 * HOUR);
-      opens.push({ t, day: dayOf(t), source: stay.source, listLength: seen.length, back, sent: stay.sent > 0, ranks });
+      const mail = stay.targets.some((x) => x.startsWith('mth_'));
+      opens.push({ t, day: dayOf(t), source: stay.source, listLength: seen.length, back, sent: stay.sent > 0, mail, ranks });
       snaps.push({
         t,
         targets: stay.targets.filter((x) => ids.has(x)),
         sent: stay.sent > 0,
         cands: seen.map((s) => {
           const r = scoreConversation(s.input);
-          return { id: s.conv.id, x: rankFeatures(s.input, r), muted: !!s.input.muted && s.conv.shape !== 'self', section: r.needs && r.owedSince !== null ? 0 : s.input.unread > 0 ? 1 : 2 };
+          const x = s.mail ? mailRankFeatures(s.input, r, s.mail) : rankFeatures(s.input, r);
+          return { id: s.conv.id, x, muted: !!s.input.muted && s.conv.shape !== 'self', section: r.needs && r.owedSince !== null ? 0 : s.input.unread > 0 ? 1 : 2, mail: !!s.mail, formula: r.score };
         }),
       });
       // As the hub learns: a sample of the candidates (rankhistory.ts).
       moments.push(momentOf(w, stay, t, seen)!);
       if (wideHorizon) wide.push(momentOf(w, stay, t, seen, wideHorizon)!);
+      if (l.mailTallies) {
+        const m = momentOf(w, stay, t, seen.filter((s) => !s.mail));
+        if (m) chatMoments.push(m);
+      }
     },
   ).run();
-  return { opens, snaps, moments, wide, skipped };
+  return { opens, snaps, moments, chatMoments, wide, skipped };
 }
 
 // ------------------------------------------------------------------ the learned order
@@ -253,6 +271,29 @@ function modelRank(m: RankModel, s: Snap, sectioned = false): number {
     .sort((a, b) => a.section - b.section || Number(a.muted) - Number(b.muted) || b.v - a.v || (a.id < b.id ? -1 : 1))
     .map((c) => c.id);
   return Math.min(...s.targets.map((x) => order.indexOf(x)).filter((r) => r >= 0));
+}
+
+/**
+ * The inbox while the order with mail runs in shadow: chats by the learned order fitted on chats alone (`m`), in its
+ * points, and mail rows by the formula's; muted last.
+ */
+function nowRank(m: RankModel, s: Snap): number {
+  const order = s.cands
+    .map((c) => ({ id: c.id, v: c.mail ? c.formula : predict(m, c.x).points, muted: c.muted }))
+    .sort((a, b) => Number(a.muted) - Number(b.muted) || b.v - a.v || (a.id < b.id ? -1 : 1))
+    .map((c) => c.id);
+  return Math.min(...s.targets.map((x) => order.indexOf(x)).filter((r) => r >= 0));
+}
+
+/** The models fitted on chats alone, day by day as `learned` fits, ranking as `nowRank`: `ranks[id]`. */
+function learnedNow(ms: Moment[], opens: Open[], snaps: Snap[], id: string, o: Setting) {
+  const models: Record<number, RankModel> = {};
+  for (const d of [...new Set(opens.map((x) => x.day))]) {
+    const cut = dayStart(d);
+    const known = ms.filter((m) => m.at + (o.horizon ?? HORIZON) <= cut);
+    models[d] = known.length ? fitRank(known, cut, { ...o, cov: false }) : PRIOR;
+  }
+  opens.forEach((x, i) => (x.ranks[id] = nowRank(models[x.day], snaps[i])));
 }
 
 /** A setting of the learned order to replay: the fit's options, and `window`, how far back it learns from. */
@@ -480,7 +521,8 @@ if (import.meta.main) {
   if (flag('grid'))
     for (const v of [15, 30, 45, 60]) for (const h of [1, 2, 4]) policies.push(oneList(`here-${v}-${h}h`, { visited: v, visitedHalfLife: h * HOUR }));
   const grid = flag('model-grid');
-  const { opens, snaps, moments, wide, skipped } = measure(l, policies, grid ? 6 * HOUR : 0);
+  const { opens, snaps, moments, chatMoments, wide, skipped } = measure(l, policies, grid ? 6 * HOUR : 0);
+  const withMail = !!l.mailTallies;
   const days = [...new Set(opens.map((o) => o.day))].sort((a, b) => a - b);
   const holdout = new Set(days.slice(-holdoutDays));
   // The learned order, as shipped; and with --model-grid, other settings to choose from on the choosing days.
@@ -488,6 +530,10 @@ if (import.meta.main) {
   const models = learned(moments, opens, snaps, 'learned', shipped, 'sectioned');
   policies.push({ id: 'learned', what: 'the learned order (rank.ts) as shipped, refitted daily on the days before', order: () => [] });
   policies.push({ id: 'sectioned', what: 'the learned order in the sections of 2026-11-09: a reply you owe that needs you, then unread, then the rest', order: () => [] });
+  if (withMail) {
+    learnedNow(chatMoments, opens, snaps, 'learned-now', shipped);
+    policies.push({ id: 'learned-now', what: "the inbox while the order with mail runs in shadow: chats by the learned order fitted on chats alone, mail by the formula's points", order: () => [] });
+  }
   const at = (lam: number): Record<Feature, number> => Object.fromEntries(FEATURES.map((f) => [f, f === 'bias' || f === 'formula' || LAMBDA[f] === Infinity ? LAMBDA[f] : lam])) as Record<Feature, number>;
   const gridIds: string[] = [];
   const fitted: Record<string, Record<number, RankModel>> = { learned: models };
@@ -527,6 +573,22 @@ if (import.meta.main) {
   const hold = opens.filter((o) => holdout.has(o.day));
   const fromInbox = (o: Open) => o.source === 'inbox';
   const later = opens.filter((o) => o.day > days[0]);
+  const mailLines = withMail
+    ? [
+        '### Mail in the learned order',
+        '',
+        `${opens.filter((o) => o.mail).length} opens of a mail thread (${later.filter((o) => o.mail).length} after the first day). \`learned\` is the order with mail; \`learned-now\` the inbox while it runs in shadow. The order with mail minus that, MRR on the same opens:`,
+        '',
+        gapLine('mail opens, every day after the first', later.filter((o) => o.mail), 'learned', 'learned-now'),
+        gapLine('mail opens, from elsewhere', later.filter((o) => o.mail && !fromInbox(o)), 'learned', 'learned-now'),
+        gapLine('chat opens, every day after the first', later.filter((o) => !o.mail), 'learned', 'learned-now'),
+        gapLine('all, held-out days', hold, 'learned', 'learned-now'),
+        `- mail's features at the start of the last day (open, change from the prior): ${MAIL_FEATURES.map((f) => `${f} ${((models[days[days.length - 1]]?.open[f] ?? 0) - (PRIOR.open[f] ?? 0)).toFixed(2)}`).join(', ')}`,
+        '',
+        table('Mail opens, every day after the first', policies.filter((p) => ['one-list', 'learned', 'learned-now', 'latest'].includes(p.id)), [['mail', later.filter((o) => o.mail)], ['from the inbox', later.filter((o) => o.mail && fromInbox(o))], ['elsewhere', later.filter((o) => o.mail && !fromInbox(o))]]),
+        '',
+      ]
+    : [];
   const exploring = flag('explore') ? explore(models, opens, snaps, Number(opt('explore-scale', String(EXPLORE_SCALE))), Number(opt('explore-floor', String(EXPLORE_FLOOR))), val, hold, later) : [];
   const gridGaps = gridIds.length
     ? [
@@ -568,6 +630,7 @@ if (import.meta.main) {
     gapLine('wrote', later.filter((o) => o.sent)),
     '',
     ...gridGaps,
+    ...mailLines,
     ...exploring,
     ...(flag('prefetch') ? prefetchReport(l, opens, snaps, models, days.length) : []),
     'Sectioned minus the learned order (what hard sections cost), MRR on the same opens:',

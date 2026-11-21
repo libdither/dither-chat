@@ -1548,6 +1548,11 @@ export interface AttentionView {
    * `owedSince`, unless you marked it "Reply needed".
    */
   needsReply?: number;
+  /**
+   * The order with mail's score for it, while that order is worked out in shadow (docs/inbox.md, "Mail in the learned
+   * order"): what `score` would be if it sorted the inbox. Only to compare; nothing sorts by it.
+   */
+  shadow?: number;
   /** When the hub computed it. */
   at: number;
 }

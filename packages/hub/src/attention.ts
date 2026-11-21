@@ -15,6 +15,7 @@ import { decayed, EXPLORE_REASON, USAGE_HALF_LIFE } from '@dither-chat/protocol'
 import type { Store } from './store.ts';
 import type { Triage } from './triage.ts';
 import type { ActivityStore } from './activity.ts';
+import type { MailSide } from './rank.ts';
 import { requestHeld } from './add.ts';
 import { QUIET_VARIANTS, QUIET_VARIANTS_SQL } from './feed.ts';
 import { sliced, whole, type SliceOptions } from './slices.ts';
@@ -622,11 +623,15 @@ export function scoreConversation(x: ScoreInput): Scored {
  *    conversations. Nothing implements it yet; `Attention.judged` is where answers
  *    would go, and `scoreConversation` already uses them.
  *  - `rank`: a learned order (ranker.ts), asked as each conversation is scored, with the formula's answer. Its score
- *    is what the inbox sorts by; `needs` and the reasons stay the formula's. Null keeps the formula's score.
+ *    is what the inbox sorts by; `needs` and the reasons stay the formula's. Null keeps the formula's score. A mail
+ *    thread's row (mail/attention.ts) is asked with what the mail side knows of it (`mail`).
+ *  - `shadow`: an order worked out beside the one that sorts (the order with mail, ranker.ts): its score for the row,
+ *    sent as the view's `shadow` to compare, or null.
  */
 export interface AttentionJudge {
   judge?(items: { conversationId: string; messageIds: string[] }[]): Promise<Map<string, Judged>>;
-  rank?(conversationId: string, x: ScoreInput, formula: Scored): { score: number; reason?: string } | null;
+  rank?(conversationId: string, x: ScoreInput, formula: Scored, mail?: MailSide | null): { score: number; reason?: string } | null;
+  shadow?(conversationId: string, x: ScoreInput, formula: Scored, mail?: MailSide | null): number | null;
   /** What it says about one conversation, for `explain`. */
   explain?(conversationId: string): unknown;
   forget?(conversationId: string): void;
@@ -670,7 +675,11 @@ const sameView = (a: P.AttentionView, b: P.AttentionView) =>
   a.owedSince === b.owedSince &&
   a.replyMark === b.replyMark &&
   a.needsReply === b.needsReply &&
+  sameShadow(a.shadow, b.shadow) &&
   a.reasons.join('\n') === b.reasons.join('\n');
+
+/** A shadow score moved enough to send again: as `score`, half a point (or it came or went). */
+export const sameShadow = (a: number | undefined, b: number | undefined) => (a === undefined || b === undefined ? a === b : Math.abs(a - b) < 0.5);
 
 export class Attention {
   /** What the inbox lists, as last computed. */
@@ -1142,6 +1151,7 @@ export class Attention {
     if (!x) return null;
     const s = scoreConversation(x);
     const r = this.judge?.rank?.(cid, x, s) ?? null;
+    const shadow = this.judge?.shadow?.(cid, x, s) ?? null;
     // Lifted to learn about it: that comes first, since it is why the row is where it is.
     const reasons = !r?.reason ? s.reasons : r.reason === EXPLORE_REASON ? [r.reason, ...s.reasons.slice(0, 3)] : [...s.reasons.slice(0, 3), r.reason];
     const turn = x.state.turn;
@@ -1155,6 +1165,7 @@ export class Attention {
       owedSince: s.owedSince,
       ...(s.owed?.held ? { replyMark: 'needs' as const } : {}),
       ...(s.needsReply !== null ? { needsReply: s.needsReply } : {}),
+      ...(shadow !== null ? { shadow: shadow + (x.alerted ? ALERT_PIN : 0) } : {}),
       at: now,
     };
   }

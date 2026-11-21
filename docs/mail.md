@@ -312,7 +312,9 @@ follows mailboxes you open), so what happens to it there later reaches the hub o
   in To is a mention, a reply to yours replies to you. How you answer someone counts all their mail threads and, once
   you merged them with a chat contact, their chats too, and the reverse: "You usually reply to Sam within 30
   minutes; unanswered for 2 hours" reads the same in both. An answer sent from here pays what you owe at once,
-  before Sent's copy comes. Until the learned order learns mail (slice 10), a mail row keeps its formula points.
+  before Sent's copy comes. The learned order with mail (slice 10) runs in shadow: a mail row keeps its formula
+  points and carries the learned score as the view's `shadow`, to compare, until `DITHER_INBOX_MAIL=model` sorts by it
+  (inbox.md, "Mail in the learned order").
 - **A mail row** has the person's picture with the envelope where a chat's network goes, the subject before the start
   of the last message, the same ↩ and reasons on hover, and a menu (why, Open in Mail, Not a person). The inbox's
   filter shows mail under All and Mail; Direct messages and Groups are chats only (inbox.md). Tapping it opens the
@@ -327,8 +329,10 @@ start when it changes (`mail_feature`, `mail_author_feature`) and is an `Attenti
 `AttentionView`s with `kind: 'mail'`, in the same `attention` events, bootstrap and sync as the chats'.
 `mail_thread.listed` follows, and the bootstrap's window carries every listed thread. The page's inbox rows are
 `{ kind: 'conv' } | { kind: 'mail' }` (`web/src/model.ts`). With no mail account the inbox is the chats' as before.
-Opening a mail row is in the activity log as a stay on the thread's id (`mth_…`): the learned order skips it for now
-(no chat candidate has that id) and slice 10 learns from it.
+Opening a thread, from a mail row or the Mail page, is in the activity log as a `mail` stay on the thread's id
+(`mth_…`; before 2026-11-20 a mail row's was a `conversation` stay with that id, and the Mail page's had none), with
+its row and where the shadow order had it when it came from the inbox. The learned order with mail (slice 10) learns
+from those (inbox.md, "Mail in the learned order").
 Tests: `hub/test/mail-classify.test.ts`, `mail-attention.test.ts`, `web/test/inbox-mail.test.ts`; `verify-inbox.ts`
 (mixed rows) and `verify-mail.ts` (Updates and People on a phone and a desktop in both themes, Not a person).
 
@@ -788,6 +792,11 @@ Gmail on the web gets it once its account has dither-accounts' slow lane (below)
   in the same budget of two calls a second that waits 10 s after any call a page waited for. Two at a time are on
   their way, one in the background slot and one waiting. A body already here whose text was cut at 16 KB (fetched
   before the account was kept) is cut again from itself, with no call.
+- **Recipients.** Gmail on the web's list rows carry no To or Cc; its `mail.get` answers do, and a message's body
+  fills them in (`MailStore.fillRecipients`), with who it was addressed to (`to`, `cc`, or neither). Without them every
+  message looks Bcc'd, every thread looks like you and one other, and what you owe by mail is wrong. Once every body is
+  here, messages kept without either (from before the hub kept them) are read again one at a time at P5, mail from a
+  person first, newest first, each once (`mail_recipients_read`).
 - **Never evicted.** A rule per account, not a `keep` value on each body (`MailStore.keptSql`): a kept account's bodies
   are left out of the 500 MB cache's eviction and of the bytes counted against it. Turning keeping off puts them back
   under the cap as they are, with nothing to rewrite.

@@ -774,8 +774,9 @@ Archiving removes it.
 
 So "you usually reply to Sam within an hour", "Sam wrote to you; not answered yet" and "you were here" read the same
 for mail. The result is an `AttentionView` with id `mth_…` and `kind: 'mail'`, sent in the same `attention` events.
-Until the learned order is retrained with mail (slice 10), a mail row keeps its formula points; under the learned
-order's prior those are the same scale.
+The learned order with mail (slice 10) runs in shadow: a mail row keeps its formula points and carries the learned
+score as `shadow` until `DITHER_INBOX_MAIL=model` sorts by it; under the learned order's prior those are the same scale
+(inbox.md, "Mail in the learned order").
 
 **The web side.** `InboxRow` in `model.ts` becomes a union, `{ kind: 'conv', conv } | { kind: 'mail', thread }`, keyed
 by id in `inbox.ts` and `ordering.ts`. `Sidebar.tsx` gets a `MailRow`:
@@ -840,7 +841,7 @@ Each slice adds files under `hub/src/mail/` and `web/src/ui/mail/`. Shared files
 | 7 | **Search**: FTS, operators, server merge, Mail group in search | 1 (2 for body text) | `mail/search.ts`, protocol `search.ts` operators; web `ui/mail/MailSearch.tsx`, `Search.tsx` | `mail-search.test.ts` (operators, local then server, deduplication, Proton's no-body note) |
 | 8 | **Classification and the one-list inbox**: §4 rules, Updates fold, People/Updates views, overrides, thread attention, inbox union | 1, 6 | `mail/{classify,attention}.ts`, `attention.ts` (author tallies summed), protocol `AttentionView.kind`; web `model.ts`, `inbox.ts`, `ordering.ts`, `Sidebar.tsx` (`MailRow`) | `mail-classify.test.ts` (each rule, order, overrides); `mail-attention.test.ts` (owed, unread, the listing window, archive removes); `web/test` inbox with mixed rows; `verify-inbox.ts` mixed |
 | 9 | **Triage and notifications** | 8 | `mail/triage.ts`, `votes.ts`, `main.ts` (`deliverMail`), `devices.ts`, `delivery.ts`, `push.ts` payload, `public/sw.js`, Android `Notifications.kt`; web board, `DeviceRules.tsx` | `mail-triage.test.ts`: bulk never notifies; a known sender in To pushes; quiet hours hold; device rule "Email off"; one vote on Sam's mail moves Sam's chat chance; `verify-notifications.ts` mail |
-| 10 | Later: the learned order trained with mail opens (`rankhistory.ts`, `ranker.ts`, a `shape:mail` feature); a From picker (after §13); contacts-based linking | 8, §13 | – | the replay (`inbox-replay.ts`) with mail opens |
+| 10 | The learned order trained with mail opens (`rankhistory.ts`, `ranker.ts`, rank.ts `MAIL_FEATURES`), in shadow since 2026-11-20 (`DITHER_INBOX_MAIL`); later: a From picker (after §13); contacts-based linking | 8, §13 | – | the replay (`inbox-replay.ts --mail`) and the scorecard's "Mail in the inbox" chart |
 
 Slices 1–4 add up to read, file and keep up in sync for any number of accounts. Slice 5 adds sending, and 8–9 make mail
 part of the inbox.

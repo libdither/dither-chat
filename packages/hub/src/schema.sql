@@ -618,7 +618,8 @@ CREATE TABLE IF NOT EXISTS visit (
   owed_shown      INTEGER,                   -- and whether its row showed it (↩)
   typed           INTEGER NOT NULL DEFAULT 0,   -- edits to the message box: a count only
   draft_left      INTEGER,                   -- a draft was left in the message box
-  exit            TEXT                       -- VisitExit: route, hidden, closed
+  exit            TEXT,                      -- VisitExit: route, hidden, closed
+  shadow_rank     INTEGER                    -- from an inbox row: its position in the shadow order with mail
 );
 CREATE INDEX IF NOT EXISTS visit_start ON visit(start_at);
 CREATE INDEX IF NOT EXISTS visit_conv ON visit(conversation_id, start_at) WHERE conversation_id IS NOT NULL;

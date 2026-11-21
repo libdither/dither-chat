@@ -78,6 +78,7 @@ export function cleanVisit(v: Partial<P.VisitRecord>, now: number): P.VisitRecor
     rank: v.rank == null ? null : int(v.rank, 0, 100_000),
     score: num(v.score),
     needs: typeof v.needs === 'boolean' ? v.needs : null,
+    shadowRank: v.shadowRank == null ? null : int(v.shadowRank, 0, 100_000),
     depth: v.depth == null ? null : int(v.depth, 0, 100_000),
     readToId: str(v.readToId, 200),
     readToTs: num(v.readToTs),
@@ -342,8 +343,8 @@ export class ActivityStore {
           .query(
             `INSERT INTO visit (id, device, device_label, view, conversation_id, space_id, person_id, start_at, end_at, active, source, push_id, rank, score, needs,
                depth, read_to_id, read_to_ts, sent, reactions, history, threads, attachments, next_view, closed, updated_at,
-               seen_to_ts, owed_since, owed_shown, typed, draft_left, exit)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               seen_to_ts, owed_since, owed_shown, typed, draft_left, exit, shadow_rank)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT (id) DO UPDATE SET
                device_label = COALESCE(excluded.device_label, device_label),
                start_at = MIN(start_at, excluded.start_at), end_at = MAX(end_at, excluded.end_at), active = MAX(active, excluded.active),
@@ -355,7 +356,7 @@ export class ActivityStore {
                next_view = COALESCE(next_view, excluded.next_view),
                seen_to_ts = CASE WHEN excluded.seen_to_ts IS NULL THEN seen_to_ts ELSE MAX(COALESCE(seen_to_ts, 0), excluded.seen_to_ts) END,
                owed_since = COALESCE(owed_since, excluded.owed_since), owed_shown = COALESCE(owed_shown, excluded.owed_shown),
-               typed = MAX(typed, excluded.typed),
+               typed = MAX(typed, excluded.typed), shadow_rank = COALESCE(shadow_rank, excluded.shadow_rank),
                -- What the stay ended as: a closed stay's word stands against a late copy from before it closed.
                draft_left = CASE WHEN closed = 1 AND excluded.closed = 0 THEN draft_left ELSE COALESCE(excluded.draft_left, draft_left) END,
                exit = CASE WHEN closed = 1 AND excluded.closed = 0 THEN exit ELSE excluded.exit END,
@@ -366,6 +367,7 @@ export class ActivityStore {
             v.pushId ?? null, v.rank ?? null, v.score ?? null, v.needs == null ? null : +v.needs, v.depth ?? null, v.readToId ?? null, v.readToTs || null,
             v.sent, v.reactions, v.history, v.threads, v.attachments, v.next ?? null, +v.closed, now,
             v.seenToTs ?? null, v.owedSince ?? null, v.owedShown == null ? null : +v.owedShown, v.typed ?? 0, v.draftLeft == null ? null : +v.draftLeft, v.exit ?? null,
+            v.shadowRank ?? null,
           );
         // read_to_ts of 0 means none: MAX above turns a missing one into 0.
         this.db.query('UPDATE visit SET read_to_ts = NULL WHERE id = ? AND read_to_ts = 0').run(v.id);
@@ -732,6 +734,7 @@ function visitOut(r: Row) {
     rank: r.rank,
     score: r.score,
     needs: r.needs == null ? null : !!r.needs,
+    shadowRank: r.shadow_rank ?? null,
     depth: r.depth,
     readToId: r.read_to_id,
     readToTs: r.read_to_ts,
