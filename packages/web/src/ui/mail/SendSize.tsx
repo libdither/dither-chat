@@ -168,8 +168,8 @@ export function SizeMeter({ s, cap, plainOnly }: { s: ReturnType<typeof useDraft
   // The account's cap counts the files' and pictures' own bytes (what dither-accounts checks), not their base64.
   const over = s.files + s.inside.bytes + s.embedded.bytes > cap;
   const rows: [string, string][] = [
-    ['Text part', bytes(s.text)],
-    ...(plainOnly ? [] : ([['HTML part', bytes(s.html)]] as [string, string][])),
+    ['Text part', bytes(s.text) || '0 B'],
+    ...(plainOnly ? [] : ([['HTML part', bytes(s.html) || '0 B']] as [string, string][])),
     ...(s.inside.n ? ([[`${plural(s.inside.n, 'picture')} pasted in`, bytes(s.inside.bytes)]] as [string, string][]) : []),
     ...(s.embedded.n ? ([[`${plural(s.embedded.n, 'picture')} embedded`, about(s.embedded.bytes, s.embedded.unknown)]] as [string, string][]) : []),
     ...(s.files ? ([['Files', bytes(s.files)]] as [string, string][]) : []),
@@ -192,7 +192,7 @@ export function SizeMeter({ s, cap, plainOnly }: { s: ReturnType<typeof useDraft
               ))}
               <tr class="mc-size-total">
                 <th scope="row">Sent in all</th>
-                <td>≈ {bytes(s.sent)}</td>
+                <td>≈ {bytes(s.sent) || '0 B'}</td>
               </tr>
               {s.linked.n > 0 && (
                 <tr>

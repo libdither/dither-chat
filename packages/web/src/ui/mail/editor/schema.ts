@@ -59,7 +59,9 @@ const leftOutOf = new WeakMap<Element, Set<string>>();
 
 /** Marks one picture or box: faded and dashed, "left out" said on it, when its address will not go. */
 function markOne(el: Element, out: Set<string> | undefined) {
-  const u = el.getAttribute('data-dc-src') ?? el.getAttribute('data-dc-was');
+  const raw = el.getAttribute('data-dc-src') ?? el.getAttribute('data-dc-was');
+  // An address without its scheme goes over https, and the left-out list says so.
+  const u = raw && /^\s*\/\//.test(raw) ? `https:${raw.trim()}` : raw;
   const gone = !!u && !!out?.has(u);
   if (gone === el.classList.contains('dc-out')) return;
   el.classList.toggle('dc-out', gone);

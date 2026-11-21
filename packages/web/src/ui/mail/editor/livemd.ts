@@ -159,7 +159,7 @@ function build(view: EditorView, stands: Stands): DecorationSet {
           const u = n.node.getChild('URL');
           const url = u ? state.doc.sliceString(u.from, u.to) : '';
           const m = /^dc-picture:([\w-]+)$/.exec(url);
-          const src = m ? stands.picture(m[1]) : /^https?:/.test(url) ? url : null;
+          const src = m ? stands.picture(m[1]) : /^(https?:)?\/\//.test(url) ? url : null;
           if (src) {
             out.push(Decoration.replace({ widget: new Thumb(src, m ? null : stands.webBox) }).range(n.from, n.to));
             return false;

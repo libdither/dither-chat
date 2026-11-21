@@ -729,6 +729,24 @@ async function forwardWithPictures(tag: string) {
   const dropBtn = await page.eval<string>(`document.querySelector('.mc-pics-btn')?.textContent ?? ''`);
   const marked = { dropBtn, out: await page.eval<number>(outIn), all: await page.eval<number>(allIn) };
   check(`${tag}: Leave out marks every picture from the web, and the footer counts none going`, dropBtn === '0 · Leave out' && marked.out === marked.all && marked.all > 60, marked);
+  // A picture pasted with an address that has no scheme (//host) is a box in the text, marked left out like the rest;
+  // a click picks it (drawn so), and Backspace takes it out again.
+  await page.eval(`(() => {
+    const dt = new DataTransfer(); dt.setData('text/html', '<p><img src="//pixel.example/o.gif?u=7" width="80" height="20"></p>');
+    const t = document.querySelector('.me-rich-doc'); t.focus();
+    t.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  })()`);
+  const bare = `document.querySelector('.me-rich-doc .me-pic-web[data-dc-was^="//pixel.example"]')`;
+  await page.until(`!!${bare}?.classList.contains('dc-out')`, 5000).catch(() => {});
+  check(`${tag}: a pasted picture whose address has no scheme is marked left out too`, await page.eval<boolean>(`!!${bare}?.classList.contains('dc-out')`));
+  await click(await at('.me-rich-doc .me-pic-web[data-dc-was^="//pixel.example"]'));
+  const picked = await page.eval<string>(`(() => { const b = ${bare}; return b?.classList.contains('ProseMirror-selectednode') ? getComputedStyle(b).outlineStyle : 'not picked'; })()`);
+  check(`${tag}: a click picks a picture box, and it shows it is picked`, picked === 'solid', picked);
+  await press('Backspace', 'Backspace', 8);
+  await page.until(`!${bare}`, 3000).catch(() => {});
+  check(`${tag}: Backspace takes the picked box out`, !(await has('.me-rich-doc .me-pic-web[data-dc-was^="//pixel.example"]')));
+  // The click in the text closed the choice: open it again.
+  await click(await at('.mc-pics-btn'));
   await click(await at('.mc-seg-btn', `el => el.textContent === 'Embed'`));
   // The one that can tell was held in the reader, so the hub has not got it: Embed leaves it out rather than fetch it.
   const embedNote = await page.eval<string>(`document.querySelector('.mc-pics-note')?.textContent ?? ''`);

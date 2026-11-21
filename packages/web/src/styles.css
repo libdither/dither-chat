@@ -14573,7 +14573,8 @@ button.msg-edited.link:hover {
   height: auto;
   border-radius: 4px;
 }
-.me-rich-doc img.ProseMirror-selectednode {
+.me-rich-doc img.ProseMirror-selectednode,
+.me-rich-doc .me-pic-web.ProseMirror-selectednode {
   outline: 2px solid var(--accent);
 }
 .me-rich-doc table {
@@ -15073,6 +15074,12 @@ button.msg-edited.link:hover {
   .md-island-x {
     min-width: 40px;
     min-height: 40px;
+  }
+  .mc-seg-btn {
+    min-height: 34px;
+  }
+  .mc-pics-tell {
+    min-height: 34px;
   }
 }
 /* A phone: the picture bar in a line or two; why they are held is in Details and on a long press. */

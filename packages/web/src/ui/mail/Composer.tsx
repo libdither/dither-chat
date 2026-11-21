@@ -117,7 +117,7 @@ function OutboxStrip() {
                 class="mc-out-note"
                 title={[
                   o.pictures.leftOut.failed && `${plural(o.pictures.leftOut.failed, 'picture')} could not be fetched`,
-                  o.pictures.leftOut.canTell && `${plural(o.pictures.leftOut.canTell, 'picture')} would have told the original sender you opened it`,
+                  o.pictures.leftOut.canTell && `${plural(o.pictures.leftOut.canTell, 'picture')} would have told where it comes from that it was opened`,
                 ]
                   .filter(Boolean)
                   .join('; ')}
