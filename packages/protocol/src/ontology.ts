@@ -15,7 +15,7 @@
  * (persons, folders, notification rules, triage) are never written back.
  */
 
-export type Network = 'discord' | 'signal' | 'matrix' | 'whatsapp' | 'telegram' | 'gmessages' | 'messenger' | 'instagram' | 'x' | 'email' | 'calendar' | 't3' | 'mastodon' | 'reddit' | 'lemmy' | 'substack' | 'bluesky';
+export type Network = 'discord' | 'signal' | 'matrix' | 'whatsapp' | 'telegram' | 'gmessages' | 'messenger' | 'instagram' | 'x' | 'email' | 'calendar' | 't3' | 'mastodon' | 'reddit' | 'lemmy' | 'substack' | 'bluesky' | 'zulip';
 /**
  * The chat networks this hub offers. telegram, gmessages (Google Messages: SMS and RCS), messenger, instagram and x
  * (X's direct messages) run only in dither-accounts. `email` is a Network for people's addresses (identities) and the
@@ -25,8 +25,10 @@ export type Network = 'discord' | 'signal' | 'matrix' | 'whatsapp' | 'telegram' 
  * (dither-accounts' docs/t3.md): each thread a chat with its agent, its project a space; it too runs only there.
  * mastodon, reddit, lemmy, substack and bluesky are networks of posts, not chats (docs/feed.md): their accounts bring a home
  * timeline, threads of comments and notifications to the Feed page, and run only in dither-accounts.
+ * `zulip` is a Zulip organization (dither-accounts' docs/zulip.md): its channels as forums whose topics are threads,
+ * and direct messages; it too runs only there.
  */
-export const NETWORKS: readonly Network[] = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x', 'calendar', 't3', 'mastodon', 'reddit', 'lemmy', 'substack', 'bluesky'];
+export const NETWORKS: readonly Network[] = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x', 'calendar', 't3', 'mastodon', 'reddit', 'lemmy', 'substack', 'bluesky', 'zulip'];
 
 /**
  * The networks of posts: an account of one brings the Feed page (docs/feed.md) its home timelines, threads and
@@ -180,6 +182,8 @@ export const REACTION_RULES: Record<Network, ReactionRules> = {
   lemmy: { exclusive: true, freeText: false, maxDistinct: 0 },
   substack: { exclusive: true, freeText: false, maxDistinct: 0 },
   bluesky: { exclusive: true, freeText: false, maxDistinct: 0 },
+  // Zulip: any number of emoji on a message, each person once per emoji; Unicode, the organization's own and :zulip:.
+  zulip: { exclusive: false, freeText: false },
 };
 
 export function discordEmojiUrl(id: string, animated?: boolean): string {
@@ -252,6 +256,8 @@ export const ATTACHMENT_LIMITS: Record<Network, { bytes: number; files: number }
   lemmy: { bytes: 0, files: 0 },
   substack: { bytes: 0, files: 0 },
   bluesky: { bytes: 0, files: 0 },
+  // Zulip's default upload limit (each organization may set its own: max_file_upload_size_mib); files go as links.
+  zulip: { bytes: 25 * 1024 * 1024, files: 10 },
 };
 
 /**
@@ -289,4 +295,5 @@ export const NETWORK_META: Record<Network, { name: string; color: string; spaceN
   substack: { name: 'Substack', color: '#FF6719', spaceNoun: 'publication', sectionNoun: 'section' },
   // Bluesky has no communities: a space is never made, the noun only names one if it were.
   bluesky: { name: 'Bluesky', color: '#0085FF', spaceNoun: 'feed', sectionNoun: 'section' },
+  zulip: { name: 'Zulip', color: '#6492FE', spaceNoun: 'organization', sectionNoun: 'folder' },
 };

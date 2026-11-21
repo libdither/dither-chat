@@ -22,7 +22,7 @@ import { applyPollUpdate, pollSeen, pollViews } from './polls.ts';
 import { ingestServers } from './servers.ts';
 import { ingestApps } from './apps.ts';
 import { ingestThreadFacts, threadParts, type ThreadParts } from './threads.ts';
-import { type DueReminder, ingestSaved } from './saved.ts';
+import { type DueReminder, ingestSaved, savedTables } from './saved.ts';
 import { feedItemOf, feedView, postView } from './feed.ts';
 import { keepAbout } from './people.ts';
 import { alertBar, type Facts } from './learn.ts';
@@ -1346,6 +1346,18 @@ export class Store {
         f.mentionsSelf && f.mentionsAll ? 1 : 0,
         f.extra || f.forward || f.silent ? JSON.stringify({ ...f.extra, ...(f.forward ? { forward: f.forward } : {}), ...(f.silent ? { silent: true } : {}) }) : null,
       );
+    // A message that moved (a Zulip topic renamed or moved): it leaves the conversation it was in, which falls back to
+    // its own newest message.
+    if (f.moved && old && old.conversation_id !== cid) {
+      this.db.query('UPDATE message SET conversation_id = ? WHERE id = ?').run(cid, id);
+      // What points at the message by its conversation follows it.
+      this.db.query('UPDATE reply_mark SET conversation_id = ? WHERE message_id = ?').run(cid, id);
+      savedTables(this.db);
+      this.db.query('UPDATE saved_message SET conversation_id = ? WHERE message_id = ?').run(cid, id);
+      const last = this.db.query('SELECT id, ts FROM message WHERE conversation_id = ? AND deleted = 0 ORDER BY ts DESC LIMIT 1').get(old.conversation_id) as Row | null;
+      this.db.query('UPDATE conversation SET last_message_id = ?, last_message_at = ? WHERE id = ?').run(last?.id ?? null, last?.ts ?? null, old.conversation_id);
+      this.dirty.conversations.add(old.conversation_id as string);
+    }
     if (f.attachments && !(old?.deleted && !f.attachments.length)) {
       this.db.query('DELETE FROM attachment WHERE message_id = ?').run(id);
       if (sizeless(f.attachments)) this.sizelessPictures = true;

@@ -1,6 +1,6 @@
 # dither-chat
 
-**All your chats in one app, run on your own computer.** Discord, Signal, WhatsApp, Matrix, Telegram, X and email
+**All your chats in one app, run on your own computer.** Discord, Signal, WhatsApp, Matrix, Telegram, Zulip, X and email
 arrive in one inbox that you can open on your phone and your computer. Someone you talk to on three networks shows up
 as one person. The app learns which messages are worth interrupting you for.
 

@@ -44,3 +44,8 @@ test('Telegram takes an @username, a phone number or an id; Google Messages a ph
   expect(directTarget('gmessages', '+1 (555) 123-4567')).toEqual({ peer: '+15551234567' });
   expect(directTarget('gmessages', '@durov_fan')).toHaveProperty('error');
 });
+
+test('someone on Zulip is named by their email', () => {
+  expect(directTarget('zulip', ' Ann@Example.org ')).toEqual({ peer: 'ann@example.org' });
+  expect(directTarget('zulip', 'ann')).toHaveProperty('error');
+});
