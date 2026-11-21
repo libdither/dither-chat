@@ -525,8 +525,12 @@ export const searchOfList = (key: string): string | null => (key.startsWith('s:'
 
 // ------------------------------------------------------------------ lists
 
-/** The views a list key can name. `people` and `updates` come with classification (slice 8). */
-export type MailView = 'inbox' | 'unread' | 'starred' | 'sent' | 'people' | 'updates';
+/**
+ * The views a list key can name. `people` and `updates` come with classification (slice 8). `inbox` is Inbox without
+ * Updates (the page ranks it: docs/mail.md "Ranked"); `all` is the whole of Inbox, Updates too, newest first.
+ * `people` and `unread` have no chip any more, but their keys still list.
+ */
+export type MailView = 'inbox' | 'all' | 'unread' | 'starred' | 'sent' | 'people' | 'updates';
 
 /**
  * A list of threads: `mb:<mailbox id>`, or `v:<view>:<account id or *>`. The page keeps lists by these keys, and
@@ -535,7 +539,23 @@ export type MailView = 'inbox' | 'unread' | 'starred' | 'sent' | 'people' | 'upd
 export type MailListKey = string;
 
 export const mailboxList = (mailboxId: string): MailListKey => `mb:${mailboxId}`;
-export const viewList = (view: MailView, accountId: string | null = null): MailListKey => `v:${view}:${accountId ?? '*'}`;
+/** A view of every account (`*`), one account (its id), or one platform's accounts (`k.<platform>`, platformScope). */
+export const viewList = (view: MailView, scope: string | null = null): MailListKey => `v:${view}:${scope ?? '*'}`;
+
+/**
+ * Which service a mail account is on, for the account switcher's first wheel: Gmail (on the web, or IMAP at a Gmail
+ * address), Proton, Outlook, else plain email. Hub and page agree on it, so a platform's list pages the same accounts.
+ */
+export function mailPlatform(a: { kind: string; address: string | null }): string {
+  if (a.kind === 'google') return 'gmail';
+  if (a.kind === 'proton') return 'proton';
+  const domain = a.address?.split('@')[1]?.toLowerCase() ?? '';
+  if (/^(gmail|googlemail)\./.test(domain)) return 'gmail';
+  if (/^(outlook|hotmail|live|msn)\./.test(domain)) return 'outlook';
+  return 'email';
+}
+export const MAIL_PLATFORM_NAMES: Record<string, string> = { gmail: 'Gmail', proton: 'Proton', outlook: 'Outlook', email: 'Email' };
+export const platformScope = (platform: string) => `k.${platform}`;
 
 /**
  * Every thread with someone, in any mailbox of any account (slice 6): `w:<person id>`, `w:<identity id>` or
@@ -549,11 +569,13 @@ export function parseWithList(key: string): string | null {
   return m ? m[1] : null;
 }
 
-export function parseMailList(key: string): { mailbox: string } | { view: MailView; accountId: string | null } | null {
+export function parseMailList(key: string): { mailbox: string } | { view: MailView; accountId: string | null; platform: string | null } | null {
   const m = key.match(/^mb:([\w-]+)$/);
   if (m) return { mailbox: m[1] };
-  const v = key.match(/^v:(inbox|unread|starred|sent|people|updates):([\w-]+|\*)$/);
-  return v ? { view: v[1] as MailView, accountId: v[2] === '*' ? null : v[2] } : null;
+  const v = key.match(/^v:(inbox|all|unread|starred|sent|people|updates):(k\.[a-z]+|[\w-]+|\*)$/);
+  if (!v) return null;
+  const platform = v[2].startsWith('k.') ? v[2].slice(2) : null;
+  return { view: v[1] as MailView, accountId: v[2] === '*' || platform ? null : v[2], platform };
 }
 
 // ------------------------------------------------------------------ text

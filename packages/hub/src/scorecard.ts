@@ -352,17 +352,34 @@ function* unprompted(c: DayContext): Generator<number, ScoreRow[]> {
   return [row(c.day, 'unprompted.list', share(caught, n), n, { caught, opened: firsts.length })];
 }
 
-/** Opens from the inbox's rows: the mean of 1 ÷ row, and the shares in the first 8 rows and below row 20. */
+/**
+ * Opens from the inbox's rows: the mean of 1 ÷ row, and the shares in the first 8 rows and below row 20. And, for the
+ * opens whose device said where the row stood in the shadow order with mail (docs/inbox.md, "Mail in the learned
+ * order"), the mean of 1 ÷ row as shown and as it would have stood, for every row and for mail rows alone. The rows
+ * were seen where they were shown, so the order shown has the better of it: the shadow order catching up says more
+ * than its level does.
+ */
 function* inbox(c: DayContext): Generator<number, ScoreRow[]> {
-  const ranks = (c.db.query(`SELECT rank FROM visit WHERE start_at >= ? AND start_at < ? AND source = 'inbox' AND rank IS NOT NULL LIMIT 20000`).all(c.from, c.to) as Row[]).map((r) => r.rank as number);
-  yield ranks.length;
+  const rows = c.db
+    .query(`SELECT rank, shadow_rank AS shadow, conversation_id AS conv FROM visit WHERE start_at >= ? AND start_at < ? AND source = 'inbox' AND rank IS NOT NULL LIMIT 20000`)
+    .all(c.from, c.to) as Row[];
+  yield rows.length;
+  const ranks = rows.map((r) => r.rank as number);
   const n = ranks.length;
   const top = ranks.filter((r) => r < TOP_ROWS).length;
   const deep = ranks.filter((r) => r >= DEEP_ROW).length;
+  const mrr = (xs: number[]) => (xs.length ? xs.reduce((s, r) => s + 1 / (r + 1), 0) / xs.length : null);
+  const both = rows.filter((r) => r.shadow != null);
+  const mail = both.filter((r) => typeof r.conv === 'string' && r.conv.startsWith('mth_'));
+  const mailOpens = rows.filter((r) => typeof r.conv === 'string' && r.conv.startsWith('mth_')).length;
   return [
-    row(c.day, 'inbox.mrr', n ? ranks.reduce((s, r) => s + 1 / (r + 1), 0) / n : null, n),
+    row(c.day, 'inbox.mrr', mrr(ranks), n),
     row(c.day, 'inbox.top8', share(top, n), n, { top }),
     row(c.day, 'inbox.deep', share(deep, n), n, { deep }),
+    row(c.day, 'inbox.mrr_live', mrr(both.map((r) => r.rank)), both.length),
+    row(c.day, 'inbox.mrr_shadow', mrr(both.map((r) => r.shadow)), both.length),
+    row(c.day, 'inbox.mail_mrr', mrr(mail.map((r) => r.rank)), mail.length, { opens: mailOpens }),
+    row(c.day, 'inbox.mail_mrr_shadow', mrr(mail.map((r) => r.shadow)), mail.length, { opens: mailOpens }),
   ];
 }
 
@@ -555,6 +572,10 @@ export function seedDemoScores(db: Database, now: number) {
         ['inbox.mrr', clamp(0.3 + 0.22 * t + 0.05 * wob(i, 12)), 20 + (i % 15)],
         ['inbox.top8', clamp(0.55 + 0.25 * t + 0.06 * wob(i, 13)), 20 + (i % 15)],
         ['inbox.deep', clamp(0.15 - 0.1 * t + 0.03 * wob(i, 14)), 20 + (i % 15)],
+        ['inbox.mrr_live', i < 12 ? null : clamp(0.45 + 0.03 * wob(i, 22)), i < 12 ? 0 : 15 + (i % 10)],
+        ['inbox.mrr_shadow', i < 12 ? null : clamp(0.38 + 0.08 * t + 0.03 * wob(i, 23)), i < 12 ? 0 : 15 + (i % 10)],
+        ['inbox.mail_mrr', i < 12 ? null : clamp(0.3 + 0.05 * wob(i, 24)), i < 12 ? 0 : 2 + (i % 4)],
+        ['inbox.mail_mrr_shadow', i < 12 ? null : clamp(0.32 + 0.1 * t + 0.05 * wob(i, 25)), i < 12 ? 0 : 2 + (i % 4)],
         ['needs.predicted', clamp(0.7 + 0.04 * wob(i, 18)), 30 + (i % 12)],
         ['needs.answered', clamp(0.74 - 0.03 * t + 0.08 * wob(i, 19)), 30 + (i % 12)],
         ['needs.brier', clamp(0.17 - 0.03 * t + 0.02 * wob(i, 20)), 30 + (i % 12)],

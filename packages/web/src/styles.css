@@ -1467,6 +1467,15 @@ code {
   letter-spacing: 0.03em;
   text-transform: uppercase;
 }
+.msg-sms {
+  border: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 0 4px;
+  border-radius: 4px;
+  letter-spacing: 0.03em;
+}
 .msg-time {
   font-size: 11px;
   color: var(--text-faint);
@@ -1865,7 +1874,9 @@ code {
   flex: none;
 }
 /* A computer: a rail of the five ways beside the run, in the space the chat leaves there. Invisible until you point
-   at the message, faint while you do, full when you point at the rail. */
+   at the message; then only the way in use shows, faint, in its place on the rail. Pointing at it (or tabbing to it)
+   brings the other four in around it, in full. The hidden four take no pointer, so passing beside the run doesn't
+   open the rail. */
 .pics.has-rail {
   max-width: calc(100% - 40px);
 }
@@ -1890,6 +1901,25 @@ code {
 .msg .pics-rail:hover,
 .pics-rail:focus-within {
   opacity: 1;
+}
+.pics-rail {
+  pointer-events: none;
+}
+.pics-rail-btn[aria-pressed='true'] {
+  pointer-events: auto;
+}
+.pics-rail-btn:not([aria-pressed='true']) {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.pics-rail:hover,
+.pics-rail:focus-within {
+  pointer-events: auto;
+}
+.pics-rail:hover .pics-rail-btn,
+.pics-rail:focus-within .pics-rail-btn {
+  opacity: 1;
+  pointer-events: auto;
 }
 .pics-rail-btn {
   position: relative;
@@ -13172,37 +13202,6 @@ button.msg-edited.link:hover {
   font-size: 13px;
   line-height: 1.45;
 }
-/* Accounts that are not working (MailSidebar TroubleLine): one quiet line, not a card per account. */
-.mail-problem {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: calc(100% - 24px);
-  margin: 6px 12px 0;
-  padding: 3px 0;
-  border: none;
-  background: none;
-  color: var(--text-faint);
-  font: inherit;
-  font-size: 12px;
-  text-align: left;
-  text-decoration: none;
-  cursor: pointer;
-}
-.mail-problem:hover {
-  color: var(--text);
-}
-.mail-problem > svg {
-  color: var(--warn);
-  flex: none;
-}
-.mail-problem > span {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .mail-acc-dot.warn {
   box-shadow: 0 0 0 2px var(--bg-sidebar), 0 0 0 3.5px var(--warn);
 }
@@ -13229,6 +13228,118 @@ button.msg-edited.link:hover {
 .mail-chips.fade-l.fade-r {
   -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
   mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+}
+/* Under "Mail": whose mail the views show, as wheels (ScopeWheel): the choice in use, the rest a click or a turn away. */
+.scope-wheels {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  margin-top: 2px;
+}
+.scope-sep {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.scope-wheel {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 1px 6px 1px 4px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+}
+.scope-wheel:hover,
+.scope-wheel:focus-visible {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+/* The choice in use sizes the wheel; the reel slides over it in a window one row high. */
+.scope-cell {
+  position: relative;
+  min-width: 0;
+  height: 18px;
+  overflow: hidden;
+}
+.scope-size {
+  display: flex;
+  visibility: hidden;
+}
+.scope-win {
+  position: absolute;
+  inset: 0;
+}
+.scope-reel {
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.scope-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 18px;
+  min-width: 0;
+  white-space: nowrap;
+  transition: opacity 0.22s;
+}
+.scope-row.dim {
+  opacity: 0;
+}
+.scope-reel .scope-row {
+  width: 100%;
+}
+.scope-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.scope-warn {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-faint);
+  opacity: 0.8;
+}
+.scope-dots {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.scope-dots > span {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.3;
+}
+.scope-dots > span.on {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .scope-reel,
+  .scope-row {
+    transition: none;
+  }
+}
+@media (pointer: coarse) {
+  .scope-wheel::after {
+    content: '';
+    position: absolute;
+    inset: -10px -4px;
+  }
 }
 /* Under "Mail": whose mail the views show (MailSidebar AccountPicker), with the dot its threads carry. */
 .mail-acc-btn {
@@ -13407,6 +13518,20 @@ button.msg-edited.link:hover {
   font-size: 12px;
   color: var(--text-faint);
   text-align: center;
+}
+/* Where Inbox's ranked rows end (docs/mail.md "Ranked"): a faint line, the rest by date under it. */
+.mail-list-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 4px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.mail-list-divider::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--border);
 }
 
 /* Filing (slice 4, ui/mail/Filing.tsx): a row slides over what its swipe does; picked rows; the selection's bar;

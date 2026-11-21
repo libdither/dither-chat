@@ -13,6 +13,7 @@ import { hubId, mailId } from '@dither-chat/protocol/ids';
 import { ReplyMarks } from '../src/replymarks.ts';
 import { Attention } from '../src/attention.ts';
 import { mailAttention, MAIL_INBOX } from '../src/mail/attention.ts';
+import { DEFAULT_MAIL_OWED_TABLE, MAIL_OWED_AGES } from '../src/owed.ts';
 import { mailClassifier } from '../src/mail/classify.ts';
 import { FakeMailBackend, type FakeInput } from '../src/mail/fake.ts';
 import { MailHub } from '../src/mail/index.ts';
@@ -107,6 +108,55 @@ describe('owed and unread', () => {
     w.fake.deliver(ACC, { mailboxId: 'INBOX', messageId: '<s2@x>', inReplyTo: '<s1@x>', references: ['<s1@x>'], from: [ME], to: [SAM], subject: 'Re: Dinner?', receivedAt: w.clock.now, flags: { seen: true } });
     await until(() => w.mail().get(t)?.owedSince === null, 3000, 'the answer');
     expect(w.hub.store.threadView(w.hub.store.thread(t)!).owedSince).toBeNull();
+  });
+
+  test('an email stays owed for longer than a chat: at five days still, run out at two weeks', async () => {
+    const at = T0 + 10 * DAY;
+    const w = await world((put) => put({ messageId: '<s5@x>', from: [SAM], to: [ME], subject: 'The lease', receivedAt: at - 5 * DAY, flags: { seen: true } }), at);
+    const t = tid(w.hub, '<s5@x>');
+    const v = w.mail().get(t)!;
+    // A chat's turn would weigh nothing past three days.
+    expect(v.owedSince).toBe(at - 5 * DAY);
+    expect(v.reasons.some((r) => r.startsWith('Sam Rivera wrote to you 5 days ago; not answered yet'))).toBe(true);
+    // Two weeks on, nothing is owed, and it leaves the list (no longer recent, owed or opened).
+    w.clock.now = at + 10 * DAY;
+    w.attention.rescoreAll();
+    expect(w.mail().get(t)).toBeUndefined();
+  });
+
+  test("a second email ten days after the first is the same turn by mail, which a chat's three days would have ended", async () => {
+    const at = T0 + 20 * DAY;
+    const w = await world((put) => {
+      put({ messageId: '<l1@x>', from: [SAM], to: [ME], subject: 'Plans', receivedAt: at - 12 * DAY });
+      put({ messageId: '<l2@x>', inReplyTo: '<l1@x>', references: ['<l1@x>'], from: [SAM], to: [ME], subject: 'Re: Plans', receivedAt: at - 2 * DAY });
+    }, at);
+    const t = tid(w.hub, '<l1@x>');
+    const since = () => w.hub.store.one<{ o: number | null }>('SELECT owed_since AS o FROM mail_feature WHERE thread_id = ?', t)?.o;
+    // Listed (recent), the turn open since the first; at twelve days it weighs too little to show.
+    expect(w.mail().get(t)?.owedSince).toBeNull();
+    expect(since()).toBe(at - 12 * DAY);
+    // No turn closed yet: none ran out.
+    expect(w.hub.store.all('SELECT * FROM mail_owed_turn WHERE thread_id = ?', t)).toEqual([]);
+    // Answered: the turn is kept, answered after twelve days, for mail's own table.
+    w.clock.now = at;
+    w.fake.deliver(ACC, { mailboxId: 'INBOX', messageId: '<l3@x>', inReplyTo: '<l2@x>', references: ['<l1@x>', '<l2@x>'], from: [ME], to: [SAM], subject: 'Re: Plans', receivedAt: at, flags: { seen: true } });
+    await until(() => (w.mail(), since() === null), 3000, 'the answer');
+    expect(w.hub.store.all<{ addressed: number; answered_at: number; shape: string }>('SELECT addressed, answered_at, shape FROM mail_owed_turn WHERE thread_id = ?', t)).toEqual([{ addressed: at - 12 * DAY, answered_at: at, shape: 'direct' }]);
+  });
+
+  test("mail's owed table is fitted on mail's turns, kept, and read back; a fold of another version is made again", async () => {
+    const w = await world((put) => put({ messageId: '<f1@x>', from: [SAM], to: [ME], subject: 'Hi', receivedAt: T0 + 9 * DAY }));
+    const a = mailAttention(w.hub)!;
+    const t = a.fitOwed(w.clock.now);
+    expect(t.ages).toEqual([...MAIL_OWED_AGES]);
+    const kept = JSON.parse(w.hub.store.one<{ value: string }>(`SELECT value FROM mail_setting WHERE key = 'owedTable'`)!.value);
+    expect(kept).toEqual(t);
+    // An older fold: its threads fold again in the background, and the table is fitted afresh.
+    w.hub.store.db.query(`UPDATE mail_setting SET value = '1' WHERE key = 'attentionVersion'`).run();
+    const again = new MailHub({ db: w.chat.db, backend: w.fake, log: () => {}, now: () => w.clock.now });
+    expect(w.hub.store.one<{ n: number }>('SELECT COUNT(*) AS n FROM mail_feature WHERE state IS NOT NULL')!.n).toBe(0);
+    expect(w.hub.store.one(`SELECT 1 FROM mail_setting WHERE key = 'owedTable'`)).toBeNull();
+    expect(mailAttention(again)!.owedTable).toBe(DEFAULT_MAIL_OWED_TABLE);
   });
 
   test('marks on mail: "No reply needed" settles the thread, "Reply needed" holds it, as in a chat', async () => {
@@ -296,5 +346,50 @@ describe('with the chats', () => {
     let ev: P.ClientEvent[] = [];
     await until(() => (ev = w.attention.sync([])).length, 3000, 'an attention event');
     expect(ev[0]).toMatchObject({ t: 'attention', items: [{ id: t, kind: 'mail' }], removed: [] });
+  });
+});
+
+describe('Mail’s ranked Inbox (docs/mail.md "Ranked")', () => {
+  const at = T0 + 100 * DAY;
+  test('every scored thread is in Inbox and the bootstrap, and Inbox pages by date whatever the scores do', async () => {
+    const w = await world((put) => {
+      put({ messageId: '<s1@x>', from: [SAM], to: [ME], subject: 'Owed and unread', receivedAt: at - 3 * H, flags: { seen: false } });
+      put({ messageId: '<a1@x>', from: [ALICE], to: [ME], subject: 'Read, owed long ago', receivedAt: at - 10 * DAY });
+      put({ messageId: '<j1@x>', from: [JO], to: [ME], subject: 'Old', receivedAt: at - 60 * DAY });
+      put({ messageId: '<t1@x>', from: [THEO], to: [ME], subject: 'Stranger', receivedAt: at - H, flags: { seen: false } });
+      put({ messageId: '<n1@x>', from: [{ name: 'News', email: 'news@weekly.example' }], to: [ME], subject: 'Issue 1', receivedAt: at - 2 * H, bulk: { listId: '<weekly.example>', unsubscribe: null, precedence: null, autoSubmitted: null } });
+    }, at);
+    const scored = w.mail();
+    const subject = (id: string) => w.hub.store.thread(id)!.subject;
+    expect([...scored.keys()].map(subject).sort()).toEqual(['Owed and unread', 'Read, owed long ago']);
+    // The page ranks what it holds: each scored thread is in the bootstrap's window and in Inbox's list.
+    const window = new Set(w.hub.store.bootstrap({ state: 'granted', managerUrl: null }).threads.map((t) => t.id));
+    const inbox = w.hub.store.listThreads('v:inbox:*', null, 50)!.threads.map((t) => t.id);
+    for (const id of scored.keys()) {
+      expect(window.has(id)).toBe(true);
+      expect(inbox).toContain(id);
+    }
+    // One row a page: Inbox comes newest first and each thread once, though a score changes between pages.
+    const sam = tid(w.hub, '<s1@x>');
+    const pages: string[] = [];
+    let next: string | null = null;
+    do {
+      const p = w.hub.store.listThreads('v:inbox:*', next, 1)!;
+      pages.push(...p.threads.map((t) => t.subject));
+      // After the first page, Sam's thread needs no reply: it scores less. (Reading it would not: what you will answer
+      // weighs more than what you have to read, and the two count as one need.)
+      if (pages.length === 1) {
+        new ReplyMarks(w.chat).setMailRow(sam, 'none');
+        mailAttention(w.hub)!.marked(sam);
+      }
+      next = p.next;
+    } while (next);
+    expect(pages).toEqual(['Stranger', 'Owed and unread', 'Read, owed long ago', 'Old']);
+    expect(w.mail().get(sam)!.score).toBeLessThan(scored.get(sam)!.score);
+    // Everything is the whole of Inbox, Updates too, by the same cursor.
+    const all = w.hub.store.listThreads('v:all:*', null, 2)!;
+    expect(all.threads.map((t) => t.subject)).toEqual(['Stranger', 'Issue 1']);
+    expect(w.hub.store.listThreads('v:all:*', all.next, 50)!.threads.map((t) => t.subject)).toEqual(['Owed and unread', 'Read, owed long ago', 'Old']);
+    expect(w.hub.store.listThreads(`v:all:${ACC}`, null, 50)!.threads).toHaveLength(5);
   });
 });

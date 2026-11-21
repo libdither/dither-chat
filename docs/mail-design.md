@@ -80,7 +80,8 @@ and into a label it leaves Inbox only, as its `mail.move` names no source.
 - Rule 4 also counts a sender who wrote in a thread you took part in, and rule 5 a person you know by another address
   (`mailPeople(hub).sender()`'s `tookPart` and `known`). Rule 6 counts a move to Junk still waiting for the server.
 - §10's listing window is bounded: unread with its last message within 30 days, owed to a message within 14 days
-  (`MAIL_INBOX`), so a year of synced mail is not a year of inbox. `mail_feature` holds the fold and `owed_since`,
+  (`MAIL_INBOX`, the same as `MAIL_WINDOW`: mail's turns stay owed for two weeks, docs/inbox.md "Mail owes for two
+  weeks"), so a year of synced mail is not a year of inbox. `mail_feature` holds the fold and `owed_since`,
   `unknown` and `sent_at` (a send from here, until Sent's copy comes); `mail_author_feature` is keyed by address and
   summed by person at scoring time, so a merge needs no new fold. Tallies are summed both ways (`Attention.otherTallies`).
 - Mail rows reach the client through `Attention.sources`, so `server.ts` and `sync.ts` are unchanged.
@@ -662,7 +663,7 @@ searches.
 | granted, no mail accounts | "No mail accounts in dither-accounts. Add Email (IMAP) or Proton Mail there." [Open] |
 | first sync | skeleton rows, then the first 50; "Syncing · 2,300 of about 14,000" |
 | empty mailbox | "Nothing in Archive." / Inbox at zero: "Inbox is empty." |
-| account problem | one line under the header (the account and its problem line) opening the account menu, which says it per account with [Open in dither-accounts]; a layer still coming up is quiet for 3 minutes; cached mail stays readable |
+| account problem | a small muted ⚠ beside the account (and its platform) on the wheels under the header, the problem line in its tooltip, after 10 s; the account menu says it per account with [Open in dither-accounts]; cached mail stays readable |
 | read grant | reader footer: "dither-accounts lets dither-chat read this account, not change it. Read here only." No archive, star or send. [Change] |
 | can't send | reply bar and ✎ off for that account: "me@proton.me can't send from here: Proton's send path was not found in the page (dither-accounts answered 501). Reading, archiving and starring work." |
 | dry run | composer banner: "Dry run: nothing reaches the account." |
@@ -773,8 +774,9 @@ Archiving removes it.
 
 So "you usually reply to Sam within an hour", "Sam wrote to you; not answered yet" and "you were here" read the same
 for mail. The result is an `AttentionView` with id `mth_…` and `kind: 'mail'`, sent in the same `attention` events.
-Until the learned order is retrained with mail (slice 10), a mail row keeps its formula points; under the learned
-order's prior those are the same scale.
+The learned order with mail (slice 10) runs in shadow: a mail row keeps its formula points and carries the learned
+score as `shadow` until `DITHER_INBOX_MAIL=model` sorts by it; under the learned order's prior those are the same scale
+(inbox.md, "Mail in the learned order").
 
 **The web side.** `InboxRow` in `model.ts` becomes a union, `{ kind: 'conv', conv } | { kind: 'mail', thread }`, keyed
 by id in `inbox.ts` and `ordering.ts`. `Sidebar.tsx` gets a `MailRow`:
@@ -789,6 +791,11 @@ by id in `inbox.ts` and `ordering.ts`. `Sidebar.tsx` gets a `MailRow`:
 It has the person's avatar with an envelope badge in the network-badge spot, the subject before the preview, the same
 ↩ owed mark and the same reasons on hover. Chips: All and Unread include mail, People includes one-to-one threads,
 Groups the rest. Tapping a row opens the reader.
+
+**Mail's own Inbox, ranked** (owner, 2026-11-20: "Sort Inbox by the same score, with a 'Newest' switch, and keep Sent
+and Starred by date"). Mail's Inbox shows the threads this section scores first, in the one-list inbox's own order, then
+the rest by date; docs/mail.md "Ranked" says how. Its chips shrank to Ranked (or Newest), Everything and Updates;
+Starred and Sent moved to the folder menu.
 
 **Triage.** `mail/triage.ts` builds learn.ts `Facts` per new personal message: `network: 'email'`, `shape: 'mail'`,
 `conversation: <thread>`, `spaces: [<mail account>]`, `author` (person, else identity), `known`, `mention` (in To),
@@ -839,7 +846,7 @@ Each slice adds files under `hub/src/mail/` and `web/src/ui/mail/`. Shared files
 | 7 | **Search**: FTS, operators, server merge, Mail group in search | 1 (2 for body text) | `mail/search.ts`, protocol `search.ts` operators; web `ui/mail/MailSearch.tsx`, `Search.tsx` | `mail-search.test.ts` (operators, local then server, deduplication, Proton's no-body note) |
 | 8 | **Classification and the one-list inbox**: §4 rules, Updates fold, People/Updates views, overrides, thread attention, inbox union | 1, 6 | `mail/{classify,attention}.ts`, `attention.ts` (author tallies summed), protocol `AttentionView.kind`; web `model.ts`, `inbox.ts`, `ordering.ts`, `Sidebar.tsx` (`MailRow`) | `mail-classify.test.ts` (each rule, order, overrides); `mail-attention.test.ts` (owed, unread, the listing window, archive removes); `web/test` inbox with mixed rows; `verify-inbox.ts` mixed |
 | 9 | **Triage and notifications** | 8 | `mail/triage.ts`, `votes.ts`, `main.ts` (`deliverMail`), `devices.ts`, `delivery.ts`, `push.ts` payload, `public/sw.js`, Android `Notifications.kt`; web board, `DeviceRules.tsx` | `mail-triage.test.ts`: bulk never notifies; a known sender in To pushes; quiet hours hold; device rule "Email off"; one vote on Sam's mail moves Sam's chat chance; `verify-notifications.ts` mail |
-| 10 | Later: the learned order trained with mail opens (`rankhistory.ts`, `ranker.ts`, a `shape:mail` feature); a From picker (after §13); contacts-based linking | 8, §13 | – | the replay (`inbox-replay.ts`) with mail opens |
+| 10 | The learned order trained with mail opens (`rankhistory.ts`, `ranker.ts`, rank.ts `MAIL_FEATURES`), in shadow since 2026-11-20 (`DITHER_INBOX_MAIL`); later: a From picker (after §13); contacts-based linking | 8, §13 | – | the replay (`inbox-replay.ts --mail`) and the scorecard's "Mail in the inbox" chart |
 
 Slices 1–4 add up to read, file and keep up in sync for any number of accounts. Slice 5 adds sending, and 8–9 make mail
 part of the inbox.

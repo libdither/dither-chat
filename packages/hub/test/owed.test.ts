@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { emptyTally, foldMessage, freshState, record, scoreConversation, WEIGHTS, type ScoreInput, type Tally } from '../src/attention.ts';
-import { DEFAULT_OWED_TABLE, fitOwedTable, OWED_AGES, owedChance, rateTurns, validTable, type OwedTurn } from '../src/owed.ts';
+import { DEFAULT_MAIL_OWED_TABLE, DEFAULT_OWED_TABLE, fitOwedTable, MAIL_OWED_AGES, OWED_AGES, owedChance, rateTurns, validTable, windowOf, type OwedTurn } from '../src/owed.ts';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -44,6 +44,43 @@ describe('the owed table', () => {
     expect(t.chance.group).toEqual(DEFAULT_OWED_TABLE.chance.group);
     // The chances never rise with age.
     for (const rows of [t.chance.direct, t.chance.group]) for (const r of rows) for (let i = 1; i < OWED_AGES.length; i++) expect(r[i]).toBeLessThanOrEqual(r[i - 1]);
+  });
+
+  test("mail's table runs two weeks, by its own reply rates; chat's ends at three days", () => {
+    expect(windowOf(DEFAULT_OWED_TABLE)).toBe(3 * DAY);
+    expect(windowOf(DEFAULT_MAIL_OWED_TABLE)).toBe(14 * DAY);
+    expect(validTable(DEFAULT_MAIL_OWED_TABLE, MAIL_OWED_AGES)).toBe(true);
+    // Each is checked against its own ages: one table is not taken for the other.
+    expect(validTable(DEFAULT_MAIL_OWED_TABLE)).toBe(false);
+    expect(validTable(DEFAULT_OWED_TABLE, MAIL_OWED_AGES)).toBe(false);
+    // Someone you answer half the time, by mail: still owed at five days, not at ten, nothing at two weeks.
+    const mail = (d: number) => owedChance(DEFAULT_MAIL_OWED_TABLE, 'direct', 0.5, d * DAY);
+    expect(owedChance(DEFAULT_OWED_TABLE, 'direct', 0.5, 5 * DAY)).toBe(0);
+    expect(mail(5)).toBeGreaterThan(0.05);
+    expect(mail(10)).toBeLessThan(0.05);
+    expect(mail(14)).toBe(0);
+    // Someone you never answer is owed little even when it is new.
+    expect(owedChance(DEFAULT_MAIL_OWED_TABLE, 'direct', 0.02, 0)).toBeLessThan(0.05);
+  });
+
+  test("fitted on mail's turns: an answer at five days is in time, and the table keeps mail's ages", () => {
+    // Half the turns answered after five days, the rest never.
+    const turns: OwedTurn[] = [];
+    for (let i = 0; i < 400; i++) {
+      const addressed = T0 + i * 20 * DAY;
+      turns.push({ conversationId: `t${i % 5}`, shape: 'direct', authorKey: `p${i % 5}`, addressed, answeredAt: i % 2 ? addressed + 5 * DAY : null, timed: true });
+    }
+    const t = fitOwedTable(turns, { now: T0 + 9000 * DAY, prior: DEFAULT_MAIL_OWED_TABLE });
+    expect(t.ages).toEqual([...MAIL_OWED_AGES]);
+    expect(t.rateEdges).toEqual(DEFAULT_MAIL_OWED_TABLE.rateEdges);
+    expect(validTable(t, MAIL_OWED_AGES)).toBe(true);
+    // Open at four days, half are answered yet; past five, none.
+    expect(owedChance(t, 'direct', 0.5, 4 * DAY)).toBeGreaterThan(0.3);
+    expect(owedChance(t, 'direct', 0.5, 6 * DAY)).toBeLessThan(0.1);
+    // The same turns on chat's three days: every answer came too late.
+    const chat = fitOwedTable(turns, { now: T0 + 9000 * DAY });
+    expect(chat.ages).toBeUndefined();
+    expect(owedChance(chat, 'direct', 0.5, 0)).toBeLessThan(0.1);
   });
 
   test('a turn still open within its window, and a reaction, say nothing about how turns end', () => {

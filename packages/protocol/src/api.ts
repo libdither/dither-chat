@@ -735,6 +735,8 @@ export interface MessageView {
   contacts?: ContactCardView[];
   /** A reply (or reaction) to a story. */
   storyReply?: StoryReplyView;
+  /** Sent as a text message (SMS or MMS), not over the network: from a Signal backup (extra.ts MessageExtra.sms). */
+  sms?: 'sms' | 'mms';
   /** Your message did not reach these people (it reached the others). */
   failed?: SendFailureView[];
   /** Files it had that the account could not download. */
@@ -1548,6 +1550,11 @@ export interface AttentionView {
    * `owedSince`, unless you marked it "Reply needed".
    */
   needsReply?: number;
+  /**
+   * The order with mail's score for it, while that order is worked out in shadow (docs/inbox.md, "Mail in the learned
+   * order"): what `score` would be if it sorted the inbox. Only to compare; nothing sorts by it.
+   */
+  shadow?: number;
   /** When the hub computed it. */
   at: number;
 }

@@ -131,6 +131,8 @@ interface Prefs {
   callSounds?: boolean;
   /** The inbox's filter (its menu beside the search box). */
   inboxFilter: InboxFilter;
+  /** How Mail's Inbox sorts on this device (docs/mail.md "Ranked"): absent is ranked. */
+  mailOrder?: 'ranked' | 'newest';
   /** People's filter chip: chats, or one kind of list (docs/add.md "Relationships"). */
   peopleFilter?: 'chats' | 'friend' | 'contact' | 'following';
   /** How People's friends, contacts and follows sort: when you last talked (the default), or by name. */

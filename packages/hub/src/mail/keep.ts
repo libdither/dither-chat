@@ -104,6 +104,8 @@ interface Feed {
   failed: Map<string, number>;
   /** Nothing left to fetch, until then or new mail. */
   idleUntil: number;
+  /** Messages to read again for their To and Cc, taken from the front (nextRecipients). */
+  recipients: string[];
 }
 
 /** A window's server search, as one of the two ways goes: what it found, and how. */
@@ -248,7 +250,7 @@ class Keeper {
 
   private feed(accountId: string): Feed {
     let f = this.feeds.get(accountId);
-    if (!f) this.feeds.set(accountId, (f = { cursor: null, going: new Set(), failed: new Map(), idleUntil: 0 }));
+    if (!f) this.feeds.set(accountId, (f = { cursor: null, going: new Set(), failed: new Map(), idleUntil: 0, recipients: [] }));
     return f;
   }
 
@@ -262,6 +264,9 @@ class Keeper {
     while (f.going.size < BODIES_AT_ONCE) {
       const id = this.next(accountId, f, now);
       if (!id) {
+        // Every body is here: then the messages kept without their recipients, read again one at a time.
+        // While bodies are still on their way, their ends kick this again.
+        if (f.going.size > 0 || this.recipients(accountId, s, f, now)) return;
         f.idleUntil = now + 5 * 60_000;
         return;
       }
@@ -291,6 +296,49 @@ class Keeper {
           if (!this.stopped) this.kick(accountId);
         });
     }
+  }
+
+  /**
+   * One message read again for its To and Cc (MailStore.fillRecipients), when every body is here: its summary came
+   * without them (Gmail on the web's list rows carry none) and so did the first read, from before the hub kept them.
+   * Mail from a person first, newest first, each once (mail_recipients_read), at P5 in the background lane like the
+   * audits. Returns whether one is on its way.
+   */
+  private recipients(accountId: string, s: AccountSync, f: Feed, now: number): boolean {
+    if (!f.recipients.length) f.recipients = this.nextRecipients(accountId);
+    let id: string | undefined;
+    while ((id = f.recipients.shift()) && (f.failed.get(id) ?? 0) > now);
+    if (!id) return false;
+    f.going.add(id);
+    const done = () => this.store.db.query('INSERT OR IGNORE INTO mail_recipients_read (message_id, at) VALUES (?, ?)').run(id, this.now);
+    s.fetchBody(id, P5, true, true)
+      .then(done, (e) => {
+        const err = asMailError(e);
+        // Gone from the server: nothing more to read there.
+        if (err.status === 404) done();
+        else f.failed.set(id!, this.now + 3_600_000);
+        if (err.status !== 404 && err.code !== 'paused' && !/stopped/.test(err.message)) s.log(`keep: recipients: ${err.message}`);
+      })
+      .finally(() => {
+        f.going.delete(id!);
+        if (!this.stopped) this.kick(accountId);
+      });
+    return true;
+  }
+
+  /** The next messages to read again for their recipients: kept without To or Cc, not read again yet. */
+  nextRecipients(accountId: string, limit = 200): string[] {
+    return this.store
+      .all<{ id: string }>(
+        `SELECT m.id FROM mail_message m JOIN mail_thread t ON t.id = m.thread_id
+         WHERE m.account_id = ? AND m.to_json = '[]' AND m.cc_json = '[]' AND m.draft = 0
+           AND EXISTS (SELECT 1 FROM mail_body b WHERE b.message_id = m.id)
+           AND NOT EXISTS (SELECT 1 FROM mail_recipients_read r WHERE r.message_id = m.id)
+         ORDER BY t.class = 'personal' DESC, m.received_at DESC, m.id DESC LIMIT ?`,
+        accountId,
+        limit,
+      )
+      .map((r) => r.id);
   }
 
   /** The next message whose text a kept account lacks, newest first from where the pass got to; null: none. */

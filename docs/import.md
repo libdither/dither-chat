@@ -15,7 +15,8 @@ Goals:
 - **Raw sources are kept.** The bytes you gave the hub are never modified, so a better reader can come back to them.
 
 Status: built for Discord and Signal. Sources (upload of files or folders, rsync, hash, census), the
-DiscordChatExporter HTML reader, Signal's new-format and legacy `.backup` readers (docs/import-signal.md), the
+DiscordChatExporter HTML reader, Signal's new-format and legacy `.backup` readers and the Signal Desktop profile reader
+(docs/import-signal.md), the
 fill-only apply with provenance, conflicts and undo, the review UI, the gap fill through the account and the media
 archive are in. Where the code differs from the design below, the code section at the end says so.
 
@@ -52,7 +53,8 @@ Ways in:
   keepmsg, deletes, edits). A wrong passphrase is detected on the first frame and forgotten.
   In a browser the page has to stay open while it uploads. In the Android app (0.10 on) the app uploads by itself
   instead, so it goes on with the app closed: see [android.md](android.md#history-uploads).
-- **Copy in** a folder: `raw/` plus a `source.json`. This is how the DiscordChatExporter exports arrived.
+- **Copy in** a folder: `raw/` plus a `source.json`. This is how the DiscordChatExporter exports arrived. A Signal
+  Desktop profile comes in this way too (docs/import-signal.md, "Reading a Signal Desktop profile").
 
 API (tailnet-only, like the rest of `/api`): `GET /api/imports`, `POST /api/imports` `{accountId, name, size}`,
 `PUT /api/imports/:id/data?offset=N`, `POST /api/imports/:id/passphrase`, `POST /api/imports/:id/check`,
@@ -68,6 +70,7 @@ mapping code, so ids, Markdown and kinds can't drift from what live sync writes:
 |---|---|---|
 | `signal-backup` | decrypt, replay statements into an in-memory SQLite, map rows | `adapter-signal/src/mapping.ts` (`msgId`, `dmId`, `groupConvId`, `attachmentKind`), `markdown.ts` (`fromSignal`) |
 | `signal-backup-v2` | decrypt `main` with the account entropy pool, walk the frames | the same |
+| `signal-desktop` | decrypt the SQLCipher database (and its write-ahead log) into a plain copy, map `conversations` and `messages` | the same |
 | `dce-html` | stream the HTML through `HTMLRewriter` and convert bodies back to Markdown | `adapter-discord/src/map.ts` (`snowflakeToMs`, `reactionKey`, `normalizeMentions`) |
 | `dce-json`, `discord-package` | JSON, nearly 1:1 | the same |
 
@@ -211,7 +214,7 @@ the source and everything before the failed stage intact.
    390k messages in about 3½ minutes, unread counts untouched, a second run changing nothing.
 3. ✅ Gap fill through the Discord account (`imports/gapfill.ts`) and the media archive (`mediaarchive.ts`).
 4. ✅ Signal: readers for new-format snapshots (`signal-v2.ts`) and a `.backup` uploaded alone (`signal-legacy.ts`),
-   through the same import path. Kept content (Molly keepmsg) goes in through the hub's own kept-message mechanism
+   through the same import path. A Signal Desktop profile (`signal-desktop.ts`) fills gaps the hub missed. Kept content (Molly keepmsg) goes in through the hub's own kept-message mechanism
    (docs/history.md): a run counts it as `kept`. A folder holding both still reads only its snapshots.
 5. Automatic pipeline on upload; decisions as rules; DCE JSON and the Discord data package.
 

@@ -6,7 +6,7 @@ import type { VisitExit, VisitRecord, VisitSource, VisitView } from '@dither-cha
 import { MAX_TICK, VISIT_AFTER } from './tracker.ts';
 
 export type Place = { view: VisitView; conversationId?: string | null; spaceId?: string | null; personId?: string | null };
-export type Arrival = { source: VisitSource; pushId?: string | null; rank?: number | null; score?: number | null; needs?: boolean | null };
+export type Arrival = { source: VisitSource; pushId?: string | null; rank?: number | null; score?: number | null; needs?: boolean | null; shadowRank?: number | null };
 /** The reply you owe at a place as a stay there begins, and whether its inbox row shows it (↩). */
 type Owed = { since: number | null; shown: boolean };
 type Action = 'sent' | 'reactions' | 'history' | 'threads' | 'attachments';
@@ -29,6 +29,24 @@ export const TAPS_KEPT = 200;
 export function firstTap(seen: readonly string[], id: string): { fresh: boolean; seen: string[] } {
   if (seen.includes(id)) return { fresh: false, seen: [...seen] };
   return { fresh: true, seen: [...seen, id].slice(-TAPS_KEPT) };
+}
+
+/**
+ * Where the row at `index` of a list would stand if the list were sorted by the shadow order instead (0 = top): muted
+ * rows last, then by the shadow score, higher first, ties kept in the list's order. Null when no row has a shadow
+ * score: the hub is not working one out (docs/inbox.md, "Mail in the learned order").
+ */
+export function shadowRankOf(rows: readonly { shadow: number | null; score: number; muted: boolean }[], index: number): number | null {
+  const me = rows[index];
+  if (!me || !rows.some((r) => r.shadow !== null)) return null;
+  const key = (r: (typeof rows)[number]) => r.shadow ?? r.score;
+  let above = 0;
+  rows.forEach((r, j) => {
+    if (j === index) return;
+    const before = r.muted !== me.muted ? !r.muted : key(r) !== key(me) ? key(r) > key(me) : j < index;
+    if (before) above++;
+  });
+  return above;
 }
 
 const randomId = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
@@ -95,7 +113,7 @@ export class VisitLog {
   relabel(now: number, arrival: Arrival, within: number): boolean {
     const v = this.current;
     if (!v || now - v.start > within || v.source === 'notification') return false;
-    Object.assign(v, { source: arrival.source, pushId: arrival.pushId ?? null, rank: arrival.rank ?? null, score: arrival.score ?? null, needs: arrival.needs ?? null });
+    Object.assign(v, { source: arrival.source, pushId: arrival.pushId ?? null, rank: arrival.rank ?? null, score: arrival.score ?? null, needs: arrival.needs ?? null, shadowRank: arrival.shadowRank ?? null });
     return true;
   }
 
@@ -117,6 +135,7 @@ export class VisitLog {
       rank: a.rank ?? null,
       score: a.score ?? null,
       needs: a.needs ?? null,
+      shadowRank: a.shadowRank ?? null,
       depth: null,
       readToId: null,
       readToTs: null,

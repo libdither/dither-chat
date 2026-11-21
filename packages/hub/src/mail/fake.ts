@@ -113,6 +113,8 @@ export interface FakeOpts {
   details?: Record<string, unknown> | null;
   /** The server's address book for `mail.contacts` (its status then says `details.contacts`); none by default. */
   contacts?: M.MailContact[] | null;
+  /** False: summaries carry no To or Cc, as Gmail on the web's list rows; mail.get's answers still do. */
+  listRecipients?: boolean;
 }
 
 const MB = 1024 * 1024;
@@ -356,6 +358,7 @@ export class FakeMailBackend implements MailBackend {
       summaryHeaders: refs,
       details: ids === 'proton' ? PROTON_DETAILS : web ? GMAIL_WEB_DETAILS : {},
       contacts: null,
+      listRecipients: true,
       ...this.defaults,
       ...o.opts,
     };
@@ -725,8 +728,8 @@ export class FakeMailBackend implements MailBackend {
       // Gmail's X-GM-MSGID: the same in every mailbox the message is in.
       ...(m.gm ? { emailId: m.gm } : {}),
       from: m.from,
-      to: m.to,
-      cc: m.cc,
+      to: a.opts.listRecipients ? m.to : [],
+      cc: a.opts.listRecipients ? m.cc : [],
       subject: m.subject,
       date: m.date,
       receivedAt: m.receivedAt,

@@ -90,6 +90,17 @@ function CensusLine({ c }: { c: P.ImportCensus }) {
       </p>
     );
   }
+  if (c.format === 'signal-desktop') {
+    if (x.messages === undefined) return null;
+    return (
+      <p class="det-note">
+        Signal Desktop{x.desktopVersion ? ` ${x.desktopVersion}` : ''}: {count(x.messages, 'message')}
+        {x.firstMonth ? `, ${x.firstMonth} to ${x.lastMonth}` : ''} · {count(x.conversations.direct, 'direct chat')}, {count(x.conversations.group, 'group')}
+        {x.attachments.count ? ` · ${count(x.attachments.onDisk, 'attachment')} on disk${x.attachments.onDisk < x.attachments.count ? ` of ${x.attachments.count.toLocaleString()}` : ''}` : ''}
+        {x.linked ? '' : ' · not linked to an account'}
+      </p>
+    );
+  }
   if (c.format === 'signal-folder') {
     return (
       <>
@@ -192,7 +203,11 @@ function SourceRow({ s, account, onChange, importing }: { s: P.ImportSourceView;
   const run = s.run;
   const running = !!run && !run.finishedAt;
   // A new-format Molly backup opens with the account's recovery key, a .backup with its 30-digit passphrase.
-  const recovery = (s.census as { needs?: string } | null)?.needs === 'recovery-key';
+  const needs = (s.census as { needs?: string } | null)?.needs;
+  const recovery = needs === 'recovery-key';
+  // A Signal Desktop profile whose key config.json can't give: the 64 hex digits of its database key.
+  const dbKey = needs === 'desktop-key';
+  const keyOk = dbKey ? /^(x')?[0-9a-fA-F]{64}'?$/.test(pass.trim()) : recovery ? pass.replace(/[^0-9a-zA-Z#=]/g, '').length === 64 : pass.replace(/\D/g, '').length === 30;
   const pct = s.status === 'uploading' ? s.received / Math.max(1, s.size) : s.status === 'counting' || (s.status === 'checking' && s.progress !== null) ? (s.progress ?? 0) : running ? run!.progress : null;
   const canImport = s.importable && s.status === 'ready' && s.accountId === account.id && !running;
   const imported = !!run && !run.dryRun && run.stage === 'done';
@@ -232,15 +247,15 @@ function SourceRow({ s, account, onChange, importing }: { s: P.ImportSourceView;
           {recovery && <p class="det-note">Molly → Settings → Backups → On-device backups → View recovery key. The hub keeps only the backup key it gives, which opens backups and nothing else.</p>}
           <input
             class="input"
-            inputMode={recovery ? 'text' : 'numeric'}
+            inputMode={recovery || dbKey ? 'text' : 'numeric'}
             autoComplete="off"
             autoCapitalize="off"
             spellcheck={false}
-            placeholder={recovery ? '64-character recovery key' : '30-digit .backup passphrase'}
+            placeholder={dbKey ? '64-digit database key (hex)' : recovery ? '64-character recovery key' : '30-digit .backup passphrase'}
             value={pass}
             onInput={(e) => setPass((e.target as HTMLInputElement).value)}
           />
-          <button class="btn" disabled={busy || (recovery ? pass.replace(/[^0-9a-zA-Z#=]/g, '').length !== 64 : pass.replace(/\D/g, '').length !== 30)}>
+          <button class="btn" disabled={busy || !keyOk}>
             Unlock
           </button>
         </form>

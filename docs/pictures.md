@@ -66,9 +66,9 @@ A run of two or more pictures can be switched where it is (`ui/PictureSwitch.tsx
 that chat, as its Pictures menu would (`place_pref.pictures`), with no toast: the run redrawn says it.
 
 - **A computer**: a rail of the five ways stands to the right of the run, in the room the chat leaves there (the
-  run is drawn 40 px narrower for it). It can't be seen until you point at the message, is faint while you do, and
-  shows in full when you point at it; each way says its name beside it. A right-click on a picture of a run has the
-  same choice, as "Show Pictures As".
+  run is drawn 40 px narrower for it). It can't be seen until you point at the message; then only the way in use
+  shows, faint, in its place on the rail. Pointing at that (or tabbing to it) brings in the other four, in full;
+  each way says its name beside it. A right-click on a picture of a run has the same choice, as "Show Pictures As".
 - **A phone**: a chip at the top right of the run's first row, its words wrapping round it, says the way in use. It
   is one line of a wheel of the five, in order from smallest to biggest: Small, Fold, Six, All, Rows
   (`PICTURE_ORDER`). Drag it up or down, scroll on it, or pinch the pictures with two fingers, and the run slides

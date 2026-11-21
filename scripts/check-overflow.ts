@@ -110,6 +110,56 @@ const LOOK = (stress: boolean, data: string[]) => `(() => {
   return out;
 })()`;
 
+/**
+ * One page's look, given PAGE_MS. A DevTools call that never answers (a page whose script never yields, a body the
+ * browser never hands over) otherwise holds the whole run until CI cancels it, saying nothing of where. Past the time
+ * this pauses the page's script and prints where it is, then fails naming the page.
+ */
+const PAGE_MS = 90_000;
+/** What the page's look is waiting on, for when it waits too long. */
+let step = "";
+async function within(
+  what: string,
+  p: Awaited<ReturnType<typeof launch>>["page"],
+  run: () => Promise<void>,
+) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<"late">(
+    (res) => (timer = setTimeout(() => res("late"), PAGE_MS)),
+  );
+  const done = await Promise.race([run().then(() => "done" as const), late]);
+  clearTimeout(timer);
+  if (done === "done") return;
+  let where = "(the page's script could not be paused)";
+  const paused = new Promise<string>((res) =>
+    p.on("Debugger.paused", (e) =>
+      res(
+        (e.callFrames ?? [])
+          .slice(0, 12)
+          .map(
+            (f: any) =>
+              `    at ${f.functionName || "(anonymous)"} ${f.url}:${f.location.lineNumber + 1}:${f.location.columnNumber + 1}`,
+          )
+          .join("\n") ||
+          "    (paused, no frames: the page is idle, so a DevTools answer was lost)",
+      ),
+    ),
+  );
+  void p.send("Debugger.enable").catch(() => {});
+  void p.send("Debugger.pause").catch(() => {});
+  where = await Promise.race([paused, Bun.sleep(5_000).then(() => where)]);
+  const answers = await Promise.race([
+    p.send("Runtime.evaluate", { expression: "1" }).then(
+      () => "answers",
+      (e) => `fails (${e.message})`,
+    ),
+    Bun.sleep(3_000).then(() => "does not answer"),
+  ]);
+  throw new Error(
+    `${what} did not finish in ${PAGE_MS / 1000} s, waiting on ${step}; the page ${answers} a plain evaluate; its script was at:\n${where}`,
+  );
+}
+
 try {
   if (!opt("web")) {
     const b = Bun.spawnSync(
@@ -240,26 +290,36 @@ try {
     await p.send("Page.reload");
     await p.until(`!!document.querySelector('.app')`, 15_000);
     for (const [hash, shown] of pages) {
-      await p.goto(`${base}/${hash}`);
-      await p.until(
-        `!!document.querySelector(${JSON.stringify(shown)})`,
-        15_000,
-      );
-      // Whatever the page asked the hub for has been read before its texts are told apart.
-      await Promise.all(reading.splice(0));
-      for (const pass of [false, true]) {
-        const found = await p.eval<{ box: string; what: string; by: number }[]>(
-          LOOK(pass, pass ? [...data] : []),
+      const t0 = performance.now();
+      await within(`${size} ${hash}`, p, async () => {
+        step = "navigating";
+        await p.goto(`${base}/${hash}`);
+        step = `what shows: ${shown}`;
+        await p.until(
+          `!!document.querySelector(${JSON.stringify(shown)})`,
+          15_000,
         );
-        for (const f of found) {
-          const key = `${f.box} ← ${f.what}`;
-          if (!problems.has(key))
-            problems.set(
-              key,
-              `${size} ${hash}: ${f.box} scrolls sideways by ${f.by}px ${pass ? `with a longer text in ${f.what}` : "(as drawn)"}`,
-            );
+        // Whatever the page asked the hub for has been read before its texts are told apart.
+        step = `${reading.length} response bodies`;
+        await Promise.all(reading.splice(0));
+        for (const pass of [false, true]) {
+          step = `the look, ${pass ? "with longer texts" : "as drawn"}`;
+          const found = await p.eval<
+            { box: string; what: string; by: number }[]
+          >(LOOK(pass, pass ? [...data] : []));
+          for (const f of found) {
+            const key = `${f.box} ← ${f.what}`;
+            if (!problems.has(key))
+              problems.set(
+                key,
+                `${size} ${hash}: ${f.box} scrolls sideways by ${f.by}px ${pass ? `with a longer text in ${f.what}` : "(as drawn)"}`,
+              );
+          }
         }
-      }
+      });
+      const ms = performance.now() - t0;
+      if (ms > 10_000)
+        console.log(`slow: ${size} ${hash} took ${(ms / 1000).toFixed(1)} s`);
     }
   }
 } finally {

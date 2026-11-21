@@ -4,7 +4,7 @@ import { Categorizer, JevProvider, KeywordProvider, OllamaProvider, type Categor
 import { ActivityStore } from './activity.ts';
 import { ForYou } from './foryou.ts';
 import { Attention } from './attention.ts';
-import { exploreOn, InboxRanker, rankMode } from './ranker.ts';
+import { exploreOn, InboxRanker, mailRankMode, rankMode } from './ranker.ts';
 import { DemoManager, type ManagerLink } from './accounts-manager.ts';
 import { applyDemoOverlay, createDemoAccounts, DEMO_MAIL_ACCOUNT, demoFactory, seedDemoMail } from './demo.ts';
 import { demoMailImages } from './mail/demo-html.ts';
@@ -141,8 +141,17 @@ const scorecard = new Scorecard(store.db);
 if (demo) seedDemoScores(store.db, Date.now());
 const attention = new Attention(store, triage);
 // The inbox's learned order (ranker.ts, docs/inbox.md). DITHER_INBOX_RANK=shadow works it out without sorting by it; off.
-// DITHER_INBOX_EXPLORE=0 sorts by its mean instead of a Thompson sample.
-const ranker = new InboxRanker(store, triage, rankMode(process.env.DITHER_INBOX_RANK), join(dataDir, 'hub.sqlite'), Date.now, exploreOn(process.env.DITHER_INBOX_EXPLORE));
+// DITHER_INBOX_EXPLORE=0 sorts by its mean instead of a Thompson sample. DITHER_INBOX_MAIL: the order with mail is
+// worked out in shadow (the default), sorts chats and mail (`model`), or is left out (`off`).
+const ranker = new InboxRanker(
+  store,
+  triage,
+  rankMode(process.env.DITHER_INBOX_RANK),
+  join(dataDir, 'hub.sqlite'),
+  Date.now,
+  exploreOn(process.env.DITHER_INBOX_EXPLORE),
+  mailRankMode(process.env.DITHER_INBOX_MAIL),
+);
 attention.judge = ranker;
 // The learned order learns from rows weighed as the inbox weighs them now.
 ranker.owedTable = () => attention.owedTable;
@@ -440,6 +449,7 @@ const mail = new MailHub({ db: store.db, backend: mailBackend, managerUrl: accou
 mailPeople(mail)?.connect(store);
 // Mail from people in the one-list inbox, scored with the chats (mail/attention.ts).
 mailAttention(mail)?.connect(store, attention);
+ranker.mailOwedTable = () => mailAttention(mail)?.owedTable;
 // New mail from people triaged by chat's model, with chat's votes, and notified the same way (mail/triage.ts).
 const mailTriaged = mailTriage(mail);
 if (mailTriaged) {
@@ -568,6 +578,9 @@ if (demoNotices && notices) {
 }
 if (manager instanceof DemoManager) manager.publish();
 startup.mark('server');
+// What the last run's stop could not apply (supervisor.ts `settle`), in before any adapter or the manager can send
+// anything newer.
+if (sup.resume()) startup.mark('carried-over events');
 // Before the manager's first account list, so mail hears it.
 mail.start();
 startup.mark('mail start');
@@ -589,6 +602,8 @@ setTimeout(() => {
 }, 10 * 60_000).unref();
 calendars.start();
 span('attention: first scoring', {}, () => attention.start((events) => server.broadcast(events)));
+// Mail's sender closeness (rank.ts `mailBond`) is the people graph's, worked out on its own thread (closeness.ts).
+ranker.bonds = () => server.closeness.get().then((r) => r.byIdentity);
 ranker.onFit = () => {
   void attention
     .rescoreAllSliced()
@@ -622,7 +637,18 @@ setTimeout(() => {
   console.log(startup.line());
 });
 
+/**
+ * How long a stop may take before it gives up applying adapter events (supervisor.ts `settle`) and carries the rest
+ * over to the next start. The unit sets no TimeoutStopSec, so systemd kills the hub 90 s after SIGTERM (the deployer's
+ * `systemctl restart` waits for that); this leaves about half a minute for what follows: the journal, the last
+ * checkpoint, the files.
+ */
+const STOP_APPLY_MS = 60_000;
+let stopping = false;
 const shutdown = async () => {
+  if (stopping) return;
+  stopping = true;
+  const stopBy = Date.now() + STOP_APPLY_MS;
   // What is being triaged finishes first (a few seconds at most); the rest waits in triage_pending for the next start.
   await Promise.race([queue, new Promise((r) => setTimeout(r, 5_000))]);
   backup.stop();
@@ -634,7 +660,12 @@ const shutdown = async () => {
   calendars.stop();
   embeddings?.close();
   server.stop();
+  // Nothing new comes after this: the manager's client is closed and the adapters here are stopped.
   await sup.stopAll();
+  // Adapter events still queued or held (a backlog after a gap, a locked database): the manager handed them over and
+  // keeps no copy, so they are applied now, and what does not make it by stopBy is carried over to the next start.
+  // From here to exit nothing awaits, so no event can come in between.
+  sup.settle(stopBy);
   // What stopping changed is in the journal too; then the next start can trust it (journal.ts).
   server.flush();
   store.journal.close();

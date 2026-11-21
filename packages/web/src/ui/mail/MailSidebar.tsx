@@ -1,19 +1,21 @@
 /**
- * Mail's side of the screen (docs/mail.md): where mail access stands, one line on accounts that are not working, the views (Inbox, Unread,
- * Starred, Sent) in one row of chips and each account's mailboxes, then the list. With several accounts the line under
+ * Mail's side of the screen (docs/mail.md): where mail access stands, whose mail (two wheels, with muted warnings), the
+ * views (Inbox ranked or newest first, Everything, Updates) in one row of chips, Starred, Sent and each account's
+ * mailboxes in the folder menu, then the list. With several accounts the line under
  * "Mail" picks whose mail the views show. On a phone it is the list a thread opens over.
  */
 import type * as P from '@dither-chat/protocol';
-import { mailboxList, searchList, searchOfList, viewList } from '@dither-chat/protocol';
+import { MAIL_PLATFORM_NAMES, mailboxList, mailPlatform, platformScope, searchList, searchOfList, viewList } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { accountTrouble, DEFAULT_LIST, holdsOnlyMailboxes, inboxUnread, listTitle, MAIL_VIEWS } from '../../mail/model.ts';
-import { db, go, mailRev } from '../../state.ts';
-import { contextMenu, openMenu, type MenuEntry } from '../ContextMenu.tsx';
+import { accountTrouble, DEFAULT_LIST, holdsOnlyMailboxes, inboxUnread, listTitle, MAIL_FOLDER_VIEWS, MAIL_VIEWS } from '../../mail/model.ts';
+import { db, go, mailRev, prefs, setPrefs } from '../../state.ts';
+import { openMenu, type MenuEntry } from '../ContextMenu.tsx';
 import { Icon } from '../icons.tsx';
 import { ComposeButton, DraftsLine } from './Composer.tsx';
 import { MailAccessNote } from './MailAccounts.tsx';
 import { LIST_BARS } from './slots.tsx';
 import { MailSearch } from './MailSearch.tsx';
+import { ScopeWheel, type WheelItem } from './ScopeWheel.tsx';
 import { ThreadList } from './ThreadList.tsx';
 
 /** The manager's page, or its account page. */
@@ -35,44 +37,12 @@ function useTrouble(accounts: P.MailAccountView[]) {
   return new Map(all.flatMap(({ a, t }) => (t.message ? [[a.id, t.message] as const] : [])));
 }
 
-/**
- * Accounts that are not working: one quiet line under the header rather than a card each. A line about one account
- * says what is wrong; with several accounts it opens the account menu, where each says its own; with one it opens the
- * account in dither-accounts.
- */
-function TroubleLine({ trouble, openPicker }: { trouble: Map<string, string>; openPicker: ((from: HTMLElement) => void) | null }) {
-  const s = db.mail;
-  if (!trouble.size) return null;
-  const [id, message] = [...trouble][0];
-  const a = s.accounts.get(id)!;
-  const text = trouble.size === 1 ? `${a.address ?? a.label}: ${message}` : `${trouble.size} accounts aren't working`;
-  const body = (
-    <>
-      <Icon name="alert" size={13} />
-      <span>{text}</span>
-    </>
-  );
-  if (openPicker) {
-    return (
-      <button class="mail-problem" title={trouble.size === 1 ? text : 'See which in the account menu'} onClick={(e) => openPicker(e.currentTarget)}>
-        {body}
-      </button>
-    );
-  }
-  const href = managerLink(s, a);
-  return href ? (
-    <a class="mail-problem" href={href} target="_blank" rel="noopener" title={`${text}. Open in dither-accounts`}>
-      {body}
-    </a>
-  ) : (
-    <div class="mail-problem" role="status" title={text}>
-      {body}
-    </div>
-  );
-}
-
-function mailboxMenu(s: typeof db.mail, at: { x: number; y: number }, from: EventTarget | null) {
-  const items: MenuEntry[] = [];
+/** The folder menu: Starred and Sent of the scope in use (newest first), then each account's mailboxes. */
+function mailboxMenu(s: typeof db.mail, scope: string, at: { x: number; y: number }, from: EventTarget | null) {
+  const items: MenuEntry[] = MAIL_FOLDER_VIEWS.map((v) => {
+    const k = viewList(v.view, scope === '*' ? null : scope);
+    return { label: v.label, icon: v.view === 'starred' ? 'star' : 'send', run: () => go({ view: 'mail', list: k }) };
+  });
   for (const a of s.accounts.values()) {
     const boxes = [...s.mailboxes.values()].filter((b) => b.accountId === a.id && !holdsOnlyMailboxes(b, s.mailboxes.values())).sort((x, y) => (x.role === 'inbox' ? -1 : y.role === 'inbox' ? 1 : x.path.localeCompare(y.path)));
     if (!boxes.length) continue;
@@ -124,15 +94,53 @@ function openAccountMenu(from: HTMLElement, accounts: P.MailAccountView[], scope
   openMenu({ x: r.left, y: r.bottom + 4 }, { label: PICKER, head: <div class="cm-sheet-title">Show mail from</div>, items }, from);
 }
 
-/** Under "Mail" with several accounts: whose mail the views show, ringed in the warning colour when one is not working. */
-function AccountPicker({ accounts, scoped, warn, open }: { accounts: P.MailAccountView[]; scoped: string; warn: boolean; open: (from: HTMLElement) => void }) {
-  const current = accounts.find((a) => a.id === scoped) ?? null;
+/**
+ * Under "Mail": whose mail the views show, as two wheels (ScopeWheel): the platform (All mail, Gmail, Proton…) when
+ * there is more than one, then the account (All of that platform's, or one) when it has more than one. An account that
+ * has not worked for PROBLEM_GRACE_MS gets a muted warning sign, as do the platform and All that hold it. A right-click
+ * or long press on the account wheel opens the account menu, with each account's unread count and its problem.
+ */
+function ScopeWheels({ accounts, scope, trouble, pickScope, openMenu }: { accounts: P.MailAccountView[]; scope: string; trouble: Map<string, string>; pickScope: (scope: string) => void; openMenu: (from: HTMLElement) => void }) {
+  const platformOf = (a: P.MailAccountView) => mailPlatform(a);
+  const platforms = [...new Set(accounts.map(platformOf))];
+  const account = accounts.find((a) => a.id === scope) ?? null;
+  const platform = account ? platformOf(account) : scope.startsWith('k.') ? scope.slice(2) : null;
+  const inPlatform = accounts.filter((a) => !platform || platformOf(a) === platform);
+  const warnOf = (as: P.MailAccountView[]) => {
+    const bad = as.filter((a) => trouble.has(a.id));
+    return bad.length ? bad.map((a) => `${a.address ?? a.label}: ${trouble.get(a.id)}`).join('\n') : null;
+  };
+  const name = (p: string) => MAIL_PLATFORM_NAMES[p] ?? p;
+  const platformItems: WheelItem[] = [
+    { key: '*', label: 'All mail', dot: allDot(accounts), warn: warnOf(accounts) },
+    ...platforms.map((p) => {
+      const as = accounts.filter((a) => platformOf(a) === p);
+      return { key: platformScope(p), label: name(p), dot: as.length === 1 ? as[0].color : allDot(as), warn: warnOf(as) };
+    }),
+  ];
+  const allKey = platform ? platformScope(platform) : '*';
+  const accountItems: WheelItem[] = [
+    { key: allKey, label: platform ? `All ${name(platform)}` : 'All accounts', dot: allDot(inPlatform), warn: warnOf(inPlatform) },
+    ...inPlatform.map((a) => ({ key: a.id, label: a.address ?? a.label, dot: a.color, warn: trouble.get(a.id) ?? null })),
+  ];
+  const showPlatforms = platforms.length > 1;
+  const showAccounts = inPlatform.length > 1;
   return (
-    <button class="mail-acc-btn" aria-haspopup="menu" aria-expanded={contextMenu.value?.label === PICKER} title="Whose mail to show" onClick={(e) => open(e.currentTarget)}>
-      <span class={`mail-acc-dot ${warn ? 'warn' : ''}`} style={{ background: current ? current.color : allDot(accounts) }} aria-hidden="true" />
-      <span class="mail-acc-name">{current ? (current.address ?? current.label) : 'All accounts'}</span>
-      <Icon name="chevronDown" size={12} />
-    </button>
+    <div class="scope-wheels">
+      {showPlatforms && <ScopeWheel label="Platform" track="mail: platform wheel" items={platformItems} at={Math.max(0, platformItems.findIndex((i) => i.key === (platform ? platformScope(platform) : '*')))} pick={pickScope} onMenu={openMenu} />}
+      {showPlatforms && showAccounts && <span class="scope-sep" aria-hidden="true">›</span>}
+      {showAccounts && <ScopeWheel label="Account" track="mail: account wheel" items={accountItems} at={Math.max(0, accountItems.findIndex((i) => i.key === (account ? account.id : allKey)))} pick={pickScope} onMenu={openMenu} />}
+      {!showPlatforms && !showAccounts && accounts[0] && (
+        <span class="side-sub">
+          {accounts[0].address ?? accounts[0].label}
+          {trouble.has(accounts[0].id) && (
+            <a class="scope-warn" title={`${trouble.get(accounts[0].id)}. Open in dither-accounts`} href={accounts[0].managedUrl ?? undefined} target="_blank" rel="noopener">
+              <Icon name="alert" size={11} />
+            </a>
+          )}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -145,8 +153,8 @@ export function MailSidebar({ list, active }: { list?: string; active?: string }
   const view = key.startsWith('v:') ? key.split(':')[1] : null;
   const pick = (v: string, acc: string) => go({ view: 'mail', list: viewList(v as P.MailView, acc === '*' ? null : acc) });
   const search = searchOfList(key);
+  const newest = prefs.value.mailOrder === 'newest';
   const trouble = useTrouble(accounts);
-  const picker = search === null && view && accounts.length > 1;
   const openPicker = (from: HTMLElement) => openAccountMenu(from, accounts, scoped, trouble, (acc) => pick(view ?? 'inbox', acc));
   const chips = search === null && accounts.length > 0;
   const row = useRef<HTMLDivElement>(null);
@@ -194,36 +202,48 @@ export function MailSidebar({ list, active }: { list?: string; active?: string }
           )}
           {accounts.length > 0 && (
             <button
-              class={`icon-btn small side-new mail-boxes-btn ${key.startsWith('mb:') ? 'on' : ''}`}
-              aria-label="Mailboxes"
-              title="Mailboxes"
+              class={`icon-btn small side-new mail-boxes-btn ${key.startsWith('mb:') || view === 'starred' || view === 'sent' ? 'on' : ''}`}
+              aria-label="Starred, Sent and mailboxes"
+              title="Starred, Sent and mailboxes"
               onClick={(e) => {
                 const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                mailboxMenu(s, { x: r.left, y: r.bottom + 4 }, e.currentTarget);
+                mailboxMenu(s, scoped, { x: r.left, y: r.bottom + 4 }, e.currentTarget);
               }}
             >
               <Icon name="folder" size={16} />
             </button>
           )}
-          <ComposeButton accountId={scoped === '*' ? null : scoped} />
+          <ComposeButton accountId={scoped === '*' || scoped.startsWith('k.') ? null : scoped} />
         </h1>
-        {picker ? (
-          <AccountPicker accounts={accounts} scoped={scoped} warn={[...trouble.keys()].some((id) => scoped === '*' || id === scoped)} open={openPicker} />
+        {search === null && view && accounts.length > 0 ? (
+          <ScopeWheels accounts={accounts} scope={scoped} trouble={trouble} pickScope={(sc) => pick(view, sc)} openMenu={openPicker} />
         ) : (
-          <span class="side-sub">{search !== null ? 'Search' : view ? (accounts.length === 1 ? (accounts[0].address ?? accounts[0].label) : 'Through dither-accounts') : listTitle(s, key)}</span>
+          <span class="side-sub">{search !== null ? 'Search' : view ? 'Through dither-accounts' : listTitle(s, key)}</span>
         )}
       </header>
       <MailAccessNote />
-      <TroubleLine trouble={trouble} openPicker={picker ? openPicker : null} />
       {search !== null && <MailSearch q={search} active={active} />}
       {chips && (
         <div class="inbox-chips mail-chips" role="radiogroup" aria-label="Show" ref={row} onScroll={edges}>
-          {/* Updates is Inbox's folded row; its chip shows while you are in it. */}
-          {MAIL_VIEWS.filter((v) => v.view !== 'updates' || view === 'updates').map((v) => (
-            <button class={`chip-btn ${view === v.view ? 'on' : ''}`} role="radio" aria-checked={view === v.view} onClick={() => pick(v.view, scoped)}>
-              {v.label}
-            </button>
-          ))}
+          {MAIL_VIEWS.map((v) => {
+            const on = view === v.view;
+            // Inbox's chip names its order; tapped again, it turns to the other (docs/mail.md "Ranked").
+            const order = v.view === 'inbox' ? (newest ? 'Newest' : 'Ranked') : null;
+            const flip = order && on ? (newest ? 'Sort by importance' : 'Sort newest first') : undefined;
+            return (
+              <button
+                class={`chip-btn ${on ? 'on' : ''} ${order ? 'mail-order-chip' : ''}`}
+                role="radio"
+                aria-checked={on}
+                title={flip}
+                data-track={flip ? `mail: ${newest ? 'ranked' : 'newest'}` : undefined}
+                onClick={() => (flip ? setPrefs({ mailOrder: newest ? 'ranked' : 'newest' }) : pick(v.view, scoped))}
+              >
+                {order ?? v.label}
+                {flip && <Icon name="repeat" size={11} />}
+              </button>
+            );
+          })}
         </div>
       )}
       {search === null && <DraftsLine />}
