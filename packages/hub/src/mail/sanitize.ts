@@ -43,7 +43,17 @@ export interface SanitizeOpts {
    * decides for all of them and pixel-shaped ones go.
    */
   decide?: (url: string, shaped: boolean) => PictureDecision;
+  /**
+   * Pictures keep the address they have in the mail as `data-dc-src` (with `decide`), and a held one stays an `<img>`
+   * whose `src` is HELD_PICTURE: for a forward or a quote, where the picture may still be sent (island.ts).
+   */
+  keepSource?: boolean;
 }
+
+/** What a held picture shows in an editor's island: a striped box, drawn at the picture's own size. */
+export const HELD_PICTURE =
+  "data:image/svg+xml;base64," +
+  Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="#eef1f4"/><path d="M0 16L16 0M-4 4L4 -4M12 20L20 12" stroke="#dde2e7" stroke-width="4"/></svg>').toString('base64');
 
 /** What `decide` says of one remote picture, as the reader's details list it. */
 export interface PictureDecision {
@@ -403,11 +413,12 @@ export function sanitizeMail(input: string, o: SanitizeOpts): Sanitized {
               if (d.class === 'tracker') out.trackers++;
               return void el.remove();
             }
+            if (o.keepSource) keep.push(['data-dc-src', r.web]);
             if (d.action === 'hold' || !o.proxy) {
               out.remoteImages++;
-              return void el.replace(placeholder(get('width'), get('height'), get('alt')), { html: true });
-            }
-            keep.push(['src', o.proxy(r.web)]);
+              if (o.keepSource) keep.push(['src', HELD_PICTURE], ['data-dc-held', d.class]);
+              else return void el.replace(placeholder(get('width'), get('height'), get('alt')), { html: true });
+            } else keep.push(['src', o.proxy(r.web)]);
           } else if (r.src) keep.push(['src', r.src]);
           else return void el.remove();
         } else if (tag === 'img') {

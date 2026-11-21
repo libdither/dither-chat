@@ -28,6 +28,9 @@ import { P0 } from './queue.ts';
 import type { MailRouter } from './routes.ts';
 import { contentId, mailDocument, type PictureDecision, SANITIZE_VERSION, sanitizeMail, type Sanitized } from './sanitize.ts';
 import { htmlText } from './store.ts';
+import type { ComposeOriginal } from './compose.ts';
+import { islandOf } from './island.ts';
+import type { OutboxPictures } from './outbox.ts';
 
 type Row = Record<string, any>;
 /** Which pictures load for one message, and what decided it. */
@@ -209,6 +212,68 @@ class Parts {
     return out;
   }
 
+  /**
+   * A forward's or a quote's island for the editor (island.ts): the original's HTML with its sheets and every picture's
+   * address kept; pictures shown as your setting shows them in the reader, trackers always gone (a forwarded tracker
+   * would tell the original sender each time your recipient opens it).
+   */
+  island(messageId: string, kind: 'forward' | 'quote', o: ComposeOriginal, tz?: string): P.MailIsland | null {
+    const m = this.message(messageId);
+    const b = m ? this.store.body(messageId) : null;
+    if (!m || !b) return null;
+    const pol = { ...this.policy(m), trackers: false };
+    const content = b.html
+      ? sanitizeMail(b.html, {
+          images: 'block',
+          keepSource: true,
+          decide: this.decider(m, pol),
+          proxy: (url) => `/api/mail/img/${imageToken(this.media.key, m.id, url)}`,
+          cid: (cid) => `/api/mail/messages/${m.id}/cid/${encodeURIComponent(cid)}`,
+        })
+      : null;
+    return islandOf(kind, o, content, Math.random().toString(36).slice(2, 8), tz);
+  }
+
+  /** What the outbox needs of pictures (island.ts OutgoingCtx): this hub's addresses resolved, bytes fetched. */
+  outboxPictures(): OutboxPictures {
+    return {
+      island: (id, kind, o, tz) => this.island(id, kind, o, tz),
+      resolve: (src) => {
+        const img = /^(?:https?:\/\/[^/]+)?\/api\/mail\/img\/([\w.-]+)$/.exec(src);
+        if (img) {
+          const t = readImageToken(this.media.key, img[1]);
+          return t ? { url: t.url } : null;
+        }
+        const cid = /^(?:https?:\/\/[^/]+)?\/api\/mail\/messages\/([\w-]+)\/cid\/([^/?#]+)$/.exec(src);
+        if (cid) return { cid: { messageId: cid[1], contentId: decodeURIComponent(cid[2]) } };
+        return null;
+      },
+      fetchPicture: async (url) => {
+        const r = await this.images.bytes(url);
+        return 'bytes' in r ? r : null;
+      },
+      cidPart: async (messageId, cid) => {
+        const m = this.message(messageId);
+        if (!m) return null;
+        const want = contentId(cid);
+        const b = await this.bodyOf(m);
+        const a = json<M.MailAttachment[]>(b?.parts, []).find((x) => x.contentId && contentId(x.contentId) === want);
+        if (!a) return null;
+        const { file } = await this.fetchPart(m, a);
+        const bytes = readFileSync(file);
+        const mime = imageType(new Uint8Array(bytes.subarray(0, 32)));
+        return mime ? { bytes, mime } : null;
+      },
+      sizes: (urls, accountId) => {
+        const you = this.you(accountId);
+        return {
+          sizes: urls.map((u) => this.images.cachedSize(u)),
+          classes: urls.map((u) => classifyPicture(u, { you }, false).class),
+        };
+      },
+    };
+  }
+
   /** What the reader's banner and details say of the pictures: counts, the hosts, and bytes the hub already has. */
   picturesView(san: Sanitized, pol: Policy): P.MailPicturesView {
     const list = san.pictures ?? [];
@@ -351,6 +416,7 @@ const GENERIC = /^(application\/(octet-stream|binary|unknown|x-download|force-do
 
 export const partRoutes: MailRouter = (hub) => {
   const parts = new Parts(hub);
+  hub.outbox.pictures = parts.outboxPictures();
   hub.store.bodyExtras.push((id, b) => parts.extras(id, b));
   hub.on('deleted', (e) => parts.forget(e.accountId, e.messageIds));
   hub.on('account', (e) => e.state === 'deleted' && parts.forget(e.accountId, null));
@@ -427,6 +493,16 @@ export const partRoutes: MailRouter = (hub) => {
         const p = m && b?.html ? parts.sanitized(m, b.html, parts.policy(m)).pictures?.find((x) => x.url === t.url) : null;
         if (!p || p.action !== 'load') return new Response('this picture is not loaded for this message', { status: 403 });
         return parts.images.serve(t.url);
+      },
+    },
+    {
+      // The composer's size meter: what the hub knows of pictures from the web (fetches nothing).
+      method: 'POST',
+      path: /^\/api\/mail\/pictures\/sizes$/,
+      handle: async ({ body }) => {
+        const b = await body<{ urls?: unknown; accountId?: unknown }>();
+        const urls = (Array.isArray(b.urls) ? b.urls : []).filter((u): u is string => typeof u === 'string' && /^https?:\/\//i.test(u)).slice(0, 500);
+        return Response.json(parts.outboxPictures().sizes(urls, String(b.accountId ?? '')) satisfies P.MailPictureSizes);
       },
     },
     {

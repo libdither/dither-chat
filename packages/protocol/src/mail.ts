@@ -313,6 +313,39 @@ export interface MailDraft {
   quote: boolean;
   files: MailDraftFile[];
   forwardParts: MailForwardPart[];
+  /**
+   * The mail's HTML as the editor made it (docs/mail.md "Writing"): your text, pictures pasted in as `data:` URLs, and
+   * the forwarded mail or quote as `div[data-dc-island]`. When there is one, `text` is its Markdown (islands and pasted
+   * pictures as `[[island:ref]]` and `dc-picture:ref`, which the hub fills in) and the hub adds no quote of its own.
+   */
+  html?: string | null;
+  /** Pictures from the web in it, when sent: linked as they are, embedded (fetched now and sent in the mail), or left out. */
+  pictures?: MailOutgoingPictures;
+  /** Sent as plain text only: no HTML part. */
+  plainOnly?: boolean;
+}
+
+export type MailOutgoingPictures = 'link' | 'embed' | 'drop';
+
+/**
+ * A forwarded mail or a quote, as an editor island (MailComposeStart.island): the original's HTML with its style sheets
+ * written into each element's style (so it keeps its look in mail apps that drop style sheets), trackers gone, and each
+ * picture from the web as `img[data-dc-src]` (the address it has in the original; `src` is this hub's copy when your
+ * picture setting loads it, else a placeholder).
+ */
+export interface MailIsland {
+  kind: 'forward' | 'quote';
+  /** "Sam Lee, Tue, Nov 3 at 10:42 AM". */
+  label: string;
+  html: string;
+}
+
+/** POST /api/mail/pictures/sizes { urls }: what the hub knows of pictures from the web, for the composer's size meter. */
+export interface MailPictureSizes {
+  /** Bytes each one is, when the hub has fetched it; null when not known (fetching it could tell its sender). */
+  sizes: (number | null)[];
+  /** Each one's class (pictures.ts): `personal` ones tell their sender when fetched. */
+  classes: ('shared' | 'personal' | 'tracker')[];
 }
 
 /** GET /api/mail/drafts[/:key]. Keys: `t:<thread>` for a reply or forward, `new:<uuid>` for a new message. */
@@ -339,6 +372,10 @@ export interface MailComposeStart {
   fromChoices: { accountId: string; email: string; name: string | null }[];
   /** "On Tue, Nov 3, 2026 at 10:42 AM, Sam Lee <sam@lee.example> wrote:" and the quoted text, or the forwarded block. */
   quote: { head: string; text: string } | null;
+  /** The quote or the forwarded mail as HTML, for the editor (null when the original has no HTML: then `quote`). */
+  island?: MailIsland | null;
+  /** The account sends pictures inside the mail as parts of it (`cid:`); else they go as `data:` URLs, which some apps (Gmail) hide. */
+  inlineParts?: boolean;
   /** The original could not be fetched to quote: why. */
   quoteError: string | null;
   /** Reply all would reach more people than reply. */

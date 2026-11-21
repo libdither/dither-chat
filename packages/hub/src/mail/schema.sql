@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS mail_account (
   storage      TEXT,                            -- JSON {text, used, total}: what the status says of the account's storage
   writes       TEXT,                            -- JSON ['seen', 'flagged', 'move', 'trash', 'junk']: status.details.writes, what it writes now; NULL: not said
   contacts     INTEGER,                         -- status.details.contacts: 1 mail.contacts answers now (the server's own recipient suggestions)
+  inline_parts INTEGER,                         -- status.details.inlineParts: 1 mail.send takes pictures inside the HTML (OutgoingFile.contentId)
   hidden      INTEGER NOT NULL DEFAULT 0,
   gone_at      INTEGER,                         -- access ended: everything of it goes 24 h later
   created_at   INTEGER NOT NULL

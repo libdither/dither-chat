@@ -2,20 +2,21 @@
  * The composer's card (Composer.tsx has the layer, the strip and the ways in): a chunk of its own, loaded when you
  * start writing (and ahead, once Mail is open), so reading mail carries none of it. docs/mail.md, "Sending".
  *
- * Your text is Markdown, as in chat (mail/edits.ts): the format bar and Ctrl+B, Ctrl+I, Ctrl+K write it, a rich paste
- * becomes it (mail/paste.ts), and Preview shows the HTML part as it will arrive. Recipients are text until they are
- * chips, and a chip opens back into text (Backspace, or a click) to be fixed. Undo (Ctrl+Z) goes back through all of
- * it: typing, chips, files, the quote, From; a discarded draft comes back from the strip (discard.ts).
+ * The text is the mail editor's (editor/MailEditor.tsx, a chunk of its own): rich text by default, with Markdown and
+ * the HTML itself a switch away; a forward or a quote sits in it as a block. Under it, how its pictures from the web
+ * go (SendSize.tsx), and in the footer how big it is. Recipients are text until they are chips, and a chip opens back
+ * into text (Backspace, or a click) to be fixed. Undo (Ctrl+Z) in the text is the editor's; elsewhere it goes back
+ * through chips, files and From; a discarded draft comes back from the strip (discard.ts).
  */
 import type * as P from '@dither-chat/protocol';
-import { mailAddressText, parseMailAddress } from '@dither-chat/protocol';
 import type { ComponentChildren } from 'preact';
+import { mailAddressText, parseMailAddress } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { bytes } from '../../format.ts';
 import { details } from '../../mail/held.ts';
 import { cannotSend, deleteDraft, draftState, findAddresses, findContacts, flushDraft, isBlank, openDraft, saveDraft, send, sendingAgain } from '../../mail/drafts.ts';
-import { applyFormat, caretAfter, chipText, continueList, EditHistory, formatsAt, indentList, keptName, mergeHits, pasteLink, type Format, type Sel } from '../../mail/edits.ts';
-import { pastedFiles, pastedMarkdown } from '../../mail/paste.ts';
+import { caretAfter, chipText, EditHistory, keptName, mergeHits } from '../../mail/edits.ts';
+import { pastedFiles } from '../../mail/paste.ts';
 import { dropLayer, phone, pushLayer } from '../../phone.ts';
 import { connected, db, mailRev, startUpload } from '../../state.ts';
 import { readable, refusalOf, type UploadJob } from '../../upload.ts';
@@ -23,14 +24,14 @@ import { Icon } from '../icons.tsx';
 import { discardLater, goneKeys } from './discard.ts';
 import { mailCompose, type ComposeOpen } from './lazy.tsx';
 import { Loading } from '../Loader.tsx';
-import { themeFrame } from './frameTheme.ts';
+import type { EditorMode, MailEditorApi, MailEditorProps } from './editor/MailEditor.tsx';
+import { PicturesChoice, SizeMeter, useDraftSize } from './SendSize.tsx';
 import { clampDock, defaultDock, EDGES, loadDock, maxDock, moveDock, resizeDock, saveDock, BAR_W, type Dock, type DockSaved, type Edge } from '../../mail/dock.ts';
 
 const MB = 1024 * 1024;
 const FILE_CAP = 25 * MB;
 /** The most bytes of files one message from the account may carry, as the hub says (its extractor's), else as before it did. */
 const totalCap = (a: P.MailAccountView | undefined) => a?.sendCap ?? (a?.kind === 'proton' ? 25 * MB : 35 * MB);
-const mbText = (n: number) => `${Number.isInteger(n / MB) ? n / MB : (n / MB).toFixed(1)} MB`;
 const TITLES: Record<P.MailComposeKind, string> = { new: 'New message', reply: 'Reply', replyAll: 'Reply all', forward: 'Forward' };
 const same = (a: { email: string }, b: { email: string }) => a.email.trim().toLowerCase() === b.email.trim().toLowerCase();
 
@@ -320,77 +321,39 @@ function AddressField(props: {
   );
 }
 
-// ------------------------------------------------------------------ formatting
+// ------------------------------------------------------------------ the editor
 
-const FORMATS: { f: Format; label: ComponentChildren; title: string }[] = [
-  { f: 'bold', label: <b>B</b>, title: 'Bold (Ctrl+B)' },
-  { f: 'italic', label: <i>I</i>, title: 'Italic (Ctrl+I)' },
-  { f: 'strike', label: <s>S</s>, title: 'Struck through' },
-  { f: 'code', label: <code>{'</>'}</code>, title: 'Code' },
-  { f: 'link', label: <Icon name="link" size={15} />, title: 'Link (Ctrl+K); or paste an address over the text' },
-  { f: 'bullets', label: <Icon name="list" size={15} />, title: 'Bulleted list (Ctrl+Shift+8)' },
-  { f: 'numbers', label: <span class="mc-fmt-num">1.</span>, title: 'Numbered list (Ctrl+Shift+7)' },
-  { f: 'quote', label: <Icon name="quote" size={15} />, title: 'Quote (Ctrl+Shift+9)' },
-  { f: 'heading', label: <span class="mc-fmt-h">H</span>, title: 'Heading: larger, then smaller, then off' },
-  { f: 'clear', label: <span class="mc-fmt-clear">T<sub>x</sub></span>, title: 'Remove formatting (Ctrl+\\)' },
-];
-/** The keys that format, as Gmail's are where it has them. */
-function formatKey(e: KeyboardEvent): Format | null {
-  if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
-  if (!e.shiftKey) return ({ b: 'bold', i: 'italic', k: 'link', '\\': 'clear' } as const)[e.key.toLowerCase() as 'b' | 'i' | 'k' | '\\'] ?? null;
-  return ({ Digit7: 'numbers', Digit8: 'bullets', Digit9: 'quote', KeyX: 'strike' } as const)[e.code as 'Digit7'] ?? null;
-}
 const BAR_KEY = 'dither.mail.formatBar';
-const barWanted = () => {
+const MODE_KEY = 'dither.mail.editMode';
+const pref = (k: string) => {
   try {
-    return localStorage.getItem(BAR_KEY) === '1';
+    return localStorage.getItem(k);
   } catch {
-    return false;
+    return null;
   }
 };
+const keepPref = (k: string, v: string) => {
+  try {
+    localStorage.setItem(k, v);
+  } catch {}
+};
+/** The bar shows unless you hid it. */
+const barWanted = () => pref(BAR_KEY) !== '0';
+const modeWanted = (): EditorMode => (['rich', 'markdown', 'html'] as const).find((m) => m === pref(MODE_KEY)) ?? 'rich';
 
-/** The HTML part as it will arrive (the hub makes it the same way, protocol mail-markdown.ts), in the app's theme. */
-function Preview({ text }: { text: string }) {
-  const [html, setHtml] = useState<string | null>(null);
-  const frame = useRef<HTMLIFrameElement>(null);
+/** The editor's chunk (Tiptap, CodeMirror), loaded once when a composer first opens. */
+let editorChunk: Promise<typeof import('./editor/MailEditor.tsx')> | null = null;
+function useEditor() {
+  const [E, setE] = useState<((p: MailEditorProps) => preact.JSX.Element) | null>(null);
   useEffect(() => {
     let live = true;
-    void import('@dither-chat/protocol/mail-markdown').then((m) => live && setHtml(m.markdownHtml(text)));
+    editorChunk ??= import('./editor/MailEditor.tsx');
+    void editorChunk.then((m) => live && setE(() => m.MailEditor));
     return () => {
       live = false;
     };
-  }, [text]);
-  useLayoutEffect(() => {
-    const f = frame.current;
-    if (!f || html === null) return;
-    let undo: (() => void) | null = null;
-    const ready = () => {
-      const doc = f.contentDocument;
-      if (!doc?.querySelector('.dc-mail')) return;
-      undo?.();
-      const unTheme = themeFrame(f, doc);
-      const fit = () => (f.style.height = `${Math.max(48, doc.documentElement.scrollHeight)}px`);
-      // Its links go nowhere from here.
-      const stay = (e: Event) => (e.target as Element | null)?.closest?.('a') && e.preventDefault();
-      doc.addEventListener('click', stay, true);
-      fit();
-      const late = setTimeout(fit, 200);
-      undo = () => (unTheme(), clearTimeout(late), doc.removeEventListener('click', stay, true));
-    };
-    f.addEventListener('load', ready);
-    if (f.contentDocument?.readyState === 'complete') ready();
-    return () => (f.removeEventListener('load', ready), undo?.());
-  }, [html]);
-  if (html === null) return <div class="mc-preview" />;
-  const doc =
-    '<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;overflow:hidden}body{overflow-wrap:break-word}' +
-    '.dc-mail{display:flow-root;padding:12px 0}.dc-mail pre{white-space:pre-wrap}.dc-mail blockquote[type=cite]{margin:0 0 0 2px;padding-left:10px;border-left:2px solid}' +
-    `.dc-empty{opacity:.55}</style></head><body><div class="dc-mail">${html || '<p class="dc-empty">Nothing written yet.</p>'}</div></body></html>`;
-  return (
-    <div class="mc-preview" aria-label="Preview">
-      <iframe ref={frame} key={html} class="mc-preview-frame" srcdoc={doc} sandbox="allow-same-origin" title="The message as it will arrive" />
-    </div>
-  );
+  }, []);
+  return E;
 }
 
 // ------------------------------------------------------------------ where it sits on a computer
@@ -468,17 +431,15 @@ export function Composer({ open }: { open: ComposeOpen }) {
   const [resumed, setResumed] = useState(false);
   const [showCc, setShowCc] = useState(false);
   const [showBcc, setShowBcc] = useState(false);
-  const [quoteOpen, setQuoteOpen] = useState(false);
   const [sending, setSending] = useState<null | 'sending' | 'waiting'>(null);
   const [error, setError] = useState<string | null>(null);
   const [bar, setBar] = useState(barWanted);
-  const [preview, setPreview] = useState(false);
-  /** The formats at the caret, as a key ("bold,bullets"), so the bar's buttons show them pressed. */
-  const [onAt, setOnAt] = useState('');
+  const [mode, setMode] = useState<EditorMode>(modeWanted);
+  const Editor = useEditor();
+  const editorApi = useRef<MailEditorApi | null>(null);
   const clientId = useRef<string | null>(null);
   const loadedSig = useRef('');
   const fileInput = useRef<HTMLInputElement>(null);
-  const body = useRef<HTMLTextAreaElement>(null);
   const box = useRef<HTMLElement>(null);
   // The state as of the last change, for a change made before the page draws again.
   const cur = useRef<Ed | null>(null);
@@ -518,8 +479,8 @@ export function Composer({ open }: { open: ComposeOpen }) {
 
   // A reply starts in the text, a new message in To.
   useEffect(() => {
-    if (d && !load.loading && d.kind !== 'new' && d.to.length) body.current?.focus();
-  }, [load.loading]);
+    if (d && !load.loading && Editor && d.kind !== 'new' && d.to.length) requestAnimationFrame(() => editorApi.current?.focus());
+  }, [load.loading, !!Editor]);
 
   /** A change, as a step of undo (typing: a burst in one field is one step). */
   const edit = (next: (e: Ed) => Ed, t?: Typing) => {
@@ -540,7 +501,6 @@ export function Composer({ open }: { open: ComposeOpen }) {
     place.current = placeOf(e, s);
     if (s.d.cc.length || s.addr.cc) setShowCc(true);
     if (s.d.bcc.length || s.addr.bcc) setShowBcc(true);
-    if (preview && s.d.text !== e.d.text) setPreview(false);
     cur.current = s;
     setEd(s);
   };
@@ -554,31 +514,14 @@ export function Composer({ open }: { open: ComposeOpen }) {
     el.setSelectionRange(at.start, at.end);
   });
 
-  /** The body changed by the page (a format, a list going on, a paste): a step of its own, the selection as it says. */
-  const putBody = (s: Sel) => {
-    set({ text: s.text });
-    place.current = { id: 'mc-body', start: s.start, end: s.end };
-  };
-  const bodySel = (): Sel | null => {
-    const el = body.current;
+  /** The editor's text and HTML: its own undo has them, so they are not steps of the composer's. */
+  const setBody = (out: { html: string; text: string }) => {
     const e = cur.current;
-    return el && e ? { text: e.d.text, start: el.selectionStart, end: el.selectionEnd } : null;
+    if (!e || (e.d.html === out.html && e.d.text === out.text)) return;
+    const n = { ...e, d: { ...e.d, html: out.html, text: out.text } };
+    cur.current = n;
+    setEd(n);
   };
-  const format = (f: Format) => {
-    const s = bodySel();
-    if (s) putBody(applyFormat(s, f));
-  };
-  // The bar follows the caret: a format it sits in shows pressed.
-  useEffect(() => {
-    if (!bar) return;
-    const read = () => {
-      const s = document.activeElement === body.current ? bodySel() : null;
-      const k = s ? [...formatsAt(s)].sort().join(',') : '';
-      setOnAt((was) => (was === k ? was : k));
-    };
-    document.addEventListener('selectionchange', read);
-    return () => document.removeEventListener('selectionchange', read);
-  }, [bar]);
 
   const account = d ? db.mail.accounts.get(d.accountId) : undefined;
   const why = d ? cannotSend(account) : null;
@@ -593,7 +536,9 @@ export function Composer({ open }: { open: ComposeOpen }) {
   }, [sig]);
 
   const total = (all?.files ?? []).reduce((n, f) => n + f.size, 0) + (d?.forwardParts ?? []).reduce((n, f) => n + f.size, 0) + files.filter((f) => f.job && f.job.status.value !== 'done').reduce((n, f) => n + f.file.size, 0);
-  const over = total > totalCap(account);
+  const size = useDraftSize({ html: d?.html, text: d?.text ?? '', plainOnly: !!d?.plainOnly, mode: d?.pictures ?? 'link', files: total, accountId: d?.accountId ?? '' });
+  // The hub counts files and the pictures inside the mail against the account's cap (base64 aside).
+  const over = total + size.inside.bytes + size.embedded.bytes > totalCap(account);
 
   /** Uploads taken off the message (and not put back by undo) stop. */
   const dropOrphans = () => {
@@ -719,6 +664,8 @@ export function Composer({ open }: { open: ComposeOpen }) {
 
   /** A picture (a screenshot, "Copy image") or files pasted anywhere in the composer are attached. */
   const onPasteFiles = (e: ClipboardEvent) => {
+    // In the text, the editor takes pictures in place (and hands other files back to attach).
+    if ((e.target as Element | null)?.closest?.('.me-views')) return;
     const cd = e.clipboardData;
     const got = cd && d ? pastedFiles([...cd.files], cd.getData('text/plain')) : null;
     if (!got) return;
@@ -735,22 +682,24 @@ export function Composer({ open }: { open: ComposeOpen }) {
   };
   const onDrop = (e: DragEvent) => {
     setDropping(false);
-    if (!hasFiles(e)) return;
+    // The editor took it (pictures in place).
+    if (!hasFiles(e) || e.defaultPrevented) return;
     e.preventDefault();
     const list = [...(e.dataTransfer?.files ?? [])];
     if (list.length) void attach(list);
   };
 
   /** Undo and redo anywhere in the composer: its own history, not each box's. */
+  const inEditor = (e: Event) => !!(e.target as Element | null)?.closest?.('.me-views, .me-pop');
   const onKeyDownCapture = (e: KeyboardEvent) => {
-    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || inEditor(e)) return;
     const k = e.key.toLowerCase();
     if (k !== 'z' && k !== 'y') return;
     e.preventDefault();
     travel(k === 'y' || e.shiftKey);
   };
   const onBeforeInput = (e: InputEvent) => {
-    if (e.inputType !== 'historyUndo' && e.inputType !== 'historyRedo') return;
+    if ((e.inputType !== 'historyUndo' && e.inputType !== 'historyRedo') || inEditor(e)) return;
     e.preventDefault();
     travel(e.inputType === 'historyRedo');
   };
@@ -759,7 +708,6 @@ export function Composer({ open }: { open: ComposeOpen }) {
   const state = key ? draftState.value[key] : undefined;
   const choices = start?.fromChoices.length ? start.fromChoices : account?.address ? [{ accountId: account.id, email: account.address, name: account.name }] : [];
   const fromNow = choices.find((c) => c.accountId === d?.accountId && (!d?.from || same(c, { email: d.from }))) ?? choices.find((c) => c.accountId === d?.accountId);
-  const quote = start?.quote ?? null;
   const original = d?.replyTo ? details.get(open.threadId ?? key?.slice(2) ?? '')?.messages.find((m) => m.id === d.replyTo) : undefined;
   const quoted = original?.from.name || original?.from.email || 'the message';
   const sendBtn = (
@@ -916,82 +864,32 @@ export function Composer({ open }: { open: ComposeOpen }) {
               </label>
               <input id="mc-subject" class="mc-subject" type="text" value={d.subject} onInput={(e) => set({ subject: (e.target as HTMLInputElement).value }, typing('subject', e))} />
             </div>
-            {preview ? (
-              <Preview text={d.text} />
-            ) : (
-              <textarea
-                id="mc-body"
-                ref={body}
-                class="mc-body"
-                aria-label="Message"
+            {Editor ? (
+              <Editor
+                initial={{ html: d.html, markdown: d.text, island: start?.island && (d.kind === 'forward' || d.quote) ? { island: start.island, from: d.replyTo } : null }}
+                mode={mode}
+                onMode={(m) => (setMode(m), keepPref(MODE_KEY, m))}
+                bar={bar}
                 placeholder="Write your message"
-                value={d.text}
-                onInput={(e) => set({ text: (e.target as HTMLTextAreaElement).value }, typing('body', e))}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) return (e.preventDefault(), void doSend());
-                  const f = formatKey(e);
-                  if (f) return (e.preventDefault(), format(f));
-                  // In a list, Tab and Shift+Tab (or Ctrl+] and Ctrl+[) move its items in and out; elsewhere Tab moves on.
-                  const tab = e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey;
-                  const bracket = (e.ctrlKey || e.metaKey) && !e.altKey && (e.key === ']' || e.key === '[');
-                  if (tab || bracket) {
-                    const s = bodySel();
-                    const next = s && indentList(s, tab ? e.shiftKey : e.key === '[');
-                    if (next) return (e.preventDefault(), putBody(next));
-                  }
-                  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-                    const s = bodySel();
-                    const next = s && continueList(s);
-                    if (next) (e.preventDefault(), putBody(next));
-                  }
-                }}
-                onPaste={(e) => {
-                  if (e.defaultPrevented) return;
-                  const s = bodySel();
-                  const cd = e.clipboardData;
-                  if (!s || !cd) return;
-                  const plain = cd.getData('text/plain');
-                  const html = cd.getData('text/html');
-                  let next = pasteLink(s, plain);
-                  if (!next && html) {
-                    const md = pastedMarkdown(new DOMParser().parseFromString(html, 'text/html').body);
-                    if (md) next = { text: s.text.slice(0, s.start) + md + s.text.slice(s.end), start: s.start + md.length, end: s.start + md.length };
-                  }
-                  if (next) (e.preventDefault(), putBody(next));
-                }}
+                onChange={setBody}
+                onSend={() => void doSend()}
+                onFiles={(list) => void attach(list)}
+                apiRef={editorApi}
               />
-            )}
-            {d.kind === 'forward' && quote && (
-              <div class="mc-quote">
-                <button class="mail-quote-toggle" aria-expanded={quoteOpen} onClick={() => setQuoteOpen(!quoteOpen)} title="The forwarded message">
-                  ··· Forwarded message
-                </button>
-                {quoteOpen && <div class="mc-quote-text">{`${quote.head}\n\n${quote.text}`}</div>}
+            ) : (
+              <div class="mc-body mc-body-loading">
+                <Loading label="Loading…" />
               </div>
             )}
-            {(d.kind === 'reply' || d.kind === 'replyAll') &&
-              quote &&
-              (d.quote ? (
-                <div class="mc-quote">
-                  <div class="mc-quote-line">
-                    <button class="mail-quote-toggle" aria-expanded={quoteOpen} onClick={() => setQuoteOpen(!quoteOpen)} title={quoteOpen ? 'Hide what is quoted' : 'Show what is quoted'}>
-                      ···
-                    </button>
-                    <span class="mc-quote-note">Quoting {quoted}</span>
-                    <button class="icon-btn small mc-quote-off" onClick={() => set({ quote: false })} aria-label="Leave the quote out" title="Leave the quote out">
-                      <Icon name="x" size={11} />
-                    </button>
-                  </div>
-                  {quoteOpen && <div class="mc-quote-text">{`${quote.head}\n${quote.text}`}</div>}
-                </div>
-              ) : (
-                <div class="mc-quote">
-                  <button class="mc-quote-add" onClick={() => set({ quote: true })} title={`Quote ${quoted} below your text`}>
-                    <Icon name="quote" size={12} />
-                    Quote {quoted}
-                  </button>
-                </div>
-              ))}
+            {(d.kind === 'reply' || d.kind === 'replyAll') && start?.island && !/data-dc-island="quote"/.test(d.html ?? '') && Editor && (
+              <div class="mc-quote">
+                <button class="mc-quote-add" onClick={() => (set({ quote: true }), editorApi.current?.addIsland(start.island!, d.replyTo))} title={`Quote ${quoted} below your text`}>
+                  <Icon name="quote" size={12} />
+                  Quote {quoted}
+                </button>
+              </div>
+            )}
+            {!d.plainOnly && <PicturesChoice s={size} mode={d.pictures ?? 'link'} onMode={(m) => set({ pictures: m })} inlineParts={!!start?.inlineParts} />}
             {start?.quoteError && <p class="mc-note">The original could not be fetched to quote it: {start.quoteError}</p>}
             {(d.files.length > 0 || d.forwardParts.length > 0 || files.length > 0) && (
               <div class="composer-files mc-files">
@@ -1008,29 +906,6 @@ export function Composer({ open }: { open: ComposeOpen }) {
             )}
           </div>
         )}
-        {bar && (
-          <div class="mc-format" role="toolbar" aria-label="Formatting">
-            {FORMATS.map((x) => (
-              <button
-                class={`mc-fmt mc-fmt-${x.f}${onAt.split(',').includes(x.f) ? ' on' : ''}`}
-                type="button"
-                disabled={!d || preview}
-                title={x.title}
-                aria-label={x.title}
-                aria-pressed={x.f === 'clear' ? undefined : onAt.split(',').includes(x.f)}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => format(x.f)}
-              >
-                {x.label}
-              </button>
-            ))}
-            <span class="mc-fmt-gap" />
-            <button class={`mc-fmt mc-preview-btn ${preview ? 'on' : ''}`} type="button" disabled={!d} aria-pressed={preview} title="See it as it will arrive" onClick={() => setPreview(!preview)}>
-              <Icon name="eye" size={15} />
-              <span>Preview</span>
-            </button>
-          </div>
-        )}
         <footer class="mc-foot">
           <button class="hdr-btn" onClick={() => fileInput.current?.click()} disabled={!d}>
             <Icon name="paperclip" size={15} />
@@ -1041,21 +916,16 @@ export function Composer({ open }: { open: ComposeOpen }) {
             type="button"
             aria-pressed={bar}
             aria-label="Formatting"
-            title="Formatting: Markdown, as in chat"
+            title={bar ? 'Hide the formatting bar' : 'Show the formatting bar'}
             onClick={() => {
               const v = !bar;
               setBar(v);
-              if (!v) setPreview(false);
-              try {
-                localStorage.setItem(BAR_KEY, v ? '1' : '0');
-              } catch {}
+              keepPref(BAR_KEY, v ? '1' : '0');
             }}
           >
             <span class="mc-fmt-aa">Aa</span>
           </button>
-          <span class={`mc-limit ${over ? 'over' : ''}`}>
-            {total ? `${bytes(total)} of ${mbText(totalCap(account))}` : `Up to 25 MB a file, ${mbText(totalCap(account))} in all`}
-          </span>
+          <SizeMeter s={size} cap={totalCap(account)} plainOnly={!!d?.plainOnly} onPlainOnly={(v) => set({ plainOnly: v })} hasHtml={!!d?.html} />
           {sendBtn}
           <input
             ref={fileInput}

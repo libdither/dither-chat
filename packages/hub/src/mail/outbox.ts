@@ -32,6 +32,7 @@ import type * as M from '@dither-chat/protocol/mail-iface';
 import { asMailError, MailCallError } from './backend.ts';
 import { dedupe, forwardSubject, messageHtml, messageText, replyAllDiffers, replyFrom, replyRecipients, replySubject, tail, validEmail, type ComposeOriginal } from './compose.ts';
 import type { MailHub } from './index.ts';
+import { outgoingHtml, outgoingText, type OutgoingCtx } from './island.ts';
 import { MAIL_LIMITS } from './limits.ts';
 import { P0 } from './queue.ts';
 import type { MailRouter } from './routes.ts';
@@ -39,6 +40,16 @@ import { maxRecipientsOf, sendCapOf } from './store.ts';
 import { jobFailed } from '../errors.ts';
 
 type Row = Record<string, any>;
+
+/** What the outbox needs of pictures and islands (parts.ts outboxPictures; set when its routes are made). */
+export interface OutboxPictures extends Pick<OutgoingCtx, 'resolve' | 'fetchPicture' | 'cidPart'> {
+  island(messageId: string, kind: 'forward' | 'quote', o: ComposeOriginal, tz?: string): P.MailIsland | null;
+  sizes(urls: string[], accountId: string): P.MailPictureSizes;
+}
+
+/** The editor's HTML is kept up to this (pictures pasted into it are in it). */
+const HTML_MAX = 40 * 1024 * 1024;
+const PICTURE_MODES = new Set(['link', 'embed', 'drop']);
 
 /** The hub's uploads (uploads.ts), as the outbox uses them. */
 interface MailFiles {
@@ -150,12 +161,18 @@ function cleanDraft(d: any): P.MailDraft {
       .filter((f: any) => f && typeof f.messageId === 'string' && typeof f.attachmentId === 'string')
       .slice(0, 100)
       .map((f: any) => ({ messageId: f.messageId, attachmentId: f.attachmentId, name: typeof f.name === 'string' ? f.name : null, mime: cleanMime(f.mime), size: Number(f.size) || 0 })),
+    // The editor's (docs/mail.md "Writing"): kept only when given, so a draft from before it stays as it was.
+    ...(typeof d?.html === 'string' && d.html.length <= HTML_MAX ? { html: d.html } : {}),
+    ...(PICTURE_MODES.has(d?.pictures) ? { pictures: d.pictures } : {}),
+    ...(d?.plainOnly === true ? { plainOnly: true } : {}),
   };
 }
 
 export class MailOutbox {
   /** The hub's uploads: set by the server, which owns them. */
   files: MailFiles | null = null;
+  /** Islands and pictures (parts.ts): set when the mail routes are made. */
+  pictures: OutboxPictures | null = null;
   /** Waits between tries while the account cannot be reached (tests make them short). */
   retryMs = RETRY_MS;
   private dirty = false;
@@ -276,7 +293,15 @@ export class MailOutbox {
     if (kind === 'new' || !messageId) {
       const acc = accountId ? writable.find((a) => a.id === accountId) : writable[0];
       if (!acc) throw bad(this.store.accounts().some((a) => a.level === 'read') ? READ_ONLY : 'no mail account can send from here', 409);
-      return { draft: { ...blank(acc.id), kind: 'new' }, draftKey: `new:${crypto.randomUUID()}`, fromChoices: choices([acc, ...writable.filter((a) => a !== acc)]), quote: null, quoteError: null, replyAllDiffers: false };
+      return {
+        draft: { ...blank(acc.id), kind: 'new' },
+        draftKey: `new:${crypto.randomUUID()}`,
+        fromChoices: choices([acc, ...writable.filter((a) => a !== acc)]),
+        quote: null,
+        quoteError: null,
+        replyAllDiffers: false,
+        inlineParts: !!acc.inline_parts,
+      };
     }
     const { m, o, parts, error } = await this.original(messageId);
     const acc = this.store.account(m.account_id);
@@ -285,11 +310,14 @@ export class MailOutbox {
     const r = kind === 'forward' ? { to: [], cc: [] } : replyRecipients(o, self, kind === 'replyAll');
     const from = replyFrom(o, this.fromChoices(acc));
     const forwardParts = kind === 'forward' ? parts.filter((p) => !p.inline).map((p) => ({ messageId, attachmentId: p.id, name: p.filename, mime: p.mime, size: p.size })) : [];
+    const islandKind = kind === 'forward' ? 'forward' : 'quote';
     return {
       draft: { ...blank(acc.id), replyTo: messageId, from, to: r.to, cc: r.cc, subject: kind === 'forward' ? forwardSubject(o.subject) : replySubject(o.subject), forwardParts },
       draftKey: `t:${m.thread_id}`,
       fromChoices: choices([acc]),
       quote: error && !o.text ? null : tail(kind, o, true, tz),
+      island: error && !o.text && !o.html ? null : (this.pictures?.island(messageId, islandKind, o, tz) ?? null),
+      inlineParts: !!acc.inline_parts,
       quoteError: error,
       replyAllDiffers: kind !== 'forward' && replyAllDiffers(o, self),
     };
@@ -315,6 +343,7 @@ export class MailOutbox {
     if (n > maxRecipientsOf(acc)) throw bad(`At most ${maxRecipientsOf(acc)} recipients on one message from this account.`);
     if (typeof req.subject !== 'string' || req.subject.length > 2000) throw bad('the subject is text');
     if (typeof req.text !== 'string' || req.text.length > 2 * MB) throw bad('the text is text, up to 2 MB');
+    if (req.html != null && (typeof req.html !== 'string' || req.html.length > HTML_MAX)) throw bad(`the HTML is text, up to ${HTML_MAX / MB} MB`);
     let from: string | null = null;
     if (req.from) {
       const hit = this.fromChoices(acc!).find((a) => lc(a.email) === lc(req.from));
@@ -360,17 +389,44 @@ export class MailOutbox {
     draft.to = to;
     draft.cc = cc;
     draft.bcc = bcc;
+    const id = mailId('mob', acc!.id, clientId);
     const t = tail(kind, o, draft.quote, req.tz);
-    const outgoing: Omit<M.OutgoingMail, 'attachments' | 'replyTo'> = {
+    // The editor's HTML (docs/mail.md "Writing"): it holds the quote or forward itself, and its pictures go as it says.
+    let body: { text: string; html?: string; inline: { contentId: string; mime: string; bytes: Buffer; name: string }[] };
+    if (typeof draft.html === 'string') {
+      const made = draft.plainOnly
+        ? null
+        : await outgoingHtml(draft.html, {
+            pictures: draft.pictures ?? 'link',
+            inlineParts: !!acc!.inline_parts,
+            resolve: (src) => this.pictures?.resolve(src) ?? null,
+            fetchPicture: (url) => this.pictures?.fetchPicture(url) ?? Promise.resolve(null),
+            cidPart: (mid, cid) => this.pictures?.cidPart(mid, cid) ?? Promise.resolve(null),
+            id,
+          });
+      if (made?.failed) this.log(`[outbox ${id}] ${made.failed} picture(s) could not be fetched: linked instead`);
+      body = { text: outgoingText(req.text, draft.html, o, req.tz), ...(made ? { html: made.html } : {}), inline: made?.inline ?? [] };
+      for (const p of body.inline) total += p.bytes.length;
+      if (total > sendCapOf(acc)) throw bad(`With the pictures inside it, the mail is ${(total / MB).toFixed(1)} MB; this account takes ${mbText(sendCapOf(acc))} on one message.`, 413);
+    } else body = { text: messageText(req.text, t), ...(draft.plainOnly ? {} : { html: messageHtml(kind, req.text, o, draft.quote, req.tz) }), inline: [] };
+    if (body.inline.length && !this.opts.dir) throw bad('this hub keeps no files for mail', 400);
+    // Pictures inside the mail wait in its folder, as its files do.
+    const inline = body.inline.map((p, i) => {
+      const path = join(this.folder(id), `inl-${i}`);
+      mkdirSync(this.folder(id), { recursive: true, mode: 0o700 });
+      writeFileSync(path, p.bytes, { mode: 0o600 });
+      return { contentId: p.contentId, mime: p.mime, name: p.name, path };
+    });
+    const outgoing: Omit<M.OutgoingMail, 'attachments' | 'replyTo'> & { inline?: typeof inline } = {
       ...(from ? { from } : {}),
       to,
       ...(cc.length ? { cc } : {}),
       ...(bcc.length ? { bcc } : {}),
       subject: req.subject,
-      text: messageText(req.text, t),
-      html: messageHtml(kind, req.text, o, draft.quote, req.tz),
+      text: body.text,
+      ...(body.html ? { html: body.html } : {}),
+      ...(inline.length ? { inline } : {}),
     };
-    const id = mailId('mob', acc!.id, clientId);
     const now = this.now();
     this.store.db.transaction(() => {
       this.run(
@@ -502,7 +558,9 @@ export class MailOutbox {
       let res: { messageId?: string; sentId?: string | null; dryRun?: boolean };
       try {
         res = await sync.queue.run(P0, `send:${id}`, async () => {
-          const out: M.OutgoingMail = json(r.outgoing, {} as M.OutgoingMail);
+          const out: M.OutgoingMail & { inline?: unknown } = json(r.outgoing, {} as M.OutgoingMail);
+          // The pictures inside it go as files with their content ids (attachments below).
+          delete out.inline;
           // The same on every try of this send.
           out.idempotencyKey = r.id;
           // Where the original is now (an IMAP move changes its id).
@@ -531,7 +589,9 @@ export class MailOutbox {
   private async attachments(r: Row): Promise<M.OutgoingFile[]> {
     const local = !!this.hub.backend?.localFiles;
     const out: M.OutgoingFile[] = [];
-    const add = (name: string, mime: string, path: string) => out.push(local ? { filename: name, mime, path } : { filename: name, mime, base64: readFileSync(path).toString('base64') });
+    const add = (name: string, mime: string, path: string, contentId?: string) =>
+      out.push({ filename: name, mime, ...(local ? { path } : { base64: readFileSync(path).toString('base64') }), ...(contentId ? { contentId } : {}) });
+    for (const p of json<{ inline?: { contentId: string; mime: string; name: string; path: string }[] }>(r.outgoing, {}).inline ?? []) add(p.name, p.mime, p.path, p.contentId);
     for (const f of json<{ name: string; mime: string; path: string }[]>(r.files, [])) add(f.name, f.mime, f.path);
     const draft = json<P.MailDraft>(r.draft, cleanDraft({}));
     for (const [i, p] of draft.forwardParts.entries()) {

@@ -3460,7 +3460,7 @@ export function seedDemoMail(fake: FakeMailBackend, now = Date.now()) {
     { name: 'Sam Rivera', email: 'sam@rivera.example' },
     { name: null, email: 'bookings@ramen.example' },
   ];
-  fake.addAccount(DEMO_MAIL_ACCOUNT, { kind: 'imap', label: 'Personal mail', email: ME.email, name: ME.name, opts: { ids: 'imap', threadIds: false, refs: true, answer: 3_000, contacts } });
+  fake.addAccount(DEMO_MAIL_ACCOUNT, { kind: 'imap', label: 'Personal mail', email: ME.email, name: ME.name, opts: { ids: 'imap', threadIds: false, refs: true, answer: 3_000, contacts, details: { inlineParts: true } } });
   const H = 3_600_000;
   const D = 24 * H;
   const sam = { name: 'Sam Rivera', email: 'sam@rivera.example' };

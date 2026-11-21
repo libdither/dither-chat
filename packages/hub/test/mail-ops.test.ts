@@ -471,7 +471,7 @@ describe('read state', () => {
     expect(onServer(fake, '<a2@x>').flags.seen).toBe(true);
     expect(writes(fake).map((c) => [c.op, c.input.seen, c.input.ids.length])).toEqual([['mail.flag', true, 1]]);
 
-    expect(ops.setSettings({ markRead: 'manual' })).toEqual({ markRead: 'manual' });
+    expect(ops.setSettings({ markRead: 'manual' })).toEqual({ markRead: 'manual', pictures: 'shared', trackers: 'remove' });
     const n = thread(st, '<n1@x>');
     hub.readHere([n.id]);
     await clock.wait(ops.idle());
@@ -520,8 +520,8 @@ describe('routes', () => {
     expect((await call(hub, 'POST', '/api/mail/flag', { threadIds: [t.id], seen: 'yes' })).status).toBe(400);
     expect((await call(hub, 'POST', '/api/mail/flag', { threadIds: [t.id] })).status).toBe(400);
     expect((await call(hub, 'POST', '/api/mail/move', { threadIds: [t.id], to: 'mbx_nope' })).status).toBe(404);
-    expect(await call(hub, 'GET', '/api/mail/settings')).toEqual({ status: 200, body: { markRead: 'view' } });
-    expect(await call(hub, 'PUT', '/api/mail/settings', { markRead: 'manual' })).toEqual({ status: 200, body: { markRead: 'manual' } });
+    expect(await call(hub, 'GET', '/api/mail/settings')).toEqual({ status: 200, body: { markRead: 'view', pictures: 'shared', trackers: 'remove' } });
+    expect(await call(hub, 'PUT', '/api/mail/settings', { markRead: 'manual' })).toEqual({ status: 200, body: { markRead: 'manual', pictures: 'shared', trackers: 'remove' } });
     expect((await call(hub, 'PUT', '/api/mail/settings', { markRead: 'never' })).status).toBe(400);
     // The thread and account views say what waits.
     const flushed = hub.flush();

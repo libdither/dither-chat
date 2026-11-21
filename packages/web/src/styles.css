@@ -14435,32 +14435,12 @@ button.msg-edited.link:hover {
 .mc-fmt-gap {
   flex: 1;
 }
-.mc-preview-btn {
-  font-size: 12.5px;
-}
-.mc-preview-btn.on {
-  background: var(--bg-raised);
-  color: var(--text);
-}
-/* A phone: Preview is its eye alone, so the bar is one row. */
+/* A phone: the bar's buttons closer. */
 @media (max-width: 480px) {
-  .mc-preview-btn span {
-    display: none;
-  }
   .mc-fmt {
     min-width: 28px;
     padding: 0 4px;
   }
-}
-.mc-preview {
-  min-height: 160px;
-}
-.mc-preview-frame {
-  display: block;
-  width: 100%;
-  height: 160px;
-  border: 0;
-  background: transparent;
 }
 .mc-limit {
   flex: 1;
@@ -14473,6 +14453,505 @@ button.msg-edited.link:hover {
 }
 .mc-limit.over {
   color: var(--danger);
+}
+/* ------------------------------------------------------------ the mail editor (ui/mail/editor) */
+.me {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+  min-height: 180px;
+}
+.me-views {
+  position: relative;
+  flex: 1 0 auto;
+  display: grid;
+}
+/* Every view in the same cell: the one leaving fades and lifts away over the one settling in. */
+.me-view {
+  grid-area: 1 / 1;
+  min-width: 0;
+  display: none;
+}
+.me-view.shown,
+.me-view.leaving {
+  display: block;
+}
+.me-view.leaving {
+  pointer-events: none;
+  animation: me-leave 0.24s ease forwards;
+}
+.me-view.entering {
+  animation: me-enter 0.26s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes me-leave {
+  to {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.99);
+    filter: blur(1.5px);
+  }
+}
+@keyframes me-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .me-view.leaving,
+  .me-view.entering {
+    animation: none;
+  }
+  .me-view.leaving {
+    display: none;
+  }
+}
+/* Rich: the text as it will look. */
+.me-rich-doc {
+  min-height: 160px;
+  padding: 12px 0;
+  outline: none;
+  color: var(--text);
+  font-size: 14.5px;
+  line-height: 1.5;
+  overflow-wrap: break-word;
+}
+.me-rich-doc > :first-child {
+  margin-top: 0;
+}
+.me-rich-doc p {
+  margin: 0 0 0.6em;
+}
+.me-rich-doc h1,
+.me-rich-doc h2,
+.me-rich-doc h3 {
+  margin: 0.8em 0 0.4em;
+  line-height: 1.25;
+}
+.me-rich-doc h1 {
+  font-size: 1.5em;
+}
+.me-rich-doc h2 {
+  font-size: 1.25em;
+}
+.me-rich-doc h3 {
+  font-size: 1.1em;
+}
+.me-rich-doc ul,
+.me-rich-doc ol {
+  margin: 0 0 0.6em;
+  padding-left: 1.6em;
+}
+.me-rich-doc blockquote {
+  margin: 0 0 0.6em 2px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  color: var(--text-dim);
+}
+.me-rich-doc code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--bg-raised);
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+.me-rich-doc pre {
+  margin: 0 0 0.6em;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: var(--bg-raised);
+  white-space: pre-wrap;
+}
+.me-rich-doc pre code {
+  padding: 0;
+  background: none;
+}
+.me-rich-doc a {
+  color: var(--accent);
+}
+.me-rich-doc img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+.me-rich-doc img.ProseMirror-selectednode {
+  outline: 2px solid var(--accent);
+}
+.me-rich-doc table {
+  border-collapse: collapse;
+  margin: 0 0 0.8em;
+}
+.me-rich-doc td,
+.me-rich-doc th {
+  min-width: 48px;
+  vertical-align: top;
+}
+.me-rich-doc .selectedCell {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.me-rich-doc p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+/* A forward, a quote or kept HTML: a sealed sheet with a bar. */
+.me-island {
+  margin: 8px 0 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  overflow: hidden;
+}
+.me-island.ProseMirror-selectednode {
+  outline: 2px solid var(--accent);
+}
+.me-island-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 10px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: grab;
+}
+.me-island-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.me-island-btn {
+  padding: 2px 8px;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.me-island-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.me-island-frame {
+  display: block;
+  width: 100%;
+  height: 48px;
+  border: 0;
+  background: #fff;
+}
+/* Markdown: drawn as you type. */
+.me-markdown .cm-editor,
+.me-html .cm-editor {
+  outline: none;
+  background: transparent;
+  color: var(--text);
+}
+.me-markdown .cm-scroller {
+  font-family: inherit;
+}
+.me-markdown .cm-content {
+  min-height: 160px;
+  padding: 12px 0;
+  font-family: inherit;
+  font-size: 14.5px;
+  line-height: 1.55;
+  caret-color: var(--text);
+}
+.me-markdown .cm-line {
+  padding: 0;
+}
+.me-markdown .md-h1 {
+  font-size: 1.5em;
+  font-weight: 700;
+}
+.me-markdown .md-h2 {
+  font-size: 1.25em;
+  font-weight: 700;
+}
+.me-markdown .md-h3 {
+  font-size: 1.1em;
+  font-weight: 700;
+}
+.me-markdown .md-strong {
+  font-weight: 700;
+}
+.me-markdown .md-em {
+  font-style: italic;
+}
+.me-markdown .md-strike {
+  text-decoration: line-through;
+}
+.me-markdown .md-code,
+.me-markdown .md-fence-line {
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+.me-markdown .md-code {
+  padding: 1px 3px;
+  border-radius: 4px;
+  background: var(--bg-raised);
+}
+.me-markdown .md-fence-line {
+  background: var(--bg-raised);
+}
+.me-markdown .md-link {
+  color: var(--accent);
+}
+.me-markdown .md-quote-line {
+  border-left: 2px solid var(--border);
+  padding-left: 10px !important;
+  color: var(--text-dim);
+}
+.me-markdown .md-html {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 0.85em;
+}
+.md-bullet {
+  display: inline-block;
+  width: 1em;
+  color: var(--text-dim);
+}
+.md-thumb {
+  max-width: min(100%, 320px);
+  max-height: 200px;
+  vertical-align: middle;
+  border-radius: 4px;
+}
+.md-chip {
+  display: inline-block;
+  padding: 2px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+/* HTML: the code, folded where the forward is, and the mail as it arrives beside it. */
+.me-html {
+  display: none;
+}
+.me-html.shown,
+.me-html.leaving {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 0;
+}
+.me-html-code .cm-editor {
+  height: 100%;
+  min-height: 220px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.me-html-code .cm-content {
+  font-family: var(--mono);
+}
+.me-html-code .cm-gutters {
+  background: transparent;
+  border-right: 1px solid var(--border-soft);
+}
+.me-html-preview {
+  min-width: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.me-html-preview-head {
+  padding: 4px 10px;
+  background: var(--bg-raised);
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+/* Narrow: the code over the mail. */
+@container (max-width: 560px) {
+  .me-html.shown,
+  .me-html.leaving {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 640px) {
+  .me-html.shown,
+  .me-html.leaving {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* The bar stays at the foot of the composer's scroll, over the text. */
+.me-bar {
+  position: sticky;
+  bottom: -12px;
+  z-index: 2;
+  margin: 0 -14px -12px;
+  padding: 4px 8px;
+  background: var(--bg-center);
+}
+/* Rich, Markdown, HTML: a segmented switch whose thumb slides to the one you pick. */
+.me-modes {
+  position: relative;
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--bg-raised);
+}
+.me-modes-thumb {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / 3);
+  border-radius: 6px;
+  background: var(--bg-center);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.18);
+  transform: translateX(calc(var(--at, 0) * 100%));
+  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.me-mode {
+  position: relative;
+  padding: 3px 10px;
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.me-mode.on {
+  color: var(--text);
+  font-weight: 600;
+}
+.me-bar-note {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.me-color-a {
+  font-weight: 700;
+  text-decoration: underline 3px #c2410c;
+}
+.me-pop {
+  position: sticky;
+  bottom: 34px;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin: 0 0 4px;
+  padding: 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: var(--bg-center);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.18);
+}
+.me-pop-input {
+  width: min(320px, 60vw);
+}
+.me-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-center);
+  box-shadow: 0 0 0 1px var(--border);
+}
+/* Under the text: how its pictures from the web go. */
+.mc-pics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin: 4px 0 8px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: var(--bg-raised);
+  font-size: 12.5px;
+}
+.mc-pics-what {
+  color: var(--text);
+}
+.mc-pics-note {
+  flex-basis: 100%;
+  color: var(--text-dim);
+}
+.mc-seg {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--bg-center);
+}
+.mc-seg-btn {
+  padding: 2px 10px;
+  border-radius: 5px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.mc-seg-btn.on {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+/* The footer's size, and its breakdown. */
+.mc-size {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.mc-size-btn {
+  display: block;
+  max-width: 100%;
+  text-align: left;
+}
+.mc-size-btn:hover {
+  color: var(--text);
+}
+.mc-size-pop {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 5;
+  width: min(340px, 80vw);
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-center);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.22);
+  font-size: 12.5px;
+}
+.mc-size-pop table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.mc-size-pop th {
+  padding: 2px 0;
+  color: var(--text-dim);
+  font-weight: normal;
+  text-align: left;
+}
+.mc-size-pop td {
+  padding: 2px 0;
+  text-align: right;
+  white-space: nowrap;
+}
+.mc-size-total th,
+.mc-size-total td {
+  padding-top: 5px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+.mc-size-note {
+  margin: 8px 0;
+  color: var(--text-faint);
+}
+.mc-size-plain {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.mc-size-faint {
+  color: var(--text-faint);
+}
+.mc-body-loading {
+  display: grid;
+  place-items: center;
 }
 .mc-strip {
   position: fixed;
@@ -15949,7 +16428,7 @@ h1:hover > .pair-nick-edit,
   width: 100%;
   min-height: 0;
   border: 0;
-  background: var(--bg);
+  background: var(--bg-center);
 }
 .plan-chip {
   display: flex;
@@ -16648,7 +17127,7 @@ h1:hover > .pair-nick-edit,
   place-items: center;
   padding: 16px;
   overflow: auto;
-  background: var(--bg);
+  background: var(--bg-center);
 }
 .login-card {
   width: 100%;
@@ -17391,5 +17870,5 @@ h1:hover > .pair-nick-edit,
 .place-keys kbd {
   color: var(--text);
   border: 1px solid var(--border);
-  background: var(--bg);
+  background: var(--bg-center);
 }
