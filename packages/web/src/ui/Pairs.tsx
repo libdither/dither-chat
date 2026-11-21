@@ -19,7 +19,7 @@ import { ago, hueOf, initials } from '../format.ts';
 import { convLabel, identityName, netColor, netName, visibleAccount } from '../model.ts';
 import { phone } from '../phone.ts';
 import { api, db, go, isSelfIdentity, prefs, route, setPrefs, timelineKey, timelines } from '../state.ts';
-import { AccountChip, Avatar, Count, Menu, NetBadge, NetGlyph } from './bits.tsx';
+import { Avatar, Count, FromChips, Menu, NetBadge, NetGlyph } from './bits.tsx';
 import { TimerLabel } from './Disappearing.tsx';
 import { Icon } from './icons.tsx';
 
@@ -391,28 +391,16 @@ export const setView = (personId: string, v: string) => void (viewing.value = { 
 
 /**
  * The line under the name, in the same words for a direct conversation and for a person's chat: where your message
- * goes. The network (its icon and name); their account, where theirs on that network differ (`to mo.codes`); and the
- * account of yours it goes from, where you have more than one, as every conversation's header says it (`via ●
- * zyansheep`, which a narrow window leaves out everywhere).
+ * goes. The account of yours it goes from, as one chip with its network's icon in it (the network's name alone where
+ * no account of yours shows), and their account, where theirs on that network differ (`to mo.codes`).
  */
 export function SendLine({ c, accounts, to }: { c: P.ConversationView; accounts: P.AccountView[]; to?: string }) {
-  const via = accounts.length > 0 && (accounts.length > 1 || db.accounts.size > 1);
   return (
-    <span class="send-line" style={{ '--net': netColor(c.network) } as Record<string, string>}>
-      <span class="crumb net">
-        <NetGlyph network={c.network} size={11} /> <span class="send-net-name">{netName(c.network)}</span>
-      </span>
+    <span class="send-line">
+      <FromChips network={c.network} accounts={accounts} />
       {to && (
         <span class="send-to">
           <span class="send-sep">·</span> to {to}
-        </span>
-      )}
-      {via && (
-        <span class="via">
-          <span class="send-sep">·</span> via
-          {accounts.map((a) => (
-            <AccountChip account={a} small />
-          ))}
         </span>
       )}
     </span>
