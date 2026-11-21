@@ -182,6 +182,7 @@ const UNCOVERED: Record<string, string> = {
   'ui/Accounts.tsx': 'Add account: a dialog as Forward to is',
   'ui/CallBar.tsx': "a phone's call expanded from the bar needs a call going on, which the demo world has none of",
   'ui/Attach.tsx': 'needs a file picked',
+  'ui/Peek.tsx': 'the box over the chat needs a file picked',
   'ui/ComposerMediaParts.tsx': 'the sticker and GIF pickers: a network that sends them',
   'ui/mail/ComposerCard.tsx': 'mail compose needs a mail account',
   'ui/Offline.tsx': 'shown only while the hub is out of reach',
