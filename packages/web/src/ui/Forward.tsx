@@ -11,7 +11,7 @@ import { phone } from '../phone.ts';
 import { fullTime } from '../format.ts';
 import { renderMarkdown } from '../markdown.ts';
 import { authorName, communitiesOf, convLabel, convTitle, identityName, kindLabel, netName, plainBody, visibleConv } from '../model.ts';
-import { api, db, go, isSelfIdentity, openProfile, prefs, rev, toast } from '../state.ts';
+import { api, db, go, isSelfIdentity, openProfile, pref, rev, toast } from '../state.ts';
 import { Avatar, Modal, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { openConv } from '../opening.ts';
@@ -23,7 +23,7 @@ const MAX = 5;
 
 function sender(c: P.ConversationView): P.AccountView | null {
   const accs = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a);
-  return accs.find((a) => a.id === prefs.value.sendAs[c.id]) ?? accs.find((a) => a.status === 'online') ?? accs[0] ?? null;
+  return accs.find((a) => a.id === pref('sendAs')[c.id]) ?? accs.find((a) => a.status === 'online') ?? accs[0] ?? null;
 }
 
 /** How it will arrive, in a few words: the network's own forward, or a copy. */
@@ -64,7 +64,7 @@ function ForwardDialog({ m, onClose }: { m: P.MessageView; onClose: () => void }
     setBusy(true);
     try {
       const r = await api<{ results: P.ForwardResult[] }>(`/api/messages/${m.id}/forward`, {
-        body: { targets: picked.map((id) => ({ conversationId: id, ...(prefs.value.sendAs[id] ? { accountId: prefs.value.sendAs[id] } : {}) })), ...(note.trim() ? { note: note.trim() } : {}) },
+        body: { targets: picked.map((id) => ({ conversationId: id, ...(pref('sendAs')[id] ? { accountId: pref('sendAs')[id] } : {}) })), ...(note.trim() ? { note: note.trim() } : {}) },
       });
       const failed = r.results.filter((x) => !x.ok);
       const skipped = [...new Set(r.results.flatMap((x) => x.skipped ?? []))];

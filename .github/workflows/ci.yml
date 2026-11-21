@@ -6,7 +6,8 @@
 # A pull request that only changes docs (*.md, docs/) or the Android app skips the work (scripts/ci-changes.ts); a push
 # to main and a manual run always run everything. The same locally: bun run typecheck, bun run test, bun run web:build,
 # bun run check:boot, bun scripts/verify-login.ts, bun scripts/verify-clear.ts, bun run check:offline,
-# bun scripts/verify-offline.ts, bun scripts/verify-arrived.ts, bun scripts/verify-back.ts, bun scripts/verify-perf.ts --ci.
+# bun scripts/verify-offline.ts, bun scripts/verify-arrived.ts, bun scripts/verify-back.ts, bun scripts/verify-response.ts,
+# bun scripts/verify-perf.ts --ci.
 name: CI
 
 on:
@@ -175,6 +176,28 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run web:build && bun scripts/verify-back.ts
 
+  # Every control on each kind of page clicked in turn, against a demo hub on a tenth-size world: a click that draws
+  # most of a list again (every message, every row) fails, unless scripts/response-known.json lists it from before.
+  # Its times go in the job's summary and are never judged (scripts/verify-response.ts, docs/perf.md "Every click").
+  # The pages in four parts side by side: about four minutes each.
+  response:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - run: b=$(command -v chromium || command -v google-chrome) && (find -L "$(dirname "$(readlink -f "$b")")" -type f -print0 | xargs -0 cat > /dev/null 2>&1 &) || true
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun scripts/verify-response.ts --shard ${{ matrix.shard }}/4
+
   # Load and chat switching on a tenth-size world in the runner's browser, a warm-up and then one run: renders, DOM
   # nodes and bytes against scripts/perf-baseline-ci.json; its times go in the job's summary and are never judged
   # (docs/perf.md, "In CI").
@@ -203,7 +226,7 @@ jobs:
   # `changes` said the pull request does not need it. It runs on failure and cancellation too, so it never reads as
   # skipped (which GitHub would count as passed).
   check:
-    needs: [changes, typecheck, test-hub, test-hub-mail, test-packages, web, boot, back, perf]
+    needs: [changes, typecheck, test-hub, test-hub-mail, test-packages, web, boot, back, response, perf]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

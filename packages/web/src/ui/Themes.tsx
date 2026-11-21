@@ -8,7 +8,7 @@
 import { effect, signal } from '@preact/signals';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { DEFAULT_DARK, DEFAULT_LIGHT, THEMES, themeById, tokens, type Theme } from '../themes.ts';
-import { prefs, setPrefs } from '../state.ts';
+import { pref, setPrefs } from '../state.ts';
 import { phone } from '../phone.ts';
 import { Icon } from './icons.tsx';
 import { Sheet } from './Sheet.tsx';
@@ -20,13 +20,13 @@ const lightQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-color
 const systemLight = signal(!!lightQuery?.matches);
 lightQuery?.addEventListener('change', () => (systemLight.value = lightQuery.matches));
 
-export const followsSystem = () => prefs.value.theme === 'system';
+export const followsSystem = () => pref('theme') === 'system';
 
 /** The theme the prefs choose right now, without any preview. */
 export function chosenTheme(): Theme {
-  const p = prefs.value;
-  if (p.theme === 'system') return themeById(systemLight.value ? (p.themeLight ?? DEFAULT_LIGHT) : (p.themeDark ?? DEFAULT_DARK));
-  return themeById(p.theme);
+  const theme = pref('theme');
+  if (theme === 'system') return themeById(systemLight.value ? (pref('themeLight') ?? DEFAULT_LIGHT) : (pref('themeDark') ?? DEFAULT_DARK));
+  return themeById(theme);
 }
 
 /** index.html applies this before any script runs, so a reload never flashes the wrong colours. */
@@ -100,7 +100,6 @@ export function Swatch({ t }: { t: Theme }) {
 
 /** Every theme, by scheme, with the switch for following the system. Used by the title bar's dropdown, its phone sheet and Settings. */
 export function ThemeList({ onChosen, compact }: { onChosen?: () => void; compact?: boolean }) {
-  const p = prefs.value;
   const sys = followsSystem();
   const current = chosenTheme().id;
   // Hover previews only with a mouse or pen: on touch, a tap is the choice.
@@ -109,7 +108,7 @@ export function ThemeList({ onChosen, compact }: { onChosen?: () => void; compac
     previewTheme.value = id;
   };
   useEffect(() => () => void (previewTheme.value = null), []);
-  const isOn = (t: Theme) => (sys ? (t.scheme === 'dark' ? themeById(p.themeDark).id : themeById(p.themeLight).id) === t.id : current === t.id);
+  const isOn = (t: Theme) => (sys ? (t.scheme === 'dark' ? themeById(pref('themeDark')).id : themeById(pref('themeLight')).id) === t.id : current === t.id);
   return (
     <div class={`theme-list ${compact ? 'compact' : ''}`} onPointerLeave={(e) => hover(null, e)}>
       <div class="theme-mode" role="radiogroup" aria-label="Theme mode">

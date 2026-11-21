@@ -7,7 +7,7 @@ import { customMarkup } from '../emojiComplete.ts';
 import { authorName } from '../model.ts';
 import { clearReactions, modOf } from '../moderate.ts';
 import { hasMine, knownReactionContext, pickerFor, quickReactions, reactedAt, reactionContext, reactionScope, reactionTip, reactorsFor, replacing, toggleReaction, whenText, whenTitle, type Picked } from '../reactions.ts';
-import { api, db, isSelfIdentity, prefs, rev, setPrefs } from '../state.ts';
+import { api, db, isSelfIdentity, pref, rev, setPrefs } from '../state.ts';
 import { useLayer } from '../phone.ts';
 import { Avatar } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -245,7 +245,7 @@ function Picker({ target, anchor, onClose, inline }: { target: Target; anchor: D
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [active, setActive] = useState<string | null>(null);
   const hovered = useSignal<Item | null>(null);
-  const tone = prefs.value.skinTone ?? 0;
+  const tone = pref('skinTone') ?? 0;
   const search = useRef<HTMLInputElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);

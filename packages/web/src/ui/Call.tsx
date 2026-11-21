@@ -3,7 +3,7 @@ import type * as P from '@dither-chat/protocol';
 import { type ActiveCall, activeCall, callName, callStatus, canCall, canRing, featuredSpeaker, leaveCall, roomOnPage, startCall } from '../call.ts';
 import { roomCall } from './CallRoomLazy.tsx';
 import { callIn } from '../ringing.ts';
-import { db, prefs, rev } from '../state.ts';
+import { db, pref, rev } from '../state.ts';
 import { convTitle } from '../model.ts';
 import { CallControls } from './CallControls.tsx';
 import { Icon } from './icons.tsx';
@@ -54,7 +54,7 @@ export function JoinCallButton({ c }: { c: P.ConversationView }) {
       data-track={here ? 'leave call' : ring ? 'start call' : 'join call'}
       title={title}
       aria-label={title}
-      onClick={() => (here ? leaveCall() : void startCall(c.id, accountId, prefs.value.callMode, ring))}
+      onClick={() => (here ? leaveCall() : void startCall(c.id, accountId, pref('callMode'), ring))}
     >
       <Icon name={here ? 'phoneOff' : 'phone'} size={16} />
       <span class="hdr-btn-label">{label}</span>

@@ -8,7 +8,7 @@ import { stateMock } from './fixtures/state.ts';
 
 mock.module('../src/state.ts', stateMock);
 const { gifLinkOf, plainGifs } = await import('../src/gifs.ts');
-const { prefs } = (await import('../src/state.ts')) as unknown as { prefs: { value: { plainGifs?: boolean } } };
+const { setPrefs } = await import('../src/state.ts');
 
 const link = 'https://gifs.example.com/party';
 const gifv: P.EmbedView = { url: link, provider: 'Klipy', video: { url: '/media/abc/def', width: 220, height: 160, gifv: true } };
@@ -29,8 +29,8 @@ test('words beside the link, a card that is not a GIF, a player, or files keep t
 
 test('on unless switched off on this device', () => {
   expect(plainGifs()).toBe(true);
-  prefs.value = { plainGifs: false };
+  setPrefs({ plainGifs: false });
   expect(plainGifs()).toBe(false);
   expect(gifLinkOf(msg(link, [gifv]))).toBeNull();
-  prefs.value = {};
+  setPrefs({ plainGifs: undefined });
 });
