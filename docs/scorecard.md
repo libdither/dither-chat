@@ -41,6 +41,8 @@ Opens are visits to the chat of 5 s or more in use (`labels.ts` `OPEN_DWELL`), o
 | `unprompted.list` | of the chats you opened that day with no notification about them in the day before, the share with a message at the list or above in that day | those chats |
 | `inbox.mrr` | for opens from an inbox row (`visit.source = 'inbox'`, `visit.rank`), the mean of 1 ÷ row | those opens |
 | `inbox.top8`, `inbox.deep` | the share of them from the first 8 rows, and from below row 20 | those opens |
+| `inbox.mrr_live`, `inbox.mrr_shadow` | for the opens from an inbox row whose device said where the row stood in the shadow order with mail (`visit.shadow_rank`, [inbox.md](inbox.md#mail-in-the-learned-order)), the mean of 1 ÷ row as shown, and as it would have stood in that order | those opens |
+| `inbox.mail_mrr`, `inbox.mail_mrr_shadow` | the same, for mail rows alone (`extra.opens`: every mail open from the inbox that day) | those mail opens |
 | `needs.predicted`, `needs.answered` | for owed replies whose 3 days ended that day, the mean "needs a reply" chance shown (`needs_prediction`, kept at 15 min, 1 h, 6 h and a day of age) and the share answered within the 3 days ([inbox.md](inbox.md#needs-a-reply)) | chances kept |
 | `needs.brier`, `needs.brier_table` | the same: the Brier score of the chance shown, and of the owed table's chance alone | chances kept |
 | `foryou.clicked`, `foryou.clicked_explore` | of the For you items on screen that day (a `shown` event, [foryou.md](foryou.md)), the share opened from it; and the same for exploration slots alone, which no order chose | items shown, and those from exploration slots |

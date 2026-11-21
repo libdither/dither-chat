@@ -56,6 +56,16 @@ export const FEATURES = [
   'notInteresting',
   'votedUp',
   'votedDown',
+  // A mail thread's row (MAIL_FEATURES): 0 on every conversation's.
+  'mail',
+  'mailTo',
+  'mailCc',
+  'mailUnknown',
+  'mailFlagged',
+  'mailGoogle',
+  'mailProton',
+  'mailKnown',
+  'mailBond',
 ] as const;
 export type Feature = (typeof FEATURES)[number];
 export type Features = Record<Feature, number>;
@@ -96,7 +106,71 @@ export function rankFeatures(x: ScoreInput, s: Scored): Features {
     notInteresting: x.level === 'drop' ? 1 : 0,
     votedUp: Math.log1p(x.votes?.up ?? 0),
     votedDown: Math.log1p(x.votes?.down ?? 0),
+    ...NO_MAIL,
   };
+}
+
+/** What a conversation's row says of mail: nothing. */
+const NO_MAIL = { mail: 0, mailTo: 0, mailCc: 0, mailUnknown: 0, mailFlagged: 0, mailGoogle: 0, mailProton: 0, mailKnown: 0, mailBond: 0 } as const;
+
+/**
+ * The features only a mail thread's row has (docs/inbox.md, "Mail in the learned order"): it is mail; how the latest
+ * message from someone else reached you (in To, in Cc, else hidden: Bcc or a list); from a person only because they
+ * look human (classify.ts rule 11); flagged; the account's kind (IMAP is neither); its sender is a person the hub
+ * knows, and how close you are to them (the people graph's closeness, docs/people-graph.md "Who matters").
+ */
+export const MAIL_FEATURES: readonly Feature[] = Object.keys(NO_MAIL) as Feature[];
+
+/** A mail thread's facts beyond the formula's input. Metadata only. */
+export interface MailFacts {
+  /** How the latest message from someone else reached you. */
+  addressed: 'to' | 'cc' | 'hidden' | null;
+  unknown: boolean;
+  flagged: boolean;
+  /** mail_account.kind: imap, proton, google. */
+  account: string;
+  /** The sender is a person the hub knows (an identity with a person). */
+  known: boolean;
+  /** Closeness with the sender before now, months decayed (bondAt): 0 for none. */
+  bond: number;
+}
+
+/** What the mail side knows of a thread (mail/attention.ts): the ranker adds `known` and `bond` from `person`. */
+export type MailSide = Omit<MailFacts, 'known' | 'bond'> & { person: string | null };
+
+/** A mail thread's row as the model sees it: the shared features as for a chat, then mail's own. */
+export function mailRankFeatures(x: ScoreInput, s: Scored, m: MailFacts): Features {
+  return {
+    ...rankFeatures(x, s),
+    mail: 1,
+    mailTo: m.addressed === 'to' ? 1 : 0,
+    mailCc: m.addressed === 'cc' ? 1 : 0,
+    mailUnknown: m.unknown ? 1 : 0,
+    mailFlagged: m.flagged ? 1 : 0,
+    mailGoogle: m.account === 'google' ? 1 : 0,
+    mailProton: m.account === 'proton' ? 1 : 0,
+    mailKnown: m.known ? 1 : 0,
+    mailBond: Math.log1p(Math.max(0, m.bond)) / 5,
+  };
+}
+
+const MONTH_DECAY = 3;
+/**
+ * How close you were to someone at `t`: their closeness by month (closeness.ts, identity → [month, weight × 10] pairs,
+ * months as year × 12 + month, UTC), summed over the months before `t`'s, each halved every MONTH_DECAY months back.
+ * The month `t` is in is left out: it was not over yet.
+ */
+export function bondAt(months: readonly number[] | undefined, t: number): number {
+  if (!months?.length) return 0;
+  const d = new Date(t);
+  const now = d.getUTCFullYear() * 12 + d.getUTCMonth();
+  let sum = 0;
+  for (let i = 0; i + 1 < months.length; i += 2) {
+    const m = months[i];
+    if (m >= now) continue;
+    sum += (months[i + 1] / 10) * 2 ** (-(now - 1 - m) / MONTH_DECAY);
+  }
+  return sum;
 }
 
 const vector = (f: Features): number[] => FEATURES.map((k) => f[k]);
@@ -117,6 +191,8 @@ export interface RankModel {
   curveFrom?: number;
   /** How sure the fit is of each chance's weights (Laplace, `posteriorSteps`), for exploring; absent: not worked out. */
   cov?: Covariance | null;
+  /** The order with mail's version (ranker.ts MAIL_MODEL_VERSION) it was fitted at. */
+  v?: number;
 }
 
 /** A covariance of the weights over the features the fit moves (not those kept at the prior). */
@@ -286,7 +362,7 @@ export function* fitSteps(rows: readonly RankRow[], prior: Weights, lambda: Reco
 export interface Moment {
   at: number;
   /** `pos`: where the row stood in the formula's one list then (0 = top), as the inbox had it, near enough. */
-  rows: { x: Features; weight: number; open: Opened | null; chosen: boolean; sent?: boolean; pos?: number }[];
+  rows: { x: Features; weight: number; open: Opened | null; chosen: boolean; sent?: boolean; pos?: number; mail?: boolean }[];
 }
 
 /** How you first got to a conversation after a moment: the source, its inbox row then, and how long after (ms). */

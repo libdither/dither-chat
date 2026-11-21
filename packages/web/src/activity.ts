@@ -9,12 +9,12 @@
  */
 import { effect, signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { inboxKeyOf, inboxRows, placeConv, rootCommunity } from './model.ts';
+import { inboxKeyOf, inboxRows, placeConv, rootCommunity, rowMuted, type InboxRow } from './model.ts';
 import { api, apiHooks, db, eventHooks, href, listUnderHooks, parseHash, route, showsHere, type Route } from './state.ts';
 import { NEW_VISIT_AFTER } from './tracker.ts';
 import { typedHooks } from './typing.ts';
 import { inUse } from './usage.ts';
-import { VisitLog, firstTap, samePlace, type Arrival, type Place } from './visits.ts';
+import { VisitLog, firstTap, samePlace, shadowRankOf, type Arrival, type Place } from './visits.ts';
 import { viewer } from './viewer.ts';
 
 const DEVICE_KEY = 'dither-chat:device';
@@ -52,6 +52,8 @@ function deviceLabel(ua = navigator.userAgent): string {
 // ------------------------------------------------------------------ where the user is
 
 function convPlace(id: string): Place {
+  // A mail thread, opened from an inbox row or a search.
+  if (id.startsWith('mth_')) return { view: 'mail', conversationId: id };
   const c0 = db.conversations.get(id);
   const c = c0 ? placeConv(c0) : null;
   const root = c?.spaceIds.length ? rootCommunity(c.spaceIds[0]) : null;
@@ -75,6 +77,9 @@ function placeOf(r: Route): Place {
     // How it sorts is triage's own page.
     case 'model':
       return { view: 'triage' };
+    // A thread open on the Mail page, by its id: the learned order learns from mail opens too (docs/inbox.md).
+    case 'mail':
+      return r.thread ? { view: 'mail', conversationId: r.thread } : { view: 'mail' };
     default:
       return { view: r.view };
   }
@@ -97,11 +102,31 @@ function arrivalOf(el: Element | null): Arrival {
   if (row && list?.classList.contains('inbox-side')) {
     const id = row.getAttribute('data-row')!;
     const a = db.attention.get(id);
-    return { source: 'inbox', rank: [...list.querySelectorAll('[data-row]')].indexOf(row), score: a ? Math.round(a.score * 10) / 10 : null, needs: a?.needs ?? null };
+    const ids = [...list.querySelectorAll('[data-row]')].map((r) => r.getAttribute('data-row')!);
+    const rank = ids.indexOf(id);
+    return { source: 'inbox', rank, score: a ? Math.round(a.score * 10) / 10 : null, needs: a?.needs ?? null, shadowRank: shadowRankAt(ids, rank) };
   }
   if (row || el.closest('.sidebar')) return { source: 'list' };
   if (el.closest('.timeline-scroll, .conv-head, .details, .pane')) return { source: 'link' };
   return { source: 'other' };
+}
+
+/**
+ * Where the row at `index` of the inbox's rows (`ids`, as on screen) would stand in the shadow order with mail, or
+ * null when the hub works none out. A chat of several routes scores the highest of its routes, as in the order shown.
+ */
+function shadowRankAt(ids: string[], index: number): number | null {
+  if (index < 0) return null;
+  const byKey = new Map(inboxRows().map((r) => [r.key, r]));
+  const scoreOf = (id: string) => db.attention.get(id);
+  const rowOf = (id: string) => {
+    const r: InboxRow | undefined = byKey.get(id);
+    if (!r) return { shadow: scoreOf(id)?.shadow ?? null, score: scoreOf(id)?.score ?? 0, muted: false };
+    const parts = r.kind === 'conv' ? (r.chat?.routes.map((c) => c.id) ?? [r.conv.id]) : [r.key];
+    const shadows = parts.map((p) => scoreOf(p)?.shadow).filter((x): x is number => x !== undefined);
+    return { shadow: shadows.length ? Math.max(...shadows) : null, score: r.score, muted: rowMuted(r) };
+  };
+  return shadowRankOf(ids.map(rowOf), index);
 }
 
 /**

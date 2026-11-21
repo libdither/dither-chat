@@ -6,13 +6,19 @@
  * conversations the inbox would have listed are scored as of then: what was unread (messages from others since you
  * last wrote or stayed there; before the activity log starts, everything counts as read), where you had been (the
  * log's stays) and the mutes as they are now. Metadata only: never what was said.
+ *
+ * With `mail` (loadWorld's option), mail threads from a person are candidates too (mail/attention.ts): their messages
+ * fold in the same time order from a second query, listed by MAIL_INBOX's rules as of each moment, with what is not
+ * replayed (the account, flagged, rule 11, roles, mutes) as it is now. Opens of a thread are the log's `mail` stays
+ * (and, before 2026-11-20, `conversation` stays with its id).
  */
 import type { Database } from 'bun:sqlite';
 import { QUIET_VARIANTS_SQL } from './feed.ts';
 import type * as P from '@dither-chat/protocol';
 import { decayed } from '@dither-chat/protocol';
 import { emptyTally, foldMessage, freshState, PIN_FOR, scoreConversation, sumTallies, voteDirection, votesAt, type ConvState, type ScoreInput, type Scored, type Tally } from './attention.ts';
-import { HORIZON, rankFeatures, type Moment, type Opened } from './rank.ts';
+import { bondAt, HORIZON, mailRankFeatures, rankFeatures, type MailFacts, type Moment, type Opened } from './rank.ts';
+import { MAIL_INBOX } from './mail/attention.ts';
 import type { Triage } from './triage.ts';
 import type { OwedTable } from './owed.ts';
 import { FACTS_SQL, factsOf, type MessageFacts, type NeedsModel } from './needsreply.ts';
@@ -47,6 +53,20 @@ export interface Conv {
   lastOwn: number | null;
   /** The open turn's messages from others as facts (needsreply.ts), with when, up to TURN_FACTS of them. */
   turnFacts: (MessageFacts & { ts: number })[];
+  /** A mail thread's (world option `mail`): what the fold keeps of it besides a chat's. */
+  mail?: MailConv;
+}
+
+/** A mail thread as a candidate: what is as it is now, and what the fold keeps. */
+export interface MailConv {
+  account: string;
+  unknown: boolean;
+  flagged: boolean;
+  /** Your own messages' Message-IDs so far: a reply to one replies to you. */
+  mine: Set<string>;
+  /** The latest message from someone else so far: how it reached you, and its sender (lower-cased). */
+  addressed: MailFacts['addressed'];
+  from: string | null;
 }
 
 /** A turn's messages the needs-reply model reads, at most (needsreply.ts `turnMessagesQuery` reads as many). */
@@ -61,6 +81,8 @@ export interface Stay {
   source: string;
   /** Its inbox row's position then, from an inbox row. */
   rank: number | null;
+  /** Where that row stood in the shadow order with mail (docs/inbox.md), when the device said. */
+  shadowRank?: number | null;
   sent: number;
   /** The usage key it counts for, and the conversations it opens. */
   key: string;
@@ -85,6 +107,11 @@ export interface World {
   owedTable?: OwedTable;
   /** The needs-reply model over it (needsreply.ts): the hub's, else the table alone. */
   needsModel?: NeedsModel | null;
+  /** With mail: how you answer each mail correspondent, per thread, keyed by their person (else address). */
+  mailTallies?: Map<string, Map<string, Tally>>;
+  /** With mail: the person behind each email address, and each person's closeness by month (`bondAt`). */
+  personOf?: Map<string, string>;
+  bonds?: Map<string, number[]>;
 }
 
 /** Where you had been by `t`: per usage key, decayed seconds and visits and when you were last there. */
@@ -113,6 +140,62 @@ export interface Seen {
   input: ScoreInput;
   /** When you were last there (from the log), or null. */
   lastThere: number | null;
+  /** A mail thread's facts as of then. */
+  mail?: MailFacts;
+}
+
+/**
+ * A mail thread at `t`, as mail/attention.ts lists and scores it (`isListed`, `input`): unread since you were last
+ * there or wrote, To you a mention; only an alert is pinned; how you answer its author is their mail and chat summed.
+ */
+function mailSeen(w: World, c: Conv, m: MailConv, t: number, usage: Map<string, NonNullable<ScoreInput['usage']>>): Seen | null {
+  const u = usage.get(c.usageKey) ?? null;
+  const there = u ? Math.max(u.at, u.lastVisit ?? 0) : null;
+  const read = Math.max(c.lastOwn ?? 0, there ?? 0, w.logStart);
+  let unread = 0;
+  let mentions = 0;
+  let told: (typeof c.incoming)[number] | null = null;
+  let level: P.TriageDecision | null = null;
+  for (let i = c.incoming.length - 1; i >= 0 && c.incoming[i].ts > read; i--) {
+    const x = c.incoming[i];
+    unread++;
+    if (x.mention) mentions++;
+    if (x.pushed) told ??= x;
+    if (!level && x.level) level = x.level;
+  }
+  const turn = c.state.turn?.addressed != null ? c.state.turn : null;
+  const W = MAIL_INBOX;
+  const last = c.lastMessageAt ?? 0;
+  const listed = (unread > 0 && t - last <= W.unread) || (!!turn && t - turn.addressed! <= W.owed) || t - last <= W.recent || (there !== null && t - there <= W.opened);
+  if (!listed) return null;
+  const person = turn?.authorKey?.startsWith('per_') ? turn.authorKey : null;
+  const author = turn?.authorKey ? sumTallies([...(w.mailTallies?.get(turn.authorKey)?.values() ?? []), ...(person ? (w.tallies.get(person)?.values() ?? []) : [])], t) : null;
+  const sender = m.from ? (w.personOf?.get(m.from) ?? null) : null;
+  return {
+    conv: c,
+    lastThere: there,
+    mail: { addressed: m.addressed, unknown: m.unknown, flagged: m.flagged, account: m.account, known: !!sender, bond: sender ? bondAt(w.bonds?.get(sender), t) : 0 },
+    input: {
+      now: t,
+      shape: c.shape,
+      members: c.members,
+      lastMessageAt: c.lastMessageAt,
+      state: c.state,
+      author,
+      authorName: null,
+      unread,
+      mentions,
+      pinged: told && told.level === 'push' ? 'a push' : null,
+      alerted: !!told && told.level === 'push' && t - told.ts <= PIN_FOR,
+      importance: told?.score ?? null,
+      muted: null,
+      usage: u,
+      level,
+      owedTable: w.owedTable ?? null,
+      needsModel: null,
+      turnMessages: null,
+    },
+  };
 }
 
 /** The candidates at `t`, as the inbox would have listed and scored them, with everything folded up to `t`. */
@@ -121,6 +204,11 @@ export function seenAt(w: World, t: number, usage = usageAt(w.stays, t)): Seen[]
   for (const c of w.convs.values()) {
     // Folded up to `t` only: a conversation with no messages yet is not in the inbox.
     if (c.lastMessageAt === null) continue;
+    if (c.mail) {
+      const m = mailSeen(w, c, c.mail, t, usage);
+      if (m) out.push(m);
+      continue;
+    }
     const u = usage.get(c.usageKey) ?? null;
     const there = u ? Math.max(u.at, u.lastVisit ?? 0) : null;
     const read = Math.max(c.lastOwn ?? 0, there ?? 0, w.logStart);
@@ -193,7 +281,7 @@ export function* flagged(db: Database, slice = 10_000): Generator<undefined, Set
  * The candidates and the log, ready to fold. `mutedOf` says where a conversation's mute comes from now (triage's
  * effective level), or null. Stays from `since` on. `flaggedIds` (from `flagged`) saves reading every message here.
  */
-export function loadWorld(db: Database, mutedOf: (id: string, shape: string) => string | null, since = 0, flaggedIds?: Set<string>): World {
+export function loadWorld(db: Database, mutedOf: (id: string, shape: string) => string | null, since = 0, flaggedIds?: Set<string>, o: WorldOptions = {}): World {
   const self = new Set((db.query(`SELECT * FROM ${SELF_SQL}`).all() as Row[]).map((r) => Object.values(r)[0] as string));
   const selfPerson = (db.query('SELECT id FROM person WHERE is_self = 1').get() as Row | null)?.id ?? null;
   const peerOf = new Map<string, string>();
@@ -232,15 +320,26 @@ export function loadWorld(db: Database, mutedOf: (id: string, shape: string) => 
       turnFacts: [],
     });
   }
+  const mail = o.mail && hasMail(db) ? loadMail(db, convs, o.bonds) : null;
   const stays: Stay[] = [];
   for (const v of db
-    .query(`SELECT id, start_at, end_at, active, source, rank, sent, view, conversation_id, person_id FROM visit WHERE view IN ('conversation', 'person') AND start_at >= ? ORDER BY start_at`)
-    .all(since) as Row[]) {
+    .query(
+      `SELECT id, start_at, end_at, active, source, rank, ${hasColumn(db, 'visit', 'shadow_rank') ? 'shadow_rank' : 'NULL AS shadow_rank'}, sent, view, conversation_id, person_id FROM visit
+       WHERE (view IN ('conversation', 'person') OR (? AND view = 'mail' AND conversation_id IS NOT NULL)) AND start_at >= ? ORDER BY start_at`,
+    )
+    .all(mail ? 1 : 0, since) as Row[]) {
+    // A mail thread's: from the Mail page or an inbox row (a `conversation` stay with its id, before 2026-11-20).
+    if (v.conversation_id?.startsWith('mth_')) {
+      if (!mail) continue;
+      stays.push({ id: v.id, start: v.start_at, end: v.end_at, active: v.active, source: v.source, rank: v.rank, shadowRank: v.shadow_rank, sent: v.sent, key: `mail:${v.conversation_id}`, targets: [v.conversation_id] });
+      continue;
+    }
+    if (v.view === 'mail') continue;
     const c = v.conversation_id ? convs.get(v.conversation_id) : null;
     const person = v.view === 'person' ? v.person_id : c?.shape === 'direct' ? peerOf.get(c.id) : null;
     const key = person ? `person:${person}` : `conversation:${v.conversation_id}`;
     const targets = v.view === 'person' ? (dmsOf.get(v.person_id) ?? []) : v.conversation_id ? [v.conversation_id] : [];
-    stays.push({ id: v.id, start: v.start_at, end: v.end_at, active: v.active, source: v.source, rank: v.rank, sent: v.sent, key, targets });
+    stays.push({ id: v.id, start: v.start_at, end: v.end_at, active: v.active, source: v.source, rank: v.rank, shadowRank: v.shadow_rank, sent: v.sent, key, targets });
   }
   const votes = new Map<string, { at: number; dir: number }[]>();
   for (const r of db
@@ -249,7 +348,70 @@ export function loadWorld(db: Database, mutedOf: (id: string, shape: string) => 
     if (!convs.has(r.cid)) continue;
     votes.set(r.cid, [...(votes.get(r.cid) ?? []), { at: r.at, dir: voteDirection(r.decision, r.feedback) }]);
   }
-  return { convs, stays, logStart: stays[0]?.start ?? Infinity, tallies: new Map(), self, selfPerson, votes };
+  return { convs, stays, logStart: stays[0]?.start ?? Infinity, tallies: new Map(), self, selfPerson, votes, ...(mail ?? {}) };
+}
+
+/** What loadWorld can be asked for besides chats. */
+interface WorldOptions {
+  /** Mail threads from a person as candidates too. */
+  mail?: boolean;
+  /** The people graph's closeness by identity (closeness.ts `byIdentity`), for mail's `mailBond`. */
+  bonds?: Record<string, number[]> | null;
+}
+
+const hasMail = (db: Database) => !!db.query(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'mail_triage'`).get();
+const hasColumn = (db: Database, table: string, col: string) => (db.query(`SELECT 1 FROM pragma_table_info(?) WHERE name = ?`).get(table, col) as Row | null) !== null;
+
+/**
+ * Mail threads the one-list inbox may have listed (mail/attention.ts): from a person, in Inbox, not muted, on an
+ * account not hidden, and, personal only by rule 11, rated by mail triage now. Their people and closeness.
+ */
+function loadMail(db: Database, convs: Map<string, Conv>, bonds?: Record<string, number[]> | null): Pick<World, 'mailTallies' | 'personOf' | 'bonds'> {
+  const lc = (x: string | null) => (x ?? '').trim().toLowerCase();
+  for (const r of db
+    .query(
+      `SELECT t.id, t.participants, t.flagged, a.kind, COALESCE(f.unknown, 0) AS unknown, a.address,
+              (SELECT COALESCE(mt.feedback, mt.level, mt.decision) FROM mail_triage mt JOIN mail_message mm ON mm.id = mt.message_id WHERE mm.thread_id = t.id ORDER BY mm.received_at DESC, mm.id DESC LIMIT 1) AS rated
+       FROM mail_thread t JOIN mail_account a ON a.id = t.account_id LEFT JOIN mail_feature f ON f.thread_id = t.id
+       WHERE t.class = 'personal' AND t.muted = 0 AND a.hidden = 0 AND EXISTS (SELECT 1 FROM json_each(t.roles) WHERE value = 'inbox')`,
+    )
+    .all() as Row[]) {
+    if (r.unknown && !['push', 'quiet', 'digest'].includes(r.rated)) continue;
+    const selfAddr = new Set([lc(r.address)]);
+    let parts: { e?: string }[] = [];
+    try {
+      parts = JSON.parse(r.participants);
+    } catch {}
+    const others = parts.filter((p) => p.e && !selfAddr.has(lc(p.e))).length;
+    convs.set(r.id, {
+      id: r.id,
+      shape: others <= 1 ? 'direct' : 'group',
+      members: others <= 1 ? 2 : others + 1,
+      listed: false,
+      usageKey: `mail:${r.id}`,
+      muted: null,
+      state: freshState(),
+      lastMessageAt: null,
+      incoming: [],
+      lastOwn: null,
+      turnFacts: [],
+      mail: { account: r.kind, unknown: !!r.unknown, flagged: !!r.flagged, mine: new Set(), addressed: null, from: null },
+    });
+  }
+  const personOf = new Map<string, string>();
+  for (const r of db.query(`SELECT native_id, person_id FROM identity WHERE network = 'email' AND person_id IS NOT NULL`).all() as Row[]) personOf.set(lc(r.native_id), r.person_id);
+  const out = new Map<string, number[]>();
+  if (bonds) {
+    const ids = Object.keys(bonds);
+    const q = db.query(`SELECT id, person_id FROM identity WHERE person_id IS NOT NULL AND id IN (SELECT value FROM json_each(?))`);
+    for (let i = 0; i < ids.length; i += 5000)
+      for (const r of q.all(JSON.stringify(ids.slice(i, i + 5000))) as Row[]) {
+        const months = out.get(r.person_id);
+        if (months) months.push(...bonds[r.id]);
+        else out.set(r.person_id, [...bonds[r.id]]);
+      }
+  }
+  return { mailTallies: new Map(), personOf, bonds: out };
 }
 
 const FOLD = `
@@ -261,6 +423,12 @@ const FOLD = `
   FROM message m INDEXED BY message_ts LEFT JOIN identity i ON i.id = m.author_id LEFT JOIN message r ON r.id = m.reply_to_id LEFT JOIN triage t ON t.message_id = m.id
   WHERE m.conversation_id IN (SELECT value FROM json_each(?)) ORDER BY m.ts, m.rowid`;
 
+const MAIL_FOLD = `
+  SELECT m.id, m.thread_id AS cid, m.received_at AS ts, lower(trim(m.from_addr)) AS author, m.addressed, m.in_reply_to, m.message_id_hdr, m.class,
+         mt.decision, mt.level, mt.score, mt.delivered, mt.feedback, mt.facts LIKE '%"question":true%' AS question
+  FROM mail_message m LEFT JOIN mail_triage mt ON mt.message_id = m.id
+  WHERE m.thread_id IN (SELECT value FROM json_each(?)) AND m.draft = 0 ORDER BY m.received_at, m.id`;
+
 /**
  * Fold every candidate's messages in time order, stopping at each moment in `at` (ascending) to call `visit` with
  * the world as it was then. `step` does about `maxMs` of it and says whether it is done, so the hub can run it
@@ -270,6 +438,10 @@ const FOLD = `
  */
 export class Rebuild {
   private rows: Iterator<Row>;
+  /** Mail's messages, merged in by time; the next of each stream waiting. */
+  private mailRows: Iterator<Row> | null = null;
+  private chatHead: Row | null | undefined = undefined;
+  private mailHead: Row | null | undefined = undefined;
   private next = 0;
   private done = false;
 
@@ -279,7 +451,72 @@ export class Rebuild {
     private at: number[],
     private visit: (t: number, w: World) => void,
   ) {
-    this.rows = (db.query(FOLD).iterate(JSON.stringify([...w.convs.keys()])) as IterableIterator<Row>)[Symbol.iterator]();
+    const chats = [...w.convs.values()].filter((c) => !c.mail).map((c) => c.id);
+    const mails = [...w.convs.values()].filter((c) => c.mail).map((c) => c.id);
+    this.rows = (db.query(FOLD).iterate(JSON.stringify(chats)) as IterableIterator<Row>)[Symbol.iterator]();
+    if (mails.length) this.mailRows = (db.query(MAIL_FOLD).iterate(JSON.stringify(mails)) as IterableIterator<Row>)[Symbol.iterator]();
+  }
+
+  /** The next message of either stream, the earlier first; null when both are done. */
+  private take(): { r: Row; mail: boolean } | null {
+    if (this.chatHead === undefined) this.chatHead = this.rows.next().value ?? null;
+    if (this.mailHead === undefined) this.mailHead = this.mailRows?.next().value ?? null;
+    const c = this.chatHead;
+    const m = this.mailHead;
+    if (!c && !m) return null;
+    if (c && (!m || c.ts <= m.ts)) {
+      this.chatHead = undefined;
+      return { r: c, mail: false };
+    }
+    this.mailHead = undefined;
+    return { r: m!, mail: true };
+  }
+
+  /** One mail message, as MailAttention.fold folds it. */
+  private foldMail(r: Row) {
+    const w = this.w;
+    const c = w.convs.get(r.cid)!;
+    const m = c.mail!;
+    const me = r.addressed === 'self';
+    if (me && r.message_id_hdr) m.mine.add(r.message_id_hdr);
+    const person = r.author ? (w.personOf?.get(r.author) ?? null) : null;
+    const key = person ?? (r.author || null);
+    foldMessage(
+      c.state,
+      (k) => {
+        const tallies = (w.mailTallies ??= new Map());
+        let x = tallies.get(k);
+        if (!x) tallies.set(k, (x = new Map()));
+        let t = x.get(c.id);
+        if (!t) x.set(c.id, (t = emptyTally()));
+        return t;
+      },
+      {
+        id: r.id,
+        ts: r.ts,
+        author: r.author || null,
+        authorKey: key,
+        mine: me,
+        bot: r.class === 'bulk',
+        mentionsMe: r.addressed === 'to',
+        repliesToMe: !!r.in_reply_to && m.mine.has(r.in_reply_to),
+        question: !!r.question,
+        pushed: !!r.delivered,
+        ignore: false,
+      },
+      { shape: c.shape, members: c.members },
+    );
+    c.lastMessageAt = Math.max(c.lastMessageAt ?? 0, r.ts);
+    if (me) {
+      c.lastOwn = Math.max(c.lastOwn ?? 0, r.ts);
+      return;
+    }
+    m.addressed = r.addressed === 'to' || r.addressed === 'cc' ? r.addressed : 'hidden';
+    m.from = r.author || null;
+    if (r.ts >= w.logStart) {
+      const level = r.feedback ?? r.level ?? r.decision;
+      c.incoming.push({ ts: r.ts, mention: r.addressed === 'to', pushed: !!r.delivered, level: level && level !== 'silent' ? level : null, score: r.delivered ? (r.score ?? null) : null, vote: null, votedAt: null });
+    }
   }
 
   step(maxMs = 30): boolean {
@@ -288,14 +525,18 @@ export class Rebuild {
     const mine = (id: string | null, person: string | null) => (!!id && w.self.has(id)) || (!!person && person === w.selfPerson);
     let n = 0;
     while (!this.done && (++n % 256 || performance.now() - start < maxMs)) {
-      const it = this.rows.next();
-      if (it.done) {
+      const it = this.take();
+      if (!it) {
         while (this.next < this.at.length) this.visit(this.at[this.next++], w);
         this.done = true;
         break;
       }
-      const r = it.value;
+      const r = it.r;
       while (this.next < this.at.length && this.at[this.next] < r.ts) this.visit(this.at[this.next++], w);
+      if (it.mail) {
+        this.foldMail(r);
+        continue;
+      }
       const c = w.convs.get(r.cid)!;
       const me = mine(r.author_id, r.person_id);
       const ignore = !!r.deleted || r.kind === 'system';
@@ -352,6 +593,7 @@ export class Rebuild {
   /** Stop early: the query is let go. */
   close() {
     this.rows.return?.();
+    this.mailRows?.return?.();
     this.done = true;
   }
 
@@ -413,7 +655,8 @@ export function momentOf(w: World, stay: Stay, t: number, seen = seenAt(w, t), h
     at: t,
     rows: sample(seen, opened, t).map(({ seen: s, weight }) => {
       const chosen = stay.targets.includes(s.conv.id);
-      return { x: rankFeatures(s.input, scored.get(s.conv.id)!), weight, open: opened.get(s.conv.id) ?? null, chosen, sent: chosen ? stay.sent > 0 : undefined, pos: pos.get(s.conv.id) };
+      const sc = scored.get(s.conv.id)!;
+      return { x: s.mail ? mailRankFeatures(s.input, sc, s.mail) : rankFeatures(s.input, sc), weight, mail: !!s.mail, open: opened.get(s.conv.id) ?? null, chosen, sent: chosen ? stay.sent > 0 : undefined, pos: pos.get(s.conv.id) };
     }),
   };
 }
