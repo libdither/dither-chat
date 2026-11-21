@@ -12,15 +12,17 @@
  * **The score**: each listed thread's messages fold with attention.ts's `foldMessage` (you and one other is `direct`,
  * else a `group` of everyone on it; you in To is a mention; a reply to one of yours replies to you), and
  * `scoreConversation` scores it. How you answer the author is their mail and chat tallies summed. The views go out as
- * `AttentionView`s with `kind: 'mail'` in the same `attention` events as the chats', through `Attention.sources`. Until
- * the learned order is trained with mail (slice 10), a mail row keeps its formula points.
+ * `AttentionView`s with `kind: 'mail'` in the same `attention` events as the chats', through `Attention.sources`.
+ * The learned order with mail (slice 10, ranker.ts) runs in shadow: each mail row gets its score as the view's `shadow`
+ * and keeps its formula points, until DITHER_INBOX_MAIL=model sorts by it (docs/inbox.md, "Mail in the learned order").
  *
  * Folding is from the start each time a thread changes: threads are short, and it keeps nothing to go stale.
  */
 import type * as P from '@dither-chat/protocol';
-import { decayed } from '@dither-chat/protocol';
-import { ALERT_PIN, emptyTally, foldMessage, freshState, PIN_FOR, scoreConversation, sumTallies, type Attention, type AttentionSource, type ConvState, type FoldMessage, type Place, type ScoreInput, type Scored, type Tally } from '../attention.ts';
+import { decayed, EXPLORE_REASON } from '@dither-chat/protocol';
+import { ALERT_PIN, sameShadow, emptyTally, foldMessage, freshState, PIN_FOR, scoreConversation, sumTallies, type Attention, type AttentionSource, type ConvState, type FoldMessage, type Place, type ScoreInput, type Scored, type Tally } from '../attention.ts';
 import type { Store } from '../store.ts';
+import type { MailSide } from '../rank.ts';
 import { foldMark } from '../replymarks.ts';
 import { mailClassifier } from './classify.ts';
 import type { MailHub } from './index.ts';
@@ -346,18 +348,36 @@ class MailAttention implements AttentionSource {
     return this.hub.store.one<{ a: string }>(`SELECT from_addr AS a FROM mail_message WHERE thread_id = ? AND addressed != 'self' AND from_addr IS NOT NULL ORDER BY received_at DESC, id DESC LIMIT 1`, threadId)?.a ?? null;
   }
 
+  /** What the learned order reads of a thread besides the formula's input (rank.ts MailFacts): metadata only. */
+  mailSide(t: Row): MailSide {
+    const last = this.hub.store.one<{ addressed: string; a: string | null }>(
+      `SELECT addressed, from_addr AS a FROM mail_message WHERE thread_id = ? AND addressed != 'self' AND draft = 0 ORDER BY received_at DESC, id DESC LIMIT 1`,
+      t.id,
+    );
+    const unknown = !!this.hub.store.one<{ u: number }>('SELECT unknown AS u FROM mail_feature WHERE thread_id = ?', t.id)?.u;
+    const addressed = last ? (last.addressed === 'to' || last.addressed === 'cc' ? last.addressed : 'hidden') : null;
+    return { addressed, unknown, flagged: !!t.flagged, account: this.hub.store.account(t.account_id)?.kind ?? 'imap', person: last?.a ? this.who(lc(last.a)).personId : null };
+  }
+
   private compute(threadId: string, now: number): P.AttentionView | null {
     const x = this.input(threadId, now);
     if (!x) return null;
     const s = scoreConversation(x);
+    // The learned order: in shadow, its score beside the formula's; once it sorts (DITHER_INBOX_MAIL=model), the score.
+    const judge = this.attention?.judge;
+    const side = judge?.rank || judge?.shadow ? this.mailSide(x.thread) : null;
+    const r = side ? (judge?.rank?.(threadId, x, s, side) ?? null) : null;
+    const shadow = side ? (judge?.shadow?.(threadId, x, s, side) ?? null) : null;
+    const reasons = r?.reason ? (r.reason === EXPLORE_REASON ? [r.reason, ...s.reasons.slice(0, 3)] : [...s.reasons.slice(0, 3), r.reason]) : s.reasons;
     // An alert you have not seen comes before everything (attention.ts).
     // Mail's chance is the owed table's alone: its turns are not in the chat model (needsreply.ts).
     return {
       id: threadId,
       kind: 'mail',
-      score: s.score + (x.alerted ? ALERT_PIN : 0),
+      score: (r ? r.score : s.score) + (x.alerted ? ALERT_PIN : 0),
+      ...(shadow !== null ? { shadow: shadow + (x.alerted ? ALERT_PIN : 0) } : {}),
       needs: s.needs,
-      reasons: s.reasons,
+      reasons,
       owedSince: s.owedSince,
       ...(s.owed?.held ? { replyMark: 'needs' as const } : {}),
       ...(s.needsReply !== null ? { needsReply: s.needsReply } : {}),
@@ -418,7 +438,7 @@ class MailAttention implements AttentionSource {
         }
         continue;
       }
-      if (prev && Math.abs(prev.score - v.score) < 0.5 && prev.needs === v.needs && prev.owedSince === v.owedSince && prev.replyMark === v.replyMark && prev.needsReply === v.needsReply && prev.reasons.join('\n') === v.reasons.join('\n')) continue;
+      if (prev && Math.abs(prev.score - v.score) < 0.5 && sameShadow(prev.shadow, v.shadow) && prev.needs === v.needs && prev.owedSince === v.owedSince && prev.replyMark === v.replyMark && prev.needsReply === v.needsReply && prev.reasons.join('\n') === v.reasons.join('\n')) continue;
       this.views.set(id, v);
       items.push(v);
     }
@@ -473,7 +493,18 @@ class MailAttention implements AttentionSource {
       listed: true,
       features: { received: f.totalReceived, sent: f.totalSent, lastReceived: f.lastReceived, lastSent: f.lastSent, owedKind: f.turn?.kind ?? null, shape: x.shape, members: x.members, opened: x.thread.opened_at ?? null },
       visited: x.usage ? decayed(x.usage.visitScore, x.usage.at, now) : 0,
+      learned: this.learned(id, x, s),
     };
+  }
+
+  /** What the learned order says of it now (ranker.ts `explain`), with mail's features. */
+  private learned(id: string, x: ScoreInput & { thread: Row }, s: Scored): unknown {
+    const judge = this.attention?.judge;
+    if (!judge) return null;
+    const side = this.mailSide(x.thread);
+    judge.rank?.(id, x, s, side);
+    judge.shadow?.(id, x, s, side);
+    return { ...((judge.explain?.(id) as object | null) ?? {}), mail: side };
   }
 }
 

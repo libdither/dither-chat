@@ -571,7 +571,48 @@ prior's two weights, 30 for the rest), so a few days of opens move the order a l
 
 `DITHER_INBOX_RANK`: `model` (the default) sorts by it; `shadow` works it out and shows it in
 `GET /api/attention/:id` without sorting by it; `off` does neither. `DITHER_INBOX_EXPLORE`: `1` (the default) sorts
-by a sample of it ([Exploring](#exploring)); `0` sorts by its mean, exactly as before exploring.
+by a sample of it ([Exploring](#exploring)); `0` sorts by its mean, exactly as before exploring. `DITHER_INBOX_MAIL`:
+the order with mail ([Mail in the learned order](#mail-in-the-learned-order)).
+
+### Mail in the learned order
+
+Mail threads from a person are rows of the same inbox (mail.md). One model for both: a second model, **the order with
+mail**, learns from the opens of chats and mail threads alike, and when it is turned on chats and mail compete in one
+ranking. Until then it runs in shadow.
+
+- **Mail opens** are in the visit log as `mail` stays on the thread's id (`mth_…`), from the Mail page or an inbox row,
+  with the row's position when opened from the inbox, as a chat's (`web/src/activity.ts`). Before 2026-11-20 a mail
+  row's open was a `conversation` stay with the thread's id, and the Mail page's had none; the rebuild reads both.
+- **The rebuild** (`rankhistory.ts`, `loadWorld`'s `mail`) adds every thread the one-list inbox may have listed: from a
+  person, in Inbox, not muted, on an account not hidden, and, if personal only because the sender looks human, rated
+  by mail triage. Their messages fold in the same time order as the chats' (a second query, merged by time), as
+  `mail/attention.ts` folds them; each moment lists a thread by `MAIL_INBOX`'s rules as of then. What is not replayed
+  is as it is now: the account, flagged, the class, roles and mutes.
+- **The features** are the chats' where they mean the same thing (the formula, unread, To you as a mention, the reply
+  you owe, a conversation going on, you were here, relationship, direct or group), and mail's own (`MAIL_FEATURES` in
+  `rank.ts`), 0 on every chat's row: `mail`; how the latest message from someone else reached you, `mailTo` or `mailCc`
+  (neither: Bcc or a list); `mailUnknown`, a person only because they look human; `mailFlagged`; the account,
+  `mailGoogle` or `mailProton` (IMAP neither); `mailKnown`, the sender is a person the hub knows; and `mailBond`, how
+  close you are to them, from the people graph's closeness (people-graph.md "Who matters"): their months before this
+  one, each halved every three months back, as log(1 + x) / 5. All start at 0 and are pulled to it as the rest are.
+- **Fitting**: each refit rebuilds once and fits both: the first model on the moments of chats alone (unchanged by
+  mail), the order with mail on every moment. It is saved apart (`meta` `inbox_rank_mail`) with its version
+  (`MAIL_MODEL_VERSION`): a model of another version is the prior, and fitted again at the next check. So a refit
+  does about twice the fitting it did, in the same slices, and asks the people graph for its closeness (worked out on
+  its own thread, kept for half an hour).
+- **In shadow** (`DITHER_INBOX_MAIL=shadow`, the default) every row, chat or mail, carries the order with mail's score
+  as `AttentionView.shadow` (its mean, in the formula's points, with an alert's pin): chats keep the first model's
+  score, mail rows the formula's. Muted places have none. A device opening an inbox row records where the row would
+  have stood had the inbox been sorted by `shadow` (`shadowRank`, `web/src/visits.ts` `shadowRankOf`), beside the
+  `rank` it was at.
+- **Comparing**: the scorecard's "Mail in the inbox" chart, day by day: the mean of 1 ÷ row as shown and in the
+  shadow order, for every row and for mail rows alone, over the same opens (scorecard.md). Rows were seen where they
+  were shown, so the order shown has the better of it there; the shadow order closing the gap says more than its
+  level. The replay's `--mail` compares them without that lean ([The replay](#the-replay)).
+- `DITHER_INBOX_MAIL=model` sorts chats and mail by the order with mail (with exploring, as the first model); a mail
+  row moved far from its formula says "Higher: you often open mail like this …". `off` neither fits nor scores it.
+  `GET /api/attention/model` shows both models (`withMail`); `GET /api/attention/:id` the row's `learned.withMail`,
+  and for a mail thread what the order read of it (`learned.mail`).
 
 ### The floor
 
@@ -713,8 +754,13 @@ left out; a person's page counts as the best of their DMs. The earlier days are 
 are held out (two until 2026-11-10). It writes counts and rates only.
 
 ```
-bun scripts/inbox-replay.ts --live .data/hub.sqlite --out <scratch dir> [--holdout 3] [--grid] [--model-grid] [--calibrate] [--curve] [--triage] [--floor] [--explore]
+bun scripts/inbox-replay.ts --live .data/hub.sqlite --out <scratch dir> [--holdout 3] [--grid] [--model-grid] [--calibrate] [--curve] [--triage] [--floor] [--explore] [--mail]
 ```
+
+`--mail` adds mail threads to the world ([Mail in the learned order](#mail-in-the-learned-order)): `learned` is then
+the order with mail, and `learned-now` the inbox while it runs in shadow (chats by the learned order fitted on chats
+alone, mail by the formula's points). The report's "Mail in the learned order" compares the two on mail opens and on
+chat opens, and lists mail's weights at the start of the last day.
 
 `--model-grid` replays the learned order with other settings, each against the shipped one on the same opens: the
 pull to the prior and the position correction, the horizon (from moments built with 6 hours, so a shorter one is

@@ -4,7 +4,7 @@ import { Categorizer, JevProvider, KeywordProvider, OllamaProvider, type Categor
 import { ActivityStore } from './activity.ts';
 import { ForYou } from './foryou.ts';
 import { Attention } from './attention.ts';
-import { exploreOn, InboxRanker, rankMode } from './ranker.ts';
+import { exploreOn, InboxRanker, mailRankMode, rankMode } from './ranker.ts';
 import { DemoManager, type ManagerLink } from './accounts-manager.ts';
 import { applyDemoOverlay, createDemoAccounts, DEMO_MAIL_ACCOUNT, demoFactory, seedDemoMail } from './demo.ts';
 import { demoMailImages } from './mail/demo-html.ts';
@@ -141,8 +141,17 @@ const scorecard = new Scorecard(store.db);
 if (demo) seedDemoScores(store.db, Date.now());
 const attention = new Attention(store, triage);
 // The inbox's learned order (ranker.ts, docs/inbox.md). DITHER_INBOX_RANK=shadow works it out without sorting by it; off.
-// DITHER_INBOX_EXPLORE=0 sorts by its mean instead of a Thompson sample.
-const ranker = new InboxRanker(store, triage, rankMode(process.env.DITHER_INBOX_RANK), join(dataDir, 'hub.sqlite'), Date.now, exploreOn(process.env.DITHER_INBOX_EXPLORE));
+// DITHER_INBOX_EXPLORE=0 sorts by its mean instead of a Thompson sample. DITHER_INBOX_MAIL: the order with mail is
+// worked out in shadow (the default), sorts chats and mail (`model`), or is left out (`off`).
+const ranker = new InboxRanker(
+  store,
+  triage,
+  rankMode(process.env.DITHER_INBOX_RANK),
+  join(dataDir, 'hub.sqlite'),
+  Date.now,
+  exploreOn(process.env.DITHER_INBOX_EXPLORE),
+  mailRankMode(process.env.DITHER_INBOX_MAIL),
+);
 attention.judge = ranker;
 // The learned order learns from rows weighed as the inbox weighs them now.
 ranker.owedTable = () => attention.owedTable;
@@ -589,6 +598,8 @@ setTimeout(() => {
 }, 10 * 60_000).unref();
 calendars.start();
 span('attention: first scoring', {}, () => attention.start((events) => server.broadcast(events)));
+// Mail's sender closeness (rank.ts `mailBond`) is the people graph's, worked out on its own thread (closeness.ts).
+ranker.bonds = () => server.closeness.get().then((r) => r.byIdentity);
 ranker.onFit = () => {
   void attention
     .rescoreAllSliced()
