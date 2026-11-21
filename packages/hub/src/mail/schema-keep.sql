@@ -47,3 +47,11 @@ CREATE INDEX IF NOT EXISTS mail_text_kept ON mail_text(message_id, cut, bytes);
 CREATE INDEX IF NOT EXISTS mail_body_bytes ON mail_body(message_id, bytes);
 -- An account's messages newest first, with their ids: the bodies' pass (keep.ts next) and the sums walk it alone.
 CREATE INDEX IF NOT EXISTS mail_message_keep ON mail_message(account_id, received_at, id);
+
+-- Messages read again for their To and Cc (keep.ts `nextRecipients`): their summaries came without them (Gmail on the
+-- web's list rows carry none) and the body fetched first kept none. Each is read again once, whatever it turns out
+-- to hold (a message sent only to Bcc has neither).
+CREATE TABLE IF NOT EXISTS mail_recipients_read (
+  message_id  TEXT PRIMARY KEY REFERENCES mail_message(id) ON DELETE CASCADE,
+  at          INTEGER NOT NULL
+) WITHOUT ROWID;

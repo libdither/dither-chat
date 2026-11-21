@@ -788,6 +788,11 @@ Gmail on the web gets it once its account has dither-accounts' slow lane (below)
   in the same budget of two calls a second that waits 10 s after any call a page waited for. Two at a time are on
   their way, one in the background slot and one waiting. A body already here whose text was cut at 16 KB (fetched
   before the account was kept) is cut again from itself, with no call.
+- **Recipients.** Gmail on the web's list rows carry no To or Cc; its `mail.get` answers do, and a message's body
+  fills them in (`MailStore.fillRecipients`), with who it was addressed to (`to`, `cc`, or neither). Without them every
+  message looks Bcc'd, every thread looks like you and one other, and what you owe by mail is wrong. Once every body is
+  here, messages kept without either (from before the hub kept them) are read again one at a time at P5, mail from a
+  person first, newest first, each once (`mail_recipients_read`).
 - **Never evicted.** A rule per account, not a `keep` value on each body (`MailStore.keptSql`): a kept account's bodies
   are left out of the 500 MB cache's eviction and of the bytes counted against it. Turning keeping off puts them back
   under the cap as they are, with nothing to rewrite.

@@ -639,9 +639,10 @@ export class MailStore {
         const { id, key } = this.identify(accountId, mailbox, s);
         const at = this.one<{ message_id: string }>('SELECT message_id FROM mail_location WHERE mailbox_id = ? AND native_id = ?', mailbox.id, s.id);
         if (at && at.message_id !== id) out.orphans.push(at.message_id);
-        const known = this.one('SELECT id, thread_id, thread_by, in_reply_to, refs, pending, seen, email_id FROM mail_message WHERE id = ?', id);
+        const known = this.one('SELECT id, account_id, thread_id, thread_by, in_reply_to, refs, pending, seen, email_id, from_addr, to_json, cc_json FROM mail_message WHERE id = ?', id);
         if (known) {
           if (s.emailId && !known.email_id) this.run('UPDATE mail_message SET email_id = ? WHERE id = ?', s.emailId, id);
+          this.fillRecipients(known, s.to, s.cc);
           this.applyFlags(known, s.flags, s.labels);
           // The extractor gives threading headers on summaries now (§13): a provisional thread may be wrong.
           if ((s.inReplyTo || s.references?.length) && !known.in_reply_to && !json<string[]>(known.refs, []).length) {
@@ -1061,6 +1062,7 @@ export class MailStore {
         now,
         now,
       );
+      this.fillRecipients(m, msg.to, msg.cc);
       const hasFiles = (msg.attachments ?? []).some((a) => !a.inline) ? 1 : m.has_attachments;
       this.run('UPDATE mail_message SET preview = ?, has_attachments = ? WHERE id = ?', mailPreview(text) ?? m.preview, hasFiles, messageId);
       const bulk = msg.bulk ? JSON.stringify(msg.bulk) : null;
@@ -1077,6 +1079,19 @@ export class MailStore {
       }
       for (const t of touched) this.recompute(t);
     })();
+  }
+
+  /**
+   * To and Cc for a message stored without either: Gmail on the web's list rows carry no recipients, its mail.get
+   * answers do. Who it was addressed to follows (a message to you, not a Bcc), and the thread's recompute after it
+   * (participants, class, what you owe) sees them. Recipients already here are kept as they are.
+   */
+  private fillRecipients(m: Row, to: M.MailAddress[] | undefined, cc: M.MailAddress[] | undefined) {
+    if (!to?.length && !cc?.length) return;
+    if (json<unknown[]>(m.to_json, []).length || json<unknown[]>(m.cc_json, []).length) return;
+    const addressed = addressedOf(this.selfAddresses(m.account_id), m.from_addr, to ?? [], cc ?? []);
+    this.run('UPDATE mail_message SET to_json = ?, cc_json = ?, addressed = ? WHERE id = ?', JSON.stringify(to ?? []), JSON.stringify(cc ?? []), addressed, m.id);
+    this.dirty.threads.add(m.thread_id);
   }
 
   touchBody(messageId: string) {
