@@ -9,7 +9,6 @@
  */
 import { computed, signal } from '@preact/signals';
 import type { JSX } from 'preact';
-import { useEffect } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
 import { type ActiveCall, activeCall, callControls, callName, callStatus, featuredSpeaker } from '../call.ts';
 import { barKinds, barShows, idleFaces } from '../callbar.ts';
@@ -114,15 +113,9 @@ export function CallBar({ call, now }: { call: ActiveCall; now: number }) {
   );
 }
 
-/** While the bar's call is expanded, back and Escape fold it. */
+/** While the bar's call is expanded, back and Escape fold it: it is a layer, which Escape closes (escape.ts). */
 export function BarLayer() {
-  const fold = () => (callOpen.value = false);
-  useLayer(fold);
-  useEffect(() => {
-    const k = (e: KeyboardEvent) => e.key === 'Escape' && fold();
-    window.addEventListener('keydown', k);
-    return () => window.removeEventListener('keydown', k);
-  }, []);
+  useLayer(() => (callOpen.value = false));
   return null;
 }
 

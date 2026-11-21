@@ -192,13 +192,11 @@ try {
   await p.until(`document.querySelectorAll('.cm').length === 2`, 3000).catch(() => {});
   const copies = await p.eval<string[]>(`[...[...document.querySelectorAll('.cm.cm-sub')].at(-1)?.querySelectorAll('.cm-item') ?? []].map((b) => b.textContent.trim())`);
   check(copies.includes('Copy User ID') && copies.includes('Copy Profile Link'), "and Discord's own menu opens beside it, with the profile link", copies);
-  // Close them all.
-  for (let i = 0; i < 2; i++) {
+  // Close them all, one Escape a menu: one more would leave the page (docs/desktop.md "Escape and back").
+  for (let i = 0; i < 3 && (await p.eval<boolean>(`!!document.querySelector('.cm')`)); i++) {
     await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
     await Bun.sleep(150);
   }
-  await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
-  await Bun.sleep(150);
 
   // A mutual friend's name opens theirs.
   await click('.pf-person');

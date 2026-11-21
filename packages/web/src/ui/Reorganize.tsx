@@ -544,7 +544,7 @@ function Organize({ onClose }: { onClose: () => void }) {
               }}
             >
               <Icon name="folder" size={14} />
-              <input ref={draftInput} class="input" aria-label="Folder name" value={draft.name} onInput={(e) => setDraft({ ...draft, name: (e.target as HTMLInputElement).value })} onKeyDown={(e) => e.key === 'Escape' && (e.stopPropagation(), setDraft(null))} />
+              <input ref={draftInput} class="input" aria-label="Folder name" value={draft.name} onInput={(e) => setDraft({ ...draft, name: (e.target as HTMLInputElement).value })} onKeyDown={(e) => e.key === 'Escape' && (e.preventDefault(), e.stopPropagation(), setDraft(null))} />
               <span class="org-count">{movable(keys).length} {movable(keys).length === 1 ? 'place' : 'places'}</span>
               <button class="btn primary small" type="submit" disabled={!movable(keys).length}>
                 Create folder

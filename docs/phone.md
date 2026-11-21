@@ -157,7 +157,7 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Toasts, open the conversation from one | Bottom right | Covered the composer | At the top; tap to open, flick to dismiss |
 | Unread and mention badges | Rail | None on the tabs | Rail, and the Home tab; You has a dot when an account needs you |
 | Collapse sections and categories | Click | Tap, under 44px | Tap, 40-44px |
-| Escape closes things | Keyboard | Nothing | Back button, swipes, tap outside |
+| Escape closes things | Keyboard; with nothing open, it goes back from the page (desktop.md "Escape and back") | Nothing | Back button, swipes, tap outside |
 
 Also fixed on the way, on every screen size: a message held for the digest had an empty line under its
 author (the pill borrowed the digest card's padding), and the settings list on the left did nothing.

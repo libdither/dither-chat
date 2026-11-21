@@ -2,9 +2,10 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { effect, untracked } from '@preact/signals';
 import { chatPersonOf, convsUnder, firstChannel, rootCommunity, totalUnread } from '../model.ts';
-import { adoptEntry, api, connected, db, go, loaded, prefs, previousRoute, readProgress, refresh, rev, route, setListUnder, setRouteFill, type Route } from '../state.ts';
+import { adoptEntry, api, back, connected, db, go, loaded, prefs, previousRoute, readProgress, refresh, rev, route, setListUnder, setRouteFill, type Route } from '../state.ts';
+import { installEscape } from '../escape.ts';
 import { isPage, isTabRoot, listKey, listToWrite, ownList, restAfter, wayBack, type Places } from '../pages.ts';
-import { dropLayer, phone, pushLayer } from '../phone.ts';
+import { dropLayer, layerCount, phone, pushLayer } from '../phone.ts';
 import { AccountPane, AccountsSidebar, AddAccount, addingAccount } from './Accounts.tsx';
 import { ConversationDetails, PersonDetails } from './Details.tsx';
 import { DirectoryPane } from './Directory.tsx';
@@ -255,6 +256,16 @@ effect(() => {
   untracked(() => go({ view: 'feed', source: acc ? `${acc}:activity` : 'activity' }, true));
 });
 
+/**
+ * Where Escape leaves for, with no layer open (escape.ts, docs/desktop.md "Escape and back"): a page goes where its
+ * back button goes; search and Settings, which are no list's page, back where you came from.
+ */
+const escapeApp = {
+  layers: layerCount,
+  canLeave: () => isPage(route.value) || route.value.view === 'search' || route.value.view === 'settings',
+  leave: () => (isPage(route.value) ? leave(route.value) : back({ view: 'inbox' })),
+};
+
 /** Back from page `r`, by a swipe or its back button: to its list, or off the page it was opened over (pages.ts). */
 function leave(r: Route) {
   const way = wayBack(r, previousRoute(), places);
@@ -333,6 +344,7 @@ export function App() {
   useEffect(() => {
     api<{ pending: number }>('/api/read-all').then((p) => (readProgress.value = { pending: p.pending, failed: 0 })).catch(() => {});
   }, []);
+  useEffect(() => installEscape(escapeApp), []);
   // The entry the app opened on takes go()'s shape once there is data to say where its page lives (state.ts).
   useEffect(() => {
     if (loaded.value) adoptEntry();

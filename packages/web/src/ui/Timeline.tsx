@@ -1532,8 +1532,9 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
           e.preventDefault();
           countKey('composer: send (Enter)');
           submit();
-        } else if (e.key === 'Escape') {
-          if (edit || reply) countKey(`composer: cancel ${edit ? 'edit' : 'reply'} (Esc)`);
+        } else if (e.key === 'Escape' && (edit || reply)) {
+          e.preventDefault();
+          countKey(`composer: cancel ${edit ? 'edit' : 'reply'} (Esc)`);
           if (edit) cancelEdit();
           else clearReply();
         }

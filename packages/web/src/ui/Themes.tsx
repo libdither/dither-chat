@@ -6,7 +6,7 @@
  * pointer leaves the list; clicking keeps it.
  */
 import { effect, signal } from '@preact/signals';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { DEFAULT_DARK, DEFAULT_LIGHT, THEMES, themeById, tokens, type Theme } from '../themes.ts';
 import { prefs, setPrefs } from '../state.ts';
 import { phone } from '../phone.ts';
@@ -159,10 +159,10 @@ export function ThemeList({ onChosen, compact }: { onChosen?: () => void; compac
 export function ThemeButton({ class: cls }: { class?: string }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open || phone.value) return;
     const down = (e: MouseEvent) => box.current && !box.current.contains(e.target as Node) && setOpen(false);
-    const key = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    const key = (e: KeyboardEvent) => e.key === 'Escape' && (e.preventDefault(), setOpen(false));
     document.addEventListener('mousedown', down);
     window.addEventListener('keydown', key);
     return () => {

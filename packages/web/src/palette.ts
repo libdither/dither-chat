@@ -108,6 +108,7 @@ type KeyAct = 'back' | 'down' | 'up' | 'take' | 'toggle' | 'goOn' | 'unpick' | n
  */
 export function keyAct(k: { key: string; ctrl?: boolean; alt?: boolean; target: KeyTarget; empty: boolean; multi?: boolean; picked?: number }): KeyAct {
   switch (k.key) {
+    // escape: only says what the key does; PaletteFrame takes the key with preventDefault when it acts.
     case 'Escape':
       return 'back';
     case 'Backspace':

@@ -42,8 +42,8 @@ export function CameraView({ onShot, onFallback, onGallery, onClose }: { onShot:
     onClose();
   };
   useLayer(close);
-  useEffect(() => {
-    const k = (e: KeyboardEvent) => e.key === 'Escape' && close();
+  useLayoutEffect(() => {
+    const k = (e: KeyboardEvent) => e.key === 'Escape' && (e.preventDefault(), close());
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, []);
@@ -262,8 +262,8 @@ export function SendScreen(props: {
   const caption = useRef<HTMLTextAreaElement>(null);
   useLayer(onClose);
   useGrow(caption, text);
-  useEffect(() => {
-    const k = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+  useLayoutEffect(() => {
+    const k = (e: KeyboardEvent) => e.key === 'Escape' && (e.preventDefault(), onClose());
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, []);

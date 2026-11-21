@@ -6,7 +6,7 @@
 # A pull request that only changes docs (*.md, docs/) or the Android app skips the work (scripts/ci-changes.ts); a push
 # to main and a manual run always run everything. The same locally: bun run typecheck, bun run test, bun run web:build,
 # bun run check:boot, bun scripts/verify-login.ts, bun scripts/verify-clear.ts, bun run check:offline,
-# bun scripts/verify-offline.ts, bun scripts/verify-arrived.ts, bun scripts/verify-perf.ts --ci.
+# bun scripts/verify-offline.ts, bun scripts/verify-arrived.ts, bun scripts/verify-back.ts, bun scripts/verify-perf.ts --ci.
 name: CI
 
 on:
@@ -63,6 +63,9 @@ jobs:
       # imports (knip.json); docs/testing.md "Checks across the code".
       - run: bun run check:cycles
       - run: bun run knip
+      # Every Escape handler says it took the key, and verify-back.ts covers every page and layer (scripts/check-escape.ts,
+      # docs/desktop.md "Escape and back").
+      - run: bun run check:escape
 
   # The hub's suite is the longest; its files run on --parallel workers (scripts/test-all.ts). All but mail-load's,
   # which runs beside it in test-hub-mail.
@@ -153,6 +156,22 @@ jobs:
       # once the hub answers (docs/notifications.md, "A copy in the push").
       - run: bun scripts/verify-arrived.ts
 
+  # Back from every kind of page and layer, by Escape and the browser's back, on a computer and a phone, against a demo
+  # hub of its own (scripts/verify-back.ts, docs/desktop.md "Escape and back").
+  back:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - run: b=$(command -v chromium || command -v google-chrome) && (find -L "$(dirname "$(readlink -f "$b")")" -type f -print0 | xargs -0 cat > /dev/null 2>&1 &) || true
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun run web:build && bun scripts/verify-back.ts
+
   # Load and chat switching on a tenth-size world in the runner's browser, a warm-up and then one run: renders, DOM
   # nodes and bytes against scripts/perf-baseline-ci.json; its times go in the job's summary and are never judged
   # (docs/perf.md, "In CI").
@@ -181,7 +200,7 @@ jobs:
   # `changes` said the pull request does not need it. It runs on failure and cancellation too, so it never reads as
   # skipped (which GitHub would count as passed).
   check:
-    needs: [changes, typecheck, test-hub, test-hub-mail, test-packages, web, boot, perf]
+    needs: [changes, typecheck, test-hub, test-hub-mail, test-packages, web, boot, back, perf]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

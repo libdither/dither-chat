@@ -94,6 +94,7 @@ function OfflinePop({ from, onClose }: { from: HTMLElement; onClose: () => void 
     };
     const key = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      e.preventDefault();
       e.stopPropagation();
       close();
     };
