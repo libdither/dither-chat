@@ -368,17 +368,27 @@ export class Supervisor {
    * what it could not (`settle`, `resume`).
    */
   apply(accountId: string, events: P.AdapterEvent[]) {
-    this.watch?.heard(accountId);
+    this.tell((w) => w.heard(accountId));
     const waiting = this.held.get(accountId);
     if (waiting) {
-      this.watch?.queued(accountId, events);
       waiting.push(...events);
+      this.tell((w) => w.queued(accountId, events));
       return;
     }
     if (!this.inbox.length && events.length <= EVENTS_STEP) return this.applyNow(accountId, events);
-    this.watch?.queued(accountId, events);
     this.inbox.push({ account: accountId, events: [...events] });
+    this.tell((w) => w.queued(accountId, events));
     this.work();
+  }
+
+  /** Tells the watch (catchup.ts), which never stops an event: whatever it throws is logged and dropped. */
+  private tell(fn: (w: EventWatch) => void) {
+    if (!this.watch) return;
+    try {
+      fn(this.watch);
+    } catch (e) {
+      console.error('catch-up watch failed', e);
+    }
   }
 
   /** The queue's worker, in slices, if it is not running already. */
@@ -432,7 +442,7 @@ export class Supervisor {
           } catch (e) {
             console.error(`[${accountId}] ${events[i].t} failed:`, e);
             jobFailed('adapter event', e, { account: accountId, event: events[i].t });
-            this.watch?.lost(accountId, [events[i]], String((e as Error)?.message ?? e).slice(0, 200));
+            this.tell((w) => w.lost(accountId, [events[i]], String((e as Error)?.message ?? e).slice(0, 200)));
             continue;
           }
           if (r === 'busy') {
@@ -454,6 +464,7 @@ export class Supervisor {
     // After anything already held for it (none: a held account's events wait in `held` and never reach here).
     const held = events.slice(busyAt);
     this.held.set(accountId, [...(this.held.get(accountId) ?? []), ...held]);
+    this.tell((w) => w.queued(accountId, held));
     console.warn(`[${accountId}] ${why}: ${held.length} events wait to be applied again`);
     reportError({ source: 'job', where: 'adapter events', name: 'SQLiteError', message: `${why}: events wait to be applied again`, extra: { account: accountId, events: held.length } });
     this.heldTimer ??= setTimeout(() => this.retryHeld(), HELD_RETRY_MS);
@@ -674,7 +685,7 @@ export class Supervisor {
       return;
     }
     if (ev.t === 'gap') {
-      this.watch?.gap(accountId, ev);
+      this.tell((w) => w.gap(accountId, ev));
       return;
     }
     const acc = this.store.account(accountId);
@@ -687,10 +698,10 @@ export class Supervisor {
       if (isBusy(e)) return 'busy';
       console.error(`[${accountId}] ingest ${ev.t} failed:`, e);
       jobFailed('ingest', e, { account: accountId, event: ev.t });
-      this.watch?.lost(accountId, [ev], String((e as Error)?.message ?? e).slice(0, 200));
+      this.tell((w) => w.lost(accountId, [ev], String((e as Error)?.message ?? e).slice(0, 200)));
       return;
     }
-    if (ev.t === 'conversation') this.watch?.conversation(accountId, ev.conversation);
+    if (ev.t === 'conversation') this.tell((w) => w.conversation(accountId, ev.conversation));
     try {
       if (fresh.length) this.opts.onFresh(fresh);
     } catch (e) {

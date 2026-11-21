@@ -57,12 +57,12 @@ export const SECTIONS: [title: string, icon: string, id: string][] = [
 
 /** Settings → Catching up (CatchUp.tsx): a chunk of its own, loaded when Settings draws it, so the first load does not carry it. */
 function CatchUpLazy() {
-  const [m, setM] = useState<typeof import('./CatchUp.tsx') | null>(null);
+  const [Section, setSection] = useState<(typeof import('./CatchUp.tsx'))['CatchUpSettings'] | null>(null);
   useEffect(() => {
-    void import('./CatchUp.tsx').then(setM, () => {});
+    void import('./CatchUp.tsx').then((m) => setSection(() => m.CatchUpSettings), () => {});
   }, []);
-  return m ? (
-    <m.CatchUpSettings />
+  return Section ? (
+    <Section />
   ) : (
     <section class="set-block" id="set-catchup">
       <h3>Catching up</h3>

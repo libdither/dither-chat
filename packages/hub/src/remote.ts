@@ -423,11 +423,19 @@ export class RoutedSupervisor extends Supervisor implements ManagerLink {
         if (this.mail?.gap(account)) return;
         if (notices && !this.remote.has(account)) return;
         console.warn(`[${account}] the manager dropped ${dropped} events while the hub was away; restarting the adapter for a fresh snapshot (one of a kind at a time: ${this.gapRestarts.size} waiting), and catching up on its messages`);
-        this.watch?.dropped(account, dropped);
+        try {
+          this.watch?.dropped(account, dropped);
+        } catch (e) {
+          console.error('catch-up watch failed', e);
+        }
         this.gapRestarts.add(account, this.remote.get(account)?.kind ?? '');
       },
       onConnection: (up) => {
-        this.watch?.connection(up);
+        try {
+          this.watch?.connection(up);
+        } catch (e) {
+          console.error('catch-up watch failed', e);
+        }
         this.mail?.connection(up);
         this.notices?.connection(up);
         if (up) void this.approvals?.connected();

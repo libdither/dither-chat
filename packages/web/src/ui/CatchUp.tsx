@@ -118,7 +118,9 @@ function HoleRow({ h, reload }: { h: P.CatchUpHoleView; reload: () => void }) {
       <p class="job-line">
         {h.state === 'unfetchable'
           ? `${plural(h.chats, 'chat')} likely had messages then`
-          : `${h.chatsDone.toLocaleString()} of ${plural(h.chats, 'chat')} done · ${plural(h.found, 'missing message')} fetched in ${plural(h.pages, 'page')}`}
+          : !h.pages && !open(h)
+            ? `${plural(h.chats, 'chat')} planned · nothing fetched`
+            : `${h.chatsDone.toLocaleString()} of ${plural(h.chats, 'chat')} done · ${plural(h.found, 'missing message')} fetched in ${plural(h.pages, 'page')}`}
       </p>
       {h.current && (
         <div class="job-line job-now">
@@ -164,7 +166,7 @@ function HoleRow({ h, reload }: { h: P.CatchUpHoleView; reload: () => void }) {
               </button>
               <span class="catchup-chat-state">{CHAT_LABEL[t.state]}</span>
               <span class="catchup-chat-n">
-                {t.found > 0 ? `${plural(t.found, 'found', 'found')}` : t.state === 'done' ? 'whole' : `~${t.expected.toLocaleString()} expected`}
+                {t.found > 0 ? `${t.found.toLocaleString()} found` : t.state === 'done' ? 'whole' : t.expected < 0.1 ? 'quiet then' : `~${t.expected.toLocaleString()} expected`}
               </span>
               {t.error && <span class="catchup-chat-why job-error">{t.error}</span>}
               {!t.error && t.state === 'skipped' && <span class="catchup-chat-why">{t.why}</span>}

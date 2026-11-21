@@ -4,6 +4,10 @@
  * stretch against a fake network, a page at a time.
  */
 import { describe, expect, test } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { CatchUp, CLAIM_SETTLE_MS, OFFLINE_MIN_MS, PAGE, PLAN_DELAY_MS } from '../src/catchup.ts';
 import { BRISK, ReadingPace } from '../src/readingpace.ts';
@@ -33,8 +37,8 @@ type Net = Record<string, P.MessageFact[]>;
  * - cq: a channel you read, nearly silent.
  * - d2: a direct chat with a message every two days.
  */
-function world(o: { caps?: P.Capability[]; held?: string[] } = {}) {
-  const store = new Store(':memory:', mediaSigner('s'));
+function world(o: { caps?: P.Capability[]; held?: string[]; path?: string; inside?: Record<string, number>; quiet?: number } = {}) {
+  const store = new Store(o.path ?? ':memory:', mediaSigner('s'));
   let acc = store.createAccount({ id: 'acc_dc', network: 'discord', label: 'main', color: '#000', adapter: 'discord' });
   store.ingest(acc, { t: 'hello', network: 'discord', version: 'test', capabilities: o.caps ?? ['history'] });
   store.ingest(acc, { t: 'status', status: 'online', self: { nativeId: 'me', isSelf: true } });
@@ -57,6 +61,12 @@ function world(o: { caps?: P.Capability[]; held?: string[] } = {}) {
     cu: { before: HOUR, inside: 20 },
     cq: { before: 7 * DAY, inside: 0 },
   };
+  for (const [c, n] of Object.entries(o.inside ?? {})) pace[c].inside = n;
+  // Direct chats with a message every five days, all held.
+  for (let i = 0; i < (o.quiet ?? 0); i++) {
+    shapes[`q${i}`] = { nativeId: `q${i}`, shape: 'direct', participants: [PEER] };
+    pace[`q${i}`] = { before: 5 * DAY, inside: 0 };
+  }
   const net: Net = {};
   for (const [c, f] of Object.entries(shapes)) {
     store.ingest(acc, { t: 'conversation', conversation: f });
@@ -74,25 +84,51 @@ function world(o: { caps?: P.Capability[]; held?: string[] } = {}) {
   return { store, acc, net, hub };
 }
 
-/** A catch-up over the world's network: each history page as Discord's extractor answers it. */
-function catchUp(store: Store, acc: AccountRow, net: Net, o: { online?: () => boolean; start?: boolean } = {}) {
-  const clock = new FakeClock(NOW);
+/**
+ * A catch-up over the world's network: each history page as Discord's extractor answers it.
+ * - `late`: the page's messages are stored a moment after the answer, as a remote account's are (the manager sends
+ *   events on a short timer and the answer at once).
+ * - `oldest: false`: the answer does not say where the page ended (Telegram, WhatsApp, X, Meta, Google Messages).
+ * - `fail`: each page fails, as for a channel the account lost access to.
+ */
+function catchUp(
+  store: Store,
+  acc: AccountRow,
+  net: Net,
+  o: { online?: () => boolean; start?: boolean; at?: number; backlog?: () => number; late?: boolean; oldest?: boolean; fail?: string; pace?: typeof BRISK } = {},
+) {
+  const clock = new FakeClock(o.at ?? NOW);
   const asked: { conversation: string; beforeTs: number; cursor?: string }[] = [];
+  let answer = () => {};
   const c = new CatchUp(store, {
     clock,
     online: o.online ?? (() => true),
-    pace: new ReadingPace(store, BRISK, clock),
+    backlog: o.backlog,
+    pace: new ReadingPace(store, o.pace ?? BRISK, clock),
     command: async (_a, cmd) => {
       expect(cmd).toMatchObject({ t: 'history', limit: PAGE, pace: 'read' });
       asked.push({ conversation: cmd.conversation, beforeTs: cmd.beforeTs, cursor: cmd.cursor });
+      answer();
+      if (o.fail) throw new Error(o.fail);
       const below = net[cmd.conversation].filter((m) => m.ts < cmd.beforeTs);
       const page = below.slice(-cmd.limit);
-      for (const m of page) store.ingest(acc, { t: 'message', message: m, live: false });
-      return { count: page.length, done: page.length === below.length, oldest: page[0]?.ts, next: page[0]?.nativeId };
+      const land = () => {
+        for (const m of page) store.ingest(acc, { t: 'message', message: m, live: false });
+      };
+      if (o.late) clock.setTimeout(land, 5);
+      else land();
+      return { count: page.length, done: page.length === below.length, ...(o.oldest === false ? {} : { oldest: page[0]?.ts }), next: page[0]?.nativeId };
     },
   });
   if (o.start !== false) c.start();
-  return { c, clock, asked };
+  /** Runs `f` as the next page is asked for, before it is answered. */
+  const onAsk = (f: () => void) => {
+    answer = () => {
+      answer = () => {};
+      f();
+    };
+  };
+  return { c, clock, asked, onAsk };
 }
 
 const count = (store: Store, cid: string, from = 0, to = Number.MAX_SAFE_INTEGER) => (store.db.query('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ? AND ts >= ? AND ts <= ?').get(cid, from, to) as any).n as number;
@@ -101,11 +137,10 @@ const holes = (c: CatchUp) => c.list();
 describe('an account hole', () => {
   test('the manager dropped events while the hub was away: the chats you read are fetched over the stretch, busiest first', async () => {
     const { store, acc, net, hub } = world();
-    const { c, clock, asked } = catchUp(store, acc, net, { start: false });
+    const { c, clock, asked } = catchUp(store, acc, net, { start: false, at: S0 });
     // The hub lost the manager at S0 and was back an hour ago; the manager says it dropped what it held.
-    (clock as any).t = S0;
     c.connection(false);
-    (clock as any).t = NOW;
+    await clock.advance(NOW - S0);
     c.connection(true);
     c.dropped(acc.id, 2400);
     c.start();
@@ -291,8 +326,14 @@ describe('reports', () => {
 describe('what the hub itself lost', () => {
   test('a start after a crash while events waited opens a sure hole back to the oldest waiting message', () => {
     const { store, acc, net } = world();
-    const { c } = catchUp(store, acc, net, { start: false });
-    c.queued(acc.id, [{ t: 'message', message: { nativeId: 'x', conversation: 'd1', author: PEER, ts: S0, body: '' } }]);
+    const { c } = catchUp(store, acc, net, { start: false, backlog: () => 1 });
+    c.queued(acc.id, [{ t: 'message', message: { nativeId: 'x', conversation: 'd1', author: PEER, ts: S0, body: '' }, live: true }]);
+    // A history page waits too: its old messages are the network's still, and do not stretch the hole back.
+    c.queued(acc.id, [{ t: 'message', message: { nativeId: 'old', conversation: 'd1', author: PEER, ts: NOW - 365 * DAY, body: '' }, live: false }]);
+    // Saved by the next tick, not inside the supervisor's write.
+    expect(store.one(`SELECT 1 FROM meta WHERE key = 'catchup:backlog'`)).toBeNull();
+    c.tick();
+    expect(store.one(`SELECT 1 FROM meta WHERE key = 'catchup:backlog'`)).not.toBeNull();
     // The hub died here: no stop. The next start says so.
     const next = catchUp(store, acc, net, { start: false }).c;
     next.start({ unclean: true });
@@ -301,14 +342,16 @@ describe('what the hub itself lost', () => {
     const h = next.list();
     expect(h).toHaveLength(1);
     expect(h[0]).toMatchObject({ scope: 'account', causes: ['lost'], strength: 'sure', from: S0 - MIN });
+    expect(h[0].to - NOW).toBeLessThan(MIN);
     expect(store.one(`SELECT 1 FROM meta WHERE key = 'catchup:backlog'`)).toBeNull();
   });
 
   test('a clean start forgets the marker; a stop that lost events reports them at the next start', () => {
     const { store, acc, net } = world();
-    const first = catchUp(store, acc, net, { start: false }).c;
-    first.queued(acc.id, [{ t: 'message', message: { nativeId: 'x', conversation: 'd1', author: PEER, ts: S0, body: '' } }]);
-    const clean = catchUp(store, acc, net, { start: false }).c;
+    const first = catchUp(store, acc, net, { start: false, backlog: () => 1 }).c;
+    first.queued(acc.id, [{ t: 'message', message: { nativeId: 'x', conversation: 'd1', author: PEER, ts: S0, body: '' }, live: true }]);
+    first.tick();
+    const clean = catchUp(store, acc, net, { start: false, backlog: () => 1 }).c;
     clean.start();
     clean.tick();
     clean.stop();
@@ -363,5 +406,139 @@ describe('what the hub itself lost', () => {
       ]),
     );
     expect(h.find((x) => x.scope === 'account')!.notes[0]).toBe('The account says it may have missed messages: the gateway session could not be resumed');
+  });
+});
+
+describe('what review found', () => {
+  test("a remote account's page lands after its answer: the check waits for it, finds what was missing, and fetches the rest", async () => {
+    const { store, acc, net, hub } = world({ held: ['g1', 'cr'] });
+    const { c, clock } = catchUp(store, acc, net, { late: true });
+    const id = c.report({ scope: 'account', accountId: acc.id, from: S0, to: S1, strength: 'possible', cause: 'offline', note: 'offline' })!;
+    await clock.until(() => ['clear', 'done'].includes(c.get(id)!.state), DAY, 'the hole');
+    expect(c.get(id)).toMatchObject({ state: 'done', found: 12 });
+    expect(count(store, hub('d1'), S0, S1)).toBe(12);
+  });
+
+  test('pages that do not say where they ended are walked to the start of the stretch, and never recorded as whole', async () => {
+    const { store, acc, net, hub } = world({ inside: { d1: 180 } });
+    const { c, clock, asked } = catchUp(store, acc, net, { late: true, oldest: false });
+    const id = c.report({ scope: 'chat', conversationId: hub('d1'), from: S0, to: S1, strength: 'sure', cause: 'report', note: 'x' })!;
+    await clock.until(() => c.get(id)!.state === 'done', DAY, 'the hole');
+    expect(count(store, hub('d1'), S0, S1)).toBe(180);
+    expect(c.get(id)).toMatchObject({ found: 180 });
+    expect(asked.length).toBe(4);
+    expect(store.raw('SELECT 1 FROM history_span WHERE conversation_id = ?', hub('d1'))).toEqual([]);
+  });
+
+  test('a check whose chats could not be read is not called clear: it goes on to the rest', async () => {
+    const { store, acc, net } = world();
+    const quiet = console.error;
+    console.error = () => {};
+    try {
+      const { c, clock } = catchUp(store, acc, net, { fail: 'Missing Access' });
+      const id = c.report({ scope: 'account', accountId: acc.id, from: S0, to: S1, strength: 'possible', cause: 'offline', note: 'offline' })!;
+      await clock.until(() => ['clear', 'done'].includes(c.get(id)!.state), DAY, 'the hole');
+      const h = c.get(id)!;
+      expect(h.state).toBe('done');
+      expect(h.notes).toContain('3 chats of the first could not be checked: fetching the rest');
+      expect(h.notes.at(-1)).toBe('4 chats could not be fetched');
+      expect(h.list!.every((t) => t.state === 'failed' && t.error === 'Missing Access')).toBe(true);
+    } finally {
+      console.error = quiet;
+    }
+  });
+
+  test('reports a tick cannot use are dropped one by one; the rest still become holes', () => {
+    const { store, acc, net } = world();
+    const { c } = catchUp(store, acc, net, { start: false });
+    c.lost(acc.id, [{ t: 'message', message: { nativeId: 'bad', conversation: 'd1', author: PEER, ts: undefined as any, body: '' } }], 'boom');
+    c.gap(acc.id, { t: 'gap', from: Number.NaN });
+    c.dropped(acc.id, 500);
+    expect(() => c.tick()).not.toThrow();
+    expect(c.list().map((h) => h.causes)).toEqual([['dropped']]);
+  });
+
+  test('dropped events with the manager never away: back to when the account was last heard', async () => {
+    const { store, acc, net } = world();
+    const { c, clock } = catchUp(store, acc, net, { start: false, at: S0 });
+    c.heard(acc.id);
+    await clock.advance(NOW - S0);
+    c.dropped(acc.id, 10);
+    c.tick();
+    expect(c.list()[0]).toMatchObject({ from: S0 - MIN, to: NOW, causes: ['dropped'] });
+  });
+
+  test('a locked database: events still wait to be applied, and the marker is saved once it is free', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'catchup-'));
+    const path = join(dir, 'hub.sqlite');
+    const { store, acc, net } = world({ path });
+    const { c } = catchUp(store, acc, net, { start: false });
+    const sup = new Supervisor(store, { hubAdapterUrl: '', dataDir: dir, repoRoot: '/nonexistent', inproc: () => null, onFresh: () => {} });
+    sup.watch = c;
+    (c as any).o.backlog = () => sup.backlog;
+    store.db.exec('PRAGMA busy_timeout = 0');
+    const other = new Database(path);
+    const quiet = [console.warn, console.error];
+    console.warn = console.error = () => {};
+    try {
+      other.exec('BEGIN IMMEDIATE');
+      const msg = (i: number): P.AdapterEvent => ({ t: 'message', message: { nativeId: `live-${i}`, conversation: 'd1', author: PEER, ts: NOW + i, body: 'x' }, live: true });
+      sup.apply(acc.id, [msg(1)]);
+      expect(() => sup.apply(acc.id, [msg(2), msg(3)])).not.toThrow();
+      expect(sup.heldEvents).toBe(3);
+      // The tick cannot save the marker while the database is locked, and says so without stopping.
+      expect(() => c.tick()).not.toThrow();
+      other.exec('ROLLBACK');
+      c.tick();
+      expect(JSON.parse((store.one<any>(`SELECT value FROM meta WHERE key = 'catchup:backlog'`)!).value).accounts).toEqual({ [acc.id]: NOW + 1 });
+    } finally {
+      [console.warn, console.error] = quiet;
+      other.close();
+      clearTimeout((sup as any).heldTimer);
+      store.db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a short sure hole over many quiet direct chats fetches nothing', async () => {
+    const { store, acc, net } = world({ quiet: 80, held: ['d1', 'g1'] });
+    const { c, clock, asked } = catchUp(store, acc, net);
+    const id = c.report({ scope: 'account', accountId: acc.id, from: NOW - 2 * MIN, to: NOW - MIN, strength: 'sure', cause: 'dropped', note: 'dropped' })!;
+    await clock.until(() => ['clear', 'done'].includes(c.get(id)!.state), DAY, 'the hole');
+    expect(c.get(id)!.state).toBe('clear');
+    expect(asked).toEqual([]);
+  });
+
+  test('a stretch that grew starts its walk and its page budget again', async () => {
+    const { store, acc, net, hub } = world({ inside: { d1: 180 } });
+    const { c, clock, onAsk } = catchUp(store, acc, net);
+    const id = c.report({ scope: 'chat', conversationId: hub('d1'), from: S0 + 3 * HOUR, to: S1, strength: 'sure', cause: 'report', note: 'x' })!;
+    // While its first page is out, the chat turns out to have missed more, and (as if a long walk) its pages ran out.
+    onAsk(() => {
+      store.db.query('UPDATE catchup_task SET pages = 60 WHERE hole_id = ?').run(id);
+      expect(c.report({ scope: 'chat', conversationId: hub('d1'), from: S0, to: S1, strength: 'sure', cause: 'report', note: 'wider' })).toBe(id);
+    });
+    await clock.until(() => c.get(id)!.state === 'done', DAY, 'the wider stretch');
+    expect(c.get(id)!.list![0].error).toBeNull();
+    expect(count(store, hub('d1'), S0, S1)).toBe(180);
+  });
+
+  test('a hole stopped while a page is out keeps what it was told', async () => {
+    const { store, acc, net, hub } = world();
+    const { c, clock, onAsk } = catchUp(store, acc, net, { late: true });
+    const id = c.report({ scope: 'chat', conversationId: hub('d1'), from: S0, to: S1, strength: 'sure', cause: 'report', note: 'x' })!;
+    onAsk(() => c.stopHole(id));
+    await clock.until(() => c.get(id)!.state === 'stopped', DAY, 'the stop');
+    await clock.advance(MIN);
+    expect(c.get(id)!.list![0]).toMatchObject({ state: 'skipped', why: 'stopped', pages: 0 });
+  });
+
+  test('a message that could not be stored: the stretch around it is no longer known whole', () => {
+    const { store, acc, net, hub } = world();
+    const { c } = catchUp(store, acc, net, { start: false });
+    store.db.query('INSERT INTO history_span (conversation_id, from_ts, to_ts) VALUES (?, ?, ?)').run(hub('d1'), S0 - DAY, NOW);
+    c.lost(acc.id, [{ t: 'message', message: { nativeId: 'd1-x', conversation: 'd1', author: PEER, ts: S1 - MIN, body: '' }, live: true }], 'boom');
+    c.tick();
+    expect(store.raw('SELECT 1 FROM history_span WHERE conversation_id = ?', hub('d1'))).toEqual([]);
   });
 });
