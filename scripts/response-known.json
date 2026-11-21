@@ -152,17 +152,7 @@
    "RailSpace",
    "SpaceIcon"
   ],
-  "Mail / chip-btn:Inbox": [
-   "AccountDots",
-   "M$1",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "Mail / chip-btn:People": [
+  "Mail / chip-btn:Everything": [
    "AccountDots",
    "Icon",
    "M$1",
@@ -173,30 +163,8 @@
    "RailSpace",
    "SpaceIcon"
   ],
-  "Mail / chip-btn:Sent": [
+  "Mail / chip-btn:Updates": [
    "AccountDots",
-   "Icon",
-   "M$1",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "Mail / chip-btn:Starred": [
-   "AccountDots",
-   "M$1",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "Mail / chip-btn:Unread": [
-   "AccountDots",
-   "Icon",
    "M$1",
    "NetBadge",
    "NetGlyph",
