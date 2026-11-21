@@ -15,6 +15,8 @@ export interface Stands {
   /** `text`: what it adds to the text part (the Plain view shows it). */
   island: (ref: string) => { kind: string; label: string; size: number; text?: string } | null;
   picture: (ref: string) => string | null;
+  /** A picture address from the web as the editor draws it: a box, never fetched (schema.ts webBox); null for others. */
+  webBox: (src: string) => { src: string; title: string } | null;
 }
 
 /** Syntax that folds away off the caret's line. */
@@ -68,7 +70,7 @@ class IslandText extends WidgetType {
   eq(o: IslandText) {
     return o.label === this.label && o.text === this.text;
   }
-  toDOM() {
+  toDOM(view: EditorView) {
     const s = document.createElement('span');
     s.className = `md-island-text md-chip-${this.kind}`;
     const head = document.createElement('span');
@@ -77,17 +79,35 @@ class IslandText extends WidgetType {
     const body = document.createElement('span');
     body.className = 'md-island-text-body';
     body.textContent = this.text;
+    // Taken out here as in Rich: its line goes.
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'md-island-x';
+    x.textContent = '✕';
+    x.title = 'Take it out of the message';
+    x.setAttribute('aria-label', x.title);
+    x.onmousedown = (e) => e.preventDefault();
+    x.onclick = () => {
+      const line = view.state.doc.lineAt(view.posAtDOM(s));
+      view.dispatch({ changes: { from: Math.max(0, line.from - (line.to === view.state.doc.length && line.from > 0 ? 1 : 0)), to: Math.min(view.state.doc.length, line.to + 1) } });
+      view.focus();
+    };
+    head.append(x);
     s.append(head, body);
-    s.title = 'Goes as it is: delete the line in Rich to take it out';
+    s.title = 'Goes as it is';
     return s;
   }
-  ignoreEvent() {
-    return false;
+  ignoreEvent(e: Event) {
+    return !!(e.target as Element | null)?.closest?.('.md-island-x');
   }
 }
 
 class Thumb extends WidgetType {
-  constructor(readonly src: string) {
+  constructor(
+    readonly src: string,
+    /** One from the web: drawn as this box, never fetched. */
+    readonly box: { src: string; title: string } | null = null,
+  ) {
     super();
   }
   eq(o: Thumb) {
@@ -95,8 +115,9 @@ class Thumb extends WidgetType {
   }
   toDOM() {
     const img = document.createElement('img');
-    img.className = 'md-thumb';
-    img.src = this.src;
+    img.className = this.box ? 'md-thumb me-pic-web' : 'md-thumb';
+    img.src = this.box?.src ?? this.src;
+    if (this.box) img.title = this.box.title;
     img.alt = '';
     return img;
   }
@@ -136,7 +157,7 @@ function build(view: EditorView, stands: Stands): DecorationSet {
           const m = /^dc-picture:([\w-]+)$/.exec(url);
           const src = m ? stands.picture(m[1]) : /^https?:/.test(url) ? url : null;
           if (src) {
-            out.push(Decoration.replace({ widget: new Thumb(src) }).range(n.from, n.to));
+            out.push(Decoration.replace({ widget: new Thumb(src, m ? null : stands.webBox(src)) }).range(n.from, n.to));
             return false;
           }
         }

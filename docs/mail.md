@@ -141,7 +141,7 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
     write there that the rich document can't hold as its own (a layout, a style sheet) stays exactly as written, as a
     block of its own.
   - **Plain**: plain text only, no HTML part (`MailDraft.plainOnly`): the text part exactly as it goes, a forward or a
-    quote as its text, exactly as it goes, read-only under its name. No formatting buttons; pictures in the text are left out, and one pasted or dropped
+    quote as its text, exactly as it goes, read-only under its name, with ✕ to take it out. No formatting buttons; pictures in the text are left out, and one pasted or dropped
     here is attached. Markdown's marks stay as written; the bits of HTML it keeps (colour, alignment) go, their words
     kept, as the hub does for every text part. Rich again makes it HTML.
   - **A forward or a quote** is such a block (an island), drawn in a sandboxed frame with a bar: its name, size, Hide
@@ -149,14 +149,18 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
     sheets written into each element's own `style`, so it keeps its look in mail apps that drop style sheets (Gmail);
     what can't go into one element (`@media`, `:hover`) stays in a sheet scoped to the block. Trackers are gone. Each
     picture from the web keeps its address, shown as your picture setting shows it in the reader (a held one as a
-    striped box). A reply's quote starts folded; taken out, "Quote <name>" puts it back, and a forward's "Put the
+    striped box; one that will not go as the mail is sent, under the choice below, faded and dashed, here and in the
+    HTML view's "As it arrives"). A reply's quote starts folded; taken out, "Quote <name>" puts it back, and a forward's "Put the
     forwarded message back". The caret starts on the line above it, never on the block, so typing never replaces it.
     A block of HTML of your own has **Edit HTML** on its bar, which opens the HTML view.
+  - **The editor fetches nothing from the web** (`ui/mail/editor/schema.ts`): a picture address you write or paste
+    (in any view) is a striped box with its host until it is sent, since your browser fetching it would tell its host
+    you are writing. The frames' policy lets in only this hub's pictures and pasted ones.
   - **Pictures from the web** in it (a forward's, a quote's, an address written in the HTML view) go as the footer's
     button says ("70 · Link · 1 can tell", beside the size, in sight however long the forward is), which opens the
-    choice (the last one made on the device is where a new mail starts): **Link** (the default: their app fetches them when they open it; one that can tell the
+    choice (the last one made on the device is where a new mail starts; the untick below is that mail's alone): **Link** (the default: their app fetches them when they open it; one that can tell the
     original sender is left out unless you untick "Leave out the ones that can tell", `MailDraft.linkCanTell`; Link
-    says how many can tell on itself, "Link · 2 can tell", and the footer counts what goes, "69 · Link · 1 left out"), **Embed** (the hub fetches them now, through its image proxy, and sends them inside the mail:
+    says how many can tell on itself, "Link · 2 can tell", and the footer's number is always what goes, "69 · Link · 1 left out", "0 · Leave out"), **Embed** (the hub fetches them now, through its image proxy, and sends them inside the mail:
     nothing is fetched on their end; never linked instead: one that can't be fetched is left out, and so is one that can
     tell unless the hub has it already, since fetching it now would tell the original sender; the choice says how many,
     and that loading it in the reader first lets it go inside)
@@ -278,7 +282,8 @@ files made without the hub surviving a reload of the page (its draft does).
     with any value. Years (`/2024/`) and sizes (`1200x800`) are not ids. Fetching it can tell the sender you opened the mail. The rule leans this
     way: a file named by its content's hash is held needlessly, never the other way round.
   - **shared** ("unlikely to tell": a short id can slip through, so None is the only sure choice): the same address in every copy; seen in mail from another sender too counts as shared
-    (not your own mail: your Sent copy of a forward carries the original's personal pictures).
+    (not your own mail: your Sent copy of a forward carries the original's personal pictures; in that copy the
+    original's sender is not enough either, it takes two senders who are not you, as in the composer).
   Settings → Mail, **Load pictures**: None, **Ones unlikely to tell** (the default) or All. A sender's rule (Always or
   Never from them) and a choice for one mail come first. The bar over a mail says what happened ("12 pictures loaded ·
   3 held back (they would tell Sam you opened it) · 2 trackers removed"; on a phone without the why), with Load all,

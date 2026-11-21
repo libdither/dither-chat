@@ -697,11 +697,16 @@ async function forwardWithPictures(tag: string) {
   const picsBtn = await page.eval<string>(`document.querySelector('.mc-foot .mc-pics-btn')?.textContent ?? ''`);
   // Link leaves out the one that can tell unless asked: the footer counts what goes.
   check(`${tag}: the footer says how its pictures from the web go, and that the one that can tell is left out`, /^69 · Link · 1 left out$/.test(picsBtn), picsBtn);
+  // The editor shows it: the one left out is faded in the forward, the rest as they are.
+  const outIn = `document.querySelector('.me-island[data-kind="forward"] iframe')?.contentDocument?.querySelectorAll('img.dc-out').length ?? -1`;
+  await page.until(`${outIn} === 1`, 5000).catch(() => {});
+  check(`${tag}: the forward marks the picture Link leaves out`, (await page.eval<number>(outIn)) === 1, await page.eval<number>(outIn));
   // Plain shows the forward's text as it goes, not a chip.
   await click(await at('.me-mode', `el => el.textContent === 'Plain'`));
   await page.until(`!!document.querySelector('.me-plain.shown .md-island-text')`, 15000).catch(() => {});
   const plainFwd = await page.eval<string>(`document.querySelector('.me-plain .md-island-text')?.textContent ?? ''`);
   check(`${tag}: Plain shows the forwarded message's text`, plainFwd.includes('Forwarded message') && plainFwd.includes('Northbound Outfitters'), plainFwd.slice(0, 160));
+  check(`${tag}: Plain's forward can be taken out there`, await has('.me-plain .md-island-text .md-island-x'));
   await click(await at('.me-mode', `el => el.textContent === 'Rich'`));
   await page.until(`!!document.querySelector('.me-rich.shown') && !!document.querySelector('.mc-pics-btn')`, 10000).catch(() => {});
   await click(await at('.mc-pics-btn'));
@@ -712,6 +717,13 @@ async function forwardWithPictures(tag: string) {
   await click(await at('.mc-seg-btn', `el => el.textContent === 'Embed'`));
   const embedBtn = await page.eval<string>(`document.querySelector('.mc-pics-btn')?.textContent ?? ''`);
   check(`${tag}: the footer button follows the choice and counts what goes`, embedBtn === '69 · Embed · 1 left out', embedBtn);
+  await click(await at('.mc-seg-btn', `el => el.textContent === 'Leave out'`));
+  const allIn = `document.querySelector('.me-island[data-kind="forward"] iframe')?.contentDocument?.querySelectorAll('img[data-dc-src]').length ?? -2`;
+  await page.until(`${outIn} === ${allIn}`, 5000).catch(() => {});
+  const dropBtn = await page.eval<string>(`document.querySelector('.mc-pics-btn')?.textContent ?? ''`);
+  const marked = { dropBtn, out: await page.eval<number>(outIn), all: await page.eval<number>(allIn) };
+  check(`${tag}: Leave out marks every picture from the web, and the footer counts none going`, dropBtn === '0 · Leave out' && marked.out === marked.all && marked.all > 60, marked);
+  await click(await at('.mc-seg-btn', `el => el.textContent === 'Embed'`));
   // The one that can tell was held in the reader, so the hub has not got it: Embed leaves it out rather than fetch it.
   const embedNote = await page.eval<string>(`document.querySelector('.mc-pics-note')?.textContent ?? ''`);
   check(`${tag}: Embed says it leaves out the picture that can tell`, embedNote.includes('1 picture that can tell is left out'), embedNote);

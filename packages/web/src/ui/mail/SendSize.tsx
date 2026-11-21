@@ -119,7 +119,7 @@ export function PicturesChoice({
   const label = MODES.find((x) => x.m === mode)!.label;
   // What goes, and what of it can tell or is left out, said on the button.
   const leftOut = mode === 'link' ? s.linked.leftOut : mode === 'embed' ? s.embedded.leftOut : 0;
-  const goes = mode === 'drop' ? s.webCount : s.webCount - leftOut;
+  const goes = mode === 'drop' ? 0 : s.webCount - leftOut;
   const warn = leftOut ? `${leftOut} left out` : mode === 'link' && s.canTellAll ? `${s.canTellAll} can tell` : '';
   return (
     <div class="mc-pics" ref={box}>
@@ -127,7 +127,7 @@ export function PicturesChoice({
         type="button"
         class={`mc-limit mc-pics-btn${warn ? ' warn' : ''}`}
         aria-expanded={open}
-        title="How the pictures from the web go"
+        title={`${goes} of ${plural(s.webCount, 'picture')} from the web go: how they go`}
         onClick={() => setOpen(!open)}
       >
         <Icon name="image" size={13} />

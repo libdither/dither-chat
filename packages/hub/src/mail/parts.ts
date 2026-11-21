@@ -146,10 +146,18 @@ class Parts {
   /** Each picture's fate for this message under `pol`. */
   decider(m: Row, pol: Policy): (url: string, shaped: boolean) => PictureDecision {
     const from = String(m.from_addr ?? '').toLowerCase();
-    // Another sender's mail, not yours: your Sent copy of a forward carries the original's personal pictures.
-    const mine = JSON.stringify([...this.ownAddresses()]);
+    // Another sender's mail, not yours: your Sent copy of a forward carries the original's personal pictures. Your own
+    // mail (that Sent copy) has the original's sender as "another": it needs two, as the composer does.
+    const own = this.ownAddresses();
+    const mine = JSON.stringify([...own]);
+    const need = own.has(from) ? 2 : 1;
     const seenElsewhere = (url: string) =>
-      !!this.store.one('SELECT 1 FROM mail_picture_seen WHERE url_hash = ? AND sender != ? AND sender NOT IN (SELECT value FROM json_each(?)) LIMIT 1', urlHash(url), from, mine);
+      (this.store.one<{ n: number }>(
+        'SELECT COUNT(*) AS n FROM (SELECT DISTINCT sender FROM mail_picture_seen WHERE url_hash = ? AND sender != ? AND sender NOT IN (SELECT value FROM json_each(?)) LIMIT 2)',
+        urlHash(url),
+        from,
+        mine,
+      )?.n ?? 0) >= need;
     const you = this.you(m.account_id);
     return (url, shaped) => {
       const v = classifyPicture(url, { you, seenElsewhere }, shaped);

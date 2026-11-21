@@ -19,7 +19,7 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { applyFormat, type Format, formatsAt, indentList, type Sel } from '../../../mail/edits.ts';
 import { Icon } from '../../icons.tsx';
-import { docHtml, docMarkdown, extensions, fitFrame, type IslandAttrs, islandDoc, newRef, refsOf } from './schema.ts';
+import { docHtml, docMarkdown, extensions, fitFrame, type IslandAttrs, islandDoc, newRef, refsOf, setLeftOut, webBox } from './schema.ts';
 
 export type EditorMode = 'rich' | 'markdown' | 'html' | 'plain';
 
@@ -49,6 +49,8 @@ export interface MailEditorProps {
   /** Files it does not take in the text (not pictures, or too big for one): the composer attaches them. */
   onFiles: (files: File[]) => void;
   apiRef?: { current: MailEditorApi | null };
+  /** Addresses of pictures from the web that will not go as the mail is sent: faded in the frames. */
+  leftOut?: string[];
 }
 
 /** A picture over this goes as a file, not in the text. */
@@ -281,6 +283,11 @@ export function MailEditor(p: MailEditorProps) {
   const [pop, setPop] = useState<null | 'link' | 'color'>(null);
   const [linkText, setLinkText] = useState('');
   const [previewHtml, setPreviewHtml] = useState('');
+  const rootEl = useRef<HTMLDivElement>(null);
+  const leftOutKey = (p.leftOut ?? []).join('\n');
+  useEffect(() => {
+    if (rootEl.current) setLeftOut(rootEl.current, p.leftOut ?? []);
+  }, [leftOutKey]);
   /** On a phone the HTML view shows one at a time: the code, or the mail as it arrives. */
   const [pane, setPane] = useState<'code' | 'preview'>('code');
   const [, redraw] = useState(0);
@@ -478,6 +485,7 @@ export function MailEditor(p: MailEditorProps) {
           return { kind: i.kind, label: i.label, size: new Blob([i.html]).size, text };
         },
         picture: (ref) => r.pictures.get(ref) ?? null,
+        webBox,
       },
       onSend: () => props.current.onSend(),
       onText: (t) => {
@@ -648,7 +656,7 @@ export function MailEditor(p: MailEditorProps) {
     box.style.setProperty('--w', `${b.offsetWidth}px`);
   }, [shown, p.bar]);
   return (
-    <div class={`me me-is-${shown}`}>
+    <div ref={rootEl} class={`me me-is-${shown}`}>
       <div class="me-views">
         <div class={view('rich')} ref={richHost} />
         <div class={view('markdown')} ref={mdHost} />

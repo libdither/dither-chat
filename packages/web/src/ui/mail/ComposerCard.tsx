@@ -326,14 +326,16 @@ function AddressField(props: {
 const BAR_KEY = 'dither.mail.formatBar';
 /** How the last forward's pictures from the web went (Link, Embed, Leave out), for the next one on this device. */
 const PICTURES_KEY = 'dither.mail.pictures';
-const LINK_TELL_KEY = 'dither.mail.linkCanTell';
 const PICTURE_MODES = new Set(['link', 'embed', 'drop']);
-/** How a draft's pictures from the web go: its own choice, else the last one made here, else Link. */
+/**
+ * How a draft's pictures from the web go: its own choice, else the last one made here, else Link. Linking the ones that
+ * can tell is this draft's alone: the next forward leaves them out again.
+ */
 const picturesOf = (d: { pictures?: P.MailOutgoingPictures; linkCanTell?: boolean } | null | undefined): { pictures: P.MailOutgoingPictures; linkCanTell: boolean } => {
   const last = pref(PICTURES_KEY);
   return {
     pictures: d?.pictures ?? (last && PICTURE_MODES.has(last) ? (last as P.MailOutgoingPictures) : 'link'),
-    linkCanTell: d?.linkCanTell ?? pref(LINK_TELL_KEY) === '1',
+    linkCanTell: d?.linkCanTell ?? false,
   };
 };
 const pref = (k: string) => {
@@ -901,6 +903,7 @@ export function Composer({ open }: { open: ComposeOpen }) {
                 }}
                 bar={bar}
                 placeholder="Write your message"
+                leftOut={size.out}
                 onChange={setBody}
                 onSend={() => void doSend()}
                 onFiles={(list) => void attach(list)}
@@ -968,7 +971,7 @@ export function Composer({ open }: { open: ComposeOpen }) {
               mode={pics.pictures}
               onMode={(m) => (set({ pictures: m }), keepPref(PICTURES_KEY, m))}
               linkCanTell={pics.linkCanTell}
-              onLinkCanTell={(v) => (set({ linkCanTell: v }), keepPref(LINK_TELL_KEY, v ? '1' : '0'))}
+              onLinkCanTell={(v) => set({ linkCanTell: v })}
               inlineParts={!!start?.inlineParts}
             />
           )}

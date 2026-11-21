@@ -77,6 +77,8 @@ export interface SizeLine {
   sent: number;
   /** What the recipient's app fetches when they open it (linked pictures it knows the size of). */
   theirEnd: number;
+  /** The addresses of the pictures from the web that will not go (the editor marks them). */
+  out: string[];
 }
 
 /** The sizes as the chosen pictures mode makes them; `known` from POST /api/mail/pictures/sizes. */
@@ -98,17 +100,20 @@ export function sizeLine(o: {
   const inside = o.plainOnly ? { n: 0, bytes: 0 } : o.pictures.inside;
   const embedded = { n: 0, bytes: 0, unknown: 0, leftOut: 0 };
   const linked = { n: 0, bytes: 0, unknown: 0, canTell: 0, leftOut: 0 };
+  const out: string[] = o.mode === 'drop' ? [...o.pictures.web] : [];
   if (!o.plainOnly && o.mode !== 'drop')
     for (const u of o.pictures.web) {
       const k = o.known.get(u);
       // Embed fetches no picture that can tell: one the hub has not got already is left out (docs/mail.md "Writing").
       if (o.mode === 'embed' && k && k.class !== 'shared' && k.cached === false) {
         embedded.leftOut++;
+        out.push(u);
         continue;
       }
       // Link leaves out the ones that can tell, unless asked to link them too.
       if (o.mode === 'link' && !o.linkCanTell && k && k.class !== 'shared') {
         linked.leftOut++;
+        out.push(u);
         continue;
       }
       const into = o.mode === 'embed' ? embedded : linked;
@@ -118,5 +123,5 @@ export function sizeLine(o: {
       if (o.mode === 'link' && k?.class === 'personal') linked.canTell++;
     }
   const sent = Math.round(text + html + (inside.bytes + embedded.bytes + o.files) * BASE64);
-  return { text, html, inside, embedded, linked, files: o.files, sent, theirEnd: linked.bytes };
+  return { text, html, inside, embedded, linked, files: o.files, sent, theirEnd: linked.bytes, out };
 }

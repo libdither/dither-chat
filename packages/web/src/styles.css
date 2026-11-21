@@ -14732,10 +14732,32 @@ button.msg-edited.link:hover {
   white-space: pre-wrap;
 }
 .md-island-text-head {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 4px;
   color: var(--text-faint);
   font-size: 12px;
+}
+.md-island-x {
+  margin-left: auto;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font: inherit;
+}
+.md-island-x:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+/* A picture from the web while you write (editor/webpic.ts): a striped box, never fetched. */
+.me-pic-web {
+  min-width: 48px;
+  min-height: 32px;
+  background: repeating-linear-gradient(45deg, var(--bg-raised) 0 6px, var(--bg-hover) 6px 12px);
+  outline: 1px dashed var(--border-soft);
+  outline-offset: -1px;
+  vertical-align: middle;
 }
 .md-chip {
   display: inline-block;

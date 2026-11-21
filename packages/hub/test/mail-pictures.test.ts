@@ -231,6 +231,15 @@ describe('through the hub', () => {
     expect((await w.body('<n1@x>')).html!.pictures!.items.find((i) => i.host === 'img.shop.example')).toMatchObject({ class: 'personal', action: 'hold' });
   });
 
+  test('your Sent copy of a forward does not count the original’s sender as another: its picture that can tell stays held', async () => {
+    const url = 'https://img.shop.example/hero.png?r=a8Xk29fQp3LmZ7w1';
+    const mine: FakeInput = { messageId: '<f2@x>', from: [{ name: 'Me', email: ME }], subject: 'Fwd: Sale', html: `<p>Look</p><img src="${url}">`, text: 'Look' };
+    const w = await world([NEWS, mine]);
+    // The shop's mail is read first: the address is seen from one sender, the original's.
+    await w.body('<n1@x>');
+    expect((await w.body('<f2@x>')).html!.pictures!.items.find((i) => i.host === 'img.shop.example')).toMatchObject({ class: 'personal', action: 'hold' });
+  });
+
   test('a mail’s own tracker choice outranks the setting, and null goes back to it', async () => {
     const w = await world([NEWS]);
     const id = mailId('mml', ACC, 'm:<n1@x>');
