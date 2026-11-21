@@ -716,7 +716,8 @@ export function Composer({ open }: { open: ComposeOpen }) {
   const sendBtn = (
     <button class="btn primary mc-send" disabled={!d || !!why || over || sending === 'sending'} onClick={() => void doSend()}>
       <Icon name="send" size={15} />
-      {sending === 'sending' ? 'Sending…' : sending === 'waiting' ? 'Waiting…' : 'Send'}
+      {/* A phone shows the paper plane alone (styles.css), for room for the pictures and the size. */}
+      <span class="mc-send-label">{sending === 'sending' ? 'Sending…' : sending === 'waiting' ? 'Waiting…' : 'Send'}</span>
     </button>
   );
 
@@ -911,7 +912,6 @@ export function Composer({ open }: { open: ComposeOpen }) {
                 </button>
               </div>
             )}
-            {!d.plainOnly && <PicturesChoice s={size} mode={d.pictures ?? 'link'} onMode={(m) => set({ pictures: m })} inlineParts={!!start?.inlineParts} />}
             {start?.quoteError && <p class="mc-note">The original could not be fetched to quote it: {start.quoteError}</p>}
             {(d.files.length > 0 || d.forwardParts.length > 0 || files.length > 0) && (
               <div class="composer-files mc-files">
@@ -947,6 +947,7 @@ export function Composer({ open }: { open: ComposeOpen }) {
           >
             <span class="mc-fmt-aa">Aa</span>
           </button>
+          {d && !d.plainOnly && <PicturesChoice s={size} mode={d.pictures ?? 'link'} onMode={(m) => set({ pictures: m })} inlineParts={!!start?.inlineParts} />}
           <SizeMeter s={size} cap={totalCap(account)} plainOnly={!!d?.plainOnly} />
           {sendBtn}
           <input

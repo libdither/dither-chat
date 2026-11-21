@@ -132,6 +132,17 @@ class Parts {
     return new Set(this.store.accounts().flatMap((a) => [...this.store.selfAddresses(a.id)]));
   }
 
+  /**
+   * A picture's class outside any one message (the composer's): seen in mail from two senders, not you, is shared;
+   * else as its address says.
+   */
+  outgoingClass(url: string, accountId: string): 'shared' | 'personal' | 'tracker' {
+    const mine = JSON.stringify([...this.ownAddresses()]);
+    const seenElsewhere = (u: string) =>
+      (this.store.one<{ n: number }>('SELECT COUNT(DISTINCT sender) AS n FROM mail_picture_seen WHERE url_hash = ? AND sender NOT IN (SELECT value FROM json_each(?))', urlHash(u), mine)?.n ?? 0) >= 2;
+    return classifyPicture(url, { you: this.you(accountId), seenElsewhere }, false).class;
+  }
+
   /** Each picture's fate for this message under `pol`. */
   decider(m: Row, pol: Policy): (url: string, shaped: boolean) => PictureDecision {
     const from = String(m.from_addr ?? '').toLowerCase();
@@ -273,6 +284,8 @@ class Parts {
         const r = await this.images.bytes(url);
         return 'bytes' in r ? r : null;
       },
+      cachedPicture: async (url) => this.images.cachedBytes(url),
+      canTell: (url, accountId) => this.outgoingClass(url, accountId) !== 'shared',
       cidPart: async (messageId, cid) => {
         const m = this.message(messageId);
         if (!m) return null;
@@ -286,16 +299,17 @@ class Parts {
         return mime ? { bytes, mime } : null;
       },
       sizes: (urls, accountId) => {
-        const you = this.you(accountId);
         // This hub's address of a picture (a background in a forward) counts as the picture it stands for.
         const originals = urls.map((u) => {
           if (/^https?:\/\//i.test(u) && !/\/api\/mail\/img\//.test(u)) return u;
           const img = /^(?:https?:\/\/[^/]+)?\/api\/mail\/img\/([\w.-]+)$/.exec(u);
           return img ? (readImageToken(this.media.key, img[1])?.url ?? null) : null;
         });
+        const sizes = originals.map((u) => (u ? this.images.cachedSize(u) : null));
         return {
-          sizes: originals.map((u) => (u ? this.images.cachedSize(u) : null)),
-          classes: originals.map((u) => (u ? classifyPicture(u, { you }, false).class : 'personal')),
+          sizes,
+          classes: originals.map((u) => (u ? this.outgoingClass(u, accountId) : 'personal')),
+          cached: sizes.map((n) => n !== null),
           originals,
         };
       },
@@ -317,7 +331,7 @@ class Parts {
         if (size === null) unknown++;
         else bytes += size;
       }
-      return { host, class: p.class, why: p.why, action: p.action, ...(size !== null ? { size } : {}) };
+      return { host, class: p.class, why: p.why, action: p.action, cached: size !== null, ...(size !== null ? { size } : {}) };
     });
     return {
       policy: pol.pictures,
@@ -327,7 +341,9 @@ class Parts {
       loaded: items.filter((x) => x.action === 'load').length,
       held: items.filter((x) => x.action === 'hold').length,
       removed: items.filter((x) => x.action === 'drop').length,
-      hosts: new Set(items.map((x) => x.host).filter(Boolean)).size,
+      // The hosts the loaded pictures come from ("N loaded from H hosts"), and every picture's.
+      hosts: new Set(items.filter((x) => x.action === 'load').map((x) => x.host).filter(Boolean)).size,
+      hostsAll: new Set(items.map((x) => x.host).filter(Boolean)).size,
       bytes,
       unknown,
       items: items.slice(0, 200),

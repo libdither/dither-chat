@@ -32,7 +32,7 @@ import type * as M from '@dither-chat/protocol/mail-iface';
 import { asMailError, MailCallError } from './backend.ts';
 import { dedupe, forwardSubject, messageHtml, messageText, replyAllDiffers, replyFrom, replyRecipients, replySubject, tail, validEmail, type ComposeOriginal } from './compose.ts';
 import type { MailHub } from './index.ts';
-import { outgoingHtml, outgoingText, type OutgoingCtx } from './island.ts';
+import { outgoingHtml, outgoingText, plainText, type OutgoingCtx } from './island.ts';
 import { MAIL_LIMITS } from './limits.ts';
 import { P0 } from './queue.ts';
 import type { MailRouter } from './routes.ts';
@@ -42,7 +42,9 @@ import { jobFailed } from '../errors.ts';
 type Row = Record<string, any>;
 
 /** What the outbox needs of pictures and islands (parts.ts outboxPictures; set when its routes are made). */
-export interface OutboxPictures extends Pick<OutgoingCtx, 'resolve' | 'fetchPicture' | 'cidPart'> {
+export interface OutboxPictures extends Pick<OutgoingCtx, 'resolve' | 'fetchPicture' | 'cachedPicture' | 'cidPart'> {
+  /** The picture can tell its sender it was opened, as the account's mail would class it (pictures.ts). */
+  canTell(url: string, accountId: string): boolean;
   island(messageId: string, kind: 'forward' | 'quote', o: ComposeOriginal, tz?: string): P.MailIsland | null;
   sizes(urls: string[], accountId: string): P.MailPictureSizes;
 }
@@ -393,6 +395,7 @@ export class MailOutbox {
     const t = tail(kind, o, draft.quote, req.tz);
     // The editor's HTML (docs/mail.md "Writing"): it holds the quote or forward itself, and its pictures go as it says.
     let body: { text: string; html?: string; inline: { contentId: string; mime: string; bytes: Buffer; name: string }[] };
+    let report: P.MailOutboxPictures | null = null;
     if (typeof draft.html === 'string') {
       const made = draft.plainOnly
         ? null
@@ -401,16 +404,20 @@ export class MailOutbox {
             inlineParts: !!acc!.inline_parts,
             resolve: (src) => this.pictures?.resolve(src) ?? null,
             fetchPicture: (url) => this.pictures?.fetchPicture(url) ?? Promise.resolve(null),
+            cachedPicture: (url) => this.pictures?.cachedPicture(url) ?? Promise.resolve(null),
+            // Without the hub's pictures, every picture counts as one that can tell: nothing is fetched for it.
+            canTell: (url) => this.pictures?.canTell(url, acc!.id) ?? true,
             cidPart: (mid, cid) => this.pictures?.cidPart(mid, cid) ?? Promise.resolve(null),
             id,
           });
-      if (made?.failed) this.log(`[outbox ${id}] ${made.failed} picture(s) could not be fetched: linked instead`);
+      if (made?.failed) this.log(`[outbox ${id}] ${made.failed} picture(s) could not be fetched: left out`);
+      if (made && (made.embedded || made.leftOut.failed || made.leftOut.canTell)) report = { embedded: made.embedded, leftOut: made.leftOut };
       body = { text: outgoingText(req.text, draft.html, o, req.tz), ...(made ? { html: made.html } : {}), inline: made?.inline ?? [] };
       // The cap is bytes of files as they are (dither-accounts counts its attachments' sizes, not their base64), and the
       // pictures inside the mail count the same way, whether they go as parts or as data: URLs.
       total += made?.insideBytes ?? 0;
       if (total > sendCapOf(acc)) throw bad(`With the pictures inside it, the mail is ${(total / MB).toFixed(1)} MB; this account takes ${mbText(sendCapOf(acc))} on one message.`, 413);
-    } else body = { text: messageText(req.text, t), ...(draft.plainOnly ? {} : { html: messageHtml(kind, req.text, o, draft.quote, req.tz) }), inline: [] };
+    } else body = { text: messageText(plainText(req.text), t), ...(draft.plainOnly ? {} : { html: messageHtml(kind, req.text, o, draft.quote, req.tz) }), inline: [] };
     if (body.inline.length && !this.opts.dir) throw bad('this hub keeps no files for mail', 400);
     // Pictures inside the mail wait in its folder, as its files do.
     const inline = body.inline.map((p, i) => {
@@ -419,7 +426,8 @@ export class MailOutbox {
       writeFileSync(path, p.bytes, { mode: 0o600 });
       return { contentId: p.contentId, mime: p.mime, name: p.name, path };
     });
-    const outgoing: Omit<M.OutgoingMail, 'attachments' | 'replyTo'> & { inline?: typeof inline } = {
+    // `pictures` is the hub's own note of what happened to them (the outbox item's), never sent.
+    const outgoing: Omit<M.OutgoingMail, 'attachments' | 'replyTo'> & { inline?: typeof inline; pictures?: P.MailOutboxPictures } = {
       ...(from ? { from } : {}),
       to,
       ...(cc.length ? { cc } : {}),
@@ -428,6 +436,7 @@ export class MailOutbox {
       text: body.text,
       ...(body.html ? { html: body.html } : {}),
       ...(inline.length ? { inline } : {}),
+      ...(report ? { pictures: report } : {}),
     };
     const now = this.now();
     this.store.db.transaction(() => {
@@ -560,9 +569,10 @@ export class MailOutbox {
       let res: { messageId?: string; sentId?: string | null; dryRun?: boolean };
       try {
         res = await sync.queue.run(P0, `send:${id}`, async () => {
-          const out: M.OutgoingMail & { inline?: unknown } = json(r.outgoing, {} as M.OutgoingMail);
-          // The pictures inside it go as files with their content ids (attachments below).
+          const out: M.OutgoingMail & { inline?: unknown; pictures?: unknown } = json(r.outgoing, {} as M.OutgoingMail);
+          // The pictures inside it go as files with their content ids (attachments below); the note of them is ours.
           delete out.inline;
+          delete out.pictures;
           // The same on every try of this send.
           out.idempotencyKey = r.id;
           // Where the original is now (an IMAP move changes its id).
@@ -711,11 +721,12 @@ export class MailOutbox {
 
   view(r: Row): P.MailOutboxView {
     const d = json<P.MailDraft>(r.draft, cleanDraft({}));
+    const { subject, pictures } = json<{ subject?: string; pictures?: P.MailOutboxPictures }>(r.outgoing, {});
     return {
       id: r.id,
       clientId: r.client_id,
       accountId: r.account_id,
-      subject: json<{ subject?: string }>(r.outgoing, {}).subject ?? d.subject,
+      subject: subject ?? d.subject,
       state: r.state,
       holdUntil: r.state === 'held' ? r.hold_until : null,
       error: r.error ?? null,
@@ -727,6 +738,7 @@ export class MailOutbox {
       sentMessageId: r.sent_message_id ?? null,
       dryRun: !!r.dry_run,
       createdAt: r.created_at,
+      ...(pictures ? { pictures } : {}),
     };
   }
 

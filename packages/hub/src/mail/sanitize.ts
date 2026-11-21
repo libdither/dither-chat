@@ -21,7 +21,7 @@
 import { hostsDiffer, shownHost } from '@dither-chat/protocol';
 
 /** Bump when the output changes: cached copies made by an older pass are made again. */
-export const SANITIZE_VERSION = 3;
+export const SANITIZE_VERSION = 4;
 
 export interface SanitizeOpts {
   /**

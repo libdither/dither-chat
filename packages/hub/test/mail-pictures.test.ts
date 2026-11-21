@@ -22,7 +22,7 @@ const cls = (url: string, shaped = false, seen = false) => classifyPicture(url, 
 describe('classes', () => {
   test('a logo or product picture at a plain address is shared', () => {
     expect(cls('https://cdn.shop.example/img/logo.png')).toBe('shared');
-    expect(cls('https://images.example/products/12345/front.jpg?w=600&h=400&q=80')).toBe('shared');
+    expect(cls('https://images.example/products/front.jpg?w=600&h=400&q=80')).toBe('shared');
     expect(cls('https://cdn.example/images/logo.png')).toBe('shared');
     expect(cls('https://blog.example/wp-content/uploads/2024/05/photo-1200x800.jpg')).toBe('shared');
     expect(cls('https://cdn.example/banners/summer-sale-2024-hero.png?v=3')).toBe('shared');
@@ -42,7 +42,6 @@ describe('classes', () => {
     expect(cls('https://img.example/banner.png?e=Zq81mXc2LpR7')).toBe('personal');
     expect(cls('https://img.example/hero.jpg?mc_eid=4b7d10aa2c')).toBe('personal');
     expect(cls('https://img.example/hero.jpg?subscriber_id=77120')).toBe('personal');
-    expect(cls('https://img.example/hero.jpg?r=a1')).toBe('shared');
     expect(cls('https://img.example/hero.jpg?ref=20240512093011')).toBe('personal');
     expect(cls('https://img.example/p/Qm9vSzEyMzQ1Njc4OTA/hero.jpg')).toBe('personal');
     expect(cls('https://img.example/p/zq81mxc2lpr7vn0ktb4w/hero.jpg')).toBe('personal');
@@ -75,14 +74,41 @@ describe('classes', () => {
     expect(cls(`https://img.example/p.png?to=${ME}`, false, true)).toBe('personal');
   });
 
+  test('tighter: long numbers, hex and interleaved runs, one-case runs, host labels, any id key', () => {
+    // 5+ digits alone in a segment; a year or a size is not an id.
+    expect(cls('https://img.example/u/8812344/hero.png')).toBe('personal');
+    expect(cls('https://images.example/products/12345/front.jpg')).toBe('personal');
+    expect(cls('https://img.example/2024/hero.png')).toBe('shared');
+    expect(cls('https://img.example/hero-1200x800.png')).toBe('shared');
+    expect(cls('https://img.example/hero_640x480_2x.png')).toBe('shared');
+    // 10+ hex with a digit, or letters and digits interleaved.
+    expect(cls('https://img.example/a/3fa9c01b7e/hero.png')).toBe('personal');
+    expect(cls('https://img.example/a/x7k2p9q4m1/hero.png')).toBe('personal');
+    expect(cls('https://img.example/a/hero-x7k2p9q4m1.png')).toBe('personal');
+    // 20+ in one case.
+    expect(cls('https://img.example/hero.png?sig=abcdefghijklmnopqrstuvwxyz')).toBe('personal');
+    expect(cls('https://img.example/ABCDEFGHIJKLMNOPQRSTUV/hero.png')).toBe('personal');
+    // A token in a host label, but its last two.
+    expect(cls('https://a1b2c3d4e5f6a7b8.img.example.com/hero.png')).toBe('personal');
+    expect(cls('https://mail-88123456.example.com/hero.png')).toBe('personal');
+    expect(cls('https://cdn2.img.example.com/hero.png')).toBe('shared');
+    // An id key with any value.
+    expect(cls('https://img.example/hero.png?u=42')).toBe('personal');
+    expect(cls('https://img.example/hero.png?user=bob')).toBe('personal');
+    expect(cls('https://img.example/hero.jpg?r=a1')).toBe('personal');
+    expect(cls('https://img.example/hero.jpg?u=')).toBe('shared');
+  });
+
   test('what each setting does', () => {
     expect(pictureAction('shared', 'shared', false)).toBe('load');
     expect(pictureAction('personal', 'shared', false)).toBe('hold');
     expect(pictureAction('personal', 'shared', false, true)).toBe('load');
     expect(pictureAction('tracker', 'all', false)).toBe('drop');
-    expect(pictureAction('tracker', 'shared', true)).toBe('hold');
+    // Kept trackers load whenever any pictures load; under none nothing does.
+    expect(pictureAction('tracker', 'shared', true)).toBe('load');
     expect(pictureAction('tracker', 'all', true)).toBe('load');
-    expect(pictureAction('tracker', 'shared', true, true)).toBe('hold');
+    expect(pictureAction('tracker', 'none', true)).toBe('hold');
+    expect(pictureAction('tracker', 'none', true, true)).toBe('hold');
     expect(pictureAction('shared', 'none', false)).toBe('hold');
   });
 });
@@ -146,7 +172,10 @@ describe('through the hub', () => {
   test('by default only shared pictures load; the personal one is held and the tracker removed', async () => {
     const w = await world([NEWS]);
     const b = await w.body('<n1@x>');
-    expect(b.html!.pictures).toMatchObject({ policy: 'shared', source: 'setting', loaded: 1, held: 1, removed: 1, hosts: 3, bytes: 0, unknown: 1 });
+    expect(b.html!.pictures).toMatchObject({ policy: 'shared', source: 'setting', loaded: 1, held: 1, removed: 1, hosts: 1, hostsAll: 3, bytes: 0, unknown: 1 });
+    // The one that loads has not been fetched yet: it loads when shown.
+    expect(b.html!.pictures!.items.find((i) => i.action === 'load')).toMatchObject({ cached: false });
+    expect(b.html!.pictures!.items.find((i) => i.action === 'load')!.size).toBeUndefined();
     const html = await w.doc('<n1@x>');
     expect(html.match(/\/api\/mail\/img\//g)?.length).toBe(1);
     expect(html).toContain('dc-img-blocked');
@@ -154,7 +183,8 @@ describe('through the hub', () => {
     const src = html.match(/src="(\/api\/mail\/img\/[^"]+)"/)![1];
     expect((await w.req(src)).status).toBe(200);
     expect(w.fetched).toEqual(['cdn.shop.example/logo.png']);
-    expect((await w.body('<n1@x>')).html!.pictures).toMatchObject({ bytes: PNG.length, unknown: 0 });
+    expect((await w.body('<n1@x>')).html!.pictures).toMatchObject({ bytes: PNG.length, unknown: 0, hosts: 1 });
+    expect((await w.body('<n1@x>')).html!.pictures!.items.find((i) => i.action === 'load')).toMatchObject({ cached: true, size: PNG.length });
   });
 
   test('a sender’s rule outranks the setting: Never holds everything, Always loads everything but trackers', async () => {
@@ -167,10 +197,12 @@ describe('through the hub', () => {
     expect((await w.body('<n1@x>')).html!.pictures).toMatchObject({ policy: 'shared', source: 'setting' });
   });
 
-  test('kept trackers are held with the personal ones, and load only with everything', async () => {
+  test('kept trackers load whenever pictures load, and are held when none do', async () => {
     const w = await world([NEWS]);
     await w.send('/api/mail/settings', { trackers: 'keep' }, 'PUT');
-    expect((await w.body('<n1@x>')).html!.pictures).toMatchObject({ keepTrackers: true, loaded: 1, held: 2, removed: 0 });
+    expect((await w.body('<n1@x>')).html!.pictures).toMatchObject({ keepTrackers: true, loaded: 2, held: 1, removed: 0 });
+    await w.send('/api/mail/images', { messageId: mailId('mml', ACC, 'm:<n1@x>'), pictures: 'none' });
+    expect((await w.body('<n1@x>')).html!.pictures).toMatchObject({ keepTrackers: true, loaded: 0, held: 3, removed: 0 });
     await w.send('/api/mail/images', { messageId: mailId('mml', ACC, 'm:<n1@x>') });
     expect((await w.body('<n1@x>')).html!.pictures).toMatchObject({ source: 'message', loaded: 3, held: 0 });
   });
@@ -198,7 +230,7 @@ describe('through the hub', () => {
     expect((await w.body('<n1@x>')).html!.pictures).toMatchObject({ keepTrackers: false, trackersSource: 'setting', removed: 1 });
     // Only trackers: the pictures stay as the setting has them.
     await w.send('/api/mail/images', { messageId: id, trackers: 'keep' });
-    expect((await w.body('<n1@x>')).html!.pictures).toMatchObject({ policy: 'shared', source: 'setting', keepTrackers: true, trackersSource: 'message', removed: 0, held: 2 });
+    expect((await w.body('<n1@x>')).html!.pictures).toMatchObject({ policy: 'shared', source: 'setting', keepTrackers: true, trackersSource: 'message', removed: 0, held: 1, loaded: 2 });
     // Pictures for this mail too: the tracker choice stays.
     await w.send('/api/mail/images', { messageId: id, pictures: 'all' });
     expect((await w.body('<n1@x>')).html!.pictures).toMatchObject({ policy: 'all', source: 'message', keepTrackers: true, trackersSource: 'message', loaded: 3 });
@@ -218,6 +250,8 @@ describe('through the hub', () => {
     await w.req(src);
     const r = (await (await w.send('/api/mail/pictures/sizes', { urls: ['nope', src, 'https://img.shop.example/hero.png?r=a8Xk29fQp3LmZ7w1', '/api/mail/img/bogus'], accountId: ACC })).json()) as P.MailPictureSizes;
     expect(r.sizes).toEqual([null, PNG.length, null, null]);
+    // Whether the hub has it now: with Embed, one that can tell goes only if it has.
+    expect(r.cached).toEqual([false, true, false, false]);
     expect(r.classes.slice(1, 3)).toEqual(['shared', 'personal']);
     expect(r.originals).toEqual([null, 'https://cdn.shop.example/logo.png', 'https://img.shop.example/hero.png?r=a8Xk29fQp3LmZ7w1', null]);
   });

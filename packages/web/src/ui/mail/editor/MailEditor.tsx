@@ -161,6 +161,21 @@ function picturesIn(html: string, r: Refs): string {
   return html.replace(/src="dc-picture:([\w-]+)"/g, (m, ref: string) => (r.pictures.has(ref) ? `src="${r.pictures.get(ref)}"` : m));
 }
 
+/**
+ * Markdown as plain text goes: the small pieces of HTML Markdown keeps (colour, alignment) taken off, their text kept,
+ * entities read. Markdown's own marks (`**bold**`, `- `, `> `) stay: they are how plain text says it.
+ */
+function plainText(md: string): string {
+  const bare = md
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|h[1-6]|div|li|tr|blockquote)>/gi, '\n')
+    .replace(/<\/?[a-z][^>]*>/gi, '')
+    .replace(/\n{3,}/g, '\n\n');
+  const t = document.createElement('textarea');
+  t.innerHTML = bare;
+  return t.value.replace(/\u00a0/g, ' ');
+}
+
 /** The mail's HTML laid out to be read and edited: one block a line. */
 function prettyHtml(html: string): string {
   return html
@@ -183,18 +198,18 @@ const BUTTONS: { c: Cmd; label: ComponentChildren; title: string; modes: EditorM
   { c: 'bold', label: <b>B</b>, title: 'Bold (Ctrl+B)', modes: ['rich', 'markdown'] },
   { c: 'italic', label: <i>I</i>, title: 'Italic (Ctrl+I)', modes: ['rich', 'markdown'] },
   { c: 'underline', label: <u>U</u>, title: 'Underline (Ctrl+U)', modes: ['rich'] },
-  { c: 'strike', label: <s>S</s>, title: 'Struck through (Ctrl+Shift+S)', modes: ['rich', 'markdown'] },
+  { c: 'strike', label: <s>S</s>, title: 'Struck through (Ctrl+Shift+S)', modes: ['rich', 'markdown'], more: true },
   { c: 'color', label: <span class="me-color-a">A</span>, title: 'Text colour', modes: ['rich'], more: true },
   { c: 'link', label: <Icon name="link" size={15} />, title: 'Link (Ctrl+K); or paste an address over the text', modes: ['rich', 'markdown'] },
   { c: 'bullets', label: <Icon name="list" size={15} />, title: 'Bulleted list (Ctrl+Shift+8)', modes: ['rich', 'markdown'] },
   { c: 'numbers', label: <span class="mc-fmt-num">1.</span>, title: 'Numbered list (Ctrl+Shift+7)', modes: ['rich', 'markdown'] },
   { c: 'quote', label: <span class="mc-fmt-quote">❝</span>, title: 'Quote (Ctrl+Shift+B)', modes: ['rich', 'markdown'] },
-  { c: 'heading', label: <span class="mc-fmt-h">H</span>, title: 'Heading: larger, then smaller, then off', modes: ['rich', 'markdown'] },
+  { c: 'heading', label: <span class="mc-fmt-h">H</span>, title: 'Heading: larger, then smaller, then off', modes: ['rich', 'markdown'], more: true },
   { c: 'code', label: <code>{'</>'}</code>, title: 'Code: in the line, or a block over several lines', modes: ['rich', 'markdown'], more: true },
   { c: 'align', label: <span class="me-align">≡</span>, title: 'Align: left, centre, right', modes: ['rich'], more: true },
   { c: 'picture', label: <Icon name="image" size={15} />, title: 'Picture in the text (or paste or drop one)', modes: ['rich', 'markdown'] },
   { c: 'table', label: <span class="me-table-ic">▦</span>, title: 'Table (again to remove it)', modes: ['rich'], more: true },
-  { c: 'clear', label: <span class="mc-fmt-clear">T<sub>x</sub></span>, title: 'Remove formatting (Ctrl+\\)', modes: ['rich', 'markdown'] },
+  { c: 'clear', label: <span class="mc-fmt-clear">T<sub>x</sub></span>, title: 'Remove formatting (Ctrl+\\)', modes: ['rich', 'markdown'], more: true },
 ];
 // No near-black: "None" is the text's own colour, which a dark theme draws light.
 const COLORS = ['#c2410c', '#b91c1c', '#a21caf', '#1d4ed8', '#0f766e', '#15803d', '#a16207'];
@@ -359,6 +374,9 @@ export function MailEditor(p: MailEditorProps) {
       onTransaction: ({ editor: ed }) => setActive(richActive(ed)),
     });
     editor.current = e;
+    // An HTML block's "Edit HTML" (schema.ts).
+    const editHtml = () => props.current.onMode('html');
+    richHost.current!.addEventListener('me-edit-html', editHtml);
     mounting.current = true;
     // A draft kept before there was HTML: Markdown, read once and kept as HTML from now on.
     if (!p.initial.html && p.initial.markdown) replaceDoc(e, markdownJson(e, p.initial.markdown, { islands: new Map(), pictures: new Map() }), false);
@@ -378,6 +396,7 @@ export function MailEditor(p: MailEditorProps) {
       };
     if (p.mode !== 'rich') void switchTo(p.mode, false);
     return () => {
+      richHost.current?.removeEventListener('me-edit-html', editHtml);
       clearTimeout(typingTimer.current);
       cm.current?.destroy();
       cm.current = null;
@@ -426,7 +445,7 @@ export function MailEditor(p: MailEditorProps) {
     before.current = e.getJSON();
     refs.current = refsOf(e);
     const r = refs.current;
-    const text = mode === 'html' ? picturesOut(prettyHtml(docHtml(e)), r) : docMarkdown(e);
+    const text = mode === 'html' ? picturesOut(prettyHtml(docHtml(e)), r) : mode === 'plain' ? plainText(docMarkdown(e)) : docMarkdown(e);
     entered.current = text;
     cm.current = code.codeView({
       parent: mode === 'html' ? htmlHost.current! : mode === 'plain' ? plainHost.current! : mdHost.current!,
@@ -498,7 +517,8 @@ export function MailEditor(p: MailEditorProps) {
       window.setTimeout(() => setLeaving((l) => (l === from ? null : l)), 280);
     }
     requestAnimationFrame(() => {
-      if (scroller) scroller.scrollTop = ratio * Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      // HTML and Plain are other shapes than the page (a long forward folds to a line): they start at the top.
+      if (scroller) scroller.scrollTop = to === 'html' || to === 'plain' ? 0 : ratio * Math.max(0, scroller.scrollHeight - scroller.clientHeight);
       if (to === 'rich') editor.current?.commands.focus();
       else cm.current?.focus();
     });
@@ -598,6 +618,15 @@ export function MailEditor(p: MailEditorProps) {
   };
 
   const view = (m: EditorMode) => `me-view me-${m}${shown === m ? ' shown' : ''}${leaving === m ? ' leaving' : ''}${shown === m && leaving ? ' entering' : ''}`;
+  // The view switch's thumb slides to the picked label, as wide as it ("Rich" is narrower than "Markdown").
+  const modesBox = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const box = modesBox.current;
+    const b = box?.querySelector<HTMLElement>('.me-mode.on');
+    if (!box || !b) return;
+    box.style.setProperty('--x', `${b.offsetLeft}px`);
+    box.style.setProperty('--w', `${b.offsetWidth}px`);
+  }, [shown, p.bar]);
   return (
     <div class={`me me-is-${shown}`}>
       <div class="me-views">
@@ -686,58 +715,62 @@ export function MailEditor(p: MailEditorProps) {
           </button>
         </div>
       )}
-      {p.bar && (
-        <div class="mc-format me-bar" role="toolbar" aria-label="Formatting" onKeyDown={barKeys}>
-          {BUTTONS.filter((b) => b.modes.includes(shown) && (more || !b.more)).map((b, i) => (
+      <div class={`mc-format me-bar${p.bar ? '' : ' bare'}`} role="toolbar" aria-label="Formatting" onKeyDown={barKeys}>
+        {/* Aa hides the formatting buttons; the switch between views always stays. */}
+        {p.bar && BUTTONS.filter((b) => b.modes.includes(shown) && (more || !b.more)).map((b, i) => (
+          <button
+            class={`mc-fmt mc-fmt-${b.c}${on.has(b.c) ? ' on' : ''}`}
+            type="button"
+            tabIndex={i === 0 ? 0 : -1}
+            title={b.title}
+            aria-label={b.title}
+            aria-pressed={b.c === 'clear' || b.c === 'picture' ? undefined : on.has(b.c)}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => run(b.c)}
+          >
+            {b.label}
+          </button>
+        ))}
+        {p.bar && BUTTONS.some((b) => b.more && b.modes.includes(shown)) && (
+          <button
+            class={`mc-fmt me-more${more ? ' open' : ''}${!more && BUTTONS.some((b) => b.more && on.has(b.c)) ? ' on' : ''}`}
+            type="button"
+            tabIndex={-1}
+            aria-expanded={more}
+            title={more ? 'Fewer buttons' : 'More: struck through, colour, heading, code, alignment, tables, remove formatting'}
+            aria-label={more ? 'Fewer buttons' : 'More formatting'}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={toggleMore}
+          >
+            <Icon name={more ? 'back' : 'more'} size={15} />
+          </button>
+        )}
+        {shown === 'html' && <span class="me-bar-note">The mail as it arrives is beside it.</span>}
+        {shown === 'plain' && (
+          <span class="me-bar-note" title="No HTML part: marks like **bold** stay as written, and pictures in the text are left out.">
+            Sent as plain text, as you see it.
+          </span>
+        )}
+        <span class="mc-fmt-gap" />
+        <div class="me-modes" ref={modesBox} role="radiogroup" aria-label="Edit as" onPointerEnter={() => void loadCode()}>
+          <span class="me-modes-thumb" aria-hidden="true" />
+          {MODES.map((x) => (
             <button
-              class={`mc-fmt mc-fmt-${b.c}${on.has(b.c) ? ' on' : ''}`}
+              class={`me-mode${shown === x.m ? ' on' : ''}`}
               type="button"
-              tabIndex={i === 0 ? 0 : -1}
-              title={b.title}
-              aria-label={b.title}
-              aria-pressed={b.c === 'clear' || b.c === 'picture' ? undefined : on.has(b.c)}
+              // The bar's one Tab stop when it has no formatting buttons (Aa off, or HTML and Plain).
+              tabIndex={x.m === shown && !(p.bar && BUTTONS.some((b) => b.modes.includes(shown))) ? 0 : -1}
+              role="radio"
+              aria-checked={shown === x.m}
+              title={x.title}
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => run(b.c)}
+              onClick={() => p.onMode(x.m)}
             >
-              {b.label}
+              {x.label}
             </button>
           ))}
-          {BUTTONS.some((b) => b.more && b.modes.includes(shown)) && (
-            <button
-              class={`mc-fmt me-more${more ? ' open' : ''}${!more && BUTTONS.some((b) => b.more && on.has(b.c)) ? ' on' : ''}`}
-              type="button"
-              tabIndex={-1}
-              aria-expanded={more}
-              title={more ? 'Fewer buttons' : 'More: colour, code, alignment, tables'}
-              aria-label={more ? 'Fewer buttons' : 'More formatting'}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={toggleMore}
-            >
-              <Icon name={more ? 'back' : 'more'} size={15} />
-            </button>
-          )}
-          {shown === 'html' && <span class="me-bar-note">Edit the HTML; the mail as it arrives is beside it.</span>}
-          {shown === 'plain' && <span class="me-bar-note">Plain text, exactly as it goes: no formatting, and pictures in the text are left out.</span>}
-          <span class="mc-fmt-gap" />
-          <div class="me-modes" role="radiogroup" aria-label="Edit as" onPointerEnter={() => void loadCode()} style={{ '--at': MODES.findIndex((x) => x.m === shown) }}>
-            <span class="me-modes-thumb" aria-hidden="true" />
-            {MODES.map((x) => (
-              <button
-                class={`me-mode${shown === x.m ? ' on' : ''}`}
-                type="button"
-                tabIndex={-1}
-                role="radio"
-                aria-checked={shown === x.m}
-                title={x.title}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => p.onMode(x.m)}
-              >
-                {x.label}
-              </button>
-            ))}
-          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

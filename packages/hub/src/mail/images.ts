@@ -124,6 +124,18 @@ export class ImageProxy {
     }
   }
 
+  /** The bytes and type of a picture the hub has, or null: never a request (a picture that can tell, embedded). */
+  async cachedBytes(url: string): Promise<{ bytes: Buffer; mime: string } | null> {
+    const file = this.file(url);
+    try {
+      if (!existsSync(file) || !existsSync(file + '.mime')) return null;
+      if ((this.o.now ?? Date.now)() - statSync(file + '.mime').mtimeMs >= IMAGE_KEEP_MS) return null;
+      return { bytes: readFileSync(file), mime: readFileSync(file + '.mime', 'utf8') };
+    } catch {
+      return null;
+    }
+  }
+
   /** The bytes and type of a picture, fetched now when the hub does not have it (a forward that embeds it). */
   async bytes(url: string): Promise<{ bytes: Buffer; mime: string } | { error: string; status: number }> {
     const r = await this.serve(url);

@@ -124,11 +124,12 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
   the same from an edit in Markdown or HTML. The bar is one stop for Tab; the arrow keys move along it.
   - **Rich** (the default): text as it will look. Bold, italic, underline, struck, colour (eight swatches), link
     (Ctrl+K, or paste an address over the text), bullets, numbers, quote, heading (larger, then smaller, then off),
-    code (in the line, or a block over several lines), alignment, a table, Remove formatting (Ctrl+\\); colour, code,
-    alignment and tables wait behind ⋯ (opened, it stays open on the device). Markdown's
+    code (in the line, or a block over several lines), alignment, a table, Remove formatting (Ctrl+\\); struck, colour,
+    heading, code, alignment, tables and Remove formatting wait behind ⋯ (opened, it stays open on the device), so the
+    bar and the switch between views are one row; on a phone the row scrolls sideways under the switch. Markdown's
     shortcuts work as you type (`**`, `# `, `- `, `> `). A picture pasted, dropped or chosen goes in the text where the
     caret is (a `data:` URL in the draft; over 5 MB, or not PNG, JPEG, GIF or WebP, it is attached instead); pasted
-    anywhere else in the composer, it is attached. The bar shows unless Aa hides it.
+    anywhere else in the composer, it is attached. Aa hides the formatting buttons; the switch between views stays.
   - **Markdown** (CodeMirror, `livemd.ts`): the same document as Markdown, drawn as you type, as Obsidian does:
     headings big, bold bold, and the marks that make them fold away on every line but the caret's. A pasted picture
     stands in as `![name](dc-picture:id)` and shows as itself; a forward or a quote as a chip (`[[island:id]]`). What
@@ -141,7 +142,8 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
     block of its own.
   - **Plain**: plain text only, no HTML part (`MailDraft.plainOnly`): the text part exactly as it goes, a forward or a
     quote as a chip for its text. No formatting buttons; pictures in the text are left out, and one pasted or dropped
-    here is attached. Rich again makes it HTML.
+    here is attached. Markdown's marks stay as written; the bits of HTML it keeps (colour, alignment) go, their words
+    kept, as the hub does for every text part. Rich again makes it HTML.
   - **A forward or a quote** is such a block (an island), drawn in a sandboxed frame with a bar: its name, size, Hide
     and ✕. The hub makes it (`hub/src/mail/island.ts`, `MailComposeStart.island`): the original's HTML with its style
     sheets written into each element's own `style`, so it keeps its look in mail apps that drop style sheets (Gmail);
@@ -149,15 +151,24 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
     picture from the web keeps its address, shown as your picture setting shows it in the reader (a held one as a
     striped box). A reply's quote starts folded; taken out, "Quote <name>" puts it back, and a forward's "Put the
     forwarded message back". The caret starts on the line above it, never on the block, so typing never replaces it.
-  - **Pictures from the web** in it (a forward's, a quote's, an address written in the HTML view) go as the line under
-    the text says: **Link** (the default: their app fetches them when they open it, and a personal one can tell the
+    A block of HTML of your own has **Edit HTML** on its bar, which opens the HTML view.
+  - **Pictures from the web** in it (a forward's, a quote's, an address written in the HTML view) go as the footer's
+    button says ("70 · Link · 1 can tell", beside the size, in sight however long the forward is), which opens the
+    choice: **Link** (the default: their app fetches them when they open it, and a personal one can tell the
     original sender; Link says how many on itself, "Link · 2 can tell"), **Embed** (the hub fetches them now, through its image proxy, and sends them inside the mail:
-    nothing is fetched on their end; one that can't be fetched stays linked) or **Leave out**. Backgrounds (a
-    `background` attribute, a style's or a sheet's `url()`) go the same way. Each says what it does
+    nothing is fetched on their end; never linked instead: one that can't be fetched is left out, and so is one that can
+    tell unless the hub has it already, since fetching it now would tell the original sender; the choice says how many)
+    or **Leave out**.
+    Backgrounds (a `background` attribute, a style's or a sheet's `url()` and `image-set()`'s first choice), an SVG
+    `<image>` and a video's poster go the same way. Video and audio are linked as they are with Link, and taken out
+    (their fallback text kept) with Embed and Leave out; this hub's own addresses never leave. What Embed left out is
+    on the outbox item (`MailOutboxView.pictures`: `{ embedded, leftOut: { failed, canTell } }`), and the sending strip
+    says it ("· 2 pictures left out"). Each says what it does
     to the size. Pictures inside the mail go as parts the HTML shows (`cid:`) when the account's status says
     `details.inlineParts` (dither-accounts' `OutgoingFile.contentId`), else as `data:` pictures, which Gmail hides.
-  - **The text part** is the Markdown, with a forward's or a quote's text as a plain-text mail has it and pictures as
-    `[picture: name]`. An island carries a fingerprint of its words (`data-dc-text`): once they were edited in the HTML
+  - **The text part** is plain text: the Markdown with every HTML tag in it taken out (its words kept, `<br>` and the
+    ends of blocks as line breaks, a link as `[text](address)`, entities decoded; Markdown's own marks and code stay),
+    with a forward's or a quote's text as a plain-text mail has it and pictures as `[picture: name]`. An island carries a fingerprint of its words (`data-dc-text`): once they were edited in the HTML
     view, or when the original had no text part, its text is made from its own HTML instead. `MailIsland.textBytes` is
     what an island adds to the text part as made, which the size meter counts while the island is unchanged. Plain sends that alone: no HTML part.
   - Drafts keep the HTML (`MailDraft.html`, with `pictures` and `plainOnly`); a draft from before it opens from its
@@ -167,8 +178,9 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
 - **Sizes.** The footer says "≈ 188 KB of 25 MB": the mail as it goes, pictures and files counted as base64 (a third
   bigger). It opens the breakdown: the text part, the HTML part, the pictures pasted in, the ones embedded, the files,
   the total, and what their app loads on their end (linked pictures, with the bytes the hub knows of them:
-  `POST /api/mail/pictures/sizes`, which fetches nothing, one answer per address; this hub's picture addresses, as a
-  forward's backgrounds have, count as the picture they stand for). The account's cap counts files and pictures
+  `POST /api/mail/pictures/sizes`, which fetches nothing, one answer per address, with whether the hub has it already
+  (`cached`, so the composer can say how many Embed would leave out); this hub's picture addresses, as a forward's
+  backgrounds have, count as the picture they stand for). The account's cap counts files and pictures
   inside it by their own bytes, not their base64, as dither-accounts counts attachments; the footer turns red over it.
 - **Undo a send.** Send gives the message to the hub's outbox (`hub/src/mail/outbox.ts`), once per `clientId`, after checking
   it: someone to send to (To, Cc and Bcc together at most the account's `details.maxRecipients`, else 500, 100 on
@@ -253,21 +265,25 @@ files made without the hub surviving a reload of the page (its draft does).
   another address.
 - **Pictures and trackers** (`hub/src/mail/pictures.ts`). Each picture from the web is one of three kinds:
   - a **tracker**: a 1-2 px or hidden image, or a known open-tracking service or path (`/track/open.php`, `/wf/open`,
-    …). Removed, by default; "Trackers: Keep" in Settings → Mail treats them as personal pictures instead, and one
+    …). Removed, by default; kept ("Trackers: Keep" in Settings → Mail), they load whenever any pictures load (Ones
+    that can't tell or All) and are held under None. One
     mail's own choice comes first (`POST /api/mail/images { messageId, trackers: 'keep' | 'remove' | null }`; the
     reader's `pictures.trackersSource` says whether it was the mail's or the setting's).
   - **personal** ("can tell"): its address carries your address (plain, encoded, or hashed with MD5 or SHA), or an
-    id made for one recipient: a UUID or 16+ hex digits anywhere, a random-looking run (letters and digits mixed) of
-    16+ characters in the path or 12+ in a query value, a long number in the query, or an id-like query key (`uid`,
-    `e`, `r`, `id`, `mc_eid`, …) with a value. Fetching it can tell the sender you opened the mail. The rule leans this
+    id made for one recipient in a path segment, a query value or a host label (but the last two): a UUID, 5+ digits
+    alone, 10+ hex digits with a digit among them, 10+ letters and digits interleaved, 20+ letters and digits in one
+    case, or 16+ in a random mix of cases; or an id-like query key (`uid`, `u`, `e`, `r`, `id`, `user`, `mc_eid`, …)
+    with any value. Years (`/2024/`) and sizes (`1200x800`) are not ids. Fetching it can tell the sender you opened the mail. The rule leans this
     way: a file named by its content's hash is held needlessly, never the other way round.
   - **shared** ("can't tell"): the same address in every copy; seen in mail from another sender too counts as shared
     (not your own mail: your Sent copy of a forward carries the original's personal pictures).
   Settings → Mail, **Load pictures**: None, **Ones that can't tell** (the default) or All. A sender's rule (Always or
   Never from them) and a choice for one mail come first. The bar over a mail says what happened ("12 pictures loaded ·
-  3 held back · 2 trackers removed (they would tell Sam you opened it)"), with Load all, and ⋯ for this mail's own
+  3 held back (they would tell Sam you opened it) · 2 trackers removed"; on a phone without the why), with Load all,
+  and ⋯ for this mail's own
   choice (No pictures, Only the ones that can't tell, All pictures, or back to the usual), its trackers (kept or
-  removed), the sender's rule, and **Details**: every host, its kind, why, what happened to it and its size once the hub has it. Links
+  removed), the sender's rule, and **Details**: how many hosts the loaded ones come from, then every host, its kind,
+  why, what happened to it and its size once the hub has it ("loads when shown" before). Links
   are not changed: a link can still tell the sender you clicked it. The bar stays when pictures that can tell were
   loaded ("12 pictures loaded, 2 of them could tell Sam"), so you know, and can take it back.
   Allowed pictures come through the hub (`GET /api/mail/img/<token>`, `hub/src/mail/images.ts`): the token is an HMAC
@@ -278,8 +294,9 @@ files made without the hub surviving a reload of the page (its draft does).
   media cache. A picture the cache already has loads under "Ones that can't tell" whatever its kind (fetching it again
   would tell no one).
 - **Sizes of a mail you got.** The message's ▾ details have a Size row: the raw message as the server counts it, its
-  HTML, text and files, and its pictures: how many loaded from how many hosts and their bytes, how many not fetched yet,
-  how many not loaded.
+  HTML, text and files, and its pictures: how many loaded from how many hosts (`pictures.hosts`: the hosts of the
+  loaded ones; `hostsAll` every picture's) and their bytes, how many load when shown (`unknown`: loaded, but the hub
+  has not fetched them yet; such an item has `cached: false` and no `size`), how many not loaded.
 - **`cid:` pictures** come from the message's own parts and always show.
 - **Files** show under the message as chat's cards; pictures the HTML shows itself are not listed again. They come
   from the server with `mail.attachment` the first time they are opened, go into the media cache, and are looked at

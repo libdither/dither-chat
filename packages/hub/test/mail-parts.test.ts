@@ -88,8 +88,8 @@ describe('the frame’s document', () => {
   test('sanitised, with the CSP, nosniff and no referrer', async () => {
     const { get } = await world([NEWSLETTER]);
     const body = (await (await get(`/api/mail/messages/${mid('<news@x>')}/body`)).json()) as P.MailBodyView;
-    expect(body.html).toMatchObject({ url: `/api/mail/messages/${mid('<news@x>')}/html?p=none&t=0&v=3`, remoteImages: 1, trackers: 1, imagesShown: false, plain: false });
-    expect(body.html!.pictures).toMatchObject({ policy: 'none', source: 'setting', loaded: 0, held: 1, removed: 1, hosts: 2 });
+    expect(body.html).toMatchObject({ url: `/api/mail/messages/${mid('<news@x>')}/html?p=none&t=0&v=4`, remoteImages: 1, trackers: 1, imagesShown: false, plain: false });
+    expect(body.html!.pictures).toMatchObject({ policy: 'none', source: 'setting', loaded: 0, held: 1, removed: 1, hosts: 0, hostsAll: 2 });
     expect(body.warnings).toEqual(['A link that shows shop.example goes to evil.example.']);
     const r = await get(body.html!.url);
     expect(r.status).toBe(200);

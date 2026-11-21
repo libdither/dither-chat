@@ -231,13 +231,23 @@ export interface MailPicturesView {
    * `trackers: null` goes back to the setting), or the setting.
    */
   trackersSource?: 'message' | 'setting';
+  /** Pictures by what happens to them (each picture once per place it appears): load, hold (held back), drop (removed). */
   loaded: number;
   held: number;
   removed: number;
+  /** Distinct hosts of the pictures that load: "N loaded from `hosts` hosts". */
   hosts: number;
+  /** Distinct hosts of every picture, loaded, held or removed (what the details list). */
+  hostsAll?: number;
+  /** Bytes of the pictures that load and that the hub has already. */
   bytes: number;
+  /** Pictures that load but that the hub has not fetched yet: they are fetched when the mail is shown ("loads when shown"). */
   unknown: number;
-  items: { host: string; class: 'shared' | 'personal' | 'tracker'; why: string; action: 'load' | 'hold' | 'drop'; size?: number }[];
+  /**
+   * Each picture: `size` is there exactly when the hub has its bytes (`cached`); a `load` one without it is fetched when
+   * the mail is shown, a `hold` or `drop` one is never fetched.
+   */
+  items: { host: string; class: 'shared' | 'personal' | 'tracker'; why: string; action: 'load' | 'hold' | 'drop'; size?: number; cached?: boolean }[];
 }
 
 export interface MailAttachmentView {
@@ -278,6 +288,18 @@ export interface MailOutboxView {
   /** Answered by a dry run: nothing reached the account. */
   dryRun?: boolean;
   createdAt?: number;
+  /** What happened to the pictures that were to go inside it (Embed), when any were embedded or left out. */
+  pictures?: MailOutboxPictures;
+}
+
+/**
+ * The pictures of a send with Embed: how many went inside the mail, and how many were left out instead of linked
+ * because their bytes could not be had (`failed`) or because fetching them now would tell the original sender
+ * (`canTell`: a personal picture the hub did not have already).
+ */
+export interface MailOutboxPictures {
+  embedded: number;
+  leftOut: { failed: number; canTell: number };
 }
 
 // ------------------------------------------------------------------ sending (slice 5)
@@ -361,6 +383,11 @@ export interface MailPictureSizes {
   sizes: (number | null)[];
   /** Each one's class (pictures.ts): `personal` ones tell their sender when fetched. */
   classes: ('shared' | 'personal' | 'tracker')[];
+  /**
+   * The hub has its bytes now. With Embed, a picture whose class is not `shared` goes inside the mail only when this
+   * is true; otherwise it is left out (fetching it would tell its sender).
+   */
+  cached?: boolean[];
   /**
    * The address each one stands for: itself, or for this hub's address of a picture (`/api/mail/img/<token>`, as a
    * forward's backgrounds have) the picture's own; null when it stands for nothing (it goes nowhere when sent).

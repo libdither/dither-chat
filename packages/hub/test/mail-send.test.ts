@@ -450,6 +450,23 @@ describe('pictures inside the mail', () => {
     expect(view.attachments).toEqual([]);
   });
 
+  test('embed leaves out what it cannot fetch and what would tell, never links it; the outbox item says so', async () => {
+    const w = await world({ opts: { details: { inlineParts: true } } as FakeOpts });
+    // Private addresses: the hub's image proxy refuses them without a request.
+    const html = `<p style="text-align: center">Look <b>here</b></p>${pasted(png(40))}<img src="https://10.0.0.1/logo.png"><img src="https://10.0.0.2/u/8812344/hero.png">`;
+    const text = '<p style="text-align: center">Look **here**</p>\n\n![p](dc-picture:p1)';
+    const { outboxId } = await clock.wait(w.hub.outbox.accept(reply(w, { kind: 'new', replyTo: null, draftKey: null, quote: false, text, html, pictures: 'embed' })));
+    expect(w.hub.outbox.item(outboxId)!.pictures).toEqual({ embedded: 1, leftOut: { failed: 1, canTell: 1 } });
+    await clock.advance(50);
+    await until(() => state(w, outboxId) === 'sent', 4000, 'sent');
+    const out = w.fake.sent[0];
+    expect(out.mail.html).not.toContain('10.0.0.');
+    expect((out.mail as unknown as Record<string, unknown>).pictures).toBeUndefined();
+    // The text part is plain text: the paragraph's words, no tags.
+    expect(out.mail.text).toBe('Look **here**\n\n[picture: p]');
+    expect(w.hub.outbox.item(outboxId)!.pictures).toEqual({ embedded: 1, leftOut: { failed: 1, canTell: 1 } });
+  });
+
   test('the cap counts the pictures inside as bytes, as files are counted, parts or data: alike', async () => {
     for (const inlineParts of [true, false]) {
       const w = await world({ opts: { details: { inlineParts, sendCap: 1000 } } as FakeOpts });

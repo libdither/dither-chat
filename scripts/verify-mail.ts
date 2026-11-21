@@ -145,7 +145,8 @@ const inView = (sel: string) =>
 
 // ------------------------------------------------------------------ layout (as verify-phone.ts)
 
-const SIDEWAYS = '.level-picker, .ident-chips, .composer-files, .sheet-quick, pre, code, .log-view, .detail-dump, .lv-screen, .mail-chips';
+// Rows meant to scroll sideways: on a phone the editor's bar is one (its view switch stays at its end).
+const SIDEWAYS = '.level-picker, .ident-chips, .composer-files, .sheet-quick, pre, code, .log-view, .detail-dump, .lv-screen, .mail-chips, .me-bar';
 async function overflow(): Promise<string[]> {
   return page.eval(`(() => {
     const W = innerWidth, out = [], sideways = ${JSON.stringify(SIDEWAYS)};
@@ -582,6 +583,9 @@ async function composerDesktop(themeName: string, full: boolean) {
   await press('Tab', 'Tab', 9, 8);
   await Bun.sleep(150);
   check(`${tag}: Shift+Tab takes it back out`, !(await has('.me-rich-doc ul ul')) && (await page.eval<number>(`document.querySelectorAll('.me-rich-doc ul li').length`)) === 2);
+  // Heading, Remove formatting, colour, code, alignment and tables are behind ⋯, which keeps the bar to one row.
+  check(`${tag}: the less used buttons wait behind ⋯`, !(await has('.me-bar .mc-fmt-heading')) && !(await has('.me-bar .mc-fmt-table')) && (await has('.me-bar .me-more')));
+  await click(await at('.me-more'));
   await typeBody('Plan for Friday');
   await click(await at('.mc-fmt-heading'));
   check(`${tag}: Heading makes the line a heading`, (await page.eval(`document.querySelector('.me-rich-doc h1')?.textContent ?? ''`)) === 'Plan for Friday');
@@ -589,9 +593,6 @@ async function composerDesktop(themeName: string, full: boolean) {
   check(`${tag}: Remove formatting takes the heading off`, !(await has('.me-rich-doc h1')) && (await bodyText()) === 'Plan for Friday');
   await typeBody('Plan:');
   await press('Enter', 'Enter', 13);
-  // Colour, code, alignment and tables are behind ⋯, which keeps the bar to one row.
-  check(`${tag}: the less used buttons wait behind ⋯`, !(await has('.me-bar .mc-fmt-table')) && (await has('.me-bar .me-more')));
-  await click(await at('.me-more'));
   await click(await at('.mc-fmt-table'));
   await page.until(`!!document.querySelector('.me-rich-doc table')`, 3000).catch(() => {});
   await page.send('Input.insertText', { text: 'Day' });
@@ -627,6 +628,9 @@ async function composerDesktop(themeName: string, full: boolean) {
   let pd: any = null;
   for (let i = 0; i < 30 && !pd?.plainOnly; i++) (await Bun.sleep(200), (pd = await plainDraft()));
   check(`${tag}: Plain shows the text as it goes, with no formatting buttons, and the draft says plain text only`, !!pd?.plainOnly && !(await has('.me-bar .mc-fmt-bold')) && (await page.eval<string>(`document.querySelector('.me-plain .cm-content')?.textContent ?? ''`)).includes('Centred'), pd?.plainOnly);
+  // The centred line is a piece of HTML in Markdown; plain text has it as words only.
+  const plainShown = await page.eval<string>(`document.querySelector('.me-plain .cm-content')?.textContent ?? ''`);
+  check(`${tag}: Plain has no HTML tags in it`, !/<\/?[a-z][^>]*>/i.test(plainShown), plainShown.slice(0, 200));
   await shot(`mail-${tag.replace(/ /g, '-')}-plain`);
   await click(await at('.me-mode', `el => el.textContent === 'Rich'`));
   await page.until(`!!document.querySelector('.me-rich.shown')`, 5000).catch(() => {});
@@ -679,18 +683,29 @@ async function forwardWithPictures(tag: string) {
   await page.until(`!!document.querySelector('.me-island[data-kind="forward"] iframe')?.contentDocument?.querySelector('img[data-dc-src]')`, 15000).catch(() => {});
   const isl = await page.eval<{ styled: boolean; pictures: number; trackers: number }>(`(() => { const d = document.querySelector('.me-island[data-kind="forward"] iframe')?.contentDocument; return { styled: !!d?.querySelector('.card[style*="border"]'), pictures: d?.querySelectorAll('img[data-dc-src]').length ?? 0, trackers: d ? [...d.querySelectorAll('img[data-dc-src]')].filter((i) => /track|\\/o\\//.test(i.dataset.dcSrc)).length : -1 }; })()`);
   check(`${tag}: a forward keeps its layout (style sheets inlined), its pictures, and none of its trackers`, isl.styled && isl.pictures > 60 && isl.trackers === 0, isl);
-  check(`${tag}: it says how its pictures from the web go`, (await page.eval<string>(`document.querySelector('.mc-pics')?.textContent ?? ''`)).includes('pictures from the web'));
-  // The hub's answer on which can tell (the newsletter's personal header) comes after the row draws, and widens Link.
-  await page.until(`!!document.querySelector('.mc-seg-btn .mc-seg-warn')`, 10000).catch(() => {});
+  // The footer says how its pictures from the web go, in sight however long the forward is; it opens the choice.
+  // The hub's answer on which can tell (the newsletter's personal header) comes after the button draws, and widens it.
+  await page.until(`!!document.querySelector('.mc-foot .mc-pics-btn .mc-seg-warn')`, 10000).catch(() => {});
+  const picsBtn = await page.eval<string>(`document.querySelector('.mc-foot .mc-pics-btn')?.textContent ?? ''`);
+  check(`${tag}: the footer says how its pictures from the web go, and how many can tell`, /^\d+ · Link · 1 can tell$/.test(picsBtn), picsBtn);
+  await click(await at('.mc-pics-btn'));
+  check(`${tag}: it opens the choice`, (await page.eval<string>(`document.querySelector('.mc-pics-pop')?.textContent ?? ''`)).includes('pictures from the web'));
   const linkLabel = await page.eval<string>(`[...document.querySelectorAll('.mc-seg-btn')].find((b) => b.textContent.startsWith('Link'))?.textContent ?? ''`);
   check(`${tag}: Link says on itself how many pictures can tell the original sender`, linkLabel === 'Link · 1 can tell', linkLabel);
   await click(await at('.mc-seg-btn', `el => el.textContent === 'Embed'`));
+  check(`${tag}: the footer button follows the choice`, / · Embed$/.test(await page.eval<string>(`document.querySelector('.mc-pics-btn')?.textContent ?? ''`)));
+  // The one that can tell was held in the reader, so the hub has not got it: Embed leaves it out rather than fetch it.
+  const embedNote = await page.eval<string>(`document.querySelector('.mc-pics-note')?.textContent ?? ''`);
+  check(`${tag}: Embed says it leaves out the picture that can tell`, embedNote.includes('1 picture that can tell is left out'), embedNote);
   await click(await at('.mc-size-btn'));
   check(`${tag}: the size breakdown counts the embedded pictures`, (await page.eval<string>(`document.querySelector('.mc-size-pop')?.textContent ?? ''`)).includes('embedded'));
   await shot(`mail-${tag.replace(/ /g, '-')}-forward`);
   await type('#mc-to', 'jo@park.example');
   await key('#mc-to', 'Enter');
   await click(await at('.mc-send'));
+  await page.until(`/left out/.test(document.querySelector('.mc-strip')?.textContent ?? '')`, 10000).catch(() => {});
+  const strip = await page.eval<string>(`document.querySelector('.mc-strip')?.textContent ?? ''`);
+  check(`${tag}: the sending strip says how many pictures were left out`, /· 1 picture left out/.test(strip), strip);
   const end = Date.now() + 30_000;
   let sent: any = null;
   while (Date.now() < end && !sent) {

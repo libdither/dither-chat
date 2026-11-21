@@ -9,6 +9,7 @@
  * there is nothing to say: everything loaded, none of it could tell, and nothing removed.
  */
 import type * as P from '@dither-chat/protocol';
+import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import { bytes as bytesText } from '../../format.ts';
 import { bodies, details } from '../../mail/api.ts';
@@ -55,8 +56,17 @@ function PictureDetails({ p }: { p: P.MailPicturesView }) {
     }
     rows.set(key, r);
   }
+  const hostsAll = p.hostsAll ?? p.hosts;
   return (
     <div class="mail-pic-details">
+      {p.loaded > 0 && (
+        <p class="mail-pic-note">
+          {plural(p.loaded, 'picture')} from {plural(p.hosts, 'host')}
+          {hostsAll > p.hosts ? ` (of ${hostsAll} in all)` : ''}
+          {p.bytes ? `, ${bytesText(p.bytes)} fetched` : ''}
+          {p.unknown ? `${p.bytes ? '' : ','} ${p.unknown} load when shown` : ''}.
+        </p>
+      )}
       <table>
         <tbody>
           {[...rows.values()].map((r) => (
@@ -68,7 +78,7 @@ function PictureDetails({ p }: { p: P.MailPicturesView }) {
               <td class={`pic-class pic-${r.item.class}`}>{CLASS_LABEL[r.item.class]}</td>
               <td class="pic-why">{r.item.why}</td>
               <td class="pic-act">{ACTION_LABEL[r.item.action]}</td>
-              <td class="pic-size">{r.sized ? bytesText(r.size) : r.item.action === 'load' ? 'not fetched yet' : ''}</td>
+              <td class="pic-size">{r.item.action !== 'load' ? '' : r.sized === r.n ? bytesText(r.size) : r.sized ? `${bytesText(r.size)} + ${r.n - r.sized} when shown` : 'loads when shown'}</td>
             </tr>
           ))}
         </tbody>
@@ -137,9 +147,20 @@ export function ImageBanner({ message, body }: { message: P.MailMessageView; bod
       await refresh([...new Set([message.id, ...ids])]);
     });
   const canTellHeld = p.items.some((x) => x.action === 'hold' && x.class !== 'shared');
-  const parts: string[] = [];
+  const tells = `they would tell ${who} you opened it`;
+  const parts: ComponentChildren[] = [];
   if (p.loaded) parts.push(`${plural(p.loaded, 'picture')} loaded${canTellLoaded ? `, ${canTellLoaded} of them could tell ${who}` : ''}`);
-  if (p.held) parts.push(p.policy === 'none' ? `${plural(p.held, 'picture')} not loaded` : `${p.held} held back`);
+  if (p.held)
+    parts.push(
+      p.policy === 'none' ? (
+        `${plural(p.held, 'picture')} not loaded`
+      ) : (
+        <span title={canTellHeld ? `Held back: ${tells}` : undefined}>
+          {p.held} held back
+          {canTellHeld && <span class="mail-img-banner-faint mail-img-why"> ({tells})</span>}
+        </span>
+      ),
+    );
   if (p.removed) parts.push(`${plural(p.removed, 'tracker')} removed`);
   if (p.keepTrackers && p.trackersSource === 'message') parts.push('trackers kept');
   const because = p.source === 'sender' ? (p.policy === 'none' ? `Never from ${who}` : `Always from ${who}`) : p.source === 'message' ? 'your choice for this mail' : null;
@@ -182,10 +203,9 @@ export function ImageBanner({ message, body }: { message: P.MailMessageView; bod
       <div class="mail-img-banner-row">
         <Icon name="image" size={15} />
         <span class="mail-img-banner-text">
-          {parts.join(' · ') || 'Pictures'}
-          {canTellHeld && p.policy !== 'none' && <span class="mail-img-banner-faint"> (they would tell {who} you opened it)</span>}
+          {parts.length ? parts.flatMap((x, i) => (i ? [' · ', x] : [x])) : 'Pictures'}
           {because && <span class="mail-img-banner-faint"> · {because}</span>}
-          {p.bytes > 0 && <span class="mail-img-banner-faint"> · {bytesText(p.bytes)}</span>}
+          {p.bytes > 0 && <span class="mail-img-banner-faint mail-img-bytes"> · {bytesText(p.bytes)}</span>}
         </span>
         <span class="mail-img-banner-acts">
           {p.held > 0 && (

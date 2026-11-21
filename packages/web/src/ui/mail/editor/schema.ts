@@ -49,10 +49,16 @@ export function fitFrame(f: HTMLIFrameElement): () => void {
     const wrap = doc.body;
     wrap.style.transform = '';
     wrap.style.width = '';
-    const natural = Math.max(wrap.scrollWidth, doc.documentElement.scrollWidth);
+    wrap.style.boxSizing = '';
+    // The body's margins stay unscaled around it, so the scaled body gets what is left between them.
+    const cs = doc.defaultView!.getComputedStyle(wrap);
+    const margins = (parseFloat(cs.marginLeft) || 0) + (parseFloat(cs.marginRight) || 0);
+    const natural = Math.max(wrap.scrollWidth, doc.documentElement.scrollWidth - margins);
     let k = 1;
-    if (W && natural > W + 1) {
-      k = W / natural;
+    if (W && natural + margins > W + 1) {
+      k = (W - margins) / natural;
+      // scrollWidth counts the body's padding: the width set must too.
+      wrap.style.boxSizing = 'border-box';
       wrap.style.width = `${natural}px`;
       wrap.style.transformOrigin = '0 0';
       wrap.style.transform = `scale(${k})`;
@@ -148,7 +154,18 @@ const Island = Node.create({
         const at = typeof getPos === 'function' ? getPos() : null;
         if (at != null) editor.chain().focus().deleteRange({ from: at, to: at + node.nodeSize }).run();
       };
-      bar.append(name, fold, remove);
+      bar.append(name, fold);
+      // HTML of your own (written in the HTML view, or pasted whole) is edited there: this opens it.
+      if (node.attrs.kind === 'html') {
+        const code = document.createElement('button');
+        code.type = 'button';
+        code.className = 'me-island-btn';
+        code.textContent = 'Edit HTML';
+        code.title = 'Edit it in the HTML view';
+        code.onclick = () => dom.dispatchEvent(new CustomEvent('me-edit-html', { bubbles: true }));
+        bar.append(code);
+      }
+      bar.append(remove);
       const sheet = document.createElement('div');
       sheet.className = 'me-island-sheet';
       const frame = document.createElement('iframe');

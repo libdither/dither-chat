@@ -14743,7 +14743,8 @@ button.msg-edited.link:hover {
   padding: 10px 0;
 }
 .me-html-code .cm-editor {
-  height: 100%;
+  /* A scroll of its own, as the mail beside it has. */
+  max-height: calc(100dvh - 120px);
   min-height: 220px;
   border: 1px solid var(--border-soft);
   border-radius: 8px;
@@ -14829,9 +14830,8 @@ button.msg-edited.link:hover {
 /* Rich, Markdown, HTML, Plain: a segmented switch whose thumb slides to the one you pick. */
 .me-modes {
   position: relative;
-  display: inline-grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
+  display: inline-flex;
+  flex: none;
   padding: 2px;
   border-radius: 8px;
   background: var(--bg-raised);
@@ -14840,17 +14840,19 @@ button.msg-edited.link:hover {
   position: absolute;
   top: 2px;
   bottom: 2px;
-  left: 2px;
-  width: calc((100% - 4px) / 4);
+  left: 0;
+  width: var(--w, 0);
   border-radius: 6px;
   background: var(--bg-center);
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.18);
-  transform: translateX(calc(var(--at, 0) * 100%));
-  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform: translateX(var(--x, 2px));
+  transition:
+    transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1),
+    width 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .me-mode {
   position: relative;
-  padding: 3px 10px;
+  padding: 3px 8px;
   color: var(--text-dim);
   font-size: 12px;
   white-space: nowrap;
@@ -14860,8 +14862,27 @@ button.msg-edited.link:hover {
   font-weight: 600;
 }
 .me-bar-note {
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-faint);
   font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A phone: one row that scrolls sideways under the view switch, which stays at its end. (Wider, the bar is one row
+   until ⋯ opens the rest onto a second.) */
+@media (max-width: 480px) {
+  .me-bar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .me-bar .me-modes {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    box-shadow: -10px 0 8px -4px var(--bg-center);
+  }
 }
 .me-color-a {
   font-weight: 700;
@@ -14893,23 +14914,26 @@ button.msg-edited.link:hover {
   border: 2px solid var(--bg-center);
   box-shadow: 0 0 0 1px var(--border);
 }
-/* Under the text: how its pictures from the web go. */
+/* In the footer: how its pictures from the web go ("12 · Link"), opening the choice. */
 .mc-pics {
-  display: flex;
-  flex-wrap: wrap;
+  position: relative;
+  flex: none;
+}
+.mc-pics-btn {
+  display: inline-flex;
   align-items: center;
-  gap: 4px 10px;
-  margin: 4px 0 8px;
-  padding: 8px 10px;
-  border-radius: 9px;
-  background: var(--bg-raised);
-  font-size: 12.5px;
+  gap: 4px;
+  white-space: nowrap;
+}
+.mc-pics-btn:hover {
+  color: var(--text);
 }
 .mc-pics-what {
+  margin: 0 0 6px;
   color: var(--text);
 }
 .mc-pics-note {
-  flex-basis: 100%;
+  margin: 8px 0 2px;
   color: var(--text-dim);
 }
 .mc-seg {
@@ -14954,6 +14978,37 @@ button.msg-edited.link:hover {
   background: var(--bg-center);
   box-shadow: 0 8px 28px rgb(0 0 0 / 0.22);
   font-size: 12.5px;
+}
+@media (max-width: 480px) {
+  .mc-foot {
+    position: relative;
+  }
+  .mc-foot .mc-size,
+  .mc-foot .mc-pics {
+    position: static;
+  }
+  .mc-foot .mc-size-pop {
+    left: 8px;
+    right: 8px;
+    width: auto;
+  }
+  /* Room for the size and the pictures: the paperclip says Attach, the paper plane Send. */
+  .mc-foot .hdr-btn-label,
+  .mc-pics-n,
+  .mc-size-cap,
+  .mc-foot .mc-send-label {
+    display: none;
+  }
+  .mc-foot .mc-send {
+    padding-inline: 14px;
+  }
+}
+/* A phone: the picture bar in a line or two; why they are held is in Details and on a long press. */
+@media (max-width: 480px) {
+  .mail-img-why,
+  .mail-img-bytes {
+    display: none;
+  }
 }
 .mc-size-pop table {
   width: 100%;

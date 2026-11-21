@@ -123,8 +123,9 @@ function declarations(body: string): { normal: string[]; important: string[] } {
 export function inlineCss(html: string, rootClass: string): string {
   let sheet = '';
   const without = html.replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gi, (_m, css: string) => {
-    // `<style><!-- … --></style>`, as old newsletters hide their sheet from older mail apps: the marks are not CSS.
-    sheet += `${css.replace(/<!--|-->/g, ' ')}\n`;
+    // `<style><!-- … --></style>` or `<![CDATA[ … ]]>`, as old newsletters hide their sheet from older mail apps: the
+    // marks are not CSS.
+    sheet += `${css.replace(/<!--|-->|<!\[CDATA\[|\]\]>/g, ' ')}\n`;
     return '';
   });
   if (!sheet.trim()) return html;
@@ -315,6 +316,10 @@ export interface OutgoingCtx {
   resolve: (src: string) => { url: string } | { cid: { messageId: string; contentId: string } } | null;
   /** A picture's bytes, for embedding: through the hub's image cache. */
   fetchPicture: (url: string) => Promise<{ bytes: Buffer; mime: string } | null>;
+  /** A picture's bytes only when the hub has them already (fetching it now would make no request). */
+  cachedPicture: (url: string) => Promise<{ bytes: Buffer; mime: string } | null>;
+  /** The picture can tell its sender it was opened (pictures.ts: personal or tracker): embedded only from the cache. */
+  canTell: (url: string) => boolean;
   /** An original's inline part's bytes. */
   cidPart: (messageId: string, contentId: string) => Promise<{ bytes: Buffer; mime: string } | null>;
   /** Names the parts made (the same on every try of one send). */
@@ -331,6 +336,11 @@ interface Outgoing {
   embedded: number;
   dropped: number;
   failed: number;
+  /**
+   * Pictures that were to go inside the mail and were left out instead: their bytes could not be had (`failed`), or
+   * fetching them now would tell the original sender (`canTell`: a personal one the hub did not have).
+   */
+  leftOut: { failed: number; canTell: number };
 }
 
 /** Tags the mail never carries, whatever the HTML view held. */
@@ -350,7 +360,37 @@ export function scriptUrl(v: string): boolean {
 }
 
 /** Whether a style or a sheet may fetch something: any url(), or an escape that could spell one. */
-const mayFetch = (css: string) => /url\s*\(|\\/i.test(css);
+const mayFetch = (css: string) => /url\s*\(|\\|image-set|image\s*\(|cross-fade|element\s*\(|paint\s*\(|@import|@font-face|expression|src\s*\(|binding|behavior/i.test(css);
+
+/**
+ * `image-set("a.png" 1x, url(b.png) 2x)` as `url("a.png")`, its first choice: one picture that goes as the others do.
+ * (sanitizeCss makes whatever else fetches inert.)
+ */
+function imageSets(css: string): string {
+  const re = /(?:-webkit-)?image-set\s*\(/gi;
+  let out = '';
+  let from = 0;
+  for (let m; (m = re.exec(css)); ) {
+    let depth = 1;
+    let quote = '';
+    let j = m.index + m[0].length;
+    for (; j < css.length && depth; j++) {
+      const c = css[j];
+      if (quote) {
+        if (c === '\\') j++;
+        else if (c === quote) quote = '';
+      } else if (c === '"' || c === "'") quote = c;
+      else if (c === '(') depth++;
+      else if (c === ')') depth--;
+    }
+    const first = splitTop(css.slice(m.index + m[0].length, depth ? j : j - 1), ',')[0] ?? '';
+    const str = /^(["'])((?:\\.|(?!\1)[^\\])*)\1/.exec(first);
+    out += css.slice(from, m.index) + (/^url\s*\([^)]*\)/i.exec(first)?.[0] ?? (str ? `url(${str[0]})` : 'none'));
+    from = j;
+    re.lastIndex = j;
+  }
+  return out + css.slice(from);
+}
 
 /** An attribute's value as text (HTMLRewriter gives it as written, entities and all), and back. */
 const attr = (el: HTMLRewriterTypes.Element, name: string) => {
@@ -362,11 +402,14 @@ const setAttr = (el: HTMLRewriterTypes.Element, name: string, v: string) => el.s
 /**
  * The editor's HTML as the mail's HTML part: scripts and the editor's own marks gone, pasted pictures as parts (or
  * `data:`), pictures from the web linked, embedded or dropped (`ctx.pictures`), this hub's addresses never leaving it.
- * Backgrounds (a `background` attribute, a style's or a sheet's `url()`) go the same way as pictures.
+ * Backgrounds (a `background` attribute, a style's or a sheet's `url()` and `image-set()`), a video's poster and an SVG
+ * `<image>` go the same way as pictures. Embed sends nothing that fetches on their end: a picture whose bytes can't be
+ * had is left out, and so is one that can tell (`ctx.canTell`) unless the hub has it already, since fetching it now
+ * would tell the original sender. Video and audio are not pictures: linked as they are, else left out.
  */
 export async function outgoingHtml(html: string, ctx: OutgoingCtx): Promise<Outgoing> {
-  const out: Outgoing = { html: '', inline: [], insideBytes: 0, linked: 0, embedded: 0, dropped: 0, failed: 0 };
-  // First pass: every picture and background, by what its address is.
+  const out: Outgoing = { html: '', inline: [], insideBytes: 0, linked: 0, embedded: 0, dropped: 0, failed: 0, leftOut: { failed: 0, canTell: 0 } };
+  // First pass: every picture, background and poster, by what its address is.
   type Pic = { kind: 'data'; mime: string; b64: string } | { kind: 'web'; url: string } | { kind: 'cid'; messageId: string; contentId: string } | { kind: 'none' };
   const what = (src: string, original: string | null): Pic => {
     if (original && /^https?:\/\//i.test(original)) return { kind: 'web', url: original };
@@ -378,10 +421,13 @@ export async function outgoingHtml(html: string, ctx: OutgoingCtx): Promise<Outg
     if (/^https?:\/\//i.test(src)) return { kind: 'web', url: src };
     return { kind: 'none' };
   };
+  const key = (p: Pic) => (p.kind === 'data' ? `d:${p.b64.length}:${p.b64.slice(0, 64)}:${p.b64.slice(-64)}` : p.kind === 'web' ? `w:${p.url}` : p.kind === 'cid' ? `c:${p.messageId}:${p.contentId}` : 'none');
   const srcs: { src: string; original: string | null }[] = [];
+  /** Pictures the island held because they can tell (its `data-dc-held`), whatever ctx.canTell says. */
+  const heldTells = new Set<string>();
   const cssRefs = (css: string) => {
     if (!mayFetch(css)) return;
-    sanitizeCss(css, (u) => {
+    sanitizeCss(imageSets(css), (u) => {
       srcs.push({ src: u.trim(), original: null });
       return null;
     });
@@ -390,7 +436,16 @@ export async function outgoingHtml(html: string, ctx: OutgoingCtx): Promise<Outg
   new HTMLRewriter()
     .on('img', {
       element(el) {
-        srcs.push({ src: (attr(el, 'src') ?? '').trim(), original: attr(el, 'data-dc-src') });
+        const s = { src: (attr(el, 'src') ?? '').trim(), original: attr(el, 'data-dc-src') };
+        srcs.push(s);
+        if (/^(personal|tracker)$/.test(attr(el, 'data-dc-held') ?? '')) heldTells.add(key(what(s.src, s.original)));
+      },
+    })
+    // A video's poster only when linking: embedding and leaving out take the video out whole.
+    .on('video[poster]', { element: (el) => void (ctx.pictures === 'link' && srcs.push({ src: (attr(el, 'poster') ?? '').trim(), original: null })) })
+    .on('svg image', {
+      element(el) {
+        srcs.push({ src: (attr(el, 'href') ?? attr(el, 'xlink:href') ?? '').trim(), original: null });
       },
     })
     .on('*', {
@@ -413,7 +468,6 @@ export async function outgoingHtml(html: string, ctx: OutgoingCtx): Promise<Outg
     .transform(html);
   // Each distinct picture once: its part, or its data: URL, or its address.
   const made = new Map<string, string | null>();
-  const key = (p: Pic) => (p.kind === 'data' ? `d:${p.b64.length}:${p.b64.slice(0, 64)}:${p.b64.slice(-64)}` : p.kind === 'web' ? `w:${p.url}` : p.kind === 'cid' ? `c:${p.messageId}:${p.contentId}` : 'none');
   const part = (bytes: Buffer, mime: string): string => {
     out.insideBytes += bytes.length;
     if (!ctx.inlineParts) return `data:${mime};base64,${bytes.toString('base64')}`;
@@ -427,22 +481,29 @@ export async function outgoingHtml(html: string, ctx: OutgoingCtx): Promise<Outg
     const p = what(s.src, s.original);
     jobs.set(key(p), p);
   }
+  const failed = () => {
+    out.failed++;
+    out.leftOut.failed++;
+    return null;
+  };
   await Promise.all(
     [...jobs].map(async ([k, p]) => {
       if (p.kind === 'none') return void made.set(k, null);
       if (p.kind === 'data') return void made.set(k, part(Buffer.from(p.b64, 'base64'), p.mime));
       if (p.kind === 'cid') {
         const got = await ctx.cidPart(p.messageId, p.contentId).catch(() => null);
-        if (!got) out.failed++;
-        return void made.set(k, got ? part(got.bytes, got.mime) : null);
+        return void made.set(k, got ? part(got.bytes, got.mime) : failed());
       }
       if (ctx.pictures === 'drop') return void made.set(k, null);
       if (ctx.pictures === 'link') return void made.set(k, p.url);
+      // Embed: one that can tell only from the cache (fetching it now would tell); none linked instead.
+      if (heldTells.has(k) || ctx.canTell(p.url)) {
+        const got = await ctx.cachedPicture(p.url).catch(() => null);
+        if (!got) out.leftOut.canTell++;
+        return void made.set(k, got ? part(got.bytes, got.mime) : null);
+      }
       const got = await ctx.fetchPicture(p.url).catch(() => null);
-      if (got) return void made.set(k, part(got.bytes, got.mime));
-      // Could not be fetched: linked, as it was in the original.
-      out.failed++;
-      made.set(k, p.url);
+      made.set(k, got ? part(got.bytes, got.mime) : failed());
     }),
   );
   // Order the parts as they first appear, so the same draft makes the same mail.
@@ -465,7 +526,14 @@ export async function outgoingHtml(html: string, ctx: OutgoingCtx): Promise<Outg
     return at;
   };
   /** A style or a sheet with each url() where its picture goes, or `none`; nothing else in it fetches either. */
-  const css = (text: string) => (mayFetch(text) ? sanitizeCss(text, (u) => to(u.trim(), null)).css : text);
+  const css = (text: string) => (mayFetch(text) ? sanitizeCss(imageSets(text), (u) => to(u.trim(), null)).css : text);
+  /** Video and audio: their own address when linking (this hub's never), else nothing. */
+  const media = (v: string | null): string | null => {
+    if (v === null || ctx.pictures !== 'link') return null;
+    const r = ctx.resolve(v.trim());
+    if (r) return 'url' in r ? r.url : null;
+    return /^https?:\/\//i.test(v.trim()) ? v.trim() : null;
+  };
   // The img handler reads data-dc-src before the * one takes the editor's marks off.
   out.html = new HTMLRewriter()
     .on(NEVER, { element: (el) => void el.remove() })
@@ -478,11 +546,40 @@ export async function outgoingHtml(html: string, ctx: OutgoingCtx): Promise<Outg
         el.removeAttribute('data-dc-held');
       },
     })
+    .on('svg image', {
+      element(el) {
+        const at = to((attr(el, 'href') ?? attr(el, 'xlink:href') ?? '').trim(), null, true);
+        if (!at) return void el.remove();
+        el.removeAttribute('xlink:href');
+        setAttr(el, 'href', at);
+      },
+    })
+    .on('video, audio', {
+      element(el) {
+        // Embed and Leave out: no player that fetches on their end; what it holds for apps without one stays.
+        if (ctx.pictures !== 'link') return void el.removeAndKeepContent();
+        if (el.hasAttribute('poster')) {
+          const at = to((attr(el, 'poster') ?? '').trim(), null);
+          if (at) setAttr(el, 'poster', at);
+          else el.removeAttribute('poster');
+        }
+        const at = media(attr(el, 'src'));
+        if (at) setAttr(el, 'src', at);
+        else el.removeAttribute('src');
+      },
+    })
+    .on('source, track', {
+      element(el) {
+        const at = media(attr(el, 'src'));
+        if (!at) return void el.remove();
+        setAttr(el, 'src', at);
+      },
+    })
     .on('*', {
       element(el) {
         for (const [n, v] of [...el.attributes]) {
           const name = n.toLowerCase();
-          if (name.startsWith('on') || name.startsWith('data-dc-') || name === 'contenteditable' || name === 'srcset') el.removeAttribute(n);
+          if (name.startsWith('on') || name.startsWith('data-dc-') || name === 'contenteditable' || name === 'srcset' || name === 'lowsrc' || name === 'dynsrc') el.removeAttribute(n);
           else if (URL_ATTRS.has(name) && scriptUrl(v)) el.removeAttribute(n);
         }
         const cls = el.getAttribute('class');
@@ -540,19 +637,73 @@ export function islandsOf(html: string): Map<string, { kind: string; html: strin
   return out;
 }
 
+/** Tags that are a block of their own: a line break before and after them in text. */
+const BLOCK_TAGS = 'p|div|h[1-6]|ul|ol|dl|dt|dd|blockquote|pre|table|thead|tbody|tfoot|tr|caption|section|article|header|footer|aside|nav|main|figure|figcaption|center|address';
+/** Tags that only mark text: gone, their text kept. */
+const INLINE_TAGS = 'span|font|b|strong|i|em|u|s|del|ins|strike|code|sub|sup|mark|small|big|abbr|cite|q|kbd|samp|var|label|time|th|td|li|a|img|br|hr|wbr|col|colgroup|picture|source|video|audio|svg|image|html|head|body|title';
+const TAG = new RegExp(`<\\/?(?:${BLOCK_TAGS}|${INLINE_TAGS})(?=[\\s/>])[^<>]*>`, 'gi');
+const BLOCK = new RegExp(`<\\/?(?:${BLOCK_TAGS})(?=[\\s/>])[^<>]*>`, 'gi');
+const attrOf = (tag: string, name: string) => decodeEntities(new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i').exec(tag)?.slice(1).find((x) => x !== undefined) ?? '');
+
+/** Markdown with the HTML pieces the editor writes in it (colours, alignment, tables…) as plain text. */
+function plainPiece(s: string): string {
+  return decodeEntities(
+    s
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<(style|script|title)\b[\s\S]*?<\/\1\s*>/gi, '')
+      .replace(/<br\b[^<>]*>/gi, '\n')
+      .replace(/<hr\b[^<>]*>/gi, '\n---\n')
+      .replace(/<img\b[^<>]*>/gi, (tag) => {
+        const alt = attrOf(tag, 'alt').trim();
+        return `[picture${alt ? `: ${alt}` : ''}]`;
+      })
+      .replace(/(<a\b[^<>]*>)([\s\S]*?)<\/a\s*>/gi, (_m, tag: string, inner: string) => {
+        const href = attrOf(tag, 'href').trim();
+        const text = inner.replace(TAG, '').trim();
+        return !/^(https?|mailto):/i.test(href) || !text || text === href || `mailto:${text}` === href ? text || href : `[${text}](${href})`;
+      })
+      .replace(/<li\b[^<>]*>/gi, '\n- ')
+      .replace(/<\/t[dh]\s*>\s*(?=<t[dh]\b)/gi, ' | ')
+      .replace(/<\/tr\s*>\s*<tr\b[^<>]*>/gi, '\n')
+      .replace(BLOCK, '\n')
+      .replace(TAG, ''),
+  );
+}
+
+/** Fenced code and code spans: written as they are, whatever HTML they show. */
+const CODE = /^(```|~~~)[^\n]*\n[\s\S]*?^\1[ \t]*$|(`+)[^`]*?\2/gm;
+
 /**
- * The text part from the editor's Markdown: each island's stand-in as islandText has it (the forwarded block or the
- * quote from the original, as a plain-text mail would have them, or the island's own text once edited), pasted
- * pictures as `[picture: name]`.
+ * The editor's Markdown as plain text: every HTML tag in it gone (its text kept, `<br>` and the ends of blocks as line
+ * breaks, a link as `[text](address)`, a picture as `[picture: alt]`) and entities decoded. Markdown's own marks
+ * (`**bold**`, `- ` lists, `> ` quotes) stay: they are how plain text says it. Code is left as written.
+ */
+export function plainText(md: string): string {
+  let out = '';
+  let from = 0;
+  CODE.lastIndex = 0;
+  for (let m; (m = CODE.exec(md)); ) {
+    out += plainPiece(md.slice(from, m.index)) + m[0];
+    from = m.index + m[0].length;
+  }
+  return tidyText((out + plainPiece(md.slice(from))).replace(/[ \t]+$/gm, '').replace(/^\n+/, ''));
+}
+
+/**
+ * The text part from the editor's Markdown, as plain text (plainText): each island's stand-in as islandText has it
+ * (the forwarded block or the quote from the original, as a plain-text mail would have them, or the island's own text
+ * once edited), pasted pictures as `[picture: name]`.
  */
 export function outgoingText(markdown: string, html: string, o: ComposeOriginal | null, tz?: string): string {
   const islands = islandsOf(html);
-  const text = markdown
+  // Islands go in after the HTML is taken out: their text is plain already ("Sam <sam@lee.example>" is no tag).
+  const texts: string[] = [];
+  const md = markdown
     .replace(/^\[\[island:([\w-]+)\]\]$/gm, (_m, ref: string) => {
       const i = islands.get(ref);
-      return i ? islandText(i, o, tz) : '';
+      return i ? `\u0000${texts.push(islandText(i, o, tz)) - 1}\u0000` : '';
     })
-    .replace(/!\[([^\]]*)\]\(dc-picture:[\w-]+\)/g, (_m, alt: string) => `[picture${alt ? `: ${alt}` : ''}]`)
-    .replace(/<span style="color:[^"]*">([\s\S]*?)<\/span>/g, '$1');
-  return tidyText(text);
+    .replace(/!\[([^\]]*)\]\(dc-picture:[\w-]+\)/g, (_m, alt: string) => `[picture${alt ? `: ${alt}` : ''}]`);
+  // eslint-disable-next-line no-control-regex
+  return tidyText(plainText(md).replace(/\u0000(\d+)\u0000/g, (_m, n: string) => texts[Number(n)]));
 }

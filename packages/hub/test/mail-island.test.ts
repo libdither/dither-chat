@@ -4,7 +4,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { demoStoreNewsletter } from '../src/mail/demo-html.ts';
-import { inlineCss, islandOf, islandPrint, islandsOf, islandText, outgoingHtml, outgoingText, scriptUrl, specificity, type OutgoingCtx } from '../src/mail/island.ts';
+import { inlineCss, islandOf, islandPrint, islandsOf, islandText, outgoingHtml, outgoingText, plainText, scriptUrl, specificity, type OutgoingCtx } from '../src/mail/island.ts';
 import { sanitizeMail } from '../src/mail/sanitize.ts';
 import type { ComposeOriginal } from '../src/mail/compose.ts';
 
@@ -39,6 +39,12 @@ describe('inlineCss', () => {
     expect(out).toContain('<p class="x" style="color:red;margin:0">');
     expect(out).not.toContain('\\3c');
     expect(out).not.toContain('<style>');
+  });
+
+  test('a sheet in <![CDATA[ ]]> keeps its first rule, and nothing of the marks is left', () => {
+    const out = inlineCss('<style><![CDATA[\np{color:red} .x{margin:0}\n]]></style><div class="r"><p class="x">a</p></div>', 'r');
+    expect(out).toContain('<p class="x" style="color:red;margin:0">');
+    expect(out).not.toMatch(/CDATA|\]\]|\\3c/);
   });
 
   test('an element’s own !important beats the sheet’s !important; the sheet’s beats its own plain style', () => {
@@ -84,6 +90,8 @@ const ctx = (over: Partial<OutgoingCtx> = {}): OutgoingCtx => ({
   inlineParts: true,
   resolve: (src) => (src.startsWith('/api/mail/img/T') ? { url: decodeURIComponent(src.slice('/api/mail/img/T'.length)) } : null),
   fetchPicture: async () => ({ bytes: PNG, mime: 'image/png' }),
+  cachedPicture: async () => null,
+  canTell: () => false,
   cidPart: async () => null,
   id: 'mob_test1234',
   ...over,
@@ -108,26 +116,38 @@ describe('outgoingHtml', () => {
     expect([r.linked, r.embedded, r.dropped]).toEqual([2, 1, 0]);
   });
 
-  test('embed: every picture goes inside the mail', async () => {
-    const r = await outgoingHtml(draftHtml, ctx({ pictures: 'embed' }));
-    expect(r.inline).toHaveLength(3);
+  test('embed: pictures go inside the mail; one that can tell only when the hub has it, else it is left out', async () => {
+    const fetched: string[] = [];
+    const r = await outgoingHtml(draftHtml, ctx({ pictures: 'embed', fetchPicture: async (u) => (fetched.push(u), { bytes: PNG, mime: 'image/png' }) }));
+    expect(r.inline).toHaveLength(2);
     expect(r.html).not.toMatch(/src="https?:/);
-    expect(r.embedded).toBe(3);
+    expect(r.html).not.toContain('img.store.example');
+    expect(r.embedded).toBe(2);
+    expect(r.leftOut).toEqual({ failed: 0, canTell: 1 });
+    // The held one (data-dc-held="personal") was never fetched.
+    expect(fetched).toEqual(['https://cdn.store.example/a.png']);
+    // The hub has it already: then it goes inside too, still without a request.
+    const c = await outgoingHtml(draftHtml, ctx({ pictures: 'embed', cachedPicture: async (u) => (u.includes('/hi/') ? { bytes: PNG, mime: 'image/png' } : null) }));
+    expect([c.embedded, c.leftOut.canTell]).toEqual([3, 0]);
+    // ctx.canTell says so of an address too, held or not.
+    const t = await outgoingHtml(draftHtml, ctx({ pictures: 'embed', canTell: (u) => u.includes('cdn.store') }));
+    expect(t.leftOut.canTell).toBe(2);
   });
 
   test('embed without inline parts: data: URLs', async () => {
-    const r = await outgoingHtml(draftHtml, ctx({ pictures: 'embed', inlineParts: false }));
+    const r = await outgoingHtml(draftHtml, ctx({ pictures: 'embed', inlineParts: false, cachedPicture: async () => ({ bytes: PNG, mime: 'image/png' }) }));
     expect(r.inline).toHaveLength(0);
     expect(r.html.match(/src="data:image\/png;base64,/g)).toHaveLength(3);
   });
 
-  test('drop: web pictures left out, pasted ones kept; a picture that cannot be fetched stays linked', async () => {
+  test('drop: web pictures left out, pasted ones kept; with embed, a picture that cannot be fetched is left out, never linked', async () => {
     const d = await outgoingHtml(draftHtml, ctx({ pictures: 'drop' }));
     expect(d.dropped).toBe(2);
     expect(d.inline).toHaveLength(1);
     const f = await outgoingHtml(draftHtml, ctx({ pictures: 'embed', fetchPicture: async () => null }));
-    expect(f.failed).toBe(2);
-    expect(f.html).toContain('src="https://cdn.store.example/a.png"');
+    expect(f.leftOut).toEqual({ failed: 1, canTell: 1 });
+    expect(f.html).not.toContain('cdn.store.example');
+    expect(f.html).not.toMatch(/src="https?:/);
   });
 });
 
@@ -155,12 +175,13 @@ describe('outgoingHtml: backgrounds', () => {
     expect(r.html).toContain('<td>z</td>');
   });
 
-  test('embed without inline parts: data: URLs; a background that cannot be fetched stays linked', async () => {
+  test('embed without inline parts: data: URLs; a background that cannot be fetched is left out', async () => {
     const r = await outgoingHtml(bgHtml, ctx({ pictures: 'embed', inlineParts: false, fetchPicture: async (u) => (u.endsWith('raw.png') ? null : { bytes: PNG, mime: 'image/png' }) }));
     expect(r.inline).toHaveLength(0);
     expect(r.html).toContain('background="data:image/png;base64,');
-    expect(r.html).toContain('url(&quot;https://cdn.store.example/raw.png&quot;)');
-    expect(r.failed).toBe(1);
+    expect(r.html).toContain('background-image:none');
+    expect(r.html).not.toContain('raw.png');
+    expect(r.leftOut.failed).toBe(1);
     expect(r.html).not.toContain('/api/mail/');
   });
 
@@ -192,6 +213,44 @@ describe('outgoingHtml: backgrounds', () => {
   });
 });
 
+describe('outgoingHtml: image-set, media, SVG and other ways to fetch', () => {
+  const media =
+    `<div style="background-image:image-set('${BG('https://cdn.store.example/set1.png')}' 1x, url(https://cdn.store.example/set2.png) 2x)">s</div>` +
+    '<div style="background:-webkit-image-set(url(https://cdn.store.example/wk.png) 1x)">w</div>' +
+    '<video src="https://media.store.example/v.mp4" poster="https://cdn.store.example/poster.png"><source src="https://media.store.example/v.webm"><track src="/api/mail/x.vtt">Your app shows no video</video>' +
+    '<audio src="https://media.store.example/a.mp3"></audio>' +
+    `<svg width="10" height="10"><image href="${BG('https://cdn.store.example/svg.png')}" width="10" height="10"></image><image xlink:href="https://cdn.store.example/svg2.png"></image></svg>` +
+    '<input type="image" src="https://cdn.store.example/in.png"><link rel="icon" href="https://cdn.store.example/icon.png">';
+
+  test('embed: image-set’s first choice, SVG images inside the mail; video and audio gone, their fallback kept', async () => {
+    const asked: string[] = [];
+    const r = await outgoingHtml(media, ctx({ pictures: 'embed', fetchPicture: async (u) => (asked.push(u), { bytes: PNG, mime: 'image/png' }) }));
+    expect(asked.sort()).toEqual(['https://cdn.store.example/set1.png', 'https://cdn.store.example/svg.png', 'https://cdn.store.example/svg2.png', 'https://cdn.store.example/wk.png']);
+    expect(r.html).not.toMatch(/https?:|\/api\/mail\/|image-set|<video|<audio|<source|<track|<input|<link/);
+    expect(r.html).toContain('Your app shows no video');
+    expect(r.html.match(/<image href="cid:/g)).toHaveLength(2);
+    expect(r.embedded).toBe(4);
+  });
+
+  test('drop: nothing that fetches is left', async () => {
+    const r = await outgoingHtml(media, ctx({ pictures: 'drop' }));
+    expect(r.html).not.toMatch(/https?:|\/api\/mail\/|<video|<audio|<image|<input|<link/);
+    expect(r.html).toContain('background-image:none');
+  });
+
+  test('link: each keeps its own address; this hub’s never leave', async () => {
+    const r = await outgoingHtml(media, ctx());
+    expect(r.html).toContain('background-image:url(&quot;https://cdn.store.example/set1.png&quot;)');
+    expect(r.html).toContain('<video src="https://media.store.example/v.mp4" poster="https://cdn.store.example/poster.png">');
+    expect(r.html).toContain('<source src="https://media.store.example/v.webm">');
+    expect(r.html).toContain('<audio src="https://media.store.example/a.mp3">');
+    expect(r.html).toContain('<image href="https://cdn.store.example/svg.png"');
+    expect(r.html).not.toContain('/api/mail/');
+    expect(r.html).not.toContain('<track');
+    expect(r.html).not.toMatch(/<input|<link/);
+  });
+});
+
 describe('outgoingHtml: script addresses', () => {
   test('javascript: however it is written goes; ordinary links stay', async () => {
     const bad = ['java&#9;script:alert(1)', '&#106;avascript:alert(1)', ' javascript:alert(1)', 'jav&Tab;ascript:alert(1)', 'java&#x0A;script:alert(1)', 'JaVaScRiPt:alert(1)', 'vbscript:msgbox(1)', '\u0001javascript:alert(1)'];
@@ -206,6 +265,28 @@ describe('outgoingHtml: script addresses', () => {
 });
 
 const wrap = (isl: { kind: string; html: string }, ref = 'r1') => `<p>Hi</p><div data-dc-island="${isl.kind}" data-dc-ref="${ref}" data-dc-label="x">${isl.html}</div>`;
+
+describe('the text part is plain text', () => {
+  test('tags gone, their text kept; line breaks for <br> and blocks; entities decoded; Markdown marks stay', () => {
+    const md =
+      'Hi **there**\n\n<p style="text-align: center">centred &amp; <span style="color:#c00">red</span></p>\n\n- a\n- b\n\n> quoted\n\n' +
+      '<table><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>\n\nline<br>next <a href="https://x.example/a">link</a> <u>under</u> <img src="x" alt="cat">\n\n' +
+      'Sam <sam@lee.example> or <https://x.example>.\n\n```html\n<p>code</p>\n```\n\nand `<b>inline</b>` code';
+    const t = plainText(md);
+    expect(t).toBe(
+      'Hi **there**\n\ncentred & red\n\n- a\n- b\n\n> quoted\n\na | b\nc | d\n\nline\nnext [link](https://x.example/a) under [picture: cat]\n\n' +
+        'Sam <sam@lee.example> or <https://x.example>.\n\n```html\n<p>code</p>\n```\n\nand `<b>inline</b>` code',
+    );
+  });
+
+  test('outgoingText: a centred paragraph next to a forward goes as its words; the forward’s headers keep their <address>', () => {
+    const isl = islandOf('forward', o, null, 'r1', 'UTC');
+    const t = outgoingText('<p style="text-align: center">centred</p>\n\n[[island:r1]]', wrap(isl), o, 'UTC');
+    expect(t).toStartWith('centred\n\n---------- Forwarded message ---------');
+    expect(t).toContain('From: Northbound Outfitters <deals@store.example>');
+    expect(t).not.toContain('<p');
+  });
+});
 
 describe('outgoingText', () => {
   test('stand-ins become the forwarded block and picture names', () => {

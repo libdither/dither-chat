@@ -14,9 +14,9 @@
  *   the picture's host that someone opened some copy, not that you did.
  *
  * The rule leans towards personal: a signed CDN address whose signature is the same for everyone, or a file named by
- * its content's hash, is held needlessly, never the other way round. Personal: a UUID or 16+ hex digits anywhere, a
- * random-looking run of 16+ characters in the path (12+ in a query value), a long number in the query, or an id-like
- * query key (`uid`, `e`, `r`, `id`, `mc_eid`, …) with a value. An address seen in mail from another sender (not one
+ * its content's hash, is held needlessly, never the other way round. Personal: tokenIn() of a path segment, a query value
+ * or a host label (5+ digits, 10+ hex or interleaved letters and digits, 20+ in one case, a UUID, a random mix of
+ * cases), or an id-like query key (`uid`, `u`, `e`, `r`, `id`, `user`, `mc_eid`, …) with any value. An address seen in mail from another sender (not one
  * of yours: your Sent copy of a forward proves nothing) is shared whatever it looks like.
  */
 import { createHash } from 'node:crypto';
@@ -73,8 +73,29 @@ function randomRun(s: string, min: number): boolean {
 }
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
-/** 16+ hex digits with letters and digits both: a hash or an id, as a folder or a file name. */
-const LONG_HEX = /(?:^|[^0-9a-f])(?=[0-9a-f]*[a-f])(?=[0-9a-f]*[0-9])[0-9a-f]{16,}(?:[^0-9a-f]|$)/i;
+
+/** Letters and digits interleaved: at least two switches between them (`a1b2c3`, `Zq81mX`), not `WinterBanner2`. */
+const interleaved = (run: string) => (run.match(/[a-z](?=\d)|\d(?=[a-z])/gi) ?? []).length >= 2;
+
+/**
+ * Whether a piece of an address (a path segment, a host label, a query value) holds an id made for one recipient:
+ * a UUID; 5+ digits alone; a run of 10+ hex digits with a digit in it, or of 10+ letters and digits interleaved; a run
+ * of 20+ letters and digits in one case (`abcdefghijklmnopqrstuvwxyz`); or 16+ in a random-looking mix of cases
+ * (randomRun).
+ * Sizes (`1200x800`) and a 4-digit year are not ids.
+ */
+function tokenIn(piece: string): boolean {
+  if (UUID.test(piece)) return true;
+  const s = piece.replace(/\d+x\d+/gi, ' ');
+  if (randomRun(s, 16)) return true;
+  for (const run of s.match(/[A-Za-z0-9]+/g) ?? []) {
+    if (/^\d{5,}$/.test(run)) return true;
+    if (run.length >= 10 && interleaved(run)) return true;
+    for (const hex of run.match(/[0-9a-f]{10,}/gi) ?? []) if (/\d/.test(hex)) return true;
+    if (run.length >= 20 && (run === run.toLowerCase() || run === run.toUpperCase())) return true;
+  }
+  return false;
+}
 
 /** Query keys that are the same for every copy: sizes, formats, versions, cache-busters, campaign names. */
 const SAME_FOR_ALL = /^(w|h|width|height|q|quality|fit|fm|format|auto|dpr|v|ver|version|crop|size|s?rgb|t|ts|_|cb|cache|lang|locale|utm_\w+)$/i;
@@ -130,11 +151,12 @@ export function classifyPicture(url: string, ctx: ClassifyContext, shapedLikeTra
   if (ctx.you.some((f) => f.length >= 6 && (decoded.includes(f) || url.toLowerCase().includes(f)))) return { class: 'personal', why: 'carries your address' };
   if (ctx.seenElsewhere?.(url)) return { class: 'shared', why: 'seen in other mail too' };
   const token = { class: 'personal', why: 'a token in its address' } as const;
-  if (UUID.test(u.pathname + u.search)) return token;
+  // The host's own labels, but its last two (`a1b2c3d4e5f6a7b8.img.example.com`).
+  if (!/^[\d.]+$|:/.test(host) && host.split('.').slice(0, -2).some(tokenIn)) return token;
   for (const [k, v] of u.searchParams) {
     if (SAME_FOR_ALL.test(k)) continue;
-    if (ID_KEYS.test(k) && v.length >= 3 && (/\d/.test(v) || v.length >= 8)) return { class: 'personal', why: `an id in its address (${k}=)` };
-    if (randomRun(v, 12) || randomRun(k, 16) || /\d{8,}/.test(v)) return token;
+    if (ID_KEYS.test(k) && v.trim()) return { class: 'personal', why: `an id in its address (${k}=)` };
+    if (tokenIn(v) || randomRun(k, 16)) return token;
   }
   const segs = u.pathname.split('/').filter(Boolean);
   for (let i = 0; i < segs.length; i++) {
@@ -144,7 +166,7 @@ export function classifyPicture(url: string, ctx: ClassifyContext, shapedLikeTra
     } catch {}
     // A file name's extension is not part of its token.
     if (i === segs.length - 1) seg = seg.replace(/\.(png|jpe?g|gif|webp|avif|svg|bmp|ico)$/i, '');
-    if (LONG_HEX.test(seg) || randomRun(seg, 16)) return token;
+    if (tokenIn(seg)) return token;
   }
   return { class: 'shared', why: 'the same address for every copy' };
 }
@@ -154,12 +176,12 @@ export type PicturePolicy = 'none' | 'shared' | 'all';
 
 /**
  * What one picture does: load, hold (a placeholder of its size), or drop (gone). Removed trackers are gone; kept ones
- * are pictures that report the open, as personal ones are, so they load only when all pictures do. A picture the hub
- * already has (`cached`) makes no request at all, so it loads whenever shared ones would.
+ * load whenever any pictures load (the policy is shared or all), so keeping them is something you can see. A picture
+ * the hub already has (`cached`) makes no request at all, so it loads whenever shared ones would.
  */
 export function pictureAction(c: PictureClass, pictures: PicturePolicy, keepTrackers: boolean, cached = false): 'load' | 'hold' | 'drop' {
-  if (c === 'tracker' && !keepTrackers) return 'drop';
+  if (c === 'tracker') return !keepTrackers ? 'drop' : pictures === 'none' ? 'hold' : 'load';
   if (pictures === 'all') return 'load';
-  if (pictures === 'shared' && (c === 'shared' || (cached && c !== 'tracker'))) return 'load';
+  if (pictures === 'shared' && (c === 'shared' || cached)) return 'load';
   return 'hold';
 }
