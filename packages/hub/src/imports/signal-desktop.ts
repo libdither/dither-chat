@@ -25,6 +25,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { fromSignal } from '../../../adapter-signal/src/markdown.ts';
 import { dmId, groupConvId, LONG_TEXT_MIME, msgId } from '../../../adapter-signal/src/mapping.ts';
+import { contactLine, distinctFiles, joinName, pollBody, VIEW_ONCE_BODY } from './signal-common.ts';
 import { decryptSqlcipher, parseRawKey } from './sqlcipher.ts';
 
 export const SIGNAL_DESKTOP_READER = 'signal-desktop@1';
@@ -194,8 +195,6 @@ const QUIET: Record<string, string> = {
   // would meet no hub row and come in a second time beside the live one, so they are left out.
   'group-v2-change': 'group change', 'timer-notification': 'timer change', 'call-history': 'call',
 };
-
-const joinName = (...parts: (string | null | undefined)[]) => parts.filter((p) => p && String(p).trim()).join(' ').trim() || undefined;
 
 function attachmentKind(mime?: string | null): P.AttachmentKind {
   const m = (mime ?? '').toLowerCase();
@@ -420,7 +419,7 @@ export function mapDesktop(dbPath: string, o: MapOptions, emit: (line: unknown) 
       if (j.isViewOnce) {
         // Respect the sender: view-once media stays on the phone, as live sync does.
         m.kind = 'media';
-        m.body = '📷 View-once media (open it on your phone)';
+        m.body = VIEW_ONCE_BODY;
         extra.viewOnce = true;
       } else if (j.sticker?.packId) {
         m.kind = 'sticker';
@@ -440,11 +439,7 @@ export function mapDesktop(dbPath: string, o: MapOptions, emit: (line: unknown) 
         m.body = fromSignal(text ?? j.body ?? '', r.styles, r.mentions, { onMention: (aci) => (mentionsSelf ||= aci.toLowerCase() === self) });
         if (mentionsSelf || row.mentionsMe) m.mentionsSelf = true;
         const facts = files.map(fileFact).filter((a): a is P.AttachmentFact => !!a);
-        const used = new Set<string>();
-        for (const [i, a] of facts.entries()) {
-          if (used.has(a.nativeId!)) a.nativeId = `${a.nativeId}#${i}`;
-          used.add(a.nativeId!);
-        }
+        distinctFiles(facts);
         if (facts.length) {
           m.kind = 'media';
           m.attachments = facts;
@@ -454,14 +449,14 @@ export function mapDesktop(dbPath: string, o: MapOptions, emit: (line: unknown) 
         if (j.poll?.question || Array.isArray(j.poll?.options)) {
           const p = j.poll;
           const options = (Array.isArray(p.options) ? p.options : []).map((x: unknown) => (typeof x === 'string' ? x : String((x as Row)?.text ?? '')));
-          lines.push(`📊 **${p.question ?? 'Poll'}**${p.allowMultiple ? ' (multiple choice)' : ''}`, ...options.map((x: string) => `• ${x}`));
+          lines.push(pollBody(p.question ?? 'Poll', options, !!p.allowMultiple));
           extra.poll = { question: p.question, options, allowMultiple: !!p.allowMultiple };
         }
         for (const c of Array.isArray(j.contact) ? (j.contact as Row[]) : []) {
           const nm = c.name ?? {};
           const name = joinName(nm.prefix, nm.givenName, nm.middleName, nm.familyName, nm.suffix) ?? nm.nickname ?? nm.displayName ?? c.organization ?? 'Contact';
           const values = [...(c.number ?? []).map((x: Row) => x?.value), ...(c.email ?? []).map((x: Row) => x?.value)].filter(Boolean);
-          lines.push(`👤 ${name}${values.length ? ' · ' + values.join(', ') : ''}`);
+          lines.push(contactLine(name, values));
         }
         if (j.payment) lines.push(`💸 Payment${j.payment.note ? `: ${j.payment.note}` : ''}`);
         if (j.giftBadge) lines.push('🎁 Gift badge');

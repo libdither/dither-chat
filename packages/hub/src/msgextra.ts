@@ -1,6 +1,7 @@
 /**
  * MessageFact.extra's known keys (protocol extra.ts) as MessageView shows them: a reply's own quote, contact cards, a
- * story reply, the people a send did not reach, files that did not download, and per-attachment notes (docs/messages.md).
+ * story reply, the people a send did not reach, files that did not download, a text sent as SMS, and per-attachment
+ * notes (docs/messages.md).
  * Pure: the store hands in how to name identities and serve media. Anything malformed is left out, never an error.
  */
 import type * as P from '@dither-chat/protocol';
@@ -17,7 +18,7 @@ interface ExtraDeps {
   stored(messageId: string): boolean;
 }
 
-type ExtraView = Pick<P.MessageView, 'quote' | 'contacts' | 'storyReply' | 'failed' | 'missingAttachments' | 'disappears'> & {
+type ExtraView = Pick<P.MessageView, 'quote' | 'contacts' | 'storyReply' | 'failed' | 'missingAttachments' | 'disappears' | 'sms'> & {
   /** One per attachment position. */
   notes?: (P.AttachmentNote | null)[];
 };
@@ -81,6 +82,7 @@ export function extraView(extra: Record<string, unknown> | null, replyToId: stri
     }));
 
   if (typeof e.expiresInSeconds === 'number' && e.expiresInSeconds > 0) out.disappears = e.expiresInSeconds;
+  if (e.sms === 'sms' || e.sms === 'mms') out.sms = e.sms;
 
   const notes = arr<P.AttachmentNote | null>(e.attachmentNotes);
   if (notes.some((n) => n && typeof n === 'object')) out.notes = notes.map((n) => (n && typeof n === 'object' ? n : null));

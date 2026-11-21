@@ -1467,6 +1467,15 @@ code {
   letter-spacing: 0.03em;
   text-transform: uppercase;
 }
+.msg-sms {
+  border: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 0 4px;
+  border-radius: 4px;
+  letter-spacing: 0.03em;
+}
 .msg-time {
   font-size: 11px;
   color: var(--text-faint);

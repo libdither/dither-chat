@@ -766,6 +766,12 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
               </span>
             )}
             {author?.isBot && <span class="bot-tag">BOT</span>}
+            {/* A text from a Signal backup (SMS or MMS) heads its own run, so the mark covers each of them. */}
+            {m.sms && (
+              <span class="msg-sms" title={`Sent as ${m.sms.toUpperCase()}, not over ${netName(m.network)}`}>
+                {m.sms.toUpperCase()}
+              </span>
+            )}
             <span class="msg-time" title={hover ? fullTime(m.ts) : undefined}>
               {clock(m.ts)}
             </span>
@@ -1122,7 +1128,7 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   const heads = chat ? headNames(convIds) : null;
   const unreadFrom = firstUnreadTs === null ? -1 : all.findIndex((m) => m.ts > firstUnreadTs && !isSelfIdentity(m.authorId));
   const groups = (prev: P.MessageView | null, m: P.MessageView) =>
-    !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId;
+    !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId && prev.sms === m.sms;
   // One person's pictures one after another are one run, drawn by its last message (docs/pictures.md); a message of
   // it that is nothing but pictures has no row of its own. How each chat draws them, once per chat.
   const runs = pictureRuns(all, start, end, (p, m, i) => groups(p, m) && i !== unreadFrom);

@@ -16,6 +16,7 @@ has. Signal (dither-accounts, `extractors/signal`) fills all of them today.
 | `failed` | Under your message: "Not delivered to Sam (no longer on Signal)". Only when it reached the others: when nobody gets it, the send fails as before and the composer says so | `send`'s `results[].type` (`UNREGISTERED_FAILURE`, `IDENTITY_FAILURE`, `RATE_LIMIT_FAILURE`, `NETWORK_FAILURE`, `INVALID_PRE_KEY_FAILURE`) |
 | `missingAttachments` | "Attachment not downloaded: send.mp4 (4.8 MB)" instead of the file vanishing | an attachment with no `id`, or whose file is not on disk when signal-cli hands the message over (it downloads first) |
 | `attachmentNotes` | A voice note's "Voice message" label, and a file's own caption, under it (by position in `attachments`) | `attachments[].isVoiceNote`, `attachments[].caption` |
+| `sms` | An "SMS" or "MMS" mark by the time: the message went as a text, not over Signal. A change between texts and Signal messages starts a new run, so each run of texts carries the mark | Signal backups only (docs/import-signal.md): live sync never sees texts |
 | `sourceDevice`, `serverReceivedTs`, `serverDeliveredTs` | Kept, not shown yet | the envelope |
 
 Not built here: resending to only the people a group message missed. Signal's apps do it by sending again with the

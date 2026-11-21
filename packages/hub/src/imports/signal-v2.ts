@@ -15,11 +15,15 @@ import { createDecipheriv, createHash, createHmac, timingSafeEqual } from 'node:
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
+import { attachmentKind } from '@dither-chat/protocol';
 import { fromSignal } from '../../../adapter-signal/src/markdown.ts';
+import { describeTimer, directConversation, groupConvId, msgId, noteToSelf } from '../../../adapter-signal/src/mapping.ts';
 import { decryptBackupId, groupIdFromMasterKey, messageBackupKeys } from './signal-keys.ts';
 import { type Field, fields } from './signal-backup.ts';
+import { addMessage, type ChatFacts, contactLine, distinctFiles, emitChats, joinName, MISSING_FILE_BODY, pollBody, smsConversation, telId, VIEW_ONCE_BODY } from './signal-common.ts';
 
-export const SIGNAL_V2_READER = 'signal-v2@1';
+/** @2: SMS and MMS, story replies as extra.storyReply. */
+export const SIGNAL_V2_READER = 'signal-v2@2';
 
 export class BadBackupKey extends Error {
   constructor() {
@@ -186,13 +190,15 @@ interface V2ReadStats {
   duplicates: number;
   selfMessages: number;
   files: { linked: number; missing: number };
-  /** Chat items left out, by why: sms, deleted, unknown author, and update kinds the hub doesn't show. */
+  /** Chat items left out, by why: deleted, unknown author, and update kinds the hub doesn't show. */
   skipped: Record<string, number>;
 }
 
 interface Recipient {
   kind: 'contact' | 'group' | 'self' | 'other';
   aci?: string | null;
+  /** Their identity's native id: the ACI, or for someone known only by number (SMS) "tel:<number>". */
+  id?: string;
   identity?: P.IdentityFact;
   conversation?: P.ConversationFact;
 }
@@ -206,21 +212,11 @@ const MIME_EXT: Record<string, string> = {
 const UPDATE_KINDS: Record<number, string> = { 1: 'simple update', 4: 'profile change', 5: 'thread merge', 6: 'session switchover', 9: 'learned profile', 10: 'poll ended', 11: 'pin' };
 const STYLES: Record<number, string> = { 1: 'BOLD', 2: 'ITALIC', 3: 'SPOILER', 4: 'STRIKETHROUGH', 5: 'MONOSPACE' };
 
-const joinName = (...parts: (string | undefined)[]) => parts.filter((p) => p && p.trim()).join(' ').trim() || undefined;
-
-function attachmentKind(mime?: string): P.AttachmentKind {
-  const m = (mime ?? '').toLowerCase();
-  if (m.startsWith('image/')) return 'image';
-  if (m.startsWith('video/')) return 'video';
-  if (m.startsWith('audio/')) return 'audio';
-  return 'file';
-}
-
-function describeTimer(seconds: number): string {
-  const units: [number, string][] = [[604800, 'week'], [86400, 'day'], [3600, 'hour'], [60, 'minute'], [1, 'second']];
-  for (const [n, name] of units) if (seconds >= n && seconds % n === 0) return `${seconds / n} ${name}${seconds / n === 1 ? '' : 's'}`;
-  return `${seconds} seconds`;
-}
+/**
+ * A number as Contact.e164 holds it (digits, no "+") the way the legacy reader names it: "+<digits>", except short
+ * codes (up to 6 digits), which never had a "+".
+ */
+const phoneOf = (e164: number) => (String(e164).length <= 6 ? String(e164) : `+${e164}`);
 
 interface ReadV2Options {
   /** The folder holding SignalBackups (or the snapshot's parent). */
@@ -247,7 +243,7 @@ function mapFrames(b: Uint8Array, files: string, o: Omit<ReadV2Options, 'dir' | 
   const stats: V2ReadStats = { conversations: 0, messages: 0, duplicates: 0, selfMessages: 0, files: { linked: 0, missing: 0 }, skipped: {} };
   const skip = (why: string) => (stats.skipped[why] = (stats.skipped[why] ?? 0) + 1);
   const recipients = new Map<number, Recipient>();
-  const chats = new Map<number, { conversation: P.ConversationFact; messages: P.MessageFact[]; people: Set<string> }>();
+  const chats = new Map<number, ChatFacts>();
   const seen = new Set<string>();
 
   const keep = (fp: Field[] | null, fallbackMime?: string): P.AttachmentFact | null => {
@@ -276,7 +272,7 @@ function mapFrames(b: Uint8Array, files: string, o: Omit<ReadV2Options, 'dir' | 
       renameSync(dest + '.tmp', dest);
     }
     stats.files.linked++;
-    const a: P.AttachmentFact = { nativeId: sha, kind: attachmentKind(mime), url: `file://${dest}`, name: name || sha + ext };
+    const a: P.AttachmentFact = { nativeId: sha, kind: attachmentKind((mime ?? '').toLowerCase()), url: `file://${dest}`, name: name || sha + ext };
     if (mime) a.mime = mime;
     if (size) a.size = size;
     const w = int(fp, 8);
@@ -287,6 +283,7 @@ function mapFrames(b: Uint8Array, files: string, o: Omit<ReadV2Options, 'dir' | 
   };
 
   const aciOf = (rid?: number) => (rid === undefined ? null : (recipients.get(rid)?.aci ?? null));
+  const idOf = (rid?: number) => (rid === undefined ? null : (recipients.get(rid)?.id ?? null));
   const names = new Map<string, string>();
   const nameOf = (aci: string | null) => (aci === self ? 'You' : (aci && names.get(aci)) || 'Someone');
 
@@ -351,9 +348,12 @@ function mapFrames(b: Uint8Array, files: string, o: Omit<ReadV2Options, 'dir' | 
       const group = sub(fs, 3);
       if (contact) {
         const aci = uuid(bytes(contact, 1));
+        const e164 = int(contact, 4);
+        // Someone with no ACI is someone you texted (SMS), known by their number.
+        const nid = aci ?? (e164 ? telId(phoneOf(e164)) : null);
         const rec: Recipient = { kind: 'contact', aci };
-        if (aci) {
-          const idf: P.IdentityFact = { nativeId: aci };
+        if (nid) {
+          const idf: P.IdentityFact = { nativeId: nid };
           const nick = sub(contact, 16);
           const name =
             joinName(str(nick, 1), str(nick, 2)) ??
@@ -362,14 +362,14 @@ function mapFrames(b: Uint8Array, files: string, o: Omit<ReadV2Options, 'dir' | 
             joinName(str(contact, 11), str(contact, 12)) ??
             joinName(str(contact, 3));
           if (name) idf.displayName = name;
-          const e164 = int(contact, 4);
           const username = str(contact, 3);
-          if (e164) idf.handle = `+${e164}`;
+          if (e164) idf.handle = aci ? `+${e164}` : phoneOf(e164);
           else if (username) idf.handle = `@${username}`;
-          if (aci === self) idf.isSelf = true;
-          else if (name) names.set(aci, name);
+          if (nid === self) idf.isSelf = true;
+          else if (name) names.set(nid, name);
+          rec.id = nid;
           rec.identity = idf;
-          rec.conversation = aci === self ? { nativeId: `dm:${self}:${self}`, shape: 'self', name: 'Note to Self', participants: [self], encrypted: true } : { nativeId: `dm:${self}:${aci}`, shape: 'direct', participants: [self, aci], encrypted: true };
+          rec.conversation = aci ? directConversation(self, aci) : smsConversation(self, nid);
         }
         recipients.set(id, rec);
       } else if (group) {
@@ -379,7 +379,7 @@ function mapFrames(b: Uint8Array, files: string, o: Omit<ReadV2Options, 'dir' | 
           continue;
         }
         const snap = sub(group, 5);
-        const conv: P.ConversationFact = { nativeId: `group:${groupIdFromMasterKey(mk).toString('base64')}`, shape: 'group', encrypted: true };
+        const conv: P.ConversationFact = { nativeId: groupConvId(groupIdFromMasterKey(mk).toString('base64')), shape: 'group', encrypted: true };
         const title = str(sub(snap, 2), 1);
         const topic = str(sub(snap, 11), 4);
         if (title) conv.name = title;
@@ -390,7 +390,7 @@ function mapFrames(b: Uint8Array, files: string, o: Omit<ReadV2Options, 'dir' | 
         if (members.length) conv.participants = [...new Set(members)];
         if (snap && one(snap, 12)?.int) conv.variant = 'announcement';
         recipients.set(id, { kind: 'group', conversation: conv });
-      } else if (one(fs, 5)) recipients.set(id, { kind: 'self', aci: self, conversation: { nativeId: `dm:${self}:${self}`, shape: 'self', name: 'Note to Self', participants: [self], encrypted: true } });
+      } else if (one(fs, 5)) recipients.set(id, { kind: 'self', aci: self, id: self, conversation: noteToSelf(self) });
       else recipients.set(id, { kind: 'other' });
     } else if (frame.no === 3) {
       // Chat
@@ -405,28 +405,20 @@ function mapFrames(b: Uint8Array, files: string, o: Omit<ReadV2Options, 'dir' | 
         skip('chat not kept');
         continue;
       }
-      const m = mapItem(fs);
-      if (!m) continue;
-      if (seen.has(m.nativeId)) {
-        stats.duplicates++;
-        continue;
-      }
-      seen.add(m.nativeId);
-      m.conversation = chat.conversation.nativeId;
-      chat.messages.push(m);
-      chat.people.add(m.author);
-      if (m.author === self) stats.selfMessages++;
+      const m = mapItem(fs, chat.conversation);
+      if (m) addMessage(chat, m, seen, self, stats);
     }
   }
 
-  function mapItem(fs: Field[]): P.MessageFact | null {
-    if (one(fs, 7)?.int) return (skip('sms'), null);
-    const author = aciOf(int(fs, 2));
-    if (!author) return (skip('author without an ACI'), null);
+  function mapItem(fs: Field[], conv: P.ConversationFact): P.MessageFact | null {
+    // An SMS or MMS (through Signal back when it sent them) may be from someone known only by number.
+    const sms = !!one(fs, 7)?.int;
+    const author = sms ? idOf(int(fs, 2)) : aciOf(int(fs, 2));
+    if (!author) return (skip(sms ? 'author without an ACI or number' : 'author without an ACI'), null);
     const revisions = all(fs, 6);
     const sent = int(fs, 3) ?? 0;
     const original = revisions.length ? (int(fields(revisions[0].bytes!), 3) ?? sent) : sent;
-    const m: P.MessageFact = { nativeId: `${author}:${original}`, conversation: '', author, ts: original, body: '' };
+    const m: P.MessageFact = { nativeId: msgId(author, original), conversation: '', author, ts: original, body: '' };
     if (revisions.length && sent !== original) m.editedTs = sent;
     const extra: Record<string, unknown> = {};
     const expires = int(fs, 5);
@@ -444,24 +436,21 @@ function mapFrames(b: Uint8Array, files: string, o: Omit<ReadV2Options, 'dir' | 
         .map((a) => keep(sub(fields(a.bytes!), 1)))
         .filter((a): a is P.AttachmentFact => !!a);
       m.kind = atts.length ? 'media' : 'text';
-      // The same file twice in one message (it happens) is still two attachments.
-      const used = new Set<string>();
-      for (const [i, a] of atts.entries()) {
-        if (used.has(a.nativeId!)) a.nativeId = `${a.nativeId}#${i}`;
-        used.add(a.nativeId!);
-      }
+      distinctFiles(atts);
       if (atts.length) m.attachments = atts;
+      // The backup doesn't say which an SMS was; one with files went as an MMS.
+      if (sms) extra.sms = all(standard, 3).length ? 'mms' : 'sms';
       const q = sub(standard, 1);
       if (q) {
         const qts = int(q, 1);
-        const qa = aciOf(int(q, 2));
+        const qa = idOf(int(q, 2));
         if (qa && qts) m.replyTo = `${qa}:${qts}`;
         const qatts = all(q, 4).map((x) => fields(x.bytes!));
         extra.quote = { author: qa, ts: qts ?? null, text: text(sub(q, 3)).body, ...(qatts.length ? { attachments: qatts.map((x) => ({ mime: str(x, 1) ?? null, name: str(x, 2) ?? null })) } : {}) };
       }
       m.reactions = reactions(standard, 6);
       if (!m.body && !atts.length) {
-        if (all(standard, 3).length) m.body = '📎 Attachment (not in the backup)';
+        if (all(standard, 3).length) m.body = MISSING_FILE_BODY;
         else return (skip('empty'), null);
       }
     } else if (sticker) {
@@ -476,7 +465,7 @@ function mapFrames(b: Uint8Array, files: string, o: Omit<ReadV2Options, 'dir' | 
     else if (one(fs, 18)) {
       // Respect the sender: view-once media stays on the phone, as live sync does.
       m.kind = 'media';
-      m.body = '📷 View-once media (open it on your phone)';
+      m.body = VIEW_ONCE_BODY;
       extra.viewOnce = true;
       m.reactions = reactions(sub(fs, 18), 2);
     } else if (one(fs, 12)) {
@@ -484,22 +473,25 @@ function mapFrames(b: Uint8Array, files: string, o: Omit<ReadV2Options, 'dir' | 
       const nm = sub(c, 1);
       // As live sync words it: prefix, given, middle, family, suffix; else the nickname, else the organisation.
       const name = joinName(str(nm, 3), str(nm, 1), str(nm, 5), str(nm, 2), str(nm, 4)) ?? str(nm, 6) ?? str(c, 7) ?? 'Contact';
-      const values = [...all(c ?? [], 3), ...all(c ?? [], 4)].map((x) => str(fields(x.bytes!), 1)).filter(Boolean);
-      m.body = `👤 ${name}${values.length ? ' · ' + values.join(', ') : ''}`;
+      const values = [...all(c ?? [], 3), ...all(c ?? [], 4)].map((x) => str(fields(x.bytes!), 1)).filter((x): x is string => !!x);
+      m.body = contactLine(name, values);
       m.reactions = reactions(sub(fs, 12), 2);
     } else if (one(fs, 20)) {
       const p = sub(fs, 20);
       const options = all(p ?? [], 3).map((x) => str(fields(x.bytes!), 1) ?? '');
       const question = str(p, 1) ?? 'Poll';
       const multiple = !!int(p, 2);
-      m.body = [`📊 **${question}**${multiple ? ' (multiple choice)' : ''}`, ...options.map((x) => `• ${x}`)].join('\n');
+      m.body = pollBody(question, options, multiple);
       extra.poll = { question, options, allowMultiple: multiple };
       m.reactions = reactions(p, 5);
     } else if (one(fs, 19)) {
+      // A reply (text or an emoji) to a story of the other one in this chat. The backup doesn't keep the story.
       const r = sub(fs, 19);
       const tr = sub(r, 1);
-      m.body = tr ? text(sub(tr, 1), sub(tr, 2)).body : (str(r, 2) ?? '');
-      extra.storyReply = true;
+      const emoji = tr ? undefined : str(r, 2);
+      if (tr) m.body = text(sub(tr, 1), sub(tr, 2)).body;
+      const storyAuthor = author === self ? (conv.participants?.find((p) => p !== self) ?? null) : self;
+      extra.storyReply = { author: storyAuthor, ts: 0, ...(emoji ? { emoji } : {}) };
       m.reactions = reactions(r, 3);
     } else if (one(fs, 16)) m.body = '💸 Payment';
     else if (one(fs, 17)) m.body = '🎁 Gift badge';
@@ -530,16 +522,8 @@ function mapFrames(b: Uint8Array, files: string, o: Omit<ReadV2Options, 'dir' | 
     return m;
   }
 
-  // Conversations with what they hold, each followed by its messages, as the facts file wants them.
   const identities = new Map<string, P.IdentityFact>();
   for (const r of recipients.values()) if (r.identity) identities.set(r.identity.nativeId, r.identity);
-  for (const c of chats.values()) {
-    if (!c.messages.length) continue;
-    stats.conversations++;
-    stats.messages += c.messages.length;
-    const people = new Set([...c.people, ...(c.conversation.participants ?? [])]);
-    emit({ t: 'conversation', conversation: c.conversation, identities: [...people].map((p) => identities.get(p)).filter(Boolean), messages: c.messages.length });
-    for (const m of c.messages) emit({ t: 'message', m });
-  }
+  emitChats(chats.values(), identities, stats, emit);
   return stats;
 }

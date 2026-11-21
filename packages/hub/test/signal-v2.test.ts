@@ -49,18 +49,19 @@ describe('reading a snapshot', () => {
 
   test('counts with the right key, and refuses a wrong one', () => {
     expect(() => countSnapshot(made.snapshot, backupKeyFromRecoveryKey('a'.repeat(64)))).toThrow(BadBackupKey);
-    expect(countSnapshot(made.snapshot, key())).toMatchObject({ format: 'signal-v2', recipients: { self: 1, contact: 3, group: 1 }, chats: 4, chatItems: 10, firstMonth: '2024-03' });
+    expect(countSnapshot(made.snapshot, key())).toMatchObject({ format: 'signal-v2', recipients: { self: 1, contact: 4, group: 1 }, chats: 5, chatItems: 15, firstMonth: '2024-03' });
   });
 
   test('maps to the live adapter’s ids and wording, and unseals the attachment', () => {
     const media = join(dir, 'media');
     const lines: any[] = [];
     const stats = readSignalV2({ dir: src, backupKey: key(), selfId: SELF, mediaDir: media }, (l) => lines.push(l));
-    expect(stats).toMatchObject({ conversations: 3, messages: 7, selfMessages: 3, duplicates: 0, files: { linked: 3, missing: 0 } });
-    expect(stats.skipped).toEqual({ deleted: 1, sms: 1, 'chat not kept': 1 });
+    expect(stats).toMatchObject({ conversations: 5, messages: 13, selfMessages: 5, duplicates: 0, files: { linked: 4, missing: 0 } });
+    expect(stats.skipped).toEqual({ deleted: 1, 'author without an ACI': 1 });
     const convs = lines.filter((l) => l.t === 'conversation').map((l) => l.conversation);
     const group = `group:${groupIdFromMasterKey(MASTER_KEY).toString('base64')}`;
-    expect(convs.map((c) => c.nativeId)).toEqual([`dm:${SELF}:${ALICE}`, group, `dm:${SELF}:${SELF}`]);
+    const DENTIST = 'tel:+15550100009';
+    expect(convs.map((c) => c.nativeId)).toEqual([`dm:${SELF}:${ALICE}`, group, `dm:${SELF}:${SELF}`, `sms:${SELF}:${DENTIST}`, `sms:${SELF}:tel:72975`]);
     expect(convs[1]).toMatchObject({ shape: 'group', name: 'Tea club', participants: [SELF, ALICE, BOB] });
     expect(convs[2]).toMatchObject({ shape: 'self', name: 'Note to Self' });
     const alice = lines.find((l) => l.t === 'conversation').identities.find((i: P.IdentityFact) => i.nativeId === ALICE);
@@ -79,6 +80,30 @@ describe('reading a snapshot', () => {
     expect(by(T + 7000)).toMatchObject({ kind: 'system', body: 'You updated the group.' });
     expect(by(T + 8000)).toMatchObject({ conversation: `dm:${SELF}:${SELF}`, body: 'remember milk' });
     expect(by(T + 8000).attachments!.map((a) => a.nativeId)).toEqual([made.attachmentSha, `${made.attachmentSha}#1`]);
+  });
+
+  test('SMS and MMS: in the Signal chat of someone on Signal, else a chat of their own by number, as the legacy reader names them', () => {
+    const lines: any[] = [];
+    readSignalV2({ dir: src, backupKey: key(), selfId: SELF, mediaDir: join(dir, 'media-sms') }, (l) => lines.push(l));
+    const msgs = lines.filter((l) => l.t === 'message').map((l) => l.m as P.MessageFact);
+    const by = (ts: number) => msgs.find((m) => m.ts === ts)!;
+    expect(by(T + 4100)).toMatchObject({ nativeId: `${ALICE}:${T + 4100}`, conversation: `dm:${SELF}:${ALICE}`, body: 'an old text', extra: { sms: 'sms' } });
+    const DENTIST = 'tel:+15550100009';
+    const sms = lines.find((l) => l.t === 'conversation' && l.conversation.nativeId === `sms:${SELF}:${DENTIST}`);
+    expect(sms.conversation).toEqual({ nativeId: `sms:${SELF}:${DENTIST}`, shape: 'direct', participants: [SELF, DENTIST], encrypted: false });
+    expect(sms.identities.find((i: P.IdentityFact) => i.nativeId === DENTIST)).toEqual({ nativeId: DENTIST, displayName: 'Dr Dentist', handle: '+15550100009' });
+    expect(by(T + 9000)).toMatchObject({ nativeId: `${DENTIST}:${T + 9000}`, author: DENTIST, body: 'your appointment', extra: { sms: 'sms' } });
+    expect(by(T + 9100)).toMatchObject({ author: SELF, body: 'x-ray', kind: 'media', extra: { sms: 'mms' } });
+    expect(by(T + 9100).attachments).toHaveLength(1);
+    expect(by(T + 9500)).toMatchObject({ author: 'tel:72975', conversation: `sms:${SELF}:tel:72975`, extra: { sms: 'sms' } });
+  });
+
+  test('story replies say whose story: the other one in the chat', () => {
+    const lines: any[] = [];
+    readSignalV2({ dir: src, backupKey: key(), selfId: SELF, mediaDir: join(dir, 'media-story') }, (l) => lines.push(l));
+    const msgs = lines.filter((l) => l.t === 'message').map((l) => l.m as P.MessageFact);
+    expect(msgs.find((m) => m.ts === T + 4200)).toMatchObject({ author: SELF, body: 'nice view', extra: { storyReply: { author: ALICE, ts: 0 } } });
+    expect(msgs.find((m) => m.ts === T + 4300)).toMatchObject({ author: ALICE, body: '', extra: { storyReply: { author: SELF, ts: 0, emoji: '🔥' } } });
   });
 });
 
@@ -136,7 +161,7 @@ describe('a Molly folder over HTTP', () => {
     expect(v.error).toContain('recovery key');
     await json(`/api/imports/${id}/passphrase`, { method: 'POST', body: { passphrase: RECOVERY_KEY.toUpperCase() } });
     v = await until(id, (v) => v.status === 'ready');
-    expect((v.census as any).v2).toMatchObject({ chatItems: 10, chats: 4 });
+    expect((v.census as any).v2).toMatchObject({ chatItems: 15, chats: 5 });
     const sdir = join(hubDir, 'imports/sources', id);
     expect(existsSync(join(sdir, 'passphrase'))).toBe(false);
     expect(readFileSync(join(sdir, 'backup-key'), 'utf8')).toBe(backupKeyFromRecoveryKey(parseRecoveryKey(RECOVERY_KEY)!).toString('hex'));
@@ -144,16 +169,16 @@ describe('a Molly folder over HTTP', () => {
 
     await json(`/api/imports/${id}/run`, { method: 'POST', body: { dryRun: false } });
     v = await until(id, (v) => !!v.run?.finishedAt);
-    expect(v.run).toMatchObject({ stage: 'done', counts: { messages: 7, new: 6, same: 1, conflicts: 0 }, files: { linked: 3, missing: 0 } });
+    expect(v.run).toMatchObject({ stage: 'done', counts: { messages: 13, new: 12, same: 1, conflicts: 0 }, files: { linked: 4, missing: 0 } });
     const n = (store.db.query(`SELECT COUNT(*) AS n FROM message WHERE network = 'signal'`).get() as any).n;
-    expect(n).toBe(7);
-    expect((store.db.query(`SELECT COUNT(*) AS n FROM attachment`).get() as any).n).toBe(3);
+    expect(n).toBe(13);
+    expect((store.db.query(`SELECT COUNT(*) AS n FROM attachment`).get() as any).n).toBe(4);
     const att = store.db.query(`SELECT url FROM attachment`).get() as any;
     expect(att.url).toStartWith(`file://${join(hubDir, 'imports/media')}`);
 
     await json(`/api/imports/${id}/run`, { method: 'POST', body: { dryRun: false } });
     v = await until(id, (v) => !!v.run?.finishedAt && v.run.counts?.new === 0);
-    expect(v.run!.counts).toMatchObject({ new: 0, same: 7 });
+    expect(v.run!.counts).toMatchObject({ new: 0, same: 13 });
   }, 30_000);
 });
 

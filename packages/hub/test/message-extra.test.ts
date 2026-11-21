@@ -131,13 +131,26 @@ describe('cards, story replies, failures and files', () => {
     expect(view(`${ALICE}:${T + 25}`).disappears).toBe(604_800);
   });
 
+  test('a text from a Signal backup says it went as SMS or MMS; one with someone not on Signal is history only', async () => {
+    put({ nativeId: `${ALICE}:${T + 27}`, extra: { sms: 'sms' } });
+    expect(view(`${ALICE}:${T + 27}`).sms).toBe('sms');
+    const SMS = `sms:${SELF}:tel:+15550199`;
+    store.ingest(sig, { t: 'conversation', conversation: { nativeId: SMS, shape: 'direct', participants: [SELF, 'tel:+15550199'], encrypted: false } });
+    put({ nativeId: `tel:+15550199:${T + 28}`, author: 'tel:+15550199', extra: { sms: 'mms' } }, SMS);
+    expect(view(`tel:+15550199:${T + 28}`).sms).toBe('mms');
+    commands.length = 0;
+    const r = await post(`/api/chats/${hubId('cnv', 'signal', SMS)}/messages`, { body: 'hi' });
+    expect(r).toEqual({ status: 409, body: { error: 'History only: Signal can’t send SMS' } });
+    expect(commands).toEqual([]);
+  });
+
   test('nothing malformed gets through, and a message without extra has none of it', () => {
     const d = { identity: () => null, isSelf: () => false, media: (u: string | null | undefined) => u ?? null, stored: () => false };
-    expect(extraView({ quote: { text: 'no ts' }, contacts: [{ phones: [] }], failed: 'x', attachmentNotes: [1, null], expiresInSeconds: '60' } as any, null, d)).toEqual({});
+    expect(extraView({ quote: { text: 'no ts' }, contacts: [{ phones: [] }], failed: 'x', attachmentNotes: [1, null], expiresInSeconds: '60', sms: 'rcs' } as any, null, d)).toEqual({});
     expect(extraView({ expiresInSeconds: 0 }, null, d)).toEqual({});
     put({ nativeId: `${ALICE}:${T + 30}` });
     const v = view(`${ALICE}:${T + 30}`);
-    for (const k of ['quote', 'contacts', 'storyReply', 'failed', 'missingAttachments', 'disappears'] as const) expect(v[k]).toBeUndefined();
+    for (const k of ['quote', 'contacts', 'storyReply', 'failed', 'missingAttachments', 'disappears', 'sms'] as const) expect(v[k]).toBeUndefined();
   });
 });
 

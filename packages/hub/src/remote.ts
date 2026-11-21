@@ -8,7 +8,10 @@
  *
  * The manager keeps nothing: while the hub restarts, the remote adapters keep running and their events wait in the
  * manager's memory. If too many wait, the manager drops them and says so (a gap); the hub then restarts that account's
- * adapter, whose fresh snapshot fills the hole.
+ * adapter, whose fresh snapshot fills the hole. Once handed over, events are the hub's alone: the manager keeps no copy
+ * and never sends them again. So a stop closes the client first, applies what is still queued, and writes what it could
+ * not apply to `<data>/pending-events.ndjson`, which the next start applies before anything else (supervisor.ts
+ * `settle`, `resume`). For Signal, whose history cannot be fetched again, an event lost here is lost for good.
  *
  * Everything the hub does to a remote account goes through the manager: its log, its live view (the manager's socket
  * on this hub's token), renames, enabling, removing (with its directory if asked). The hub follows what the manager
@@ -681,13 +684,17 @@ export class RoutedSupervisor extends Supervisor implements ManagerLink {
     await this.client?.admin({ do: 'restart', account: id });
   }
 
-  /** Local adapters stop with the hub; the manager's keep running, and their events wait for the hub to return. */
+  /**
+   * Local adapters stop with the hub; the manager's keep running, and their events wait for the hub to return. The
+   * client closes first, so that nothing more is handed over while the hub stops (main.ts then applies or carries over
+   * what it already has, supervisor.ts `settle`).
+   */
   override async stopAll() {
-    await super.stopAll();
+    this.client?.close();
     this.gapRestarts.stop();
     if (this.mailTimer) clearInterval(this.mailTimer);
     this.mailTimer = null;
-    this.client?.close();
+    await super.stopAll();
   }
 
   override online(id: string): boolean {
