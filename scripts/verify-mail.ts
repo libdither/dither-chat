@@ -707,6 +707,12 @@ async function forwardWithPictures(tag: string) {
   const plainFwd = await page.eval<string>(`document.querySelector('.me-plain .md-island-text')?.textContent ?? ''`);
   check(`${tag}: Plain shows the forwarded message's text`, plainFwd.includes('Forwarded message') && plainFwd.includes('Northbound Outfitters'), plainFwd.slice(0, 160));
   check(`${tag}: Plain's forward can be taken out there`, await has('.me-plain .md-island-text .md-island-x'));
+  // Taken out in Plain and put back: Rich again, and an HTML part again (the pictures choice is back).
+  await click(await at('.me-plain .md-island-x'));
+  await page.until(`!document.querySelector('.me-plain .md-island-text') && !!document.querySelector('.mc-quote-add')`, 5000).catch(() => {});
+  await click(await at('.mc-quote-add'));
+  await page.until(`!!document.querySelector('.me-rich.shown .me-island[data-kind="forward"]') && !!document.querySelector('.mc-pics-btn')`, 10000).catch(() => {});
+  check(`${tag}: put back from Plain, the forward goes as HTML again`, (await has('.me-rich.shown .me-island[data-kind="forward"]')) && (await has('.mc-pics-btn')));
   await click(await at('.me-mode', `el => el.textContent === 'Rich'`));
   await page.until(`!!document.querySelector('.me-rich.shown') && !!document.querySelector('.mc-pics-btn')`, 10000).catch(() => {});
   await click(await at('.mc-pics-btn'));

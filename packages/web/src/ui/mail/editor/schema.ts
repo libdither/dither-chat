@@ -35,8 +35,6 @@ export const newRef = () => Math.random().toString(36).slice(2, 10);
  * fetches one: that would tell its host, from your address, that you are writing (docs/mail.md "Writing").
  */
 const fromWeb = (src: string) => /^\s*(https?:)?\/\//i.test(src);
-/** What stands for one while you write: an empty picture, drawn as a striped box. */
-const WEB_BOX = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 const hostOf = (src: string) => {
   try {
     return new URL(src, 'https://x.invalid').host;
@@ -45,27 +43,94 @@ const hostOf = (src: string) => {
   }
 };
 const webBoxTitle = (src: string) => `A picture from ${hostOf(src)}: not fetched while you write; it goes as the pictures choice says`;
-/** How the editor draws a picture address: one from the web as a box with its host, never fetched; else null. */
-export const webBox = (src: string) => (fromWeb(src) ? { src: WEB_BOX, title: webBoxTitle(src) } : null);
+const px = (v: unknown) => {
+  const n = parseFloat(String(v ?? ''));
+  return n > 0 && n < 5000 ? Math.round(n) : null;
+};
+/** A box's size from the picture's own width and height: its shape kept, never wider than the page. */
+function boxSize(w: unknown, h: unknown): string {
+  const W = px(w);
+  const H = px(h);
+  return `max-width:100%;${W && H ? `width:${W}px;aspect-ratio:${W}/${H}` : W ? `width:${W}px;height:${Math.min(W, 64)}px` : H ? `width:${Math.min(H, 96)}px;height:${H}px` : 'width:96px;height:64px'}`;
+}
 
-/** The island's HTML with its pictures from the web as boxes (the original kept in data-dc-was). */
+/** Each editor's addresses that will not go (MailEditor's leftOut). */
+const leftOutOf = new WeakMap<Element, Set<string>>();
+
+/** Marks one picture or box: faded and dashed, "left out" said on it, when its address will not go. */
+function markOne(el: Element, out: Set<string> | undefined) {
+  const u = el.getAttribute('data-dc-src') ?? el.getAttribute('data-dc-was');
+  const gone = !!u && !!out?.has(u);
+  if (gone === el.classList.contains('dc-out')) return;
+  el.classList.toggle('dc-out', gone);
+  if (gone) el.setAttribute('data-dc-title', el.getAttribute('title') ?? '');
+  const was = el.getAttribute('data-dc-title');
+  if (gone) el.setAttribute('title', 'Left out when it is sent');
+  else if (was !== null) {
+    if (was) el.setAttribute('title', was);
+    else el.removeAttribute('title');
+    el.removeAttribute('data-dc-title');
+  }
+}
+const markInEditor = (el: Element) => {
+  const root = el.closest('.me');
+  if (root) markOne(el, leftOutOf.get(root));
+};
+
+/**
+ * How the editor draws a picture address from the web: a striped box the picture's shape, its host written on it, never
+ * fetched (marked when it will not go); null for any other address.
+ */
+export function webBox(src: string, w?: unknown, h?: unknown): HTMLElement | null {
+  if (!fromWeb(src)) return null;
+  const s = document.createElement('span');
+  s.className = 'me-pic-web';
+  s.contentEditable = 'false';
+  s.setAttribute('data-dc-was', src);
+  s.setAttribute('style', boxSize(w, h));
+  s.title = webBoxTitle(src);
+  s.textContent = hostOf(src);
+  // Marked once it is in the editor (a node view and a widget are made before they are placed).
+  requestAnimationFrame(() => markInEditor(s));
+  return s;
+}
+
+const escapeText = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/**
+ * The island's HTML with its pictures from the web as boxes (the original kept in data-dc-was), and the other choices
+ * a browser has (srcset, <picture>'s sources), which the frame would refuse, taken out.
+ */
 function boxed(html: string): string {
-  if (!/<img\b[^>]*\bsrc\s*=\s*["']?\s*(https?:)?\/\//i.test(html)) return html;
+  if (!/<img\b[^>]*\bsrc\s*=\s*["']?\s*(https?:)?\/\/|\bsrcset\s*=|<source\b|\bdata-dc-held\b/i.test(html)) return html;
   const d = new DOMParser().parseFromString(`<!doctype html><body>${html}`, 'text/html');
+  d.querySelectorAll('picture source, img[srcset]').forEach((x) => (x.tagName === 'SOURCE' ? x.remove() : x.removeAttribute('srcset')));
+  // A held one is a striped picture of its own shape: the picture's, when it says its size; else not too tall.
+  for (const img of d.querySelectorAll<HTMLImageElement>('img[data-dc-held]')) {
+    const W = px(img.getAttribute('width'));
+    const H = px(img.getAttribute('height'));
+    if (W && H) img.style.aspectRatio = `${W}/${H}`;
+    else img.style.maxHeight = '120px';
+  }
   for (const img of d.querySelectorAll('img')) {
     const src = img.getAttribute('src') ?? '';
     if (!fromWeb(src)) continue;
-    img.setAttribute('src', WEB_BOX);
-    img.setAttribute('data-dc-was', src);
-    img.classList.add('dc-web');
-    img.setAttribute('title', webBoxTitle(src));
+    const box = d.createElement('span');
+    box.className = 'dc-web';
+    box.setAttribute('data-dc-was', src);
+    box.setAttribute('role', 'img');
+    box.setAttribute('title', webBoxTitle(src));
+    box.setAttribute('style', boxSize(img.getAttribute('width'), img.getAttribute('height')));
+    box.innerHTML = escapeText(hostOf(src));
+    img.replaceWith(box);
   }
   return d.body.innerHTML;
 }
 
 /**
  * The frame an island is drawn in: a white sheet, its own styles, nothing that runs, and no picture but this hub's and
- * pasted ones (one from the web is a striped box). Pictures that will not go as the mail is sent are faded and dashed.
+ * pasted ones (one from the web is a striped box). Pictures that will not go as the mail is sent are faded and dashed;
+ * a held one (already a striped box) keeps its strength, so its dashes show.
  */
 export function islandDoc(html: string): string {
   return (
@@ -73,40 +138,28 @@ export function islandDoc(html: string): string {
     "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src 'self' data: blob:; style-src 'unsafe-inline'\">" +
     '<style>html,body{margin:0;background:#fff;color:#1f2328;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;overflow:hidden}' +
     'body{padding:8px 10px}img{max-width:100%;height:auto}a{color:#0b62d6}blockquote[type=cite]{margin:0 0 0 2px;padding-left:10px;border-left:2px solid #c9d1d9;color:#57606a}' +
-    'img.dc-web{min-width:48px;min-height:32px;background:repeating-linear-gradient(45deg,#eef0f2 0 6px,#f8f9fa 6px 12px);outline:1px dashed #afb8c1;outline-offset:-1px}' +
-    'img.dc-out{opacity:.25;outline:2px dashed #cf222e;outline-offset:-2px}</style></head>' +
+    '.dc-web{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;overflow:hidden;vertical-align:middle;padding:2px 4px;' +
+    'background:repeating-linear-gradient(45deg,#eef0f2 0 6px,#f8f9fa 6px 12px);border:1px dashed #afb8c1;color:#57606a;font-size:11px;line-height:1.2;text-align:center;word-break:break-all}' +
+    '.dc-out{opacity:.35;outline:2px dashed #cf222e;outline-offset:-2px}img.dc-out[data-dc-held]{opacity:1}' +
+    '.dc-web.dc-out{opacity:1;color:#cf222e}.dc-web.dc-out::after{content:"left out"}</style></head>' +
     `<body>${boxed(html)}</body></html>`
   );
 }
 
-/** Each editor's addresses that will not go (MailEditor's leftOut), for its frames. */
-const leftOutOf = new WeakMap<Element, Set<string>>();
-
 /** Marks the frame's pictures that will not go, as its editor has them. */
 function markLeftOut(f: HTMLIFrameElement) {
   const doc = f.contentDocument;
-  const out = leftOutOf.get(f.closest('.me') ?? f);
   if (!doc?.body) return;
-  for (const img of doc.querySelectorAll('img')) {
-    const u = img.getAttribute('data-dc-src') ?? img.getAttribute('data-dc-was');
-    const gone = !!u && !!out?.has(u);
-    if (gone === img.classList.contains('dc-out')) continue;
-    img.classList.toggle('dc-out', gone);
-    if (gone) img.setAttribute('data-dc-title', img.getAttribute('title') ?? '');
-    const was = img.getAttribute('data-dc-title');
-    if (gone) img.setAttribute('title', 'Left out when it is sent');
-    else if (was !== null) {
-      if (was) img.setAttribute('title', was);
-      else img.removeAttribute('title');
-      img.removeAttribute('data-dc-title');
-    }
-  }
+  const out = leftOutOf.get(f.closest('.me') ?? f);
+  doc.querySelectorAll('[data-dc-src], [data-dc-was]').forEach((el) => markOne(el, out));
 }
 
-/** The editor at `root`: these addresses will not go; its frames mark them. */
+/** The editor at `root`: these addresses will not go; its frames and its boxes mark them. */
 export function setLeftOut(root: Element, urls: string[]) {
-  leftOutOf.set(root, new Set(urls));
+  const out = new Set(urls);
+  leftOutOf.set(root, out);
   root.querySelectorAll<HTMLIFrameElement>('iframe.me-island-frame').forEach(markLeftOut);
+  root.querySelectorAll('.me-pic-web[data-dc-was]').forEach((el) => markOne(el, out));
 }
 
 /** Sizes a frame to its content, and again when its pictures arrive; returns how to stop. */
@@ -289,30 +342,20 @@ const Picture = Image.extend({
   // Drawn as it is, but one from the web as a striped box: the editor fetches nothing from the web.
   addNodeView() {
     return ({ node }) => {
-      const img = document.createElement('img');
-      const draw = (n: PMNode) => {
-        const src = String(n.attrs.src ?? '');
-        const web = fromWeb(src);
-        img.src = web ? WEB_BOX : src;
-        img.className = web ? 'me-pic-web' : '';
-        img.alt = n.attrs.alt ?? '';
-        if (web) img.title = webBoxTitle(src);
-        else if (n.attrs.title) img.title = n.attrs.title;
-        else img.removeAttribute('title');
-        for (const k of ['width', 'height'] as const) {
-          if (n.attrs[k] != null) img.setAttribute(k, String(n.attrs[k]));
-          else img.removeAttribute(k);
-        }
-      };
-      draw(node);
-      return {
-        dom: img,
-        update: (n) => {
-          if (n.type !== node.type) return false;
-          draw(n);
-          return true;
-        },
-      };
+      const src = String(node.attrs.src ?? '');
+      const box = webBox(src, node.attrs.width, node.attrs.height);
+      let dom: HTMLElement;
+      if (box) dom = box;
+      else {
+        const img = document.createElement('img');
+        img.src = src;
+        img.alt = node.attrs.alt ?? '';
+        if (node.attrs.title) img.title = node.attrs.title;
+        for (const k of ['width', 'height'] as const) if (node.attrs[k] != null) img.setAttribute(k, String(node.attrs[k]));
+        dom = img;
+      }
+      // Any change draws it again.
+      return { dom, update: (n) => n.type === node.type && n.attrs.src === node.attrs.src && n.attrs.width === node.attrs.width && n.attrs.height === node.attrs.height && n.attrs.alt === node.attrs.alt && n.attrs.title === node.attrs.title };
     };
   },
 }).configure({ inline: true, allowBase64: true });

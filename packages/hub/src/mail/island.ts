@@ -423,6 +423,8 @@ export async function outgoingHtml(html: string, ctx: OutgoingCtx): Promise<Outg
     if (r && 'url' in r) return { kind: 'web', url: r.url };
     if (r && 'cid' in r) return { kind: 'cid', ...r.cid };
     if (/^https?:\/\//i.test(src)) return { kind: 'web', url: src };
+    // An address without its scheme ("//host/pic.png") is the web's, over https.
+    if (/^\/\/[^/\s]/.test(src)) return { kind: 'web', url: `https:${src}` };
     return { kind: 'none' };
   };
   const key = (p: Pic) => (p.kind === 'data' ? `d:${p.b64.length}:${p.b64.slice(0, 64)}:${p.b64.slice(-64)}` : p.kind === 'web' ? `w:${p.url}` : p.kind === 'cid' ? `c:${p.messageId}:${p.contentId}` : 'none');

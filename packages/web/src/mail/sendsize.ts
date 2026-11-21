@@ -22,9 +22,12 @@ const fetched = (u: string) => /^(https?:\/\/|\/api\/mail\/img\/)/i.test(u);
  * The HTML's pictures, and its bytes without the pasted ones' data. `island`: the forward or quote as the hub made it,
  * with the bytes it adds to the text part; while it is unchanged that is its share of the text part, not its HTML's text.
  */
-export function measureHtml(html: string | null | undefined, island?: { html: string; textBytes?: number } | null): { html: number; islandText: number; pictures: DraftPictures } {
+export function measureHtml(
+  html: string | null | undefined,
+  island?: { html: string; textBytes?: number } | null,
+): { html: number; islandText: number; pictures: DraftPictures; original: boolean } {
   const pictures: DraftPictures = { inside: { n: 0, bytes: 0 }, web: [] };
-  if (!html) return { html: 0, islandText: 0, pictures };
+  if (!html) return { html: 0, islandText: 0, pictures, original: false };
   const doc = new DOMParser().parseFromString(html, 'text/html');
   // A forward's or a quote's text goes in the text part too (the hub writes it there from the original).
   let islandText = 0;
@@ -43,6 +46,8 @@ export function measureHtml(html: string | null | undefined, island?: { html: st
     const src = img.getAttribute('src') ?? '';
     if (orig && /^https?:\/\//i.test(orig)) web.add(orig);
     else if (/^https?:\/\//i.test(src)) web.add(src);
+    // Without its scheme it is the web's too, over https (as the hub sends it).
+    else if (/^\/\/[^/\s]/.test(src)) web.add(`https:${src}`);
     else if (/^data:image\/(png|jpeg|gif|webp);base64,/i.test(src) && !inside.has(src)) {
       inside.add(src);
       const b64 = src.slice(src.indexOf(',') + 1);
@@ -61,7 +66,9 @@ export function measureHtml(html: string | null | undefined, island?: { html: st
   }
   for (const src of inside) dataChars += src.length * html.split(src).length - src.length;
   pictures.web = [...web];
-  return { html: Math.max(0, new Blob([html]).size - dataChars), islandText, pictures };
+  // A forward or a quote in it: its pictures are another sender's, who is the one they can tell.
+  const original = !!doc.querySelector('div[data-dc-island="forward"], div[data-dc-island="quote"]');
+  return { html: Math.max(0, new Blob([html]).size - dataChars), islandText, pictures, original };
 }
 
 export interface SizeLine {

@@ -141,7 +141,8 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
     write there that the rich document can't hold as its own (a layout, a style sheet) stays exactly as written, as a
     block of its own.
   - **Plain**: plain text only, no HTML part (`MailDraft.plainOnly`): the text part exactly as it goes, a forward or a
-    quote as its text, exactly as it goes, read-only under its name, with ✕ to take it out. No formatting buttons; pictures in the text are left out, and one pasted or dropped
+    quote as its text, exactly as it goes, read-only under its name, with ✕ to take it out ("Put the forwarded message
+    back" then goes back to Rich, an HTML part again). No formatting buttons; pictures in the text are left out, and one pasted or dropped
     here is attached. Markdown's marks stay as written; the bits of HTML it keeps (colour, alignment) go, their words
     kept, as the hub does for every text part. Rich again makes it HTML.
   - **A forward or a quote** is such a block (an island), drawn in a sandboxed frame with a bar: its name, size, Hide
@@ -154,13 +155,15 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
     forwarded message back". The caret starts on the line above it, never on the block, so typing never replaces it.
     A block of HTML of your own has **Edit HTML** on its bar, which opens the HTML view.
   - **The editor fetches nothing from the web** (`ui/mail/editor/schema.ts`): a picture address you write or paste
-    (in any view) is a striped box with its host until it is sent, since your browser fetching it would tell its host
-    you are writing. The frames' policy lets in only this hub's pictures and pasted ones.
+    (in any view) is a striped box the picture's shape, its host written on it, until it is sent, since your browser
+    fetching it would tell its host you are writing; one that will not go says "left out" on it. The frames' policy
+    lets in only this hub's pictures and pasted ones, and their `srcset` and `<picture>` sources are taken out (the hub
+    takes them out when sending too). An address without its scheme (`//host/pic.png`) is the web's, over https.
   - **Pictures from the web** in it (a forward's, a quote's, an address written in the HTML view) go as the footer's
     button says ("70 · Link · 1 can tell", beside the size, in sight however long the forward is), which opens the
     choice (the last one made on the device is where a new mail starts; the untick below is that mail's alone): **Link** (the default: their app fetches them when they open it; one that can tell the
     original sender is left out unless you untick "Leave out the ones that can tell", `MailDraft.linkCanTell`; Link
-    says how many can tell on itself, "Link · 2 can tell", and the footer's number is always what goes, "69 · Link · 1 left out", "0 · Leave out"), **Embed** (the hub fetches them now, through its image proxy, and sends them inside the mail:
+    says how many can tell on itself, "Link · 2 can tell", and the footer's number is always what goes, "69 · Link · 1 left out", "0 · Leave out"; a phone leaves the number off for room), **Embed** (the hub fetches them now, through its image proxy, and sends them inside the mail:
     nothing is fetched on their end; never linked instead: one that can't be fetched is left out, and so is one that can
     tell unless the hub has it already, since fetching it now would tell the original sender; the choice says how many,
     and that loading it in the reader first lets it go inside)

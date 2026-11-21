@@ -14750,14 +14750,31 @@ button.msg-edited.link:hover {
   background: var(--bg-hover);
   color: var(--text);
 }
-/* A picture from the web while you write (editor/webpic.ts): a striped box, never fetched. */
+/* A picture from the web while you write (editor/schema.ts webBox): a striped box its shape, its host on it, never
+   fetched; dashed red and "left out" when it will not go. */
 .me-pic-web {
-  min-width: 48px;
-  min-height: 32px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 2px 4px;
+  border: 1px dashed var(--text-faint);
   background: repeating-linear-gradient(45deg, var(--bg-raised) 0 6px, var(--bg-hover) 6px 12px);
-  outline: 1px dashed var(--border-soft);
-  outline-offset: -1px;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: center;
   vertical-align: middle;
+  word-break: break-all;
+}
+.me-pic-web.dc-out {
+  border: 2px dashed var(--danger);
+  color: var(--danger);
+}
+.me-pic-web.dc-out::after {
+  content: 'left out';
 }
 .md-chip {
   display: inline-block;
@@ -15045,6 +15062,17 @@ button.msg-edited.link:hover {
   }
   .mc-foot .mc-send {
     padding-inline: 14px;
+  }
+  /* Big enough for a finger. */
+  .mc-foot .mc-pics-btn,
+  .mc-foot .mc-size-btn {
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
+  }
+  .md-island-x {
+    min-width: 40px;
+    min-height: 40px;
   }
 }
 /* A phone: the picture bar in a line or two; why they are held is in Details and on a long press. */

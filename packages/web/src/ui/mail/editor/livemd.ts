@@ -15,8 +15,8 @@ export interface Stands {
   /** `text`: what it adds to the text part (the Plain view shows it). */
   island: (ref: string) => { kind: string; label: string; size: number; text?: string } | null;
   picture: (ref: string) => string | null;
-  /** A picture address from the web as the editor draws it: a box, never fetched (schema.ts webBox); null for others. */
-  webBox: (src: string) => { src: string; title: string } | null;
+  /** A picture address from the web as the editor draws it: a box with its host, never fetched (schema.ts); null for others. */
+  webBox: (src: string) => HTMLElement | null;
 }
 
 /** Syntax that folds away off the caret's line. */
@@ -105,8 +105,8 @@ class IslandText extends WidgetType {
 class Thumb extends WidgetType {
   constructor(
     readonly src: string,
-    /** One from the web: drawn as this box, never fetched. */
-    readonly box: { src: string; title: string } | null = null,
+    /** One from the web: drawn as a box (Stands.webBox), never fetched. */
+    readonly box: ((src: string) => HTMLElement | null) | null = null,
   ) {
     super();
   }
@@ -114,10 +114,14 @@ class Thumb extends WidgetType {
     return o.src === this.src;
   }
   toDOM() {
+    const box = this.box?.(this.src);
+    if (box) {
+      box.classList.add('md-thumb');
+      return box;
+    }
     const img = document.createElement('img');
-    img.className = this.box ? 'md-thumb me-pic-web' : 'md-thumb';
-    img.src = this.box?.src ?? this.src;
-    if (this.box) img.title = this.box.title;
+    img.className = 'md-thumb';
+    img.src = this.src;
     img.alt = '';
     return img;
   }
@@ -157,7 +161,7 @@ function build(view: EditorView, stands: Stands): DecorationSet {
           const m = /^dc-picture:([\w-]+)$/.exec(url);
           const src = m ? stands.picture(m[1]) : /^https?:/.test(url) ? url : null;
           if (src) {
-            out.push(Decoration.replace({ widget: new Thumb(src, m ? null : stands.webBox(src)) }).range(n.from, n.to));
+            out.push(Decoration.replace({ widget: new Thumb(src, m ? null : stands.webBox) }).range(n.from, n.to));
             return false;
           }
         }

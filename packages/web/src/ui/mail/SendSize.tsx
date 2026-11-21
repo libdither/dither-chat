@@ -33,7 +33,7 @@ export function useDraftSize(o: {
   accountId: string;
   /** The forward or quote as the hub made it (its text part's share). */
   island?: P.MailIsland | null;
-}): SizeLine & { webCount: number; canTellAll: number } {
+}): SizeLine & { webCount: number; canTellAll: number; original: boolean } {
   const m = useMemo(() => measureHtml(o.html, o.island), [o.html, o.island]);
   const [, redraw] = useState(0);
   const asking = useRef(false);
@@ -58,7 +58,7 @@ export function useDraftSize(o: {
   }, [key]);
   const line = sizeLine({ text: o.text, islandText: m.islandText, html: m.html, plainOnly: o.plainOnly, pictures: m.pictures, mode: o.mode, linkCanTell: o.linkCanTell, known, files: o.files });
   const canTellAll = m.pictures.web.filter((u) => known.get(u)?.class === 'personal').length;
-  return { ...line, webCount: m.pictures.web.length, canTellAll };
+  return { ...line, webCount: m.pictures.web.length, canTellAll, original: m.original };
 }
 
 const MODES: { m: P.MailOutgoingPictures; label: string }[] = [
@@ -104,15 +104,17 @@ export function PicturesChoice({
   const { open, setOpen, box } = usePopover();
   if (!s.webCount) return null;
   const them = (n: number) => (n === 1 ? 'it' : 'them');
+  // A forward's pictures tell the original sender; your own, the sites they come from.
+  const whom = s.original ? 'the original sender' : 'the site it comes from';
   const note =
     mode === 'link'
       ? `Their app fetches ${them(s.linked.n)} when they open it${s.linked.bytes || s.linked.unknown ? ` (${about(s.linked.bytes, s.linked.unknown)})` : ''}.${
-          s.linked.leftOut ? '' : s.canTellAll ? ` ${plural(s.canTellAll, 'picture')} can tell the original sender it was opened.` : ''
+          s.linked.leftOut ? '' : s.canTellAll ? ` ${plural(s.canTellAll, 'picture')} can tell ${whom} it was opened.` : ''
         }`
       : mode === 'embed'
         ? `Fetched now and sent inside the mail (${about(s.embedded.bytes, s.embedded.unknown)}, a third more as sent): nothing is fetched on their end.${
             s.embedded.leftOut
-              ? ` ${plural(s.embedded.leftOut, 'picture')} that can tell ${s.embedded.leftOut === 1 ? 'is' : 'are'} left out: fetching ${them(s.embedded.leftOut)} would tell the original sender you opened it. Load ${them(s.embedded.leftOut)} in the reader first to send ${them(s.embedded.leftOut)} inside.`
+              ? ` ${plural(s.embedded.leftOut, 'picture')} that can tell ${s.embedded.leftOut === 1 ? 'is' : 'are'} left out: fetching ${them(s.embedded.leftOut)} would tell ${whom} you opened it. Load ${them(s.embedded.leftOut)} in the reader first to send ${them(s.embedded.leftOut)} inside.`
               : ''
           } One that can’t be fetched is left out too.${inlineParts ? '' : ' This account sends them as data: pictures, which Gmail hides.'}`
         : 'They are left out; their places close up.';
@@ -175,7 +177,7 @@ export function SizeMeter({ s, cap, plainOnly }: { s: ReturnType<typeof useDraft
   return (
     <div class="mc-size" ref={box}>
       <button type="button" class={`mc-limit mc-size-btn${over ? ' over' : ''}`} aria-expanded={open} title="How big it is, as it goes" onClick={() => setOpen(!open)}>
-        ≈ {bytes(s.sent)}
+        ≈ {bytes(s.sent) || '0 B'}
         <span class="mc-size-cap"> of {mbText(cap)}</span>
       </button>
       {open && (

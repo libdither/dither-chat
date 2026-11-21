@@ -411,6 +411,8 @@ export function MailEditor(p: MailEditorProps) {
         focus: () => (shownRef.current === 'rich' ? void e.commands.focus() : cm.current?.focus()),
         addPictures: (files) => take(files),
         addIsland: (island, from) => {
+          // Rich, as the composer has it too: from Plain that means an HTML part again (MailDraft.plainOnly off).
+          if (shownRef.current !== 'rich') props.current.onMode('rich');
           void switchTo('rich', false).then(() => {
             appendIsland(e, island, from, true);
             e.commands.focus();

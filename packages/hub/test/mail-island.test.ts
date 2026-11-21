@@ -128,6 +128,17 @@ describe('outgoingHtml', () => {
     expect(c.leftOut.canTell).toBe(2);
   });
 
+  test('an address without its scheme is the web’s: linked over https, fetched in with Embed', async () => {
+    const html = '<p>Hi <img src="//cdn.store.example/a.png"></p>';
+    const r = await outgoingHtml(html, ctx());
+    expect(r.html).toContain('src="https://cdn.store.example/a.png"');
+    expect(r.linked).toBe(1);
+    const fetched: string[] = [];
+    const e = await outgoingHtml(html, ctx({ pictures: 'embed', fetchPicture: async (u) => (fetched.push(u), { bytes: PNG, mime: 'image/png' }) }));
+    expect(fetched).toEqual(['https://cdn.store.example/a.png']);
+    expect(e.embedded).toBe(1);
+  });
+
   test('embed: pictures go inside the mail; one that can tell only when the hub has it, else it is left out', async () => {
     const fetched: string[] = [];
     const r = await outgoingHtml(draftHtml, ctx({ pictures: 'embed', fetchPicture: async (u) => (fetched.push(u), { bytes: PNG, mime: 'image/png' }) }));
