@@ -106,7 +106,7 @@ function HoleRow({ h, reload }: { h: P.CatchUpHoleView; reload: () => void }) {
         <span class="job-kind">
           {h.scope === 'chat' ? `${h.accountName} · one chat` : 'Every chat'} · {stretch(h.from, h.to)}
         </span>
-        <span class={`job-pill ${PILL[h.state]}`}>{STATE_LABEL[h.state]}</span>
+        <span class={`job-pill ${PILL[h.state]}`}>{h.state === 'clear' && !h.pages ? 'Nothing to fetch' : STATE_LABEL[h.state]}</span>
       </div>
       <p class="job-line catchup-why">{h.causes.map((c) => CAUSE_LABEL[c]).join(' · ')}</p>
       {h.notes.length > 0 && <p class="job-line job-when">{h.notes[h.notes.length - 1]}</p>}
@@ -119,7 +119,9 @@ function HoleRow({ h, reload }: { h: P.CatchUpHoleView; reload: () => void }) {
         {h.state === 'unfetchable'
           ? `${plural(h.chats, 'chat')} likely had messages then`
           : !h.pages && !open(h)
-            ? `${plural(h.chats, 'chat')} planned · nothing fetched`
+            ? h.chats
+              ? `${plural(h.chats, 'chat')} planned · nothing fetched`
+              : 'No chat worth fetching'
             : `${h.chatsDone.toLocaleString()} of ${plural(h.chats, 'chat')} done · ${plural(h.found, 'missing message')} fetched in ${plural(h.pages, 'page')}`}
       </p>
       {h.current && (
@@ -135,9 +137,11 @@ function HoleRow({ h, reload }: { h: P.CatchUpHoleView; reload: () => void }) {
       {left > 0 && <p class="job-line job-skipped">Left out: {h.left.map((l) => `${plural(l.count, 'chat')} ${l.why}`).join(', ')}</p>}
       <div class="job-controls">
         <div class="job-buttons">
-          <button class="btn ghost small" aria-expanded={shown} onClick={() => setShown(!shown)}>
-            {shown ? 'Hide chats' : 'Show chats'}
-          </button>
+          {(h.chats > 0 || open(h)) && (
+            <button class="btn ghost small" aria-expanded={shown} onClick={() => setShown(!shown)}>
+              {shown ? 'Hide chats' : 'Show chats'}
+            </button>
+          )}
           {open(h) && (
             <button class="btn ghost small" disabled={busy} onClick={() => void act(() => api(`/api/catch-up/${h.id}/stop`, { body: {} }), 'stop it')}>
               Stop

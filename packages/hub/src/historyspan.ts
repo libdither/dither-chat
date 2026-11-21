@@ -27,3 +27,15 @@ export function addSpan(store: Store, cid: string, from: number, to: number) {
     store.db.query('INSERT INTO history_span (conversation_id, from_ts, to_ts) VALUES (?, ?, ?)').run(cid, lo, hi);
   })();
 }
+
+/** [from, to] is no longer known whole: each span over it is cut in two around it, the rest kept. */
+export function cutSpan(store: Store, cid: string, from: number, to: number) {
+  store.db.transaction(() => {
+    const over = store.raw<Row>('SELECT * FROM history_span WHERE conversation_id = ? AND from_ts < ? AND to_ts >= ?', cid, to, from);
+    for (const s of over) {
+      store.db.query('DELETE FROM history_span WHERE conversation_id = ? AND from_ts = ?').run(cid, s.from_ts);
+      if (s.from_ts < from) store.db.query('INSERT OR REPLACE INTO history_span (conversation_id, from_ts, to_ts) VALUES (?, ?, ?)').run(cid, s.from_ts, from);
+      if (s.to_ts > to) store.db.query('INSERT OR REPLACE INTO history_span (conversation_id, from_ts, to_ts) VALUES (?, ?, ?)').run(cid, to, s.to_ts);
+    }
+  })();
+}

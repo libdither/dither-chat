@@ -667,7 +667,12 @@ const shutdown = async () => {
   // From here to exit nothing awaits, so no event can come in between.
   const settled = sup.settle(stopBy);
   // What the catch-up must know at the next start: when the hub last heard each account, and events it lost now.
-  server.catchup.stopping(settled.lost);
+  try {
+    server.catchup.stopping(settled.lost);
+  } catch (e) {
+    // A locked database: the next start finds the stop unclean and checks what waited, which is the safe side.
+    console.error('catch-up: saving at the stop failed', e);
+  }
   // What stopping changed is in the journal too; then the next start can trust it (journal.ts).
   server.flush();
   store.journal.close();

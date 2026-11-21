@@ -29,7 +29,7 @@ import type * as P from '@dither-chat/protocol';
 import { hubId, randomId } from '@dither-chat/protocol/ids';
 import { type Clock, realClock, sleep, unref } from './clock.ts';
 import { jobFailed } from './errors.ts';
-import { addSpan, spanAt } from './historyspan.ts';
+import { addSpan, cutSpan, spanAt } from './historyspan.ts';
 import { READING, ReadingPace } from './readingpace.ts';
 import type { Store } from './store.ts';
 
@@ -79,8 +79,11 @@ const KEEP_MS = 30 * DAY;
 const SAVE_MS = MIN;
 /** While events wait to be applied, their marker is saved at least this often, so a crash's time is known that closely. */
 const BACKLOG_SAVE_MS = 30_000;
-/** Direct chats and groups expected to have had fewer messages than this in the stretch are left out. */
-const DIRECT_MIN_EXPECTED = 0.1;
+/**
+ * Direct chats and groups: the quietest are left out while all those left out together were expected to have had
+ * fewer messages than this. Eighty chats that each rarely talk may still have had a few messages between them.
+ */
+const DIRECT_TAIL = 0.5;
 /** A direct chat or group with messages this close to the stretch is fetched however quiet it was before. */
 const AROUND_MS = 30 * MIN;
 /** Claims looked at in one tick: after a snapshot thousands come at once. */
@@ -96,10 +99,18 @@ const DEFER_MAX_MS = 10 * MIN;
  */
 const LAND_MS = 250;
 const LAND_TRIES = 40;
+/** Looks with nothing changing after which a page counts as landed although it held fewer than it said (kinds the hub does not keep). */
+const LAND_STILL = 8;
+/** However busy the supervisor's queue, a page waits at most this long; then it is asked again later. */
+const LAND_MAX_MS = 5 * MIN;
+/** A page whose messages had not landed is asked again after this long. */
+const LAND_AGAIN_MS = 30_000;
 /** Channels whose own history holds nothing: their posts are threads. */
 const NO_MESSAGES = new Set(['forum', 'media']);
 const STRENGTH: Record<P.CatchUpStrength, number> = { possible: 0, likely: 1, sure: 2 };
 const OPEN = `('planning', 'checking', 'fetching')`;
+/** Another connection held the database past busy_timeout. */
+const isBusy = (e: unknown) => (e as { code?: string } | null)?.code === 'SQLITE_BUSY';
 
 /** What the supervisor tells it as events come and go (supervisor.ts). Called inside a write: memory only. */
 export interface EventWatch {
@@ -456,6 +467,15 @@ export class CatchUp implements EventWatch {
       ['plans', () => {
         for (const h of this.store.raw<Row>(`SELECT * FROM catchup_hole WHERE state = 'planning' AND plan_at <= ?`, now)) this.plan(h);
       }],
+      ['finish', () => {
+        // Open holes with nothing left to fetch (a check whose only chats were its first ones, a restart between a
+        // chat's end and its hole's): over now.
+        const idle = this.store.raw<Row>(
+          `SELECT id FROM catchup_hole h WHERE state IN ('checking', 'fetching') AND NOT EXISTS
+           (SELECT 1 FROM catchup_task t WHERE t.hole_id = h.id AND t.state = 'queued' AND (h.state = 'fetching' OR t.probe = 1))`,
+        );
+        for (const h of idle) if (![...this.working.values()].some((w) => w.holeId === h.id)) this.finished(h.id);
+      }],
       ['sweep', () => this.sweep(now)],
     ];
     for (const [what, step] of steps)
@@ -463,27 +483,36 @@ export class CatchUp implements EventWatch {
         step();
       } catch (e) {
         console.error(`catch-up: ${what} failed`, e);
-        jobFailed(`catch-up: ${what}`, e);
+        // A locked database is tried again at the next tick: said, not reported as a bug.
+        if (!isBusy(e)) jobFailed(`catch-up: ${what}`, e);
       }
     if (this.stopped) return;
     const accounts = this.store.raw<Row>(`SELECT DISTINCT t.account_id FROM catchup_task t JOIN catchup_hole h ON h.id = t.hole_id WHERE t.state = 'queued' AND h.state IN ('checking', 'fetching')`);
     for (const a of accounts) if (!this.working.has(a.account_id) && this.o.online(a.account_id)) void this.work(a.account_id);
   }
 
-  /** Each report on its own: one that cannot be stored does not take the others with it. */
+  /**
+   * Each report on its own: one that cannot be stored does not take the others with it. A locked database keeps this
+   * one and the rest for the next tick.
+   */
   private takeReports() {
     const reports = this.reports;
     this.reports = [];
-    for (const r of reports)
+    for (let i = 0; i < reports.length; i++) {
+      const r = reports[i];
       try {
-        // A message that failed to be stored may sit inside a stretch a page already marked whole: no longer.
-        if (r.cause === 'lost' && r.scope === 'chat' && r.conversationId)
-          this.store.db.query('DELETE FROM history_span WHERE conversation_id = ? AND from_ts < ? AND to_ts >= ?').run(r.conversationId, r.to ?? r.from, r.from);
+        // A message that failed to be stored sits inside a stretch a page may have marked whole: not that moment.
+        if (r.cause === 'lost' && r.scope === 'chat' && r.conversationId) cutSpan(this.store, r.conversationId, r.from, r.to ?? r.from + 1);
         this.report(r);
       } catch (e) {
+        if (isBusy(e)) {
+          this.reports.unshift(...reports.slice(i));
+          throw e;
+        }
         console.error('catch-up: a report failed', e);
         jobFailed('catch-up: report', e, { account: r.accountId ?? '' });
       }
+    }
   }
 
   /** Old holes go; open holes of an account that is gone go too, since nothing will ever fetch them. */
@@ -506,19 +535,21 @@ export class CatchUp implements EventWatch {
       const up = !!a.enabled && this.o.online(a.id) && a.status === 'online';
       const was = this.up.get(a.id);
       this.up.set(a.id, up);
-      // The first look after a start is no change: a hub that just started sees its accounts come up one by one.
-      if (was === undefined && !up) continue;
-      if (was !== false && !up) {
-        this.offlineSince.set(a.id, now);
-        changed = true;
+      if (!up) {
+        // Down from now, unless known down since earlier (saved across a restart). At a start too: an account that
+        // never comes up is offline from then; one that comes up within OFFLINE_MIN_MS, as most do, opens nothing.
+        if (was !== false && !this.offlineSince.has(a.id)) {
+          this.offlineSince.set(a.id, now);
+          changed = true;
+        }
         continue;
       }
-      if (!up) continue;
       const since = this.offlineSince.get(a.id);
       if (since === undefined) continue;
+      // Reported first: a locked database leaves it offline-since, to be reported at the next tick.
+      if (now - since >= OFFLINE_MIN_MS) this.report({ scope: 'account', accountId: a.id, from: since - MIN, to: now, strength: 'possible', cause: 'offline', note: `The account was offline for ${hm(now - since)}` });
       this.offlineSince.delete(a.id);
       changed = true;
-      if (now - since >= OFFLINE_MIN_MS) this.report({ scope: 'account', accountId: a.id, from: since - MIN, to: now, strength: 'possible', cause: 'offline', note: `The account was offline for ${hm(now - since)}` });
     }
     for (const id of this.offlineSince.keys())
       if (!this.store.account(id)) {
@@ -576,9 +607,10 @@ export class CatchUp implements EventWatch {
   private keepBacklog(now: number) {
     if (!this.backlog) return;
     if ((this.o.backlog?.() ?? 0) === 0) {
+      // The marker goes first: if the database is locked, memory still says so and the next tick tries again.
+      if (this.backlogSaved) this.setMeta('catchup:backlog', null);
       this.backlog = null;
       this.backlogDirty = false;
-      if (this.backlogSaved) this.setMeta('catchup:backlog', null);
       this.backlogSaved = 0;
       return;
     }
@@ -617,13 +649,14 @@ export class CatchUp implements EventWatch {
   /** The account to fetch a chat through: one that sees it and can fetch, online first; or any that sees it. */
   private accountFor(cid: string): string | null {
     const seen = this.store.vantageAccounts('conversation', cid);
-    const able = seen.filter((a) => this.can(a, 'history'));
+    const able = seen.filter((a) => this.can(a, 'history') && !!this.store.account(a)?.enabled);
     return able.find((a) => this.o.online(a)) ?? able[0] ?? seen[0] ?? null;
   }
 
+  /** The account's adapter said it can (whether the account is on or not). */
   private can(accountId: string, capability: P.Capability): boolean {
     const a = this.store.account(accountId);
-    if (!a || !a.enabled) return false;
+    if (!a) return false;
     try {
       return (JSON.parse(a.capabilities || '[]') as string[]).includes(capability);
     } catch {
@@ -637,6 +670,11 @@ export class CatchUp implements EventWatch {
     const acc = this.store.account(h.account_id);
     if (!acc) {
       this.remove(h.id);
+      return;
+    }
+    if (!acc.enabled) {
+      // Turned off: planned once it is on again, when what it can do is known (turned off is not unfetchable).
+      this.store.db.query('UPDATE catchup_hole SET plan_at = ? WHERE id = ?').run(now + 10 * MIN, h.id);
       return;
     }
     const from = h.from_ts as number;
@@ -665,7 +703,7 @@ export class CatchUp implements EventWatch {
           );
     const left = new Map<string, number>();
     const leave = (why: string) => left.set(why, (left.get(why) ?? 0) + 1);
-    const picked: { id: string; expected: number; score: number; why: string; direct: boolean }[] = [];
+    const picked: { id: string; expected: number; score: number; why: string; direct: boolean; around: boolean }[] = [];
     for (const c of convs) {
       if (NO_MESSAGES.has(c.variant)) continue;
       const expected = ((c.before as number) / RATE_MS) * (to - from);
@@ -674,10 +712,7 @@ export class CatchUp implements EventWatch {
       if (h.scope === 'account' && !all) {
         // A direct chat or a group goes in if it was busy enough then, or had messages right around the stretch (a
         // conversation that started that day has no pace yet): each one costs a page, wanted or not.
-        if (direct && expected < DIRECT_MIN_EXPECTED && !c.around) {
-          leave('quiet then');
-          continue;
-        }
+        // Direct chats and groups: their tail is cut below, together.
         if (!direct && !read) {
           leave("you don't read them");
           continue;
@@ -692,7 +727,21 @@ export class CatchUp implements EventWatch {
         continue;
       }
       const why = direct ? (c.shape === 'direct' ? 'a direct chat' : 'a group') : read ? 'a channel you read' : 'a channel';
-      picked.push({ id: c.id, expected, direct, why, score: direct ? 3 * (expected + 0.5) : (expected + 0.5) * (read ? 1 : 0.3) });
+      picked.push({ id: c.id, expected, direct, around: !!c.around, why, score: direct ? 3 * (expected + 0.5) : (expected + 0.5) * (read ? 1 : 0.3) });
+    }
+    if (h.scope === 'account' && !all) {
+      // The quietest direct chats and groups go while all that went were expected under DIRECT_TAIL messages between
+      // them; one with messages right around the stretch stays however quiet (a conversation that started that day).
+      const quiet = picked.filter((p) => p.direct && !p.around).sort((a, b) => a.expected - b.expected || a.id.localeCompare(b.id));
+      let sum = 0;
+      const out = new Set<string>();
+      for (const p of quiet) {
+        if (sum + p.expected >= DIRECT_TAIL) break;
+        sum += p.expected;
+        out.add(p.id);
+        leave('quiet then');
+      }
+      if (out.size) picked.splice(0, picked.length, ...picked.filter((p) => !out.has(p.id)));
     }
     picked.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
     if (!all && picked.length > MAX_CHATS) {
@@ -742,8 +791,13 @@ export class CatchUp implements EventWatch {
         // its stretch grew; the walk starts over from the top, and the spans skip what it fetched.
         const grew = from < t.from_ts || to > t.to_ts;
         const again = t.state === 'queued' || grew || (t.state === 'skipped' && taskState === 'queued');
-        // A stretch that grew is a new walk: its page budget starts again too.
-        update.run(rank, probes.has(p.id) ? 1 : 0, p.expected, again ? why : t.why, again ? taskState : t.state, Math.min(from, t.from_ts), Math.max(to, t.to_ts), grew ? null : t.cursor, grew ? null : t.walk, grew ? 0 : t.pages, again ? null : t.error, now, h.id, p.id);
+        // A stretch that grew is a new walk with its own page budget. Grown only further back, the walk goes on from
+        // where it was; grown at the end, it starts at the new end and, reaching the old one, jumps to where it was
+        // (`resume`): an account without spans (no `oldest`) would otherwise read it all again.
+        const later = to > t.to_ts;
+        const cursor = !grew ? t.cursor : later ? null : t.cursor;
+        const walk = !grew ? t.walk : later ? (t.cursor !== null ? JSON.stringify({ resume: { top: t.to_ts + 1, cursor: t.cursor } }) : null) : t.walk;
+        update.run(rank, probes.has(p.id) ? 1 : 0, p.expected, again ? why : t.why, again ? taskState : t.state, Math.min(from, t.from_ts), Math.max(to, t.to_ts), cursor, walk, grew ? 0 : t.pages, again ? null : t.error, now, h.id, p.id);
       });
       const leftOut = [...left].map(([why, count]) => ({ why, count }));
       if (state === 'unfetchable') notes.push(`${acc.label || 'This account'} cannot fetch older messages from ${acc.network}: an import (Settings → Import) can fill this`);
@@ -825,31 +879,50 @@ export class CatchUp implements EventWatch {
         .query('UPDATE catchup_task SET cursor = ?, walk = ?, state = ?, error = ?, pages = pages + ?, found = found + ?, updated_at = ? WHERE hole_id = ? AND conversation_id = ?')
         .run(patch.cursor === undefined ? row.cursor : patch.cursor, patch.walk === undefined ? null : patch.walk, patch.state ?? 'queued', patch.error ?? null, patch.pages ?? 0, patch.found ?? 0, now(), t.hole_id, cid);
     if (!native) return (save({ state: 'failed', error: 'the chat is gone' }), { count: 0, done: true });
-    let cursor: number = t.cursor ?? t.to_ts + 1;
-    for (let s = spanAt(this.store, cid, cursor); s; s = spanAt(this.store, cid, cursor)) cursor = s.from_ts;
-    if (cursor <= t.from_ts) return (save({ cursor, state: 'done' }), { count: 0, done: true });
-    if (t.pages >= MAX_PAGES) return (save({ cursor, state: 'done', error: `Stopped after ${MAX_PAGES} pages; older messages in the stretch were not fetched` }), { count: 0, done: true });
-    let mark: { next?: string; at?: number } = {};
+    /** The adapter's cursor at `at`; a page asked at `at` whose messages had not landed (`before`: held then); where a walk that restarted at a new end goes on (`resume`). */
+    let mark: { next?: string; at?: number; before?: number; resume?: { top: number; cursor: number } } = {};
     try {
       mark = JSON.parse(t.walk || '{}') ?? {};
     } catch {
       /* none */
     }
+    let cursor: number = t.cursor ?? t.to_ts + 1;
+    let resume = mark.resume ?? null;
+    for (;;) {
+      const s = spanAt(this.store, cid, cursor);
+      if (s) cursor = s.from_ts;
+      else if (resume && cursor <= resume.top) {
+        cursor = Math.min(cursor, resume.cursor);
+        resume = null;
+      } else break;
+    }
+    const keep = (w: Record<string, unknown>) => JSON.stringify(resume ? { ...w, resume } : w);
+    if (cursor <= t.from_ts) return (save({ cursor, state: 'done' }), { count: 0, done: true });
+    if (t.pages >= MAX_PAGES) return (save({ cursor, state: 'done', error: `Stopped after ${MAX_PAGES} pages; older messages in the stretch were not fetched` }), { count: 0, done: true });
+    // Found: what came into the stretch, not older history the page reached below it.
+    const inStretch = this.store.db.query('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ? AND ts >= ? AND ts < ?');
+    const held = () => (inStretch.get(cid, t.from_ts, cursor) as Row).n as number;
     const below = this.store.db.query('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ? AND ts < ?');
-    const held = () => (below.get(cid, cursor) as Row).n as number;
-    const before = held();
+    const heldBelow = () => (below.get(cid, cursor) as Row).n as number;
+    const before = mark.at === cursor && typeof mark.before === 'number' ? mark.before : held();
     const cmd = { t: 'history' as const, conversation: native, beforeTs: cursor, limit: PAGE, pace: 'read' as const, ...(mark.next && mark.at === cursor ? { cursor: mark.next } : {}) };
     const r = (await this.o.command(t.account_id, cmd, 180_000)) as P.HistoryResult | null;
     if (r?.deferMs && !r.count) return { count: 0, done: false, deferMs: r.deferMs };
     const count = r?.count ?? 0;
     const oldest: number | null = typeof r?.oldest === 'number' && Number.isFinite(r.oldest) ? r.oldest : null;
     if (oldest !== null) this.givesOldest.add(t.account_id);
-    if (count) await this.landed(cid, cursor, count, oldest, held);
-    const found = Math.max(0, held() - before);
+    const arrived = !count || (await this.landed(cid, cursor, count, oldest, heldBelow));
 
     // While it waited, the hole may have been stopped or planned again: what this page says is no longer the task's.
     const now_ = this.store.one<Row>('SELECT * FROM catchup_task WHERE hole_id = ? AND conversation_id = ?', t.hole_id, cid);
-    const same = !!now_ && now_.state === 'queued' && now_.cursor === t.cursor && now_.from_ts === t.from_ts && now_.to_ts === t.to_ts;
+    const same = !!now_ && now_.state === 'queued' && now_.cursor === t.cursor && now_.walk === t.walk && now_.from_ts === t.from_ts && now_.to_ts === t.to_ts;
+    if (!arrived) {
+      // Not in yet (a long queue in the supervisor): nothing is recorded, and the same page is asked again later,
+      // counting from what was held before this one.
+      if (same) save({ cursor, walk: keep({ ...(mark.at === cursor && mark.next ? { next: mark.next } : {}), at: cursor, before }), state: 'queued' });
+      return { count: 0, done: false, deferMs: LAND_AGAIN_MS };
+    }
+    const found = Math.max(0, held() - before);
 
     if (oldest !== null && oldest >= cursor) {
       // Messages from after the cursor: the network does not page back by time here, and a walk would go nowhere.
@@ -873,27 +946,38 @@ export class CatchUp implements EventWatch {
         return { count, done: true };
       }
     }
-    const done = next <= t.from_ts;
-    if (same) save({ cursor: next, walk: !done && typeof r.next === 'string' ? JSON.stringify({ next: r.next, at: next }) : null, state: done ? 'done' : 'queued', pages: 1, found });
+    const done = next <= t.from_ts && !resume;
+    if (same) save({ cursor: next, walk: done ? null : keep(typeof r.next === 'string' ? { next: r.next, at: next } : {}), state: done ? 'done' : 'queued', pages: 1, found });
     return { count, done };
   }
 
   /**
-   * Waits until a page's messages are in: nothing waits in the supervisor's queue, the count below the cursor holds
-   * still, and (when the page said where it ended) the stretch it covered holds at least as many as it sent. Gives up
-   * after LAND_TRIES looks: some of a page may be kinds the hub does not keep.
+   * Waits until a page's messages are in: nothing waits in the supervisor's queue, the chat's count below the cursor
+   * held still from one look to the next, and (when the page said where it ended) the stretch it covered holds as many
+   * as it sent. Looks while the queue is busy do not count (a snapshot after a gap can take minutes): only LAND_TRIES
+   * quiet ones, or LAND_MAX_MS in all. A page that held fewer than it said, with nothing changing for LAND_STILL looks,
+   * is in (kinds the hub does not keep). Whether it is in.
    */
-  private async landed(cid: string, cursor: number, count: number, oldest: number | null, held: () => number) {
+  private async landed(cid: string, cursor: number, count: number, oldest: number | null, held: () => number): Promise<boolean> {
     const inPage = this.store.db.query('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ? AND ts >= ? AND ts < ?');
+    const until = this.clock.now() + LAND_MAX_MS;
     let last = -1;
-    for (let i = 0; i < LAND_TRIES; i++) {
-      const n = held();
-      const queued = this.o.backlog?.() ?? 0;
-      const whole = oldest !== null && ((inPage.get(cid, oldest, cursor) as Row).n as number) >= count;
-      if (!queued && (whole || n === last)) return;
-      last = n;
+    let still = 0;
+    for (let tries = 0; tries < LAND_TRIES && this.clock.now() < until; ) {
       await sleep(this.clock, LAND_MS);
+      const n = held();
+      if ((this.o.backlog?.() ?? 0) > 0) {
+        last = -1;
+        still = 0;
+        continue;
+      }
+      tries++;
+      still = n === last ? still + 1 : 0;
+      last = n;
+      if (!still) continue;
+      if (oldest === null || ((inPage.get(cid, oldest, cursor) as Row).n as number) >= count || still >= LAND_STILL) return true;
     }
+    return false;
   }
 
   /** A chat of the hole is done: whether the hole is, and what the first chats of a check said. */
@@ -911,12 +995,14 @@ export class CatchUp implements EventWatch {
         // Messages missing, or a chat that could not be checked: either way the first chats did not show it whole.
         notes.push(found > 0 ? `${plural(found, 'missing message')} in the first chats checked: fetching the rest` : `${plural(failed, 'chat')} of the first could not be checked: fetching the rest`);
         this.store.db.query(`UPDATE catchup_hole SET state = 'fetching', strength = 'likely', notes = ?, updated_at = ? WHERE id = ?`).run(JSON.stringify(notes.slice(-20)), now, holeId);
+        // Its first chats may have been all it planned: then it is over now.
+        h.state = 'fetching';
       } else {
         notes.push('The chats likeliest to have had messages then were whole, so the rest were not fetched');
         this.store.db.query(`UPDATE catchup_task SET state = 'skipped', why = 'the first chats checked were whole', updated_at = ? WHERE hole_id = ? AND state = 'queued'`).run(now, holeId);
         this.store.db.query(`UPDATE catchup_hole SET state = 'clear', notes = ?, updated_at = ? WHERE id = ?`).run(JSON.stringify(notes.slice(-20)), now, holeId);
+        return;
       }
-      return;
     }
     if (h.state === 'fetching' && !sum(`state = 'queued'`).n) {
       const failed = sum(`state = 'failed'`).n as number;
@@ -942,7 +1028,7 @@ export class CatchUp implements EventWatch {
     const from = Math.min(...rows.map((r) => r.from_ts));
     const to = Math.max(...rows.map((r) => r.to_ts));
     // Once: an account hole of the last day already over this stretch, open or done, is enough.
-    if (this.store.one(`SELECT 1 FROM catchup_hole WHERE scope = 'account' AND account_id = ? AND created_at >= ? AND from_ts <= ? AND to_ts >= ? AND state != 'stopped'`, h.account_id, now - DAY, to, from))
+    if (this.store.one(`SELECT 1 FROM catchup_hole WHERE scope = 'account' AND account_id = ? AND created_at >= ? AND from_ts <= ? AND to_ts >= ?`, h.account_id, now - DAY, to, from))
       return;
     this.report({ scope: 'account', accountId: h.account_id, from, to, strength: 'likely', cause: 'nearby', note: `${rows.length} chats were missing messages around the same time, so the account's other chats are checked for then` });
   }
