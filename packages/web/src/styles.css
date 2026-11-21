@@ -52,6 +52,10 @@ body {
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
+  /* A long unbroken word (a web address, a name) breaks where it must instead of holding its box open: a flex or grid
+     item keeps at least its longest word's width, so one long word widened its row past the window and gave the page a
+     sideways scrollbar (docs/testing.md, "Sideways overflow"). Text that fits is laid out as before. */
+  overflow-wrap: anywhere;
 }
 button {
   font: inherit;
@@ -788,6 +792,8 @@ code {
   color: #fff;
   font-weight: 600;
   line-height: 1;
+  /* Initials stay on one line even where a tiny picture is narrower than them (body breaks long words anywhere). */
+  white-space: nowrap;
 }
 .avatar-net {
   position: absolute;
@@ -1360,6 +1366,10 @@ code {
   flex-direction: column;
   padding: 16px 0 10px;
   min-height: min-content;
+  /* A safety net: whatever a message holds that is still too wide (a network's odd embed) is cut at the chat's edge
+     instead of giving the whole chat a sideways scrollbar, which a focus could then scroll. Only sideways: the hover
+     bar still rises above the first message. scripts/check-overflow.ts looks with it off. */
+  overflow-x: clip;
 }
 .timeline-start {
   text-align: center;
@@ -1683,6 +1693,10 @@ code {
   color: var(--text-dim);
   flex: none;
   white-space: nowrap;
+  /* A long name ends in "…" before it pushes the row past the chat's edge. */
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .reply-quote span {
   white-space: nowrap;
