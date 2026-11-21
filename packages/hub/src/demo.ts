@@ -2779,7 +2779,28 @@ class DemoAdapter implements InprocAdapter {
     msg(`${climb.nativeId}~h-mine`, S.self, 54, 'I can drive, leaving at 6');
     for (const [who, state, min] of [[S.alice, 'delivered', 53], [S.alice, 'read', 52], [S.priya, 'delivered', 53], [S.priya, 'read', 50]] as const)
       emit({ t: 'receipt', conversation: climb.nativeId, messages: [`${climb.nativeId}~h-mine`], who: who.nativeId, state, ts: ago(min) });
+    this.seedTexts(ago);
     this.seedActivity();
+  }
+
+  /**
+   * Texts a Signal backup brought in (docs/import-signal.md): Mom's from before she was on Signal, in her chat and
+   * marked SMS; and a dentist's office, not on Signal, in a chat of its own that is history only.
+   */
+  private seedTexts(ago: (min: number) => number) {
+    const D = 24 * 60;
+    const mom = sdm(S.mom).nativeId;
+    const text = (conversation: string, author: string, min: number, body: string, sms: 'sms' | 'mms' = 'sms') =>
+      this.emit({ t: 'message', live: false, message: { nativeId: `${author}:${ago(min)}`, conversation, author, ts: ago(min), body, extra: { sms } } });
+    text(mom, S.mom.nativeId, 40 * D, 'Did you get home ok? Call me when you can');
+    text(mom, S.self.nativeId, 40 * D - 12, 'Yes! Just got in, will call tomorrow');
+    const office = 'tel:+15550142';
+    this.emit({ t: 'identity', identity: { nativeId: office, displayName: 'Bright Smile Dental', handle: '+15550142' } });
+    const sms = `sms:${S.self.nativeId}:${office}`;
+    this.emit({ t: 'conversation', conversation: { nativeId: sms, shape: 'direct', participants: [S.self.nativeId, office], encrypted: false } });
+    text(sms, office, 30 * D, 'Reminder: your cleaning is Thursday at 9:30. Reply C to confirm.');
+    text(sms, S.self.nativeId, 30 * D - 5, 'C');
+    text(sms, office, 30 * D - 6, 'Thanks, see you Thursday!');
   }
 
   /**

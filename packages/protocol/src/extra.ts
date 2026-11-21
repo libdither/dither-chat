@@ -1,6 +1,6 @@
 /**
  * What a network says about a message beyond its body and files: the known keys of MessageFact.extra, which the hub
- * keeps (message.extra) and shows as MessageView's quote, contacts, storyReply, failed and missingAttachments, and as
+ * keeps (message.extra) and shows as MessageView's quote, contacts, storyReply, failed, missingAttachments and sms, and as
  * AttachmentView's voiceNote and caption (docs/messages.md). Every key is optional: an adapter sets what its network
  * has, and a hub that does not know a key keeps it and shows nothing of it. `embeds` (EmbedView) is older than this
  * file and stays as it is.
@@ -81,6 +81,8 @@ export interface MessageExtra {
   expiresInSeconds?: number;
   serverReceivedTs?: number;
   serverDeliveredTs?: number;
+  /** A text sent as SMS or MMS, not over the network itself (Signal backups hold the phone's texts too). */
+  sms?: 'sms' | 'mms';
 }
 
 /**

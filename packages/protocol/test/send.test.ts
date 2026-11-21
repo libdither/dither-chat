@@ -22,6 +22,14 @@ test('an encrypted Matrix room takes an adapter that can encrypt; Signal always 
   expect(sendBlocker({ ...secret, network: 'signal' }, { ...acc, network: 'signal' } as any)).toBeNull();
 });
 
+test('texts a Signal backup brought in are history: no account sends there', () => {
+  const sig = { ...acc, network: 'signal' } as any;
+  const dm = { network: 'signal', encrypted: true, variant: 'text', nativeId: 'dm:me:you' } as const;
+  expect(sendBlocker(dm, sig)).toBeNull();
+  expect(sendBlocker({ ...dm, encrypted: false, nativeId: 'sms:me:tel:+15550100' }, sig)).toBe('History only: Signal can’t send SMS');
+  expect(sendBlocker({ ...dm, shape: 'group', encrypted: false, nativeId: 'mms:c0ffee' } as any, null)).toBe('History only: Signal can’t send SMS');
+});
+
 test('more files than a message takes: runs of the network\'s count, in order; mail and words-only places do not split', () => {
   expect(fileBatches([1, 2, 3], 10)).toEqual([[1, 2, 3]]);
   expect(fileBatches([], 10)).toEqual([[]]);

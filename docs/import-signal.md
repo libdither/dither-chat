@@ -90,7 +90,7 @@ or on tmpfs) and read it with SQL. That's what Molly's own `FullBackupImporter` 
 Signal's own test vectors in `~/Repos/molly/app/src/androidTest/assets/backupTests/*.binproto` (synthetic, public
 data): quotes, reactions, attachments, edits (`revisions`) and remote deletes are all counted correctly.
 
-### Reading it (built: `packages/hub/src/imports/signal-keys.ts`, `signal-v2.ts`)
+### Reading it (built: `packages/hub/src/imports/signal-keys.ts`, `signal-v2.ts`, reader `signal-v2@2`)
 
 No native library: the derivations are ported and checked against libsignal-client's own output (pinned in
 `test/signal-v2.test.ts`), and group ids against all 75 of a real signal-cli account's groups.
@@ -110,11 +110,18 @@ No native library: the derivations are ported and checked against libsignal-clie
 - Mapping follows the live adapter word for word where it has a line: text through `fromSignal` (styles and
   mentions from `BodyRange`), quotes → `replyTo` + `extra.quote`, reactions, edits (the original's timestamp names
   the message, `editedTs` the latest), stickers (pack id hex), view-once as a placeholder, contacts, polls, calls,
-  timers and group changes as call/system lines. Left out and counted: SMS, deleted messages, authors without an
-  ACI, and updates the hub has no line for (profile changes, safety numbers, pins, …).
+  timers and group changes as call/system lines, story replies as `extra.storyReply` (the story's author is the other
+  one in the chat; the backup has no story, so `ts` is 0; an emoji reply is the reaction). Left out and counted:
+  deleted messages, non-SMS items from someone without an ACI, and updates the hub has no line for (profile changes,
+  safety numbers, pins, …). Stories aren't in the format at all.
+- **SMS and MMS** (`ChatItem.sms`) come in as the legacy reader brings them (*Reading a .backup*, step 3), with the
+  same ids, so the two formats meet. A contact with no ACI is `tel:+<e164>` (a short code, up to 6 digits, has no
+  `+`), in a chat `sms:<self ACI>:<that id>`. The format doesn't say which was an MMS: one with attachments is
+  `extra.sms = 'mms'`, the rest `'sms'`. It has no MMS groups (`Recipient` has no kind for them), so a group text
+  never reaches the backup.
 - The newest snapshot is read; older ones in the same folder are ignored.
 
-### Reading a .backup (built: `packages/hub/src/imports/signal-legacy.ts`, reader `signal-legacy@2`)
+### Reading a .backup (built: `packages/hub/src/imports/signal-legacy.ts`, reader `signal-legacy@3`)
 
 1. **Unpack.** Every frame is decrypted and its MAC checked. Only the tables an import reads are replayed into a
    private SQLite file: message, recipient, thread, attachment, reaction, mention, groups, group_membership and the
@@ -126,14 +133,18 @@ No native library: the derivations are ported and checked against libsignal-clie
 2. **Map.** SQL rows become the same facts as the table above. Old edit revisions (`latest_revision_id` set) are left
    out. The latest revision gives the words and the original's `date_sent` names the message. Reactions on either are
    kept. Quote thumbnails (`attachment.quote = 1`) go into `extra.quote`, and long text (`text/x-signal-plain`)
-   becomes the body. Left out and counted: stories, safety-number and session lines, MMS never downloaded
-   (`m_type` 130), and updates the hub has no line for.
+   becomes the body. A reply to a story (`parent_story_id`, negative for a group's) gets `extra.storyReply` with the
+   story's author and time, and a reaction to one (special type 0x1, the emoji its body) the same with `emoji`. Left
+   out and counted: stories, safety-number and session lines, MMS never downloaded (`m_type` 130), and updates the
+   hub has no line for.
 3. **SMS and MMS** (no secure/push bit, base type 20–28) come in with `extra.sms` = `'sms'` or `'mms'` (`m_type` 128
    sent, 132 received). With someone who has an ACI they go into that person's Signal chat, as the phone showed them.
    Someone without one is `tel:<number as stored>` (short codes have no `+`) or `mailto:<email>`, in a chat
    `sms:<self ACI>:<that id>`. An MMS group (`recipient.type` 1, `__signal_mms_group__!<hex>`) is a group chat
    `mms:<hex>`, its members from `group_membership`. The Signal adapter sends only to `dm:` and `group:`, so these
-   chats are history: a reply there fails with "not a Signal conversation of this account".
+   chats are history: the message box says "History only: Signal can’t send SMS" (protocol `sendBlocker`), and the
+   hub refuses a send there with the same words. Each text shows an SMS or MMS mark by its time, and a change between
+   texts and Signal messages starts a new run of messages, so every run of texts carries the mark.
 
 On a real backup (72k rows, 6.9 GB), the unpack and the mapping together take about 20 s. Attachments the new-format
 import had already stored hash to the same files.
@@ -257,7 +268,7 @@ hub, in a worker:
   1. header check: is it a legacy backup, which version                 done on upload
   2. passphrase / recovery key → census                                 done; a wrong secret is forgotten
      (.backup: counts, date range, keepmsg rows; snapshots: chats, items, months)
-  3. read → facts                                                       snapshots: done (signal-v2@1);
+  3. read → facts                                                       snapshots: done (signal-v2@2);
                                                                          .backup: done (signal-legacy@2)
   4. plan: new / same / fill / conflict / skip, per conversation         dry run, shown in the History section
   5. apply, fill-only, inside the hub                                    conflicts wait for review (docs/import.md)
