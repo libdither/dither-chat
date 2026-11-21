@@ -312,10 +312,13 @@ try {
   check('forward opens it again', (await state()).hash === conv);
 
   // A menu is a sheet on a phone.
-  await tap(await at('.conv-head .hdr-btn.level'));
-  check('the notification menu opens as a sheet', await has('.sheet-layer .sheet-menu .level-menu'));
+  // A phone's header keeps Call and Search; the rest, the notification rules among it, is under ⋯.
+  check('the header keeps Call and Search, the rest under ⋯', !(await has('.conv-head .hdr-btn.level')) || (await page.eval<boolean>(`getComputedStyle(document.querySelector('.conv-head .hdr-btn.level')).display === 'none'`)));
+  await tap(await at('.conv-head .hdr-btn[aria-label="More"]'));
+  check('the ⋯ menu opens as a sheet, with the notification rules', await has('.sheet-layer .sheet-menu .level-menu'));
   await shot('47-phone-menu-sheet');
-  await tap(await at('.sheet-layer'), );
+  // Above the sheet, which may reach past the middle of the screen.
+  await tap([Math.round((await at('.sheet-layer'))[0]), 40]);
   await Bun.sleep(300);
   check('tapping outside the sheet closes it', !(await has('.sheet-layer')));
 

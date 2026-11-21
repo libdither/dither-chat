@@ -174,8 +174,8 @@ try {
     await Bun.sleep(150);
     rule = await ruleNow();
   }
-  await p.until(`document.querySelector('.conv-head .hdr-btn.level')?.textContent.trim() === 'List only'`, 5000).catch(() => {});
-  check(rule === 'digest' && (await p.eval<string>(`document.querySelector('.conv-head .hdr-btn.level')?.textContent.trim() ?? ''`)) === 'List only', 'List only sets the rule on the hub, and the header says so', rule);
+  await p.until(`document.querySelector('.conv-head .hdr-btn.level')?.getAttribute('aria-label') === 'Notifications: List only'`, 5000).catch(() => {});
+  check(rule === 'digest' && (await p.eval<string>(`document.querySelector('.conv-head .hdr-btn.level')?.getAttribute('aria-label') ?? ''`)) === 'Notifications: List only', 'List only sets the rule on the hub, and the header’s bell says so', rule);
   await p.eval(`document.querySelector('.conv-head .hdr-btn.level').click()`);
   await p.until(`!!document.querySelector('.level-menu')`, 5000).catch(() => {});
   await p.eval(`[...document.querySelectorAll('.level-menu .menu-item')].find((b) => b.querySelector('b').textContent.trim() === 'Automatic').click()`);
@@ -183,8 +183,8 @@ try {
     await Bun.sleep(150);
     rule = await ruleNow();
   }
-  await p.until(`document.querySelector('.conv-head .hdr-btn.level')?.textContent.trim() === 'Automatic'`, 5000).catch(() => {});
-  check(rule === null && (await p.eval<string>(`document.querySelector('.conv-head .hdr-btn.level')?.textContent.trim() ?? ''`)) === 'Automatic', 'Automatic takes the rule away again', rule);
+  await p.until(`document.querySelector('.conv-head .hdr-btn.level')?.getAttribute('aria-label') === 'Notifications: Automatic'`, 5000).catch(() => {});
+  check(rule === null && (await p.eval<string>(`document.querySelector('.conv-head .hdr-btn.level')?.getAttribute('aria-label') ?? ''`)) === 'Notifications: Automatic', 'Automatic takes the rule away again', rule);
   check(!(await put('/api/rules', { scope: 'conversation', target: conv, level: 'mentions' })).ok && !(await put('/api/rules', { scope: 'conversation', target: conv, level: 'smart' })).ok, 'the hub takes no level from before the tiers');
 
   // Forgetting what it learned.
