@@ -34,6 +34,8 @@
         "src/ui/apps/Apps.tsx",
         "src/ui/calendar/PlanChip.tsx",
         "src/ui/CallPanel.tsx",
+        "src/ui/CallRoom.tsx",
+        "src/ui/CallWindow.tsx",
         "src/ui/ChipLayer.ts",
         "src/ui/mail/ComposerCard.tsx",
         "src/ui/feed/FeedView.tsx",

@@ -1225,8 +1225,8 @@ export class Engine {
       if (e.key === '+' || e.key === '=') this.zoom(1.25);
       else if (e.key === '-') this.zoom(0.8);
       else if (e.key === '0') this.refit();
-      else if (e.key === 'Escape' && this.selected !== null) this.ev.pick(null);
-      else if (e.key === 'Escape' && this.pickedGroup !== null) this.ev.group(null);
+      else if (e.key === 'Escape' && this.selected !== null) (e.preventDefault(), this.ev.pick(null));
+      else if (e.key === 'Escape' && this.pickedGroup !== null) (e.preventDefault(), this.ev.group(null));
       else return;
       e.preventDefault();
     });

@@ -24,6 +24,17 @@ const TRACK: Partial<Record<CallControlKind, (c: CallControl) => string>> = {
   listen: (c) => (c.label === 'Stay in the audience' ? 'stage stay' : 'stage listen'),
 };
 
+/**
+ * The switches' names: the same whichever way they are, with aria-pressed saying which (a screen reader hears "Mute,
+ * pressed", not "Unmute, pressed"). Their tooltips still say what a press does now.
+ */
+const SWITCH: Partial<Record<CallControlKind, { name: string; pressed: (c: CallControl) => boolean }>> = {
+  mute: { name: 'Mute', pressed: (c) => !!c.off },
+  deafen: { name: 'Deafen', pressed: (c) => !!c.off },
+  camera: { name: 'Camera', pressed: (c) => !!c.on },
+  share: { name: 'Share your screen', pressed: (c) => !!c.on },
+};
+
 function run(call: ActiveCall, c: CallControl) {
   switch (c.kind) {
     case 'mute':
@@ -63,8 +74,17 @@ export function CallControls({ call, only, track }: { call: ActiveCall; only?: r
               {c.label}
             </button>
           );
+        const sw = SWITCH[c.kind];
         return (
-          <button class={`call-btn ${c.kind} ${c.off ? 'off' : ''} ${c.on ? 'on' : ''}`} onClick={() => run(call, c)} aria-label={c.label} title={c.title ?? c.label} disabled={c.disabled} aria-pressed={c.kind === 'hand' ? !!c.on : undefined} data-track={t}>
+          <button
+            class={`call-btn ${c.kind} ${c.off ? 'off' : ''} ${c.on ? 'on' : ''}`}
+            onClick={() => run(call, c)}
+            aria-label={sw?.name ?? c.label}
+            title={c.title ?? c.label}
+            disabled={c.disabled}
+            aria-pressed={sw ? sw.pressed(c) : c.kind === 'hand' ? !!c.on : undefined}
+            data-track={t}
+          >
             {icon ? <Icon name={icon} size={18} /> : <span aria-hidden="true">✋</span>}
           </button>
         );
@@ -81,7 +101,8 @@ function MicButton({ call, c, track }: { call: ActiveCall; c: CallControl; track
       <button
         class={`call-btn mic ${c.off ? 'off' : ''} ${talking ? 'muted-talking' : ''}`}
         onClick={() => run(call, c)}
-        aria-label={c.label}
+        aria-label={SWITCH.mute!.name}
+        aria-pressed={SWITCH.mute!.pressed(c)}
         title={c.title ?? c.label}
         disabled={c.disabled}
         data-track={track}

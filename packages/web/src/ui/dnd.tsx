@@ -166,7 +166,7 @@ export function dragProps(o: DragOpts) {
         stop();
         drag.value = null;
       };
-      const key = (ev: KeyboardEvent) => ev.key === 'Escape' && cancel();
+      const key = (ev: KeyboardEvent) => ev.key === 'Escape' && (ev.preventDefault(), cancel());
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', up);
       window.addEventListener('pointercancel', cancel);

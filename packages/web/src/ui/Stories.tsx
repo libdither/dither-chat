@@ -4,7 +4,7 @@
  * account's rules allow (read receipts on); replying and reacting go to their 1:1, or the group of a group story.
  */
 import { createPortal } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
 import { ago, fullTime } from '../format.ts';
 import { useLayer } from '../phone.ts';
@@ -84,10 +84,10 @@ function StoryViewer({ list, at, setAt, onSeen, onClose }: { list: P.StoryView[]
   const [busy, setBusy] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   useLayer(onClose);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const k = (e: KeyboardEvent) => {
       if (document.activeElement === input.current) return;
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') (e.preventDefault(), onClose());
       else if (e.key === 'ArrowRight' && at < list.length - 1) setAt(at + 1);
       else if (e.key === 'ArrowLeft' && at > 0) setAt(at - 1);
     };

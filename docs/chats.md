@@ -234,7 +234,11 @@ What it adds to a conversation's page:
   more of your accounts sit has the same line for the one choice it has: "To #general · via main" (`SendAsLead`), the
   account a token that switches or opens a menu; until 2026-11-16 that was a chip at the box's start. Until 2026-11-14 it took the placeholder's place, as a dashed link, and jumped to the box's top
   edge once typed in; then, on a computer, it was a row of its own over the box, under the typing line's.
-- **The header's buttons** are a conversation's: profile, call, search, notifications, details. With all chats shown
+- **The header's buttons** are a conversation's, bare icons with their names in their titles: call, search,
+  notifications (a bell; a dot and the rule's own icon where a rule other than Automatic holds), details, and for a
+  group or channel its about page. A DM's profile is its picture and name and the details panel's Profile. A phone
+  keeps call and search and puts the rest under ⋯: profile or about, details, and the notification rules. Until
+  2026-11-20 they were outlined buttons, notifications and call with their names, and a DM had a profile button. With all chats shown
   they act on every route: search is `in:<person id>` (the hub reads a person's id as every direct conversation with
   them), and a notification rule is set on each. With one route picked, search is `in:<conversation>`. A call goes
   through the route in use. The details panel is the person's, also when the address names one of their DMs.
@@ -247,6 +251,12 @@ banners and held requests show as they do on a DM.
 holds the message (up to 10 pages of 60, `jumpInChat` in `state.ts`), then shows it there like any other. The hub has
 no page around a message across conversations, so one further back opens in its route alone, as if picked from the
 list (which then says so; one pick returns to all). A click on a reply's quote does the same for the quoted message.
+
+**A reply's quote** is one line above it (`ReplyQuote` in `ui/MessageExtras.tsx`): who it answers and as much of their
+text as the row has room for, ending in "…", with the whole of it as the line's tooltip. On a phone it takes up to two
+lines. A reply to you that pinged you (`mentionsSelf`) shows your name as a mention, "@You", in the same colours as an
+@mention of you in the text. Whether a reply to someone else pinged them is not known yet: the hub keeps only whether
+a message pinged you.
 
 ## Not yet
 

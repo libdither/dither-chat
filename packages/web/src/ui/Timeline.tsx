@@ -109,7 +109,7 @@ import { ForwardCard, forwarding } from './Forward.tsx';
 import { InviteCards } from './InviteCard.tsx';
 import { PollCardLazy, PollMakerLazy } from './PollLazy.tsx';
 import { pollMaker } from '../polls.ts';
-import { AttachmentNote, ContactCards, MissingFiles, played, QuoteFallback, SendFailures, StoryReplyLine, withoutCardLines } from './MessageExtras.tsx';
+import { AttachmentNote, ContactCards, MissingFiles, played, QuoteFallback, ReplyQuote, SendFailures, StoryReplyLine, withoutCardLines } from './MessageExtras.tsx';
 import { attachmentMenu, conversationMenu, identityMenu, imageMenu, linkMenu, messageMenu, openAttachment, personMenu } from './menus.tsx';
 import { fileFacts, fileIcon, fileKind, openFileViewer, VIEWABLE } from '../files.ts';
 import { desk } from '../desk.ts';
@@ -117,7 +117,7 @@ import { android } from '../android.ts';
 import { counting, markPainted, rendered } from '../perf.ts';
 import { memo } from './memo.ts';
 import { heldRequest } from '../requests.ts';
-import { LinkBanner, RequestBar } from './Requests.tsx';
+import { LinkBanner, RequestBar, RequestSentMark, RequestSentNote } from './Requests.tsx';
 import { countKey } from '../clicklog.ts';
 import { badgeShows, focusedPair, focusPair, headNames, loadChat, PairDropdown, PairLead, RouteTag, SendAsLead, SendLine, setView, viewOf } from './Pairs.tsx';
 import { nicknamable, NicknamedName, ownName } from './Nickname.tsx';
@@ -128,6 +128,8 @@ import { PlanChipLazy } from './calendar/lazy.tsx';
 import { EmbedVideo, RichFoot, RichHead, RichMarks, Veil, veiled, Voice } from './rich/parts.tsx';
 import { VoicePeople } from './Ringing.tsx';
 import { ForumLazy } from './ThreadsLazy.tsx';
+import { CallRoomLazy, roomCall, roomHasChat, roomSide, RoomSwitch } from './CallRoomLazy.tsx';
+import { CallSlot, fillsPage } from './CallSlot.tsx';
 import { ScheduledStrip, useSendExtras } from './SendExtras.tsx';
 import { FeedViewLazy, FollowChatLazy, PostsListLazy, ThreadLazy } from './feed/lazy.tsx';
 import { postMessageKey } from '../feed.ts';
@@ -172,26 +174,35 @@ function Crumbs({ c }: { c: P.ConversationView }) {
  */
 function LevelMenu({ c, also }: { c: P.ConversationView; /** A person's other chats, which take the same rule (all chats together). */ also?: P.ConversationView[] }) {
   const eff = effectiveLevel(c);
-  const own = ruleOn('conversation', c.id);
-  const com = c.spaceIds[0] ?? (c.parentId ? db.conversations.get(c.parentId)?.spaceIds[0] : undefined);
   // The button says the rule that holds; with none, Automatic. A place muted on its network looks kept to the list.
   const held = eff.rule === 'mentions' ? 'Mentions only' : ruleName(eff.rule);
   const look = eff.rule ?? (eff.level === 'digest' ? 'digest' : 'auto');
+  return (
+    <Menu
+      align="right"
+      trigger={(toggle) => (
+        // A bell, with a dot where a rule other than Automatic holds; the rule's own icon says which.
+        <button class={`hdr-btn level ${look} phone-hide`} data-track="notification level" onClick={toggle} title={`Notifications: ${ruleName(eff.rule)} (${eff.source})`} aria-label={`Notifications: ${held}`}>
+          <Icon name={eff.rule ? ruleIcon(eff.rule) : 'bell'} size={16} />
+          {eff.rule && <span class="hdr-dot" aria-hidden="true" />}
+        </button>
+      )}
+    >
+      {(close) => <LevelItems c={c} also={also} close={close} />}
+    </Menu>
+  );
+}
+
+/** The notification rules, as the header's bell lists them and a phone's ⋯ menu does. */
+function LevelItems({ c, also, close }: { c: P.ConversationView; also?: P.ConversationView[]; close: () => void }) {
+  const eff = effectiveLevel(c);
+  const own = ruleOn('conversation', c.id);
+  const com = c.spaceIds[0] ?? (c.parentId ? db.conversations.get(c.parentId)?.spaceIds[0] : undefined);
   const pick = (l: P.RuleLevel | null, close: () => void) => () => {
     for (const x of [c, ...(also ?? [])]) setRule('conversation', x.id, l);
     close();
   };
   return (
-    <Menu
-      align="right"
-      trigger={(toggle) => (
-        <button class={`hdr-btn level ${look}`} data-track="notification level" onClick={toggle} title={`Notifications: ${ruleName(eff.rule)} (${eff.source})`} aria-label={`Notifications: ${held}`}>
-          <Icon name={ruleIcon(eff.rule)} size={16} />
-          <span class="hdr-btn-label">{held}</span>
-        </button>
-      )}
-    >
-      {(close) => (
         <div class="level-menu">
           <div class="menu-title">Notify me about {convLabel(c)}</div>
           {own === 'mentions' && (
@@ -242,6 +253,54 @@ function LevelMenu({ c, also }: { c: P.ConversationView; /** A person's other ch
             </div>
           )}
         </div>
+  );
+}
+
+/**
+ * A phone's header keeps Call and Search; the rest is in this menu: the profile or the place's about page, the
+ * details panel, and the notification rules.
+ */
+function HeadMore({ c, also, profile }: { c: P.ConversationView; also?: P.ConversationView[]; profile?: string }) {
+  return (
+    <Menu
+      align="right"
+      trigger={(toggle) => (
+        <button class="hdr-btn phone-only" data-track="header menu" title="More" aria-label="More" onClick={toggle}>
+          <Icon name="more" size={18} />
+        </button>
+      )}
+    >
+      {(close) => (
+        <>
+          <button
+            class="menu-item"
+            data-track={profile ? 'profile' : 'about'}
+            onClick={() => {
+              close();
+              if (profile) go({ view: 'profile', person: profile });
+              else openAbout('conversation', c.id);
+            }}
+          >
+            <Icon name="info" size={15} />
+            <span>
+              <b>{profile ? 'Profile' : 'About and settings'}</b>
+            </span>
+          </button>
+          <button
+            class="menu-item"
+            data-track="details"
+            onClick={() => {
+              close();
+              showDetails(!detailsShown());
+            }}
+          >
+            <Icon name="panel" size={15} />
+            <span>
+              <b>Details</b>
+            </span>
+          </button>
+          <LevelItems c={c} also={also} close={close} />
+        </>
       )}
     </Menu>
   );
@@ -322,18 +381,15 @@ function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () =>
               )}
             </>
           )}
+          {isDirect && <RequestSentMark convs={chat ? [c, ...chat.directs] : [c]} />}
         </div>
       </div>
       <div class="conv-head-actions">
         <HeadOrb />
-        {person && isDirect && (
-          <button class="hdr-btn phone-hide" data-track="profile" title="Profile" aria-label="Profile" onClick={() => go({ view: 'profile', person: person.id })}>
-            <Icon name="info" size={16} />
-          </button>
-        )}
         <JoinCallButton c={c} />
+        {/* A DM's profile is its picture and name, and the details panel's Profile. */}
         {!isDirect && (
-          <button class="hdr-btn" data-track="about" title="About and settings" aria-label="About and settings" onClick={() => openAbout('conversation', c.id)}>
+          <button class="hdr-btn phone-hide" data-track="about" title="About and settings" aria-label="About and settings" onClick={() => openAbout('conversation', c.id)}>
             <Icon name="info" size={16} />
           </button>
         )}
@@ -341,9 +397,10 @@ function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () =>
           <Icon name="search" size={16} />
         </button>
         <LevelMenu c={c} also={all ? chat!.directs.filter((d) => d.id !== c.id) : undefined} />
-        <button class={`hdr-btn ${detailsShown() ? 'on' : ''}`} data-track="details" onClick={() => showDetails(!detailsShown())} title="Details" aria-label="Details">
+        <button class={`hdr-btn phone-hide ${detailsShown() ? 'on' : ''}`} data-track="details" onClick={() => showDetails(!detailsShown())} title="Details" aria-label="Details">
           <Icon name="panel" size={16} />
         </button>
+        <HeadMore c={c} also={all ? chat!.directs.filter((d) => d.id !== c.id) : undefined} profile={person && isDirect ? person.id : undefined} />
       </div>
     </header>
   );
@@ -687,14 +744,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
       ref={(el) => void (el && swipeReply.set(el, () => onReply(m)))}
       {...menuProps}
     >
-      {/* What it replies to, on a line of its own above the picture and the name: its line bends up from the picture. */}
-      {target && (
-        <button class="reply-quote" onClick={() => onQuote(target.id)}>
-          <Icon name="reply" size={12} />
-          <b>{isSelfIdentity(target.authorId) ? 'You' : authorName(target.authorId)}</b>
-          <span>{target.deleted ? 'Message deleted' : plainBody(target.body, target.network).slice(0, 120) || 'Attachment'}</span>
-        </button>
-      )}
+      {target && <ReplyQuote m={m} target={target} onQuote={onQuote} />}
       {!target && m.quote && <QuoteFallback m={m} />}
       <div class="msg-gutter">
         {grouped ? (
@@ -1482,8 +1532,9 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
           e.preventDefault();
           countKey('composer: send (Enter)');
           submit();
-        } else if (e.key === 'Escape') {
-          if (edit || reply) countKey(`composer: cancel ${edit ? 'edit' : 'reply'} (Esc)`);
+        } else if (e.key === 'Escape' && (edit || reply)) {
+          e.preventDefault();
+          countKey(`composer: cancel ${edit ? 'edit' : 'reply'} (Esc)`);
           if (edit) cancelEdit();
           else clearReply();
         }
@@ -1566,6 +1617,7 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
       }}
     >
       <ScheduledStrip conversationId={targets.convId} />
+      {!edit && <RequestSentNote c={conv} />}
       {edit && (
         <div class="composer-reply">
           <Icon name="pencil" size={13} /> Editing your message
@@ -1830,16 +1882,19 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
   const sendAsValue = prefs.value.sendAs[c.id] ?? accounts.find((a) => a.status === 'online')?.id ?? accounts[0]?.id;
   const voice = c.variant === 'voice' || c.variant === 'stage';
   const held = heldRequest(db.requests, c.id);
-  return (
-    <section class="pane">
-      <ConvHeader c={c} onBack={onBack} />
+  // A stage you are in is a room (docs/calls.md "The room view"): beside the chat on a wide pane, a Room / Chat switch
+  // on a narrow one (a container query on .room-pane), only the room where there is no chat.
+  const room = roomCall(c);
+  const chat = !room || roomHasChat(c);
+  const body = chat && (
+    <>
       {!held && c.pending && <LinkBanner c={c} />}
       {/* A forum's or media channel's messages are its posts (ui/Threads.tsx, docs/threads.md). */}
       {c.variant === 'forum' || c.variant === 'media' ? (
         <ForumLazy c={c} />
       ) : (
         <>
-          {voice && <div class="voice-note"><Icon name="voice" size={14} /> Voice isn't relayed. This shows the channel's text chat.</div>}
+          {voice && !room && <div class="voice-note"><Icon name="voice" size={14} /> Voice isn't relayed. This shows the channel's text chat.</div>}
           {voice && <VoicePeople conversationId={c.id} size={22} names class="voice-here" />}
           <NotStartedNote c={c} />
           <Timeline tkey={timelineKey('c', c.id)} convIds={[c.id]} onReply={setReply} firstUnreadTs={unreadAt} focus={focus} />
@@ -1870,6 +1925,27 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
           disabledReason={composerBlocker(c, sendAsValue)}
         />
       )}
+    </>
+  );
+  if (room)
+    return (
+      <section class="pane room-pane">
+        <ConvHeader c={c} onBack={onBack} />
+        <RoomSwitch c={c} />
+        <div class={`room-split ${chat ? '' : 'alone'}`} data-show={roomSide(c)}>
+          <div class="room-col">
+            <CallRoomLazy c={c} />
+          </div>
+          {chat && <div class="room-chat">{body}</div>}
+        </div>
+      </section>
+    );
+  // The call's own chat: the call window's slot under the header (docked, or the whole page for Fill).
+  return (
+    <section class="pane">
+      <ConvHeader c={c} onBack={onBack} />
+      <CallSlot c={c} />
+      {!fillsPage(c) && body}
     </section>
   );
 }

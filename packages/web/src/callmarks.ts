@@ -5,6 +5,7 @@
  * buttons your role gets, and the call's status line. No app state here, and every clock can be a test's own.
  */
 import type * as P from '@dither-chat/protocol';
+import { stageRights } from '@dither-chat/protocol';
 
 /** Now, later, and calling off later: the browser's own, or a test's hand-moved clock. */
 export interface Clock {
@@ -81,6 +82,8 @@ export function speakingHold(onChange: (on: ReadonlySet<string>) => void, holdMs
 
 /** The least time one person stays featured before another takes their place. */
 export const FEATURE_KEEP_MS = 1500;
+/** How long someone else talks before they take the featured place from whoever has it. */
+export const FEATURE_TAKE_MS = 1000;
 
 interface FeaturedPicker {
   /** Who is speaking now (held), and you, who is never featured. */
@@ -91,32 +94,43 @@ interface FeaturedPicker {
 }
 
 /**
- * Whose face to feature (the call bar's, the video window's Speaker): the latest person to start talking, never you,
- * kept at least `keepMs` before switching to someone else (or to nobody), so a quick "yeah" doesn't snatch it.
- * `onChange` gets each new pick, including a switch that waited out the keep.
+ * Whose face to feature (the call bar's, the call window's Speaker): the latest person to start talking, never you.
+ * While the featured one still talks, someone else takes over only after `takeMs` of talking, and never before the
+ * featured one has had `keepMs`, so a quick "yeah" doesn't snatch it. While nobody is featured, or the featured one has
+ * gone quiet, the latest to start takes it at once (after the keep). `onChange` gets each new pick.
  */
-export function featuredPicker(onChange: (id: string | null) => void, keepMs = FEATURE_KEEP_MS, clock: Clock = realClock): FeaturedPicker {
+export function featuredPicker(onChange: (id: string | null) => void, keepMs = FEATURE_KEEP_MS, clock: Clock = realClock, takeMs = FEATURE_TAKE_MS): FeaturedPicker {
   let shown: string | null = null;
   let since = 0;
   let wait: unknown;
   let seq = 0;
-  /** Who is speaking, with the order they started in. */
-  const started = new Map<string, number>();
+  /** Who is speaking, with the order they started in and when. */
+  const started = new Map<string, { n: number; at: number }>();
   const decide = () => {
     if (wait !== undefined) clock.cancel(wait);
     wait = undefined;
+    const now = clock.now();
+    const holding = shown !== null && started.has(shown);
     let want: string | null = null;
     let latest = -1;
-    for (const [id, n] of started) if (n > latest) (want = id), (latest = n);
-    if (want === shown) return;
-    const left = since + keepMs - clock.now();
-    if (shown !== null && left > 0) {
-      wait = clock.after(decide, left);
-      return;
+    let soonest = Infinity;
+    for (const [id, s] of started) {
+      if (holding && id !== shown && now - s.at < takeMs) {
+        soonest = Math.min(soonest, s.at + takeMs - now);
+        continue;
+      }
+      if (s.n > latest) (want = id), (latest = s.n);
     }
-    shown = want;
-    since = clock.now();
-    onChange(shown);
+    if (want !== shown) {
+      const left = since + keepMs - now;
+      if (shown !== null && left > 0) soonest = Math.min(soonest, left);
+      else {
+        shown = want;
+        since = now;
+        onChange(shown);
+      }
+    }
+    if (soonest < Infinity) wait = clock.after(decide, soonest);
   };
   return {
     get shown() {
@@ -126,7 +140,7 @@ export function featuredPicker(onChange: (id: string | null) => void, keepMs = F
       const now = new Set(speaking);
       if (self) now.delete(self);
       for (const id of [...started.keys()]) if (!now.has(id)) started.delete(id);
-      for (const id of now) if (!started.has(id)) started.set(id, seq++);
+      for (const id of now) if (!started.has(id)) started.set(id, { n: seq++, at: clock.now() });
       decide();
     },
     clear() {
@@ -260,7 +274,7 @@ interface CallLike {
   since: number;
   note?: string;
   self?: Pick<P.CallSelf, 'connected' | 'muted'>;
-  stage?: Pick<P.CallStage, 'moderator'>;
+  stage?: Pick<P.CallStage, 'can' | 'canOn'>;
   camera: boolean;
   screen: boolean;
   listenOnly?: boolean;
@@ -303,6 +317,8 @@ export interface CallControl {
 interface CallAbilities {
   /** Your role on a stage, or null in a call without an audience. */
   role: P.StageRole | null;
+  /** Your rank on a stage (host, co-host, moderator), when it has one for you. */
+  rank?: P.StageRank;
   /** Video goes through this call (bridge mode, an account that sends it). */
   video: boolean;
   /** This browser can share a screen. */
@@ -312,13 +328,24 @@ interface CallAbilities {
 }
 
 /**
+ * What you may do on this stage now (protocol stageRights): what the room says, else what your role and rank give.
+ * Nothing without the capability 'stage' or outside a stage. The one rule every surface's buttons and menus read.
+ */
+export function stageCan(call: Pick<CallLike, 'stage'>, can: Pick<CallAbilities, 'role' | 'rank' | 'stage'>): { can: P.StageSelfAction[]; canOn: P.StageMove[] } {
+  if (!can.stage || !can.role || !call.stage) return { can: [], canOn: [] };
+  return stageRights(call.stage, can.role, can.rank);
+}
+
+/**
  * The buttons your role and the call's state give you, in order. A speaker (or anyone in a call without an audience)
- * gets mute, deafen, camera and share where video goes, and leave; on a stage also Move to the audience. The audience
- * gets deafen, a hand, Speak when invited (or as a moderator), and Leave quietly.
+ * gets mute, deafen, camera and share where video goes, and leave. On a stage the rest are what you may do there
+ * (stageCan): a hand to raise or lower, Speak, Move to the audience (Stay in the audience, when invited). The audience
+ * never gets the microphone, a camera or a screen, and leaves quietly.
  */
 export function controlsFor(call: CallLike, can: CallAbilities): CallControl[] {
   const ended = call.phase === 'ended';
   const role = can.role;
+  const may = new Set(stageCan(call, can).can);
   const speaking = role === null || role === 'speaker';
   const out: CallControl[] = [];
   if (speaking)
@@ -332,9 +359,10 @@ export function controlsFor(call: CallLike, can: CallAbilities): CallControl[] {
   out.push({ kind: 'deafen', label: call.deafened ? 'Undeafen' : 'Deafen', off: call.deafened, disabled: ended });
   if (speaking && can.video) out.push({ kind: 'camera', label: call.camera ? 'Turn camera off' : 'Turn camera on', on: call.camera, disabled: ended });
   if (speaking && can.video && can.share) out.push({ kind: 'share', label: call.screen ? 'Stop sharing' : 'Share your screen or a window', on: call.screen, disabled: ended });
-  if (can.stage && (role === 'audience' || role === 'hand')) out.push({ kind: 'hand', label: role === 'hand' ? 'Lower hand' : 'Ask to speak', on: role === 'hand', disabled: ended });
-  if (can.stage && (role === 'invited' || (!!call.stage?.moderator && (role === 'audience' || role === 'hand')))) out.push({ kind: 'speak', label: 'Speak', disabled: ended });
-  if (can.stage && (role === 'speaker' || role === 'invited')) out.push({ kind: 'listen', label: role === 'invited' ? 'Stay in the audience' : 'Move to the audience', disabled: ended });
+  if (may.has('lowerHand')) out.push({ kind: 'hand', label: 'Lower hand', on: true, disabled: ended });
+  else if (may.has('raiseHand')) out.push({ kind: 'hand', label: 'Ask to speak', on: false, disabled: ended });
+  if (may.has('speak')) out.push({ kind: 'speak', label: 'Speak', disabled: ended });
+  if (may.has('listen')) out.push({ kind: 'listen', label: role === 'invited' ? 'Stay in the audience' : 'Move to the audience', disabled: ended });
   out.push({ kind: 'leave', label: speaking ? 'Leave' : 'Leave quietly', title: 'Leave the call', disabled: ended });
   return out;
 }

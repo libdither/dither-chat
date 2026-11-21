@@ -1,0 +1,375 @@
+/* The call's window (ui/CallWindow.tsx, docs/calls.md "The video window"): one window, floating over the app or in
+   the slot of the call's chat or room (docked, Fill), whose tiles move to their new places with a transition when the
+   layout changes. */
+
+/* What the window is drawn in: out of the app's grid while it floats, the whole slot while it is in one. */
+.call-win-host {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  z-index: 41;
+}
+.call-slot > .call-win-host,
+.croom-slot > .call-win-host {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  z-index: 2;
+}
+
+.call-videos {
+  --call-ease: cubic-bezier(0.3, 0.7, 0.3, 1);
+  position: fixed;
+  background: var(--bg-raised);
+  border: 1px solid var(--bg-active);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.4);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  transition:
+    left 0.28s var(--call-ease),
+    top 0.28s var(--call-ease),
+    width 0.28s var(--call-ease),
+    height 0.28s var(--call-ease),
+    border-radius 0.28s;
+}
+.call-videos.dock,
+.call-videos.fill {
+  position: absolute;
+  inset: 0;
+  border-radius: 0;
+  border-width: 0 0 1px;
+  box-shadow: none;
+  cursor: default;
+}
+.croom-slot .call-videos {
+  background: transparent;
+  border: 0;
+}
+.call-videos.full {
+  background: #000;
+  border: 0;
+  border-radius: 0;
+  cursor: default;
+}
+.call-videos.live,
+.call-videos.live .call-video.dragging,
+.call-videos.resizing .call-video,
+.call-videos:not(.ready) .call-video {
+  transition: none;
+}
+.call-videos.live {
+  cursor: grabbing;
+}
+.call-win-area {
+  position: absolute;
+}
+
+.call-video {
+  position: absolute;
+  margin: 0;
+  background: #000;
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: zoom-in;
+  transition:
+    left 0.28s var(--call-ease),
+    top 0.28s var(--call-ease),
+    width 0.28s var(--call-ease),
+    height 0.28s var(--call-ease),
+    opacity 0.2s;
+}
+.call-video.pinned {
+  cursor: zoom-out;
+}
+.call-video:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.call-video video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+/* Filling a page or the screen: cameras fill their tile; a shared screen is never cropped. */
+.call-video.fill:not(.share) video {
+  object-fit: cover;
+}
+.call-video.mirror video {
+  transform: scaleX(-1);
+}
+/* A person without their camera on: their picture, with its own ring and badge (CallAvatar). */
+.call-video.face {
+  background: var(--bg-active);
+  overflow: visible;
+}
+.croom-slot .call-video.face {
+  background: var(--bg-hover, var(--bg-active));
+}
+.call-tile-face {
+  position: absolute;
+  inset: 0 0 30px;
+  display: grid;
+  place-items: center;
+}
+.call-video.inset {
+  z-index: 3;
+  cursor: grab;
+  box-shadow:
+    0 0 0 2px var(--bg-raised),
+    0 4px 14px rgb(0 0 0 / 0.55);
+}
+.call-video.inset.dragging {
+  z-index: 4;
+  cursor: grabbing;
+}
+.call-video.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+.call-video figcaption {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #fff;
+  background: rgb(0 0 0 / 0.55);
+  max-width: calc(100% - 16px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.call-video figcaption small {
+  opacity: 0.8;
+}
+.call-video figcaption .call-av-badge {
+  position: static;
+  box-shadow: none;
+}
+.call-video.inset figcaption {
+  left: 6px;
+  bottom: 6px;
+  padding: 1px 6px;
+  font-size: 11px;
+}
+.call-video-pin {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: #fff;
+  background: rgb(0 0 0 / 0.55);
+  pointer-events: none;
+}
+/* A moderator's moves on a speaker in a room: a button on the tile's corner. */
+.call-tile-menu {
+  all: unset;
+  box-sizing: border-box;
+  position: absolute;
+  z-index: 5;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  color: #fff;
+  background: rgb(20 20 24 / 0.6);
+}
+.call-tile-menu:hover {
+  background: rgb(20 20 24 / 0.85);
+}
+
+/* Its buttons, on hover at the top right, and the layout menu. */
+.call-win-ctl {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  z-index: 8;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  cursor: default;
+}
+.call-videos:hover .call-win-ctl,
+.call-win-ctl:focus-within,
+.call-win-ctl.open {
+  opacity: 1;
+}
+@media (hover: none) {
+  .call-win-ctl,
+  .call-tile-menu {
+    opacity: 0.85;
+  }
+}
+.call-win-btn {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: rgb(20 20 24 / 0.6);
+  backdrop-filter: blur(6px);
+}
+.call-win-btn:hover,
+.call-win-ctl.open .call-win-layout {
+  background: rgb(20 20 24 / 0.85);
+}
+.call-win-grip {
+  cursor: grab;
+}
+.call-win-btn:focus-visible,
+.call-win-row button:focus-visible,
+.call-tile-menu:focus-visible,
+.call-win-resize:focus-visible,
+.call-win-split:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.call-win-menu {
+  position: absolute;
+  right: 0;
+  top: 36px;
+  width: 236px;
+  padding: 6px;
+  border-radius: 10px;
+  background: var(--bg-raised);
+  border: 1px solid var(--bg-active);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
+  color: var(--text);
+}
+/* No room below: it opens upward. */
+.call-win-menu.up {
+  top: auto;
+  bottom: 36px;
+}
+.call-win-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 6px 6px 4px;
+}
+.call-win-row {
+  display: flex;
+  gap: 4px;
+  padding: 0 2px 4px;
+}
+.call-win-row button {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 7px 4px 5px;
+  border-radius: 7px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.call-win-row button:hover {
+  background: var(--bg-hover, var(--bg-active));
+  color: var(--text);
+}
+.call-win-row button.on {
+  background: var(--bg-active);
+  color: var(--text);
+}
+.call-win-row svg {
+  width: 22px;
+  height: 16px;
+}
+.call-win-tip {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 6px 6px 2px;
+  margin-top: 2px;
+  border-top: 1px solid var(--bg-active);
+}
+
+/* The call's buttons on the window (a phone, full screen). */
+.call-win-controls {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 8px;
+  z-index: 7;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  cursor: default;
+}
+
+.call-win-resize {
+  all: unset;
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  width: 16px;
+  height: 16px;
+  z-index: 6;
+  cursor: nwse-resize;
+  opacity: 0.6;
+  background: linear-gradient(135deg, transparent 50%, var(--text-dim) 50% 58%, transparent 58% 70%, var(--text-dim) 70% 78%, transparent 78%);
+}
+.call-win-split {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -5px;
+  height: 10px;
+  z-index: 6;
+  cursor: ns-resize;
+  display: grid;
+  place-items: center;
+}
+.call-win-split::before {
+  content: '';
+  width: 36px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--text-dim);
+  opacity: 0.7;
+}
+.call-win-hint {
+  position: fixed;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  z-index: 42;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--accent);
+  color: #fff;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .call-videos,
+  .call-video {
+    transition: none;
+  }
+}

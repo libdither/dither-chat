@@ -191,7 +191,7 @@ export function EditableText({
       'aria-label': label,
       onInput: (e: Event) => setDraft((e.target as HTMLInputElement).value),
       onKeyDown: (e: KeyboardEvent) => {
-        if (e.key === 'Escape') (e.stopPropagation(), setDraft(null));
+        if (e.key === 'Escape') (e.preventDefault(), e.stopPropagation(), setDraft(null));
         if (e.key === 'Enter' && (!multiline || e.ctrlKey || e.metaKey) && !e.isComposing) (e.preventDefault(), void save());
       },
       ref: (el: HTMLInputElement | HTMLTextAreaElement | null) => el && document.activeElement !== el && el.focus(),

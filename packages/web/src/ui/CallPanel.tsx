@@ -6,9 +6,9 @@
  * topic and your own hand, and the soundboard where the account may play sounds.
  */
 import type * as P from '@dither-chat/protocol';
-import { modVerb, NETWORK_META, VOLUME_MAX } from '@dither-chat/protocol';
+import { modVerb, NETWORK_META, stageMoveFits, VOLUME_MAX } from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
-import { type ActiveCall, askSounds, callCan, callName as name, callNetwork, callRole, isCallSelf, playSound, setPersonVolume, stageAction, watchStream } from '../call.ts';
+import { type ActiveCall, askSounds, callCan, callName as name, callNetwork, callRole, callStageCan, isCallSelf, playSound, roomOnPage, setPersonVolume, stageAction, watchStream } from '../call.ts';
 import { convTitle } from '../model.ts';
 import { api, db, go, toast } from '../state.ts';
 import { CallAvatar, callMarks } from './CallAvatar.tsx';
@@ -64,7 +64,8 @@ function personMenu(call: ActiveCall, p: P.CallParticipant, about: P.AboutView |
   const who = name(p.id);
   const volume = p.volume ?? 100;
   const mod = about?.moderation;
-  const stageMod = !!call.stage?.moderator && callCan('stage');
+  const canOn = callStageCan(call).canOn;
+  const role = p.stage ?? 'audience';
   const moves = mod?.voiceMove?.can ? moveTargets(call.conversationId) : [];
   return groups(
     callCan('callVolume')
@@ -88,8 +89,8 @@ function personMenu(call: ActiveCall, p: P.CallParticipant, about: P.AboutView |
           { label: p.localMute ? 'Unmute for you' : 'Mute for you', icon: p.localMute ? 'mic' : 'micOff', checked: !!p.localMute, track: 'call local mute', run: () => setPersonVolume(p.id, { muted: !p.localMute }) },
         ]
       : [],
-    stageMod && p.stage && p.stage !== 'speaker' && p.stage !== 'invited' ? [{ label: 'Invite to speak', icon: 'stage', track: 'stage invite', run: () => stageAction('invite', p.id) }] : [],
-    stageMod && (p.stage === 'speaker' || p.stage === 'invited') ? [{ label: 'Move to the audience', icon: 'users', track: 'stage audience', run: () => stageAction('audience', p.id) }] : [],
+    p.stage && canOn.includes('invite') && stageMoveFits('invite', role) ? [{ label: 'Invite to speak', icon: 'stage', track: 'stage invite', run: () => void stageAction('invite', p.id) }] : [],
+    p.stage && canOn.includes('audience') && stageMoveFits('audience', role) ? [{ label: 'Move to the audience', icon: 'users', track: 'stage audience', run: () => void stageAction('audience', p.id) }] : [],
     [
       mod?.voiceMute?.can && {
         label: p.serverMuted ? 'Server unmute' : 'Server mute',
@@ -168,7 +169,7 @@ function StageBar({ call }: { call: ActiveCall }) {
       </div>
       <div class="call-stage-you">
         <span>{STAGE_WORDS[role]}</span>
-        <CallControls call={call} only={['speak', 'listen']} />
+        {roomOnPage.value !== call.conversationId && <CallControls call={call} only={['speak', 'listen']} />}
       </div>
     </div>
   );

@@ -272,7 +272,7 @@ try {
   // popover listens from when it is drawn.
   layerBefore = await p.eval<number | null>('history.state?.layer ?? null');
   const quickEsc = await p.eval<boolean>(
-    `new Promise((done) => { const mo = new MutationObserver(() => { if (!document.querySelector('.offline-pop')) return; mo.disconnect(); window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); requestAnimationFrame(() => requestAnimationFrame(() => done(!document.querySelector('.offline-pop')))); }); mo.observe(document.body, { childList: true }); document.querySelector('.rail .rail-btn:has(.offline-orb)').click(); })`,
+    `new Promise((done) => { const mo = new MutationObserver(() => { if (!document.querySelector('.offline-pop')) return; mo.disconnect(); window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); requestAnimationFrame(() => requestAnimationFrame(() => done(!document.querySelector('.offline-pop')))); }); mo.observe(document.body, { childList: true }); document.querySelector('.rail .rail-btn:has(.offline-orb)').click(); })`,
   );
   check(quickEsc, '…even an Esc pressed the moment it is drawn');
   if (!quickEsc) await escape();

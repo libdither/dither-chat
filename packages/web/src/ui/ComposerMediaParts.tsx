@@ -331,8 +331,8 @@ export function GifPicker({ conversationId, anchor, onPick, onClose, inline }: {
 
 function Layer({ box, onClose, label, children, kind = 'sticker-picker' }: { box: { current: HTMLDivElement | null }; onClose: () => void; label: string; children: any; kind?: string }) {
   useLayer(onClose);
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+  useLayoutEffect(() => {
+    const h = (e: KeyboardEvent) => e.key === 'Escape' && (e.preventDefault(), onClose());
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
   }, []);

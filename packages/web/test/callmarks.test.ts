@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { badgeSize, callBadge, callTime, type Clock, controlsFor, FEATURE_KEEP_MS, featuredPicker, MUTED_TALK, SPEAKING_HOLD_MS, speakingHold, statusFor, talkGate } from '../src/callmarks.ts';
+import { badgeSize, callBadge, callTime, type Clock, controlsFor, FEATURE_KEEP_MS, FEATURE_TAKE_MS, featuredPicker, MUTED_TALK, SPEAKING_HOLD_MS, speakingHold, stageCan, statusFor, talkGate } from '../src/callmarks.ts';
 
 /** A clock the test moves by hand: timers fire only when it is advanced past them. */
 function fakeClock() {
@@ -132,11 +132,34 @@ describe('featuredPicker', () => {
     expect(picks).toEqual(['a', 'b']);
   });
 
-  test('a talker who started long after the keep takes it at once', () => {
+  test('after the keep, someone else takes it once they have talked a second, while the featured one still talks', () => {
     const { picker, advance } = pickerSetup();
     picker.update(['a']);
     advance(FEATURE_KEEP_MS + 1000);
     picker.update(['a', 'b']);
+    expect(picker.shown).toBe('a');
+    advance(FEATURE_TAKE_MS - 1);
+    expect(picker.shown).toBe('a');
+    advance(1);
+    expect(picker.shown).toBe('b');
+  });
+
+  test('a quick word after the keep does not take it from someone still talking', () => {
+    const { picker, picks, advance } = pickerSetup();
+    picker.update(['a']);
+    advance(FEATURE_KEEP_MS + 1000);
+    picker.update(['a', 'b']);
+    advance(400);
+    picker.update(['a']);
+    advance(FEATURE_TAKE_MS * 3);
+    expect(picks).toEqual(['a']);
+  });
+
+  test('the featured one gone quiet: whoever talks takes it at once', () => {
+    const { picker, advance } = pickerSetup();
+    picker.update(['a']);
+    advance(FEATURE_KEEP_MS + 1000);
+    picker.update(['b']);
     expect(picker.shown).toBe('b');
   });
 
@@ -275,18 +298,35 @@ describe('controlsFor', () => {
   });
 
   test('a stage: speaker, audience, hand up, invited, moderator', () => {
-    const stage = { ...call, stage: { moderator: false } };
+    const stage = { ...call, stage: {} };
     expect(kinds(stage, { ...can, role: 'speaker' })).toEqual(['mute', 'deafen', 'camera', 'share', 'listen', 'leave']);
     expect(kinds(stage, { ...can, role: 'audience' })).toEqual(['deafen', 'hand', 'leave']);
     expect(controlsFor(stage, { ...can, role: 'hand' }).find((c) => c.kind === 'hand')).toMatchObject({ label: 'Lower hand', on: true });
     expect(kinds(stage, { ...can, role: 'invited' })).toEqual(['deafen', 'speak', 'listen', 'leave']);
     expect(controlsFor(stage, { ...can, role: 'invited' }).find((c) => c.kind === 'listen')?.label).toBe('Stay in the audience');
-    expect(kinds({ ...stage, stage: { moderator: true } }, { ...can, role: 'audience' })).toEqual(['deafen', 'hand', 'speak', 'leave']);
+    // A moderator listening speaks without asking first: Speak, and no Ask to speak beside it.
+    expect(kinds(stage, { ...can, role: 'audience', rank: 'moderator' })).toEqual(['deafen', 'speak', 'leave']);
+    expect(kinds({ ...stage, stage: { canOn: ['invite'] } }, { ...can, role: 'audience' })).toEqual(['deafen', 'speak', 'leave']);
+    expect(kinds(stage, { ...can, role: 'hand', rank: 'host' })).toEqual(['deafen', 'hand', 'speak', 'leave']);
     expect(controlsFor(stage, { ...can, role: 'audience' }).at(-1)?.label).toBe('Leave quietly');
   });
 
+  test("what the stage says you may do wins over your role's defaults", () => {
+    // A Space that lets nobody ask: no hand. A speaker the room won't let step down: no Move to the audience.
+    expect(kinds({ ...call, stage: { can: [] } }, { ...can, role: 'audience' })).toEqual(['deafen', 'leave']);
+    expect(kinds({ ...call, stage: { can: [] } }, { ...can, role: 'speaker' })).toEqual(['mute', 'deafen', 'camera', 'share', 'leave']);
+    expect(stageCan({ stage: {} }, { role: 'speaker', rank: 'cohost', stage: true })).toEqual({ can: ['listen'], canOn: ['invite', 'audience'] });
+    expect(stageCan({ stage: {} }, { role: 'audience', stage: true })).toEqual({ can: ['raiseHand'], canOn: [] });
+  });
+
   test('without the stage capability: no hand, Speak or Move', () => {
-    expect(kinds({ ...call, stage: { moderator: true } }, { ...can, role: 'audience', stage: false })).toEqual(['deafen', 'leave']);
+    expect(kinds({ ...call, stage: { canOn: ['invite', 'audience'] } }, { ...can, role: 'audience', stage: false })).toEqual(['deafen', 'leave']);
+    expect(stageCan({ stage: {} }, { role: 'audience', rank: 'host', stage: false })).toEqual({ can: [], canOn: [] });
+  });
+
+  test('the audience never gets a camera or a screen', () => {
+    expect(kinds({ ...call, stage: {} }, { ...can, role: 'audience' })).not.toContain('camera');
+    expect(kinds({ ...call, stage: {} }, { ...can, role: 'invited' })).not.toContain('share');
   });
 
   test("the microphone's state", () => {

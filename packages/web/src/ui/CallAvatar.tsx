@@ -65,11 +65,16 @@ export function CallAvatar({ id, name, picture, size = 40, square, speaking, lev
       data-badge={badge ?? undefined}
     >
       <Avatar id={id} name={name} url={picture} size={size} square={square} />
-      {badge && (
-        <b class={`call-av-badge ${badge}`} title={BADGE_WORDS[badge]}>
-          {badge === 'hand' ? '✋' : <Icon name={badge === 'invited' ? 'stage' : badge === 'deafened' || badge === 'serverDeafened' ? 'headphonesOff' : 'micOff'} size={Math.round(corner * 0.66)} />}
-        </b>
-      )}
+      {badge && <CallBadgeMark badge={badge} size={corner} />}
     </span>
+  );
+}
+
+/** A badge's mark: the face's corner here, a video tile's caption in the call window. */
+export function CallBadgeMark({ badge, size }: { badge: CallBadge; size: number }) {
+  return (
+    <b class={`call-av-badge ${badge}`} title={BADGE_WORDS[badge]}>
+      {badge === 'hand' ? '✋' : <Icon name={badge === 'invited' ? 'stage' : badge === 'deafened' || badge === 'serverDeafened' ? 'headphonesOff' : 'micOff'} size={Math.round(size * 0.66)} />}
+    </b>
   );
 }

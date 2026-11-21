@@ -13,7 +13,7 @@
 import type * as P from '@dither-chat/protocol';
 import { effect, signal } from '@preact/signals';
 import type { ComponentChildren } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { badgeDiffers, cameFromThem, headIdents, lastRouteTells, leadTells, pickHolds, tagTells, tagText, tells, type HeadName, type RouteKey, type Side } from '../chatroutes.ts';
 import { ago, hueOf, initials } from '../format.ts';
 import { convLabel, identityName, netColor, netName, visibleAccount } from '../model.ts';
@@ -472,7 +472,7 @@ export function PairDropdown({ person, directs, focus, view: v, onPick }: { pers
     onPick(id);
     if (inside) btn.current?.focus();
   };
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return;
     if (keyTo.current) {
       const to = keyTo.current;
@@ -482,6 +482,7 @@ export function PairDropdown({ person, directs, focus, view: v, onPick }: { pers
     const away = (e: PointerEvent) => root.current && !root.current.contains(e.target as Node) && setOpen(false);
     const esc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      e.preventDefault();
       const inside = !!root.current?.contains(document.activeElement);
       setOpen(false);
       if (inside) btn.current?.focus();

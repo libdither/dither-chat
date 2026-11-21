@@ -9,7 +9,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { commandProblem, modalProblem, MODAL_TEXT_MAX, MODAL_TTL_MS } from '@dither-chat/protocol';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { appsFor, claimSends, closeForm, commandsOf, forms, interactions, picksOf, run, sendForm, stateWords } from '../../apps.ts';
 import { renderMarkdown } from '../../markdown.ts';
 import { phone } from '../../phone.ts';
@@ -306,7 +306,7 @@ export function SlashCommands({ ta, convId, accountId, text }: { ta: { current: 
   // The list's keys, ahead of the composer's own (as the emoji list takes them).
   const keys = useRef({ listOpen, matches, sel, pick, picked });
   keys.current = { listOpen, matches, sel, pick, picked };
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ta.current;
     const box = el?.parentElement;
     if (!el || !box) return;

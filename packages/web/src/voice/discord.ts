@@ -43,6 +43,8 @@ export function discordTransport(host: TransportHost): Transport {
   let stopped = false;
   let speaking = false;
   let vadStop: (() => void) | null = null;
+  /** What sends the microphone, to swap it when the host's changes (a stage's listener speaking). */
+  let micSender: RTCRtpSender | null = null;
   const remote = new MediaStream();
   /** user id -> audio ssrc */
   const userSsrc = new Map<string, number>();
@@ -243,6 +245,7 @@ export function discordTransport(host: TransportHost): Transport {
     const track = host.mic.getAudioTracks()[0]!;
     const t0 = pc.addTransceiver(track, { direction: 'sendrecv', streams: [host.mic], sendEncodings: [{ maxBitrate: 64_000 }] });
     transforms(t0, true);
+    micSender = t0.sender;
     pc.ontrack = (e) => {
       if (e.track.kind !== 'audio') return;
       const mid = e.transceiver?.mid;
@@ -281,6 +284,12 @@ export function discordTransport(host: TransportHost): Transport {
     await pc.setRemoteDescription({ type: 'answer', sdp: answer(serverSdp, pc.localDescription!.sdp, assigned, opusPt) });
     for (const [id, ssrc] of userSsrc) giveSlot(id, ssrc);
     send(15, { any: 100 });
+    listenVad();
+  }
+
+  /** Speaking, as this device judges it from the host's microphone (again whenever that changes). */
+  function listenVad() {
+    vadStop?.();
     vadStop = startVad(host.mic, () => vadLevel, (on) => {
       speaking = on;
       send(5, { speaking: on ? 1 : 0, delay: 0, ssrc: ownSsrc });
@@ -404,6 +413,10 @@ export function discordTransport(host: TransportHost): Transport {
     setMuted(muted) {
       host.mic.getAudioTracks().forEach((t) => (t.enabled = !muted));
       if (muted && speaking) send(5, { speaking: 0, delay: 0, ssrc: ownSsrc });
+    },
+    async setMic() {
+      await micSender?.replaceTrack(host.mic.getAudioTracks()[0] ?? null);
+      if (vadStop) listenVad();
     },
     setDeafened(deafened) {
       host.speaker.muted = deafened;
