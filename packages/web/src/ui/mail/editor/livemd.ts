@@ -149,6 +149,44 @@ function build(view: EditorView, stands: Stands): DecorationSet {
   );
 }
 
+/** Plain text: nothing drawn but the stand-ins, as chips (a pasted picture as its thumbnail). */
+function buildPlain(view: EditorView, stands: Stands): DecorationSet {
+  const out: Range<Decoration>[] = [];
+  const state = view.state;
+  for (const { from, to } of view.visibleRanges) {
+    const text = state.doc.sliceString(from, to);
+    const pic = /!\[[^\]]*\]\(dc-picture:([\w-]+)\)/g;
+    for (let m; (m = pic.exec(text)); ) {
+      const src = stands.picture(m[1]);
+      if (src) out.push(Decoration.replace({ widget: new Thumb(src) }).range(from + m.index, from + m.index + m[0].length));
+    }
+    const re = /^\[\[island:([\w-]+)\]\]$/gm;
+    for (let m; (m = re.exec(text)); ) {
+      const isl = stands.island(m[1]);
+      const label = isl ? `${isl.kind === 'forward' ? 'Forwarded message, as its text' : isl.kind === 'quote' ? 'Quoted text' : 'HTML, as its text'}${isl.label ? ` · ${isl.label}` : ''}` : 'Missing part';
+      out.push(Decoration.replace({ widget: new Chip(label, isl?.kind ?? 'gone') }).range(from + m.index, from + m.index + m[0].length));
+    }
+  }
+  return Decoration.set(out.sort((a, b) => a.from - b.from), true);
+}
+
+/** The Plain view's drawing: the stand-ins only. */
+export function plainStands(stands: Stands) {
+  const plugin = ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet;
+      constructor(view: EditorView) {
+        this.decorations = buildPlain(view, stands);
+      }
+      update(u: ViewUpdate) {
+        if (u.docChanged || u.viewportChanged) this.decorations = buildPlain(u.view, stands);
+      }
+    },
+    { decorations: (v) => v.decorations },
+  );
+  return [plugin, EditorView.lineWrapping];
+}
+
 /** The live drawing, for this document's stand-ins. */
 export function liveMarkdown(stands: Stands) {
   const plugin = ViewPlugin.fromClass(

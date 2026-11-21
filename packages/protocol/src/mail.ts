@@ -224,7 +224,13 @@ export interface MailPicturesView {
   policy: 'none' | 'shared' | 'all';
   /** What chose the policy: you, for this message; the sender's rule; or the setting. */
   source: 'message' | 'sender' | 'setting';
+  /** Trackers kept (Settings → Mail "Trackers: Keep", or this message's choice) or removed. */
   keepTrackers: boolean;
+  /**
+   * What chose `keepTrackers`: you, for this message (POST /api/mail/images { messageId, trackers: 'keep' | 'remove' },
+   * `trackers: null` goes back to the setting), or the setting.
+   */
+  trackersSource?: 'message' | 'setting';
   loaded: number;
   held: number;
   removed: number;
@@ -338,14 +344,28 @@ export interface MailIsland {
   /** "Sam Lee, Tue, Nov 3 at 10:42 AM". */
   label: string;
   html: string;
+  /**
+   * Bytes the island adds to the mail's text part as made (hub island.ts islandText: a forward's headers and the
+   * original's own text, or the quote), which is not the island's HTML's text. Once the island is edited, the hub
+   * makes its text from the HTML instead.
+   */
+  textBytes?: number;
 }
 
-/** POST /api/mail/pictures/sizes { urls }: what the hub knows of pictures from the web, for the composer's size meter. */
+/**
+ * POST /api/mail/pictures/sizes { urls, accountId }: what the hub knows of pictures from the web, for the composer's size
+ * meter, one answer per address asked (in order). `urls` may hold this hub's picture addresses too (`/api/mail/img/…`).
+ */
 export interface MailPictureSizes {
   /** Bytes each one is, when the hub has fetched it; null when not known (fetching it could tell its sender). */
   sizes: (number | null)[];
   /** Each one's class (pictures.ts): `personal` ones tell their sender when fetched. */
   classes: ('shared' | 'personal' | 'tracker')[];
+  /**
+   * The address each one stands for: itself, or for this hub's address of a picture (`/api/mail/img/<token>`, as a
+   * forward's backgrounds have) the picture's own; null when it stands for nothing (it goes nowhere when sent).
+   */
+  originals?: (string | null)[];
 }
 
 /** GET /api/mail/drafts[/:key]. Keys: `t:<thread>` for a reply or forward, `new:<uuid>` for a new message. */

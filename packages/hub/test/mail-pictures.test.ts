@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { mailId } from '@dither-chat/protocol/ids';
-import { demoPng } from '../src/mail/demo-html.ts';
+import { demoPng, demoStoreNewsletter } from '../src/mail/demo-html.ts';
 import { FakeMailBackend, type FakeInput } from '../src/mail/fake.ts';
 import { MailHub } from '../src/mail/index.ts';
 import { addressForms, classifyPicture, pictureAction } from '../src/mail/pictures.ts';
@@ -23,8 +23,29 @@ describe('classes', () => {
   test('a logo or product picture at a plain address is shared', () => {
     expect(cls('https://cdn.shop.example/img/logo.png')).toBe('shared');
     expect(cls('https://images.example/products/12345/front.jpg?w=600&h=400&q=80')).toBe('shared');
-    // A content-hashed file name is the same for everyone.
-    expect(cls('https://cdn.example/a/9f8e7d6c5b4a39281706f5e4d3c2b1a0.png')).toBe('shared');
+    expect(cls('https://cdn.example/images/logo.png')).toBe('shared');
+    expect(cls('https://blog.example/wp-content/uploads/2024/05/photo-1200x800.jpg')).toBe('shared');
+    expect(cls('https://cdn.example/banners/summer-sale-2024-hero.png?v=3')).toBe('shared');
+    expect(cls('https://cdn.example/email/WinterBanner2.png?width=600&utm_campaign=winter')).toBe('shared');
+  });
+
+  test('when in doubt, personal: a long hex name or a UUID, though it may be a content hash', () => {
+    expect(cls('https://cdn.example/a/9f8e7d6c5b4a39281706f5e4d3c2b1a0.png')).toBe('personal');
+    expect(cls('https://t.example/open/3f2b8c1e-9a4d-4e7b-b6c2-0d5e8f1a2b3c.gif')).toBe('personal');
+    expect(cls('https://img.example/u/0a1b2c3d4e5f6a7b8c9d/logo.png')).toBe('personal');
+  });
+
+  test('the shapes the reviewer found: a token folder, ids in the query', () => {
+    // The demo newsletter's personal header (demo-html.ts demoStoreNewsletter).
+    expect(cls('https://img.store.example/hi/Zq81mXc2LpR7vN0kTb4W/welcome.png?w=640&h=60')).toBe('personal');
+    expect(cls('https://img.example/banner.png?uid=8812344')).toBe('personal');
+    expect(cls('https://img.example/banner.png?e=Zq81mXc2LpR7')).toBe('personal');
+    expect(cls('https://img.example/hero.jpg?mc_eid=4b7d10aa2c')).toBe('personal');
+    expect(cls('https://img.example/hero.jpg?subscriber_id=77120')).toBe('personal');
+    expect(cls('https://img.example/hero.jpg?r=a1')).toBe('shared');
+    expect(cls('https://img.example/hero.jpg?ref=20240512093011')).toBe('personal');
+    expect(cls('https://img.example/p/Qm9vSzEyMzQ1Njc4OTA/hero.jpg')).toBe('personal');
+    expect(cls('https://img.example/p/zq81mxc2lpr7vn0ktb4w/hero.jpg')).toBe('personal');
   });
 
   test('your address in any form makes it personal', () => {
@@ -152,6 +173,53 @@ describe('through the hub', () => {
     expect((await w.body('<n1@x>')).html!.pictures).toMatchObject({ keepTrackers: true, loaded: 1, held: 2, removed: 0 });
     await w.send('/api/mail/images', { messageId: mailId('mml', ACC, 'm:<n1@x>') });
     expect((await w.body('<n1@x>')).html!.pictures).toMatchObject({ source: 'message', loaded: 3, held: 0 });
+  });
+
+  test('the demo newsletter’s personal header is held by default, its product pictures load', async () => {
+    const w = await world([{ messageId: '<w1@x>', from: [{ name: 'Store', email: 'deals@store.example' }], subject: 'Sale', html: demoStoreNewsletter(), text: 'Sale' }]);
+    const items = (await w.body('<w1@x>')).html!.pictures!.items;
+    const header = items.filter((i) => i.host === 'img.store.example');
+    expect(header).toEqual([expect.objectContaining({ class: 'personal', action: 'hold' })]);
+    expect(items.filter((i) => i.host === 'cdn.store.example').every((i) => i.class === 'shared' && i.action === 'load')).toBe(true);
+  });
+
+  test('your own mail carrying a picture (your Sent copy of a forward) does not make it shared', async () => {
+    const url = 'https://img.shop.example/hero.png?r=a8Xk29fQp3LmZ7w1';
+    const mine: FakeInput = { messageId: '<f1@x>', from: [{ name: 'Me', email: ME }], subject: 'Fwd: Sale', html: `<p>Look</p><img src="${url}">`, text: 'Look' };
+    const w = await world([mine, NEWS]);
+    // Your copy is read first: it is remembered by no one.
+    await w.body('<f1@x>');
+    expect((await w.body('<n1@x>')).html!.pictures!.items.find((i) => i.host === 'img.shop.example')).toMatchObject({ class: 'personal', action: 'hold' });
+  });
+
+  test('a mail’s own tracker choice outranks the setting, and null goes back to it', async () => {
+    const w = await world([NEWS]);
+    const id = mailId('mml', ACC, 'm:<n1@x>');
+    expect((await w.body('<n1@x>')).html!.pictures).toMatchObject({ keepTrackers: false, trackersSource: 'setting', removed: 1 });
+    // Only trackers: the pictures stay as the setting has them.
+    await w.send('/api/mail/images', { messageId: id, trackers: 'keep' });
+    expect((await w.body('<n1@x>')).html!.pictures).toMatchObject({ policy: 'shared', source: 'setting', keepTrackers: true, trackersSource: 'message', removed: 0, held: 2 });
+    // Pictures for this mail too: the tracker choice stays.
+    await w.send('/api/mail/images', { messageId: id, pictures: 'all' });
+    expect((await w.body('<n1@x>')).html!.pictures).toMatchObject({ policy: 'all', source: 'message', keepTrackers: true, trackersSource: 'message', loaded: 3 });
+    // The setting says keep; this mail says remove.
+    await w.send('/api/mail/settings', { trackers: 'keep' }, 'PUT');
+    await w.send('/api/mail/images', { messageId: id, trackers: 'remove' });
+    expect((await w.body('<n1@x>')).html!.pictures).toMatchObject({ policy: 'all', keepTrackers: false, trackersSource: 'message', removed: 1 });
+    await w.send('/api/mail/images', { messageId: id, trackers: null, pictures: null });
+    expect((await w.body('<n1@x>')).html!.pictures).toMatchObject({ policy: 'shared', source: 'setting', keepTrackers: true, trackersSource: 'setting' });
+    expect((await w.send('/api/mail/images', { messageId: id, trackers: 'maybe' })).status).toBe(400);
+  });
+
+  test('sizes for the composer: one answer per address, this hub’s picture addresses as what they stand for', async () => {
+    const w = await world([NEWS]);
+    const html = await w.doc('<n1@x>');
+    const src = html.match(/src="(\/api\/mail\/img\/[^"]+)"/)![1];
+    await w.req(src);
+    const r = (await (await w.send('/api/mail/pictures/sizes', { urls: ['nope', src, 'https://img.shop.example/hero.png?r=a8Xk29fQp3LmZ7w1', '/api/mail/img/bogus'], accountId: ACC })).json()) as P.MailPictureSizes;
+    expect(r.sizes).toEqual([null, PNG.length, null, null]);
+    expect(r.classes.slice(1, 3)).toEqual(['shared', 'personal']);
+    expect(r.originals).toEqual([null, 'https://cdn.shop.example/logo.png', 'https://img.shop.example/hero.png?r=a8Xk29fQp3LmZ7w1', null]);
   });
 
   test('an address another sender’s mail carried too is shared', async () => {

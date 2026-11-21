@@ -1,12 +1,12 @@
 /**
  * The picture bar over a mail (docs/mail.md "Pictures and trackers"): what loaded, what is held back because loading it
  * would tell the sender you opened the mail, and the trackers that went: "3 loaded · 1 held back · 1 tracker removed ·
- * Load all · ⋯". The ⋯ menu sets the sender's own rule (Always or Never from them, or back to the setting), this mail's
- * (only the ones that can't tell, or back), and opens Details: every picture's host, why it counts as what it is, what
+ * Load all · ⋯". The ⋯ menu sets this mail's own choice (none, only the ones that can't tell, or all; or back to the
+ * usual), the sender's rule (Always or Never from them, or back to the setting), and opens Details: every picture's host, why it counts as what it is, what
  * happened to it and, once the hub has it, its size.
  *
  * Pictures come through the hub's proxy whatever happens, so a sender never sees your address. The bar is quiet when
- * there is nothing to say: everything loaded and nothing removed.
+ * there is nothing to say: everything loaded, none of it could tell, and nothing removed.
  */
 import type * as P from '@dither-chat/protocol';
 import { useState } from 'preact/hooks';
@@ -14,7 +14,7 @@ import { bytes as bytesText } from '../../format.ts';
 import { bodies, details } from '../../mail/api.ts';
 import { api, go, toast } from '../../state.ts';
 import { mailChanged } from '../../versions.ts';
-import { openMenu } from '../ContextMenu.tsx';
+import { groups, openMenu } from '../ContextMenu.tsx';
 import { Icon } from '../icons.tsx';
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -81,6 +81,13 @@ function PictureDetails({ p }: { p: P.MailPicturesView }) {
   );
 }
 
+/** This mail's choice, from the ⋯ menu. */
+const THIS_MAIL: { v: P.MailSettings['pictures']; label: string }[] = [
+  { v: 'none', label: 'No pictures' },
+  { v: 'shared', label: 'Only the ones that can’t tell' },
+  { v: 'all', label: 'All pictures' },
+];
+
 /** Settings, at Mail. */
 function openPictureSettings() {
   go({ view: 'settings' });
@@ -94,7 +101,9 @@ export function ImageBanner({ message, body }: { message: P.MailMessageView; bod
   const h = body.html;
   const p = h?.pictures;
   if (!h || !p) return null;
-  const quiet = !p.held && !p.removed && p.source === 'setting';
+  // Pictures that could tell the sender keep the bar up even once loaded: you should know, and can take it back.
+  const canTellLoaded = p.items.filter((x) => x.action === 'load' && x.class !== 'shared').length;
+  const quiet = !p.held && !p.removed && !canTellLoaded && p.source === 'setting' && p.trackersSource !== 'message';
   if (quiet) return null;
   const who = message.from.name || message.from.email;
   const run = (fn: () => Promise<unknown>) => async () => {
@@ -113,6 +122,12 @@ export function ImageBanner({ message, body }: { message: P.MailMessageView; bod
       if (r.body) bodies.set(message.id, r.body);
       mailChanged();
     });
+  const trackersFor = (trackers: 'keep' | 'remove' | null) =>
+    run(async () => {
+      const r = await api<{ body: P.MailBodyView | null }>('/api/mail/images', { body: { messageId: message.id, trackers } });
+      if (r.body) bodies.set(message.id, r.body);
+      mailChanged();
+    });
   const forSender = (rule: { allow: boolean } | { forget: true }) =>
     run(async () => {
       await api('/api/mail/images', { body: { sender: message.from.email, ...rule } });
@@ -122,11 +137,11 @@ export function ImageBanner({ message, body }: { message: P.MailMessageView; bod
       await refresh([...new Set([message.id, ...ids])]);
     });
   const canTellHeld = p.items.some((x) => x.action === 'hold' && x.class !== 'shared');
-  const safeHeld = p.items.some((x) => x.action === 'hold' && x.class === 'shared');
   const parts: string[] = [];
-  if (p.loaded) parts.push(`${plural(p.loaded, 'picture')} loaded`);
+  if (p.loaded) parts.push(`${plural(p.loaded, 'picture')} loaded${canTellLoaded ? `, ${canTellLoaded} of them could tell ${who}` : ''}`);
   if (p.held) parts.push(p.policy === 'none' ? `${plural(p.held, 'picture')} not loaded` : `${p.held} held back`);
   if (p.removed) parts.push(`${plural(p.removed, 'tracker')} removed`);
+  if (p.keepTrackers && p.trackersSource === 'message') parts.push('trackers kept');
   const because = p.source === 'sender' ? (p.policy === 'none' ? `Never from ${who}` : `Always from ${who}`) : p.source === 'message' ? 'your choice for this mail' : null;
   const menu = (e: MouseEvent) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -134,18 +149,30 @@ export function ImageBanner({ message, body }: { message: P.MailMessageView; bod
       { x: r.right, y: r.bottom },
       {
         label: 'Pictures',
-        items: [
-          ...(p.source === 'message' ? [{ label: 'Back to the usual for this mail', icon: 'refresh' as const, run: forMessage(null) }] : []),
-          ...(p.policy === 'none' && safeHeld ? [{ label: 'Load the ones that can’t tell', icon: 'image' as const, run: forMessage('shared') }] : []),
-          ...(p.source === 'sender'
-            ? [{ label: `Use my setting for ${who}`, icon: 'refresh' as const, run: forSender({ forget: true }) }]
+        items: groups(
+          // This mail only: one of three, the one in force ticked.
+          [
+            { kind: 'label', label: 'This mail' },
+            ...THIS_MAIL.map((x) => ({ label: x.label, checked: p.policy === x.v, radio: true, run: forMessage(x.v) })),
+            p.source === 'message' && { label: 'Back to the usual', icon: 'refresh', run: forMessage(null) },
+          ],
+          // Trackers, this mail only: kept (they report that you opened it) or removed.
+          [
+            p.keepTrackers
+              ? { label: 'Remove its trackers', icon: 'eyeOff', run: trackersFor(p.trackersSource === 'message' ? null : 'remove') }
+              : { label: p.removed ? `Keep its ${plural(p.removed, 'tracker')}` : 'Keep its trackers', icon: 'eye', run: trackersFor(p.trackersSource === 'message' ? null : 'keep') },
+          ],
+          p.source === 'sender'
+            ? [{ label: `Use my setting for ${who}`, icon: 'refresh', run: forSender({ forget: true }) }]
             : [
-                { label: `Always load from ${who}`, icon: 'eye' as const, run: forSender({ allow: true }) },
-                { label: `Never load from ${who}`, icon: 'eyeOff' as const, run: forSender({ allow: false }) },
-              ]),
-          { label: open ? 'Hide details' : 'Details', icon: 'info' as const, run: () => setOpen(!open) },
-          { label: 'Picture settings', icon: 'settings' as const, run: openPictureSettings },
-        ],
+                { label: `Always load from ${who}`, icon: 'eye', run: forSender({ allow: true }) },
+                { label: `Never load from ${who}`, icon: 'eyeOff', run: forSender({ allow: false }) },
+              ],
+          [
+            { label: open ? 'Hide details' : 'Details', icon: 'info', run: () => setOpen(!open) },
+            { label: 'Picture settings', icon: 'settings', run: openPictureSettings },
+          ],
+        ),
       },
       e.currentTarget,
     );

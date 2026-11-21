@@ -324,7 +324,6 @@ function AddressField(props: {
 // ------------------------------------------------------------------ the editor
 
 const BAR_KEY = 'dither.mail.formatBar';
-const MODE_KEY = 'dither.mail.editMode';
 const pref = (k: string) => {
   try {
     return localStorage.getItem(k);
@@ -339,7 +338,6 @@ const keepPref = (k: string, v: string) => {
 };
 /** The bar shows unless you hid it. */
 const barWanted = () => pref(BAR_KEY) !== '0';
-const modeWanted = (): EditorMode => (['rich', 'markdown', 'html'] as const).find((m) => m === pref(MODE_KEY)) ?? 'rich';
 
 /** The editor's chunk (Tiptap, CodeMirror), loaded once when a composer first opens. */
 let editorChunk: Promise<typeof import('./editor/MailEditor.tsx')> | null = null;
@@ -434,7 +432,8 @@ export function Composer({ open }: { open: ComposeOpen }) {
   const [sending, setSending] = useState<null | 'sending' | 'waiting'>(null);
   const [error, setError] = useState<string | null>(null);
   const [bar, setBar] = useState(barWanted);
-  const [mode, setMode] = useState<EditorMode>(modeWanted);
+  // Each message opens as rich text (or plain, if it was left so): the view is the draft's, not a setting.
+  const [mode, setMode] = useState<EditorMode>('rich');
   const Editor = useEditor();
   const editorApi = useRef<MailEditorApi | null>(null);
   const clientId = useRef<string | null>(null);
@@ -454,6 +453,8 @@ export function Composer({ open }: { open: ComposeOpen }) {
   const min = !p && dock.min;
   const max = !p && !min && dock.max;
   const [dropping, setDropping] = useState(false);
+  /** Maximized when the HTML view opened, so made small again when it closes. */
+  const maxedForHtml = useRef(false);
   const minBtn = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -538,7 +539,7 @@ export function Composer({ open }: { open: ComposeOpen }) {
   }, [sig]);
 
   const total = (all?.files ?? []).reduce((n, f) => n + f.size, 0) + (d?.forwardParts ?? []).reduce((n, f) => n + f.size, 0) + files.filter((f) => f.job && f.job.status.value !== 'done').reduce((n, f) => n + f.file.size, 0);
-  const size = useDraftSize({ html: d?.html, text: d?.text ?? '', plainOnly: !!d?.plainOnly, mode: d?.pictures ?? 'link', files: total, accountId: d?.accountId ?? '' });
+  const size = useDraftSize({ html: d?.html, text: d?.text ?? '', plainOnly: !!d?.plainOnly, mode: d?.pictures ?? 'link', files: total, accountId: d?.accountId ?? '', island: start?.island });
   // The hub counts files and the pictures inside the mail against the account's cap (base64 aside).
   const over = total + size.inside.bytes + size.embedded.bytes > totalCap(account);
 
@@ -869,8 +870,19 @@ export function Composer({ open }: { open: ComposeOpen }) {
             {Editor ? (
               <Editor
                 initial={{ html: d.html, markdown: d.text, island: start?.island && (d.kind === 'forward' || d.quote) ? { island: start.island, from: d.replyTo } : null }}
-                mode={mode}
-                onMode={(m) => (setMode(m), keepPref(MODE_KEY, m))}
+                mode={d.plainOnly ? 'plain' : mode === 'plain' ? 'rich' : mode}
+                onMode={(m) => {
+                  // The HTML view wants the room: a docked composer grows to the window for it, and back after.
+                  if (m === 'html' && !p && !min && !max) {
+                    maxedForHtml.current = true;
+                    dock.setMax(true);
+                  } else if (m !== 'html' && maxedForHtml.current) {
+                    maxedForHtml.current = false;
+                    if (max) dock.setMax(false);
+                  }
+                  setMode(m);
+                  if (m === 'plain' || d.plainOnly) set({ plainOnly: m === 'plain' });
+                }}
                 bar={bar}
                 placeholder="Write your message"
                 onChange={setBody}
@@ -888,6 +900,14 @@ export function Composer({ open }: { open: ComposeOpen }) {
                 <button class="mc-quote-add" onClick={() => (set({ quote: true }), editorApi.current?.addIsland(start.island!, d.replyTo))} title={`Quote ${quoted} below your text`}>
                   <Icon name="quote" size={12} />
                   Quote {quoted}
+                </button>
+              </div>
+            )}
+            {d.kind === 'forward' && start?.island && !/data-dc-island="forward"/.test(d.html ?? '') && Editor && (
+              <div class="mc-quote">
+                <button class="mc-quote-add" onClick={() => editorApi.current?.addIsland(start.island!, d.replyTo)} title="Put the forwarded message back below your text">
+                  <Icon name="forward" size={12} />
+                  Put the forwarded message back
                 </button>
               </div>
             )}
@@ -927,7 +947,7 @@ export function Composer({ open }: { open: ComposeOpen }) {
           >
             <span class="mc-fmt-aa">Aa</span>
           </button>
-          <SizeMeter s={size} cap={totalCap(account)} plainOnly={!!d?.plainOnly} onPlainOnly={(v) => set({ plainOnly: v })} hasHtml={!!d?.html} />
+          <SizeMeter s={size} cap={totalCap(account)} plainOnly={!!d?.plainOnly} />
           {sendBtn}
           <input
             ref={fileInput}

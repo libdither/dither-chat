@@ -406,7 +406,9 @@ export class MailOutbox {
           });
       if (made?.failed) this.log(`[outbox ${id}] ${made.failed} picture(s) could not be fetched: linked instead`);
       body = { text: outgoingText(req.text, draft.html, o, req.tz), ...(made ? { html: made.html } : {}), inline: made?.inline ?? [] };
-      for (const p of body.inline) total += p.bytes.length;
+      // The cap is bytes of files as they are (dither-accounts counts its attachments' sizes, not their base64), and the
+      // pictures inside the mail count the same way, whether they go as parts or as data: URLs.
+      total += made?.insideBytes ?? 0;
       if (total > sendCapOf(acc)) throw bad(`With the pictures inside it, the mail is ${(total / MB).toFixed(1)} MB; this account takes ${mbText(sendCapOf(acc))} on one message.`, 413);
     } else body = { text: messageText(req.text, t), ...(draft.plainOnly ? {} : { html: messageHtml(kind, req.text, o, draft.quote, req.tz) }), inline: [] };
     if (body.inline.length && !this.opts.dir) throw bad('this hub keeps no files for mail', 400);

@@ -14,14 +14,27 @@ interface DraftPictures {
 
 const BASE64 = 4 / 3;
 
-/** The HTML's pictures, and its bytes without the pasted ones' data. */
-export function measureHtml(html: string | null | undefined): { html: number; islandText: number; pictures: DraftPictures } {
+/** A picture's address from a background (an attribute, a style, a sheet): the web's, or this hub's for one. */
+const BG_URL = /url\(\s*(['"]?)((?:https?:\/\/|\/api\/mail\/img\/)[^'")\s]+)\1\s*\)/gi;
+const fetched = (u: string) => /^(https?:\/\/|\/api\/mail\/img\/)/i.test(u);
+
+/**
+ * The HTML's pictures, and its bytes without the pasted ones' data. `island`: the forward or quote as the hub made it,
+ * with the bytes it adds to the text part; while it is unchanged that is its share of the text part, not its HTML's text.
+ */
+export function measureHtml(html: string | null | undefined, island?: { html: string; textBytes?: number } | null): { html: number; islandText: number; pictures: DraftPictures } {
   const pictures: DraftPictures = { inside: { n: 0, bytes: 0 }, web: [] };
   if (!html) return { html: 0, islandText: 0, pictures };
   const doc = new DOMParser().parseFromString(html, 'text/html');
   // A forward's or a quote's text goes in the text part too (the hub writes it there from the original).
   let islandText = 0;
-  for (const el of doc.querySelectorAll('div[data-dc-island]')) islandText += new Blob([el.textContent ?? '']).size;
+  let asMade = island?.textBytes !== undefined && html.includes(island.html);
+  for (const el of doc.querySelectorAll('div[data-dc-island]')) {
+    if (asMade && (el.getAttribute('data-dc-island') === 'forward' || el.getAttribute('data-dc-island') === 'quote')) {
+      islandText += island!.textBytes!;
+      asMade = false;
+    } else islandText += new Blob([el.textContent ?? '']).size;
+  }
   const web = new Set<string>();
   const inside = new Set<string>();
   let dataChars = 0;
@@ -36,6 +49,15 @@ export function measureHtml(html: string | null | undefined): { html: number; is
       pictures.inside.n++;
       pictures.inside.bytes += Math.floor((b64.length * 3) / 4);
     }
+  }
+  // Backgrounds go as pictures do (embedded, linked or left out).
+  for (const el of doc.querySelectorAll('[background]')) {
+    const u = el.getAttribute('background') ?? '';
+    if (fetched(u)) web.add(u);
+  }
+  for (const el of doc.querySelectorAll('[style], style')) {
+    const css = el.tagName === 'STYLE' ? (el.textContent ?? '') : (el.getAttribute('style') ?? '');
+    for (const m of css.matchAll(BG_URL)) web.add(m[2]);
   }
   for (const src of inside) dataChars += src.length * html.split(src).length - src.length;
   pictures.web = [...web];

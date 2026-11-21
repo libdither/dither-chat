@@ -1,5 +1,5 @@
 /**
- * The Markdown and HTML views' CodeMirror (MailEditor.tsx): a chunk of its own, loaded the first time one of them opens
+ * The Markdown, HTML and Plain views' CodeMirror (MailEditor.tsx): a chunk of its own, loaded the first time one of them opens
  * (and ahead, when the pointer goes to the switch), so writing rich text carries none of it.
  */
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
@@ -7,11 +7,11 @@ import { html as htmlLang } from '@codemirror/lang-html';
 import { bracketMatching, defaultHighlightStyle, foldEffect, foldGutter, foldKeymap, indentOnInput, syntaxHighlighting } from '@codemirror/language';
 import { EditorState } from '@codemirror/state';
 import { EditorView, keymap, placeholder } from '@codemirror/view';
-import { liveMarkdown, type Stands } from './livemd.ts';
+import { liveMarkdown, plainStands, type Stands } from './livemd.ts';
 
 interface CodeViewOpts {
   parent: HTMLElement;
-  mode: 'markdown' | 'html';
+  mode: 'markdown' | 'html' | 'plain';
   doc: string;
   placeholder: string;
   stands: Stands;
@@ -53,14 +53,16 @@ export function codeView(o: CodeViewOpts): EditorView {
                 { key: 'Mod-k', run: (v: EditorView) => o.format(v, 'link') },
                 { key: 'Mod-\\', run: (v: EditorView) => o.format(v, 'clear') },
               ]
-            : [indentWithTab]),
+            : o.mode === 'html'
+              ? [indentWithTab]
+              : []),
           ...foldKeymap,
           ...historyKeymap,
           ...defaultKeymap,
         ]),
-        ...(md ? liveMarkdown(o.stands) : [htmlLang(), syntaxHighlighting(defaultHighlightStyle), foldGutter(), bracketMatching(), indentOnInput(), EditorView.lineWrapping]),
+        ...(md ? liveMarkdown(o.stands) : o.mode === 'plain' ? plainStands(o.stands) : [htmlLang(), syntaxHighlighting(defaultHighlightStyle), foldGutter(), bracketMatching(), indentOnInput(), EditorView.lineWrapping]),
         placeholder(o.placeholder),
-        EditorView.contentAttributes.of({ 'aria-label': md ? 'Message, as Markdown' : 'Message, as HTML' }),
+        EditorView.contentAttributes.of({ 'aria-label': md ? 'Message, as Markdown' : o.mode === 'plain' ? 'Message, as plain text' : 'Message, as HTML' }),
         EditorView.updateListener.of((u) => {
           if (u.selectionSet) o.onCaret();
           if (u.docChanged) o.onText(u.state.doc.toString());
@@ -73,7 +75,7 @@ export function codeView(o: CodeViewOpts): EditorView {
     }),
   });
   // The forwarded mail and quotes are long: folded until you open them.
-  if (!md) foldIslands(view);
+  if (o.mode === 'html') foldIslands(view);
   return view;
 }
 

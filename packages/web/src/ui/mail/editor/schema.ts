@@ -13,13 +13,15 @@
  * In the Markdown view, islands and pictures stand in as `[[island:id]]` and `dc-picture:id`: the view shows them as
  * chips, and the bytes never pass through the text.
  */
-import { type Editor, type JSONContent, type MarkdownRendererHelpers, mergeAttributes, Node } from '@tiptap/core';
+import { type Editor, getHTMLFromFragment, getSchema, type JSONContent, type MarkdownRendererHelpers, mergeAttributes, Node } from '@tiptap/core';
+import Heading from '@tiptap/extension-heading';
 import Image from '@tiptap/extension-image';
+import Paragraph from '@tiptap/extension-paragraph';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import TextAlign from '@tiptap/extension-text-align';
 import { Color, TextStyle } from '@tiptap/extension-text-style';
 import { Markdown } from '@tiptap/markdown';
-import type { Node as PMNode } from '@tiptap/pm/model';
+import { Node as PMNode, type Schema } from '@tiptap/pm/model';
 import { Placeholder } from '@tiptap/extensions';
 import StarterKit from '@tiptap/starter-kit';
 
@@ -207,13 +209,38 @@ const ColorStyle = TextStyle.extend({
   },
 });
 
+/**
+ * A centred or right-aligned paragraph or heading, which Markdown can't say, written into Markdown as its HTML (pasted
+ * pictures as their stand-ins), which comes back aligned; others as Markdown.
+ */
+let alignSchema: Schema | null = null;
+function alignedHtml(node: JSONContent): string | null {
+  const align = node.attrs?.textAlign as string | undefined;
+  if (!align || align === 'left' || !node.content?.length) return null;
+  alignSchema ??= getSchema(extensions(''));
+  const stand = (n: JSONContent): JSONContent =>
+    n.type === 'image' && String(n.attrs?.src ?? '').startsWith('data:') ? { ...n, attrs: { ...n.attrs, src: `dc-picture:${n.attrs?.ref ?? ''}` } } : n;
+  const inner = getHTMLFromFragment(PMNode.fromJSON(alignSchema, { ...node, content: node.content.map(stand) }).content, alignSchema);
+  const tag = node.type === 'heading' ? `h${node.attrs?.level ?? 1}` : 'p';
+  return `<${tag} style="text-align: ${align}">${inner}</${tag}>`;
+}
+const AlignedParagraph = Paragraph.extend({
+  renderMarkdown: (node: JSONContent, h: MarkdownRendererHelpers, ctx: unknown) => alignedHtml(node) ?? Paragraph.config.renderMarkdown!.call(null as never, node as never, h, ctx as never),
+});
+const AlignedHeading = Heading.extend({
+  renderMarkdown: (node: JSONContent, h: MarkdownRendererHelpers, ctx: unknown) => alignedHtml(node) ?? Heading.config.renderMarkdown!.call(null as never, node as never, h, ctx as never),
+}).configure({ levels: [1, 2, 3] });
+
 /** Every extension the document uses. */
 export function extensions(placeholder: string) {
   return [
     StarterKit.configure({
       link: { openOnClick: false, autolink: true, HTMLAttributes: { rel: 'noopener noreferrer', target: null } },
-      heading: { levels: [1, 2, 3] },
+      paragraph: false,
+      heading: false,
     }),
+    AlignedParagraph,
+    AlignedHeading,
     ColorStyle,
     Color,
     TextAlign.configure({ types: ['heading', 'paragraph'] }),

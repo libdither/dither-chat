@@ -13,8 +13,11 @@
  * - **shared**: anything else: a logo or a product picture at an address every recipient's copy has. Loading it tells
  *   the picture's host that someone opened some copy, not that you did.
  *
- * The rule leans towards personal: a signed CDN address whose signature is the same for everyone is held needlessly,
- * never the other way round. An address seen in two different mails is shared whatever it looks like.
+ * The rule leans towards personal: a signed CDN address whose signature is the same for everyone, or a file named by
+ * its content's hash, is held needlessly, never the other way round. Personal: a UUID or 16+ hex digits anywhere, a
+ * random-looking run of 16+ characters in the path (12+ in a query value), a long number in the query, or an id-like
+ * query key (`uid`, `e`, `r`, `id`, `mc_eid`, …) with a value. An address seen in mail from another sender (not one
+ * of yours: your Sent copy of a forward proves nothing) is shared whatever it looks like.
  */
 import { createHash } from 'node:crypto';
 
@@ -50,17 +53,38 @@ const TRACKER_PATH = [/\/track\/open\.php$/i, /\/wf\/open$/i, /\/open\.aspx$/i, 
 
 const hostIs = (host: string, h: string) => host === h || host.endsWith(`.${h}`);
 
-/** A run that looks random: long, and mixing letters with digits (or base64's -_), not a word or a plain number. */
-function opaque(s: string, min: number): boolean {
-  if (s.length < min) return false;
-  if (!/^[A-Za-z0-9_\-=.%+~]+$/.test(s)) return false;
-  const digits = (s.match(/[0-9]/g) ?? []).length;
-  const letters = (s.match(/[A-Za-z]/g) ?? []).length;
-  // A plain number (an id the same for everyone, like a product's) or a word-ish slug is not a token.
-  if (!letters || !digits) return false;
-  if (/^[a-z]+(-[a-z]+)+$/i.test(s)) return false;
-  return digits >= 3 && letters >= 3;
+/** Classes of characters a random token switches between often and a word or a number seldom. */
+const charClass = (c: string) => (c >= '0' && c <= '9' ? 0 : c >= 'a' && c <= 'z' ? 1 : 2);
+
+/**
+ * A run that looks random: `min`+ letters and digits (base64's -_ between them allowed) that switch between lower
+ * case, upper case and digits often, as generated ids do (`Zq81mXc2LpR7`, a hex hash, a UUID), and words, slugs,
+ * CamelCase names and plain numbers don't (`summer-sale-2024`, `WinterBanner2`, `20240512`).
+ */
+function randomRun(s: string, min: number): boolean {
+  for (const run of s.match(/[A-Za-z0-9_-]+/g) ?? []) {
+    const a = run.replace(/[_-]/g, '');
+    if (a.length < min) continue;
+    let switches = 0;
+    for (let i = 1; i < a.length; i++) if (charClass(a[i]) !== charClass(a[i - 1])) switches++;
+    if (switches >= 4 && switches >= a.length * 0.3) return true;
+  }
+  return false;
 }
+
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+/** 16+ hex digits with letters and digits both: a hash or an id, as a folder or a file name. */
+const LONG_HEX = /(?:^|[^0-9a-f])(?=[0-9a-f]*[a-f])(?=[0-9a-f]*[0-9])[0-9a-f]{16,}(?:[^0-9a-f]|$)/i;
+
+/** Query keys that are the same for every copy: sizes, formats, versions, cache-busters, campaign names. */
+const SAME_FOR_ALL = /^(w|h|width|height|q|quality|fit|fm|format|auto|dpr|v|ver|version|crop|size|s?rgb|t|ts|_|cb|cache|lang|locale|utm_\w+)$/i;
+/**
+ * Query keys that name a recipient, a subscriber, a contact or one message (`?uid=8812344`, `?e=Zq81mXc2LpR7`,
+ * Mailchimp's `mc_eid`, ConvertKit's `ck_subscriber_id`): any value but a tiny one is personal. A short prefix
+ * (`mc_`, `_`) is allowed.
+ */
+const ID_KEYS =
+  /^(?:[a-z]{0,4}_)?(u|e|r|id|uid|uuid|guid|user|user_?id|mid|msg_?id|message_?id|sid|sub|subid|subscriber|subscriber_?id|rid|rcpt|recipient|recipient_?id|contact|contact_?id|cust|customer|customer_?id|member|member_?id|mem|eid|enc|enc_?id|email|em|mail|token|tk|hash|hsenc|hsmi)$/i;
 
 /** The forms an address takes inside a URL: as written, encoded, and hashed the ways mailing services hash it. */
 export function addressForms(emails: string[]): string[] {
@@ -105,18 +129,22 @@ export function classifyPicture(url: string, ctx: ClassifyContext, shapedLikeTra
   } catch {}
   if (ctx.you.some((f) => f.length >= 6 && (decoded.includes(f) || url.toLowerCase().includes(f)))) return { class: 'personal', why: 'carries your address' };
   if (ctx.seenElsewhere?.(url)) return { class: 'shared', why: 'seen in other mail too' };
+  const token = { class: 'personal', why: 'a token in its address' } as const;
+  if (UUID.test(u.pathname + u.search)) return token;
   for (const [k, v] of u.searchParams) {
-    // Sizes, formats and versions are the same for everyone.
-    if (/^(w|h|width|height|q|quality|fit|fm|format|auto|dpr|v|ver|version|crop|size|s?rgb)$/i.test(k)) continue;
-    if (opaque(v, 16) || opaque(k, 24)) return { class: 'personal', why: 'a token in its address' };
+    if (SAME_FOR_ALL.test(k)) continue;
+    if (ID_KEYS.test(k) && v.length >= 3 && (/\d/.test(v) || v.length >= 8)) return { class: 'personal', why: `an id in its address (${k}=)` };
+    if (randomRun(v, 12) || randomRun(k, 16) || /\d{8,}/.test(v)) return token;
   }
   const segs = u.pathname.split('/').filter(Boolean);
   for (let i = 0; i < segs.length; i++) {
-    const last = i === segs.length - 1;
-    const s = segs[i];
-    // A file name with a picture's extension is most often a content hash, the same for everyone.
-    if (last && /\.(png|jpe?g|gif|webp|avif|svg|bmp|ico)$/i.test(s)) continue;
-    if (opaque(s, last ? 20 : 24)) return { class: 'personal', why: 'a token in its address' };
+    let seg = segs[i];
+    try {
+      seg = decodeURIComponent(seg);
+    } catch {}
+    // A file name's extension is not part of its token.
+    if (i === segs.length - 1) seg = seg.replace(/\.(png|jpe?g|gif|webp|avif|svg|bmp|ico)$/i, '');
+    if (LONG_HEX.test(seg) || randomRun(seg, 16)) return token;
   }
   return { class: 'shared', why: 'the same address for every copy' };
 }

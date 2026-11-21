@@ -34,7 +34,16 @@ import type { OutboxPictures } from './outbox.ts';
 
 type Row = Record<string, any>;
 /** Which pictures load for one message, and what decided it. */
-type Policy = { pictures: PicturePolicy; trackers: boolean; source: 'message' | 'sender' | 'setting' };
+type Policy = { pictures: PicturePolicy; trackers: boolean; source: 'message' | 'sender' | 'setting'; trackersSource: 'message' | 'setting' };
+
+/**
+ * `mail_message.images_allowed` holds both choices for one message: its low two bits the pictures (0 the sender's rule
+ * or the setting, 1 all, 2 shared only, 3 none), the next two the trackers (0 the setting, 4 keep, 8 remove).
+ */
+const PICTURE_BITS = 3;
+const TRACKER_BITS = 12;
+const TRACKER_KEEP = 4;
+const TRACKER_REMOVE = 8;
 const urlHash = (url: string) => createHash('sha256').update(url).digest('base64url').slice(0, 22);
 
 const json = <T>(s: string | null | undefined, fallback: T): T => {
@@ -90,15 +99,19 @@ class Parts {
    */
   policy(m: Row): Policy {
     const setting = (k: string) => this.store.one<{ value: string }>('SELECT value FROM mail_setting WHERE key = ?', k)?.value;
-    const trackers = setting('trackers') === 'keep';
+    const bits = Number(m.images_allowed) || 0;
+    // Trackers: this message's choice (POST /api/mail/images { messageId, trackers }), else the setting.
+    const t = bits & TRACKER_BITS;
+    const trackersSource = t === TRACKER_KEEP || t === TRACKER_REMOVE ? 'message' : 'setting';
+    const trackers = trackersSource === 'message' ? t === TRACKER_KEEP : setting('trackers') === 'keep';
     // For this message: 1 all, 2 shared only, 3 none (POST /api/mail/images { messageId, pictures }).
-    const own = ({ 1: 'all', 2: 'shared', 3: 'none' } as const)[Number(m.images_allowed) as 1 | 2 | 3];
-    if (own) return { pictures: own, trackers, source: 'message' };
+    const own = ({ 1: 'all', 2: 'shared', 3: 'none' } as const)[(bits & PICTURE_BITS) as 1 | 2 | 3];
+    if (own) return { pictures: own, trackers, source: 'message', trackersSource };
     const from = String(m.from_addr ?? '').toLowerCase();
     const rule = from ? this.store.one<{ allow: number }>('SELECT allow FROM mail_sender_images WHERE address = ?', from) : null;
-    if (rule) return { pictures: rule.allow ? 'all' : 'none', trackers, source: 'sender' };
+    if (rule) return { pictures: rule.allow ? 'all' : 'none', trackers, source: 'sender', trackersSource };
     const p = setting('pictures');
-    return { pictures: p === 'none' || p === 'all' ? p : 'shared', trackers, source: 'setting' };
+    return { pictures: p === 'none' || p === 'all' ? p : 'shared', trackers, source: 'setting', trackersSource };
   }
 
   /** The forms your addresses take in a URL (pictures.ts addressForms), per account. */
@@ -114,10 +127,18 @@ class Parts {
     return f;
   }
 
+  /** Every address of yours, on any account: mail from them says nothing of who else got a picture. */
+  ownAddresses(): Set<string> {
+    return new Set(this.store.accounts().flatMap((a) => [...this.store.selfAddresses(a.id)]));
+  }
+
   /** Each picture's fate for this message under `pol`. */
   decider(m: Row, pol: Policy): (url: string, shaped: boolean) => PictureDecision {
     const from = String(m.from_addr ?? '').toLowerCase();
-    const seenElsewhere = (url: string) => !!this.store.one('SELECT 1 FROM mail_picture_seen WHERE url_hash = ? AND sender != ? LIMIT 1', urlHash(url), from);
+    // Another sender's mail, not yours: your Sent copy of a forward carries the original's personal pictures.
+    const mine = JSON.stringify([...this.ownAddresses()]);
+    const seenElsewhere = (url: string) =>
+      !!this.store.one('SELECT 1 FROM mail_picture_seen WHERE url_hash = ? AND sender != ? AND sender NOT IN (SELECT value FROM json_each(?)) LIMIT 1', urlHash(url), from, mine);
     const you = this.you(m.account_id);
     return (url, shaped) => {
       const v = classifyPicture(url, { you, seenElsewhere }, shaped);
@@ -140,9 +161,9 @@ class Parts {
       proxy: (url) => `/api/mail/img/${imageToken(this.media.key, m.id, url)}`,
       cid: (cid) => `/api/mail/messages/${m.id}/cid/${encodeURIComponent(cid)}`,
     });
-    // Remembered by sender, so the next sender's mail with the same address knows it is shared.
+    // Remembered by sender, so the next sender's mail with the same address knows it is shared. Not your own mail's.
     const from = String(m.from_addr ?? '').toLowerCase();
-    if (from) {
+    if (from && !this.ownAddresses().has(from)) {
       const q = this.store.db.query('INSERT OR IGNORE INTO mail_picture_seen (url_hash, sender) VALUES (?, ?)');
       for (const p of s.pictures ?? []) if (p.class !== 'tracker') q.run(urlHash(p.url), from);
     }
@@ -266,9 +287,16 @@ class Parts {
       },
       sizes: (urls, accountId) => {
         const you = this.you(accountId);
+        // This hub's address of a picture (a background in a forward) counts as the picture it stands for.
+        const originals = urls.map((u) => {
+          if (/^https?:\/\//i.test(u) && !/\/api\/mail\/img\//.test(u)) return u;
+          const img = /^(?:https?:\/\/[^/]+)?\/api\/mail\/img\/([\w.-]+)$/.exec(u);
+          return img ? (readImageToken(this.media.key, img[1])?.url ?? null) : null;
+        });
         return {
-          sizes: urls.map((u) => this.images.cachedSize(u)),
-          classes: urls.map((u) => classifyPicture(u, { you }, false).class),
+          sizes: originals.map((u) => (u ? this.images.cachedSize(u) : null)),
+          classes: originals.map((u) => (u ? classifyPicture(u, { you }, false).class : 'personal')),
+          originals,
         };
       },
     };
@@ -295,6 +323,7 @@ class Parts {
       policy: pol.pictures,
       source: pol.source,
       keepTrackers: pol.trackers,
+      trackersSource: pol.trackersSource,
       loaded: items.filter((x) => x.action === 'load').length,
       held: items.filter((x) => x.action === 'hold').length,
       removed: items.filter((x) => x.action === 'drop').length,
@@ -501,7 +530,8 @@ export const partRoutes: MailRouter = (hub) => {
       path: /^\/api\/mail\/pictures\/sizes$/,
       handle: async ({ body }) => {
         const b = await body<{ urls?: unknown; accountId?: unknown }>();
-        const urls = (Array.isArray(b.urls) ? b.urls : []).filter((u): u is string => typeof u === 'string' && /^https?:\/\//i.test(u)).slice(0, 500);
+        // Answers line up with the addresses asked, one each; one that is not a picture's address answers null.
+        const urls = (Array.isArray(b.urls) ? b.urls : []).slice(0, 500).map((u) => (typeof u === 'string' && /^(https?:\/\/|\/api\/mail\/img\/)/i.test(u) ? u : ''));
         return Response.json(parts.outboxPictures().sizes(urls, String(b.accountId ?? '')) satisfies P.MailPictureSizes);
       },
     },
@@ -510,13 +540,19 @@ export const partRoutes: MailRouter = (hub) => {
       method: 'POST',
       path: /^\/api\/mail\/images$/,
       handle: async ({ body }) => {
-        const b = await body<{ messageId?: string; pictures?: 'all' | 'shared' | 'none' | null; sender?: string; allow?: boolean; forget?: boolean }>();
+        const b = await body<{ messageId?: string; pictures?: 'all' | 'shared' | 'none' | null; trackers?: 'keep' | 'remove' | null; sender?: string; allow?: boolean; forget?: boolean }>();
         if (typeof b.messageId === 'string') {
-          need(b.messageId);
-          // { messageId } alone loads all, as before; pictures: null goes back to the sender's rule or the setting.
-          const v = b.pictures === null ? 0 : b.pictures === undefined || b.pictures === 'all' ? 1 : b.pictures === 'shared' ? 2 : b.pictures === 'none' ? 3 : -1;
-          if (v < 0) throw new MailCallError('pictures: all, shared, none or null', 400);
-          hub.store.db.query('UPDATE mail_message SET images_allowed = ? WHERE id = ?').run(v, b.messageId);
+          const m = need(b.messageId);
+          const had = Number(m.images_allowed) || 0;
+          // { messageId } alone loads all, as before; pictures: null goes back to the sender's rule or the setting. With
+          // only `trackers`, the pictures stay as they were.
+          const pictures =
+            b.pictures === undefined && b.trackers !== undefined ? had & PICTURE_BITS : b.pictures === null ? 0 : b.pictures === undefined || b.pictures === 'all' ? 1 : b.pictures === 'shared' ? 2 : b.pictures === 'none' ? 3 : -1;
+          if (pictures < 0) throw new MailCallError('pictures: all, shared, none or null', 400);
+          // trackers: keep or remove for this message; null goes back to the setting; absent leaves it as it was.
+          const trackers = b.trackers === undefined ? had & TRACKER_BITS : b.trackers === null ? 0 : b.trackers === 'keep' ? TRACKER_KEEP : b.trackers === 'remove' ? TRACKER_REMOVE : -1;
+          if (trackers < 0) throw new MailCallError('trackers: keep, remove or null', 400);
+          hub.store.db.query('UPDATE mail_message SET images_allowed = ? WHERE id = ?').run(pictures | trackers, b.messageId);
           return Response.json({ ok: true, body: hub.store.bodyView(b.messageId) });
         }
         const sender = typeof b.sender === 'string' ? b.sender.trim().toLowerCase() : '';

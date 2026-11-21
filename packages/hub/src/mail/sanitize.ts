@@ -21,7 +21,7 @@
 import { hostsDiffer, shownHost } from '@dither-chat/protocol';
 
 /** Bump when the output changes: cached copies made by an older pass are made again. */
-export const SANITIZE_VERSION = 2;
+export const SANITIZE_VERSION = 3;
 
 export interface SanitizeOpts {
   /**
@@ -51,7 +51,7 @@ export interface SanitizeOpts {
 }
 
 /** What a held picture shows in an editor's island: a striped box, drawn at the picture's own size. */
-export const HELD_PICTURE =
+const HELD_PICTURE =
   "data:image/svg+xml;base64," +
   Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="#eef1f4"/><path d="M0 16L16 0M-4 4L4 -4M12 20L20 12" stroke="#dde2e7" stroke-width="4"/></svg>').toString('base64');
 

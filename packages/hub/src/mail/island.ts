@@ -15,10 +15,11 @@
  * Pictures pasted in (`data:` URLs) always go inside the mail: as parts when the account sends them (details.inlineParts),
  * else as `data:` URLs.
  */
+import { createHash } from 'node:crypto';
 import type * as P from '@dither-chat/protocol';
 import { QUOTE_STYLE } from '@dither-chat/protocol/mail-markdown';
 import { attribution, forwardBlock, quoteLines, textHtml, type ComposeOriginal } from './compose.ts';
-import { sanitizeCss } from './sanitize.ts';
+import { decodeEntities, sanitizeCss } from './sanitize.ts';
 import { htmlText } from './store.ts';
 
 // ------------------------------------------------------------------ style sheets into style attributes
@@ -122,7 +123,8 @@ function declarations(body: string): { normal: string[]; important: string[] } {
 export function inlineCss(html: string, rootClass: string): string {
   let sheet = '';
   const without = html.replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gi, (_m, css: string) => {
-    sheet += `${css}\n`;
+    // `<style><!-- … --></style>`, as old newsletters hide their sheet from older mail apps: the marks are not CSS.
+    sheet += `${css.replace(/<!--|-->/g, ' ')}\n`;
     return '';
   });
   if (!sheet.trim()) return html;
@@ -154,7 +156,9 @@ export function inlineCss(html: string, rootClass: string): string {
     }
   }
   rules.sort((a, b) => a.spec - b.spec || a.order - b.order);
+  // The element's own style goes after the sheet's, and its own `!important` after the sheet's `!important`.
   const OWN = 'data-dc-own';
+  const OWN_IMPORTANT = 'data-dc-own-imp';
   const append = (el: HTMLRewriterTypes.Element, decls: string[]) => {
     if (!decls.length) return;
     const was = el.getAttribute('style') ?? '';
@@ -164,7 +168,11 @@ export function inlineCss(html: string, rootClass: string): string {
     element(el) {
       const own = el.getAttribute('style');
       if (own !== null) {
-        el.setAttribute(OWN, own);
+        if (/!\s*important/i.test(own)) {
+          const d = declarations(own);
+          el.setAttribute(OWN, d.normal.join(';'));
+          el.setAttribute(OWN_IMPORTANT, d.important.join(';'));
+        } else el.setAttribute(OWN, own);
         el.removeAttribute('style');
       }
     },
@@ -188,11 +196,20 @@ export function inlineCss(html: string, rootClass: string): string {
       const own = el.getAttribute(OWN);
       if (own !== null) {
         el.removeAttribute(OWN);
-        append(el, [own]);
+        if (own) append(el, [own]);
       }
     },
   });
   for (const r of live) if (r.important.length) rw = rw.on(r.selector, { element: (el) => append(el, r.important) });
+  rw = rw.on('*', {
+    element(el) {
+      const own = el.getAttribute(OWN_IMPORTANT);
+      if (own !== null) {
+        el.removeAttribute(OWN_IMPORTANT);
+        if (own) append(el, [own]);
+      }
+    },
+  });
   const done = rw.transform(without);
   const left = rest.length ? sanitizeCss(rest.join('\n')).css : '';
   return left.trim() ? `<style>${left}</style>${done}` : done;
@@ -210,8 +227,60 @@ function bodyStyle(body: Record<string, string>): string {
 }
 
 /**
+ * What an island says, as a fingerprint: its text with the tags and spacing gone, so the same island through a
+ * browser's parser (the HTML view: other quoting, entities written out, new lines between blocks) has the same one,
+ * and an island whose words were edited has another.
+ */
+export function islandPrint(html: string): string {
+  const text = decodeEntities(
+    html
+      .replace(/<!--[\s\S]*?-->/g, ' ')
+      .replace(/<(style|script)\b[\s\S]*?<\/\1\s*>/gi, ' ')
+      .replace(/<[^>]*>/g, ' '),
+  )
+    .replace(/\s+/g, ' ')
+    .trim();
+  return createHash('sha256').update(text).digest('base64url').slice(0, 16);
+}
+
+/** The island as the hub made it: its fingerprint (`data-dc-text`, on its head) still matches what it says. */
+function islandAsMade(html: string): boolean {
+  const said = /\bdata-dc-text="([\w-]+)"/.exec(html)?.[1];
+  return !!said && said === islandPrint(html);
+}
+
+/** Text with `\r\n` as `\n`, at most one empty line in a row, no trailing space. */
+const tidyText = (t: string) => t.replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/\s+$/, '');
+
+/**
+ * An island's part of the mail's text part (outgoingText): a forward's headers and the original's own text, or the
+ * attribution and its text quoted, as a plain-text mail has them; when the island was edited (in the HTML view), or
+ * the original had no text, its text is the island's own HTML's, a quote's quoted.
+ */
+export function islandText(i: { kind: string; html: string }, o: ComposeOriginal | null, tz?: string): string {
+  const own = !o || !islandAsMade(i.html) || !(o.text ?? '').trim();
+  if (i.kind === 'forward' && o && !own) {
+    const f = forwardBlock(o, tz);
+    return tidyText(`${f.head}\n\n${f.text}`);
+  }
+  if (i.kind === 'quote' && o && !own) return tidyText(`${attribution(o, tz)}\n${quoteLines(o.text)}`);
+  if (i.kind === 'quote') {
+    // The attribution, then what is inside the quote, quoted.
+    const at = i.html.search(/<blockquote\b/i);
+    if (at >= 0) {
+      const head = htmlText(i.html.slice(0, at)).trim();
+      const body = quoteLines(htmlText(i.html.slice(at)));
+      return tidyText(head ? `${head}\n${body}` : body);
+    }
+  }
+  return tidyText(htmlText(i.html));
+}
+
+/**
  * A forward's or a quote's island: the forwarded-message lines or the attribution, then the original's HTML (`content`:
  * sanitised with its sheets and pictures kept, sanitize.ts keepSource), its sheets inlined; or its text when it had no HTML.
+ * Its head carries its fingerprint (`data-dc-text`), so the text part knows whether it was edited (islandText); and
+ * `textBytes` is what it adds to the text part.
  */
 export function islandOf(kind: 'forward' | 'quote', o: ComposeOriginal, content: { html: string; body: Record<string, string> } | null, ref: string, tz?: string): P.MailIsland {
   const rootClass = `dc-isl-${ref}`;
@@ -221,11 +290,11 @@ export function islandOf(kind: 'forward' | 'quote', o: ComposeOriginal, content:
   const root = content ? inlineCss(wrapped, rootClass) : wrapped;
   const who = o.from.name || o.from.email;
   const when = new Date(o.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', ...(tz ? { timeZone: tz } : {}) });
-  if (kind === 'forward') {
-    const f = forwardBlock(o, tz);
-    return { kind, label: `${who}, ${when}`, html: `<div class="dc-forward-head" style="color:#57606a;margin:0 0 10px">${textHtml(f.head)}</div>${root}` };
-  }
-  return { kind, label: `${who}, ${when}`, html: `<div class="dc-quote-head">${esc(attribution(o, tz))}</div><blockquote type="cite" style="${QUOTE_STYLE}">${root}</blockquote>` };
+  const head = kind === 'forward' ? `<div class="dc-forward-head" style="color:#57606a;margin:0 0 10px">${textHtml(forwardBlock(o, tz).head)}</div>` : `<div class="dc-quote-head">${esc(attribution(o, tz))}</div>`;
+  const body = kind === 'forward' ? root : `<blockquote type="cite" style="${QUOTE_STYLE}">${root}</blockquote>`;
+  // The fingerprint is of the text alone, so writing it into the head changes nothing it covers.
+  const html = `${head.replace(/^<div /, `<div data-dc-text="${islandPrint(head + body)}" `)}${body}`;
+  return { kind, label: `${who}, ${when}`, html, textBytes: Buffer.byteLength(islandText({ kind, html }, o, tz)) };
 }
 
 // ------------------------------------------------------------------ the mail that goes
@@ -255,7 +324,9 @@ export interface OutgoingCtx {
 interface Outgoing {
   html: string;
   inline: InlinePart[];
-  /** What happened to the pictures, for the outbox's log and the tests. */
+  /** Bytes of the pictures that go inside the mail (as parts or as `data:`), before base64: what the cap counts. */
+  insideBytes: number;
+  /** What happened to the pictures (backgrounds too), each once, for the outbox's log and the tests. */
   linked: number;
   embedded: number;
   dropped: number;
@@ -266,14 +337,36 @@ interface Outgoing {
 const NEVER = 'script, iframe, object, embed, base, meta, link, form, input, button, select, textarea, frame, frameset, applet, noscript';
 const DATA_IMAGE = /^data:(image\/(?:png|jpeg|gif|webp));base64,([a-z0-9+/=\s]+)$/i;
 const EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/svg+xml': 'svg' };
+/** Attributes that hold an address a click or the page follows. */
+const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'xlink:href', 'poster', 'cite', 'longdesc', 'lowsrc', 'dynsrc', 'data']);
+
+/**
+ * A `javascript:` (or vbscript:, livescript:) address however it is written: entities decoded (`java&#9;script:`),
+ * then every space and control character gone, as a browser's URL parser drops tabs and new lines anywhere.
+ */
+export function scriptUrl(v: string): boolean {
+  // eslint-disable-next-line no-control-regex
+  return /^(java|vb|live)script:/i.test(decodeEntities(v).replace(/[\u0000-\u0020\u007f-\u009f\u00a0\u1680\u2000-\u200f\u2028\u2029\u202f\u205f\u3000\ufeff]/g, ''));
+}
+
+/** Whether a style or a sheet may fetch something: any url(), or an escape that could spell one. */
+const mayFetch = (css: string) => /url\s*\(|\\/i.test(css);
+
+/** An attribute's value as text (HTMLRewriter gives it as written, entities and all), and back. */
+const attr = (el: HTMLRewriterTypes.Element, name: string) => {
+  const v = el.getAttribute(name);
+  return v === null ? null : decodeEntities(v);
+};
+const setAttr = (el: HTMLRewriterTypes.Element, name: string, v: string) => el.setAttribute(name, v.replace(/&/g, '&amp;'));
 
 /**
  * The editor's HTML as the mail's HTML part: scripts and the editor's own marks gone, pasted pictures as parts (or
  * `data:`), pictures from the web linked, embedded or dropped (`ctx.pictures`), this hub's addresses never leaving it.
+ * Backgrounds (a `background` attribute, a style's or a sheet's `url()`) go the same way as pictures.
  */
 export async function outgoingHtml(html: string, ctx: OutgoingCtx): Promise<Outgoing> {
-  const out: Outgoing = { html: '', inline: [], linked: 0, embedded: 0, dropped: 0, failed: 0 };
-  // First pass: every picture, by what its src is.
+  const out: Outgoing = { html: '', inline: [], insideBytes: 0, linked: 0, embedded: 0, dropped: 0, failed: 0 };
+  // First pass: every picture and background, by what its address is.
   type Pic = { kind: 'data'; mime: string; b64: string } | { kind: 'web'; url: string } | { kind: 'cid'; messageId: string; contentId: string } | { kind: 'none' };
   const what = (src: string, original: string | null): Pic => {
     if (original && /^https?:\/\//i.test(original)) return { kind: 'web', url: original };
@@ -286,10 +379,35 @@ export async function outgoingHtml(html: string, ctx: OutgoingCtx): Promise<Outg
     return { kind: 'none' };
   };
   const srcs: { src: string; original: string | null }[] = [];
+  const cssRefs = (css: string) => {
+    if (!mayFetch(css)) return;
+    sanitizeCss(css, (u) => {
+      srcs.push({ src: u.trim(), original: null });
+      return null;
+    });
+  };
+  let sheet = '';
   new HTMLRewriter()
     .on('img', {
       element(el) {
-        srcs.push({ src: el.getAttribute('src') ?? '', original: el.getAttribute('data-dc-src') });
+        srcs.push({ src: (attr(el, 'src') ?? '').trim(), original: attr(el, 'data-dc-src') });
+      },
+    })
+    .on('*', {
+      element(el) {
+        const bg = attr(el, 'background');
+        if (bg !== null) srcs.push({ src: bg.trim(), original: null });
+        const style = attr(el, 'style');
+        if (style) cssRefs(style);
+      },
+    })
+    .on('style', {
+      text(t) {
+        sheet += t.text;
+        if (t.lastInTextNode) {
+          cssRefs(sheet);
+          sheet = '';
+        }
       },
     })
     .transform(html);
@@ -297,6 +415,7 @@ export async function outgoingHtml(html: string, ctx: OutgoingCtx): Promise<Outg
   const made = new Map<string, string | null>();
   const key = (p: Pic) => (p.kind === 'data' ? `d:${p.b64.length}:${p.b64.slice(0, 64)}:${p.b64.slice(-64)}` : p.kind === 'web' ? `w:${p.url}` : p.kind === 'cid' ? `c:${p.messageId}:${p.contentId}` : 'none');
   const part = (bytes: Buffer, mime: string): string => {
+    out.insideBytes += bytes.length;
     if (!ctx.inlineParts) return `data:${mime};base64,${bytes.toString('base64')}`;
     const n = out.inline.length + 1;
     const contentId = `dc${n}.${ctx.id.replace(/[^\w]/g, '').slice(-16)}@dither`;
@@ -331,24 +450,30 @@ export async function outgoingHtml(html: string, ctx: OutgoingCtx): Promise<Outg
   out.inline.sort((a, b) => firstSeen.findIndex((k) => made.get(k) === `cid:${a.contentId}`) - firstSeen.findIndex((k) => made.get(k) === `cid:${b.contentId}`));
 
   const counted = new Set<string>();
+  /** Where one picture goes in the mail (null: left out), counted the first time. */
+  const to = (src: string, original: string | null, img = false): string | null => {
+    const p = what(src, original);
+    const k = key(p);
+    const at = made.get(k) ?? null;
+    // An img that stands for nothing is a picture left out; a url() that does (`url(#filter)`) is no picture.
+    if ((img || p.kind !== 'none') && !counted.has(k)) {
+      counted.add(k);
+      if (!at) out.dropped++;
+      else if (at.startsWith('cid:') || at.startsWith('data:')) out.embedded++;
+      else out.linked++;
+    }
+    return at;
+  };
+  /** A style or a sheet with each url() where its picture goes, or `none`; nothing else in it fetches either. */
+  const css = (text: string) => (mayFetch(text) ? sanitizeCss(text, (u) => to(u.trim(), null)).css : text);
   // The img handler reads data-dc-src before the * one takes the editor's marks off.
   out.html = new HTMLRewriter()
     .on(NEVER, { element: (el) => void el.remove() })
     .on('img', {
       element(el) {
-        const k = key(what(el.getAttribute('src') ?? '', el.getAttribute('data-dc-src')));
-        const to = made.get(k) ?? null;
-        if (!to) {
-          if (!counted.has(k)) out.dropped++;
-          counted.add(k);
-          return void el.remove();
-        }
-        if (!counted.has(k)) {
-          if (to.startsWith('cid:') || to.startsWith('data:')) out.embedded++;
-          else out.linked++;
-          counted.add(k);
-        }
-        el.setAttribute('src', to);
+        const at = to((attr(el, 'src') ?? '').trim(), attr(el, 'data-dc-src'), true);
+        if (!at) return void el.remove();
+        setAttr(el, 'src', at);
         el.removeAttribute('data-dc-src');
         el.removeAttribute('data-dc-held');
       },
@@ -357,8 +482,8 @@ export async function outgoingHtml(html: string, ctx: OutgoingCtx): Promise<Outg
       element(el) {
         for (const [n, v] of [...el.attributes]) {
           const name = n.toLowerCase();
-          if (name.startsWith('on') || name.startsWith('data-dc-') || name === 'contenteditable') el.removeAttribute(n);
-          else if ((name === 'href' || name === 'src' || name === 'action') && /^\s*(javascript|vbscript):/i.test(v)) el.removeAttribute(n);
+          if (name.startsWith('on') || name.startsWith('data-dc-') || name === 'contenteditable' || name === 'srcset') el.removeAttribute(n);
+          else if (URL_ATTRS.has(name) && scriptUrl(v)) el.removeAttribute(n);
         }
         const cls = el.getAttribute('class');
         if (cls !== null) {
@@ -366,18 +491,23 @@ export async function outgoingHtml(html: string, ctx: OutgoingCtx): Promise<Outg
           if (keep.length) el.setAttribute('class', keep.join(' '));
           else el.removeAttribute('class');
         }
-        // Backgrounds from this hub: the address they stand for, or nothing.
-        const style = el.getAttribute('style');
-        if (style && /url\(/i.test(style)) {
-          el.setAttribute(
-            'style',
-            style.replace(/url\(\s*(["']?)([^"')]+)\1\s*\)/gi, (m, _q, u: string) => {
-              const r = ctx.resolve(u);
-              if (!r) return /^(https?:|cid:|data:)/i.test(u) ? m : 'none';
-              return 'url' in r && ctx.pictures === 'link' ? `url("${r.url}")` : 'none';
-            }),
-          );
+        // Backgrounds: as the pictures go (this hub's addresses never leave).
+        const bg = attr(el, 'background');
+        if (bg !== null) {
+          const at = to(bg.trim(), null);
+          if (at) setAttr(el, 'background', at);
+          else el.removeAttribute('background');
         }
+        const style = attr(el, 'style');
+        if (style && mayFetch(style)) setAttr(el, 'style', css(style));
+      },
+    })
+    .on('style', {
+      text(t) {
+        sheet += t.text;
+        if (!t.lastInTextNode) return void t.remove();
+        t.replace(css(sheet), { html: true });
+        sheet = '';
       },
     })
     .transform(html);
@@ -411,24 +541,18 @@ export function islandsOf(html: string): Map<string, { kind: string; html: strin
 }
 
 /**
- * The text part from the editor's Markdown: each island's stand-in as the forwarded block or the quote in text (from
- * the original, as a plain-text mail would have them), pasted pictures as `[picture: name]`.
+ * The text part from the editor's Markdown: each island's stand-in as islandText has it (the forwarded block or the
+ * quote from the original, as a plain-text mail would have them, or the island's own text once edited), pasted
+ * pictures as `[picture: name]`.
  */
 export function outgoingText(markdown: string, html: string, o: ComposeOriginal | null, tz?: string): string {
   const islands = islandsOf(html);
   const text = markdown
     .replace(/^\[\[island:([\w-]+)\]\]$/gm, (_m, ref: string) => {
       const i = islands.get(ref);
-      if (!i) return '';
-      if (i.kind === 'forward' && o) {
-        const f = forwardBlock(o, tz);
-        return `${f.head}\n\n${f.text}`;
-      }
-      if (i.kind === 'quote' && o) return `${attribution(o, tz)}\n${quoteLines(o.text)}`;
-      return htmlText(i.html);
+      return i ? islandText(i, o, tz) : '';
     })
     .replace(/!\[([^\]]*)\]\(dc-picture:[\w-]+\)/g, (_m, alt: string) => `[picture${alt ? `: ${alt}` : ''}]`)
     .replace(/<span style="color:[^"]*">([\s\S]*?)<\/span>/g, '$1');
-  return text.replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/\s+$/, '');
+  return tidyText(text);
 }
-

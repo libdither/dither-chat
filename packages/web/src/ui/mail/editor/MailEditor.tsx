@@ -13,6 +13,7 @@
  */
 import type { EditorView } from '@codemirror/view';
 import { Editor, generateJSON, type JSONContent } from '@tiptap/core';
+import { TextSelection } from '@tiptap/pm/state';
 import type * as P from '@dither-chat/protocol';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
@@ -20,7 +21,7 @@ import { applyFormat, type Format, formatsAt, indentList, type Sel } from '../..
 import { Icon } from '../../icons.tsx';
 import { docHtml, docMarkdown, extensions, fitFrame, type IslandAttrs, islandDoc, newRef, refsOf } from './schema.ts';
 
-export type EditorMode = 'rich' | 'markdown' | 'html';
+export type EditorMode = 'rich' | 'markdown' | 'html' | 'plain';
 
 export interface MailEditorApi {
   focus(): void;
@@ -90,9 +91,16 @@ function appendIsland(e: Editor, island: P.MailIsland, from: string | null, undo
   const node = { type: 'island', attrs: { kind: island.kind, html: island.html, label: island.label, from, ref: newRef() } };
   const json = e.getJSON();
   const content: JSONContent[] = [...(json.content ?? [])];
-  if (!content.length) content.push({ type: 'paragraph' });
+  const empty = (n?: JSONContent) => n?.type === 'paragraph' && !n.content?.length;
+  // One empty line above it is enough (taking a block out and putting it back leaves more).
+  while (content.length > 1 && empty(content[content.length - 1]) && empty(content[content.length - 2])) content.pop();
+  if (!content.length || content[content.length - 1].type === 'island') content.push({ type: 'paragraph' });
   content.push(node);
   replaceDoc(e, { ...json, content }, undoable);
+  // The caret at the end of the text above it, never on the block itself: typing there would replace the quote.
+  const doc = e.state.doc;
+  const above = doc.content.size - doc.lastChild!.nodeSize - 1;
+  e.view.dispatch(e.state.tr.setSelection(TextSelection.near(doc.resolve(above), -1)).setMeta('addToHistory', false));
 }
 
 /** Markdown with stand-ins back into the document's JSON. */
@@ -114,14 +122,15 @@ function markdownJson(editor: Editor, md: string, refs: Refs): JSONContent {
 }
 
 /** Tags and attributes the document holds as its own; anything else stays exact, as an island. */
-const OWN_TAGS = new Set('p br b strong i em u s del strike code pre a ul ol li blockquote h1 h2 h3 hr span img table thead tbody tr th td'.split(' '));
+const OWN_TAGS = new Set('p br b strong i em u s del strike code pre a ul ol li blockquote h1 h2 h3 hr span img table colgroup col thead tbody tr th td'.split(' '));
 const OWN_ATTRS = new Set(['href', 'src', 'alt', 'width', 'height', 'title', 'rel', 'target', 'colspan', 'rowspan', 'type', 'start', 'dir', 'data-ref']);
 const OWN_STYLE = /^\s*((color|text-align|border(-collapse)?|padding|margin|text-decoration|min-width)\s*:[^;]*;?\s*)*$/i;
 function own(el: Element): boolean {
   if (!OWN_TAGS.has(el.tagName.toLowerCase())) return false;
   for (const a of [...el.attributes]) {
     const n = a.name.toLowerCase();
-    if (n === 'style' ? !OWN_STYLE.test(a.value) : !OWN_ATTRS.has(n)) return false;
+    // A code block's language is its own too (class="language-js").
+    if (n === 'class' ? !/^language-[\w+#-]+$/.test(a.value) : n === 'style' ? !OWN_STYLE.test(a.value) : !OWN_ATTRS.has(n)) return false;
   }
   return [...el.children].every(own);
 }
@@ -143,6 +152,15 @@ function htmlJson(editor: Editor, html: string): JSONContent {
   return generateJSON(out.join(''), editor.extensionManager.extensions);
 }
 
+/** Pasted pictures' bytes out of the HTML view's text, as `dc-picture:id` (as in Markdown), and back in. */
+function picturesOut(html: string, r: Refs): string {
+  const ids = new Map([...r.pictures].map(([ref, src]) => [src, ref]));
+  return html.replace(/src="(data:[^"]+)"/g, (m, src: string) => (ids.has(src) ? `src="dc-picture:${ids.get(src)}"` : m));
+}
+function picturesIn(html: string, r: Refs): string {
+  return html.replace(/src="dc-picture:([\w-]+)"/g, (m, ref: string) => (r.pictures.has(ref) ? `src="${r.pictures.get(ref)}"` : m));
+}
+
 /** The mail's HTML laid out to be read and edited: one block a line. */
 function prettyHtml(html: string): string {
   return html
@@ -160,28 +178,31 @@ const loadCode = () => (codeChunk ??= import('./code.ts'));
 // ------------------------------------------------------------------ the bar
 
 type Cmd = Format | 'underline' | 'color' | 'align' | 'picture' | 'table';
-const BUTTONS: { c: Cmd; label: ComponentChildren; title: string; modes: EditorMode[] }[] = [
+/** `more`: behind the bar's ⋯ until opened (it stays open), to keep the bar to one row. */
+const BUTTONS: { c: Cmd; label: ComponentChildren; title: string; modes: EditorMode[]; more?: true }[] = [
   { c: 'bold', label: <b>B</b>, title: 'Bold (Ctrl+B)', modes: ['rich', 'markdown'] },
   { c: 'italic', label: <i>I</i>, title: 'Italic (Ctrl+I)', modes: ['rich', 'markdown'] },
   { c: 'underline', label: <u>U</u>, title: 'Underline (Ctrl+U)', modes: ['rich'] },
   { c: 'strike', label: <s>S</s>, title: 'Struck through (Ctrl+Shift+S)', modes: ['rich', 'markdown'] },
-  { c: 'color', label: <span class="me-color-a">A</span>, title: 'Text colour', modes: ['rich'] },
+  { c: 'color', label: <span class="me-color-a">A</span>, title: 'Text colour', modes: ['rich'], more: true },
   { c: 'link', label: <Icon name="link" size={15} />, title: 'Link (Ctrl+K); or paste an address over the text', modes: ['rich', 'markdown'] },
   { c: 'bullets', label: <Icon name="list" size={15} />, title: 'Bulleted list (Ctrl+Shift+8)', modes: ['rich', 'markdown'] },
   { c: 'numbers', label: <span class="mc-fmt-num">1.</span>, title: 'Numbered list (Ctrl+Shift+7)', modes: ['rich', 'markdown'] },
   { c: 'quote', label: <span class="mc-fmt-quote">❝</span>, title: 'Quote (Ctrl+Shift+B)', modes: ['rich', 'markdown'] },
   { c: 'heading', label: <span class="mc-fmt-h">H</span>, title: 'Heading: larger, then smaller, then off', modes: ['rich', 'markdown'] },
-  { c: 'code', label: <code>{'</>'}</code>, title: 'Code: in the line, or a block over several lines', modes: ['rich', 'markdown'] },
-  { c: 'align', label: <span class="me-align">≡</span>, title: 'Align: left, centre, right', modes: ['rich'] },
+  { c: 'code', label: <code>{'</>'}</code>, title: 'Code: in the line, or a block over several lines', modes: ['rich', 'markdown'], more: true },
+  { c: 'align', label: <span class="me-align">≡</span>, title: 'Align: left, centre, right', modes: ['rich'], more: true },
   { c: 'picture', label: <Icon name="image" size={15} />, title: 'Picture in the text (or paste or drop one)', modes: ['rich', 'markdown'] },
-  { c: 'table', label: <span class="me-table-ic">▦</span>, title: 'Table (again to remove it)', modes: ['rich'] },
+  { c: 'table', label: <span class="me-table-ic">▦</span>, title: 'Table (again to remove it)', modes: ['rich'], more: true },
   { c: 'clear', label: <span class="mc-fmt-clear">T<sub>x</sub></span>, title: 'Remove formatting (Ctrl+\\)', modes: ['rich', 'markdown'] },
 ];
-const COLORS = ['#1f2328', '#c2410c', '#b91c1c', '#a21caf', '#1d4ed8', '#0f766e', '#15803d', '#a16207'];
+// No near-black: "None" is the text's own colour, which a dark theme draws light.
+const COLORS = ['#c2410c', '#b91c1c', '#a21caf', '#1d4ed8', '#0f766e', '#15803d', '#a16207'];
 const MODES: { m: EditorMode; label: string; title: string }[] = [
   { m: 'rich', label: 'Rich', title: 'Rich text: as it will look' },
   { m: 'markdown', label: 'Markdown', title: 'Markdown, drawn as you type' },
   { m: 'html', label: 'HTML', title: 'The HTML itself, with the mail as it arrives beside it' },
+  { m: 'plain', label: 'Plain', title: 'Plain text only: no HTML part; the text here is exactly what they get' },
 ];
 
 /** What the rich editor is in at the caret, as the bar's pressed buttons. */
@@ -211,6 +232,7 @@ export function MailEditor(p: MailEditorProps) {
   const richHost = useRef<HTMLDivElement>(null);
   const mdHost = useRef<HTMLDivElement>(null);
   const htmlHost = useRef<HTMLDivElement>(null);
+  const plainHost = useRef<HTMLDivElement>(null);
   const preview = useRef<HTMLIFrameElement>(null);
   const editor = useRef<Editor | null>(null);
   const cm = useRef<EditorView | null>(null);
@@ -228,10 +250,37 @@ export function MailEditor(p: MailEditorProps) {
   const [pop, setPop] = useState<null | 'link' | 'color'>(null);
   const [linkText, setLinkText] = useState('');
   const [previewHtml, setPreviewHtml] = useState('');
+  /** On a phone the HTML view shows one at a time: the code, or the mail as it arrives. */
+  const [pane, setPane] = useState<'code' | 'preview'>('code');
   const [, redraw] = useState(0);
   const props = useRef(p);
   props.current = p;
   const pictureInput = useRef<HTMLInputElement>(null);
+  const [more, setMore] = useState(() => {
+    try {
+      return localStorage.getItem('dither.mail.formatMore') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleMore = () => {
+    setMore(!more);
+    try {
+      localStorage.setItem('dither.mail.formatMore', more ? '0' : '1');
+    } catch {}
+  };
+  /** The bar is one stop for Tab; the arrows move along it (and Home, End). */
+  const barKeys = (ev: KeyboardEvent) => {
+    const keys: Record<string, number> = { ArrowRight: 1, ArrowLeft: -1, Home: -1e9, End: 1e9 };
+    if (!(ev.key in keys)) return;
+    const list = [...(ev.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('button')].filter((b) => b.offsetParent);
+    const at = list.indexOf(document.activeElement as HTMLButtonElement);
+    if (at < 0) return;
+    ev.preventDefault();
+    const to = list[Math.max(0, Math.min(list.length - 1, at + keys[ev.key]))];
+    for (const b of list) b.tabIndex = b === to ? 0 : -1;
+    to.focus();
+  };
 
   const mounting = useRef(false);
   const emit = () => {
@@ -244,6 +293,8 @@ export function MailEditor(p: MailEditorProps) {
   const take = async (files: File[]) => {
     const e = editor.current;
     if (!e) return;
+    // Plain text has no pictures in it: they go as files.
+    if (shownRef.current === 'plain') return props.current.onFiles(files);
     const pics = files.filter((f) => isPicture(f) && f.size <= INLINE_MAX);
     const rest = files.filter((f) => !pics.includes(f));
     if (rest.length) props.current.onFiles(rest);
@@ -319,7 +370,10 @@ export function MailEditor(p: MailEditorProps) {
         focus: () => (shownRef.current === 'rich' ? void e.commands.focus() : cm.current?.focus()),
         addPictures: (files) => take(files),
         addIsland: (island, from) => {
-          void switchTo('rich', false).then(() => appendIsland(e, island, from, true));
+          void switchTo('rich', false).then(() => {
+            appendIsland(e, island, from, true);
+            e.commands.focus();
+          });
         },
       };
     if (p.mode !== 'rich') void switchTo(p.mode, false);
@@ -339,7 +393,7 @@ export function MailEditor(p: MailEditorProps) {
   const putBack = (mode: EditorMode, text: string, undoable: boolean) => {
     const e = editor.current;
     if (!e) return;
-    const json = mode === 'markdown' ? markdownJson(e, text, refs.current ?? refsOf(e)) : htmlJson(e, text);
+    const json = mode === 'html' ? htmlJson(e, picturesIn(text, refs.current ?? refsOf(e))) : markdownJson(e, text, refs.current ?? refsOf(e));
     if (undoable && before.current) {
       // Undo takes the session back as one step: from where it began to where it ended.
       replaceDoc(e, before.current, false);
@@ -367,15 +421,15 @@ export function MailEditor(p: MailEditorProps) {
     return true;
   };
 
-  const mountCode = (code: typeof import('./code.ts'), mode: 'markdown' | 'html') => {
+  const mountCode = (code: typeof import('./code.ts'), mode: 'markdown' | 'html' | 'plain') => {
     const e = editor.current!;
     before.current = e.getJSON();
     refs.current = refsOf(e);
     const r = refs.current;
-    const text = mode === 'markdown' ? docMarkdown(e) : prettyHtml(docHtml(e));
+    const text = mode === 'html' ? picturesOut(prettyHtml(docHtml(e)), r) : docMarkdown(e);
     entered.current = text;
     cm.current = code.codeView({
-      parent: mode === 'markdown' ? mdHost.current! : htmlHost.current!,
+      parent: mode === 'html' ? htmlHost.current! : mode === 'plain' ? plainHost.current! : mdHost.current!,
       mode,
       doc: text,
       placeholder: props.current.placeholder,
@@ -392,7 +446,7 @@ export function MailEditor(p: MailEditorProps) {
         typingTimer.current = window.setTimeout(() => {
           putBack(mode, t, false);
           emit();
-          if (mode === 'html') setPreviewHtml(t);
+          if (mode === 'html') setPreviewHtml(picturesIn(t, r));
         }, 300);
       },
       onCaret: () => mode === 'markdown' && redraw((n) => n + 1),
@@ -400,7 +454,7 @@ export function MailEditor(p: MailEditorProps) {
       format: mdFormat,
       indent: mdIndent,
     });
-    if (mode === 'html') setPreviewHtml(text);
+    if (mode === 'html') setPreviewHtml(picturesIn(text, r));
   };
   const unmountCode = (mode: EditorMode) => {
     const v = cm.current;
@@ -487,7 +541,7 @@ export function MailEditor(p: MailEditorProps) {
       mdFormat(v, c);
       return;
     }
-    if (shownRef.current === 'html') return;
+    if (shownRef.current === 'html' || shownRef.current === 'plain') return;
     const ch = e.chain().focus();
     switch (c) {
       case 'bold':
@@ -549,7 +603,17 @@ export function MailEditor(p: MailEditorProps) {
       <div class="me-views">
         <div class={view('rich')} ref={richHost} />
         <div class={view('markdown')} ref={mdHost} />
-        <div class={view('html')}>
+        <div class={view('plain')} ref={plainHost} />
+        <div class={view('html')} data-pane={pane}>
+          {shown === 'html' && (
+            <div class="me-html-panes" role="tablist" aria-label="Show">
+              {(['code', 'preview'] as const).map((x) => (
+                <button type="button" role="tab" aria-selected={pane === x} class={`me-html-pane${pane === x ? ' on' : ''}`} onClick={() => setPane(x)}>
+                  {x === 'code' ? 'HTML' : 'As it arrives'}
+                </button>
+              ))}
+            </div>
+          )}
           <div ref={htmlHost} class="me-html-code" />
           {shown === 'html' && (
             <div class="me-html-preview">
@@ -623,11 +687,12 @@ export function MailEditor(p: MailEditorProps) {
         </div>
       )}
       {p.bar && (
-        <div class="mc-format me-bar" role="toolbar" aria-label="Formatting">
-          {BUTTONS.filter((b) => b.modes.includes(shown)).map((b) => (
+        <div class="mc-format me-bar" role="toolbar" aria-label="Formatting" onKeyDown={barKeys}>
+          {BUTTONS.filter((b) => b.modes.includes(shown) && (more || !b.more)).map((b, i) => (
             <button
               class={`mc-fmt mc-fmt-${b.c}${on.has(b.c) ? ' on' : ''}`}
               type="button"
+              tabIndex={i === 0 ? 0 : -1}
               title={b.title}
               aria-label={b.title}
               aria-pressed={b.c === 'clear' || b.c === 'picture' ? undefined : on.has(b.c)}
@@ -637,7 +702,22 @@ export function MailEditor(p: MailEditorProps) {
               {b.label}
             </button>
           ))}
+          {BUTTONS.some((b) => b.more && b.modes.includes(shown)) && (
+            <button
+              class={`mc-fmt me-more${more ? ' open' : ''}${!more && BUTTONS.some((b) => b.more && on.has(b.c)) ? ' on' : ''}`}
+              type="button"
+              tabIndex={-1}
+              aria-expanded={more}
+              title={more ? 'Fewer buttons' : 'More: colour, code, alignment, tables'}
+              aria-label={more ? 'Fewer buttons' : 'More formatting'}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={toggleMore}
+            >
+              <Icon name={more ? 'back' : 'more'} size={15} />
+            </button>
+          )}
           {shown === 'html' && <span class="me-bar-note">Edit the HTML; the mail as it arrives is beside it.</span>}
+          {shown === 'plain' && <span class="me-bar-note">Plain text, exactly as it goes: no formatting, and pictures in the text are left out.</span>}
           <span class="mc-fmt-gap" />
           <div class="me-modes" role="radiogroup" aria-label="Edit as" onPointerEnter={() => void loadCode()} style={{ '--at': MODES.findIndex((x) => x.m === shown) }}>
             <span class="me-modes-thumb" aria-hidden="true" />
@@ -645,6 +725,7 @@ export function MailEditor(p: MailEditorProps) {
               <button
                 class={`me-mode${shown === x.m ? ' on' : ''}`}
                 type="button"
+                tabIndex={-1}
                 role="radio"
                 aria-checked={shown === x.m}
                 title={x.title}

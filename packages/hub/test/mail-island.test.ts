@@ -4,7 +4,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { demoStoreNewsletter } from '../src/mail/demo-html.ts';
-import { inlineCss, islandOf, islandsOf, outgoingHtml, outgoingText, specificity, type OutgoingCtx } from '../src/mail/island.ts';
+import { inlineCss, islandOf, islandPrint, islandsOf, islandText, outgoingHtml, outgoingText, scriptUrl, specificity, type OutgoingCtx } from '../src/mail/island.ts';
 import { sanitizeMail } from '../src/mail/sanitize.ts';
 import type { ComposeOriginal } from '../src/mail/compose.ts';
 
@@ -31,6 +31,24 @@ describe('inlineCss', () => {
     expect(out).not.toContain('<style>');
     expect(out).toContain('style="color:red;margin:0;color:blue;color:green;color:black"');
     expect(out).toContain('style="color:red;margin:0;color:blue;font-weight:normal;font-weight:bold !important"');
+  });
+
+  test('a sheet hidden in <!-- --> keeps its first rule, and nothing of the marks is left', () => {
+    const html = '<style><!--\np{color:red} .x{margin:0}\n--></style><div class="r"><p class="x">a</p></div>';
+    const out = inlineCss(html, 'r');
+    expect(out).toContain('<p class="x" style="color:red;margin:0">');
+    expect(out).not.toContain('\\3c');
+    expect(out).not.toContain('<style>');
+  });
+
+  test('an element’s own !important beats the sheet’s !important; the sheet’s beats its own plain style', () => {
+    const html = '<style>p{color:red!important;margin:0!important}</style><div class="r"><p style="color:black !important;margin:4px">a</p></div>';
+    const out = inlineCss(html, 'r');
+    const style = /<p style="([^"]*)"/.exec(out)![1];
+    // Last of each property wins: color is its own (important), margin the sheet's (important over a plain one).
+    const last = (prop: string) => style.split(';').filter((d) => d.trim().startsWith(`${prop}:`)).pop();
+    expect(last('color')).toBe('color:black !important');
+    expect(last('margin')).toBe('margin:0 !important');
   });
 
   test('body rules go to the root; @media and hover stay in a sheet scoped to the root', () => {
@@ -113,14 +131,141 @@ describe('outgoingHtml', () => {
   });
 });
 
+const BG = (u: string) => `/api/mail/img/T${encodeURIComponent(u)}`;
+const bgHtml =
+  '<div data-dc-island="forward" data-dc-ref="r2"><div class="dc-isl-r2">' +
+  `<table background="${BG('https://cdn.store.example/bg.png')}"><tr><td style="background:url('${BG('https://cdn.store.example/cell.png')}') no-repeat;color:red">x</td>` +
+  '<td style="background-image:url(https://cdn.store.example/raw.png)">y</td><td background="/api/mail/img/bogus">z</td></tr></table>' +
+  '<style>.dc-isl-r2 .a{background:url("https://cdn.store.example/sheet.png")}</style></div></div>';
+
+describe('outgoingHtml: backgrounds', () => {
+  test('embed: every background goes inside the mail, as pictures do; nothing is fetched on their end', async () => {
+    const asked: string[] = [];
+    const r = await outgoingHtml(bgHtml, ctx({ pictures: 'embed', fetchPicture: async (u) => (asked.push(u), { bytes: PNG, mime: 'image/png' }) }));
+    expect(asked.sort()).toEqual(['https://cdn.store.example/bg.png', 'https://cdn.store.example/cell.png', 'https://cdn.store.example/raw.png', 'https://cdn.store.example/sheet.png']);
+    expect(r.inline).toHaveLength(4);
+    expect(r.embedded).toBe(4);
+    expect(r.insideBytes).toBe(4 * PNG.length);
+    expect(r.html).not.toMatch(/https?:/);
+    expect(r.html).not.toContain('/api/mail/');
+    expect(r.html).toMatch(/<table background="cid:dc\d\.[^"]+">/);
+    expect(r.html).toMatch(/background:url\(&quot;cid:[^&]+&quot;\) no-repeat;color:red/);
+    expect(r.html).toMatch(/\.dc-isl-r2 \.a\{background:url\("cid:/);
+    // An address of this hub that stands for nothing goes.
+    expect(r.html).toContain('<td>z</td>');
+  });
+
+  test('embed without inline parts: data: URLs; a background that cannot be fetched stays linked', async () => {
+    const r = await outgoingHtml(bgHtml, ctx({ pictures: 'embed', inlineParts: false, fetchPicture: async (u) => (u.endsWith('raw.png') ? null : { bytes: PNG, mime: 'image/png' }) }));
+    expect(r.inline).toHaveLength(0);
+    expect(r.html).toContain('background="data:image/png;base64,');
+    expect(r.html).toContain('url(&quot;https://cdn.store.example/raw.png&quot;)');
+    expect(r.failed).toBe(1);
+    expect(r.html).not.toContain('/api/mail/');
+  });
+
+  test('link: this hub’s addresses become the addresses they stand for', async () => {
+    const r = await outgoingHtml(bgHtml, ctx());
+    expect(r.html).toContain('<table background="https://cdn.store.example/bg.png">');
+    expect(r.html).toContain('url(&quot;https://cdn.store.example/cell.png&quot;)');
+    expect(r.html).toContain('url(&quot;https://cdn.store.example/raw.png&quot;)');
+    expect(r.html).toContain('url("https://cdn.store.example/sheet.png")');
+    expect(r.html).not.toContain('/api/mail/');
+    expect(r.linked).toBe(4);
+  });
+
+  test('drop: backgrounds from the web are left out', async () => {
+    const r = await outgoingHtml(bgHtml, ctx({ pictures: 'drop' }));
+    expect(r.html).not.toContain('cdn.store.example');
+    expect(r.html).not.toContain('/api/mail/');
+    expect(r.html).not.toContain('background=');
+    expect(r.html).toContain('background:none no-repeat;color:red');
+    expect(r.dropped).toBe(4);
+  });
+
+  test('a picture’s address with &amp; in it is fetched and linked as the address it is', async () => {
+    const html = '<p><img data-dc-src="https://cdn.store.example/p.png?w=1&amp;h=2" src="/x"></p>';
+    const asked: string[] = [];
+    await outgoingHtml(html, ctx({ pictures: 'embed', fetchPicture: async (u) => (asked.push(u), { bytes: PNG, mime: 'image/png' }) }));
+    expect(asked).toEqual(['https://cdn.store.example/p.png?w=1&h=2']);
+    expect((await outgoingHtml(html, ctx())).html).toContain('src="https://cdn.store.example/p.png?w=1&amp;h=2"');
+  });
+});
+
+describe('outgoingHtml: script addresses', () => {
+  test('javascript: however it is written goes; ordinary links stay', async () => {
+    const bad = ['java&#9;script:alert(1)', '&#106;avascript:alert(1)', ' javascript:alert(1)', 'jav&Tab;ascript:alert(1)', 'java&#x0A;script:alert(1)', 'JaVaScRiPt:alert(1)', 'vbscript:msgbox(1)', '\u0001javascript:alert(1)'];
+    for (const b of bad) expect(scriptUrl(b)).toBe(true);
+    const html = bad.map((b, i) => `<a href="${b}">l${i}</a>`).join('') + '<a href="https://x.example/?a=1&amp;b=2">ok</a><a href="mailto:a@b.example">m</a>';
+    const r = await outgoingHtml(html, ctx());
+    expect(r.html).not.toMatch(/script:/i);
+    expect(r.html.match(/href=/g)).toHaveLength(2);
+    expect(r.html).toContain('href="https://x.example/?a=1&amp;b=2"');
+    expect(scriptUrl('https://x.example/javascript:')).toBe(false);
+  });
+});
+
+const wrap = (isl: { kind: string; html: string }, ref = 'r1') => `<p>Hi</p><div data-dc-island="${isl.kind}" data-dc-ref="${ref}" data-dc-label="x">${isl.html}</div>`;
+
 describe('outgoingText', () => {
   test('stand-ins become the forwarded block and picture names', () => {
+    const isl = islandOf('forward', o, null, 'r1', 'UTC');
     const md = 'Hi **there**\n\n![shot](dc-picture:p1)\n\n[[island:r1]]\n';
-    const t = outgoingText(md, draftHtml, o, 'UTC');
+    const html = `<p>Hi <b>there</b></p><p><img src="data:image/png;base64,${PNG.toString('base64')}" alt="shot"></p>${wrap(isl).replace('<p>Hi</p>', '')}`;
+    const t = outgoingText(md, html, o, 'UTC');
     expect(t).toContain('Hi **there**');
     expect(t).toContain('[picture: shot]');
     expect(t).toContain('---------- Forwarded message ---------');
     expect(t).toContain('Our biggest sale.');
-    expect(islandsOf(draftHtml).get('r1')?.kind).toBe('forward');
+    expect(islandsOf(html).get('r1')?.kind).toBe('forward');
+  });
+
+  test('textBytes is what the island adds to the text part, for a forward of a big HTML mail too', () => {
+    const san = sanitizeMail(demoStoreNewsletter(), { images: 'block', keepSource: true, decide: () => ({ action: 'load', class: 'shared', why: '' }), proxy: (u) => `/api/mail/img/T${encodeURIComponent(u)}` });
+    const short = { ...o, text: 'Short text.' };
+    for (const [isl, orig] of [
+      [islandOf('forward', short, san, 'r1', 'UTC'), short],
+      [islandOf('quote', o, null, 'r1', 'UTC'), o],
+    ] as const) {
+      const t = outgoingText('[[island:r1]]', wrap(isl), orig, 'UTC');
+      expect(Buffer.byteLength(t)).toBe(isl.textBytes!);
+      expect(isl.textBytes).toBe(Buffer.byteLength(islandText(isl, orig, 'UTC')));
+    }
+    // The forward's text part is the original's text, far smaller than the island's HTML's text.
+    const fwd = islandOf('forward', short, san, 'r1', 'UTC');
+    expect(fwd.textBytes!).toBeLessThan(1000);
+    expect(outgoingText('[[island:r1]]', wrap(fwd), short, 'UTC')).toContain('Short text.');
+  });
+
+  test('an island as a browser writes it back (new lines, entities) is still the one the hub made', () => {
+    const isl = islandOf('forward', { ...o, text: 'Fish & chips, “today”.' }, null, 'r1', 'UTC');
+    const html = isl.html.replace(/></g, '>\n<').replace(/“/g, '&ldquo;').replace(/”/g, '&rdquo;');
+    expect(islandPrint(html)).toBe(islandPrint(isl.html));
+    const t = outgoingText('[[island:r1]]', wrap({ kind: 'forward', html }), { ...o, text: 'Fish & chips, “today”.' }, 'UTC');
+    expect(t).toContain('---------- Forwarded message ---------');
+  });
+
+  test('an island edited in the HTML view: the text part is made from its HTML, not the original', () => {
+    const fwd = islandOf('forward', o, null, 'r1', 'UTC');
+    const edited = fwd.html.replace('Our biggest sale.', 'A smaller sale, edited.');
+    const t = outgoingText('[[island:r1]]', wrap({ kind: 'forward', html: edited }), o, 'UTC');
+    expect(t).toContain('A smaller sale, edited.');
+    expect(t).not.toContain('Our biggest sale.');
+    expect(t).toContain('Forwarded message');
+    // A quote edited: its attribution, then its words quoted.
+    const q = islandOf('quote', o, null, 'r1', 'UTC');
+    const qt = outgoingText('[[island:r1]]', wrap({ kind: 'quote', html: q.html.replace('Members save more.', 'Members save less.') }), o, 'UTC');
+    expect(qt).toMatch(/wrote:\n> Our biggest sale\.\n> Members save less\./);
+    // One without the hub's fingerprint (pasted in) counts as edited.
+    const bare = outgoingText('[[island:r1]]', wrap({ kind: 'forward', html: '<p>Pasted words</p>' }), o, 'UTC');
+    expect(bare).toBe('Pasted words');
+  });
+
+  test('a forward of a mail with no text part: the text is the island’s own', () => {
+    const htmlOnly = { ...o, text: null };
+    const isl = islandOf('forward', htmlOnly, { html: '<p>Only <b>HTML</b> here.</p>', body: {} }, 'r1', 'UTC');
+    const t = outgoingText('[[island:r1]]', wrap(isl), htmlOnly, 'UTC');
+    expect(t).toContain('Forwarded message');
+    expect(t).toContain('Only HTML here.');
   });
 });

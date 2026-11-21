@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS mail_message (
   addressed       TEXT NOT NULL DEFAULT 'hidden', -- to | cc | hidden | self
   class           TEXT,                         -- slice 8
   class_why       TEXT,
-  images_allowed  INTEGER NOT NULL DEFAULT 0,   -- slice 3
+  images_allowed  INTEGER NOT NULL DEFAULT 0,   -- slice 3: pictures (bits 0-1: 1 all, 2 shared, 3 none) | trackers (4 keep, 8 remove)
   email_id        TEXT                          -- the server's id for it in every mailbox (Gmail's X-GM-MSGID), when it has one
 );
 CREATE INDEX IF NOT EXISTS mail_message_thread ON mail_message(thread_id, received_at);

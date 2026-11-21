@@ -5,7 +5,7 @@
  *   fetches them; a personal one can tell the original sender), Embed (fetched now and sent inside the mail: nothing
  *   is fetched on their end) or Leave out, each with what it does to the size.
  * - `SizeMeter`: the footer's "≈ 188 KB of 25 MB", which opens the breakdown: text, HTML, pictures inside, files, the
- *   total as sent, and what their app loads on their end; and "Plain text only".
+ *   total as sent, and what their app loads on their end. (Plain text only is the editor's Plain view.)
  */
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -21,8 +21,17 @@ const about = (b: number, unknown: number) => (unknown ? (b ? `${bytes(b)} + ${u
 /** What the hub knows of pictures from the web, asked once per address. */
 const known = new Map<string, { size: number | null; class: string }>();
 
-export function useDraftSize(o: { html: string | null | undefined; text: string; plainOnly: boolean; mode: P.MailOutgoingPictures; files: number; accountId: string }): SizeLine & { webCount: number; canTellAll: number } {
-  const m = useMemo(() => measureHtml(o.html), [o.html]);
+export function useDraftSize(o: {
+  html: string | null | undefined;
+  text: string;
+  plainOnly: boolean;
+  mode: P.MailOutgoingPictures;
+  files: number;
+  accountId: string;
+  /** The forward or quote as the hub made it (its text part's share). */
+  island?: P.MailIsland | null;
+}): SizeLine & { webCount: number; canTellAll: number } {
+  const m = useMemo(() => measureHtml(o.html, o.island), [o.html, o.island]);
   const [, redraw] = useState(0);
   const asking = useRef(false);
   const key = m.pictures.web.join('\n');
@@ -71,6 +80,8 @@ export function PicturesChoice({ s, mode, onMode, inlineParts }: { s: ReturnType
         {MODES.map((x) => (
           <button type="button" role="radio" aria-checked={mode === x.m} class={`mc-seg-btn${mode === x.m ? ' on' : ''}`} onClick={() => onMode(x.m)}>
             {x.label}
+            {/* Said on the choice itself: linking these tells the original sender the mail was opened. */}
+            {x.m === 'link' && s.canTellAll > 0 && <span class="mc-seg-warn"> · {s.canTellAll} can tell</span>}
           </button>
         ))}
       </span>
@@ -80,7 +91,7 @@ export function PicturesChoice({ s, mode, onMode, inlineParts }: { s: ReturnType
 }
 
 /** "≈ 188 KB of 25 MB", and the breakdown under it. */
-export function SizeMeter({ s, cap, plainOnly, onPlainOnly, hasHtml }: { s: ReturnType<typeof useDraftSize>; cap: number; plainOnly: boolean; onPlainOnly: (v: boolean) => void; hasHtml: boolean }) {
+export function SizeMeter({ s, cap, plainOnly }: { s: ReturnType<typeof useDraftSize>; cap: number; plainOnly: boolean }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -94,7 +105,8 @@ export function SizeMeter({ s, cap, plainOnly, onPlainOnly, hasHtml }: { s: Retu
       document.removeEventListener('keydown', esc, true);
     };
   }, [open]);
-  const over = s.sent > cap;
+  // The account's cap counts the files' and pictures' own bytes (what dither-accounts checks), not their base64.
+  const over = s.files + s.inside.bytes + s.embedded.bytes > cap;
   const rows: [string, string][] = [
     ['Text part', bytes(s.text)],
     ...(plainOnly ? [] : ([['HTML part', bytes(s.html)]] as [string, string][])),
@@ -131,16 +143,8 @@ export function SizeMeter({ s, cap, plainOnly, onPlainOnly, hasHtml }: { s: Retu
               )}
             </tbody>
           </table>
-          <p class="mc-size-note">Pictures and files travel as base64, a third bigger than they are. This account takes {mbText(cap)} on one message.</p>
-          {hasHtml && (
-            <label class="mc-size-plain">
-              <input type="checkbox" checked={plainOnly} onChange={(e) => onPlainOnly((e.target as HTMLInputElement).checked)} />
-              <span>
-                Plain text only
-                <span class="mc-size-faint"> — no formatting, pictures or layout: what you see in Markdown is what they get</span>
-              </span>
-            </label>
-          )}
+          <p class="mc-size-note">Pictures and files travel as base64, a third bigger than they are. This account takes {mbText(cap)} of files and pictures on one message.</p>
+          {plainOnly && <p class="mc-size-note">Plain text only: no HTML part (the editor's Plain view).</p>}
         </div>
       )}
     </div>
