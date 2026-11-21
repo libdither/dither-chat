@@ -91,6 +91,23 @@ The manager keeps running the remote adapters. Their events wait for the hub in 
 If more wait than the manager keeps (100,000 events or 64 MB), it drops that account's and tells the hub (a gap). The
 hub then restarts that adapter, and its fresh snapshot fills the hole.
 
+Once the manager has handed events over, it keeps no copy and never sends them again, so they are the hub's to keep.
+A big batch (a backlog after a gap, a history page) waits in the hub's memory while it is applied a slice at a time,
+and events the database was locked for wait to be tried again (`packages/hub/src/supervisor.ts`). A stop therefore:
+
+1. closes the manager's client and stops the adapters it runs itself, so nothing new comes in;
+2. applies everything still queued or held, for up to a minute from the signal (the unit sets no `TimeoutStopSec`,
+   so systemd allows 90 s);
+3. writes whatever is left (time ran out, the database stayed locked) to `<data>/pending-events.ndjson`, private to
+   the hub's user, one line per account batch in order, written whole or not at all.
+
+The next start applies that file before any adapter or the manager can send anything, so each account's carried-over
+events go in before its newer ones, and removes the file once they are in. The log says how many events were applied
+at the stop and how many were carried over. An event that is lost anyway (the file could not be written, a line of it
+could not be read) is logged as lost, with counts, and reported to `traces/errors.ndjson`. Events the database stays
+locked for are no longer dropped after a minute either: they are kept and tried every 30 s, and saved to the same file
+meanwhile, so a crash does not lose them.
+
 An account that becomes remote while the manager already has it online is also restarted once, for the same reason:
 its snapshot went by before the hub could see it.
 

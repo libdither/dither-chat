@@ -578,6 +578,9 @@ if (demoNotices && notices) {
 }
 if (manager instanceof DemoManager) manager.publish();
 startup.mark('server');
+// What the last run's stop could not apply (supervisor.ts `settle`), in before any adapter or the manager can send
+// anything newer.
+if (sup.resume()) startup.mark('carried-over events');
 // Before the manager's first account list, so mail hears it.
 mail.start();
 startup.mark('mail start');
@@ -634,7 +637,18 @@ setTimeout(() => {
   console.log(startup.line());
 });
 
+/**
+ * How long a stop may take before it gives up applying adapter events (supervisor.ts `settle`) and carries the rest
+ * over to the next start. The unit sets no TimeoutStopSec, so systemd kills the hub 90 s after SIGTERM (the deployer's
+ * `systemctl restart` waits for that); this leaves about half a minute for what follows: the journal, the last
+ * checkpoint, the files.
+ */
+const STOP_APPLY_MS = 60_000;
+let stopping = false;
 const shutdown = async () => {
+  if (stopping) return;
+  stopping = true;
+  const stopBy = Date.now() + STOP_APPLY_MS;
   // What is being triaged finishes first (a few seconds at most); the rest waits in triage_pending for the next start.
   await Promise.race([queue, new Promise((r) => setTimeout(r, 5_000))]);
   backup.stop();
@@ -646,7 +660,12 @@ const shutdown = async () => {
   calendars.stop();
   embeddings?.close();
   server.stop();
+  // Nothing new comes after this: the manager's client is closed and the adapters here are stopped.
   await sup.stopAll();
+  // Adapter events still queued or held (a backlog after a gap, a locked database): the manager handed them over and
+  // keeps no copy, so they are applied now, and what does not make it by stopBy is carried over to the next start.
+  // From here to exit nothing awaits, so no event can come in between.
+  sup.settle(stopBy);
   // What stopping changed is in the journal too; then the next start can trust it (journal.ts).
   server.flush();
   store.journal.close();
