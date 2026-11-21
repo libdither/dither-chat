@@ -227,6 +227,25 @@ describe('networks without the command', () => {
   });
 });
 
+describe('Zulip', () => {
+  test('@everyone and @here where the extractor says you may, as text its extractor turns into @**all** and @**topic**', async () => {
+    const z = store.createAccount({ network: 'zulip', label: 'Zulip', color: '#6492FE', adapter: 'zulip' });
+    store.db.query('UPDATE account SET capabilities = ? WHERE id = ?').run(JSON.stringify(['mentionables']), z.id);
+    store.ingest(z, { t: 'conversation', conversation: { nativeId: 'chat.example.org/s/3', shape: 'channel', variant: 'forum', name: 'general' } });
+    store.ingest(z, { t: 'conversation', conversation: { nativeId: 'chat.example.org/s/3/t/plans', shape: 'thread', name: 'plans', parentConversation: 'chat.example.org/s/3' } });
+    const topic = conv('zulip', 'plans');
+    instead = async () => ({ people: [], roles: [], everyone: true });
+    const v = await view(topic, '', { account: z.id });
+    expect(v.rows.filter((r) => r.kind === 'everyone' || r.kind === 'here').map((r) => [r.kind, r.insert])).toEqual([
+      ['everyone', '@everyone '],
+      ['here', '@here '],
+    ]);
+    // A big channel where you may not: the extractor says so, and neither row comes.
+    instead = async () => ({ people: [], roles: [], everyone: false });
+    expect((await view(topic, '', { account: z.id })).rows.some((r) => r.kind === 'everyone' || r.kind === 'here')).toBe(false);
+  });
+});
+
 describe('Matrix', () => {
   test('@room where your power level allows it, and never @here', async () => {
     const house = await view(conv('matrix', 'Housemates'));
