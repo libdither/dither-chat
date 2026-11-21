@@ -72,7 +72,7 @@ function visibleSpace(s: P.SpaceView) {
 /** Replace raw <@id> / <#id> tokens in stored preview text with readable names. */
 export function resolveTokens(text: string, network: P.Network): string {
   return text
-    .replace(/<@&\d+>/g, '@role')
+    .replace(/<@&[^>\s]+>/g, '@role')
     .replace(/<@!?([^>\s]+)>/g, (_, id) => {
       const hid = db.identityByNative.get(`${network}:${id}`);
       return '@' + (hid ? (isSelfIdentity(hid) ? 'you' : authorName(hid)) : 'user');
@@ -188,6 +188,7 @@ export function kindLabel(c: P.ConversationView): string {
       return `${n} notes to self`;
     case 'thread': {
       const parent = c.parentId ? db.conversations.get(c.parentId) : null;
+      if (c.network === 'zulip') return 'Zulip topic';
       return parent?.variant === 'forum' ? `${n} forum post` : `${n} thread`;
     }
     case 'channel':
@@ -195,6 +196,8 @@ export function kindLabel(c: P.ConversationView): string {
       if (c.network === 'matrix') return c.spaceIds.length ? `Matrix ${variant}room` : 'Matrix room (no space)';
       // A Telegram forum's topic (dither-accounts' forums as spaces); its "channels" are broadcast groups.
       if (c.network === 'telegram') return 'Telegram topic';
+      // A Zulip channel is a forum of topics (dither-accounts' docs/zulip.md).
+      if (c.network === 'zulip') return 'Zulip channel';
       if (c.variant === 'follow') return `${n} post you follow`;
       return `${n} ${variant}channel`;
   }

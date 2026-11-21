@@ -72,6 +72,7 @@ const WHAT_NETWORKS_SHARE: Record<P.Network, string> = {
   lemmy: 'Name, handle, bio and picture, as their Lemmy profile shows them.',
   substack: 'Name, handle, bio and picture, and the publications they write.',
   bluesky: 'Name, handle, bio and picture, as their Bluesky profile shows them.',
+  zulip: 'Name, picture and role in the organization, their status, time zone and the profile fields the organization asks for.',
 };
 
 /** What a network says when someone wrote nothing. */

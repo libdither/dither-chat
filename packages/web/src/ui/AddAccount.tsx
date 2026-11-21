@@ -94,6 +94,18 @@ const NET_HELP: Record<P.Network, { adapter: string; blurb: string; fields: { ke
     blurb: 'Brings your Bluesky Following and Discover feeds, threads and notifications to the Feed page, where you can reply, like, repost and quote. It runs in dither-accounts; after you add it, sign in to Bluesky there.',
     fields: [],
   },
+  // Runs only in dither-accounts (its docs/zulip.md): the organization's address and email are settings, the key a secret.
+  zulip: {
+    adapter: 'zulip',
+    blurb: "Talks to your Zulip organization with Zulip's own API, as its apps do. Channels come as forums whose topics are threads, with your direct messages, reactions, polls, starred messages and reminders. Give it an API key (Zulip: Personal settings → Account & privacy → API key), or your password once, which it swaps for a key and forgets.",
+    fields: [
+      { key: 'server', label: 'Organization URL', placeholder: 'https://chat.example.org' },
+      { key: 'email', label: 'Email', placeholder: 'you@example.org' },
+      { key: 'apiKey', label: 'API key', secret: true, optional: true },
+      { key: 'password', label: 'Password (instead of an API key)', secret: true, optional: true },
+    ],
+    config: ['server', 'email'],
+  },
   // Runs only in dither-accounts, beside T3 Code on the same machine (its docs/t3.md).
   t3: {
     adapter: 't3',
@@ -310,13 +322,17 @@ function AddChat({ network, onClose }: { network: P.Network; onClose: () => void
     setBusy(true);
     try {
       const secret: Record<string, string> = {};
-      for (const f of help.fields) if (fields[f.key]) secret[f.key] = fields[f.key];
+      const settings: Record<string, string> = {};
+      for (const f of help.fields) if (fields[f.key]) {
+        if (help.config?.includes(f.key)) settings[f.key] = fields[f.key].trim();
+        else secret[f.key] = fields[f.key];
+      }
       const account = await api<P.AccountView>('/api/accounts', {
         body: {
           network,
           adapter: help.adapter,
           label: label.trim() || undefined,
-          config: network === 'matrix' ? { homeserver } : network === 'calendar' ? { url: calendarUrl.trim() } : {},
+          config: network === 'matrix' ? { homeserver } : network === 'calendar' ? { url: calendarUrl.trim() } : settings,
           secret,
         },
       });

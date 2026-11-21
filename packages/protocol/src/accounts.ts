@@ -30,6 +30,7 @@ export const NETWORK_FEATURES: Record<Network, AccountFeature[]> = {
   instagram: ['chat'],
   x: ['chat', 'feed'],
   t3: ['chat'],
+  zulip: ['chat'],
   email: ['mail'],
   calendar: ['chat', 'calendar'],
   // Posts only, on the Feed page (docs/feed.md): no chats.
