@@ -390,7 +390,7 @@ still gets a panel: the hub builds it from what it stores (name, topic, picture,
 
 ## The panel
 
-**About** in a conversation's or space's right-click menu, the conversation header's info button, the details
+**About** in a conversation's or space's right-click menu, the conversation header's info button (under ⋯ on a phone), the details
 panel and the space header. A dialog on the desktop, a sheet on a phone: picture, name and description at the
 top (with a pencil where you may change them), then Settings (a switch, a choice or a field where you may, the
 value and a lock with the reason where you may not), Invite link, Pinned, Members (with roles, as Discord's member

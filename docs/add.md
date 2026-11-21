@@ -366,8 +366,12 @@ How each of your accounts stands with someone, and ending it (2026-11-09). An in
   network that will not open it says why, on the card.
 - **A DM's banner.** A direct conversation's view carries `pending` when a friend or follow request waits between one
   of its accounts and the other person: theirs (from `add_request`, with the request to answer) or yours (the list
-  says `requested`). The page shows it under the header, as Discord does: "Wren wants to be friends" with Accept,
-  Decline and Block (and the warning), or "Friend request sent" with Cancel.
+  says `requested`). Theirs waits on you, so the page shows it as a bar under the header, as Discord does: "Wren wants
+  to be friends" with Accept, Decline and Block (and the warning). Yours waits on them, so it is no bar: a dashed
+  "Request sent" mark at the end of the line under the name (with the network's icon where it is another route's of
+  that person), whose menu says from which account and has Cancel request, and a note over the message box while you
+  write through that account ("Discord: they haven't accepted your friend request from alt yet", with Cancel request).
+  Until 2026-11-20 it was a bar too, "Friend request sent" with Cancel.
 - **Removing.** POST /api/people/:identityId/remove asks the adapter (`remove`) to end what the owner saw: friend →
   unfriend, requested → cancel, blocked → unblock, contact → remove the contact, following → unfollow. The adapter
   refuses when the network says otherwise now ("That changed; look again"). Only on a click on the hub's own page,

@@ -16,7 +16,7 @@ import { CONNECTION_KINDS, CONNECTION_TITLE, connectionLine, linkKind, linksLine
 import { accountLine, ANSWER_LABEL, canRemove, FOLLOW_NETWORKS, groupRequests, linkRows, linkSinceLine, messageRequestNote, nameMatches, relation, removeNote, removeQuestion, requestLine, requestsRow, sentence, waitingOnYou, sortLinkRows, talkedLine, targetMembers, type LinkSort } from '../requests.ts';
 import { api, applyEvents, db, go, openDirect, openProfile, rev, toast } from '../state.ts';
 import { LiveView } from './Accounts.tsx';
-import { Avatar, Empty, Modal, NetBadge, NetGlyph } from './bits.tsx';
+import { Avatar, Empty, Menu, Modal, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { HeadOrb } from './Offline.tsx';
 import { contextMenu, groups, openMenu, useMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
@@ -513,59 +513,140 @@ function RemoveDialog({ identityId, accountId, relationship, onClose, onDone }: 
   );
 }
 
-/** A DM shows a friend request it is about, either way: theirs with Accept, Decline and Block; yours with Cancel. */
+/**
+ * A DM shows a friend request they sent you as a bar over the chat, with Accept, Decline and Block: it waits on you.
+ * One you sent waits on them, so it is a mark by the line under the name (`RequestSentMark`) and a note over the
+ * message box while you write through that account (`RequestSentNote`), not a bar.
+ */
 export function LinkBanner({ c }: { c: P.ConversationView }) {
-  const [cancel, setCancel] = useState(false);
   const p = c.pending;
-  if (!p) return null;
+  if (!p?.incoming) return null;
   const name = identityName(p.identityId);
   const account = db.accounts.get(p.accountId);
   const who = db.identities.get(p.identityId);
   const several = c.vantages.length > 1 || [...db.accounts.values()].filter((a) => a.network === c.network).length > 1;
-  const line = (incoming: boolean) => accountLine(c.network, account?.label).replace(/^to /, incoming ? 'to ' : 'from ');
-  const via = (incoming: boolean) => (several && account ? <small class="link-banner-acc">{line(incoming)}</small> : null);
-  if (p.incoming) {
-    const r = p.requestId ? db.requests.find((x) => x.id === p.requestId) : undefined;
-    if (!r) return null;
-    return (
-      <div class="link-banner incoming" role="region" aria-label="Friend request" data-request={r.id}>
-        <div class="link-banner-head">
-          <Avatar id={p.identityId} name={name} url={who?.avatar} size={28} />
-          <span class="link-banner-text">
-            <span>
-              <b>{name}</b> {requestLine(r)}
-            </span>
-            {via(true)}
-          </span>
-        </div>
-        <Answers r={r} name={name} />
-      </div>
-    );
-  }
+  const r = p.requestId ? db.requests.find((x) => x.id === p.requestId) : undefined;
+  if (!r) return null;
   return (
-    <div class="link-banner outgoing" role="region" aria-label="Friend request sent">
+    <div class="link-banner incoming" role="region" aria-label="Friend request" data-request={r.id}>
       <div class="link-banner-head">
-        <Icon name="userPlus" size={16} />
+        <Avatar id={p.identityId} name={name} url={who?.avatar} size={28} />
         <span class="link-banner-text">
-          <span>Friend request sent</span>
-          {via(false)}
+          <span>
+            <b>{name}</b> {requestLine(r)}
+          </span>
+          {several && account && <small class="link-banner-acc">{accountLine(c.network, account.label)}</small>}
         </span>
-        {canRemove(account) && (
-          <button class="btn ghost small" data-remove="requested" onClick={() => setCancel(true)}>
-            Cancel
-          </button>
-        )}
       </div>
-      {cancel && (
-        <RemoveDialog
-          identityId={p.identityId}
-          accountId={p.accountId}
-          relationship="requested"
-          onClose={() => setCancel(false)}
-          onDone={() => applyEvents([{ t: 'conversation', conversation: { ...c, pending: undefined } }])}
-        />
-      )}
+      <Answers r={r} name={name} />
     </div>
+  );
+}
+
+/** A friend request you sent and they haven't answered, on one of these conversations: the one sending first. */
+const sentOn = (convs: P.ConversationView[]) => convs.find((c) => c.pending && !c.pending.incoming);
+
+/** Cancelling a request you sent: the dialog, and the conversation without it once it is done. */
+function CancelSent({ c, onClose }: { c: P.ConversationView; onClose: () => void }) {
+  const p = c.pending!;
+  return (
+    <RemoveDialog
+      identityId={p.identityId}
+      accountId={p.accountId}
+      relationship="requested"
+      onClose={onClose}
+      onDone={() => applyEvents([{ t: 'conversation', conversation: { ...c, pending: undefined } }])}
+    />
+  );
+}
+
+/**
+ * By the line under a DM's name: a friend request you sent is waiting, on which network and from which account of
+ * yours, with Cancel in its menu. `convs`: the conversation, or every chat of a person's (the one sending first).
+ */
+export function RequestSentMark({ convs }: { convs: P.ConversationView[] }) {
+  const [cancel, setCancel] = useState<P.ConversationView | null>(null);
+  const c = sentOn(convs);
+  if (!c && !cancel) return null;
+  const at = (c ?? cancel)!;
+  const p = at.pending;
+  const account = p ? db.accounts.get(p.accountId) : undefined;
+  const net = netName(at.network);
+  const title = `Friend request sent on ${net}${account ? ` from ${account.label}` : ''}`;
+  return (
+    <>
+      {c && p && (
+        <Menu
+          align="left"
+          trigger={(toggle) => (
+            <button class="req-sent" data-track="request sent" data-network={at.network} title={title} aria-label={`${title}: waiting for them to accept`} onClick={toggle}>
+              {/* On a person's chat the request can be another route's: its network says which. */}
+              {at.id !== convs[0]?.id && <NetGlyph network={at.network} size={10} />}
+              <Icon name="clock" size={12} />
+              <span class="req-sent-label">Request sent</span>
+            </button>
+          )}
+        >
+          {(close) => (
+            <div class="req-sent-menu">
+              <div class="menu-title">Friend request sent on {net}</div>
+              <p class="req-sent-what">
+                {account && (
+                  <>
+                    <span class="acc-dot" style={{ background: account.color }} /> from {account.label} ·{' '}
+                  </>
+                )}
+                waiting for {identityName(p.identityId)} to accept
+              </p>
+              {canRemove(account) && (
+                <button
+                  class="menu-item danger"
+                  data-remove="requested"
+                  onClick={() => {
+                    close();
+                    setCancel(c);
+                  }}
+                >
+                  <Icon name="x" size={15} />
+                  <span>
+                    <b>Cancel request</b>
+                  </span>
+                </button>
+              )}
+            </div>
+          )}
+        </Menu>
+      )}
+      {cancel && <CancelSent c={cancel} onClose={() => setCancel(null)} />}
+    </>
+  );
+}
+
+/** Over the message box, while you write through an account whose friend request they haven't accepted yet. */
+export function RequestSentNote({ c }: { c: P.ConversationView | undefined }) {
+  // The conversation as it was when Cancel was pressed: its request goes once the dialog has done it.
+  const [cancel, setCancel] = useState<P.ConversationView | null>(null);
+  const p = c?.pending;
+  const shown = !!c && !!p && !p.incoming;
+  if (!shown && !cancel) return null;
+  const account = p ? db.accounts.get(p.accountId) : undefined;
+  return (
+    <>
+      {shown && (
+        <div class="composer-reply req-sent-note" data-network={c.network}>
+          <Icon name="clock" size={13} />
+          <span>
+            {netName(c.network)}: they haven't accepted your friend request{account ? ` from ${account.label}` : ''} yet
+          </span>
+          {canRemove(account) && (
+            <button class="chip-btn" data-remove="requested" onClick={() => setCancel(c)}>
+              Cancel request
+            </button>
+          )}
+        </div>
+      )}
+      {cancel && <CancelSent c={cancel} onClose={() => setCancel(null)} />}
+    </>
   );
 }
 

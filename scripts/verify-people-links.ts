@@ -197,25 +197,30 @@ try {
   await p.until(`!document.querySelector('.link-banner')`, 8000);
   check(!(await bootstrap()).requests.some((r: any) => r.id === wrenReq.id), 'Decline from the banner answers it, and the banner goes');
 
-  // 5. A request you sent: its DM says so, with Cancel.
+  // 5. A request you sent: no bar over its DM; a mark by the line under the name, a note over the message box, Cancel.
   const opened = await fetch(`${hub}/api/directs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ accountId: DALT, peer: mara.nativeId }) }).then((r) => r.json());
   const maraConv = opened.conversation?.id;
   check(opened.conversation?.pending?.incoming === false, 'the DM with someone you asked carries the request', opened.conversation?.pending);
-  await open(`#/inbox/c/${maraConv}`, '.link-banner.outgoing');
-  check((await text('.link-banner')).includes('Friend request sent') && (await text('.link-banner')).includes('from your Discord account alt') && (await has('.link-banner [data-remove="requested"]')), '"Friend request sent" from alt, with Cancel', await text('.link-banner'));
+  await open(`#/inbox/c/${maraConv}`, '.conv-head .req-sent');
+  const mark = await p.eval<string>(`document.querySelector('.conv-head .req-sent')?.getAttribute('title') ?? ''`);
+  check(mark === 'Friend request sent on Discord from alt' && !(await has('.link-banner')), 'the header marks "Friend request sent" from alt, and no bar', mark);
+  check((await text('.req-sent-note')).includes("Discord: they haven't accepted your friend request from alt yet") && (await has('.req-sent-note [data-remove="requested"]')), 'the message box notes it, with Cancel request', await text('.req-sent-note'));
   await shot('links-05-sent-desktop');
   await phone();
-  await open(`#/inbox/c/${maraConv}`, '.link-banner.outgoing');
+  await open(`#/inbox/c/${maraConv}`, '.conv-head .req-sent');
   await fits('the DM with a request sent');
   await shot('links-05-sent-phone');
   await desktop();
-  await open(`#/inbox/c/${maraConv}`, '.link-banner.outgoing');
-  await click('.link-banner [data-remove="requested"]');
+  await open(`#/inbox/c/${maraConv}`, '.conv-head .req-sent');
+  await click('.conv-head .req-sent');
+  await p.until(`!!document.querySelector('.req-sent-menu [data-remove="requested"]')`, 5000);
+  await shot('links-05-sent-menu');
+  await click('.req-sent-menu [data-remove="requested"]');
   await p.until(`!!document.querySelector('[data-remove-dialog="requested"]')`, 5000);
   check((await text('[data-remove-dialog]')).includes('Cancel your friend request to Mara on your Discord account alt?'), 'Cancel asks first', await text('[data-remove-dialog]'));
   await click('[data-confirm-remove="requested"]');
-  await p.until(`!document.querySelector('.link-banner')`, 8000);
-  check(!(await get(`/api/people?relationship=requested&account=${DALT}`)).links.some((l: any) => l.identityId === mara.id), 'cancelled: the request is off the list, and the banner gone');
+  await p.until(`!document.querySelector('.req-sent') && !document.querySelector('.req-sent-note')`, 8000);
+  check(!(await get(`/api/people?relationship=requested&account=${DALT}`)).links.some((l: any) => l.identityId === mara.id), 'cancelled: the request is off the list, and the mark and note gone');
 
   // 6. A profile: how each account stands with them, and Remove friend after a question.
   await open(`#/p/${ravi.personId}`, '.profile-page');
