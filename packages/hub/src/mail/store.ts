@@ -264,16 +264,20 @@ export class MailStore {
     // With tagged layers, mail is fine when none of its own (or the shared ones) is waiting or failed, whatever the
     // account says of itself: its attention may be about the other interface.
     const mailFine = tagged && !interfaceTrouble(all, 'mail');
-    const problem =
+    const found: Omit<P.MailProblem, 'since'> | null =
       (st.status === 'online' && !att) || mailFine
         ? null
         : att?.message && (!tagged || !bad?.interface)
-          ? { layer: failed?.name ?? bad?.name ?? null, message: att.message }
+          ? { layer: failed?.name ?? bad?.name ?? null, message: att.message, state: 'attention' }
           : bad
-            ? { layer: bad.name, message: bad.note ? `${bad.name}: ${bad.note}` : `${bad.name}: ${bad.state}` }
+            ? { layer: bad.name, message: bad.note ? `${bad.name}: ${bad.note}` : `${bad.name}: ${bad.state}`, state: bad.state === 'waiting' ? 'waiting' : 'failed' }
             : att?.message
-              ? { layer: null, message: att.message }
+              ? { layer: null, message: att.message, state: 'attention' }
               : null;
+    // `since`: when the account last stopped working, kept while its trouble only changes its words (a start-up walks
+    // through several waiting layers), so the page can leave a short wait unsaid.
+    const hadSince = json<P.MailProblem | null>(was.problem, null)?.since;
+    const problem: P.MailProblem | null = found && { ...found, since: hadSince ?? Date.now() };
     const details = (st.details ?? {}) as Record<string, unknown>;
     const sendLayer = layers.find((l) => /send path|smtp/i.test(l.name));
     const prevSend = json<{ ok: boolean | null; why: string | null; at?: number; refused?: boolean }>(was.send, { ok: null, why: null });

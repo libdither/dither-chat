@@ -17,6 +17,7 @@ const KIND: Record<string, string> = { imap: 'Email (IMAP)', proton: 'Proton Mai
 
 function state(a: P.MailAccountView): { pill: string; cls: string } {
   if (a.level === null) return { pill: 'No access', cls: 'disabled' };
+  if (a.problem?.state === 'waiting') return { pill: 'Starting', cls: 'offline' };
   if (a.problem) return { pill: 'Needs you', cls: 'attention' };
   return a.online ? { pill: 'Online', cls: 'online' } : { pill: 'Offline', cls: 'offline' };
 }

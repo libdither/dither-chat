@@ -13186,22 +13186,39 @@ button.msg-edited.link:hover {
   font-size: 13px;
   line-height: 1.45;
 }
+/* Accounts that are not working (MailSidebar TroubleLine): one quiet line, not a card per account. */
 .mail-problem {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  margin: 8px 12px 0;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--warn);
-  color: var(--text-dim);
-  font-size: 12.5px;
-  overflow-wrap: anywhere;
+  width: calc(100% - 24px);
+  margin: 6px 12px 0;
+  padding: 3px 0;
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.mail-problem:hover {
+  color: var(--text);
 }
 .mail-problem > svg {
   color: var(--warn);
   flex: none;
+}
+.mail-problem > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mail-acc-dot.warn {
+  box-shadow: 0 0 0 2px var(--bg-sidebar), 0 0 0 3.5px var(--warn);
 }
 /* Mail's views: one row that scrolls sideways, with no scrollbar, rather than wrapping onto a second. */
 .mail-chips {
@@ -13271,6 +13288,50 @@ button.msg-edited.link:hover {
   width: 10px;
   height: 10px;
   border-radius: 50%;
+}
+/* An account that is not working: its dot ringed in the warning colour. */
+.cm-dot.warn {
+  box-shadow: 0 0 0 2px var(--bg-raised, var(--bg)), 0 0 0 3.5px var(--warn);
+}
+.cm-two {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.cm-detail {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 400;
+  opacity: 0.75;
+}
+.cm-detail.warn {
+  color: var(--warn);
+  opacity: 1;
+}
+.cm-item.active .cm-detail.warn {
+  color: inherit;
+}
+.cm-count {
+  flex: none;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--bg-hover);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
+.cm-item.active .cm-count {
+  background: transparent;
+  color: inherit;
 }
 .mail-acc-note {
   max-width: 260px;

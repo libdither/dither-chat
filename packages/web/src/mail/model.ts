@@ -326,3 +326,25 @@ export function syncLine(accounts: P.MailAccountView[], now = Date.now()): strin
   const oldest = Math.min(...busy.map((a) => a.sync.oldest ?? Infinity));
   return `Syncing older mail · ${n}${Number.isFinite(oldest) ? `, back to ${day(oldest, now)}` : ''}`;
 }
+
+/** A layer still coming up (signing in, the page loading) is left unsaid this long: it usually passes by itself. */
+export const PROBLEM_GRACE_MS = 3 * 60_000;
+
+/**
+ * What to say about an account that is not working, or null while there is nothing to say yet: access ended, the
+ * account asks for you, a layer failed, or a layer has been coming up for longer than PROBLEM_GRACE_MS. `at`: when a
+ * problem kept quiet now becomes one to say (null when that is already so, or never).
+ */
+export function accountTrouble(a: P.MailAccountView, now = Date.now()): { message: string; at: null } | { message: null; at: number | null } {
+  if (a.level === null) return { message: 'dither-chat no longer has access to it.', at: null };
+  const p = a.problem;
+  if (!p) return { message: null, at: null };
+  if (p.state === 'waiting' && p.since != null && now - p.since < PROBLEM_GRACE_MS) return { message: null, at: p.since + PROBLEM_GRACE_MS };
+  return { message: p.message, at: null };
+}
+
+/** An account's Inbox unread count, when its server says. */
+export function inboxUnread(s: { mailboxes: Map<string, P.MailboxView> }, accountId: string): number | null {
+  for (const b of s.mailboxes.values()) if (b.accountId === accountId && b.role === 'inbox') return b.unread;
+  return null;
+}

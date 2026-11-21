@@ -290,7 +290,7 @@ describe('accounts', () => {
       layers: [{ name: 'signed in', state: 'failed' }],
     });
     const v = st.accountView(st.account(ACC)!);
-    expect(v.problem).toEqual({ layer: 'signed in', message: 'Sign in to Proton in the live view' });
+    expect(v.problem).toMatchObject({ layer: 'signed in', message: 'Sign in to Proton in the live view', state: 'attention' });
     expect(v.send).toEqual({ ok: false, why: "Proton's send path was not found" });
     expect(v.online).toBe(false);
     // Its addresses known now: the message was to one of them.
@@ -312,10 +312,29 @@ describe('accounts', () => {
     expect(st.accountView(st.account(ACC)!)).toMatchObject({ problem: null, online: true });
     // Gmail's own layer stops: its note, not the account's words about Calendar.
     st.setStatus(ACC, { status: 'error', attention: { message: 'Google Calendar: every key was refused' }, self: { email: ME }, layers: [...calendar.slice(0, 3), { name: 'Gmail page', state: 'waiting', note: 'Gmail is loading', interface: 'mail' }] });
-    expect(st.accountView(st.account(ACC)!)).toMatchObject({ problem: { layer: 'Gmail page', message: 'Gmail page: Gmail is loading' }, online: false });
+    expect(st.accountView(st.account(ACC)!)).toMatchObject({ problem: { layer: 'Gmail page', message: 'Gmail page: Gmail is loading', state: 'waiting' }, online: false });
     // A layer both rest on: the account's own words.
     st.setStatus(ACC, { status: 'attention', attention: { message: 'Sign in to Google in the live view' }, self: { email: ME }, layers: [{ name: 'signed in', state: 'waiting' }, ...calendar.slice(2)] });
-    expect(st.accountView(st.account(ACC)!).problem).toEqual({ layer: 'signed in', message: 'Sign in to Google in the live view' });
+    expect(st.accountView(st.account(ACC)!).problem).toMatchObject({ layer: 'signed in', message: 'Sign in to Google in the live view' });
+  });
+
+  test('a problem keeps when it began while only its words change, and starts again after the account worked', () => {
+    const problem = () => st.accountView(st.account(ACC)!).problem!;
+    st.setStatus(ACC, { status: 'starting', self: { email: ME }, layers: [{ name: 'browser', state: 'waiting', note: 'starting' }] });
+    const first = problem();
+    expect(first).toMatchObject({ state: 'waiting' });
+    expect(typeof first.since).toBe('number');
+    // A start-up walks to the next waiting layer, then one fails: still the same stretch of not working.
+    st.setStatus(ACC, { status: 'starting', self: { email: ME }, layers: [{ name: 'browser', state: 'ok' }, { name: 'Gmail page', state: 'waiting', note: 'Gmail is loading' }] });
+    expect(problem()).toMatchObject({ message: 'Gmail page: Gmail is loading', state: 'waiting', since: first.since });
+    st.setStatus(ACC, { status: 'error', self: { email: ME }, layers: [{ name: 'Gmail page', state: 'failed', note: 'no mail call' }] });
+    expect(problem()).toMatchObject({ state: 'failed', since: first.since });
+    // Working, then not again: a new stretch, not the old start (set far back here so the two differ).
+    st.db.run('UPDATE mail_account SET problem = ? WHERE id = ?', [JSON.stringify({ ...problem(), since: 1 }), ACC]);
+    st.setStatus(ACC, { status: 'online', self: { email: ME }, layers: [] });
+    expect(st.accountView(st.account(ACC)!).problem).toBeNull();
+    st.setStatus(ACC, { status: 'starting', self: { email: ME }, layers: [{ name: 'browser', state: 'waiting' }] });
+    expect(problem().since).toBeGreaterThanOrEqual(first.since!);
   });
 
   test('what its server is: what the status says, kept until it says otherwise; until it says, by the kind', () => {
