@@ -1,13 +1,14 @@
 /**
- * Mail's side of the screen (docs/mail.md): where mail access stands, whose mail (two wheels, with muted warnings), the views (Inbox, Unread,
- * Starred, Sent) in one row of chips and each account's mailboxes, then the list. With several accounts the line under
+ * Mail's side of the screen (docs/mail.md): where mail access stands, whose mail (two wheels, with muted warnings), the
+ * views (Inbox ranked or newest first, Everything, Updates) in one row of chips, Starred, Sent and each account's
+ * mailboxes in the folder menu, then the list. With several accounts the line under
  * "Mail" picks whose mail the views show. On a phone it is the list a thread opens over.
  */
 import type * as P from '@dither-chat/protocol';
 import { MAIL_PLATFORM_NAMES, mailboxList, mailPlatform, platformScope, searchList, searchOfList, viewList } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { accountTrouble, DEFAULT_LIST, holdsOnlyMailboxes, inboxUnread, listTitle, MAIL_VIEWS } from '../../mail/model.ts';
-import { db, go, mailRev } from '../../state.ts';
+import { accountTrouble, DEFAULT_LIST, holdsOnlyMailboxes, inboxUnread, listTitle, MAIL_FOLDER_VIEWS, MAIL_VIEWS } from '../../mail/model.ts';
+import { db, go, mailRev, prefs, setPrefs } from '../../state.ts';
 import { openMenu, type MenuEntry } from '../ContextMenu.tsx';
 import { Icon } from '../icons.tsx';
 import { ComposeButton, DraftsLine } from './Composer.tsx';
@@ -36,8 +37,12 @@ function useTrouble(accounts: P.MailAccountView[]) {
   return new Map(all.flatMap(({ a, t }) => (t.message ? [[a.id, t.message] as const] : [])));
 }
 
-function mailboxMenu(s: typeof db.mail, at: { x: number; y: number }, from: EventTarget | null) {
-  const items: MenuEntry[] = [];
+/** The folder menu: Starred and Sent of the scope in use (newest first), then each account's mailboxes. */
+function mailboxMenu(s: typeof db.mail, scope: string, at: { x: number; y: number }, from: EventTarget | null) {
+  const items: MenuEntry[] = MAIL_FOLDER_VIEWS.map((v) => {
+    const k = viewList(v.view, scope === '*' ? null : scope);
+    return { label: v.label, icon: v.view === 'starred' ? 'star' : 'send', run: () => go({ view: 'mail', list: k }) };
+  });
   for (const a of s.accounts.values()) {
     const boxes = [...s.mailboxes.values()].filter((b) => b.accountId === a.id && !holdsOnlyMailboxes(b, s.mailboxes.values())).sort((x, y) => (x.role === 'inbox' ? -1 : y.role === 'inbox' ? 1 : x.path.localeCompare(y.path)));
     if (!boxes.length) continue;
@@ -148,6 +153,7 @@ export function MailSidebar({ list, active }: { list?: string; active?: string }
   const view = key.startsWith('v:') ? key.split(':')[1] : null;
   const pick = (v: string, acc: string) => go({ view: 'mail', list: viewList(v as P.MailView, acc === '*' ? null : acc) });
   const search = searchOfList(key);
+  const newest = prefs.value.mailOrder === 'newest';
   const trouble = useTrouble(accounts);
   const openPicker = (from: HTMLElement) => openAccountMenu(from, accounts, scoped, trouble, (acc) => pick(view ?? 'inbox', acc));
   const chips = search === null && accounts.length > 0;
@@ -196,12 +202,12 @@ export function MailSidebar({ list, active }: { list?: string; active?: string }
           )}
           {accounts.length > 0 && (
             <button
-              class={`icon-btn small side-new mail-boxes-btn ${key.startsWith('mb:') ? 'on' : ''}`}
-              aria-label="Mailboxes"
-              title="Mailboxes"
+              class={`icon-btn small side-new mail-boxes-btn ${key.startsWith('mb:') || view === 'starred' || view === 'sent' ? 'on' : ''}`}
+              aria-label="Starred, Sent and mailboxes"
+              title="Starred, Sent and mailboxes"
               onClick={(e) => {
                 const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                mailboxMenu(s, { x: r.left, y: r.bottom + 4 }, e.currentTarget);
+                mailboxMenu(s, scoped, { x: r.left, y: r.bottom + 4 }, e.currentTarget);
               }}
             >
               <Icon name="folder" size={16} />
@@ -219,12 +225,25 @@ export function MailSidebar({ list, active }: { list?: string; active?: string }
       {search !== null && <MailSearch q={search} active={active} />}
       {chips && (
         <div class="inbox-chips mail-chips" role="radiogroup" aria-label="Show" ref={row} onScroll={edges}>
-          {/* Updates is Inbox's folded row; its chip shows while you are in it. */}
-          {MAIL_VIEWS.filter((v) => v.view !== 'updates' || view === 'updates').map((v) => (
-            <button class={`chip-btn ${view === v.view ? 'on' : ''}`} role="radio" aria-checked={view === v.view} onClick={() => pick(v.view, scoped)}>
-              {v.label}
-            </button>
-          ))}
+          {MAIL_VIEWS.map((v) => {
+            const on = view === v.view;
+            // Inbox's chip names its order; tapped again, it turns to the other (docs/mail.md "Ranked").
+            const order = v.view === 'inbox' ? (newest ? 'Newest' : 'Ranked') : null;
+            const flip = order && on ? (newest ? 'Sort by importance' : 'Sort newest first') : undefined;
+            return (
+              <button
+                class={`chip-btn ${on ? 'on' : ''} ${order ? 'mail-order-chip' : ''}`}
+                role="radio"
+                aria-checked={on}
+                title={flip}
+                data-track={flip ? `mail: ${newest ? 'ranked' : 'newest'}` : undefined}
+                onClick={() => (flip ? setPrefs({ mailOrder: newest ? 'ranked' : 'newest' }) : pick(v.view, scoped))}
+              >
+                {order ?? v.label}
+                {flip && <Icon name="repeat" size={11} />}
+              </button>
+            );
+          })}
         </div>
       )}
       {search === null && <DraftsLine />}

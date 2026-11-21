@@ -24,9 +24,13 @@ function stored(): InboxSnapshot | null {
 /** The order last taken; this device's last one until the first of this session. Bumping `v` animates the change. */
 export const inboxSnap = signal<{ v: number; at: number | null; snap: InboxSnapshot | null }>({ v: 0, at: null, snap: stored() });
 
-/** The row open in the inbox keeps its place while it is open: a person's chat by any of their DMs. */
+/**
+ * The row open in the inbox keeps its place while it is open: a person's chat by any of their DMs. So does a thread
+ * open in Mail, whose ranked Inbox takes this order (docs/mail.md "Ranked").
+ */
 const openHere = () => {
   const r = route.value;
+  if (r.view === 'mail') return r.thread;
   return r.view === 'inbox' && r.conv ? inboxKeyOf(r.conv) : undefined;
 };
 const hold = (): Hold | undefined => {
