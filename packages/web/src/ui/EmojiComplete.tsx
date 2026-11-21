@@ -9,7 +9,7 @@ import type * as P from '@dither-chat/protocol';
 import { loadEmoji, skinOf, type EmojiCategory, type EmojiItem } from '../emoji.ts';
 import { closedCode, customMarkup, exactEmoji, findTrigger, rankEmoji, type Candidate, type CustomEmoji, type Trigger } from '../emojiComplete.ts';
 import { reactionContext } from '../reactions.ts';
-import { db, prefs } from '../state.ts';
+import { db, pref } from '../state.ts';
 
 /** Replaces [start, end) of the textarea with `text` the way typing would: undoable, and through its input event. */
 function replaceRange(el: HTMLTextAreaElement, start: number, end: number, text: string) {
@@ -54,7 +54,7 @@ export function EmojiComplete({ ta, convId, network }: { ta: { current: HTMLText
   const results = useMemo(() => (trig ? rankEmoji(trig.query, unicode, custom, usage) : []), [trig?.query, unicode, custom, usage]);
   const open = !!trig && dismissed.current !== trig.start && results.length > 0;
 
-  const textOf = (c: Candidate) => (c.kind === 'custom' ? customMarkup(c.emoji) ?? `:${c.code}:` : skinOf(c.item as EmojiItem, prefs.value.skinTone ?? 0));
+  const textOf = (c: Candidate) => (c.kind === 'custom' ? customMarkup(c.emoji) ?? `:${c.code}:` : skinOf(c.item as EmojiItem, pref('skinTone') ?? 0));
 
   const insert = (c: Candidate) => {
     const el = ta.current;
@@ -87,7 +87,7 @@ export function EmojiComplete({ ta, convId, network }: { ta: { current: HTMLText
         const closed = closedCode(el.value, caret);
         const hit = closed && exactEmoji(closed.code, live.current.unicode, live.current.custom);
         if (closed && hit) {
-          replaceRange(el, closed.start, closed.end, hit.kind === 'custom' ? customMarkup(hit.emoji) ?? `:${hit.code}:` : skinOf(hit.item, prefs.value.skinTone ?? 0));
+          replaceRange(el, closed.start, closed.end, hit.kind === 'custom' ? customMarkup(hit.emoji) ?? `:${hit.code}:` : skinOf(hit.item, pref('skinTone') ?? 0));
           return;
         }
       }
@@ -145,7 +145,7 @@ export function EmojiComplete({ ta, convId, network }: { ta: { current: HTMLText
       </div>
       {results.map((c, i) => (
         <button class={`ec-opt ${i === sel ? 'on' : ''}`} role="option" aria-selected={i === sel} tabIndex={-1} onMouseMove={() => i !== sel && setSel(i)} onClick={() => insert(c)}>
-          {c.kind === 'custom' ? <img class="ec-glyph" src={c.emoji.url} alt="" loading="lazy" /> : <span class="ec-glyph">{skinOf(c.item, prefs.value.skinTone ?? 0)}</span>}
+          {c.kind === 'custom' ? <img class="ec-glyph" src={c.emoji.url} alt="" loading="lazy" /> : <span class="ec-glyph">{skinOf(c.item, pref('skinTone') ?? 0)}</span>}
           <span class="ec-code">:{c.code}:</span>
           {c.kind === 'unicode' ? <span class="ec-name">{c.item.name}</span> : <span class="ec-name">custom</span>}
         </button>

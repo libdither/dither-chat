@@ -6,7 +6,7 @@ import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { canonicalReactionKey, REACTION_RULES } from '@dither-chat/protocol';
 import { fullTime, stamp } from './format.ts';
-import { api, changed, db, isSelfIdentity, patchMessage, prefs, toast } from './state.ts';
+import { api, changed, db, isSelfIdentity, patchMessage, pref, toast } from './state.ts';
 
 export interface Picked {
   key: string;
@@ -32,7 +32,7 @@ function actingAccount(conversationId: string): P.AccountView | null {
   const c = db.conversations.get(conversationId);
   if (!c) return null;
   const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a);
-  return accounts.find((a) => a.id === prefs.value.sendAs[c.id]) ?? accounts.find((a) => a.status === 'online') ?? accounts[0] ?? null;
+  return accounts.find((a) => a.id === pref('sendAs')[c.id]) ?? accounts.find((a) => a.status === 'online') ?? accounts[0] ?? null;
 }
 
 // ------------------------------------------------------------------ context

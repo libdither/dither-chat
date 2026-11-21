@@ -96,6 +96,11 @@ test('a new message or read state in a conversation leaves names alone; anything
   expect(conversationMetaChanged(c, conv({ spaceIds: ['s2'] }))).toBe(true);
   expect(conversationMetaChanged(c, conv({ nativeMute: { level: 'none' } as P.NativeMute }))).toBe(true);
   expect(conversationMetaChanged(c, conv({ vantages: [...c.vantages, { accountId: 'a2', unread: 0, mentions: 0, lastReadTs: null }] }))).toBe(true);
+  // The same members in another order: the hub's bootstrap and its events once listed them so.
+  const two = conv({ participantIds: ['i1', 'i2'] });
+  expect(conversationMetaChanged(two, conv({ participantIds: ['i2', 'i1'] }))).toBe(false);
+  expect(conversationMetaChanged(two, conv({ participantIds: ['i1', 'i3'] }))).toBe(true);
+  expect(conversationMetaChanged(two, conv({ participantIds: ['i1', 'i2', 'i3'] }))).toBe(true);
 });
 
 test('props are the same when each value is, arrays item by item', () => {

@@ -13,7 +13,7 @@ import { BRIDGE_MIDS, CALL_INPUT_DEFAULT, callInput, NETWORK_META } from '@dithe
 import { AUTO_GATE_DB, type CallControl, type CallStatus, controlsFor, featuredPicker, levelShown, smoothLevel, speakingHold, stageCan, statusFor, talkGate } from './callmarks.ts';
 import { requestsOf } from './room.ts';
 import { playCallSound, preloadCallSounds, soundLog } from './callsounds.ts';
-import { changed, db, isSelfIdentity, prefs, toast } from './state.ts';
+import { changed, db, isSelfIdentity, pref, toast } from './state.ts';
 
 export interface CallStats {
   /** Media bytes this device sent and received so far. */
@@ -204,7 +204,7 @@ export function callNetwork(call: Pick<ActiveCall, 'accountId'>): P.Network {
 export function canCall(c: P.ConversationView): string | null {
   if (c.variant !== 'voice' && c.variant !== 'stage') return null;
   const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && a.capabilities.includes('calls') && (c.variant !== 'stage' || a.capabilities.includes('stage')) && a.status === 'online');
-  return (accounts.find((a) => a.id === prefs.value.sendAs[c.id]) ?? accounts[0])?.id ?? null;
+  return (accounts.find((a) => a.id === pref('sendAs')[c.id]) ?? accounts[0])?.id ?? null;
 }
 
 /**
@@ -213,12 +213,12 @@ export function canCall(c: P.ConversationView): string | null {
 export function canRing(c: P.ConversationView): string | null {
   if (c.shape !== 'direct' && c.shape !== 'group') return null;
   const able = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && a.capabilities.includes('calls') && a.capabilities.includes('ringCalls') && a.status === 'online');
-  return (able.find((a) => a.id === prefs.value.sendAs[c.id]) ?? able[0])?.id ?? null;
+  return (able.find((a) => a.id === pref('sendAs')[c.id]) ?? able[0])?.id ?? null;
 }
 
 /** The microphone this device uses in calls (Settings → Calls), and its handling. */
 function micConstraints(input: P.CallInput): MediaTrackConstraints {
-  const id = prefs.value.callMicId;
+  const id = pref('callMicId');
   return { echoCancellation: true, noiseSuppression: input.noiseSuppression, autoGainControl: true, ...(id ? { deviceId: { ideal: id } } : {}) };
 }
 
@@ -292,7 +292,7 @@ function mark(step: keyof ActiveCall['timing']) {
 
 /** A call sound, if this device plays them (Settings → Calls). */
 function sound(name: P.CallSoundName) {
-  if (prefs.value.callSounds === false) return;
+  if (pref('callSounds') === false) return;
   const net = activeCall.value ? callNetwork(activeCall.value) : 'discord';
   void playCallSound(ctx, name, 0.6, net).then((as) => {
     if (as !== 'skipped') soundLog.push({ name, as, at: Date.now() });
@@ -465,7 +465,7 @@ export function setDeafened(deafened: boolean) {
 
 /** This device's microphone choices (Settings → Calls). */
 export function myInput(): P.CallInput {
-  return callInput(prefs.value.callInput ?? CALL_INPUT_DEFAULT);
+  return callInput(pref('callInput') ?? CALL_INPUT_DEFAULT);
 }
 
 /** The people's volumes and mutes for this account, by native user id (what the direct transport plays by). */
@@ -654,7 +654,7 @@ export async function setCamera(on: boolean) {
   if (on) {
     let cam: MediaStream;
     try {
-      const id = prefs.value.callCameraId;
+      const id = pref('callCameraId');
       cam = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 }, ...(id ? { deviceId: { ideal: id } } : {}) }, audio: false });
     } catch (e: any) {
       toast({ kind: 'error', title: 'No camera', body: String(e?.message ?? e) });

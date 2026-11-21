@@ -1,4 +1,4 @@
-import { effect, signal } from '@preact/signals';
+import { computed, effect, signal, type ReadonlySignal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, fileBatches, splitsFiles, SYNC_VERSION } from '@dither-chat/protocol';
 import { leaveLayerEntry, takeOverLayers } from './phone.ts';
@@ -153,7 +153,19 @@ function storedPrefs(): Prefs {
   // The chips before the filter menu: People became Direct messages, and Unread is the New section, under All.
   return { ...p, inboxFilter: inboxFilterOf(p.inboxFilter) };
 }
-export const prefs = signal<Prefs>(storedPrefs());
+/**
+ * Every setting in one signal, kept to this file: a component that read it whole would render again on every
+ * setPrefs, whatever it changed. Opening the details panel drew every message, the list and the rail again that way,
+ * and set the theme's colours again (docs/perf.md, "One setting at a time"). Read a setting with pref().
+ */
+const prefs = signal<Prefs>(storedPrefs());
+const prefFields = new Map<keyof Prefs, ReadonlySignal<unknown>>();
+/** One setting. What reads it while it renders renders again when this setting changes, and for no other. */
+export function pref<K extends keyof Prefs>(k: K): Prefs[K] {
+  let s = prefFields.get(k);
+  if (!s) prefFields.set(k, (s = computed(() => prefs.value[k])));
+  return s.value as Prefs[K];
+}
 export function setPrefs(p: Partial<Prefs>) {
   prefs.value = { ...prefs.value, ...p };
   localStorage.setItem(PREFS_KEY, JSON.stringify(prefs.value));
@@ -455,7 +467,7 @@ function onNotify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
   const open = cal ? () => go({ view: 'calendar', at: calendarAt(cal.open) }) : notice ? () => go({ view: 'notices', notice }) : undefined;
   const conversationId = notice ? undefined : ev.conversationId;
   toast({ kind: 'notify', title: ev.title, body: ev.body, conversationId, reasons: ev.reasons, icon: ev.icon, network: ev.network, ...(open ? { action: open } : {}) }, 8000);
-  if (!prefs.value.pushEnabled && prefs.value.notifications && 'Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
+  if (!pref('pushEnabled') && pref('notifications') && 'Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
     // A group's own picture goes over the sender's, as in a push (delivery.ts conv).
     const c = ev.conversationId ? db.conversations.get(ev.conversationId) : undefined;
     const conv = c && c.shape !== 'direct' && c.avatar ? { shape: c.shape === 'channel' || c.shape === 'thread' ? 'channel' : 'group', icon: c.avatar } : undefined;
