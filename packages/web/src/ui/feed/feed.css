@@ -115,11 +115,15 @@
 .post-who:hover b {
   text-decoration: underline;
 }
+/* A long handle ends in "…" rather than widening the row (scripts/check-overflow.ts). */
 .post-handle {
   color: var(--text-faint);
   font-size: 12px;
   white-space: nowrap;
   text-decoration: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .post-media {
   display: grid;

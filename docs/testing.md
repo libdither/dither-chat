@@ -290,3 +290,21 @@ The fix is a class of the component's own: rename the shared one, prefix it (`po
 root class in front. A box the rest of the app draws for the component (the feed's `.feed-pane`) is styled in
 styles.css, so it holds before the component loads. A rule that must reach out says why, in the comment right before
 it: `/* css-scope: <reason> */`.
+
+### Sideways overflow
+
+A box that scrolls up and down (a chat, a list, Settings) scrolls sideways too as soon as anything in it is wider than
+it is. A flex or grid item is never narrower than its longest word unless told so (`min-width: 0`, `minmax(0, 1fr)`),
+so one long unbroken word (a web address, a long name) in a row widens the row past the window, the whole chat gets a
+sideways scrollbar, and a focus can then shift it sideways. On 2026-11-20 a chat beside the details panel did.
+
+So `body` sets `overflow-wrap: anywhere`: a word breaks where it must instead of holding its box open, and text that
+fits is laid out as before. What stays on one line on purpose (`white-space: nowrap`: a name, a handle) ends in "…"
+(`overflow: hidden; text-overflow: ellipsis`) or is the app's own short words; initials in a picture keep `nowrap`.
+The chat's `.timeline-inner` clips sideways (`overflow-x: clip`) as a safety net for what still gets through.
+
+`bun scripts/check-overflow.ts` (`bun run check:overflow`, in CI's boot job, about a minute) opens the demo world's
+pages (a chat of each network and shape, profiles, Settings, the feed, mail, search…) at a computer's size, with the
+details panel open, a narrow window's and a phone's, and fails when a box that scrolls up and down is wider inside than
+it is, as drawn or with one of the hub's texts (a string from an `/api/` answer) made 40 characters longer with an
+unbroken word. A box meant to scroll sideways sets `overflow-x` in a rule of its own (a code block, a row of chips).
