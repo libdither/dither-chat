@@ -223,10 +223,11 @@ export function CallWindow({ call }: { call: ActiveCall }) {
     const w = winEl.current?.getBoundingClientRect();
     if (r && w && r.bottom > innerHeight - 8 && w.top + 36 - r.height > 8) setMenuUp(true);
   }, [menu]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!menu) return;
     const key = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      e.preventDefault();
       e.stopPropagation();
       setMenu(false);
       btn.current?.focus();

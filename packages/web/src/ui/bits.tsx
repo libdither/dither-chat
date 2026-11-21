@@ -1,5 +1,5 @@
 import { createPortal, type ComponentChildren } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
 import { GLYPH } from '../brand.ts';
 import { linkParts } from '../links.ts';
@@ -131,7 +131,7 @@ function useDialog(onClose: () => void) {
   const dismiss = () => (phone.value ? slideAway(box.current, () => close.current()) : close.current());
   useLayer(dismiss);
   useSheetDrag(box, () => close.current(), phone.value);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const k = (e: KeyboardEvent) => e.key === 'Escape' && (e.preventDefault(), close.current());
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);

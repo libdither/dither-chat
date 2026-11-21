@@ -161,6 +161,7 @@ function AudienceList({ can, room, onClose }: { can: Can; room: Room; onClose: (
       aria-label="Everyone listening"
       onKeyDown={(e) => {
         if (e.key === 'Escape') {
+          e.preventDefault();
           e.stopPropagation();
           onClose();
         }

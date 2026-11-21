@@ -4,7 +4,7 @@
  * the edit). It listens on the composer box in the capture phase, so it sees those keys before the textarea's
  * own handler does. A closing `:` on an exact shortcode turns it into the emoji, list or not.
  */
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
 import { loadEmoji, skinOf, type EmojiCategory, type EmojiItem } from '../emoji.ts';
 import { closedCode, customMarkup, exactEmoji, findTrigger, rankEmoji, type Candidate, type CustomEmoji, type Trigger } from '../emojiComplete.ts';
@@ -69,7 +69,7 @@ export function EmojiComplete({ ta, convId, network }: { ta: { current: HTMLText
   const live = useRef({ open, results, sel, trig, insert, unicode, custom });
   live.current = { open, results, sel, trig, insert, unicode, custom };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ta.current;
     const box = el?.parentElement;
     if (!el || !box) return;

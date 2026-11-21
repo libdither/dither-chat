@@ -4,6 +4,7 @@
  * 1. Every handler in the web app that acts on Escape says it took it, with preventDefault(): escape.ts then lets that
  *    Escape go no further. One that does not would close its popover and also leave the page. A handler that means to
  *    let Escape through says why in a comment starting `escape:` in the lines just before it.
+ *    It listens from a useLayoutEffect, not a useEffect, so an Escape pressed the moment its popover is drawn is taken.
  * 2. scripts/verify-back.ts covers every route view (routes.ts) and every component that opens a layer (pushLayer or
  *    useLayer, phone.ts), or says in its UNCOVERED why not, so a new page or overlay comes with its way back checked.
  *
@@ -83,6 +84,14 @@ for (const file of files(SRC)) {
           .join('\n');
         if (!/escape:/.test(before) && (!fn || !prevents(fn, helpers)))
           problems.push(`  ${relative(ROOT, file)}:${line + 1}: acts on Escape without preventDefault()`);
+        // A listener added in a useEffect starts after the next paint: an Escape before then finds nothing that takes it
+        // and leaves the page while the popover closes with it. useLayoutEffect listens from when it is drawn.
+        for (let up: ts.Node | undefined = n.parent; up; up = up.parent)
+          if (ts.isCallExpression(up) && ts.isIdentifier(up.expression) && up.expression.text === 'useEffect') {
+            if (!/escape:/.test(before))
+              problems.push(`  ${relative(ROOT, file)}:${line + 1}: listens for Escape from a useEffect, not useLayoutEffect`);
+            break;
+          }
       }
     }
     ts.forEachChild(n, visit);

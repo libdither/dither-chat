@@ -20,7 +20,7 @@ import { NETWORK_META } from '@dither-chat/protocol';
 // Their own paths, so the rules and the orders ride in this chunk, not the app's start.
 import { composeState, postFieldsProblem, postRulesFor, splitThread, timelineName, type PostRules } from '@dither-chat/protocol/compose';
 import { MIX_ORDERS, SHARE_WEIGHTS } from '@dither-chat/protocol/mix';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { api, db, go, loadTimeline, markRead, previousRoute, timelineKey, timelines } from '../../state.ts';
 import { rev, timelineRev } from '../../versions.ts';
 import type { Kit } from './lazy.tsx';
@@ -384,7 +384,7 @@ function OrderButton({ mix, kit }: { mix: P.FeedMixView; kit: Kit }) {
   const [open, setOpen] = useState(false);
   const phone = kit.phone.value;
   const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open || phone) return;
     const away = (e: Event) => !box.current?.contains(e.target as Node) && setOpen(false);
     const esc = (e: KeyboardEvent) => e.key === 'Escape' && (e.preventDefault(), setOpen(false));

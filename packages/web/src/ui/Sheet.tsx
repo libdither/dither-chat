@@ -1,6 +1,6 @@
 /** A bottom sheet with a grabber: drag it down, tap outside it, press Escape or back, and it goes. */
 import { createPortal, type ComponentChildren } from 'preact';
-import { useEffect, useRef } from 'preact/hooks';
+import { useLayoutEffect, useRef } from 'preact/hooks';
 import { slideAway, useLayer, useSheetDrag } from '../phone.ts';
 
 export function Sheet({ onClose, label, class: cls, tall, children }: { onClose: () => void; label: string; class?: string; tall?: boolean; children: ComponentChildren }) {
@@ -18,7 +18,7 @@ export function Sheet({ onClose, label, class: cls, tall, children }: { onClose:
     gone.current = true;
     onClose();
   });
-  useEffect(() => {
+  useLayoutEffect(() => {
     const k = (e: KeyboardEvent) => e.key === 'Escape' && (e.preventDefault(), dismiss());
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);

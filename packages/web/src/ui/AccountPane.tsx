@@ -4,7 +4,7 @@
  */
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'preact/hooks';
 import { accountRow } from '../accountrows.ts';
 import { ago } from '../format.ts';
 import { netName } from '../model.ts';
@@ -48,7 +48,7 @@ function LinkCode({ account, at }: { account: P.AccountView; at: P.Attention }) 
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!full) return;
     const k = (e: KeyboardEvent) => e.key === 'Escape' && (e.preventDefault(), setFull(false));
     window.addEventListener('keydown', k);

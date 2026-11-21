@@ -127,7 +127,7 @@ Escape is the back button of a keyboard (packages/web/src/escape.ts). One Escape
 
 1. **Something took it.** A list of suggestions under a box closes, an edit or a reply is cancelled, a box is cleared, a
    popover that is no layer (search's filter chips, the theme picker) closes. Each such handler calls
-   `preventDefault()`, and the Escape goes no further.
+   `preventDefault()`, listening from the moment it is drawn, and the Escape goes no further.
 2. **A layer is open**: a sheet, menu, dialog, picker, the viewer or Ctrl+K. The top one closes, as the back button
    closes it (phone.ts `pushLayer`), and its history entry goes with it.
 3. **The page has a way back**: a conversation, a person, a profile, an account, the directory, requests, notices,

@@ -69,7 +69,7 @@ function Floating({ anchor, onClose, children, label, role = 'dialog', hover }: 
     addEventListener('resize', place);
     return () => (ro.disconnect(), removeEventListener('scroll', place, true), removeEventListener('resize', place));
   }, [anchor]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const down = (e: PointerEvent) => {
       const t = e.target as Node;
       if (!panel.current?.contains(t) && !anchor?.contains(t)) onClose();

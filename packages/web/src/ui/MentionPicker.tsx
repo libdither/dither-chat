@@ -7,7 +7,7 @@
  * someone with several, as does Enter on a person from those; ← or Escape goes back.
  */
 import type * as P from '@dither-chat/protocol';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { MentionTrigger } from '../mentionComplete.ts';
 import { cleanQuery, hubRows, knownRows, localRows, matchTier, mergeRows } from '../mentionRows.ts';
 import { netName } from '../model.ts';
@@ -137,7 +137,7 @@ export function MentionPicker({
   const live = useRef({ open, rows: shownRows, sel, trig, insert, choose, openRow, person, back });
   live.current = { open, rows: shownRows, sel, trig, insert, choose, openRow, person, back };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ta.current;
     const box = el?.parentElement;
     if (!el || !box) return;

@@ -82,7 +82,7 @@ function FileBox({ att }: { att: FileSource }) {
       live = false;
     };
   }, [att.infoUrl]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const k = (e: KeyboardEvent) => e.key === 'Escape' && (e.preventDefault(), close());
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
@@ -302,7 +302,7 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
     return () => removeEventListener('resize', r);
   }, [i]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const k = (e: KeyboardEvent) => {
       if (e.key === 'Escape') (e.preventDefault(), close());
       if (e.key === 'ArrowLeft') page(-1);

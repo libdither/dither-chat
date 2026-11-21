@@ -180,6 +180,7 @@ const UNCOVERED: Record<string, string> = {
   'ui/App.tsx': "a phone's details panel: the phone part's back covers its card",
   'ui/AccountPane.tsx': "the live view full screen needs a sandboxed browser account's live view",
   'ui/Accounts.tsx': 'Add account: a dialog as Forward to is',
+  'ui/CallBar.tsx': "a phone's call expanded from the bar needs a call going on, which the demo world has none of",
   'ui/Attach.tsx': 'needs a file picked',
   'ui/ComposerMediaParts.tsx': 'the sticker and GIF pickers: a network that sends them',
   'ui/mail/ComposerCard.tsx': 'mail compose needs a mail account',

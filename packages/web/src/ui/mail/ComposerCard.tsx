@@ -641,7 +641,7 @@ export function Composer({ open }: { open: ComposeOpen }) {
     const id = pushLayer(() => closeRef.current());
     return () => dropLayer(id);
   }, [p]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const k = (e: KeyboardEvent) => {
       // Minimized, it stays as it is: Escape neither closes nor throws away.
       if (e.key === 'Escape' && !e.defaultPrevented && !minRef.current && box.current?.contains(document.activeElement)) (e.preventDefault(), closeRef.current());

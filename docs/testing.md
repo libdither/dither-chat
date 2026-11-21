@@ -239,9 +239,11 @@ build only.
 
 `bun run check:escape` (scripts/check-escape.ts, about a second) holds two things (docs/desktop.md "Escape and back"):
 every handler in the web app that acts on Escape calls `preventDefault()`, or says why not in a comment starting
-`escape:` just before it; and scripts/verify-back.ts covers every route view in routes.ts and every component that
-opens a layer (`pushLayer` or `useLayer`), or names it in its `UNCOVERED` with the reason. A new page or overlay
-fails the check until its way back is checked, or the reason it cannot be is written down.
+`escape:` just before it, and listens from a `useLayoutEffect` (one added in a `useEffect` starts after the next paint,
+so an Escape the moment its popover is drawn would go past it and leave the page); and scripts/verify-back.ts covers
+every route view in routes.ts and every component that opens a layer (`pushLayer` or `useLayer`), or names it in its
+`UNCOVERED` with the reason. A new page or overlay fails the check until its way back is checked, or the reason it
+cannot be is written down.
 
 ### Unused code
 

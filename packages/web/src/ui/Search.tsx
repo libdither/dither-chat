@@ -1,7 +1,7 @@
 import type * as P from '@dither-chat/protocol';
 import { mailSearchable, NETWORKS, parseSearch, searchOp, searchOps, setSearchOp, toggleSearchOp } from '@dither-chat/protocol';
 import type { ComponentType } from 'preact';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { clock, dayLabel } from '../format.ts';
 import { authorName, communitiesOf, convLabel, convTitle, netName, plainBody, plainMarkdown, resolveTokens, visibleConv } from '../model.ts';
 import { api, back, db, go, mailRev, openMessage, openProfile, rev } from '../state.ts';
@@ -138,7 +138,7 @@ type Chip = 'from' | 'in' | 'date' | 'network' | 'more' | 'sort';
 function FilterBar({ q, set }: { q: string; set: (q: string) => void }) {
   const [open, setOpen] = useState<Chip | null>(null);
   const bar = useRef<HTMLDivElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return;
     const away = (e: PointerEvent) => !bar.current?.contains(e.target as Node) && setOpen(null);
     const esc = (e: KeyboardEvent) => e.key === 'Escape' && (e.preventDefault(), e.stopPropagation(), setOpen(null));
