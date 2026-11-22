@@ -55,3 +55,8 @@ test('previews come off by an edit only while the network lets you edit', () => 
   // A Signal announcement-only group is still a group: its 24 hours hold.
   expect(previewsRemovable('signal', now - 25 * H, { shape: 'group', variant: 'announcement' }, now)).toBe(false);
 });
+
+test("a Zulip channel takes messages only in its topics", () => {
+  const z = { network: 'zulip', label: 'z', status: 'online', capabilities: ['send'] } as const;
+  expect(sendBlocker({ network: 'zulip', encrypted: false, variant: 'forum' }, z as any)).toBe('Open a topic to reply');
+});

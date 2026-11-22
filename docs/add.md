@@ -145,6 +145,7 @@ What each network will do once its adapter has it. **None of the real adapters d
 | Signal | group links only partly (signal-cli has no preview); usernames and phones | Join (admin approval is pending) | none; Message | message requests, group invites |
 | WhatsApp | group invite links; phones | Join (approval is pending) | none; Message | group join requests you approve |
 | Google Messages | phones | none | none | none: its spam folder has nothing to accept |
+| Zulip | a channel's link (`…/#narrow/channel/12-name`) or `#name`; people by email | Join (subscribe) | none; Message opens a DM | none: Zulip has no requests |
 | Instagram, X, Messenger | handles, profile names | none | Follow (Instagram, X) | message requests, follow requests |
 
 ### What a dither-accounts adapter would call

@@ -143,11 +143,15 @@ interface Candidate {
   lastSpoke: number;
 }
 
-/** What a body says for @everyone on this network, if it has one: Discord's two, Matrix's @room. */
+/**
+ * What a body says for @everyone on this network, if it has one: Discord's two, Matrix's @room, and on Zulip @everyone
+ * and @here, which its extractor sends as Zulip's @**all** and @**topic** (everyone in the channel, everyone in the topic).
+ */
 function everyoneRows(network: P.Network): P.MentionRow[] {
   const row = (kind: 'everyone' | 'here', word: string): P.MentionRow => ({ kind, insert: `@${word} `, pings: true, section: 'here', name: word, network });
   if (network === 'discord') return [row('everyone', 'everyone'), row('here', 'here')];
   if (network === 'matrix') return [row('everyone', 'room')];
+  if (network === 'zulip') return [row('everyone', 'everyone'), row('here', 'here')];
   return [];
 }
 

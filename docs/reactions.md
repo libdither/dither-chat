@@ -34,7 +34,7 @@ Each person's reaction keeps when it was made: `reaction.at`, with `at_exact` sa
 | WhatsApp | the reaction's own time (`senderTimestampMS`), else its message's; history's too | `3:41 PM` |
 | Matrix | the `m.reaction` event's server time, old ones included; a taken-back one, the redaction's | `3:41 PM` |
 | Telegram | the date it gives for the people it names on a message; none for one taken back | `3:41 PM`; taken back `~3:41 PM` |
-| Discord, X, Messenger, Instagram, Google Messages | none: the hub keeps when it heard (live events, or a new name in a snapshot of a message it had) | `~3:41 PM` |
+| Discord, X, Messenger, Instagram, Google Messages, Zulip | none: the hub keeps when it heard (live events, or a new name in a snapshot of a message it had) | `~3:41 PM` |
 | any | a reaction already there when the hub first saw the message, or from before times were kept | no time |
 
 An adapter puts the network's time on the `reaction` event as `ts` (and on a snapshot's `ReactionFact.at`, by

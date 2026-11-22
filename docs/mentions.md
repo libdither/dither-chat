@@ -24,6 +24,7 @@ Canonical bodies (protocol `adapter.ts`, MessageFact) carry mentions as Discord 
 | `<#convNativeId>` | A channel or room (not a mention: nobody is notified) |
 | `@everyone`, `@here` | Discord: everyone who can see the channel, or those of them online |
 | `@room` | Matrix: everyone in the room (Step 2) |
+| `@everyone`, `@here` | Zulip: everyone in the channel, or everyone in the topic (sent as Zulip's `@**all**` and `@**topic**`) |
 | `<@person:per_…>` | A hub person, by reference (Step 3). Lowered on send, see [References](#references-and-lowering) |
 | `<@identity:idn_…>` | One of a person's accounts, by reference (Step 3). Lowered the same way |
 
@@ -164,7 +165,7 @@ Nothing from the network's answer is stored. A person the network names whom the
 `identityId`, its picture signed for the account that answered.
 
 Every row of these is section `here` and `pings: true`. Its `insert` is `<@nativeId> ` for a person, `<@&id> ` for a
-role, and `@everyone ` / `@here ` on Discord (`@room ` on Matrix) where the answer said `everyone`.
+role, and `@everyone ` / `@here ` on Discord and Zulip (`@room ` on Matrix) where the answer said `everyone`.
 
 Order:
 

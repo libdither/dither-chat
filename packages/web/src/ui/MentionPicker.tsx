@@ -32,8 +32,8 @@ function replaceRange(el: HTMLTextAreaElement, start: number, end: number, text:
 /** What a row says beside its name. */
 function noteOf(r: P.MentionRow, network: P.Network | undefined): string | null {
   if (r.kind === 'role') return 'role';
-  if (r.kind === 'here') return 'everyone online here';
-  if (r.kind === 'everyone') return network === 'matrix' ? 'everyone in this room' : 'everyone who can see this channel';
+  if (r.kind === 'here') return network === 'zulip' ? 'everyone in this topic' : 'everyone online here';
+  if (r.kind === 'everyone') return network === 'matrix' ? 'everyone in this room' : network === 'zulip' ? 'everyone in this channel' : 'everyone who can see this channel';
   if (r.accounts && r.accounts.length > 1) return r.accounts.map((a) => netName(a.network as P.Network)).join(' · ');
   return r.isBot ? 'bot' : null;
 }
