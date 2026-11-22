@@ -173,23 +173,24 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
     here is attached. Markdown's marks stay as written; the bits of HTML it keeps (colour, alignment) go, their words
     kept, as the hub does for every text part. Rich again makes it HTML.
   - **A forward or a quote** is the document's own text when it can be without losing anything (`islandBlocks` in
-    `MailEditor.tsx`: plain tags, left to right, and only styles the document keeps (a span's colour, a paragraph's
-    alignment, a quote's bar) or that change nothing you see (Apple Mail's `line-break`, zero margins); every word and
+    `MailEditor.tsx`: plain tags, left to right (Gmail's `dir="auto"` too, unless the text is right to left), and only
+    styles the document keeps (a span's or a link's colour, a paragraph's alignment, a quote's bar) or that change nothing you see (Apple Mail's `line-break`, zero margins); every word and
     picture there after): the attribution ("On …, Sam wrote:") then the original in a mail quote (`blockquote type=cite`, as
     every quote the editor writes, nested as it was), or the forwarded-message lines then the original. It is edited
     like the rest (trim it, answer inside it), is `>` in Markdown, and goes as it reads. Pictures it brings keep the
     original's address (`data-dc-src`, and `data-dc-held` for a held one), so the pictures choice below applies to
-    them and they are marked the same way. "Quote <name>" comes back once its attribution line is gone (a quote of your
-    own does not count), and a forward's "Put the forwarded message back" once its lines are gone. An empty line goes
+    them and they are marked the same way. "Quote <name>" comes back once its attribution line and its first words are
+    gone (a quote of your own does not count). A draft emptied of it stays so when it is opened again, and a forward's "Put the forwarded message back" once its lines are gone. An empty line goes
     as `<p><br></p>`, which every mail app draws (an empty `<p>` is drawn as nothing), and `<p><br></p>` or Gmail's
     `<div><br></div>` comes in as one empty line.
   - **Otherwise it is kept whole** (an island: a newsletter's layout, its own styles), drawn in a sandboxed frame with
     a bar: "Kept as its own HTML", its size, then its name (cut short on a phone; its tooltip says it all), Hide, Edit
     HTML, Make it text and ✕. Edit HTML opens its HTML in an editor right under the bar, and the block is drawn again
-    below as you type; Done closes it (only opening it changes nothing). What was typed there a moment ago goes with a
-    send or a switch of view at once. Make it text turns it into ordinary text to edit and answer inside (`islandText`
+    below as you type; Done closes it (only opening it changes nothing). What was typed there, or in Markdown, HTML or Plain, a
+    moment ago goes with a send, a close, a discard or a switch of view at once. Make it text turns it into ordinary text to edit and answer inside (`islandText`
     in `schema.ts`: its words, links, pictures, lists and quotes; its layout and styles gone, a layout's tables as their
-    cells one after another); Undo brings the block back. The hub makes it (`hub/src/mail/island.ts`, `MailComposeStart.island`): the original's HTML with its style
+    cells one after another, a table of data with headers kept), the caret at its start; Undo brings the block back.
+    On a phone the bar's name has a line of its own, the buttons under it. The hub makes it (`hub/src/mail/island.ts`, `MailComposeStart.island`): the original's HTML with its style
     sheets written into each element's own `style`, so it keeps its look in mail apps that drop style sheets (Gmail);
     what can't go into one element (`@media`, `:hover`) stays in a sheet scoped to the block. Trackers are gone. Each
     picture from the web keeps its address, shown as your picture setting shows it in the reader (a held one as a

@@ -25,6 +25,7 @@ import TextAlign from '@tiptap/extension-text-align';
 import { Color, TextStyle } from '@tiptap/extension-text-style';
 import { Markdown } from '@tiptap/markdown';
 import { Fragment, Node as PMNode, type Schema } from '@tiptap/pm/model';
+import { TextSelection } from '@tiptap/pm/state';
 import { Placeholder } from '@tiptap/extensions';
 import StarterKit from '@tiptap/starter-kit';
 
@@ -230,8 +231,10 @@ export function islandName(kind: string, label: string, html: string): { text: s
 export function islandText(e: Editor, html: string): JSONContent[] {
   const d = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html');
   for (const x of d.querySelectorAll('style, link, script, title, meta')) x.remove();
-  // The innermost first, so an outer table's cells are found after its inner ones are gone.
+  // The innermost first, so an outer table's cells are found after its inner ones are gone. A table of data (headers,
+  // and no table or layout inside) stays a table: the document has tables.
   for (const t of [...d.querySelectorAll('table')].reverse()) {
+    if (t.querySelector('th') && !t.querySelector('table, div, p, img')) continue;
     const cells = [...t.querySelectorAll('td, th')].filter((c) => c.closest('table') === t);
     t.replaceWith(
       ...cells.map((c) => {
@@ -378,8 +381,18 @@ const Island = Node.create({
       plain.textContent = 'Make it text';
       plain.title = 'Turn it into ordinary text you can edit and answer inside: its layout and styles go (Undo brings them back)';
       plain.onclick = () => {
+        // Its HTML as last typed, if its editor is open.
+        if (editing) codeHost.dispatchEvent(new CustomEvent('me-island-done'));
         const at = typeof getPos === 'function' ? getPos() : null;
-        if (at != null) editor.chain().focus().insertContentAt({ from: at, to: at + node.nodeSize }, islandText(editor, node.attrs.html)).run();
+        if (at == null) return;
+        // The caret at its start, in sight: not at the end of a long newsletter.
+        editor
+          .chain()
+          .focus()
+          .insertContentAt({ from: at, to: at + node.nodeSize }, islandText(editor, node.attrs.html))
+          .command(({ tr }) => (tr.setSelection(TextSelection.near(tr.doc.resolve(at))), true))
+          .scrollIntoView()
+          .run();
       };
       bar.append(code, plain, remove);
       const sheet = document.createElement('div');
@@ -509,7 +522,7 @@ function alignedHtml(node: JSONContent): string | null {
   return `<${tag} style="text-align: ${align}">${inner}</${tag}>`;
 }
 /** A line with only a line break in it (`<p><br></p>`, Gmail's `<div><br></div>`): an empty line, one line tall. */
-const loneBreak = (el: HTMLElement) => (el.childNodes.length === 1 && el.firstChild!.nodeName === 'BR' ? null : false);
+const loneBreak = (el: HTMLElement) => (el.childNodes.length === 1 && el.firstChild!.nodeName === 'BR' && !el.hasAttribute('data-dc-island') ? null : false);
 const AlignedParagraph = Paragraph.extend({
   parseHTML: () => [
     { tag: 'p', getAttrs: loneBreak, getContent: () => Fragment.empty },
