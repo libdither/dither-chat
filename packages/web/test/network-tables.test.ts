@@ -64,8 +64,6 @@ test("deepLink: a chat's address on its network's own site", () => {
     substack: notBuilt('post link'),
     bluesky: notBuilt('post link'),
     lesswrong: notBuilt('post link'),
-    // Open in Zulip: being added by the Zulip presentation work (branch zulip/presentation).
-    zulip: { gap: 'Open in Zulip links: the Zulip presentation work adds them' },
   });
 });
 
@@ -86,7 +84,5 @@ test("externalProfile: someone's page on their network's own site", () => {
     substack: notBuilt('profile link'),
     bluesky: notBuilt('profile link'),
     lesswrong: notBuilt('profile link'),
-    // A person's Zulip page: being added by the Zulip presentation work (branch zulip/presentation).
-    zulip: { gap: "a person's Zulip page: the Zulip presentation work adds it" },
   });
 });

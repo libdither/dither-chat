@@ -558,7 +558,12 @@ export interface PersonAbout {
   friends?: string[];
   /** Connected accounts, websites, a phone number. */
   links?: { label: string; value: string; url?: string; verified?: boolean }[];
-  /** Anything else worth a line: "Business account", "Local time". */
+  /**
+   * Their time zone, an IANA name ("Europe/Berlin"), where the network says one (Zulip's `timezone`): the profile shows
+   * their local time from it, worked out as it is shown.
+   */
+  timeZone?: string;
+  /** Anything else worth a line: "Business account". */
   facts?: { label: string; value: string }[];
   /** Badges the network shows on their profile, by name, with the network's picture. */
   badges?: { name: string; icon?: MediaUrl }[];

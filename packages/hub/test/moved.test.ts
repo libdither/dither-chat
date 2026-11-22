@@ -50,17 +50,61 @@ test('a moved message changes conversation; the old one falls back to its newest
 test("a client's copy of the conversation a message left is answered with a fresh page when it comes back", async () => {
   const { syncResponse } = await import('../src/sync.ts');
   store.ingest(z, { t: 'conversation', conversation: { nativeId: 'h/s/3/t/away', shape: 'thread', name: 'away', parentConversation: 'h/s/3' } });
-  for (const [n, ts] of [['h/m/5', 500], ['h/m/6', 600]] as const) store.ingest(z, { t: 'message', message: { nativeId: n, conversation: 'h/s/3/t/away', author: 'h/u/9', ts, body: n } });
+  for (const [n, ts] of [['h/m/15', 1500], ['h/m/16', 1600]] as const) store.ingest(z, { t: 'message', message: { nativeId: n, conversation: 'h/s/3/t/away', author: 'h/u/9', ts, body: n } });
   const pos = store.journal.position();
-  const ask = (key: string) => ({ key, seq: pos.seq, newest: 600, oldest: 500 });
+  const ask = (key: string) => ({ key, seq: pos.seq, newest: 1600, oldest: 1500 });
   const sync = () => syncResponse({ store, usage: {} as any, boot: 'b' }, { v: pos.v, epoch: pos.epoch, timelines: [ask(`c:${cnv('h/s/3/t/away')}`), ask(`c:${cnv('h/s/3/t/later')}`)] }) as Extract<P.SyncResponse, { sync: unknown }>;
   // Nothing moved yet: a delta, empty.
   expect(sync().timelines.map((t) => t.replace)).toEqual([false, false]);
   // Moved while the client was away.
-  store.ingest(z, { t: 'message', message: { nativeId: 'h/m/6', conversation: 'h/s/3/t/later', author: 'h/u/9', ts: 600, body: 'h/m/6', moved: true } });
+  store.ingest(z, { t: 'message', message: { nativeId: 'h/m/16', conversation: 'h/s/3/t/later', author: 'h/u/9', ts: 1600, body: 'h/m/16', moved: true } });
   const [away, later] = sync().timelines;
   expect(away.replace).toBe(true);
-  expect(away.messages.map((m) => m.id)).toEqual([msg('h/m/5')]);
+  expect(away.messages.map((m) => m.id)).toEqual([msg('h/m/15')]);
   // Where it went still gets a delta: it holds nothing it should not.
   expect(later.replace).toBe(false);
+});
+
+test('a moved message says when (extra.movedAt, or zulip.movedAt from an older extractor); one never moved says nothing', () => {
+  store.ingest(z, { t: 'message', message: { nativeId: 'h/m/3', conversation: 'h/s/3/t/later', author: 'h/u/9', ts: 300, body: 'third', extra: { movedAt: 5_000 }, moved: true } });
+  store.ingest(z, { t: 'message', message: { nativeId: 'h/m/4', conversation: 'h/s/3/t/later', author: 'h/u/9', ts: 400, body: 'fourth', extra: { zulip: { movedAt: 6_000 } } } });
+  store.ingest(z, { t: 'message', message: { nativeId: 'h/m/5', conversation: 'h/s/3/t/later', author: 'h/u/9', ts: 500, body: 'fifth', extra: { movedAt: 'soon' } } });
+  expect(store.messageView(msg('h/m/3'))?.movedAt).toBe(5_000);
+  expect(store.messageView(msg('h/m/4'))?.movedAt).toBe(6_000);
+  expect(store.messageView(msg('h/m/5'))?.movedAt).toBeUndefined();
+  expect(store.messageView(msg('h/m/2'))?.movedAt).toBeUndefined();
+});
+
+test("resolving a Zulip topic (archived here) leaves it shown; another network's archived thread is hidden", () => {
+  const hidden = (id: string) => !!store.placePrefs().find((p) => p.kind === 'conversation' && p.id === id)?.hidden;
+  store.ingest(z, { t: 'conversation', conversation: { nativeId: 'h/s/3/t/plans', shape: 'thread', name: '✔ plans', parentConversation: 'h/s/3', archived: true } });
+  expect(store.one<{ archived: number }>('SELECT archived FROM conversation WHERE id = ?', cnv('h/s/3/t/plans'))?.archived).toBe(1);
+  expect(hidden(cnv('h/s/3/t/plans'))).toBe(false);
+  const d = store.createAccount({ network: 'discord', label: 'd', color: '#5865f2', adapter: 'discord' });
+  store.ingest(d, { t: 'conversation', conversation: { nativeId: '91', shape: 'thread', name: 'done', archived: false } });
+  store.ingest(d, { t: 'conversation', conversation: { nativeId: '91', shape: 'thread', name: 'done', archived: true } });
+  expect(hidden(hubId('cnv', 'discord', '91'))).toBe(true);
+});
+
+test('resolved Zulip topics an older hub hid are shown again, once, when the hub starts; nothing else is', () => {
+  const at = mkdtempSync(join(tmpdir(), 'dither-resolved-'));
+  try {
+    const first = new Store(join(at, 'hub.sqlite'), (raw) => raw ?? null);
+    const zz = first.createAccount({ network: 'zulip', label: 'z', color: '#6492FE', adapter: 'zulip' });
+    const dd = first.createAccount({ network: 'discord', label: 'd', color: '#5865f2', adapter: 'discord' });
+    first.ingest(zz, { t: 'conversation', conversation: { nativeId: 'h/s/3/t/done', shape: 'thread', name: '✔ done', parentConversation: 'h/s/3', archived: true } });
+    first.ingest(zz, { t: 'conversation', conversation: { nativeId: 'h/s/3/t/open', shape: 'thread', name: 'open', parentConversation: 'h/s/3' } });
+    first.ingest(dd, { t: 'conversation', conversation: { nativeId: '92', shape: 'thread', name: 'old', archived: true } });
+    // As an older hub left it: each archived thread hidden, and a topic you hid yourself.
+    const ids = [cnv('h/s/3/t/done'), cnv('h/s/3/t/open'), hubId('cnv', 'discord', '92')];
+    for (const id of ids) first.db.query(`INSERT INTO place_pref (kind, id, hidden) VALUES ('conversation', ?, 1) ON CONFLICT (kind, id) DO UPDATE SET hidden = 1`).run(id);
+    first.db.query(`DELETE FROM meta WHERE key = 'zulip_resolved_shown'`).run();
+    first.db.close();
+    const again = new Store(join(at, 'hub.sqlite'), (raw) => raw ?? null);
+    const hidden = (id: string) => !!again.placePrefs().find((p) => p.kind === 'conversation' && p.id === id)?.hidden;
+    expect(ids.map(hidden)).toEqual([false, true, true]);
+    again.db.close();
+  } finally {
+    rmSync(at, { recursive: true, force: true });
+  }
 });
