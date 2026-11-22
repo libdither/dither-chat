@@ -203,6 +203,11 @@ export function editDistance(a: string, b: string, max: number): number {
   return Math.min(p[b.length], max + 1);
 }
 
+/** Of the accounts that saw a person's accounts, the one that saw the account `url` is the picture of, else any. */
+function pickVia(rows: { via: string; url: string | null }[] | undefined, url: string): string | null {
+  return rows?.find((r) => r.url === url)?.via ?? rows?.[0]?.via ?? null;
+}
+
 /** Fields that may go from nothing to something and back (Store.logChanges). */
 const SETTABLE = new Set(['topic', 'bio', 'status', 'pronouns']);
 const PRESENCE_STATES = new Set<string>(['online', 'idle', 'dnd', 'offline']);
@@ -212,7 +217,7 @@ const PRESENCE_DEVICES = new Set<string>(['desktop', 'mobile', 'web']);
  * Bump when a migration step changes without schema.sql changing, so the database is copied before it runs. Mail's
  * migration steps (mail/store.ts) count here too, when no mail schema file changes with them.
  */
-const MIGRATIONS = 5;
+const MIGRATIONS = 6;
 
 /** How long a write waits for another connection's lock before it fails (PRAGMA busy_timeout). */
 export const BUSY_MS = 2000;
@@ -339,6 +344,7 @@ export class Store {
       this.toTiers();
       this.sourceNames();
       this.nicknamesToAccounts();
+      this.forgetGoneSeenVia();
       this.db.query(`INSERT INTO meta (key, value) VALUES ('schema_sig', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(sig);
     })();
     timer.step('migrations');
@@ -458,6 +464,16 @@ export class Store {
     }
     if (named.length) console.log(`names: ${named.length} nickname${named.length === 1 ? '' : 's'} moved onto the accounts of the person named`);
     this.db.query(`INSERT INTO meta (key, value) VALUES ('nicknames_by_account', ?)`).run(String(Date.now()));
+  }
+
+  /**
+   * People seen only through an account since removed kept it as theirs (deleteAccount did not clear it before), so
+   * their pictures were asked of an account that is not there, and the account added again never took its place.
+   */
+  private forgetGoneSeenVia() {
+    if (this.db.query(`SELECT 1 FROM meta WHERE key = 'seen_via_gone'`).get()) return;
+    this.db.exec('UPDATE identity SET seen_via = NULL WHERE seen_via IS NOT NULL AND seen_via NOT IN (SELECT id FROM account)');
+    this.db.exec(`INSERT INTO meta (key, value) VALUES ('seen_via_gone', '1')`);
   }
 
   /** backups/pre-migrate-<time>.sqlite next to the database, the newest five kept. Not for an in-memory database. */
@@ -668,6 +684,9 @@ export class Store {
     const tx = this.db.transaction(() => {
       this.db.query('DELETE FROM account WHERE id = ?').run(id);
       this.db.query('DELETE FROM about WHERE account_id = ?').run(id);
+      // Pictures are fetched through the account that saw someone: one that is gone cannot, so the next account to
+      // see them takes its place (seen_via is only set where it is empty).
+      this.db.query('UPDATE identity SET seen_via = NULL WHERE seen_via = ?').run(id);
       const orphanConvs = this.db
         .query(`SELECT id FROM conversation c WHERE NOT EXISTS (SELECT 1 FROM vantage v WHERE v.target_kind = 'conversation' AND v.target_id = c.id)`)
         .all() as Row[];
@@ -1403,6 +1422,7 @@ export class Store {
       const last = this.db.query('SELECT id, ts FROM message WHERE conversation_id = ? AND deleted = 0 ORDER BY ts DESC LIMIT 1').get(old.conversation_id) as Row | null;
       this.db.query('UPDATE conversation SET last_message_id = ?, last_message_at = ? WHERE id = ?').run(last?.id ?? null, last?.ts ?? null, old.conversation_id);
       this.dirty.conversations.add(old.conversation_id as string);
+      this.journal.movedOut(old.conversation_id as string);
     }
     if (f.attachments && !(old?.deleted && !f.attachments.length)) {
       this.db.query('DELETE FROM attachment WHERE message_id = ?').run(id);
@@ -2545,9 +2565,22 @@ export class Store {
     return out;
   }
 
-  personView(r: Row, identityIds?: string[]): P.PersonView {
+  /** `vias`: the accounts that saw each person's accounts, when a caller reads many (bootstrap); else looked up. */
+  personView(r: Row, identityIds?: string[], vias?: Map<string, { via: string; url: string | null }[]>): P.PersonView {
     const ids = identityIds ?? (this.db.query('SELECT id FROM identity WHERE person_id = ?').all(r.id) as Row[]).map((x) => x.id);
-    return { id: r.id, name: r.name, avatar: r.avatar_url ? this.media(r.avatar_url, null) : null, starred: false, isSelf: !!r.is_self, identityIds: ids, nameSource: (r.name_source ?? 'network') as P.NameSource };
+    const avatar = !r.avatar_url ? null : vias ? this.media(r.avatar_url, pickVia(vias.get(r.id), r.avatar_url)) : this.personPicture(r.id, r.avatar_url);
+    return { id: r.id, name: r.name, avatar, starred: false, isSelf: !!r.is_self, identityIds: ids, nameSource: (r.name_source ?? 'network') as P.NameSource };
+  }
+
+  /**
+   * A person's picture, signed through an account that saw one of their accounts: a picture only an account can fetch
+   * (Zulip's `zulip:` paths, Matrix's `mxc://`) cannot be fetched with none. The account of the one the picture came
+   * from first, else any of theirs still here.
+   */
+  personPicture(personId: string, url: string | null | undefined): string | null {
+    if (!url) return null;
+    const rows = this.db.query(`SELECT i.seen_via AS via, i.avatar_url AS url FROM identity i JOIN account a ON a.id = i.seen_via WHERE i.person_id = ?`).all(personId) as { via: string; url: string | null }[];
+    return this.media(url, pickVia(rows, url));
   }
 
   spaceView(r: Row, accountIds?: string[], mute?: string | null): P.SpaceView {
@@ -3946,7 +3979,10 @@ export class Store {
     });
 
     const idsByPerson = group(identities.filter((i) => i.personId), (i) => i.personId!);
-    const persons = (db.query('SELECT * FROM person').all() as Row[]).map((p) => this.personView(p, (idsByPerson.get(p.id) ?? []).map((i) => i.id)));
+    const vias = new Map<string, { via: string; url: string | null }[]>();
+    for (const v of db.query(`SELECT i.person_id AS pid, i.seen_via AS via, i.avatar_url AS url FROM identity i JOIN account a ON a.id = i.seen_via WHERE i.person_id IS NOT NULL`).all() as Row[])
+      (vias.get(v.pid) ?? vias.set(v.pid, []).get(v.pid)!).push({ via: v.via, url: v.url });
+    const persons = (db.query('SELECT * FROM person').all() as Row[]).map((p) => this.personView(p, (idsByPerson.get(p.id) ?? []).map((i) => i.id), vias));
     const spaces = (db.query('SELECT * FROM space').all() as Row[]).map((s) => {
       const vs = VS.get(s.id) ?? [];
       return this.spaceView(s, vs.map((v) => v.account_id), vs.find((v) => v.native_mute)?.native_mute ?? null);
@@ -4031,9 +4067,9 @@ export class Store {
     if (!c) return {};
     const via = this.vantageAccounts('conversation', c.id)[0] ?? null;
     const sender = messageId
-      ? this.one<Row>('SELECT i.avatar_url, i.seen_via, p.avatar_url AS person_avatar FROM message m JOIN identity i ON i.id = m.author_id LEFT JOIN person p ON p.id = i.person_id WHERE m.id = ?', messageId)
+      ? this.one<Row>('SELECT i.avatar_url, i.seen_via, p.id AS person_id, p.avatar_url AS person_avatar FROM message m JOIN identity i ON i.id = m.author_id LEFT JOIN person p ON p.id = i.person_id WHERE m.id = ?', messageId)
       : null;
-    const icon = sender?.avatar_url ? this.media(sender.avatar_url, sender.seen_via ?? via) : sender?.person_avatar ? this.media(sender.person_avatar, null) : this.media(c.avatar_url, via);
+    const icon = sender?.avatar_url ? this.media(sender.avatar_url, sender.seen_via ?? via) : sender?.person_avatar ? this.personPicture(sender.person_id, sender.person_avatar) : this.media(c.avatar_url, via);
     // A push carries at most about 4 KB, so an inline picture only goes when it is small.
     return { network: c.network, ...(icon && (!icon.startsWith('data:') || icon.length < 1500) ? { icon } : {}) };
   }

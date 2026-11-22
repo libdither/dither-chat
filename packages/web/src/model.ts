@@ -5,7 +5,7 @@
  * nothing: a component reads `rev` or `metaRev` itself.
  */
 import type * as P from '@dither-chat/protocol';
-import { categoryThreshold, NETWORK_META, POST_NETWORKS, RULE_LABEL } from '@dither-chat/protocol';
+import { categoryThreshold, mutedNow, NETWORK_META, POST_NETWORKS, RULE_LABEL } from '@dither-chat/protocol';
 import { dataVersion, db, inbox, isSelfIdentity, mailTriage } from './state.ts';
 import { mailDataVersion, metaDataVersion } from './versions.ts';
 import { isMailItem, triageBoard, type Board, type BoardItem } from './board.ts';
@@ -405,12 +405,21 @@ export function spaceChildren(id: string): TreeNode[] {
 /** Channels a server can open on: ones with messages to read, not voice rooms, forums or feeds. */
 const OPENS_ON: ReadonlySet<P.Variant> = new Set(['text', 'announcement', 'rules']);
 
-/** A space's first channel to read, in list order through its categories and subspaces, as Discord opens a server. */
-export function firstChannel(id: string, seen = new Set<string>()): string | undefined {
+/**
+ * A space's first channel to read, in list order through its categories and subspaces, as Discord opens a server.
+ * A space with no channel of messages opens on its first forum (a Zulip organization, whose channels are all forums),
+ * which shows the forum's posts.
+ */
+export function firstChannel(id: string): string | undefined {
+  return firstOf(id, OPENS_ON, new Set()) ?? firstOf(id, FORUMS, new Set());
+}
+const FORUMS: ReadonlySet<P.Variant> = new Set(['forum']);
+
+function firstOf(id: string, variants: ReadonlySet<P.Variant>, seen: Set<string>): string | undefined {
   if (seen.has(id)) return undefined;
   seen.add(id);
   for (const n of spaceChildren(id)) {
-    const hit = n.kind === 'conversation' ? (OPENS_ON.has(db.conversations.get(n.id)!.variant) ? n.id : undefined) : firstChannel(n.id, seen);
+    const hit = n.kind === 'conversation' ? (variants.has(db.conversations.get(n.id)!.variant) ? n.id : undefined) : firstOf(n.id, variants, seen);
     if (hit) return hit;
   }
   return undefined;
@@ -541,6 +550,22 @@ export function convsUnder(id: string): P.ConversationView[] {
   });
 }
 
+/**
+ * A space's channels, not the threads and topics under them (every Zulip topic is a conversation of its own), latest
+ * first by their newest message there or in a thread of theirs: a Zulip channel takes no messages itself.
+ */
+export function channelsUnder(id: string): P.ConversationView[] {
+  return memo('chans:' + id, () => {
+    const under = convsUnder(id);
+    const latest = new Map<string, number>();
+    for (const c of under) {
+      const k = c.shape === 'thread' && c.parentId ? c.parentId : c.id;
+      latest.set(k, Math.max(latest.get(k) ?? 0, c.lastMessageAt ?? 0));
+    }
+    return under.filter((c) => c.shape === 'channel').sort((a, b) => latest.get(b.id)! - latest.get(a.id)!);
+  });
+}
+
 /** Their ids: the walk is done again only when what is where may have changed. */
 function idsUnder(id: string): string[] {
   return metaMemo('under:' + id, () => {
@@ -663,7 +688,7 @@ function nativeLevel(c: P.ConversationView, parent?: P.ConversationView): 'all' 
   const now = Date.now();
   const at = (m: P.NativeMute | null | undefined) => {
     if (m?.until !== undefined && m.until > now) expires = Math.min(expires, m.until);
-    return !m || (m.until !== undefined && m.until <= now) ? null : m.until !== undefined ? 'none' : (m.level ?? null);
+    return !m || (m.until !== undefined && m.until <= now) ? null : mutedNow(m, now) ? 'none' : (m.level ?? null);
   };
   for (const m of [c.nativeMute, parent?.nativeMute]) {
     const lv = at(m);
@@ -687,12 +712,15 @@ function nativeLevel(c: P.ConversationView, parent?: P.ConversationView): 'all' 
 
 function nativeMuteLevel(c: P.ConversationView, parent?: P.ConversationView): Level | null {
   const now = Date.now();
-  const mutes: (P.NativeMute | null)[] = [c.nativeMute, parent?.nativeMute ?? null, ...(parent ?? c).spaceIds.map((s) => db.spaces.get(s)?.nativeMute ?? null)];
+  // A thread's own setting is its answer over its channel's (a Zulip topic unmuted in a muted channel), as in nativeLevel.
+  const own = c.nativeMute;
+  const says = !!own && (mutedNow(own, now) || (own.level !== undefined && !(own.until !== undefined && own.until <= now)));
+  const mutes: (P.NativeMute | null)[] = [own, says ? null : (parent?.nativeMute ?? null), ...(parent ?? c).spaceIds.map((s) => db.spaces.get(s)?.nativeMute ?? null)];
   let best: Level | null = null;
   for (const m of mutes) {
     if (!m) continue;
     if (m.until && m.until > now) expires = Math.min(expires, m.until);
-    const lv: Level | null = m.level === 'none' || (m.until && m.until > now) ? 'digest' : m.level === 'mentions' ? 'mentions' : null;
+    const lv: Level | null = mutedNow(m, now) ? 'digest' : m.level === 'mentions' ? 'mentions' : null;
     if (lv && (!best || rank(lv) < rank(best))) best = lv;
   }
   return best;

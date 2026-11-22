@@ -199,7 +199,9 @@ function timeline(store: Store, t: P.SyncTimelineRequest): P.SyncTimeline {
 
   let newer: Row[] = [];
   const regrouped = person && (!Array.isArray(t.conversationIds) || [...t.conversationIds].sort().join() !== [...convs].sort().join());
-  let behind = typeof t.seq !== 'number' || t.seq < j.floor || t.seq > j.seq || regrouped;
+  // A message that moved out since (a Zulip topic renamed): a delta cannot take it away, a fresh page does.
+  const movedOut = () => !!store.one(`SELECT 1 FROM sync_change WHERE kind = 'movedOut' AND id IN (SELECT value FROM json_each(?)) AND seq > ? LIMIT 1`, list, t.seq);
+  let behind = typeof t.seq !== 'number' || t.seq < j.floor || t.seq > j.seq || regrouped || movedOut();
   if (!behind && t.newer !== false) {
     newer = latest(PAGE + 1);
     behind = newer.length > PAGE;

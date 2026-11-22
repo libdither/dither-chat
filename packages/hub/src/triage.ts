@@ -32,7 +32,7 @@
  */
 
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META, reminderOf } from '@dither-chat/protocol';
+import { mutedNow, NETWORK_META, reminderOf } from '@dither-chat/protocol';
 import { previewText, type Store } from './store.ts';
 import { namedTokens } from './mentionrefs.ts';
 import { describeActivity, type ActivityStore, type Features } from './activity.ts';
@@ -265,20 +265,22 @@ export class Triage {
 
   private nativeMute(cid: string, parentId?: string): { level: P.NotifyLevel } | null {
     const now = Date.now();
-    const rows = this.store.raw<Row>(
-      `SELECT native_mute FROM vantage WHERE native_mute IS NOT NULL AND (
-         (target_kind = 'conversation' AND target_id IN (?, ?))
-         OR (target_kind = 'space' AND target_id IN (SELECT parent_id FROM space_edge WHERE child_kind = 'conversation' AND child_id IN (?, ?))))`,
-      cid,
-      parentId ?? cid,
+    const read = (sql: string, ...args: string[]) => this.store.raw<Row>(sql, ...args).map((r) => JSON.parse(r.native_mute) as P.NativeMute);
+    const conv = (id: string) => read(`SELECT native_mute FROM vantage WHERE native_mute IS NOT NULL AND target_kind = 'conversation' AND target_id = ?`, id);
+    const own = conv(cid);
+    // A thread's own setting is its answer over its channel's (a Zulip topic unmuted in a muted channel), as in
+    // nativeLevel: a mute in force, or a level that has not run out.
+    const says = (m: P.NativeMute) => mutedNow(m, now) || (m.level !== undefined && !(m.until !== undefined && m.until <= now));
+    const parent = parentId && parentId !== cid && !own.some(says) ? conv(parentId) : [];
+    const spaces = read(
+      `SELECT native_mute FROM vantage WHERE native_mute IS NOT NULL AND target_kind = 'space' AND target_id IN (SELECT parent_id FROM space_edge WHERE child_kind = 'conversation' AND child_id IN (?, ?))`,
       cid,
       parentId ?? cid,
     );
     let best: P.NotifyLevel | null = null;
-    for (const r of rows) {
-      const m = JSON.parse(r.native_mute) as P.NativeMute;
-      const muted = m.level === 'none' || (m.until !== undefined && m.until > now);
-      const lv: P.NotifyLevel | null = muted ? 'digest' : m.level === 'mentions' ? 'mentions' : null;
+    for (const m of [...own, ...parent, ...spaces]) {
+      // Muted outright (`muted`, as Zulip and Discord send it), set to nothing, or until a time still ahead.
+      const lv: P.NotifyLevel | null = mutedNow(m, now) ? 'digest' : m.level === 'mentions' ? 'mentions' : null;
       if (lv && (!best || rank(lv) < rank(best))) best = lv;
     }
     return best ? { level: best } : null;
@@ -296,7 +298,7 @@ export class Triage {
       for (const r of this.store.raw<Row>(`SELECT native_mute FROM vantage WHERE target_kind = ? AND target_id = ? AND native_mute IS NOT NULL`, kind, id)) {
         const m = JSON.parse(r.native_mute) as P.NativeMute;
         if (m.until !== undefined && m.until <= now) continue;
-        const lv = m.until !== undefined ? 'none' : m.level;
+        const lv = mutedNow(m, now) ? 'none' : m.level;
         if (lv && (!best || loud[lv] > loud[best])) best = lv;
       }
       return best;
