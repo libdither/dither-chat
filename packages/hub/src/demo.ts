@@ -3364,9 +3364,9 @@ export function demoFactory(acc: AccountRow, dir: string): InprocAdapter | null 
 }
 
 /**
- * `x: false` leaves out the X accounts and their feed (docs/feed.md), and the Mastodon, Reddit, Lemmy, Substack and Bluesky
- * ones with them: scripts/perf-world.ts's world predates them. `posts: false` (or DITHER_DEMO_POSTS=0, for the verify
- * scripts written for X alone) leaves out only those five.
+ * `x: false` leaves out the X accounts and their feed (docs/feed.md), and the Mastodon, Reddit, Lemmy, Substack, Bluesky
+ * and LessWrong ones with them: scripts/perf-world.ts's world predates them. `posts: false` (or DITHER_DEMO_POSTS=0, for
+ * the verify scripts written for X alone) leaves out only those six.
  */
 export function createDemoAccounts(store: Store, o: { x?: boolean; posts?: boolean } = {}): AccountRow[] {
   // A new world (a fresh hub, Reset demo, each test): names and settings changed in the last one start over.

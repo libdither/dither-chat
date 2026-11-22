@@ -4,7 +4,7 @@
  */
 import { expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
-import { cardSentence, clip, feedCards, feedUnits, isPostKey, namesPhrase, parsePostKey, postHref, postKey, postMessageKey, reactionCounts, reactorsPhrase, shortCount } from '../src/feed.ts';
+import { activityVerbs, cardSentence, clip, feedBarLine, feedCards, feedUnits, feedVerb, isPostKey, namesPhrase, parsePostKey, postHref, postKey, postMessageKey, reactionCounts, reactWords, reactorsPhrase, shortCount } from '../src/feed.ts';
 
 const post = (id: string, text = `post ${id}`): P.PostFact => ({ id, url: `https://x.com/me/status/${id}`, ts: 0, author: 'idn_me', text });
 let n = 0;
@@ -88,6 +88,7 @@ test('post keys: a post and a logged message, there and back', () => {
     expect(parsePostKey(postKey('reddit', 't1_abc12'))).toEqual({ network: 'reddit', post: 't1_abc12' });
     expect(parsePostKey(postKey('lemmy', 'comment:9001'))).toEqual({ network: 'lemmy', post: 'comment:9001' });
     expect(parsePostKey(postKey('bluesky', 'did:plc:riverdemoqqqqqqqqqqqqqqq~3lbxaaaaaaaab'))).toEqual({ network: 'bluesky', post: 'did:plc:riverdemoqqqqqqqqqqqqqqq~3lbxaaaaaaaab' });
+    expect(parsePostKey(postKey('lesswrong', 'c-dmo0013LwQxZk7Faq'))).toEqual({ network: 'lesswrong', post: 'c-dmo0013LwQxZk7Faq' });
     expect(parsePostKey('pst_x_12/ab')).toBeNull();
     expect(parsePostKey('pst_x_')).toBeNull();
     expect(isPostKey('cnv_x')).toBe(false);
@@ -132,3 +133,10 @@ test('by post: what is new, and the reactions line in words and counts', () => {
   expect([old.fresh, reactorsPhrase(old, name), reactionCounts(old).repost]).toEqual([false, 'Reposted by Alice', 1]);
 });
 
+
+test("LessWrong in its own words: an upvote on karma, no repost, votes on the bar", () => {
+  expect(reactWords('lesswrong')).toMatchObject({ liked: 'upvoted', likes: 'Karma', likeIcon: 'upvote' });
+  expect(feedVerb('like', 'lesswrong')).toBe('upvoted your post');
+  expect(activityVerbs('lesswrong')).toBe('upvote or reply to');
+  expect(feedBarLine('lesswrong')).toBe('Replies, votes and follows happen on LessWrong.');
+});

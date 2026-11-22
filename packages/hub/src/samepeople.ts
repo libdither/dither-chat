@@ -284,6 +284,7 @@ export const COLLECT_PACE: Partial<Record<P.Network, { gapMs: number; perDay: nu
   lemmy: { gapMs: 120_000, perDay: 200 },
   substack: { gapMs: 300_000, perDay: 120 },
   bluesky: { gapMs: 120_000, perDay: 200 },
+  lesswrong: { gapMs: 300_000, perDay: 120 },
 };
 /** A profile asked this recently is not asked again. */
 const COLLECT_FRESH_MS = 14 * 86_400_000;

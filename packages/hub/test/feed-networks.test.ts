@@ -1,10 +1,11 @@
 /**
- * The Feed with Mastodon, Reddit, Lemmy, Substack and Bluesky (docs/feed.md "A feed of posts, for any network"), through
- * the demo world's five accounts (demo-posts.ts): their timelines in Following and Discover with titles, places and a
+ * The Feed with Mastodon, Reddit, Lemmy, Substack, Bluesky and LessWrong (docs/feed.md "A feed of posts, for any
+ * network"), through the demo world's six accounts (demo-posts.ts): their timelines in Following and Discover with titles, places and a
  * content warning; threads with comment trees read by their own ids (Reddit's t1_…, Lemmy's comment:…), a branch
  * deeper than six levels opened as a thread of its own; like and repost where each network has them; a new Reddit or
  * Lemmy post refused without its title and place, posted with them; Mastodon's content warning; the notifications in
- * each network's words; Bluesky's `<did>~<rkey>` ids, its 300 graphemes and quote posts; the feed read-only.
+ * each network's words; Bluesky's `<did>~<rkey>` ids, its 300 graphemes and quote posts; LessWrong's `p-` and `c-` ids,
+ * its articles only in their threads, karma as the like, comments only and no repost; the feed read-only.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
@@ -23,7 +24,7 @@ let store: Store;
 const adapters = new Map<string, DemoPosts>();
 const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
 const sent: { accountId: string; cmd: Record<string, any> }[] = [];
-const ACC = Object.fromEntries(DEMO_POST_ACCOUNTS.map((a) => [a.network, a.id])) as Record<'mastodon' | 'reddit' | 'lemmy' | 'substack' | 'bluesky', string>;
+const ACC = Object.fromEntries(DEMO_POST_ACCOUNTS.map((a) => [a.network, a.id])) as Record<'mastodon' | 'reddit' | 'lemmy' | 'substack' | 'bluesky' | 'lesswrong', string>;
 
 function command<T>(accountId: string, cmd: object): Promise<T> {
   const id = crypto.randomUUID();
@@ -69,7 +70,8 @@ afterAll(() => {
 describe('sources and timelines', () => {
   test('each account reads timelines, posts and has its notifications conversation', () => {
     const v = tl.sources();
-    expect(v.accounts.map((a) => a.network)).toEqual(['mastodon', 'reddit', 'lemmy', 'substack', 'bluesky']);
+    expect(v.accounts.map((a) => a.network)).toEqual(['mastodon', 'reddit', 'lemmy', 'substack', 'bluesky', 'lesswrong']);
+    // LessWrong deletes a comment of yours while nothing answers it (dither-accounts' lesswrong kind), so it can too.
     for (const a of v.accounts) expect(a).toMatchObject({ online: true, home: true, publish: true, unpublish: true });
     expect(v.accounts.every((a) => !!a.feedConvId)).toBe(true);
   });
@@ -85,6 +87,10 @@ describe('sources and timelines', () => {
     expect(by('bluesky').some((p) => p.quoteOf?.media?.length)).toBe(true);
     expect(by('bluesky').some((p) => p.repostOf)).toBe(true);
     expect(by('bluesky').every((p) => !p.title && !p.place && !p.warning)).toBe(true);
+    expect(by('lesswrong').length).toBeGreaterThan(0);
+    expect(by('lesswrong').every((p) => p.title && !p.place && p.counts?.reposts === undefined)).toBe(true);
+    // A card has the short text; the whole article comes only with the post's thread.
+    expect(v.entries.every((e) => e.post.article === undefined)).toBe(true);
     // Discover is each account's For you, its reasons kept.
     const d = await tl.read('discover');
     expect(d.entries.some((e) => e.network === 'reddit' && e.reason?.text.startsWith('Popular in r/'))).toBe(true);
@@ -207,6 +213,78 @@ describe('Bluesky', () => {
     const conv = tl.sources().accounts.find((a) => a.accountId === ACC.bluesky)!.feedConvId!;
     const types = (store.db.query('SELECT extra FROM message WHERE conversation_id = ?').all(conv) as { extra: string }[]).map((m) => JSON.parse(m.extra).feed.type);
     expect(types.sort()).toEqual(['follow', 'like', 'quote', 'reply', 'repost']);
+  });
+});
+
+describe('LessWrong', () => {
+  const calibOf = () => tl.entries(`${ACC.lesswrong}:following`).entries.find((e) => e.post.title === 'Notes on calibrating small predictions')!.post;
+
+  test('posts are `p-…`, comments `c-…`; a post\'s whole article comes in its thread, not on its card; karma and comments as counts', async () => {
+    const calib = calibOf();
+    expect(calib.id).toMatch(/^p-[A-Za-z0-9]{17}$/);
+    expect(calib.url).toStartWith('https://www.lesswrong.com/posts/');
+    expect(calib.article).toBeUndefined();
+    expect(calib.counts).toMatchObject({ likes: 87, replies: 4 });
+    const t = await posts.thread('lesswrong', calib.id);
+    expect(t.focal?.article).toContain('## What I did');
+    expect(t.focal?.article).toStartWith(calib.text);
+    expect(t.focal?.text).toBe(calib.text);
+    const comments = t.replies.flat();
+    expect(comments.length).toBe(4);
+    expect(comments.every((c) => /^c-[A-Za-z0-9]{17}$/.test(c.id) && !c.article)).toBe(true);
+    // A comment opened by its own id: the post and the comment it answers above it.
+    const deep = comments.find((c) => c.text.startsWith('The tail is'))!;
+    const sub = await posts.thread('lesswrong', deep.id);
+    expect(sub.ancestors.map((p) => p.id)).toEqual([calib.id, comments.find((c) => c.text.startsWith('I tried the same'))!.id]);
+    expect(sub.focal?.article).toBeUndefined();
+    // The card stays short after its thread was read.
+    expect(tl.entries(`${ACC.lesswrong}:following`).entries.find((e) => e.post.id === calib.id)!.post.article).toBeUndefined();
+  });
+
+  test('a like is an upvote and takes back; a repost is refused before anything is sent', async () => {
+    const calib = calibOf();
+    const up = await posts.act('lesswrong', calib.id, 'like');
+    expect(up.viewer.liked).toBe(true);
+    expect((await posts.act('lesswrong', calib.id, 'unlike')).viewer.liked).toBe(false);
+    const before = sent.length;
+    await expect(posts.act('lesswrong', calib.id, 'repost')).rejects.toMatchObject({ status: 409 });
+    expect(sent.length).toBe(before);
+  });
+
+  test('only comments: no new post (409, nothing sent), a comment on a post and on a comment, 100,000 characters, no pictures', async () => {
+    const calib = calibOf();
+    const before = sent.length;
+    await expect(posts.publish('lesswrong', { text: 'A new post', key: 'w1' })).rejects.toMatchObject({ status: 409, message: 'LessWrong takes only comments from here: answer a post or a comment.' });
+    await expect(posts.publish('lesswrong', { text: 'A new post', title: 'Title', key: 'w1b' })).rejects.toMatchObject({ status: 409 });
+    expect(sent.length).toBe(before);
+    const c = await posts.publish('lesswrong', { text: 'A **comment**, in Markdown.', replyTo: calib.id, key: 'w2' });
+    expect(c.id).toMatch(/^c-/);
+    expect(c.replyTo?.id).toBe(calib.id);
+    const under = (await posts.thread('lesswrong', calib.id)).replies.flat().find((p) => p.text.startsWith('Brier'))!;
+    expect((await posts.publish('lesswrong', { text: 'A reply to a comment.', replyTo: under.id, key: 'w3' })).root).toBe(calib.id);
+    expect((await posts.publish('lesswrong', { text: 'a'.repeat(100_000), replyTo: calib.id, key: 'w4' })).id).toMatch(/^c-/);
+    await expect(posts.publish('lesswrong', { text: 'a'.repeat(100_001), replyTo: calib.id, key: 'w5' })).rejects.toMatchObject({ status: 422, message: "Too long: 1 over LessWrong's 100000." });
+    await expect(posts.publish('lesswrong', { text: 'with a picture', replyTo: calib.id, key: 'w6', media: [{ kind: 'image', mime: 'image/png', path: 'nowhere.png', name: 'p.png', size: 10 }] })).rejects.toMatchObject({ status: 422, message: 'LessWrong takes words only here: no pictures or videos.' });
+    await expect(posts.publish('lesswrong', { text: 'cw', warning: 'cw', replyTo: calib.id, key: 'w7' })).rejects.toMatchObject({ status: 422 });
+  });
+
+  test('one press to every account leaves LessWrong out with its reason, the others posted', async () => {
+    const v = await tl.publish({ key: 'press-lw', destinations: [{ accountId: ACC.mastodon, text: 'Hello again' }, { accountId: ACC.lesswrong, text: 'Hello again' }] });
+    expect(v.results.map((r) => r.ok)).toEqual([true, false]);
+    expect(v.results[1]!.error).toContain('only comments');
+    expect(sent.some((s) => s.accountId === ACC.lesswrong && s.cmd.t === 'publish' && s.cmd.text === 'Hello again')).toBe(false);
+  });
+
+  test('a Substack essay brings its whole article in its thread too', async () => {
+    const essay = tl.entries(`${ACC.substack}:following`).entries.find((e) => e.post.title === 'Why maps lie, gently')!.post;
+    expect(essay.article).toBeUndefined();
+    expect((await posts.thread('substack', essay.id)).focal?.article).toContain('## Three projections');
+  });
+
+  test('replies arrive as notifications in LessWrong\'s feed', () => {
+    const conv = tl.sources().accounts.find((a) => a.accountId === ACC.lesswrong)!.feedConvId!;
+    const types = (store.db.query('SELECT extra FROM message WHERE conversation_id = ?').all(conv) as { extra: string }[]).map((m) => JSON.parse(m.extra).feed.type);
+    expect(types.sort()).toEqual(['follow', 'reply']);
   });
 });
 
