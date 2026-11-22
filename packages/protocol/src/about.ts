@@ -562,8 +562,13 @@ export interface PersonAbout {
   /** Connected accounts, websites, a phone number. */
   links?: { label: string; value: string; url?: string; verified?: boolean }[];
   /**
-   * Anything else worth a line: "Business account", "Local time". `people`: native identity ids of the people the value
-   * names, in its order (a bot's owner, a person field), so the app can link them; identity facts for them come first.
+   * Their time zone, an IANA name ("Europe/Berlin"), where the network says one (Zulip's `timezone`): the profile shows
+   * their local time from it, worked out as it is shown.
+   */
+  timeZone?: string;
+  /**
+   * Anything else worth a line: "Business account". `people`: native identity ids of the people the value names, in
+   * its order (a bot's owner, a person field), so the app can link them; identity facts for them come first.
    */
   facts?: { label: string; value: string; people?: string[] }[];
   /** Badges the network shows on their profile, by name, with the network's picture. */

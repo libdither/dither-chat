@@ -57,8 +57,10 @@ Left:
   address with or without `https://`, a Markdown link, and on X an @handle; `links.ts`, `bits.tsx` Linked), the longest first, labelled
   by network when there is more than one (a network's
   stock line such as WhatsApp's "Available" is left out); their links (connected accounts, GitHub, a phone number
-  written two ways once); On Discord since; facts a network adds (Business, Time zone), the people a fact names
-  (a bot's owner, a Zulip person field: `facts[].people`) each a link to their profile; how many of their messages
+  written two ways once); On Discord since; facts a network adds (Business), the people a fact names (a bot's owner,
+  a Zulip person field: `facts[].people`) each a link to their profile; their **Local time** where the network
+  says their time zone (`PersonAbout.timeZone`, an IANA name, else a "Time zone" fact from an older adapter: Zulip,
+  Matrix's `m.tz`), with how far it is from yours; how many of their messages
   the hub has, since when; follower, following and post counts (X). A network that could not be asked says why, in a line.
   Badges, the frame on their picture and their profile's colours, where the network shows them. On your own page,
   under your bio: your name, pronouns and banner on each network that lets you change them here
@@ -190,9 +192,9 @@ null for one it does not have), friends into identities, pictures into signed me
 | Discord | bio | custom status | yes | from the id | friend, requests, blocked | servers, with nick and roles | yes | friends list | connections | |
 | Signal | About | About emoji | | | contact, blocked | (hub's own) | | contacts | phone | |
 | WhatsApp | About | | | | contact, blocked | (hub's own) | | address book | phone | business |
-| Matrix | | | where the server keeps them | | has a DM | (hub's own) | | DM partners | matrix.to | time zone |
+| Matrix | | | where the server keeps them | | has a DM | (hub's own) | | DM partners | matrix.to | time zone (`timeZone`) |
 | X | bio | | | from the profile | following, Follows you | (hub's own) | | | website | follower, following and post counts; recent posts |
-| Zulip | the first long-text field | custom status (an organization emoji as its picture) | the pronouns field | joined | | the organization, with their role and user groups | | | link and external-account fields | role, profile fields (person fields and a bot's owner linked, dates in words), time zone |
+| Zulip | the first long-text field | custom status (an organization emoji as its picture) | the pronouns field | joined | | the organization, with their role and user groups | | | link and external-account fields | role, profile fields (person fields and a bot's owner linked, dates in words), time zone (`timeZone`) |
 
 **X** also answers with the person's recent posts (`PersonAbout.posts`, up to 20, a pinned one first), shown in a
 **Recent posts** card after About; its counts go in About and its following and `followsYou` in Connections
