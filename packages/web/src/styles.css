@@ -7332,10 +7332,15 @@ textarea.chip-box {
   }
 }
 /* An installed app with the window controls overlay: the window's own buttons are drawn over the top of the page, so
-   the viewers' bars start below them (wider than a phone, the file box already does). */
+   the viewers' bars, the live view's bar and the stories start below them (wider than a phone, the file box already
+   does; the camera's top row is below its own rule). */
 @media (display-mode: window-controls-overlay) {
-  .viewer-bar {
+  .viewer-bar,
+  .lv-bar {
     padding-top: calc(6px + env(titlebar-area-height, 0px));
+  }
+  .story-viewer {
+    padding-top: env(titlebar-area-height, 0px);
   }
 }
 @media (max-width: 820px) and (display-mode: window-controls-overlay) {
@@ -16066,6 +16071,12 @@ button.msg-edited.link:hover {
   justify-content: space-between;
   padding: calc(8px + env(safe-area-inset-top)) 12px 8px;
   background: linear-gradient(rgb(0 0 0 / 0.45), transparent);
+}
+/* Under the window's own buttons in an installed app with the window controls overlay (see .viewer-bar). */
+@media (display-mode: window-controls-overlay) {
+  .cam-top {
+    padding-top: calc(8px + env(titlebar-area-height, 0px));
+  }
 }
 .cam-btn {
   width: 48px;
