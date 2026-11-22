@@ -131,6 +131,11 @@ export interface OutgoingFile {
   /** A file on this machine, or the bytes. One of the two. */
   path?: string;
   base64?: string;
+  /**
+   * A picture the HTML shows in place, as `cid:<contentId>` (no angle brackets): sent as an inline part beside the HTML
+   * (multipart/related). Only to an account whose status says `details.inlineParts`; without it, an attachment.
+   */
+  contentId?: string;
 }
 
 export interface OutgoingMail {

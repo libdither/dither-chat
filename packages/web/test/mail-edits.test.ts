@@ -1,6 +1,6 @@
 /** The composer's edits (mail/edits.ts, mail/paste.ts): formatting as Markdown, lists, undo, chips back to text, paste. */
 import { describe, expect, test } from 'bun:test';
-import { applyFormat, caretAfter, chipText, continueList, EditHistory, keptName, mergeHits, pasteLink, type Format, type Sel } from '../src/mail/edits.ts';
+import { applyFormat, caretAfter, chipText, continueList, EditHistory, formatsAt, indentList, keptName, mergeHits, pasteLink, type Format, type Sel } from '../src/mail/edits.ts';
 import { pastedFiles, pastedMarkdown, type PasteNode } from '../src/mail/paste.ts';
 
 /** Text with its selection written in: [ and ] around it, or | for the caret. */
@@ -28,6 +28,50 @@ describe('formatting', () => {
     ['caret|here', 'bold', 'caret**|**here'],
     ['[one\n\ntwo]', 'bold', '[**one**\n\n**two**]'],
   ] as [string, Format, string][])('%s %s', (input, f, out) => expect(fmt(input, f)).toBe(out));
+
+  test.each([
+    // Heading: larger, then smaller, then off (Gmail's text sizes), on the whole line.
+    ['Ti|tle', 'heading', '# Title|'],
+    ['# Ti|tle', 'heading', '## Title|'],
+    ['### Ti|tle', 'heading', 'Title|'],
+    ['[one\ntwo]', 'heading', '[# one\n# two]'],
+    // Code over several lines is a block; inside a block, Code takes its fences off.
+    ['a\n[one\ntwo]\nb', 'code', 'a\n```\n[one\ntwo]\n```\nb'],
+    ['a\n```\non|e\ntwo\n```\nb', 'code', 'a\n[one\ntwo]\nb'],
+    // Remove formatting: what is selected and the marks around it; nothing selected, the whole line.
+    ['say _it_ **[now]** ok', 'clear', 'say _it_ [now] ok'],
+    ['say _it_ [**now** and `this`]', 'clear', 'say _it_ [now and this]'],
+    ['- **bo|ld** and [a link](https://x.example)', 'clear', '[bold and a link]'],
+    ['[> ## quoted ~~head~~]', 'clear', '[quoted head]'],
+    ['snake_case [stays_put]', 'clear', 'snake_case [stays_put]'],
+  ] as [string, Format, string][])('%s %s', (input, f, out) => expect(fmt(input, f)).toBe(out));
+
+  test('Tab and Shift+Tab move list items in and out, three spaces a level; not a list: null', () => {
+    const ind = (s: string, out: boolean) => {
+      const r = indentList(sel(s), out);
+      return r && show(r);
+    };
+    expect(ind('- one\n- tw|o', false)).toBe('- one\n   - tw|o');
+    expect(ind('   - tw|o', true)).toBe('- tw|o');
+    expect(ind('[1. a\n2. b]', false)).toBe('[   1. a\n   2. b]');
+    expect(ind('- top|', true)).toBeNull();
+    expect(ind('plain|', false)).toBeNull();
+  });
+
+  test('the formats the caret is in, for the bar to show pressed', () => {
+    const at = (s: string) => [...formatsAt(sel(s))].sort().join(',');
+    expect(at('say **bo|ld** x')).toBe('bold');
+    expect(at('a _it|al_ b')).toBe('italic');
+    expect(at('snake_ca|se_x')).toBe('');
+    expect(at('- **it|em**')).toBe('bold,bullets');
+    expect(at('1. it|em')).toBe('numbers');
+    expect(at('> ## q|')).toBe('quote');
+    expect(at('## he|ad')).toBe('heading');
+    expect(at('run `co|de` now')).toBe('code');
+    expect(at('```\nco|de\n```')).toBe('code');
+    expect(at('[te|xt](https://x.example)')).toBe('link');
+    expect(at('after **bold** |here')).toBe('');
+  });
 
   test('links: text gets an address to fill in; an address gets its text', () => {
     expect(fmt('see [the menu] now', 'link')).toBe('see [the menu]([https://]) now');
@@ -143,6 +187,19 @@ describe('pasting rich text', () => {
   test("a document's styles: bold by weight, Google Docs' outer <b> that is not bold", () => {
     const md = pastedMarkdown(el('b', { style: 'font-weight:normal;', id: 'docs-internal-guid-1' }, el('p', null, el('span', { style: 'font-weight:700' }, 'Heavy'), ' and ', el('span', { style: 'font-style:italic' }, 'slanted'))));
     expect(md).toBe('**Heavy** and _slanted_');
+  });
+
+  test('a table of data becomes a Markdown table, its first row the header; a layout table, its text', () => {
+    const tr = (...cells: (PasteNode | string)[]) => el('tr', null, ...cells);
+    const md = pastedMarkdown(
+      body(el('table', null, el('thead', null, tr(el('th', null, 'Day'), el('th', null, 'Who'))), el('tbody', null, tr(el('td', null, 'Fri'), el('td', null, el('b', null, 'Sam'))), tr(el('td', null, 'Sat'), el('td', null, 'a | b'))))),
+    );
+    expect(md).toBe('| Day | Who |\n| --- | --- |\n| Fri | **Sam** |\n| Sat | a \\| b |');
+    // A sheet's rows with no header row: the first is the header; a short row is filled out.
+    expect(pastedMarkdown(body(el('table', null, tr(el('td', null, 'a'), el('td', null, 'b')), tr(el('td', null, 'c')))))).toBe('| a | b |\n| --- | --- |\n| c |   |');
+    // One column, or cells spanning others: layout, so its text.
+    expect(pastedMarkdown(body(el('table', null, tr(el('td', null, 'just')), tr(el('td', null, 'text')))))).toBeNull();
+    expect(pastedMarkdown(body(el('table', null, tr(el('td', { colspan: '2' }, 'wide')), tr(el('td', null, 'a'), el('td', null, 'b')))))).toBeNull();
   });
 
   test('nothing Markdown would keep: null, so the clipboard text goes in', () => {

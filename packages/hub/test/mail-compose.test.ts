@@ -171,6 +171,15 @@ describe('HTML', () => {
     expect(messageHtml('new', '[x](javascript:alert(1)) <script>alert(1)</script>', null, false)).not.toMatch(/<script|javascript:/);
   });
 
+  test('a table is drawn with its lines inline, its header and alignment kept', () => {
+    const h = messageHtml('new', '| Day | Who |\n|---|:-:|\n| Fri | **Sam** |', null, false);
+    expect(h).toBe(
+      '<div dir="auto"><table style="border-collapse:collapse;margin:0 0 1em"><thead><tr>' +
+        '<th style="border:1px solid #bbb;padding:4px 8px;text-align:left">Day</th><th style="border:1px solid #bbb;padding:4px 8px;text-align:center">Who</th></tr></thead>' +
+        '<tbody><tr><td style="border:1px solid #bbb;padding:4px 8px">Fri</td><td style="border:1px solid #bbb;padding:4px 8px;text-align:center"><strong>Sam</strong></td></tr></tbody></table></div>',
+    );
+  });
+
   test('a forward carries its block', () => {
     const h = messageHtml('forward', '', orig(), true, 'UTC');
     expect(h).toContain('---------- Forwarded message ---------<br>From: Sam Lee &lt;sam@lee.example&gt;');

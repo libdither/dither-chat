@@ -14,3 +14,11 @@ CREATE TABLE IF NOT EXISTS mail_file_info (
   version  INTEGER NOT NULL,                    -- fileinfo.ts SNIFF_VERSION
   at       INTEGER NOT NULL
 );
+
+-- Remote picture addresses by the senders whose mail carried them (pictures.ts): an address seen in mail from two
+-- senders is the same for more than one sender's mail, so it reports no one's open in particular.
+CREATE TABLE IF NOT EXISTS mail_picture_seen (
+  url_hash TEXT NOT NULL,                       -- sha256 of the address, base64url, 22 characters
+  sender   TEXT NOT NULL,                       -- the from address, lower case
+  PRIMARY KEY (url_hash, sender)
+) WITHOUT ROWID;
