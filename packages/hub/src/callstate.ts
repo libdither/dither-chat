@@ -23,6 +23,7 @@ import { callSeconds, RING } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import type { AccountRow, Store } from './store.ts';
 import { requestHeld } from './add.ts';
+import { inQuietHours } from './quiethours.ts';
 
 type Row = Record<string, any>;
 
@@ -450,15 +451,33 @@ export async function callRoute(d: CallRouteDeps, req: Request, url: URL, path: 
  * A mute on the chat, the caller, the account, the network or everything keeps a ring off your devices (the ring card
  * still shows). So does an open message request: someone you have not accepted cannot ring your phone (docs/add.md).
  */
-export function ringMuted(store: Store, c: Pick<P.CallView, 'conversationId' | 'accountId' | 'network' | 'callerId'>): boolean {
-  if (requestHeld(store.db, c.conversationId)) return true;
+export function ringMuted(store: Store, c: RingTarget): boolean {
+  return requestHeld(store.db, c.conversationId) || ringRule(store, c) === 'none';
+}
+
+type RingTarget = Pick<P.CallView, 'conversationId' | 'accountId' | 'network' | 'callerId'>;
+
+/** The nearest rule over a call: the chat's, the caller's, the account's, the network's, everything's. */
+function ringRule(store: Store, c: RingTarget): string | null {
   const rules = new Map(store.rules().map((r) => [`${r.scope}:${r.target ?? ''}`, r.level]));
   const person = c.callerId ? ((store.db.query('SELECT person_id FROM identity WHERE id = ?').get(c.callerId) as Row | null)?.person_id ?? null) : null;
   for (const key of [`conversation:${c.conversationId}`, person ? `person:${person}` : '', `account:${c.accountId}`, `network:${c.network}`, 'global:']) {
     const l = key ? rules.get(key) : undefined;
-    if (l) return l === 'none';
+    if (l) return l;
   }
-  return false;
+  return null;
+}
+
+/**
+ * Whether a ring goes to your devices: `muted` (ringMuted), `quiet` (held by quiet hours), or `ring`. Quiet hours let
+ * through a call from a chat or person set to always alert when they let starred messages through (allowStarred), as
+ * triage.ts does for messages.
+ */
+export function ringGate(store: Store, c: RingTarget, now: number): 'muted' | 'quiet' | 'ring' {
+  if (ringMuted(store, c)) return 'muted';
+  const q = store.quietHours();
+  if (!inQuietHours(q, now)) return 'ring';
+  return q!.allowStarred && ringRule(store, c) === 'all' ? 'ring' : 'quiet';
 }
 
 /** What a ring says: "Alice is calling", "Discord call in Climbing crew". */

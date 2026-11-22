@@ -75,7 +75,7 @@ before 2026-11-12 each such start was logged as another tap of that push, a stay
 "tap" visits, from 4 pushes). Now it is a `start`.
 
 `notification` keeps the kind (`message`, `held` for the quiet-hours summary, `request` for a request waiting on you,
-docs/add.md; rows of kind `digest` are from before the tiers, when a daily digest notification existed), the message and
+docs/add.md; `ring` for a call ringing you, docs/calls.md; rows of kind `digest` are from before the tiers, when a daily digest notification existed), the message and
 conversation, when it was sent, how many registrations it went to and how many push servers took it, the first
 time any device said each outcome, and the visit the tap led to. `notification_event` keeps each device's word,
 once per device and outcome.
