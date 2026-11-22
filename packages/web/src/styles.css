@@ -1655,14 +1655,20 @@ code {
 .msg.system .reactions {
   margin-top: 0;
 }
+/* A message gone to (a quote, a link): lit up once the view gets there, then fading, as Discord does. */
 .msg.flash {
-  animation: flash 1.4s;
+  animation: flash 2s ease-out;
 }
 @keyframes flash {
   0%,
-  40% {
+  45% {
     background: var(--accent-soft);
   }
+}
+/* The message a reply's quote line points to, while the pointer is on that line: which one a click goes to. */
+.msg.quoted-hover {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .reply-quote {
