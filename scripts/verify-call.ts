@@ -11,12 +11,17 @@
  * The wav (16-bit PCM) becomes the microphone; without one Chromium sends a beep.
  */
 import { launch } from './browser.ts';
+import { bearer, hubDataDir, signInWithToken } from './hub-login.ts';
 
 const [base, conv, mode = 'bridge', secs = '20', wav] = process.argv.slice(2);
 if (!base || !conv) throw new Error('usage: bun scripts/verify-call.ts <hub url> <conversation id> [bridge|direct] [seconds] [wav]');
+// A hub behind the login (docs/login.md) answers 401: then its service token, from DITHER_DATA or the usual data dir
+// (hub-login.ts). A demo hub needs none, and is never sent one.
+const dataDir = hubDataDir();
+const auth: Record<string, string> = (await fetch(`${base.replace(/\/$/, '')}/api/bootstrap`)).status === 401 ? bearer(dataDir) : {};
 {
   const allowed = new Set((process.env.DITHER_CALL_TEST_ACCOUNTS ?? '').split(',').map((s) => s.trim()).filter(Boolean));
-  const boot = await (await fetch(`${base.replace(/\/$/, '')}/api/bootstrap`)).json();
+  const boot = await (await fetch(`${base.replace(/\/$/, '')}/api/bootstrap`, { headers: auth })).json();
   const c = boot.conversations?.find((x: { id: string }) => x.id === conv);
   const seers: string[] = c?.vantages?.map((v: { accountId: string }) => v.accountId) ?? [];
   if (!c) throw new Error(`no conversation ${conv} on ${base}`);
@@ -39,6 +44,7 @@ page.on('Runtime.consoleAPICalled', (p) => {
 });
 await page.send('Runtime.enable');
 try {
+  if (auth.authorization) await signInWithToken(page, base.replace(/\/$/, ''), dataDir);
   await page.goto(base);
   await page.eval(`localStorage.setItem('dither-chat:prefs', JSON.stringify({ ...JSON.parse(localStorage.getItem('dither-chat:prefs') || '{}'), callMode: ${JSON.stringify(mode)} }))`);
   await page.goto(`${base.replace(/\/$/, '')}/?mode=${mode}#/inbox/c/${conv}`); // a new query string reloads, so the saved mode applies
