@@ -37,6 +37,8 @@ export function QuoteFallback({ m }: { m: P.MessageView }) {
  * on a phone). The whole of it is the line's tooltip.
  */
 const QUOTE_CHARS = 600;
+/** Lights up the message a quote line points to, if it is drawn, while the pointer is on the line. */
+const pointAt = (id: string, on: boolean) => document.getElementById(`m-${id}`)?.classList.toggle('quoted-hover', on);
 const PINGED_TITLE = 'This reply pinged you';
 
 /**
@@ -48,7 +50,16 @@ export function ReplyQuote({ m, target, onQuote }: { m: P.MessageView; target: P
   const pinged = mine && m.mentionsSelf;
   const text = target.deleted ? 'Message deleted' : plainBody(target.body, target.network).slice(0, QUOTE_CHARS) || 'Attachment';
   return (
-    <button class="reply-quote" title={text} onClick={() => onQuote(target.id)}>
+    <button
+      class="reply-quote"
+      title={text}
+      onMouseEnter={() => pointAt(target.id, true)}
+      onMouseLeave={() => pointAt(target.id, false)}
+      onClick={() => {
+        pointAt(target.id, false);
+        onQuote(target.id);
+      }}
+    >
       <Icon name="reply" size={12} />
       <b class={pinged ? 'reply-pinged' : undefined} title={pinged ? PINGED_TITLE : undefined}>
         {pinged ? '@You' : mine ? 'You' : authorName(target.authorId)}
