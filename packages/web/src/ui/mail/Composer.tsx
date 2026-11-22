@@ -52,6 +52,8 @@ export function ComposerLayer() {
 
 // ------------------------------------------------------------------ the outbox strip
 
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
 /** Seen as sent by this page: shown a few seconds, then gone. */
 const sentSeen = new Map<string, number>();
 const SENT_SHOWN_MS = 6000;
@@ -109,6 +111,20 @@ function OutboxStrip() {
               <>
                 <b>Not sent.</b> {o.error}
               </>
+            )}
+            {o.pictures && o.pictures.leftOut.failed + o.pictures.leftOut.canTell > 0 && (
+              <span
+                class="mc-out-note"
+                title={[
+                  o.pictures.leftOut.failed && `${plural(o.pictures.leftOut.failed, 'picture')} could not be fetched`,
+                  o.pictures.leftOut.canTell && `${plural(o.pictures.leftOut.canTell, 'picture')} would have told where it comes from that it was opened`,
+                ]
+                  .filter(Boolean)
+                  .join('; ')}
+              >
+                {' '}
+                · {plural(o.pictures.leftOut.failed + o.pictures.leftOut.canTell, 'picture')} left out
+              </span>
             )}
           </span>
           {o.state === 'held' && (

@@ -13991,8 +13991,7 @@ button.msg-edited.link:hover {
 }
 .mail-img-banner {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
   gap: 4px 8px;
   padding: 6px 10px;
   border: 1px solid var(--border);
@@ -14009,6 +14008,56 @@ button.msg-edited.link:hover {
   gap: 6px;
 }
 .mail-img-banner-faint {
+  color: var(--text-faint);
+}
+.mail-img-banner-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.mail-img-banner-text {
+  flex: 1 1 200px;
+}
+.mail-img-more {
+  width: 24px;
+  height: 24px;
+}
+.mail-pic-details {
+  overflow-x: auto;
+}
+.mail-pic-details table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.mail-pic-details td {
+  padding: 3px 8px 3px 0;
+  border-top: 1px solid var(--border);
+  vertical-align: top;
+}
+.mail-pic-details .pic-host {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mail-pic-details .pic-n,
+.mail-pic-details .pic-size {
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.mail-pic-details .pic-personal,
+.mail-pic-details .pic-tracker {
+  color: var(--warn);
+}
+.mail-pic-details tr.pic-drop td {
+  text-decoration: line-through;
+  text-decoration-color: var(--text-faint);
+}
+.mail-pic-details tr.pic-drop td.pic-act {
+  text-decoration: none;
+}
+.mail-pic-note {
+  margin: 6px 0 0;
   color: var(--text-faint);
 }
 .mail-files {
@@ -14520,12 +14569,11 @@ button.msg-edited.link:hover {
 /* The format bar, over the footer when Aa is on. */
 .mc-format {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 2px;
   padding: 4px 8px;
   border-top: 1px solid var(--border-soft);
-  overflow-x: auto;
-  scrollbar-width: none;
 }
 .mc-fmt {
   flex: none;
@@ -14556,25 +14604,29 @@ button.msg-edited.link:hover {
   font-size: 12.5px;
   font-weight: 600;
 }
+.mc-fmt.on {
+  background: var(--bg-raised);
+  color: var(--accent);
+}
+.mc-fmt-h {
+  font-weight: 700;
+  font-size: 14px;
+}
+.mc-fmt-clear {
+  font-size: 14px;
+}
+.mc-fmt-clear sub {
+  font-size: 9px;
+}
 .mc-fmt-gap {
   flex: 1;
 }
-.mc-preview-btn {
-  font-size: 12.5px;
-}
-.mc-preview-btn.on {
-  background: var(--bg-raised);
-  color: var(--text);
-}
-.mc-preview {
-  min-height: 160px;
-}
-.mc-preview-frame {
-  display: block;
-  width: 100%;
-  height: 160px;
-  border: 0;
-  background: transparent;
+/* A phone: the bar's buttons closer. */
+@media (max-width: 480px) {
+  .mc-fmt {
+    min-width: 28px;
+    padding: 0 4px;
+  }
 }
 .mc-limit {
   flex: 1;
@@ -14587,6 +14639,678 @@ button.msg-edited.link:hover {
 }
 .mc-limit.over {
   color: var(--danger);
+}
+/* ------------------------------------------------------------ the mail editor (ui/mail/editor) */
+.me {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+  min-height: 180px;
+}
+.me-views {
+  position: relative;
+  flex: 1 0 auto;
+  display: grid;
+}
+/* Every view in the same cell: the one leaving fades and lifts away over the one settling in. */
+.me-view {
+  grid-area: 1 / 1;
+  min-width: 0;
+  display: none;
+}
+.me-view.shown,
+.me-view.leaving {
+  display: block;
+}
+.me-view.leaving {
+  pointer-events: none;
+  animation: me-leave 0.24s ease forwards;
+}
+.me-view.entering {
+  animation: me-enter 0.26s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes me-leave {
+  to {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.99);
+    filter: blur(1.5px);
+  }
+}
+@keyframes me-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .me-view.leaving,
+  .me-view.entering {
+    animation: none;
+  }
+  .me-view.leaving {
+    display: none;
+  }
+}
+/* Rich: the text as it will look. */
+.me-rich-doc {
+  min-height: 160px;
+  padding: 12px 0;
+  outline: none;
+  color: var(--text);
+  font-size: 14.5px;
+  line-height: 1.5;
+  overflow-wrap: break-word;
+}
+.me-rich-doc > :first-child {
+  margin-top: 0;
+}
+.me-rich-doc p {
+  margin: 0 0 0.6em;
+}
+.me-rich-doc h1,
+.me-rich-doc h2,
+.me-rich-doc h3 {
+  margin: 0.8em 0 0.4em;
+  line-height: 1.25;
+}
+.me-rich-doc h1 {
+  font-size: 1.5em;
+}
+.me-rich-doc h2 {
+  font-size: 1.25em;
+}
+.me-rich-doc h3 {
+  font-size: 1.1em;
+}
+.me-rich-doc ul,
+.me-rich-doc ol {
+  margin: 0 0 0.6em;
+  padding-left: 1.6em;
+}
+.me-rich-doc blockquote {
+  margin: 0 0 0.6em 2px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  color: var(--text-dim);
+}
+.me-rich-doc code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--bg-raised);
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+.me-rich-doc pre {
+  margin: 0 0 0.6em;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: var(--bg-raised);
+  white-space: pre-wrap;
+}
+.me-rich-doc pre code {
+  padding: 0;
+  background: none;
+}
+.me-rich-doc a {
+  color: var(--accent);
+}
+.me-rich-doc img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+.me-rich-doc img.ProseMirror-selectednode,
+.me-rich-doc .me-pic-web.ProseMirror-selectednode {
+  outline: 2px solid var(--accent);
+}
+.me-rich-doc table {
+  border-collapse: collapse;
+  margin: 0 0 0.8em;
+}
+.me-rich-doc td,
+.me-rich-doc th {
+  min-width: 48px;
+  vertical-align: top;
+}
+.me-rich-doc .selectedCell {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.me-rich-doc p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+/* A forward, a quote or kept HTML: a sealed sheet with a bar. */
+.me-island {
+  margin: 8px 0 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  overflow: hidden;
+}
+.me-island.ProseMirror-selectednode {
+  outline: 2px solid var(--accent);
+}
+.me-island-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 10px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: grab;
+}
+.me-island-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.me-island-btn {
+  padding: 2px 8px;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.me-island-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.me-island-frame {
+  display: block;
+  width: 100%;
+  height: 48px;
+  border: 0;
+  background: #fff;
+}
+/* Markdown: drawn as you type. Plain: the text as it goes. */
+.me-markdown .cm-editor,
+.me-plain .cm-editor,
+.me-html .cm-editor {
+  outline: none;
+  background: transparent;
+  color: var(--text);
+}
+.me-markdown .cm-scroller,
+.me-plain .cm-scroller {
+  font-family: inherit;
+}
+.me-markdown .cm-content,
+.me-plain .cm-content {
+  min-height: 160px;
+  padding: 12px 0;
+  font-family: inherit;
+  font-size: 14.5px;
+  line-height: 1.55;
+  caret-color: var(--text);
+}
+.me-markdown .cm-line,
+.me-plain .cm-line {
+  padding: 0;
+}
+.me-markdown .md-h1 {
+  font-size: 1.5em;
+  font-weight: 700;
+}
+.me-markdown .md-h2 {
+  font-size: 1.25em;
+  font-weight: 700;
+}
+.me-markdown .md-h3 {
+  font-size: 1.1em;
+  font-weight: 700;
+}
+.me-markdown .md-strong {
+  font-weight: 700;
+}
+.me-markdown .md-em {
+  font-style: italic;
+}
+.me-markdown .md-strike {
+  text-decoration: line-through;
+}
+.me-markdown .md-code,
+.me-markdown .md-fence-line {
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+.me-markdown .md-code {
+  padding: 1px 3px;
+  border-radius: 4px;
+  background: var(--bg-raised);
+}
+.me-markdown .md-fence-line {
+  background: var(--bg-raised);
+}
+.me-markdown .md-link {
+  color: var(--accent);
+}
+.me-markdown .md-quote-line {
+  border-left: 2px solid var(--border);
+  padding-left: 10px !important;
+  color: var(--text-dim);
+}
+.me-markdown .md-html {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 0.85em;
+}
+.md-bullet {
+  display: inline-block;
+  width: 1em;
+  color: var(--text-dim);
+}
+.md-thumb {
+  max-width: min(100%, 320px);
+  max-height: 200px;
+  vertical-align: middle;
+  border-radius: 4px;
+}
+/* Plain: a forward's or a quote's text, as it goes, under its name; read-only, set off by a rule at its side. */
+.md-island-text {
+  display: block;
+  margin: 4px 0;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid var(--border);
+  color: var(--text-dim);
+  white-space: pre-wrap;
+}
+.md-island-text-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.md-island-x {
+  margin-left: auto;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font: inherit;
+}
+.md-island-x:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+/* A picture from the web while you write (editor/schema.ts webBox): a striped box its shape, its host on it, never
+   fetched; dashed red and "left out" when it will not go. */
+.me-pic-web {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 2px 4px;
+  border: 1px dashed var(--text-faint);
+  background: repeating-linear-gradient(45deg, var(--bg-raised) 0 6px, var(--bg-hover) 6px 12px);
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: center;
+  vertical-align: middle;
+  word-break: break-all;
+}
+.me-pic-web.dc-out {
+  border: 2px dashed var(--danger);
+  color: var(--danger);
+}
+.me-pic-web.dc-out::after {
+  content: 'left out';
+}
+.md-chip {
+  display: inline-block;
+  padding: 2px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+/* HTML: the code, folded where the forward is, and the mail as it arrives beside it. */
+.me-html {
+  display: none;
+}
+.me-html.shown,
+.me-html.leaving {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 0;
+}
+.me-html-code .cm-editor {
+  /* A scroll of its own, as the mail beside it has. */
+  max-height: calc(100dvh - 120px);
+  min-height: 220px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.me-html-code .cm-content {
+  font-family: var(--mono);
+}
+.me-html-code .cm-gutters {
+  background: transparent;
+  border-right: 1px solid var(--border-soft);
+}
+.me-html-preview {
+  /* Beside the code as it scrolls, with a scroll of its own: a long mail stays in view. */
+  position: sticky;
+  top: 0;
+  align-self: start;
+  min-width: 0;
+  max-height: calc(100dvh - 120px);
+  overflow: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+.me-html-panes {
+  display: none;
+}
+.me-html-pane {
+  padding: 3px 12px;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.me-html-pane.on {
+  background: var(--bg-raised);
+  color: var(--text);
+  font-weight: 600;
+}
+.me-html-preview-head {
+  padding: 4px 10px;
+  background: var(--bg-raised);
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+/* Narrow: the code over the mail. */
+@container (max-width: 560px) {
+  .me-html.shown,
+  .me-html.leaving {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 640px) {
+  .me-html.shown,
+  .me-html.leaving {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* A phone: the code or the mail, one at a time; rows as tall as they are. */
+  .me-html.shown,
+  .me-html.leaving {
+    align-content: start;
+  }
+  .me-html-panes {
+    display: flex;
+    gap: 4px;
+  }
+  .me-html[data-pane='code'] .me-html-preview,
+  .me-html[data-pane='preview'] .me-html-code {
+    display: none;
+  }
+  .me-html-preview {
+    position: static;
+    max-height: none;
+  }
+}
+/* The bar stays at the foot of the composer's scroll, over the text. */
+.me-bar {
+  position: sticky;
+  bottom: -12px;
+  z-index: 2;
+  margin: 0 -14px -12px;
+  padding: 4px 8px;
+  background: var(--bg-center);
+}
+/* Rich, Markdown, HTML, Plain: a segmented switch whose thumb slides to the one you pick. */
+.me-modes {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--bg-raised);
+}
+.me-modes-thumb {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  width: var(--w, 0);
+  border-radius: 6px;
+  background: var(--bg-center);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.18);
+  transform: translateX(var(--x, 2px));
+  transition:
+    transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1),
+    width 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.me-mode {
+  position: relative;
+  padding: 3px 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.me-mode.on {
+  color: var(--text);
+  font-weight: 600;
+}
+.me-bar-note {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A phone: one row that scrolls sideways under the view switch, which stays at its end. (Wider, the bar is one row
+   until ⋯ opens the rest onto a second.) */
+@media (max-width: 480px) {
+  .me-bar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .me-bar .me-modes {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    box-shadow: -10px 0 8px -4px var(--bg-center);
+  }
+}
+.me-color-a {
+  font-weight: 700;
+  text-decoration: underline 3px #c2410c;
+}
+.me-pop {
+  position: sticky;
+  bottom: 34px;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin: 0 0 4px;
+  padding: 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: var(--bg-center);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.18);
+}
+.me-pop-input {
+  width: min(320px, 60vw);
+}
+.me-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-center);
+  box-shadow: 0 0 0 1px var(--border);
+}
+/* In the footer: how its pictures from the web go ("12 · Link"), opening the choice. */
+.mc-pics {
+  position: relative;
+  flex: none;
+}
+.mc-pics-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.mc-pics-btn:hover {
+  color: var(--text);
+}
+.mc-pics-what {
+  margin: 0 0 6px;
+  color: var(--text);
+}
+.mc-pics-tell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  color: var(--text);
+}
+.mc-pics-note {
+  margin: 8px 0 2px;
+  color: var(--text-dim);
+}
+.mc-seg {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--bg-center);
+}
+.mc-seg-btn {
+  padding: 2px 10px;
+  border-radius: 5px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.mc-seg-btn.on {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+/* The footer's size, and its breakdown. */
+.mc-size {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.mc-size-btn {
+  display: block;
+  max-width: 100%;
+  text-align: left;
+}
+.mc-size-btn:hover {
+  color: var(--text);
+}
+.mc-size-pop {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 5;
+  width: min(340px, 80vw);
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-center);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.22);
+  font-size: 12.5px;
+}
+@media (max-width: 480px) {
+  .mc-foot {
+    position: relative;
+  }
+  .mc-foot .mc-size,
+  .mc-foot .mc-pics {
+    position: static;
+  }
+  .mc-foot .mc-size-pop {
+    left: 8px;
+    right: 8px;
+    width: auto;
+  }
+  /* Room for the size and the pictures: the paperclip says Attach, the paper plane Send. */
+  .mc-foot .hdr-btn-label,
+  .mc-pics-n,
+  .mc-size-cap,
+  .mc-foot .mc-send-label {
+    display: none;
+  }
+  .mc-foot .mc-send {
+    padding-inline: 14px;
+  }
+  /* Big enough for a finger. */
+  .mc-foot .mc-pics-btn,
+  .mc-foot .mc-size-btn {
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
+  }
+  .md-island-x {
+    min-width: 40px;
+    min-height: 40px;
+  }
+  .mc-seg-btn {
+    min-height: 34px;
+  }
+  .mc-pics-tell {
+    min-height: 34px;
+  }
+}
+/* A phone: the picture bar in a line or two; why they are held is in Details and on a long press. */
+@media (max-width: 480px) {
+  .mail-img-why,
+  .mail-img-bytes {
+    display: none;
+  }
+}
+.mc-size-pop table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.mc-size-pop th {
+  padding: 2px 0;
+  color: var(--text-dim);
+  font-weight: normal;
+  text-align: left;
+}
+.mc-size-pop td {
+  padding: 2px 0;
+  text-align: right;
+  white-space: nowrap;
+}
+.mc-size-total th,
+.mc-size-total td {
+  padding-top: 5px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+.mc-seg-warn {
+  color: var(--warn);
+  font-weight: 600;
+}
+.mc-seg-btn.on .mc-seg-warn {
+  color: inherit;
+}
+.mc-size-note {
+  margin: 8px 0;
+  color: var(--text-faint);
+}
+.mc-body-loading {
+  display: grid;
+  place-items: center;
 }
 .mc-strip {
   position: fixed;
@@ -16063,7 +16787,7 @@ h1:hover > .pair-nick-edit,
   width: 100%;
   min-height: 0;
   border: 0;
-  background: var(--bg);
+  background: var(--bg-center);
 }
 .plan-chip {
   display: flex;
@@ -16762,7 +17486,7 @@ h1:hover > .pair-nick-edit,
   place-items: center;
   padding: 16px;
   overflow: auto;
-  background: var(--bg);
+  background: var(--bg-center);
 }
 .login-card {
   width: 100%;
@@ -17505,5 +18229,5 @@ h1:hover > .pair-nick-edit,
 .place-keys kbd {
   color: var(--text);
   border: 1px solid var(--border);
-  background: var(--bg);
+  background: var(--bg-center);
 }

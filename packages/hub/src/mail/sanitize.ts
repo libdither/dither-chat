@@ -21,7 +21,7 @@
 import { hostsDiffer, shownHost } from '@dither-chat/protocol';
 
 /** Bump when the output changes: cached copies made by an older pass are made again. */
-export const SANITIZE_VERSION = 1;
+export const SANITIZE_VERSION = 4;
 
 export interface SanitizeOpts {
   /**
@@ -37,6 +37,29 @@ export interface SanitizeOpts {
   styles?: boolean;
   /** Keep data: images. */
   dataImages?: boolean;
+  /**
+   * Each remote picture's fate, when given (pictures.ts): `load` through `proxy`, `hold` as a placeholder, `drop`
+   * gone. `shaped` is isTracker's answer from its size and style (CSS backgrounds have none). Without it, `images`
+   * decides for all of them and pixel-shaped ones go.
+   */
+  decide?: (url: string, shaped: boolean) => PictureDecision;
+  /**
+   * Pictures keep the address they have in the mail as `data-dc-src` (with `decide`), and a held one stays an `<img>`
+   * whose `src` is HELD_PICTURE: for a forward or a quote, where the picture may still be sent (island.ts).
+   */
+  keepSource?: boolean;
+}
+
+/** What a held picture shows in an editor's island: a striped box, drawn at the picture's own size. */
+const HELD_PICTURE =
+  "data:image/svg+xml;base64," +
+  Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="#eef1f4"/><path d="M0 16L16 0M-4 4L4 -4M12 20L20 12" stroke="#dde2e7" stroke-width="4"/></svg>').toString('base64');
+
+/** What `decide` says of one remote picture, as the reader's details list it. */
+export interface PictureDecision {
+  action: 'load' | 'hold' | 'drop';
+  class: 'shared' | 'personal' | 'tracker';
+  why: string;
 }
 
 export interface Sanitized {
@@ -54,13 +77,15 @@ export interface Sanitized {
   quotes: number;
   /**
    * Plain: only text, paragraphs, line breaks, links, lists, quotes, bold, italic, underline, struck-through text,
-   * headings, code and rules (what Markdown makes, mail-markdown.ts). No images, tables, colours, backgrounds, fonts,
-   * alignment or style sheets (margins and a quote's bar are fine). The reader shows such a mail in the app's theme
+   * headings, code, rules and tables with no attributes but their lines (what Markdown makes, mail-markdown.ts). No
+   * images, layout tables, colours, backgrounds, fonts, alignment or style sheets (margins and a quote's bar are fine). The reader shows such a mail in the app's theme
    * instead of on the white sheet (parts.ts): its text part, or this HTML when it is `formatted`.
    */
   plain: boolean;
   /** Plain, with formatting its text part cannot show: bold, italic, headings, code and the like (FORMAT_TAGS). */
   formatted: boolean;
+  /** With `decide`: each remote picture once, by address, in the order met. */
+  pictures?: (PictureDecision & { url: string })[];
 }
 
 // ------------------------------------------------------------------ the lists
@@ -121,20 +146,24 @@ const ATTRS: Record<string, string[]> = {
 };
 
 /** What a plain mail (Sanitized.plain) is made of. `meta` and `title` show nothing, so they do not count. */
-const PLAIN_TAGS = new Set('html head body meta title p div span br wbr a b strong i em u s del strike code pre h1 h2 h3 h4 h5 h6 hr ul ol li blockquote'.split(' '));
+const PLAIN_TAGS = new Set('html head body meta title p div span br wbr a b strong i em u s del strike code pre h1 h2 h3 h4 h5 h6 hr ul ol li blockquote table thead tbody tr th td'.split(' '));
 /** Plain tags whose looks a text part loses: a mail with one reads as its HTML, in the app's theme. */
-const FORMAT_TAGS = new Set('b strong i em u s del strike code pre h1 h2 h3 h4 h5 h6 hr'.split(' '));
+const FORMAT_TAGS = new Set('b strong i em u s del strike code pre h1 h2 h3 h4 h5 h6 hr table'.split(' '));
 /** The attributes a plain mail's elements may keep; `style` only as plainStyle allows. */
 const PLAIN_ATTRS = new Set(['href', 'class', 'id', 'dir', 'lang', 'title', 'role', 'type', 'start', 'value', 'reversed']);
 /** Style that changes no looks: spacing, how lines wrap, the direction. */
 const PLAIN_CSS = /^(margin|padding)(-(top|right|bottom|left|block|inline)(-(start|end))?)?$|^(overflow-wrap|word-wrap|word-break|line-break|-webkit-nbsp-mode|direction|unicode-bidi)$/;
 
-/** A kept style attribute that leaves a mail plain: PLAIN_CSS only, and a quote's bar on a blockquote. */
+/** A kept style attribute that leaves a mail plain: PLAIN_CSS only, a quote's bar on a blockquote, a table's lines. */
 export function plainStyle(tag: string, style: string): boolean {
   for (const decl of style.split(';')) {
     if (!decl.trim()) continue;
     const prop = decl.split(':')[0].trim().toLowerCase();
-    if (!PLAIN_CSS.test(prop) && !(tag === 'blockquote' && /^border-left(-(width|style|color))?$/.test(prop))) return false;
+    if (PLAIN_CSS.test(prop) || (tag === 'blockquote' && /^border-left(-(width|style|color))?$/.test(prop))) continue;
+    // A table's lines and its cells' alignment, as mail-markdown.ts draws them; a colour of its own is not plain.
+    if (tag === 'table' && prop === 'border-collapse') continue;
+    if ((tag === 'td' || tag === 'th') && (/^border(-(top|right|bottom|left))?(-(width|style|color))?$/.test(prop) || prop === 'text-align' || prop === 'vertical-align')) continue;
+    return false;
   }
   return true;
 }
@@ -307,16 +336,38 @@ export function sanitizeMail(input: string, o: SanitizeOpts): Sanitized {
       return o.cid?.(id) ?? null;
     }
     const web = webUrl(raw);
+    if (web && o.decide) {
+      const d = decided(web, false);
+      if (d.action === 'load') return o.proxy ? o.proxy(web) : null;
+      if (d.action === 'hold') out.remoteImages++;
+      else if (d.class === 'tracker') out.trackers++;
+      return '';
+    }
     if (web && o.images === 'proxy' && o.proxy) return o.proxy(web);
     return null;
   };
+  const seen = new Map<string, PictureDecision & { url: string }>();
+  /** `decide`, once per address and shape. */
+  const decided = (url: string, shaped: boolean): PictureDecision => {
+    const key = `${shaped ? 1 : 0}${url}`;
+    let d = seen.get(key);
+    if (!d) {
+      d = { url, ...o.decide!(url, shaped) };
+      seen.set(key, d);
+    }
+    return d;
+  };
   const css = (text: string) => {
-    const r = sanitizeCss(text, cssUrl);
-    if (o.images === 'block') out.remoteImages += r.remote;
+    // '' from cssUrl: decided, and counted there.
+    const r = sanitizeCss(text, (u) => {
+      const to = cssUrl(u);
+      return to === '' ? null : to;
+    });
+    if (o.images === 'block' && !o.decide) out.remoteImages += r.remote;
     return r.css;
   };
   /** A remote image's new address, or null when it goes. */
-  const image = (raw: string): { src: string | null; remote: boolean } => {
+  const image = (raw: string): { src: string | null; remote: boolean; web?: string } => {
     const u = cleanUrl(raw);
     if (/^cid:/i.test(u)) {
       const id = contentId(u.slice(4));
@@ -326,7 +377,7 @@ export function sanitizeMail(input: string, o: SanitizeOpts): Sanitized {
     if (/^data:/i.test(u)) return { src: o.dataImages !== false && DATA_IMAGE.test(u) ? u : null, remote: false };
     const web = webUrl(u);
     if (!web) return { src: null, remote: false };
-    return { src: o.images === 'proxy' && o.proxy ? o.proxy(web) : null, remote: true };
+    return { src: o.images === 'proxy' && o.proxy ? o.proxy(web) : null, remote: true, web };
   };
 
   // The link being read, for its text.
@@ -354,7 +405,23 @@ export function sanitizeMail(input: string, o: SanitizeOpts): Sanitized {
         const get = (n: string) => (raw.has(n) ? decodeEntities(raw.get(n)!) : null);
         let style = get('style') ?? '';
 
-        if (tag === 'img') {
+        if (tag === 'img' && o.decide) {
+          const r = image(raw.get('src') ?? '');
+          if (r.web) {
+            const d = decided(r.web, isTracker(get('width'), get('height'), style));
+            if (d.action === 'drop') {
+              if (d.class === 'tracker') out.trackers++;
+              return void el.remove();
+            }
+            if (o.keepSource) keep.push(['data-dc-src', r.web]);
+            if (d.action === 'hold' || !o.proxy) {
+              out.remoteImages++;
+              if (o.keepSource) keep.push(['src', HELD_PICTURE], ['data-dc-held', d.class]);
+              else return void el.replace(placeholder(get('width'), get('height'), get('alt')), { html: true });
+            } else keep.push(['src', o.proxy(r.web)]);
+          } else if (r.src) keep.push(['src', r.src]);
+          else return void el.remove();
+        } else if (tag === 'img') {
           const src = raw.get('src') ?? '';
           const r = image(src);
           if (r.remote && isTracker(get('width'), get('height'), style)) {
@@ -370,7 +437,10 @@ export function sanitizeMail(input: string, o: SanitizeOpts): Sanitized {
         }
         if (raw.has('background') && allowed.has('background')) {
           const r = image(raw.get('background')!);
-          if (r.src) keep.push(['background', r.src]);
+          if (r.web && o.decide) {
+            const to = cssUrl(r.web);
+            if (to) keep.push(['background', to]);
+          } else if (r.src) keep.push(['background', r.src]);
           else if (r.remote && o.images === 'block') out.remoteImages++;
         }
 
@@ -448,6 +518,7 @@ export function sanitizeMail(input: string, o: SanitizeOpts): Sanitized {
   const cut = danglingTag(html);
   out.html = cut === null ? html : html.slice(0, cut);
   out.cids = [...cids];
+  if (o.decide) out.pictures = [...new Map([...seen.values()].map((d) => [d.url, d])).values()];
   out.formatted &&= out.plain;
   return out;
 }

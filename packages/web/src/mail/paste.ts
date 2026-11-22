@@ -1,7 +1,7 @@
 /**
  * Rich text pasted into the composer (a web page, a document, another mail) kept as Markdown, the composer's own
- * formatting (docs/mail.md, "Formatting"): bold, italic, struck-through text, code, links, headings, lists and quotes.
- * Colours, fonts, sizes, pictures and tables' lines are left behind (a picture pasted on its own is attached: see
+ * formatting (docs/mail.md, "Formatting"): bold, italic, struck-through text, code, links, headings, lists, quotes and
+ * tables of data. Colours, fonts, sizes, pictures and layout tables are left behind (a picture pasted on its own is attached: see
  * pastedFiles). Works on any DOM-like tree, so the test runs without a browser; the composer hands it DOMParser's body,
  * an inert document (nothing in it loads or runs).
  */
@@ -71,6 +71,10 @@ function inline(n: PasteNode, depth: number): string {
     return body ? `\n\n${body.split('\n').map((l) => (l ? `> ${l}` : '>')).join('\n')}\n\n` : '';
   }
   if (tag === 'HR') return '\n\n---\n\n';
+  if (tag === 'TABLE') {
+    const t = gridOf(n, depth);
+    if (t) return `\n\n${t}\n\n`;
+  }
   let out = kids(n, depth);
   if (tag === 'A') {
     const href = (n.getAttribute?.('href') ?? '').trim();
@@ -95,6 +99,32 @@ function kids(n: PasteNode, depth: number): string {
     if (c.nodeType === 1 && /^T[DH]$/.test(c.nodeName.toUpperCase())) s += ' ';
   }
   return s;
+}
+
+const elems = (n: PasteNode) => Array.from(n.childNodes as ArrayLike<PasteNode>).filter((c) => c.nodeType === 1);
+const tagOf = (n: PasteNode) => n.nodeName.toUpperCase();
+
+/**
+ * A table of data (a spreadsheet's cells, a page's table) as GitHub's Markdown table, its first row the header. Null
+ * for one that is layout (a single row or column, a table inside, cells spanning others): its text then goes in as
+ * lines, as before.
+ */
+function gridOf(n: PasteNode, depth: number): string | null {
+  const rows: PasteNode[] = [];
+  for (const c of elems(n)) {
+    const t = tagOf(c);
+    if (t === 'TR') rows.push(c);
+    else if (t === 'THEAD' || t === 'TBODY' || t === 'TFOOT') rows.push(...elems(c).filter((r) => tagOf(r) === 'TR'));
+  }
+  const cells = rows.map((r) => elems(r).filter((c) => /^T[DH]$/.test(tagOf(c))));
+  const width = Math.max(0, ...cells.map((r) => r.length));
+  if (rows.length < 2 || width < 2) return null;
+  const spans = (c: PasteNode) => Number(c.getAttribute?.('colspan') || 1) > 1 || Number(c.getAttribute?.('rowspan') || 1) > 1;
+  const nested = (c: PasteNode): boolean => elems(c).some((k) => tagOf(k) === 'TABLE' || nested(k));
+  if (cells.some((r) => r.some((c) => spans(c) || nested(c)))) return null;
+  const text = (c: PasteNode) => tidy(kids(c, depth)).replace(/\s*\n\s*/g, ' ').replace(/\|/g, '\\|') || ' ';
+  const line = (r: PasteNode[]) => `| ${Array.from({ length: width }, (_, i) => (r[i] ? text(r[i]) : ' ')).join(' | ')} |`;
+  return [line(cells[0]), `|${' --- |'.repeat(width)}`, ...cells.slice(1).map(line)].join('\n');
 }
 
 function list(n: PasteNode, depth: number): string {
@@ -137,7 +167,7 @@ function tidy(s: string): string {
 export function pastedMarkdown(body: PasteNode): string | null {
   const md = tidy(kids(body, 0));
   if (!md) return null;
-  return /\*\*|(^|\W)_\S|~~|`|\]\(|^#{1,6} |^\s*(- |\d+\. |> )/m.test(md) ? md : null;
+  return /\*\*|(^|\W)_\S|~~|`|\]\(|^#{1,6} |^\s*(- |\d+\. |> )|^\|.*\|$/m.test(md) ? md : null;
 }
 
 // ------------------------------------------------------------------ pictures and files

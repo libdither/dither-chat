@@ -325,6 +325,21 @@ describe('plain or styled (which part the reader shows)', () => {
     expect(clean('<p style="color:red"><b>Hi</b></p>').formatted).toBe(false);
   });
 
+  test('a table written here is plain and formatted; a layout table, or one with colours, is styled', () => {
+    const md = messageHtml('new', '| Day | Who |\n|---|:-:|\n| Fri | **Sam** |', null, false);
+    expect(md).toContain('<table style="border-collapse:collapse');
+    expect([clean(md).plain, clean(md).formatted]).toEqual([true, true]);
+    expect(clean(md).html).toContain('border:1px solid #bbb');
+    for (const html of [
+      '<table width="600"><tr><td>Hi</td></tr></table>',
+      '<table border="1"><tr><td>a</td><td>b</td></tr></table>',
+      '<table><tr><td style="background:#ff0">a</td></tr></table>',
+      '<table style="width:100%"><tr><td>a</td></tr></table>',
+      '<table><tr><td bgcolor="red">a</td></tr></table>',
+    ])
+      expect(clean(html).plain, html).toBe(false);
+  });
+
   test('plainStyle: spacing and wrapping, and a quote’s bar only on a blockquote', () => {
     expect(plainStyle('div', 'margin:0 0 0 .8ex; padding-left:1ex')).toBe(true);
     expect(plainStyle('blockquote', 'margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex')).toBe(true);
