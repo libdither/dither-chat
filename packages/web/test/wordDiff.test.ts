@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { changesInContext, markChanged, wordDiff } from '../src/wordDiff.ts';
+import { changesInContext } from '../src/historyRows.ts';
+import { markChanged, wordDiff } from '../src/wordDiff.ts';
 
 const show = (ps: { k: string; t?: string }[]) => ps.map((p) => (p.k === '=' ? p.t : p.k === 'gap' ? '…' : `${p.k}[${p.t}]`)).join('');
 

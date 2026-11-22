@@ -24,11 +24,13 @@ import {
   people,
   placeConv,
   plainBody,
+  resolvedTopic,
   ruleIcon,
   spaceChildren,
   spaceUnread,
   sumUnread,
   threadsOf,
+  topicForum,
   unreadOf,
   visibleConv,
   type InboxRow,
@@ -657,8 +659,28 @@ function treeOpener(key: string, open: (c: P.ConversationView) => void) {
   return f;
 }
 
-/** A channel's threads shown under it: the open one, unread ones and those of the last three days; a forum's first six. */
+/** A forum's threads that count toward its badge: every topic of a Zulip channel, a Discord forum's open posts. */
+function forumThreads(c: P.ConversationView): P.ConversationView[] {
+  const out: P.ConversationView[] = [];
+  for (const id of db.threads.get(c.id) ?? []) {
+    const t = db.conversations.get(id);
+    if (t && visibleConv(t) && (!t.archived || topicForum(c))) out.push(t);
+  }
+  return out;
+}
+
+/**
+ * A channel's threads shown under it: the open one, unread ones and those of the last three days. A forum of topics
+ * (Zulip's channels): the open one and the unread ones, a muted one only for a mention, as Zulip's own sidebar. Another
+ * forum (Discord's): its six latest posts, since a busy forum's posts are mostly ones you never opened.
+ */
 function shownThreadsOf(c: P.ConversationView, active?: string): P.ConversationView[] {
+  if (topicForum(c))
+    return threadsOf(c.id).filter((t) => {
+      if (t.id === active) return true;
+      const u = unreadOf(t);
+      return u.unread > 0 && (!u.muted || u.badge > 0);
+    });
   if (c.variant === 'forum') return threadsOf(c.id).slice(0, 6);
   return threadsOf(c.id).filter((t) => t.id === active || unreadOf(t).unread > 0 || (t.lastMessageAt ?? 0) > Date.now() - 3 * 86_400_000);
 }
@@ -668,9 +690,11 @@ function shownThreadsOf(c: P.ConversationView, active?: string): P.ConversationV
  * (`metaRev`): `active` is the open conversation only when it is this one or a thread shown here, so opening another
  * channel draws two rows, not the list.
  */
-const ChannelRow = memo(function ChannelRow({ c, shownThreads, active, depth, onOpen, alsoIn, dots = true }: { c: P.ConversationView; shownThreads: P.ConversationView[]; active?: string; depth: number; onOpen: (c: P.ConversationView) => void; alsoIn?: string[]; dots?: boolean }) {
+const ChannelRow = memo(function ChannelRow({ c, shownThreads, active, depth, onOpen, alsoIn, dots = true, threadUnread = 0, threadBadge = 0 }: { c: P.ConversationView; shownThreads: P.ConversationView[]; active?: string; depth: number; onOpen: (c: P.ConversationView) => void; alsoIn?: string[]; dots?: boolean; threadUnread?: number; threadBadge?: number }) {
   metaRev.value;
-  const u = unreadOf(c);
+  const own = unreadOf(c);
+  // A forum's own count is 0 (Zulip) or may already hold its posts' (Discord): the larger, never both added.
+  const u = { ...own, unread: Math.max(own.unread, threadUnread), badge: Math.max(own.badge, threadBadge) };
   const lvl = effectiveLevel(c);
   const ctx = useMenu(() => conversationMenu(c));
   return (
@@ -709,6 +733,11 @@ const ChannelRow = memo(function ChannelRow({ c, shownThreads, active, depth, on
               >
                 <span class="thread-elbow" />
                 <span class="chan-name">{convTitle(t)}</span>
+                {resolvedTopic(t) && (
+                  <span class="chan-resolved" title="Resolved">
+                    <Icon name="check" size={11} />
+                  </span>
+                )}
                 <Count n={tu.badge} />
               </button>
             )}
@@ -733,7 +762,9 @@ function SpaceTree({ spaceId, active, onOpen, depth = 0, seen = new Set<string>(
           const also = c.spaceIds.filter((s) => s !== spaceId).map((s) => communityOfSpace(s)?.name ?? db.spaces.get(s)?.name ?? '');
           const threads = shownThreadsOf(c, active);
           const here = active === c.id || threads.some((t) => t.id === active);
-          return <ChannelRow key={c.id} c={c} shownThreads={threads} active={here ? active : undefined} depth={depth} onOpen={onOpen} alsoIn={also.filter(Boolean)} dots={dots} />;
+          // A forum takes no messages of its own: its count is its threads', as numbers so the row's memo still holds.
+          const sum = c.variant === 'forum' ? sumUnread(forumThreads(c)) : null;
+          return <ChannelRow key={c.id} c={c} shownThreads={threads} active={here ? active : undefined} depth={depth} onOpen={onOpen} alsoIn={also.filter(Boolean)} dots={dots} threadUnread={sum?.unread} threadBadge={sum?.badge} />;
         }
         const s = db.spaces.get(k.id)!;
         if (k.kind === 'section' && !spaceChildren(s.id).length) return null; // a category whose channels this account can't see

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
-import { historyItems } from '../src/messageHistory.ts';
+import { historyItems } from '../src/historyRows.ts';
 
 const M = 60_000;
 const msg = (x: Partial<P.MessageView> = {}): P.MessageView =>

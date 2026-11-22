@@ -10,8 +10,8 @@ export interface Part {
   t: string;
 }
 
-const tokens = (s: string) => s.match(/\s+|[^\s]+/g) ?? [];
-const space = (t: string) => /^\s+$/.test(t);
+export const tokens = (s: string) => s.match(/\s+|[^\s]+/g) ?? [];
+export const space = (t: string) => /^\s+$/.test(t);
 /** Past this many cells (words before × words after, once the same start and end are set aside) it is all one change. */
 const MAX_CELLS = 2_000_000;
 
@@ -92,37 +92,6 @@ export function wordDiff(a: string, b: string): Part[] {
       else out.push({ k: '=', t: tail });
     }
   }
-  return out;
-}
-
-/**
- * Only the changes, with up to `around` words either side and `…` where text is left out: what the history list shows
- * for one edit. A `gap` part stands for the words left out.
- */
-export function changesInContext(a: string, b: string, around = 3): (Part | { k: 'gap' })[] {
-  const parts = wordDiff(a, b);
-  const words = (ts: string[]) => ts.filter((t) => !space(t)).length;
-  const take = (ts: string[], n: number, fromEnd: boolean) => {
-    const seq = fromEnd ? [...ts].reverse() : ts;
-    const got: string[] = [];
-    let c = 0;
-    for (const t of seq) {
-      if (c >= n && !space(t)) break;
-      got.push(t);
-      if (!space(t)) c++;
-    }
-    return (fromEnd ? got.reverse() : got).join('');
-  };
-  const out: (Part | { k: 'gap' })[] = [];
-  parts.forEach((p, i) => {
-    if (p.k !== '=') return void out.push(p);
-    const ts = tokens(p.t), first = i === 0, last = i === parts.length - 1, n = words(ts);
-    if (first && last) return void out.push(p);
-    if (first) return void (n > around ? out.push({ k: 'gap' }, { k: '=', t: take(ts, around, true).replace(/^\s+/, '') }) : out.push(p));
-    if (last) return void (n > around ? out.push({ k: '=', t: take(ts, around, false).replace(/\s+$/, '') }, { k: 'gap' }) : out.push(p));
-    if (n > around * 2 + 1) out.push({ k: '=', t: take(ts, around, false).replace(/\s+$/, '') }, { k: 'gap' }, { k: '=', t: take(ts, around, true).replace(/^\s+/, '') });
-    else out.push(p);
-  });
   return out;
 }
 

@@ -1,7 +1,7 @@
 /**
  * MessageFact.extra's known keys (protocol extra.ts) as MessageView shows them: a reply's own quote, contact cards, a
- * story reply, the people a send did not reach, files that did not download, a text sent as SMS, and per-attachment
- * notes (docs/messages.md).
+ * story reply, the people a send did not reach, files that did not download, a text sent as SMS, when it was moved,
+ * and per-attachment notes (docs/messages.md).
  * Pure: the store hands in how to name identities and serve media. Anything malformed is left out, never an error.
  */
 import type * as P from '@dither-chat/protocol';
@@ -18,7 +18,7 @@ interface ExtraDeps {
   stored(messageId: string): boolean;
 }
 
-type ExtraView = Pick<P.MessageView, 'quote' | 'contacts' | 'storyReply' | 'failed' | 'missingAttachments' | 'disappears' | 'sms'> & {
+type ExtraView = Pick<P.MessageView, 'quote' | 'contacts' | 'storyReply' | 'failed' | 'missingAttachments' | 'disappears' | 'sms' | 'movedAt'> & {
   /** One per attachment position. */
   notes?: (P.AttachmentNote | null)[];
 };
@@ -47,6 +47,10 @@ export function extraView(extra: Record<string, unknown> | null, replyToId: stri
       thumbnail: thumb ? d.media(thumb) : null,
     };
   }
+
+  // Moved to another topic (Zulip): `movedAt`, or `zulip.movedAt` as its extractor said it before the key was shared.
+  const moved = e.movedAt ?? (extra.zulip as { movedAt?: unknown } | undefined)?.movedAt;
+  if (typeof moved === 'number' && Number.isFinite(moved) && moved > 0) out.movedAt = moved;
 
   const cards = arr<P.SharedContactFact>(e.contacts).filter((c) => c && typeof c.name === 'string');
   if (cards.length)

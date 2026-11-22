@@ -1018,6 +1018,7 @@ code {
   text-overflow: ellipsis;
 }
 .chan-also,
+.chan-resolved,
 .chan-muted {
   color: var(--text-faint);
   flex: none;
@@ -1655,14 +1656,20 @@ code {
 .msg.system .reactions {
   margin-top: 0;
 }
+/* A message gone to (a quote, a link): lit up once the view gets there, then fading, as Discord does. */
 .msg.flash {
-  animation: flash 1.4s;
+  animation: flash 2s ease-out;
 }
 @keyframes flash {
   0%,
-  40% {
+  45% {
     background: var(--accent-soft);
   }
+}
+/* The message a reply's quote line points to, while the pointer is on that line: which one a click goes to. */
+.msg.quoted-hover {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .reply-quote {
@@ -3983,6 +3990,27 @@ textarea.chip-box {
 }
 .forum-tag.muted {
   color: var(--text-faint);
+}
+.forum-tag.resolved {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-dim);
+}
+.forum-post-head .forum-count {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.forum-post.unread .forum-post-head b {
+  color: var(--text);
+}
+.forum-post.muted {
+  opacity: 0.75;
 }
 .forum-post span.forum-preview {
   color: var(--text-dim);
@@ -12363,226 +12391,6 @@ button.msg-edited.link:hover {
   align-items: center;
   gap: 2px;
   margin-left: 2px;
-}
-/* A message's history as one list (ui/MessageHistory.tsx, docs/history.md "A message's history"): latest at the bottom. */
-.mh-layer {
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-}
-.mh-pop {
-  position: fixed;
-  left: 0;
-  top: 0;
-  width: min(400px, calc(100vw - 16px));
-  max-height: min(480px, calc(100dvh - 16px));
-  display: flex;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--shadow);
-  overflow: hidden;
-  animation: pop 0.12s ease-out;
-}
-.mh-page {
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  display: flex;
-  flex-direction: column;
-  background: var(--bg-sidebar);
-  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
-  animation: fade-in 0.15s;
-}
-.mh-page-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border-soft);
-}
-.mh-page-head h2 {
-  margin: 0;
-  font-size: 16px;
-}
-.mh {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  flex: 1;
-}
-.mh-now {
-  padding: 12px 14px 10px;
-  border-bottom: 1px solid var(--border-soft);
-  max-height: 30%;
-  overflow-y: auto;
-  flex: none;
-}
-.mh.page .mh-now {
-  max-height: 35dvh;
-  background: var(--bg-center);
-}
-.mh-now p {
-  margin: 0;
-  font-size: 13.5px;
-  white-space: pre-wrap;
-}
-.mh-meta {
-  display: block;
-  font-size: 12px;
-  color: var(--text-faint);
-  margin-bottom: 3px;
-}
-.mh-now-who {
-  display: flex;
-  gap: 10px;
-}
-.mh-now-who time {
-  font-size: 11.5px;
-  color: var(--text-faint);
-}
-.mh-now-who p {
-  font-size: 14.5px;
-  margin-top: 2px;
-}
-.mh-bar {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  padding: 8px 14px 2px;
-  flex: none;
-}
-.mh-bar h4 {
-  margin: 0;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-faint);
-}
-.mh-bar .link,
-.mh-more {
-  font-size: 12px;
-  color: var(--link);
-}
-.mh-list {
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 0 14px 10px;
-  min-height: 0;
-  flex: 1;
-}
-.mh-day {
-  font-size: 11px;
-  font-weight: 650;
-  color: var(--text-faint);
-  margin: 10px 0 2px;
-}
-.mh-row {
-  display: grid;
-  grid-template-columns: 20px 1fr auto;
-  gap: 0 8px;
-  align-items: start;
-  padding: 7px 0;
-  border-top: 1px solid var(--border-soft);
-  font-size: 13px;
-  color: var(--text-dim);
-}
-.mh-day + .mh-row {
-  border-top: 0;
-}
-.mh-row > svg {
-  margin-top: 2px;
-  color: var(--text-faint);
-}
-.mh-row b {
-  color: var(--text);
-  font-weight: 600;
-}
-.mh-row.quiet,
-.mh-row.quiet b {
-  color: var(--text-faint);
-}
-.mh-row > time {
-  font-size: 11.5px;
-  color: var(--text-faint);
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-  padding-top: 1px;
-}
-.mh-what {
-  min-width: 0;
-}
-.mh-text {
-  display: block;
-  margin-top: 2px;
-  white-space: pre-wrap;
-}
-.mh-text ins,
-.mh-text del {
-  border-radius: 3px;
-  padding: 0 2px;
-}
-.mh-text ins {
-  text-decoration: none;
-  color: var(--text);
-  background: color-mix(in oklab, var(--good) 18%, transparent);
-}
-.mh-text del {
-  color: var(--text-dim);
-  background: color-mix(in oklab, var(--danger) 14%, transparent);
-  text-decoration-color: color-mix(in oklab, var(--danger) 70%, transparent);
-}
-.mh-gap {
-  color: var(--text-faint);
-}
-.mh-more {
-  margin-top: 2px;
-}
-.mh-pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  margin-top: 4px;
-}
-.mh-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 1px 8px 1px 2px;
-  border-radius: 999px;
-  background: var(--bg-hover);
-  font-size: 12px;
-}
-.mh-who {
-  padding: 0;
-  text-align: left;
-  color: inherit;
-}
-.mh-people {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 5px;
-}
-.mh-people > span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12.5px;
-}
-.mh-people time {
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--text-faint);
-}
-.mh-empty {
-  margin: 10px 0;
-  font-size: 12px;
-  color: var(--text-faint);
-}
-.mh.page .mh-row {
-  padding: 10px 0;
-  font-size: 14px;
 }
 /* The words a message's last edit put in, in the chat: a quiet underline that opens the edits. */
 .msg-changed {

@@ -712,6 +712,8 @@ export interface MessageView {
   edits?: number;
   /** The version before this one, when the hub kept it: the chat marks the words the last edit put in (docs/history.md "A message's history"). */
   prevBody?: string;
+  /** When it was last moved to the conversation it is in now (ms epoch): a Zulip message moved to another topic (extra.ts movedAt). */
+  movedAt?: number;
   /** Other things that happened to it the hub kept: reactions taken back, pins (docs/history.md). Reaction times are on `reactions`. */
   events?: number;
   /** Pinned, as the last pin or unpin the hub saw says. */

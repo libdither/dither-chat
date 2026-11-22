@@ -340,6 +340,7 @@ export class Store {
     timer.step('migrations');
     this.journal = new Journal(this.db);
     timer.step('journal');
+    this.showResolvedTopics();
     // Messages from before full-text search existed.
     if (!this.db.query(`SELECT 1 FROM meta WHERE key = 'fts_backfilled'`).get()) {
       this.db.exec(`INSERT INTO message_fts (message_fts) VALUES ('rebuild'); INSERT INTO meta (key, value) VALUES ('fts_backfilled', '1');`);
@@ -391,6 +392,19 @@ export class Store {
   /** When this database took up the tiers: what stood before it says nothing about alerts. */
   tiersAt(): number {
     return Number((this.db.query(`SELECT value FROM meta WHERE key = 'tiers_at'`).get() as Row | null)?.value ?? 0);
+  }
+
+  /**
+   * Resolved Zulip topics were hidden as an archived chat is, until 2026-11-22 (`conversation`): every one the hub met
+   * resolved was hidden at once. Shown again, once; a topic hidden by hand since is not touched after.
+   */
+  private showResolvedTopics() {
+    if (this.db.query(`SELECT 1 FROM meta WHERE key = 'zulip_resolved_shown'`).get()) return;
+    const n = this.db
+      .query(`UPDATE place_pref SET hidden = 0 WHERE kind = 'conversation' AND hidden = 1 AND id IN (SELECT id FROM conversation WHERE network = 'zulip' AND shape = 'thread' AND archived = 1)`)
+      .run().changes;
+    if (n) console.log(`zulip: ${n} resolved topic${n === 1 ? '' : 's'} shown again`);
+    this.db.query(`INSERT INTO meta (key, value) VALUES ('zulip_resolved_shown', ?)`).run(String(Date.now()));
   }
 
   /**
@@ -1235,8 +1249,10 @@ export class Store {
         f.archived === undefined ? null : 1,
       );
     this.ensureVantage(acc.id, 'conversation', id, f.mute);
-    // Archived or unarchived on the network: hidden or shown here too, when that changes, unless you turned it off.
-    if (f.archived !== undefined && !!was?.archived !== f.archived && this.followArchive()) this.patchPlacePrefs([{ kind: 'conversation', id, hidden: f.archived }]);
+    // Archived or unarchived on the network: hidden or shown here too, when that changes, unless you turned it off. Not a
+    // resolved Zulip topic (archived here): it is done, not put away, and Zulip's apps keep it with the rest.
+    const resolving = acc.network === 'zulip' && f.shape === 'thread';
+    if (f.archived !== undefined && !!was?.archived !== f.archived && !resolving && this.followArchive()) this.patchPlacePrefs([{ kind: 'conversation', id, hidden: f.archived }]);
     if (f.spaces) {
       this.db.query(`DELETE FROM space_edge WHERE child_kind = 'conversation' AND child_id = ?`).run(id);
       for (const s of f.spaces) {
