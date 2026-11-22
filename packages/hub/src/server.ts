@@ -1279,7 +1279,9 @@ export class HubServer {
           : [{ kind: kind as P.ChangeView['target']['kind'], id: m[2] }];
       // ?fields=status,presence: only those; ?except=…: all but those.
       const list = (k: string) => url.searchParams.get(k)?.split(',').filter((f) => /^\w{1,32}$/.test(f)).slice(0, 20);
-      const changes = s.changes(targets, limit, { fields: list('fields'), except: list('except') });
+      // A person's page also has the roles they were given and lost in places.
+      const rolesOf = kind === 'identity' ? targets.map((t) => t.id) : undefined;
+      const changes = s.changes(targets, limit, { fields: list('fields'), except: list('except'), rolesOf });
       // Whoever they name, and whoever made them, for rendering.
       const named = new Set(changes.flatMap((c) => [c.identityId, c.actorId, c.target.kind === 'identity' ? c.target.id : undefined].filter((x): x is string => !!x)));
       return ok({ changes, identities: s.identitiesByIds(named) });

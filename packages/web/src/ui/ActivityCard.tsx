@@ -16,6 +16,7 @@ import { ActivityChart } from './ActivityChart.tsx';
 import { NetGlyph } from './bits.tsx';
 import { Change } from './HistoryCard.tsx';
 import { Icon } from './icons.tsx';
+import { StatusEmoji } from './ProfileShell.tsx';
 
 const SHOWN = 8;
 
@@ -32,7 +33,7 @@ export function ActivityCard({
   chartPath: string;
   self: boolean;
   chart: boolean;
-  status?: { text?: string; emoji?: string } | null;
+  status?: { text?: string; emoji?: string; emojiUrl?: string } | null;
   at?: number;
   /** Whose status dot to say in words when presence is not logged (PresenceDot.tsx). */
   presence?: PresenceOf;
@@ -72,7 +73,7 @@ export function ActivityCard({
       <div class="pf-status-now">
         {hasStatus ? (
           <p class="pf-status">
-            {status!.emoji && <span class="pf-status-emoji">{status!.emoji}</span>}
+            <StatusEmoji status={status!} />
             <span>{status!.text}</span>
             {at ? (
               <time class="hist-when" title={fullTime(at)}>

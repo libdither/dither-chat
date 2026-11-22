@@ -48,7 +48,9 @@ journal, as after restoring an older database) or:
 - `timelines`: for each one the client holds, the messages after its newest, and the ones it holds (between `oldest`
   and `newest`) that changed since its `seq`: edits, deletions, reactions, triage, forwards. When there are more than
   a page (60) of new ones, when the timeline's `seq` is older than the floor, or when a person timeline now spans
-  other conversations (people merged or split), it gets `replace: true` and the newest page instead.
+  other conversations (people merged or split), or when a message moved out of it since (a Zulip topic renamed or
+  moved: the journal keeps a `movedOut` row for the conversation it left), it gets `replace: true` and the newest page
+  instead. A client open at the time drops the moved message from the old timeline as the live event comes.
 - `selfPersonId`, `categoryProvider`, and `reactionUsage` (only when messages changed), the identities the messages
   name, and the messages their replies quote.
 

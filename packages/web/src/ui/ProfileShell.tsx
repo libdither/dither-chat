@@ -174,4 +174,10 @@ export function Facts({ rows }: { rows: ([ComponentChildren, ComponentChildren] 
   );
 }
 
+/** A status's emoji: a custom one's picture where a profile gave it, else the emoji (or its `:name:`). */
+export function StatusEmoji({ status }: { status: { emoji?: string; emojiUrl?: string } }) {
+  if (status.emojiUrl) return <img class="pf-status-emoji" src={status.emojiUrl} alt={status.emoji ?? ''} title={status.emoji} />;
+  return status.emoji ? <span class="pf-status-emoji">{status.emoji}</span> : null;
+}
+
 export const monthYear = (ms: number) => new Date(ms).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });

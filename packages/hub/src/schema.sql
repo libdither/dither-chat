@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS vantage (
   last_read_ts INTEGER,
   unread       INTEGER NOT NULL DEFAULT 0,
   mentions     INTEGER NOT NULL DEFAULT 0,
+  -- Of those mentions, how many were @everyone, @all, @here or @topic (attention.ts weighs them less).
+  wildcards    INTEGER NOT NULL DEFAULT 0,
   native_mute  TEXT,                           -- JSON NativeMute, as the network reports it
   PRIMARY KEY (account_id, target_kind, target_id)
 );
@@ -156,6 +158,8 @@ CREATE TABLE IF NOT EXISTS message (
   mentions_self   INTEGER NOT NULL DEFAULT 0,
   -- The mention of you was @everyone or @here: it notifies like one, but is not addressed to you.
   mentions_all    INTEGER NOT NULL DEFAULT 0,
+  -- The mention of you was of a group you are in (a Zulip user group, a Discord role), not you by name.
+  mentions_group  INTEGER NOT NULL DEFAULT 0,
   deleted         INTEGER NOT NULL DEFAULT 0,
   -- When gone, how and when (docs/history.md): 'deleted' or 'disappeared'; the body stays if the hub kept it.
   gone_how        TEXT,

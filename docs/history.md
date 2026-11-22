@@ -143,7 +143,8 @@ reactions with a known time (docs/reactions.md "When") and receipts.
   from a message, with no name yet, filling in is not a change.
 - Group members: who joined and who left, once the members were known (`shape: 'group'` only).
 - Roles: an adapter's `role` event (Discord roles from member updates, Matrix power levels, admin on Signal and
-  WhatsApp), with who gave or took it where the network says.
+  WhatsApp, a Zulip role or user group), with who gave or took it where the network says. Kept against the place; a
+  person's changes (`/api/persons/:id/changes`, `/api/identities/:id/changes`) have theirs too while changes are kept.
 - Pins: an adapter's `pin` event, with who.
 - Settings: each About answer is compared with the last one kept through the same account.
 - People: display name, username and picture as identity facts arrive; status from an adapter's `customStatus`

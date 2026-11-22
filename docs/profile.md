@@ -21,7 +21,8 @@ command (`packages/protocol/src/about.ts` `PersonAbout`).
   member and channel counts. Tags under it: pronouns, one per kind of connection with the networks' marks (Friend,
   Contact, You follow, Follows you, Request sent, Blocked: "Connections" below), Wants to be friends, You, Bot;
   for a place End-to-end encrypted, Age-restricted, Only admins send, your role there, Muted. A person's status line
-  last.
+  last, a custom emoji in it as its picture where a profile gave one (`status.emojiUrl`: Zulip's organization emoji),
+  else as `:name:`.
 - **Actions.** One row. A person: Message (straight to your chat with them, every route together, where the message
   box's line chooses the accounts; with no chat yet, starting one, a menu where there are several ways: each account's
   own menu always has it), Merge (opens the search for someone to merge in; again closes it), Copy (a menu: the
@@ -56,7 +57,8 @@ Left:
   address with or without `https://`, a Markdown link, and on X an @handle; `links.ts`, `bits.tsx` Linked), the longest first, labelled
   by network when there is more than one (a network's
   stock line such as WhatsApp's "Available" is left out); their links (connected accounts, GitHub, a phone number
-  written two ways once); On Discord since; facts a network adds (Business); their **Local time** where the network
+  written two ways once); On Discord since; facts a network adds (Business), the people a fact names (a bot's owner,
+  a Zulip person field: `facts[].people`) each a link to their profile; their **Local time** where the network
   says their time zone (`PersonAbout.timeZone`, an IANA name, else a "Time zone" fact from an older adapter: Zulip,
   Matrix's `m.tz`), with how far it is from yours; how many of their messages
   the hub has, since when; follower, following and post counts (X). A network that could not be asked says why, in a line.
@@ -81,7 +83,9 @@ Left:
   the activity chart (below, "Activity"); then, with adversarial features shown (docs/history.md), the logged status
   history and presence history (each stretch with how long it lasted), each collapsed until opened. Absent when there
   is no status, nothing logged and no message or conversation with them.
-- **History**: what changed about them, except statuses and presence (ui/HistoryCard.tsx).
+- **History**: what changed about them, except statuses and presence (ui/HistoryCard.tsx), and, while changes are kept,
+  the roles and user groups they were given or lost in a place ("was given designers in Example Org"), which are
+  kept against the place and show in its History too.
 
 Right:
 - **Mutual friends** (Discord), or on your own page **Friends**: your Discord friends, Signal and WhatsApp
@@ -191,6 +195,7 @@ null for one it does not have), friends into identities, pictures into signed me
 | WhatsApp | About | | | | contact, blocked | (hub's own) | | address book | phone | business |
 | Matrix | | | where the server keeps them | | has a DM | (hub's own) | | DM partners | matrix.to | time zone (`timeZone`) |
 | X | bio | | | from the profile | following, Follows you | (hub's own) | | | website | follower, following and post counts; recent posts |
+| Zulip | the first long-text field | custom status (an organization emoji as its picture) | the pronouns field | joined | | the organization, with their role and user groups | | | link and external-account fields | role, profile fields (person fields and a bot's owner linked, dates in words), time zone (`timeZone`) |
 
 **X** also answers with the person's recent posts (`PersonAbout.posts`, up to 20, a pinned one first), shown in a
 **Recent posts** card after About; its counts go in About and its following and `followsYou` in Connections
