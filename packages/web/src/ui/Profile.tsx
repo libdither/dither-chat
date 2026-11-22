@@ -7,6 +7,7 @@ import type * as P from '@dither-chat/protocol';
 import { RELATIONSHIP_LABEL, withList } from '@dither-chat/protocol';
 import { connections, connectionTags, withChanges, type Connection } from '../connections.ts';
 import { useEffect, useRef, useState } from 'preact/hooks';
+import type { ComponentChildren } from 'preact';
 import { ago, fullTime } from '../format.ts';
 import { bioEditor, bioLeft } from '../bio.ts';
 import { openers } from '../direct.ts';
@@ -25,7 +26,7 @@ import { ActivityCard } from './ActivityCard.tsx';
 import { SameBox } from './SameBox.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
 import { copyEntries, identityMenu, personMenu } from './menus.tsx';
-import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, Tag } from './ProfileShell.tsx';
+import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, StatusEmoji, Tag } from './ProfileShell.tsx';
 import { ConnectActions, ProfileConnections } from './Requests.tsx';
 import { openConv } from '../opening.ts';
 import { Loading } from './Loader.tsx';
@@ -90,6 +91,25 @@ function onePerPerson(list: string[]): string[] {
 
 /** The same line from two accounts on one network once. */
 const dedupe = (rows: [string, string][]) => rows.filter((r, i) => rows.findIndex((x) => x[0] === r[0] && x[1] === r[1]) === i);
+
+/** The people a fact names, each a link to their profile. */
+function FactPeople({ ids }: { ids: string[] }) {
+  return (
+    <>
+      {ids.map((id, i) => {
+        const p = db.identities.get(id)?.personId ? db.persons.get(db.identities.get(id)!.personId!) : null;
+        return (
+          <>
+            {i > 0 && ', '}
+            <button class="pf-fact-who" onClick={() => openProfile(id)}>
+              {p?.name ?? identityName(id)}
+            </button>
+          </>
+        );
+      })}
+    </>
+  );
+}
 
 const normalized = (s: string | null | undefined) => (s ?? '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 
@@ -467,7 +487,10 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     .map((i) => i.status)
     .filter((x): x is NonNullable<P.IdentityView['status']> => !!(x?.text || x?.emoji))
     .sort((a, b) => b.at - a.at)[0];
-  const status = live ?? (said.find((a) => a.status?.text) ?? said.find((a) => a.status?.emoji))?.status;
+  const heard = live ?? (said.find((a) => a.status?.text) ?? said.find((a) => a.status?.emoji))?.status;
+  // A custom emoji (`:name:`) with the picture a profile gave for it (Zulip's organization emoji).
+  const emojiPic = heard?.emoji?.startsWith(':') ? said.find((a) => a.status?.emoji === heard.emoji && a.status?.emojiUrl)?.status?.emojiUrl : undefined;
+  const status = heard && emojiPic ? { ...heard, emojiUrl: emojiPic } : heard;
   const changesPath = person ? `/api/persons/${person.id}/changes` : `/api/identities/${first.id}/changes`;
   const chartPath = `/api/people/${person?.id ?? first.id}/activity`;
   // One number written two ways is one link.
@@ -662,7 +685,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       status={
         status && (
           <>
-            {status.emoji && <span class="pf-status-emoji">{status.emoji}</span>}
+            <StatusEmoji status={status} />
             {status.text}
           </>
         )
@@ -823,7 +846,11 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
             ...dedupe([
               ...said.filter((a) => a.createdAt).map((a): [string, string] => [`On ${netName(a.network)} since`, monthYear(a.createdAt!)]),
               ...facts.map((f): [string, string] => [f.label, f.value]),
-            ]),
+            ]).map(([k, v]): [string, ComponentChildren] => {
+              // A fact that names people (a bot's owner, a person field) links each to their profile.
+              const named = facts.find((f) => f.label === k && f.value === v && f.people?.length)?.people;
+              return [k, named ? <FactPeople ids={named} /> : v];
+            }),
             profile.totalMessages > 0 && [
               'Messages stored',
               `${profile.totalMessages.toLocaleString()}${profile.firstSeenTs ? ` since ${new Date(profile.firstSeenTs).toLocaleDateString()}` : ''}`,
@@ -855,7 +882,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         self={isSelf}
         chart={profile.totalMessages > 0 || profile.conversations.length > 0}
         status={status}
-        at={live && status === live ? live.at : undefined}
+        at={live && heard === live ? live.at : undefined}
       />
 
       {(sharedSpaces.length > 0 || groupChats.length > 0) && (
@@ -942,7 +969,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           </div>
         </Card>
       )}
-      <HistoryCard path={`${changesPath}?except=status,presence`} />
+      <HistoryCard path={`${changesPath}?except=status,presence`} person />
     </>
   );
 

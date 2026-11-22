@@ -11220,6 +11220,23 @@ html[data-theme='light'] .acc-dot {
 .pf-status-emoji {
   font-size: 16px;
 }
+img.pf-status-emoji {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  vertical-align: -4px;
+}
+.pf-fact-who {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.pf-fact-who:hover {
+  text-decoration: underline;
+}
 .pf-actions {
   display: flex;
   flex-wrap: wrap;
