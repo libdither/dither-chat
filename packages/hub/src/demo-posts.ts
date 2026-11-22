@@ -2,7 +2,7 @@
  * The demo world's Mastodon, Reddit, Lemmy, Substack, Bluesky and LessWrong accounts (docs/feed.md "The demo world"):
  * networks of posts only, as dither-accounts' extractors for them send them. Each has a home timeline in two (Mastodon's
  * Home and Trending, Reddit's New and Best, Lemmy's Subscribed and All, Substack's Inbox and Notes, Bluesky's Following
- * and Discover, LessWrong's Subscribed and Frontpage), threads with comment trees,
+ * and Discover, LessWrong's Subscribed and For you), threads with comment trees,
  * notifications in one `feed` conversation, profiles with posts, and what you do there (like, repost where the network
  * has one, posts with a title and a place, a content warning). Everyone and everything here is made up.
  *
@@ -283,27 +283,6 @@ function substack(epoch: number): World {
     noteOf(31, wren, 4 * H, 'Next week: a map of every bench in one park, and what it says about who the park is for.', { counts: { likes: 88, reposts: 9, replies: 0 } }),
   ];
   const reply = posts.find((p) => p.id === nid(20))!;
-  const articles = {
-    [essay.id]: [
-      'Every map leaves things out, and the good ones tell you what. This week: three projections, a subway diagram, and the one map I keep on my wall even though it is wrong about everything.',
-      '',
-      '## Three projections',
-      '',
-      'A globe cannot lie flat without tearing or stretching somewhere. Each projection picks what to keep:',
-      '',
-      '- **Mercator** keeps angles, so a compass course is a straight line, and pays for it with a giant Greenland.',
-      '- **Equal Earth** keeps areas, and lets the shapes near the edges lean.',
-      '- **Azimuthal equidistant** keeps distances from one point, and only from that one.',
-      '',
-      '## The subway diagram',
-      '',
-      '> A diagram is a map that admits it is lying.',
-      '',
-      'The stations are in the right order and almost nowhere else. Nobody minds, because the question it answers is *which train*, not *how far*.',
-      '',
-      'More next week, from [the archive](https://slowgraph.substack.com/archive).',
-    ].join('\n'),
-  };
   return {
     network: 'substack',
     me,
@@ -318,7 +297,19 @@ function substack(epoch: number): World {
     ],
     likers: { [mine.id]: ['tom'] },
     reposters: { [mine.id]: ['wren'] },
-    articles,
+    articles: {
+      [essay.id]: [
+        'Every map leaves things out, and the good ones tell you what. This week: three projections, a subway diagram, and the one map I keep on my wall even though it is **wrong about everything**.',
+        '## Three projections',
+        'Mercator keeps angles and gives up area, which is why Greenland looks the size of Africa. The [equal-area projections](https://en.wikipedia.org/wiki/Equal-area_map) do the opposite, and look *melted* for it.',
+        `![A diagram of stations and lines](${GRAPH})`,
+        '_The subway diagram: right about order, wrong about distance._',
+        '> A map is not the territory, but a good one admits it.',
+        '## What I keep on my wall',
+        '- a 1920s tram map of a city that no longer has trams\n- with every street name spelled the old way\n- and a river in the wrong place',
+        'Next week: why every weather map you have seen is a little bit of a guess.',
+      ].join('\n\n'),
+    },
     newId: (n) => ({ id: nid(800 + n), url: `https://substack.com/@zyan/note/${nid(800 + n)}` }),
     capabilities: ['profile', 'posts', 'postActions', 'publish', 'postReactors', 'home', 'unpublish'],
   };
@@ -479,7 +470,7 @@ function lesswrong(epoch: number): World {
       const root = to?.root ?? to?.id ?? calib.id;
       return { id, url: commentUrl(root)(id) };
     },
-    capabilities: ['profile', 'posts', 'postActions', 'publish', 'home'],
+    capabilities: ['profile', 'posts', 'postActions', 'publish', 'home', 'unpublish'],
   };
 }
 

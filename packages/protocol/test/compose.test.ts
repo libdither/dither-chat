@@ -72,7 +72,7 @@ test("LessWrong's: comments only, in Markdown, 100,000 characters, no pictures; 
   expect([LESSWRONG_RULES.markdown, LESSWRONG_RULES.likeIcon, LESSWRONG_RULES.likersVisible, LESSWRONG_RULES.media]).toEqual([true, 'upvote', 'none', { images: 0, gif: false, video: false }]);
   expect([LESSWRONG_RULES.words.reply, LESSWRONG_RULES.words.like]).toEqual(['Comment', 'Upvote']);
   expect(postFieldsProblem({ title: 'T' }, LESSWRONG_RULES, true, 'LessWrong')).toBe('A reply on LessWrong takes no title or place.');
-  expect([timelineName('lesswrong', 'following'), timelineName('lesswrong', 'foryou')]).toEqual(['Subscribed', 'Frontpage']);
+  expect([timelineName('lesswrong', 'following'), timelineName('lesswrong', 'foryou')]).toEqual(['Subscribed', 'For you']);
   // Every other network that has posts starts one here.
   expect(Object.entries(POST_RULES).filter(([, r]) => r.replyOnly).map(([n]) => n)).toEqual(['lesswrong']);
 });

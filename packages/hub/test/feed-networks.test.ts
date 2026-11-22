@@ -71,8 +71,8 @@ describe('sources and timelines', () => {
   test('each account reads timelines, posts and has its notifications conversation', () => {
     const v = tl.sources();
     expect(v.accounts.map((a) => a.network)).toEqual(['mastodon', 'reddit', 'lemmy', 'substack', 'bluesky', 'lesswrong']);
-    // LessWrong's demo deletes nothing: its comments are not taken back from here.
-    for (const a of v.accounts) expect(a).toMatchObject({ online: true, home: true, publish: true, unpublish: a.network !== 'lesswrong' });
+    // LessWrong deletes a comment of yours while nothing answers it (dither-accounts' lesswrong kind), so it can too.
+    for (const a of v.accounts) expect(a).toMatchObject({ online: true, home: true, publish: true, unpublish: true });
     expect(v.accounts.every((a) => !!a.feedConvId)).toBe(true);
   });
 

@@ -199,12 +199,13 @@ export const BLUESKY_RULES: PostRules = {
  * LessWrong's: comments on a post or on a comment, in Markdown, up to 100,000 characters (generous: the site's own cap
  * is far beyond what anyone writes in a comment), no pictures. A new post is an article written on the site, so none
  * starts here (`replyOnly`). The like is a normal upvote (karma), anonymous; there is no repost or quote. Subscribed is
- * the posts of the people and tags you follow, Frontpage the site's own front page.
+ * the posts of the people whose new posts you subscribe to, For you the front page's own feed (as dither-accounts'
+ * `lesswrong` kind reads them: docs/lesswrong.md there).
  */
 export const LESSWRONG_RULES: PostRules = {
   words: { post: 'Post', reply: 'Comment', quote: 'Quote', placeholder: 'Write a comment', replyPlaceholder: 'Write a comment', quotePlaceholder: 'Add a comment', like: 'Upvote', unlike: 'Remove upvote', repost: 'Repost', unrepost: 'Undo repost', likedBy: 'Upvoted by', repostedBy: 'Reposted by' },
   likeIcon: 'upvote',
-  timelines: { following: 'Subscribed', foryou: 'Frontpage' },
+  timelines: { following: 'Subscribed', foryou: 'For you' },
   maxLength: 100_000,
   count: 'chars',
   urlLength: 0,
