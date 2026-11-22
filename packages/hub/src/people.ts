@@ -299,7 +299,7 @@ export class People {
     const network = s.nativeOf('identity', identityId)!.network;
     const acc = accountId ? s.account(accountId) : null;
     const ident = (native: string) => (acc ? s.ensureIdentity(acc, native) : hubId('idn', network, native));
-    const { avatar, banner, mutualSpaces, mutualFriends, friends, decoration, badges, posts, ...rest } = a;
+    const { avatar, banner, status, facts, mutualSpaces, mutualFriends, friends, decoration, badges, posts, ...rest } = a;
     const spaces = mutualSpaces?.map((m) => {
       const id = hubId('spc', network, m.id);
       const known = s.one<Row>('SELECT id FROM space WHERE id = ?', id);
@@ -307,6 +307,10 @@ export class People {
     });
     const mf = mutualFriends?.map(ident);
     const fr = friends?.map(ident);
+    // Facts that name people (a bot's owner, a person field): those people as hub ids, so the page links them.
+    const fs = facts?.map(({ people, ...f }): { label: string; value: string; people?: string[] } => (Array.isArray(people) && people.length ? { ...f, people: people.map(ident) } : f));
+    const emojiPic = status?.emojiUrl ? s.mediaUrl(status.emojiUrl, accountId) : null;
+    const { emojiUrl: _e, ...st } = status ?? {};
     // Their posts (X, docs/feed.md): authors as hub ids, pictures signed; whoever a repost or quote names comes along.
     const ps = posts?.map((p) => postView(p, network, (u) => s.mediaUrl(u, accountId)));
     const named = [...new Set((posts ?? []).flatMap((p) => postAuthors(p)))].map((n) => hubId('idn', network, n)).filter((id) => id !== identityId);
@@ -324,11 +328,13 @@ export class People {
       ...(banner ? { banner: s.mediaUrl(banner, accountId) } : {}),
       ...(decoration ? { decoration: s.mediaUrl(decoration, accountId) ?? undefined } : {}),
       ...(badges?.length ? { badges: badges.map((b) => ({ name: b.name, ...(b.icon ? { icon: s.mediaUrl(b.icon, accountId) ?? undefined } : {}) })) } : {}),
+      ...(status ? { status: { ...st, ...(emojiPic ? { emojiUrl: emojiPic } : {}) } } : {}),
+      ...(fs ? { facts: fs } : {}),
       ...(spaces ? { mutualSpaces: spaces } : {}),
       ...(mf ? { mutualFriends: mf } : {}),
       ...(fr ? { friends: fr } : {}),
       ...(ps ? { posts: ps } : {}),
-      identities: s.identitiesByIds([...(mf ?? []), ...(fr ?? []), ...named]),
+      identities: s.identitiesByIds([...(mf ?? []), ...(fr ?? []), ...named, ...(fs ?? []).flatMap((f) => f.people ?? [])]),
     };
   }
 }

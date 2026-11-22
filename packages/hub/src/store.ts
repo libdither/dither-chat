@@ -2347,16 +2347,22 @@ export class Store {
   }
 
   /** What changed about these, newest first. `fields`: only these; `except`: not these. */
-  changes(targets: { kind: P.ChangeView['target']['kind']; id: string }[], limit = 100, pick: { fields?: string[]; except?: string[] } = {}): P.ChangeView[] {
+  changes(targets: { kind: P.ChangeView['target']['kind']; id: string }[], limit = 100, pick: { fields?: string[]; except?: string[]; rolesOf?: string[] } = {}): P.ChangeView[] {
     if (!targets.length) return [];
-    const where = targets.map(() => '(target_kind = ? AND target_id = ?)').join(' OR ');
+    // A person's roles and groups given and lost in places (kept against the place), on their own page too, while
+    // changes are kept.
+    const rolesOf = this.retention().changes ? (pick.rolesOf ?? []) : [];
+    const where = [
+      ...targets.map(() => '(target_kind = ? AND target_id = ?)'),
+      ...(rolesOf.length ? [`(target_kind IN ('space', 'conversation') AND field = 'role' AND json_extract(coalesce(new, old), '$.identityId') IN (${rolesOf.map(() => '?').join(', ')}))`] : []),
+    ].join(' OR ');
     // Statuses and presence over time only with adversarial features shown.
     const watched = this.retention().adversarial ? '' : ` AND NOT (target_kind = 'identity' AND field IN ('status', 'presence'))`;
     const only = pick.fields?.length ? ` AND field IN (${pick.fields.map(() => '?').join(', ')})` : '';
     const not = pick.except?.length ? ` AND field NOT IN (${pick.except.map(() => '?').join(', ')})` : '';
     const rows = this.db
       .query(`SELECT * FROM change_log WHERE (${where})${watched}${only}${not} ORDER BY at DESC, id DESC LIMIT ?`)
-      .all(...targets.flatMap((t) => [t.kind, t.id]), ...(pick.fields ?? []), ...(pick.except ?? []), limit) as Row[];
+      .all(...targets.flatMap((t) => [t.kind, t.id]), ...rolesOf, ...(pick.fields ?? []), ...(pick.except ?? []), limit) as Row[];
     const val = (r: Row, v: string | null): unknown => {
       const x = json<unknown>(v, null);
       return (r.field === 'avatar' || r.field === 'banner') && typeof x === 'string' ? this.media(x, r.account_id) : x;

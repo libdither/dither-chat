@@ -543,8 +543,11 @@ export interface PersonAbout {
   accent?: string;
   /** Bio or About text, as the network has it (Discord markdown, WhatsApp About, Signal About). */
   bio?: string;
-  /** A short status line with an emoji (Discord custom status, Signal's About emoji). */
-  status?: { text?: string; emoji?: string };
+  /**
+   * A short status line with an emoji (Discord custom status, Signal's About emoji). A custom emoji is `:name:`, with
+   * its picture in `emojiUrl` where the network gives one (Zulip's organization emoji).
+   */
+  status?: { text?: string; emoji?: string; emojiUrl?: MediaUrl };
   pronouns?: string;
   /** ms epoch: when their account was made (Discord, from the id). */
   createdAt?: number;
@@ -563,8 +566,11 @@ export interface PersonAbout {
    * their local time from it, worked out as it is shown.
    */
   timeZone?: string;
-  /** Anything else worth a line: "Business account". */
-  facts?: { label: string; value: string }[];
+  /**
+   * Anything else worth a line: "Business account". `people`: native identity ids of the people the value names, in
+   * its order (a bot's owner, a person field), so the app can link them; identity facts for them come first.
+   */
+  facts?: { label: string; value: string; people?: string[] }[];
   /** Badges the network shows on their profile, by name, with the network's picture. */
   badges?: { name: string; icon?: MediaUrl }[];
   /** A frame drawn around their picture (Discord's avatar decoration). */
