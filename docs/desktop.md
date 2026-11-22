@@ -91,9 +91,11 @@ except for its own minimize, maximize and close buttons, and the app draws the r
 usually maximizes), and its buttons opt out (`app-region: no-drag`). The chevron turns it back off; Chromium
 remembers the choice per app. Firefox and Safari ignore `display_override` and use `standalone`.
 
-Whatever covers the whole window (the picture and file viewers, an account's live view, stories, the camera)
-starts its top bar below `env(titlebar-area-height)` in overlay mode, so the window's buttons never sit on top of
-its own close button.
+Whatever covers the whole window (the picture viewer, an account's live view, stories, the camera) keeps its top
+bar at the very top in overlay mode and leaves the window's buttons their corner: the bar is padded by the width
+outside `env(titlebar-area-x/width)`, so its own close button sits just beside the window's, never under it. Its
+empty parts move the window, like the title bar's. The file viewer, full-window on a narrow window, starts below
+`env(titlebar-area-height)` instead.
 
 What is not possible, and why there are no buttons of our own: in overlay mode the browser always draws its
 window buttons, and they cannot be hidden or restyled beyond following `theme-color`. The web has no
