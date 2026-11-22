@@ -658,9 +658,20 @@ const TAG = new RegExp(`<\\/?(?:${BLOCK_TAGS}|${INLINE_TAGS})(?=[\\s/>])[^<>]*>`
 const BLOCK = new RegExp(`<\\/?(?:${BLOCK_TAGS})(?=[\\s/>])[^<>]*>`, 'gi');
 const attrOf = (tag: string, name: string) => decodeEntities(new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i').exec(tag)?.slice(1).find((x) => x !== undefined) ?? '');
 
+/** Markdown's backslash escapes (`utm\_source`, `\[x\]`): marks no plain-text reader needs. */
+const MD_ESCAPE = /\\([!-/:-@[-`{-~])/g;
+/** A link written `[text](address)` whose text is its own address (as the editor writes a pasted one) as the address alone. */
+const unmark = (s: string) =>
+  s
+    .replace(/(?<!\\)\[((?:\\.|[^\]\\\n])*)\]\(([^()\s]+)\)/g, (m, text: string, href: string) => {
+      const t = text.replace(MD_ESCAPE, '$1');
+      return t === href ? href : `mailto:${t}` === href ? t : m;
+    })
+    .replace(MD_ESCAPE, '$1');
+
 /** Markdown with the HTML pieces the editor writes in it (colours, alignment, tables…) as plain text. */
 function plainPiece(s: string): string {
-  return decodeEntities(
+  return unmark(decodeEntities(
     s
       .replace(/<!--[\s\S]*?-->/g, '')
       .replace(/<(style|script|title)\b[\s\S]*?<\/\1\s*>/gi, '')
@@ -680,7 +691,7 @@ function plainPiece(s: string): string {
       .replace(/<\/tr\s*>\s*<tr\b[^<>]*>/gi, '\n')
       .replace(BLOCK, '\n')
       .replace(TAG, ''),
-  );
+  ));
 }
 
 /** Fenced code and code spans: written as they are, whatever HTML they show. */
@@ -688,7 +699,8 @@ const CODE = /^(```|~~~)[^\n]*\n[\s\S]*?^\1[ \t]*$|(`+)[^`]*?\2/gm;
 
 /**
  * The editor's Markdown as plain text: every HTML tag in it gone (its text kept, `<br>` and the ends of blocks as line
- * breaks, a link as `[text](address)`, a picture as `[picture: alt]`) and entities decoded. Markdown's own marks
+ * breaks, a link as `[text](address)`, or its address alone when that is its text, a picture as `[picture: alt]`),
+ * entities decoded and Markdown's backslash escapes undone. Markdown's own marks
  * (`**bold**`, `- ` lists, `> ` quotes) stay: they are how plain text says it. Code is left as written.
  */
 export function plainText(md: string): string {

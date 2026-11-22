@@ -100,7 +100,7 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
   a phone and a panel docked at the bottom right on a desktop, so the list stays usable beside it. Its header has ✕ and
   the trash (discard); Attach, Aa (formatting) and Send are along the bottom, Send at the right. It has From (a picker
   when the account sends as several addresses, its status's `self.addresses`), To, Cc and Bcc (Cc and Bcc beside To
-  open their lines; an empty one has ✕ to take it away again), the subject and your text. A reply's quote is under
+  open their lines; an empty one has ✕ to take it away again, and the caret goes to To), the subject and your text. A reply's quote is under
   the text, in sight (see "A forward or a quote" below; deleted, "Quote Sam" puts it back); a forward carries the
   original and its files, each of which can be taken off. Ctrl+Enter
   sends; ✕, Esc or back closes it and keeps the draft.
@@ -158,8 +158,8 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
     headings big, bold bold, and the marks that make them fold away on every line but the caret's. A pasted picture
     stands in as `![name](dc-picture:id)` and shows as itself (a picture from an original too: its size and address
     come back with it). A quote is Markdown's `>`, a bar drawn for each level; `&lt;` and `\_` show as `<` and `_` off
-    the caret's line. A block kept whole (`[[island:id]]`) is drawn as it will arrive, under a bar that names it ("its
-    own HTML, sent as it is") with Edit HTML: Markdown with HTML in it, as CommonMark allows. What Markdown can't say
+    the caret's line. A block kept whole (`[[island:id]]`) is drawn as it will arrive, under a bar that names it ("Kept
+    as its own HTML") with "Open in HTML view": Markdown with HTML in it, as CommonMark allows. What Markdown can't say
     (colour, underline, a centred or right-aligned paragraph or heading) stays as small pieces of HTML, and comes back
     as it was.
   - **HTML**: the mail's whole HTML, a forward's or a quote's inside folded, pasted pictures as `dc-picture:id`, with
@@ -173,17 +173,23 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
     here is attached. Markdown's marks stay as written; the bits of HTML it keeps (colour, alignment) go, their words
     kept, as the hub does for every text part. Rich again makes it HTML.
   - **A forward or a quote** is the document's own text when it can be without losing anything (`islandBlocks` in
-    `MailEditor.tsx`: plain tags, no styles but colour, alignment, margins and a quote's bar, every word and picture
-    there after): the attribution ("On …, Sam wrote:") then the original in a mail quote (`blockquote type=cite`, as
+    `MailEditor.tsx`: plain tags, left to right, and only styles the document keeps (a span's colour, a paragraph's
+    alignment, a quote's bar) or that change nothing you see (Apple Mail's `line-break`, zero margins); every word and
+    picture there after): the attribution ("On …, Sam wrote:") then the original in a mail quote (`blockquote type=cite`, as
     every quote the editor writes, nested as it was), or the forwarded-message lines then the original. It is edited
     like the rest (trim it, answer inside it), is `>` in Markdown, and goes as it reads. Pictures it brings keep the
     original's address (`data-dc-src`, and `data-dc-held` for a held one), so the pictures choice below applies to
-    them and they are marked the same way. "Quote <name>" comes back once no quote is left, and a forward's "Put the
-    forwarded message back" once its lines are gone.
+    them and they are marked the same way. "Quote <name>" comes back once its attribution line is gone (a quote of your
+    own does not count), and a forward's "Put the forwarded message back" once its lines are gone. An empty line goes
+    as `<p><br></p>`, which every mail app draws (an empty `<p>` is drawn as nothing), and `<p><br></p>` or Gmail's
+    `<div><br></div>` comes in as one empty line.
   - **Otherwise it is kept whole** (an island: a newsletter's layout, its own styles), drawn in a sandboxed frame with
-    a bar: its name, "its own HTML, sent as it is", its size, Hide, Edit HTML and ✕. Edit HTML opens its HTML in an
-    editor right under the bar, and the block is drawn again below as you type; Done closes it (only opening it changes
-    nothing). The hub makes it (`hub/src/mail/island.ts`, `MailComposeStart.island`): the original's HTML with its style
+    a bar: "Kept as its own HTML", its size, then its name (cut short on a phone; its tooltip says it all), Hide, Edit
+    HTML, Make it text and ✕. Edit HTML opens its HTML in an editor right under the bar, and the block is drawn again
+    below as you type; Done closes it (only opening it changes nothing). What was typed there a moment ago goes with a
+    send or a switch of view at once. Make it text turns it into ordinary text to edit and answer inside (`islandText`
+    in `schema.ts`: its words, links, pictures, lists and quotes; its layout and styles gone, a layout's tables as their
+    cells one after another); Undo brings the block back. The hub makes it (`hub/src/mail/island.ts`, `MailComposeStart.island`): the original's HTML with its style
     sheets written into each element's own `style`, so it keeps its look in mail apps that drop style sheets (Gmail);
     what can't go into one element (`@media`, `:hover`) stays in a sheet scoped to the block. Trackers are gone. Each
     picture from the web keeps its address, shown as your picture setting shows it in the reader (a held one as a
@@ -212,7 +218,8 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
     to the size. Pictures inside the mail go as parts the HTML shows (`cid:`) when the account's status says
     `details.inlineParts` (dither-accounts' `OutgoingFile.contentId`), else as `data:` pictures, which Gmail hides.
   - **The text part** is plain text: the Markdown with every HTML tag in it taken out (its words kept, `<br>` and the
-    ends of blocks as line breaks, a link as `[text](address)`, entities decoded; Markdown's own marks and code stay),
+    ends of blocks as line breaks, a link as `[text](address)` or its address alone when that is its text, entities and
+    Markdown's backslash escapes (`utm\_source`) undone; Markdown's own marks and code stay),
     with a forward's or a quote's text as a plain-text mail has it and pictures as `[picture: name]`. An island carries a fingerprint of its words (`data-dc-text`): once they were edited in the HTML
     view, or when the original had no text part, its text is made from its own HTML instead. `MailIsland.textBytes` is
     what an island adds to the text part as made, which the size meter counts while the island is unchanged. Plain sends that alone: no HTML part.

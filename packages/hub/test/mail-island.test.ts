@@ -302,6 +302,11 @@ describe('the text part is plain text', () => {
     );
   });
 
+  test('a quoted address with an underscore goes as itself, and escapes are undone outside code', () => {
+    const md = '> [https://ramen.example/menu?a=1&utm\\_source=mail](https://ramen.example/menu?a=1&utm_source=mail)\n>\n> snake\\_case and 2\\*3\\*4 \\[brackets\\] [sam@lee.example](mailto:sam@lee.example) [the menu](https://ramen.example/menu)\n\n`a\\_b`';
+    expect(plainText(md)).toBe('> https://ramen.example/menu?a=1&utm_source=mail\n>\n> snake_case and 2*3*4 [brackets] sam@lee.example [the menu](https://ramen.example/menu)\n\n`a\\_b`');
+  });
+
   test('outgoingText: a centred paragraph next to a forward goes as its words; the forward’s headers keep their <address>', () => {
     const isl = islandOf('forward', o, null, 'r1', 'UTC');
     const t = outgoingText('<p style="text-align: center">centred</p>\n\n[[island:r1]]', wrap(isl), o, 'UTC');

@@ -366,11 +366,11 @@ async function press(key: string, code: string, vk: number, modifiers = 0) {
   await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: vk, modifiers });
 }
 /**
- * Text typed into the editor as a person would: in place of everything there (`all`), or at the start, above a
- * reply's quote (`start`).
+ * Text typed into the editor as a person would: in place of everything there (`all`), at the start, above a reply's
+ * quote (`start`), or wherever the editor left its caret (`caret`).
  */
-async function typeBody(text: string, where: 'all' | 'start' = 'all') {
-  await page.eval(`(() => { const d = document.querySelector('.me-rich-doc'); d.focus(); ${where === 'all' ? "document.execCommand('selectAll');" : "getSelection().collapse(d.querySelector('p') ?? d, 0);"} })()`);
+async function typeBody(text: string, where: 'all' | 'start' | 'caret' = 'all') {
+  await page.eval(`(() => { const d = document.querySelector('.me-rich-doc'); d.focus(); ${where === 'all' ? "document.execCommand('selectAll');" : where === 'start' ? "getSelection().collapse(d.querySelector('p') ?? d, 0);" : ''} })()`);
   if (where === 'all') await press('Delete', 'Delete', 46);
   await page.send('Input.insertText', { text });
 }
@@ -404,7 +404,7 @@ async function composer(themeName: string, full: boolean) {
   // Markdown says it as Markdown does: `>` lines, a bar for each level, and `<` drawn as itself.
   await tap(await at('.me-mode', `el => el.textContent === 'Markdown'`));
   await page.until(`!!document.querySelector('.me-markdown.shown .md-quote-in2')`, 15000).catch(() => {});
-  const mdQuote = await page.eval<{ text: string; levels: number }>(`({ text: document.querySelector('.me-markdown .cm-content')?.innerText.slice(0, 200) ?? '', levels: document.querySelectorAll('.me-markdown .md-quote-in2').length })`);
+  const mdQuote = await page.eval<{ text: string; levels: number }>(`({ text: (document.querySelector('.me-markdown .cm-content')?.innerText ?? '').replace(/\u2060/g, '').slice(0, 200), levels: document.querySelectorAll('.me-markdown .md-quote-in2').length })`);
   check(`${tag}: Markdown quotes it with a bar for each level, the address in <>`, mdQuote.levels > 0 && mdQuote.text.includes('<sam@rivera.example>') && !mdQuote.text.includes('&lt;'), mdQuote);
   await tap(await at('.me-mode', `el => el.textContent === 'Rich'`));
   await page.until(`!!document.querySelector('.me-rich.shown .me-rich-doc blockquote')`, 10000).catch(() => {});
@@ -434,8 +434,11 @@ async function composer(themeName: string, full: boolean) {
   await key('#mc-cc', 'z', { ctrlKey: true });
   await Bun.sleep(150);
   check(`${tag}: Ctrl+Z makes it a chip again`, (await page.eval(`document.querySelector('#mc-cc').value`)) === '' && (await chipped('jo@park.example')));
-  // The reply goes with its bold (Ctrl+B, as in any mail app), written above the quote.
-  await typeBody('See you at ', 'start');
+  // The reply goes with its bold (Ctrl+B, as in any mail app), written where the caret starts: above the quote, on a
+  // line of its own (not at the end of "… wrote:").
+  await typeBody('See you at ', 'caret');
+  const lines = await page.eval<string[]>(`[...document.querySelectorAll('.me-rich-doc > p')].map((p) => p.textContent)`);
+  check(`${tag}: the caret starts on the line above the quote`, lines[0] === 'See you at ' && lines.some((l) => /wrote:$/.test(l)), lines.slice(0, 3));
   await press('b', 'KeyB', 66, 2);
   await page.send('Input.insertText', { text: '7:30' });
   await press('b', 'KeyB', 66, 2);
@@ -476,6 +479,9 @@ async function composer(themeName: string, full: boolean) {
   // Its HTML part is plain (no colours or fonts) but formatted (bold): it reads as its HTML in the app's theme, not on a white sheet.
   const body = (await fetch(`${base}/api/mail/messages/${mine.id}/body`).then((r) => r.json())) as any;
   check(`${tag}: the hub calls its HTML plain and formatted`, !!body.html && body.html.plain === true && body.html.formatted === true, body.html);
+  // An empty line goes as one mail apps draw (`<p><br></p>`), never as an empty <p>; the text part's quote has no Markdown escapes.
+  const wentHtml = body.html ? await fetch(`${base}${body.html.url}`).then((r) => r.text()) : '';
+  check(`${tag}: no empty <p> went, and the text part's quote reads as it was written`, !!body.text && !/<p[^>]*><\/p>/.test(wentHtml) && !/\\[_*[\]]/.test(body.text) && !/\]\(https?:/.test(body.text), { text: String(body.text).slice(0, 400) });
   for (const t of [themeName, themeName === 'dither-dark' ? 'dither-light' : 'dither-dark']) {
     await theme(t, `#/mail/t/${dinner.id}`);
     const card = `.mail-reader .mail-msg[data-message="${mine.id}"]`;
@@ -811,12 +817,16 @@ async function forwardWithPictures(tag: string) {
   await click(await at('.me-mode', `el => el.textContent === 'Markdown'`));
   await page.until(`!!document.querySelector('.me-markdown.shown .md-island-sheet iframe')`, 15000).catch(() => {});
   const sheetBar = await page.eval<string>(`document.querySelector('.me-markdown .md-island-sheet-bar')?.textContent ?? ''`);
-  check(`${tag}: Markdown shows the forward kept whole as it arrives, named as its own HTML`, sheetBar.includes('its own HTML, sent as it is') && (await has('.me-markdown .md-island-sheet iframe')), sheetBar);
+  check(`${tag}: Markdown shows the forward kept whole as it arrives, named as its own HTML first`, sheetBar.startsWith('Kept as its own HTML') && sheetBar.includes('Open in HTML view') && (await has('.me-markdown .md-island-sheet iframe')), sheetBar);
   await click(await at('.me-mode', `el => el.textContent === 'Rich'`));
   await page.until(`!!document.querySelector('.me-rich.shown .me-island[data-kind="forward"]')`, 10000).catch(() => {});
   await type('#mc-to', 'jo@park.example');
   await key('#mc-to', 'Enter');
-  await click(await at('.mc-send'));
+  // A line typed into its HTML and sent at once with Ctrl+Enter (before the editor's pause) goes too.
+  await click(await at('.me-island[data-kind="forward"] .me-island-btn', `el => el.textContent === 'Edit HTML'`));
+  await page.until(`document.activeElement?.closest?.('.me-island-code') != null`, 15000).catch(() => {});
+  await page.send('Input.insertText', { text: '<p>Typed just before sending</p>' });
+  await press('Enter', 'Enter', 13, 2);
   await page.until(`/left out/.test(document.querySelector('.mc-strip')?.textContent ?? '')`, 10000).catch(() => {});
   const strip = await page.eval<string>(`document.querySelector('.mc-strip')?.textContent ?? ''`);
   check(`${tag}: the sending strip says how many pictures were left out`, /· 1 picture left out/.test(strip), strip);
@@ -830,6 +840,7 @@ async function forwardWithPictures(tag: string) {
   if (!sent) return;
   const b = (await fetch(`${base}/api/mail/messages/${sent.id}/body`).then((r) => r.json())) as any;
   const doc = b.html ? await fetch(`${base}${b.html.url}`).then((r) => r.text()) : '';
+  check(`${tag}: what was typed into its HTML just before Ctrl+Enter went`, doc.includes('Typed just before sending'));
   check(`${tag}: its pictures went inside the mail, as parts, none linked`, (doc.match(/\/cid\//g)?.length ?? 0) > 60 && !/<img[^>]+src="https?:/.test(doc) && (b.attachments ?? []).filter((a: any) => !a.inline).length === 0, { cid: doc.match(/\/cid\//g)?.length, files: b.attachments?.length });
 }
 

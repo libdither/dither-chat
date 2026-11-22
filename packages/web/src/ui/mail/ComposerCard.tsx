@@ -140,19 +140,44 @@ function typing(field: string, e: Event): Typing {
 /** An empty Cc or Bcc line taken away again (the Cc and Bcc beside To bring it back). */
 function RowX({ what, onClick }: { what: string; onClick: () => void }) {
   return (
-    <button type="button" class="icon-btn mc-row-x" title={`No ${what}`} aria-label={`Remove the ${what} line`} onClick={onClick}>
+    <button
+      type="button"
+      class="icon-btn mc-row-x"
+      title={`No ${what}`}
+      aria-label={`Remove the ${what} line`}
+      onClick={(e) => {
+        // The caret goes to To, not to the page (on a phone the keyboard stays up).
+        const to = (e.currentTarget as HTMLElement).closest('.mc-addrs')?.parentElement?.querySelector<HTMLInputElement>('.mc-addrs .mc-addr-input');
+        onClick();
+        to?.focus();
+      }}
+    >
       <Icon name="x" size={14} />
     </button>
   );
 }
 
+/** An island's first line as the draft's HTML has it once it is text ("On …, Sam wrote:"), read once per island. */
+const headLines = new WeakMap<P.MailIsland, string>();
+function headLine(island: P.MailIsland): string {
+  let line = headLines.get(island);
+  if (line === undefined) {
+    const head = new DOMParser().parseFromString(`<body>${island.html}</body>`, 'text/html').querySelector('.dc-quote-head, .dc-forward-head');
+    line = (head?.textContent ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!).replace(/\s+/g, '');
+    headLines.set(island, line);
+  }
+  return line;
+}
 /**
- * The draft still holds the original: the quote (a quote of the document's own, or one kept whole) or the forwarded
- * message (its lines, or kept whole). Else the composer offers to put it back.
+ * The draft still holds the original: the quote (its attribution line, or the quote kept whole) or the forwarded
+ * message (its lines, or kept whole). Else the composer offers to put it back. A quote of your own (❝) is not it.
  */
-function hasOriginal(html: string | null | undefined, kind: 'quote' | 'forward'): boolean {
+function hasOriginal(html: string | null | undefined, kind: 'quote' | 'forward', island: P.MailIsland): boolean {
   if (!html) return false;
-  return kind === 'quote' ? /data-dc-island="quote"|<blockquote\b/.test(html) : /data-dc-island="forward"|-{4,} Forwarded message -{4,}/.test(html);
+  if (html.includes(`data-dc-island="${kind}"`)) return true;
+  if (kind === 'forward' && /-{4,} Forwarded message -{4,}/.test(html)) return true;
+  const line = headLine(island);
+  return !!line && html.replace(/<[^>]*>/g, '').replace(/\s+/g, '').includes(line);
 }
 
 /**
@@ -667,6 +692,9 @@ export function Composer({ open }: { open: ComposeOpen }) {
   }, [online]);
 
   const doSend = async () => {
+    // What was typed a moment ago goes too (the editor writes its views' text back after a pause).
+    editorApi.current?.flush();
+    const d = cur.current?.d ?? null;
     if (!d || !key || sending === 'sending') return;
     setError(null);
     if (!d.to.length && !d.cc.length && !d.bcc.length) return setError('Who is it to? Add a recipient.');
@@ -954,7 +982,7 @@ export function Composer({ open }: { open: ComposeOpen }) {
                 <Loading label="Loading…" />
               </div>
             )}
-            {(d.kind === 'reply' || d.kind === 'replyAll') && start?.island && !hasOriginal(d.html, 'quote') && Editor && (
+            {(d.kind === 'reply' || d.kind === 'replyAll') && start?.island && !hasOriginal(d.html, 'quote', start.island) && Editor && (
               <div class="mc-quote">
                 <button class="mc-quote-add" onClick={() => (set({ quote: true }), editorApi.current?.addIsland(start.island!, d.replyTo))} title={`Quote ${quoted} below your text`}>
                   <Icon name="quote" size={12} />
@@ -962,7 +990,7 @@ export function Composer({ open }: { open: ComposeOpen }) {
                 </button>
               </div>
             )}
-            {d.kind === 'forward' && start?.island && !hasOriginal(d.html, 'forward') && Editor && (
+            {d.kind === 'forward' && start?.island && !hasOriginal(d.html, 'forward', start.island) && Editor && (
               <div class="mc-quote">
                 <button class="mc-quote-add" onClick={() => editorApi.current?.addIsland(start.island!, d.replyTo)} title="Put the forwarded message back below your text">
                   <Icon name="forward" size={12} />

@@ -19,7 +19,7 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { applyFormat, type Format, formatsAt, indentList, type Sel } from '../../../mail/edits.ts';
 import { Icon } from '../../icons.tsx';
-import { docHtml, docMarkdown, extensions, fitFrame, type IslandAttrs, islandDoc, type IslandEdit, newRef, refsOf, setLeftOut, webBox } from './schema.ts';
+import { docHtml, docMarkdown, extensions, fitFrame, type IslandAttrs, islandDoc, type IslandEdit, islandName, islandText, newRef, refsOf, setLeftOut, webBox } from './schema.ts';
 
 export type EditorMode = 'rich' | 'markdown' | 'html' | 'plain';
 
@@ -29,6 +29,8 @@ export interface MailEditorApi {
   addPictures(files: File[]): Promise<void>;
   /** A forwarded mail or a quote put back at the end (after it was taken out). */
   addIsland(island: P.MailIsland, from: string | null): void;
+  /** What was typed in the last moment, which the views write back after a pause, written back now (before a send). */
+  flush(): void;
 }
 
 export interface MailEditorProps {
@@ -99,12 +101,14 @@ function islandSheet(i: IslandAttrs, onEdit: () => void): HTMLElement {
   const bar = document.createElement('div');
   bar.className = 'md-island-sheet-bar';
   const name = document.createElement('span');
-  const size = new Blob([i.html]).size;
-  name.textContent = `${SHEET_NAME[i.kind] ?? 'HTML'}${i.label ? ` · ${i.label}` : ''} · its own HTML, sent as it is · ${size < 1024 ? `${size} B` : `${Math.round(size / 1024)} KB`}`;
+  const said = islandName(i.kind, i.label, i.html);
+  name.textContent = said.text;
+  name.title = said.title;
   const edit = document.createElement('button');
   edit.type = 'button';
   edit.className = 'md-island-sheet-btn';
-  edit.textContent = 'Edit HTML';
+  // Not Rich's "Edit HTML" (which opens an editor under the block): this one goes to the whole mail's HTML.
+  edit.textContent = 'Open in HTML view';
   edit.onmousedown = (e) => e.preventDefault();
   edit.onclick = onEdit;
   bar.append(name, edit);
@@ -121,18 +125,37 @@ function islandSheet(i: IslandAttrs, onEdit: () => void): HTMLElement {
 
 type Refs = { islands: Map<string, IslandAttrs>; pictures: Map<string, string>; attrs?: Map<string, Record<string, unknown>> };
 
-/** Styles a quote's or a forward's original may carry and still be the document's own: they change nothing much. */
-const PLAIN_STYLE = /^(color|text-align|margin(-\w+)?|padding(-\w+)?|border-left(-\w+)?|font-family|line-height|direction|unicode-bidi|word-break|overflow-wrap|word-wrap)$/i;
+/** Styles that change nothing you see (Apple Mail wraps every message in the first two). */
+const UNSEEN_STYLE = /^(line-break|-webkit-nbsp-mode|-webkit-line-break|word-break|overflow-wrap|word-wrap|unicode-bidi)$/i;
+/** The styles the document keeps, by tag: a span's colour, a paragraph's or heading's alignment, a quote's bar and margins (it draws its own). */
+const KEPT_STYLE: Record<string, RegExp> = { span: /^color$/i, p: /^text-align$/i, h1: /^text-align$/i, h2: /^text-align$/i, h3: /^text-align$/i, blockquote: /^(margin|padding|border-left)(-\w+)?$/i };
 const PLAIN_TAGS = new Set([...'p br b strong i em u s del strike code pre a ul ol li blockquote h1 h2 h3 hr span img div'.split(' ')]);
-const PLAIN_ATTRS = /^(href|src|alt|width|height|title|rel|target|type|start|dir|class|data-dc-src|data-dc-held|data-dc-text)$/i;
-/** An original's element the document can hold as its own text: plain tags, and nothing in its style that would be lost. */
+const PLAIN_ATTRS = /^(href|src|alt|width|height|title|rel|target|type|start|class|data-dc-src|data-dc-held|data-dc-text)$/i;
+/** One declaration of an original's style that the document keeps, or that changes nothing to lose. */
+function styleKept(tag: string, prop: string, value: string): boolean {
+  if (UNSEEN_STYLE.test(prop)) return true;
+  // The document is left to right, and has no spacing of its own to lose where there was none.
+  if (/^direction$/i.test(prop)) return /^\s*ltr\s*$/i.test(value);
+  if (/^(margin|padding)(-\w+)?$/i.test(prop) && /^\s*(0[a-z%]*\s*)+$/i.test(value)) return true;
+  if (/^text-align$/i.test(prop) && /^\s*(left|start)\s*$/i.test(value)) return true;
+  return KEPT_STYLE[tag]?.test(prop) ?? false;
+}
+/**
+ * An original's element the document can hold as its own text: plain tags, and nothing in its style or direction that
+ * would be lost (a colour on a paragraph, an indent, a font, right to left: those keep it whole).
+ */
 function plainEnough(el: Element): boolean {
-  if (!PLAIN_TAGS.has(el.tagName.toLowerCase())) return false;
+  const tag = el.tagName.toLowerCase();
+  if (!PLAIN_TAGS.has(tag)) return false;
   for (const a of [...el.attributes]) {
-    if (!PLAIN_ATTRS.test(a.name) && a.name !== 'style') return false;
-    if (a.name === 'style')
-      for (const decl of a.value.split(';'))
-        if (decl.trim() && !PLAIN_STYLE.test(decl.split(':')[0].trim())) return false;
+    if (a.name === 'dir') {
+      if (!/^\s*ltr\s*$/i.test(a.value)) return false;
+    } else if (a.name === 'style') {
+      for (const decl of a.value.split(';')) {
+        const at = decl.indexOf(':');
+        if (decl.trim() && (at < 0 || !styleKept(tag, decl.slice(0, at).trim(), decl.slice(at + 1)))) return false;
+      }
+    } else if (!PLAIN_ATTRS.test(a.name)) return false;
   }
   return [...el.children].every(plainEnough);
 }
@@ -150,8 +173,7 @@ function islandBlocks(e: Editor, island: P.MailIsland): JSONContent[] | null {
   const head = d.body.querySelector(':scope > .dc-quote-head, :scope > .dc-forward-head');
   const rest = [...d.body.children].filter((x) => x !== head);
   if (!head || !rest.length || !rest.every(plainEnough)) return null;
-  const html = `<p>${head.innerHTML}</p>${rest.map((x) => x.outerHTML).join('')}`;
-  const content = generateJSON(html, e.extensionManager.extensions).content ?? [];
+  const content = islandText(e, island.html);
   // Nothing lost on the way: the same words, the same pictures.
   const made = e.schema.nodeFromJSON({ type: 'doc', content });
   let pics = 0;
@@ -170,15 +192,15 @@ function appendIsland(e: Editor, island: P.MailIsland, from: string | null, undo
   // One empty line above it is enough (taking a block out and putting it back leaves more).
   while (content.length > 1 && empty(content[content.length - 1]) && empty(content[content.length - 2])) content.pop();
   if (!content.length || content[content.length - 1].type !== 'paragraph' || content[content.length - 1].content?.length) content.push({ type: 'paragraph' });
-  const added = blocks ?? [node];
-  content.push(...added);
+  const first = content.length;
+  content.push(...(blocks ?? [node]));
   replaceDoc(e, { ...json, content }, undoable);
-  // The caret at the end of the text above it, never on the block itself: typing there would replace the quote.
+  // The caret at the end of the line above it, never on the block itself (typing there would replace the quote), nor
+  // on the attribution line: counted from the front, as the editor keeps an empty line after a quote at the end.
   const doc = e.state.doc;
-  let size = 0;
-  for (let i = 0; i < added.length; i++) size += doc.child(doc.childCount - 1 - i).nodeSize;
-  const above = doc.content.size - size - 1;
-  e.view.dispatch(e.state.tr.setSelection(TextSelection.near(doc.resolve(above), -1)).setMeta('addToHistory', false));
+  let at = 0;
+  for (let i = 0; i < first; i++) at += doc.child(i).nodeSize;
+  e.view.dispatch(e.state.tr.setSelection(TextSelection.near(doc.resolve(at - 1), -1)).setMeta('addToHistory', false));
 }
 
 /** Markdown with stand-ins back into the document's JSON. */
@@ -352,6 +374,16 @@ export function MailEditor(p: MailEditorProps) {
   const entered = useRef<string | null>(null);
   const refs = useRef<Refs | null>(null);
   const typingTimer = useRef<number | undefined>(undefined);
+  /** The Markdown, HTML or Plain view's text waiting for its pause to go into the document; each open island editor's. */
+  const pending = useRef<(() => void) | null>(null);
+  const islandPending = useRef(new Set<() => void>());
+  const flush = () => {
+    for (const put of [...islandPending.current]) put();
+    clearTimeout(typingTimer.current);
+    const put = pending.current;
+    pending.current = null;
+    put?.();
+  };
   const [shown, setShown] = useState<EditorMode>('rich');
   const shownRef = useRef(shown);
   shownRef.current = shown;
@@ -495,6 +527,7 @@ export function MailEditor(p: MailEditorProps) {
             e.commands.focus();
           });
         },
+        flush,
       };
     if (p.mode !== 'rich') void switchTo(p.mode, false);
     return () => {
@@ -514,6 +547,7 @@ export function MailEditor(p: MailEditorProps) {
   const editIsland = async (o: IslandEdit) => {
     const code = await loadCode();
     let timer = 0;
+    let waiting: (() => void) | null = null;
     // Laid out to be read; it goes back only when you change it (else the island stays byte for byte as it was).
     const shown = prettyHtml(o.html);
     const v = code.codeView({
@@ -525,7 +559,17 @@ export function MailEditor(p: MailEditorProps) {
       onSend: () => props.current.onSend(),
       onText: (t) => {
         clearTimeout(timer);
-        timer = window.setTimeout(() => o.set(t), 250);
+        if (waiting) islandPending.current.delete(waiting);
+        // Sent or switched away from before the pause: flush() puts it in first.
+        const put = () => {
+          clearTimeout(timer);
+          islandPending.current.delete(put);
+          waiting = null;
+          o.set(t);
+        };
+        waiting = put;
+        islandPending.current.add(put);
+        timer = window.setTimeout(put, 250);
       },
       onCaret: () => {},
       onFiles: () => {},
@@ -537,6 +581,7 @@ export function MailEditor(p: MailEditorProps) {
       'me-island-done',
       () => {
         clearTimeout(timer);
+        if (waiting) islandPending.current.delete(waiting);
         if (v.state.doc.toString() !== shown) o.set(v.state.doc.toString());
         v.destroy();
         o.closed();
@@ -581,6 +626,8 @@ export function MailEditor(p: MailEditorProps) {
 
   const mountCode = (code: typeof import('./code.ts'), mode: 'markdown' | 'html' | 'plain') => {
     const e = editor.current!;
+    // A block's HTML typed a moment ago is in the document before the view takes its copy.
+    flush();
     before.current = e.getJSON();
     refs.current = refsOf(e);
     const r = refs.current;
@@ -610,11 +657,12 @@ export function MailEditor(p: MailEditorProps) {
       onSend: () => props.current.onSend(),
       onText: (t) => {
         clearTimeout(typingTimer.current);
-        typingTimer.current = window.setTimeout(() => {
+        pending.current = () => {
           putBack(mode, t, false);
           emit();
           if (mode === 'html') setPreviewHtml(picturesIn(t, r));
-        }, 300);
+        };
+        typingTimer.current = window.setTimeout(flush, 300);
       },
       onCaret: () => mode === 'markdown' && redraw((n) => n + 1),
       onFiles: (files) => void take(files),
@@ -627,6 +675,7 @@ export function MailEditor(p: MailEditorProps) {
     const v = cm.current;
     if (!v) return;
     clearTimeout(typingTimer.current);
+    pending.current = null;
     // Only looked at: the document stays exactly as it was (no round trip through the text, no undo step).
     const text = v.state.doc.toString();
     if (text !== entered.current) putBack(mode, text, true);
