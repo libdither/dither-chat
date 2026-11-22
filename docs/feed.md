@@ -230,7 +230,11 @@ its post at once, from the page, "Reading the replies from X…" under it until 
 A post card draws whatever a `PostFact` carries, so a network that brings these needs no card of its own: `title`
 (Reddit, Lemmy, Hacker News, a forum), shown over the words; `warning` (Mastodon's content warning, a spoiler), the
 words and pictures folded behind it until **Show**; `place` (a subreddit, a community, a channel), "in r/rust" over
-it; `replies`, who may reply. The composer reads the network's rules (`compose.ts`: limit, how it counts, pictures,
+it; `replies`, who may reply; `article`, a long-form post's whole body as Markdown (Substack, LessWrong), which only a
+post's thread brings: the thread draws it in place of the preview (the file viewer's Markdown renderer, its chunk
+loaded the first time, raw HTML shown as text, links http(s) only) with its pictures in place and no cover above it,
+and the hub signs its pictures as it does a post's others (feed.ts `articleView`), so they come through the hub's
+media cache. A card never has it. The composer reads the network's rules (`compose.ts`: limit, how it counts, pictures,
 reply gates, a title, a place, a content warning). X, Mastodon, Reddit, Lemmy, Substack and Bluesky bring posts. Post ids are
 the network's own, opaque to the hub (`POST_ID_PATTERN`: letters, digits and `_.~:-`, up to 120): Reddit's `t3_…`
 and `t1_…`, Lemmy's `post:…` and `comment:…`, Bluesky's `<did>~<rkey>` (the author's DID and the post's record

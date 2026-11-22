@@ -57,9 +57,23 @@ export function feedItemOf(extra: unknown): P.FeedItem | null {
 }
 
 /** Native ids to hub ids and pictures to signed paths, in a post and the posts it holds. */
+/**
+ * An article's pictures (`![alt](url)`) through the hub's media path, as a post's other pictures are: cached, and
+ * fetched by the hub rather than by each device. One the hub won't sign stays as it was (the page then shows its words).
+ */
+export function articleView(md: string, media: (raw: string) => string | null): string {
+  return md.replace(/(!\[(?:\\.|[^\]\\])*\]\()(https?:\/\/[^)\s]+)\)/g, (all, head: string, url: string) => {
+    const raw = url.replace(/%2[89]/gi, (c) => (c.toLowerCase() === '%28' ? '(' : ')'));
+    const m = media(raw);
+    // A signed path is base64url and a query: nothing in it ends the Markdown link.
+    return m ? `${head}${m})` : all;
+  });
+}
+
 export function postView(p: P.PostFact, network: P.Network, media: (raw: string) => string | null): P.PostFact {
   return {
     ...p,
+    ...(p.article ? { article: articleView(p.article, media) } : {}),
     ...(p.author ? { author: hubId('idn', network, p.author) } : {}),
     ...(p.replyTo ? { replyTo: { id: p.replyTo.id, ...(p.replyTo.author ? { author: hubId('idn', network, p.replyTo.author) } : {}) } } : {}),
     ...(p.repostOf ? { repostOf: postView(p.repostOf, network, media) } : {}),
