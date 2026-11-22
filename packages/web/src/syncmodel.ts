@@ -287,6 +287,24 @@ export function upsertInto(list: P.MessageView[], m: P.MessageView) {
   list.splice(j, 0, m);
 }
 
+/**
+ * A message now in `m.conversationId` goes from every other conversation's timeline (keys `c:<id>`) that holds it: it
+ * moved (MessageFact.moved, a Zulip topic renamed or messages moved to another topic). Person timelines span
+ * conversations and keep it. Returns the keys of the timelines it left.
+ */
+export function leaveOtherTimelines(timelines: Iterable<{ key: string; messages: P.MessageView[] }>, m: P.MessageView): string[] {
+  const here = 'c:' + m.conversationId;
+  const left: string[] = [];
+  for (const o of timelines) {
+    if (o.key === here || !o.key.startsWith('c:')) continue;
+    const i = o.messages.findIndex((x) => x.id === m.id);
+    if (i < 0) continue;
+    o.messages.splice(i, 1);
+    left.push(o.key);
+  }
+  return left;
+}
+
 export interface TimelineCopy {
   messages: P.MessageView[];
   hasMore: boolean;
