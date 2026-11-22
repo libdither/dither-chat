@@ -8,7 +8,8 @@ import { authorName } from '../model.ts';
 import { clearReactions, modOf } from '../moderate.ts';
 import { hasMine, knownReactionContext, pickerFor, quickReactions, reactedAt, reactionContext, reactionScope, reactionTip, reactorsFor, replacing, toggleReaction, whenText, whenTitle, type Picked } from '../reactions.ts';
 import { api, db, isSelfIdentity, pref, rev, setPrefs } from '../state.ts';
-import { useLayer } from '../phone.ts';
+import { phone, useLayer } from '../phone.ts';
+import { openHistory } from '../messageHistory.ts';
 import { Avatar } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { Sheet } from './Sheet.tsx';
@@ -35,7 +36,8 @@ function Pill({ m, r }: { m: P.MessageView; r: P.ReactionView }) {
     const rect = ref.current?.getBoundingClientRect();
     if (rect) reactorsFor.value = { message: m, key: r.key, style: r.style, anchor: rect };
   };
-  const press = useLongPress(showWho);
+  // On a phone a long press opens the message's reactions, from the start, with a way to all of its history.
+  const press = useLongPress(() => (phone.value ? openHistory(m, 'reactions') : showWho()));
   const superStyle = r.style === 'super' ? { '--r1': r.colors?.[0] ?? '#ff7ad9', '--r2': r.colors?.[1] ?? r.colors?.[0] ?? '#7c5cff' } : undefined;
   return (
     <button

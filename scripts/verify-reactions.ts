@@ -194,9 +194,9 @@ try {
   await p.eval(`(() => { const m = [...document.querySelectorAll('.msg')].find((x) => x.textContent.includes('Mesa is open till 10')); const b = m.getBoundingClientRect(); m.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: b.x + 40, clientY: b.y + 8 })); })()`);
   await p.until(`[...document.querySelectorAll('[role="menuitem"]')].some((i) => i.textContent.includes('Message History'))`, 4000);
   await p.eval(`[...document.querySelectorAll('[role="menuitem"]')].find((i) => i.textContent.includes('Message History')).click()`);
-  await p.until(`!!document.querySelector('.modal .msg-history-event')`, 5000);
+  await p.until(`!!document.querySelector('.mh-pop .mh-row')`, 5000);
   await Bun.sleep(300);
-  const lines = await p.eval<string[]>(`[...document.querySelectorAll('.modal .msg-history-event')].map((e) => e.innerText.replace(/\s+/g, ' ').trim())`);
+  const lines = await p.eval<string[]>(`[...document.querySelectorAll('.mh-pop .mh-row .mh-what')].filter((e) => !/sent it/.test(e.innerText)).map((e) => e.innerText.replace(/\s+/g, ' ').trim())`);
   const order = lines.map((l) => (l.includes('pinned') ? 'pin' : /^Sam\S* ?\S* reacted/.test(l) ? 'sam+' : /^Sam\S* ?\S* took back/.test(l) ? 'sam-' : /^Alice\S* ?\S* reacted/.test(l) ? 'alice+' : '?'));
   check(order.join() === 'sam+,sam-,pin,alice+,sam+' || order.join() === 'pin,sam+,sam-,alice+,sam+', 'Message history: Sam reacted, took it back, Alice reacted, Sam reacted again, each with its time', lines);
   if (shots) await p.shot(`${shots}/when-history-signal.png`);

@@ -148,6 +148,31 @@ reactions with a known time (docs/reactions.md "When") and receipts.
 - Nothing said is no change: networks often leave fields out. A description, bio, status or pronouns may go from
   nothing to something and back; a name or picture is only replaced.
 
+## A message's history
+
+One list for everything that happened to a message (ui/MessageHistory.tsx, rows in `messageHistory.ts`), oldest first
+so the latest is at the bottom, as in a chat, and it opens scrolled there. What the message says now sits above it.
+
+- **Sent**, with what it first said when it was edited since.
+- **Each edit**, as the words it took out (struck) and put in, with three words either side and `…` for the rest
+  (`wordDiff.ts`); "Whole text" shows that version whole with its changes marked.
+- **Reactions** made and taken back, each with its time (docs/reactions.md "When"); those already there when the hub
+  first saw the message, with no time, in one row at the top, with how many the network counts but does not name.
+- **Pins** and unpins, with who.
+- **Your own message's receipts**: every delivery in one row, and the reads (and plays) between two edits in one row
+  each, so it says who read which version. A click on a row lists each person with their time.
+
+It opens on one part or on all of it, never with filters: from "(edited)" or the words an edit put in on its edits,
+from a reaction held down on a phone on its reactions, and from the ticks or Message History in the message's menu on
+all of it. "All history" goes from either part to all of it. On a computer it hangs below what opened it (above, when
+there is no room); on a phone it is a page of its own, which back closes. It is a chunk of its own, loaded the first
+time one opens.
+
+**In the chat**, the words a message's last edit put in are underlined, quietly, and a click on them opens its edits.
+The hub sends the version before (`MessageView.prevBody`, the body the last edit event kept), and the web app
+compares the two as rendered text, so markdown's marks are not words (`markChanged`). Nothing is underlined when the
+edit only took words out, or when no word of the old text is left; "(edited)" is there either way.
+
 ## Not logged
 
 A server's own membership (joins and leaves in big servers, which Discord does not send to user clients without the

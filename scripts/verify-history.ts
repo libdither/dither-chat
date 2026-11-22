@@ -1,7 +1,8 @@
 /**
  * Message history (docs/history.md), end to end against a demo hub in headless Chromium: a deleted and a disappeared
- * message kept as collapsed lines that open; an edited message's earlier versions; a pinned message marked, a reaction
- * taken back, read ticks and who read it; a group's History card with a description change, a member joining and a
+ * message kept as collapsed lines that open; an edited message's earlier versions, the words its last edit put in
+ * underlined and opening its edits, and its history as one list, latest at the bottom; a pinned message marked, a
+ * reaction taken back, read ticks and who read it; a group's History card with a description change, a member joining and a
  * role given; a person's Activity section with their status changing and their presence over time; hiding kept messages completely from Settings; a network turned off; and
  * forgetting what was kept.
  *
@@ -39,11 +40,32 @@ try {
   check((await p.eval<string>(`[...document.querySelectorAll('.msg-gone')].map((g) => g.innerText).join('\\n')`)).includes('wrong chat lol, ignore this'), 'shown in full, what it said with it');
   if (shots) await p.shot(`${shots}/history-chat.png`);
 
-  await p.eval(`document.querySelector('button.msg-edited.link').click()`);
-  await p.until(`document.querySelectorAll('.edit-version').length >= 2`, 5000);
-  const versions = await p.eval<string[]>(`[...document.querySelectorAll('.edit-version .edit-body')].map((s) => s.textContent)`);
-  check(versions[0] === 'meet at 6' && versions.at(-1) === 'meet at 6:30, traffic', '(edited) lists the versions, oldest first', versions);
+  // Priya's message: what the edit put in is underlined in the chat.
+  const priya = `[...document.querySelectorAll('.msg')].find((m) => m.textContent.includes('meet at 6:30'))`;
+  check((await p.eval<string>(`[...(${priya}).querySelectorAll('.msg-changed')].map((s) => s.textContent).join('|')`)) === '6:30, traffic', 'the words the edit put in are underlined');
+  await p.eval(`(${priya}).querySelector('button.msg-edited.link').click()`);
+  await p.until(`document.querySelectorAll('.mh-pop .mh-row').length >= 2`, 5000);
+  const edits = await p.eval<string[]>(`[...document.querySelectorAll('.mh-pop .mh-row')].map((r) => r.innerText.replace(/\\s+/g, ' ').trim())`);
+  check(edits.length === 2 && /sent it meet at 6\b/.test(edits[0]) && /edited it meet at 6 ?6:30, traffic/.test(edits[1]), '(edited) opens its edits, oldest first: as sent, then the edit as words out and in', edits);
   if (shots) await p.shot(`${shots}/history-edits.png`);
+  await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  await p.until(`!document.querySelector('.mh-pop')`, 3000);
+
+  // Your message, edited twice: a click on its underlined words opens its edits, and from there all of its history.
+  const mine = `[...document.querySelectorAll('.msg')].find((m) => m.textContent.includes('I can drive'))`;
+  check((await p.eval<string>(`[...(${mine}).querySelectorAll('.msg-changed')].map((s) => s.textContent).join('|')`)) === 'from the gym, room for 3', 'only the last edit is underlined');
+  await p.eval(`(${mine}).querySelector('.msg-changed').click()`);
+  await p.until(`!!document.querySelector('.mh-pop .mh-bar .link') && document.querySelectorAll('.mh-pop .mh-row').length > 0`, 5000);
+  check((await p.eval<number>(`document.querySelectorAll('.mh-pop .mh-row').length`)) === 3, 'its edits: sent and two edits');
+  await p.eval(`document.querySelector('.mh-pop .mh-bar .link').click()`);
+  await p.until(`document.querySelectorAll('.mh-pop .mh-row').length > 3`, 5000);
+  const all = await p.eval<string[]>(`[...document.querySelectorAll('.mh-pop .mh-row')].map((r) => r.innerText.replace(/\\s+/g, ' ').trim())`);
+  const kinds = all.map((l) => (/sent it/.test(l) ? 'sent' : /edited it/.test(l) ? 'edit' : /^Delivered/.test(l) ? 'delivered' : /^Read by/.test(l) ? 'read' : /reacted/.test(l) ? 'react' : '?'));
+  check(kinds.join() === 'sent,delivered,react,read,edit,react,edit', 'All history: sent, delivered, a reaction, both reads in one row, an edit, a reaction, the last edit', all);
+  check(await p.eval<boolean>(`(() => { const l = document.querySelector('.mh-pop .mh-list'); return l.scrollHeight <= l.clientHeight + 1 || l.scrollTop + l.clientHeight >= l.scrollHeight - 2; })()`), 'scrolled to the latest, at the bottom');
+  if (shots) await p.shot(`${shots}/history-all.png`);
+  await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  await p.until(`!document.querySelector('.mh-pop')`, 3000);
 
   // Pins, receipts and the message's whole history.
   await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
@@ -53,10 +75,9 @@ try {
   const ticks = await p.eval<{ cls: string; title: string } | null>(`(() => { const t = document.querySelector('.msg-ticks'); return t ? { cls: t.className, title: t.title } : null; })()`);
   check(ticks?.cls.includes('read') && /Read by 2/.test(ticks.title), 'your message has read ticks: read by two', ticks);
   await p.eval(`document.querySelector('.msg-ticks').click()`);
-  await p.until(`!!document.querySelector('.modal .msg-history section')`, 5000);
-  const hist = await p.eval<string>(`document.querySelector('.modal .msg-history').innerText`);
-  check(/READ BY 2/i.test(hist) && hist.includes('Alice') && hist.includes('Priya'), 'its history lists who read it', hist.split('\n').slice(0, 5));
-  await p.eval(`document.querySelector('.modal-backdrop')?.click()`);
+  await p.until(`!!document.querySelector('.mh-pop .mh-row')`, 5000);
+  const hist = await p.eval<string>(`document.querySelector('.mh-pop .mh-list').innerText`);
+  check(/Read by\s+Alice Chen and Priya/.test(hist), 'its history lists who read it', hist.split('\n').slice(0, 8));
   await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
   await Bun.sleep(300);
   const pinned = await p.eval<string>(`document.querySelector('.msg-pin')?.closest('.msg')?.id ?? ''`);

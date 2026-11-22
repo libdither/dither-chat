@@ -169,6 +169,8 @@
     "js/src/ui/MediaParts.tsx.gzip": { "measured": 7324, "budget": 7467 },
     "js/src/ui/MentionPicker.tsx.bytes": { "measured": 7562, "budget": 7714 },
     "js/src/ui/MentionPicker.tsx.gzip": { "measured": 3399, "budget": 3448, "reason": "@ mentions Step 3: the picker's Friends and Everyone you know sections and a person's accounts; the @ finds setting on a chat's and a space's About and in a folder's menu; references drawn as chips" },
+    "js/src/ui/MessageHistory.tsx.bytes": { "measured": 9381, "budget": 9568 },
+    "js/src/ui/MessageHistory.tsx.gzip": { "measured": 3884, "budget": 3961 },
     "js/src/ui/Moderation.tsx.bytes": { "measured": 8572, "budget": 8744 },
     "js/src/ui/Moderation.tsx.gzip": { "measured": 3410, "budget": 3468 },
     "js/src/ui/NoticesPane.tsx.bytes": { "measured": 6964, "budget": 7103, "reason": "An approval request opens to its card in the notice (docs/approvals.md \"Answering\"): body, what a signature covers, message box, actions, following the request while it waits" },

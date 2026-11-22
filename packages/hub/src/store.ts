@@ -2911,6 +2911,14 @@ export class Store {
         if (!cur || e.last > cur.at) PIN.set(e.message_id, { at: e.last, pinned: e.kind === 'pin' });
       }
     }
+    // The version before the last edit, for marking what that edit put in: each edit event keeps the body it replaced.
+    const PREV = new Map<string, string>();
+    const edited = [...E.keys()];
+    if (edited.length)
+      for (const e of this.db.query(`SELECT message_id, data FROM message_event WHERE kind = 'edit' AND message_id IN (${edited.map(() => '?').join(',')}) ORDER BY at, id`).all(...edited) as Row[]) {
+        const body = json<{ body?: string }>(e.data, {}).body;
+        if (typeof body === 'string') PREV.set(e.message_id, body);
+      }
     const RC = new Map<string, NonNullable<P.MessageView['receipts']>>();
     for (const r of this.db.query(`SELECT message_id, identity_id, state, at FROM receipt WHERE message_id IN (${ph}) ORDER BY at`).all(...ids) as Row[]) {
       const cur = RC.get(r.message_id) ?? { delivered: 0, read: 0, played: 0, latest: { identityId: r.identity_id, state: r.state, at: r.at } };
@@ -2965,6 +2973,7 @@ export class Store {
         deleted: !!r.deleted,
         ...(r.deleted && r.gone_how ? { gone: { how: r.gone_how, at: r.gone_at, kept: !sealed && (!!r.body || !!A.get(r.id)?.length) } } : {}),
         ...(E.get(r.id) ? { edits: E.get(r.id) } : {}),
+        ...(!sealed && PREV.has(r.id) ? { prevBody: PREV.get(r.id) } : {}),
         ...(EV.get(r.id) ? { events: EV.get(r.id) } : {}),
         ...(PIN.get(r.id)?.pinned ? { pinned: true } : {}),
         ...(RC.get(r.id) ? { receipts: RC.get(r.id) } : {}),

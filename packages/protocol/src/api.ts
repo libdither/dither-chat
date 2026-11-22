@@ -710,6 +710,8 @@ export interface MessageView {
   gone?: { how: 'deleted' | 'disappeared'; at: number; kept: boolean };
   /** Earlier versions the hub kept: GET /api/messages/:id/history. */
   edits?: number;
+  /** The version before this one, when the hub kept it: the chat marks the words the last edit put in (docs/history.md "A message's history"). */
+  prevBody?: string;
   /** Other things that happened to it the hub kept: reactions taken back, pins (docs/history.md). Reaction times are on `reactions`. */
   events?: number;
   /** Pinned, as the last pin or unpin the hub saw says. */

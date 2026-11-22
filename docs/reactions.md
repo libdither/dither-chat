@@ -48,12 +48,13 @@ What shows:
 - **A pill's tooltip** (the app's own, shown at once above it): who reacted, then a line each with when, earliest
   first (just the time for one person), at most eight. A time the hub heard, not the network's own, starts with "~",
   and nothing more is said about it.
-- **Who reacted** (right-click or long-press a pill; `GET /api/messages/:id/reactors`): each person with their time,
+- **Who reacted** (right-click a pill; `GET /api/messages/:id/reactors`): each person with their time,
   and under their name their earlier turns ("added 2:10 PM · took back 2:12 PM"); then **Taken back**: those who took
   theirs back and did not react again, with when. A "~" time's title says it is when the hub heard; reactions already
   there have no time.
-- **Message history** lists reactions made and taken back with the pins, in order, each with its time. A message with
-  a timed reaction offers Message History in its menu.
+- **Message history** (docs/history.md "A message's history") lists reactions made and taken back with the edits,
+  pins and receipts, oldest first, each with its time. A message with a timed reaction offers Message History in its
+  menu. On a phone, holding a pill down opens it on the message's reactions, with All history a tap away.
 
 Taken back reactions come from `message_event` (docs/history.md): each says when it had been added, so a person can
 read "added, took back, added again". As there, your own are not kept, and nothing is while Message history does not
@@ -88,7 +89,7 @@ not advertised when they are not.
 
 - **Hover** (desktop): your three most-used emoji, plus the picker.
 - **Long-press** (phone): six most-used emoji, the picker as a bottom sheet, and the rest of the message's actions ([phone.md](phone.md)).
-- **A pill**: tap to join or leave. Right-click or long-press to see who reacted; the hub asks the network only if it has not named everyone yet.
+- **A pill**: tap to join or leave. Right-click to see who reacted; the hub asks the network only if it has not named everyone yet. On a phone a long press opens the message's reactions in its history instead.
 - **Picker**: laid out like Discord's. Search and skin tones across the top; a rail of categories down the side
   (your frequent emoji, each server's or pack's custom ones, then Unicode's), which follows the scroll and jumps it;
   sections that fold; and along the bottom the emoji under the pointer by name (and its server), with what picking

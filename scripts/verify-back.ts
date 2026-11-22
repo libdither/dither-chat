@@ -50,6 +50,8 @@ const e = encodeURIComponent;
 const dm = boot.conversations.find((c: any) => c.shape === 'direct' && c.network === 'discord');
 const channel = boot.conversations.find((c: any) => c.shape === 'channel' && c.spaceIds?.length);
 const space = channel?.spaceIds[0];
+/** A group with an edited message, whose history opens from its "(edited)". */
+const climb = boot.conversations.find((c: any) => c.name === 'Climbing crew 🧗');
 const person = boot.persons.find((p: any) => p.id !== boot.selfPersonId && p.identityIds?.length);
 const account = boot.accounts[0];
 const folder = boot.folders.find((f: any) => f.items.some((i: any) => i.kind === 'conversation'));
@@ -168,6 +170,10 @@ const LAYERS: LayerCase[] = [
   { name: "a message's menu", file: 'ui/ContextMenu.tsx', at: `#/inbox/c/${dm.id}`, open: () => click('.msg .msg-body', 'right', true) },
   { name: 'the reaction picker', file: 'ui/Reactions.tsx', at: `#/inbox/c/${dm.id}`, open: onMessage('[data-track="react"], .msg-actions [title="Add reaction"], .msg-actions [aria-label="Add reaction"]') },
   { name: 'Forward to (a dialog)', file: 'ui/bits.tsx', at: `#/inbox/c/${dm.id}`, open: onMessage('[data-track="forward"]') },
+  { name: "a message's history", file: 'ui/MessageHistory.tsx', at: `#/inbox/c/${climb.id}`, open: async () => {
+      await p.until(`!!document.querySelector('button.msg-edited.link')`, 10000);
+      await click('button.msg-edited.link');
+    } },
   { name: "search's filter chips", file: 'ui/Search.tsx', at: '#/search?q=pizza', open: () => click('.search-chip-main'), noLayer: true },
   { name: 'the theme picker', file: 'ui/Themes.tsx', at: '#/people', open: () => click('button[aria-label="Theme"]'), noLayer: true },
 ];
