@@ -113,6 +113,11 @@ export function conversationMetaChanged(prev: P.ConversationView | undefined, ne
       if (prev.vantages.length !== next.vantages.length || prev.vantages.some((v, i) => v.accountId !== next.vantages[i].accountId)) return true;
       continue;
     }
+    // The same members in another order are no new names (the hub sends them by id; an older hub did not).
+    if (k === 'participantIds') {
+      if (prev.participantIds.length !== next.participantIds.length || !next.participantIds.every((id) => prev.participantIds.includes(id))) return true;
+      continue;
+    }
     const a = prev[k];
     const b = next[k];
     if (a !== b && JSON.stringify(a) !== JSON.stringify(b)) return true;

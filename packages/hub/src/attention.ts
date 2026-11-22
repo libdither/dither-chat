@@ -1249,6 +1249,28 @@ export class Attention {
     return this.pending.size > 0 || this.sources.some((s) => s.busy);
   }
 
+  /**
+   * Whether scores are still to come out of what already happened: conversations waiting to be sent, folded again
+   * (a stale one waits QUIET first) or folded at all. `GET /api/attention/waiting`, which verify-response.ts waits on
+   * after a click so the scores the click set off are counted with it.
+   */
+  get waiting(): boolean {
+    if (this.busy) return true;
+    const db = this.store.db;
+    if (db.query('SELECT 1 FROM conv_feature WHERE stale_at IS NOT NULL LIMIT 1').get()) return true;
+    // Behind as pump() sees it, and with a message past the cursor: a conversation whose last message time is later
+    // than any message it holds (one a request was accepted into) has nothing to fold however often it is tried.
+    return !!db
+      .query(
+        `SELECT 1 FROM conversation c LEFT JOIN conv_feature f ON f.conversation_id = c.id
+         WHERE c.last_message_at IS NOT NULL AND (f.conversation_id IS NULL OR (c.last_message_at > f.cursor_ts AND f.stale_at IS NULL))
+           AND EXISTS (SELECT 1 FROM message m WHERE m.conversation_id = c.id
+                       AND (f.conversation_id IS NULL OR m.ts > f.cursor_ts OR (m.ts = f.cursor_ts AND m.rowid > f.cursor_rid)))
+         LIMIT 1`,
+      )
+      .get();
+  }
+
   /** One conversation's score as last sent, if the inbox lists it. */
   view(id: string): P.AttentionView | undefined {
     if (!this.scored) this.rescoreAll();

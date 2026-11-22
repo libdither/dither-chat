@@ -2,7 +2,7 @@ import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { listPreview } from '../board.ts';
 import { liveRules, netName, ruleIcon, ruleName } from '../model.ts';
-import { api, db, go, mailRev, prefs, rev, setPrefs, setRule, toast } from '../state.ts';
+import { api, db, go, mailRev, pref, rev, setPrefs, setRule, toast } from '../state.ts';
 import { loadPolicy, setListLevel, triagePolicy } from '../triage.ts';
 import { addingAccount, RowName } from './Accounts.tsx';
 import { FeatureIcons, KindBadge } from './AccountFeatures.tsx';
@@ -257,7 +257,6 @@ function AccountsBlock() {
 
 export function SettingsPane() {
   rev.value;
-  const p = prefs.value;
   const [keyword, setKeyword] = useState('');
   const rules = liveRules();
   const keywordRules = rules.filter((r) => r.scope === 'keyword');
@@ -296,7 +295,7 @@ export function SettingsPane() {
             <Icon name="chevronRight" size={15} />
           </button>
           <label class="toggle-row">
-            <input type="checkbox" checked={!!p.notifications} onChange={async (e) => {
+            <input type="checkbox" checked={!!pref('notifications')} onChange={async (e) => {
               const on = (e.target as HTMLInputElement).checked;
               if (on && 'Notification' in window && Notification.permission !== 'granted') {
                 const r = await Notification.requestPermission();
@@ -403,7 +402,7 @@ export function SettingsPane() {
               </span>
             </label>
             <label class="toggle-row">
-              <input type="checkbox" data-track="settings: plain gifs" checked={prefs.value.plainGifs !== false} onChange={(e) => setPrefs({ plainGifs: (e.target as HTMLInputElement).checked })} />
+              <input type="checkbox" data-track="settings: plain gifs" checked={pref('plainGifs') !== false} onChange={(e) => setPrefs({ plainGifs: (e.target as HTMLInputElement).checked })} />
               <span>
                 <b>Show GIFs as plain GIFs</b>
                 <small>A GIF sent as a link (Discord's picker sends them so) shows as just the GIF, with no link or card naming the site it came from, and the GIF videos of Telegram and WhatsApp loop silently with no player, as each app shows them. Off: the link, its card and a player. For this device.</small>
@@ -439,14 +438,14 @@ export function SettingsPane() {
                     ['direct', 'This device'],
                   ] as const
                 ).map(([m, label]) => (
-                  <button class={`chip-btn ${p.callMode === m ? 'on' : ''}`} onClick={() => setPrefs({ callMode: m })}>
+                  <button class={`chip-btn ${pref('callMode') === m ? 'on' : ''}`} onClick={() => setPrefs({ callMode: m })}>
                     {label}
                   </button>
                 ))}
               </div>
             </div>
             <p class="set-help">
-              {p.callMode === 'bridge'
+              {pref('callMode') === 'bridge'
                 ? "The account's own client on the hub joins the call, and its audio is passed to this device. Works the way the network's app does, at the cost of the hub's CPU."
                 : 'This device joins the call itself, with a one-call token from the account. Its connection still goes through the hub. Lighter on the hub, a little more work for the device. Discord only: calls on other networks still go through the account.'}
             </p>
@@ -485,10 +484,9 @@ export function SettingsPane() {
 /** The theme: every theme in a list on a desktop; on a phone, a row that opens them in a sheet. */
 function AppearanceTheme() {
   const [open, setOpen] = useState(false);
-  const p = prefs.value;
   const t = chosenTheme();
   if (!phone.value) return <ThemeList />;
-  const label = followsSystem() ? `${themeById(p.themeDark).name} / ${themeById(p.themeLight).name}` : t.name;
+  const label = followsSystem() ? `${themeById(pref('themeDark')).name} / ${themeById(pref('themeLight')).name}` : t.name;
   return (
     <>
       <button class="set-rule theme-row" onClick={() => setOpen(true)}>
@@ -553,7 +551,7 @@ function CallInputSettings() {
         <span class="set-rule-label">Call sounds</span>
         <div class="level-picker">
           {([true, false] as const).map((on) => (
-            <button class={`chip-btn ${(prefs.value.callSounds !== false) === on ? 'on' : ''}`} onClick={() => setPrefs({ callSounds: on })}>
+            <button class={`chip-btn ${(pref('callSounds') !== false) === on ? 'on' : ''}`} onClick={() => setPrefs({ callSounds: on })}>
               {on ? 'On' : 'Off'}
             </button>
           ))}
@@ -568,7 +566,6 @@ function CallInputSettings() {
 function CallDevices() {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [level, setLevel] = useState<number | null>(null);
-  const p = prefs.value;
   const list = () =>
     navigator.mediaDevices
       ?.enumerateDevices()
@@ -583,7 +580,7 @@ function CallDevices() {
   const test = async () => {
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: p.callMicId ? { deviceId: { exact: p.callMicId } } : true });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: pref('callMicId') ? { deviceId: { exact: pref('callMicId') } } : true });
     } catch (e) {
       toast({ kind: 'error', title: 'No microphone', body: (e as Error).message });
       return;
@@ -623,8 +620,8 @@ function CallDevices() {
   };
   return (
     <>
-      {pick('audioinput', 'Microphone', p.callMicId, (id) => setPrefs({ callMicId: id }))}
-      {pick('videoinput', 'Camera', p.callCameraId, (id) => setPrefs({ callCameraId: id }))}
+      {pick('audioinput', 'Microphone', pref('callMicId'), (id) => setPrefs({ callMicId: id }))}
+      {pick('videoinput', 'Camera', pref('callCameraId'), (id) => setPrefs({ callCameraId: id }))}
       <div class="set-rule">
         <span class="set-rule-label">Test the microphone</span>
         {level === null ? (

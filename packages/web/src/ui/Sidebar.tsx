@@ -34,7 +34,7 @@ import {
   type InboxRow,
   type RailEntry,
 } from '../model.ts';
-import { db, go, isSelfIdentity, mailRev, metaRev, prefs, rev, route, setPrefs, type InboxFilter } from '../state.ts';
+import { db, go, isSelfIdentity, mailRev, metaRev, pref, rev, route, setPrefs, type InboxFilter } from '../state.ts';
 import { openPalette } from './Palette.tsx';
 import { INBOX_FILTERS } from '../ordering.ts';
 import { senderLine } from '../mail/model.ts';
@@ -322,10 +322,10 @@ function needsTarget(c: P.ConversationView): string | undefined {
 
 /** A list's section, folded or open on this device. Its click counts as "section toggle (label)": labels are fixed words. */
 function SectionHead({ id, label, count, actions }: { id: string; label: string; count?: number; actions?: any }) {
-  const collapsed = !!prefs.value.collapsed[id];
+  const collapsed = !!pref('collapsed')[id];
   return (
     <div class="section-head" data-section={id}>
-      <button class="section-toggle" aria-expanded={!collapsed} data-track={`section toggle (${label})`} onClick={() => setPrefs({ collapsed: { ...prefs.value.collapsed, [id]: !collapsed } })}>
+      <button class="section-toggle" aria-expanded={!collapsed} data-track={`section toggle (${label})`} onClick={() => setPrefs({ collapsed: { ...pref('collapsed'), [id]: !collapsed } })}>
         <Icon name={collapsed ? 'chevronRight' : 'chevronDown'} size={12} />
         <span>{label}</span>
         {count ? <span class="section-count">{count}</span> : null}
@@ -334,7 +334,7 @@ function SectionHead({ id, label, count, actions }: { id: string; label: string;
     </div>
   );
 }
-const isCollapsed = (id: string) => !!prefs.value.collapsed[id];
+const isCollapsed = (id: string) => !!pref('collapsed')[id];
 
 // ------------------------------------------------------------------ inbox
 
@@ -391,7 +391,7 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
   if (mailRowsWaiting()) mailRev.value;
   const snap = inboxSnap.value;
   const accounts = accountsNeedingYou();
-  let filter = prefs.value.inboxFilter;
+  let filter = pref('inboxFilter');
   if (filter === 'mail' && !db.mail.accounts.size) filter = 'all';
   const rows = shownInbox(filter);
   const [drawn, more] = useShown(rows.length);
@@ -537,7 +537,7 @@ const LINK_SORTS: { id: 'recent' | 'az'; label: string }[] = [
 
 /** The order of a list of friends, contacts or follows: the same button as the Chats order, two choices, kept per device. */
 function LinkSortButton() {
-  const mode = prefs.value.peopleLinkSort ?? 'recent';
+  const mode = pref('peopleLinkSort') ?? 'recent';
   const on = LINK_SORTS.find((m) => m.id === mode)!;
   const label = `Order: ${on.label}. Click to change`;
   return (
@@ -594,7 +594,7 @@ export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
   rev.value;
   // Friends, contacts and follows, where an account keeps such a list (docs/add.md "Relationships").
   const chips = peopleFilters(db.accounts.values());
-  const filter = chips.find((f) => f.id === prefs.value.peopleFilter)?.id ?? 'chats';
+  const filter = chips.find((f) => f.id === pref('peopleFilter'))?.id ?? 'chats';
   const relationship = filter === 'chats' ? null : filter;
   const links = usePeopleLinks(relationship);
   const [accountId, setAccountId] = useState<string | null>(null);
@@ -620,7 +620,7 @@ export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
       )}
       <FindBox value={q} set={setQ} placeholder={FIND[filter]} />
       <div class="side-scroll">
-        {relationship && <PeopleLinks relationship={relationship} links={links} accountId={scoped} dots={accounts.length > 1 && !scoped} q={q} sort={prefs.value.peopleLinkSort ?? 'recent'} active={activePerson} />}
+        {relationship && <PeopleLinks relationship={relationship} links={links} accountId={scoped} dots={accounts.length > 1 && !scoped} q={q} sort={pref('peopleLinkSort') ?? 'recent'} active={activePerson} />}
         {filter === 'chats' && <SectionHead id="people-all" label="Direct messages" count={list.length} />}
         {!isCollapsed('people-all') && list.slice(0, drawn).map(({ person, directs }) => <PersonRow key={person.id} person={person} directs={directs} active={person.id === activePerson} onClick={opener(`people:${person.id}`, () => go({ view: 'people', person: person.id }))} />)}
         {!isCollapsed('people-all') && more}
@@ -708,7 +708,7 @@ function SpaceTree({ spaceId, active, onOpen, depth = 0, seen = new Set<string>(
           <div class={`tree-group ${k.kind}`}>
             <Menuable build={() => spaceMenu(s)}>
               {(ctx) => (
-            <button class="tree-head" style={{ paddingLeft: `${6 + depth * 12}px` }} onClick={() => setPrefs({ collapsed: { ...prefs.value.collapsed, [key]: !collapsed } })} {...ctx}>
+            <button class="tree-head" style={{ paddingLeft: `${6 + depth * 12}px` }} onClick={() => setPrefs({ collapsed: { ...pref('collapsed'), [key]: !collapsed } })} {...ctx}>
               <Icon name={collapsed ? 'chevronRight' : 'chevronDown'} size={11} />
               {k.kind === 'subspace' && <NetGlyph network={s.network} size={11} />}
               <span>{k.kind === 'section' ? s.name.toUpperCase() : s.name}</span>
@@ -857,7 +857,7 @@ export function FolderSidebar({ folderId, activeConv, activePerson }: { folderId
             const u = spaceUnread(s.id);
             return (
               <div class="folder-space">
-                <button class="folder-space-head" onClick={() => setPrefs({ collapsed: { ...prefs.value.collapsed, [key]: !collapsed } })} onContextMenu={onMenu(() => spaceMenu(s))}>
+                <button class="folder-space-head" onClick={() => setPrefs({ collapsed: { ...pref('collapsed'), [key]: !collapsed } })} onContextMenu={onMenu(() => spaceMenu(s))}>
                   <Icon name={collapsed ? 'chevronRight' : 'chevronDown'} size={12} />
                   <Avatar id={s.id} name={s.name} url={s.icon} size={22} square network={s.network} />
                   <span class="folder-space-name">{s.name}</span>

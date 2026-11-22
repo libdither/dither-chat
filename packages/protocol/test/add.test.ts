@@ -154,3 +154,11 @@ test("a list holds every relationship but the two that are not one: someone aski
   expect([...LINK_RELATIONSHIPS].sort()).toEqual(Object.keys(RELATIONSHIP_LABEL).filter((r) => r !== 'requesting' && r !== 'stranger').sort());
   expect(LINK_RELATIONSHIPS.map((r) => REMOVE_LABEL[r])).toEqual(['Remove friend', 'Cancel request', 'Unblock', 'Remove contact', 'Unfollow']);
 });
+
+test("a Zulip channel link, on whatever address the organization has, is a place on Zulip", () => {
+  const url = 'https://chat.example.org/#narrow/channel/12-design';
+  expect(parseAdd(url)).toEqual([{ kind: 'place', network: 'zulip', address: url }]);
+  expect(parseAdd('https://chat.example.org/#narrow/stream/12-design/topic/colors')[0]).toMatchObject({ kind: 'place', network: 'zulip' });
+  // A link to a direct message or a search is not a place to join.
+  expect(parseAdd('https://chat.example.org/#narrow/dm/8,9-dm').some((r) => r.network === 'zulip')).toBe(false);
+});

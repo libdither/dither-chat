@@ -76,6 +76,16 @@ capability gets nothing new offered.
 The forum view, the thread browser and forms, and the About cards are a lazy chunk (`web/src/ui/Threads.tsx`); the
 menu entries are `web/src/threads.ts`.
 
+## Zulip: channels are forums, topics their threads
+
+A Zulip account (dither-accounts' `zulip` kind, its docs/zulip.md) says each channel as a forum (`variant: 'forum'`)
+and each topic as a thread of it, so a channel's page is its topics, newest first, and the message box is in the
+topics. **New post** starts a topic: its name and first message (`createPost`). A topic's menu has Follow and Mute,
+which are Zulip's own (`user_topics`: followed, muted, unmuted); a resolved topic (Zulip's ✔) shows as archived.
+Renaming a topic or moving messages to another one moves them here too: the adapter sends each again with
+`moved: true`, and the hub moves the message, its saved mark and its reply mark to the new conversation; the topic it
+left falls back to its own newest message (`Store.message`, `packages/hub/test/moved.test.ts`).
+
 ## Not built
 
 - Forum unread counts per post (Discord's FORUM_UNREADS): they come only when its own forum view asks, which the

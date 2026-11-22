@@ -4,9 +4,9 @@
  * GIF videos looping silently with no player.
  */
 import type * as P from '@dither-chat/protocol';
-import { prefs } from './state.ts';
+import { pref } from './state.ts';
 
-export const plainGifs = () => prefs.value.plainGifs !== false;
+export const plainGifs = () => pref('plainGifs') !== false;
 
 /**
  * A message that is just a GIF's link which Discord drew as a GIF (one gifv embed, no files): that embed, where the

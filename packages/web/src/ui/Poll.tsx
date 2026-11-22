@@ -128,7 +128,7 @@ export function PollMaker({ conversationId, network, accountId, question: initia
   const rules = POLL_RULES[network]!;
   const [question, setQuestion] = useState(initial.replace(/\s+/g, ' ').trim().slice(0, rules.questionMax));
   const [options, setOptions] = useState(['', '']);
-  const [multi, setMulti] = useState(false);
+  const [multi, setMulti] = useState(!!rules.multiOnly);
   const [hours, setHours] = useState(rules.defaultHours);
   const [busy, setBusy] = useState(false);
   const form = useRef<HTMLFormElement>(null);
@@ -193,13 +193,18 @@ export function PollMaker({ conversationId, network, accountId, question: initia
         ))}
       </div>
       <div class="poll-draft-foot">
-        <div class="poll-draft-pills" role="radiogroup" aria-label="How many choices">
-          <button type="button" role="radio" aria-checked={!multi} class={`poll-pill ${!multi ? 'on' : ''}`} onClick={() => setMulti(false)}>
-            One choice
-          </button>
-          <button type="button" role="radio" aria-checked={multi} class={`poll-pill ${multi ? 'on' : ''}`} onClick={() => setMulti(true)}>
-            Several
-          </button>
+        <div class="poll-draft-pills" role={rules.multiOnly ? undefined : "radiogroup"} aria-label={rules.multiOnly ? undefined : "How many choices"}>
+          {/* A network whose polls always take several choices (Zulip) has nothing to pick. */}
+          {!rules.multiOnly && (
+            <>
+              <button type="button" role="radio" aria-checked={!multi} class={`poll-pill ${!multi ? 'on' : ''}`} onClick={() => setMulti(false)}>
+                One choice
+              </button>
+              <button type="button" role="radio" aria-checked={multi} class={`poll-pill ${multi ? 'on' : ''}`} onClick={() => setMulti(true)}>
+                Several
+              </button>
+            </>
+          )}
           {rules.hours && (
             <label class="poll-pill poll-pill-select" title="How long it stays open">
               <Icon name="clock" size={12} />

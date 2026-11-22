@@ -7,7 +7,7 @@ import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 import { applyCalls, ringingCalls, voice } from '../ringing.ts';
 import { activeCall, startCall } from '../call.ts';
-import { api, db, go, prefs, rev, toast } from '../state.ts';
+import { api, db, go, pref, rev, toast } from '../state.ts';
 import { convTitle } from '../model.ts';
 import { Avatar } from './bits.tsx';
 import { CallAvatar, callMarks } from './CallAvatar.tsx';
@@ -15,7 +15,7 @@ import { Icon } from './icons.tsx';
 
 /** Answer: join the call from this device (a click: the microphone needs it). */
 function answer(c: P.CallView) {
-  void startCall(c.conversationId, c.accountId, prefs.value.callMode);
+  void startCall(c.conversationId, c.accountId, pref('callMode'));
 }
 
 /** Decline: the network's own, through the hub; it stops ringing everywhere. Says why when the network refuses. */

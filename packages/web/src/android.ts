@@ -10,7 +10,7 @@ import { activeCall, leaveCall, setMuted, startCall } from './call.ts';
 import { noteOpen } from './activity.ts';
 import { reportAppCrashes } from './errors.ts';
 import { addArrived, onArrivedDone } from './arrived.ts';
-import { db, go, parseHash, prefs } from './state.ts';
+import { db, go, parseHash, pref } from './state.ts';
 import { onceListed } from './versions.ts';
 import { api } from './api.ts';
 import type * as P from '@dither-chat/protocol';
@@ -255,7 +255,7 @@ export function startAndroid() {
   });
   // Launch screen and status bar follow the theme the page picked.
   effect(() => {
-    void [prefs.value.theme, prefs.value.themeDark, prefs.value.themeLight];
+    void [pref('theme'), pref('themeDark'), pref('themeLight')];
     requestAnimationFrame(() => android.send({ t: 'theme', bg: getComputedStyle(document.body).backgroundColor }));
   });
 }
@@ -275,5 +275,5 @@ async function answer(d: { call?: string; conversationId?: string; accountId?: s
     account = r?.calls.find((c) => c.id === d.call)?.accountId ?? '';
   }
   if (!account) return;
-  onceListed(() => db.accounts.has(account), () => void startCall(conv, account, prefs.value.callMode), 60_000);
+  onceListed(() => db.accounts.has(account), () => void startCall(conv, account, pref('callMode')), 60_000);
 }
