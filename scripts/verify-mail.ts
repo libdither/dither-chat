@@ -132,7 +132,17 @@ async function at(sel: string, pick = 'el => true'): Promise<Pt> {
     return [Math.round(b.x + b.width / 2), Math.round(b.y + b.height / 2)];
   })()`);
   if (!r) throw new Error(`nothing matches ${sel}`);
-  await Bun.sleep(150);
+  // Still where it was measured: a list can re-sort under it as the demo world's people write in (the inbox ranks).
+  // Measured again until two looks 150 ms apart agree, so the check below and the press hit what was asked for.
+  const place = `(() => { const el = ${find}; if (!el) return null; const b = el.getBoundingClientRect(); return [Math.round(b.x + b.width / 2), Math.round(b.y + b.height / 2)]; })()`;
+  for (let i = 0; i < 40; i++) {
+    await Bun.sleep(150);
+    const now = await page.eval<Pt | null>(place);
+    if (!now) throw new Error(`${sel} went away`);
+    if (now[0] === r[0] && now[1] === r[1]) break;
+    await page.eval(`${find}?.scrollIntoView({ block: 'center' })`);
+    [r[0], r[1]] = (await page.eval<Pt | null>(place)) ?? r;
+  }
   // The demo world's people write in on their own, and a toast for it can sit over the target: a tap would close the
   // toast instead. Dismiss the ones in the way first.
   const covered = `(() => { const top = document.elementFromPoint(${r[0]}, ${r[1]}); return !!top?.closest('.toasts') && !${find}?.contains(top); })()`;
@@ -386,8 +396,18 @@ async function composer(themeName: string, full: boolean) {
   await tap(await at('.mail-reader-bar .hdr-btn', `el => el.textContent.trim() === 'Reply'`));
   await page.until(`!!document.querySelector('.mc-layer.phone .me-rich-doc')`, 15000);
   check(`${tag}: Reply opens the composer full screen`, await inView('.mc-layer.phone .mc'));
-  const filled = await page.eval<{ to: string; subject: string; quote: boolean }>(`({ to: [...document.querySelectorAll('.mc-chip')].map((c) => c.textContent).join(','), subject: document.querySelector('.mc-subject').value, quote: !!document.querySelector('.me-island[data-kind="quote"]') })`);
-  check(`${tag}: To, the subject and the quote are filled in`, filled.to.includes('Sam Rivera') && filled.subject === 'Re: Dinner on Friday?' && filled.quote, filled);
+  // The quote is the document's own text (a plain original): the attribution, then a mail quote, nested as it was.
+  const filled = await page.eval<{ to: string; subject: string; quote: boolean; nested: number; island: boolean }>(
+    `({ to: [...document.querySelectorAll('.mc-chip')].map((c) => c.textContent).join(','), subject: document.querySelector('.mc-subject').value, quote: /Sam Rivera <sam@rivera\\.example> wrote:$/.test([...document.querySelectorAll('.me-rich-doc > p')].find((p) => p.textContent.trim())?.textContent ?? '') && (document.querySelector('.me-rich-doc > blockquote')?.textContent ?? '').includes('Booked for 7:30'), nested: document.querySelectorAll('.me-rich-doc blockquote blockquote').length, island: !!document.querySelector('.me-island') })`,
+  );
+  check(`${tag}: To, the subject and the quote are filled in, the quote as text to trim or answer in`, filled.to.includes('Sam Rivera') && filled.subject === 'Re: Dinner on Friday?' && filled.quote && filled.nested === 2 && !filled.island, filled);
+  // Markdown says it as Markdown does: `>` lines, a bar for each level, and `<` drawn as itself.
+  await tap(await at('.me-mode', `el => el.textContent === 'Markdown'`));
+  await page.until(`!!document.querySelector('.me-markdown.shown .md-quote-in2')`, 15000).catch(() => {});
+  const mdQuote = await page.eval<{ text: string; levels: number }>(`({ text: document.querySelector('.me-markdown .cm-content')?.innerText.slice(0, 200) ?? '', levels: document.querySelectorAll('.me-markdown .md-quote-in2').length })`);
+  check(`${tag}: Markdown quotes it with a bar for each level, the address in <>`, mdQuote.levels > 0 && mdQuote.text.includes('<sam@rivera.example>') && !mdQuote.text.includes('&lt;'), mdQuote);
+  await tap(await at('.me-mode', `el => el.textContent === 'Rich'`));
+  await page.until(`!!document.querySelector('.me-rich.shown .me-rich-doc blockquote')`, 10000).catch(() => {});
   check(`${tag}: no sideways overflow`, !(await overflow()).length, await overflow());
   await shot(`mail-${tag.replace(/ /g, '-')}`);
   if (!full) {
@@ -396,6 +416,11 @@ async function composer(themeName: string, full: boolean) {
     check(`${tag}: ✕ closes it`, !(await has('.mc-layer')));
     return;
   }
+  // A Bcc line opened by mistake goes away again while it is empty; Bcc beside To brings it back.
+  await tap(await at('.mc-more .link-btn', `el => el.textContent === 'Bcc'`));
+  check(`${tag}: an empty Bcc line has a ✕`, (await has('#mc-bcc')) && (await has('.mc-row-x[aria-label="Remove the Bcc line"]')));
+  await tap(await at('.mc-row-x[aria-label="Remove the Bcc line"]'));
+  check(`${tag}: ✕ takes the Bcc line away, and Bcc is offered again`, !(await has('#mc-bcc')) && (await page.eval<boolean>(`[...document.querySelectorAll('.mc-more .link-btn')].some((b) => b.textContent === 'Bcc')`)));
   // A Cc typed in, the text, a file.
   await tap(await at('.mc-more .link-btn', `el => el.textContent === 'Cc'`));
   await type('#mc-cc', 'jo@park.example');
@@ -769,6 +794,26 @@ async function forwardWithPictures(tag: string) {
   await click(await at('.mc-size-btn'));
   check(`${tag}: the size breakdown counts the embedded pictures`, (await page.eval<string>(`document.querySelector('.mc-size-pop')?.textContent ?? ''`)).includes('embedded'));
   await shot(`mail-${tag.replace(/ /g, '-')}-forward`);
+  await click(await at('.mc-size-btn'));
+  // The newsletter is kept whole (its layout is its own HTML): Edit HTML opens its HTML under its bar, Done closes it,
+  // and only opening it changes nothing that goes.
+  const sizeBefore = await page.eval<string>(`document.querySelector('.mc-size-btn')?.textContent ?? ''`);
+  await click(await at('.me-island[data-kind="forward"] .me-island-btn', `el => el.textContent === 'Edit HTML'`));
+  await page.until(`!!document.querySelector('.me-island[data-kind="forward"] .me-island-code .cm-content')`, 15000).catch(() => {});
+  const nested = await page.eval<{ open: boolean; above: boolean; text: string }>(
+    `(() => { const i = document.querySelector('.me-island[data-kind="forward"]'); const c = i?.querySelector('.me-island-code'); return { open: !!c?.querySelector('.cm-content') && !c.hidden, above: !!c && c.compareDocumentPosition(i.querySelector('.me-island-sheet')) === Node.DOCUMENT_POSITION_FOLLOWING, text: c?.querySelector('.cm-content')?.textContent.slice(0, 200) ?? '' }; })()`,
+  );
+  check(`${tag}: a forward kept whole opens its own HTML editor in place, over the forward`, nested.open && nested.above && nested.text.includes('dc-forward-head'), nested);
+  await click(await at('.me-island[data-kind="forward"] .me-island-btn', `el => el.textContent === 'Done'`));
+  await Bun.sleep(400);
+  check(`${tag}: Done closes it, and the mail is as it was`, (await page.eval<boolean>(`document.querySelector('.me-island[data-kind="forward"] .me-island-code').hidden`)) && (await page.eval<string>(`document.querySelector('.mc-size-btn')?.textContent ?? ''`)) === sizeBefore);
+  // Markdown draws it as it arrives, under a bar that names it: not a stand-in.
+  await click(await at('.me-mode', `el => el.textContent === 'Markdown'`));
+  await page.until(`!!document.querySelector('.me-markdown.shown .md-island-sheet iframe')`, 15000).catch(() => {});
+  const sheetBar = await page.eval<string>(`document.querySelector('.me-markdown .md-island-sheet-bar')?.textContent ?? ''`);
+  check(`${tag}: Markdown shows the forward kept whole as it arrives, named as its own HTML`, sheetBar.includes('its own HTML, sent as it is') && (await has('.me-markdown .md-island-sheet iframe')), sheetBar);
+  await click(await at('.me-mode', `el => el.textContent === 'Rich'`));
+  await page.until(`!!document.querySelector('.me-rich.shown .me-island[data-kind="forward"]')`, 10000).catch(() => {});
   await type('#mc-to', 'jo@park.example');
   await key('#mc-to', 'Enter');
   await click(await at('.mc-send'));

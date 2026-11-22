@@ -67,7 +67,8 @@ export function measureHtml(
   for (const src of inside) dataChars += src.length * html.split(src).length - src.length;
   pictures.web = [...web];
   // A forward or a quote in it: its pictures are another sender's, who is the one they can tell.
-  const original = !!doc.querySelector('div[data-dc-island="forward"], div[data-dc-island="quote"]');
+  // From an original: a forward or a quote kept whole, or pictures it brought into the text (their address kept).
+  const original = !!doc.querySelector('div[data-dc-island="forward"], div[data-dc-island="quote"], img[data-dc-src]');
   return { html: Math.max(0, new Blob([html]).size - dataChars), islandText, pictures, original };
 }
 

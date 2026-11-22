@@ -99,9 +99,10 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
   a phone a bar under the thread answers the latest (`r`, `a`, `f` on a desktop). The composer is a full-screen card on
   a phone and a panel docked at the bottom right on a desktop, so the list stays usable beside it. Its header has ✕ and
   the trash (discard); Attach, Aa (formatting) and Send are along the bottom, Send at the right. It has From (a picker
-  when the account sends as several addresses, its status's `self.addresses`), To, Cc and Bcc, the subject and your
-  text. A reply's quote is one quiet line under the text ("··· Quoting Sam ×": ··· shows it, × leaves it out, "Quote
-  Sam" puts it back); a forward carries the original's text and its files, each of which can be taken off. Ctrl+Enter
+  when the account sends as several addresses, its status's `self.addresses`), To, Cc and Bcc (Cc and Bcc beside To
+  open their lines; an empty one has ✕ to take it away again), the subject and your text. A reply's quote is under
+  the text, in sight (see "A forward or a quote" below; deleted, "Quote Sam" puts it back); a forward carries the
+  original and its files, each of which can be taken off. Ctrl+Enter
   sends; ✕, Esc or back closes it and keeps the draft.
 - **Out of the way, on a desktop** (`web/src/mail/dock.ts`, tested in `web/test/mail-dock.test.ts`): the header drags
   the panel anywhere on screen, and any edge or corner resizes it, the opposite edges staying put (at least 360 × 260,
@@ -155,9 +156,12 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
     anywhere else in the composer, it is attached. Aa hides the formatting buttons; the switch between views stays.
   - **Markdown** (CodeMirror, `livemd.ts`): the same document as Markdown, drawn as you type, as Obsidian does:
     headings big, bold bold, and the marks that make them fold away on every line but the caret's. A pasted picture
-    stands in as `![name](dc-picture:id)` and shows as itself; a forward or a quote as a chip (`[[island:id]]`). What
-    Markdown can't say (colour, underline, a centred or right-aligned paragraph or heading) stays as small pieces of
-    HTML, and comes back as it was.
+    stands in as `![name](dc-picture:id)` and shows as itself (a picture from an original too: its size and address
+    come back with it). A quote is Markdown's `>`, a bar drawn for each level; `&lt;` and `\_` show as `<` and `_` off
+    the caret's line. A block kept whole (`[[island:id]]`) is drawn as it will arrive, under a bar that names it ("its
+    own HTML, sent as it is") with Edit HTML: Markdown with HTML in it, as CommonMark allows. What Markdown can't say
+    (colour, underline, a centred or right-aligned paragraph or heading) stays as small pieces of HTML, and comes back
+    as it was.
   - **HTML**: the mail's whole HTML, a forward's or a quote's inside folded, pasted pictures as `dc-picture:id`, with
     the mail as it arrives beside it, which stays in view with a scroll of its own. A docked composer grows to the
     window for it, and back when you leave it. On a phone a switch shows the HTML or the mail as it arrives. What you
@@ -168,15 +172,24 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
     back" then goes back to Rich, an HTML part again). No formatting buttons; pictures in the text are left out, and one pasted or dropped
     here is attached. Markdown's marks stay as written; the bits of HTML it keeps (colour, alignment) go, their words
     kept, as the hub does for every text part. Rich again makes it HTML.
-  - **A forward or a quote** is such a block (an island), drawn in a sandboxed frame with a bar: its name, size, Hide
-    and ✕. The hub makes it (`hub/src/mail/island.ts`, `MailComposeStart.island`): the original's HTML with its style
+  - **A forward or a quote** is the document's own text when it can be without losing anything (`islandBlocks` in
+    `MailEditor.tsx`: plain tags, no styles but colour, alignment, margins and a quote's bar, every word and picture
+    there after): the attribution ("On …, Sam wrote:") then the original in a mail quote (`blockquote type=cite`, as
+    every quote the editor writes, nested as it was), or the forwarded-message lines then the original. It is edited
+    like the rest (trim it, answer inside it), is `>` in Markdown, and goes as it reads. Pictures it brings keep the
+    original's address (`data-dc-src`, and `data-dc-held` for a held one), so the pictures choice below applies to
+    them and they are marked the same way. "Quote <name>" comes back once no quote is left, and a forward's "Put the
+    forwarded message back" once its lines are gone.
+  - **Otherwise it is kept whole** (an island: a newsletter's layout, its own styles), drawn in a sandboxed frame with
+    a bar: its name, "its own HTML, sent as it is", its size, Hide, Edit HTML and ✕. Edit HTML opens its HTML in an
+    editor right under the bar, and the block is drawn again below as you type; Done closes it (only opening it changes
+    nothing). The hub makes it (`hub/src/mail/island.ts`, `MailComposeStart.island`): the original's HTML with its style
     sheets written into each element's own `style`, so it keeps its look in mail apps that drop style sheets (Gmail);
     what can't go into one element (`@media`, `:hover`) stays in a sheet scoped to the block. Trackers are gone. Each
     picture from the web keeps its address, shown as your picture setting shows it in the reader (a held one as a
     striped box; one that will not go as the mail is sent, under the choice below, faded and dashed, here and in the
-    HTML view's "As it arrives"). A reply's quote starts folded; taken out, "Quote <name>" puts it back, and a forward's "Put the
-    forwarded message back". The caret starts on the line above it, never on the block, so typing never replaces it.
-    A block of HTML of your own has **Edit HTML** on its bar, which opens the HTML view.
+    HTML view's "As it arrives"). It starts open. The caret starts on the line above it, never on the block, so typing
+    never replaces it. A block of HTML of your own has the same bar.
   - **The editor fetches nothing from the web** (`ui/mail/editor/schema.ts`): a picture address you write or paste
     (in any view) is a striped box the picture's shape, its host written on it, until it is sent, since your browser
     fetching it would tell its host you are writing; one that will not go says "left out" on it. The frames' policy

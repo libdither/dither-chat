@@ -137,6 +137,24 @@ function typing(field: string, e: Event): Typing {
 
 // ------------------------------------------------------------------ recipients
 
+/** An empty Cc or Bcc line taken away again (the Cc and Bcc beside To bring it back). */
+function RowX({ what, onClick }: { what: string; onClick: () => void }) {
+  return (
+    <button type="button" class="icon-btn mc-row-x" title={`No ${what}`} aria-label={`Remove the ${what} line`} onClick={onClick}>
+      <Icon name="x" size={14} />
+    </button>
+  );
+}
+
+/**
+ * The draft still holds the original: the quote (a quote of the document's own, or one kept whole) or the forwarded
+ * message (its lines, or kept whole). Else the composer offers to put it back.
+ */
+function hasOriginal(html: string | null | undefined, kind: 'quote' | 'forward'): boolean {
+  if (!html) return false;
+  return kind === 'quote' ? /data-dc-island="quote"|<blockquote\b/.test(html) : /data-dc-island="forward"|-{4,} Forwarded message -{4,}/.test(html);
+}
+
 /**
  * To, Cc or Bcc: chips, and a box whose text becomes them. It completes from people, your mail and the account's own
  * server (Gmail's or Proton's suggestions). Backspace at its start opens the last chip back into text, its last letter
@@ -877,8 +895,30 @@ export function Composer({ open }: { open: ComposeOpen }) {
                 )
               }
             />
-            {showCc && <AddressField field="cc" label="Cc" list={d.cc} text={ed.addr.cc} accountId={d.accountId} onEdit={setField('cc')} focus={!d.cc.length && d.to.length > 0} />}
-            {showBcc && <AddressField field="bcc" label="Bcc" list={d.bcc} text={ed.addr.bcc} accountId={d.accountId} onEdit={setField('bcc')} focus={!d.bcc.length && d.to.length > 0} />}
+            {showCc && (
+              <AddressField
+                field="cc"
+                label="Cc"
+                list={d.cc}
+                text={ed.addr.cc}
+                accountId={d.accountId}
+                onEdit={setField('cc')}
+                focus={!d.cc.length && d.to.length > 0}
+                extra={!d.cc.length && !ed.addr.cc && <RowX what="Cc" onClick={() => setShowCc(false)} />}
+              />
+            )}
+            {showBcc && (
+              <AddressField
+                field="bcc"
+                label="Bcc"
+                list={d.bcc}
+                text={ed.addr.bcc}
+                accountId={d.accountId}
+                onEdit={setField('bcc')}
+                focus={!d.bcc.length && d.to.length > 0}
+                extra={!d.bcc.length && !ed.addr.bcc && <RowX what="Bcc" onClick={() => setShowBcc(false)} />}
+              />
+            )}
             <div class="mc-field">
               <label class="mc-label" for="mc-subject">
                 Subject
@@ -914,7 +954,7 @@ export function Composer({ open }: { open: ComposeOpen }) {
                 <Loading label="Loading…" />
               </div>
             )}
-            {(d.kind === 'reply' || d.kind === 'replyAll') && start?.island && !/data-dc-island="quote"/.test(d.html ?? '') && Editor && (
+            {(d.kind === 'reply' || d.kind === 'replyAll') && start?.island && !hasOriginal(d.html, 'quote') && Editor && (
               <div class="mc-quote">
                 <button class="mc-quote-add" onClick={() => (set({ quote: true }), editorApi.current?.addIsland(start.island!, d.replyTo))} title={`Quote ${quoted} below your text`}>
                   <Icon name="quote" size={12} />
@@ -922,7 +962,7 @@ export function Composer({ open }: { open: ComposeOpen }) {
                 </button>
               </div>
             )}
-            {d.kind === 'forward' && start?.island && !/data-dc-island="forward"/.test(d.html ?? '') && Editor && (
+            {d.kind === 'forward' && start?.island && !hasOriginal(d.html, 'forward') && Editor && (
               <div class="mc-quote">
                 <button class="mc-quote-add" onClick={() => editorApi.current?.addIsland(start.island!, d.replyTo)} title="Put the forwarded message back below your text">
                   <Icon name="forward" size={12} />
