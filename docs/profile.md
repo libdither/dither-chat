@@ -76,7 +76,8 @@ Left:
   and each is logged as a message.
 - **Recent messages**: each with the place's picture (the server's icon for a channel), the place, and when. A feed
   item says what they did ("X notifications", "Liked your post: “…”"). Not shown for someone known only by mail.
-- **Activity** (ui/ActivityCard.tsx): the current status and since when, and their presence now when it is logged; then
+- **Activity** (ui/ActivityCard.tsx): the current status and since when, and their presence now (from the log when it
+  is logged, else the status dot's words: "Online on Zulip"); then
   the activity chart (below, "Activity"); then, with adversarial features shown (docs/history.md), the logged status
   history and presence history (each stretch with how long it lasted), each collapsed until opened. Absent when there
   is no status, nothing logged and no message or conversation with them.
@@ -322,6 +323,41 @@ The presence band, the status marks and the grid's Online need adversarial featu
 `presence` only while presence is logged and `statuses` only while statuses are (shown, and their switches on), and
 leaves the fields out otherwise rather than sending zeros. Until then a line under the chart says they appear once
 those are turned on, with a link to Settings → Adversarial features. The rest needs nothing turned on.
+
+## Status dots
+
+A small dot on a person's picture says how they are on their networks right now: green online, amber idle, red do not
+disturb, a hollow ring offline. No dot: nothing known. Where: DM and group rows in the inbox and the sidebar, people
+rows, a DM's header, the profile's picture, member lists on About, and the @ picker. On a row whose picture carries
+the network's badge in its bottom corner, the dot sits at the top.
+
+- **One person, one dot.** Their most present account wins (online, then do not disturb, then idle, then offline, as
+  the Activity chart merges), and the tooltip names where: "Online on Zulip", "Idle on Discord and Matrix". An account
+  not yet joined to a person is its own dot.
+- **Groups** show a dot only while someone in them is around (online, busy or idle), the most present of them, and the
+  tooltip names up to three ("Around: Bo (online), Ann (idle)"). Offline people are no dot there.
+- **Kept always, unlike presence over time.** The hub keeps each identity's latest state whatever the adversarial
+  presence switch says (docs/history.md): it is what the network's own app shows. It is in memory and in
+  `presence_now`, so a restart keeps it (adapters tell a state once, when it changes).
+- **Unknown rather than stale.** A state is hidden (sent as unknown) while no account that heard it is online
+  (offline, connecting, needing attention, error, disabled, or the hub cut off from dither-accounts), and shows again
+  when one is back: adapters tell only changes, so what one told is still its word then, and anything newer comes as a
+  change. It goes with the last account that heard it, and when it has not been heard for three days (online, idle,
+  busy) or a week (offline). The hub keeps it only for people it already knows: presence makes no identity.
+- **Cheap on a big server.** Presence goes to the page in the bootstrap and as `presence` frames on the live socket, at
+  most one every two seconds, each identity once at its newest (hub presence.ts); the journal keeps it by identity
+  (docs/sync.md). On the page it moves `presenceRev` only (versions.ts), so a change draws the dots again and not the
+  rows or lists they sit in. The offline snapshot keeps it too.
+- **Which networks say it** (`{t:'presence'}` in packages/protocol adapter.ts, from dither-accounts' extractors):
+  Discord (friends and people with a DM, with devices), Matrix (people with a direct chat, `m.presence`), Zulip
+  (everyone in the organization, read once a minute as Zulip's apps do), and Telegram (contacts and people with a
+  DM, from the status updates Telegram pushes to every client anyway). Signal, WhatsApp, Google Messages, X and the
+  Meta apps say none. WhatsApp could, but only by subscribing to each person, which its own app does only for the chat
+  on screen: left out on purpose. Slack has no account kind here yet.
+
+Code: hub `presence.ts`; web `presence.ts` (which dot), `ui/PresenceDot.tsx` (drawing it). Tests:
+`packages/hub/test/presence.test.ts`, `packages/web/test/presence.test.ts`, and `scripts/verify-presence.ts`
+(a demo hub in headless Chromium: dots on each place, both themes).
 
 ## A place
 

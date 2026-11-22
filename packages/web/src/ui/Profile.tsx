@@ -607,6 +607,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       name={name}
       picture={picture}
       onPicture={ownPicture ? (e) => pe!.pictureMenu(e, ownPicture, setPicturing) : undefined}
+      presence={isSelf ? undefined : person ? { person: person.id } : { identity: first?.id }}
       network={nets.length === 1 ? nets[0] : undefined}
       banner={banner}
       accent={accent}
@@ -861,6 +862,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         chart={profile.totalMessages > 0 || profile.conversations.length > 0}
         status={status}
         at={live && status === live ? live.at : undefined}
+        presence={isSelf ? undefined : person ? { person: person.id } : { identity: first?.id }}
       />
 
       {(sharedSpaces.length > 0 || groupChats.length > 0) && (

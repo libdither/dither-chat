@@ -676,7 +676,8 @@ const shutdown = async () => {
   // From here to exit nothing awaits, so no event can come in between.
   sup.settle(stopBy);
   // What stopping changed is in the journal too; then the next start can trust it (journal.ts).
-  server.flush();
+  // Presence held for coalescing goes too (presence.ts).
+  server.flush(true);
   store.journal.close();
   // Commits reach the disk at checkpoints (synchronous = NORMAL, store.ts): a clean stop leaves none behind.
   try {

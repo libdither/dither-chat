@@ -134,6 +134,20 @@ function changedSince(ctx: SyncContext, rows: ChangeRow[]): P.ClientEvent[] {
       out.push({ t: 'attention', items, removed: gone });
     }
   }
+  if (list('presence')) {
+    const xs = of('presence');
+    if (xs.includes('*')) out.push({ t: 'presence', items: store.presenceNow.list(), removed: [], replace: true });
+    else {
+      const items: P.PresenceNowView[] = [];
+      const gone: string[] = [];
+      for (const id of xs) {
+        const v = store.presenceNow.get(id);
+        if (v) items.push(v);
+        else gone.push(id);
+      }
+      out.push({ t: 'presence', items, removed: gone });
+    }
+  }
   if (list('usage')) {
     const xs = of('usage');
     if (xs.includes('*')) out.push({ t: 'usage', places: usage.list(), removed: [], replace: true });

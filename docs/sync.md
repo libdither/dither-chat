@@ -15,7 +15,8 @@ what an object is now is read from its own table when a client asks. Being compa
 objects that changed, not with the number of changes.
 
 - **Kinds**: `account`, `identity`, `person`, `space`, `conversation`, `message` (with its conversation),
-  `attention` (the inbox score of a conversation), `usage` (`kind:id` of a place), and the lists kept whole, under id
+  `attention` (the inbox score of a conversation), `usage` (`kind:id` of a place), `presence` (an identity's status
+  dot, docs/profile.md), and the lists kept whole, under id
   `*`: `folders`, `placePrefs`, `categories`, `rules`, `arrange`, and `attention:*` / `usage:*` for "all of them".
   Typing, notifications (and `cleared`, which closes them) and mark-all-read progress are of the moment and not kept.
 - **Epoch**: a random id for the journal. Every position belongs to one; a position from another epoch is void.

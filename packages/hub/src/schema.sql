@@ -563,6 +563,19 @@ CREATE TABLE IF NOT EXISTS needs_prediction (
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS needs_prediction_addressed ON needs_prediction(addressed);
 
+-- ------------------------------------------------------------------ status dots (presence.ts, docs/profile.md)
+-- How each person is on their network now, as last heard: one row each, current state only, never a history (that
+-- is the change log's, behind the adversarial presence switch). Hidden while no account that heard it is online; gone
+-- with its accounts, or when stale.
+CREATE TABLE IF NOT EXISTS presence_now (
+  identity_id TEXT PRIMARY KEY,
+  state       TEXT NOT NULL,                   -- online, idle, dnd, offline
+  devices     TEXT,                            -- desktop,mobile,web as the network said, comma-separated
+  at          INTEGER NOT NULL,                -- when it became so
+  heard       INTEGER NOT NULL,                -- when the hub last heard it (written with a change), for staleness
+  accounts    TEXT                             -- the accounts that heard this state, comma-separated: shown while one is online
+) WITHOUT ROWID;
+
 -- ------------------------------------------------------------------ the change journal (journal.ts, docs/sync.md)
 -- What changed, by object, at which position, so a client that comes back asks only for that. Compacted: one row
 -- per object, at its latest change. Holds ids only; what an object is now is read from its own table at sync time.

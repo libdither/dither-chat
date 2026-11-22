@@ -12,6 +12,7 @@ import { Sheet } from './Sheet.tsx';
 import { onMenu } from './ContextMenu.tsx';
 import { accountMenu } from './accountMenu.tsx';
 import { drawLater } from './Later.tsx';
+import { PresenceDot, type PresenceOf } from './PresenceDot.tsx';
 
 /** `decorative`: hidden from screen readers, for where the network is already said in words around it. */
 export function NetGlyph({ network, size = 14, color, decorative }: { network: P.Network; size?: number; color?: string; decorative?: boolean }) {
@@ -120,6 +121,7 @@ export function Avatar({
   network,
   accountIds,
   icon,
+  presence,
 }: {
   id: string;
   name: string;
@@ -129,6 +131,8 @@ export function Avatar({
   network?: P.Network;
   accountIds?: string[];
   icon?: string;
+  /** Whose status dot it shows (PresenceDot.tsx): none without, and none while their presence is unknown. */
+  presence?: PresenceOf;
 }) {
   // The picture that failed, not "failed": a group whose picture arrives later (or changes) shows the new one.
   const [broken, setBroken] = useState<string | null>(null);
@@ -148,6 +152,7 @@ export function Avatar({
           <AccountDots network={network} accountIds={accountIds} size={Math.max(6, Math.round(size * 0.2))} />
         </span>
       )}
+      {presence && <PresenceDot of={presence} size={size} corner={network ? 'top' : undefined} />}
     </span>
   );
 }

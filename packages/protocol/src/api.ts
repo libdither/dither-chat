@@ -1522,6 +1522,8 @@ export interface Bootstrap {
   notices?: NoticesBoot;
   /** Changes when the hub process starts again, as in a sync answer: a new one may have brought a new web build. */
   boot?: string;
+  /** Status dots: everyone's presence as last heard (PresenceNowView). Absent from hubs that predate them. */
+  presence?: PresenceNowView[];
 }
 
 /**
@@ -1629,6 +1631,11 @@ export type ClientEvent =
    * pending copy by id before the answer to its POST arrives. Of the moment, like `typing`: not journaled.
    */
   | { t: 'sent'; conversationId: string; clientId: string; messageId: string }
+  /**
+   * Status dots: presence that changed (`items`) or became unknown (`removed`, identity ids), at most once every two
+   * seconds (hub presence.ts). `replace`: these are all of them. Journaled per identity, like attention.
+   */
+  | { t: 'presence'; items: PresenceNowView[]; removed: string[]; replace?: true }
   /**
    * Chats, mail threads and groups of notices read on some device since the hub notified about them (delivery.ts
    * `read`): an open page closes their notifications that show nothing newer than `upTo`, the newest message the hub
@@ -1835,6 +1842,19 @@ export const RETENTION_GUARDED = ['deleted', 'disappearing', 'statuses', 'presen
 /** Whether kept deleted and disappeared messages show in this chat. */
 export const showsGone = (r: RetentionSettings, conversationId: string | null | undefined): boolean =>
   r.adversarial && ((conversationId ? r.showIn?.[conversationId] : undefined) ?? r.show) !== 'hidden';
+
+/**
+ * How someone is on their network right now, for status dots (docs/profile.md, "Status dots"): the latest state the
+ * hub heard, kept always (it is what the network's own app shows), unlike presence over time. No entry: unknown.
+ */
+export interface PresenceNowView {
+  identityId: string;
+  state: 'online' | 'idle' | 'dnd' | 'offline';
+  /** Where they are on, when the network says. */
+  devices?: ('desktop' | 'mobile' | 'web')[];
+  /** When it became so, as near as the hub knows (ms epoch). */
+  at: number;
+}
 
 /** Someone's presence, as a presence change's `old` and `new` (ChangeView, field "presence"). */
 export interface PresenceView {
