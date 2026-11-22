@@ -174,8 +174,8 @@ function drawRun(pics: PictureRef[], layout: PictureLayout, runKey: string, open
 /**
  * The pictures of one message, or of a run of them (`runKey`: its first message's id), drawn as `layout` says.
  * `anchors`: messages of the run drawn only by this block, so a jump to one of them lands here. `convId`: the chat a
- * switch saves to; with `rail`, the computer's rail of ways stands beside a run of two or more. While a slide or a
- * pinch is under way (switchOf), the run is drawn between two ways over it (Morph).
+ * switch saves to; with `rail`, the computer's rail of ways stands in the gutter left of a run of two or more. While
+ * a slide or a pinch is under way (switchOf), the run is drawn between two ways over it (Morph).
  */
 export function Pictures({ pics, layout, runKey, anchors, convId, rail }: { pics: PictureRef[]; layout: PictureLayout; runKey: string; anchors?: string[]; convId?: string; rail?: boolean }) {
   const host = useRef<HTMLDivElement>(null);
@@ -194,7 +194,7 @@ export function Pictures({ pics, layout, runKey, anchors, convId, rail }: { pics
   // While sliding, the run as it is stays where it was, out of sight (the fingers' touches still go to its pictures),
   // and the drawing between two ways takes its place.
   return (
-    <div class={`pics${wide || sliding ? ' wide' : ''}${switchable && rail ? ' has-rail' : ''}${pinch ? ' pics-pinch' : ''}${sliding ? ' pics-sliding' : ''}`} ref={host} {...pinch}>
+    <div class={`pics${wide || sliding ? ' wide' : ''}${pinch ? ' pics-pinch' : ''}${sliding ? ' pics-sliding' : ''}`} ref={host} {...pinch}>
       {anchorEls}
       {body}
       {switchable && rail && <PictureRail layout={layout} convId={convId!} runKey={runKey} />}

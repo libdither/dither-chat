@@ -1873,19 +1873,13 @@ code {
   height: 15px;
   flex: none;
 }
-/* A computer: a rail of the five ways beside the run, in the space the chat leaves there. Invisible until you point
-   at the message; then only the way in use shows, faint, in its place on the rail. Pointing at it (or tabbing to it)
-   brings the other four in around it, in full. The hidden four take no pointer, so passing beside the run doesn't
-   open the rail. */
-.pics.has-rail {
-  max-width: calc(100% - 40px);
-}
-.pics.has-rail.wide {
-  max-width: min(560px, calc(100% - 40px));
-}
+/* A computer: a rail of the five ways in the message's gutter, left of the run and level with its top, under the
+   avatar (.msg's 56px first column). Invisible until you point at the message; then only the way in use shows, faint,
+   at the rail's top (PictureRail puts it first). Pointing at it (or tabbing to it) brings the other four in below it,
+   in full. The hidden four take no pointer, so passing through the gutter doesn't open the rail. */
 .pics-rail {
   position: absolute;
-  left: calc(100% + 6px);
+  right: calc(100% + 11px);
   top: 0;
   z-index: 2;
   display: flex;
@@ -1894,6 +1888,11 @@ code {
   padding: 3px;
   opacity: 0;
   transition: opacity 0.18s;
+}
+/* A grouped message's time shows at the gutter's top when you point at it: a run that starts the message starts its
+   rail below that. */
+.msg.grouped .msg-main > .atts:first-child .pics-rail {
+  top: 16px;
 }
 .msg:hover .pics-rail {
   opacity: 0.45;
