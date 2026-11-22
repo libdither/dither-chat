@@ -101,7 +101,7 @@ import { GifPicker, gifSend, mediaOffer, preloadStickers, StickerPicker, sticker
 import type { GifPick } from './ComposerMediaParts.tsx';
 import { CAPTURE_ACCEPT, MEDIA_ACCEPT, opensSendScreen } from '../camera.ts';
 import { gifLinkOf, plainGifs } from '../gifs.ts';
-import { closePanel, openPanel, panelOpen, panelShown, phone, touchOnly } from '../phone.ts';
+import { closePanel, openPanel, panelOpen, panelShown, phone, reducedMotion, touchOnly } from '../phone.ts';
 import { composerDone, composerTyped } from '../typing.ts';
 import { noteSeen } from '../activity.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
@@ -889,6 +889,50 @@ const WINDOW = 150;
 /** How many more are drawn each time the view nears an end of what is drawn. */
 const STEP = 100;
 
+/**
+ * How far from the newest end (px) the view still follows it: a new message, or one growing (a picture loading),
+ * keeps it on screen. Further up, what you are reading stays still.
+ */
+const FOLLOW = 32;
+
+/**
+ * Brings a message to the middle of the view, as Discord does: one more than a screen and a half away is jumped to most
+ * of the way at once, and the rest glides, so a far one takes no longer than a near one. `then` runs once it is there.
+ */
+function bringToCenter(scroller: HTMLElement | null, el: HTMLElement, then: () => void) {
+  if (!scroller || reducedMotion()) {
+    el.scrollIntoView({ block: 'center' });
+    return then();
+  }
+  const box = scroller.getBoundingClientRect();
+  /** How far the message's middle is below the view's (above: negative). */
+  const offset = () => {
+    const r = el.getBoundingClientRect();
+    return r.top + r.height / 2 - (box.top + box.height / 2);
+  };
+  /** In the middle, or as near it as the view goes (column-reverse: scrollTop 0 at the newest end). */
+  const there = () => {
+    const o = offset();
+    const top = Math.abs(scroller.scrollTop);
+    return Math.abs(o) < 2 || (o > 0 && top < 1) || (o < 0 && top > scroller.scrollHeight - scroller.clientHeight - 1);
+  };
+  if (there()) return then();
+  const off = offset();
+  if (Math.abs(off) > box.height * 1.5) scroller.scrollTop += off - Math.sign(off) * box.height * 0.75;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    scroller.removeEventListener('scrollend', onEnd);
+    then();
+  };
+  // The jump most of the way ends a scroll of its own before the glide: only the one that ends there counts.
+  const onEnd = () => there() && finish();
+  scroller.addEventListener('scrollend', onEnd);
+  setTimeout(finish, 1200);
+}
+
 /** What is drawn: from `from` (a message id; '^' the oldest held; null the newest WINDOW) to `to` (an id; null the newest). */
 interface Drawn {
   key: string;
@@ -909,10 +953,34 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   const t = timelines.get(tkey);
   const [flash, setFlash] = useState<string | null>(null);
   const scrolledTo = useRef<string | null>(null);
+  // A message gone to (a link, a quote) is lit up for a moment; lit again from the start if gone to again.
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const flashIt = (id: string) => {
+    clearTimeout(flashTimer.current);
+    setFlash(null);
+    requestAnimationFrame(() => setFlash(id));
+    flashTimer.current = setTimeout(() => setFlash((f) => (f === id ? null : f)), 2500);
+  };
+  useEffect(() => () => clearTimeout(flashTimer.current), []);
+  /** Whether the view follows the newest message (FOLLOW): it is drawn, and the view is at it. */
+  const following = useRef(true);
+  /** A jump to a message under way (goTo): its glide away from the newest end does not follow it back. */
+  const jumping = useRef(false);
+  const goTo = (el: HTMLElement, id: string) => {
+    following.current = false;
+    jumping.current = true;
+    bringToCenter(scroller.current, el, () => {
+      jumping.current = false;
+      flashIt(id);
+    });
+  };
+  /** The content's height when last looked at (onScroll, and the ResizeObserver below). */
+  const heightSeen = useRef(0);
   /** A quoted message on its way to the screen (onQuote below). */
   const revealing = useRef<string | null>(null);
   useEffect(() => {
     revealing.current = null;
+    following.current = !focus;
     // A person's chat pages back through every route to the message; one too far back shows its route alone.
     if (focus && tkey.startsWith('p:')) void jumpInChat(tkey, focus).then((found) => !found && chat?.onMissing());
     else if (focus) void jumpTo(convIds[0], focus);
@@ -924,10 +992,9 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     const el = document.getElementById(`m-${focus}`);
     if (!el) return;
     scrolledTo.current = focus;
+    following.current = false;
     el.scrollIntoView({ block: 'center' });
-    setFlash(focus);
-    const id = setTimeout(() => setFlash(null), 2500);
-    return () => clearTimeout(id);
+    flashIt(focus);
   });
 
   const msgs = t?.messages ?? [];
@@ -1010,6 +1077,12 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
+    // A scroll that comes with the content's height changed, while following, is the browser's anchoring and not you:
+    // when a layout is forced before the ResizeObserver's turn (a measure in an effect), its scroll event comes first.
+    const grew = el.scrollHeight !== heightSeen.current;
+    heightSeen.current = el.scrollHeight;
+    if (following.current && grew && el.scrollTop !== 0) el.scrollTop = 0;
+    else following.current = !jumping.current && Math.abs(el.scrollTop) < FOLLOW && drawn.current.to === null && !t?.detached;
     // column-reverse: scrollTop is 0 at the bottom and negative going up.
     if (el.scrollHeight + el.scrollTop - el.clientHeight < 400) {
       if (more) {
@@ -1094,9 +1167,12 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   const quote = useRef((_: string) => {});
   quote.current = (id: string) => {
     const el = document.getElementById(`m-${id}`);
-    if (el) return el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    revealing.current = id;
+    following.current = false;
     const i = at.get(id);
+    // Near the top of what is drawn there is nothing above it to centre it among: what is around it is drawn first.
+    const edge = i !== undefined && i - start < 20 && (start > 0 || more);
+    if (el && !edge) return goTo(el, id);
+    revealing.current = id;
     if (i !== undefined) return draw(...around(i));
     const q = quoted.get(id);
     const away = () => {
@@ -1117,9 +1193,36 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     const el = id && document.getElementById(`m-${id}`);
     if (!el) return;
     revealing.current = null;
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    setFlash(id);
-    setTimeout(() => setFlash((f) => (f === id ? null : f)), 2500);
+    goTo(el, id);
+  });
+
+  // The browser holds what is in view still while the content changes (scroll anchoring), unless the view is right at
+  // the newest end: a pixel above it, a new message came in below the view and stayed out of sight. So while the view
+  // follows the newest (FOLLOW), it is put back at the end whenever the content grows or shrinks, before it is painted.
+  const inner = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    const box = inner.current;
+    if (!el || !box || typeof ResizeObserver !== 'function') return;
+    const stick = () => {
+      heightSeen.current = el.scrollHeight;
+      if (following.current && el.scrollTop !== 0) el.scrollTop = 0;
+    };
+    const ro = new ResizeObserver(stick);
+    ro.observe(box);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [tkey]);
+  // A message of your own just sent goes to the newest end, from wherever the view was (Discord does the same).
+  const sent = useRef(0);
+  useLayoutEffect(() => {
+    const n = mine.length;
+    const grew = n > sent.current;
+    sent.current = n;
+    const el = scroller.current;
+    if (!grew || !el || end !== all.length) return;
+    following.current = true;
+    el.scrollTop = 0;
   });
 
   // A switch is done once the newest message is on screen, or the hub has answered (docs/perf.md).
@@ -1198,7 +1301,7 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
 
   return (
     <div class="timeline-scroll" ref={scroller} onScroll={onScroll}>
-      <div class="timeline-inner">
+      <div class="timeline-inner" ref={inner}>
         {t && !t.hasMore && msgs.length > 0 && start === 0 && <div class="timeline-start">This is the start of what dither-chat has stored here.</div>}
         {t?.detached && (
           <button
