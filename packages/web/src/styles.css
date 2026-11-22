@@ -14404,6 +14404,11 @@ button.msg-edited.link:hover {
   color: var(--danger);
   text-decoration: underline wavy var(--danger);
 }
+.mc-row-x {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-faint);
+}
 .mc-more {
   display: flex;
   flex: none;
@@ -14727,11 +14732,20 @@ button.msg-edited.link:hover {
   margin: 0 0 0.6em;
   padding-left: 1.6em;
 }
+/* A mail quote: the bar mail apps draw, the text in the editor's own colour (it is yours to trim or answer in). */
 .me-rich-doc blockquote {
   margin: 0 0 0.6em 2px;
   padding-left: 10px;
-  border-left: 2px solid var(--border);
-  color: var(--text-dim);
+  border-left: 2px solid var(--text-faint);
+}
+/* A picture from an original that will not go (MailEditor's leftOut): faded and dashed; a held one, already striped, keeps its strength. */
+.me-rich-doc img.dc-out {
+  opacity: 0.35;
+  outline: 2px dashed var(--danger);
+  outline-offset: -2px;
+}
+.me-rich-doc img.dc-out[data-dc-held] {
+  opacity: 1;
 }
 .me-rich-doc code {
   padding: 1px 4px;
@@ -14888,10 +14902,68 @@ button.msg-edited.link:hover {
 .me-markdown .md-link {
   color: var(--accent);
 }
+/* Quoted lines: a bar for each level of quote, in the text's own colour (as Rich draws them). */
 .me-markdown .md-quote-line {
-  border-left: 2px solid var(--border);
+  border-left: 2px solid var(--text-faint);
   padding-left: 10px !important;
+}
+.me-markdown .md-quote-line.md-quote-in1 {
+  padding-left: 22px !important;
+  background: linear-gradient(var(--text-faint), var(--text-faint)) 10px 0 / 2px 100% no-repeat;
+}
+.me-markdown .md-quote-line.md-quote-in2 {
+  padding-left: 34px !important;
+  background:
+    linear-gradient(var(--text-faint), var(--text-faint)) 10px 0 / 2px 100% no-repeat,
+    linear-gradient(var(--text-faint), var(--text-faint)) 22px 0 / 2px 100% no-repeat;
+}
+/* Markdown: a block kept whole, drawn as it arrives (its own HTML), with a bar naming it. */
+/* An island's own HTML, edited in place under it. */
+.me-island-code {
+  max-height: 320px;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  background: var(--bg-center);
+  font-size: 12px;
+}
+.me-markdown .md-island-sheet {
+  display: block;
+  /* Its one-line bar must not widen the text to its own length. */
+  contain: inline-size;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 4px 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font);
+}
+.me-markdown .md-island-sheet-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--bg-center);
   color: var(--text-dim);
+  font-size: 12px;
+}
+.me-markdown .md-island-sheet-bar > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.md-island-sheet-btn {
+  flex: none;
+  color: var(--accent);
+  font-size: 12px;
+}
+.me-markdown .md-island-sheet .me-island-frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: #fff;
 }
 .me-markdown .md-html {
   color: var(--text-faint);

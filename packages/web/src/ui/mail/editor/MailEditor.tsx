@@ -19,7 +19,7 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { applyFormat, type Format, formatsAt, indentList, type Sel } from '../../../mail/edits.ts';
 import { Icon } from '../../icons.tsx';
-import { docHtml, docMarkdown, extensions, fitFrame, type IslandAttrs, islandDoc, newRef, refsOf, setLeftOut, webBox } from './schema.ts';
+import { docHtml, docMarkdown, extensions, fitFrame, type IslandAttrs, islandDoc, type IslandEdit, newRef, refsOf, setLeftOut, webBox } from './schema.ts';
 
 export type EditorMode = 'rich' | 'markdown' | 'html' | 'plain';
 
@@ -86,22 +86,98 @@ function replaceDoc(editor: Editor, json: JSONContent, undoable: boolean) {
   editor.view.dispatch(tr);
 }
 
-type Refs = { islands: Map<string, IslandAttrs>; pictures: Map<string, string> };
+const SHEET_NAME: Record<string, string> = { forward: 'Forwarded message', quote: 'Quoted text', html: 'HTML' };
 
-/** An island at the end of the document, after an empty line to write in above it. */
+/**
+ * Markdown: a block kept whole, drawn as it will arrive, under a bar that says what it is (its own HTML, which Markdown
+ * can't say, sent as it is) and opens it in the HTML view.
+ */
+function islandSheet(i: IslandAttrs, onEdit: () => void): HTMLElement {
+  const box = document.createElement('div') as HTMLDivElement & { dcStop?: () => void };
+  box.className = 'md-island-sheet';
+  box.dataset.kind = i.kind;
+  const bar = document.createElement('div');
+  bar.className = 'md-island-sheet-bar';
+  const name = document.createElement('span');
+  const size = new Blob([i.html]).size;
+  name.textContent = `${SHEET_NAME[i.kind] ?? 'HTML'}${i.label ? ` · ${i.label}` : ''} · its own HTML, sent as it is · ${size < 1024 ? `${size} B` : `${Math.round(size / 1024)} KB`}`;
+  const edit = document.createElement('button');
+  edit.type = 'button';
+  edit.className = 'md-island-sheet-btn';
+  edit.textContent = 'Edit HTML';
+  edit.onmousedown = (e) => e.preventDefault();
+  edit.onclick = onEdit;
+  bar.append(name, edit);
+  const f = document.createElement('iframe');
+  f.className = 'me-island-frame';
+  f.setAttribute('sandbox', 'allow-same-origin');
+  f.setAttribute('referrerpolicy', 'no-referrer');
+  f.title = SHEET_NAME[i.kind] ?? 'HTML';
+  f.srcdoc = islandDoc(i.html);
+  box.append(bar, f);
+  box.dcStop = fitFrame(f);
+  return box;
+}
+
+type Refs = { islands: Map<string, IslandAttrs>; pictures: Map<string, string>; attrs?: Map<string, Record<string, unknown>> };
+
+/** Styles a quote's or a forward's original may carry and still be the document's own: they change nothing much. */
+const PLAIN_STYLE = /^(color|text-align|margin(-\w+)?|padding(-\w+)?|border-left(-\w+)?|font-family|line-height|direction|unicode-bidi|word-break|overflow-wrap|word-wrap)$/i;
+const PLAIN_TAGS = new Set([...'p br b strong i em u s del strike code pre a ul ol li blockquote h1 h2 h3 hr span img div'.split(' ')]);
+const PLAIN_ATTRS = /^(href|src|alt|width|height|title|rel|target|type|start|dir|class|data-dc-src|data-dc-held|data-dc-text)$/i;
+/** An original's element the document can hold as its own text: plain tags, and nothing in its style that would be lost. */
+function plainEnough(el: Element): boolean {
+  if (!PLAIN_TAGS.has(el.tagName.toLowerCase())) return false;
+  for (const a of [...el.attributes]) {
+    if (!PLAIN_ATTRS.test(a.name) && a.name !== 'style') return false;
+    if (a.name === 'style')
+      for (const decl of a.value.split(';'))
+        if (decl.trim() && !PLAIN_STYLE.test(decl.split(':')[0].trim())) return false;
+  }
+  return [...el.children].every(plainEnough);
+}
+const squash = (s: string) => s.replace(/\s+/g, '');
+
+/**
+ * A forward or a quote as the document's own blocks, when the document can hold it with nothing lost (its text and its
+ * pictures all there): the forwarded-message lines or the attribution as a line, then the original, a quote's in a
+ * quote. Null when it has to stay whole, as an island (a newsletter's layout, its own styles).
+ */
+function islandBlocks(e: Editor, island: P.MailIsland): JSONContent[] | null {
+  if (island.kind !== 'forward' && island.kind !== 'quote') return null;
+  const d = new DOMParser().parseFromString(`<body>${island.html}</body>`, 'text/html');
+  if (d.querySelector('style, link, table, font, center')) return null;
+  const head = d.body.querySelector(':scope > .dc-quote-head, :scope > .dc-forward-head');
+  const rest = [...d.body.children].filter((x) => x !== head);
+  if (!head || !rest.length || !rest.every(plainEnough)) return null;
+  const html = `<p>${head.innerHTML}</p>${rest.map((x) => x.outerHTML).join('')}`;
+  const content = generateJSON(html, e.extensionManager.extensions).content ?? [];
+  // Nothing lost on the way: the same words, the same pictures.
+  const made = e.schema.nodeFromJSON({ type: 'doc', content });
+  let pics = 0;
+  made.descendants((n) => void (n.type.name === 'image' && pics++));
+  if (squash(made.textBetween(0, made.content.size, '', '')) !== squash(d.body.textContent ?? '') || pics !== d.querySelectorAll('img').length) return null;
+  return content;
+}
+
+/** A forward or a quote at the end of the document, after an empty line to write in above it: as its own text when it can be, else an island. */
 function appendIsland(e: Editor, island: P.MailIsland, from: string | null, undoable: boolean) {
+  const blocks = islandBlocks(e, island);
   const node = { type: 'island', attrs: { kind: island.kind, html: island.html, label: island.label, from, ref: newRef() } };
   const json = e.getJSON();
   const content: JSONContent[] = [...(json.content ?? [])];
   const empty = (n?: JSONContent) => n?.type === 'paragraph' && !n.content?.length;
   // One empty line above it is enough (taking a block out and putting it back leaves more).
   while (content.length > 1 && empty(content[content.length - 1]) && empty(content[content.length - 2])) content.pop();
-  if (!content.length || content[content.length - 1].type === 'island') content.push({ type: 'paragraph' });
-  content.push(node);
+  if (!content.length || content[content.length - 1].type !== 'paragraph' || content[content.length - 1].content?.length) content.push({ type: 'paragraph' });
+  const added = blocks ?? [node];
+  content.push(...added);
   replaceDoc(e, { ...json, content }, undoable);
   // The caret at the end of the text above it, never on the block itself: typing there would replace the quote.
   const doc = e.state.doc;
-  const above = doc.content.size - doc.lastChild!.nodeSize - 1;
+  let size = 0;
+  for (let i = 0; i < added.length; i++) size += doc.child(doc.childCount - 1 - i).nodeSize;
+  const above = doc.content.size - size - 1;
   e.view.dispatch(e.state.tr.setSelection(TextSelection.near(doc.resolve(above), -1)).setMeta('addToHistory', false));
 }
 
@@ -116,7 +192,8 @@ function markdownJson(editor: Editor, md: string, refs: Refs): JSONContent {
     }
     if (n.type === 'image') {
       const m = /^dc-picture:([\w-]+)$/.exec(String(n.attrs?.src ?? ''));
-      if (m) return { ...n, attrs: { ...n.attrs, src: refs.pictures.get(m[1]) ?? '', ref: m[1] } };
+      // Its size and an original's address come back too: Markdown can't say them.
+      if (m) return { ...n, attrs: { ...n.attrs, ...(refs.attrs?.get(m[1]) ?? {}), alt: n.attrs?.alt ?? null, title: n.attrs?.title ?? null, src: refs.pictures.get(m[1]) ?? '', ref: m[1] } };
     }
     return n.content ? { ...n, content: n.content.map(fix) } : n;
   };
@@ -125,8 +202,8 @@ function markdownJson(editor: Editor, md: string, refs: Refs): JSONContent {
 
 /** Tags and attributes the document holds as its own; anything else stays exact, as an island. */
 const OWN_TAGS = new Set('p br b strong i em u s del strike code pre a ul ol li blockquote h1 h2 h3 hr span img table colgroup col thead tbody tr th td'.split(' '));
-const OWN_ATTRS = new Set(['href', 'src', 'alt', 'width', 'height', 'title', 'rel', 'target', 'colspan', 'rowspan', 'type', 'start', 'dir', 'data-ref']);
-const OWN_STYLE = /^\s*((color|text-align|border(-collapse)?|padding|margin|text-decoration|min-width)\s*:[^;]*;?\s*)*$/i;
+const OWN_ATTRS = new Set(['href', 'src', 'alt', 'width', 'height', 'title', 'rel', 'target', 'colspan', 'rowspan', 'type', 'start', 'dir', 'data-ref', 'data-dc-src', 'data-dc-held']);
+const OWN_STYLE = /^\s*((color|text-align|border(-collapse|-left)?|padding(-left)?|margin(-left)?|text-decoration|min-width|aspect-ratio|max-height)\s*:[^;]*;?\s*)*$/i;
 function own(el: Element): boolean {
   if (!OWN_TAGS.has(el.tagName.toLowerCase())) return false;
   for (const a of [...el.attributes]) {
@@ -397,9 +474,9 @@ export function MailEditor(p: MailEditorProps) {
       onTransaction: ({ editor: ed }) => setActive(richActive(ed)),
     });
     editor.current = e;
-    // An HTML block's "Edit HTML" (schema.ts).
-    const editHtml = () => props.current.onMode('html');
-    richHost.current!.addEventListener('me-edit-html', editHtml);
+    // An island's "Edit HTML" (schema.ts): its own HTML editor, under it.
+    const editHtml = (ev: Event) => void editIsland((ev as CustomEvent<IslandEdit>).detail);
+    richHost.current!.addEventListener('me-edit-island', editHtml);
     mounting.current = true;
     // A draft kept before there was HTML: Markdown, read once and kept as HTML from now on.
     if (!p.initial.html && p.initial.markdown) replaceDoc(e, markdownJson(e, p.initial.markdown, { islands: new Map(), pictures: new Map() }), false);
@@ -421,7 +498,7 @@ export function MailEditor(p: MailEditorProps) {
       };
     if (p.mode !== 'rich') void switchTo(p.mode, false);
     return () => {
-      richHost.current?.removeEventListener('me-edit-html', editHtml);
+      richHost.current?.removeEventListener('me-edit-island', editHtml);
       clearTimeout(typingTimer.current);
       cm.current?.destroy();
       cm.current = null;
@@ -430,6 +507,43 @@ export function MailEditor(p: MailEditorProps) {
       if (p.apiRef) p.apiRef.current = null;
     };
   }, []);
+
+  // ---------------------------------------------------------------- an island's own HTML, edited in place
+
+  /** The HTML editor under an island (schema.ts IslandEdit): what you type draws it again; Done closes it. */
+  const editIsland = async (o: IslandEdit) => {
+    const code = await loadCode();
+    let timer = 0;
+    // Laid out to be read; it goes back only when you change it (else the island stays byte for byte as it was).
+    const shown = prettyHtml(o.html);
+    const v = code.codeView({
+      parent: o.host,
+      mode: 'html',
+      doc: shown,
+      placeholder: 'Its HTML',
+      stands: { island: () => null, picture: () => null, webBox },
+      onSend: () => props.current.onSend(),
+      onText: (t) => {
+        clearTimeout(timer);
+        timer = window.setTimeout(() => o.set(t), 250);
+      },
+      onCaret: () => {},
+      onFiles: () => {},
+      format: () => false,
+      indent: () => false,
+    });
+    v.focus();
+    o.host.addEventListener(
+      'me-island-done',
+      () => {
+        clearTimeout(timer);
+        if (v.state.doc.toString() !== shown) o.set(v.state.doc.toString());
+        v.destroy();
+        o.closed();
+      },
+      { once: true },
+    );
+  };
 
   // ---------------------------------------------------------------- the other views
 
@@ -488,6 +602,10 @@ export function MailEditor(p: MailEditorProps) {
         },
         picture: (ref) => r.pictures.get(ref) ?? null,
         webBox,
+        islandSheet: (ref) => {
+          const i = r.islands.get(ref);
+          return i ? islandSheet(i, () => props.current.onMode('html')) : null;
+        },
       },
       onSend: () => props.current.onSend(),
       onText: (t) => {

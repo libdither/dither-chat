@@ -17,6 +17,30 @@ export interface Stands {
   picture: (ref: string) => string | null;
   /** A picture address from the web as the editor draws it: a box with its host, never fetched (schema.ts); null for others. */
   webBox: (src: string) => HTMLElement | null;
+  /** Markdown: a block kept whole, drawn as it will arrive under its name (MailEditor); its `dcStop` ends its watching. */
+  islandSheet?: (ref: string) => HTMLElement | null;
+}
+
+/** Markdown: HTML kept whole (a newsletter's layout) in the text as it will arrive, not as a stand-in. */
+class Sheet extends WidgetType {
+  constructor(
+    readonly ref: string,
+    readonly make: (ref: string) => HTMLElement | null,
+  ) {
+    super();
+  }
+  eq(o: Sheet) {
+    return o.ref === this.ref;
+  }
+  toDOM() {
+    return this.make(this.ref) ?? document.createElement('span');
+  }
+  destroy(dom: HTMLElement) {
+    (dom as HTMLElement & { dcStop?: () => void }).dcStop?.();
+  }
+  ignoreEvent() {
+    return true;
+  }
 }
 
 /** Syntax that folds away off the caret's line. */
@@ -35,6 +59,22 @@ const STYLE: Record<string, string> = {
   FencedCode: 'md-fence',
   HTMLTag: 'md-html',
 };
+
+/** An entity (`&lt;`) or an escaped mark (`\_`) drawn as the character it stands for. */
+class Char extends WidgetType {
+  constructor(readonly ch: string) {
+    super();
+  }
+  eq(o: Char) {
+    return o.ch === this.ch;
+  }
+  toDOM() {
+    const s = document.createElement('span');
+    s.textContent = this.ch;
+    return s;
+  }
+}
+const ENTITY: Record<string, string> = { '&lt;': '<', '&gt;': '>', '&amp;': '&', '&quot;': '"', '&#39;': "'", '&nbsp;': '\u00a0' };
 
 class Chip extends WidgetType {
   constructor(
@@ -168,10 +208,22 @@ function build(view: EditorView, stands: Stands): DecorationSet {
         const cls = STYLE[n.name];
         if (cls) out.push(Decoration.mark({ class: cls }).range(n.from, n.to));
         if (n.name === 'Blockquote' || n.name === 'FencedCode') {
+          // A quote inside a quote draws a bar more (up to three), as the mail will.
+          let depth = 0;
+          for (let a = n.node.parent; a; a = a.parent) if (a.name === 'Blockquote') depth++;
+          const cls = n.name === 'Blockquote' ? (depth ? `md-quote-in${Math.min(depth, 2)}` : 'md-quote-line') : 'md-fence-line';
           for (let l = state.doc.lineAt(n.from).number; l <= state.doc.lineAt(n.to).number; l++) {
             const line = state.doc.line(l);
-            out.push(Decoration.line({ class: n.name === 'Blockquote' ? 'md-quote-line' : 'md-fence-line' }).range(line.from));
+            out.push(Decoration.line({ class: cls }).range(line.from));
           }
+        }
+        // What a character is written as (`&lt;`, `\_`) drawn as itself, off the caret's line.
+        // escape: Markdown's backslash escape (a syntax node's name), not the key.
+        if ((n.name === 'Entity' || n.name === 'Escape') && !onCaret(n.from)) {
+          const t = state.doc.sliceString(n.from, n.to);
+          // escape: the same node.
+          const ch = n.name === 'Escape' ? t.slice(1) : ENTITY[t];
+          if (ch) out.push(Decoration.replace({ widget: new Char(ch) }).range(n.from, n.to));
         }
         if (MARKS.has(n.name) && !onCaret(n.from)) {
           // A heading's and a quote's mark take their space with them.
@@ -179,8 +231,16 @@ function build(view: EditorView, stands: Stands): DecorationSet {
           if ((n.name === 'HeaderMark' || n.name === 'QuoteMark') && state.doc.sliceString(end, end + 1) === ' ') end++;
           if (end > n.from) out.push(Decoration.replace({}).range(n.from, end));
         }
-        // A link's address folds away (its brackets are marks).
-        if (n.name === 'URL' && n.node.parent?.name === 'Link' && !onCaret(n.from)) out.push(Decoration.replace({}).range(n.from, n.to));
+        // An address written out (a link's text, an autolink) is one node: what its characters are written as, inside it.
+        if (n.name === 'URL' && state.doc.sliceString(n.from - 1, n.from) !== '(' && !onCaret(n.from)) {
+          const t = state.doc.sliceString(n.from, n.to);
+          for (const m of t.matchAll(/&(?:lt|gt|amp|quot|#39|nbsp);|\\[!-/:-@[-`{-~]/g)) {
+            const ch = m[0][0] === '\\' ? m[0].slice(1) : ENTITY[m[0]];
+            if (ch) out.push(Decoration.replace({ widget: new Char(ch) }).range(n.from + m.index!, n.from + m.index! + m[0].length));
+          }
+        }
+        // A link's address folds away (its brackets are marks); an address written as the link's text stays.
+        if (n.name === 'URL' && n.node.parent?.name === 'Link' && state.doc.sliceString(n.from - 1, n.from) === '(' && !onCaret(n.from)) out.push(Decoration.replace({}).range(n.from, n.to));
         if (n.name === 'ListMark' && !onCaret(n.from)) {
           const t = state.doc.sliceString(n.from, n.to);
           if (t === '-' || t === '*' || t === '+') out.push(Decoration.replace({ widget: new Bullet() }).range(n.from, n.to));
@@ -196,7 +256,9 @@ function build(view: EditorView, stands: Stands): DecorationSet {
       const at = from + m.index;
       const isl = stands.island(m[1]);
       const label = isl ? `${isl.kind === 'forward' ? 'Forwarded message' : isl.kind === 'quote' ? 'Quoted text' : 'HTML'}${isl.label ? ` · ${isl.label}` : ''} · ${kb(isl.size)}` : 'Missing part';
-      if (!onCaret(at)) out.push(Decoration.replace({ widget: new Chip(label, isl?.kind ?? 'gone') }).range(at, at + m[0].length));
+      if (onCaret(at)) continue;
+      const widget = isl && stands.islandSheet ? new Sheet(m[1], stands.islandSheet) : new Chip(label, isl?.kind ?? 'gone');
+      out.push(Decoration.replace({ widget }).range(at, at + m[0].length));
     }
   }
   return Decoration.set(

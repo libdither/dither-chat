@@ -2,16 +2,19 @@
  * The mail editor's document (docs/mail.md "Writing"): one ProseMirror document, which the three views show
  * (MailEditor.tsx). Its parts beyond Tiptap's starter kit:
  *
- * - **Island**: HTML the document can't hold as its own blocks (a forwarded mail, a quote, a pasted layout), kept
- *   exactly as it came and drawn in a sandboxed frame, so its styles can't reach the page and nothing in it runs. It
- *   moves and goes as one block; the HTML view edits it.
+ * - **Quote**: a blockquote is a mail quote (`<blockquote type="cite">`, with the bar mail apps draw), so a reply's
+ *   quote that the document can hold (islandBlocks) is its own text: the attribution, then the original in a quote,
+ *   edited like the rest, `> ` in Markdown.
+ * - **Island**: HTML the document can't hold as its own blocks (a newsletter's layout, a pasted page), kept exactly as
+ *   it came and drawn in a sandboxed frame, so its styles can't reach the page and nothing in it runs. It moves and
+ *   goes as one block; its own HTML editor opens under it.
  * - **Picture**: a picture in the text. Pasted or dropped ones are `data:` URLs while you write; the hub sends them as
  *   parts of the mail (cid:) and links to the web stay links (or are fetched in, as the sender chooses).
  * - Colour, alignment, underline and tables, which Markdown can't say, are written into the Markdown view as small
  *   pieces of HTML, so they survive a trip through it.
  *
- * In the Markdown view, islands and pictures stand in as `[[island:id]]` and `dc-picture:id`: the view shows them as
- * chips, and the bytes never pass through the text.
+ * In the Markdown view, islands and pictures stand in as `[[island:id]]` and `dc-picture:id`: the view draws an
+ * island as it will arrive and a picture as itself, and the bytes never pass through the text.
  */
 import { type Editor, getHTMLFromFragment, getSchema, type JSONContent, type MarkdownRendererHelpers, mergeAttributes, Node } from '@tiptap/core';
 import Heading from '@tiptap/extension-heading';
@@ -161,7 +164,7 @@ export function setLeftOut(root: Element, urls: string[]) {
   const out = new Set(urls);
   leftOutOf.set(root, out);
   root.querySelectorAll<HTMLIFrameElement>('iframe.me-island-frame').forEach(markLeftOut);
-  root.querySelectorAll('.me-pic-web[data-dc-was]').forEach((el) => markOne(el, out));
+  root.querySelectorAll('.me-pic-web[data-dc-was], .me-rich-doc img[data-dc-src]').forEach((el) => markOne(el, out));
 }
 
 /** Sizes a frame to its content, and again when its pictures arrive; returns how to stop. */
@@ -211,6 +214,15 @@ export function fitFrame(f: HTMLIFrameElement): () => void {
 }
 
 const KIND_LABEL: Record<string, string> = { forward: 'Forwarded message', quote: 'Quoted text', html: 'HTML' };
+
+/** An island's "Edit HTML": its own HTML editor opens in `host`, under it (MailEditor mounts it); `set` takes the edits. */
+export interface IslandEdit {
+  host: HTMLElement;
+  html: string;
+  set: (html: string) => void;
+  /** It closed (Done, or the island went). */
+  closed: () => void;
+}
 
 export interface IslandAttrs {
   /** forward | quote | html (pasted or written in the HTML view). */
@@ -265,8 +277,11 @@ const Island = Node.create({
       bar.className = 'me-island-bar';
       const name = document.createElement('span');
       name.className = 'me-island-name';
-      const size = new Blob([node.attrs.html]).size;
-      name.textContent = `${KIND_LABEL[node.attrs.kind] ?? 'HTML'}${node.attrs.label ? ` · ${node.attrs.label}` : ''} · ${size < 1024 ? `${size} B` : `${Math.round(size / 1024)} KB`}`;
+      const naming = (n: PMNode) => {
+        const size = new Blob([n.attrs.html]).size;
+        name.textContent = `${KIND_LABEL[n.attrs.kind] ?? 'HTML'}${n.attrs.label ? ` · ${n.attrs.label}` : ''} · its own HTML, sent as it is · ${size < 1024 ? `${size} B` : `${Math.round(size / 1024)} KB`}`;
+      };
+      naming(node);
       const fold = document.createElement('button');
       fold.type = 'button';
       fold.className = 'me-island-btn';
@@ -281,17 +296,45 @@ const Island = Node.create({
         if (at != null) editor.chain().focus().deleteRange({ from: at, to: at + node.nodeSize }).run();
       };
       bar.append(name, fold);
-      // HTML of your own (written in the HTML view, or pasted whole) is edited there: this opens it.
-      if (node.attrs.kind === 'html') {
-        const code = document.createElement('button');
-        code.type = 'button';
-        code.className = 'me-island-btn';
+      // Its own HTML, edited in place: an HTML editor opens under it, and it is drawn again as you type.
+      const codeHost = document.createElement('div');
+      codeHost.className = 'me-island-code';
+      codeHost.hidden = true;
+      const code = document.createElement('button');
+      code.type = 'button';
+      code.className = 'me-island-btn';
+      code.textContent = 'Edit HTML';
+      code.title = 'Edit its HTML here, under it';
+      let editing = false;
+      let gone = false;
+      const closed = () => {
+        editing = false;
+        codeHost.hidden = true;
         code.textContent = 'Edit HTML';
-        code.title = 'Edit it in the HTML view';
-        code.onclick = () => dom.dispatchEvent(new CustomEvent('me-edit-html', { bubbles: true }));
-        bar.append(code);
-      }
-      bar.append(remove);
+        code.setAttribute('aria-expanded', 'false');
+      };
+      code.onclick = () => {
+        if (editing) {
+          codeHost.dispatchEvent(new CustomEvent('me-island-done'));
+          return;
+        }
+        editing = true;
+        codeHost.hidden = false;
+        code.textContent = 'Done';
+        code.setAttribute('aria-expanded', 'true');
+        const detail: IslandEdit = {
+          host: codeHost,
+          html: node.attrs.html,
+          set: (html) => {
+            if (gone || html === node.attrs.html) return;
+            const at = typeof getPos === 'function' ? getPos() : null;
+            if (at != null) editor.view.dispatch(editor.state.tr.setNodeMarkup(at, undefined, { ...node.attrs, html }));
+          },
+          closed,
+        };
+        dom.dispatchEvent(new CustomEvent('me-edit-island', { bubbles: true, detail }));
+      };
+      bar.append(code, remove);
       const sheet = document.createElement('div');
       sheet.className = 'me-island-sheet';
       const frame = document.createElement('iframe');
@@ -299,8 +342,8 @@ const Island = Node.create({
       frame.setAttribute('sandbox', 'allow-same-origin');
       frame.setAttribute('referrerpolicy', 'no-referrer');
       frame.title = KIND_LABEL[node.attrs.kind] ?? 'HTML';
-      // A quote starts folded, as in the reader; a forward open.
-      let open = node.attrs.kind !== 'quote';
+      // Open: what goes is in sight.
+      let open = true;
       const show = () => {
         sheet.hidden = !open;
         fold.textContent = open ? 'Hide' : 'Show';
@@ -312,14 +355,30 @@ const Island = Node.create({
         show();
       };
       sheet.append(frame);
-      dom.append(bar, sheet);
+      // The HTML editor right under the bar: in sight above a long forward, which redraws below it as you type.
+      dom.append(bar, codeHost, sheet);
       const stop = fitFrame(frame);
       show();
       return {
         dom,
-        stopEvent: (e) => !!(e.target as Element | null)?.closest?.('.me-island-btn'),
+        // Its edit drawn again in place (the HTML editor under it stays open).
+        update: (n) => {
+          if (n.type !== node.type || n.attrs.kind !== node.attrs.kind) return false;
+          const changed = n.attrs.html !== node.attrs.html;
+          node = n;
+          if (changed) {
+            naming(n);
+            if (frame.srcdoc) frame.srcdoc = islandDoc(n.attrs.html);
+          }
+          return true;
+        },
+        stopEvent: (e) => !!(e.target as Element | null)?.closest?.('.me-island-btn, .me-island-code'),
         ignoreMutation: () => true,
-        destroy: stop,
+        destroy: () => {
+          gone = true;
+          stop();
+          if (editing) codeHost.dispatchEvent(new CustomEvent('me-island-done'));
+        },
       };
     };
   },
@@ -333,13 +392,16 @@ const Picture = Image.extend({
       ref: { default: null, rendered: false },
       width: { default: null },
       height: { default: null },
+      // A picture from an original (a quote's, a forward's): its address on the web, and why the reader held it.
+      dcSrc: { default: null, parseHTML: (el: HTMLElement) => el.getAttribute('data-dc-src'), renderHTML: (a: { dcSrc?: string | null }) => (a.dcSrc ? { 'data-dc-src': a.dcSrc } : {}) },
+      dcHeld: { default: null, parseHTML: (el: HTMLElement) => el.getAttribute('data-dc-held'), renderHTML: (a: { dcHeld?: string | null }) => (a.dcHeld ? { 'data-dc-held': a.dcHeld } : {}) },
     };
   },
   renderMarkdown: (node: { attrs?: { src?: string; alt?: string; ref?: string } }) => {
     const src = node.attrs?.src ?? '';
     const alt = (node.attrs?.alt ?? '').replace(/[[\]]/g, '');
-    // Bytes stay out of the text: the view draws the picture from the id.
-    return src.startsWith('data:') ? `![${alt}](dc-picture:${node.attrs?.ref ?? ''})` : `![${alt}](${src})`;
+    // Bytes and this hub's addresses stay out of the text: the view draws the picture from the id.
+    return fromWeb(src) ? `![${alt}](${src})` : `![${alt}](dc-picture:${node.attrs?.ref ?? ''})`;
   },
   // Drawn as it is, but one from the web as a striped box: the editor fetches nothing from the web.
   addNodeView() {
@@ -354,10 +416,23 @@ const Picture = Image.extend({
         img.alt = node.attrs.alt ?? '';
         if (node.attrs.title) img.title = node.attrs.title;
         for (const k of ['width', 'height'] as const) if (node.attrs[k] != null) img.setAttribute(k, String(node.attrs[k]));
+        if (node.attrs.dcSrc) {
+          img.setAttribute('data-dc-src', node.attrs.dcSrc);
+          requestAnimationFrame(() => markInEditor(img));
+        }
+        // A held one is a striped picture of the original's shape (else it would be a big square).
+        if (node.attrs.dcHeld) {
+          img.setAttribute('data-dc-held', node.attrs.dcHeld);
+          const W = px(node.attrs.width);
+          const H = px(node.attrs.height);
+          if (W && H) img.style.aspectRatio = `${W}/${H}`;
+          else img.style.maxHeight = '120px';
+        }
         dom = img;
       }
       // Any change draws it again.
-      return { dom, update: (n) => n.type === node.type && n.attrs.src === node.attrs.src && n.attrs.width === node.attrs.width && n.attrs.height === node.attrs.height && n.attrs.alt === node.attrs.alt && n.attrs.title === node.attrs.title };
+      const same = (n: PMNode) => ['src', 'width', 'height', 'alt', 'title', 'dcSrc', 'dcHeld'].every((k) => n.attrs[k] === node.attrs[k]);
+      return { dom, update: (n) => n.type === node.type && same(n) };
     };
   },
 }).configure({ inline: true, allowBase64: true });
@@ -400,6 +475,8 @@ export function extensions(placeholder: string) {
       link: { openOnClick: false, autolink: true, HTMLAttributes: { rel: 'noopener noreferrer', target: null } },
       paragraph: false,
       heading: false,
+      // A quote as mail apps write one (and as the hub writes Markdown's `>`: protocol mail-markdown QUOTE_STYLE).
+      blockquote: { HTMLAttributes: { type: 'cite', style: 'margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex' } },
     }),
     AlignedParagraph,
     AlignedHeading,
@@ -420,9 +497,11 @@ export function extensions(placeholder: string) {
 // ------------------------------------------------------------------ the document in and out
 
 /** The islands and pictures of a document, by ref (each given one when missing), for the Markdown view. */
-export function refsOf(editor: Editor): { islands: Map<string, IslandAttrs>; pictures: Map<string, string> } {
+export function refsOf(editor: Editor): { islands: Map<string, IslandAttrs>; pictures: Map<string, string>; attrs: Map<string, Record<string, unknown>> } {
   const islands = new Map<string, IslandAttrs>();
   const pictures = new Map<string, string>();
+  // A picture's other attributes (its size, an original's address), which Markdown can't say: put back from here.
+  const attrs = new Map<string, Record<string, unknown>>();
   const tr = editor.state.tr;
   let changed = false;
   editor.state.doc.descendants((n: PMNode, pos: number) => {
@@ -434,10 +513,13 @@ export function refsOf(editor: Editor): { islands: Map<string, IslandAttrs>; pic
       changed = true;
     }
     if (n.type.name === 'island') islands.set(ref, { ...(n.attrs as IslandAttrs), ref });
-    else if (String(n.attrs.src ?? '').startsWith('data:')) pictures.set(ref, n.attrs.src);
+    else if (!fromWeb(String(n.attrs.src ?? ''))) {
+      pictures.set(ref, n.attrs.src);
+      attrs.set(ref, { ...n.attrs, ref });
+    }
   });
   if (changed) editor.view.dispatch(tr.setMeta('addToHistory', false));
-  return { islands, pictures };
+  return { islands, pictures, attrs };
 }
 
 /** The document as the mail's HTML: islands filled in with their own HTML. */
