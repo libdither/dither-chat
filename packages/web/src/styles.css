@@ -1018,6 +1018,7 @@ code {
   text-overflow: ellipsis;
 }
 .chan-also,
+.chan-resolved,
 .chan-muted {
   color: var(--text-faint);
   flex: none;
@@ -3983,6 +3984,27 @@ textarea.chip-box {
 }
 .forum-tag.muted {
   color: var(--text-faint);
+}
+.forum-tag.resolved {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-dim);
+}
+.forum-post-head .forum-count {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.forum-post.unread .forum-post-head b {
+  color: var(--text);
+}
+.forum-post.muted {
+  opacity: 0.75;
 }
 .forum-post span.forum-preview {
   color: var(--text-dim);

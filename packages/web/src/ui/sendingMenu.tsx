@@ -46,6 +46,7 @@ export function sendingEntries(m: P.MessageView): (MenuEntry | false)[] {
     previewsEntry(m, author),
     !self &&
       !!c &&
+      c.network === 'discord' &&
       !!deepLink(c) && {
         label: 'Report on Discord',
         icon: 'flag',
