@@ -507,6 +507,15 @@ function Edited({ m }: { m: P.MessageView }) {
   );
 }
 
+/** "(moved)": moved here from another topic (Zulip), when it says in its tooltip. */
+function Moved({ m }: { m: P.MessageView }) {
+  return (
+    <span class="msg-edited msg-moved" title={`Moved here ${fullTime(m.movedAt!)}`}>
+      (moved)
+    </span>
+  );
+}
+
 /** A mark beside the time: pinned. How far your message got sits after its text (`Ticks`). */
 function Marks({ m }: { m: P.MessageView }) {
   return (
@@ -778,6 +787,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
             {/* A person's chat (ui/Pairs.tsx): where the route changes, which one, quietly. A click sends through it. */}
             {conv && chatPerson && onTag && <RouteTag c={conv} directs={directsOf(chatPerson.id)} side={self ? 'mine' : who !== undefined ? 'theirs' : 'other'} onPick={() => onTag(conv.id)} />}
             {(m.editedTs || m.edits) && <Edited m={m} />}
+            {m.movedAt && <Moved m={m} />}
             <DisappearsMark m={m} self={self} />
             <Marks m={m} />
             {m.encryptionWarning && (
@@ -814,6 +824,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
         <SendFailures m={m} />
         {ticks && (!m.body || gif || m.deleted || (m.poll && !m.forward)) && <span class="msg-marks">{ticks}</span>}
         {grouped && (m.editedTs || m.edits) && <Edited m={m} />}
+        {grouped && m.movedAt && <Moved m={m} />}
         {grouped && <DisappearsMark m={m} self={self} />}
         {grouped && (m.pinned || m.rich?.silent || m.rich?.marks) && (
           <span class="msg-marks">
@@ -1995,7 +2006,7 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
       {!held && c.pending && <LinkBanner c={c} />}
       {/* A forum's or media channel's messages are its posts (ui/Threads.tsx, docs/threads.md). */}
       {c.variant === 'forum' || c.variant === 'media' ? (
-        <ForumLazy c={c} />
+        <ForumLazy key={c.id} c={c} />
       ) : (
         <>
           {voice && !room && <div class="voice-note"><Icon name="voice" size={14} /> Voice isn't relayed. This shows the channel's text chat.</div>}

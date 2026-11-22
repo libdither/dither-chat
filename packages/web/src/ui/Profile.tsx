@@ -7,7 +7,7 @@ import type * as P from '@dither-chat/protocol';
 import { RELATIONSHIP_LABEL, withList } from '@dither-chat/protocol';
 import { connections, connectionTags, withChanges, type Connection } from '../connections.ts';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { ago, fullTime } from '../format.ts';
+import { ago, fullTime, localTime } from '../format.ts';
 import { bioEditor, bioLeft } from '../bio.ts';
 import { openers } from '../direct.ts';
 import { composeTo } from '../mail/people.ts';
@@ -478,7 +478,11 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       const k = `${l.label}|${l.label === 'Phone' ? l.value.replace(/\D/g, '') : l.value}`;
       return !seen.has(k) && seen.add(k);
     });
-  const facts = said.flatMap((a) => (a.facts ?? []).map((f) => ({ ...f, network: a.network })));
+  // Their time zone (Zulip's): the profile's own field, else a "Time zone" fact from an older extractor.
+  const zone = [...said.map((a) => a.timeZone), ...said.flatMap((a) => a.facts ?? []).map((f) => (f.label === 'Time zone' ? f.value : undefined))].find((z) => z && localTime(z));
+  const localNow = zone ? localTime(zone) : null;
+  // The Local time row names the zone, so its bare fact goes.
+  const facts = said.flatMap((a) => (a.facts ?? []).filter((f) => !(localNow && f.label === 'Time zone' && f.value === zone)).map((f) => ({ ...f, network: a.network })));
   // How your accounts stand with them, in one vocabulary (connections.ts), with what this page changed laid over it.
   const now = withChanges(profile.links ?? [], abouts, changed);
   const conns = isSelf ? [] : connections(ids, now.links, now.abouts);
@@ -824,6 +828,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
               ...said.filter((a) => a.createdAt).map((a): [string, string] => [`On ${netName(a.network)} since`, monthYear(a.createdAt!)]),
               ...facts.map((f): [string, string] => [f.label, f.value]),
             ]),
+            localNow ? ['Local time', localNow] : null,
             profile.totalMessages > 0 && [
               'Messages stored',
               `${profile.totalMessages.toLocaleString()}${profile.firstSeenTs ? ` since ${new Date(profile.firstSeenTs).toLocaleDateString()}` : ''}`,

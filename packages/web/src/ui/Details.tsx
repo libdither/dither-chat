@@ -1,7 +1,7 @@
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, RULE_LABEL, RULE_LEVELS } from '@dither-chat/protocol';
 import { useState } from 'preact/hooks';
-import { AUTOMATIC, AUTOMATIC_HELP, RULE_HELP, communitiesOf, convLabel, convTitle, deepLink, directsOf, effectiveLevel, identityName, kindLabel, netName, placeConv, ruleHelp, ruleIcon, ruleName, ruleOn, threadsOf } from '../model.ts';
+import { AUTOMATIC, AUTOMATIC_HELP, RULE_HELP, communitiesOf, convLabel, convTitle, deepLink, directsOf, effectiveLevel, identityName, kindLabel, linkOpensIn, netName, placeConv, ruleHelp, ruleIcon, ruleName, ruleOn, threadsOf, threadWords } from '../model.ts';
 import { api, db, go, isSelfIdentity, openProfile, rev, setRule } from '../state.ts';
 import { AccountChip, Avatar, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -53,6 +53,7 @@ export function ConversationDetails({ convId }: { convId: string }) {
   const link = deepLink(c);
   const parts = c.participantIds.map((id) => db.identities.get(id)).filter((i): i is P.IdentityView => !!i);
   const threads = threadsOf(c.id);
+  const words = threadWords(c);
   return (
     <aside class="details">
       <header class="det-head">
@@ -133,7 +134,7 @@ export function ConversationDetails({ convId }: { convId: string }) {
           </dl>
           {link && (
             <a class="btn ghost small" href={link} target="_blank" rel="noreferrer">
-              <Icon name="external" size={13} /> Open in {c.network === 'discord' ? 'Discord' : 'Element (matrix.to)'}
+              <Icon name="external" size={13} /> Open in {linkOpensIn(c.network)}
             </a>
           )}
         </Section>
@@ -198,7 +199,7 @@ export function ConversationDetails({ convId }: { convId: string }) {
         )}
 
         {(threads.length > 0 || (c.shape === 'channel' && !!ableAccount(c, 'listThreads'))) && (
-          <Section title={c.variant === 'forum' ? `Posts (${threads.length})` : `Threads (${threads.length})`}>
+          <Section title={`${words.many.replace(/^./, (x) => x.toUpperCase())} (${threads.length})`}>
             {threads.map((t) => (
               <button class="link-row" onClick={() => openConv(t)}>
                 <Icon name="thread" size={13} /> {convTitle(t)}
@@ -206,7 +207,7 @@ export function ConversationDetails({ convId }: { convId: string }) {
             ))}
             {c.shape === 'channel' && c.variant !== 'voice' && c.variant !== 'stage' && ableAccount(c, 'listThreads') && (
               <button class="link-row" onClick={() => (threadDialog.value = { kind: 'browse', convId: c.id, tab: 'archived' })}>
-                <Icon name="archive" size={13} /> Show archived {c.variant === 'forum' || c.variant === 'media' ? 'posts' : 'threads'}
+                <Icon name="archive" size={13} /> Show {words.archived.toLowerCase()} {words.many}
               </button>
             )}
           </Section>

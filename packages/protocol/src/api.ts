@@ -710,6 +710,8 @@ export interface MessageView {
   gone?: { how: 'deleted' | 'disappeared'; at: number; kept: boolean };
   /** Earlier versions the hub kept: GET /api/messages/:id/history. */
   edits?: number;
+  /** When it was last moved to the conversation it is in now (ms epoch): a Zulip message moved to another topic (extra.ts movedAt). */
+  movedAt?: number;
   /** Other things that happened to it the hub kept: reactions taken back, pins (docs/history.md). Reaction times are on `reactions`. */
   events?: number;
   /** Pinned, as the last pin or unpin the hub saw says. */
