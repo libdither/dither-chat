@@ -2,7 +2,8 @@
  * Writing a post or a reply on a network that has posts (docs/feed.md "Answering"): how long it may be and how the
  * network counts, what the counter shows and when, the network's own words, and what can be done to a post. One
  * composer draws every network from these rules: X's ring that fills and counts down from 20, Mastodon's 500 with its
- * content warning, Reddit's and Lemmy's title, place and Markdown, Substack's Notes, Bluesky's 300. Pure, so the hub checks a post with the same count the page shows.
+ * content warning, Reddit's and Lemmy's title, place and Markdown, Substack's Notes, Bluesky's 300, LessWrong's
+ * comments. Pure, so the hub checks a post with the same count the page shows.
  */
 import type { ReplyGate } from './feed.ts';
 
@@ -72,6 +73,11 @@ export interface PostRules {
   place?: { required: boolean; noun: string; prefix: string; example: string; pattern: string };
   /** A content warning over the words (Mastodon's CW), on any post: how long it may be. */
   warning?: { maxLength: number };
+  /**
+   * Replies and comments only: no new post of its own from here (LessWrong, whose posts are long articles written on the
+   * site). The composer leaves the network out of a new post, and the hub refuses one before anything is sent.
+   */
+  replyOnly?: true;
 }
 
 const X_RULES: PostRules = {
@@ -189,8 +195,31 @@ export const BLUESKY_RULES: PostRules = {
   replyGates: [],
 };
 
+/**
+ * LessWrong's: comments on a post or on a comment, in Markdown, up to 100,000 characters (generous: the site's own cap
+ * is far beyond what anyone writes in a comment), no pictures. A new post is an article written on the site, so none
+ * starts here (`replyOnly`). The like is a normal upvote (karma), anonymous; there is no repost or quote. Subscribed is
+ * the posts of the people and tags you follow, Frontpage the site's own front page.
+ */
+export const LESSWRONG_RULES: PostRules = {
+  words: { post: 'Post', reply: 'Comment', quote: 'Quote', placeholder: 'Write a comment', replyPlaceholder: 'Write a comment', quotePlaceholder: 'Add a comment', like: 'Upvote', unlike: 'Remove upvote', repost: 'Repost', unrepost: 'Undo repost', likedBy: 'Upvoted by', repostedBy: 'Reposted by' },
+  likeIcon: 'upvote',
+  timelines: { following: 'Subscribed', foryou: 'Frontpage' },
+  maxLength: 100_000,
+  count: 'chars',
+  urlLength: 0,
+  counter: 'text',
+  warnAt: 1_000,
+  markdown: true,
+  actions: { like: true, repost: false, quote: false, reply: true },
+  likersVisible: 'none',
+  media: { images: 0, gif: false, video: false },
+  replyGates: [],
+  replyOnly: true,
+};
+
 /** The rules of each network that has posts. */
-export const POST_RULES: Readonly<Record<string, PostRules>> = { x: X_RULES, mastodon: MASTODON_RULES, reddit: REDDIT_RULES, lemmy: LEMMY_RULES, substack: SUBSTACK_RULES, bluesky: BLUESKY_RULES };
+export const POST_RULES: Readonly<Record<string, PostRules>> = { x: X_RULES, mastodon: MASTODON_RULES, reddit: REDDIT_RULES, lemmy: LEMMY_RULES, substack: SUBSTACK_RULES, bluesky: BLUESKY_RULES, lesswrong: LESSWRONG_RULES };
 export const postRulesFor = (network: string): PostRules | null => (Object.hasOwn(POST_RULES, network) ? POST_RULES[network]! : null);
 
 /** The rules for a reply or comment: the network's, with its reply limit where it has one. */

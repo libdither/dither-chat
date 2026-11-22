@@ -404,6 +404,7 @@ export const ABOUT_RULES: Record<Network, AboutRules> = {
   lemmy: { conversation: [], space: [] },
   substack: { conversation: [], space: [] },
   bluesky: { conversation: [], space: [] },
+  lesswrong: { conversation: [], space: [] },
   // Zulip: a channel's name, description, who may post, public or private, and whether new members see its history;
   // a topic's name (renaming moves its messages); the organization's name and description. Names are at most 60.
   zulip: {

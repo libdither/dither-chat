@@ -113,6 +113,8 @@ interface PublishIn {
 /** Why these files cannot go with one post on this network, or null. */
 function postMediaProblem(media: readonly P.OutgoingAttachment[], rules: P.PostRules, net: string): string | null {
   if (!media.length) return null;
+  // LessWrong's comments are words only.
+  if (!rules.media.images && !rules.media.gif && !rules.media.video) return `${net} takes words only here: no pictures or videos.`;
   const images = media.filter((m) => m.kind === 'image' && m.mime !== 'image/gif').length;
   const gifs = media.filter((m) => m.mime === 'image/gif').length;
   const videos = media.filter((m) => m.kind === 'video').length;
@@ -376,6 +378,8 @@ export class Posts {
     const quote = id(b.quote, 'quote');
     const rules = replyTo ? rulesForReply(base) : base;
     if (replyTo && !rules.actions.reply) throw new PostsError(`${net} has no replies here.`, 409);
+    // LessWrong: comments only; a new post is an article written on the site.
+    if (!replyTo && rules.replyOnly) throw new PostsError(`${net} takes only comments from here: answer a post or a comment.`, 409);
     if (quote && !rules.actions.quote) throw new PostsError(`${net} has no quotes here.`, 409);
     if (b.replies !== undefined && b.replies !== null && !(rules.replyGates as readonly unknown[]).includes(b.replies)) throw new PostsError(`replies: ${net} has no such choice`, 400);
     const replies = b.replies === undefined || b.replies === null || b.replies === 'everyone' ? undefined : (b.replies as P.ReplyGate);

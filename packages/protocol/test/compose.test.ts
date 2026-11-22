@@ -1,7 +1,7 @@
-/** Writing a post (compose.ts, docs/feed.md "Answering"): X's count and counter, Mastodon's, Reddit's, Lemmy's, Substack's, Bluesky's, from one set of rules. */
+/** Writing a post (compose.ts, docs/feed.md "Answering"): X's count and counter, Mastodon's, Reddit's, Lemmy's, Substack's, Bluesky's, LessWrong's, from one set of rules. */
 import { describe, expect, test } from 'bun:test';
 import { isPostId } from '../src/feed.ts';
-import { BLUESKY_RULES, composeState, LEMMY_RULES, MASTODON_RULES, placeName, POST_RULES, postFieldsProblem, postLength, postRulesFor, REDDIT_RULES, rulesForReply, SUBSTACK_RULES, splitThread, timelineName } from '../src/compose.ts';
+import { BLUESKY_RULES, composeState, LEMMY_RULES, LESSWRONG_RULES, MASTODON_RULES, placeName, POST_RULES, postFieldsProblem, postLength, postRulesFor, REDDIT_RULES, rulesForReply, SUBSTACK_RULES, splitThread, timelineName } from '../src/compose.ts';
 
 const X = POST_RULES.x;
 
@@ -63,7 +63,22 @@ test("Bluesky's: 300 graphemes (an emoji, a flag or a ZWJ family is one; a link 
   expect([timelineName('bluesky', 'following'), timelineName('bluesky', 'foryou')]).toEqual(['Following', 'Discover']);
 });
 
-test('a post id is opaque: Bluesky\'s `<did>~<rkey>` fits, a slash or a space does not', () => {
+test("LessWrong's: comments only, in Markdown, 100,000 characters, no pictures; an upvote and no repost or quote", () => {
+  expect(LESSWRONG_RULES.replyOnly).toBe(true);
+  expect(POST_RULES.lesswrong).toBe(LESSWRONG_RULES);
+  expect(composeState('a'.repeat(100_000), rulesForReply(LESSWRONG_RULES))).toMatchObject({ remaining: 0, sendable: true });
+  expect(composeState('a'.repeat(100_001), rulesForReply(LESSWRONG_RULES))).toMatchObject({ remaining: -1, sendable: false });
+  expect(LESSWRONG_RULES.actions).toEqual({ like: true, repost: false, quote: false, reply: true });
+  expect([LESSWRONG_RULES.markdown, LESSWRONG_RULES.likeIcon, LESSWRONG_RULES.likersVisible, LESSWRONG_RULES.media]).toEqual([true, 'upvote', 'none', { images: 0, gif: false, video: false }]);
+  expect([LESSWRONG_RULES.words.reply, LESSWRONG_RULES.words.like]).toEqual(['Comment', 'Upvote']);
+  expect(postFieldsProblem({ title: 'T' }, LESSWRONG_RULES, true, 'LessWrong')).toBe('A reply on LessWrong takes no title or place.');
+  expect([timelineName('lesswrong', 'following'), timelineName('lesswrong', 'foryou')]).toEqual(['Subscribed', 'Frontpage']);
+  // Every other network that has posts starts one here.
+  expect(Object.entries(POST_RULES).filter(([, r]) => r.replyOnly).map(([n]) => n)).toEqual(['lesswrong']);
+});
+
+test('a post id is opaque: Bluesky\'s `<did>~<rkey>` fits, LessWrong\'s `p-` and `c-` ones too, a slash or a space does not', () => {
+  expect(['p-dmo0001LwQxZk7Faq', 'c-dmo0013LwQxZk7Faq'].map(isPostId)).toEqual([true, true]);
   expect(isPostId('did:plc:riverdemoqqqqqqqqqqqqqqq~3kgcbqtnfxk2a')).toBe(true);
   expect(isPostId('did:web:river.example~3lbxaaaaaaaab')).toBe(true);
   expect(['at://did:plc:a/app.bsky.feed.post/3k', 'a b', '', 'x'.repeat(121)].map(isPostId)).toEqual([false, false, false, false]);

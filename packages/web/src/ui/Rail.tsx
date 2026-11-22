@@ -303,7 +303,7 @@ function RailMail({ active }: { active: boolean }) {
 }
 
 /**
- * The Feed (docs/feed.md "The Feed page"), once an account has posts (X, Mastodon, Reddit, Lemmy, Substack, Bluesky): a dot while someone answered, quoted or
+ * The Feed (docs/feed.md "The Feed page"), once an account has posts (X, Mastodon, Reddit, Lemmy, Substack, Bluesky, LessWrong): a dot while someone answered, quoted or
  * mentioned you there and you have not looked; never for likes or follows.
  */
 function RailFeed({ active }: { active: boolean }) {

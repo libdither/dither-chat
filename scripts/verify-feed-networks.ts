@@ -1,12 +1,13 @@
 /**
- * The Feed page with Mastodon, Reddit, Lemmy, Substack and Bluesky (docs/feed.md "A feed of posts, for any network"), in
- * a real browser against a demo hub of its own on a fresh data dir, with the demo's five accounts of them (demo-posts.ts):
+ * The Feed page with Mastodon, Reddit, Lemmy, Substack, Bluesky and LessWrong (docs/feed.md "A feed of posts, for any
+ * network"), in a real browser against a demo hub of its own on a fresh data dir, with the demo's six accounts of them
+ * (demo-posts.ts):
  * the Feed offered and Following taking every network's posts, a Reddit or Lemmy post's title and place, Mastodon's
  * content warning folded until Show, Substack's publication, Bluesky's quote post with its picture; Tune naming each timeline in its network's words; a
  * Reddit thread's comment tree with Continue this thread opening the deep branch as a thread of its own; each
- * network's bar (Upvote and no Repost on Reddit and Lemmy, Favourite and Boost on Mastodon, Restack on Substack, Repost and Like on Bluesky) and a
+ * network's bar (Upvote and no Repost on Reddit and Lemmy, Favourite and Boost on Mastodon, Restack on Substack, Repost and Like on Bluesky, Comment and Upvote on LessWrong with no composer of its own) and a
  * press reaching the network once; the composer asking a Reddit post for its title and subreddit, and Mastodon's
- * content warning; Activity in each network's words; and a phone.
+ * content warning, and no LessWrong among the composer's accounts; Activity in each network's words; and a phone.
  *
  *   bun scripts/verify-feed-networks.ts [--port <port>] [--web <built dist>] [--work <empty dir>] [--keep] [--shots <dir>]
  *
@@ -35,7 +36,7 @@ mkdirSync(work, { recursive: true });
 const shots = opt('shots', '');
 if (shots) mkdirSync(shots, { recursive: true });
 
-const ACC = { mastodon: 'acc_demo-mastodon', reddit: 'acc_demo-reddit', lemmy: 'acc_demo-lemmy', substack: 'acc_demo-substack', bluesky: 'acc_demo-bluesky' };
+const ACC = { mastodon: 'acc_demo-mastodon', reddit: 'acc_demo-reddit', lemmy: 'acc_demo-lemmy', substack: 'acc_demo-substack', bluesky: 'acc_demo-bluesky', lesswrong: 'acc_demo-lesswrong' };
 
 let failed = 0;
 const check = (name: string, ok: boolean, detail: unknown = '') => {
@@ -71,7 +72,7 @@ const hub = Bun.spawn(['bun', join(root, 'packages/hub/src/main.ts'), '--demo', 
 await until(async () => (await fetch(`${base}/api/health`).catch(() => null))?.ok ?? false, 30_000, 'the hub did not start');
 let boot = await json('/api/bootstrap');
 if (!boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub');
-await until(async () => (boot = await json('/api/bootstrap')).conversations.filter((c: any) => c.variant === 'feed').length === 7, 15_000, 'seven feed conversations');
+await until(async () => (boot = await json('/api/bootstrap')).conversations.filter((c: any) => c.variant === 'feed').length === 8, 15_000, 'eight feed conversations');
 
 const { page, close } = await launch();
 const q = (s: string) => JSON.stringify(s);
@@ -116,7 +117,7 @@ try {
   await tap('.feed-main .feed-tune-btn');
   await page.until(`!!document.querySelector('.feed-tune-src small')`, 5000);
   const tune = await page.eval<string[]>(`[...document.querySelectorAll('.feed-tune-src small')].map((s) => s.textContent.trim())`);
-  check('Tune names the timelines as each network does', ['Home · Mastodon', 'New · Reddit', 'Subscribed · Lemmy', 'Inbox · Substack', 'Following · Bluesky'].every((t) => tune.some((x) => x.includes(t))), tune);
+  check('Tune names the timelines as each network does', ['Home · Mastodon', 'New · Reddit', 'Subscribed · Lemmy', 'Inbox · Substack', 'Following · Bluesky', 'Subscribed · LessWrong'].every((t) => tune.some((x) => x.includes(t))), tune);
   if (shots) await page.shot(join(shots, 'networks-tune.png'));
 
   /** One account's own timeline. */
@@ -158,6 +159,16 @@ try {
   check('Like pressed: on, and Bluesky asked once', (await count(`${quoted} .pa-btn.like.on`)) === 1 && (await writes(ACC.bluesky)).filter((w) => w === 'postAct:like').length === 1, await writes(ACC.bluesky));
   if (shots) await page.shot(join(shots, 'networks-bluesky-desktop.png'));
 
+  await open(ACC.lesswrong);
+  const lw = await entry('calibrating small predictions');
+  check('a LessWrong post: its title, no place, and its short text only (the article waits for its thread)', (await text(`${lw} .post-title`)) === 'Notes on calibrating small predictions' && !(await count(`${lw} .post-place`)) && !/What I did/.test(await text(lw)), (await text(lw)).slice(0, 120));
+  check('LessWrong’s bar: Comment and Upvote, no Repost', JSON.stringify(await bar(lw)) === JSON.stringify(['Comment', 'Upvote']), await bar(lw));
+  check('LessWrong’s own timeline has no composer: new posts are written on the site', !(await count('.feed-main .feed-compose-closed, .feed-main .feed-composer')));
+  await tap(`${lw} .pa-btn.like`);
+  await until(async () => (await writes(ACC.lesswrong)).includes('postAct:like'), 10000, 'the upvote reaching LessWrong');
+  check('Upvote pressed: on, and LessWrong asked once', (await count(`${lw} .pa-btn.like.on`)) === 1 && (await writes(ACC.lesswrong)).filter((w) => w === 'postAct:like').length === 1, await writes(ACC.lesswrong));
+  if (shots) await page.shot(join(shots, 'networks-lesswrong-desktop.png'));
+
   await open(ACC.mastodon);
   const spoiler = await entry('Spoilers: the finale');
   check('a Mastodon post behind its content warning: the warning, not the words', (await count(`${spoiler} .post-warning`)) === 1 && !/did not see that ending/.test(await text(spoiler)));
@@ -190,6 +201,7 @@ try {
   // The composer: a Reddit post asks for its title and subreddit
   await tap('.feed-main .feed-compose-closed');
   await page.until(`!!document.querySelector('.feed-composer textarea')`, 10000);
+  check('the composer offers no LessWrong account: only comments go there', (await count(`.feed-as-face[data-as="${ACC.lesswrong}"]`)) === 0 && (await count(`.feed-as-face[data-as="${ACC.reddit}"]`)) === 1);
   for (const a of await page.eval<string[]>(`[...document.querySelectorAll('.feed-as-face.on')].map((b) => b.dataset.as)`)) await tap(`.feed-as-face[data-as="${a}"]`);
   await tap(`.feed-as-face[data-as="${ACC.reddit}"]`);
   await page.until(`!!document.querySelector('.feed-fields[data-fields="reddit"]')`, 3000);

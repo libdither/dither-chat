@@ -127,7 +127,7 @@
     "js/src/ui/AccountPane.tsx.gzip": { "measured": 15532, "budget": 15801 },
     "js/src/ui/AccountSelf.tsx.bytes": { "measured": 6206, "budget": 6331 },
     "js/src/ui/AccountSelf.tsx.gzip": { "measured": 2510, "budget": 2544 },
-    "js/src/ui/AddAccount.tsx.bytes": { "measured": 13253, "budget": 13519, "reason": "Zulip as a network (dither-accounts' docs/zulip.md): its glyph, colour and rules in the shared protocol tables, and its Add account entry" },
+    "js/src/ui/AddAccount.tsx.bytes": { "measured": 13604, "budget": 13876, "reason": "LessWrong as a feed network (docs/feed.md): its Add account entry, saying what it brings and that new posts are written on the site" },
     "js/src/ui/AddAccount.tsx.gzip": { "measured": 4434, "budget": 4523, "reason": "Zulip as a network (dither-accounts' docs/zulip.md): its glyph, colour and rules in the shared protocol tables, and its Add account entry" },
     "js/src/ui/mail/editor/code.ts.bytes": { "measured": 516753, "budget": 527089, "reason": "The mail editor (docs/mail.md \"Writing\"): rich text with pictures in place, Markdown and HTML views, forwards and quotes kept whole; the rich editor and the CodeMirror views load as chunks of their own when a message is first written" },
     "js/src/ui/mail/editor/code.ts.gzip": { "measured": 179490, "budget": 183080, "reason": "The mail editor (docs/mail.md \"Writing\"): rich text with pictures in place, Markdown and HTML views, forwards and quotes kept whole; the rich editor and the CodeMirror views load as chunks of their own when a message is first written" },
