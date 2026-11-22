@@ -16,7 +16,7 @@
  * In the Markdown view, islands and pictures stand in as `[[island:id]]` and `dc-picture:id`: the view draws an
  * island as it will arrive and a picture as itself, and the bytes never pass through the text.
  */
-import { type Editor, getHTMLFromFragment, getSchema, type JSONContent, type MarkdownRendererHelpers, mergeAttributes, Node } from '@tiptap/core';
+import { type Editor, generateJSON, getHTMLFromFragment, getSchema, type JSONContent, type MarkdownRendererHelpers, mergeAttributes, Node } from '@tiptap/core';
 import Heading from '@tiptap/extension-heading';
 import Image from '@tiptap/extension-image';
 import Paragraph from '@tiptap/extension-paragraph';
@@ -24,7 +24,7 @@ import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table
 import TextAlign from '@tiptap/extension-text-align';
 import { Color, TextStyle } from '@tiptap/extension-text-style';
 import { Markdown } from '@tiptap/markdown';
-import { Node as PMNode, type Schema } from '@tiptap/pm/model';
+import { Fragment, Node as PMNode, type Schema } from '@tiptap/pm/model';
 import { Placeholder } from '@tiptap/extensions';
 import StarterKit from '@tiptap/starter-kit';
 
@@ -215,6 +215,42 @@ export function fitFrame(f: HTMLIFrameElement): () => void {
 
 const KIND_LABEL: Record<string, string> = { forward: 'Forwarded message', quote: 'Quoted text', html: 'HTML' };
 
+/** A kept-whole block's bar: what it is first, as a phone's narrow bar cuts the rest (its tooltip has it all). */
+export function islandName(kind: string, label: string, html: string): { text: string; title: string } {
+  const size = new Blob([html]).size;
+  const kb = size < 1024 ? `${size} B` : `${Math.round(size / 1024)} KB`;
+  const what = `${KIND_LABEL[kind] ?? 'HTML'}${label ? ` · ${label}` : ''}`;
+  return { text: `Kept as its own HTML · ${kb} · ${what}`, title: `${what}: kept as its own HTML, and sent as it is (${kb})` };
+}
+
+/**
+ * A kept-whole block as ordinary text (its bar's "Make it text"): its words, links, pictures, lists and quotes, with
+ * its layout and styles gone. A layout's tables become their cells, one after another.
+ */
+export function islandText(e: Editor, html: string): JSONContent[] {
+  const d = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html');
+  for (const x of d.querySelectorAll('style, link, script, title, meta')) x.remove();
+  // The innermost first, so an outer table's cells are found after its inner ones are gone.
+  for (const t of [...d.querySelectorAll('table')].reverse()) {
+    const cells = [...t.querySelectorAll('td, th')].filter((c) => c.closest('table') === t);
+    t.replaceWith(
+      ...cells.map((c) => {
+        const div = d.createElement('div');
+        div.append(...c.childNodes);
+        return div;
+      }),
+    );
+  }
+  // The attribution ("On …, Sam wrote:") or the forwarded-message lines: a line of text.
+  const head = d.body.querySelector(':scope > .dc-quote-head, :scope > .dc-forward-head');
+  if (head) {
+    const line = d.createElement('p');
+    line.append(...head.childNodes);
+    head.replaceWith(line);
+  }
+  return generateJSON(d.body.innerHTML, e.extensionManager.extensions).content ?? [];
+}
+
 /** An island's "Edit HTML": its own HTML editor opens in `host`, under it (MailEditor mounts it); `set` takes the edits. */
 export interface IslandEdit {
   host: HTMLElement;
@@ -278,8 +314,9 @@ const Island = Node.create({
       const name = document.createElement('span');
       name.className = 'me-island-name';
       const naming = (n: PMNode) => {
-        const size = new Blob([n.attrs.html]).size;
-        name.textContent = `${KIND_LABEL[n.attrs.kind] ?? 'HTML'}${n.attrs.label ? ` · ${n.attrs.label}` : ''} · its own HTML, sent as it is · ${size < 1024 ? `${size} B` : `${Math.round(size / 1024)} KB`}`;
+        const said = islandName(n.attrs.kind, n.attrs.label, n.attrs.html);
+        name.textContent = said.text;
+        name.title = said.title;
       };
       naming(node);
       const fold = document.createElement('button');
@@ -334,7 +371,17 @@ const Island = Node.create({
         };
         dom.dispatchEvent(new CustomEvent('me-edit-island', { bubbles: true, detail }));
       };
-      bar.append(code, remove);
+      // Its layout given up for text you can edit like your own (Undo brings it back).
+      const plain = document.createElement('button');
+      plain.type = 'button';
+      plain.className = 'me-island-btn';
+      plain.textContent = 'Make it text';
+      plain.title = 'Turn it into ordinary text you can edit and answer inside: its layout and styles go (Undo brings them back)';
+      plain.onclick = () => {
+        const at = typeof getPos === 'function' ? getPos() : null;
+        if (at != null) editor.chain().focus().insertContentAt({ from: at, to: at + node.nodeSize }, islandText(editor, node.attrs.html)).run();
+      };
+      bar.append(code, plain, remove);
       const sheet = document.createElement('div');
       sheet.className = 'me-island-sheet';
       const frame = document.createElement('iframe');
@@ -461,7 +508,14 @@ function alignedHtml(node: JSONContent): string | null {
   const tag = node.type === 'heading' ? `h${node.attrs?.level ?? 1}` : 'p';
   return `<${tag} style="text-align: ${align}">${inner}</${tag}>`;
 }
+/** A line with only a line break in it (`<p><br></p>`, Gmail's `<div><br></div>`): an empty line, one line tall. */
+const loneBreak = (el: HTMLElement) => (el.childNodes.length === 1 && el.firstChild!.nodeName === 'BR' ? null : false);
 const AlignedParagraph = Paragraph.extend({
+  parseHTML: () => [
+    { tag: 'p', getAttrs: loneBreak, getContent: () => Fragment.empty },
+    { tag: 'div', getAttrs: loneBreak, getContent: () => Fragment.empty },
+    { tag: 'p' },
+  ],
   renderMarkdown: (node: JSONContent, h: MarkdownRendererHelpers, ctx: unknown) => alignedHtml(node) ?? Paragraph.config.renderMarkdown!.call(null as never, node as never, h, ctx as never),
 });
 const AlignedHeading = Heading.extend({
@@ -529,7 +583,12 @@ export function docHtml(editor: Editor): string {
     if (n.type.name === 'island') islands.push(n.attrs.html as string);
   });
   let i = 0;
-  return editor.getHTML().replace(/<div data-dc-island="[^"]*"[^>]*><\/div>/g, (m) => m.replace('></div>', `>${islands[i++] ?? ''}</div>`));
+  return editor
+    .getHTML()
+    // An empty line as mail apps write one (an empty <p> is drawn as nothing); the editor's empty last line not at all.
+    .replace(/(<p(?:\s[^>]*)?><\/p>)+$/, '')
+    .replace(/<p(\s[^>]*)?><\/p>/g, '<p$1><br></p>')
+    .replace(/<div data-dc-island="[^"]*"[^>]*><\/div>/g, (m) => m.replace('></div>', `>${islands[i++] ?? ''}</div>`));
 }
 
 /** Markdown of the document, with islands and pasted pictures as their stand-ins. */

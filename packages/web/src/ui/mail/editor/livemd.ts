@@ -70,7 +70,8 @@ class Char extends WidgetType {
   }
   toDOM() {
     const s = document.createElement('span');
-    s.textContent = this.ch;
+    // A word joiner on the side of the text it belongs to: "<jo@park.example>" breaks as a whole, never after its "<".
+    s.textContent = this.ch === '<' ? '<\u2060' : this.ch === '>' ? '\u2060>' : this.ch;
     return s;
   }
 }

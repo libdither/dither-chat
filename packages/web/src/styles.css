@@ -14406,6 +14406,9 @@ button.msg-edited.link:hover {
 }
 .mc-row-x {
   flex: none;
+  /* No taller than the To line's own links. */
+  width: 24px;
+  height: 24px;
   margin-left: auto;
   color: var(--text-faint);
 }
@@ -14733,10 +14736,11 @@ button.msg-edited.link:hover {
   padding-left: 1.6em;
 }
 /* A mail quote: the bar mail apps draw, the text in the editor's own colour (it is yours to trim or answer in). */
+/* Over the quote's own inline style, which is for the mail as it goes (schema.ts blockquote): the same bar as Markdown's. */
 .me-rich-doc blockquote {
-  margin: 0 0 0.6em 2px;
-  padding-left: 10px;
-  border-left: 2px solid var(--text-faint);
+  margin: 0 0 0.6em 2px !important;
+  padding-left: 10px !important;
+  border-left: 2px solid var(--text-faint) !important;
 }
 /* A picture from an original that will not go (MailEditor's leftOut): faded and dashed; a held one, already striped, keeps its strength. */
 .me-rich-doc img.dc-out {
