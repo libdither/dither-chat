@@ -1,11 +1,11 @@
 /**
  * Switching a run of pictures to another way where it is (docs/pictures.md, "Switching in the chat"). On a computer,
- * a rail of the five ways stands beside the run: invisible until you point at the message, then only the way in use,
- * faint; pointing at that brings in the other four. On a phone, a chip at the top right of the message (its words
- * wrap round it) is a wheel of the five: drag it up or down, scroll on it, or pinch the pictures, and the run slides
- * from one way to the next in PICTURE_ORDER, sticky near each (pictures.ts slidePosition) and undone by going back,
- * until you let go. A tap opens the list. Either way the choice is saved for that chat (place_pref.pictures), with no
- * toast: the run shows it.
+ * a rail of the five ways stands in the gutter left of the run, under the avatar: invisible until you point at the
+ * message, then only the way in use, faint, at the top; pointing at that brings in the other four below it. On a
+ * phone, a chip at the top right of the message (its words wrap round it) is a wheel of the five: drag it up or down,
+ * scroll on it, or pinch the pictures, and the run slides from one way to the next in PICTURE_ORDER, sticky near each
+ * (pictures.ts slidePosition) and undone by going back, until you let go. A tap opens the list. Either way the
+ * choice is saved for that chat (place_pref.pictures), with no toast: the run shows it.
  */
 import { signal, type Signal } from '@preact/signals';
 import type { PictureLayout } from '@dither-chat/protocol';
@@ -86,10 +86,29 @@ function choose(runKey: string, convId: string, l: PictureLayout) {
 
 // ------------------------------------------------------------------ the computer's rail
 
+/**
+ * The rail the pointer is on, and the way that was first on it when the pointer came. Outside the component, so it
+ * outlasts the redraw a choice makes.
+ */
+const railHeld = signal<{ runKey: string; first: PictureLayout } | null>(null);
+
+/**
+ * The way in use first, so it is the one at the top when the rest are hidden; then the others in PICTURE_ORDER. While
+ * the pointer is on the rail its order holds, so a click doesn't reshuffle the icons under it.
+ */
 export function PictureRail({ layout, convId, runKey }: { layout: PictureLayout; convId: string; runKey: string }) {
+  const held = railHeld.value;
+  const first = held?.runKey === runKey ? held.first : layout;
+  const order = [first, ...PICTURE_ORDER.filter((l) => l !== first)];
   return (
-    <div class="pics-rail" role="group" aria-label="Show these pictures as">
-      {PICTURE_ORDER.map((l) => (
+    <div
+      class="pics-rail"
+      role="group"
+      aria-label="Show these pictures as"
+      onPointerEnter={() => railHeld.value?.runKey !== runKey && (railHeld.value = { runKey, first: layout })}
+      onPointerLeave={() => railHeld.value?.runKey === runKey && (railHeld.value = null)}
+    >
+      {order.map((l) => (
         <button
           class="pics-rail-btn"
           aria-pressed={l === layout}
