@@ -42,7 +42,7 @@ import { sliced } from './slices.ts';
 import { StallWatch, timedWrite } from './stalls.ts';
 import { NdjsonFile, setSpanThrowHook, setTraceSink, span, spansBetween, type Span } from './trace.ts';
 import { inQuietHours } from './triage.ts';
-import { onRing, ringMuted, ringWords, sweepCalls } from './callstate.ts';
+import { onRing, ringGate, ringWords, sweepCalls } from './callstate.ts';
 import { CalendarAccounts, seedCalendarAccount } from './calendar-account.ts';
 import { ErrorLog, jobFailed, reportError, setErrorLog } from './errors.ts';
 import { readPassword } from './auth.ts';
@@ -307,11 +307,20 @@ onRing(store, (n) => {
     push.clear(tag).catch((e) => console.error('push clear failed', e));
     return;
   }
-  if (ringMuted(store, c) || inQuietHours(store.quietHours(), Date.now())) return;
+  const gate = ringGate(store, c, Date.now());
+  if (gate !== 'ring') {
+    console.log(`ring: ${c.id} not sent to devices (${gate === 'muted' ? 'muted' : 'quiet hours'})`);
+    return;
+  }
   const { title, body } = ringWords(store, c);
   const look = store.notifyLook(c.conversationId, undefined);
   const call = { id: c.id, tag, accountId: c.accountId, canAnswer: c.canAnswer, canDecline: c.canDecline };
-  push.notify(title, body, c.conversationId, { ...look, call, level: 'push', tier: 'push' }, devices.quietOn(c.conversationId, false), 'push').catch((e) => console.error('push failed', e));
+  // Logged as a notification of its own, so the phones' delivered and shown reports say whether it rang there.
+  const nid = activity.notification({ kind: 'ring', conversationId: c.conversationId });
+  push
+    .notify(title, body, c.conversationId, { ...look, call, level: 'push', tier: 'push', ...(nid ? { nid } : {}) }, devices.quietOn(c.conversationId, false), 'push')
+    .then((r) => nid && activity.sent(nid, r))
+    .catch((e) => console.error('push failed', e));
 });
 
 // Read anywhere since its notification went out: off open pages, the phones and the computers (clears.ts). New

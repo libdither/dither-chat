@@ -228,7 +228,7 @@ export function describeActivity(f: P.PlaceActivity): string | null {
 // ------------------------------------------------------------------ the store
 
 /** `reminder`: a calendar reminder from before calendar accounts, with no message or conversation (old rows; now a reminder is a message). */
-type NotificationKind = 'message' | 'held' | 'digest' | 'request' | 'reminder';
+type NotificationKind = 'message' | 'held' | 'digest' | 'request' | 'reminder' | 'ring';
 
 export interface Features {
   conversation: P.PlaceActivity;
