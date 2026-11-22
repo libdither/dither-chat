@@ -14812,6 +14812,7 @@ button.msg-edited.link:hover {
 }
 .me-island-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   padding: 4px 6px 4px 10px;
@@ -14821,7 +14822,8 @@ button.msg-edited.link:hover {
   cursor: grab;
 }
 .me-island-name {
-  flex: 1;
+  /* Its first words ("Kept as its own HTML · 87 KB") on a line of their own on a phone, the buttons under them. */
+  flex: 1 1 14em;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -705,6 +705,31 @@ async function composerDesktop(themeName: string, full: boolean) {
   const left = ((await fetch(`${base}/api/mail/drafts`).then((r) => r.json())) as any).drafts as any[];
   check(`${tag}: after its Undo, the draft is gone`, !(await has('.mail-drafts-line')) && !(await has('.mc-out.discarded')) && !left.length, left.length);
   await forwardWithPictures(tag);
+  await leftAsLeft(tag);
+}
+
+/** A reply emptied on purpose stays empty when it is opened again. */
+async function leftAsLeft(tag: string) {
+  await page.eval(`location.hash = '#/mail/t/${lease.id}'`);
+  await page.until(`document.querySelector('.mail-reader .mail-subject')?.textContent === ${JSON.stringify(lease.subject)}`, 15000);
+  const reply = async () => {
+    await click(await at('.mail-reader-bar .hdr-btn, .mail-msg-actions .hdr-btn', `el => el.textContent.trim() === 'Reply'`));
+    await page.until(`!!document.querySelector('.me-rich-doc')`, 15000);
+    await Bun.sleep(600);
+  };
+  await reply();
+  check(`${tag}: a reply starts with its quote`, (await has('.me-rich-doc blockquote')) || (await has('.me-island')));
+  await typeBody('');
+  await page.until(`!document.querySelector('.me-rich-doc blockquote, .me-island')`, 5000).catch(() => {});
+  await Bun.sleep(1200);
+  await click(await at('.mc-head .icon-btn', `el => (el.getAttribute('aria-label') ?? '').startsWith('Close')`));
+  await page.until(`!document.querySelector('.mc-layer')`, 5000).catch(() => {});
+  await reply();
+  check(`${tag}: emptied and closed, it opens again empty, with "Quote" to put the quote back`, !(await has('.me-rich-doc blockquote')) && !(await has('.me-island')) && (await has('.mc-quote-add')));
+  await click(await at('.mc-discard'));
+  // Its "Discarded · Undo" strip gone, and the draft with it: nothing left over for the checks after.
+  await page.until(`!document.querySelector('.mc-layer') && !document.querySelector('.mc-out.discarded')`, 15000).catch(() => {});
+  check(`${tag}: discarded, the emptied reply is gone`, !(await has('.mc-out.discarded')));
 }
 
 /** A big newsletter forwarded: its layout comes along, trackers gone; Embed sends its pictures inside the mail. */
@@ -813,6 +838,16 @@ async function forwardWithPictures(tag: string) {
   await click(await at('.me-island[data-kind="forward"] .me-island-btn', `el => el.textContent === 'Done'`));
   await Bun.sleep(400);
   check(`${tag}: Done closes it, and the mail is as it was`, (await page.eval<boolean>(`document.querySelector('.me-island[data-kind="forward"] .me-island-code').hidden`)) && (await page.eval<string>(`document.querySelector('.mc-size-btn')?.textContent ?? ''`)) === sizeBefore);
+  // Make it text turns the block into the document's text, the caret at its start in sight; Undo brings it back.
+  await click(await at('.me-island[data-kind="forward"] .me-island-btn', `el => el.textContent === 'Make it text'`));
+  await page.until(`!document.querySelector('.me-island')`, 5000).catch(() => {});
+  const made = await page.eval<{ island: boolean; text: boolean; top: number }>(
+    `({ island: !!document.querySelector('.me-island'), text: (document.querySelector('.me-rich-doc')?.innerText ?? '').includes('Forwarded message'), top: document.querySelector('.me-rich-doc')?.closest('.mc-scroll')?.scrollTop ?? -1 })`,
+  );
+  check(`${tag}: Make it text makes the forward text, the caret at its start`, !made.island && made.text && made.top >= 0 && made.top < 600, made);
+  await press('z', 'KeyZ', 90, 2);
+  await page.until(`!!document.querySelector('.me-island[data-kind="forward"]')`, 5000).catch(() => {});
+  check(`${tag}: Undo brings the block back`, await has('.me-island[data-kind="forward"]'));
   // Markdown draws it as it arrives, under a bar that names it: not a stand-in.
   await click(await at('.me-mode', `el => el.textContent === 'Markdown'`));
   await page.until(`!!document.querySelector('.me-markdown.shown .md-island-sheet iframe')`, 15000).catch(() => {});
@@ -1218,7 +1253,8 @@ async function filing() {
     await swipe(row(a.id), 1);
     await page.until(`!document.querySelector(${JSON.stringify(row(a.id))})`, 5000).catch(() => {});
     check(`${tag}: a swipe right archives the row away`, !(await has(row(a.id))));
-    check(`${tag}: "Archived · Undo" shows`, (await page.eval<string>(`document.querySelector('.mail-undo')?.textContent ?? ''`)).includes('Archived'));
+    const undoLine = await page.eval<string>(`document.querySelector('.mail-undo')?.textContent ?? ''`);
+    check(`${tag}: "Archived · Undo" shows`, undoLine.includes('Archived'), { undoLine, strips: await page.eval<string>(`[...document.querySelectorAll('.mc-strip, .mail-ops-note')].map((e) => e.textContent).join(' | ')`) });
     check(`${tag}: the hub archived it on the server`, await settled(a.id, (t) => t.roles.includes('archive') && !t.roles.includes('inbox'), 'it archived'));
     check(`${tag}: no sideways overflow: Undo`, !(await overflow()).length, await overflow());
     await shot(`mail-phone-${themeName}-archived`);

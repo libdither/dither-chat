@@ -128,9 +128,11 @@ type Refs = { islands: Map<string, IslandAttrs>; pictures: Map<string, string>; 
 /** Styles that change nothing you see (Apple Mail wraps every message in the first two). */
 const UNSEEN_STYLE = /^(line-break|-webkit-nbsp-mode|-webkit-line-break|word-break|overflow-wrap|word-wrap|unicode-bidi)$/i;
 /** The styles the document keeps, by tag: a span's colour, a paragraph's or heading's alignment, a quote's bar and margins (it draws its own). */
-const KEPT_STYLE: Record<string, RegExp> = { span: /^color$/i, p: /^text-align$/i, h1: /^text-align$/i, h2: /^text-align$/i, h3: /^text-align$/i, blockquote: /^(margin|padding|border-left)(-\w+)?$/i };
+const KEPT_STYLE: Record<string, RegExp> = { span: /^color$/i, a: /^(color|text-decoration)$/i, p: /^text-align$/i, h1: /^text-align$/i, h2: /^text-align$/i, h3: /^text-align$/i, blockquote: /^(margin|padding|border-left)(-\w+)?$/i };
 const PLAIN_TAGS = new Set([...'p br b strong i em u s del strike code pre a ul ol li blockquote h1 h2 h3 hr span img div'.split(' ')]);
 const PLAIN_ATTRS = /^(href|src|alt|width|height|title|rel|target|type|start|class|data-dc-src|data-dc-held|data-dc-text)$/i;
+/** Hebrew, Arabic and the scripts near them: text that reads right to left. */
+const RTL = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
 /** One declaration of an original's style that the document keeps, or that changes nothing to lose. */
 function styleKept(tag: string, prop: string, value: string): boolean {
   if (UNSEEN_STYLE.test(prop)) return true;
@@ -149,7 +151,8 @@ function plainEnough(el: Element): boolean {
   if (!PLAIN_TAGS.has(tag)) return false;
   for (const a of [...el.attributes]) {
     if (a.name === 'dir') {
-      if (!/^\s*ltr\s*$/i.test(a.value)) return false;
+      // Gmail's phone app writes dir="auto" on every line: left to right unless its text is right to left.
+      if (!/^\s*(ltr|auto)\s*$/i.test(a.value) || (/auto/i.test(a.value) && RTL.test(el.textContent ?? ''))) return false;
     } else if (a.name === 'style') {
       for (const decl of a.value.split(';')) {
         const at = decl.indexOf(':');
@@ -510,10 +513,12 @@ export function MailEditor(p: MailEditorProps) {
     const editHtml = (ev: Event) => void editIsland((ev as CustomEvent<IslandEdit>).detail);
     richHost.current!.addEventListener('me-edit-island', editHtml);
     mounting.current = true;
-    // A draft kept before there was HTML: Markdown, read once and kept as HTML from now on.
-    if (!p.initial.html && p.initial.markdown) replaceDoc(e, markdownJson(e, p.initial.markdown, { islands: new Map(), pictures: new Map() }), false);
-    if (!p.initial.html && p.initial.island) appendIsland(e, p.initial.island.island, p.initial.island.from, false);
-    if (!p.initial.html && (p.initial.markdown || p.initial.island)) emit();
+    // A draft kept before there was HTML: Markdown, read once and kept as HTML from now on. A draft with HTML, even
+    // none at all (everything deleted, the quote too), is as it was left: its quote is not put back.
+    const fresh = p.initial.html == null;
+    if (fresh && p.initial.markdown) replaceDoc(e, markdownJson(e, p.initial.markdown, { islands: new Map(), pictures: new Map() }), false);
+    if (fresh && p.initial.island) appendIsland(e, p.initial.island.island, p.initial.island.from, false);
+    if (fresh && (p.initial.markdown || p.initial.island)) emit();
     mounting.current = false;
     if (p.apiRef)
       p.apiRef.current = {

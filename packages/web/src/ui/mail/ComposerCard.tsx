@@ -157,16 +157,23 @@ function RowX({ what, onClick }: { what: string; onClick: () => void }) {
   );
 }
 
-/** An island's first line as the draft's HTML has it once it is text ("On …, Sam wrote:"), read once per island. */
-const headLines = new WeakMap<P.MailIsland, string>();
-function headLine(island: P.MailIsland): string {
-  let line = headLines.get(island);
-  if (line === undefined) {
-    const head = new DOMParser().parseFromString(`<body>${island.html}</body>`, 'text/html').querySelector('.dc-quote-head, .dc-forward-head');
-    line = (head?.textContent ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!).replace(/\s+/g, '');
-    headLines.set(island, line);
+/**
+ * How the draft's HTML shows an island once it is text, without tags or spaces: its first line ("On …, Sam wrote:")
+ * and the start of the original under it. Read once per island.
+ */
+const marksOf = new WeakMap<P.MailIsland, string[]>();
+function originalMarks(island: P.MailIsland): string[] {
+  let marks = marksOf.get(island);
+  if (!marks) {
+    const body = new DOMParser().parseFromString(`<body>${island.html}</body>`, 'text/html').body;
+    const head = body.querySelector('.dc-quote-head, .dc-forward-head');
+    const as = (t: string) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!).replace(/\s+/g, '');
+    const line = as(head?.textContent ?? '');
+    head?.remove();
+    marks = [line, as(body.textContent ?? '').slice(0, 40)].filter((m) => m.length >= 12);
+    marksOf.set(island, marks);
   }
-  return line;
+  return marks;
 }
 /**
  * The draft still holds the original: the quote (its attribution line, or the quote kept whole) or the forwarded
@@ -176,8 +183,9 @@ function hasOriginal(html: string | null | undefined, kind: 'quote' | 'forward',
   if (!html) return false;
   if (html.includes(`data-dc-island="${kind}"`)) return true;
   if (kind === 'forward' && /-{4,} Forwarded message -{4,}/.test(html)) return true;
-  const line = headLine(island);
-  return !!line && html.replace(/<[^>]*>/g, '').replace(/\s+/g, '').includes(line);
+  // Its attribution, or its first words when the attribution was edited: either way the original is still there.
+  const text = html.replace(/<[^>]*>/g, '').replace(/\s+/g, '');
+  return originalMarks(island).some((m) => text.includes(m));
 }
 
 /**
@@ -614,6 +622,10 @@ export function Composer({ open }: { open: ComposeOpen }) {
    * False when there was nothing to keep: then it is gone.
    */
   const keep = (force = false): boolean => {
+    // As it is this moment (the editor's last keystrokes written back), not as this render had it.
+    const cd = cur.current?.d;
+    const all: P.MailDraft | null = cd ? { ...cd, files: [...cd.files, ...done] } : null;
+    const sig = all ? JSON.stringify(all) : '';
     if (!key || !all) return false;
     if (isBlank(all) && !files.length) {
       void deleteDraft(key);
@@ -636,6 +648,7 @@ export function Composer({ open }: { open: ComposeOpen }) {
   };
   /** Closed: kept as a draft (gone if nothing was written). */
   const close = () => {
+    editorApi.current?.flush();
     keep();
     dropOrphans();
     mailCompose.value = null;
@@ -653,6 +666,7 @@ export function Composer({ open }: { open: ComposeOpen }) {
 
   /** Thrown away, with Undo in the strip for a few seconds; then the draft and its files go. */
   const discard = () => {
+    editorApi.current?.flush();
     if (keep(true) && key && d) discardLater({ key, kind: d.kind, threadId: open.threadId ?? (key.startsWith('t:') ? key.slice(2) : undefined), subject: d.subject });
     dropOrphans();
     mailCompose.value = null;
