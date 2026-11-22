@@ -4,7 +4,7 @@ import { ATTACHMENT_LIMITS, fileBatches, splitsFiles, SYNC_VERSION } from '@dith
 import { leaveLayerEntry, takeOverLayers } from './phone.ts';
 import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snapshot.ts';
 import { arrivedInto, carryArrived, doneArrived, dropArrived, heldEnds, isArrivedCopy, stripArrived } from './arrived.ts';
-import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, identityVersion, indexThreads, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
+import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, identityVersion, indexThreads, onlyOpens, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
 import { changed, mailChanged, timelineChanged, timelineRev } from './versions.ts';
 import { applyTyping, type TypingState } from './typers.ts';
 import { ECHO_SKEW, mayBeOut, openOutbox, settled, type Echo, type OutboxEntry, type SendMedia } from './outbox.ts';
@@ -21,7 +21,7 @@ import { closeCleared, closeNotifications, readIn, tidyNotifications } from './s
 // ------------------------------------------------------------------ data
 
 /** What components read to re-render: `rev` for the lists, `metaRev` for names and settings, one per timeline (versions.ts). */
-export { changed, dataVersion, mailRev, metaRev, rev,  timelineRev } from './versions.ts';
+export { changed, dataVersion, mailRev, metaRev, readMinute, rev, timelineRev } from './versions.ts';
 export { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines,  } from './store.ts';
 export const connected = signal(false);
 /** Notices on this hub (docs/notices.md): whether it may read them; null when it has none. */
@@ -304,6 +304,7 @@ export function applyEvents(events: P.ClientEvent[]) {
   let meta = false;
   let shown = false;
   let mail = false;
+  let opened = false;
   for (const ev of events) {
     // Mail has its own signal: chat's lists do not draw again for it.
     if (ev.t.startsWith('mail.')) mail = true;
@@ -314,6 +315,8 @@ export function applyEvents(events: P.ClientEvent[]) {
       if (ev.t === 'conversation') meta ||= conversationMetaChanged(db.conversations.get(ev.conversation.id), ev.conversation);
       // An account already here changing its status or name: the set of accounts, which decides what is shown, stays.
       else if (SHOWN_ONLY.has(ev.t) || (ev.t === 'account' && db.accounts.has(ev.account.id))) shown = true;
+      // A folder opened or closed (here or on another device): nothing a message or a row shows.
+      else if (ev.t === 'placePrefs' && onlyOpens(db, ev.prefs)) opened = true;
       else if (!LIST_ONLY.has(ev.t)) meta = true;
     }
     threadsDirty = applyEventTo(db, ev) || threadsDirty;
@@ -408,8 +411,11 @@ export function applyEvents(events: P.ClientEvent[]) {
   for (const key of regrouped) if (!timelines.get(key)?.loading) void catchUp(key);
   settle();
   if (meta) changed('meta');
-  else if (shown || identityVersion() !== ids) changed('shown');
-  else if (list) changed('list');
+  else {
+    if (opened) changed('open');
+    if (shown || identityVersion() !== ids) changed('shown');
+    else if (list) changed('list');
+  }
   if (mail) mailChanged();
 }
 
@@ -1157,7 +1163,7 @@ export function patchPlaces(items: P.PlacePrefPatch[]) {
     if (i.pictures === null) delete next.pictures;
     db.placePrefs.set(k, next);
   }
-  changed('meta');
+  changed(items.every((i) => Object.keys(i).every((k) => k === 'kind' || k === 'id' || k === 'open')) ? 'open' : 'meta');
   return api('/api/place-prefs', { method: 'PATCH', body: { items } }).catch(placeFailed);
 }
 function placeFailed(e: Error) {

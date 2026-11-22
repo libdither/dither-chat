@@ -2,18 +2,11 @@
  "note": "bun scripts/verify-response.ts --update (docs/perf.md, \"Every click\"): lists that clicks draw again, page / control to the components. It should only shrink.",
  "known": {
   "Accounts / acc-row.row": [
-   "AccountDots",
    "FeatureIcons",
    "Icon",
    "KindBadge",
    "M$1",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "RowName",
-   "SpaceIcon"
+   "RowName"
   ],
   "Accounts / add-btn:Add account": [
    "FeatureIcons",
@@ -26,7 +19,6 @@
    "Icon",
    "KindBadge",
    "M$1",
-   "RailEntryView",
    "RowName"
   ],
   "Accounts / hub: a visit counted": [
@@ -34,7 +26,6 @@
    "Icon",
    "KindBadge",
    "M$1",
-   "RailEntryView",
    "RowName"
   ],
   "Accounts / input:on": [
@@ -42,7 +33,6 @@
    "Icon",
    "KindBadge",
    "M$1",
-   "RailEntryView",
    "RowName"
   ],
   "Accounts / seg-btn:Do not disturb": [
@@ -50,7 +40,6 @@
    "Icon",
    "KindBadge",
    "M$1",
-   "RailEntryView",
    "RowName"
   ],
   "Accounts / seg-btn:Idle": [
@@ -58,7 +47,6 @@
    "Icon",
    "KindBadge",
    "M$1",
-   "RailEntryView",
    "RowName"
   ],
   "Accounts / seg-btn:Invisible": [
@@ -66,7 +54,6 @@
    "Icon",
    "KindBadge",
    "M$1",
-   "RailEntryView",
    "RowName"
   ],
   "Accounts / seg-btn:Online": [
@@ -74,299 +61,156 @@
    "Icon",
    "KindBadge",
    "M$1",
-   "RailEntryView",
    "RowName"
   ],
   "Feed / feed-src:Activity": [
-   "AccountDots",
    "Icon",
-   "M$1",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "Feed / feed-src:Drafts": [
-   "AccountDots",
    "Icon",
-   "M$1",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "Feed / feed-src:Your posts": [
-   "AccountDots",
    "Icon",
-   "M$1",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "Feed / hub: a visit counted": [
    "Icon",
-   "M$1",
-   "RailEntryView"
+   "M$1"
+  ],
+  "For you / held: the app's clocks": [
+   "Age",
+   "Ago",
+   "Owed"
   ],
   "For you / how it sorts": [
-   "Age",
-   "Ago",
-   "M$1",
-   "MarkableRow",
-   "Owed",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "For you / hub: a visit counted": [
-   "Age",
-   "Ago",
-   "M$1",
-   "MarkableRow",
-   "Owed",
-   "RailEntryView"
+   "M$1"
   ],
   "For you / less like this": [
-   "Age",
-   "Ago",
-   "M$1",
-   "MarkableRow",
-   "Owed",
-   "RailEntryView"
+   "M$1"
   ],
   "Mail / Search mail": [
-   "AccountDots",
-   "M$1",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "Mail / chip-btn:Everything": [
-   "AccountDots",
    "Icon",
-   "M$1",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "Mail / chip-btn:Updates": [
-   "AccountDots",
-   "M$1",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "Mail / hub: a visit counted": [
-   "M$1",
-   "RailEntryView"
+   "M$1"
   ],
   "Mail / mail-row.mail-updates-row.row": [
-   "AccountDots",
-   "M$1",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "Mail / mail-row.row": [
-   "AccountDots",
    "Icon",
-   "M$1",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
-  "Notices / hub: a visit counted": [
+  "Notices / held: the app's clocks": [
    "Age",
    "Ago",
-   "Icon",
-   "M$1",
-   "MarkableRow",
-   "Owed",
-   "RailEntryView"
+   "Owed"
+  ],
+  "Notices / hub: a visit counted": [
+   "M$1"
+  ],
+  "People / held: the app's clocks": [
+   "Ago"
   ],
   "People / hub: a visit counted": [
-   "Ago",
    "Icon",
-   "M$1",
-   "RailEntryView"
+   "M$1"
   ],
   "People / people graph": [
    "Icon",
-   "M$1",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "People / row (person)": [
    "Icon",
-   "M$1",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "People / row (person, unread)": [
-   "Ago",
    "Icon",
-   "M$1",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "People / same person": [
    "Icon",
-   "M$1",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "Requests / Nitro Drops's profile": [
-   "M$1",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "Requests / Open your DM with Wren on Discord alt, without answering": [
    "AccountDots",
-   "Age",
-   "Ago",
    "Avatar",
    "CallMark",
    "ConvRow",
    "Count",
    "Icon",
    "M$1",
-   "MarkableRow",
    "NetBadge",
    "NetGlyph",
-   "Owed",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "RowTyping",
-   "SpaceIcon"
+   "RowTyping"
   ],
   "Requests / Wren's profile": [
-   "M$1",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "Requests / btn.ghost.small:Decline": [
-   "Age",
-   "Ago",
-   "Icon",
-   "M$1",
-   "MarkableRow",
-   "Owed",
-   "RailEntryView"
+   "M$1"
   ],
   "Requests / btn.primary.small:Accept": [
    "AccountDots",
-   "Age",
-   "Ago",
    "Avatar",
    "CallMark",
    "ConvRow",
    "Count",
    "Icon",
    "M$1",
-   "MarkableRow",
    "NetBadge",
    "NetGlyph",
-   "Owed",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "RowTyping",
-   "SpaceIcon"
+   "RowTyping"
+  ],
+  "Requests / held: the app's clocks": [
+   "Age",
+   "Ago",
+   "Owed"
   ],
   "Requests / hub: a visit counted": [
-   "Age",
-   "Ago",
-   "Icon",
-   "M$1",
-   "MarkableRow",
-   "Owed",
-   "RailEntryView"
+   "M$1"
   ],
   "Requests / link-btn.request-name:Nitro Drops": [
-   "M$1",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "Requests / link-btn.request-name:Wren": [
-   "M$1",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
-  "Search / hub: a visit counted": [
+  "Search / held: the app's clocks": [
    "Age",
    "Ago",
-   "Icon",
+   "Owed"
+  ],
+  "Search / hub: a visit counted": [
    "Line",
    "M$1",
-   "MarkableRow",
    "Menuable",
-   "Owed",
-   "RailEntryView",
    "Snippet"
   ],
   "Search / pager: back button": [
    "AccountDots",
-   "Age",
-   "Ago",
    "CallMark",
    "ConvRow",
    "Count",
-   "Icon",
-   "MarkableRow",
-   "NetBadge",
-   "Owed",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "RowTyping",
-   "SpaceIcon"
+   "RowTyping"
   ],
   "Search / search-chip-main:Mentions me": [
-   "M$1",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "Search / search: tab (files)": [
    "Line",
@@ -380,48 +224,13 @@
    "Menuable",
    "Snippet"
   ],
-  "Settings / how it sorts": [
-   "AccountDots",
-   "NetBadge",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "Settings / hub: a visit counted": [
-   "RailEntryView"
-  ],
-  "Settings / settings: section Accounts": [
-   "AccountDots",
-   "NetBadge",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a DM / Profile of Contact #": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a DM / Profile of You": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a DM / hub: a visit counted": [
+  "a DM / held: the app's clocks": [
    "Age",
    "Ago",
-   "MarkableRow",
-   "Owed",
-   "RailEntryView"
+   "Owed"
   ],
   "a DM, details open / Conversations and alerts are worked out for you": [
    "AccountDots",
-   "Age",
-   "Ago",
    "Attachments",
    "Body",
    "CallMark",
@@ -433,15 +242,11 @@
    "Icon",
    "InviteCards",
    "M$1",
-   "MarkableRow",
    "Marks",
-   "Memo(ConvRow)",
    "MessageItem",
    "MissingFiles",
    "NetBadge",
    "NetGlyph",
-   "Owed",
-   "RailEntryView",
    "ReactionBar",
    "RichHead",
    "RichMarks",
@@ -452,8 +257,6 @@
   ],
   "a DM, details open / Every message here is an alert": [
    "AccountDots",
-   "Age",
-   "Ago",
    "Attachments",
    "Body",
    "CallMark",
@@ -465,15 +268,11 @@
    "Icon",
    "InviteCards",
    "M$1",
-   "MarkableRow",
    "Marks",
-   "Memo(ConvRow)",
    "MessageItem",
    "MissingFiles",
    "NetBadge",
    "NetGlyph",
-   "Owed",
-   "RailEntryView",
    "ReactionBar",
    "RichHead",
    "RichMarks",
@@ -484,8 +283,6 @@
   ],
   "a DM, details open / Never a conversation row or an alert; it can still be on the list": [
    "AccountDots",
-   "Age",
-   "Ago",
    "Attachments",
    "Body",
    "CallMark",
@@ -497,15 +294,11 @@
    "Icon",
    "InviteCards",
    "M$1",
-   "MarkableRow",
    "Marks",
-   "Memo(ConvRow)",
    "MessageItem",
    "MissingFiles",
    "NetBadge",
    "NetGlyph",
-   "Owed",
-   "RailEntryView",
    "ReactionBar",
    "RichHead",
    "RichMarks",
@@ -516,8 +309,6 @@
   ],
   "a DM, details open / No notification and never on the list; the unread count only": [
    "AccountDots",
-   "Age",
-   "Ago",
    "Attachments",
    "Body",
    "CallMark",
@@ -529,15 +320,11 @@
    "Icon",
    "InviteCards",
    "M$1",
-   "MarkableRow",
    "Marks",
-   "Memo(ConvRow)",
    "MessageItem",
    "MissingFiles",
    "NetBadge",
    "NetGlyph",
-   "Owed",
-   "RailEntryView",
    "ReactionBar",
    "RichHead",
    "RichMarks",
@@ -546,36 +333,13 @@
    "StoryReplyLine",
    "TriageNote"
   ],
-  "a DM, details open / Profile of Contact #": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a DM, details open / Profile of You": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a DM, details open / btn.det-about.ghost.small:About and settings": [
-   "MarkableRow",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a DM, details open / hub: a visit counted": [
+  "a DM, details open / held: the app's clocks": [
    "Age",
    "Ago",
-   "MarkableRow",
-   "Owed",
-   "RailEntryView"
+   "Owed"
   ],
   "a channel / # people": [
    "AccountDots",
-   "Age",
-   "Ago",
    "Attachments",
    "Body",
    "CallMark",
@@ -587,14 +351,11 @@
    "Icon",
    "InviteCards",
    "M$1",
-   "MarkableRow",
    "Marks",
    "MessageItem",
    "MissingFiles",
    "NetBadge",
    "NetGlyph",
-   "Owed",
-   "RailEntryView",
    "ReactionBar",
    "RichHead",
    "RichMarks",
@@ -603,279 +364,55 @@
    "StoryReplyLine",
    "TriageNote"
   ],
-  "a channel / Profile of Member #": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a channel / about": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a channel / accounts": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a channel / community": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a channel / crumb (community)": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a channel / folder (open)": [
-   "AccountDots",
+  "a channel / held: the app's clocks": [
    "Age",
    "Ago",
-   "Attachments",
-   "Body",
-   "CallMark",
-   "ContactCards",
-   "ConvRow",
-   "Count",
-   "DisappearsMark",
-   "Embeds",
-   "Icon",
-   "InviteCards",
-   "M$1",
-   "MarkableRow",
-   "Marks",
-   "MessageItem",
-   "MissingFiles",
-   "NetBadge",
-   "NetGlyph",
-   "Owed",
-   "RailEntryView",
-   "ReactionBar",
-   "RichHead",
-   "RichMarks",
-   "RowTyping",
-   "SendFailures",
-   "StoryReplyLine",
-   "TriageNote"
-  ],
-  "a channel / hub: a visit counted": [
-   "Age",
-   "Ago",
-   "MarkableRow",
-   "Owed",
-   "RailEntryView"
+   "Owed"
   ],
   "a channel / inbox": [
    "AccountDots",
-   "Age",
-   "Ago",
    "CallMark",
    "ConvRow",
    "Count",
-   "MarkableRow",
    "NetBadge",
    "NetGlyph",
-   "Owed",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "RowTyping",
-   "SpaceIcon"
-  ],
-  "a channel / mail": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a channel / mark no reply needed": [
-   "Age",
-   "Ago",
-   "MarkableRow",
-   "Owed",
-   "RailEntryView"
-  ],
-  "a channel / mark reply needed": [
-   "Age",
-   "Ago",
-   "MarkableRow",
-   "Owed",
-   "RailEntryView"
-  ],
-  "a channel / name": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a channel / notices row": [
-   "MarkableRow",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a channel / people": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a channel / picture": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a channel / requests row": [
-   "MarkableRow",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a channel / row (DM, owes a reply)": [
-   "MarkableRow",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a channel / row (DM, unread)": [
-   "Age",
-   "Ago",
-   "MarkableRow",
-   "Owed",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a channel / row (channel, unread)": [
-   "Age",
-   "Ago",
-   "MarkableRow",
-   "Owed",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a channel / row (group, unread)": [
-   "Age",
-   "Ago",
-   "MarkableRow",
-   "Owed",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a channel / search here": [
-   "MarkableRow",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a channel / settings": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "RowTyping"
   ],
   "a channel's About / About this server": [
-   "AccountDots",
-   "CallMark",
-   "ChannelRow",
-   "Count",
    "Icon",
-   "M$1",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "a channel's About / Discord channel": [
-   "AccountDots",
    "CallMark",
    "ChannelRow",
    "Count",
    "Icon",
-   "M$1",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "a channel's About / Mute": [
    "CallMark",
    "ChannelRow",
    "Count",
    "Icon",
-   "M$1",
-   "RailEntryView"
-  ],
-  "a channel's About / Open": [
-   "AccountDots",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a channel's About / Search": [
-   "AccountDots",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "a channel's About / hub: a visit counted": [
-   "CallMark",
-   "ChannelRow",
-   "Count",
-   "Icon",
-   "M$1",
-   "RailEntryView"
+   "M$1"
   ],
   "a channel's About / input:on": [
    "CallMark",
    "ChannelRow",
    "Count",
    "Icon",
-   "M$1",
-   "RailEntryView"
+   "M$1"
   ],
-  "a channel's About / tree-head:CATEGORY #": [
-   "CallMark",
-   "ChannelRow",
-   "Count"
-  ],
-  "a channel, a message hovered / hub: a visit counted": [
+  "a channel, a message hovered / held: the app's clocks": [
    "Age",
    "Ago",
-   "MarkableRow",
-   "Owed",
-   "RailEntryView"
+   "Owed"
   ],
   "a channel, details open / Conversations and alerts are worked out for you": [
    "AccountDots",
-   "Age",
-   "Ago",
    "Attachments",
    "Body",
    "CallMark",
@@ -887,15 +424,11 @@
    "Icon",
    "InviteCards",
    "M$1",
-   "MarkableRow",
    "Marks",
-   "Memo(ConvRow)",
    "MessageItem",
    "MissingFiles",
    "NetBadge",
    "NetGlyph",
-   "Owed",
-   "RailEntryView",
    "ReactionBar",
    "RichHead",
    "RichMarks",
@@ -906,8 +439,6 @@
   ],
   "a channel, details open / Every message here is an alert": [
    "AccountDots",
-   "Age",
-   "Ago",
    "Attachments",
    "Body",
    "CallMark",
@@ -919,15 +450,11 @@
    "Icon",
    "InviteCards",
    "M$1",
-   "MarkableRow",
    "Marks",
-   "Memo(ConvRow)",
    "MessageItem",
    "MissingFiles",
    "NetBadge",
    "NetGlyph",
-   "Owed",
-   "RailEntryView",
    "ReactionBar",
    "RichHead",
    "RichMarks",
@@ -938,8 +465,6 @@
   ],
   "a channel, details open / Never a conversation row or an alert; it can still be on the list": [
    "AccountDots",
-   "Age",
-   "Ago",
    "Attachments",
    "Body",
    "CallMark",
@@ -951,15 +476,11 @@
    "Icon",
    "InviteCards",
    "M$1",
-   "MarkableRow",
    "Marks",
-   "Memo(ConvRow)",
    "MessageItem",
    "MissingFiles",
    "NetBadge",
    "NetGlyph",
-   "Owed",
-   "RailEntryView",
    "ReactionBar",
    "RichHead",
    "RichMarks",
@@ -970,8 +491,6 @@
   ],
   "a channel, details open / No notification and never on the list; the unread count only": [
    "AccountDots",
-   "Age",
-   "Ago",
    "Attachments",
    "Body",
    "CallMark",
@@ -983,15 +502,11 @@
    "Icon",
    "InviteCards",
    "M$1",
-   "MarkableRow",
    "Marks",
-   "Memo(ConvRow)",
    "MessageItem",
    "MissingFiles",
    "NetBadge",
    "NetGlyph",
-   "Owed",
-   "RailEntryView",
    "ReactionBar",
    "RichHead",
    "RichMarks",
@@ -1000,278 +515,79 @@
    "StoryReplyLine",
    "TriageNote"
   ],
-  "a channel, details open / btn.det-about.ghost.small:About and settings": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a channel, details open / hub: a visit counted": [
+  "a channel, details open / held: the app's clocks": [
    "Age",
    "Ago",
-   "MarkableRow",
-   "Owed",
-   "RailEntryView"
-  ],
-  "a channel, details open / link-btn:Server #": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "Owed"
   ],
   "a folder / Discord announcement channel": [
-   "AccountDots",
-   "Count",
    "Icon",
-   "M$1",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "a folder / Discord channel": [
-   "AccountDots",
-   "Count",
    "Icon",
-   "M$1",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "a folder / Discord stage channel": [
-   "AccountDots",
    "Count",
    "Icon",
-   "M$1",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "a folder / Discord thread": [
-   "AccountDots",
    "Count",
    "Icon",
-   "M$1",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "M$1"
   ],
   "a folder / hub: a visit counted": [
-   "Count",
    "Icon",
-   "M$1",
-   "RailEntryView"
+   "M$1"
   ],
-  "a group / Profile of Contact #": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a group / hub: a visit counted": [
+  "a group / held: the app's clocks": [
    "Age",
    "Ago",
-   "MarkableRow",
-   "Owed",
-   "RailEntryView"
-  ],
-  "a person / Profile of Contact #": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "Owed"
   ],
   "a person / Profile of You": [
    "AccountDots",
-   "Ago",
    "CallMark",
    "Count",
    "NetBadge",
    "NetGlyph",
    "PersonRow",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "RowTyping",
-   "SpaceIcon"
+   "RowTyping"
   ],
-  "a person / hub: a visit counted": [
-   "Ago",
-   "RailEntryView"
-  ],
-  "a person / people graph": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a person / row (person)": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a person / row (person, unread)": [
-   "Ago",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a person / same person": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+  "a person / held: the app's clocks": [
+   "Ago"
   ],
   "a person's profile / Message": [
    "Icon",
    "M$1",
-   "PlaceIcon",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
+   "PlaceIcon"
+  ],
+  "a person's profile / held: the app's clocks": [
+   "Ago"
   ],
   "a person's profile / hub: a visit counted": [
-   "Ago",
    "Icon",
    "M$1",
-   "PlaceIcon",
-   "RailEntryView"
+   "PlaceIcon"
   ],
   "a person's profile / input:on": [
    "AccountDots",
-   "Ago",
    "CallMark",
    "Count",
    "Icon",
    "M$1",
-   "Memo(PersonRow)",
    "NetBadge",
    "NetGlyph",
    "PersonRow",
    "PlaceIcon",
-   "RailEntryView",
    "RowTyping"
   ],
   "a person's profile / nickname": [
    "PlaceIcon"
   ],
-  "a person's profile / people graph": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a person's profile / row (person)": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a person's profile / row (person, unread)": [
-   "Ago",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a person's profile / same person": [
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a server / About this server": [
-   "AccountDots",
-   "Count",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a server / Discord channel": [
-   "AccountDots",
-   "Count",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
-   "RailItem",
-   "RailSpace",
-   "SpaceIcon"
-  ],
-  "a server / hub: a visit counted": [
-   "Count",
-   "RailEntryView"
-  ],
-  "the directory / chip-btn:Active": [
-   "AccountChip",
-   "Card",
-   "Count",
-   "Icon",
-   "M$1",
-   "NetBadge",
-   "NetGlyph"
-  ],
-  "the directory / chip-btn:Discord": [
-   "AccountChip",
-   "Card",
-   "Icon",
-   "NetBadge",
-   "NetGlyph"
-  ],
-  "the directory / chip-btn:Name": [
-   "AccountChip",
-   "Avatar",
-   "Card",
-   "Count",
-   "Icon",
-   "M$1",
-   "NetBadge",
-   "NetGlyph"
-  ],
-  "the directory / chip-btn:Network": [
-   "AccountChip",
-   "Card",
-   "Icon",
-   "NetBadge",
-   "NetGlyph"
-  ],
-  "the directory / chip-btn:Unread": [
-   "AccountChip",
-   "Card",
-   "Count",
-   "Icon",
-   "M$1",
-   "NetBadge",
-   "NetGlyph"
-  ],
-  "the directory / chip-btn:Your order": [
-   "Card"
-  ],
   "the directory / hub: a visit counted": [
-   "AccountChip",
-   "Card",
-   "Count",
-   "Icon",
-   "M$1",
-   "NetBadge",
-   "NetGlyph",
-   "RailEntryView",
    "SpacesEntry"
   ]
  }

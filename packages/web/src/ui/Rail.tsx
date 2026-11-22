@@ -3,11 +3,12 @@ import type * as P from '@dither-chat/protocol';
 import { Fragment } from 'preact';
 import { accountsNeedingYou, convTitle, directsOf, folderConvs, folderLeaves, people, inboxBadge, placePref, spaceUnread, sumUnread, netName, unreadOf, visibleConv, type RailEntry } from '../model.ts';
 import { db, go, mailRev, markAllRead, patchPlaces, rev, route, type Route } from '../state.ts';
+import { memo } from './memo.ts';
 import { unreadInbox } from '../mail/model.ts';
 import { preloadMail } from './mail/lazy.tsx';
 import { preloadFeed } from './feed/lazy.tsx';
 import { calendarLink, calendarOn } from '../plans.ts';
-import { AccountDots, Avatar, Count, NetBadge } from './bits.tsx';
+import { AccountDots, Avatar, Count, dotsLook, NetBadge } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { DitherMark, Icon } from './icons.tsx';
 import { dropPlace, placeLabel } from './Organize.tsx';
@@ -107,17 +108,20 @@ function dnd(key: string, folder?: string, accepts = false) {
   return { ...dragProps({ key, label: placeLabel(key), group: 'rail', folder, accepts, onDrop: railDrop, onMenu: (x, y) => openPlaceMenu(key, placeLabel(key), x, y, folder) }) };
 }
 
-function RailSpace({ space: s, route: r, folder, quiet }: { space: P.SpaceView; route: Route; folder?: string; quiet?: boolean }) {
-  const u = spaceUnread(s.id);
+/**
+ * The rail's places are drawn again only when what they show changes (memo.ts): their parent works out whether each is
+ * the open one, its counts, a chat's name and a server's account dots (`dots`, which AccountDots reads), so going
+ * somewhere draws the place you left and the one you opened, and a setting or a status draws none.
+ */
+const RailSpace = memo(function RailSpace({ space: s, active, unread, badge, folder, quiet }: { space: P.SpaceView; active: boolean; unread: boolean; badge: number; folder?: string; quiet?: boolean; dots: string }) {
   const key = `space:${s.id}`;
   return (
     <RailItem
-      key={s.id}
-      active={r.view === 'space' && r.space === s.id}
-      unread={u.unread > 0}
-      badge={u.badge}
+      active={active}
+      unread={unread}
+      badge={badge}
       title={s.name}
-      sub={[`${netName(s.network)} ${NETWORK_META[s.network].spaceNoun}`, mentions(u.badge)].filter(Boolean).join(' · ')}
+      sub={[`${netName(s.network)} ${NETWORK_META[s.network].spaceNoun}`, mentions(badge)].filter(Boolean).join(' · ')}
       onClick={() => go({ view: 'space', space: s.id })}
       track={folder ? 'community (in a folder)' : 'community'}
       dnd={dnd(key, folder, !folder)}
@@ -126,46 +130,52 @@ function RailSpace({ space: s, route: r, folder, quiet }: { space: P.SpaceView; 
       <SpaceIcon space={s} />
     </RailItem>
   );
-}
+});
 
-function RailConv({ conv: c, route: r, folder }: { conv: P.ConversationView; route: Route; folder?: string }) {
-  const u = unreadOf(c);
+const RailConv = memo(function RailConv({ conv: c, title, active, unread, badge, folder }: { conv: P.ConversationView; title: string; active: boolean; unread: boolean; badge: number; folder?: string }) {
   const key = `conversation:${c.id}`;
   return (
     <RailItem
-      active={'conv' in r && r.conv === c.id}
-      unread={u.unread > 0}
-      badge={u.badge}
-      title={convTitle(c)}
-      sub={[`${netName(c.network)} ${c.shape === 'group' ? 'group' : c.shape}`, mentions(u.badge)].filter(Boolean).join(' · ')}
+      active={active}
+      unread={unread}
+      badge={badge}
+      title={title}
+      sub={[`${netName(c.network)} ${c.shape === 'group' ? 'group' : c.shape}`, mentions(badge)].filter(Boolean).join(' · ')}
       onClick={() => go(folder ? { view: 'folder', folder, conv: c.id } : { view: 'inbox', conv: c.id })}
       track={folder ? 'chat (in a folder)' : 'chat'}
       dnd={dnd(key, folder, !folder)}
       class={dropClass(key, folder)}
     >
       <span class="space-icon">
-        <Avatar id={c.id} name={convTitle(c)} url={c.avatar} size={44} square />
+        <Avatar id={c.id} name={title} url={c.avatar} size={44} square />
         <NetBadge network={c.network} size={18} class="space-net" />
       </span>
     </RailItem>
   );
-}
+});
 
-function RailPerson({ id, route: r, folder }: { id: string; route: Route; folder: string }) {
-  const p = db.persons.get(id);
-  if (!p) return null;
-  const u = sumUnread(directsOf(id));
-  const key = `person:${id}`;
+const RailPerson = memo(function RailPerson({ person: p, active, unread, badge, folder }: { person: P.PersonView; active: boolean; unread: boolean; badge: number; folder: string }) {
+  const key = `person:${p.id}`;
   return (
-    <RailItem active={r.view === 'folder' && r.person === id} unread={u.unread > 0} badge={u.badge} title={p.name} track="person (in a folder)" onClick={() => go({ view: 'folder', folder, person: id })} dnd={dnd(key, folder)} class={dropClass(key, folder)}>
+    <RailItem active={active} unread={unread} badge={badge} title={p.name} track="person (in a folder)" onClick={() => go({ view: 'folder', folder, person: p.id })} dnd={dnd(key, folder)} class={dropClass(key, folder)}>
       <Avatar id={p.id} name={p.name} url={p.avatar} size={44} />
     </RailItem>
   );
-}
+});
 
-function RailEntryView({ entry: e, route: r }: { entry: RailEntry; route: Route }) {
-  if (e.kind === 'space') return <RailSpace space={e.space} route={r} />;
-  if (e.kind === 'conversation') return <RailConv conv={e.conv} route={r} />;
+const spaceEntry = (s: P.SpaceView, r: Route, folder?: string, quiet?: boolean) => {
+  const u = spaceUnread(s.id);
+  return <RailSpace key={s.id} space={s} active={r.view === 'space' && r.space === s.id} unread={u.unread > 0} badge={u.badge} folder={folder} quiet={quiet} dots={dotsLook(s.network, s.accountIds)} />;
+};
+const convEntry = (c: P.ConversationView, r: Route, folder?: string) => {
+  const u = unreadOf(c);
+  return <RailConv key={c.id} conv={c} title={convTitle(c)} active={'conv' in r && r.conv === c.id} unread={u.unread > 0} badge={u.badge} folder={folder} />;
+};
+
+/** A top-level place of the rail; a function, not a component, so only the place itself is drawn again. */
+function entryView(e: RailEntry, r: Route) {
+  if (e.kind === 'space') return spaceEntry(e.space, r);
+  if (e.kind === 'conversation') return convEntry(e.conv, r);
   return <RailFolder folder={e.folder} route={r} />;
 }
 
@@ -196,15 +206,20 @@ function RailFolder({ folder: f, route: r, parent }: { folder: P.FolderView; rou
   const item = (it: P.FolderView['items'][number]) => {
     if (it.kind === 'folder') {
       const c = db.folders.find((x) => x.id === it.id);
-      return c ? <RailFolder folder={c} route={r} parent={f.id} /> : null;
+      return c ? <RailFolder key={c.id} folder={c} route={r} parent={f.id} /> : null;
     }
-    if (it.kind === 'person') return <RailPerson id={it.id} route={r} folder={f.id} />;
+    if (it.kind === 'person') {
+      const p = db.persons.get(it.id);
+      if (!p) return null;
+      const u = sumUnread(directsOf(p.id));
+      return <RailPerson key={p.id} person={p} active={r.view === 'folder' && r.person === p.id} unread={u.unread > 0} badge={u.badge} folder={f.id} />;
+    }
     if (it.kind === 'space') {
       const s = db.spaces.get(it.id);
-      return s ? <RailSpace space={s} route={r} folder={f.id} quiet={dim.has(it)} /> : null;
+      return s ? spaceEntry(s, r, f.id, dim.has(it)) : null;
     }
     const c = db.conversations.get(it.id);
-    return c ? <RailConv conv={c} route={r} folder={f.id} /> : null;
+    return c ? convEntry(c, r, f.id) : null;
   };
   return (
     <div class={`rail-folder ${open ? 'open' : ''} ${parent ? 'inner' : ''}`} style={{ '--folder': f.color ?? '#8b93a7' } as any}>
@@ -374,12 +389,12 @@ export function Rail() {
       <div class="rail-scroll" ref={scroll}>
         {entries.slice(0, drawn).map((e, i) => (
           <Fragment key={e.key}>
-            <RailEntryView entry={e} route={r} />
+            {entryView(e, r)}
             {placePref(e.kind, entryId(e)).pinned && !placePref(entries[i + 1]?.kind ?? 'space', entries[i + 1] ? entryId(entries[i + 1]) : '').pinned && <div class="rail-sep small" />}
           </Fragment>
         ))}
         {more}
-        {quiet.length > 0 && shelfOpen && quiet.map((e) => (e.kind === 'space' ? <RailSpace space={e.space} route={r} quiet /> : <RailEntryView entry={e} route={r} />))}
+        {quiet.length > 0 && shelfOpen && quiet.map((e) => (e.kind === 'space' ? spaceEntry(e.space, r, undefined, true) : entryView(e, r)))}
         {quiet.length > 0 && <QuietShelf list="rail" n={quiet.length} open={shelfOpen} />}
         <RailItem active={r.view === 'directory'} title="All communities" track="all communities" sub="Browse, sort and categorise" onClick={() => go({ view: 'directory' })}>
           <Icon name="grid" size={20} />

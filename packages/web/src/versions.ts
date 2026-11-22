@@ -8,6 +8,7 @@
  * - `timelineRev(key)`, one per timeline: its messages, its loading and what replies in it quote.
  * - `mailRev`, mail (docs/mail.md): its accounts, threads, lists and what the reader has loaded. Mail moving leaves the
  *   chat lists alone, and chat moving leaves mail alone.
+ * - `minute`, the clock: what says how long ago something was (`readMinute`).
  *
  * Changes are counted at once (`dataVersion`, which model.ts memoizes on); the signals move once the task that made
  * them is done.
@@ -44,13 +45,14 @@ let scheduled = false;
 /**
  * Something in `db` changed. 'meta': names or settings too, not only a conversation's last message and counts.
  * 'shown': only how things already where they are look (people's names and pictures, what a message's reaction row
- * offers), which moves `metaRev` but not what is where.
+ * offers), which moves `metaRev` but not what is where. 'open': only which folders are open, which moves what is where
+ * (`metaDataVersion`) but nothing a message or a row shows, so `metaRev` stays and the rail draws it from `rev`.
  */
-export function changed(kind: 'list' | 'meta' | 'shown') {
+export function changed(kind: 'list' | 'meta' | 'shown' | 'open') {
   version++;
   dirty.list = true;
-  if (kind !== 'list') dirty.meta = true;
-  if (kind === 'meta') metaVersion++;
+  if (kind === 'meta' || kind === 'shown') dirty.meta = true;
+  if (kind === 'meta' || kind === 'open') metaVersion++;
   schedule();
 }
 
@@ -117,4 +119,20 @@ function schedule() {
   if (scheduled) return;
   scheduled = true;
   setTimeout(flush, 0);
+}
+
+/**
+ * Moves once a minute while the page is shown, and when it is shown again: what says how long ago something was
+ * (an inbox row's time, a reply's ↩) reads this, not `rev`, so a message arriving draws its own row's time and not
+ * every row's (docs/perf.md).
+ */
+const minute = signal(0);
+let clock: ReturnType<typeof setInterval> | undefined;
+export function readMinute(): number {
+  if (clock === undefined && typeof document !== 'undefined') {
+    const tick = () => document.visibilityState === 'visible' && minute.value++;
+    clock = setInterval(tick, 60_000);
+    document.addEventListener('visibilitychange', tick);
+  }
+  return minute.value;
 }

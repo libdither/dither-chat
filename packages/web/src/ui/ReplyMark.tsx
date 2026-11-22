@@ -15,11 +15,11 @@ import type { ComponentChildren } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { since } from '../format.ts';
 import { markRow, needsReplyLabel, REPLY_MARK_LABEL } from '../replymarks.ts';
-import { rev } from '../state.ts';
+import { readMinute } from '../state.ts';
 
 /** The ↩ and how long, as the row draws it: the button over it has the same, so it covers it exactly. */
 function Age({ at }: { at: number }) {
-  rev.value;
+  readMinute();
   return <>{since(at)}</>;
 }
 
