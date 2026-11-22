@@ -310,12 +310,32 @@ export class Triage {
     return NATIVE_DEFAULT[c.shape as P.Shape] ?? 'mentions';
   }
 
-  /** Does a space this conversation is in say @everyone and @here do not notify there (NativeMute.suppressEveryone)? */
+  /**
+   * Do @everyone and @here not notify here (NativeMute.suppressEveryone)? The most specific place that says either
+   * way decides: the conversation (a Zulip topic you follow), its parent channel, then its spaces, nearest first (a
+   * Discord server). Across accounts at one place, any that would be notified.
+   */
   suppressesEveryone(c: Row): boolean {
+    return this.suppresses(c, 'suppressEveryone');
+  }
+
+  /** Do mentions of a group you are in (a Discord role) not notify here (NativeMute.suppressRoles)? As suppressesEveryone. */
+  suppressesRoles(c: Row): boolean {
+    return this.suppresses(c, 'suppressRoles');
+  }
+
+  private suppresses(c: Row, key: 'suppressEveryone' | 'suppressRoles'): boolean {
     const parent = c.shape === 'thread' && c.parent_id ? (c.parent_id as string) : null;
-    for (const sp of this.ancestors(parent ?? c.id))
-      for (const r of this.store.raw<Row>(`SELECT native_mute FROM vantage WHERE target_kind = 'space' AND target_id = ? AND native_mute IS NOT NULL`, sp.id))
-        if ((JSON.parse(r.native_mute) as P.NativeMute).suppressEveryone === true) return true;
+    const chain: ['conversation' | 'space', string][] = [['conversation', c.id], ...(parent ? [['conversation', parent] as ['conversation', string]] : []), ...this.ancestors(parent ?? c.id).map((sp) => ['space', sp.id] as ['space', string])];
+    for (const [kind, id] of chain) {
+      let said: boolean | null = null;
+      for (const r of this.store.raw<Row>(`SELECT native_mute FROM vantage WHERE target_kind = ? AND target_id = ? AND native_mute IS NOT NULL`, kind, id)) {
+        const v = (JSON.parse(r.native_mute) as P.NativeMute)[key];
+        if (v === false) said = false;
+        else if (v === true && said === null) said = true;
+      }
+      if (said !== null) return said;
+    }
     return false;
   }
 
@@ -458,8 +478,10 @@ export class Triage {
       spaces: this.ancestors(parent ?? c.id).map((x) => x.id as string),
       author: author?.person_id ?? author?.id ?? null,
       bot: !!author?.is_bot,
-      mention: !!m.mentions_self && !m.mentions_all,
+      mention: !!m.mentions_self && !m.mentions_all && !m.mentions_group,
       everyone: !!m.mentions_self && !!m.mentions_all,
+      // A group you are in (a Zulip user group, a Discord role you hold), not you by name: absent where it was not.
+      ...(m.mentions_self && !m.mentions_all && m.mentions_group ? { group: true } : {}),
       reply: !!repliedTo && s.isSelf(repliedTo.author_id),
       question: /\?\s*$|\?\s/.test(m.body),
       urgent: URGENT.test(m.body),
@@ -478,6 +500,7 @@ export class Triage {
     let score = 0.15;
     const why: string[] = [];
     if (f.mention) (score += 0.5), why.push('mentions you');
+    else if (f.group) (score += 0.35), why.push('mentions a group you are in');
     else if (f.everyone) (score += 0.2), why.push('pings @everyone');
     if (f.reply) (score += 0.4), why.push('replies to you');
     const addressed = f.mention || f.reply || c.shape === 'direct';
@@ -561,8 +584,9 @@ export class Triage {
     const how = this.addressed(f, c);
     const native = this.nativeLevel(c);
     const net = NETWORK_META[c.network as P.Network].name;
-    // @everyone and @here in a server set to suppress them (Discord's own setting) would not have notified you.
-    const about = f.mention || f.reply || (f.everyone && !this.suppressesEveryone(c));
+    // @everyone and @here where they are suppressed (a Discord server's setting, a Zulip channel's) would not have
+    // notified you, nor a role's mention in a server that suppresses those.
+    const about = f.mention || f.reply || (!!f.group && !this.suppressesRoles(c)) || (!!f.everyone && !this.suppressesEveryone(c));
     // Would the network itself have notified you? Replies to you ping on Discord, @everyone wherever mentions do. A
     // place you once set to mentions only says the same of itself.
     const mentionsOnly = eff.level === 'mentions' && !eff.native;
@@ -604,7 +628,7 @@ export class Triage {
     if (author?.is_bot) reasons.push('From a bot');
     if (feedType) reasons.push(`${NETWORK_META[c.network as P.Network].name} notifications: ${FEED_REASON[feedType]}, kept to the list (at most a silent row)`);
     else if (cap) reasons.push(eff.native ? `Muted in ${net}: kept to the list` : `List only: ${eff.source}`);
-    else if (notify) reasons.push(mentionsOnly || native !== 'all' ? (f.mention ? 'Mentions you' : f.reply ? 'Replies to your message' : 'Pings @everyone') : `${net} notifies every message here`);
+    else if (notify) reasons.push(mentionsOnly || native !== 'all' ? (f.mention ? 'Mentions you' : f.reply ? 'Replies to your message' : f.group ? 'Mentions a group you are in' : 'Pings @everyone') : `${net} notifies every message here`);
     else {
       reasons.push(mentionsOnly ? `Mentions only: ${eff.source}` : native === 'none' ? `Muted in ${net}` : `${net} notifies only mentions here`);
       if (how.why.length) reasons.push(`About you: ${how.why.join(', ')}`);
