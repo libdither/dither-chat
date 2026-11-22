@@ -61,6 +61,8 @@ interface World {
   reposters?: Record<string, string[]>;
   /** Where a new post goes: its place's address on the network (a subreddit, a community). */
   placeOf?: (name: string) => P.PostFact['place'];
+  /** Long-form posts' whole bodies (`PostFact.article`), by id: only a post's thread brings one, as on the networks. */
+  articles?: Record<string, string>;
   /** A new post's id and link. */
   newId: (n: number, reply: P.PostFact | null) => { id: string; url: string };
   capabilities: P.Capability[];
@@ -291,6 +293,19 @@ function substack(epoch: number): World {
     ],
     likers: { [mine.id]: ['tom'] },
     reposters: { [mine.id]: ['wren'] },
+    articles: {
+      [essay.id]: [
+        'Every map leaves things out, and the good ones tell you what. This week: three projections, a subway diagram, and the one map I keep on my wall even though it is **wrong about everything**.',
+        '## Three projections',
+        'Mercator keeps angles and gives up area, which is why Greenland looks the size of Africa. The [equal-area projections](https://en.wikipedia.org/wiki/Equal-area_map) do the opposite, and look *melted* for it.',
+        `![A diagram of stations and lines](${GRAPH})`,
+        '_The subway diagram: right about order, wrong about distance._',
+        '> A map is not the territory, but a good one admits it.',
+        '## What I keep on my wall',
+        '- a 1920s tram map of a city that no longer has trams\n- with every street name spelled the old way\n- and a river in the wrong place',
+        'Next week: why every weather map you have seen is a little bit of a guess.',
+      ].join('\n\n'),
+    },
     newId: (n) => ({ id: nid(800 + n), url: `https://substack.com/@zyan/note/${nid(800 + n)}` }),
     capabilities: ['profile', 'posts', 'postActions', 'publish', 'postReactors', 'home', 'unpublish'],
   };
@@ -457,7 +472,8 @@ export class DemoPosts implements InprocAdapter {
     };
     walk(focal, []);
     const v = (p: P.PostFact) => this.viewed(p);
-    return { focal: v(focal), ancestors: ancestors.map(v), replies: chains.map((c) => c.map(v)), more: null };
+    const article = this.w.articles?.[focal.id];
+    return { focal: { ...v(focal), ...(article ? { article } : {}) }, ancestors: ancestors.map(v), replies: chains.map((c) => c.map(v)), more: null };
   }
 
   command(cmd: P.AdapterCommand) {

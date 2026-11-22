@@ -2,7 +2,7 @@
  * The Feed page with Mastodon, Reddit, Lemmy, Substack and Bluesky (docs/feed.md "A feed of posts, for any network"), in
  * a real browser against a demo hub of its own on a fresh data dir, with the demo's five accounts of them (demo-posts.ts):
  * the Feed offered and Following taking every network's posts, a Reddit or Lemmy post's title and place, Mastodon's
- * content warning folded until Show, Substack's publication, Bluesky's quote post with its picture; Tune naming each timeline in its network's words; a
+ * content warning folded until Show, Substack's publication and a post's whole body in its thread, Bluesky's quote post with its picture; Tune naming each timeline in its network's words; a
  * Reddit thread's comment tree with Continue this thread opening the deep branch as a thread of its own; each
  * network's bar (Upvote and no Repost on Reddit and Lemmy, Favourite and Boost on Mastodon, Restack on Substack, Repost and Like on Bluesky) and a
  * press reaching the network once; the composer asking a Reddit post for its title and subreddit, and Mastodon's
@@ -144,6 +144,22 @@ try {
   check('a Substack post: its title and its publication', /The Slow Graph/.test(await text(`${substack} .post-place`)), await text(`${substack} .post-place`));
   check('Substack’s bar: Reply, Restack, Like', JSON.stringify(await bar(substack)) === JSON.stringify(['Reply', 'Restack', 'Like']), await bar(substack));
   if (shots) await page.shot(join(shots, 'networks-substack-desktop.png'));
+  check('a Substack card: its preview, never the whole post', !(await count(`${substack} .thread-article`)) && !/Three projections/.test(await text(substack)));
+  // Its thread: the whole post (`article`), its headings, emphasis, link, quote, list and picture drawn in place
+  await tap(`${substack} .post-title`);
+  await page.until(`!!document.querySelector('.feed-thread .thread-focal .thread-article h2')`, 15000);
+  const article = '.feed-thread .thread-focal .thread-article';
+  check(
+    'the Substack thread: the whole post, its headings, emphasis, link, quote and list',
+    (await page.eval<string[]>(`[...document.querySelectorAll(${q(`${article} h2`)})].map((h) => h.textContent)`)).join('|') === 'Three projections|What I keep on my wall' &&
+      (await count(`${article} strong`)) === 1 && (await count(`${article} blockquote`)) === 1 && (await count(`${article} li`)) === 3 &&
+      (await page.eval<string>(`document.querySelector(${q(`${article} a[href]`)})?.getAttribute('href') ?? ''`)).startsWith('https://'),
+    (await text(article)).slice(0, 160),
+  );
+  check('…its picture in place, and no cover above it', (await count(`${article} img[alt="A diagram of stations and lines"]`)) === 1 && !(await count('.feed-thread .thread-focal .post-media')));
+  if (shots) await page.shot(join(shots, 'networks-substack-article.png'));
+  await page.goto(`${base}/#/feed`);
+  await page.until(`document.querySelectorAll('.feed-entry').length >= 8`, 15000);
 
   await open(ACC.bluesky);
   const quoted = await entry('good map labels');
