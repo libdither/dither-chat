@@ -127,6 +127,17 @@ export function conversationMetaChanged(prev: P.ConversationView | undefined, ne
 
 export const prefKey = (kind: P.PlaceKind, id: string) => `${kind}:${id}`;
 
+/** Whether the hub's place settings differ from the client's only in which folders are open (versions.ts 'open'). */
+export function onlyOpens(db: Db, prefs: P.PlacePrefView[]): boolean {
+  if (prefs.length !== db.placePrefs.size) return false;
+  return prefs.every((p) => {
+    const cur = db.placePrefs.get(prefKey(p.kind, p.id)) as Record<string, unknown> | undefined;
+    if (!cur) return false;
+    const next = p as unknown as Record<string, unknown>;
+    return [...new Set([...Object.keys(cur), ...Object.keys(next)])].every((k) => k === 'open' || JSON.stringify(cur[k]) === JSON.stringify(next[k]));
+  });
+}
+
 function setPlacePrefs(db: Db, prefs: P.PlacePrefView[]) {
   db.placePrefs = new Map(prefs.map((x) => [prefKey(x.kind, x.id), x]));
 }
@@ -204,6 +215,9 @@ export function applyEventTo(db: Db, ev: P.ClientEvent): boolean {
     case 'conversation': {
       const c = ev.conversation;
       const prev = db.conversations.get(c.id);
+      // The hub sends every conversation again when a rule changes, most of them as they were: those keep the object
+      // the client has, so the rows memoised on it (memo.ts) are not drawn again.
+      if (prev && JSON.stringify(prev) === JSON.stringify(c)) return false;
       db.conversations.set(c.id, c);
       for (const e of [...(db.parents.get(c.id) ?? [])]) if (!c.spaceIds.includes(e.parentId)) removeEdge(db, e.parentId, c.id);
       for (const sid of c.spaceIds)

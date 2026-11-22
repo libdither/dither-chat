@@ -284,8 +284,15 @@ What changed:
   their props change or `metaRev` moves. Updates replace a message or conversation object rather than change it, so
   the same object is the same thing. What a message would read that changes with every message (its thread's
   conversation, the message its reply quotes, where it came from in a merged timeline) the timeline passes in. A
-  row's "5m" and a deleted message's "ago" are small components that still read `rev`, so they move on as before.
-  Rows get the same `onClick` each time (`opener` in Sidebar.tsx), and people rows their `directs` as a prop.
+  deleted message's "ago" is a small component that still reads `rev`. An inbox row's "5m" and its ↩ and how long
+  read `minute` (versions.ts), which moves once a minute while the page is shown and again when it is shown: a message
+  or a visit draws its own row's time, not every row's. Rows get the same `onClick` each time (`opener` in
+  Sidebar.tsx), and people rows their `directs` as a prop. The click check (below, "Every click") found more lists
+  drawn whole, and these are memoised too: each inbox row with its ↩ button (`InboxRowView`; the inbox makes its rows
+  again for each change, so a chat row is compared by its person and routes), the rail's places (Rail.tsx: the rail
+  works out which is open and its counts and passes them in, so going somewhere draws the place left and the place
+  opened), a server's channel rows (`ChannelRow`, given its threads, and the open conversation only when it is one of
+  them, with one opener per tree) and the directory's cards (keyed, and compared field by field).
 - **Batched**: the signals move once the task that changed things is done (a timer), not on every change. Once per
   animation frame measured worse: the render then ran in the same task as the frame's layout and paint, and the
   longest task of a first open went from about 320 to 512 ms at 4×; a hidden page gets no frames either.
@@ -933,7 +940,9 @@ that end (`metaMemo`'s `until`). Two kinds of change moved `metaRev` without cha
 (`changed('shown')`): people's names and pictures arriving with a page of messages, and what a message's reaction row
 offers once a conversation's reaction context is known, both of which came with every first open; and a person, or an
 account already here, changing (the walk came back once in a trace of Mail's first open, after a meta change this
-did not name; these two are the likely ones, not checked).
+did not name; these two are the likely ones, not checked). A folder opened or closed, here or from another device, moves
+what is where and nothing a row or a message shows (`changed('open')`): `metaDataVersion` moves, `metaRev` stays, and
+the rail, which reads `rev`, draws it.
 
 `test/model-memo.test.ts` holds it: a read changes the counts and the order at once, with the same walk; the walk is
 done again on a meta change; a level holds until a rule changes or a mute runs out.
@@ -985,7 +994,9 @@ The app's own clocks would land in whichever click is running when they strike, 
 `setInterval` of 5 s or more (the usage tick that counts a visit 3 s into a place, the minute's re-sort, the ping),
 and the usage tracker's visits, which it answers itself instead of sending to the hub. Each page then has two cases of
 its own before its clicks: "held: the app's clocks" runs every held interval once, and "hub: a visit counted" posts a
-visit to the hub as another device would, and counts what the hub's event draws. A case that could not run fails.
+visit to the hub as another device would, and counts what the hub's event draws. A case that could not run fails. The
+clocks case draws every "5m" and ↩ again, on purpose: that is the minute clock (`minute` in versions.ts), and it is on
+the known list.
 
 For each click it counts every component's renders (`window.__ditherPerf.components`), layouts and style
 recalculations, and times the click to the next frame and the longest task. A click fails when it renders again at

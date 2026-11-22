@@ -3,7 +3,7 @@ import { expect, test } from 'bun:test';
 import { effect, signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { changed, dataVersion, flush, metaDataVersion, metaRev, onceListed, rev, timelineChanged, timelineRev } from '../src/versions.ts';
-import { conversationMetaChanged, emptyDb, identityVersion, putIdentity } from '../src/syncmodel.ts';
+import { applyEventTo, conversationMetaChanged, emptyDb, identityVersion, onlyOpens, prefKey, putIdentity } from '../src/syncmodel.ts';
 import { sameProps } from '../src/ui/memo.ts';
 
 /** How many times each signal moved while `fn` ran and the flush after it. */
@@ -51,6 +51,27 @@ test('how things look moves metaRev but not what is where; a read moves neither'
   changed('meta');
   flush();
   expect(metaDataVersion()).toBe(m + 1);
+});
+
+test('a folder opened or closed moves what is where, and nothing a row or a message shows', () => {
+  const m = metaDataVersion();
+  expect(moves(() => changed('open'))).toEqual({ rev: 1, metaRev: 0 });
+  expect(metaDataVersion()).toBe(m + 1);
+});
+
+test("the hub's place settings are only a folder opening when nothing else in them differs", () => {
+  const db = emptyDb();
+  const pref = (id: string, extra: Partial<P.PlacePrefView> = {}): P.PlacePrefView => ({ kind: 'folder', id, position: 1, pinned: false, hidden: false, open: false, railed: false, ...extra });
+  for (const p of [pref('f1'), pref('f2', { pinned: true })]) db.placePrefs.set(prefKey(p.kind, p.id), p);
+  expect(onlyOpens(db, [pref('f1', { open: true }), pref('f2', { pinned: true })])).toBe(true);
+  // The same again: nothing changed, which is no meta change either.
+  expect(onlyOpens(db, [pref('f1'), pref('f2', { pinned: true })])).toBe(true);
+  // Moved, pinned, a setting added, one missing or one more: a meta change.
+  expect(onlyOpens(db, [pref('f1', { open: true, position: 2 }), pref('f2', { pinned: true })])).toBe(false);
+  expect(onlyOpens(db, [pref('f1'), pref('f2')])).toBe(false);
+  expect(onlyOpens(db, [pref('f1', { pictures: 'grid' } as Partial<P.PlacePrefView>), pref('f2', { pinned: true })])).toBe(false);
+  expect(onlyOpens(db, [pref('f1')])).toBe(false);
+  expect(onlyOpens(db, [pref('f1'), pref('f2', { pinned: true }), pref('f3')])).toBe(false);
 });
 
 test('the signals move by themselves', async () => {
@@ -101,6 +122,18 @@ test('a new message or read state in a conversation leaves names alone; anything
   expect(conversationMetaChanged(two, conv({ participantIds: ['i2', 'i1'] }))).toBe(false);
   expect(conversationMetaChanged(two, conv({ participantIds: ['i1', 'i3'] }))).toBe(true);
   expect(conversationMetaChanged(two, conv({ participantIds: ['i1', 'i2', 'i3'] }))).toBe(true);
+});
+
+test('a conversation sent again as it was keeps its object; a changed one replaces it', () => {
+  const db = emptyDb();
+  applyEventTo(db, { t: 'conversation', conversation: conv() });
+  const first = db.conversations.get('c1')!;
+  // A rule changed: the hub sends every conversation again.
+  applyEventTo(db, { t: 'conversation', conversation: conv() });
+  expect(db.conversations.get('c1')).toBe(first);
+  applyEventTo(db, { t: 'conversation', conversation: conv({ name: 'random' }) });
+  expect(db.conversations.get('c1')!.name).toBe('random');
+  expect(db.conversations.get('c1')).not.toBe(first);
 });
 
 test('props are the same when each value is, arrays item by item', () => {

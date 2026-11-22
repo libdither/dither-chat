@@ -34,7 +34,7 @@ import {
   type InboxRow,
   type RailEntry,
 } from '../model.ts';
-import { db, go, isSelfIdentity, mailRev, metaRev, pref, rev, route, setPrefs, type InboxFilter } from '../state.ts';
+import { db, go, isSelfIdentity, mailRev, metaRev, pref, readMinute, rev, route, setPrefs, type InboxFilter } from '../state.ts';
 import { openPalette } from './Palette.tsx';
 import { INBOX_FILTERS } from '../ordering.ts';
 import { senderLine } from '../mail/model.ts';
@@ -65,7 +65,7 @@ import { SortButton, SortIcon, useFlip } from './Reorganize.tsx';
 import { rememberSearch, SearchBox } from './SearchBox.tsx';
 import { focusSearch, preloadSearch } from './SearchLazy.tsx';
 import { counting, rendered } from '../perf.ts';
-import { memo } from './memo.ts';
+import { memo, sameProps } from './memo.ts';
 import { convKind, rowTrack } from '../clicks.ts';
 import { useShown } from './more.tsx';
 import { VoicePeople } from './Ringing.tsx';
@@ -128,7 +128,7 @@ function placeLine(c: P.ConversationView): string {
 
 /** A row's "5m": it reads the list's version, so it moves on as often as the list changes, without the row. */
 function Ago({ ts }: { ts: number | null | undefined }) {
-  rev.value;
+  readMinute();
   return <>{ago(ts)}</>;
 }
 
@@ -137,7 +137,7 @@ function Ago({ ts }: { ts: number | null | undefined }) {
  * percentage that styles.css draws from `data-p`, so the row has no more elements.
  */
 function Owed({ at, p }: { at: number; p?: number | null }) {
-  rev.value;
+  readMinute();
   const chance = p != null ? needsReplyLabel(p) : null;
   return (
     <span class="row-owed" aria-label={`Unanswered for ${since(at)}${chance ? `. ${chance}` : ''}`} title={chance ?? undefined} data-p={p != null ? `${Math.round(p * 100)}%` : undefined}>
@@ -238,6 +238,36 @@ const ConvRow = memo(function ConvRow({
     </button>
   );
 });
+
+type RowChat = { person: P.PersonView; routes: P.ConversationView[] };
+type InboxRowProps = { rowKey: string; ids: string[]; conv?: P.ConversationView; chat?: RowChat; active: boolean; why?: string[]; owedSince: number | null; needsP: number | null; latest?: string };
+/** The same chat: the inbox makes its rows again for each change, so a chat is the same person by the same routes. */
+const sameChat = (a?: RowChat, b?: RowChat) => a === b || (!!a && !!b && a.person === b.person && sameProps({ r: a.routes }, { r: b.routes }));
+
+/**
+ * One inbox row with its ↩ (ReplyMark.tsx): a mail thread when there is no `conv`. Drawn again only when what it shows
+ * changes (memo.ts), so a message or a visit elsewhere draws the list again but not every row.
+ */
+const InboxRowView = memo(
+  function InboxRowView({ rowKey, ids, conv, chat, active, why, owedSince, needsP, latest }: InboxRowProps) {
+    if (!conv)
+      return (
+        <MarkableRow rowKey={rowKey} kind="mail" ids={ids} owedSince={owedSince} needsP={needsP} canNeed={false}>
+          <MailRow id={rowKey} active={active} why={why} owedSince={owedSince} needsP={needsP} />
+        </MarkableRow>
+      );
+    return (
+      <MarkableRow rowKey={rowKey} kind="conversation" ids={ids} owedSince={owedSince} needsP={needsP} canNeed={!!latest} latest={latest}>
+        {chat ? (
+          <ConvRow c={conv} chat={chat} active={active} onClick={opener(`inbox:${rowKey}`, () => go({ view: 'inbox', conv: chatOpens(chat.person.id) ?? conv.id }))} why={why} owedSince={owedSince} needsP={needsP} />
+        ) : (
+          <ConvRow c={conv} active={active} onClick={opener(`inbox:${conv.id}`, () => go({ view: 'inbox', conv: conv.id }))} why={why} owedSince={owedSince} needsP={needsP} />
+        )}
+      </MarkableRow>
+    );
+  },
+  (a, b) => sameProps({ ...a, chat: undefined }, { ...b, chat: undefined }) && sameChat(a.chat, b.chat),
+);
 
 /** A chat's unread, as one row: summed over its routes, muted only if every route is. */
 function chatUnread(routes: P.ConversationView[]) {
@@ -403,23 +433,10 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
   const activeKey = activeConv ? inboxKeyOf(activeConv) : undefined;
   const row = (r: InboxRow) => {
     const owedSince = r.needs ? r.owedSince : null;
-    const needsP = owedSince !== null ? needsReplyOf(r.kind === 'mail' ? [r.key] : r.chat ? r.chat.routes.map((c) => c.id) : [r.conv.id]) : null;
-    if (r.kind === 'mail')
-      return (
-        <MarkableRow key={r.key} rowKey={r.key} kind="mail" ids={[r.key]} owedSince={owedSince} needsP={needsP} canNeed={false}>
-          <MailRow id={r.key} active={r.key === activeConv} why={r.reasons} owedSince={owedSince} needsP={needsP} />
-        </MarkableRow>
-      );
-    const latest = needsTarget(r.conv);
-    return (
-      <MarkableRow key={r.key} rowKey={r.key} kind="conversation" ids={r.chat ? r.chat.routes.map((c) => c.id) : [r.conv.id]} owedSince={owedSince} needsP={needsP} canNeed={!!latest} latest={latest}>
-        {r.chat ? (
-          <ConvRow c={r.conv} chat={r.chat} active={r.key === activeKey} onClick={opener(`inbox:${r.key}`, () => go({ view: 'inbox', conv: chatOpens(r.chat!.person.id) ?? r.conv.id }))} why={r.reasons} owedSince={owedSince} needsP={needsP} />
-        ) : (
-          <ConvRow c={r.conv} active={r.conv.id === activeConv} onClick={opener(`inbox:${r.conv.id}`, () => go({ view: 'inbox', conv: r.conv.id }))} why={r.reasons} owedSince={owedSince} needsP={needsP} />
-        )}
-      </MarkableRow>
-    );
+    const ids = r.kind === 'mail' ? [r.key] : r.chat ? r.chat.routes.map((c) => c.id) : [r.conv.id];
+    const needsP = owedSince !== null ? needsReplyOf(ids) : null;
+    if (r.kind === 'mail') return <InboxRowView key={r.key} rowKey={r.key} ids={ids} active={r.key === activeConv} why={r.reasons} owedSince={owedSince} needsP={needsP} />;
+    return <InboxRowView key={r.key} rowKey={r.key} ids={ids} conv={r.conv} chat={r.chat} active={r.chat ? r.key === activeKey : r.conv.id === activeConv} why={r.reasons} owedSince={owedSince} needsP={needsP} latest={needsTarget(r.conv)} />;
   };
   return (
     <div class="sidebar-inner inbox-side" data-track-area="inbox">
@@ -632,11 +649,28 @@ export function PeopleSidebar({ activePerson }: { activePerson?: string }) {
 
 // ------------------------------------------------------------------ space tree
 
-function ChannelRow({ c, active, depth, onOpen, alsoIn, dots = true }: { c: P.ConversationView; active?: string; depth: number; onOpen: (c: P.ConversationView) => void; alsoIn?: string[]; dots?: boolean }) {
+/** One opener per list a channel tree is in, the same each time, so a channel row that did not change is not drawn again. */
+const treeOpeners = new Map<string, (c: P.ConversationView) => void>();
+function treeOpener(key: string, open: (c: P.ConversationView) => void) {
+  let f = treeOpeners.get(key);
+  if (!f) treeOpeners.set(key, (f = open));
+  return f;
+}
+
+/** A channel's threads shown under it: the open one, unread ones and those of the last three days; a forum's first six. */
+function shownThreadsOf(c: P.ConversationView, active?: string): P.ConversationView[] {
+  if (c.variant === 'forum') return threadsOf(c.id).slice(0, 6);
+  return threadsOf(c.id).filter((t) => t.id === active || unreadOf(t).unread > 0 || (t.lastMessageAt ?? 0) > Date.now() - 3 * 86_400_000);
+}
+
+/**
+ * A channel and the threads under it. Drawn again only when its props change (memo.ts) or a name or setting does
+ * (`metaRev`): `active` is the open conversation only when it is this one or a thread shown here, so opening another
+ * channel draws two rows, not the list.
+ */
+const ChannelRow = memo(function ChannelRow({ c, shownThreads, active, depth, onOpen, alsoIn, dots = true }: { c: P.ConversationView; shownThreads: P.ConversationView[]; active?: string; depth: number; onOpen: (c: P.ConversationView) => void; alsoIn?: string[]; dots?: boolean }) {
+  metaRev.value;
   const u = unreadOf(c);
-  const threads = threadsOf(c.id).filter((t) => t.id === active || unreadOf(t).unread > 0 || (t.lastMessageAt ?? 0) > Date.now() - 3 * 86_400_000);
-  const forum = c.variant === 'forum';
-  const shownThreads = forum ? threadsOf(c.id).slice(0, 6) : threads;
   const lvl = effectiveLevel(c);
   const ctx = useMenu(() => conversationMenu(c));
   return (
@@ -683,7 +717,7 @@ function ChannelRow({ c, active, depth, onOpen, alsoIn, dots = true }: { c: P.Co
       })}
     </>
   );
-}
+});
 
 function SpaceTree({ spaceId, active, onOpen, depth = 0, seen = new Set<string>(), dots }: { spaceId: string; active?: string; onOpen: (c: P.ConversationView) => void; depth?: number; seen?: Set<string>; dots?: boolean }) {
   if (seen.has(spaceId)) return null;
@@ -697,7 +731,9 @@ function SpaceTree({ spaceId, active, onOpen, depth = 0, seen = new Set<string>(
         if (k.kind === 'conversation') {
           const c = db.conversations.get(k.id)!;
           const also = c.spaceIds.filter((s) => s !== spaceId).map((s) => communityOfSpace(s)?.name ?? db.spaces.get(s)?.name ?? '');
-          return <ChannelRow c={c} active={active} depth={depth} onOpen={onOpen} alsoIn={also.filter(Boolean)} dots={dots} />;
+          const threads = shownThreadsOf(c, active);
+          const here = active === c.id || threads.some((t) => t.id === active);
+          return <ChannelRow key={c.id} c={c} shownThreads={threads} active={here ? active : undefined} depth={depth} onOpen={onOpen} alsoIn={also.filter(Boolean)} dots={dots} />;
         }
         const s = db.spaces.get(k.id)!;
         if (k.kind === 'section' && !spaceChildren(s.id).length) return null; // a category whose channels this account can't see
@@ -764,7 +800,7 @@ export function SpaceSidebar({ spaceId, activeConv }: { spaceId: string; activeC
     <div class="sidebar-inner">
       <SpaceHeader space={space} />
       <div class="side-scroll tree">
-        <SpaceTree spaceId={spaceId} active={activeConv} onOpen={(c) => go({ view: 'space', space: spaceId, conv: c.id })} />
+        <SpaceTree spaceId={spaceId} active={activeConv} onOpen={treeOpener(`space:${spaceId}`, (c) => go({ view: 'space', space: spaceId, conv: c.id }))} />
       </div>
     </div>
   );
@@ -785,7 +821,7 @@ export function FolderSidebar({ folderId, activeConv, activePerson }: { folderId
     if (it.kind === 'person') directsOf(it.id).forEach((d) => nets.add(d.network));
   }
   nets.delete('');
-  const open = (c: P.ConversationView) => go({ view: 'folder', folder: f.id, conv: c.id });
+  const open = treeOpener(`folder:${f.id}`, (c: P.ConversationView) => go({ view: 'folder', folder: f.id, conv: c.id }));
   return (
     <div class="sidebar-inner">
       <header class="side-head folder-head" style={{ '--folder': f.color ?? '#8b93a7' } as any} onContextMenu={onMenu(() => folderMenuSpec(f.id))}>

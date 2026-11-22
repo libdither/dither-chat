@@ -35,11 +35,23 @@ export function NetBadge({ network, size = 16, class: cls }: { network: P.Networ
  * Coloured dots for the accounts that see something. Hidden when the network has only one account, and where only the
  * network's usual account sees it (usualAccount): a dot means "another account of yours", not "your account".
  */
-export function AccountDots({ network, accountIds, size = 8, force }: { network: P.Network; accountIds: string[]; size?: number; force?: boolean }) {
-  if (!force && !annotateAccounts(network)) return null;
+/** The accounts AccountDots shows, none where it shows none. */
+function dotted(network: P.Network, accountIds: string[], force?: boolean): P.AccountView[] {
+  if (!force && !annotateAccounts(network)) return [];
   const accs = accountIds.map((id) => db.accounts.get(id)).filter((a): a is P.AccountView => !!a);
+  if (!force && accs.length === 1 && accs[0].id === usualAccount(network)) return [];
+  return accs;
+}
+
+/** What AccountDots draws, as a string: a memoised row given it draws again when the dots would change, and not for every setting. */
+export const dotsLook = (network: P.Network, accountIds: string[]) =>
+  dotted(network, accountIds)
+    .map((a) => `${a.color} ${a.label}`)
+    .join('|');
+
+export function AccountDots({ network, accountIds, size = 8, force }: { network: P.Network; accountIds: string[]; size?: number; force?: boolean }) {
+  const accs = dotted(network, accountIds, force);
   if (!accs.length) return null;
-  if (!force && accs.length === 1 && accs[0].id === usualAccount(network)) return null;
   return (
     <span class="acc-dots" title={`via ${accs.map((a) => a.label).join(' + ')}`}>
       {accs.map((a) => (
