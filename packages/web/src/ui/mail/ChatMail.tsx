@@ -44,10 +44,10 @@ function asMailMessage(m: P.MessageView): P.MailMessageView {
 }
 
 /**
- * `show`: 'words' its words, for a message the hub had no body for; 'quote' the text with its quote open; 'sent' the mail as it was sent (its HTML where it has one); 'files'
+ * `show`: 'words' its words, for a message the hub had no body for (drawn by `words`, the chat's letter); 'quote' the text with its quote open; 'sent' the mail as it was sent (its HTML where it has one); 'files'
  * only its files (a message with attachments shows them under its words without being opened).
  */
-export function ChatMailBody({ m, show }: { m: P.MessageView; show: 'words' | 'quote' | 'sent' | 'files' }) {
+export function ChatMailBody({ m, show, words }: { m: P.MessageView; show: 'words' | 'quote' | 'sent' | 'files'; words?: (text: string, quoted: boolean) => preact.JSX.Element }) {
   mailRev.value;
   useEffect(() => void loadBody(m.id), [m.id]);
   const body = bodies.get(m.id);
@@ -67,6 +67,7 @@ export function ChatMailBody({ m, show }: { m: P.MessageView; show: 'words' | 'q
   const account = db.mail.accounts.get(message.accountId);
   if (show === 'files') return <MailFiles body={body} />;
   // Words the hub did not hold yet (mail you sent from elsewhere has no body until asked): up to its quote.
+  if (show === 'words' && words && body.text) return words(body.text.slice(0, body.quoteAt ?? undefined).trimEnd(), !!body.quoteAt);
   if (show === 'words') return body.text ? <TextBody message={message} account={account} body={{ ...body, text: body.text.slice(0, body.quoteAt ?? undefined).trimEnd(), quoteAt: null }} /> : <div class="msg-body chat-mail-empty">No text</div>;
   if (show === 'quote' && body.text) return <div class="chat-mail-quote"><QuoteOpen body={body} message={message} account={account} /></div>;
   for (const r of BODY_RENDERERS) {

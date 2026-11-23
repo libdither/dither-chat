@@ -120,10 +120,19 @@ asked for, never copied into the message table.
 - **A mail as a chat message** (`MessageView.mail`, `MessageMailView`): `ts` is when it reached the server, as mail
   sorts; the body is the words above the quote when the body is here, else the preview; `rich` when its HTML is more
   than plain text would show (what the reader's body renderers decide); `quoted` when there is quoted text under it;
-  `opens` on the first message of its thread. One mail that reached two of your accounts (two rows with one
-  Message-ID) is shown once in a person's chat, as its earliest copy, with both accounts in `seenVia`. `only`, on a
-  mail of yours in a thread with others that went to fewer of them than are on it (`mail_thread.participants`, less
-  your addresses), lists who it went to, so the thread says "to Alice only".
+  `opens` on the first message of its thread; `inReplyTo`, the Message-ID it answers. One mail that reached two of
+  your accounts (two rows with one Message-ID) is shown once in a person's chat, as its earliest copy, with both
+  accounts in `seenVia`. `only`, on a mail of yours in a thread with others that went to fewer of them than are on it
+  (`mail_thread.participants`, less your addresses), lists who it went to, so the thread says "to Alice only".
+- **Letter furniture** (`web/src/mail/letter.ts`, `web/test/mail-letter.test.ts`): a chat draws a mail's words as a
+  chat message, in a person's chat and in a group thread alike. Folded behind ···: only what is certainly not the
+  message, everything from a `-- ` line on and a last line that is only the sender's name (first name, full name, or
+  their identity's, person's or your account's name). An unsure tail ("Best,\nSam", "Thanks!", "Love, Mom", "Sent from
+  my phone") stays in place, small and faint. A greeting ("Hi both,") stays full size, with no blank line after it.
+  A run of blank lines is one small gap. A link shows as its host and a short path (the middle cut out), the full
+  address on hover and in its long-press menu. ··· shows only when it hides something: the folded lines, the quoted
+  mail (unless it answers the message drawn right above it), and "Show as sent" for a mail whose HTML plain text would
+  lose. A click or tap opens them under the message, and another closes them.
 - **The line over the box** (web `ui/MailChat.tsx`) holds pills, not captions. In a person's chat, after "To Sam
   Rivera", the thread the mail goes into (`✉ Dinner on Friday? ⌄`): its list has "New subject…" first, then your
   threads with them newest first; New subject turns the pill into a field of its size, and Esc puts the thread back.

@@ -157,6 +157,7 @@ function mailViews(hub: MailHub, places: MailPlaces, chat: Store, rows: Row[], p
       subject: r.subject ?? '',
       place: p ? `person:${p.personId}` : r.thread_id,
       messageId: r.message_id_hdr ?? null,
+      inReplyTo: r.in_reply_to ?? null,
       from: who.address({ name: r.from_name ?? null, email: r.from_addr ?? '' }),
       to: json<M.MailAddress[]>(r.to_json, []).map((a) => who.address(a)),
       cc: json<M.MailAddress[]>(r.cc_json, []).map((a) => who.address(a)),

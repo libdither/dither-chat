@@ -722,7 +722,7 @@ function TriageNote({ m }: { m: P.MessageView }) {
  * draws them; `run`, the messages whose pictures this one draws after its own, when it ends a run of them; `absorbed`,
  * a message of a run whose pictures the run's last message draws.
  */
-const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, highlight, target, thread, who, whoIdent, net, tag, onTag, pictures, run, absorbed, chipRun, subject }: { m: P.MessageView; grouped: boolean; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; who?: string; whoIdent?: string; net?: boolean; tag?: boolean; onTag?: (convId: string) => void; pictures: PictureLayout; run?: P.MessageView[]; absorbed?: boolean; chipRun?: P.MessageView[]; subject?: boolean }) {
+const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, highlight, target, thread, who, whoIdent, net, tag, onTag, pictures, run, absorbed, chipRun, subject, quoteAbove }: { m: P.MessageView; grouped: boolean; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; who?: string; whoIdent?: string; net?: boolean; tag?: boolean; onTag?: (convId: string) => void; pictures: PictureLayout; run?: P.MessageView[]; absorbed?: boolean; chipRun?: P.MessageView[]; subject?: boolean; quoteAbove?: boolean }) {
   if (counting) rendered('MessageItem');
   metaRev.value;
   // On a touch screen the action bar (it shows on hover) and the tooltips are not drawn: a long-press opens the same
@@ -838,7 +838,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           </div>
         )}
         {mail ? (
-          <MailWords m={m} />
+          <MailWords m={m} quoteAbove={quoteAbove} />
         ) : m.deleted && m.gone?.kept ? (
           <Gone m={m} layout={pictures} />
         ) : m.forward && !m.deleted ? (
@@ -1432,6 +1432,7 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
         absorbed={!!run && !ends}
         chipRun={run && !chipped.has(run) ? (chipped.add(run), run) : undefined}
         subject={subject}
+        quoteAbove={!!m.mail?.inReplyTo && prev?.mail?.messageId === m.mail.inReplyTo}
       />,
     );
     prev = above = m;

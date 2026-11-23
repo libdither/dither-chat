@@ -12,6 +12,7 @@ import { bareSubject, viewList } from '@dither-chat/protocol';
 import { archivedInAll } from '../mail/filing.ts';
 import { dayLabel } from '../format.ts';
 import { MAIL_LISTS } from '../mail/model.ts';
+import { letter, shortLink } from '../mail/letter.ts';
 import { linkify } from '../mail/text.ts';
 import { db, go, mailRev, timelineRev, toast } from '../state.ts';
 import { timelines } from '../store.ts';
@@ -43,13 +44,14 @@ async function undoChatSend(item: P.MailOutboxView) {
   }
 }
 
+/** Text with its links, each shown as its host and a short path (mail/letter.ts shortLink), the full address on hover. */
 function Linked({ text }: { text: string }) {
   return (
     <>
       {linkify(text).map((p) =>
         'url' in p ? (
-          <a href={p.url} target="_blank" rel="noreferrer noopener">
-            {p.text}
+          <a href={p.url} target="_blank" rel="noreferrer noopener" title={p.url}>
+            {shortLink(p.url)}
           </a>
         ) : (
           p.text
@@ -59,48 +61,99 @@ function Linked({ text }: { text: string }) {
   );
 }
 
+/** What the sender may sign a mail with: the From name, their identity's and person's names, your account's on mail you sent. */
+function signNames(m: P.MessageView): (string | null | undefined)[] {
+  const x = m.mail!;
+  const i = m.authorId ? db.identities.get(m.authorId) : undefined;
+  const acc = db.mail.accounts.get(x.accountId);
+  const mine = !!acc?.address && acc.address.toLowerCase() === x.from.email.toLowerCase();
+  return [x.from.name, i?.displayName, i?.personId ? db.persons.get(i.personId)?.name : null, mine ? acc!.name : null];
+}
+
 /**
- * A mail's words in the chat: plain text with its links (mail is never Markdown), then what opens under it: ··· for
- * the quoted mail it answers, "As sent" for one whose HTML plain text would lose, and its files.
+ * A mail's words in the chat: plain text with its links (mail is never Markdown), drawn as a letter (mail/letter.ts):
+ * paragraphs a small gap apart, an unsure sign-off small and faint. Words the hub did not hold yet come from Mail's chunk.
+ * `quoteAbove`: the mail it answers is the message drawn right above, so its quote is no reason for ···.
  */
-export function MailWords({ m }: { m: P.MessageView }) {
+export function MailWords({ m, quoteAbove }: { m: P.MessageView; quoteAbove?: boolean }) {
   const x = m.mail!;
   // Its menu files the thread (ChatMail.tsx mailMessageItems): the thread and mail's chunk are fetched now, not on open.
   useEffect(() => {
     if (!mailThread(x.threadId)) void loadMailThread(x.threadId);
     void preloadMail().catch(() => {});
   }, [x.threadId]);
-  const [open, setOpen] = useState<null | 'quote' | 'sent'>(null);
-  const toggle = (w: 'quote' | 'sent') => setOpen(open === w ? null : w);
-  const empty = !m.body.trim();
+  if (!m.body.trim() && x.bodyState !== 'cached') return <ChatMailBodyLazy m={m} show="words" words={(text, quoted) => <MailLetter m={m} text={text} quoted={quoted} quoteAbove={quoteAbove} />} />;
+  return <MailLetter m={m} text={m.body} quoted={x.quoted} quoteAbove={quoteAbove} />;
+}
+
+/**
+ * The letter, then ··· when something is behind it: the folded name and signature, the quoted mail (unless it is the
+ * message above), "Show as sent" for a mail whose HTML plain text would lose. ··· opens them under the message and
+ * closes them again. Its files show under it either way.
+ */
+function MailLetter({ m, text, quoted, quoteAbove }: { m: P.MessageView; text: string; quoted: boolean; quoteAbove?: boolean }) {
+  const x = m.mail!;
+  const [open, setOpen] = useState(false);
+  const [sent, setSent] = useState(false);
+  const l = letter(text, signNames(m));
+  const quote = quoted && !quoteAbove;
+  const behind = !!l.rest || quote || x.rich;
+  if (sent)
+    return (
+      <>
+        <ChatMailBodyLazy m={m} show="sent" />
+        <div class="mail-opens">
+          <button class="mail-open-chip on" data-track="mail as sent" aria-pressed="true" title="Back to its words" onClick={() => setSent(false)}>
+            Just the words
+          </button>
+        </div>
+      </>
+    );
   return (
     <>
-      {open !== 'sent' &&
-        (!empty ? (
-          <div class="msg-body mail-words">
-            <Linked text={m.body} />
-          </div>
-        ) : x.bodyState !== 'cached' ? (
-          <ChatMailBodyLazy m={m} show="words" />
-        ) : (
-          !x.hasAttachments && <div class="msg-body mail-words mail-words-empty">No text</div>
-        ))}
-      {(x.quoted || x.rich) && (
-        <div class="mail-opens">
-          {x.quoted && open !== 'sent' && (
-            <button class="mail-quote-dots" data-track="mail quote" aria-expanded={open === 'quote'} title={open === 'quote' ? 'Hide the quoted mail' : 'Show the quoted mail'} onClick={() => toggle('quote')}>
-              ···
-            </button>
+      {l.paras.length ? (
+        <div class="msg-body mail-words">
+          {l.paras.map((p) => (
+            <div class="mail-para">
+              {p.map((line, i) => (
+                <>
+                  {i > 0 && '\n'}
+                  {line.faint ? (
+                    <span class="mail-faint">
+                      <Linked text={line.text} />
+                    </span>
+                  ) : (
+                    <Linked text={line.text} />
+                  )}
+                </>
+              ))}
+            </div>
+          ))}
+        </div>
+      ) : (
+        !x.hasAttachments && <div class="msg-body mail-words mail-words-empty">No text</div>
+      )}
+      {behind && (
+        <button class="mail-quote-dots" data-track="mail rest" aria-expanded={open} title={open ? 'Hide the rest of this mail' : 'Show the rest of this mail'} onClick={() => setOpen(!open)}>
+          ···
+        </button>
+      )}
+      {behind && open && (
+        <div class="mail-rest">
+          {l.rest && (
+            <div class="mail-words mail-faint">
+              <Linked text={l.rest} />
+            </div>
           )}
+          {quote && <ChatMailBodyLazy m={m} show="quote" />}
           {x.rich && (
-            <button class={`mail-open-chip ${open === 'sent' ? 'on' : ''}`} data-track="mail as sent" aria-expanded={open === 'sent'} title={open === 'sent' ? 'Back to its words' : 'Show the mail as it was sent: its colours, pictures and layout'} onClick={() => toggle('sent')}>
-              {open === 'sent' ? 'Just the words' : 'As sent'}
+            <button class="mail-open-chip" data-track="mail as sent" title="Show the mail as it was sent: its colours, pictures and layout" onClick={() => setSent(true)}>
+              Show as sent
             </button>
           )}
         </div>
       )}
-      {open && <ChatMailBodyLazy m={m} show={open} />}
-      {x.hasAttachments && open !== 'sent' && <ChatMailBodyLazy m={m} show="files" />}
+      {x.hasAttachments && <ChatMailBodyLazy m={m} show="files" />}
     </>
   );
 }
