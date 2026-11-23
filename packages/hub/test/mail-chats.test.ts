@@ -231,6 +231,9 @@ describe('a person’s chat', () => {
     expect(d0.body).toBe('dinner 0');
     expect(d0.mail).toMatchObject({ threadId: threadOf('<din0@x>'), place: `person:${sam()}`, opens: true, quoted: true, bodyState: 'cached', rich: false, messageId: '<din0@x>' });
     expect(d1.mail!.opens).toBe(false);
+    // What it answers, for the chat to leave out ··· when that is the message drawn above it.
+    expect(d0.mail!.inReplyTo).toBeNull();
+    expect(d1.mail!.inReplyTo).toBe('<din0@x>');
     expect(d1.authorId).toBe(email(SAM.email));
     // Yours is yours: your address is an identity of the self person.
     const self = store.one<{ id: string }>('SELECT id FROM person WHERE is_self = 1')!.id;

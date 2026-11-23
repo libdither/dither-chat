@@ -1,13 +1,21 @@
 /* Mail as chats (docs/mail.md "Mail as chats"): a mail's words in a chat, what a person wrote elsewhere, sends on their
    way, the subject chip's rows and a thread's chat header. */
 
-/* A mail's words: plain text with its links, kept as written (mail's line breaks are its own). */
+/* A mail's words: plain text with its links, kept as written (mail's line breaks are its own), as a letter
+   (mail/letter.ts): paragraphs a small gap apart instead of a blank line, an unsure sign-off small and faint. */
 .mail-words {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .mail-words a {
   color: var(--link);
+}
+.mail-para + .mail-para {
+  margin-top: 10px;
+}
+.mail-faint {
+  font-size: 12.5px;
+  color: var(--text-faint);
 }
 .mail-words-empty {
   color: var(--text-faint);
@@ -19,7 +27,10 @@
   gap: 6px;
   margin-top: 2px;
 }
+/* ···: the rest of this mail (its folded name and signature, its quote, Show as sent), opened under it. */
 .mail-quote-dots {
+  display: block;
+  margin-top: 2px;
   padding: 0 7px;
   border: 1px solid var(--border-soft);
   border-radius: 8px;
@@ -35,6 +46,16 @@
   background: var(--bg-raised);
   color: var(--text);
 }
+.mail-rest {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+}
+.mail-rest > .mail-words {
+  margin: 0;
+}
 .mail-open-chip {
   padding: 0 7px;
   border: 1px solid var(--border-soft);
@@ -49,6 +70,16 @@
 .mail-open-chip.on {
   background: var(--bg-raised);
   color: var(--text);
+}
+/* A finger needs more than the glyph: the same look, a taller target. */
+@media (pointer: coarse) {
+  .mail-quote-dots {
+    padding: 5px 12px;
+    background-clip: content-box;
+  }
+  .mail-open-chip {
+    padding: 4px 10px;
+  }
 }
 /* What a person wrote in threads with others, between their chat's own messages. */
 .elsewhere {

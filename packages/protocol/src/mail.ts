@@ -843,6 +843,8 @@ export interface MessageMailView {
   place: string;
   /** The Message-ID header. */
   messageId: string | null;
+  /** Its In-Reply-To header: the Message-ID of the mail it answers. A chat leaves out ··· for a quote of the message drawn right above. */
+  inReplyTo: string | null;
   from: MailAddressView;
   to: MailAddressView[];
   cc: MailAddressView[];
