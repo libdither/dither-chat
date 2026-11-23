@@ -123,12 +123,14 @@ it loops silently with no controls (above).
 
 | | With a mouse | On a phone |
 | --- | --- | --- |
-| Before it plays | its first frame, a play button in the middle, its length in the corner; the name and Download along the top on hover | the same, the name and Download always shown |
+| Before it plays | its first frame, a play button in the middle, its length in the corner; Download in the top corner on hover (its tooltip names the file) | the same; Download shows with the controls |
 | Play and pause | a click anywhere on the picture, or the bar's button | a tap plays; once it plays, a tap shows or hides the controls, and the big button in the middle pauses |
-| The controls | the bar along the bottom while the pointer is over it or it is paused | shown after a tap, gone by themselves 2.5 s later while it plays |
+| The controls | one thin bar along the bottom (36 px), while the pointer is over it or it is paused | the same bar a little taller for a thumb (44 px), shown after a tap, gone by themselves 2.5 s later while it plays |
 | Seeking | a click or drag on the bar; the time under the pointer shows above it | a drag on the bar, which is tall enough for a thumb |
 | Sound | mute, and a volume slider that opens beside it on hover | mute (the phone's buttons set the volume) |
 | Full screen | the button, F or a double click; Escape leaves it | the button; back leaves it, and a wide video turns on its side where the phone allows |
+
+Nothing else is laid over the picture: the name and the file's size show along the top only in full screen, beside the way out.
 
 Keys, while the player has the focus: Space or K plays and pauses, F fills the screen, M mutes, the arrows go 5 s back
 and on and change the volume, J and L go 10 s, Home and End go to the start and the end.

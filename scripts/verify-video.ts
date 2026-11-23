@@ -38,7 +38,9 @@ async function ownHub() {
     if (Date.now() > end) throw new Error('the demo hub did not start');
     await Bun.sleep(200);
   }
-  return { url, stop: () => (proc.kill(), rmSync(data, { recursive: true, force: true })) };
+  // The hub writes its last traces as it exits: its folder goes only after that.
+  const stop = async () => (proc.kill(), await proc.exited, rmSync(data, { recursive: true, force: true }));
+  return { url, stop };
 }
 
 let failures = 0;
@@ -98,9 +100,9 @@ try {
   await p.size(1280, 800);
   await p.goto(route);
   await p.until(`!!${PLAYER} && ${video}.readyState >= 1`, 20_000);
-  const look = await p.eval(`(() => { const b = ${PLAYER}; const r = b.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height), native: ${video}.controls, name: b.querySelector('.vp-name b')?.textContent, dl: !!b.querySelector('.vp-top a[download]') }; })()`);
+  const look = await p.eval(`(() => { const b = ${PLAYER}; const r = b.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height), native: ${video}.controls, dl: b.querySelector('a.vp-corner[download]')?.title, top: !!b.querySelector('.vp-top') }; })()`);
   check(look.w === 400 && look.h === 225 && !look.native, 'a 480×270 clip is drawn 400×225 with the app\'s controls, not the browser\'s', look);
-  check(look.name === 'bouldering.webm' && look.dl, 'its name and Download are on it', look);
+  check(look.dl?.startsWith('Download bouldering.webm') && !look.top, 'Download sits in the corner, naming the file, with no strip along the top', look);
   await mid(PLAYER);
   await p.eval(`document.activeElement?.blur()`);
   await mouse('mouseMoved', [5, 5]);
@@ -115,6 +117,8 @@ try {
   await Bun.sleep(300);
   check((await state()).barShown, 'the bar shows while the pointer is over it');
   await shot('desktop-playing');
+  const barH = await p.eval<number>(`Math.round(${PLAYER}.querySelector('.vp-bar').getBoundingClientRect().height)`);
+  check(barH <= 36, 'the bar is a thin band (36 px at most) over the bottom of the picture', barH);
   await mouse('mouseMoved', [5, 5]);
   await Bun.sleep(400);
   check(!(await state()).barShown, 'the bar goes once the pointer leaves');
@@ -189,6 +193,8 @@ try {
   s = await state();
   check(!s.idle && s.barShown && !s.paused, 'a tap brings the controls back and leaves it playing', s);
   await shot('phone-controls');
+  const pbarH = await p.eval<number>(`Math.round(${PLAYER}.querySelector('.vp-bar').getBoundingClientRect().height)`);
+  check(pbarH <= 44, 'on a phone too the bar is a thin band (44 px at most), its buttons still big enough for a thumb', pbarH);
   await tap(await mid(`${PLAYER}.querySelector('.vp-big')`));
   check((await state()).paused, 'the big button pauses it');
 
@@ -215,7 +221,7 @@ try {
   check(p.errors.length === 0, 'no page errors on the phone', p.errors);
 } finally {
   await b.close?.();
-  own?.stop();
+  await own?.stop();
 }
 console.log(failures ? `\n${failures} failed` : '\nall passed');
 process.exit(failures ? 1 : 0);

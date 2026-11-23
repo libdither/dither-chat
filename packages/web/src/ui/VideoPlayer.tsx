@@ -310,6 +310,19 @@ export function VideoPlayer(props: VideoProps) {
   const at = scrub ?? time;
   const volIcon = muted || volume === 0 ? 'volumeOff' : volume < 0.5 ? 'volumeLow' : 'voice';
   const label = props.label ?? props.name ?? 'Video';
+  const icon = coarse ? 20 : 16;
+  const download = (
+    <a
+      class={`vp-btn ${full ? '' : 'vp-corner'}`}
+      href={props.src}
+      download={props.name}
+      aria-label="Download"
+      title={props.name ? `Download ${props.name}${props.facts ? ` (${props.facts})` : ''}` : 'Download'}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <Icon name="download" size={icon} />
+    </a>
+  );
 
   return (
     <div
@@ -351,37 +364,34 @@ export function VideoPlayer(props: VideoProps) {
           {/* With a mouse, only until it first plays (then the bar's button, and a click anywhere); on a phone, with the controls. */}
           {(!started || (coarse && (paused || !hideUi))) && !waiting && (
             <button class="vp-big" onClick={toggle} aria-label={paused ? 'Play' : 'Pause'} title={paused ? 'Play' : 'Pause'}>
-              <Icon name={paused ? 'play' : 'pause'} size={coarse ? 30 : 26} class="vp-solid" />
+              <Icon name={paused ? 'play' : 'pause'} size={coarse ? 26 : 22} class="vp-solid" />
             </button>
           )}
           {!started && end > 0 && <span class="vp-length">{clockTime(end)}</span>}
         </>
       )}
-      {(props.name || full) && (
+      {/* In a message, only Download in the corner (its title names the file); in full screen, a strip with the way out and the name. */}
+      {full ? (
         <div class="vp-top">
-          {full && (
-            <button class="vp-btn" onClick={leaveFull} aria-label="Leave full screen" title="Leave full screen">
-              <Icon name="x" size={20} />
-            </button>
-          )}
+          <button class="vp-btn" onClick={leaveFull} aria-label="Leave full screen" title="Leave full screen">
+            <Icon name="x" size={icon + 2} />
+          </button>
           {props.name && (
             <span class="vp-name">
               <b title={props.name}>{props.name}</b>
               {props.facts && <small>{props.facts}</small>}
             </span>
           )}
-          {props.name && (
-            <a class="vp-btn" href={props.src} download={props.name} aria-label="Download" title="Download" onClick={(e) => e.stopPropagation()}>
-              <Icon name="download" size={18} />
-            </a>
-          )}
+          {props.name && download}
         </div>
+      ) : (
+        props.name && download
       )}
       {started && !failed && (
         <div class="vp-bar">
           {!coarse && (
             <button class="vp-btn" onClick={toggle} aria-label={paused ? 'Play' : 'Pause'} title={paused ? 'Play (K)' : 'Pause (K)'}>
-              <Icon name={paused ? 'play' : 'pause'} size={18} class="vp-solid" />
+              <Icon name={paused ? 'play' : 'pause'} size={icon} class="vp-solid" />
             </button>
           )}
           <span class="vp-time">
@@ -391,7 +401,7 @@ export function VideoPlayer(props: VideoProps) {
           <Seek at={at} end={end} buffered={buffered} onScrub={setScrub} onSeek={(s) => (setScrub(null), seekTo(s))} />
           <div class="vp-sound">
             <button class="vp-btn" onClick={mute} aria-label={muted ? 'Unmute' : 'Mute'} title={muted ? 'Unmute (M)' : 'Mute (M)'}>
-              <Icon name={volIcon} size={18} />
+              <Icon name={volIcon} size={icon} />
             </button>
             {!coarse && (
               <input
@@ -407,7 +417,7 @@ export function VideoPlayer(props: VideoProps) {
             )}
           </div>
           <button class="vp-btn" onClick={toggleFull} aria-label={full ? 'Leave full screen' : 'Full screen'} title={full ? 'Leave full screen (F)' : 'Full screen (F)'}>
-            <Icon name={full ? 'fullscreenOff' : 'fullscreen'} size={18} />
+            <Icon name={full ? 'fullscreenOff' : 'fullscreen'} size={icon} />
           </button>
         </div>
       )}
