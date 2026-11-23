@@ -18,6 +18,7 @@ has. Signal (dither-accounts, `extractors/signal`) fills all of them today.
 | `attachmentNotes` | A voice note's "Voice message" label, and a file's own caption, under it (by position in `attachments`) | `attachments[].isVoiceNote`, `attachments[].caption` |
 | `sms` | An "SMS" or "MMS" mark by the time: the message went as a text, not over Signal. A change between texts and Signal messages starts a new run, so each run of texts carries the mark | Signal backups only (docs/import-signal.md): live sync never sees texts |
 | `sourceDevice`, `serverReceivedTs`, `serverDeliveredTs` | Kept, not shown yet | the envelope |
+| `movedAt` | "(moved)" beside "(edited)", with when in its tooltip: the message was moved here from another topic. An older Zulip extractor's `zulip.movedAt` reads the same | Zulip only: a message's `last_moved_timestamp` |
 
 Not built here: resending to only the people a group message missed. Signal's apps do it by sending again with the
 same timestamp to those people; signal-cli 0.14.8 has no way to send a group message to some of its members, so the

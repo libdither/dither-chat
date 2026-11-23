@@ -7,7 +7,7 @@ import type * as P from '@dither-chat/protocol';
 import { followedPostOf, NETWORK_META, PICTURE_LAYOUTS, RULE_LABEL, RULE_LEVELS, showsInline } from '@dither-chat/protocol';
 import { fullTime } from '../format.ts';
 import { noteRowRead } from '../activity.ts';
-import { AUTOMATIC, OLDER_RULE, authorName, convTitle, deepLink, directsOf, effectiveLevel, externalProfile, heldHere, netName, placePref, plainBody, ruleOn, sumUnread, unreadOf, type Level } from '../model.ts';
+import { AUTOMATIC, OLDER_RULE, authorName, convTitle, deepLink, directsOf, effectiveLevel, externalProfile, heldHere, netName, placePref, plainBody, ruleOn, spaceLink, sumUnread, unreadOf, zulipMessageLink, type Level } from '../model.ts';
 import { inheritedPictures, PICTURE_LABELS, setPlacePictures } from '../arrange.ts';
 import { deviceRule, myDevice, setDeviceRule } from '../devices.ts';
 import { android } from '../android.ts';
@@ -55,6 +55,7 @@ function messageLink(m: P.MessageView): string {
   const c = db.conversations.get(m.conversationId);
   if (c?.network === 'discord') return `${deepLink(c)}/${m.nativeId}`;
   if (c?.network === 'matrix') return `https://matrix.to/#/${encodeURIComponent(c.nativeId.split('|')[0])}/${encodeURIComponent(m.nativeId)}`;
+  if (c?.network === 'zulip') return zulipMessageLink(c, m.nativeId) ?? appLink({ view: 'inbox', conv: m.conversationId, msg: m.id });
   return appLink({ view: 'inbox', conv: m.conversationId, msg: m.id });
 }
 
@@ -104,7 +105,8 @@ function MessageHead({ m }: { m: P.MessageView }) {
           <b>{name}</b>
           <small>
             {fullTime(m.ts)}
-            {m.editedTs ? ' · edited' : ''} · {netName(m.network)}
+            {m.editedTs ? ' · edited' : ''}
+            {m.movedAt ? ' · moved' : ''} · {netName(m.network)}
             {via.length ? ` via ${via.map((a) => a.label).join(', ')}` : ''}
           </small>
         </span>
@@ -409,6 +411,18 @@ function followEntries(c: P.ConversationView): MenuEntry[] {
   return [{ label: stopped ? 'Follow Again' : 'Stop Following', icon: stopped ? 'bell' : 'bellOff', run }];
 }
 
+/**
+ * Mark As Read. A forum channel (a Zulip channel, a Discord forum) holds no messages of its own and is never unread
+ * itself: its threads are marked read, each told to its network through the read queue (hub readqueue.ts).
+ */
+function markReadEntry(c: P.ConversationView): MenuEntry {
+  if (c.shape === 'channel' && (c.variant === 'forum' || c.variant === 'media')) {
+    const threads = (db.threads.get(c.id) ?? []).map((id) => db.conversations.get(id)).filter((t): t is P.ConversationView => !!t);
+    return { label: 'Mark As Read', icon: 'check', disabled: !threads.some((t) => unreadOf(t).unread), run: () => markAllRead(threads, convTitle(c)) };
+  }
+  return { label: 'Mark As Read', icon: 'check', disabled: !unreadOf(c).unread, run: () => (noteRowRead('conversation', [c.id]), markRead(c.id)) };
+}
+
 /** `why`: the inbox's reasons for where this row sits (docs/inbox.md), shown first. */
 export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpec {
   const eff = effectiveLevel(c);
@@ -424,7 +438,7 @@ export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpe
     head: <div class="cm-sheet-title">{convTitle(c)}</div>,
     items: groups(
       why?.length ? [{ kind: 'row', render: () => <WhyHere reasons={why} /> }] : [],
-      [{ label: 'Mark As Read', icon: 'check', disabled: !unreadOf(c).unread, run: () => (noteRowRead('conversation', [c.id]), markRead(c.id)) }],
+      [markReadEntry(c)],
       [
         person && { label: 'Profile', icon: 'user', run: () => go({ view: 'profile', person: person.id }) },
         { label: `About This ${c.shape === 'direct' ? 'Chat' : noun}`, icon: 'info', run: () => openAbout('conversation', c.id) },
@@ -489,7 +503,7 @@ export function spaceMenu(s: P.SpaceView): MenuSpec {
   const section = s.kind === 'section';
   const noun = section ? 'Category' : s.network === 'discord' ? 'Server' : NETWORK_META[s.network].spaceNoun.replace(/^./, (x) => x.toUpperCase());
   const convs = placeConvs('space', s.id);
-  const link = s.network === 'discord' ? `https://discord.com/channels/${s.nativeId}` : s.network === 'matrix' ? `https://matrix.to/#/${encodeURIComponent(s.nativeId)}` : null;
+  const link = spaceLink(s);
   return {
     label: `${s.name} actions`,
     head: <div class="cm-sheet-title">{s.name}</div>,

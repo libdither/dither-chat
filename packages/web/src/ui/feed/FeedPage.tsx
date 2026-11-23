@@ -241,7 +241,7 @@ export function FeedPane({ source, post, kit, onBack }: { source?: string; post?
         ) : (
           <EntriesList source={at} s={s} order={mix?.order} kit={fk} top={composer} />
         )}
-        {phone && s.kind !== 'activity' && accounts().some((a) => a.publish) && (
+        {phone && s.kind !== 'activity' && accounts().some(startsPosts) && !(s.kind === 'line' && onlyAnswers(s.account)) && (
           <button class="feed-fab" aria-label="New post" onClick={() => setComposing(true)} data-composer="open">
             <kit.Icon name="pencil" size={22} />
           </button>
@@ -832,7 +832,7 @@ function ActivityList({ account, kit }: { account?: string; kit: Kit }) {
       {loading && <kit.Loading inline label="Loading notifications…" />}
       {!loading && !units.length && (
         <kit.Empty icon="bell" title="Nothing yet">
-          {convs.length ? 'When people like, answer or share your posts, mention you or follow you, it shows here.' : 'An account that has notifications (X, Mastodon, Reddit, Lemmy, Substack, Bluesky) shows them here.'}
+          {convs.length ? 'When people like, answer or share your posts, mention you or follow you, it shows here.' : 'An account that has notifications (X, Mastodon, Reddit, Lemmy, Substack, Bluesky, LessWrong) shows them here.'}
         </kit.Empty>
       )}
     </Scroll>
@@ -936,10 +936,15 @@ const localInput = (ms: number) => {
   return d.toISOString().slice(0, 16);
 };
 
+/** Whether a new post can start from this account: it posts, and its network takes more than replies (not LessWrong). */
+const startsPosts = (a: P.FeedAccountView) => a.publish && !postRulesFor(a.network)?.replyOnly;
+/** An account whose network takes only replies from here: its own timeline has no composer. */
+const onlyAnswers = (id: string) => accounts().some((a) => a.accountId === id && !!postRulesFor(a.network)?.replyOnly);
+
 /** The composer: over the posts on a computer, in a sheet from the pencil button on a phone (`sheet`, closed by
  * `onDone` once posted or saved). */
 function FeedComposer({ kit, fixed, sheet, onDone }: { kit: Kit; fixed?: string; sheet?: boolean; onDone?: () => void }) {
-  const accs = accounts().filter((a) => a.publish);
+  const accs = accounts().filter(startsPosts);
   const first = () => {
     const last = (read(LAST_AS) ?? '').split(',').filter((a) => accs.some((x) => x.accountId === a));
     return fixed && accs.some((a) => a.accountId === fixed) ? [fixed] : last.length ? last : accs.slice(0, 1).map((a) => a.accountId);
@@ -1007,7 +1012,7 @@ function FeedComposer({ kit, fixed, sheet, onDone }: { kit: Kit; fixed?: string;
     a.style.height = `${Math.min(a.scrollHeight, 360)}px`;
   }, [text, open]);
 
-  if (!accs.length) return null;
+  if (!accs.length || (fixed && onlyAnswers(fixed))) return null;
   const chosen = accs.filter((a) => as.includes(a.accountId));
   const rulesOf = (a: P.FeedAccountView) => postRulesFor(a.network)!;
   const words = rulesOf(chosen[0] ?? accs[0]).words;

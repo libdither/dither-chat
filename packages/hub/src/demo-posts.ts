@@ -1,20 +1,23 @@
 /**
- * The demo world's Mastodon, Reddit, Lemmy, Substack and Bluesky accounts (docs/feed.md "The demo world"): networks of posts
- * only, as dither-accounts' extractors for them send them. Each has a home timeline in two (Mastodon's Home and
- * Trending, Reddit's New and Best, Lemmy's Subscribed and All, Substack's Inbox and Notes, Bluesky's Following and Discover), threads with comment trees,
+ * The demo world's Mastodon, Reddit, Lemmy, Substack, Bluesky and LessWrong accounts (docs/feed.md "The demo world"):
+ * networks of posts only, as dither-accounts' extractors for them send them. Each has a home timeline in two (Mastodon's
+ * Home and Trending, Reddit's New and Best, Lemmy's Subscribed and All, Substack's Inbox and Notes, Bluesky's Following
+ * and Discover, LessWrong's Subscribed and For you), threads with comment trees,
  * notifications in one `feed` conversation, profiles with posts, and what you do there (like, repost where the network
  * has one, posts with a title and a place, a content warning). Everyone and everything here is made up.
  *
  * What each exercises: Mastodon a content warning on a post and on a reply, a boost and Trending's reasons; Reddit a
  * title and a subreddit on every post, a comment tree deeper than six levels (Continue this thread) and votes with no
  * names; Lemmy `post:` and `comment:` ids, communities on other servers; Substack a publication as the place, a
- * long post's title, Notes and restacks; Bluesky `<did>~<rkey>` ids, a quote post and a repost, a reply tree.
+ * long post's title and its whole article in its thread, Notes and restacks; Bluesky `<did>~<rkey>` ids, a quote post
+ * and a repost, a reply tree; LessWrong `p-` and `c-` ids, titled posts with no place whose whole article comes only in
+ * their thread, karma as the like, and comments as the only thing written from here.
  */
 import type * as P from '@dither-chat/protocol';
 import type { AccountRow } from './store.ts';
 import type { InprocAdapter } from './supervisor.ts';
 
-type PostsNet = 'mastodon' | 'reddit' | 'lemmy' | 'substack' | 'bluesky';
+type PostsNet = 'mastodon' | 'reddit' | 'lemmy' | 'substack' | 'bluesky' | 'lesswrong';
 
 export const DEMO_POST_ACCOUNTS: { id: string; network: PostsNet; label: string; color: string }[] = [
   { id: 'acc_demo-mastodon', network: 'mastodon', label: 'toots', color: '#6364FF' },
@@ -22,6 +25,7 @@ export const DEMO_POST_ACCOUNTS: { id: string; network: PostsNet; label: string;
   { id: 'acc_demo-lemmy', network: 'lemmy', label: 'lemmy', color: '#00BC8C' },
   { id: 'acc_demo-substack', network: 'substack', label: 'reading', color: '#FF6719' },
   { id: 'acc_demo-bluesky', network: 'bluesky', label: 'sky', color: '#0085FF' },
+  { id: 'acc_demo-lesswrong', network: 'lesswrong', label: 'lw', color: '#5F9B65' },
 ];
 
 const MIN = 60_000;
@@ -59,6 +63,8 @@ interface World {
   /** Who liked, where the network names them (Mastodon's favourites, Substack's likes). */
   likers?: Record<string, string[]>;
   reposters?: Record<string, string[]>;
+  /** A long post's whole body as Markdown (PostFact.article), by post id: given only in the post's own thread. */
+  articles?: Record<string, string>;
   /** Where a new post goes: its place's address on the network (a subreddit, a community). */
   placeOf?: (name: string) => P.PostFact['place'];
   /** A new post's id and link. */
@@ -291,6 +297,19 @@ function substack(epoch: number): World {
     ],
     likers: { [mine.id]: ['tom'] },
     reposters: { [mine.id]: ['wren'] },
+    articles: {
+      [essay.id]: [
+        'Every map leaves things out, and the good ones tell you what. This week: three projections, a subway diagram, and the one map I keep on my wall even though it is **wrong about everything**.',
+        '## Three projections',
+        'Mercator keeps angles and gives up area, which is why Greenland looks the size of Africa. The [equal-area projections](https://en.wikipedia.org/wiki/Equal-area_map) do the opposite, and look *melted* for it.',
+        `![A diagram of stations and lines](${GRAPH})`,
+        '_The subway diagram: right about order, wrong about distance._',
+        '> A map is not the territory, but a good one admits it.',
+        '## What I keep on my wall',
+        '- a 1920s tram map of a city that no longer has trams\n- with every street name spelled the old way\n- and a river in the wrong place',
+        'Next week: why every weather map you have seen is a little bit of a guess.',
+      ].join('\n\n'),
+    },
     newId: (n) => ({ id: nid(800 + n), url: `https://substack.com/@zyan/note/${nid(800 + n)}` }),
     capabilities: ['profile', 'posts', 'postActions', 'publish', 'postReactors', 'home', 'unpublish'],
   };
@@ -355,7 +374,107 @@ function bluesky(epoch: number): World {
   };
 }
 
-const WORLDS: Record<PostsNet, (epoch: number) => World> = { mastodon, reddit, lemmy, substack, bluesky };
+// ------------------------------------------------------------------ LessWrong
+
+function lesswrong(epoch: number): World {
+  // Post ids are `p-<id>`, comment ids `c-<id>` (dither-accounts' lesswrong kind), on the site's own 17-character ids; all made up.
+  const lwid = (n: number) => `dmo${String(n).padStart(4, '0')}LwQxZk7Fa`.slice(0, 17).padEnd(17, 'q');
+  const pid = (n: number) => `p-${lwid(n)}`;
+  const cid = (n: number) => `c-${lwid(n)}`;
+  let u = 0;
+  const user = (key: string, slug: string, name: string, bg: string, bio: string, x: Partial<Person> = {}) => personOf(key, `usr${String(++u).padStart(4, '0')}DemoLwAbc`.slice(0, 17), slug, name, bg, bio, `https://www.lesswrong.com/users/${slug}`, x);
+  const me = user('me', 'zyan', 'zyan', '#F7D154', 'Routing, sheaves, and the occasional forecast.');
+  const maren = user('maren', 'maren-holt', 'Maren Holt', '#5F9B65', 'Writes about small forecasts and how to score them.', { followers: 410 });
+  const ossian = user('ossian', 'ossian-reed', 'Ossian Reed', '#364fc7', 'Changing my mind, slowly, in public.', { followers: 1_250 });
+  const tamsin = user('tamsin', 'tamsin-vale', 'Tamsin Vale', '#c2255c', 'Mostly comments. Sometimes a sequence.');
+  const slug = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const urls = new Map<string, string>();
+  const post = (n: number, who: Person, min: number, title: string, text: string, x: Partial<P.PostFact> = {}): P.PostFact => {
+    const url = `https://www.lesswrong.com/posts/${lwid(n)}/${slug(title)}`;
+    urls.set(pid(n), url);
+    // Karma is the like; comments are the replies; no reposts on LessWrong.
+    return { id: pid(n), url, ts: epoch - min * MIN, author: who.identity.nativeId, title, text, ...x };
+  };
+  const commentUrl = (root: string) => (id: string) => `${urls.get(root)}?commentId=${id.slice(2)}`;
+  const calib = post(1, maren, 8 * H, 'Notes on calibrating small predictions', 'I scored a year of my own everyday predictions (will the bus be late, will the meeting run over) and learned more from the boring ones than from the big ones.', { counts: { replies: 4, likes: 87 } });
+  const slowly = post(2, ossian, 30 * H, 'A field guide to changing your mind slowly', 'Most of my real updates did not happen in an argument. They happened weeks later, in the shower, after the argument had been lost by everyone.', { counts: { replies: 0, likes: 142 } });
+  const streaks = post(3, tamsin, 50 * H, 'Why I stopped keeping streaks', 'A streak measures how long since you last failed, which is a strange thing to optimise. Here is what I count instead.', { counts: { replies: 0, likes: 64 } });
+  const posts = [
+    ...tree(epoch, calib, [
+      [cid(10), calib.id, ossian, 7 * H, 'The boring ones are where the base rates live. Did you score them with a log score or a Brier score?'],
+      [cid(11), cid(10), maren, 6 * H, 'Brier, for this one: it forgives a confident miss less than I wanted it to, which was the point.'],
+      [cid(12), calib.id, me, 5 * H, 'I tried the same with how long my builds take. I was overconfident in exactly the way you describe: right about the median, wrong about the tail.'],
+      [cid(13), cid(12), tamsin, 3 * H, 'The tail is the whole story with build times. Did you try writing down a 90% interval instead of a point?'],
+    ], commentUrl(calib.id)).map((p) => (p.id === calib.id ? { ...p, counts: { ...p.counts, replies: 4 } } : p)),
+    slowly,
+    streaks,
+  ];
+  const articles = {
+    [calib.id]: [
+      'I scored a year of my own everyday predictions (will the bus be late, will the meeting run over) and learned more from the boring ones than from the big ones.',
+      '',
+      '## What I did',
+      '',
+      'Every evening I wrote down three predictions for the next day, each with a probability, and scored them the morning after. By December there were a little over a thousand.',
+      '',
+      '1. Most were about things I could not change: buses, weather, other people being late.',
+      '2. About a fifth were about my own plans, and those were the badly calibrated ones.',
+      '3. A handful were about the news, and I have stopped making those.',
+      '',
+      '## What I found',
+      '',
+      '> When I said 90% about my own plans, it happened about 70% of the time.',
+      '',
+      'Everything else was close to the line. The fix was not to think harder but to **say 70% when I meant "I intend to"**.',
+      '',
+      'The scoring was one line:',
+      '',
+      '```',
+      'brier = mean((p - outcome) ** 2)',
+      '```',
+      '',
+      '---',
+      '',
+      'If you try this, start with the boring predictions. *They are the ones you will keep making.*',
+    ].join('\n'),
+    [slowly.id]: [
+      'Most of my real updates did not happen in an argument. They happened weeks later, in the shower, after the argument had been lost by everyone.',
+      '',
+      '## Signs it is happening',
+      '',
+      '- You start steelmanning the other side without being asked.',
+      '- You notice you have stopped bringing the topic up.',
+      '- Your examples change before your conclusion does.',
+      '',
+      'None of these feel like changing your mind. That is rather the point.',
+    ].join('\n'),
+  };
+  const reply = posts.find((p) => p.id === cid(13))!;
+  const mine = posts.find((p) => p.id === cid(12))!;
+  return {
+    network: 'lesswrong',
+    me,
+    people: [maren, ossian, tamsin],
+    posts,
+    home: {
+      following: [{ id: calib.id }, { id: slowly.id }],
+      foryou: [{ id: streaks.id, reason: { text: 'Curated', kind: 'pinned' } }, { id: slowly.id }, { id: calib.id }],
+    },
+    feed: [
+      { min: 3 * H, who: 'tamsin', nativeId: `reply:${reply.id}`, body: reply.text, item: { type: 'reply', post: mine, theirs: reply, url: reply.url } },
+      { min: 2 * H, who: 'ossian', nativeId: `follow:${ossian.identity.nativeId}`, body: 'subscribed to you', item: { type: 'follow', url: ossian.url } },
+    ],
+    articles,
+    newId: (n, to) => {
+      const id = cid(900 + n);
+      const root = to?.root ?? to?.id ?? calib.id;
+      return { id, url: commentUrl(root)(id) };
+    },
+    capabilities: ['profile', 'posts', 'postActions', 'publish', 'home', 'unpublish'],
+  };
+}
+
+const WORLDS: Record<PostsNet, (epoch: number) => World> = { mastodon, reddit, lemmy, substack, bluesky, lesswrong };
 
 /**
  * One network of posts, played: its feed conversation and notifications, home timelines, threads, profiles, and what
@@ -457,7 +576,9 @@ export class DemoPosts implements InprocAdapter {
     };
     walk(focal, []);
     const v = (p: P.PostFact) => this.viewed(p);
-    return { focal: v(focal), ancestors: ancestors.map(v), replies: chains.map((c) => c.map(v)), more: null };
+    // A long post's whole article comes with its own thread only; a card has its short text.
+    const article = this.w.articles?.[focal.id];
+    return { focal: article ? { ...v(focal), article } : v(focal), ancestors: ancestors.map(v), replies: chains.map((c) => c.map(v)), more: null };
   }
 
   command(cmd: P.AdapterCommand) {
@@ -488,7 +609,7 @@ export class DemoPosts implements InprocAdapter {
       case 'postAct': {
         if (!this.known(cmd.post)) return fail(`${net} did not give this post`);
         const repost = cmd.act.endsWith('repost');
-        if (repost && (net === 'reddit' || net === 'lemmy')) return fail(`${net} has no reposts`);
+        if (repost && (net === 'reddit' || net === 'lemmy' || net === 'lesswrong')) return fail(`${net} has no reposts`);
         const set = repost ? this.reposted : this.liked;
         if (cmd.act.startsWith('un')) set.delete(cmd.post);
         else set.add(cmd.post);
@@ -498,6 +619,7 @@ export class DemoPosts implements InprocAdapter {
         this.published.push(cmd);
         const to = cmd.replyTo ? this.known(cmd.replyTo) : null;
         if (cmd.replyTo && !to) return fail('That post is gone');
+        if (!to && net === 'lesswrong') return fail('LessWrong takes only comments from here');
         if (!to && (net === 'reddit' || net === 'lemmy') && (!cmd.title || !cmd.place)) return fail(`A new ${net} post needs a title and a ${net === 'reddit' ? 'subreddit' : 'community'}`);
         const { id, url } = this.w.newId(this.made.length + this.deleted.size, to ?? null);
         const p: P.PostFact = {
@@ -511,7 +633,7 @@ export class DemoPosts implements InprocAdapter {
           ...(cmd.place && this.w.placeOf ? { place: this.w.placeOf(cmd.place) } : {}),
           ...(cmd.warning ? { warning: cmd.warning } : {}),
           ...(cmd.quote && this.known(cmd.quote) ? { quoteOf: this.known(cmd.quote)! } : {}),
-          counts: { replies: 0, likes: net === 'reddit' || net === 'lemmy' ? 1 : 0, ...(net === 'mastodon' || net === 'substack' || net === 'bluesky' ? { reposts: 0 } : {}) },
+          counts: { replies: 0, likes: net === 'reddit' || net === 'lemmy' || net === 'lesswrong' ? 1 : 0, ...(net === 'mastodon' || net === 'substack' || net === 'bluesky' ? { reposts: 0 } : {}) },
         };
         this.made.push(p);
         return reply(p satisfies P.PostFact);

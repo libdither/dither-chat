@@ -48,7 +48,7 @@ export interface Conv {
    * (`pushed`), which (null: not decided, or silent) and its importance, with your vote and when. Older ones count as
    * read.
    */
-  incoming: { ts: number; mention: boolean; pushed: boolean; level: P.TriageDecision | null; score: number | null; vote: P.TriageDecision | null; votedAt: number | null }[];
+  incoming: { ts: number; mention: boolean; wildcard?: boolean; pushed: boolean; level: P.TriageDecision | null; score: number | null; vote: P.TriageDecision | null; votedAt: number | null }[];
   /** When you last wrote. */
   lastOwn: number | null;
   /** The open turn's messages from others as facts (needsreply.ts), with when, up to TURN_FACTS of them. */
@@ -217,6 +217,7 @@ export function seenAt(w: World, t: number, usage = usageAt(w.stays, t)): Seen[]
     const read = Math.max(c.lastOwn ?? 0, there ?? 0, w.logStart);
     let unread = 0;
     let mentions = 0;
+    let wildcards = 0;
     let pushedUnread = false;
     let level: P.TriageDecision | null = null;
     // The newest unread message triage put in a tier, as Attention.input reads it (`lastPush`).
@@ -225,6 +226,7 @@ export function seenAt(w: World, t: number, usage = usageAt(w.stays, t)): Seen[]
       const m = c.incoming[i];
       unread++;
       if (m.mention) mentions++;
+      if (m.wildcard) wildcards++;
       if (m.pushed) {
         pushedUnread = true;
         told ??= m;
@@ -248,6 +250,7 @@ export function seenAt(w: World, t: number, usage = usageAt(w.stays, t)): Seen[]
         authorName: null,
         unread,
         mentions,
+        wildcards,
         // As the live inbox has it: an alert or a Conversation is pinged, an alert is pinned while fresh, and any tier
         // brings its importance. (A swipe since is not replayed: the row then counts a little more than it did.)
         pinged: told && (told.level === 'push' || told.level === 'quiet') ? 'a push' : null,
@@ -583,6 +586,7 @@ export class Rebuild {
         c.incoming.push({
           ts: r.ts,
           mention: !!r.mentions_self,
+          ...(r.mentions_self && r.mentions_all ? { wildcard: true } : {}),
           pushed: !!r.pushed,
           level: r.decision && r.decision !== 'silent' ? r.decision : null,
           score: r.score ?? null,

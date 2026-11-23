@@ -5,7 +5,7 @@
  * nothing: a component reads `rev` or `metaRev` itself.
  */
 import type * as P from '@dither-chat/protocol';
-import { categoryThreshold, NETWORK_META, POST_NETWORKS, RULE_LABEL } from '@dither-chat/protocol';
+import { categoryThreshold, mutedNow, NETWORK_META, POST_NETWORKS, RULE_LABEL } from '@dither-chat/protocol';
 import { dataVersion, db, inbox, isSelfIdentity, mailTriage } from './state.ts';
 import { mailDataVersion, metaDataVersion } from './versions.ts';
 import { isMailItem, triageBoard, type Board, type BoardItem } from './board.ts';
@@ -50,8 +50,71 @@ export function externalProfile(i: P.IdentityView): string | null {
   if (i.network === 'discord') return /^\d+$/.test(i.nativeId) ? `https://discord.com/users/${i.nativeId}` : null;
   if (i.network === 'matrix') return `https://matrix.to/#/${encodeURIComponent(i.nativeId)}`;
   if (i.network === 'whatsapp') return /^\+\d{6,}$/.test(i.handle ?? '') ? `https://wa.me/${i.handle!.slice(1)}` : null;
+  if (i.network === 'zulip') {
+    const m = i.nativeId.match(/^([^/]+)\/u\/(\d+)$/);
+    return m ? `${zulipBase(m[1]!)}/#user/${m[2]}` : null;
+  }
   return null;
 }
+
+// ------------------------------------------------------------------ Zulip's own links
+
+/**
+ * A Zulip organization's address from its host (dither-accounts' ids: `<host>` is the server's host and port, without
+ * its scheme). https, as an organization is served; plain http only on this machine (a local test server).
+ */
+const zulipBase = (host: string) => `${/^(localhost|127\.\d+\.\d+\.\d+|\[::1\])(:\d+)?$/.test(host) ? 'http' : 'https'}://${host}`;
+
+/**
+ * Zulip's hash encoding, as its web client writes narrow links (`encodeHashComponent` in zulip/zulip's
+ * web/src/internal_url.ts, https://github.com/zulip/zulip/blob/7bb11b60d91def4644f6c74be6611fcc85488b06/web/src/internal_url.ts#L7-L24):
+ * encodeURIComponent, then `%` as `.` and `!'()*.` as `.` and their hex.
+ */
+export const zulipHash = (s: string) => encodeURIComponent(s).replace(/[%!'()*.]/g, (c) => (c === '%' ? '.' : `.${c.charCodeAt(0).toString(16).toUpperCase()}`));
+
+/** A channel's part of a narrow: its id and name, as Zulip writes it (`encode_slug`), or the bare id where that is long. */
+function zulipChannel(id: string, name: string | null | undefined) {
+  const slug = `${id}-${(name ?? '').replace(/ /g, '-')}`;
+  const enc = zulipHash(slug);
+  return !name || enc.length - slug.length > 10 || enc.length > slug.length * 1.5 ? id : enc;
+}
+
+/**
+ * A Zulip conversation's narrow link from its native id (dither-accounts' docs/zulip.md): a channel, a topic (by the
+ * name it has now, since its id is lowercased), or direct messages (`-dm` for two, `-group` for more, as Zulip's own
+ * permalinks).
+ */
+function zulipLink(c: P.ConversationView): string | null {
+  let m = c.nativeId.match(/^([^/]+)\/s\/(\d+)(?:\/t\/(.*))?$/s);
+  if (m) {
+    const [, host, stream, topic] = m;
+    const channel = c.shape === 'thread' && c.parentId ? db.conversations.get(c.parentId) : c;
+    const at = `${zulipBase(host!)}/#narrow/channel/${zulipChannel(stream!, channel?.name)}`;
+    // The empty topic ("general chat" in Zulip's apps) is `…/t/`: its link's topic is empty too, as Zulip writes it.
+    return topic === undefined ? at : `${at}/topic/${zulipHash(topic === '' ? '' : (c.name ?? decodeURIComponent(topic)))}`;
+  }
+  m = c.nativeId.match(/^([^/]+)\/dm\/(\d+(?:,\d+)*)$/);
+  if (m) return `${zulipBase(m[1]!)}/#narrow/dm/${m[2]}-${m[2]!.split(',').length > 2 ? 'group' : 'dm'}`;
+  return null;
+}
+
+/** A Zulip message's own link: its conversation's narrow, near it. */
+export function zulipMessageLink(c: P.ConversationView, messageNativeId: string): string | null {
+  const id = messageNativeId.match(/\/m\/(\d+)$/)?.[1];
+  const at = zulipLink(c);
+  return id && at ? `${at}/near/${id}` : null;
+}
+
+/** A space's page on its network's own site: a Discord server, a Matrix space, a Zulip organization. */
+export function spaceLink(s: P.SpaceView): string | null {
+  if (s.network === 'discord') return `https://discord.com/channels/${s.nativeId}`;
+  if (s.network === 'matrix') return `https://matrix.to/#/${encodeURIComponent(s.nativeId)}`;
+  if (s.network === 'zulip') return s.kind === 'community' ? `${zulipBase(s.nativeId)}/` : null;
+  return null;
+}
+
+/** "Open in …": the app a network's links open, for the button that does. */
+export const linkOpensIn = (n: P.Network) => (n === 'matrix' ? 'Element (matrix.to)' : netName(n));
 export const netColor = (n: P.Network) => NETWORK_META[n].color;
 
 // ------------------------------------------------------------------ visibility
@@ -158,7 +221,8 @@ export function convTitle(c: P.ConversationView | undefined | null): string {
     return p?.name ?? identityName(peerIdentity(c));
   }
   if (c.shape === 'self') return c.name ?? 'Notes to self';
-  if (c.name) return c.name;
+  // A resolved Zulip topic keeps Zulip's ✔ in its name; it shows as a Resolved mark instead (resolvedTopic).
+  if (c.name) return resolvedTopic(c) ? c.name.slice(RESOLVED.length) : c.name;
   if (c.shape === 'group')
     return (
       c.participantIds
@@ -168,6 +232,37 @@ export function convTitle(c: P.ConversationView | undefined | null): string {
         .join(', ') || 'Group'
     );
   return 'Unnamed';
+}
+
+/** Zulip marks a resolved topic by this in front of its name (dither-accounts' docs/zulip.md). */
+const RESOLVED = '✔ ';
+
+/** A resolved Zulip topic: its name starts with Zulip's ✔, and the hub has it archived. */
+export const resolvedTopic = (c: P.ConversationView) => c.network === 'zulip' && c.shape === 'thread' && !!c.name?.startsWith(RESOLVED);
+
+/**
+ * A forum whose threads are topics (Zulip's channels): the channel takes no messages of its own, and its topics are
+ * read as channels are, not posts to browse. The sidebar lists its unread topics, and its words are Zulip's.
+ */
+export const topicForum = (c: P.ConversationView | null | undefined) => !!c && c.variant === 'forum' && c.network === 'zulip';
+
+/** The words for a channel's threads, by network: Zulip's topics are resolved, Discord's posts and threads archived. */
+interface ThreadWords {
+  /** "topic", "post", "thread". */
+  one: string;
+  many: string;
+  /** "Resolved", "Archived": a tab, a chip, a toast. */
+  archived: string;
+  archive: string;
+  unarchive: string;
+  unarchived: string;
+}
+export function threadWords(c: P.ConversationView | null | undefined): ThreadWords {
+  const place = c && c.shape === 'thread' && c.parentId ? db.conversations.get(c.parentId) : c;
+  if (topicForum(place) || (c?.network === 'zulip' && c.shape === 'thread'))
+    return { one: 'topic', many: 'topics', archived: 'Resolved', archive: 'Resolve', unarchive: 'Unresolve', unarchived: 'Unresolved' };
+  const posts = place?.variant === 'forum' || place?.variant === 'media';
+  return { one: posts ? 'post' : 'thread', many: posts ? 'posts' : 'threads', archived: 'Archived', archive: 'Archive', unarchive: 'Unarchive', unarchived: 'Unarchived' };
 }
 
 /** "#dev" for channels, plain names otherwise. */
@@ -310,12 +405,21 @@ export function spaceChildren(id: string): TreeNode[] {
 /** Channels a server can open on: ones with messages to read, not voice rooms, forums or feeds. */
 const OPENS_ON: ReadonlySet<P.Variant> = new Set(['text', 'announcement', 'rules']);
 
-/** A space's first channel to read, in list order through its categories and subspaces, as Discord opens a server. */
-export function firstChannel(id: string, seen = new Set<string>()): string | undefined {
+/**
+ * A space's first channel to read, in list order through its categories and subspaces, as Discord opens a server.
+ * A space with no channel of messages opens on its first forum (a Zulip organization, whose channels are all forums),
+ * which shows the forum's posts.
+ */
+export function firstChannel(id: string): string | undefined {
+  return firstOf(id, OPENS_ON, new Set()) ?? firstOf(id, FORUMS, new Set());
+}
+const FORUMS: ReadonlySet<P.Variant> = new Set(['forum']);
+
+function firstOf(id: string, variants: ReadonlySet<P.Variant>, seen: Set<string>): string | undefined {
   if (seen.has(id)) return undefined;
   seen.add(id);
   for (const n of spaceChildren(id)) {
-    const hit = n.kind === 'conversation' ? (OPENS_ON.has(db.conversations.get(n.id)!.variant) ? n.id : undefined) : firstChannel(n.id, seen);
+    const hit = n.kind === 'conversation' ? (variants.has(db.conversations.get(n.id)!.variant) ? n.id : undefined) : firstOf(n.id, variants, seen);
     if (hit) return hit;
   }
   return undefined;
@@ -446,6 +550,22 @@ export function convsUnder(id: string): P.ConversationView[] {
   });
 }
 
+/**
+ * A space's channels, not the threads and topics under them (every Zulip topic is a conversation of its own), latest
+ * first by their newest message there or in a thread of theirs: a Zulip channel takes no messages itself.
+ */
+export function channelsUnder(id: string): P.ConversationView[] {
+  return memo('chans:' + id, () => {
+    const under = convsUnder(id);
+    const latest = new Map<string, number>();
+    for (const c of under) {
+      const k = c.shape === 'thread' && c.parentId ? c.parentId : c.id;
+      latest.set(k, Math.max(latest.get(k) ?? 0, c.lastMessageAt ?? 0));
+    }
+    return under.filter((c) => c.shape === 'channel').sort((a, b) => latest.get(b.id)! - latest.get(a.id)!);
+  });
+}
+
 /** Their ids: the walk is done again only when what is where may have changed. */
 function idsUnder(id: string): string[] {
   return metaMemo('under:' + id, () => {
@@ -568,7 +688,7 @@ function nativeLevel(c: P.ConversationView, parent?: P.ConversationView): 'all' 
   const now = Date.now();
   const at = (m: P.NativeMute | null | undefined) => {
     if (m?.until !== undefined && m.until > now) expires = Math.min(expires, m.until);
-    return !m || (m.until !== undefined && m.until <= now) ? null : m.until !== undefined ? 'none' : (m.level ?? null);
+    return !m || (m.until !== undefined && m.until <= now) ? null : mutedNow(m, now) ? 'none' : (m.level ?? null);
   };
   for (const m of [c.nativeMute, parent?.nativeMute]) {
     const lv = at(m);
@@ -592,12 +712,15 @@ function nativeLevel(c: P.ConversationView, parent?: P.ConversationView): 'all' 
 
 function nativeMuteLevel(c: P.ConversationView, parent?: P.ConversationView): Level | null {
   const now = Date.now();
-  const mutes: (P.NativeMute | null)[] = [c.nativeMute, parent?.nativeMute ?? null, ...(parent ?? c).spaceIds.map((s) => db.spaces.get(s)?.nativeMute ?? null)];
+  // A thread's own setting is its answer over its channel's (a Zulip topic unmuted in a muted channel), as in nativeLevel.
+  const own = c.nativeMute;
+  const says = !!own && (mutedNow(own, now) || (own.level !== undefined && !(own.until !== undefined && own.until <= now)));
+  const mutes: (P.NativeMute | null)[] = [own, says ? null : (parent?.nativeMute ?? null), ...(parent ?? c).spaceIds.map((s) => db.spaces.get(s)?.nativeMute ?? null)];
   let best: Level | null = null;
   for (const m of mutes) {
     if (!m) continue;
     if (m.until && m.until > now) expires = Math.min(expires, m.until);
-    const lv: Level | null = m.level === 'none' || (m.until && m.until > now) ? 'digest' : m.level === 'mentions' ? 'mentions' : null;
+    const lv: Level | null = mutedNow(m, now) ? 'digest' : m.level === 'mentions' ? 'mentions' : null;
     if (lv && (!best || rank(lv) < rank(best))) best = lv;
   }
   return best;
@@ -943,5 +1066,6 @@ export function deepLink(c: P.ConversationView): string | null {
     return `https://discord.com/channels/${guild?.nativeId ?? '@me'}/${c.nativeId}`;
   }
   if (c.network === 'matrix') return `https://matrix.to/#/${encodeURIComponent(base.nativeId.split('|')[0])}`;
+  if (c.network === 'zulip') return zulipLink(c);
   return null;
 }

@@ -417,7 +417,7 @@ function personSections(
       const native = best && 'nativeId' in best ? best.nativeId : null;
       const sub = m.list.map((r) => accountRow(r, views.get(r.id), p.name, m.pid, section, o.network, o.refs));
       const lead = (native ? sub.find((x) => x.insert === `<@${native}> `) : undefined) ?? sub[0];
-      const avatar = p.avatar_url ? s.mediaUrl(p.avatar_url, null) : lead.avatar;
+      const avatar = p.avatar_url ? s.personPicture(m.pid, p.avatar_url) : lead.avatar;
       rows.push({
         kind: 'person',
         insert: native ? `<@${native}> ` : `${personRef(m.pid)} `,

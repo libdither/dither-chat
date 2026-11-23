@@ -94,6 +94,11 @@ const NET_HELP: Record<P.Network, { adapter: string; blurb: string; fields: { ke
     blurb: 'Brings your Bluesky Following and Discover feeds, threads and notifications to the Feed page, where you can reply, like, repost and quote. It runs in dither-accounts; after you add it, sign in to Bluesky there.',
     fields: [],
   },
+  lesswrong: {
+    adapter: 'lesswrong',
+    blurb: 'Brings LessWrong\'s front page, the posts you subscribe to, whole posts with their comment threads, and replies to you to the Feed page, where you can upvote and comment. New posts are written on LessWrong itself. It runs in dither-accounts; after you add it, sign in to LessWrong there.',
+    fields: [],
+  },
   // Runs only in dither-accounts (its docs/zulip.md): the organization's address and email are settings, the key a secret.
   zulip: {
     adapter: 'zulip',

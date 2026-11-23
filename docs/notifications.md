@@ -75,7 +75,7 @@ and not in your notes to self, and the first of these that holds:
 | --- | --- |
 | it is in a DM | A direct message |
 | it is in a post you follow: a reply the hub's check found ([feed.md](feed.md#following-a-post)) | A reply to a post you follow |
-| it mentions you by name or replies to your message (`@everyone` does not count) | About you |
+| it mentions you by name, or a group you are in (a Zulip user group, a Discord role you hold), or replies to your message (`@everyone` does not count) | About you |
 | it says one of your keywords ([Rules](#rules)) | Says “…”, one of your keywords |
 | you wrote in its chat in the last 24 hours (`TOOK_PART`) | You wrote here in the last day |
 | you answer openings there at 10% or more (`ANSWER_RATE` 0.1) | You usually answer here |
@@ -125,7 +125,7 @@ question is a fixed string. Its answers are low and uncalibrated: on real messag
 So the answer is not used as a chance. It is set against a bar.
 
 **The bars** (`learn.ts` `ALERT_BAR`): 0.05 in a DM and for a message that mentions you or replies to you, 0.2
-elsewhere. Before any mark the alert chance is
+elsewhere (a mention of a group you are in too). Before any mark the alert chance is
 
 ```
 alert = sigmoid(logit(answer) − logit(bar))
@@ -163,10 +163,13 @@ alert, sorts the phone's list, and counts in the inbox's order. No language mode
 **Where it starts** (`learn.ts` `prior`): from the network's own notification setting for the place.
 
 - **0.8** (`NOTIFIED`) where the network itself would have notified you: every message in a place it notifies on
-  every message, and a mention of you, a reply to you or `@everyone` in a place it notifies on mentions.
+  every message, and a mention of you or of a group you are in, a reply to you or `@everyone` in a place it notifies
+  on mentions. A followed Zulip topic with Zulip's followed-topic notifications on is a place that notifies every
+  message: it starts here, and like any other it alerts only when the local model says so.
   A message that says one of your keywords starts here too, wherever it is.
 - **Otherwise** `0.05 + 0.75 × addressed`, at most 0.6, where `addressed` is triage's own sense of how much the
-  message is about you (`Triage.addressed`): from 0.15, mentions you +0.5 (or `@everyone` +0.2), replies to you +0.4,
+  message is about you (`Triage.addressed`): from 0.15, mentions you +0.5 (or a group you are in +0.35, or
+  `@everyone` +0.2), replies to you +0.4,
   a question to you or in a group chat +0.15, sounds urgent +0.3, a small group of six or fewer +0.1, you wrote there
   in the half hour before +0.25, an announcement channel −0.1.
 - **Half** of either from a bot.
@@ -681,9 +684,15 @@ arrives a little late.
   live message is, so a mention found a minute late can still be a Conversation or an alert. Older, it never notifies.
   A message the hub already had is never news again. @everyone, @here and role mentions found this way are
   `mentionsAll`, never "about you".
-- **@everyone suppressed.** A server set in Discord to suppress @everyone and @here (`NativeMute.suppressEveryone` on
-  its space) makes an @everyone there something the network would not have notified you about, so its importance
-  starts lower (`Triage.suppressesEveryone`). Role mentions suppressed are kept (`suppressRoles`) but not used yet.
+- **@everyone suppressed.** A Discord server set to suppress @everyone and @here, or a Zulip channel or topic with
+  wildcard mentions off (`NativeMute.suppressEveryone`), makes an @everyone there something the network would not have
+  notified you about, so its importance starts lower (`Triage.suppressesEveryone`). The most specific place that says
+  either way decides: the conversation, its parent channel, then its spaces, so a followed Zulip topic whose wildcards
+  notify (Zulip's followed-topic setting) counts them in a channel that has them off.
+- **Groups you are in.** A mention of a Zulip user group or a Discord role you hold, and not of you by name
+  (`MessageFact.mentionsGroup`), is about you (a Conversation) but held to the higher alert bar (0.2), and weighs
+  between your name and `@everyone`. A Discord server set to suppress role mentions (`suppressRoles`) makes one
+  there something it would not have notified you about. An older extractor sends a role ping as a mention by name.
 - **Mutes changed in Discord** come at once: a mute set, changed or cleared in any Discord app, or running out,
   sends the place's fact again; a cleared one carries an empty `mute` (`{}`), which clears the hub's (a fact without
   `mute` leaves it as it was). "Muted on the network" in triage follows.

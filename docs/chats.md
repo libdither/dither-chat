@@ -262,6 +262,19 @@ lines. A reply to you that pinged you (`mentionsSelf`) shows your name as a ment
 @mention of you in the text. Whether a reply to someone else pinged them is not known yet: the hub keeps only whether
 a message pinged you.
 
+The pointer on a quote line lights up the message it points to, when that one is drawn (`.quoted-hover`), so you can
+see which it is before clicking. A click brings the quoted message to the middle of the view and lights it up for two
+seconds once it gets there (`.flash`), as Discord does; a message on screen already is lit up too. One more than a
+screen and a half away is jumped to most of the way at once and glides the rest, so a far one takes no longer than a
+near one (`bringToCenter` in `ui/Timeline.tsx`; with reduced motion it jumps).
+
+**Following the newest.** At the newest end, or within 32 px of it, the timeline follows the newest message: one coming
+in, or one growing (a picture loading), stays on screen. The browser's scroll anchoring otherwise holds what is in
+view still whenever the view is not exactly at the end, so a message arriving a pixel above it came in below the view.
+A ResizeObserver puts the view back at the end before it is painted. Further up, what you are reading stays where it
+is. A message you send goes to the newest end from wherever you were. `scripts/verify-timeline-scroll.ts` checks all
+of this on a computer and a phone, in CI.
+
 ## Not yet
 
 - **Groups as one chat.** The same group on two networks (every member on both) needs a stored link, `group_link`,

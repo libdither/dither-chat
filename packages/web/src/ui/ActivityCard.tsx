@@ -14,10 +14,11 @@ import { ActivityChart } from './ActivityChart.tsx';
 import { NetGlyph } from './bits.tsx';
 import { Change } from './HistoryCard.tsx';
 import { Icon } from './icons.tsx';
+import { StatusEmoji } from './ProfileShell.tsx';
 
 const SHOWN = 8;
 
-export function ActivityCard({ path, chartPath, self, chart, status, at }: { path: string; chartPath: string; self: boolean; chart: boolean; status?: { text?: string; emoji?: string } | null; at?: number }) {
+export function ActivityCard({ path, chartPath, self, chart, status, at }: { path: string; chartPath: string; self: boolean; chart: boolean; status?: { text?: string; emoji?: string; emojiUrl?: string } | null; at?: number }) {
   rev.value;
   const r = retention.value;
   const [statuses, setStatuses] = useState<P.ChangeView[]>([]);
@@ -51,7 +52,7 @@ export function ActivityCard({ path, chartPath, self, chart, status, at }: { pat
       <div class="pf-status-now">
         {hasStatus ? (
           <p class="pf-status">
-            {status!.emoji && <span class="pf-status-emoji">{status!.emoji}</span>}
+            <StatusEmoji status={status!} />
             <span>{status!.text}</span>
             {at ? (
               <time class="hist-when" title={fullTime(at)}>

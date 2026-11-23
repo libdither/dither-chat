@@ -108,6 +108,7 @@ const SITES: { re: RegExp; site: string; network?: Network }[] = [
   { re: /(?:^|[\s/(])(?:www\.)?reddit\.com\/u(?:ser)?\/([A-Za-z0-9_-]{3,20})\b/g, site: 'reddit', network: 'reddit' },
   { re: /(?:^|[\s(])\/?u\/([A-Za-z0-9_-]{3,20})\b/g, site: 'reddit', network: 'reddit' },
   { re: /(?:^|[\s/(])substack\.com\/@([A-Za-z0-9_-]{2,40})\b/g, site: 'substack', network: 'substack' },
+  { re: /(?:^|[\s/(])(?:www\.)?lesswrong\.com\/users\/([A-Za-z0-9_-]{1,64})\b/g, site: 'lesswrong', network: 'lesswrong' },
   { re: /(?:^|[\s/(])(?:www\.)?twitch\.tv\/([A-Za-z0-9_]{3,25})\b/g, site: 'twitch' },
   { re: /(?:^|[\s/(])(?:www\.)?youtube\.com\/@([A-Za-z0-9_.-]{3,30})\b/g, site: 'youtube' },
   { re: /(?:^|[\s/(])steamcommunity\.com\/(?:id|profiles)\/([A-Za-z0-9_-]{2,32})\b/g, site: 'steam' },
@@ -128,6 +129,7 @@ const LABEL_SITES: Record<string, { site: string; network?: Network }> = {
   bluesky: { site: 'bluesky', network: 'bluesky' },
   reddit: { site: 'reddit', network: 'reddit' },
   substack: { site: 'substack', network: 'substack' },
+  lesswrong: { site: 'lesswrong', network: 'lesswrong' },
   lemmy: { site: 'lemmy', network: 'lemmy' },
   twitch: { site: 'twitch' },
   youtube: { site: 'youtube' },
@@ -148,6 +150,16 @@ const LABEL_SITES: Record<string, { site: string; network?: Network }> = {
   discord: { site: 'discord', network: 'discord' },
   email: { site: 'email', network: 'email' },
 };
+
+/**
+ * A handle as a name compares it: Zulip's handle is the address people sign in with, whose own part is the name they
+ * picked (sam.lee@example.org is sam.lee) and whose domain everyone at that place shares. Mail's is no name at all.
+ */
+export function nameHandle(network: Network, handle: string | null | undefined): string | null {
+  if (!handle || network === 'email') return null;
+  if (network === 'zulip' && handle.includes('@')) return handle.slice(0, handle.lastIndexOf('@')) || null;
+  return handle;
+}
 
 /** A handle as a key compares it: lower case, no leading @. */
 const handleKey = (s: string) => s.trim().replace(/^@/, '').toLowerCase();
@@ -225,6 +237,8 @@ export function ownKeys(i: { network: Network; native_id: string; handle?: strin
   if (site && h) out.push({ key: `${site}:${h}`, text: `${net} ${i.handle}` });
   if (i.network === 'matrix') out.push({ key: `matrix:${i.native_id.toLowerCase()}`, text: `Matrix ${i.native_id}` });
   if (i.network === 'email') out.push({ key: `email:${i.native_id.toLowerCase()}`, text: i.native_id.toLowerCase() });
+  // Zulip's handle is an address (none where the organization keeps addresses from members: the extractor sends none).
+  if (i.network === 'zulip' && i.handle && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(i.handle.trim())) out.push({ key: `email:${i.handle.trim().toLowerCase()}`, text: i.handle.trim().toLowerCase() });
   const phone =
     i.network === 'whatsapp'
       ? phoneKey(i.native_id.split('@')[0])
@@ -378,8 +392,9 @@ function load(db: Database, now = Date.now()): Loaded {
     s.idents.push(i);
     s.networks.add(i.network);
     sideOf.set(i.id, sid);
-    for (const n of [i.display_name, i.nickname, i.network === 'email' ? null : i.handle]) addName(s, n);
-    if (i.handle && i.network !== 'email') s.handles.add(norm(i.handle));
+    const handle = nameHandle(i.network, i.handle);
+    for (const n of [i.display_name, i.nickname, handle]) addName(s, n);
+    if (handle) s.handles.add(norm(handle));
     // A Matrix id's own part is the handle people pick (@mothlight:matrix.org is mothlight); a bridge's stand-in is not.
     const local = i.network === 'matrix' && !puppetOf(i.native_id) ? /^@([^:]+):/.exec(i.native_id)?.[1] : undefined;
     if (local) s.handles.add(norm(local));
@@ -411,7 +426,9 @@ function load(db: Database, now = Date.now()): Loaded {
     try {
       const a = JSON.parse(r.data) as P.PersonAbout;
       addName(s, a.displayName);
-      if (a.handle) s.handles.add(norm(a.handle));
+      const net = s.idents.find((i) => i.id === r.identity_id)?.network;
+      const h = net === 'zulip' ? nameHandle(net, a.handle) : a.handle;
+      if (h) s.handles.add(norm(h));
       for (const c of claimsOf(a)) if (!s.claims.some((x) => x.key === c.key)) s.claims.push(c);
     } catch {}
   }
@@ -477,11 +494,12 @@ function addName(s: Side, n: string | null | undefined) {
 }
 
 function addProfile(s: Side, a: P.PersonAbout, identityId: string, sideOf: Map<string, string>) {
+  const from = s.idents.find((i) => i.id === identityId)?.network;
   addName(s, a.displayName);
-  if (a.handle) s.handles.add(norm(a.handle));
+  const h = from === 'zulip' ? nameHandle(from, a.handle) : a.handle;
+  if (h) s.handles.add(norm(h));
   if (a.username?.name) s.handles.add(norm(a.username.name));
   for (const f of a.facts ?? []) if (/originally known as/i.test(f.label)) addName(s, f.value.replace(/#\d{4}$/, ''));
-  const from = s.idents.find((i) => i.id === identityId)?.network;
   for (const c of claimsOf(a)) if (!s.claims.some((x) => x.key === c.key)) s.claims.push({ ...c, ...(from ? { from } : {}) });
   if (a.bio) {
     s.bioText = a.bio;
@@ -698,7 +716,10 @@ function compare(L: Loaded, a: Side, b: Side, df: Map<string, number>): Scored {
 
 /** The network of a side's account with this handle (or name). */
 function whereNamed(s: Side, n: string, handle: boolean): Network {
-  for (const i of s.idents) if (handle ? norm(i.handle) === n : [i.display_name, i.nickname, i.handle].some((x) => norm(x) === n)) return i.network;
+  for (const i of s.idents) {
+    const h = nameHandle(i.network, i.handle);
+    if (handle ? norm(h) === n : [i.display_name, i.nickname, h].some((x) => norm(x) === n)) return i.network;
+  }
   return s.idents[0].network;
 }
 
@@ -707,7 +728,7 @@ const rarity = (n: number) => Math.max(0.3, Math.min(1, 1.4 - 0.4 * Math.log2(Ma
 
 /** The name as they wrote it, for the card, rather than squashed. */
 function shown(s: Side, n: string): string {
-  for (const i of s.idents) for (const x of [i.display_name, i.nickname, i.handle]) if (x && norm(x) === n) return x;
+  for (const i of s.idents) for (const x of [i.display_name, i.nickname, nameHandle(i.network, i.handle)]) if (x && norm(x) === n) return x;
   return n;
 }
 
@@ -759,8 +780,9 @@ function partOf(s: Side, n: Network): Side {
   const idents = s.idents.filter((i) => i.network === n);
   const p: Side = { ...s, id: `${s.id}#${n}`, idents, networks: new Set([n]), names: new Set(), handles: new Set(), words: new Set(), keys: new Map(), claims: [], bio: new Set(), hashes: [] };
   for (const i of idents) {
-    for (const x of [i.display_name, i.nickname, i.network === 'email' ? null : i.handle]) addName(p, x);
-    if (i.handle && i.network !== 'email') p.handles.add(norm(i.handle));
+    const h = nameHandle(i.network, i.handle);
+    for (const x of [i.display_name, i.nickname, h]) addName(p, x);
+    if (h) p.handles.add(norm(h));
     for (const k of ownKeys(i)) p.keys.set(k.key, k.text);
   }
   // Claims and bios are the side's as a whole; kept only on the part whose network made them would need the source.

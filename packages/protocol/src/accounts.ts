@@ -39,6 +39,7 @@ export const NETWORK_FEATURES: Record<Network, AccountFeature[]> = {
   lemmy: ['feed'],
   substack: ['feed'],
   bluesky: ['feed'],
+  lesswrong: ['feed'],
 };
 
 /** The features a kind of dither-accounts' offers here, from its interfaces. */

@@ -64,6 +64,8 @@ export interface Facts {
   mention?: boolean;
   /** @everyone / @here, not you by name. */
   everyone?: boolean;
+  /** A group you are in (a Zulip user group, a Discord role), not you by name; absent where it was not. */
+  group?: boolean;
   reply?: boolean;
   /** It says one of your keywords: about you, like a mention (tiers.ts), and as important as what the network notifies. */
   keyword?: boolean;
@@ -154,7 +156,10 @@ export const contextOf = (f: Facts, eligible = !!f.conv): TierContext => ({ conv
 
 const clampP = (p: number, lo = 0.001, hi = 0.999) => Math.max(lo, Math.min(hi, p));
 
-/** The bar the local model's answer is set against: lower where the message is to you. */
+/**
+ * The bar the local model's answer is set against: lower where the message is to you. A group you are in mentioned
+ * is held to the other bar: about you, so a Conversation, but less to you than your name.
+ */
 export const alertBar = (f: Pick<Facts, 'shape' | 'mention' | 'reply'>) => (f.shape === 'direct' || f.mention || f.reply ? ALERT_BAR.direct : ALERT_BAR.other);
 
 /** The alert chance from the local model's answer and the bar it is held to: even odds exactly at the bar. */
@@ -176,7 +181,7 @@ export function prior(f: Facts): P.TriageProbs {
 
 // ------------------------------------------------------------------ features
 
-const FLAGS = ['mention', 'everyone', 'reply', 'keyword', 'question', 'urgent', 'bot', 'active', 'media', 'link', 'long', 'known'] as const;
+const FLAGS = ['mention', 'group', 'everyone', 'reply', 'keyword', 'question', 'urgent', 'bot', 'active', 'media', 'link', 'long', 'known'] as const;
 /** Flags whose absence says something: "unless it mentions you". */
 const NEGATABLE = new Set(['mention', 'reply', 'question', 'active', 'known']);
 
@@ -425,6 +430,7 @@ const FLAG_WORDS: Record<string, string> = {
   '!mention': 'does not mention you',
   keyword: 'says one of your keywords',
   everyone: 'pings @everyone',
+  group: 'mentions a group you are in',
   reply: 'replies to you',
   '!reply': 'is not a reply to you',
   question: 'asks a question',

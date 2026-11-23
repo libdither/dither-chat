@@ -80,8 +80,27 @@ menu entries are `web/src/threads.ts`.
 
 A Zulip account (dither-accounts' `zulip` kind, its docs/zulip.md) says each channel as a forum (`variant: 'forum'`)
 and each topic as a thread of it, so a channel's page is its topics, newest first, and the message box is in the
-topics. **New post** starts a topic: its name and first message (`createPost`). A topic's menu has Follow and Mute,
-which are Zulip's own (`user_topics`: followed, muted, unmuted); a resolved topic (Zulip's ✔) shows as archived.
+topics. **New topic** starts one: its name and first message (`createPost`). A topic's menu has Follow and Mute,
+which are Zulip's own (`user_topics`: followed, muted, unmuted). Everything says Zulip's words: topics, not posts or
+threads, and Resolved, not Archived (`model.ts` `threadWords`).
+
+- **The sidebar** lists under each channel its unread topics and the open one, as Zulip's does (a muted topic only
+  for a mention), not its six latest; a Discord forum keeps its six latest posts, since a busy forum's posts are mostly
+  ones you never opened. A forum's own count is its threads' summed (unread and mentions; a Discord forum's open posts
+  only): a Zulip channel takes no messages of its own, so its own count is always 0. Each topic stays its own row in the inbox.
+- **Resolved topics** (Zulip's ✔ in front of the name) are archived here, but stay in the channel's list with a
+  Resolved chip, the ✔ left out of the shown name (`resolvedTopic`); the name the hub keeps, and searches, still has
+  it. Resolving does not hide the topic as a network's archive hides a chat (`Store.conversation`): it is done, not
+  put away. The topics an older hub hid that way are shown again once (`Store.showResolvedTopics`). A moved message's
+  mark leaves resolving out, as Zulip does: its `last_moved_timestamp` is not set by resolving or unresolving.
+- **Topic cards** show their unread count (a red one for mentions) and a muted mark. "Newest first" is offered only
+  where some post says when it started; Zulip's topics do not, so it would sort as "Latest activity" does.
+- **Links**: Open in Zulip, Copy Link and Copy Message Link are Zulip's own narrow links, built from the native ids:
+  `#narrow/channel/<id>-<name>`, `/topic/<name as written>`, `/near/<message id>`, `#narrow/dm/<ids>-dm` (`-group`
+  for three or more), and `#user/<id>` for a person, encoded as Zulip's web client does (`encodeHashComponent` in
+  [web/src/internal_url.ts](https://github.com/zulip/zulip/blob/7bb11b60d91def4644f6c74be6611fcc85488b06/web/src/internal_url.ts#L7-L24)).
+- **A moved message** shows "(moved)" beside "(edited)", with when in its tooltip (`extra.movedAt`, docs/messages.md).
+
 Renaming a topic or moving messages to another one moves them here too: the adapter sends each again with
 `moved: true`, and the hub moves the message, its saved mark and its reply mark to the new conversation; the topic it
 left falls back to its own newest message (`Store.message`, `packages/hub/test/moved.test.ts`).
