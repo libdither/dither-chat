@@ -1,7 +1,7 @@
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META } from '@dither-chat/protocol';
+import { bareSubject, NETWORK_META, searchOfList } from '@dither-chat/protocol';
 import { computed, type ReadonlySignal } from '@preact/signals';
-import { useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { ago, since } from '../format.ts';
 import {
   authorName,
@@ -44,7 +44,8 @@ import { convPresence } from './PresenceDot.tsx';
 import { db, go, isSelfIdentity, mailRev, metaRev, pref, readMinute, rev, route, setPrefs, type InboxFilter } from '../state.ts';
 import { openPalette } from './Palette.tsx';
 import { INBOX_FILTERS } from '../ordering.ts';
-import { senderLine } from '../mail/model.ts';
+import { isGroupThread, listName, listSearch, searchIn, threadName, threadSnippet } from '../mail/model.ts';
+import { MailSidebarLazy } from './mail/lazy.tsx';
 import { personItems } from './mail/Classify.tsx';
 import { RowTyping } from './Typing.tsx';
 import { AccountChip, AccountDots, Avatar, Count, NetBadge, NetGlyph, SourceChip, variantIcon } from './bits.tsx';
@@ -78,7 +79,7 @@ import { memo, sameProps } from './memo.ts';
 import { convKind, rowTrack } from '../clicks.ts';
 import { useShown } from './more.tsx';
 import { VoicePeople } from './Ringing.tsx';
-import { MailListChips } from './MailChat.tsx';
+import { MailListChips, MailTile } from './MailChat.tsx';
 import { CallMark } from './CallBar.tsx';
 
 // ------------------------------------------------------------------ navigation helpers
@@ -486,7 +487,7 @@ function chatOpens(personId: string): string | undefined {
 
 /** A thread's menu in the inbox: why it is here, where it lives in Mail, and whether it is from a person. */
 function mailRowMenu(t: P.MailThreadView, why?: string[]): MenuSpec {
-  const title = t.subject || '(no subject)';
+  const title = threadName(t);
   return {
     label: `${title} actions`,
     head: <div class="cm-sheet-title">{title}</div>,
@@ -495,9 +496,10 @@ function mailRowMenu(t: P.MailThreadView, why?: string[]): MenuSpec {
 }
 
 /**
- * A thread of mail from a person in the one-list inbox (docs/mail.md, slice 8): their picture with the envelope where
- * a chat's network badge goes, the subject before the start of the last message, the same ↩ and reasons as a chat.
- * Opening it opens the reader beside the inbox.
+ * A thread of mail in the one-list inbox (docs/mail.md, slice 8), with the same ↩ and reasons as a chat. From one
+ * person: their picture with the envelope where a chat's network badge goes, the subject before the start of the last
+ * message. With more people, a chat of its own (docs/mail.md "Mail as chats"): the envelope tile, its name (the subject)
+ * and "Jo: …", as its header has them.
  */
 const MailRow = memo(function MailRow({ id, active, why, owedSince, needsP }: { id: string; active: boolean; why?: string[]; owedSince?: number | null; needsP?: number | null }) {
   mailRev.value;
@@ -507,7 +509,8 @@ const MailRow = memo(function MailRow({ id, active, why, owedSince, needsP }: { 
   if (!t) return null;
   const other = [...t.from].reverse().find((f) => !f.self) ?? t.from[t.from.length - 1];
   const person = other?.personId ? db.persons.get(other.personId) : undefined;
-  const title = t.participants <= 2 ? (person?.name ?? other?.name ?? other?.email ?? '?') : senderLine(t);
+  const group = isGroupThread(t);
+  const title = group ? threadName(t) : (person?.name ?? other?.name ?? other?.email ?? '?');
   return (
     <button
       class={`row conv-row inbox-mail-row ${active ? 'active' : ''} ${t.unread ? 'unread' : ''}`}
@@ -517,9 +520,7 @@ const MailRow = memo(function MailRow({ id, active, why, owedSince, needsP }: { 
       data-track={rowTrack('mail', !!t.unread, !!owedSince)}
       {...ctx}
     >
-      <span class="row-avatar">
-        <Avatar id={person?.id ?? other?.email ?? id} name={person?.name ?? other?.name ?? other?.email ?? title} url={person?.avatar} size={36} square={t.participants > 2} network="email" />
-      </span>
+      <span class="row-avatar">{group ? <MailTile /> : <Avatar id={person?.id ?? other?.email ?? id} name={person?.name ?? other?.name ?? other?.email ?? title} url={person?.avatar} size={36} network="email" />}</span>
       <span class="row-main">
         <span class="row-top">
           <span class="row-title">{title}</span>
@@ -528,10 +529,14 @@ const MailRow = memo(function MailRow({ id, active, why, owedSince, needsP }: { 
           </span>
         </span>
         <span class="row-bottom">
-          <span class="row-preview">
-            <span class="row-subject">{t.subject || '(no subject)'}</span>
-            {t.preview ? ` — ${t.preview}` : ''}
-          </span>
+          {group ? (
+            <span class="row-preview">{threadSnippet(t)}</span>
+          ) : (
+            <span class="row-preview">
+              <span class="row-subject">{bareSubject(t.subject) || '(no subject)'}</span>
+              {t.preview ? ` — ${t.preview}` : ''}
+            </span>
+          )}
           <Count n={t.unread} />
           {owedSince ? <Owed at={owedSince} p={needsP} /> : null}
         </span>
@@ -584,7 +589,20 @@ function InboxFilterButton({ filter }: { filter: InboxFilter }) {
         label: FILTER_MENU,
         track: 'inbox',
         head: <div class="cm-sheet-title">Show</div>,
-        items: choices.map((f): MenuEntry => ({ label: f.label, checked: f.id === filter, radio: true, track: `filter (${f.label})`, run: () => setPrefs({ inboxFilter: f.id }) })),
+        items: choices.map(
+          (f): MenuEntry => ({
+            label: f.label,
+            checked: f.id === filter,
+            radio: true,
+            track: `filter (${f.label})`,
+            run: () => {
+              setPrefs({ inboxFilter: f.id });
+              // The mail lists are the Mail filter's: another filter is the whole inbox again.
+              const r = route.value;
+              if (f.id !== 'mail' && r.view === 'inbox' && r.mail) go({ view: 'inbox' }, true);
+            },
+          }),
+        ),
       },
       e.currentTarget,
     );
@@ -609,11 +627,52 @@ function InboxFilterButton({ filter }: { filter: InboxFilter }) {
 const EMPTY: Record<InboxFilter, string> = { all: 'No conversations yet.', direct: 'No direct messages here.', groups: 'No groups here.', mail: 'No mail from people here.' };
 
 /**
+ * The search box over a mail list, where the Inbox's is (docs/inbox.md "Mail lists"): it searches that list's mail
+ * (listSearch), and holds the words of a search in it. Emptied, the list is back.
+ */
+function MailListSearch({ list }: { list: string }) {
+  mailRev.value;
+  const search = searchOfList(list);
+  const scoped = search !== null ? searchIn(search) : null;
+  const home = scoped ? scoped.list : list;
+  const words = scoped ? scoped.words : '';
+  const [q, setQ] = useState(words);
+  useEffect(() => setQ(words), [list]);
+  const run = (t: string) => {
+    if (t) go({ view: 'inbox', mail: home ? listSearch(home, t) : `s:${t}` }, true);
+    else if (search !== null) go(home ? { view: 'inbox', mail: home } : { view: 'inbox' }, true);
+  };
+  const name = home ? listName(db.mail, home) : 'mail';
+  return (
+    <form
+      class="search search-box"
+      role="search"
+      onSubmit={(e) => {
+        e.preventDefault();
+        run(q.trim());
+      }}
+    >
+      <Icon name="search" size={15} />
+      <input data-track="mail list: search" aria-label={`Search ${name}`} placeholder={`Search ${name}`} enterkeyhint="search" value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)} />
+      {q && (
+        <button type="button" class="icon-btn small" aria-label="Clear" title="Clear" onClick={() => (setQ(''), run(''))}>
+          <Icon name="x" size={14} />
+        </button>
+      )}
+    </form>
+  );
+}
+
+/**
  * One list: DMs, group chats, rooms outside a space and notes to self, plus anything else while it has something
  * for you, and mail from people (docs/mail.md), ranked by how likely you are to want each now (docs/inbox.md). No
  * sections: a reply you owe shows on its row (↩ and how long), and unread rows are bold with their count.
+ *
+ * `mail`: a mail list open in the Inbox's place (Updates, Everything, Starred, Sent, a mailbox, a search in one). The
+ * Inbox's header stays as it is, title, search box and Mail filter, with the list under the same chips (docs/inbox.md
+ * "Mail lists").
  */
-export function InboxSidebar({ activeConv }: { activeConv?: string }) {
+export function InboxSidebar({ activeConv, mail }: { activeConv?: string; mail?: string }) {
   if (counting) rendered('InboxSidebar');
   rev.value;
   // A mail thread the hub listed whose view has not come yet: the mail event that brings it draws the list again.
@@ -622,7 +681,9 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
   const accounts = accountsNeedingYou();
   let filter = pref('inboxFilter');
   if (filter === 'mail' && !db.mail.accounts.size) filter = 'all';
-  const rows = shownInbox(filter);
+  // A mail list is the Mail filter's, however it was opened (Ctrl+K, a link).
+  if (mail) filter = 'mail';
+  const rows = mail ? [] : shownInbox(filter);
   const [drawn, more] = useShown(rows.length);
   const [q, setQ] = useState('');
   const scroll = useRef<HTMLDivElement>(null);
@@ -656,7 +717,7 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
         <h1>Inbox<NewMessageButton /></h1>
       </header>
       <div class="inbox-search">
-        <SearchBox
+        {mail ? <MailListSearch list={mail} /> : <SearchBox
           value={q}
           setValue={(t) => {
             // Results come as you type (docs/search.md): the first letter opens the search page, whose box takes the
@@ -675,12 +736,12 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
             rememberSearch(t);
             go({ view: 'search', q: t });
           }}
-        />
+        />}
         <InboxFilterButton filter={filter} />
       </div>
       {/* Mail is chats (docs/mail.md "Mail as chats"): with the Mail filter on, its other lists are a tap away. */}
-      {filter === 'mail' && <MailListChips on={null} />}
-      <div class="side-scroll" ref={scroll}>
+      {filter === 'mail' && <MailListChips on={mail ?? null} />}
+      {mail ? <MailSidebarLazy list={mail} active={activeConv} /> : <div class="side-scroll" ref={scroll}>
         {accounts.length > 0 && (
           <>
             <SectionHead id="inbox-att" label="Needs you" count={accounts.length} />
@@ -712,7 +773,7 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
         {rows.slice(0, drawn).map(row)}
         {more}
         {!rows.length && <p class="inbox-empty">{EMPTY[filter]}</p>}
-      </div>
+      </div>}
     </div>
   );
 }

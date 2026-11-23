@@ -162,6 +162,8 @@ const PAGES: PageCase[] = [
   // Mail as chats: a person's email chat, and a group thread from a mail list.
   { name: "a person's email chat from the inbox", view: 'inbox', from: '#/inbox', to: `#/inbox/c/${e(mailChat.id)}`, cursor: COMPOSER },
   { name: 'a mail thread from a mail list', view: 'inbox', from: `#/inbox?mail=${e('v:all:*')}`, to: `#/inbox/c/${mailGroup.id}?mail=${e('v:all:*')}`, cursor: COMPOSER },
+  // A mail list under the Inbox's header: Escape and back go to the Inbox chip (docs/inbox.md "Mail lists").
+  { name: 'a mail list from the inbox', view: 'inbox', from: '#/inbox', to: `#/inbox?mail=${e('v:updates:*')}` },
 ];
 
 /** Lists and tab roots: Escape has nowhere to go from these, and leaves them be. */
@@ -175,8 +177,6 @@ const ROOTS: { view: string; at: string }[] = [
   { view: 'accounts', at: '#/accounts' },
   { view: 'calendar', at: '#/calendar' },
   { view: 'feed', at: '#/feed' },
-  // Mail is chats (docs/mail.md "Mail as chats"): a mail list, in the inbox's place.
-  { view: 'inbox', at: `#/inbox?mail=${e('v:updates:*')}` },
 ];
 
 /** A layer, opened on page `at`: it closes by Escape and by back, the page staying. */
