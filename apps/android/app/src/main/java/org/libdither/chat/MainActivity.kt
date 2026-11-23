@@ -127,7 +127,9 @@ class MainActivity : Activity() {
         hub = Hub.origin(this)
         val h = hub
         if (h == null) showSetup(null, null) else showWeb(h, hashFrom(intent))
-        answerFrom(intent)
+        // Only a fresh tap answers: an activity brought back after Android stopped the app comes with the intent it
+        // first started from, Answer and all, and answering that again called the other side anew.
+        if (savedInstanceState == null) answerFrom(intent)
     }
 
     /**
@@ -136,8 +138,10 @@ class MainActivity : Activity() {
      */
     private fun answerFrom(i: Intent?) {
         val raw = i?.getStringExtra(EXTRA_ANSWER) ?: return
-        // Once: a later recreation of the activity from the same intent must not join again.
+        // Once: a later recreation of the activity from the same intent must not join again. Removing the extra holds
+        // only while this process lives; opening the app from Recents hands back the first intent, so that is no tap.
         i.removeExtra(EXTRA_ANSWER)
+        if (i.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
         val a = runCatching { JSONObject(raw) }.getOrNull() ?: return
         Notifications.cancel(this, a.optString("tag").ifEmpty { "call:${a.optString("call")}" })
         Log.i(TAG, "answering call ${a.optString("call")}")
