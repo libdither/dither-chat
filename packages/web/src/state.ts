@@ -182,11 +182,12 @@ function canonicalHash() {
   if (location.hash.startsWith('#/groups') && h !== location.hash) history.replaceState(history.state, '', h);
 }
 canonicalHash();
-// The entry the app opened on. adoptEntry shapes it once the app has its data, as a page's list may need it.
+// The entry the app opened on. adoptOpened shapes it once the app has its data, as a page's list may need it.
 if (history.state === null) history.replaceState({ prev: null, opened: true }, '');
 window.addEventListener('hashchange', (e) => {
-  // An address from outside go() (typed, or a script's) makes an entry with no state yet.
-  if (history.state === null) adoptEntry(new URL(e.oldURL).hash || null);
+  // An address from outside go() (typed, or a script's) makes an entry with no state yet. It gets what go() would have
+  // written: the entry before it remembered, and a page's list under it.
+  if (history.state === null) write(location.hash, new URL(e.oldURL).hash || null, true, null);
   route.value = parseHash();
   canonicalHash();
 });
@@ -232,12 +233,13 @@ export function go(r: Route, replace = false) {
 }
 
 /**
- * An entry made outside go(): the one the app opened on (from a link or a notification), or one an address typed
- * in made. It gets what go() would have written: the entry before it remembered, and a page's list under it.
+ * The entry the app opened on (from a link or a notification), once there is data to say where its page lives: it
+ * gets what go() would have written, a page's list under it. Only that entry: one an address typed in made before
+ * then has no state until its hashchange, a task later, which writes it with the entry before it; written here first,
+ * it would lose that, and Escape and back from it would go to its list instead of where you came from.
  */
-export function adoptEntry(prev: string | null = null) {
-  if (history.state !== null && !history.state.opened) return;
-  write(location.hash, prev, true, null);
+export function adoptOpened() {
+  if (history.state?.opened) write(location.hash, null, true, null);
 }
 
 /** Back where you came from, or to `fallback` when this page was opened directly. */
