@@ -76,7 +76,7 @@ import { useLongPress } from './longpress.ts';
 import { Icon } from './icons.tsx';
 import { TriageWhy, tierIcon, tierName } from './Marks.tsx';
 import { Ticks } from './Ticks.tsx';
-import { openHistory } from '../messageHistory.ts';
+import { historyOnMenu, openHistory } from '../messageHistory.ts';
 import { markChanged } from '../wordDiff.ts';
 import { detailsShown, showDetails, swipeReply } from './Pager.ts';
 import { openConv } from '../opening.ts';
@@ -475,12 +475,7 @@ function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
     }
   };
   // Right-click on them opens the edits as well; Shift+right-click still gets the browser's own menu.
-  const menu = (e: MouseEvent) => {
-    const changed = changedAt(e.target as HTMLElement);
-    if (!changed || e.shiftKey || phone.value) return;
-    e.preventDefault();
-    openHistory(m, 'edits', changed.getBoundingClientRect());
-  };
+  const menu = historyOnMenu(m, 'edits', (e) => changedAt(e.target as HTMLElement));
   if (tail)
     return (
       <div class={`msg-body ${isJumbo(m.body) ? 'jumbo' : ''}`} onClick={click} onContextMenu={menu}>
@@ -524,11 +519,7 @@ function Edited({ m }: { m: P.MessageView }) {
     <button
       class="msg-edited link"
       onClick={(e) => openHistory(m, 'edits', (e.currentTarget as HTMLElement).getBoundingClientRect())}
-      onContextMenu={(e) => {
-        if (e.shiftKey || phone.value) return;
-        e.preventDefault();
-        openHistory(m, 'edits', (e.currentTarget as HTMLElement).getBoundingClientRect());
-      }}
+      onContextMenu={historyOnMenu(m, 'edits')}
       title="See earlier versions"
     >
       (edited)

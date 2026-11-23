@@ -8,6 +8,7 @@
  */
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
+import { phone } from './phone.ts';
 
 export type HistoryFocus = 'all' | 'edits' | 'reactions';
 
@@ -17,6 +18,17 @@ export const historyOf = signal<{ m: P.MessageView; focus: HistoryFocus; anchor?
 export function openHistory(m: P.MessageView, focus: HistoryFocus = 'all', anchor?: DOMRect) {
   historyOf.value = { m, focus, anchor };
 }
+
+/**
+ * A right-click on a computer that opens it, hung from `el` (what was clicked, by default); Shift+right-click keeps the
+ * browser's own menu, and on a phone a long press does what it does there.
+ */
+export const historyOnMenu = (m: P.MessageView, focus: HistoryFocus, el?: (e: MouseEvent) => Element | null) => (e: MouseEvent) => {
+  const at = el ? el(e) : (e.currentTarget as Element);
+  if (!at || e.shiftKey || phone.value) return;
+  e.preventDefault();
+  openHistory(m, focus, at.getBoundingClientRect());
+};
 
 /** Whether there is anything to show beyond the message itself: a reaction with a time counts. */
 export const hasHistory = (m: P.MessageView) => !!(m.edits || m.events || m.receipts || m.reactions.some((r) => r.at || r.seenAt));

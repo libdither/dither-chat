@@ -4,9 +4,8 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { fullTime } from '../format.ts';
-import { historyOf } from '../messageHistory.ts';
+import { historyOf, historyOnMenu } from '../messageHistory.ts';
 import { identityName } from '../model.ts';
-import { phone } from '../phone.ts';
 import { db, isSelfIdentity } from '../state.ts';
 import { Icon } from './icons.tsx';
 
@@ -25,11 +24,7 @@ export function Ticks({ m }: { m: P.MessageView }) {
       title={title}
       aria-label={title}
       onClick={(e) => (historyOf.value = { m, focus: 'all', anchor: (e.currentTarget as HTMLElement).getBoundingClientRect() })}
-      onContextMenu={(e) => {
-        if (e.shiftKey || phone.value) return;
-        e.preventDefault();
-        historyOf.value = { m, focus: 'all', anchor: (e.currentTarget as HTMLElement).getBoundingClientRect() };
-      }}
+      onContextMenu={historyOnMenu(m, 'all')}
     >
       {top === 'played' ? <Icon name="play" size={11} /> : <Icon name={top === 'read' ? 'checks' : 'check'} size={13} />}
       {n > 1 && <span>{n}</span>}

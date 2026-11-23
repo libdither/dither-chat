@@ -37,7 +37,7 @@
   },
   "web": {
     "startup.bytes": { "measured": 1221714, "budget": 1246148, "reason": "Pictures and trackers (docs/mail.md \"Pictures and trackers\"): the mail setting for which pictures load and whether trackers are kept, in the startup bundle with Settings; the mail editor's styles (docs/mail.md \"Writing\"), in the one style sheet; and Zulip as a network (its glyph, colour and rules in the shared protocol tables)" },
-    "startup.gzip": { "measured": 370252, "budget": 377658, "reason": "Zulip as a network (dither-accounts' docs/zulip.md): its glyph, colour and rules in the shared protocol tables, and its Add account entry" },
+    "startup.gzip": { "measured": 377839, "budget": 385396, "reason": "A message's history (docs/history.md): the words an edit put in, compared and underlined in the chat (wordDiff.ts markChanged), and the ticks, clicks and right-clicks that open the history" },
     "startup.files": { "measured": 4, "budget": 4 },
     "html/index.html.bytes": { "measured": 5733, "budget": 5848, "reason": "index.html asks the hub again and reloads by itself when the app's script could not load (the hub out of reach, a file not kept), instead of staying on the logo for good, and says so under the logo when the hub answers but a file it lists is missing (docs/android.md, Starting fast)" },
     "html/index.html.gzip": { "measured": 2315, "budget": 2362, "reason": "index.html asks the hub again and reloads by itself when the app's script could not load (the hub out of reach, a file not kept), instead of staying on the logo for good, and says so under the logo when the hub answers but a file it lists is missing (docs/android.md, Starting fast)" },
