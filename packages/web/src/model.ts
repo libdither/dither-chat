@@ -242,7 +242,8 @@ export const resolvedTopic = (c: P.ConversationView) => c.network === 'zulip' &&
 
 /**
  * A forum whose threads are topics (Zulip's channels): the channel takes no messages of its own, and its topics are
- * read as channels are, not posts to browse. The sidebar lists its unread topics, and its words are Zulip's.
+ * read as channels are, not posts to browse. Its words are Zulip's (threadWords), and its resolved topics are listed
+ * with the rest (shownThreads).
  */
 export const topicForum = (c: P.ConversationView | null | undefined) => !!c && c.variant === 'forum' && c.network === 'zulip';
 
@@ -455,19 +456,34 @@ interface ShownThreads {
  * The threads the sidebar shows under a channel, one rule for every network (docs/servers.md, "Threads under a
  * channel"): the open one, the unread ones (a mention first; a muted one only for a mention; at most
  * UNREAD_THREADS_SHOWN others), then the latest few not shown yet. The open one comes first only when it would not be
- * shown otherwise. An archived thread shows only open or unread: a Discord text channel keeps hundreds of old ones.
+ * shown otherwise, and was not shown before it was opened: a row stays where it was clicked. An archived thread shows only open or unread: a Discord text channel keeps hundreds of old ones.
  * Zulip's resolved topics are done, not put away, so they count as any other (its own sidebar lists them too). The
  * rest are `more`.
  */
 export function shownThreads(c: P.ConversationView, active?: string): ShownThreads {
   const base = memo('shownThreads:' + c.id, () => pickThreads(c));
-  if (!active || active === c.id) return base;
+  if (!active || active === c.id) return remember(c.id, base);
   const open = db.conversations.get(active);
-  if (!open || open.parentId !== c.id || open.shape !== 'thread' || !visibleConv(open)) return base;
+  if (!open || open.parentId !== c.id || open.shape !== 'thread' || !visibleConv(open)) return remember(c.id, base);
   // Shown already, it stays where it is: a row does not jump from under the pointer that opened it.
-  if (base.shown.includes(open)) return base;
-  // Opened from the channel's list of the rest, it comes first, out of them.
-  return { shown: [open, ...base.shown], more: listedThread(c, open) ? base.more - 1 : base.more };
+  if (base.shown.includes(open)) return remember(c.id, base);
+  const more = listedThread(c, open) ? base.more - 1 : base.more;
+  // Shown before it was opened (an unread one, read by opening it): in the same place still.
+  const was = lastShown.get(c.id);
+  const at = was ? was.indexOf(open.id) : -1;
+  if (at >= 0) return remember(c.id, { shown: [...base.shown.slice(0, at), open, ...base.shown.slice(at)], more });
+  // Opened from the channel's list of the rest, or from elsewhere: it comes first, out of them.
+  return remember(c.id, { shown: [open, ...base.shown], more });
+}
+
+/** The threads each channel showed last: where an open thread that the rule would now leave out stays. */
+const lastShown = new Map<string, string[]>();
+function remember(channel: string, s: ShownThreads): ShownThreads {
+  lastShown.set(
+    channel,
+    s.shown.map((t) => t.id),
+  );
+  return s;
 }
 
 /** A thread the channel's thread list shows without asking: not an archived one, but a resolved Zulip topic. */
@@ -935,6 +951,12 @@ export function folderConvs(f: P.FolderView): P.ConversationView[] {
       else if (it.kind === 'conversation') {
         const c = db.conversations.get(it.id);
         if (c && visibleConv(c)) out.set(c.id, c);
+        // A channel with its threads, as under a server: its row's count is theirs too (channelUnread).
+        if (c && visibleConv(c))
+          for (const id of db.threads.get(c.id) ?? []) {
+            const t = db.conversations.get(id);
+            if (t && visibleConv(t)) out.set(t.id, t);
+          }
       } else for (const c of directsOf(it.id)) out.set(c.id, c);
     }
     return [...out.values()];

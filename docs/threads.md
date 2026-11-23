@@ -86,7 +86,7 @@ threads, and Resolved, not Archived (`model.ts` `threadWords`).
 
 - **The sidebar** lists under each channel the same rows as for any network's channel with threads (docs/servers.md,
   "Threads under a channel"): the open topic, the unread ones (a mention first; a muted one only for a mention; at
-  most eight others), the three latest not shown yet, then "N more topics", which opens the channel's topics. A
+  most eight others), the three latest not shown yet, then "N more topics", which opens the channel's topic cards. A
   chevron folds a channel's topics away. A channel's count is its topics' summed (unread and mentions): a Zulip
   channel takes no messages of its own, so its own count is always 0. Each topic stays its own row in the inbox.
 - **Resolved topics** (Zulip's ✔ in front of the name) are archived here, but stay in the channel's list with a

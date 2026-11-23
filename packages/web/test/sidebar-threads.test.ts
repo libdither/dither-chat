@@ -71,6 +71,26 @@ test('the open thread, then unread ones with a mention first, then the latest th
   expect(threadWords(db.conversations.get('zchan')!).many).toBe('topics');
 });
 
+test('an unread thread opened, and so read, stays where it was clicked', () => {
+  space('zorg5', 'zulip');
+  channel('zstay', 'zulip', 'zorg5', { variant: 'forum' });
+  for (let i = 0; i < 5; i++) thread(`zs${i}`, 'zstay', i);
+  thread('zs-unread', 'zstay', 100, { unread: 2 });
+  changed('meta');
+  const c = db.conversations.get('zstay')!;
+  expect(ids(shownThreads(c))).toEqual(['zs-unread', 'zs0', 'zs1', 'zs2']);
+  // Opened: it is read, so the rule alone would leave it out; it keeps its place.
+  thread('zs-unread', 'zstay', 100);
+  changed('list');
+  const open = shownThreads(c, 'zs-unread');
+  expect(ids(open)).toEqual(['zs-unread', 'zs0', 'zs1', 'zs2']);
+  expect(open.more).toBe(2);
+  // Another of its threads opened: the rule again.
+  expect(ids(shownThreads(c, 'zs1'))).toEqual(['zs0', 'zs1', 'zs2']);
+  // One opened from the rest, never shown: first.
+  expect(ids(shownThreads(c, 'zs4'))).toEqual(['zs4', 'zs0', 'zs1', 'zs2']);
+});
+
 test('unread threads are capped: a channel with hundreds shows a few, the rest are counted', () => {
   space('zorg2', 'zulip');
   channel('zbig', 'zulip', 'zorg2', { variant: 'forum' });
@@ -176,6 +196,12 @@ test('counts: a channel with its threads, a space and a folder agree, nothing co
   changed('meta');
   const f = sumUnread(folderConvs(db.folders.find((x) => x.id === 'fold1')!));
   expect([f.unread, f.mentions, f.badge]).toEqual([9, 2, 2]);
+  // A folder holding the channels themselves: with their threads, as their rows count.
+  db.folders = db.folders.filter((x) => x.id !== 'fold2');
+  db.folders.push({ id: 'fold2', name: 'G', items: [{ kind: 'conversation', id: 'ctext' }, { kind: 'conversation', id: 'cforum' }] } as unknown as P.FolderView);
+  changed('meta');
+  const g = sumUnread(folderConvs(db.folders.find((x) => x.id === 'fold2')!));
+  expect([g.unread, g.mentions, g.badge]).toEqual([9, 2, 2]);
   // A forum's own count of nothing (Zulip's): its posts'.
   db.conversations.set('cforum', { ...db.conversations.get('cforum')!, vantages: [{ accountId: 'acc-d', unread: 0, mentions: 0, lastReadTs: null }] });
   changed('list');

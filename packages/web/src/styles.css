@@ -1043,9 +1043,14 @@ code {
 .chan-line {
   position: relative;
 }
-/* Room on the right for the fold's chevron, beside the count. */
-.chan.foldable {
+/* Room on the right for a fold's chevron, beside the count: on every channel and thread row, so the counts line up. */
+.chan-line > .chan,
+.chan.thread {
   padding-right: 28px;
+}
+.chan-line:hover > .chan {
+  background: var(--bg-hover);
+  color: var(--text);
 }
 .chan-fold {
   position: absolute;
@@ -6766,6 +6771,15 @@ textarea.chip-box {
   }
   .chan.thread {
     min-height: 40px;
+  }
+  .chan-fold {
+    width: 40px;
+    height: 40px;
+    right: 0;
+  }
+  .chan-line > .chan,
+  .chan.thread {
+    padding-right: 44px;
   }
   .section-head {
     padding: 6px 6px 0;

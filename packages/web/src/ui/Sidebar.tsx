@@ -57,6 +57,7 @@ import { MarkableRow } from './ReplyMark.tsx';
 import { needsReplyLabel, needsReplyOf } from '../replymarks.ts';
 import { pickedRoute } from './Pairs.tsx';
 import { chatKey } from '../chatroutes.ts';
+import { threadDialog } from '../threads.ts';
 import { groups, type MenuSpec } from './ContextMenu.tsx';
 import { openAbout } from '../opening.ts';
 import { arrangeDrop, arrangedFolderItems, arrangedPeople, arrangedRail, snapshot } from '../arrange.ts';
@@ -681,6 +682,12 @@ const ThreadRow = memo(function ThreadRow({ t, active, depth, onOpen }: { t: P.C
   );
 });
 
+/** "N more": a forum's page is its thread cards; another channel has no such page, so its thread browser opens too. */
+function moreThreads(c: P.ConversationView, onOpen: (c: P.ConversationView) => void) {
+  onOpen(c);
+  if (c.variant !== 'forum' && c.variant !== 'media') threadDialog.value = { kind: 'browse', convId: c.id, tab: 'active' };
+}
+
 /** The pref('collapsed') key of a channel whose threads are folded away, on this device. */
 const foldKey = (id: string) => `chan:${id}`;
 
@@ -694,7 +701,7 @@ const ChannelHead = memo(function ChannelHead({ c, folded, active, depth, onOpen
   return (
     <div class="chan-line">
       <button
-        class={`chan ${active ? 'active' : ''} ${unread && !muted ? 'unread' : ''} ${muted ? 'muted' : ''} ${threads ? 'foldable' : ''}`}
+        class={`chan ${active ? 'active' : ''} ${unread && !muted ? 'unread' : ''} ${muted ? 'muted' : ''}`}
         style={{ paddingLeft: `${10 + depth * 12}px` }}
         onClick={() => onOpen(c)}
         title={kindLabel(c)}
@@ -745,9 +752,10 @@ const ChannelRow = memo(function ChannelRow({ c, shownThreads, more = 0, folded,
       {(folded ? shownThreads.filter((t) => t.id === active) : shownThreads).map((t) => (
         <ThreadRow key={t.id} t={t} active={t.id === active} depth={depth} onOpen={onOpen} />
       ))}
-      {/* The rest are in the channel's thread list: a forum's post cards (ui/Threads.tsx), which the channel opens on. */}
+      {/* The rest are in the channel's thread list: a forum's post cards (ui/Threads.tsx), which the channel opens on;
+          else the channel, with its thread browser over it. */}
       {!folded && words && more > 0 && (
-        <button class="chan thread chan-more" style={{ paddingLeft: `${26 + depth * 12}px` }} data-track={`more threads (${words.many})`} onClick={() => onOpen(c)}>
+        <button class="chan thread chan-more" style={{ paddingLeft: `${26 + depth * 12}px` }} data-track={`more threads (${words.many})`} onClick={() => moreThreads(c, onOpen)}>
           <span class="thread-elbow" />
           <span class="chan-name">
             {more} more {more === 1 ? words.one : words.many}
