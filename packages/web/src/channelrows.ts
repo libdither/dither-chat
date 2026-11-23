@@ -77,8 +77,9 @@ interface ChannelRow<T extends ChannelPart> extends MergedChannel<T> {
  * The inbox's rows with each channel's threads made one (model.ts convRows). `parentOf` names the channel a thread
  * row belongs to, else null; `idOf` is a row's own conversation. A thread row comes back merged under
  * `channel:<parent>`, and so does the parent's own row where it has one (a Matrix room listed on its own, a Discord
- * text channel the hub scored): the channel and its threads are the same row. A channel's own row with no thread row
- * of it is one too where `folds` says so (it has unread threads to open on). The rest stay as they are.
+ * text channel the hub scored): the channel and its threads are the same row. A place's own row with no thread row of
+ * it is one too where `folds` says so (it has threads, so its key does not change as they come and go). The rest stay
+ * as they are.
  */
 export function groupChannels<T extends ChannelPart>(rows: T[], parentOf: (r: T) => string | null, idOf: (r: T) => string, folds: (r: T) => boolean = () => false): { rows: T[]; channels: ChannelRow<T>[] } {
   const by = new Map<string, T[]>();
@@ -109,8 +110,9 @@ interface SubThread {
 
 /**
  * The threads an open channel row lists under it: the unread ones, a muted one only where it mentions you (as the
- * sidebar lists a Zulip channel's topics), those that mention you first, then the latest.
+ * sidebar lists a Zulip channel's topics), and the one open now (`open`) once read, so it does not go from under you;
+ * those that mention you first, then the latest.
  */
-export function subThreads<T extends SubThread>(threads: T[]): T[] {
-  return threads.filter((t) => t.unread > 0 && (!t.muted || t.badge > 0)).sort((a, b) => Number(b.badge > 0) - Number(a.badge > 0) || b.last - a.last);
+export function subThreads<T extends SubThread>(threads: T[], open?: string): T[] {
+  return threads.filter((t) => t.id === open || (t.unread > 0 && (!t.muted || t.badge > 0))).sort((a, b) => Number(b.badge > 0) - Number(a.badge > 0) || b.last - a.last);
 }

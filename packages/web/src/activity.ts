@@ -103,7 +103,8 @@ function arrivalOf(el: Element | null): Arrival {
   // The inbox's list: its rank counts across the sections, top to bottom.
   if (row && list?.classList.contains('inbox-side')) {
     const id = row.getAttribute('data-row')!;
-    const a = db.attention.get(id);
+    // A row of several conversations (a person's, a channel's) has the merge's score and need.
+    const a = db.attention.get(id) ?? inboxRows().find((r) => r.key === id);
     const ids = [...list.querySelectorAll('[data-row]')].map((r) => r.getAttribute('data-row')!);
     const rank = ids.indexOf(id);
     return { source: 'inbox', rank, score: a ? Math.round(a.score * 10) / 10 : null, needs: a?.needs ?? null, shadowRank: shadowRankAt(ids, rank) };

@@ -76,9 +76,26 @@ const at = async (sel: string, text = ''): Promise<[number, number]> => {
 const text = (sel: string) => p.eval<string | null>(`document.querySelector(${JSON.stringify(sel)})?.textContent ?? null`);
 const subRows = () => p.eval<string[]>(`[...document.querySelectorAll('[data-row-key="${row}"] .inbox-subrow .inbox-subrow-name')].map((e) => e.textContent)`);
 const hash = () => p.eval<string>('location.hash');
+const key = async (k: string) => {
+  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code: k, windowsVirtualKeyCode: k === 'Enter' ? 13 : 0, ...(k === 'Enter' ? { text: '\r' } : {}) });
+  await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code: k, windowsVirtualKeyCode: k === 'Enter' ? 13 : 0 });
+};
+/** A conversation as the hub has it now. */
+const hubConv = async (id: string) => ((await fetch(`${hub}/api/bootstrap`).then((r) => r.json())) as any).conversations.find((c: any) => c.id === id);
+const unreadOf = (c: any) => Math.max(0, ...c.vantages.map((v: any) => v.unread));
+/** Polls the hub for one thing, as long as `ms`. */
+const until = async (f: () => Promise<boolean>, ms: number) => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (await f()) return true;
+    await Bun.sleep(250);
+  }
+  return false;
+};
 const shot = async (name: string) => {
   if (!shots) return;
-  await p.eval(`document.querySelector(${JSON.stringify(rowSel)})?.scrollIntoView({ block: 'center' })`);
+  // The demo world's own toasts are not what the picture is of.
+  await p.eval(`(document.querySelectorAll('.toast').forEach((t) => t.remove()), document.querySelector(${JSON.stringify(rowSel)})?.scrollIntoView({ block: 'center' }))`);
   await Bun.sleep(400);
   await p.shot(`${shots}/${name}.png`);
 };
@@ -111,6 +128,14 @@ try {
   await p.until(`document.querySelectorAll('[data-row-key="${row}"] .inbox-subrow').length > 0`, 15000);
   check(true, 'it is still open after a reload (kept on this device)');
 
+  // From the keyboard: Enter on the chevron closes and opens it, and the focus stays on it.
+  await p.eval(`document.querySelector(${JSON.stringify(fold)}).focus()`);
+  for (const want of [0, 3]) {
+    await key('Enter');
+    await p.until(`document.querySelectorAll('[data-row-key="${row}"] .inbox-subrow').length === ${want}`, 5000);
+    check(await p.eval<boolean>(`document.activeElement === document.querySelector(${JSON.stringify(fold)})`), `the keyboard ${want ? 'opens' : 'closes'} it, and the focus stays on the chevron`);
+  }
+
   // ---------------------------------------------------------------- phone
   phone = true;
   await p.size(390, 844, true);
@@ -133,7 +158,10 @@ try {
   await p.until(`location.hash.includes(${JSON.stringify(encodeURIComponent(buttons.id))}) || location.hash.includes(${JSON.stringify(buttons.id)})`, 5000);
   check(true, 'a topic under the row opens that topic');
   await p.until(`document.querySelector(${JSON.stringify(rowSel)})?.classList.contains('active')`, 5000);
-  check(await p.eval<boolean>(`!!document.querySelector('[data-row-key="${row}"] .inbox-subrow.active')`), 'the row stays the active one, and the topic under it is marked open');
+  // Opening it reads it: once the hub says so, it is still under the row, marked open.
+  await until(async () => unreadOf(await hubConv(buttons.id)) === 0, 8000);
+  await p.until(`document.querySelector('[data-row-key="${row}"] .inbox-subrow.active .count') === null`, 5000);
+  check((await p.eval<string | null>(`document.querySelector('[data-row-key="${row}"] .inbox-subrow.active .inbox-subrow-name')?.textContent ?? null`)) === 'Button states', 'the row stays the active one, and the topic open under it stays there once read');
   await shot('computer-topic-open');
 
   await click(await at(rowSel));
@@ -148,14 +176,11 @@ try {
   await click(await at(rowSel), 'right');
   await p.until(`[...document.querySelectorAll('.cm .cm-item')].some((e) => e.textContent.includes('Mark As Read'))`, 5000);
   await click(await at('.cm .cm-item', 'Mark As Read'));
-  const read = async () => {
-    const b = (await fetch(`${hub}/api/bootstrap`).then((r) => r.json())) as any;
-    return [tokens, buttons, spacing].every((t) => b.conversations.find((c: any) => c.id === t.id)?.vantages.every((v: any) => !v.unread && !v.mentions));
-  };
-  const end = Date.now() + 8000;
-  while (!(await read()) && Date.now() < end) await Bun.sleep(250);
-  check(await read(), 'Mark As Read on the row reads every topic of the channel');
+  const read = async () => (await Promise.all([tokens, buttons, spacing].map((t) => hubConv(t.id)))).every((c) => unreadOf(c) === 0 && c.vantages.every((v: any) => !v.mentions));
+  check(await until(read, 8000), 'Mark As Read on the row reads every topic of the channel');
   check(dialogs.length === 0, 'with no confirm', dialogs);
+  await p.until(`!document.querySelector('${rowSel} .row-at') && !document.querySelector('${rowSel} .count') && !document.querySelector('[data-row-key="${row}"] .row-fold')`, 5000);
+  check(true, 'the row has no count, no @ and no chevron left');
 } catch (e) {
   check(false, (e as Error).message);
 } finally {

@@ -69,6 +69,9 @@ test('an open channel row lists its unread threads, those that mention you first
   const t = (id: string, o: Partial<{ unread: number; badge: number; muted: boolean; last: number }>) => ({ id, unread: 0, badge: 0, muted: false, last: NOW, ...o });
   const shown = subThreads([t('read', { last: NOW + 9 }), t('new', { unread: 2, last: NOW + 5 }), t('older', { unread: 1, last: NOW + 1 }), t('ping', { unread: 1, badge: 1, last: NOW }), t('muted', { unread: 7, muted: true, last: NOW + 8 }), t('muted-ping', { unread: 1, badge: 1, muted: true, last: NOW + 2 })]);
   expect(shown.map((x) => x.id)).toEqual(['muted-ping', 'ping', 'new', 'older']);
+  // The one open now stays, read, in its place by time.
+  const open = subThreads([t('read', { last: NOW + 9 }), t('new', { unread: 2, last: NOW + 5 })], 'read');
+  expect(open.map((x) => x.id)).toEqual(['read', 'new']);
 });
 
 // ------------------------------------------------------------------ the inbox's rows
@@ -90,17 +93,22 @@ function world() {
   db.threads.set('zc', ['zt1', 'zt2', 'zt3']);
   db.conversations.set('room', conv('room', { network: 'matrix', shape: 'group', unread: 1, lastMessageAt: NOW - 300 }));
   db.conversations.set('mt', conv('mt', { network: 'matrix', parentId: 'room', unread: 2, lastMessageAt: NOW - 200 }));
+  db.threads.set('room', ['mt']);
   db.conversations.set('lone', conv('lone', { network: 'matrix', shape: 'group', lastMessageAt: NOW - 50 }));
-  // A room listed on its own whose one thread is unread but not listed: a channel's row too, to open on that thread.
+  // A room listed on its own whose one thread is unread but not listed: a channel's row too, as any place with threads.
   db.conversations.set('room2', conv('room2', { network: 'matrix', shape: 'group', lastMessageAt: NOW - 70 }));
   db.conversations.set('mt2', conv('mt2', { network: 'matrix', parentId: 'room2', unread: 4, lastMessageAt: NOW - 60 }));
   db.threads.set('room2', ['mt2']);
+  // A thread of a DM: the DM's row is the person's, so the thread keeps a row of its own.
+  db.conversations.set('dm', conv('dm', { network: 'matrix', shape: 'direct', lastMessageAt: NOW - 400 }));
+  db.conversations.set('dmt', conv('dmt', { network: 'matrix', parentId: 'dm', unread: 1, mentions: 1, lastMessageAt: NOW - 30 }));
+  db.threads.set('dm', ['dmt']);
   // zt3 is not listed: the hub scores only zt1 and zt2 of the channel.
-  for (const a of [score('zt1', 40), score('zt2', 30), score('room', 20), score('mt', 50), score('lone', 10), score('room2', 15)]) db.attention.set(a.id, a);
+  for (const a of [score('zt1', 40), score('zt2', 30), score('room', 20), score('mt', 50), score('lone', 10), score('room2', 15), score('dmt', 5)]) db.attention.set(a.id, a);
   changed('meta');
 }
 /** The one db is every test file's (fixtures/state.ts): this world goes when each test is done. */
-const MINE = ['zc', 'zt1', 'zt2', 'zt3', 'room', 'mt', 'lone', 'room2', 'mt2'];
+const MINE = ['zc', 'zt1', 'zt2', 'zt3', 'room', 'mt', 'lone', 'room2', 'mt2', 'dm', 'dmt'];
 afterEach(() => {
   for (const id of MINE) {
     db.conversations.delete(id);
@@ -108,6 +116,8 @@ afterEach(() => {
   }
   db.threads.delete('zc');
   db.threads.delete('room2');
+  db.threads.delete('room');
+  db.threads.delete('dm');
   db.spaces.delete('org');
   db.accounts.delete('accz');
   changed('meta');
@@ -119,7 +129,7 @@ test('the inbox holds one row per channel: summed, keyed channel:<id>, opening t
   world();
   const rows = mine();
   const byKey = new Map(rows.map((r) => [r.key, r]));
-  expect([...byKey.keys()].sort()).toEqual(['channel:room', 'channel:room2', 'channel:zc', 'lone']);
+  expect([...byKey.keys()].sort()).toEqual(['channel:room', 'channel:room2', 'channel:zc', 'dm', 'dmt', 'lone']);
   const zc = byKey.get('channel:zc')!;
   if (zc.kind !== 'conv' || !zc.channel) throw new Error('not a channel row');
   // The click opens the channel; the preview is the latest listed thread; the score is the best thread's.
@@ -150,6 +160,28 @@ test('the inbox holds one row per channel: summed, keyed channel:<id>, opening t
   // What the row counts and opens on: every thread of the channel with something unread, listed or not.
   expect(unreadThreadsOf('zc').map((t) => t.id).sort()).toEqual(['zt1', 'zt2']);
   expect(unreadThreadsOf('room2').map((t) => t.id)).toEqual(['mt2']);
+  expect(inboxKeyOf('dmt')).toBe('dmt');
+});
+
+test("a channel row's key holds while its threads are read and come unread, so the open row stays held", () => {
+  world();
+  const keys = () => mine().map((r) => r.key).sort();
+  expect(keys()).toContain('channel:room2');
+  // Its one unread thread read (open from under the row): the same row, by the same key.
+  db.conversations.set('mt2', conv('mt2', { network: 'matrix', parentId: 'room2', lastMessageAt: NOW - 60 }));
+  changed('list');
+  expect(keys()).toContain('channel:room2');
+  expect(keys()).not.toContain('room2');
+  expect(inboxKeyOf('room2')).toBe('channel:room2');
+  expect(inboxKeyOf('mt2')).toBe('channel:room2');
+  // The last listed topic of a channel read: its row goes once the hub stops listing it, and comes back by the same key.
+  db.attention.delete('zt1');
+  db.attention.delete('zt2');
+  changed('list');
+  expect(keys()).not.toContain('channel:zc');
+  db.attention.set('zt2', score('zt2', 30));
+  changed('list');
+  expect(keys()).toContain('channel:zc');
 });
 
 test('a channel row is muted only when every thread in it is', () => {

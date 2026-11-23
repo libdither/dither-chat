@@ -970,13 +970,20 @@ export function chatPersonOf(c: P.ConversationView | null | undefined): P.Person
 
 /**
  * The channel whose inbox row a thread folds into (docs/inbox.md "One row per channel"): its parent, a Zulip channel,
- * a Discord channel or forum, a Matrix room. Null for anything else, and for a thread whose parent this page does not
- * hold (it keeps a row of its own).
+ * a Discord channel or forum, a Matrix room. Null for anything else, for a thread whose parent this page does not hold
+ * (it keeps a row of its own), and for a thread of a DM (a DM's row is the person's).
  */
 function threadParentOf(c: P.ConversationView | null | undefined): P.ConversationView | null {
   if (c?.shape !== 'thread' || !c.parentId) return null;
-  return db.conversations.get(c.parentId) ?? null;
+  const parent = db.conversations.get(c.parentId);
+  return parent && hasThreads(parent) ? parent : null;
 }
+
+/**
+ * A place whose inbox row is a channel's row (`channel:<id>`), whether or not a thread of it is listed now: one with
+ * threads, not a DM. So its key holds while its threads are read or come unread, and the hold on the open row with it.
+ */
+const hasThreads = (c: P.ConversationView) => c.shape !== 'direct' && c.shape !== 'thread' && !!db.threads.get(c.id)?.length;
 
 /**
  * A channel's threads with something unread (or a mention), whether or not the hub lists them: what its inbox row
@@ -994,21 +1001,17 @@ export function unreadThreadsOf(channelId: string): P.ConversationView[] {
   });
 }
 
-/** The conversations in a folded row (a channel's), to their row's key: made with the rows. */
-let foldedKeys = new Map<string, string>();
-
 /**
  * A conversation's row in the inbox: its own id, `person:<id>` for a route of a chat of several, or `channel:<id>` for
- * a thread, and for a channel whose threads are in the inbox.
+ * a thread and for a place with threads.
  */
 export function inboxKeyOf(convId: string): string {
   const c = db.conversations.get(convId);
   const parent = threadParentOf(c);
   if (parent) return channelKey(parent.id);
+  if (c && hasThreads(c)) return channelKey(c.id);
   const p = chatPersonOf(c);
-  if (p) return chatKey(p.id);
-  convRows();
-  return foldedKeys.get(convId) ?? convId;
+  return p ? chatKey(p.id) : convId;
 }
 
 function convRows(): ConvInboxRow[] {
@@ -1031,20 +1034,17 @@ function convRows(): ConvInboxRow[] {
       g.rows,
       (r) => threadParentOf(r.conv)?.id ?? null,
       (r) => r.conv.id,
-      (r) => db.threads.has(r.conv.id) && unreadThreadsOf(r.conv.id).some((t) => !unreadOf(t).muted || unreadOf(t).badge > 0),
+      (r) => hasThreads(r.conv),
     );
     const out: ConvInboxRow[] = f.rows;
     for (const ch of g.chats)
       out.push({ kind: 'conv', key: ch.key, conv: ch.latest.conv, score: ch.score, needs: ch.needs, reasons: ch.reasons, owedSince: ch.owedSince, chat: { person: db.persons.get(ch.personId)!, routes: ch.parts.map((r) => r.conv) } });
-    const keys = new Map<string, string>();
     for (const ch of f.channels) {
       const parent = db.conversations.get(ch.channelId)!;
       const parts = ch.parts.map((r) => r.conv);
-      for (const c of parts) keys.set(c.id, ch.key);
       const channel = { parent, parts, threads: parts.filter((c) => c !== parent), latest: ch.latest.conv, last: ch.last };
       out.push({ kind: 'conv', key: ch.key, conv: parent, score: ch.score, needs: ch.needs, reasons: ch.reasons, owedSince: ch.owedSince, channel });
     }
-    foldedKeys = keys;
     return out;
   });
 }

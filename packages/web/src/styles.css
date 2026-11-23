@@ -746,6 +746,9 @@ code {
   flex-direction: column;
   padding: 0 0 4px 46px;
 }
+.inbox-subrows[hidden] {
+  display: none;
+}
 .inbox-subrow {
   display: flex;
   align-items: center;

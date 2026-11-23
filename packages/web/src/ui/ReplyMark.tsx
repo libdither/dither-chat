@@ -72,8 +72,8 @@ export function MarkableRow({
       {fold}
     </div>
   );
-  if (!below) return row(rowKey);
-  // The row and what it opens on move as one: the key goes on both.
+  if (!fold && !below) return row(rowKey);
+  // The row and what it opens on move as one, under one key; open or closed, the same elements, so focus stays.
   return (
     <div class="inbox-group" data-row-key={rowKey}>
       {row()}
