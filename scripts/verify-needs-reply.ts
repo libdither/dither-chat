@@ -59,7 +59,7 @@ try {
   await p.goto(`${hub}/#/inbox`);
   await p.until(`document.querySelectorAll('.sidebar .inbox-row.owes .row-owed[data-p]').length > 0`, 15000);
   const rows = await p.eval<{ key: string; p: string | null; title: string | null; aria: string | null; button: string | null }[]>(
-    `[...document.querySelectorAll('.sidebar .inbox-row.owes')].map((el) => { const o = el.querySelector('.row-owed'); const b = el.querySelector('.row-mark'); return { key: el.dataset.rowKey, p: o?.dataset.p ?? null, title: o?.title || null, aria: o?.getAttribute('aria-label'), button: b?.title ?? null }; })`,
+    `[...document.querySelectorAll('.sidebar .inbox-row.owes')].map((el) => { const o = el.querySelector('.row-owed'); const b = el.querySelector('.row-mark'); return { key: el.dataset.rowKey ?? el.parentElement?.dataset.rowKey ?? '', p: o?.dataset.p ?? null, title: o?.title || null, aria: o?.getAttribute('aria-label'), button: b?.title ?? null }; })`,
   );
   const plain = rows.filter((x) => x.key.startsWith('cnv_') && views.get(x.key)?.needsReply != null);
   check(plain.length > 0, 'rows with ↩ carry the hub’s chance', { rows: rows.length, withChance: plain.length });

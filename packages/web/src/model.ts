@@ -11,6 +11,7 @@ import { mailDataVersion, metaDataVersion } from './versions.ts';
 import { isMailItem, triageBoard, type Board, type BoardItem } from './board.ts';
 import { mailInboxRows, mailNames, scopeAccounts } from './mail/model.ts';
 import { accountName, chatKey, groupChats } from './chatroutes.ts';
+import { channelKey, groupChannels } from './channelrows.ts';
 import { isQuietConv } from './feed.ts';
 
 const memos = new Map<string, { rev: number; value: unknown }>();
@@ -914,16 +915,22 @@ export interface ConvInboxRow extends InboxScore {
    * newest first, and the person. Its key is `person:<id>`.
    */
   chat?: { person: P.PersonView; routes: P.ConversationView[] };
+  /**
+   * A channel's threads as one row (docs/inbox.md "One row per channel", channelrows.ts): the channel (`conv` too, what
+   * a click opens), every conversation of the row (its threads in the inbox, and the channel where it had a row of its
+   * own), newest first, the threads alone, and the part whose message the row shows. Its key is `channel:<id>`.
+   */
+  channel?: { parent: P.ConversationView; parts: P.ConversationView[]; threads: P.ConversationView[]; latest: P.ConversationView; last: number };
 }
 export interface MailInboxRow extends InboxScore {
   kind: 'mail';
   thread: P.MailThreadView;
 }
 
-/** A conversation row's conversations: its one, or every route of a chat. */
-const rowConvs = (r: ConvInboxRow) => r.chat?.routes ?? [r.conv];
-/** The latest message of a row, anyone's. */
-export const rowLast = (r: InboxRow) => (r.kind === 'conv' ? (r.conv.lastMessageAt ?? 0) : r.thread.lastAt);
+/** A conversation row's conversations: its one, every route of a chat, or a channel's and its threads'. */
+export const rowConvs = (r: ConvInboxRow) => r.chat?.routes ?? r.channel?.parts ?? [r.conv];
+/** The latest message of a row, anyone's (a channel's row: of its threads that are not muted, while there are some). */
+export const rowLast = (r: InboxRow) => (r.kind === 'conv' ? (r.channel?.last ?? r.conv.lastMessageAt ?? 0) : r.thread.lastAt);
 /** One other person: a DM, or a mail thread between you and one other. */
 export const rowDirect = (r: InboxRow) => (r.kind === 'conv' ? r.conv.shape === 'direct' : r.thread.participants <= 2);
 /** Muted here or on its network: below everything else. Notes to self notify nobody, which is not the same. */
@@ -961,15 +968,55 @@ export function chatPersonOf(c: P.ConversationView | null | undefined): P.Person
   return p && !p.isSelf && directsOf(p.id).length > 1 ? p : null;
 }
 
-/** A conversation's row in the inbox: its own id, or `person:<id>` for a route of a chat of several. */
+/**
+ * The channel whose inbox row a thread folds into (docs/inbox.md "One row per channel"): its parent, a Zulip channel,
+ * a Discord channel or forum, a Matrix room. Null for anything else, for a thread whose parent this page does not hold
+ * (it keeps a row of its own), and for a thread of a DM (a DM's row is the person's).
+ */
+function threadParentOf(c: P.ConversationView | null | undefined): P.ConversationView | null {
+  if (c?.shape !== 'thread' || !c.parentId) return null;
+  const parent = db.conversations.get(c.parentId);
+  return parent && hasThreads(parent) ? parent : null;
+}
+
+/**
+ * A place whose inbox row is a channel's row (`channel:<id>`), whether or not a thread of it is listed now: one with
+ * threads, not a DM. So its key holds while its threads are read or come unread, and the hold on the open row with it.
+ */
+const hasThreads = (c: P.ConversationView) => c.shape !== 'direct' && c.shape !== 'thread' && !!db.threads.get(c.id)?.length;
+
+/**
+ * A channel's threads with something unread (or a mention), whether or not the hub lists them: what its inbox row
+ * counts and opens on (docs/inbox.md "One row per channel"). Unsorted; a busy Zulip channel has a thousand topics, so
+ * this is one pass, once per change.
+ */
+export function unreadThreadsOf(channelId: string): P.ConversationView[] {
+  return memo(`ut:${channelId}`, () => {
+    const out: P.ConversationView[] = [];
+    for (const id of db.threads.get(channelId) ?? []) {
+      const t = db.conversations.get(id);
+      if (t && t.vantages.some((v) => v.unread || v.mentions) && visibleConv(t)) out.push(t);
+    }
+    return out;
+  });
+}
+
+/**
+ * A conversation's row in the inbox: its own id, `person:<id>` for a route of a chat of several, or `channel:<id>` for
+ * a thread and for a place with threads.
+ */
 export function inboxKeyOf(convId: string): string {
-  const p = chatPersonOf(db.conversations.get(convId));
+  const c = db.conversations.get(convId);
+  const parent = threadParentOf(c);
+  if (parent) return channelKey(parent.id);
+  if (c && hasThreads(c)) return channelKey(c.id);
+  const p = chatPersonOf(c);
   return p ? chatKey(p.id) : convId;
 }
 
 function convRows(): ConvInboxRow[] {
   return memo('inboxConvRows', () => {
-    const rows: (ConvInboxRow & { last: number; unread: number; muted: boolean })[] = [];
+    const rows: (ConvInboxRow & { last: number; unread: number; badge: number; muted: boolean })[] = [];
     const held = heldByRequest();
     for (const c of db.conversations.values()) {
       const a = db.attention.get(c.id);
@@ -978,13 +1025,26 @@ function convRows(): ConvInboxRow[] {
       const row: ConvInboxRow = a ? { kind: 'conv', key: c.id, conv: c, score: a.score, needs: a.needs, reasons: a.reasons, owedSince: a.owedSince } : unscored(c);
       if (!row.needs && c.shape !== 'self' && placePref('conversation', c.id).hidden) continue;
       const u = unreadOf(c);
-      rows.push({ ...row, last: c.lastMessageAt ?? 0, unread: u.unread, muted: u.muted });
+      rows.push({ ...row, last: c.lastMessageAt ?? 0, unread: u.unread, badge: u.badge, muted: u.muted });
     }
     // A person's routes as one row: ranked, kept and drawn as one (chatroutes.ts).
     const g = groupChats(rows, (r) => chatPersonOf(r.conv)?.id ?? null);
-    const out: ConvInboxRow[] = g.rows;
+    // A channel's threads as one row, with the channel's own where it has one (channelrows.ts).
+    const f = groupChannels(
+      g.rows,
+      (r) => threadParentOf(r.conv)?.id ?? null,
+      (r) => r.conv.id,
+      (r) => hasThreads(r.conv),
+    );
+    const out: ConvInboxRow[] = f.rows;
     for (const ch of g.chats)
       out.push({ kind: 'conv', key: ch.key, conv: ch.latest.conv, score: ch.score, needs: ch.needs, reasons: ch.reasons, owedSince: ch.owedSince, chat: { person: db.persons.get(ch.personId)!, routes: ch.parts.map((r) => r.conv) } });
+    for (const ch of f.channels) {
+      const parent = db.conversations.get(ch.channelId)!;
+      const parts = ch.parts.map((r) => r.conv);
+      const channel = { parent, parts, threads: parts.filter((c) => c !== parent), latest: ch.latest.conv, last: ch.last };
+      out.push({ kind: 'conv', key: ch.key, conv: parent, score: ch.score, needs: ch.needs, reasons: ch.reasons, owedSince: ch.owedSince, channel });
+    }
     return out;
   });
 }

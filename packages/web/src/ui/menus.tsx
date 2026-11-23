@@ -430,8 +430,30 @@ function markReadEntry(c: P.ConversationView): MenuEntry {
   return { label: 'Mark As Read', icon: 'check', disabled: !unreadOf(c).unread, run: () => (noteRowRead('conversation', [c.id]), markRead(c.id)) };
 }
 
-/** `why`: the inbox's reasons for where this row sits (docs/inbox.md), shown first. */
-export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpec {
+/**
+ * Mark As Read on a channel's inbox row (docs/inbox.md "One row per channel"): the channel and every thread of it, the
+ * ones the row does not list too, at once, with no confirm: the row said what it holds. Each goes to its network through
+ * the read queue (hub readqueue.ts).
+ */
+function readChannelEntry(c: P.ConversationView): MenuEntry {
+  const unread = readScope(c).filter((t) => unreadOf(t).unread || unreadOf(t).mentions);
+  return {
+    label: 'Mark As Read',
+    icon: 'check',
+    disabled: !unread.length,
+    run: () => {
+      noteRowRead('conversation', unread.map((t) => t.id));
+      if (unread.length === 1) markRead(unread[0].id);
+      else markAllRead(unread, convTitle(c), false);
+    },
+  };
+}
+
+/**
+ * `why`: the inbox's reasons for where this row sits (docs/inbox.md), shown first. `channelRow`: the menu of a
+ * channel's inbox row, which stands for its threads too (Mark As Read reads them all).
+ */
+export function conversationMenu(c: P.ConversationView, why?: string[], channelRow = false): MenuSpec {
   const eff = effectiveLevel(c);
   const own = ruleOn('conversation', c.id);
   const muted = own === 'none';
@@ -445,7 +467,7 @@ export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpe
     head: <div class="cm-sheet-title">{convTitle(c)}</div>,
     items: groups(
       why?.length ? [{ kind: 'row', render: () => <WhyHere reasons={why} /> }] : [],
-      [markReadEntry(c)],
+      [channelRow ? readChannelEntry(c) : markReadEntry(c)],
       [
         person && { label: 'Profile', icon: 'user', run: () => go({ view: 'profile', person: person.id }) },
         { label: `About This ${c.shape === 'direct' ? 'Chat' : noun}`, icon: 'info', run: () => openAbout('conversation', c.id) },

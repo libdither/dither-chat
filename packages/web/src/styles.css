@@ -709,6 +709,87 @@ code {
     clip-path: inset(50%);
   }
 }
+/* A channel's threads as one row (docs/inbox.md "One row per channel"): a chevron beside the row's own button, at the
+   end of its top line, opens it on its unread threads, indented under the row's name. */
+.row-fold {
+  position: absolute;
+  z-index: 2;
+  top: 6px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--text-faint);
+}
+.row-fold:hover {
+  background: var(--bg-active);
+  color: var(--text);
+}
+.inbox-row:has(> .row-fold) > .row .row-top {
+  padding-right: 22px;
+}
+/* The topic's name and its message as one line of text, cut at its end. */
+.channel-row .row-preview {
+  display: block;
+}
+.channel-row .row-subject {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.channel-row.unread .row-subject {
+  color: var(--text);
+}
+.inbox-subrows {
+  display: flex;
+  flex-direction: column;
+  padding: 0 0 4px 46px;
+}
+.inbox-subrows[hidden] {
+  display: none;
+}
+.inbox-subrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  text-align: left;
+  color: var(--text-dim);
+}
+.inbox-subrow:hover {
+  background: var(--bg-hover);
+}
+.inbox-subrow.active {
+  background: var(--bg-active);
+  color: var(--text);
+}
+.inbox-subrow.muted {
+  opacity: 0.7;
+}
+.inbox-subrow-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: var(--text);
+}
+@media (pointer: coarse) {
+  /* A finger-sized target without a taller row. */
+  .row-fold::after {
+    content: '';
+    position: absolute;
+    inset: -8px -4px;
+  }
+  .inbox-subrow {
+    min-height: 40px;
+  }
+}
 .inbox-empty {
   padding: 16px 10px;
   color: var(--text-faint);
@@ -6825,7 +6906,8 @@ textarea.chip-box {
   /* The same for the list beside it: hundreds of conversations, a screenful on show. It halves the first
      paint's layout on a big hub (docs/android.md). Not the rail, whose unread pills sit outside its items. */
   .side-scroll > .row,
-  .side-scroll > .inbox-row {
+  .side-scroll > .inbox-row,
+  .side-scroll > .inbox-group {
     content-visibility: auto;
     contain-intrinsic-size: auto 60px;
   }
