@@ -328,11 +328,20 @@ repository every minute:
    `head`, it makes the merge commit (parents `base`, `head`, tree `tree`; checked equal), signed with the bot's own
    SSH key, its message carrying the approval trailers (below), and pushes it to the target without force. If the
    target moved, it asks again for the new base (the old approval covers a tree that is no longer the result). After
-   the push it deletes `review/<name>`.
+   the push it deletes `review/<name>`. **A refused push** (the remote said no) fetches the target again: if its tip
+   moved, it asks again on the new base, as above. If it did not, the refusal is for something asking again would not
+   change (a protected branch, a hook, a rule such as GitHub's "GH006: Protected branch update failed ... Commits must
+   have verified signatures"): the branch is `failed` with the remote's reason, and the user is told once with an
+   `alert` on the same topic ("review/<name>: main refused the bot's push: <reason>"). Nothing more is asked for that
+   head, across restarts too. To try again, fix the cause and push a new head to `review/<name>` (a rebase on the
+   target, or `git commit --amend --no-edit` and a force push of the branch); `dither-ask review` has no command to
+   retry a head. A push that can't reach the remote at all is tried again on the next pass, without asking.
 4. **Deny**: the request closes with your message; the branch stays for the agent to push a fix. The agent reads the
    outcome with `dither-ask review status <name> --repo R`: the latest request for that branch (every request the bot
    makes has the topic `<repo>:review/<name>`, and any asker's token may read a topic), its state, action and message;
-   exit 0 approved, 77 sent back, 75 waiting, expired or a conflict.
+   exit 0 approved, 77 sent back, 75 waiting, expired, a conflict or failed. When the latest is the bot's alert, the
+   JSON also has `outcome` (`conflict` or `failed`) and `reason` (for `failed`, the remote's words), and stderr says
+   it.
 
 **CI sources** are per repository in the watcher's config:
 
