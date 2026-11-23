@@ -135,6 +135,7 @@ function currentBootstrap(): P.Bootstrap {
     devices: db.devices,
     reactionUsage: db.reactionUsage,
     attention: [...db.attention.values()],
+    presence: [...db.presence.values()],
     requests: db.requests,
     ...(calendarLink.value ? { calendar: calendarLink.value } : {}),
     now: Date.now(),

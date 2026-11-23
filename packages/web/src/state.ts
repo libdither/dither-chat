@@ -5,7 +5,7 @@ import { leaveLayerEntry, takeOverLayers } from './phone.ts';
 import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snapshot.ts';
 import { arrivedInto, carryArrived, doneArrived, dropArrived, heldEnds, isArrivedCopy, stripArrived } from './arrived.ts';
 import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, identityVersion, indexThreads, onlyOpens, leaveOtherTimelines, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
-import { changed, mailChanged, timelineChanged, timelineRev } from './versions.ts';
+import { changed, mailChanged, presenceRev, timelineChanged, timelineRev } from './versions.ts';
 import { applyTyping, type TypingState } from './typers.ts';
 import { ECHO_SKEW, mayBeOut, openOutbox, settled, type Echo, type OutboxEntry, type SendMedia } from './outbox.ts';
 import { hubTransport, UploadJob } from './upload.ts';
@@ -262,6 +262,7 @@ export const adoptIdentities = (list: P.IdentityView[]) => list.forEach(putIdent
 
 export function applyBootstrap(b: P.Bootstrap) {
   applyBootstrapTo(db, b);
+  presenceRev.value++;
   // A calendar account on the hub (plans.ts, docs/calendar.md): its plans once the socket is up (now, if it is).
   if (calendarFromBootstrap(b) && ws?.readyState === WebSocket.OPEN) void loadPlans();
   noticesBoot.value = b.notices ?? null;
@@ -288,8 +289,8 @@ export function patchMessage(id: string, patch: (m: P.MessageView) => P.MessageV
   }
 }
 
-/** Events that change nothing in `db`: typing, toasts and read progress have signals of their own. */
-const NOT_DB = new Set<P.ClientEvent['t']>(['typing', 'notify', 'cleared', 'sync', 'readProgress', 'resync', 'sent', 'plans', 'calendar']);
+/** Events that change nothing in `db` the lists show: typing, toasts, read progress and status dots have signals of their own. */
+const NOT_DB = new Set<P.ClientEvent['t']>(['typing', 'notify', 'cleared', 'sync', 'readProgress', 'resync', 'sent', 'plans', 'calendar', 'presence']);
 /** Events that change what lists show but no names or settings: `metaRev` stays. */
 const LIST_ONLY = new Set<P.ClientEvent['t']>(['message', 'message.deleted', 'identity', 'attention', 'usage', 'arrange', 'requests', 'accountsManager']);
 /** Events that change names (`metaRev` moves) but not what is where (versions.ts `changed('shown')`): people. */
@@ -336,6 +337,9 @@ export function applyEvents(events: P.ClientEvent[]) {
       }
       case 'readProgress':
         readProgress.value = ev;
+        break;
+      case 'presence':
+        presenceRev.value++;
         break;
       case 'message': {
         const m = ev.message;

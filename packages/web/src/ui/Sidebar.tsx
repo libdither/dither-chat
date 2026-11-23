@@ -36,6 +36,7 @@ import {
   type InboxRow,
   type RailEntry,
 } from '../model.ts';
+import { convPresence } from './PresenceDot.tsx';
 import { db, go, isSelfIdentity, mailRev, metaRev, pref, readMinute, rev, route, setPrefs, type InboxFilter } from '../state.ts';
 import { openPalette } from './Palette.tsx';
 import { INBOX_FILTERS } from '../ordering.ts';
@@ -213,6 +214,7 @@ const ConvRow = memo(function ConvRow({
             network={c.network}
             accountIds={c.vantages.map((v) => v.accountId)}
             icon={c.shape === 'self' ? '✎' : undefined}
+            presence={chat ? { person: chat.person.id } : convPresence(c)}
           />
           {(c.shape === 'direct' || c.shape === 'group') && <RowTyping convIds={chat ? chat.routes.map((r) => r.id) : [c.id]} />}
         </span>
@@ -516,7 +518,7 @@ const PersonRow = memo(function PersonRow({ person, directs, active, onClick }: 
   return (
     <button class={`row conv-row ${active ? 'active' : ''} ${u.unread ? 'unread' : ''}`} data-person={person.id} data-track={rowTrack('person', !!u.unread)} onClick={onClick} {...ctx}>
       <span class="row-avatar">
-        <Avatar id={person.id} name={person.name} url={person.avatar} size={36} />
+        <Avatar id={person.id} name={person.name} url={person.avatar} size={36} presence={{ person: person.id }} />
         <RowTyping convIds={directs.map((d) => d.id)} />
       </span>
       <span class="row-main">
@@ -981,7 +983,7 @@ function SpacesEntry({ entry: e, hidden }: { entry: RailEntry; hidden?: boolean 
     ) : e.kind === 'space' ? (
       <Avatar id={e.space.id} name={e.space.name} url={e.space.icon} size={36} square network={e.space.network} accountIds={e.space.accountIds} />
     ) : (
-      <Avatar id={e.conv.id} name={label} url={e.conv.avatar} size={36} square network={e.conv.network} />
+      <Avatar id={e.conv.id} name={label} url={e.conv.avatar} size={36} square network={e.conv.network} presence={convPresence(e.conv)} />
     );
   const u = e.kind === 'folder' ? sumUnread(folderConvs(e.folder)) : e.kind === 'space' ? spaceUnread(e.space.id) : unreadOf(e.conv);
   const sub =

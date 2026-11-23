@@ -12,6 +12,7 @@ import { Journal } from './journal.ts';
 import { infoFor } from './mediainfo.ts';
 import { extraView, withNote } from './msgextra.ts';
 import { TypingRelay, typingTtl } from './typing.ts';
+import { PresenceNow } from './presence.ts';
 import { stepTimer } from './startup.ts';
 import { addTables, ingestRelationships, ingestRequests, pendingLinks } from './add.ts';
 import { accountSelfView, ingestSelf } from './accountself.ts';
@@ -279,6 +280,8 @@ export class Store {
   private binCache = new Map<string, number[]>();
   /** Who is typing where: in memory only (typing.ts). */
   readonly typers = new TypingRelay();
+  /** How each person is on their network now, for status dots (presence.ts). */
+  readonly presenceNow: PresenceNow;
   /** People a merge, a split or a new person changed: mail/people.ts sends their mail threads again. */
   personsChanged: ((personIds: string[]) => void) | null = null;
   /** A reminder set on a network came due (saved.ts): the server notifies. Called inside ingest's transaction. */
@@ -350,6 +353,7 @@ export class Store {
     timer.step('migrations');
     this.journal = new Journal(this.db);
     timer.step('journal');
+    this.presenceNow = new PresenceNow(this.db, (this.db.query(`SELECT id FROM account WHERE status != 'online' OR enabled = 0`).all() as Row[]).map((r) => r.id));
     this.showResolvedTopics();
     // Messages from before full-text search existed.
     if (!this.db.query(`SELECT 1 FROM meta WHERE key = 'fts_backfilled'`).get()) {
@@ -675,6 +679,12 @@ export class Store {
     if (!keys.length) return;
     this.db.query(`UPDATE account SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(...keys.map((k) => patch[k] as any), id);
     this.dirty.accounts.add(id);
+    // An account not online hears no one: what it heard is unknown while it is down (hidden, not forgotten: adapters
+    // tell only changes, so what it told is still the truth when it is back, and anything else comes as a change).
+    if (patch.status !== undefined || patch.enabled !== undefined) {
+      const a = this.account(id);
+      if (a) this.presenceNow.accountUp(id, a.status === 'online' && !!a.enabled);
+    }
   }
 
   /** Remove an account and everything that only it could see. */
@@ -720,6 +730,7 @@ export class Store {
       }
     });
     tx();
+    this.presenceNow.forgetAccount(id);
     this.refreshSelf();
     for (const v of seen) {
       const exists = this.db.query(`SELECT 1 FROM ${v.target_kind === 'space' ? 'space' : 'conversation'} WHERE id = ?`).get(v.target_id);
@@ -832,9 +843,17 @@ export class Store {
         case 'customStatus':
           this.setStatus(this.ensureIdentity(acc, ev.who), ev.text || ev.emoji ? { text: ev.text, emoji: ev.emoji } : null, acc.id, ev.ts);
           break;
-        case 'presence':
-          if (this.logsPresence()) this.setPresence(this.ensureIdentity(acc, ev.who), ev.state, ev.devices, acc.id, ev.ts);
+        case 'presence': {
+          // The latest state always (status dots, presence.ts), of someone the hub knows: it makes no identity for it.
+          // Presence over time only while it is logged, as before.
+          const logs = this.logsPresence();
+          const known = hubId('idn', acc.network, ev.who);
+          const iid = logs ? this.ensureIdentity(acc, ev.who) : this.db.query('SELECT 1 FROM identity WHERE id = ?').get(known) ? known : null;
+          if (!iid || this.isSelf(iid)) break;
+          this.presenceNow.set(iid, ev.state, ev.devices, acc.id, ev.ts);
+          if (logs) this.setPresence(iid, ev.state, ev.devices, acc.id, ev.ts);
           break;
+        }
         case 'receipt':
           this.receipt(acc, ev);
           break;
@@ -1068,6 +1087,8 @@ export class Store {
         acc.self_identity = id;
       }
       this.selfIdentities.add(id);
+      // Your own identity is never a dot, though it was heard before it was known as yours.
+      this.presenceNow.forget(id);
     } else if (f.contact) {
       // A contact always has a person; one first heard without a name (Signal before its profile arrives) is named by
       // its id, so a later name or picture reaches the person too (the person keeps a name you gave it: manual).
@@ -4010,14 +4031,19 @@ export class Store {
       ...(this.accountsManager ? { accountsManager: this.accountsManager } : {}),
       rules: this.rules(),
       reactionUsage: this.reactionUsage(),
+      presence: this.presenceNow.list(),
       now: Date.now(),
     };
   }
 
-  /** Drain dirty markers into client events. */
-  flush(): P.ClientEvent[] {
+  /** Drain dirty markers into client events. `all`: presence held for coalescing too (a clean stop). */
+  flush(all = false): P.ClientEvent[] {
     const d = this.dirty;
-    if (d.empty) return [];
+    // Status dots go out at most once every two seconds, whatever else a frame carries (presence.ts); written after
+    // the frame's commit (HubServer.flush), or here when there is no frame's transaction around this.
+    const presence = this.presenceNow.take(all);
+    if (!this.db.inTransaction) this.presenceNow.save();
+    if (d.empty) return presence ? [presence] : [];
     const out: P.ClientEvent[] = [];
     for (const id of d.accounts) {
       const a = this.account(id);
@@ -4046,6 +4072,7 @@ export class Store {
       for (const m of views) out.push({ t: 'message', message: m, identities: this.identitiesOf([m]), live: d.messages.get(m.id) ?? false });
     }
     out.push(...d.removed, ...d.extra);
+    if (presence) out.push(presence);
     this.dirty.accounts.clear();
     this.dirty.identities.clear();
     this.dirty.persons.clear();

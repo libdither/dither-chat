@@ -416,7 +416,7 @@ export function MembersSection({ m, adding, onAdd, extra }: { m: NonNullable<P.A
               <Menuable build={() => withExtra(identityMenu(x.identityId), extra?.(x) ?? [])}>
                 {(ctx) => (
                   <button class="member" onClick={() => openProfile(x.identityId)} {...ctx}>
-                    <Avatar id={p?.id ?? x.identityId} name={name} url={p?.avatar ?? i?.avatar} size={28} />
+                    <Avatar id={p?.id ?? x.identityId} name={name} url={p?.avatar ?? i?.avatar} size={28} presence={self ? undefined : { identity: x.identityId }} />
                     <span>
                       <b style={x.color ? { color: x.color } : undefined}>{name}</b>
                       <small>{x.label ? `${x.label.emoji ?? ''} ${x.label.text ?? ''}`.trim() : (i?.handle ?? i?.nativeId ?? '')}</small>

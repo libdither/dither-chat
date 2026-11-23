@@ -11794,6 +11794,24 @@ img.pf-status-emoji {
   background: transparent;
   box-shadow: inset 0 0 0 2px var(--text-faint);
 }
+/* A status dot on an avatar (PresenceDot.tsx): bottom right, or top right where the network's badge has that corner.
+   A ring of the surface around it parts it from the picture; offline is a hollow ring there too. No motion. */
+.avatar-presence {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  box-shadow: 0 0 0 2px var(--bg-sidebar);
+}
+.avatar-presence.at-top {
+  top: -1px;
+  bottom: auto;
+}
+.avatar-presence.offline {
+  background: var(--bg-sidebar);
+  box-shadow:
+    inset 0 0 0 2px var(--text-faint),
+    0 0 0 2px var(--bg-sidebar);
+}
 .pf-asking {
   color: var(--text-faint);
   animation: pf-pulse 1.4s ease-in-out infinite;
