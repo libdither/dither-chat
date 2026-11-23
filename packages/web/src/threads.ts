@@ -12,6 +12,16 @@ import { api, db, isSelfIdentity, toast } from './state.ts';
 import type { MenuEntry } from './ui/ContextMenu.tsx';
 
 /** What the threads chunk shows over the page: a channel's thread browser, or the form to start a thread or a post. */
+/**
+ * What a channel's Mark As Read covers (docs/threads.md "Next unread"): the channel and every thread of it, on every
+ * network (a Zulip channel's topics, a Discord text channel's threads and a forum's posts, a Matrix room's threads),
+ * archived ones too. A thread, or a chat with no threads, is itself alone.
+ */
+export function readScope(c: P.ConversationView): P.ConversationView[] {
+  const threads = c.shape === 'thread' ? [] : (db.threads.get(c.id) ?? []).map((id) => db.conversations.get(id)).filter((t): t is P.ConversationView => !!t);
+  return [c, ...threads];
+}
+
 export type ThreadDialog = { kind: 'browse'; convId: string; tab?: 'active' | 'archived' | 'mine' } | { kind: 'start'; convId: string; messageId?: string; name?: string } | { kind: 'post'; convId: string };
 export const threadDialog = signal<ThreadDialog | null>(null);
 
