@@ -24,6 +24,8 @@ interface ChatMail {
   replyTo?: P.MessageView | null;
   /** The newest message of the thread it goes into, from the timeline. */
   latest?: P.MessageView | null;
+  /** A thread's own chat: only these of it (the box's "Only Alice"), not everyone. */
+  only?: P.MailAddressView[] | null;
 }
 
 export async function sendFromChat(o: ChatMail): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -34,7 +36,7 @@ export async function sendFromChat(o: ChatMail): Promise<{ ok: true } | { ok: fa
     const ch = db.mail.chats.get(o.place);
     if (!ch) return { ok: false, error: 'This email route is gone.' };
     const to = [{ name: db.persons.get(ch.personId)?.name ?? null, email: ch.address }];
-    if (o.subject || !answer) {
+    if ((o.subject !== null && o.subject !== undefined) || !answer) {
       draft = blank(ch.accountId, 'new', null, to, o.subject?.trim() || '(no subject)', o.text);
     } else {
       const start = await api<P.MailComposeStart>(`/api/mail/compose?${new URLSearchParams({ kind: 'reply', message: answer.id, ...(timeZone() ? { tz: timeZone()! } : {}) })}`).catch((e) => e as Error);
@@ -49,8 +51,11 @@ export async function sendFromChat(o: ChatMail): Promise<{ ok: true } | { ok: fa
     const start = await api<P.MailComposeStart>(`/api/mail/compose?${new URLSearchParams({ kind: 'replyAll', message: at.id, ...(timeZone() ? { tz: timeZone()! } : {}) })}`).catch((e) => e as Error);
     if (start instanceof Error) return { ok: false, error: start.message };
     draft = { ...start.draft, text: o.text, quote: false, html: null, files: [], forwardParts: [] };
+    // "Only Alice": the reply all, to her alone; the thread then marks it "to Alice only" (the hub's MessageMailView.only).
+    if (o.only?.length) draft = { ...draft, to: o.only.map((a) => ({ name: a.name, email: a.email })), cc: [], bcc: [] };
   }
-  chatSends.set(clientId, { place: o.place, text: o.text, subject: draft.subject, ts: Date.now() });
+  const first = (a: P.MailAddressView) => (a.name || a.email.split('@')[0]).split(/\s+/)[0];
+  chatSends.set(clientId, { place: o.place, text: o.text, subject: draft.subject, ts: Date.now(), ...(o.only?.length ? { only: o.only.map(first) } : {}) });
   mailChanged();
   const r = await sendDraft(`chat:${clientId}`, draft, clientId);
   if (!r.ok) {

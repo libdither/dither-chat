@@ -332,6 +332,42 @@ describe('mail chats of their own and the routes list', () => {
     expect(hub.bootstrap().chats!.map((c) => c.id)).toEqual(expect.arrayContaining([route, `email:${ACC}:${THEO.email}`, `email:${ACC}:${ALICE.email}`]));
   });
 
+  test('answering one person in a thread with others: the send goes to them alone, and the thread marks it "only"', async () => {
+    const plans = threadOf('<old@x>');
+    const start = await call<P.MailComposeStart>('GET', `/api/mail/compose?kind=replyAll&message=${messageOf('<old@x>')}&tz=UTC`);
+    expect(start.status).toBe(200);
+    expect([...start.json.draft.to, ...start.json.draft.cc].map((a) => a.email).sort()).toEqual([ALICE.email, JO.email].sort());
+    // What the box's "Only Alice" sends: the reply all, narrowed to her (mail/chatsend.ts).
+    const sent = await call<{ outboxId: string }>('POST', '/api/mail/send', { ...start.json.draft, to: [ALICE], cc: [], bcc: [], text: 'Just you', clientId: 'only-alice', draftKey: start.json.draftKey });
+    expect(sent.status).toBe(200);
+    const stored = new Promise<string>((done) => {
+      const off = hub.on('sent', (e) => {
+        if (e.outboxId !== sent.json.outboxId) return;
+        off();
+        done(e.messageId!);
+      });
+    });
+    expect((await call('POST', `/api/mail/outbox/${sent.json.outboxId}/send`, {})).status).toBe(200);
+    const hdr = await stored;
+    const went = fake.sent.find((x) => x.messageId === hdr)!;
+    expect(went.mail.to.map((a) => a.email)).toEqual([ALICE.email]);
+    expect(went.mail.cc ?? []).toEqual([]);
+    // Its copy in Sent, once synced, is in the thread's chat with who it went to.
+    await new Promise<void>((done) => {
+      const here = () => !!store.one('SELECT id FROM mail_message WHERE message_id_hdr = ? AND account_id = ?', hdr, ACC);
+      if (here()) return done();
+      const off = hub.on('ingested', () => here() && (off(), done()));
+    });
+    flush();
+    const t = await call<P.MessagePage>('GET', `/api/mail/chats/${plans}/messages`);
+    const mine = t.json.messages.find((m) => m.mail?.messageId === hdr)!;
+    expect(mine.mail!.only!.map((a) => a.email)).toEqual([ALICE.email]);
+    // Mail to everyone on it, and theirs, are not marked.
+    expect(t.json.messages.filter((m) => m.id !== mine.id).every((m) => !m.mail!.only)).toBe(true);
+    const movers = await call<P.MessagePage>('GET', `/api/mail/chats/${threadOf('<gb@x>')}/messages`);
+    expect(movers.json.messages.find((m) => m.id === messageOf('<gb@x>'))!.mail!.only).toBeUndefined();
+  });
+
   test('marking messages read marks only those', async () => {
     const ids = [messageOf('<g0@x>'), messageOf('<g1@x>')];
     const r = await call('POST', '/api/mail/flag', { messageIds: [ids[0]], seen: true });

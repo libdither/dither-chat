@@ -56,6 +56,9 @@ export function MailThreadActionsLazy(p: { threadId: string }) {
 /** A mail message's star, tier and its thread's filing for its menu: none until mail's chunk is here (it loads at idle). */
 export const mailMessageExtras = (msg: P.MessageView): MenuEntry[] => screens?.mailMessageItems(msg) ?? [];
 
+/** A thread's Archive and Star from a chat (ChatMail.tsx threadFiling): none until mail's chunk is here. */
+export const mailThreadFiling = (threadId: string, long: boolean): MenuEntry[] => screens?.threadFiling(threadId, long) ?? [];
+
 /** A mail message in a chat, opened up (ChatMail.tsx): its quote, the mail as sent, or its files. */
 export function ChatMailBodyLazy(p: { m: P.MessageView; show: 'words' | 'quote' | 'sent' | 'files' }) {
   const { m, failed } = useScreens();

@@ -121,7 +121,21 @@ asked for, never copied into the message table.
   sorts; the body is the words above the quote when the body is here, else the preview; `rich` when its HTML is more
   than plain text would show (what the reader's body renderers decide); `quoted` when there is quoted text under it;
   `opens` on the first message of its thread. One mail that reached two of your accounts (two rows with one
-  Message-ID) is shown once in a person's chat, as its earliest copy, with both accounts in `seenVia`.
+  Message-ID) is shown once in a person's chat, as its earliest copy, with both accounts in `seenVia`. `only`, on a
+  mail of yours in a thread with others that went to fewer of them than are on it (`mail_thread.participants`, less
+  your addresses), lists who it went to, so the thread says "to Alice only".
+- **The line over the box** (web `ui/MailChat.tsx`) holds pills, not captions. In a person's chat, after "To Sam
+  Rivera", the thread the mail goes into (`✉ Dinner on Friday? ⌄`): its list has "New subject…" first, then your
+  threads with them newest first; New subject turns the pill into a field of its size, and Esc puts the thread back.
+  In a thread's own chat, who the answer goes to: up to two names, else "Everyone · N", with Everyone, Only <each
+  person> and Full editor. "Only Alice" sends the reply all to her alone (`mail/chatsend.ts`), says "Reply to Alice
+  only" in the box, and is everyone again after the send. A pill at rest is a neutral fill; it is outlined while its
+  list is open or when it is not at its default. Subjects are drawn without their Re: and Fwd: (`bareSubject`);
+  what is sent keeps them.
+- **The subject tag** in a message's head, where the thread changes, has the pill's envelope and bare subject. A
+  click or tap opens the thread's card ("3 mails · with Sam Rivera · newest today") with Archive and Star;
+  archiving says "Archived · Undo", and an archived thread's tags show the archive glyph. Every mail message's menu
+  has the same two for its thread: "Archive “Dinner on Friday?”" (or Unarchive) and "Star thread" (or Unstar).
 - **A person's chat** (`GET /api/chats/person:<id>/messages?before=<ts>:<id>&limit=`) is their chat timeline and the
   mail of their threads, merged newest first by `(ts, id)` under the one cursor: `limit` counts both, and `hasMore`
   is either side's. A person you only mail with has a chat too.

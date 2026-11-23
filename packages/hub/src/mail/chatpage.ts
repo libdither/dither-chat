@@ -128,6 +128,22 @@ function mailViews(hub: MailHub, places: MailPlaces, chat: Store, rows: Row[], p
   const first = new Map<string, string>();
   const firstOf = db.query('SELECT id FROM mail_message WHERE thread_id = ? AND draft = 0 ORDER BY received_at, id LIMIT 1');
   for (const t of new Set(rows.map((r) => r.thread_id as string))) first.set(t, ((firstOf.get(t) as Row | null)?.id as string) ?? '');
+  // A mail of yours in a thread with others that went to fewer of them than are on it: who it went to ("to Alice only").
+  const own = places.ownAddresses();
+  const partsOf = db.query('SELECT participants FROM mail_thread WHERE id = ?');
+  const others = new Map<string, Set<string>>();
+  const onlyOf = (r: Row): P.MailAddressView[] | undefined => {
+    if (placed.has(r.thread_id) || !own.has(lc(r.from_addr))) return undefined;
+    let all = others.get(r.thread_id);
+    if (!all) {
+      all = new Set(json<{ e: string }[]>((partsOf.get(r.thread_id) as Row | null)?.participants, []).map((p) => lc(p.e)).filter((e) => e && !own.has(e)));
+      others.set(r.thread_id, all);
+    }
+    const to = [...json<M.MailAddress[]>(r.to_json, []), ...json<M.MailAddress[]>(r.cc_json, [])].filter((a) => !own.has(lc(a.email)));
+    const went = new Set(to.map((a) => lc(a.email)));
+    if (!went.size || went.size >= all.size || [...went].some((e) => !all.has(e))) return undefined;
+    return to.filter((a, i) => to.findIndex((b) => lc(b.email) === lc(a.email)) === i).map((a) => who.address(a));
+  };
   const messages = rows.map((r): P.MessageView => {
     const p = placed.get(r.thread_id);
     const body = cached.has(r.id) ? hub.store.bodyView(r.id) : null;
@@ -155,6 +171,8 @@ function mailViews(hub: MailHub, places: MailPlaces, chat: Store, rows: Row[], p
       quoted: !!above?.quoted,
       opens: first.get(r.thread_id) === r.id,
     };
+    const only = onlyOf(r);
+    if (only) mail.only = only;
     return {
       id: r.id,
       conversationId: p ? p.routeId : r.thread_id,

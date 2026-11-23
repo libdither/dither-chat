@@ -148,7 +148,7 @@ export async function chooseRung(view: string, place: string, rung: P.Rung | nul
 // ------------------------------------------------------------------ sends on their way
 
 /** What chat sends are on their way, by clientId: the outbox has no text, so the chat shows them from here. */
-export const chatSends = new Map<string, { place: string; text: string; subject: string; ts: number }>();
+export const chatSends = new Map<string, { place: string; text: string; subject: string; ts: number; only?: string[] }>();
 
 /**
  * Words a chat send's Undo gives back to the box of their place (an email route or a thread): the box takes them when

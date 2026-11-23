@@ -4,8 +4,11 @@
  * Mail's chunk, with the renderers the reader used.
  */
 import type * as P from '@dither-chat/protocol';
+import { bareSubject } from '@dither-chat/protocol';
 import { useEffect } from 'preact/hooks';
-import { db, mailRev } from '../../state.ts';
+import { archivedInAll } from '../../mail/filing.ts';
+import { canWrite, destination, move, moveKind, star } from '../../mail/ops.ts';
+import { db, mailRev, toast } from '../../state.ts';
 import { bodies, bodyState, details, loadBody, retryBody } from '../../mail/api.ts';
 import type { MenuEntry } from '../ContextMenu.tsx';
 import { Icon } from '../icons.tsx';
@@ -99,20 +102,54 @@ export function MailThreadActions({ threadId }: { threadId: string }) {
   );
 }
 
-/** What a thread's filing is called from one of its messages, in a chat. */
-const ON_THE_THREAD: Record<string, string> = { archive: 'Archive the thread', unarchive: 'Move the thread to Inbox', trash: 'Move the thread to the trash' };
+/** The account files the thread that way: the mailbox is there, and it makes that kind of move. */
+const canMove = (t: P.MailThreadView, to: P.MailMoveTarget) => {
+  const b = destination(t, to);
+  return !!b && canWrite(db.mail.accounts.get(t.accountId), moveKind(b));
+};
 
 /**
- * A mail message's menu in a chat, past answering (MailChat.tsx mailMessageMenu has that): its star and tier, from the
- * reader's table, and its thread's filing.
+ * A thread's Archive and Star from a chat (the subject tag's card, and every mail message's menu): `long` names the
+ * thread ("Archive “Dinner on Friday?”", "Star thread"), as a message's menu needs; the tag's card says it already.
+ * Archiving says "Archived · Undo"; the thread's tags then show the archive glyph (MailChat.tsx SubjectTag).
+ */
+export function threadFiling(threadId: string, long: boolean): MenuEntry[] {
+  const t = threadOf(threadId);
+  if (!t) return [];
+  const subject = bareSubject(t.subject) || '(no subject)';
+  const out: MenuEntry[] = [];
+  const inbox = t.roles.includes('inbox');
+  if (inbox && canMove(t, 'archive'))
+    out.push({
+      label: long ? `Archive “${subject}”` : 'Archive',
+      icon: 'archive',
+      track: 'mail thread: archive',
+      run: () => {
+        move([t.id], 'archive');
+        toast({ kind: 'info', title: 'Archived', body: '', action: () => move([t.id], 'inbox'), actionLabel: 'Undo' });
+      },
+    });
+  else if (!inbox && (t.roles.includes('archive') || archivedInAll(db.mail.mailboxes, t)) && canMove(t, 'inbox'))
+    out.push({ label: long ? `Unarchive “${subject}”` : 'Unarchive', icon: 'inbox', track: 'mail thread: unarchive', run: () => move([t.id], 'inbox') });
+  if (canWrite(db.mail.accounts.get(t.accountId), 'flagged'))
+    out.push({ label: `${t.flagged ? 'Unstar' : 'Star'}${long ? ' thread' : ''}`, icon: 'star', track: t.flagged ? 'mail thread: unstar' : 'mail thread: star', run: () => star([t.id], !t.flagged) });
+  return out;
+}
+
+/**
+ * A mail message's menu in a chat, past answering (MailChat.tsx mailMessageMenu has that): its tier, from the reader's
+ * table, its thread's Archive and Star (threadFiling), and the thread's trash.
  */
 export function mailMessageItems(m: P.MessageView): MenuEntry[] {
   const t = threadOf(m.mail!.threadId);
   if (!t) return [];
   const message = asMailMessage(m);
   const account = db.mail.accounts.get(t.accountId);
-  const out: MenuEntry[] = MESSAGE_ACTIONS.filter((a) => !ANSWERS.has(a.id) && (a.show?.(message, t, account) ?? true)).map((a) => ({ label: a.label, icon: a.icon, track: `mail: ${a.id}`, run: () => a.run(message, t) }));
-  for (const a of THREAD_ACTIONS) if (ON_THE_THREAD[a.id] && (a.show?.(t, account) ?? true)) out.push({ label: ON_THE_THREAD[a.id], icon: a.icon, track: `mail thread: ${a.id}`, run: () => a.run(t) });
+  const out: MenuEntry[] = MESSAGE_ACTIONS.filter((a) => !ANSWERS.has(a.id) && !STARS.has(a.id) && (a.show?.(message, t, account) ?? true)).map((a) => ({ label: a.label, icon: a.icon, track: `mail: ${a.id}`, run: () => a.run(message, t) }));
+  out.push(...threadFiling(t.id, true));
+  for (const a of THREAD_ACTIONS) if (a.id === 'trash' && (a.show?.(t, account) ?? true)) out.push({ label: 'Move the thread to the trash', icon: a.icon, track: `mail thread: ${a.id}`, run: () => a.run(t) });
   return out;
 }
 const ANSWERS = new Set(['reply', 'replyAll', 'forward']);
+/** A message's own star: in a chat the thread is starred instead ("Star thread"), as one control. */
+const STARS = new Set(['star', 'unstar']);

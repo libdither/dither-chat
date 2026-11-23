@@ -860,6 +860,11 @@ export interface MessageMailView {
   quoted: boolean;
   /** The first message of its thread here: the chat shows the subject on it. */
   opens: boolean;
+  /**
+   * A mail you sent in a thread with others that went to only some of them (Reply's "Only Alice" over a thread's box):
+   * who it went to, so the thread can say "to Alice only". Absent when it went to everyone on the thread.
+   */
+  only?: MailAddressView[];
 }
 
 /**

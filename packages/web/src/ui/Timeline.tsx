@@ -73,7 +73,7 @@ import {
 import { mailRev } from '../versions.ts';
 import { convById, isMailPlace, isMailThread, loadMailThread, mailThread, refill, threadsFailed } from '../mail/chats.ts';
 import { openPalette } from './Palette.tsx';
-import { BackBar, ElsewhereRows, MailSends, MailThreadHeader, MailWords, MailThreadLead, ReplySubject, SubjectChip, SubjectTag, mailMessageMenu, pickSubject, subjectOf } from './MailChat.tsx';
+import { BackBar, ElsewhereRows, MailSends, MailThreadHeader, MailWords, MailThreadLead, ReplySubject, SubjectChip, SubjectTag, answerEveryone, mailMessageMenu, onlyOf, pickSubject, subjectOf, threadPlaceholder } from './MailChat.tsx';
 import { openCompose, sendMailFromChat } from './mail/lazy.tsx';
 import { reactionContext } from '../reactions.ts';
 import { openAbout } from '../opening.ts';
@@ -825,7 +825,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
               {clock(m.ts)}
             </span>
             {/* A person's chat (ui/Pairs.tsx): where the route changes, which one, quietly. A click sends through it. */}
-            {mail ? subject && <SubjectTag m={m} /> : conv && chatPerson && onTag && <RouteTag c={conv} directs={directsOf(chatPerson.id)} side={self ? 'mine' : who !== undefined ? 'theirs' : 'other'} onPick={() => onTag(conv.id)} />}
+            {mail ? (subject || mail.only) && <SubjectTag m={m} tag={!!subject} /> : conv && chatPerson && onTag && <RouteTag c={conv} directs={directsOf(chatPerson.id)} side={self ? 'mine' : who !== undefined ? 'theirs' : 'other'} onPick={() => onTag(conv.id)} />}
             {(m.editedTs || m.edits) && <Edited m={m} />}
             {m.movedAt && <Moved m={m} />}
             <DisappearsMark m={m} self={self} />
@@ -1355,7 +1355,7 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
       ? -1
       : all.findIndex((m) => m.ts > firstUnreadTs && !isSelfIdentity(m.authorId));
   const groups = (prev: P.MessageView | null, m: P.MessageView) =>
-    !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId && prev.sms === m.sms && prev.mail?.threadId === m.mail?.threadId;
+    !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId && prev.sms === m.sms && prev.mail?.threadId === m.mail?.threadId && !m.mail?.only;
   // Mail (mail/chats.ts): the subject where the thread changes, except in the thread's own chat, which it names.
   const ownThread = tkey.startsWith('c:mth_');
   let lastThread: string | null = null;
@@ -2197,10 +2197,16 @@ function mailPost(place: string, tkey: string, reply: P.MessageView | null) {
     const pick = isMailThread(place) ? { threadId: place, subject: null } : subjectOf(place);
     const threadId = reply?.mail?.threadId ?? pick.threadId;
     const latest = [...held].reverse().find((m) => m.mail && m.mail.threadId === threadId) ?? null;
-    const r = await sendMailFromChat({ place, text: body, subject: reply ? null : pick.subject, threadId, replyTo: reply?.mail ? reply : null, latest });
+    // A thread's box: everyone on it, or the one person its pill picked ("Only Alice", MailChat.tsx MailThreadLead).
+    const one = isMailThread(place) ? onlyOf(place) : null;
+    const r = await sendMailFromChat({ place, text: body, subject: reply ? null : pick.subject, threadId, replyTo: reply?.mail ? reply : null, latest, only: one ? [one] : null });
     if (!r.ok) toast({ kind: 'error', title: 'The mail did not go', body: r.error });
-    // A new subject is one mail's: the next goes on with the thread it starts, which the chip then follows.
-    else if (pick.subject !== null && !reply) pickSubject(place, null);
+    else {
+      // A new subject is one mail's: the next goes on with the thread it starts, which the pill then follows.
+      if (pick.subject !== null && !reply) pickSubject(place, null);
+      // "Only Alice" is one mail's too: the pill goes back to everyone.
+      if (one) answerEveryone(place);
+    }
     return r.ok;
   };
 }
@@ -2283,8 +2289,8 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
         <MailThreadHeader c={c} onBack={onBack} />
         <BackBar place={c.id} />
         <Timeline tkey={timelineKey('c', c.id)} convIds={[c.id]} onReply={setReply} firstUnreadTs={unreadAt} focus={focus} />
-        <TypingBar convIds={[c.id]} lead={<MailThreadLead c={c} />} />
-        <Composer targets={{ convId: c.id }} placeholder="Reply to everyone" reply={reply} clearReply={() => setReply(null)} disabledReason={composerBlocker(c)} post={mailPost(c.id, timelineKey('c', c.id), reply)} />
+        <TypingBar convIds={[c.id]} lead={<MailThreadLead c={c} tkey={timelineKey('c', c.id)} />} />
+        <Composer targets={{ convId: c.id }} placeholder={threadPlaceholder(c.id)} reply={reply} clearReply={() => setReply(null)} disabledReason={composerBlocker(c)} post={mailPost(c.id, timelineKey('c', c.id), reply)} />
       </section>
     );
   // A network's notifications about you: cards, and no composer (docs/feed.md).

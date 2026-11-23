@@ -3,6 +3,6 @@ export { MailSidebar } from './MailSidebar.tsx';
 export { MailSearchGroup } from './MailSearch.tsx';
 export { ComposerLayer } from './Composer.tsx';
 export { MailKeepSection } from './MailKeep.tsx';
-export { ChatMailBody, MailThreadActions, mailMessageItems } from './ChatMail.tsx';
+export { ChatMailBody, MailThreadActions, mailMessageItems, threadFiling } from './ChatMail.tsx';
 export { sendFromChat } from '../../mail/chatsend.ts';
 export { deleteDraft, dismissSend, sendNow, undoSend } from '../../mail/drafts.ts';

@@ -201,65 +201,173 @@
   color: var(--danger);
 }
 
-/* The subject chip over the box (as a stream's thread chip is, ui/Stream.css), and its rows. */
-.subject-chip-line {
-  display: inline;
-  margin-left: 6px;
+/* The line over the box (pick A): real pills, after "To Sam Rivera" (the thread the mail goes into) or alone in a
+   thread's chat (who the answer goes to). A neutral raised fill at rest; the accent outline only while its list is open
+   or when it is not at its default (a new subject, "Only Alice"). 24px on a computer, 30px on a phone; at most ~60% of
+   the line, a long subject cut in the middle. */
+/* css-scope: the typing line (ui/Typing.tsx) is the row the pills sit in; only a row holding one grows to fit it. */
+.typing-bar:has(.mail-pill) {
+  container-type: inline-size;
+  height: 32px;
+  margin-top: -4px;
 }
-.subject-chip {
-  max-width: 320px;
+.app.phone .typing-bar:has(.mail-pill) {
+  height: 38px;
 }
-.subject-chip-name {
-  overflow: hidden;
+.mail-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 60cqw;
+  height: 24px;
+  margin-left: 8px;
+  padding: 0 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  vertical-align: middle;
   white-space: nowrap;
+  cursor: pointer;
+}
+.app.phone .mail-pill {
+  height: 30px;
+  padding: 0 11px;
+  font-size: 13px;
+}
+/* Alone on the line (a thread's chat): no name before it to keep apart from. */
+.typing-lead > .mail-pill:first-child {
+  margin-left: 0;
+}
+.mail-pill:hover {
+  background: var(--bg-hover);
+}
+.mail-pill.open,
+.mail-pill.set {
+  border-color: var(--accent);
+}
+.mail-pill.fixed {
+  cursor: default;
+}
+.mail-pill.fixed:hover {
+  background: var(--bg-raised);
+}
+.mail-pill > svg {
+  flex: none;
+  color: var(--text-dim);
+}
+.mail-pill-text {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
 }
-.subject-chip-new {
-  color: var(--accent);
+/* Cut in the middle: the head gives way, its last letters stay. */
+.mail-pill-text.mid {
+  display: inline-flex;
 }
-.subject-card {
-  padding: 6px;
-  gap: 4px;
+.mail-pill-head {
+  white-space: pre;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.subject-find {
+.mail-pill-tail {
+  white-space: pre;
   flex: none;
-  font-size: 12.5px;
 }
-.subject-rows {
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  min-height: 0;
+/* New subject: the pill is a field of its size, in place. */
+.mail-pill-field {
+  cursor: text;
+  padding-right: 3px;
 }
-.subject-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 8px;
+.mail-pill-field input {
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
   border: none;
-  border-radius: 6px;
+  outline: none;
   background: none;
+  color: var(--text);
   font: inherit;
-  text-align: left;
+}
+.mail-pill-field input::placeholder {
+  color: var(--text-faint);
+  font-weight: 500;
+}
+.mail-pill-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: none;
   color: var(--text-dim);
   cursor: pointer;
 }
-.subject-row.hi {
+.mail-pill-more:hover {
   background: var(--bg-hover);
   color: var(--text);
 }
-.subject-row.on {
-  font-weight: 600;
+
+/* The subject tag in a message's head: the pill's envelope and bare subject, small. Hover only outlines it; a click or
+   tap opens its card. On a phone padding makes it a 28px target without a bigger label. */
+.route-tag.mail-tag {
+  max-width: min(320px, 50%);
+  font-size: 11px;
+  border: 1px solid transparent;
+  background: none;
+  cursor: pointer;
+}
+.route-tag.mail-tag:hover {
+  background: none;
+  border-color: var(--border);
+  color: var(--text-dim);
+}
+.route-tag.mail-tag.open {
+  border-color: var(--accent);
   color: var(--text);
 }
-.subject-row-name {
+.route-tag.mail-tag .route-label {
   overflow: hidden;
-  white-space: nowrap;
   text-overflow: ellipsis;
 }
-.subject-none {
-  padding: 5px 8px;
+.app.phone .route-tag.mail-tag {
+  padding: 5px 7px;
+  margin: -6px 0;
+}
+.mail-tag-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 10px 6px;
+  max-width: 320px;
+}
+.mail-tag-card b {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+}
+.mail-tag-card small {
+  padding-left: 17px;
   color: var(--text-faint);
+  font-size: 11.5px;
+}
+/* A mail you sent to only some on a thread. */
+.mail-only {
+  margin-left: 4px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-dim);
+  white-space: nowrap;
 }
 
 /* A thread's chat header. */
@@ -267,12 +375,6 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-.mail-thread-lead {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
 }
 /* The mail lists' chips scroll sideways: the edge with more past it fades. */
 .mail-list-chips {

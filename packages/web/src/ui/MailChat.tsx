@@ -8,16 +8,19 @@ import type * as P from '@dither-chat/protocol';
 import { signal } from '@preact/signals';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { chatSends, chosenRung, chooseRung, loadMailThread, mailThread, refill, sendsIn } from '../mail/chats.ts';
-import { viewList } from '@dither-chat/protocol';
+import { bareSubject, viewList } from '@dither-chat/protocol';
+import { archivedInAll } from '../mail/filing.ts';
+import { dayLabel } from '../format.ts';
 import { MAIL_LISTS } from '../mail/model.ts';
 import { linkify } from '../mail/text.ts';
-import { db, go, mailRev, toast } from '../state.ts';
+import { db, go, mailRev, timelineRev, toast } from '../state.ts';
+import { timelines } from '../store.ts';
 import { Icon } from './icons.tsx';
 import './MailChat.css';
-import { ChatMailBodyLazy, MailThreadActionsLazy, mailMessageExtras, openCompose, preloadMail } from './mail/lazy.tsx';
+import { ChatMailBodyLazy, MailThreadActionsLazy, mailMessageExtras, mailThreadFiling, openCompose, preloadMail } from './mail/lazy.tsx';
 import { HeadOrb } from './Offline.tsx';
 import { identityName } from '../model.ts';
-import { openMenu, type MenuSpec } from './ContextMenu.tsx';
+import { contextMenu, openMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 
 /** Undo, Send now and Dismiss, from mail's chunk (mail/drafts.ts is in it). */
 const drafts = () => preloadMail();
@@ -105,21 +108,93 @@ export function MailWords({ m }: { m: P.MessageView }) {
 /** Where a mail thread opens on its own (its chat), at a message. */
 const openThread = (threadId: string, msg?: string) => go({ view: 'inbox', conv: threadId, ...(msg ? { msg } : {}) });
 
+/** A thread is archived: out of Inbox, into Archive (or All mail where the account has no Archive). */
+function archived(t: P.MailThreadView | undefined): boolean {
+  return !!t && !t.roles.includes('inbox') && (t.roles.includes('archive') || archivedInAll(db.mail.mailboxes, t));
+}
+
+/** Who a thread is with, by name: everyone who wrote in it but you. */
+function withWhom(t: P.MailThreadView): string {
+  const names: string[] = [];
+  for (const f of t.from) if (!f.self && !names.includes(f.name || f.email)) names.push(f.name || f.email);
+  return names.join(', ');
+}
+
+/** "3 mails · with Sam Rivera · newest today": a thread in one line, over its filing. */
+function threadLine(t: P.MailThreadView): string {
+  const day = dayLabel(t.lastAt);
+  const who = withWhom(t);
+  return [`${t.count} ${t.count === 1 ? 'mail' : 'mails'}`, who && `with ${who}`, `newest ${day === 'Today' || day === 'Yesterday' ? day.toLowerCase() : day}`].filter(Boolean).join(' · ');
+}
+
+/** First names for "to Alice only", whole names where two share one. */
+function firstNames(as: P.MailAddressView[]): string[] {
+  const first = (a: P.MailAddressView) => (a.name || a.email.split('@')[0]).split(/\s+/)[0];
+  return as.map((a) => (as.filter((b) => first(b) === first(a)).length > 1 ? a.name || a.email : first(a)));
+}
+const andList = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+
 /**
- * Style A: the subject as a tag in the message's head, where the thread changes. A click opens the thread alone. In the
- * thread's own chat the subject is the page's name, so it is not drawn.
+ * Pick A (docs/mail.md "Mail as chats"): the subject as a tag in the message's head, where the thread changes, with the
+ * composer pill's envelope and bare subject. A click or tap opens the thread's card (how many mails, with whom, the
+ * newest) with Archive and Star; an archived thread's tags show the archive glyph. In the thread's own chat the
+ * subject is the page's name, so `tag` is false there; a mail you sent to only some on a thread still says so.
  */
-export function SubjectTag({ m }: { m: P.MessageView }) {
+export function SubjectTag({ m, tag = true }: { m: P.MessageView; tag?: boolean }) {
+  mailRev.value;
   const x = m.mail!;
+  const btn = useRef<HTMLButtonElement>(null);
+  const open = !!btn.current && contextMenu.value?.from === btn.current;
+  const t = mailThread(x.threadId);
+  const subject = bareSubject(x.subject) || '(no subject)';
+  const gone = archived(t);
   return (
-    <button class="route-tag mail-subject" data-track="mail subject" title={`Email: ${x.subject || '(no subject)'}. Open this thread on its own`} onClick={() => openThread(x.threadId, m.id)}>
-      <Icon name="mail" size={11} />
-      <span class="route-label">{x.subject || '(no subject)'}</span>
-    </button>
+    <>
+      {tag && (
+        <button
+          ref={btn}
+          class={`route-tag mail-tag ${open ? 'open' : ''}`}
+          data-track="mail subject"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          title={`Email: ${subject}${gone ? ' (archived)' : ''}`}
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            openMenu({ x: r.left, y: r.bottom + 4 }, subjectMenu(m), e.currentTarget);
+          }}
+        >
+          <Icon name={gone ? 'archive' : 'mail'} size={11} />
+          <span class="route-label">{subject}</span>
+        </button>
+      )}
+      {x.only && <span class="mail-only" title={`Sent to ${x.only.map((a) => a.name || a.email).join(', ')} only, not everyone on the thread`}>to {andList(firstNames(x.only))} only</span>}
+    </>
   );
 }
 
-/** A mail message's menu: answer it, the full editor, the thread on its own. */
+/** The subject tag's card: the thread in a line, then Archive and Star for it (ChatMail.tsx threadFiling). */
+function subjectMenu(m: P.MessageView): MenuSpec {
+  const x = m.mail!;
+  const t = mailThread(x.threadId);
+  const subject = bareSubject(x.subject) || '(no subject)';
+  const items: MenuEntry[] = [
+    {
+      kind: 'row',
+      render: () => (
+        <div class="mail-tag-card">
+          <b>
+            <Icon name="mail" size={12} /> {subject}
+          </b>
+          {t && <small>{threadLine(t)}</small>}
+        </div>
+      ),
+    },
+    ...mailThreadFiling(x.threadId, false),
+  ];
+  return { track: 'mail subject card', label: subject, items };
+}
+
+/** A mail message's menu: answer it, the full editor, its thread's filing (Archive “Subject”, Star thread), the thread on its own. */
 export function mailMessageMenu(m: P.MessageView, reply: () => void): MenuSpec {
   const x = m.mail!;
   const many = !x.place.startsWith('person:');
@@ -137,13 +212,31 @@ export function mailMessageMenu(m: P.MessageView, reply: () => void): MenuSpec {
   };
 }
 
-// ------------------------------------------------------------------ the subject chip
+// ------------------------------------------------------------------ the line over the box
 
-/** Over the box while answering a mail: the thread the answer goes on, which the chip does not choose then. */
+/**
+ * A subject in a pill, cut in the middle when long ("Dinner on Fri…day?"), so its start and end both show: the head
+ * gives way first, the last few letters stay.
+ */
+function Mid({ text }: { text: string }) {
+  if (text.length <= 14) return <span class="mail-pill-text">{text}</span>;
+  return (
+    <span class="mail-pill-text mid" title={text}>
+      <span class="mail-pill-head">{text.slice(0, -7)}</span>
+      <span class="mail-pill-tail">{text.slice(-7)}</span>
+    </span>
+  );
+}
+
+/** The message box's textarea: where a pick sends you back to type. */
+const toBox = () => (document.querySelector('.composer textarea') as HTMLTextAreaElement | null)?.focus();
+
+/** Over the box while answering a mail: the thread the answer goes on, which the pill does not choose then. */
 export function ReplySubject({ m }: { m: P.MessageView }) {
   return (
-    <span class="subject-chip-line pair-token subject-chip static">
-      <Icon name="mail" size={11} /> {m.mail?.subject || '(no subject)'}
+    <span class="mail-pill fixed" title="Your answer goes on this thread">
+      <Icon name="mail" size={12} />
+      <Mid text={bareSubject(m.mail?.subject ?? '') || '(no subject)'} />
     </span>
   );
 }
@@ -167,122 +260,151 @@ export function pickSubject(routeId: string, v: { threadId: string | null; subje
 }
 
 /**
- * Over an email route's box, after the route line: the thread it goes into, "Re: Dinner Friday", and a card to pick
- * another of yours with them or start one with a subject (TopicChip.tsx is the channel stream's twin of it). `subjects`:
- * the thread subjects the chat holds, newest first.
+ * Over an email route's box, after "To Sam Rivera": the thread the message goes into, as a pill (`✉ Dinner on
+ * Friday? ⌄`). Its list has "New subject…" first, then your threads with them, newest first. New subject turns the
+ * pill into a field of its size in place; Esc puts the thread back. `subjects`: the thread subjects the chat holds,
+ * newest first (for threads the page has no view of).
  */
 export function SubjectChip({ routeId, subjects }: { routeId: string; subjects: { threadId: string; subject: string }[] }) {
   mailRev.value;
   subjectPick.value;
   const ch = db.mail.chats.get(routeId);
   const cur = subjectOf(routeId);
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState('');
-  const [hi, setHi] = useState(0);
-  const [at, setAt] = useState<{ left: number; bottom: number; maxHeight: number } | null>(null);
   const btn = useRef<HTMLButtonElement>(null);
-  const card = useRef<HTMLDivElement>(null);
-  const find = useRef<HTMLInputElement>(null);
+  const pill = useRef<HTMLSpanElement>(null);
+  const field = useRef<HTMLInputElement>(null);
+  // The pick before New subject: Esc in the field goes back to it.
+  const before = useRef<{ threadId: string | null; subject: string | null } | null>(null);
+  const [focusField, setFocusField] = useState(0);
+  const writing = cur.subject !== null;
   useLayoutEffect(() => {
-    if (!open) return;
-    find.current?.focus();
-    const away = (e: PointerEvent) => {
-      if (!card.current?.contains(e.target as Node) && !btn.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('pointerdown', away, true);
-    return () => document.removeEventListener('pointerdown', away, true);
-  }, [open]);
+    if (focusField) field.current?.focus();
+  }, [focusField]);
   if (!ch) return null;
-  const known = new Map<string, string>();
-  if (ch.threadIds[0]) known.set(ch.threadIds[0], ch.subject);
-  for (const s of subjects) if (!known.has(s.threadId)) known.set(s.threadId, s.subject);
-  const shown = cur.subject !== null ? cur.subject : cur.threadId ? (known.get(cur.threadId) ?? ch.subject) : '';
-  const needle = q.trim().toLowerCase();
-  type Row = { kind: 'thread'; threadId: string; subject: string } | { kind: 'new'; subject: string };
-  const rows: Row[] = [];
-  if (needle && ![...known.values()].some((s) => s.toLowerCase() === needle)) rows.push({ kind: 'new', subject: q.trim() });
-  for (const [threadId, subject] of known) if (!needle || subject.toLowerCase().includes(needle)) rows.push({ kind: 'thread', threadId, subject });
-  const close = (focusBox = true) => {
-    setOpen(false);
-    if (focusBox) (document.querySelector('.composer textarea') as HTMLTextAreaElement | null)?.focus();
+  const held = new Map(subjects.map((x) => [x.threadId, x.subject]));
+  const threads = [...new Set([...ch.threadIds, ...held.keys()])]
+    .map((id) => ({ id, t: mailThread(id), subject: mailThread(id)?.subject ?? held.get(id) ?? (id === ch.threadIds[0] ? ch.subject : null) }))
+    .filter((x): x is { id: string; t: P.MailThreadView | undefined; subject: string } => x.subject !== null)
+    .sort((a, b) => (b.t?.lastAt ?? 0) - (a.t?.lastAt ?? 0));
+  const shown = cur.threadId ? (threads.find((x) => x.id === cur.threadId)?.subject ?? ch.subject) : ch.subject;
+  const anchor = () => (writing ? pill.current : btn.current);
+  const open = !!anchor() && contextMenu.value?.from === anchor();
+  const startNew = () => {
+    before.current = subjectPick.value[routeId] ?? null;
+    pickSubject(routeId, { threadId: null, subject: '' });
+    setFocusField((n) => n + 1);
   };
-  const choose = (r: Row | undefined) => {
-    if (!r) return;
-    pickSubject(routeId, r.kind === 'new' ? { threadId: null, subject: r.subject } : r.threadId === ch.threadIds[0] ? null : { threadId: r.threadId, subject: null });
-    close();
+  const menu = (el: HTMLElement) => {
+    const r = el.getBoundingClientRect();
+    openMenu(
+      { x: r.left, y: r.bottom + 4 },
+      {
+        flipY: r.top - 4,
+        track: 'subject chip',
+        label: 'Where your mail goes',
+        items: [
+          { label: 'New subject…', icon: 'plus', track: 'new subject', run: startNew },
+          { kind: 'sep' },
+          ...threads.map(
+            (x): MenuEntry => ({
+              label: bareSubject(x.subject) || '(no subject)',
+              icon: 'mail',
+              track: 'thread',
+              detail: x.t ? `${x.t.count} ${x.t.count === 1 ? 'mail' : 'mails'} · ${dayLabel(x.t.lastAt)}` : undefined,
+              checked: !writing && x.id === cur.threadId,
+              run: () => {
+                pickSubject(routeId, x.id === ch.threadIds[0] ? null : { threadId: x.id, subject: null });
+                toBox();
+              },
+            }),
+          ),
+        ],
+      },
+      el,
+    );
   };
-  const onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      close();
-    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      setHi((h) => Math.max(0, Math.min(rows.length - 1, h + (e.key === 'ArrowDown' ? 1 : -1))));
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      choose(rows[hi]);
-    }
-  };
+  if (writing)
+    return (
+      <span ref={pill} class={`mail-pill mail-pill-field set ${open ? 'open' : ''}`}>
+        <Icon name="mail" size={12} />
+        <input
+          ref={field}
+          value={cur.subject ?? ''}
+          placeholder="New subject"
+          aria-label="Subject of a new thread"
+          size={Math.max(11, (cur.subject ?? '').length + 1)}
+          onInput={(e) => pickSubject(routeId, { threadId: null, subject: (e.target as HTMLInputElement).value })}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              e.stopPropagation();
+              pickSubject(routeId, before.current);
+              toBox();
+            } else if (e.key === 'Enter') {
+              e.preventDefault();
+              toBox();
+            }
+          }}
+        />
+        <button class="mail-pill-more" data-track="subject chip" aria-label="Pick a thread instead" title="Pick a thread instead" onClick={() => pill.current && menu(pill.current)}>
+          <Icon name="chevronDown" size={12} />
+        </button>
+      </span>
+    );
   return (
-    <span class="subject-chip-line mail-subject-line">
-      <button
-        ref={btn}
-        class="pair-token subject-chip"
-        data-track="subject chip"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        title="The mail thread your message goes into. Click to pick another or start one with a new subject."
-        onClick={() => {
-          if (open) return close(false);
-          const r = btn.current?.getBoundingClientRect();
-          if (r) setAt({ left: Math.max(8, Math.min(r.left, innerWidth - Math.min(360, innerWidth - 16) - 8)), bottom: innerHeight - r.top + 4, maxHeight: Math.max(160, r.top - 16) });
-          setQ('');
-          setHi(0);
-          setOpen(true);
-        }}
-      >
-        <Icon name="mail" size={11} />
-        {cur.subject !== null && <span class="subject-chip-new">New:</span>}
-        <span class="subject-chip-name">{shown || '(no subject)'}</span>
-        <Icon name="chevronDown" size={11} />
-      </button>
-      {open && at && (
-        <div ref={card} class="pair-card subject-card" style={{ left: `${at.left}px`, bottom: `${at.bottom}px`, maxHeight: `${at.maxHeight}px` }}>
-          <input
-            ref={find}
-            class="input subject-find"
-            value={q}
-            placeholder="Find a thread, or type a new subject"
-            aria-label="Find a thread or type a new subject"
-            onInput={(e) => {
-              setQ((e.target as HTMLInputElement).value);
-              setHi(0);
-            }}
-            onKeyDown={onKey}
-          />
-          <div class="subject-rows" role="listbox">
-            {rows.map((r, i) => (
-              <button key={r.kind === 'thread' ? r.threadId : 'new'} role="option" aria-selected={i === hi} class={`subject-row ${i === hi ? 'hi' : ''} ${r.kind === 'thread' && r.threadId === cur.threadId && cur.subject === null ? 'on' : ''}`} onMouseEnter={() => setHi(i)} onClick={() => choose(r)}>
-                {r.kind === 'new' ? (
-                  <>
-                    <Icon name="pencil" size={12} /> New thread: <b>{r.subject}</b>
-                  </>
-                ) : (
-                  <>
-                    <Icon name="mail" size={12} /> <span class="subject-row-name">{r.subject || '(no subject)'}</span>
-                  </>
-                )}
-              </button>
-            ))}
-            {!rows.length && <div class="subject-none">Type a subject to start a new thread</div>}
-          </div>
-        </div>
-      )}
-    </span>
+    <button
+      ref={btn}
+      class={`mail-pill ${open ? 'open' : ''} ${cur.threadId !== ch.threadIds[0] ? 'set' : ''}`}
+      data-track="subject chip"
+      aria-haspopup="menu"
+      aria-expanded={open}
+      title="The mail thread your message goes into. Pick another, or start one with a new subject."
+      onClick={(e) => menu(e.currentTarget)}
+    >
+      <Icon name="mail" size={12} />
+      <Mid text={bareSubject(shown) || '(no subject)'} />
+      <Icon name="chevronDown" size={12} />
+    </button>
   );
 }
 
+/** Who a thread box's answer goes to, per thread: one person of it ("Only Alice"), else everyone (absent). */
+const onlyTo = signal<Record<string, P.MailAddressView>>({});
+
+/** The one person a thread's box answers now, or null for everyone. */
+export const onlyOf = (place: string): P.MailAddressView | null => onlyTo.value[place] ?? null;
+
+/** Everyone again (after a send, or picked). */
+export function answerEveryone(place: string) {
+  if (!onlyTo.value[place]) return;
+  const next = { ...onlyTo.value };
+  delete next[place];
+  onlyTo.value = next;
+}
+
+/** A thread box's placeholder: "Reply to everyone", or "Reply to Alice only". */
+export function threadPlaceholder(place: string): string {
+  const one = onlyOf(place);
+  return one ? `Reply to ${firstNames([one])[0]} only` : 'Reply to everyone';
+}
+
+/** Your own address: an account's, or one the hub put on you. */
+function mine(a: P.MailAddressView): boolean {
+  if (a.personId && a.personId === db.selfPersonId) return true;
+  const e = a.email.toLowerCase();
+  for (const acc of db.mail.accounts.values()) if (acc.address?.toLowerCase() === e) return true;
+  return false;
+}
+
+/** Who answering a thread reaches, as reply all would: the newest mail's sender and recipients but you. */
+function threadAudience(msgs: P.MessageView[]): { people: P.MailAddressView[]; latest: P.MessageView | null } {
+  const latest = [...msgs].reverse().find((m) => m.mail) ?? null;
+  const x = latest?.mail;
+  if (!x) return { people: [], latest: null };
+  const people: P.MailAddressView[] = [];
+  for (const a of [x.from, ...x.to, ...x.cc]) if (a.email && !mine(a) && !people.some((p) => p.email.toLowerCase() === a.email.toLowerCase())) people.push(a);
+  return { people, latest };
+}
 // ------------------------------------------------------------------ what they wrote elsewhere
 
 /** Places followed from a person's chat this visit: their links get a tick. */
@@ -457,14 +579,17 @@ export function MailSends({ places, held }: { places: string[]; held: P.MessageV
   if (!items.length) return null;
   return (
     <div class="mail-sends">
-      {items.map(({ item, text, subject }) => (
+      {items.map(({ item, text, subject }) => {
+        const only = chatSends.get(item.clientId)?.only;
+        return (
         <div class={`msg mail-send ${item.state}`} key={item.id}>
           <div class="msg-gutter" />
           <div class="msg-main">
             <div class="msg-body mail-words">{text}</div>
             <div class="mail-send-state">
               <Icon name="mail" size={11} />
-              {subject && <span class="mail-send-subject">{subject}</span>}
+              {subject && <span class="mail-send-subject">{bareSubject(subject)}</span>}
+              {only?.length ? <span class="mail-only">to {andList(only)} only</span> : null}
               {item.state === 'held' ? (
                 <>
                   <Held until={item.holdUntil} />
@@ -488,7 +613,8 @@ export function MailSends({ places, held }: { places: string[]; held: P.MessageV
             </div>
           </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -560,13 +686,62 @@ export function MailThreadHeader({ c, onBack }: { c: P.ConversationView; onBack?
   );
 }
 
-/** Over a thread's box: everyone on it gets your answer, as Reply all does. */
-export function MailThreadLead({ c }: { c: P.ConversationView }) {
-  const names = c.participantIds.map((id) => identityName(id)).filter(Boolean);
+/**
+ * Over a thread's box: who your answer goes to, as a pill. Up to two names ("Alice Chen, Jo Park"), else "Everyone ·
+ * 5"; its menu answers everyone, only one of them, or opens the full editor. "Only Alice" outlines the pill, makes the
+ * placeholder "Reply to Alice only" and marks the sent mail so; after the send it is everyone again (Timeline.tsx
+ * mailPost). `tkey`: the thread's timeline, whose newest mail says who reply all reaches.
+ */
+export function MailThreadLead({ c, tkey }: { c: P.ConversationView; tkey: string }) {
+  onlyTo.value;
+  timelineRev(tkey).value;
+  const msgs = timelines.get(tkey)?.messages ?? [];
+  const btn = useRef<HTMLButtonElement>(null);
+  const open = !!btn.current && contextMenu.value?.from === btn.current;
+  const { people: all, latest } = threadAudience(msgs);
+  // In the header's order (MailThreadHeader names the thread's people so).
+  const at = (a: P.MailAddressView) => (a.identityId && c.participantIds.includes(a.identityId) ? c.participantIds.indexOf(a.identityId) : c.participantIds.length);
+  const people = [...all].sort((a, b) => at(a) - at(b));
+  const names = people.length ? people.map((a) => a.name || a.email) : c.participantIds.map((id) => identityName(id)).filter(Boolean);
+  const one = onlyOf(c.id);
+  // One no longer on the thread's newest mail is no pick.
+  const only = one && people.some((p) => p.email.toLowerCase() === one.email.toLowerCase()) ? one : null;
+  const short = firstNames(people);
+  const label = only ? `Only ${firstNames([only])[0]}` : names.length && names.length <= 2 ? names.join(', ') : `Everyone · ${names.length}`;
+  const pick = (a: P.MailAddressView | null) => {
+    if (a) onlyTo.value = { ...onlyTo.value, [c.id]: a };
+    else answerEveryone(c.id);
+    toBox();
+  };
   return (
-    <span class="mail-thread-lead" title="Your message goes to everyone on this thread, as Reply all does">
-      <Icon name="replyAll" size={12} />
-      <span>To {names.length ? names.join(', ') : 'everyone on it'}</span>
-    </span>
+    <button
+      ref={btn}
+      class={`mail-pill ${open ? 'open' : ''} ${only ? 'set' : ''}`}
+      data-track="mail recipients"
+      aria-haspopup="menu"
+      aria-expanded={open}
+      title={only ? `Your answer goes to ${only.name || only.email} only` : 'Your answer goes to everyone on this thread, as Reply all does'}
+      onClick={(e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        openMenu(
+          { x: r.left, y: r.bottom + 4 },
+          {
+            flipY: r.top - 4,
+            track: 'mail recipients',
+            label: 'Who your answer goes to',
+            items: [
+              { label: 'Everyone', icon: 'users', track: 'everyone', radio: true, checked: !only, detail: names.join(', ') || undefined, run: () => pick(null) },
+              ...people.map((a, i): MenuEntry => ({ label: `Only ${short[i]}`, icon: 'user', track: 'only one', radio: true, checked: !!only && only.email.toLowerCase() === a.email.toLowerCase(), detail: a.email, run: () => pick(a) })),
+              ...(latest ? [{ kind: 'sep' } as MenuEntry, { label: 'Full editor…', icon: 'pencil', track: 'full editor', run: () => openCompose({ kind: 'replyAll', messageId: latest.id, threadId: c.id, accountId: latest.mail!.accountId }) } as MenuEntry] : []),
+            ],
+          },
+          e.currentTarget,
+        );
+      }}
+    >
+      <Icon name={only ? 'reply' : 'replyAll'} size={12} />
+      <span class="mail-pill-text">{label}</span>
+      <Icon name="chevronDown" size={12} />
+    </button>
   );
 }
