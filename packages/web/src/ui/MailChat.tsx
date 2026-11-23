@@ -784,7 +784,8 @@ export function MailThreadLead({ c, tkey }: { c: P.ConversationView; tkey: strin
             label: 'Who your answer goes to',
             items: [
               { label: 'Everyone', icon: 'users', track: 'everyone', radio: true, checked: !only, detail: names.join(', ') || undefined, run: () => pick(null) },
-              ...people.map((a, i): MenuEntry => ({ label: `Only ${short[i]}`, icon: 'user', track: 'only one', radio: true, checked: !!only && only.email.toLowerCase() === a.email.toLowerCase(), detail: a.email, run: () => pick(a) })),
+              // One person on it: Everyone is them already.
+              ...(people.length < 2 ? [] : people).map((a, i): MenuEntry => ({ label: `Only ${short[i]}`, icon: 'user', track: 'only one', radio: true, checked: !!only && only.email.toLowerCase() === a.email.toLowerCase(), detail: a.email, run: () => pick(a) })),
               ...(latest ? [{ kind: 'sep' } as MenuEntry, { label: 'Full editor…', icon: 'pencil', track: 'full editor', run: () => openCompose({ kind: 'replyAll', messageId: latest.id, threadId: c.id, accountId: latest.mail!.accountId }) } as MenuEntry] : []),
             ],
           },

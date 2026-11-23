@@ -37,7 +37,7 @@
   },
   "web": {
     "startup.bytes": { "measured": 1284939, "budget": 1310600, "reason": "Mail as chats (docs/mail.md \"Mail as chats\"): mail drawn in a person's chat and as group chats (ui/MailChat.tsx: its words, the subject chip, the rows of mail elsewhere, sends on their way, the thread header and list chips; mail/chats.ts), at start with the chats; the Mail page's rail item and reader went, about 11 kB (5.4 kB gzip)" },
-    "startup.gzip": { "measured": 394885, "budget": 395300, "reason": "Mail's letter furniture in chats (docs/mail.md \"Letter furniture\", web/src/mail/letter.ts): sign-offs and signatures folded or drawn faint, greetings and gaps, short links, and ··· opening the rest under a mail, about 1.2 kB gzip" },
+    "startup.gzip": { "measured": 397108, "budget": 397300, "reason": "Pills over the box and the subject tag (docs/mail.md \"The line over the box\", \"The subject tag\"; ui/MailChat.tsx): the thread pill with its New subject field, the recipients pill with Only one person, and the tag's card, at start with mail's chats, about 2.1 kB gzip" },
     "startup.files": { "measured": 4, "budget": 4 },
     "html/index.html.bytes": { "measured": 5733, "budget": 5848, "reason": "index.html asks the hub again and reloads by itself when the app's script could not load (the hub out of reach, a file not kept), instead of staying on the logo for good, and says so under the logo when the hub answers but a file it lists is missing (docs/android.md, Starting fast)" },
     "html/index.html.gzip": { "measured": 2315, "budget": 2362, "reason": "index.html asks the hub again and reloads by itself when the app's script could not load (the hub out of reach, a file not kept), instead of staying on the logo for good, and says so under the logo when the hub answers but a file it lists is missing (docs/android.md, Starting fast)" },
@@ -82,7 +82,7 @@
     "css/SendLists.css.bytes": { "measured": 1603, "budget": 1636 },
     "css/SendLists.css.gzip": { "measured": 611, "budget": 624 },
     "css/startup.css.bytes": { "measured": 276016, "budget": 281600, "reason": "Mail as chats (docs/mail.md \"Mail as chats\"): ui/MailChat.css at start with the chats, for mail's words, the rows of what someone wrote elsewhere, the back bar, sends on their way, the subject chip and the mail lists' chips, about 5.5 kB" },
-    "css/startup.css.gzip": { "measured": 51248, "budget": 52273, "reason": "One row per channel (docs/inbox.md \"One row per channel\") on top of Next unread (docs/threads.md): the channel row's chevron and the indented threads it opens on, with the next-unread bar's styles, about 1 kB gzip together" },
+    "css/startup.css.gzip": { "measured": 52586, "budget": 52650, "reason": "Pills over the box and the subject tag (docs/mail.md \"The line over the box\"): ui/MailChat.css's pills, middle-cut subjects, the New subject field and the tag's outline and card, about 0.3 kB gzip" },
     "js/../protocol/src/folderplan.ts.bytes": { "measured": 9201, "budget": 9289 },
     "js/../protocol/src/folderplan.ts.gzip": { "measured": 3418, "budget": 3442 },
     "js/../protocol/src/mail-markdown.ts.bytes": { "measured": 1701, "budget": 1736, "reason": "Mail formatting: Heading and Remove formatting, code blocks, list indent with Tab, buttons pressed at the caret, and tables (sent with their lines, pasted from a sheet) (docs/mail.md \"Formatting\")" },
