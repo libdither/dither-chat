@@ -36,7 +36,7 @@
     "sync.missed.events": { "measured": 3, "budget": 3, "reason": "Three tiers: the perf world's decisions follow them (every decision has its importance), and a server channel is an inbox row while it holds an unread message on the list" }
   },
   "web": {
-    "startup.bytes": { "measured": 1221714, "budget": 1246148, "reason": "Pictures and trackers (docs/mail.md \"Pictures and trackers\"): the mail setting for which pictures load and whether trackers are kept, in the startup bundle with Settings; the mail editor's styles (docs/mail.md \"Writing\"), in the one style sheet; and Zulip as a network (its glyph, colour and rules in the shared protocol tables)" },
+    "startup.bytes": { "measured": 1246417, "budget": 1247500, "reason": "Threads under a channel (docs/servers.md \"Threads under a channel\"): one rule for every network's threads in the server list, a fold per channel, a \"N more\" row, and a channel's count with all of its threads', about 0.7 kB" },
     "startup.gzip": { "measured": 378244, "budget": 385800, "reason": "Status dots (docs/profile.md \"Status dots\"): the presence model and the dot on every picture load at start, about 1.3 kB gzip" },
     "startup.files": { "measured": 4, "budget": 4 },
     "html/index.html.bytes": { "measured": 5733, "budget": 5848, "reason": "index.html asks the hub again and reloads by itself when the app's script could not load (the hub out of reach, a file not kept), instead of staying on the logo for good, and says so under the logo when the hub answers but a file it lists is missing (docs/android.md, Starting fast)" },
@@ -115,7 +115,7 @@
     "js/shared/rolldown-runtime.gzip": { "measured": 368, "budget": 376 },
     "js/shared/selfparts.bytes": { "measured": 602, "budget": 615 },
     "js/shared/selfparts.gzip": { "measured": 416, "budget": 425 },
-    "js/shared/startup.bytes": { "measured": 956354, "budget": 975481, "reason": "Pictures and trackers (docs/mail.md \"Pictures and trackers\"): the mail setting for which pictures load and whether trackers are kept, in the startup bundle with Settings; and Zulip as a network (its glyph, colour and rules in the shared protocol tables)" },
+    "js/shared/startup.bytes": { "measured": 976170, "budget": 977200, "reason": "Threads under a channel (docs/servers.md \"Threads under a channel\"): one rule for every network's threads in the server list, a fold per channel, a \"N more\" row, and a channel's count with all of its threads', about 0.7 kB" },
     "js/shared/startup.gzip": { "measured": 327864, "budget": 334421, "reason": "A message's history (docs/history.md): the words an edit put in, compared and underlined in the chat (wordDiff.ts markChanged), and the ticks, clicks and right-clicks that open the history, about 1 kB gzip on top of the status dots" },
     "js/shared/TextView.bytes": { "measured": 8500, "budget": 8670 },
     "js/shared/TextView.gzip": { "measured": 3868, "budget": 3943 },
