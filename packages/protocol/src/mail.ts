@@ -923,3 +923,16 @@ export interface PlaceRungView {
   rung: Rung;
   setAt: number;
 }
+
+/**
+ * A subject as shown (docs/mail.md "Mail as chats"): without the reply and forward prefixes mail stacks on it ("Re:",
+ * "Fwd:", "AW:", "SV:" and the like). What is sent keeps the subject as it is; only what is drawn is bare.
+ */
+export function bareSubject(subject: string): string {
+  let s = subject.trim();
+  for (;;) {
+    const next = s.replace(/^(re|fwd?|aw|wg|sv|vs|antw|r|tr)(\[\d+\])?\s*:\s*/i, '');
+    if (next === s) return s;
+    s = next;
+  }
+}
