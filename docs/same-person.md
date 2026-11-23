@@ -119,6 +119,7 @@ person clicking through them, through the same command as opening a profile:
 | Matrix | 30 s | 800 |
 | Telegram | 60 s | 500 |
 | Discord | 90 s | 400 |
+| Zulip | 90 s | 400 |
 | X | 5 min | 120 |
 | Messenger | 5 min | 100 |
 | WhatsApp | 6 min | 100 |

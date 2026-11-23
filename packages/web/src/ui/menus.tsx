@@ -412,6 +412,18 @@ function followEntries(c: P.ConversationView): MenuEntry[] {
   return [{ label: stopped ? 'Follow Again' : 'Stop Following', icon: stopped ? 'bell' : 'bellOff', run }];
 }
 
+/**
+ * Mark As Read. A forum channel (a Zulip channel, a Discord forum) holds no messages of its own and is never unread
+ * itself: its threads are marked read, each told to its network through the read queue (hub readqueue.ts).
+ */
+function markReadEntry(c: P.ConversationView): MenuEntry {
+  if (c.shape === 'channel' && (c.variant === 'forum' || c.variant === 'media')) {
+    const threads = (db.threads.get(c.id) ?? []).map((id) => db.conversations.get(id)).filter((t): t is P.ConversationView => !!t);
+    return { label: 'Mark As Read', icon: 'check', disabled: !threads.some((t) => unreadOf(t).unread), run: () => markAllRead(threads, convTitle(c)) };
+  }
+  return { label: 'Mark As Read', icon: 'check', disabled: !unreadOf(c).unread, run: () => (noteRowRead('conversation', [c.id]), markRead(c.id)) };
+}
+
 /** `why`: the inbox's reasons for where this row sits (docs/inbox.md), shown first. */
 export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpec {
   const eff = effectiveLevel(c);
@@ -427,7 +439,7 @@ export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpe
     head: <div class="cm-sheet-title">{convTitle(c)}</div>,
     items: groups(
       why?.length ? [{ kind: 'row', render: () => <WhyHere reasons={why} /> }] : [],
-      [{ label: 'Mark As Read', icon: 'check', disabled: !unreadOf(c).unread, run: () => (noteRowRead('conversation', [c.id]), markRead(c.id)) }],
+      [markReadEntry(c)],
       [
         person && { label: 'Profile', icon: 'user', run: () => go({ view: 'profile', person: person.id }) },
         { label: `About This ${c.shape === 'direct' ? 'Chat' : noun}`, icon: 'info', run: () => openAbout('conversation', c.id) },

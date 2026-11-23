@@ -36,6 +36,8 @@ worked out on `closeness-worker.ts`), `packages/web/src/graph/` (the view: `Grap
   links there are; a picked or hovered node's lit, the rest faded while something is picked), from what the hub
   already has:
   - the participants of group chats, and of channels inside a server that list them;
+  - who wrote in a thread (a Zulip topic, a Discord or Matrix thread), to the server its channel is in: a Zulip channel
+    lists nobody, and a thread lists no participants;
   - the servers a profile you opened said you share (`mutualSpaces`, docs/profile.md);
   - server members your accounts' clients saw — only while the adversarial "Record server members" is on
     (docs/history.md). Turned off, those links go, and people only they named go with them.
@@ -103,7 +105,8 @@ the graph, so the graph opens at once; the hub works it out on a worker on a rea
 A tie between two people, neither of them you (`ties.ts`), adds up:
 
 - **their talk with each other**, from the hub: a reply either way (1), a reaction (0.3), and a turn, one speaking
-  within 5 minutes of the other in a group chat of 60 or fewer (0.5), by month and fading as talk with you does. Bots
+  within 5 minutes of the other in a group chat of 60 or fewer or a thread 20 or fewer wrote in (a Zulip topic, a
+  Discord thread) (0.5), by month and fading as talk with you does. Bots
   count for nothing, and pairs with less than 2 in all are left out;
 - **friends**: a fetched profile's friends in common with you are that person's friends too (6 each);
 - **small places they share**: a group or server of 60 people or fewer here adds 4 / (its people − 1).

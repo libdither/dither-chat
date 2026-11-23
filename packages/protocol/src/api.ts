@@ -666,8 +666,8 @@ export interface GraphTuning {
   /** Set when the weights were fitted to what came next (Fit to me): when, and how well before and after. */
   fitted?: { at: number; before: number; after: number };
 }
-/** Where a link came from: members seen (adversarial), a profile's mutual servers, a conversation's participants. */
-export const GRAPH_SOURCE = { members: 1, profile: 2, participant: 4 } as const;
+/** Where a link came from: members seen (adversarial), a profile's mutual servers, a conversation's participants, a thread's authors. */
+export const GRAPH_SOURCE = { members: 1, profile: 2, participant: 4, author: 8 } as const;
 
 /** What one of your accounts can react with in a conversation. */
 export interface ReactionContextView {
@@ -1119,7 +1119,7 @@ export interface PlaceStats {
 
 /** Everything the hub has stored about someone. It only knows what crossed your accounts. */
 /** What one network says about one of a person's identities (docs/profile.md): PersonAbout in hub ids. */
-export interface PersonAboutView extends Omit<PersonAbout, 'avatar' | 'banner' | 'mutualSpaces' | 'mutualFriends' | 'friends' | 'posts'> {
+export interface PersonAboutView extends Omit<PersonAbout, 'avatar' | 'banner' | 'status' | 'facts' | 'mutualSpaces' | 'mutualFriends' | 'friends' | 'posts'> {
   identityId: string;
   network: Network;
   /** The account that asked. */
@@ -1129,6 +1129,10 @@ export interface PersonAboutView extends Omit<PersonAbout, 'avatar' | 'banner' |
   stale?: string;
   avatar?: string | null;
   banner?: string | null;
+  /** As PersonAbout's, with a custom emoji's picture a signed media path. */
+  status?: { text?: string; emoji?: string; emojiUrl?: string };
+  /** As PersonAbout's, with the people each names as hub identity ids. */
+  facts?: { label: string; value: string; people?: string[] }[];
   /** Spaces you share; `spaceId` null for one the hub does not have. */
   mutualSpaces?: { spaceId: string | null; nativeId: string; nick?: string; roles?: { name: string; color?: string }[]; joinedAt?: number; bio?: string; pronouns?: string }[];
   mutualFriends?: string[];

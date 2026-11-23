@@ -203,6 +203,11 @@ export function editDistance(a: string, b: string, max: number): number {
   return Math.min(p[b.length], max + 1);
 }
 
+/** Of the accounts that saw a person's accounts, the one that saw the account `url` is the picture of, else any. */
+function pickVia(rows: { via: string; url: string | null }[] | undefined, url: string): string | null {
+  return rows?.find((r) => r.url === url)?.via ?? rows?.[0]?.via ?? null;
+}
+
 /** Fields that may go from nothing to something and back (Store.logChanges). */
 const SETTABLE = new Set(['topic', 'bio', 'status', 'pronouns']);
 const PRESENCE_STATES = new Set<string>(['online', 'idle', 'dnd', 'offline']);
@@ -212,7 +217,7 @@ const PRESENCE_DEVICES = new Set<string>(['desktop', 'mobile', 'web']);
  * Bump when a migration step changes without schema.sql changing, so the database is copied before it runs. Mail's
  * migration steps (mail/store.ts) count here too, when no mail schema file changes with them.
  */
-const MIGRATIONS = 5;
+const MIGRATIONS = 6;
 
 /** How long a write waits for another connection's lock before it fails (PRAGMA busy_timeout). */
 export const BUSY_MS = 2000;
@@ -312,7 +317,9 @@ export class Store {
     this.db.transaction(() => {
       const reactionsBefore = this.oldReactions();
       const broadcastsUnknown = this.addMentionsAll();
-      this.addColumns('message', { gone_how: 'TEXT', gone_at: 'INTEGER', imported: 'INTEGER NOT NULL DEFAULT 0' });
+      this.addColumns('message', { gone_how: 'TEXT', gone_at: 'INTEGER', imported: 'INTEGER NOT NULL DEFAULT 0', mentions_group: 'INTEGER NOT NULL DEFAULT 0' });
+      const wildcardsUnknown = this.lacksColumn('vantage', 'wildcards');
+      this.addColumns('vantage', { wildcards: 'INTEGER NOT NULL DEFAULT 0' });
       this.addColumns('identity', { status: 'TEXT', nickname: 'TEXT', net_nickname: 'TEXT', net_note: 'TEXT' });
       this.addColumns('category', { threshold: 'REAL' });
       this.addColumns('triage', { shadow: 'TEXT', explore: 'TEXT', propensity: 'REAL', was: 'TEXT', alert_mark: 'INTEGER', less_mark: 'INTEGER', marked_at: 'INTEGER' });
@@ -327,6 +334,8 @@ export class Store {
       const oldTriage = this.setAsideTriage();
       const oldLog = this.setAside('change_log', 'actor_id', ['change_log_target']);
       this.db.exec(schema);
+      // Counted once from the messages the hub holds: the @everyone-style mentions among the unread ones.
+      if (wildcardsUnknown) this.countWildcards();
       if (oldTriage) this.adoptOldTriage(oldTriage);
       if (oldLog) this.adoptOldChangeLog();
       if (broadcastsUnknown) this.markBroadcasts();
@@ -335,6 +344,7 @@ export class Store {
       this.toTiers();
       this.sourceNames();
       this.nicknamesToAccounts();
+      this.forgetGoneSeenVia();
       this.db.query(`INSERT INTO meta (key, value) VALUES ('schema_sig', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(sig);
     })();
     timer.step('migrations');
@@ -456,6 +466,16 @@ export class Store {
     this.db.query(`INSERT INTO meta (key, value) VALUES ('nicknames_by_account', ?)`).run(String(Date.now()));
   }
 
+  /**
+   * People seen only through an account since removed kept it as theirs (deleteAccount did not clear it before), so
+   * their pictures were asked of an account that is not there, and the account added again never took its place.
+   */
+  private forgetGoneSeenVia() {
+    if (this.db.query(`SELECT 1 FROM meta WHERE key = 'seen_via_gone'`).get()) return;
+    this.db.exec('UPDATE identity SET seen_via = NULL WHERE seen_via IS NOT NULL AND seen_via NOT IN (SELECT id FROM account)');
+    this.db.exec(`INSERT INTO meta (key, value) VALUES ('seen_via_gone', '1')`);
+  }
+
   /** backups/pre-migrate-<time>.sqlite next to the database, the newest five kept. Not for an in-memory database. */
   private snapshotBeforeMigrating(path: string) {
     if (path === ':memory:' || path === '') return;
@@ -574,6 +594,20 @@ export class Store {
     for (const [name, type] of Object.entries(cols)) if (!have.includes(name)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
   }
 
+  /** A table that exists and has no such column. */
+  private lacksColumn(table: string, col: string): boolean {
+    const have = (this.db.query(`PRAGMA table_info(${table})`).all() as Row[]).map((c) => c.name);
+    return have.length > 0 && !have.includes(col);
+  }
+
+  /** Each conversation's unread @everyone-style mentions, from its messages since the read point, at most its mentions. */
+  private countWildcards() {
+    this.db.exec(`UPDATE vantage SET wildcards = MIN(mentions, (
+        SELECT COUNT(*) FROM message m JOIN message_seen s ON s.message_id = m.id AND s.account_id = vantage.account_id
+        WHERE m.conversation_id = vantage.target_id AND m.ts > COALESCE(vantage.last_read_ts, 0) AND m.deleted = 0 AND m.mentions_self = 1 AND m.mentions_all = 1))
+      WHERE target_kind = 'conversation' AND mentions > 0`);
+  }
+
   /** Message tables from before @everyone was told apart from a mention by name get the column. */
   private addMentionsAll(): boolean {
     const cols = (this.db.query('PRAGMA table_info(message)').all() as Row[]).map((c) => c.name);
@@ -650,6 +684,9 @@ export class Store {
     const tx = this.db.transaction(() => {
       this.db.query('DELETE FROM account WHERE id = ?').run(id);
       this.db.query('DELETE FROM about WHERE account_id = ?').run(id);
+      // Pictures are fetched through the account that saw someone: one that is gone cannot, so the next account to
+      // see them takes its place (seen_via is only set where it is empty).
+      this.db.query('UPDATE identity SET seen_via = NULL WHERE seen_via = ?').run(id);
       const orphanConvs = this.db
         .query(`SELECT id FROM conversation c WHERE NOT EXISTS (SELECT 1 FROM vantage v WHERE v.target_kind = 'conversation' AND v.target_id = c.id)`)
         .all() as Row[];
@@ -825,10 +862,10 @@ export class Store {
           const v = this.db.query(`SELECT last_read_ts FROM vantage WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`).get(acc.id, cid) as Row;
           // Marked unread on the network by hand: the read point moves back (attention.ts). Otherwise only forward.
           const upTo = ev.manual === true ? ev.upToTs : Math.max(v?.last_read_ts ?? 0, ev.upToTs);
-          const counts = ev.unread !== undefined ? { unread: ev.unread, mentions: ev.mentions ?? 0 } : this.countUnread(acc, cid, upTo);
+          const counts = ev.unread !== undefined ? this.networkCounts(acc, cid, upTo, ev) : this.countUnread(acc, cid, upTo);
           this.db
-            .query(`UPDATE vantage SET last_read_ts = ?, unread = ?, mentions = ? WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`)
-            .run(upTo, counts.unread, counts.mentions, acc.id, cid);
+            .query(`UPDATE vantage SET last_read_ts = ?, unread = ?, mentions = ?, wildcards = ? WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`)
+            .run(upTo, counts.unread, counts.mentions, counts.wildcards, acc.id, cid);
           this.dirty.conversations.add(cid);
           break;
         }
@@ -902,15 +939,25 @@ export class Store {
     return fresh;
   }
 
+  /**
+   * The network's own counts. Of its mentions, the @everyone-style ones are as it says, else as many as the hub holds
+   * unread (an adapter from before `wildcards`, or a network that does not tell them apart).
+   */
+  private networkCounts(acc: AccountRow, cid: string, afterTs: number, ev: { unread?: number; mentions?: number; wildcards?: number }) {
+    const mentions = Math.max(0, ev.mentions ?? 0);
+    const wildcards = ev.wildcards ?? (mentions ? this.countUnread(acc, cid, afterTs).wildcards : 0);
+    return { unread: ev.unread ?? 0, mentions, wildcards: Math.max(0, Math.min(mentions, wildcards)) };
+  }
+
   private countUnread(acc: AccountRow, cid: string, afterTs: number) {
     const r = this.db
       .query(
-        `SELECT COUNT(*) AS unread, COALESCE(SUM(m.mentions_self), 0) AS mentions FROM message m
+        `SELECT COUNT(*) AS unread, COALESCE(SUM(m.mentions_self), 0) AS mentions, COALESCE(SUM(m.mentions_self * m.mentions_all), 0) AS wildcards FROM message m
          JOIN message_seen s ON s.message_id = m.id AND s.account_id = ?
          WHERE m.conversation_id = ? AND m.ts > ? AND m.deleted = 0 AND (m.author_id IS NULL OR m.author_id != ?)`,
       )
       .get(acc.id, cid, afterTs, acc.self_identity ?? '') as Row;
-    return { unread: r.unread as number, mentions: r.mentions as number };
+    return { unread: r.unread as number, mentions: r.mentions as number, wildcards: r.wildcards as number };
   }
 
   private ensureVantage(accountId: string, kind: 'space' | 'conversation', id: string, nativeMute?: P.NativeMute) {
@@ -1336,15 +1383,16 @@ export class Store {
     if (old && !old.deleted && old.body && f.body !== old.body && !reworded && this.keeps('edits', acc)) this.messageEvent(id, 'edit', { body: old.body }, author, acc.id, f.editedTs ?? Date.now());
     this.db
       .query(
-        `INSERT INTO message (id, conversation_id, network, native_id, author_id, ts, edited_ts, kind, body, reply_to_id, thread_id, mentions_self, mentions_all, extra)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO message (id, conversation_id, network, native_id, author_id, ts, edited_ts, kind, body, reply_to_id, thread_id, mentions_self, mentions_all, mentions_group, extra)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (network, native_id) DO UPDATE SET
            edited_ts = COALESCE(excluded.edited_ts, edited_ts), kind = excluded.kind, imported = 0,
            -- A kept deleted message the network sends again empty (a Matrix redaction) keeps what was kept.
            body = CASE WHEN deleted = 1 AND excluded.body = '' THEN body ELSE excluded.body END,
            reply_to_id = COALESCE(excluded.reply_to_id, reply_to_id), thread_id = COALESCE(excluded.thread_id, thread_id),
            mentions_self = MAX(mentions_self, excluded.mentions_self),
-           mentions_all = CASE WHEN excluded.mentions_self = 1 THEN excluded.mentions_all ELSE mentions_all END, extra = COALESCE(excluded.extra, extra)`,
+           mentions_all = CASE WHEN excluded.mentions_self = 1 THEN excluded.mentions_all ELSE mentions_all END,
+           mentions_group = CASE WHEN excluded.mentions_self = 1 THEN excluded.mentions_group ELSE mentions_group END, extra = COALESCE(excluded.extra, extra)`,
       )
       .run(
         id,
@@ -1360,6 +1408,7 @@ export class Store {
         thread,
         f.mentionsSelf ? 1 : 0,
         f.mentionsSelf && f.mentionsAll ? 1 : 0,
+        f.mentionsSelf && !f.mentionsAll && f.mentionsGroup ? 1 : 0,
         f.extra || f.forward || f.silent ? JSON.stringify({ ...f.extra, ...(f.forward ? { forward: f.forward } : {}), ...(f.silent ? { silent: true } : {}) }) : null,
       );
     // A message that moved (a Zulip topic renamed or moved): it leaves the conversation it was in, which falls back to
@@ -1373,6 +1422,7 @@ export class Store {
       const last = this.db.query('SELECT id, ts FROM message WHERE conversation_id = ? AND deleted = 0 ORDER BY ts DESC LIMIT 1').get(old.conversation_id) as Row | null;
       this.db.query('UPDATE conversation SET last_message_id = ?, last_message_at = ? WHERE id = ?').run(last?.id ?? null, last?.ts ?? null, old.conversation_id);
       this.dirty.conversations.add(old.conversation_id as string);
+      this.journal.movedOut(old.conversation_id as string);
     }
     if (f.attachments && !(old?.deleted && !f.attachments.length)) {
       this.db.query('DELETE FROM attachment WHERE message_id = ?').run(id);
@@ -1404,15 +1454,15 @@ export class Store {
     if (newForAccount && !fromSelf && conv.variant !== 'posts' && (live || conv.variant !== 'follow')) {
       this.db
         .query(
-          `UPDATE vantage SET unread = unread + 1, mentions = mentions + ? WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?
+          `UPDATE vantage SET unread = unread + 1, mentions = mentions + ?, wildcards = wildcards + ? WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?
              AND (last_read_ts IS NULL OR last_read_ts < ? OR ?)`,
         )
-        .run(f.mentionsSelf ? 1 : 0, acc.id, cid, f.ts, conv.variant === 'follow' ? 1 : 0);
+        .run(f.mentionsSelf ? 1 : 0, f.mentionsSelf && f.mentionsAll ? 1 : 0, acc.id, cid, f.ts, conv.variant === 'follow' ? 1 : 0);
     }
     if (fromSelf && newForAccount) {
       // Sending from any client counts as reading up to there.
       this.db
-        .query(`UPDATE vantage SET last_read_ts = MAX(COALESCE(last_read_ts, 0), ?), unread = 0, mentions = 0 WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`)
+        .query(`UPDATE vantage SET last_read_ts = MAX(COALESCE(last_read_ts, 0), ?), unread = 0, mentions = 0, wildcards = 0 WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`)
         .run(f.ts, acc.id, cid);
     }
     const changed = before === null || JSON.stringify(this.messageViews([this.db.query('SELECT * FROM message WHERE id = ?').get(id) as Row])) !== before;
@@ -1446,7 +1496,7 @@ export class Store {
     if (o.first && !convExisted) counts.conversationsNew = 1;
     const run = () => {
       if (!convExisted && !o.dryRun) this.conversation(acc, { ...b.conversation, ...(o.archiveNew ? { archived: true } : {}) });
-      const v0 = this.db.query(`SELECT unread, mentions FROM vantage WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`).get(acc.id, cid) as Row | null;
+      const v0 = this.db.query(`SELECT unread, mentions, wildcards FROM vantage WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`).get(acc.id, cid) as Row | null;
       if (!o.dryRun)
         for (const f of b.identities) {
           const iid = hubId('idn', acc.network, f.nativeId);
@@ -1561,10 +1611,10 @@ export class Store {
       }
       if (o.dryRun) return;
       // Old messages are read; a conversation's counts stay what the network said.
-      if (v0) this.db.query(`UPDATE vantage SET unread = ?, mentions = ? WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`).run(v0.unread, v0.mentions, acc.id, cid);
+      if (v0) this.db.query(`UPDATE vantage SET unread = ?, mentions = ?, wildcards = ? WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`).run(v0.unread, v0.mentions, v0.wildcards, acc.id, cid);
       else if (newest)
         this.db
-          .query(`UPDATE vantage SET last_read_ts = MAX(COALESCE(last_read_ts, 0), ?), unread = 0, mentions = 0 WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`)
+          .query(`UPDATE vantage SET last_read_ts = MAX(COALESCE(last_read_ts, 0), ?), unread = 0, mentions = 0, wildcards = 0 WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`)
           .run(newest, acc.id, cid);
       this.dirty.conversations.add(cid);
     };
@@ -1679,7 +1729,7 @@ export class Store {
       .query('SELECT native_id FROM message WHERE conversation_id = ? AND ts <= ? ORDER BY ts DESC LIMIT 1')
       .get(conversationId, upToTs) as Row | null;
     this.db
-      .query(`UPDATE vantage SET last_read_ts = MAX(COALESCE(last_read_ts, 0), ?), unread = 0, mentions = 0 WHERE target_kind = 'conversation' AND target_id = ?`)
+      .query(`UPDATE vantage SET last_read_ts = MAX(COALESCE(last_read_ts, 0), ?), unread = 0, mentions = 0, wildcards = 0 WHERE target_kind = 'conversation' AND target_id = ?`)
       .run(upToTs, conversationId);
     this.dirty.conversations.add(conversationId);
     return vs.map((v) => ({ accountId: v.account_id, upTo: last?.native_id ?? null }));
@@ -2297,16 +2347,22 @@ export class Store {
   }
 
   /** What changed about these, newest first. `fields`: only these; `except`: not these. */
-  changes(targets: { kind: P.ChangeView['target']['kind']; id: string }[], limit = 100, pick: { fields?: string[]; except?: string[] } = {}): P.ChangeView[] {
+  changes(targets: { kind: P.ChangeView['target']['kind']; id: string }[], limit = 100, pick: { fields?: string[]; except?: string[]; rolesOf?: string[] } = {}): P.ChangeView[] {
     if (!targets.length) return [];
-    const where = targets.map(() => '(target_kind = ? AND target_id = ?)').join(' OR ');
+    // A person's roles and groups given and lost in places (kept against the place), on their own page too, while
+    // changes are kept.
+    const rolesOf = this.retention().changes ? (pick.rolesOf ?? []) : [];
+    const where = [
+      ...targets.map(() => '(target_kind = ? AND target_id = ?)'),
+      ...(rolesOf.length ? [`(target_kind IN ('space', 'conversation') AND field = 'role' AND json_extract(coalesce(new, old), '$.identityId') IN (${rolesOf.map(() => '?').join(', ')}))`] : []),
+    ].join(' OR ');
     // Statuses and presence over time only with adversarial features shown.
     const watched = this.retention().adversarial ? '' : ` AND NOT (target_kind = 'identity' AND field IN ('status', 'presence'))`;
     const only = pick.fields?.length ? ` AND field IN (${pick.fields.map(() => '?').join(', ')})` : '';
     const not = pick.except?.length ? ` AND field NOT IN (${pick.except.map(() => '?').join(', ')})` : '';
     const rows = this.db
       .query(`SELECT * FROM change_log WHERE (${where})${watched}${only}${not} ORDER BY at DESC, id DESC LIMIT ?`)
-      .all(...targets.flatMap((t) => [t.kind, t.id]), ...(pick.fields ?? []), ...(pick.except ?? []), limit) as Row[];
+      .all(...targets.flatMap((t) => [t.kind, t.id]), ...rolesOf, ...(pick.fields ?? []), ...(pick.except ?? []), limit) as Row[];
     const val = (r: Row, v: string | null): unknown => {
       const x = json<unknown>(v, null);
       return (r.field === 'avatar' || r.field === 'banner') && typeof x === 'string' ? this.media(x, r.account_id) : x;
@@ -2515,9 +2571,22 @@ export class Store {
     return out;
   }
 
-  personView(r: Row, identityIds?: string[]): P.PersonView {
+  /** `vias`: the accounts that saw each person's accounts, when a caller reads many (bootstrap); else looked up. */
+  personView(r: Row, identityIds?: string[], vias?: Map<string, { via: string; url: string | null }[]>): P.PersonView {
     const ids = identityIds ?? (this.db.query('SELECT id FROM identity WHERE person_id = ?').all(r.id) as Row[]).map((x) => x.id);
-    return { id: r.id, name: r.name, avatar: r.avatar_url ? this.media(r.avatar_url, null) : null, starred: false, isSelf: !!r.is_self, identityIds: ids, nameSource: (r.name_source ?? 'network') as P.NameSource };
+    const avatar = !r.avatar_url ? null : vias ? this.media(r.avatar_url, pickVia(vias.get(r.id), r.avatar_url)) : this.personPicture(r.id, r.avatar_url);
+    return { id: r.id, name: r.name, avatar, starred: false, isSelf: !!r.is_self, identityIds: ids, nameSource: (r.name_source ?? 'network') as P.NameSource };
+  }
+
+  /**
+   * A person's picture, signed through an account that saw one of their accounts: a picture only an account can fetch
+   * (Zulip's `zulip:` paths, Matrix's `mxc://`) cannot be fetched with none. The account of the one the picture came
+   * from first, else any of theirs still here.
+   */
+  personPicture(personId: string, url: string | null | undefined): string | null {
+    if (!url) return null;
+    const rows = this.db.query(`SELECT i.seen_via AS via, i.avatar_url AS url FROM identity i JOIN account a ON a.id = i.seen_via WHERE i.person_id = ?`).all(personId) as { via: string; url: string | null }[];
+    return this.media(url, pickVia(rows, url));
   }
 
   spaceView(r: Row, accountIds?: string[], mute?: string | null): P.SpaceView {
@@ -3925,7 +3994,10 @@ export class Store {
     });
 
     const idsByPerson = group(identities.filter((i) => i.personId), (i) => i.personId!);
-    const persons = (db.query('SELECT * FROM person').all() as Row[]).map((p) => this.personView(p, (idsByPerson.get(p.id) ?? []).map((i) => i.id)));
+    const vias = new Map<string, { via: string; url: string | null }[]>();
+    for (const v of db.query(`SELECT i.person_id AS pid, i.seen_via AS via, i.avatar_url AS url FROM identity i JOIN account a ON a.id = i.seen_via WHERE i.person_id IS NOT NULL`).all() as Row[])
+      (vias.get(v.pid) ?? vias.set(v.pid, []).get(v.pid)!).push({ via: v.via, url: v.url });
+    const persons = (db.query('SELECT * FROM person').all() as Row[]).map((p) => this.personView(p, (idsByPerson.get(p.id) ?? []).map((i) => i.id), vias));
     const spaces = (db.query('SELECT * FROM space').all() as Row[]).map((s) => {
       const vs = VS.get(s.id) ?? [];
       return this.spaceView(s, vs.map((v) => v.account_id), vs.find((v) => v.native_mute)?.native_mute ?? null);
@@ -4010,9 +4082,9 @@ export class Store {
     if (!c) return {};
     const via = this.vantageAccounts('conversation', c.id)[0] ?? null;
     const sender = messageId
-      ? this.one<Row>('SELECT i.avatar_url, i.seen_via, p.avatar_url AS person_avatar FROM message m JOIN identity i ON i.id = m.author_id LEFT JOIN person p ON p.id = i.person_id WHERE m.id = ?', messageId)
+      ? this.one<Row>('SELECT i.avatar_url, i.seen_via, p.id AS person_id, p.avatar_url AS person_avatar FROM message m JOIN identity i ON i.id = m.author_id LEFT JOIN person p ON p.id = i.person_id WHERE m.id = ?', messageId)
       : null;
-    const icon = sender?.avatar_url ? this.media(sender.avatar_url, sender.seen_via ?? via) : sender?.person_avatar ? this.media(sender.person_avatar, null) : this.media(c.avatar_url, via);
+    const icon = sender?.avatar_url ? this.media(sender.avatar_url, sender.seen_via ?? via) : sender?.person_avatar ? this.personPicture(sender.person_id, sender.person_avatar) : this.media(c.avatar_url, via);
     // A push carries at most about 4 KB, so an inline picture only goes when it is small.
     return { network: c.network, ...(icon && (!icon.startsWith('data:') || icon.length < 1500) ? { icon } : {}) };
   }

@@ -8,7 +8,7 @@ import { changed } from '../src/versions.ts';
 import { db, stateMock } from './fixtures/state.ts';
 
 mock.module('../src/state.ts', stateMock);
-const { activityOfSpace, allCommunities, convsUnder, effectiveLevel, railEntries, spaceUnread } = await import('../src/model.ts');
+const { activityOfSpace, allCommunities, channelsUnder, convsUnder, effectiveLevel, firstChannel, railEntries, spaceUnread } = await import('../src/model.ts');
 
 const acc = { id: 'acc', network: 'discord', label: 'me' } as unknown as P.AccountView;
 const space = (id: string, name: string): P.SpaceView => ({ id, network: 'discord', nativeId: id, kind: 'community', name, topic: null, icon: null, accountIds: ['acc'], nativeMute: null });
@@ -86,4 +86,57 @@ test('a notification level holds until a rule or a place changes, or a native mu
   db.rules = [{ id: 'r', scope: 'space', target: 's1', level: 'all' } as P.RuleView];
   changed('meta');
   expect(effectiveLevel(db.conversations.get('m')!).level).toBe('all');
+});
+
+test('a Zulip mute (muted: true, no level) on a channel or a topic keeps it to the list, as a Discord mute does', () => {
+  const zconv = (id: string, extra: Partial<P.ConversationView>) => conv(id, 1, 0, { network: 'zulip', spaceIds: ['zs'], ...extra } as Partial<P.ConversationView>);
+  db.spaces.set('zs', { ...space('zs', 'Org'), network: 'zulip' });
+  db.conversations.set('zc1', zconv('zc1', { variant: 'forum', nativeMute: { muted: true } } as Partial<P.ConversationView>));
+  db.conversations.set('zt1', zconv('zt1', { shape: 'thread', parentId: 'zc1' } as Partial<P.ConversationView>));
+  db.conversations.set('zc2', zconv('zc2', { variant: 'forum' } as Partial<P.ConversationView>));
+  db.conversations.set('zt2', zconv('zt2', { shape: 'thread', parentId: 'zc2', nativeMute: { muted: true } } as Partial<P.ConversationView>));
+  db.conversations.set('zt3', zconv('zt3', { shape: 'thread', parentId: 'zc2' } as Partial<P.ConversationView>));
+  // Unmuted in the muted channel: Zulip sends the topic { level: 'all' }.
+  db.conversations.set('zt4', zconv('zt4', { shape: 'thread', parentId: 'zc1', nativeMute: { level: 'all' } } as Partial<P.ConversationView>));
+  for (const id of ['zc1', 'zt1', 'zc2', 'zt2', 'zt3', 'zt4']) link(edge('zs', id));
+  db.rules = [];
+  changed('meta');
+  for (const id of ['zc1', 'zt1', 'zt2']) expect(effectiveLevel(db.conversations.get(id)!)).toMatchObject({ level: 'digest', rule: null, source: 'Muted in Zulip: kept to the list' });
+  expect(effectiveLevel(db.conversations.get('zt3')!)).toMatchObject({ level: 'mentions', source: 'Zulip notifies only mentions here' });
+  // With a rule above it, the Zulip mute still holds it down.
+  db.rules = [{ id: 'r', scope: 'network', target: 'zulip', level: 'all' } as P.RuleView];
+  changed('meta');
+  expect(effectiveLevel(db.conversations.get('zt2')!)).toMatchObject({ level: 'digest', source: 'muted in Zulip' });
+  expect(effectiveLevel(db.conversations.get('zt3')!).level).toBe('all');
+  // The topic's own setting is its answer over its channel's mute.
+  expect(effectiveLevel(db.conversations.get('zt4')!).level).toBe('all');
+  expect(effectiveLevel(db.conversations.get('zt1')!).level).toBe('digest');
+  db.rules = [];
+  changed('meta');
+});
+
+test('a server opens on its first channel of messages, past forums; a space of forums only opens on its first forum', () => {
+  const at = (id: string, position: string) => ({ ...edge(id.startsWith('d') ? 'ds' : 'zo', id), position });
+  db.spaces.set('ds', space('ds', 'Server'));
+  db.spaces.set('zo', { ...space('zo', 'Org'), network: 'zulip' });
+  for (const [id, variant, position] of [['d-forum', 'forum', '1'], ['d-voice', 'voice', '2'], ['d-text', 'text', '3'], ['z-voice', 'voice', '1'], ['z-general', 'forum', '2'], ['z-random', 'forum', '3']] as const) {
+    db.conversations.set(id, conv(id, 1, 0, { variant, spaceIds: [id.startsWith('d') ? 'ds' : 'zo'] } as Partial<P.ConversationView>));
+    link(at(id, position));
+  }
+  changed('meta');
+  expect(firstChannel('ds')).toBe('d-text');
+  expect(firstChannel('zo')).toBe('z-general');
+  expect(firstChannel('nothing-here')).toBeUndefined();
+});
+
+test("a space's channels are its channels only, not the threads or topics under them, latest first", () => {
+  db.spaces.set('zc', { ...space('zc', 'Counted'), network: 'zulip' });
+  for (const [id, shape, parentId, at] of [['q-old', 'channel', null, 0], ['q-new', 'channel', null, 0], ['q-t1', 'thread', 'q-old', 50], ['q-t2', 'thread', 'q-new', 90], ['q-t3', 'thread', 'q-new', 10]] as const) {
+    db.conversations.set(id, conv(id, at, 0, { network: 'zulip', shape, parentId, variant: shape === 'channel' ? 'forum' : 'text', spaceIds: shape === 'channel' ? ['zc'] : [] } as Partial<P.ConversationView>));
+    if (shape === 'channel') link(edge('zc', id));
+    else db.threads.set(parentId!, [...(db.threads.get(parentId!) ?? []), id]);
+  }
+  changed('meta');
+  expect(convsUnder('zc')).toHaveLength(5);
+  expect(channelsUnder('zc').map((c) => c.id)).toEqual(['q-new', 'q-old']);
 });

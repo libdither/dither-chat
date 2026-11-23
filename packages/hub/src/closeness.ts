@@ -14,8 +14,9 @@
  * (`visit`), so it only goes back as far as that does.
  *
  * And ties between two people, neither of them you (the graph's circles): replies between them, reactions to each
- * other's messages, and turns one right after the other in a small group chat, by month; and the friends a fetched
- * profile says they have in common with you, who are their friends too.
+ * other's messages, and turns one right after the other in a small group chat or a thread few people wrote in (a
+ * Zulip topic, a Discord thread), by month; and the friends a fetched profile says they have in common with you, who
+ * are their friends too.
  *
  * Worked out on a thread of its own (closeness-worker.ts) on a read-only connection, kept for a while, and asked for
  * by the page apart from the graph, so the graph opens at once.
@@ -51,6 +52,8 @@ const GROUP_MAX = 50;
 const TIE = { reply: 1, reaction: 0.3, turn: 0.5 };
 const TURN_MS = 5 * 60_000;
 const TURN_GROUP_MAX = 60;
+/** A thread lists nobody, so its size is who wrote in it: up to this many is a conversation, as a small group is. */
+const TURN_THREAD_MAX = 20;
 
 export function closeness(db: Database): ClosenessRun {
   const t0 = performance.now();
@@ -169,8 +172,16 @@ export function closeness(db: Database): ClosenessRun {
     .query(`SELECT x.identity_id, m.author_id, m.ts FROM reaction x JOIN message m ON m.id = x.message_id WHERE m.author_id IS NOT NULL AND x.identity_id <> m.author_id`)
     .values() as [string, string, number][])
     tie(a, b, monthOf(ts), TIE.reaction);
-  // Turns: a message right after someone else's, within five minutes, in a group chat small enough to be a conversation.
+  // Turns: a message right after someone else's, within five minutes, in a group chat small enough to be a conversation,
+  // or a thread few people wrote in.
   const small = [...size].filter(([, n]) => n <= TURN_GROUP_MAX).map(([id]) => id);
+  for (const r of db
+    .query(
+      `SELECT m.conversation_id AS id FROM message m JOIN conversation c ON c.id = m.conversation_id AND c.shape = 'thread'
+       WHERE m.author_id IS NOT NULL GROUP BY m.conversation_id HAVING count(DISTINCT m.author_id) BETWEEN 2 AND ${TURN_THREAD_MAX}`,
+    )
+    .all() as Row[])
+    small.push(r.id);
   if (small.length) {
     const turns = db.query(
       `SELECT author_id AS a, prev AS b, ${MONTH} AS mo, count(*) AS n FROM (

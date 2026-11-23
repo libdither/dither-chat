@@ -263,8 +263,10 @@ and through the journal like any message change. Marks are not part of the activ
 
 ### Unread, alerts and importance
 
-DM messages and mentions count 12 each (up to 3). Other unread messages count 3 each (up to 3). Anything unread
-adds 8. An unread busy group you never take part in therefore does not need you, and a mention in it lifts
+DM messages and mentions count 12 each (up to 3). An unread `@everyone`, `@all`, `@here` or `@topic` counts 6 (up
+to 3): it pinged you along with everyone else (`vantage.wildcards`, from the network's own count where it gives one,
+else from the messages the hub holds). Other unread messages count 3 each (up to 3). Anything unread adds 8. In the
+learned order's `mentions` feature an `@everyone` is half a mention. An unread busy group you never take part in therefore does not need you, and a mention in it lifts
 it.
 
 Where triage put the conversation's newest unread message that it put in a tier at all (an alert, a Conversation or
@@ -364,7 +366,7 @@ the row's tooltip and at the top of its right-click menu (a sheet on a phone):
 | owed, reply rate known (3+ turns) | You reply to Sam most of the time / about half the time / rarely; unanswered for 2 days |
 | owed, otherwise | Sam wrote to you / mentioned you / replied to you / asked the group something / answered you 3 hours ago; not answered yet |
 | owed, the chance (after any of the four above) | . Likely needs a reply: 70% · . May need a reply: 30% |
-| unread | 2 unread messages · 1 unread mention, 4 more unread |
+| unread | 2 unread messages · 1 unread mention, 4 more unread · 1 unread mention, 2 @everyone |
 | an alert you have not seen | Alerted you: (triage's first reason) |
 | an unread Conversation message | triage's first reason as it stands: A direct message · You wrote here in the last day |
 | importance, for a message on the list | On your list: importance 72% |
