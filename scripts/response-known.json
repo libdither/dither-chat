@@ -224,10 +224,20 @@
    "Menuable",
    "Snippet"
   ],
+  "a DM / # people": [
+   "AddButton",
+   "HoverReactions",
+   "M$1"
+  ],
   "a DM / held: the app's clocks": [
    "Age",
    "Ago",
    "Owed"
+  ],
+  "a DM, details open / # people": [
+   "AddButton",
+   "HoverReactions",
+   "M$1"
   ],
   "a DM, details open / Conversations and alerts are worked out for you": [
    "AccountDots",
@@ -338,32 +348,6 @@
    "Ago",
    "Owed"
   ],
-  "a channel / # people": [
-   "AccountDots",
-   "Attachments",
-   "Body",
-   "CallMark",
-   "ContactCards",
-   "ConvRow",
-   "Count",
-   "DisappearsMark",
-   "Embeds",
-   "Icon",
-   "InviteCards",
-   "M$1",
-   "Marks",
-   "MessageItem",
-   "MissingFiles",
-   "NetBadge",
-   "NetGlyph",
-   "ReactionBar",
-   "RichHead",
-   "RichMarks",
-   "RowTyping",
-   "SendFailures",
-   "StoryReplyLine",
-   "TriageNote"
-  ],
   "a channel / held: the app's clocks": [
    "Age",
    "Ago",
@@ -405,6 +389,20 @@
    "Count",
    "Icon",
    "M$1"
+  ],
+  "a channel's stream / held: the app's clocks": [
+   "Age",
+   "Ago",
+   "Owed"
+  ],
+  "a channel's stream / next unread": [
+   "AccountDots",
+   "CallMark",
+   "ConvRow",
+   "Count",
+   "NetBadge",
+   "NetGlyph",
+   "RowTyping"
   ],
   "a channel, a message hovered / held: the app's clocks": [
    "Age",
@@ -542,10 +540,20 @@
    "Icon",
    "M$1"
   ],
+  "a group / # people": [
+   "AddButton",
+   "HoverReactions",
+   "M$1"
+  ],
   "a group / held: the app's clocks": [
    "Age",
    "Ago",
    "Owed"
+  ],
+  "a person / # people": [
+   "AddButton",
+   "HoverReactions",
+   "M$1"
   ],
   "a person / Profile of You": [
    "AccountDots",

@@ -1716,7 +1716,7 @@ export interface SyncPosition {
 }
 
 export interface SyncTimelineRequest {
-  /** `c:<conversation>` or `p:<person>`, as the client keys its timelines. */
+  /** `c:<conversation>`, `p:<person>` or `k:<channel>` (a channel's stream), as the client keys its timelines. */
   key: string;
   /** The journal position this copy of the timeline is current to. */
   seq: number;
@@ -1725,7 +1725,10 @@ export interface SyncTimelineRequest {
   oldest: number;
   /** False for a window around an old message: only changes inside it, nothing newer. */
   newer?: boolean;
-  /** A person timeline: the conversations it merged. Another set now (people merged or split) means a fresh page. */
+  /**
+   * A person timeline: the conversations it merged. Another set now (people merged or split) means a fresh page. A
+   * channel's stream sends it too; a thread new since does not need one.
+   */
   conversationIds?: string[];
 }
 

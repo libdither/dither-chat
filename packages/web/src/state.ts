@@ -4,7 +4,7 @@ import { ATTACHMENT_LIMITS, fileBatches, splitsFiles, SYNC_VERSION } from '@dith
 import { leaveLayerEntry, takeOverLayers } from './phone.ts';
 import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snapshot.ts';
 import { arrivedInto, carryArrived, doneArrived, dropArrived, heldEnds, isArrivedCopy, stripArrived } from './arrived.ts';
-import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, identityVersion, indexThreads, onlyOpens, leaveOtherTimelines, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
+import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, identityVersion, indexThreads, onlyOpens, leaveOtherTimelines, mergeInbox as merged, streamChannelOf, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
 import { changed, mailChanged, presenceRev, timelineChanged, timelineRev } from './versions.ts';
 import { applyTyping, type TypingState } from './typers.ts';
 import { ECHO_SKEW, mayBeOut, openOutbox, settled, type Echo, type OutboxEntry, type SendMedia } from './outbox.ts';
@@ -144,6 +144,8 @@ interface Prefs {
    * networks' GIF videos looping with no player. On unless switched off.
    */
   plainGifs?: boolean;
+  /** What a channel with threads shows on this device: its stream, its thread cards, or its own messages (stream.ts). */
+  channelViews?: Record<string, import('./stream.ts').ChannelView>;
 }
 export type { InboxFilter };
 const PREFS_KEY = 'dither-chat:prefs';
@@ -300,7 +302,8 @@ const SHOWN_ONLY = new Set<P.ClientEvent['t']>(['person', 'person.removed']);
 
 export function applyEvents(events: P.ClientEvent[]) {
   let threadsDirty = false;
-  const behind = new Set<string>();
+  /** Timelines a newer message may be missing from, and that message's id. */
+  const behind = new Map<string, string>();
   const regrouped = new Set<string>();
   const ids = identityVersion();
   let list = false;
@@ -333,8 +336,14 @@ export function applyEvents(events: P.ClientEvent[]) {
       }
       case 'conversation': {
         // A newer message this timeline has not seen: once the frame is applied, it may still be missing.
+        const last = ev.conversation.lastMessage;
         const t = timelines.get('c:' + ev.conversation.id);
-        if (t && !t.detached && ev.conversation.lastMessage) behind.add(t.key);
+        if (t && !t.detached && last) behind.set(t.key, last.id);
+        // And the stream of its channel (a thread new since too: it is in `db` now).
+        const ch = streamChannelOf(db, ev.conversation.id);
+        const kt = ch && timelines.get('k:' + ch);
+        // Only a message newer than the stream holds: a thread's older last message is simply further back.
+        if (kt && !kt.detached && last && last.ts >= (kt.messages[kt.messages.length - 1]?.ts ?? 0)) behind.set(kt.key, last.id);
         break;
       }
       case 'readProgress':
@@ -349,11 +358,19 @@ export function applyEvents(events: P.ClientEvent[]) {
         const held = !!t && t.messages.some((x) => x.id === m.id);
         // Moved here from another conversation (MessageFact.moved, a Zulip topic renamed or messages moved to another
         // topic): whatever timeline still holds it from before lets it go, even where a page loaded since holds it here.
-        for (const k of leaveOtherTimelines(timelines.values(), m)) timelineChanged(k);
+        const ch = streamChannelOf(db, m.conversationId);
+        for (const k of leaveOtherTimelines(timelines.values(), m, ch)) timelineChanged(k);
         // A detached window only takes updates to what it holds: a new message would leave a silent gap.
         if (t && (!t.detached || held)) {
           upsertInto(t.messages, m);
           timelineChanged(t.key);
+        }
+        // Its channel's stream, every thread's messages together (docs/threads.md "The channel stream").
+        const kt = ch && timelines.get('k:' + ch);
+        if (kt && (!kt.detached || kt.messages.some((x) => x.id === m.id))) {
+          upsertInto(kt.messages, m);
+          if (kt.conversationIds && !kt.conversationIds.includes(m.conversationId)) kt.conversationIds = [...kt.conversationIds, m.conversationId];
+          timelineChanged(kt.key);
         }
         const conv = db.conversations.get(m.conversationId);
         if (conv?.shape === 'direct' && conv.peerPersonId) {
@@ -413,10 +430,9 @@ export function applyEvents(events: P.ClientEvent[]) {
     if (eventHooks.size) for (const h of eventHooks) h(ev);
   }
   if (threadsDirty) indexThreads(db);
-  for (const key of behind) {
+  for (const [key, last] of behind) {
     const t = timelines.get(key);
-    const last = db.conversations.get(key.slice(2))?.lastMessage;
-    if (t && last && !t.loading && !t.messages.some((m) => m.id === last.id)) void catchUp(key);
+    if (t && !t.loading && !t.messages.some((m) => m.id === last)) void catchUp(key);
   }
   for (const key of regrouped) if (!timelines.get(key)?.loading) void catchUp(key);
   settle();
@@ -503,7 +519,8 @@ function onNotify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
 
 // ------------------------------------------------------------------ timelines
 
-export function timelineKey(kind: 'c' | 'p', id: string) {
+/** `c:` a conversation, `p:` a person's chat, `k:` a channel's stream: its own messages and every thread's. */
+export function timelineKey(kind: 'c' | 'p' | 'k', id: string) {
   return `${kind}:${id}`;
 }
 
@@ -569,11 +586,12 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
   if (older && !t.hasMore) return;
   t.loading = true;
   timelineChanged(key);
-  const [kind, id] = key.split(':') as ['c' | 'p', string];
-  // A person's timeline spans conversations, where two messages can share a time: its cursor names the message too.
+  const [kind, id] = key.split(':') as ['c' | 'p' | 'k', string];
+  // A person's timeline and a channel's stream span conversations, where two messages can share a time: their cursor
+  // names the message too.
   const oldest = older ? t.messages[0] : undefined;
-  const before = oldest ? (kind === 'p' ? `${oldest.ts}:${encodeURIComponent(oldest.id)}` : oldest.ts) : undefined;
-  const url = kind === 'c' ? `/api/conversations/${id}/messages` : `/api/chats/person:${id}/messages`;
+  const before = oldest ? (kind !== 'c' ? `${oldest.ts}:${encodeURIComponent(oldest.id)}` : oldest.ts) : undefined;
+  const url = kind === 'c' ? `/api/conversations/${id}/messages` : kind === 'k' ? `/api/conversations/${id}/stream` : `/api/chats/person:${id}/messages`;
   try {
     // After the socket, so nothing can fall between this page and the live events.
     if (!older) {
@@ -622,6 +640,12 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
         t.hasMore = true;
         void fromNetwork(t, id).then(() => timelineChanged(key));
       } else t.hasMore = await fromNetwork(t, id);
+    } else if (kind === 'k' && ownMessages(id)) {
+      // A Matrix room's stream: the room's own latest from the network, as the room alone asks (above), then the
+      // stream's own page again, so what is held stays one unbroken span of every thread. Its threads' come with the
+      // room's sync; a Zulip channel has none of its own.
+      if (older && !t.hasMore) t.hasMore = await streamFromNetwork(t, id, t.messages[0]);
+      else if (!older && !t.glance) void streamFromNetwork(t, id).then(() => timelineChanged(key));
     }
   } catch (e) {
     // The page did not come (the network, most likely): the timeline keeps what it shows and catches up later.
@@ -634,6 +658,12 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
   }
 }
 
+/** A channel that takes messages of its own (a Matrix room, a Discord text channel): not a forum of threads. */
+const ownMessages = (id: string) => {
+  const c = db.conversations.get(id);
+  return !!c && c.variant !== 'forum' && c.variant !== 'media';
+};
+
 /** Ask the conversation's network for messages, then show what the hub stored. Returns whether there may be older ones. */
 async function fromNetwork(t: Timeline, conversationId: string, beforeTs?: number): Promise<boolean> {
   const r = await api<{ count?: number; done?: boolean }>(`/api/conversations/${conversationId}/history`, { body: { beforeTs, limit: 50 } }).catch(() => null);
@@ -642,6 +672,20 @@ async function fromNetwork(t: Timeline, conversationId: string, beforeTs?: numbe
   page?.identities.forEach(putIdentity);
   for (const m of page?.messages ?? []) upsertInto(t.messages, m);
   return !r.done;
+}
+
+/**
+ * A stream's room asked of its network (`before`: the oldest held, for older ones), then the stream's page from there:
+ * the room's page alone could reach further back than the threads' messages held. Whether there may be older ones.
+ */
+async function streamFromNetwork(t: Timeline, channelId: string, before?: P.MessageView): Promise<boolean> {
+  const r = await api<{ count?: number; done?: boolean }>(`/api/conversations/${channelId}/history`, { body: { beforeTs: before?.ts, limit: 50 } }).catch(() => null);
+  if (!r?.count) return false;
+  const cursor = before ? `&before=${before.ts}:${encodeURIComponent(before.id)}` : '';
+  const page = await api<P.MessagePage>(`/api/conversations/${channelId}/stream?limit=60${cursor}`).catch(() => null);
+  page?.identities.forEach(putIdentity);
+  for (const m of page?.messages ?? []) upsertInto(t.messages, m);
+  return !r.done || !!page?.hasMore;
 }
 
 /** Make sure a message is loaded, replacing the window around it if it is not. */
@@ -672,9 +716,10 @@ function timelineIdle(key: string): Promise<void> {
 }
 
 /**
- * Open a person's chat (`p:` timeline) at a message: page back through every route until it is held, so it shows
- * interleaved like any other. The hub has no page around a message across conversations, so a message more than
- * CHAT_JUMP_PAGES pages back is not reached: false, and the page shows its route alone (Timeline.tsx PersonChat).
+ * Open a person's chat (`p:` timeline) or a channel's stream (`k:`) at a message: page back through every route or
+ * thread until it is held, so it shows interleaved like any other. The hub has no page around a message across
+ * conversations, so a message more than CHAT_JUMP_PAGES pages back is not reached: false, and the page shows its
+ * route alone (Timeline.tsx PersonChat), or its thread alone (StreamPane).
  */
 export async function jumpInChat(key: string, messageId: string): Promise<boolean> {
   await loadTimeline(key);
@@ -775,7 +820,7 @@ function timelineRequest(t: Timeline, seq: number): P.SyncTimelineRequest {
     newest,
     oldest,
     ...(t.detached ? { newer: false } : {}),
-    ...(t.key.startsWith('p:') ? { conversationIds: t.conversationIds ?? [] } : {}),
+    ...(t.key.startsWith('p:') || t.key.startsWith('k:') ? { conversationIds: t.conversationIds ?? [] } : {}),
   };
 }
 
@@ -791,7 +836,7 @@ function applyTimelines(r: Extract<P.SyncResponse, { sync: unknown }>) {
       timelineChanged(t.key);
     }
     // One that moved here while away goes from the timeline that held it before.
-    if (tl.key.startsWith('c:')) for (const m of tl.messages) for (const k of leaveOtherTimelines(timelines.values(), m)) timelineChanged(k);
+    if (tl.key.startsWith('c:') || tl.key.startsWith('k:')) for (const m of tl.messages) for (const k of leaveOtherTimelines(timelines.values(), m, streamChannelOf(db, m.conversationId))) timelineChanged(k);
   }
   settle();
 }

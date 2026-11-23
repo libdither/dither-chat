@@ -147,6 +147,8 @@ export class DemoZulip implements InprocAdapter {
   private emit!: (ev: P.AdapterEvent) => void;
   private epoch = 0;
   private resolved = new Map<string, boolean>();
+  /** Messages sent here and topics started here, numbered on from the seeded ones. */
+  private sent = 0;
 
   constructor(
     private acc: AccountRow,
@@ -178,7 +180,7 @@ export class DemoZulip implements InprocAdapter {
     this.emit = emit;
     this.epoch = JSON.parse(this.acc.config || '{}').epoch ?? Date.now();
     const at = (min: number) => this.epoch - min * MIN;
-    emit({ t: 'hello', network: 'zulip', version: 'demo', capabilities: ['history', 'markRead', 'threads', 'listThreads', 'followThreads', 'threadState', 'profile', 'about'] });
+    emit({ t: 'hello', network: 'zulip', version: 'demo', capabilities: ['send', 'history', 'markRead', 'threads', 'listThreads', 'followThreads', 'threadState', 'forumPosts', 'profile', 'about'] });
     emit({ t: 'status', status: 'online', self: { nativeId: user(ME.id), displayName: ME.name, isSelf: true, contact: true } });
     for (const p of PEOPLE) emit({ t: 'identity', identity: { nativeId: user(p.id), displayName: p.name, contact: true } });
     emit({ t: 'space', space: { nativeId: ZULIP_HOST, kind: 'community', name: 'Example Lab', topic: 'A made-up Zulip organization' } });
@@ -240,6 +242,21 @@ export class DemoZulip implements InprocAdapter {
       }
       case 'history':
         return reply({ count: 0, done: true } satisfies P.HistoryResult);
+      // A message to a topic, and a new topic with its first message (the channel stream's box, docs/threads.md).
+      case 'send': {
+        const nativeId = `${ZULIP_HOST}/m/sent-${++this.sent}`;
+        this.emit({ t: 'message', live: true, message: { nativeId, conversation: cmd.conversation, author: user(ME.id), ts: Date.now(), body: cmd.body } });
+        return reply({ nativeId });
+      }
+      case 'createPost': {
+        const c = CHANNELS.find((x) => channel(x.id) === cmd.conversation);
+        if (!c) return fail('Zulip has no such channel');
+        const name = cmd.name.trim();
+        const conversation = zulipTopic(c.id, name);
+        this.emit({ t: 'conversation', conversation: { nativeId: conversation, shape: 'thread', variant: 'text', name, parentConversation: channel(c.id), mute: {}, thread: { joined: true }, lastMessageAt: Date.now() } });
+        this.emit({ t: 'message', live: true, message: { nativeId: `${ZULIP_HOST}/m/sent-${++this.sent}`, conversation, author: user(ME.id), ts: Date.now(), body: cmd.body } });
+        return reply({ conversation } satisfies P.CreateThreadResult);
+      }
       case 'markRead':
         return reply({});
       default:

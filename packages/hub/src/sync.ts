@@ -60,7 +60,7 @@ export function syncResponse(ctx: SyncContext, req: P.SyncRequest, now = Date.no
   }
 
   for (const t of (Array.isArray(req.timelines) ? req.timelines : []).slice(0, MAX_TIMELINES)) {
-    if (typeof t?.key !== 'string' || !/^[cp]:[\w-]+$/.test(t.key)) continue;
+    if (typeof t?.key !== 'string' || !/^[cpk]:[\w-]+$/.test(t.key)) continue;
     const tl = timeline(store, t);
     out.timelines.push(tl);
     msgs.push(...tl.messages);
@@ -203,16 +203,22 @@ function personConversations(store: Store, personId: string): string[] {
 function timeline(store: Store, t: P.SyncTimelineRequest): P.SyncTimeline {
   const j = store.journal;
   const person = t.key.startsWith('p:');
+  // A channel's stream (`k:<channel>`): the channel and its threads. A thread new since keeps the copy: its messages
+  // are newer than what is held, or come as changes; one moved out of a thread asks for a fresh page (movedOut below).
+  const stream = t.key.startsWith('k:');
   const id = t.key.slice(2);
-  const convs = person ? personConversations(store, id) : [id];
+  const convs = person ? personConversations(store, id) : stream ? store.channelStream(id) : [id];
   const list = JSON.stringify(convs);
-  const extra = person ? { conversationIds: convs } : {};
+  const extra = person || stream ? { conversationIds: convs } : {};
   const newest = Number(t.newest) || 0;
   const oldest = Number(t.oldest) || 0;
   const latest = (n: number) => store.raw(`SELECT * FROM message WHERE conversation_id IN (SELECT value FROM json_each(?)) AND ts > ? ORDER BY ts DESC LIMIT ?`, list, newest, n);
 
   let newer: Row[] = [];
-  const regrouped = person && (!Array.isArray(t.conversationIds) || [...t.conversationIds].sort().join() !== [...convs].sort().join());
+  const regrouped =
+    (person && (!Array.isArray(t.conversationIds) || [...t.conversationIds].sort().join() !== [...convs].sort().join())) ||
+    // A stream whose copy spans a thread no longer under the channel (gone, or moved to another): a fresh page.
+    (stream && Array.isArray(t.conversationIds) && ((under) => t.conversationIds!.some((c) => !under.has(c)))(new Set(convs)));
   // A message that moved out since (a Zulip topic renamed): a delta cannot take it away, a fresh page does.
   const movedOut = () => !!store.one(`SELECT 1 FROM sync_change WHERE kind = 'movedOut' AND id IN (SELECT value FROM json_each(?)) AND seq > ? LIMIT 1`, list, t.seq);
   let behind = typeof t.seq !== 'number' || t.seq < j.floor || t.seq > j.seq || regrouped || movedOut();

@@ -425,7 +425,7 @@ async function savePages() {
       const t = timelines.get(k);
       return t ? { ...t, sync: t.from ?? (t.fetchedAt && !t.loading ? (db.sync ?? undefined) : undefined) } : undefined;
     },
-    exists: (k) => (k.startsWith('c:') ? db.conversations.has(k.slice(2)) : k.startsWith('p:') && db.persons.has(k.slice(2))),
+    exists: (k) => (k.startsWith('c:') || k.startsWith('k:') ? db.conversations.has(k.slice(2)) : k.startsWith('p:') && db.persons.has(k.slice(2))),
     identities: db.identities,
     quoted,
   });

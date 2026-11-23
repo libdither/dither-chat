@@ -295,15 +295,27 @@ export function upsertInto(list: P.MessageView[], m: P.MessageView) {
 }
 
 /**
- * A message now in `m.conversationId` goes from every other conversation's timeline (keys `c:<id>`) that holds it: it
- * moved (MessageFact.moved, a Zulip topic renamed or messages moved to another topic). Person timelines span
- * conversations and keep it. Returns the keys of the timelines it left.
+ * The channel whose stream (`k:<channel>`) holds a conversation's messages: a thread's channel, else the conversation
+ * itself (a Matrix room's own messages are in its stream). Undefined where the conversation is not known.
  */
-export function leaveOtherTimelines(timelines: Iterable<{ key: string; messages: P.MessageView[] }>, m: P.MessageView): string[] {
+export function streamChannelOf(db: Pick<Db, 'conversations'>, convId: string): string | undefined {
+  const c = db.conversations.get(convId);
+  if (!c) return undefined;
+  return c.shape === 'thread' && c.parentId ? c.parentId : c.id;
+}
+
+/**
+ * A message now in `m.conversationId` goes from every other conversation's timeline (keys `c:<id>`) that holds it: it
+ * moved (MessageFact.moved, a Zulip topic renamed or messages moved to another topic). A channel's stream (`k:<id>`)
+ * keeps it while it moved within the channel (`channel`: the stream its conversation is in now), and lets it go when
+ * it moved to another. Person timelines span conversations and keep it. Returns the keys of the timelines it left.
+ */
+export function leaveOtherTimelines(timelines: Iterable<{ key: string; messages: P.MessageView[] }>, m: P.MessageView, channel?: string): string[] {
   const here = 'c:' + m.conversationId;
+  const stream = channel === undefined ? undefined : 'k:' + channel;
   const left: string[] = [];
   for (const o of timelines) {
-    if (o.key === here || !o.key.startsWith('c:')) continue;
+    if (o.key === here || o.key === stream || !(o.key.startsWith('c:') || (o.key.startsWith('k:') && channel !== undefined))) continue;
     const i = o.messages.findIndex((x) => x.id === m.id);
     if (i < 0) continue;
     o.messages.splice(i, 1);

@@ -63,6 +63,7 @@
         "src/ui/SendLists.tsx",
         "src/ui/ServerParts.tsx",
         "src/ui/SignalPeople.tsx",
+        "src/ui/Stream.tsx",
         "src/ui/Threads.tsx",
         "src/voice/discord.ts"
       ],

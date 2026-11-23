@@ -2,11 +2,12 @@
  * Reacting, as the client sees it. The picker, the pills and the long-press sheet all go
  * through here, so a reaction shows at once and is taken back with a toast if the network refuses.
  */
-import { signal } from '@preact/signals';
+import { computed, signal, type ReadonlySignal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { canonicalReactionKey, REACTION_RULES } from '@dither-chat/protocol';
 import { fullTime, stamp } from './format.ts';
 import { api, changed, db, isSelfIdentity, patchMessage, pref, toast } from './state.ts';
+import { metaRev } from './versions.ts';
 
 export interface Picked {
   key: string;
@@ -19,12 +20,32 @@ export const reactorsFor = signal<{ message: P.MessageView; key: string; style: 
 
 const FALLBACK_QUICK = ['👍', '❤️', '😂', '🎉', '😮', '🙏'];
 
+/** Moves when a reaction made here reorders `db.reactionUsage` (bumpUsage). */
+const usageRev = signal(0);
+/**
+ * The quick reactions, by network, as one string: what draws them (a bar over every message) redraws when they change,
+ * not with every row and message on each reaction, as `changed('shown')` did. The hub's copy comes with the bootstrap or
+ * a sync, which move `metaRev`.
+ */
+const QUICK_MAX = 6;
+const quickBy = new Map<P.Network, ReadonlySignal<string>>();
+
 /** Your most-used emoji on this network, then on any network. Custom emoji only appear in the picker, where we know they still work. */
-export function quickReactions(network: P.Network, n = 6): string[] {
-  const usage = db.reactionUsage.filter((u) => !u.emoji && !/^mxc:|^\S+:\d+$/.test(u.key));
-  const here = usage.filter((u) => u.network === network).map((u) => u.key);
-  const anywhere = usage.map((u) => u.key);
-  return [...new Set([...here, ...anywhere, ...FALLBACK_QUICK])].slice(0, n);
+export function quickReactions(network: P.Network, n = QUICK_MAX): string[] {
+  let s = quickBy.get(network);
+  if (!s)
+    quickBy.set(
+      network,
+      (s = computed(() => {
+        usageRev.value;
+        metaRev.value;
+        const usage = db.reactionUsage.filter((u) => !u.emoji && !/^mxc:|^\S+:\d+$/.test(u.key));
+        const here = usage.filter((u) => u.network === network).map((u) => u.key);
+        const anywhere = usage.map((u) => u.key);
+        return [...new Set([...here, ...anywhere, ...FALLBACK_QUICK])].slice(0, QUICK_MAX).join('\n');
+      })),
+    );
+  return s.value.split('\n').slice(0, n);
 }
 
 /** The account that acts in a conversation: the one you chose to send as, else any connected one. */
@@ -108,7 +129,7 @@ function bumpUsage(network: P.Network, picked: Picked) {
   else db.reactionUsage.push({ key, network, count: 1, ...(picked.emoji ? { emoji: picked.emoji } : {}) });
   db.reactionUsage.sort((a, b) => b.count - a.count);
   // The quick reactions over every message come from this.
-  changed('shown');
+  usageRev.value++;
 }
 
 // ------------------------------------------------------------------ acting
