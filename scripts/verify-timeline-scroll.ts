@@ -83,7 +83,7 @@ try {
     return p.eval<{ before: number; after: number; below: number; moved: number }>(`new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => {
       const s = document.querySelector('.timeline-scroll');
       const m = [...s.querySelectorAll('.msg')].find((x) => x.textContent.includes(${JSON.stringify(body)}));
-      r({ before: ${before}, after: s.scrollTop, below: Math.round(m.getBoundingClientRect().bottom - s.getBoundingClientRect().bottom), moved: Math.round(document.getElementById(${JSON.stringify(seen.id)}).getBoundingClientRect().top - ${seen.y}) });
+      r({ before: ${before}, after: s.scrollTop, below: Math.round(m.getBoundingClientRect().bottom - s.getBoundingClientRect().bottom), moved: Math.round((document.getElementById(${JSON.stringify(seen.id)}).getBoundingClientRect().top - ${seen.y}) * 100) / 100 });
     })))`);
   };
 
@@ -100,7 +100,9 @@ try {
   }
   await p.eval(`window.__forcer.disconnect()`);
   const far = await arrive(-400, `far ${Date.now()}`);
-  check(far.moved === 0 && far.below > 300, 'far up, what is being read stays where it is', far);
+  // Rows can be a fractional height (24.5 px) and the view scrolls by whole pixels, so holding still is to within one.
+  // Rounding the half-pixel off made this depend on the demo's day lines, and so on the time of day.
+  check(Math.abs(far.moved) < 1 && far.below > 300, 'far up, what is being read stays where it is', far);
 
   // A reply to a message far up: its quote line points there.
   // Forty rows up: more than a screen and a half, with messages above it to be centred among.
