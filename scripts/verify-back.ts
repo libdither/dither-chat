@@ -89,6 +89,8 @@ async function nav(h: string) {
   await hashIs(h);
 }
 const blur = () => p.eval('document.activeElement?.blur?.()');
+/** Waits for the page to have put the cursor in `sel`, as it does once drawn. */
+const cursorIn = (sel: string) => p.until(`document.activeElement?.matches(${JSON.stringify(sel)}) === true`);
 /** The middle of the first of `sel` on screen, or with `last` the last: the newest message, which nothing loads under. */
 async function at(sel: string, last = false) {
   const r = await p.eval<{ x: number; y: number } | null>(
@@ -115,12 +117,20 @@ interface PageCase {
   to: string;
   /** Where the cursor is when Escape is pressed: nowhere (the default), or the page's own box. */
   focus?: string;
+  /**
+   * Where the page puts the cursor once it is drawn (a chat its message box, search its box): an effect after the next
+   * paint, so it can land after the address has changed and the cursor has been moved, and an Escape in a message box
+   * stays. The cursor is moved once it is there.
+   */
+  cursor?: string;
 }
+const COMPOSER = '.composer textarea';
+const SEARCH_BOX = '.search-pane .search-main input';
 const PAGES: PageCase[] = [
-  { name: 'a conversation from the inbox', view: 'inbox', from: '#/inbox', to: `#/inbox/c/${dm.id}` },
-  { name: 'a channel from its server', view: 'space', from: `#/s/${space}`, to: `#/s/${space}/c/${channel.id}` },
-  { name: 'a chat from its folder', view: 'folder', from: `#/f/${folder.id}`, to: `#/f/${folder.id}/c/${folderConv}` },
-  { name: 'a person from People', view: 'people', from: '#/people', to: `#/people/${person.id}` },
+  { name: 'a conversation from the inbox', view: 'inbox', from: '#/inbox', to: `#/inbox/c/${dm.id}`, cursor: COMPOSER },
+  { name: 'a channel from its server', view: 'space', from: `#/s/${space}`, to: `#/s/${space}/c/${channel.id}`, cursor: COMPOSER },
+  { name: 'a chat from its folder', view: 'folder', from: `#/f/${folder.id}`, to: `#/f/${folder.id}/c/${folderConv}`, cursor: COMPOSER },
+  { name: 'a person from People', view: 'people', from: '#/people', to: `#/people/${person.id}`, cursor: COMPOSER },
   { name: "a person's profile from their conversation", view: 'profile', from: `#/inbox/c/${dm.id}`, to: `#/p/${person.id}` },
   { name: "a channel's About from the channel", view: 'profile', from: `#/s/${space}/c/${channel.id}`, to: `#/about/c/${channel.id}` },
   { name: 'the people graph', view: 'people', from: '#/people', to: '#/people/graph' },
@@ -130,8 +140,8 @@ const PAGES: PageCase[] = [
   { name: 'requests', view: 'requests', from: '#/inbox', to: '#/requests' },
   { name: 'notices', view: 'notices', from: '#/inbox', to: '#/notices' },
   { name: 'how it sorts', view: 'model', from: '#/foryou', to: '#/model' },
-  { name: 'search, with the cursor in its box', view: 'search', from: '#/inbox', to: '#/search?q=pizza', focus: '.search-pane .search-main input' },
-  { name: 'searching one conversation', view: 'search', from: `#/inbox/c/${dm.id}`, to: `#/search?q=${e(`hi in:${dm.id}`)}` },
+  { name: 'search, with the cursor in its box', view: 'search', from: '#/inbox', to: '#/search?q=pizza', focus: SEARCH_BOX, cursor: SEARCH_BOX },
+  { name: 'searching one conversation', view: 'search', from: `#/inbox/c/${dm.id}`, to: `#/search?q=${e(`hi in:${dm.id}`)}`, cursor: SEARCH_BOX },
   { name: 'Settings', view: 'settings', from: '#/inbox', to: '#/settings' },
 ];
 
@@ -192,7 +202,7 @@ const UNCOVERED: Record<string, string> = {
 };
 void UNCOVERED;
 
-/** A fresh history each time: the app as opened from a link, its data in. */
+/** The app at `h`, its data in: opened from a link the first time, then an address typed in (browser.ts goto). */
 async function start(h: string) {
   await p.goto(`${hub}/${h}`);
   await p.until(`!!document.querySelector('.pane') && !document.querySelector('.boot, .splash')`, 15000);
@@ -206,6 +216,7 @@ try {
     for (const how of ['Escape', 'back'] as const) {
       await start(c.from);
       await nav(c.to);
+      if (c.cursor) await cursorIn(c.cursor);
       const was = await hash();
       if (c.focus) await p.eval(`document.querySelector(${JSON.stringify(c.focus)})?.focus()`);
       else await blur();
@@ -240,6 +251,8 @@ try {
       if (c.noLayer && how === 'back') continue;
       await start('#/inbox');
       await nav(c.at);
+      // A chat puts the cursor in its box once drawn (PageCase.cursor): it is moved, and the layer opened, after that.
+      if (c.at.includes('/c/')) await cursorIn(COMPOSER);
       const before = await hash();
       await blur();
       try {

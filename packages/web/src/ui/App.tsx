@@ -2,7 +2,7 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { effect, untracked } from '@preact/signals';
 import { chatPersonOf, convsUnder, firstChannel, rootCommunity, totalUnread } from '../model.ts';
-import { adoptEntry, api, back, connected, db, go, loaded, pref, previousRoute, readProgress, refresh, rev, route, setListUnder, setRouteFill, type Route } from '../state.ts';
+import { adoptOpened, api, back, connected, db, go, loaded, pref, previousRoute, readProgress, refresh, rev, route, setListUnder, setRouteFill, type Route } from '../state.ts';
 import { installEscape } from '../escape.ts';
 import { isPage, isTabRoot, listKey, listToWrite, ownList, restAfter, wayBack, type Places } from '../pages.ts';
 import { dropLayer, layerCount, phone, pushLayer } from '../phone.ts';
@@ -347,7 +347,7 @@ export function App() {
   useEffect(() => installEscape(escapeApp), []);
   // The entry the app opened on takes go()'s shape once there is data to say where its page lives (state.ts).
   useEffect(() => {
-    if (loaded.value) adoptEntry();
+    if (loaded.value) adoptOpened();
   }, [loaded.value]);
 
   // On a phone the page you are on is a card over the lists; see Pager.ts.
