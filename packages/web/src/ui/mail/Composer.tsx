@@ -9,8 +9,9 @@
  * draft has its Undo there too (discard.ts). An account that cannot send (a read grant, or sending turned off) says
  * why, and the rest of mail keeps working.
  */
-import { isMailThread } from '../../mail/chats.ts';
+import { chatSends, isMailThread, sendsShown } from '../../mail/chats.ts';
 import type * as P from '@dither-chat/protocol';
+import { bareSubject } from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { details } from '../../mail/held.ts';
 import { canSendFrom, dismissSend, drafts, loadDrafts, loadOutbox, sendNow, undoSend } from '../../mail/drafts.ts';
@@ -63,7 +64,11 @@ function OutboxStrip() {
   mailRev.value;
   const [, tick] = useState(0);
   const now = Date.now();
+  const shown = sendsShown.value;
   const items = [...db.mail.outbox.values()].filter((o) => {
+    // Sent from a chat that is open now: the chat shows it, with its own Undo.
+    const from = chatSends.get(o.clientId);
+    if (from && shown.has(from.place)) return false;
     if (o.state !== 'sent') return true;
     if (!sentSeen.has(o.id)) sentSeen.set(o.id, (o.createdAt ?? 0) > now - 60_000 ? now : 0);
     return now - sentSeen.get(o.id)! < SENT_SHOWN_MS;
@@ -81,7 +86,10 @@ function OutboxStrip() {
     if (up) void loadOutbox();
   }, [up]);
   if (!items.length && !gone.length) return null;
-  const quoted = (s: string) => (s ? `“${s.length > 40 ? `${s.slice(0, 39)}…` : s}”` : 'your message');
+  const quoted = (raw: string) => {
+    const s = bareSubject(raw);
+    return s ? `“${s.length > 40 ? `${s.slice(0, 39)}…` : s}”` : 'your message';
+  };
   return (
     <div class="mc-strip" role="status" aria-live="polite">
       {gone.map((x) => (
