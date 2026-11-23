@@ -127,6 +127,42 @@ try {
   check(picker.length >= 1, 'the @ picker shows dots', picker.slice(0, 3));
   await shot('mentions-light');
 
+  // Live: a presence frame on the socket draws the dots it changes, and nothing else (docs/perf.md "Every click"). The
+  // frame is handed to the page's own socket, and what it draws is drawn in the microtasks after it (preact renders
+  // in one), so nothing else the page does can land between the counts. A page holds frames while it catches up
+  // (state.ts `held`): a first frame, once it shows, says it no longer does.
+  await p.send('Page.addScriptToEvaluateOnNewDocument', {
+    source: `{ const W = WebSocket; window.__sockets = []; window.WebSocket = class extends W { constructor(...a) { super(...a); window.__sockets.push(this); } }; }`,
+  });
+  const person = persons.get(dm.peerPersonId!)!;
+  const frame = (state: string) =>
+    `window.__sockets.at(-1).onmessage({ data: JSON.stringify([{ t: 'presence', items: ${JSON.stringify(person.identityIds)}.map((identityId) => ({ identityId, state: ${JSON.stringify(state)}, at: Date.now() })), removed: [] }]) })`;
+  const live = (state: string) =>
+    p.eval<Record<string, number>>(`(async () => {
+      const perf = window.__ditherPerf;
+      perf.fresh();
+      ${frame(state)};
+      for (let i = 0; i < 20 && !perf.components.again.PresenceDot; i++) await Promise.resolve();
+      return { ...perf.components.again };
+    })()`);
+  const lists = (again: Record<string, number>) => Object.keys(again).filter((n) => /^(Memo\()?(ConvRow|PersonRow|MessageItem|InboxRowView|Timeline|ActivityCardBody)\)?$/.test(n));
+  await p.goto(`${url}/?perf=1#/inbox/c/${encodeURIComponent(dm.id)}`);
+  await p.until(`document.querySelectorAll('.conv-row').length > 3 && document.querySelectorAll('.msg').length > 0 && window.__sockets?.at(-1)?.readyState === 1`, 20_000);
+  const was = (await dots('.conv-head'))[0]?.state;
+  const first = was === 'offline' ? 'dnd' : 'offline';
+  await p.eval(frame(first));
+  await p.until(`document.querySelector('.conv-head .avatar-presence')?.dataset.presence === ${JSON.stringify(first)}`, 15_000);
+  const drew = await live('idle');
+  const headNow = await dots('.conv-head');
+  check(headNow[0]?.state === 'idle', `a presence frame changes the dot live (${first} to idle)`, headNow);
+  check((drew.PresenceDot ?? 0) >= 1 && !lists(drew).length, 'and draws only dots again, no row or message', drew);
+  await p.eval(`location.hash = ${JSON.stringify(`#/p/${encodeURIComponent(person.id)}`)}`);
+  await p.until(`!!document.querySelector('.pf-hero .avatar-presence') && !!document.querySelector('.pf-activity-card .pf-presence')`, 15_000);
+  await live('online');
+  const heroNow = await dots('.pf-hero');
+  const wordsNow = await p.eval<string>(`document.querySelector('.pf-activity-card .pf-presence')?.textContent ?? ''`);
+  check(heroNow[0]?.state === 'online' && /^Online on /.test(wordsNow), "on a profile, its picture's dot and the Activity card's words follow", { hero: heroNow, words: wordsNow });
+
   // Unknown is no dot: someone with no presence heard.
   const unknown = boot.persons.find((x) => !x.isSelf && !present(x.id) && x.identityIds.length);
   if (unknown) {

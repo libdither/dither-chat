@@ -96,7 +96,7 @@
     "js/shared/frameTheme.bytes": { "measured": 1904, "budget": 1943, "reason": "Mail composer: Markdown formatting (format bar, Preview, rich paste), recipients edited as text, one undo history; the composer's card is now a chunk of its own, loaded when writing" },
     "js/shared/frameTheme.gzip": { "measured": 993, "budget": 1011 },
     "js/shared/jump.bytes": { "measured": 1392, "budget": 1420, "reason": "Search as you type (docs/search.md \"In the app\"): what Ctrl+K jumps to (jump.ts), shared by Ctrl+K and search's Jump to, each a chunk of its own" },
-    "js/shared/jump.gzip": { "measured": 729, "budget": 744, "reason": "Search as you type (docs/search.md \"In the app\"): what Ctrl+K jumps to (jump.ts), shared by Ctrl+K and search's Jump to, each a chunk of its own" },
+    "js/shared/jump.gzip": { "measured": 746, "budget": 761, "reason": "Status dots drawn only when they change (ui/memo.ts memoOn): the startup chunk exports one more name, so the short names jump.ts imports from it are longer; jump.ts itself is the same" },
     "js/shared/load.bytes": { "measured": 1740, "budget": 1775 },
     "js/shared/load.gzip": { "measured": 990, "budget": 1010 },
     "js/shared/MarkdownView.bytes": { "measured": 52610, "budget": 53663, "reason": "The mail editor (docs/mail.md \"Writing\"): marked, which the rich editor reads Markdown with too, now shares a chunk with the file viewer's MarkdownView (it was js/shared/marked.esm)" },

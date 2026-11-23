@@ -7,6 +7,7 @@ import type * as P from '@dither-chat/protocol';
 import { RELATIONSHIP_LABEL, withList } from '@dither-chat/protocol';
 import { connections, connectionTags, withChanges, type Connection } from '../connections.ts';
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { memoOn } from './memo.ts';
 import type { ComponentChildren } from 'preact';
 import { ago, fullTime, localTime } from '../format.ts';
 import { bioEditor, bioLeft } from '../bio.ts';
@@ -113,13 +114,27 @@ function FactPeople({ ids }: { ids: string[] }) {
 
 const normalized = (s: string | null | undefined) => (s ?? '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 
-/** A conversation's picture: its own, else its server's. */
-function PlaceIcon({ c, size = 22 }: { c: P.ConversationView; size?: number }) {
+/** What a conversation's picture shows: its own, else its server's. */
+function placePicture(c: P.ConversationView) {
   const com = c.spaceIds.length ? rootCommunity(c.spaceIds[0]) : null;
-  if (com) return <Avatar id={com.id} name={com.name} url={com.icon} size={size} square network={c.network} />;
+  if (com) return { id: com.id, name: com.name, url: com.icon, square: true, network: c.network };
   const person = c.peerPersonId ? db.persons.get(c.peerPersonId) : null;
-  return <Avatar id={person?.id ?? c.id} name={convTitle(c)} url={person?.avatar ?? c.avatar} size={size} square={c.shape !== 'direct'} network={c.network} />;
+  return { id: person?.id ?? c.id, name: convTitle(c), url: person?.avatar ?? c.avatar, square: c.shape !== 'direct', network: c.network };
 }
+
+/**
+ * A conversation's picture. Drawn again only when what it shows changes (memoOn): a profile draws its lists again for
+ * a name you give someone, and the places' pictures mostly stay (docs/perf.md "Every click").
+ */
+const PlaceIcon = memoOn(
+  function PlaceIcon({ c, size = 22 }: { c: P.ConversationView; size?: number }) {
+    return <Avatar {...placePicture(c)} size={size} />;
+  },
+  ({ c, size }) => {
+    const p = placePicture(c);
+    return `${size ?? ''}\n${p.id}\n${p.name}\n${p.url ?? ''}\n${p.square}\n${p.network}`;
+  },
+);
 
 /** One account's handle or id, a button that copies it. */
 function HandleChip({ i }: { i: P.IdentityView }) {

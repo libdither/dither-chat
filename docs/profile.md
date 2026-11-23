@@ -351,8 +351,8 @@ the network's badge in its bottom corner, the dot sits at the top.
   busy) or a week (offline). The hub keeps it only for people it already knows: presence makes no identity.
 - **Cheap on a big server.** Presence goes to the page in the bootstrap and as `presence` frames on the live socket, at
   most one every two seconds, each identity once at its newest (hub presence.ts); the journal keeps it by identity
-  (docs/sync.md). On the page it moves `presenceRev` only (versions.ts), so a change draws the dots again and not the
-  rows or lists they sit in. The offline snapshot keeps it too.
+  (docs/sync.md). On the page it moves `presenceRev` only (versions.ts), so a change draws again the dots it changed and
+  not the rows or lists they sit in; a row drawn again for something else leaves its dot alone (`memoOn`, docs/perf.md). The offline snapshot keeps it too.
 - **Which networks say it** (`{t:'presence'}` in packages/protocol adapter.ts, from dither-accounts' extractors):
   Discord (friends and people with a DM, with devices), Matrix (people with a direct chat, `m.presence`), Zulip
   (everyone in the organization, read once a minute as Zulip's apps do), and Telegram (contacts and people with a

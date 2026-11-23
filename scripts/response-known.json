@@ -561,16 +561,14 @@
   ],
   "a person's profile / Message": [
    "Icon",
-   "M$1",
-   "PlaceIcon"
+   "M$1"
   ],
   "a person's profile / held: the app's clocks": [
    "Ago"
   ],
   "a person's profile / hub: a visit counted": [
    "Icon",
-   "M$1",
-   "PlaceIcon"
+   "M$1"
   ],
   "a person's profile / input:on": [
    "AccountDots",
@@ -581,11 +579,7 @@
    "NetBadge",
    "NetGlyph",
    "PersonRow",
-   "PlaceIcon",
    "RowTyping"
-  ],
-  "a person's profile / nickname": [
-   "PlaceIcon"
   ],
   "the directory / hub: a visit counted": [
    "SpacesEntry"

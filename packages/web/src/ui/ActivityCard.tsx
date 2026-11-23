@@ -7,11 +7,11 @@
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { ago, fullTime, since } from '../format.ts';
-import { dotFor, type PresenceOf } from './PresenceDot.tsx';
-import { presenceRev } from '../versions.ts';
+import { dotFor, dotLooks, whose as whoseDot, type PresenceOf } from './PresenceDot.tsx';
+import { memo } from './memo.ts';
 import { keeping, loadChanges, presenceText, retention } from '../history.ts';
 import { netName } from '../model.ts';
-import { db, rev } from '../state.ts';
+import { db, readMinute } from '../state.ts';
 import { ActivityChart } from './ActivityChart.tsx';
 import { NetGlyph } from './bits.tsx';
 import { Change } from './HistoryCard.tsx';
@@ -20,15 +20,7 @@ import { StatusEmoji } from './ProfileShell.tsx';
 
 const SHOWN = 8;
 
-export function ActivityCard({
-  path,
-  chartPath,
-  self,
-  chart,
-  status,
-  at,
-  presence: whose,
-}: {
+type CardProps = {
   path: string;
   chartPath: string;
   self: boolean;
@@ -37,10 +29,31 @@ export function ActivityCard({
   at?: number;
   /** Whose status dot to say in words when presence is not logged (PresenceDot.tsx). */
   presence?: PresenceOf;
-}) {
-  rev.value;
-  presenceRev.value;
-  const dot = whose ? dotFor(whose) : null;
+};
+const sameStatus = (a: CardProps['status'], b: CardProps['status']) =>
+  a === b || (!!a && !!b && a.text === b.text && a.emoji === b.emoji && a.emojiUrl === b.emojiUrl);
+
+/**
+ * Drawn again when what it is handed changes, not with the whole profile (a nickname, a message): the profile hands it
+ * new objects each time, so they are compared by value (docs/perf.md "Every click"). What it loads, the retention
+ * settings, presence frames and the minute clock draw it themselves.
+ */
+export const ActivityCard = memo(
+  ActivityCardBody,
+  (a: CardProps, b: CardProps) =>
+    a.path === b.path &&
+    a.chartPath === b.chartPath &&
+    a.self === b.self &&
+    a.chart === b.chart &&
+    a.at === b.at &&
+    sameStatus(a.status, b.status) &&
+    whoseDot(a.presence) === whoseDot(b.presence),
+);
+
+function ActivityCardBody({ path, chartPath, self, chart, status, at, presence: whose }: CardProps) {
+  // "since …" moves with the clock; the dot with presence frames (dotLooks reads them).
+  readMinute();
+  const dot = whose && dotLooks(whose) ? dotFor(whose) : null;
   const r = retention.value;
   const [statuses, setStatuses] = useState<P.ChangeView[]>([]);
   const [presence, setPresence] = useState<P.ChangeView[]>([]);
