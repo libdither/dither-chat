@@ -1,7 +1,7 @@
-import { useRef } from 'preact/hooks';
+import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { lockAxis, velocity } from '../gesture.ts';
 import { reducedMotion } from '../phone.ts';
-import { go, toasts, type Toast } from '../state.ts';
+import { go, route, toasts, type Toast } from '../state.ts';
 import { Avatar } from './bits.tsx';
 import { Icon } from './icons.tsx';
 
@@ -100,11 +100,41 @@ function ToastItem({ t }: { t: Toast }) {
   );
 }
 
+/** The stack's width and its gap to the window's right edge (styles.css `.toasts`). */
+const STACK = 380;
+
+/**
+ * On a desktop the stack sits at the bottom right, where a chat's composer has its send button: it stands on top of any
+ * composer under it instead, and follows it as the box grows. A phone shows toasts at the top (styles.css).
+ */
+function useClearOfComposer(on: boolean, at: unknown): number {
+  const [lift, setLift] = useState(0);
+  useLayoutEffect(() => {
+    if (!on) return;
+    const under = () => [...document.querySelectorAll<HTMLElement>('.composer')].filter((el) => {
+      const r = el.getBoundingClientRect();
+      return r.height > 0 && r.right > innerWidth - STACK && r.left < innerWidth;
+    });
+    const measure = () => setLift(Math.max(0, ...under().map((el) => innerHeight - el.getBoundingClientRect().top)));
+    measure();
+    if (typeof ResizeObserver !== 'function') return;
+    const ro = new ResizeObserver(measure);
+    for (const el of under()) ro.observe(el);
+    addEventListener('resize', measure);
+    return () => {
+      ro.disconnect();
+      removeEventListener('resize', measure);
+    };
+  }, [on, at]);
+  return lift;
+}
+
 export function Toasts() {
   const list = toasts.value;
+  const lift = useClearOfComposer(list.length > 0, route.value);
   if (!list.length) return null;
   return (
-    <div class="toasts">
+    <div class="toasts" style={lift ? { '--toast-lift': `${lift}px` } : undefined}>
       {list.map((t) => (
         <ToastItem key={t.id} t={t} />
       ))}

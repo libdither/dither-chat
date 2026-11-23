@@ -74,6 +74,7 @@ import { mailRev } from '../versions.ts';
 import { convById, isMailPlace, isMailThread, loadMailThread, mailThread, refill, threadsFailed } from '../mail/chats.ts';
 import { openPalette } from './Palette.tsx';
 import { BackBar, ElsewhereRows, MailSends, MailThreadHeader, MailWords, MailThreadLead, ReplySubject, SubjectChip, SubjectTag, mailMessageMenu, pickSubject, subjectOf } from './MailChat.tsx';
+import { threadRows } from '../mail/elsewhere.ts';
 import { openCompose, sendMailFromChat } from './mail/lazy.tsx';
 import { reactionContext } from '../reactions.ts';
 import { openAbout } from '../opening.ts';
@@ -1359,14 +1360,23 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
   // Mail (mail/chats.ts): the subject where the thread changes, except in the thread's own chat, which it names.
   const ownThread = tkey.startsWith('c:mth_');
   let lastThread: string | null = null;
-  // What a person wrote in threads with others (MailChat.tsx ElsewhereRows), between the chat's own messages.
+  // The day of the last thing drawn, for day lines: a message, or a row of what they wrote elsewhere.
+  let drawnDay: number | null = null;
+  // What a person wrote in threads with others (MailChat.tsx ElsewhereRows), a row per thread at its own time among the
+  // chat's own messages, under its own day.
   const elsewherePerson = tkey.startsWith('p:') ? db.persons.get(tkey.slice(2)) : undefined;
-  const elsewhere = elsewherePerson ? (t?.elsewhere ?? []) : [];
+  const elsewhere = elsewherePerson ? threadRows(t?.elsewhere ?? []) : [];
   let ew = 0;
-  const elsewhereUpTo = (ts: number, key: string) => {
-    const from = ew;
-    while (ew < elsewhere.length && elsewhere[ew].ts <= ts) ew++;
-    if (ew > from) items.push(<ElsewhereRows key={`ew-${key}`} view={`person:${elsewherePerson!.id}`} person={elsewherePerson!} items={elsewhere.slice(from, ew)} />);
+  const elsewhereUpTo = (ts: number) => {
+    while (ew < elsewhere.length && elsewhere[ew].ts <= ts) {
+      const from = ew;
+      const day = elsewhere[ew].ts;
+      while (ew < elsewhere.length && elsewhere[ew].ts <= ts && sameDay(elsewhere[ew].ts, day)) ew++;
+      if (drawnDay === null || !sameDay(drawnDay, day)) items.push(<div class="day-sep"><span>{dayLabel(day)}</span></div>);
+      drawnDay = elsewhere[ew - 1].ts;
+      items.push(<ElsewhereRows key={`ew-${elsewhere[from].place}`} view={`person:${elsewherePerson!.id}`} person={elsewherePerson!} rows={elsewhere.slice(from, ew)} />);
+      above = null;
+    }
   };
   // Before the first message drawn, nothing older than it: those are above, with older pages. At the start of the
   // history they come first.
@@ -1383,7 +1393,9 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
   for (let i = start; i < end; i++) {
     const m = all[i];
     const newDay = !prev || !sameDay(prev.ts, m.ts);
-    if (newDay) items.push(<div class="day-sep"><span>{dayLabel(m.ts)}</span></div>);
+    if (elsewhere.length) elsewhereUpTo(m.ts - 1);
+    if (drawnDay === null || !sameDay(drawnDay, m.ts)) items.push(<div class="day-sep"><span>{dayLabel(m.ts)}</span></div>);
+    drawnDay = m.ts;
     if (i === unreadFrom) items.push(<div class="new-sep"><span>New</span></div>);
     // A stream: the thread's name where it changes (stream.ts headBefore), and its messages grouped under it.
     if (stream && headBefore(prev, m, newDay)) {
@@ -1403,7 +1415,6 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
       prev = m;
       continue;
     }
-    if (elsewhere.length) elsewhereUpTo(m.ts - 1, m.id);
     const grouped = groups(above, m);
     const subject = !!m.mail && !ownThread && m.mail.threadId !== lastThread;
     if (m.mail) lastThread = m.mail.threadId;
@@ -1436,7 +1447,7 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
     );
     prev = above = m;
   }
-  if (elsewhere.length && end === all.length) elsewhereUpTo(Infinity, 'end');
+  if (elsewhere.length && end === all.length) elsewhereUpTo(Infinity);
   // Your mail from here still in the outbox (MailChat.tsx): under the newest message.
   const mailPlaces = end === all.length ? convIds.filter(isMailPlace) : [];
   if (mailPlaces.length) items.push(<MailSends key="sends" places={mailPlaces} held={msgs} />);

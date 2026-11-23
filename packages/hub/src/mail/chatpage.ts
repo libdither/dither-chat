@@ -1,7 +1,7 @@
 /**
  * Mail drawn as chat messages (docs/mail.md "Mail as chats"): mail_message rows as `MessageView`s with `mail` set, a
  * page of them by the chats' `(ts, id)` cursor, a person's chat as their chat timeline and their mail together, and what
- * they wrote in threads with others in the page's range (`elsewhere`), at the rung rungs.ts gives it.
+ * they wrote in threads with others in the page's range (`elsewhere`).
  *
  * `ts` is when the mail reached the server (`received_at`), as mail sorts. One mail that reached two of your accounts
  * is two rows with one Message-ID: a person's chat shows it once, as its earliest copy, with both accounts in seenVia.
@@ -11,7 +11,7 @@ import type * as M from '@dither-chat/protocol/mail-iface';
 import { hubId } from '@dither-chat/protocol/ids';
 import type { Store } from '../store.ts';
 import { parseCursor } from '../chats.ts';
-import { AWAITS_MS, defaultRung, excerptOf, EXCERPTS_PER_GAP, placeRungs } from '../rungs.ts';
+import { AWAITS_MS, excerptOf } from '../rungs.ts';
 import type { MailHub } from './index.ts';
 import type { MailPlaces, Placed } from './places.ts';
 
@@ -29,8 +29,6 @@ const json = <T>(s: string | null | undefined, fallback: T): T => {
 const lc = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
 /** Newest first by (ts, id), as the chats' pages go. */
 const newer = (a: { ts: number; id: string }, b: { ts: number; id: string }) => b.ts - a.ts || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
-/** The characters of `line`. */
-const LINE_CHARS = 140;
 
 /** A page of mail rows among these threads, newest first, before the cursor. Drafts are not shown. */
 function mailRows(hub: MailHub, threads: string[], before: Cursor | null, limit: number, collapse: boolean): { rows: Row[]; via: Map<string, string[]>; hasMore: boolean } {
@@ -215,7 +213,7 @@ export function personPage(hub: MailHub, places: MailPlaces, chat: Store, person
   // began (now, on the newest), so the pages' ranges meet without a gap or an overlap.
   const lo = hasMore && messages.length ? messages[0].ts : 0;
   const hi = before ? before.ts : Number.MAX_SAFE_INTEGER;
-  const elsewhere = elsewhereIn(hub, places, chat, personId, new Set(threads), messages, lo, hi, now);
+  const elsewhere = elsewhereIn(hub, places, chat, personId, new Set(threads), lo, hi, now);
   for (const i of elsewhere.identities) if (!identities.has(i.id)) identities.set(i.id, i);
   return { ...chats, messages, identities: [...identities.values()], hasMore, elsewhere: elsewhere.items };
 }
@@ -225,10 +223,10 @@ const ELSEWHERE_MAX = 200;
 
 /**
  * What a person wrote in mail threads with others (threads whose place is the thread) in [lo, hi): theirs, to you (To
- * or Cc), oldest first. Each gets its rung: one you chose for that thread in their chat, else the default (rungs.ts),
- * with at most EXCERPTS_PER_GAP default excerpts between two of the page's own messages.
+ * or Cc), oldest first, each with whether it awaits you and its excerpt. Threads you hid in their chat are sent too:
+ * the chat counts them ("1 hidden thread · Show"); how each shows is the chat's to draw (rungs.ts).
  */
-function elsewhereIn(hub: MailHub, places: MailPlaces, chat: Store, personId: string, personThreads: Set<string>, page: P.MessageView[], lo: number, hi: number, now: number): { items: P.ElsewhereView[]; identities: P.IdentityView[] } {
+function elsewhereIn(hub: MailHub, places: MailPlaces, chat: Store, personId: string, personThreads: Set<string>, lo: number, hi: number, now: number): { items: P.ElsewhereView[]; identities: P.IdentityView[] } {
   const db = hub.store.db;
   const addrs = (chat.db.query(`SELECT native_id FROM identity WHERE person_id = ? AND network = 'email'`).all(personId) as Row[]).map((r) => r.native_id as string);
   if (!addrs.length) return { items: [], identities: [] };
@@ -259,19 +257,14 @@ function elsewhereIn(hub: MailHub, places: MailPlaces, chat: Store, personId: st
       }
     }
   }
-  const view = `person:${personId}`;
-  const chosen = new Map(placeRungs(db, view).map((r) => [r.place, r.rung]));
   const own = places.ownAddresses();
   const theirs = new Set(addrs);
   const myNames = selfNames(hub);
   const texts = new Map((db.query('SELECT message_id, text FROM mail_body WHERE message_id IN (SELECT value FROM json_each(?))').all(JSON.stringify(kept.map((r) => r.id))) as Row[]).map((b) => [b.message_id as string, b.text as string | null]));
   const answered = db.query(`SELECT 1 FROM mail_message WHERE thread_id = ? AND addressed = 'self' AND draft = 0 AND received_at > ? LIMIT 1`);
   const owed = db.query('SELECT owed_since FROM mail_feature WHERE thread_id = ? AND state IS NOT NULL');
-  const excerpts = new Map<number, number>();
   const items: P.ElsewhereView[] = [];
   for (const r of kept.slice(0, ELSEWHERE_MAX)) {
-    const rung0 = chosen.get(r.thread_id);
-    if (rung0 === 'hidden') continue;
     const words = aboveQuote(texts.get(r.id))?.text || r.preview || '';
     const toYou = r.addressed === 'to' || namesYou(words, myNames);
     // Awaits you: to you, under a week old, and you have neither written in nor opened the thread since. Where mail's
@@ -281,26 +274,10 @@ function elsewhereIn(hub: MailHub, places: MailPlaces, chat: Store, personId: st
       const f = owed.get(r.thread_id) as Row | null;
       if (f) awaits = f.owed_since !== null && r.received_at >= f.owed_since;
     }
-    let rung: P.Rung;
-    let why: P.ElsewhereView['why'];
-    if (rung0) {
-      rung = rung0;
-      why = 'chosen';
-    } else {
-      ({ rung, why } = defaultRung(view, { awaits }));
-      if (rung === 'excerpt') {
-        // Newest first here: the newest two of a gap keep their excerpt.
-        const gap = page.filter((m) => m.ts < r.received_at || (m.ts === r.received_at && m.id < r.id)).length;
-        const n = excerpts.get(gap) ?? 0;
-        if (n >= EXCERPTS_PER_GAP) rung = 'link';
-        else excerpts.set(gap, n + 1);
-      }
-    }
     const others = json<{ e: string; n: string | null }[]>(r.t_participants, [])
       .filter((p) => p.e && !own.has(p.e) && !theirs.has(p.e))
       .map((p) => p.n || p.e);
-    const line = words.replace(/\s+/g, ' ').trim();
-    const excerpt = rung === 'excerpt' ? excerptOf(words) : undefined;
+    const excerpt = excerptOf(words, r.from_name);
     items.push({
       place: r.thread_id,
       placeKind: 'mail-thread',
@@ -309,11 +286,8 @@ function elsewhereIn(hub: MailHub, places: MailPlaces, chat: Store, personId: st
       messageId: r.id,
       ts: r.received_at,
       unread: !r.seen && !r.seen_local,
-      rung,
-      why,
+      awaits,
       ...(excerpt ? { excerpt } : {}),
-      line: line.length > LINE_CHARS ? line.slice(0, LINE_CHARS - 1).trimEnd() + '…' : line,
-      toYou,
     });
   }
   const ids = chat.identitiesByIds(addrs.map((a) => hubId('idn', 'email', a)));

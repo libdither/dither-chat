@@ -126,8 +126,8 @@ export const mailPageUrl = (id: string) => `/api/mail/chats/${encodeURIComponent
 
 // ------------------------------------------------------------------ rungs
 
-/** The rung you chose for a place in a view, if any (hub rungs.ts has the defaults). */
-export const chosenRung = (view: string, place: string): P.Rung | null => db.mail.rungs.get(rungKey(view, place))?.rung ?? null;
+/** How you chose a place shows in a view, and when, if you did (hub rungs.ts; ui/MailChat.tsx has the defaults). */
+export const chosenRung = (view: string, place: string): P.PlaceRungView | null => db.mail.rungs.get(rungKey(view, place)) ?? null;
 
 export async function chooseRung(view: string, place: string, rung: P.Rung | null) {
   const k = rungKey(view, place);

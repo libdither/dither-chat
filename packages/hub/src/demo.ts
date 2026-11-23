@@ -3547,6 +3547,9 @@ export function seedDemoMail(fake: FakeMailBackend, now = Date.now()) {
   put({ mailboxId: 'Sent', messageId: id('lease-2'), inReplyTo: id('lease-1'), references: [id('lease-1')], from: [ME], to: [alice], cc: [jo], subject: 'Re: Lease renewal', receivedAt: now - 2 * D, text: 'Signed and scanned, it is attached. Thanks for sorting this out!\n\nOn Mon, Alice Chen <alice.chen@example.org> wrote:\n> The landlord sent the renewal.', attachments: [{ id: 'att-lease-signed', filename: 'lease-renewal-signed.pdf', mime: 'application/pdf', size: 212_992, inline: false, contentId: null }], files: demoFileBytes() });
   put({ messageId: id('lease-3'), inReplyTo: id('lease-2'), references: [id('lease-1'), id('lease-2')], from: [jo], to: [alice, ME], subject: 'Re: Lease renewal', receivedAt: now - 9 * H, flags: { seen: false }, text: 'Done on my side too. Do we want to ask about the parking spot while we are at it?\n\nJo' });
 
+  // Alice asks you and Jo something today: it waits on you, so her chat shows it open.
+  put({ messageId: id('moveout-1'), from: [alice], to: [ME], cc: [jo], subject: 'Move-out checklist', receivedAt: now - 2 * H, flags: { seen: false }, text: 'The landlord sent what needs doing before we hand back the keys. Could you take the kitchen and the hall closet?\n\nAlice' });
+
   // A newsletter and a notification: list headers say so.
   put({
     messageId: id('rust-weekly'),

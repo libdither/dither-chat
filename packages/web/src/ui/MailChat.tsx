@@ -8,16 +8,18 @@ import type * as P from '@dither-chat/protocol';
 import { signal } from '@preact/signals';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { chatSends, chosenRung, chooseRung, loadMailThread, mailThread, refill, sendsIn } from '../mail/chats.ts';
-import { viewList } from '@dither-chat/protocol';
+import { bareSubject, viewList } from '@dither-chat/protocol';
 import { MAIL_LISTS } from '../mail/model.ts';
+import { rowOpen, toggled, type ElsewhereRow } from '../mail/elsewhere.ts';
 import { linkify } from '../mail/text.ts';
-import { db, go, mailRev, toast } from '../state.ts';
+import { db, go, mailRev, openChat, toast } from '../state.ts';
+import { clock, fullTime } from '../format.ts';
 import { Icon } from './icons.tsx';
 import './MailChat.css';
 import { ChatMailBodyLazy, MailThreadActionsLazy, mailMessageExtras, openCompose, preloadMail } from './mail/lazy.tsx';
 import { HeadOrb } from './Offline.tsx';
 import { identityName } from '../model.ts';
-import { openMenu, type MenuSpec } from './ContextMenu.tsx';
+import { useMenu, type MenuSpec } from './ContextMenu.tsx';
 
 /** Undo, Send now and Dismiss, from mail's chunk (mail/drafts.ts is in it). */
 const drafts = () => preloadMail();
@@ -285,156 +287,113 @@ export function SubjectChip({ routeId, subjects }: { routeId: string; subjects: 
 
 // ------------------------------------------------------------------ what they wrote elsewhere
 
-/** Places followed from a person's chat this visit: their links get a tick. */
-const followed = signal<Set<string>>(new Set());
-
-/** Where "Back to <person>" goes: set when a link in their chat is followed, shown by the place's pane. */
+/** Where "Back to <person>" goes: set when a thread is opened from a person's chat, shown by the thread's pane. */
 const backTo = signal<{ place: string; label: string } | null>(null);
 
-function follow(view: string, place: string, label: string, msg: string) {
-  followed.value = new Set([...followed.value, `${view} ${place}`]);
+function follow(place: string, label: string, msg: string) {
   backTo.value = { place, label };
   openThread(place, msg);
 }
 
-/** How a place shows in a view: what you chose, else what the hub said. */
-const rungOf = (view: string, e: P.ElsewhereView): P.Rung => chosenRung(view, e.place) ?? (e.why === 'chosen' ? 'link' : e.rung);
+/** Whether a row shows its text (mail/elsewhere.ts rowOpen). */
+const isOpen = (view: string, r: ElsewhereRow) => rowOpen(chosenRung(view, r.place), r);
+const isHidden = (view: string, r: ElsewhereRow) => chosenRung(view, r.place)?.rung === 'hidden';
+
+/** Choose how a thread shows in a chat; a failure puts it back and says so. Whether it was saved. */
+const choose = (view: string, place: string, rung: P.Rung | null): Promise<boolean> =>
+  chooseRung(view, place, rung).then(
+    () => true,
+    (err) => (toast({ kind: 'error', title: 'Could not save that', body: String(err?.message ?? err) }), false),
+  );
 
 /**
- * What a person wrote in threads with others, between two of their chat's own messages (docs/mail.md "Mail as
- * chats", "What they wrote elsewhere"): a few lines of what still waits for you, and one row of links for the rest,
- * one per place, behind a rail. A place name with ↗ goes there, at those messages; "Read here" opens their lines in
- * place; ⋯ chooses how this place shows in this chat.
+ * What a person wrote in threads with others, between two of their chat's own messages on one day (docs/mail.md "Mail
+ * as chats", "What they wrote elsewhere"): a row per thread, its header line the toggle that shows its text and
+ * "Answer there". Hidden threads leave a faint line with Show in their place.
  */
-export function ElsewhereRows({ view, person, items }: { view: string; person: P.PersonView; items: P.ElsewhereView[] }) {
+export function ElsewhereRows({ view, person, rows }: { view: string; person: P.PersonView; rows: ElsewhereRow[] }) {
   mailRev.value;
-  followed.value;
-  const [here, setHere] = useState(false);
-  const shown = items.filter((e) => rungOf(view, e) !== 'hidden');
-  if (!shown.length) return null;
-  const excerpts = shown.filter((e) => rungOf(view, e) === 'excerpt' && (e.excerpt || e.line));
-  const linked = shown.filter((e) => !excerpts.includes(e));
-  const places = new Map<string, P.ElsewhereView[]>();
-  for (const e of linked) places.set(e.place, [...(places.get(e.place) ?? []), e]);
-  const first = person.name.split(' ')[0];
+  // Hidden rows one after another are one line.
+  const parts: (ElsewhereRow | ElsewhereRow[])[] = [];
+  for (const r of rows) {
+    if (!isHidden(view, r)) parts.push(r);
+    else if (Array.isArray(parts[parts.length - 1])) (parts[parts.length - 1] as ElsewhereRow[]).push(r);
+    else parts.push([r]);
+  }
   return (
     <div class="elsewhere" role="group" aria-label={`What ${person.name} wrote elsewhere`}>
-      {excerpts.map((e) => (
-        <div class="elsewhere-excerpt" key={e.messageId}>
-          <div class="elsewhere-head">
-            <PlaceLink view={view} e={e} first={first} name={person.name} />
-            {e.others.length > 0 && <span class="elsewhere-with">with {e.others.join(', ')}</span>}
-            <PlaceMenu view={view} e={e} />
+      {parts.map((p) =>
+        Array.isArray(p) ? (
+          <div class="elsewhere-hidden" key={`hidden-${p[0].place}`}>
+            {p.length === 1 ? '1 hidden thread' : `${p.length} hidden threads`} ·{' '}
+            <button class="link-btn" data-track="elsewhere show hidden" onClick={() => p.forEach((r) => void choose(view, r.place, null))}>
+              Show
+            </button>
           </div>
-          <p class="elsewhere-text">{e.excerpt ?? e.line}</p>
-          <button class="link-btn elsewhere-answer" data-track="elsewhere answer" onClick={() => follow(view, e.place, person.name, e.messageId)}>
-            Answer there
-          </button>
-        </div>
-      ))}
-      {places.size > 0 && (
-        <div class="elsewhere-links">
-          <span class="elsewhere-lead">{excerpts.length ? 'Also in' : `${first} wrote in`}</span>
-          {[...places].map(([place, es]) => (
-            <span class="elsewhere-place" key={place}>
-              <PlaceLink view={view} e={es[es.length - 1]} first={first} name={person.name} count={es.length} />
-              <PlaceMenu view={view} e={es[es.length - 1]} />
-            </span>
-          ))}
-          <button class="link-btn elsewhere-here" aria-expanded={here} data-track="elsewhere read here" onClick={() => setHere(!here)}>
-            {here ? 'Hide' : 'Read here'}
-          </button>
-        </div>
-      )}
-      {here && (
-        <ul class="elsewhere-lines">
-          {linked.map((e) => (
-            <li key={e.messageId}>
-              <span class="elsewhere-line-place">{e.title || '(no subject)'}:</span> {e.line}
-            </li>
-          ))}
-        </ul>
+        ) : (
+          <PlaceRow key={p.place} view={view} person={person} r={p} />
+        ),
       )}
     </div>
   );
 }
 
-function PlaceLink({ view, e, first, name, count }: { view: string; e: P.ElsewhereView; first: string; name: string; count?: number }) {
-  const done = followed.value.has(`${view} ${e.place}`);
+function PlaceRow({ view, person, r }: { view: string; person: P.PersonView; r: ElsewhereRow }) {
+  const subject = bareSubject(r.e.title) || '(no subject)';
+  const open = isOpen(view, r);
+  const menu = useMenu(() => placeMenu(view, person, r, subject));
+  const toggle = () => void choose(view, r.place, toggled(open, r));
   return (
-    <a
-      class={`elsewhere-link ${e.unread ? 'unread' : ''} ${done ? 'done' : ''}`}
-      href={`#/inbox/c/${encodeURIComponent(e.place)}`}
-      data-track="elsewhere link"
-      title={`${first} in "${e.title || '(no subject)'}"${e.others.length ? ` with ${e.others.join(', ')}` : ''}. Go there`}
-      onClick={(ev) => {
-        ev.preventDefault();
-        follow(view, e.place, name, e.messageId);
-      }}
-    >
-      <Icon name="mail" size={11} />
-      <span class="elsewhere-title">{e.title || '(no subject)'}</span>
-      {count && count > 1 ? <span class="elsewhere-count">{count}</span> : null}
-      {done ? <Icon name="check" size={11} /> : <span aria-hidden="true">↗</span>}
-    </a>
+    <div class={`elsewhere-row ${r.waits ? 'waits' : ''}`} {...menu}>
+      <button class="elsewhere-head" aria-expanded={open} data-track={open ? 'elsewhere close' : 'elsewhere open'} title={`${person.name} in "${subject}"${r.e.others.length ? ` with ${r.e.others.join(', ')}` : ''}, ${fullTime(r.ts)}`} onClick={toggle}>
+        <Icon name="mail" size={12} />
+        <span class={`elsewhere-title ${r.e.unread ? 'unread' : ''}`}>{subject}</span>
+        {r.e.others.length > 0 && <span class="elsewhere-with">· with {r.e.others.join(', ')}</span>}
+        <span class="elsewhere-time">· {clock(r.ts)}</span>
+        <Icon name={open ? 'chevronUp' : 'chevronDown'} size={12} />
+        {!open && r.waits && <span class="elsewhere-waiting">Waiting on you</span>}
+      </button>
+      {open && (
+        <div class="elsewhere-body">
+          {r.e.excerpt && (
+            <p class="elsewhere-text">
+              <b>{person.name.split(' ')[0]}:</b> {r.e.excerpt}
+            </p>
+          )}
+          <button class="link-btn elsewhere-answer" data-track="elsewhere answer" onClick={() => follow(r.place, person.name, r.e.messageId)}>
+            Answer there <Icon name="chevronRight" size={12} />
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
-const RUNG_WORDS: [P.Rung, string][] = [
-  ['excerpt', 'Text and link'],
-  ['link', 'Link only'],
-  ['hidden', 'Hidden'],
-];
-
-function PlaceMenu({ view, e }: { view: string; e: P.ElsewhereView }) {
-  const now = chosenRung(view, e.place);
-  const why =
-    e.why === 'awaits'
-      ? 'Its text shows: it was to you, and you have not answered there.'
-      : now
-        ? 'You chose how this thread shows here.'
-        : !e.toYou
-          ? 'A link: it was to the others, not you.'
-          : Date.now() - e.ts > 7 * 86_400_000
-            ? 'A link: it is over a week old.'
-            : 'A link: you have answered or read it there.';
-  return (
-    <button
-      class="icon-btn small elsewhere-more"
-      aria-label={`How "${e.title}" shows here`}
-      title="How this shows here"
-      data-track="elsewhere menu"
-      onClick={(ev) => {
-        const r = (ev.currentTarget as HTMLElement).getBoundingClientRect();
-        openMenu(
-          { x: r.left, y: r.bottom },
-          {
-            track: 'elsewhere menu',
-            items: [
-              { kind: 'label', label: why, note: true },
-              ...RUNG_WORDS.map(([rung, label]) => ({
-                label,
-                radio: true,
-                checked: rungOf(view, e) === rung,
-                track: rung,
-                run: () =>
-                  void chooseRung(view, e.place, rung).then(
-                    () => toast({ kind: 'info', title: `${label}: ${e.title || '(no subject)'}`, body: 'In this chat only.', action: () => void chooseRung(view, e.place, now), actionLabel: 'Undo' }),
-                    (err) => toast({ kind: 'error', title: 'Could not change that', body: String(err?.message ?? err) }),
-                  ),
-              })),
-              ...(now ? [{ label: 'As it would show by itself', track: 'default', run: () => void chooseRung(view, e.place, null) }] : []),
-            ],
-          },
-        );
-      }}
-    >
-      <Icon name="more" size={13} />
-    </button>
-  );
+/** Right-click or long-press on a row: open its thread, or hide it in this chat (Undo in the toast, Show in its place). */
+function placeMenu(view: string, person: P.PersonView, r: ElsewhereRow, subject: string): MenuSpec {
+  return {
+    track: 'elsewhere menu',
+    head: subject,
+    items: [
+      { label: `Open in ${subject}`, icon: 'external', track: 'open', run: () => follow(r.place, person.name, r.e.messageId) },
+      {
+        label: 'Hide in this chat',
+        icon: 'eyeOff',
+        track: 'hide',
+        run: () => {
+          const was = chosenRung(view, r.place);
+          void choose(view, r.place, 'hidden').then(
+            (ok) =>
+              ok &&
+              toast({ kind: 'info', title: 'Hidden in this chat', body: subject, action: () => void choose(view, r.place, was?.rung ?? null), actionLabel: 'Undo', chat: openChat() }),
+          );
+        },
+      },
+    ],
+  };
 }
 
-/** The bar over a place you went to from a person's chat: back to them (Esc does the same, as everywhere). */
+/** The bar over a thread opened from a person's chat: back to them, by their full name (Esc does the same, as everywhere). */
 export function BackBar({ place }: { place: string }) {
   const b = backTo.value;
   useEffect(() => () => void (backTo.value?.place === place && (backTo.value = null)), [place]);
