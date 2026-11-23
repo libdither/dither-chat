@@ -14,6 +14,7 @@ import { Icon } from './icons.tsx';
 import { ContextMenuLayer } from './ContextMenu.tsx';
 import { TooltipLayer } from './Tooltip.tsx';
 import { feedOn, PlaceKeys } from './PlaceKeys.tsx';
+import { NextUnreadKey } from './NextUnreadLazy.tsx';
 import { ForwardLayer } from './Forward.tsx';
 import { AppsHostLazy } from './apps/lazy.tsx';
 import { SendingLayer } from './SendExtras.tsx';
@@ -461,6 +462,7 @@ export function App() {
       <ContextMenuLayer />
       <TooltipLayer />
       <PlaceKeys />
+      <NextUnreadKey />
       <ForwardLayer />
       <AppsHostLazy />
       <SendingLayer />
