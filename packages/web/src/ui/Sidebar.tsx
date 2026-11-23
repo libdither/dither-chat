@@ -29,11 +29,11 @@ import {
   rowConvs,
   ruleIcon,
   spaceChildren,
+  channelUnread,
+  shownThreads,
   spaceUnread,
   sumUnread,
-  threadsOf,
   threadWords,
-  topicForum,
   unreadThreadsOf,
   unreadOf,
   visibleConv,
@@ -60,6 +60,7 @@ import { MarkableRow } from './ReplyMark.tsx';
 import { needsReplyLabel, needsReplyOf } from '../replymarks.ts';
 import { pickedRoute } from './Pairs.tsx';
 import { chatKey } from '../chatroutes.ts';
+import { threadDialog } from '../threads.ts';
 import { subThreads } from '../channelrows.ts';
 import { groups, type MenuSpec } from './ContextMenu.tsx';
 import { openAbout } from '../opening.ts';
@@ -867,48 +868,45 @@ function treeOpener(key: string, open: (c: P.ConversationView) => void) {
   return f;
 }
 
-/** A forum's threads that count toward its badge: every topic of a Zulip channel, a Discord forum's open posts. */
-function forumThreads(c: P.ConversationView): P.ConversationView[] {
-  const out: P.ConversationView[] = [];
-  for (const id of db.threads.get(c.id) ?? []) {
-    const t = db.conversations.get(id);
-    if (t && visibleConv(t) && (!t.archived || topicForum(c))) out.push(t);
-  }
-  return out;
-}
-
-/**
- * A channel's threads shown under it: the open one, unread ones and those of the last three days. A forum of topics
- * (Zulip's channels): the open one and the unread ones, a muted one only for a mention, as Zulip's own sidebar. Another
- * forum (Discord's): its six latest posts, since a busy forum's posts are mostly ones you never opened.
- */
-function shownThreadsOf(c: P.ConversationView, active?: string): P.ConversationView[] {
-  if (topicForum(c))
-    return threadsOf(c.id).filter((t) => {
-      if (t.id === active) return true;
-      const u = unreadOf(t);
-      return u.unread > 0 && (!u.muted || u.badge > 0);
-    });
-  if (c.variant === 'forum') return threadsOf(c.id).slice(0, 6);
-  return threadsOf(c.id).filter((t) => t.id === active || unreadOf(t).unread > 0 || (t.lastMessageAt ?? 0) > Date.now() - 3 * 86_400_000);
-}
-
-/**
- * A channel and the threads under it. Drawn again only when its props change (memo.ts) or a name or setting does
- * (`metaRev`): `active` is the open conversation only when it is this one or a thread shown here, so opening another
- * channel draws two rows, not the list.
- */
-const ChannelRow = memo(function ChannelRow({ c, shownThreads, active, depth, onOpen, alsoIn, dots = true, threadUnread = 0, threadBadge = 0 }: { c: P.ConversationView; shownThreads: P.ConversationView[]; active?: string; depth: number; onOpen: (c: P.ConversationView) => void; alsoIn?: string[]; dots?: boolean; threadUnread?: number; threadBadge?: number }) {
+/** A thread under its channel: drawn again only when it changes or is opened or left, not when another is. */
+const ThreadRow = memo(function ThreadRow({ t, active, depth, onOpen }: { t: P.ConversationView; active: boolean; depth: number; onOpen: (c: P.ConversationView) => void }) {
   metaRev.value;
-  const own = unreadOf(c);
-  // A forum's own count is 0 (Zulip) or may already hold its posts' (Discord): the larger, never both added.
-  const u = { ...own, unread: Math.max(own.unread, threadUnread), badge: Math.max(own.badge, threadBadge) };
+  const tu = unreadOf(t);
+  const ctx = useMenu(() => conversationMenu(t));
+  return (
+    <button class={`chan thread ${active ? 'active' : ''} ${tu.unread && !tu.muted ? 'unread' : ''}`} style={{ paddingLeft: `${26 + depth * 12}px` }} onClick={() => onOpen(t)} title={kindLabel(t)} {...ctx}>
+      <span class="thread-elbow" />
+      <span class="chan-name">{convTitle(t)}</span>
+      {resolvedTopic(t) && (
+        <span class="chan-resolved" title="Resolved">
+          <Icon name="check" size={11} />
+        </span>
+      )}
+      {tu.badge > 0 && <Count n={tu.badge} />}
+    </button>
+  );
+});
+
+/** "N more": a forum's page is its thread cards; another channel has no such page, so its thread browser opens too. */
+function moreThreads(c: P.ConversationView, onOpen: (c: P.ConversationView) => void) {
+  onOpen(c);
+  if (c.variant !== 'forum' && c.variant !== 'media') threadDialog.value = { kind: 'browse', convId: c.id, tab: 'active' };
+}
+
+/** The pref('collapsed') key of a channel whose threads are folded away, on this device. */
+const foldKey = (id: string) => `chan:${id}`;
+
+/** A channel's own line: its name, count and fold. Not drawn again when one of its threads is opened or left. */
+const ChannelHead = memo(function ChannelHead({ c, folded, active, depth, onOpen, alsoIn, dots, unread, badge }: { c: P.ConversationView; folded?: boolean; active: boolean; depth: number; onOpen: (c: P.ConversationView) => void; alsoIn?: string[]; dots: boolean; unread: number; badge: number }) {
+  metaRev.value;
+  const muted = unreadOf(c).muted;
   const lvl = effectiveLevel(c);
   const ctx = useMenu(() => conversationMenu(c));
+  const threads = folded === undefined ? null : threadWords(c);
   return (
-    <>
+    <div class="chan-line">
       <button
-        class={`chan ${c.id === active ? 'active' : ''} ${u.unread && !u.muted ? 'unread' : ''} ${u.muted ? 'muted' : ''}`}
+        class={`chan ${active ? 'active' : ''} ${unread && !muted ? 'unread' : ''} ${muted ? 'muted' : ''}`}
         style={{ paddingLeft: `${10 + depth * 12}px` }}
         onClick={() => onOpen(c)}
         title={kindLabel(c)}
@@ -922,36 +920,53 @@ const ChannelRow = memo(function ChannelRow({ c, shownThreads, active, depth, on
             <Icon name="link" size={11} />
           </span>
         )}
-        {u.muted && <Icon name={ruleIcon(lvl.level)} size={12} class="chan-muted" />}
+        {muted && <Icon name={ruleIcon(lvl.level)} size={12} class="chan-muted" />}
         {dots && <AccountDots network={c.network} accountIds={c.vantages.map((v) => v.accountId)} size={6} />}
-        <Count n={u.badge} />
+        {badge > 0 && <Count n={badge} />}
       </button>
+      {threads && (
+        <button
+          class="chan-fold"
+          aria-expanded={!folded}
+          title={folded ? `Show ${threads.many}` : `Hide ${threads.many}`}
+          aria-label={folded ? `Show ${threads.many}` : `Hide ${threads.many}`}
+          data-track={`channel fold (${threads.many})`}
+          onClick={() => setPrefs({ collapsed: { ...pref('collapsed'), [foldKey(c.id)]: !folded } })}
+        >
+          <Icon name={folded ? 'chevronRight' : 'chevronDown'} size={12} />
+        </button>
+      )}
+    </div>
+  );
+});
+
+/**
+ * A channel and the threads under it (model.ts `shownThreads`, docs/servers.md "Threads under a channel"): a chevron
+ * folds them away, and a last row says how many more its thread list has. Its badge is its threads' count with its own
+ * (`channelUnread`), folded or not. Drawn again only when its props change (memo.ts): `active` is the open
+ * conversation only when it is this one or a thread shown here, so opening another channel draws two rows, not the
+ * list, and opening a thread draws that thread's row and the one left; a fold draws only its own channel.
+ */
+const ChannelRow = memo(function ChannelRow({ c, shownThreads, more = 0, folded, active, depth, onOpen, alsoIn, dots = true, unread = 0, badge = 0 }: { c: P.ConversationView; shownThreads: P.ConversationView[]; more?: number; folded?: boolean; active?: string; depth: number; onOpen: (c: P.ConversationView) => void; alsoIn?: string[]; dots?: boolean; unread?: number; badge?: number }) {
+  const words = folded === undefined ? null : threadWords(c);
+  return (
+    <>
+      <ChannelHead c={c} folded={folded} active={c.id === active} depth={depth} onOpen={onOpen} alsoIn={alsoIn} dots={dots} unread={unread} badge={badge} />
       {(c.variant === 'voice' || c.variant === 'stage') && <VoicePeople conversationId={c.id} class="chan-voice" style={{ paddingLeft: `${36 + depth * 12}px` }} />}
-      {shownThreads.map((t) => {
-        const tu = unreadOf(t);
-        return (
-          <Menuable build={() => conversationMenu(t)}>
-            {(ctx) => (
-              <button
-                class={`chan thread ${t.id === active ? 'active' : ''} ${tu.unread && !tu.muted ? 'unread' : ''}`}
-                style={{ paddingLeft: `${26 + depth * 12}px` }}
-                onClick={() => onOpen(t)}
-                title={kindLabel(t)}
-                {...ctx}
-              >
-                <span class="thread-elbow" />
-                <span class="chan-name">{convTitle(t)}</span>
-                {resolvedTopic(t) && (
-                  <span class="chan-resolved" title="Resolved">
-                    <Icon name="check" size={11} />
-                  </span>
-                )}
-                <Count n={tu.badge} />
-              </button>
-            )}
-          </Menuable>
-        );
-      })}
+      {/* Folded, the open thread still shows: where you are. */}
+      {(folded ? shownThreads.filter((t) => t.id === active) : shownThreads).map((t) => (
+        <ThreadRow key={t.id} t={t} active={t.id === active} depth={depth} onOpen={onOpen} />
+      ))}
+      {/* The rest are in the channel's thread list: a forum's post cards (ui/Threads.tsx), which the channel opens on;
+          else the channel, with its thread browser over it. */}
+      {!folded && words && more > 0 && (
+        <button class="chan thread chan-more" style={{ paddingLeft: `${26 + depth * 12}px` }} data-track={`more threads (${words.many})`} onClick={() => moreThreads(c, onOpen)}>
+          <span class="thread-elbow" />
+          <span class="chan-name">
+            {more} more {more === 1 ? words.one : words.many}
+          </span>
+        </button>
+      )}
     </>
   );
 });
@@ -962,22 +977,24 @@ function SpaceTree({ spaceId, active, onOpen, depth = 0, seen = new Set<string>(
   const kids = spaceChildren(spaceId);
   // Seen through one account, the header's "via" already says which; a dot on every channel would repeat it.
   dots ??= (db.spaces.get(spaceId)?.accountIds.length ?? 0) > 1;
+  const folds = pref('collapsed');
   return (
     <>
       {kids.map((k) => {
         if (k.kind === 'conversation') {
           const c = db.conversations.get(k.id)!;
           const also = c.spaceIds.filter((s) => s !== spaceId).map((s) => communityOfSpace(s)?.name ?? db.spaces.get(s)?.name ?? '');
-          const threads = shownThreadsOf(c, active);
-          const here = active === c.id || threads.some((t) => t.id === active);
-          // A forum takes no messages of its own: its count is its threads', as numbers so the row's memo still holds.
-          const sum = c.variant === 'forum' ? sumUnread(forumThreads(c)) : null;
-          return <ChannelRow key={c.id} c={c} shownThreads={threads} active={here ? active : undefined} depth={depth} onOpen={onOpen} alsoIn={also.filter(Boolean)} dots={dots} threadUnread={sum?.unread} threadBadge={sum?.badge} />;
+          const { shown, more } = shownThreads(c, active);
+          const has = shown.length > 0 || more > 0;
+          const here = active === c.id || shown.some((t) => t.id === active);
+          // Its threads' counts with its own, as numbers so the row's memo still holds.
+          const u = channelUnread(c);
+          return <ChannelRow key={c.id} c={c} shownThreads={shown} more={more} folded={has ? !!folds[foldKey(c.id)] : undefined} active={here ? active : undefined} depth={depth} onOpen={onOpen} alsoIn={also.filter(Boolean)} dots={dots} unread={u.unread} badge={u.badge} />;
         }
         const s = db.spaces.get(k.id)!;
         if (k.kind === 'section' && !spaceChildren(s.id).length) return null; // a category whose channels this account can't see
         const key = `space:${s.id}`;
-        const collapsed = isCollapsed(key);
+        const collapsed = !!folds[key];
         const u = spaceUnread(s.id);
         return (
           <div class={`tree-group ${k.kind}`}>

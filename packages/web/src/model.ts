@@ -243,7 +243,8 @@ export const resolvedTopic = (c: P.ConversationView) => c.network === 'zulip' &&
 
 /**
  * A forum whose threads are topics (Zulip's channels): the channel takes no messages of its own, and its topics are
- * read as channels are, not posts to browse. The sidebar lists its unread topics, and its words are Zulip's.
+ * read as channels are, not posts to browse. Its words are Zulip's (threadWords), and its resolved topics are listed
+ * with the rest (shownThreads).
  */
 export const topicForum = (c: P.ConversationView | null | undefined) => !!c && c.variant === 'forum' && c.network === 'zulip';
 
@@ -435,6 +436,110 @@ export function threadsOf(convId: string): P.ConversationView[] {
     .map((id) => db.conversations.get(id)!)
     .filter((t) => t && visibleConv(t))
     .sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0));
+}
+
+/** A channel whose own count may already hold its threads' (a Discord forum's read state): it takes no messages itself. */
+const postsOnly = (c: P.ConversationView | null | undefined) => !!c && c.shape !== 'thread' && (c.variant === 'forum' || c.variant === 'media');
+
+/** At most this many unread threads under a channel in the sidebar, mentions aside: a busy Zulip channel has hundreds. */
+export const UNREAD_THREADS_SHOWN = 8;
+/** And this many of its latest threads after them, as long as they are not shown already. */
+export const LATEST_THREADS_SHOWN = 3;
+
+interface ShownThreads {
+  /** The rows under the channel, in order. */
+  shown: P.ConversationView[];
+  /** The threads left out that the channel's thread list shows: the "N more topics" row. */
+  more: number;
+}
+
+/**
+ * The threads the sidebar shows under a channel, one rule for every network (docs/servers.md, "Threads under a
+ * channel"): the open one, the unread ones (a mention first; a muted one only for a mention; at most
+ * UNREAD_THREADS_SHOWN others), then the latest few not shown yet. The open one comes first only when it would not be
+ * shown otherwise, and was not shown before it was opened: a row stays where it was clicked. An archived thread shows only open or unread: a Discord text channel keeps hundreds of old ones.
+ * Zulip's resolved topics are done, not put away, so they count as any other (its own sidebar lists them too). The
+ * rest are `more`.
+ */
+export function shownThreads(c: P.ConversationView, active?: string): ShownThreads {
+  const base = memo('shownThreads:' + c.id, () => pickThreads(c));
+  if (!active || active === c.id) return remember(c.id, base);
+  const open = db.conversations.get(active);
+  if (!open || open.parentId !== c.id || open.shape !== 'thread' || !visibleConv(open)) return remember(c.id, base);
+  // Shown already, it stays where it is: a row does not jump from under the pointer that opened it.
+  if (base.shown.includes(open)) return remember(c.id, base);
+  const more = listedThread(c, open) ? base.more - 1 : base.more;
+  // Shown before it was opened (an unread one, read by opening it): in the same place still.
+  const was = lastShown.get(c.id);
+  const at = was ? was.indexOf(open.id) : -1;
+  if (at >= 0) return remember(c.id, { shown: [...base.shown.slice(0, at), open, ...base.shown.slice(at)], more });
+  // Opened from the channel's list of the rest, or from elsewhere: it comes first, out of them.
+  return remember(c.id, { shown: [open, ...base.shown], more });
+}
+
+/** The threads each channel showed last: where an open thread that the rule would now leave out stays. */
+const lastShown = new Map<string, string[]>();
+function remember(channel: string, s: ShownThreads): ShownThreads {
+  lastShown.set(
+    channel,
+    s.shown.map((t) => t.id),
+  );
+  return s;
+}
+
+/** A thread the channel's thread list shows without asking: not an archived one, but a resolved Zulip topic. */
+const listedThread = (c: P.ConversationView, t: P.ConversationView) => !t.archived || topicForum(c);
+
+function pickThreads(c: P.ConversationView): ShownThreads {
+  const all = threadsOf(c.id);
+  if (!all.length) return { shown: [], more: 0 };
+  const chanMuted = unreadOf(c).muted;
+  const mentioned: P.ConversationView[] = [];
+  const unread: P.ConversationView[] = [];
+  const latest: P.ConversationView[] = [];
+  let listed = 0;
+  // Latest first, so each list takes the latest of its kind, and the latest few are those not shown yet.
+  for (const t of all) {
+    const listedHere = listedThread(c, t);
+    if (listedHere) listed++;
+    const u = unreadOf(t);
+    if (u.unread > 0 || u.mentions > 0) {
+      // Muted, it shows only for a mention that still makes a badge (Mute outright takes even that off).
+      if (u.mentions > 0 && (!u.muted || u.badge > 0)) {
+        mentioned.push(t);
+        continue;
+      }
+      if (!u.muted && unread.length < UNREAD_THREADS_SHOWN) {
+        unread.push(t);
+        continue;
+      }
+    }
+    // Muted by itself in a channel that is not: left out of the latest, as Zulip's sidebar does.
+    if (listedHere && latest.length < LATEST_THREADS_SHOWN && (chanMuted || !u.muted)) latest.push(t);
+  }
+  const shown = [...mentioned, ...unread, ...latest];
+  return { shown, more: Math.max(0, listed - shown.filter((t) => listedThread(c, t)).length) };
+}
+
+/**
+ * A channel's count with its threads', every one of them (the sidebar shows only some): what its row's badge says,
+ * folded or not. A thread's messages are its own (the hub counts them there), so a text channel's own count and its
+ * threads' add up; a forum's own count may already hold its posts', so `sumUnread` takes the larger.
+ */
+export function channelUnread(c: P.ConversationView): Unread {
+  return memo('cu:' + c.id, () => {
+    const ids = db.threads.get(c.id);
+    const own = unreadOf(c);
+    if (!ids?.length) return own;
+    const all: P.ConversationView[] = [c];
+    for (const id of ids) {
+      const t = db.conversations.get(id);
+      if (t && visibleConv(t)) all.push(t);
+    }
+    const sum = sumUnread(all);
+    // A muted channel's own count is left out of the sum, but the row still says it has some, dimmed.
+    return { ...sum, unread: Math.max(sum.unread, own.unread), muted: own.muted };
+  });
 }
 
 const NO_PREF: Omit<P.PlacePrefView, 'kind' | 'id'> = { position: null, pinned: false, hidden: false, open: false, railed: false };
@@ -774,19 +879,42 @@ export function unreadOf(c: P.ConversationView): Unread {
   return { unread, mentions, badge: loud ? unread : muted && lvl === 'none' ? 0 : mentions, muted };
 }
 
+/**
+ * What these conversations count together. A thread's messages are its own, so a channel's and its threads' add up;
+ * but a forum's own count may already hold its posts' (a Discord forum's read state): of the forum and its posts here,
+ * the larger, never both (channelUnread, a space's count, a folder's).
+ */
 export function sumUnread(convs: P.ConversationView[]): Unread {
   let unread = 0,
     mentions = 0,
     badge = 0;
+  let forums: Map<string, { own: [number, number, number]; posts: [number, number, number] }> | null = null;
   for (const c of convs) {
     // Nothing unread adds nothing, whatever its level: most conversations, and the level is the dear part.
     if (!c.vantages.some((v) => v.unread || v.mentions)) continue;
     const u = unreadOf(c);
     if (u.muted && !u.badge) continue;
+    const forum = postsOnly(c) ? c.id : c.shape === 'thread' && c.parentId && postsOnly(db.conversations.get(c.parentId)) ? c.parentId : null;
+    if (forum) {
+      forums ??= new Map();
+      let f = forums.get(forum);
+      if (!f) forums.set(forum, (f = { own: [0, 0, 0], posts: [0, 0, 0] }));
+      const into = forum === c.id ? f.own : f.posts;
+      into[0] += u.unread;
+      into[1] += u.mentions;
+      into[2] += u.badge;
+      continue;
+    }
     unread += u.unread;
     mentions += u.mentions;
     badge += u.badge;
   }
+  if (forums)
+    for (const { own, posts } of forums.values()) {
+      unread += Math.max(own[0], posts[0]);
+      mentions += Math.max(own[1], posts[1]);
+      badge += Math.max(own[2], posts[2]);
+    }
   return { unread, mentions, badge, muted: false };
 }
 
@@ -824,6 +952,12 @@ export function folderConvs(f: P.FolderView): P.ConversationView[] {
       else if (it.kind === 'conversation') {
         const c = db.conversations.get(it.id);
         if (c && visibleConv(c)) out.set(c.id, c);
+        // A channel with its threads, as under a server: its row's count is theirs too (channelUnread).
+        if (c && visibleConv(c))
+          for (const id of db.threads.get(c.id) ?? []) {
+            const t = db.conversations.get(id);
+            if (t && visibleConv(t)) out.set(t.id, t);
+          }
       } else for (const c of directsOf(it.id)) out.set(c.id, c);
     }
     return [...out.values()];

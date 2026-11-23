@@ -77,7 +77,7 @@
     "css/NoticesPane.css.gzip": { "measured": 533, "budget": 544, "reason": "The approval card under Notices (docs/approvals.md \"Answering\"), its own stylesheet in the Notices chunk" },
     "css/SendLists.css.bytes": { "measured": 1603, "budget": 1636 },
     "css/SendLists.css.gzip": { "measured": 611, "budget": 624 },
-    "css/startup.css.bytes": { "measured": 264670, "budget": 269963, "reason": "Mail editor, nested (docs/mail.md \"Writing\"): quotes drawn as mail quotes in Rich and Markdown (a bar a level), the in-place HTML editor, the Markdown view's blocks drawn as they arrive, and the Cc and Bcc lines' ✕" },
+    "css/startup.css.bytes": { "measured": 270448, "budget": 275857, "reason": "Threads under a channel (docs/servers.md) on top of one row per channel (docs/inbox.md): the sidebar's fold chevron per channel and its \"N more\" row, with the inbox's channel row, about 0.5 kB with the row's" },
     "css/startup.css.gzip": { "measured": 51248, "budget": 52273, "reason": "One row per channel (docs/inbox.md \"One row per channel\") on top of Next unread (docs/threads.md): the channel row's chevron and the indented threads it opens on, with the next-unread bar's styles, about 1 kB gzip together" },
     "js/../protocol/src/folderplan.ts.bytes": { "measured": 9201, "budget": 9289 },
     "js/../protocol/src/folderplan.ts.gzip": { "measured": 3418, "budget": 3442 },

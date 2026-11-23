@@ -84,10 +84,11 @@ topics. **New topic** starts one: its name and first message (`createPost`). A t
 which are Zulip's own (`user_topics`: followed, muted, unmuted). Everything says Zulip's words: topics, not posts or
 threads, and Resolved, not Archived (`model.ts` `threadWords`).
 
-- **The sidebar** lists under each channel its unread topics and the open one, as Zulip's does (a muted topic only
-  for a mention), not its six latest; a Discord forum keeps its six latest posts, since a busy forum's posts are mostly
-  ones you never opened. A forum's own count is its threads' summed (unread and mentions; a Discord forum's open posts
-  only): a Zulip channel takes no messages of its own, so its own count is always 0.
+- **The sidebar** lists under each channel the same rows as for any network's channel with threads (docs/servers.md,
+  "Threads under a channel"): the open topic, the unread ones (a mention first; a muted one only for a mention; at
+  most eight others), the three latest not shown yet, then "N more topics", which opens the channel's topic cards. A
+  chevron folds a channel's topics away. A channel's count is its topics' summed (unread and mentions): a Zulip
+  channel takes no messages of its own, so its own count is always 0.
 - **The inbox** has one row per channel for its topics, not one per topic ([inbox.md](inbox.md), "One row per
   channel"): a topic that mentions you gives its channel's row the red @ count and comes first when the row opens on
   its unread topics. The same holds for a Discord channel's threads and a forum's posts, and a Matrix room's threads.
