@@ -2,7 +2,7 @@
  * src/model.ts: the threads the sidebar shows under a channel, one rule for every network (docs/servers.md, "Threads
  * under a channel"), and a channel's count with its threads', which a space's and a folder's agree with.
  */
-import { expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
 import { changed } from '../src/versions.ts';
 import { db, stateMock } from './fixtures/state.ts';
@@ -13,9 +13,30 @@ const { channelUnread, folderConvs, LATEST_THREADS_SHOWN, shownThreads, spaceUnr
 const NOW = 1_800_000_000_000;
 type Net = 'discord' | 'zulip' | 'matrix';
 
-db.accounts.set('acc-d', { id: 'acc-d', network: 'discord', label: 'me' } as unknown as P.AccountView);
-db.accounts.set('acc-z', { id: 'acc-z', network: 'zulip', label: 'me' } as unknown as P.AccountView);
-db.accounts.set('acc-m', { id: 'acc-m', network: 'matrix', label: 'me' } as unknown as P.AccountView);
+/**
+ * The one db is every test file's (fixtures/state.ts), and others leave their own in it: each test here has the db to
+ * itself, and what was there is put back after, so nothing made here reaches another file.
+ */
+const MAPS = ['conversations', 'attention', 'threads', 'spaces', 'accounts'] as const;
+let saved: { maps: Map<string, unknown>[]; folders: P.FolderView[] } | null = null;
+beforeEach(() => {
+  saved = { maps: MAPS.map((k) => new Map(db[k] as Map<string, unknown>)), folders: db.folders };
+  for (const k of MAPS) db[k].clear();
+  db.folders = [];
+  db.accounts.set('acc-d', { id: 'acc-d', network: 'discord', label: 'me' } as unknown as P.AccountView);
+  db.accounts.set('acc-z', { id: 'acc-z', network: 'zulip', label: 'me' } as unknown as P.AccountView);
+  db.accounts.set('acc-m', { id: 'acc-m', network: 'matrix', label: 'me' } as unknown as P.AccountView);
+  changed('meta');
+});
+afterEach(() => {
+  MAPS.forEach((k, i) => {
+    const m = db[k] as Map<string, unknown>;
+    m.clear();
+    for (const [id, v] of saved!.maps[i]) m.set(id, v);
+  });
+  db.folders = saved!.folders;
+  changed('meta');
+});
 const accOf = (n: Net) => (n === 'discord' ? 'acc-d' : n === 'zulip' ? 'acc-z' : 'acc-m');
 
 function space(id: string, network: Net) {
