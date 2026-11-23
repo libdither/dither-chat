@@ -44,6 +44,7 @@ type DotProps = { of: PresenceOf; size: number; corner?: 'top' };
  * draws the dots it changed, and a merge or a renamed member the dots it changed.
  */
 export const PresenceDot = memoOn(
+  'PresenceDot',
   function PresenceDot({ of, size, corner }: DotProps) {
     const dot = dotFor(of);
     if (!dot) return null;

@@ -127,6 +127,7 @@ function placePicture(c: P.ConversationView) {
  * a name you give someone, and the places' pictures mostly stay (docs/perf.md "Every click").
  */
 const PlaceIcon = memoOn(
+  'PlaceIcon',
   function PlaceIcon({ c, size = 22 }: { c: P.ConversationView; size?: number }) {
     return <Avatar {...placePicture(c)} size={size} />;
   },

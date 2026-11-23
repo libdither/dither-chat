@@ -37,8 +37,11 @@ export function memo<P extends object>(c: FunctionComponent<P>, same: (a: P, b: 
  * `c`, drawn again only when what it shows changes, as `look` says in a string: when its parent draws, or when a
  * signal `look` reads moves (it is read while drawing, so the component follows it). For what a parent hands new
  * objects each time (`{ person: id }`) and what reads more than its props (a status dot, a picture from a name).
+ * `name` is the component's name for the perf counters (perf.ts): a function written inside the call loses its own
+ * name in the minified build.
  */
-export function memoOn<P extends object>(c: FunctionComponent<P>, look: (p: P) => string): FunctionComponent<P> {
+export function memoOn<P extends object>(name: string, c: FunctionComponent<P>, look: (p: P) => string): FunctionComponent<P> {
+  c.displayName = name;
   class MemoOn extends Component<P> {
     private drawn = '';
     shouldComponentUpdate(next: P) {
