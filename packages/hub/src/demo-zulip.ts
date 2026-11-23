@@ -4,8 +4,9 @@
  * messages of its own, each topic a thread of it with its id lowercased. Everyone and everything here is made up.
  *
  * What it exercises: more topics in a channel than the sidebar's six, unread ones among older read ones, a mention in
- * one, a muted topic with unread messages, a resolved topic (Zulip's ✔ in front of its name, read as archived), a
- * message moved from another topic (`extra.movedAt`), a direct message, and profiles with a time zone.
+ * one (its channel's inbox row then opens on the others unread too), a muted topic with unread messages, a resolved
+ * topic (Zulip's ✔ in front of its name, read as archived), a message moved from another topic (`extra.movedAt`), a
+ * direct message, and profiles with a time zone.
  */
 import type * as P from '@dither-chat/protocol';
 import type { AccountRow } from './store.ts';
@@ -77,6 +78,16 @@ const TOPICS: Topic[] = [
       [25, CLEO, 'Yes, with 2px only inside dense tables.'],
     ],
     unread: 1,
+  },
+  {
+    stream: DESIGN,
+    name: 'Button states',
+    msgs: [
+      [240, CLEO, 'Hover, pressed and disabled are drawn; focus is not yet.'],
+      [55, BEN, 'Focus ring at 2px in the accent, outside the border?'],
+      [8, CLEO, 'Yes, and it keeps the corner radius.'],
+    ],
+    unread: 2,
   },
   {
     stream: DESIGN,

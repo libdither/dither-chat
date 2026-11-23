@@ -88,7 +88,10 @@ threads, and Resolved, not Archived (`model.ts` `threadWords`).
   "Threads under a channel"): the open topic, the unread ones (a mention first; a muted one only for a mention; at
   most eight others), the three latest not shown yet, then "N more topics", which opens the channel's topic cards. A
   chevron folds a channel's topics away. A channel's count is its topics' summed (unread and mentions): a Zulip
-  channel takes no messages of its own, so its own count is always 0. Each topic stays its own row in the inbox.
+  channel takes no messages of its own, so its own count is always 0.
+- **The inbox** has one row per channel for its topics, not one per topic ([inbox.md](inbox.md), "One row per
+  channel"): a topic that mentions you gives its channel's row the red @ count and comes first when the row opens on
+  its unread topics. The same holds for a Discord channel's threads and a forum's posts, and a Matrix room's threads.
 - **Resolved topics** (Zulip's ✔ in front of the name) are archived here, but stay in the channel's list with a
   Resolved chip, the ✔ left out of the shown name (`resolvedTopic`); the name the hub keeps, and searches, still has
   it. Resolving does not hide the topic as a network's archive hides a chat (`Store.conversation`): it is done, not
