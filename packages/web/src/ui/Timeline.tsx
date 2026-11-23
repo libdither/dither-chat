@@ -77,6 +77,7 @@ import { convPresence } from './PresenceDot.tsx';
 import { HoverReactions, InsertPicker, ReactionBar } from './Reactions.tsx';
 import { useLongPress } from './longpress.ts';
 import { Icon } from './icons.tsx';
+import { Video } from './Video.tsx';
 import { TriageWhy, tierIcon, tierName } from './Marks.tsx';
 import { Ticks } from './Ticks.tsx';
 import { historyOnMenu, openHistory } from '../messageHistory.ts';
@@ -586,7 +587,7 @@ function Attachments({ m, run, absorbed, layout, switchable }: { m: P.MessageVie
             a.gif && plainGifs() ? (
               <video class="att-video att-gif" data-att={i} src={a.url} autoplay loop muted playsInline preload="auto" aria-label={a.alt ?? 'GIF'} style={a.width && a.height ? { aspectRatio: `${a.width} / ${a.height}` } : undefined} />
             ) : (
-              <video class="att-video" data-att={i} src={a.url} controls preload="metadata" onPlay={() => played(m)} />
+              <Video src={a.url} att={i} name={a.name} facts={fileFacts(a)} width={a.width ?? a.info?.width} height={a.height ?? a.info?.height} label={a.alt} onPlay={() => played(m)} />
             );
           return withNote(a, veiled(a) ? <Veil a={a}>{video}</Veil> : video);
         }

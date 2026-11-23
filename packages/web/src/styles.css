@@ -2546,11 +2546,6 @@ code {
   align-self: flex-start;
   border-radius: 6px;
 }
-.att-video {
-  max-width: 400px;
-  max-height: 300px;
-  border-radius: 10px;
-}
 .att-file {
   display: flex;
   align-items: center;
@@ -7837,6 +7832,9 @@ textarea.chip-box {
 }
 .fv-none .icon {
   color: var(--text-faint);
+}
+.fv-video {
+  margin: 24px auto;
 }
 .fv-media {
   display: block;

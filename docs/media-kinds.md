@@ -115,6 +115,32 @@ converts a WebP or WebM to one yet, so a found GIF goes to them as a WebP pictur
 
 Off, both show as before: the link and its card, and a video player.
 
+## Videos
+
+A video in a message, a link's video and a video file in the file viewer play in place in the app's own player
+(`ui/VideoPlayer.tsx`), made to work as Discord's does on each kind of device. A GIF sent as a video is not a video:
+it loops silently with no controls (above).
+
+| | With a mouse | On a phone |
+| --- | --- | --- |
+| Before it plays | its first frame, a play button in the middle, its length in the corner; the name and Download along the top on hover | the same, the name and Download always shown |
+| Play and pause | a click anywhere on the picture, or the bar's button | a tap plays; once it plays, a tap shows or hides the controls, and the big button in the middle pauses |
+| The controls | the bar along the bottom while the pointer is over it or it is paused | shown after a tap, gone by themselves 2.5 s later while it plays |
+| Seeking | a click or drag on the bar; the time under the pointer shows above it | a drag on the bar, which is tall enough for a thumb |
+| Sound | mute, and a volume slider that opens beside it on hover | mute (the phone's buttons set the volume) |
+| Full screen | the button, F or a double click; Escape leaves it | the button; back leaves it, and a wide video turns on its side where the phone allows |
+
+Keys, while the player has the focus: Space or K plays and pauses, F fills the screen, M mutes, the arrows go 5 s back
+and on and change the volume, J and L go 10 s, Home and End go to the start and the end.
+
+Full screen is the browser's own where it has one. The Android app's WebView and an iPhone have none for a page's
+element, so there the player is put over the whole page instead (a popover, above everything), and back or Escape
+takes it down; the video goes on from where it was either way. Starting a video pauses the one playing before, and the
+volume and mute are remembered for the next video.
+
+The demo world has one video, an invented test pattern in Alice's WhatsApp chat (`packages/hub/src/demo-clip.webm`).
+`scripts/verify-video.ts` plays it with a mouse, keys and a finger, in CI.
+
 ## Protocol
 
 Capabilities: `sendStickers`, `installStickers`, `searchGifs`, `sendGifs`, `sendVoice`, `sendViewOnce`, `stories`.
