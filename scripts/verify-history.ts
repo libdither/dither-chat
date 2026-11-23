@@ -46,7 +46,9 @@ try {
   await p.eval(`(${priya}).querySelector('button.msg-edited.link').click()`);
   await p.until(`document.querySelectorAll('.mh-pop .mh-row').length >= 2`, 5000);
   const edits = await p.eval<string[]>(`[...document.querySelectorAll('.mh-pop .mh-row')].map((r) => r.innerText.replace(/\\s+/g, ' ').trim())`);
-  check(edits.length === 2 && /sent it meet at 6\b/.test(edits[0]) && /edited it meet at 6 ?6:30, traffic/.test(edits[1]), '(edited) opens its edits, oldest first: as sent, then the edit as words out and in', edits);
+  check(edits.length === 2 && /sent it/.test(edits[0]) && !/meet/.test(edits[0]) && /edited it meet at 6 ?6:30, traffic/.test(edits[1]), '(edited) opens its edits, oldest first: sent (no words), then the edit as words out and in', edits);
+  check(await p.eval<boolean>(`(() => { const b = document.querySelector('.mh-pop').getBoundingClientRect(); return b.top >= 0 && b.bottom <= innerHeight && b.left >= 0 && b.right <= innerWidth; })()`), 'the popover sits inside the window once its rows are in');
+  check(!(await p.eval<boolean>(`!!document.querySelector('.mh-pop .mh-more')`)), 'no Whole text when nothing was left out');
   if (shots) await p.shot(`${shots}/history-edits.png`);
   await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
   await p.until(`!document.querySelector('.mh-pop')`, 3000);

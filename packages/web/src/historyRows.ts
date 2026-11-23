@@ -8,9 +8,11 @@ import { space, tokens, wordDiff, type Part } from './wordDiff.ts';
 
 /**
  * Only the changes, with up to `around` words either side and `…` where text is left out: what the history list shows
- * for one edit. A `gap` part stands for the words left out.
+ * for one edit. A change of more than `long` words keeps only its first and last few, so a rewrite does not repeat the
+ * whole of the text before it (or after it, which the top of the list shows). A `gap` part stands for the words left
+ * out.
  */
-export function changesInContext(a: string, b: string, around = 3): (Part | { k: 'gap' })[] {
+export function changesInContext(a: string, b: string, around = 3, long = 12): (Part | { k: 'gap' })[] {
   const parts = wordDiff(a, b);
   const words = (ts: string[]) => ts.filter((t) => !space(t)).length;
   const take = (ts: string[], n: number, fromEnd: boolean) => {
@@ -26,7 +28,11 @@ export function changesInContext(a: string, b: string, around = 3): (Part | { k:
   };
   const out: (Part | { k: 'gap' })[] = [];
   parts.forEach((p, i) => {
-    if (p.k !== '=') return void out.push(p);
+    if (p.k !== '=') {
+      const ts = tokens(p.t);
+      if (words(ts) <= long) return void out.push(p);
+      return void out.push({ k: p.k, t: take(ts, 6, false).replace(/\s+$/, '') }, { k: 'gap' }, { k: p.k, t: take(ts, 3, true).replace(/^\s+/, '') });
+    }
     const ts = tokens(p.t), first = i === 0, last = i === parts.length - 1, n = words(ts);
     if (first && last) return void out.push(p);
     if (first) return void (n > around ? out.push({ k: 'gap' }, { k: '=', t: take(ts, around, true).replace(/^\s+/, '') }) : out.push(p));
@@ -39,7 +45,7 @@ export function changesInContext(a: string, b: string, around = 3): (Part | { k:
 
 /** One row of the list. Times are ms; `seen` means the time is when the hub heard, not the network's own. */
 export type HistoryItem =
-  | { kind: 'sent'; at: number; body?: string }
+  | { kind: 'sent'; at: number }
   | { kind: 'edit'; at: number; before: string; after: string; actorId: string | null }
   | { kind: 'react'; at: number; seen?: boolean; actorId?: string; key: string }
   | { kind: 'unreact'; at: number; seen?: boolean; actorId?: string; key: string; cleared?: boolean }
@@ -59,7 +65,8 @@ export function historyItems(m: P.MessageView, h: P.MessageHistoryView, focus: H
   const v = h.versions;
   const sentAt = v[0]?.at ?? m.ts;
   if (edits) {
-    out.push({ kind: 'sent', at: sentAt, ...(v.length > 1 ? { body: v[0].body } : {}) });
+    // Sent with no words: the first edit shows what it first said, and the top what it says now.
+    out.push({ kind: 'sent', at: sentAt });
     for (let i = 1; i < v.length; i++) out.push({ kind: 'edit', at: v[i].at ?? m.editedTs ?? m.ts, before: v[i - 1].body, after: v[i].body, actorId: m.authorId });
   }
   if (reactions) {

@@ -20,10 +20,11 @@ const hist = (x: Partial<P.MessageHistoryView> = {}): P.MessageHistoryView => ({
 const kinds = (xs: { kind: string }[]) => xs.map((x) => x.kind);
 
 describe('historyItems', () => {
-  test('oldest first: sent with what it first said, then each edit as before and after', () => {
+  test('oldest first: sent, with no words (the first edit has them), then each edit as before and after', () => {
     const xs = historyItems(msg(), hist(), 'edits');
     expect(kinds(xs)).toEqual(['sent', 'edit', 'edit']);
-    expect(xs[0]).toMatchObject({ body: 'leaving at 6' });
+    expect(xs[0]).toEqual({ kind: 'sent', at: 0 });
+    expect(xs[1]).toMatchObject({ before: 'leaving at 6', after: 'leaving at 5:45' });
     expect(xs[2]).toMatchObject({ before: 'leaving at 5:45', after: 'leaving at 5:45 from the gym', at: 5 * M });
   });
 
