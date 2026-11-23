@@ -7,6 +7,7 @@ import type { ComponentChildren } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 import { Avatar } from './bits.tsx';
+import type { PresenceOf } from './PresenceDot.tsx';
 import { openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
 import { HeadOrb } from './Offline.tsx';
@@ -48,6 +49,7 @@ export function Hero({
   status,
   actions,
   onPicture,
+  presence,
 }: {
   id: string;
   name: string;
@@ -64,8 +66,10 @@ export function Hero({
   actions?: ComponentChildren;
   /** Where you may change the picture: it is a button, with a camera on it, that opens what you can do. */
   onPicture?: (e: MouseEvent) => void;
+  /** Whose status dot the picture shows (PresenceDot.tsx). */
+  presence?: PresenceOf;
 }) {
-  const pic = <Avatar id={id} name={name} url={picture} size={92} square={square} />;
+  const pic = <Avatar id={id} name={name} url={picture} size={92} square={square} presence={presence} />;
   return (
     <section class="pf-hero">
       <div class={`pf-banner ${banner ? 'pic' : ''}`} style={bannerStyle(banner, accent, network)} />

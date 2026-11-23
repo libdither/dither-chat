@@ -1363,6 +1363,13 @@ code {
      bar still rises above the first message. scripts/check-overflow.ts looks with it off. */
   overflow-x: clip;
 }
+/* Each row is a whole number of pixels tall, rounded up. Text makes fractional heights (a grouped message is 24.5 px),
+   and the browser's scroll anchoring scrolls by whole pixels: a message coming in below the view moved what you read by
+   half a pixel. Rounding the whole timeline instead would only move the slip to rows growing above the view.
+   No specificity, so a row's own height wins; where calc-size() is unknown, rows are as they were. */
+:where(.timeline-inner > *) {
+  height: calc-size(auto, round(up, size, 1px));
+}
 .timeline-start {
   text-align: center;
   color: var(--text-faint);
@@ -11793,6 +11800,24 @@ img.pf-status-emoji {
 .presence-dot.offline {
   background: transparent;
   box-shadow: inset 0 0 0 2px var(--text-faint);
+}
+/* A status dot on an avatar (PresenceDot.tsx): bottom right, or top right where the network's badge has that corner.
+   A ring of the surface around it parts it from the picture; offline is a hollow ring there too. No motion. */
+.avatar-presence {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  box-shadow: 0 0 0 2px var(--bg-sidebar);
+}
+.avatar-presence.at-top {
+  top: -1px;
+  bottom: auto;
+}
+.avatar-presence.offline {
+  background: var(--bg-sidebar);
+  box-shadow:
+    inset 0 0 0 2px var(--text-faint),
+    0 0 0 2px var(--bg-sidebar);
 }
 .pf-asking {
   color: var(--text-faint);

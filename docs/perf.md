@@ -292,7 +292,11 @@ What changed:
   again for each change, so a chat row is compared by its person and routes), the rail's places (Rail.tsx: the rail
   works out which is open and its counts and passes them in, so going somewhere draws the place left and the place
   opened), a server's channel rows (`ChannelRow`, given its threads, and the open conversation only when it is one of
-  them, with one opener per tree) and the directory's cards (keyed, and compared field by field).
+  them, with one opener per tree) and the directory's cards (keyed, and compared field by field). What a parent hands a
+  new object each time and that reads more than its props is memoised on what it shows (`memoOn`, a string it works
+  out): a status dot (its person's state and tooltip, so a presence frame draws only the dots it changed, and a row
+  drawn again does not draw its dot) and a profile's place pictures. A profile's Activity card compares its props by
+  value and reads `minute`, not `rev`, so a nickname or a message leaves it alone.
 - **Batched**: the signals move once the task that changed things is done (a timer), not on every change. Once per
   animation frame measured worse: the render then ran in the same task as the frame's layout and paint, and the
   longest task of a first open went from about 320 to 512 ms at 4×; a hidden page gets no frames either.

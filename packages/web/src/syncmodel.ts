@@ -7,6 +7,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { applyMailBootstrap, applyMailEvent, emptyMail } from './mail/model.ts';
+import { applyPresence } from './presence.ts';
 
 export function emptyDb() {
   return {
@@ -37,6 +38,8 @@ export function emptyDb() {
     reactionUsage: [] as P.ReactionUsage[],
     /** The hub's inbox ranking, by conversation (docs/inbox.md). */
     attention: new Map<string, P.AttentionView>(),
+    /** Status dots: the latest presence by identity (presence.ts). None: unknown. */
+    presence: new Map<string, P.PresenceNowView>(),
     /** Where in the hub's change journal this copy stands (docs/sync.md). Null: nowhere a delta can start from. */
     sync: null as P.SyncPosition | null,
     /** Mail (mail/model.ts, docs/mail.md). */
@@ -169,6 +172,7 @@ export function applyBootstrapTo(db: Db, b: P.Bootstrap) {
   db.rules = b.rules;
   db.devices = b.devices ?? [];
   db.attention = new Map((b.attention ?? []).map((a) => [a.id, a]));
+  db.presence = new Map((b.presence ?? []).map((v) => [v.identityId, v]));
   db.sync = b.sync ?? null;
   db.requests = b.requests ?? [];
   applyMailBootstrap(db.mail, b.mail);
@@ -253,6 +257,9 @@ export function applyEventTo(db: Db, ev: P.ClientEvent): boolean {
       if (ev.replace) db.attention.clear();
       for (const a of ev.items) db.attention.set(a.id, a);
       for (const id of ev.removed) db.attention.delete(id);
+      return false;
+    case 'presence':
+      applyPresence(db.presence, ev);
       return false;
     default:
       return false;

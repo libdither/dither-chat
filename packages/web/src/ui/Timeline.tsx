@@ -71,6 +71,7 @@ import { openPalette } from './Palette.tsx';
 import { reactionContext } from '../reactions.ts';
 import { openAbout } from '../opening.ts';
 import { Avatar, Empty, FromChips, Menu, variantIcon } from './bits.tsx';
+import { convPresence } from './PresenceDot.tsx';
 import { HoverReactions, InsertPicker, ReactionBar } from './Reactions.tsx';
 import { useLongPress } from './longpress.ts';
 import { Icon } from './icons.tsx';
@@ -340,7 +341,15 @@ function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () =>
       {/* The picture and the name open its profile page: theirs for a DM, the place's otherwise. */}
       <button class="conv-head-icon conv-head-who" tabIndex={-1} data-track="picture" title={whoTitle} onClick={openWho}>
         {isDirect || c.shape === 'group' || c.shape === 'self' ? (
-          <Avatar id={person?.id ?? c.id} name={convTitle(c)} url={person?.avatar ?? c.avatar} size={34} square={!isDirect} network={c.network} />
+          <Avatar
+            id={person?.id ?? c.id}
+            name={convTitle(c)}
+            url={person?.avatar ?? c.avatar}
+            size={34}
+            square={!isDirect}
+            network={c.network}
+            presence={isDirect ? (person ? { person: person.id } : convPresence(c)) : undefined}
+          />
         ) : (
           <span class="conv-head-variant">
             <Icon name={variantIcon(c.variant, c.shape)} size={20} />

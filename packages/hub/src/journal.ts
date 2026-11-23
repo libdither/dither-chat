@@ -95,6 +95,11 @@ export function changesOf(events: P.ClientEvent[]): Change[] {
       case 'mail.lists':
         for (const k of e.stale) out.push({ kind: 'mailList', id: k });
         break;
+      case 'presence':
+        if (e.replace) out.push({ kind: 'presence', id: '*' });
+        for (const v of e.items) out.push({ kind: 'presence', id: v.identityId });
+        for (const id of e.removed) out.push({ kind: 'presence', id, removed: true });
+        break;
       case 'usage':
         if (e.replace) out.push({ kind: 'usage', id: '*' });
         for (const u of e.places) out.push({ kind: 'usage', id: `${u.kind}:${u.id}` });

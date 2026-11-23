@@ -4,7 +4,7 @@
  *
  * - A message that comes in while the view is a pixel or a few above the newest end is shown, not left below the view
  *   (the browser's scroll anchoring would hold the old view still).
- * - Further up, what is being read stays where it is.
+ * - Further up, what is being read stays where it is, to the pixel, as a message comes in below or a row above grows.
  * - The pointer on a reply's quote line lights up the message it points to; a click brings that one to the middle and
  *   lights it up for a moment, a drawn one too.
  * Sends only on the demo adapter, through its hub.
@@ -83,7 +83,7 @@ try {
     return p.eval<{ before: number; after: number; below: number; moved: number }>(`new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => {
       const s = document.querySelector('.timeline-scroll');
       const m = [...s.querySelectorAll('.msg')].find((x) => x.textContent.includes(${JSON.stringify(body)}));
-      r({ before: ${before}, after: s.scrollTop, below: Math.round(m.getBoundingClientRect().bottom - s.getBoundingClientRect().bottom), moved: Math.round(document.getElementById(${JSON.stringify(seen.id)}).getBoundingClientRect().top - ${seen.y}) });
+      r({ before: ${before}, after: s.scrollTop, below: Math.round(m.getBoundingClientRect().bottom - s.getBoundingClientRect().bottom), moved: document.getElementById(${JSON.stringify(seen.id)}).getBoundingClientRect().top - ${seen.y} });
     })))`);
   };
 
@@ -99,8 +99,33 @@ try {
     check(r.below <= 1 && r.after === 0, `with a layout forced as it comes in, ${-off}px above the newest end, a new message is shown`, r);
   }
   await p.eval(`window.__forcer.disconnect()`);
-  const far = await arrive(-400, `far ${Date.now()}`);
-  check(far.moved === 0 && far.below > 300, 'far up, what is being read stays where it is', far);
+  // Not by a part of a pixel either. Text makes fractional heights (a grouped row was 24.5 px) and the browser's
+  // anchoring scrolls by whole pixels, so each row is rounded up to whole pixels (.timeline-inner's rows in styles.css).
+  // Without that the half pixel went one way or the other with the rows above (a day line just after midnight UTC).
+  // Twice, so that both ways come up in every run.
+  for (const n of [1, 2]) {
+    const far = await arrive(-400, `far ${n} ${Date.now()}`);
+    check(far.moved === 0 && far.below > 300, 'far up, what is being read stays where it is', far);
+  }
+  // And a row above the view growing by a part of a pixel (a picture loading there). Rounding the whole timeline to whole
+  // pixels, instead of each row, would move what is being read by the rest of that pixel.
+  const above = await p.eval<{ before: number; after: number; moved: number }>(`new Promise((r) => {
+    const s = document.querySelector('.timeline-scroll');
+    const box = s.getBoundingClientRect();
+    const ms = [...s.querySelectorAll('.msg[id]')];
+    const seen = ms.find((x) => { const b = x.getBoundingClientRect(); return b.top > box.top && b.bottom < box.bottom; });
+    const up = ms.filter((x) => x.getBoundingClientRect().bottom < box.top).pop();
+    const y = seen.getBoundingClientRect().top;
+    const before = s.scrollTop;
+    const grow = Object.assign(document.createElement('div'), { className: 'scroll-check-growth' });
+    grow.style.height = '10.5px';
+    up.querySelector('.msg-main').append(grow);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      r({ before, after: s.scrollTop, moved: seen.getBoundingClientRect().top - y });
+      grow.remove();
+    }));
+  })`);
+  check(above.moved === 0, 'far up, a row above the view growing does not move what is being read', above);
 
   // A reply to a message far up: its quote line points there.
   // Forty rows up: more than a screen and a half, with messages above it to be centred among.
