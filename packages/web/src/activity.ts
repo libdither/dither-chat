@@ -9,7 +9,7 @@
  */
 import { effect, signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { inboxKeyOf, inboxRows, placeConv, rootCommunity, rowMuted, type InboxRow } from './model.ts';
+import { inboxKeyOf, inboxRows, placeConv, rootCommunity, rowConvs, rowMuted, type InboxRow } from './model.ts';
 import { api, apiHooks, db, eventHooks, href, listUnderHooks, parseHash, route, showsHere, type Route } from './state.ts';
 import { NEW_VISIT_AFTER } from './tracker.ts';
 import { typedHooks } from './typing.ts';
@@ -96,7 +96,9 @@ function arrivalOf(el: Element | null): Arrival {
   const item = el.closest('.foryou [data-pos]');
   if (item) return { source: 'foryou', rank: Number(item.getAttribute('data-pos')) };
   if (el.closest('.foryou')) return { source: 'foryou' };
-  const row = el.closest('[data-row]');
+  // A thread under an open channel row (docs/inbox.md "One row per channel") counts as that row.
+  const under = el.closest('[data-in-row]');
+  const row = el.closest('[data-row]') ?? under?.closest('[data-row-key]')?.querySelector('[data-row]') ?? null;
   const list = row?.closest('.sidebar-inner');
   // The inbox's list: its rank counts across the sections, top to bottom.
   if (row && list?.classList.contains('inbox-side')) {
@@ -122,7 +124,7 @@ function shadowRankAt(ids: string[], index: number): number | null {
   const rowOf = (id: string) => {
     const r: InboxRow | undefined = byKey.get(id);
     if (!r) return { shadow: scoreOf(id)?.shadow ?? null, score: scoreOf(id)?.score ?? 0, muted: false };
-    const parts = r.kind === 'conv' ? (r.chat?.routes.map((c) => c.id) ?? [r.conv.id]) : [r.key];
+    const parts = r.kind === 'conv' ? rowConvs(r).map((c) => c.id) : [r.key];
     const shadows = parts.map((p) => scoreOf(p)?.shadow).filter((x): x is number => x !== undefined);
     return { shadow: shadows.length ? Math.max(...shadows) : null, score: r.score, muted: rowMuted(r) };
   };

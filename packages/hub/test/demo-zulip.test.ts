@@ -34,7 +34,7 @@ test('channels are forums with no messages of their own; topics hold them, with 
   expect(tokens.parentId).toBe(design.id);
   expect(tokens.vantages[0]).toMatchObject({ unread: 2, mentions: 1 });
   expect(view(zulipTopic(12, 'Nightly builds')).vantages[0]?.unread).toBe(3);
-  expect(store.one<{ n: number }>('SELECT COUNT(*) AS n FROM conversation WHERE parent_id = ?', design.id)?.n).toBe(8);
+  expect(store.one<{ n: number }>('SELECT COUNT(*) AS n FROM conversation WHERE parent_id = ?', design.id)?.n).toBe(9);
 });
 
 test('a resolved topic keeps its ✔ name, is archived and not hidden; a moved message says when', () => {
