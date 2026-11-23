@@ -369,6 +369,11 @@
    "Ago",
    "Owed"
   ],
+  "a channel's stream / held: the app's clocks": [
+   "Age",
+   "Ago",
+   "Owed"
+  ],
   "a channel / inbox": [
    "AccountDots",
    "CallMark",

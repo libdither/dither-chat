@@ -21,3 +21,17 @@ test('a moved message leaves the old topic, stays in a person timeline, and is l
   // A new message held nowhere: nothing to leave.
   expect(leaveOtherTimelines(all, msg('m9', 'later', 9))).toEqual([]);
 });
+
+test("a channel's stream keeps a message moved to another of its topics, and lets one moved to another channel go", () => {
+  const stream = { key: 'k:general', messages: [msg('m1', 'plans', 1), msg('m2', 'plans', 2)] };
+  const plans = { key: 'c:plans', messages: [msg('m1', 'plans', 1), msg('m2', 'plans', 2)] };
+  const all = [stream, plans];
+  // Within the channel: the topic's page lets it go, the stream keeps it (the event puts the new copy in).
+  expect(leaveOtherTimelines(all, msg('m1', 'later', 1), 'general')).toEqual(['c:plans']);
+  expect(stream.messages.map((m) => m.id)).toEqual(['m1', 'm2']);
+  // To another channel's topic: the stream lets it go too.
+  expect(leaveOtherTimelines(all, msg('m2', 'elsewhere', 2), 'random')).toEqual(['k:general', 'c:plans']);
+  expect(stream.messages.map((m) => m.id)).toEqual(['m1']);
+  // Where the conversation it is in now is not known, a stream keeps what it holds.
+  expect(leaveOtherTimelines([{ key: 'k:general', messages: [msg('m3', 'plans', 3)] }], msg('m3', 'nowhere', 3))).toEqual([]);
+});

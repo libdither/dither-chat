@@ -163,7 +163,11 @@ function apply() {
 /** The copies that belong in a timeline, put in it: one opened while the layer shows (state.ts fillTimeline). */
 export function arrivedInto(t: Timeline) {
   if (phase !== 'open' || !shown.length || t.detached) return;
-  const convIds = t.key.startsWith('c:') ? [t.key.slice(2)] : (t.conversationIds ?? [...db.conversations.values()].filter((c) => c.shape === 'direct' && `p:${c.peerPersonId}` === t.key).map((c) => c.id));
+  const convIds = t.key.startsWith('c:')
+    ? [t.key.slice(2)]
+    : t.key.startsWith('k:')
+      ? [t.key.slice(2), ...(db.threads.get(t.key.slice(2)) ?? [])]
+      : (t.conversationIds ?? [...db.conversations.values()].filter((c) => c.shape === 'direct' && `p:${c.peerPersonId}` === t.key).map((c) => c.id));
   let added = false;
   for (const m of shown) {
     if (!convIds.includes(m.conversationId) || t.messages.some((x) => x.id === m.id)) continue;

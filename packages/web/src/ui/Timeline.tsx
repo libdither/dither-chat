@@ -17,6 +17,8 @@ import {
   chatPersonOf,
   plainBody,
   convByNative,
+  resolvedTopic,
+  threadWords,
   convLabel,
   convTitle,
   crumbs,
@@ -131,6 +133,7 @@ import { PlanChipLazy } from './calendar/lazy.tsx';
 import { EmbedVideo, RichFoot, RichHead, RichMarks, Veil, veiled, Voice } from './rich/parts.tsx';
 import { VoicePeople } from './Ringing.tsx';
 import { ForumLazy } from './ThreadsLazy.tsx';
+import { channelView, channelViews, headBefore, setChannelView, viewLabel, type ChannelView } from '../stream.ts';
 import { CallRoomLazy, roomCall, roomHasChat, roomSide, RoomSwitch } from './CallRoomLazy.tsx';
 import { CallSlot, fillsPage } from './CallSlot.tsx';
 import { ScheduledStrip, useSendExtras } from './SendExtras.tsx';
@@ -318,7 +321,7 @@ function HeadMore({ c, also, profile }: { c: P.ConversationView; also?: P.Conver
  * `chat`: someone you reach through several routes (PersonChat), and `c` the route messages go through. The header is
  * the same, saying the same of that route; it adds one control, the pill that opens the list of routes (Pairs.tsx).
  */
-function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () => void; chat?: { person: P.PersonView; directs: P.ConversationView[]; all: boolean; onView: (view: string) => void } }) {
+export function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () => void; chat?: { person: P.PersonView; directs: P.ConversationView[]; all: boolean; onView: (view: string) => void } }) {
   // Names it shows come from people and accounts, which change without `c` changing (a nickname, a rename).
   metaRev.value;
   const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && visibleAccount(a.id));
@@ -969,13 +972,28 @@ interface Drawn {
   to: string | null;
 }
 
+/** A channel's stream (StreamPane): its channel, a thread header's click, a click on a message (whose thread it picks). */
+export interface StreamOpts {
+  channel: string;
+  onOpen: (convId: string) => void;
+  onPick: (convId: string) => void;
+  onMissing: () => void;
+}
+
+/**
+ * Where a stream was when a thread header opened that thread alone: back to the stream comes back to it (the message
+ * at the top of the view, and how far below the view's top it was). Kept a while, for this session.
+ */
+const streamSpots = new Map<string, { id: string; y: number; at: number }>();
+const SPOT_KEPT = 30 * 60_000;
+
 /**
  * `chat`: a person's chat over several routes (PersonChat): messages name each account by its own name and picture
  * (Pairs.tsx headNames, over the routes shown); `badge`, whether pictures
  * carry the network's badge; `onFocus`, a route tag's click; `onMissing`, a message linked to (`focus`) that paging
- * back through the chat did not reach.
+ * back through the chat did not reach. `stream`: a channel's stream (StreamPane), a header where the thread changes.
  */
-function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey: string; convIds: string[]; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string; chat?: { badge: boolean; onFocus: (convId: string) => void; onMissing: () => void } }) {
+export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, stream }: { tkey: string; convIds: string[]; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string; chat?: { badge: boolean; onFocus: (convId: string) => void; onMissing: () => void }; stream?: StreamOpts }) {
   if (counting) rendered('Timeline');
   timelineRev(tkey).value;
   const scroller = useRef<HTMLDivElement>(null);
@@ -1009,9 +1027,11 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   const revealing = useRef<string | null>(null);
   useEffect(() => {
     revealing.current = null;
-    following.current = !focus;
-    // A person's chat pages back through every route to the message; one too far back shows its route alone.
-    if (focus && tkey.startsWith('p:')) void jumpInChat(tkey, focus).then((found) => !found && chat?.onMissing());
+    // Back to a stream at its spot (streamSpots): not at the newest end.
+    following.current = !focus && !spotHeld.current;
+    // A person's chat pages back through every route to the message, a stream through every thread; one too far
+    // back shows its route, or its thread, alone.
+    if (focus && (tkey.startsWith('p:') || tkey.startsWith('k:'))) void jumpInChat(tkey, focus).then((found) => !found && (chat ?? stream)?.onMissing());
     else if (focus) void jumpTo(convIds[0], focus);
     else loadTimeline(tkey);
     scrolledTo.current = null;
@@ -1038,6 +1058,22 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   const [, redraw] = useState(0);
   const drawn = useRef<Drawn>({ key: tkey, from: null, to: null });
   if (drawn.current.key !== tkey) drawn.current = { key: tkey, from: null, to: null };
+  // Back from a thread a header opened: the stream where it was (streamSpots), drawn around that message.
+  const spot = useRef<{ id: string; y: number } | null>(null);
+  const spotHeld = useRef(false);
+  const spotTaken = useRef('');
+  if (stream && spotTaken.current !== tkey && !focus && t) {
+    spotTaken.current = tkey;
+    const s = streamSpots.get(tkey);
+    streamSpots.delete(tkey);
+    const i = s && Date.now() - s.at < SPOT_KEPT ? at.get(s.id) : undefined;
+    if (s && i !== undefined) {
+      spot.current = s;
+      spotHeld.current = true;
+      following.current = false;
+      if (i < all.length - WINDOW) drawn.current = { key: tkey, from: all[Math.max(0, i - STEP / 2)].id, to: i + STEP / 2 >= all.length - 1 ? null : all[i + STEP / 2].id };
+    }
+  }
   // And of that, the newest FIRST when it shows, then a slice more each time the page is idle (slices.ts).
   const [slices] = useState(() => new Slices());
   slices.begin(tkey);
@@ -1144,7 +1180,9 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     } else if (t?.detached) {
       if (Math.abs(el.scrollTop) < 400) void loadNewer(tkey);
     } else if (Math.abs(el.scrollTop) < 40 && document.visibilityState === 'visible') {
-      convIds.forEach(markRead);
+      // A stream marks read the threads whose messages are drawn: what you saw, not every topic of the channel.
+      if (stream) new Set(all.slice(start, end).map((m) => m.conversationId)).forEach(markRead);
+      else convIds.forEach(markRead);
       // The newest message is on screen, read or not: what this stay could have seen (activity.ts).
       const newest = all[all.length - 1];
       if (newest) noteSeen(convIds, newest.ts);
@@ -1190,6 +1228,32 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     if (el && Math.abs(moved) >= 1) el.scrollTop += moved;
   });
 
+  useLayoutEffect(() => {
+    const s = spot.current;
+    const el = scroller.current;
+    const node = s && document.getElementById(`m-${s.id}`);
+    if (!s || !el || !node) return;
+    spot.current = null;
+    el.scrollTop += node.getBoundingClientRect().top - el.getBoundingClientRect().top - s.y;
+  });
+  /** A thread header's click: where the stream is goes into streamSpots, then the thread opens alone. */
+  const openThread = useRef((_: string) => {});
+  openThread.current = (convId: string) => {
+    const el = scroller.current;
+    if (el) {
+      const top = el.getBoundingClientRect().top;
+      for (let i = start; i < end; i++) {
+        const node = document.getElementById(`m-${all[i].id}`);
+        const r = node?.getBoundingClientRect();
+        if (r && r.bottom > top) {
+          streamSpots.set(tkey, { id: all[i].id, y: r.top - top, at: Date.now() });
+          break;
+        }
+      }
+    }
+    stream?.onOpen(convId);
+  };
+  const onHead = useMemo(() => (id: string) => openThread.current(id), []);
   // A reply's quote shows the message it quotes: drawn first if it is held but not drawn. One further back than the
   // timeline holds is fetched with the page around it, in place, as a link to a message is (jumpTo, jumpInChat); one
   // in another chat, or too far back in a person's chat, opens its own chat at it.
@@ -1208,7 +1272,7 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
       if (revealing.current === id) revealing.current = null;
       if (q) openMessage(q.conversationId, id);
     };
-    if (tkey.startsWith('p:')) void jumpInChat(tkey, id).then((found) => !found && away());
+    if (tkey.startsWith('p:') || tkey.startsWith('k:')) void jumpInChat(tkey, id).then((found) => !found && away());
     else if (q?.conversationId === convIds[0]) void jumpTo(convIds[0], id);
     else away();
   };
@@ -1283,8 +1347,14 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   let above: P.MessageView | null = null;
   for (let i = start; i < end; i++) {
     const m = all[i];
-    if (!prev || !sameDay(prev.ts, m.ts)) items.push(<div class="day-sep"><span>{dayLabel(m.ts)}</span></div>);
+    const newDay = !prev || !sameDay(prev.ts, m.ts);
+    if (newDay) items.push(<div class="day-sep"><span>{dayLabel(m.ts)}</span></div>);
     if (i === unreadFrom) items.push(<div class="new-sep"><span>New</span></div>);
+    // A stream: the thread's name where it changes (stream.ts headBefore), and its messages grouped under it.
+    if (stream && headBefore(prev, m, newDay)) {
+      items.push(<ThreadHead key={`h-${m.id}`} conv={db.conversations.get(m.conversationId)} onOpen={onHead} />);
+      above = null;
+    }
     // A push's copy, before the hub has answered (arrived.ts): what came before it may not be here yet.
     if (isArrivedCopy(m) && !(prev && isArrivedCopy(prev)))
       items.push(
@@ -1330,7 +1400,7 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
 
   return (
     <div class="timeline-scroll" ref={scroller} onScroll={onScroll}>
-      <div class="timeline-inner" ref={inner}>
+      <div class="timeline-inner" ref={inner} onClick={stream ? (e) => pickFrom(e, byId, stream) : undefined}>
         {t && !t.hasMore && msgs.length > 0 && start === 0 && <div class="timeline-start">This is the start of what dither-chat has stored here.</div>}
         {t?.detached && (
           <button
@@ -1390,6 +1460,46 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   );
 }
 
+/** A click on a stream's message picks its thread for the box (StreamPane), unless it was on a link or a button. */
+function pickFrom(e: MouseEvent, byId: Map<string, P.MessageView>, stream: StreamOpts) {
+  const target = e.target as Element;
+  if (target.closest('a, button, input, textarea, .stream-head')) return;
+  const row = target.closest('.msg[id^="m-"]');
+  const m = row && byId.get(row.id.slice(2));
+  if (m) stream.onPick(m.conversationId);
+}
+
+/**
+ * Where a stream's thread changes: the thread's name (a resolved topic's Resolved chip, its name without the ✔), a
+ * click opening it alone; or, back among a room's own messages, the room's name.
+ */
+const ThreadHead = memo(function ThreadHead({ conv, onOpen }: { conv: P.ConversationView | undefined; onOpen: (convId: string) => void }) {
+  if (counting) rendered('ThreadHead');
+  if (!conv) return <div class="stream-head" />;
+  if (conv.shape !== 'thread')
+    return (
+      <div class="stream-head own" role="heading" aria-level={3}>
+        <span class="stream-head-own">
+          <Icon name="hash" size={12} /> {convLabel(conv)}
+        </span>
+      </div>
+    );
+  return (
+    <div class="stream-head" role="heading" aria-level={3}>
+      <button class="stream-head-open" data-track="thread header" title={`Open this ${threadWords(conv).one} alone`} onClick={() => onOpen(conv.id)}>
+        <Icon name="thread" size={12} />
+        <span class="stream-head-name">{convTitle(conv)}</span>
+        {resolvedTopic(conv) && (
+          <span class="forum-tag resolved">
+            <Icon name="check" size={11} /> Resolved
+          </span>
+        )}
+        <Icon name="chevronRight" size={12} class="stream-head-go" />
+      </button>
+    </div>
+  );
+});
+
 // ------------------------------------------------------------------ composer
 
 // The phone's + panel is a chunk of its own, loaded at the first press of + (ui/panel/Panel.tsx).
@@ -1405,9 +1515,13 @@ const loadPanels = () =>
     },
   ));
 
-function Composer({ targets, placeholder, reply, clearReply, disabledReason, routed }: {
+export function Composer({ targets, placeholder, reply, clearReply, disabledReason, routed, draft, post }: {
   targets: { convId: string; accountId?: string };
   placeholder: string;
+  /** Where the half-written message is kept, when not by its conversation: a stream's, whichever thread it goes to. */
+  draft?: string;
+  /** Sends a new topic's first message instead (StreamPane): false when it did not go, and the text comes back. */
+  post?: (body: string, attachments: string[]) => Promise<boolean>;
   /** A person page: the line over the box says where the message goes (ui/Pairs.tsx), so the placeholder is just "Message". */
   routed?: boolean;
   reply: P.MessageView | null;
@@ -1457,7 +1571,7 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
     setViewOnce(false);
   }, [targets.convId]);
   const files = att.sendable;
-  const draftKey = `dither-chat:draft:${targets.convId}`;
+  const draftKey = `dither-chat:draft:${draft ?? targets.convId}`;
   const [text, setText] = useState(() => localStorage.getItem(draftKey) ?? '');
   const ta = useRef<HTMLTextAreaElement>(null);
   const edit = editing.value?.conversationId === targets.convId ? editing.value : null;
@@ -1506,6 +1620,17 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
       const m = edit;
       cancelEdit();
       if (body !== m.body) void editMessage(m, body);
+      return;
+    }
+    if (post) {
+      const sent = files;
+      void Promise.all(sent.map((f) => f.job!.settle()))
+        .then((ups) => post(body, ups.map((u) => u.id)))
+        .then((ok) => !ok && type(body));
+      composerDone();
+      type('');
+      att.clear(true);
+      clearReply();
       return;
     }
     send(targets.convId, body, { accountId: targets.accountId, replyTo: reply?.id, files: files.map((f) => f.file), uploads: files.map((f) => f.job!), ...extras.opts, ...(viewOnce && offer.viewOnce && files.length ? { media: { viewOnce: true } } : {}) });
@@ -1980,7 +2105,7 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
 const touchKeyboard = () => matchMedia('(pointer: coarse)').matches;
 
 /** Why the composer cannot send here, or null. */
-function composerBlocker(c: P.ConversationView, accountId?: string): string | null {
+export function composerBlocker(c: P.ConversationView, accountId?: string): string | null {
   // An open message request is read-only until accepted (docs/add.md).
   if (heldRequest(db.requests, c.id)) return 'Accept the message request first, under Requests';
   const vs = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a);
@@ -1989,7 +2114,7 @@ function composerBlocker(c: P.ConversationView, accountId?: string): string | nu
 
 // ------------------------------------------------------------------ panes
 
-function firstUnread(convs: P.ConversationView[]): number | null {
+export function firstUnread(convs: P.ConversationView[]): number | null {
   const ts = convs.flatMap((c) => c.vantages.filter((v) => v.unread > 0).map((v) => v.lastReadTs ?? 0));
   return ts.length ? Math.min(...ts) : null;
 }
@@ -2040,6 +2165,9 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
     );
   // A post you follow (docs/feed.md "Following a post"): its thread, what came since it was read marked new.
   if (c.variant === 'follow') return <FollowChatLazy c={c} onBack={onBack} />;
+  // A channel with threads shows its stream, its thread cards or its own messages (stream.ts, docs/threads.md).
+  const shows = channelView(c);
+  if (shows === 'stream') return <StreamLazy key={c.id} c={c} onBack={onBack} focus={focus} />;
   const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && visibleAccount(a.id));
   const sendAsValue = pref('sendAs')[c.id] ?? accounts.find((a) => a.status === 'online')?.id ?? accounts[0]?.id;
   const voice = c.variant === 'voice' || c.variant === 'stage';
@@ -2050,9 +2178,11 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
   const chat = !room || roomHasChat(c);
   const body = chat && (
     <>
+      <ViewSwitch c={c} shows={shows} />
       {!held && c.pending && <LinkBanner c={c} />}
-      {/* A forum's or media channel's messages are its posts (ui/Threads.tsx, docs/threads.md). */}
-      {c.variant === 'forum' || c.variant === 'media' ? (
+      {/* A forum's or media channel's messages are its posts (ui/Threads.tsx, docs/threads.md), as are a channel's
+          threads when its switch says so. */}
+      {shows === 'cards' ? (
         <ForumLazy key={c.id} c={c} />
       ) : (
         <>
@@ -2078,7 +2208,7 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
       />
       {held ? (
         <RequestBar r={held} />
-      ) : c.variant === 'forum' || c.variant === 'media' ? null : (
+      ) : shows === 'cards' ? null : (
         <Composer
           targets={{ convId: c.id, accountId: sendAsValue }}
           placeholder={`Message ${c.shape === 'direct' ? convTitle(c) : convLabel(c)}`}
@@ -2109,6 +2239,50 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
       <CallSlot c={c} />
       {!fillsPage(c) && body}
     </section>
+  );
+}
+
+// A channel's stream is a chunk of its own (ui/Stream.tsx), loaded the first time one opens.
+type StreamParts = typeof import('./Stream.tsx');
+let streamParts: StreamParts | null = null;
+let streamLoading: Promise<StreamParts> | null = null;
+const loadStream = () =>
+  (streamLoading ??= import('./Stream.tsx').then(
+    (m) => (streamParts = m),
+    (e) => {
+      streamLoading = null;
+      throw e;
+    },
+  ));
+
+function StreamLazy({ c, onBack, focus }: { c: P.ConversationView; onBack?: () => void; focus?: string }) {
+  const [m, setM] = useState(streamParts);
+  useEffect(() => {
+    if (!m) loadStream().then(setM, () => {});
+  }, []);
+  if (m) return <m.StreamPane c={c} onBack={onBack} focus={focus} />;
+  return (
+    <section class="pane stream-pane">
+      <ConvHeader c={c} onBack={onBack} />
+      <ViewSwitch c={c} shows="stream" />
+      <Loading label="Loading messages…" />
+    </section>
+  );
+}
+
+/** Between a channel's stream, its thread cards and its own messages, where it has more than one (stream.ts). */
+export function ViewSwitch({ c, shows }: { c: P.ConversationView; shows: ChannelView }) {
+  const vs = channelViews(c);
+  if (!vs) return null;
+  const many = threadWords(c).many;
+  return (
+    <div class="view-switch" role="tablist" aria-label="Show">
+      {vs.map((v) => (
+        <button key={v} role="tab" aria-selected={v === shows} class={`view-switch-btn ${v === shows ? 'on' : ''}`} data-track={`channel view ${v}`} onClick={() => setChannelView(c.id, v)}>
+          {viewLabel(c, v, many)}
+        </button>
+      ))}
+    </div>
   );
 }
 

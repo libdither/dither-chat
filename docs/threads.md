@@ -79,8 +79,10 @@ menu entries are `web/src/threads.ts`.
 ## Zulip: channels are forums, topics their threads
 
 A Zulip account (dither-accounts' `zulip` kind, its docs/zulip.md) says each channel as a forum (`variant: 'forum'`)
-and each topic as a thread of it, so a channel's page is its topics, newest first, and the message box is in the
-topics. **New topic** starts one: its name and first message (`createPost`). A topic's menu has Follow and Mute,
+and each topic as a thread of it. A channel's page is its stream, as Zulip's channel view is: every topic's messages
+together by time, a header where the topic changes, and a message box with a topic chip ([below](#the-channel-stream)).
+Its **Topics** switch shows the topics as cards instead, newest first. **New topic** starts one: its name and first
+message (`createPost`), from the cards or by naming it on the stream's chip. A topic's menu has Follow and Mute,
 which are Zulip's own (`user_topics`: followed, muted, unmuted). Everything says Zulip's words: topics, not posts or
 threads, and Resolved, not Archived (`model.ts` `threadWords`).
 
@@ -105,6 +107,41 @@ Renaming a topic or moving messages to another one moves them here too: the adap
 `moved: true`, and the hub moves the message, its saved mark and its reply mark to the new conversation; the topic it
 left falls back to its own newest message (`Store.message`, `packages/hub/test/moved.test.ts`).
 
+## The channel stream
+
+A channel's threads, read as one timeline: every thread's messages together by time, and the channel's own where it
+takes any (a Matrix room does; a Zulip channel takes none). Where the conversation changes, a header bar says the
+thread's name (a resolved Zulip topic with its Resolved chip, the ✔ left out), and a click on it opens that thread
+alone; Escape or back from there comes back to the stream where it was. Among a room's own messages again, the bar
+says the room's name. Under a header, messages group by author as anywhere else; a new day starts a header again.
+
+- **What opens on it.** A Zulip channel, and a Matrix room that has threads, open on the stream. A Discord forum still
+  opens on its post cards (its posts are long), and a Discord text channel on its own messages; each offers the stream
+  on the same switch once it has threads. The switch over the timeline says the network's words: **All messages** and
+  **Topics** on Zulip, **Threads** on Matrix, **Posts** on a forum, **Channel** and **With threads** on a text
+  channel. What you pick is kept on this device, per channel (`channelViews`, `web/src/stream.ts`).
+- **The message box** sends to the thread on its chip, the line over the box ("To <thread>"): the thread of the
+  message you last clicked or replied to, else that of the newest message (in a room, the room itself: "No thread"),
+  else the thread with the latest activity. The chip's card finds another by name; where the channel starts topics (a
+  Zulip channel, a forum), a name no thread has starts a new one, its first message sent through `createPost`. Editing
+  a message of another thread moves the chip there. The half-written message is the stream's, whichever thread it
+  goes to.
+- **Read.** Reaching the newest end marks read the threads whose messages are drawn: what you saw, not every topic of
+  the channel.
+- **Links.** A message link to the channel (`#/inbox/c/<channel>?m=<message>`) pages back through the stream to it;
+  one further back than ten pages opens in its thread alone.
+
+The stream's timeline is `k:<channel>` (docs/sync.md): `GET /api/conversations/:id/stream?before=<ts>:<id>&limit=`
+pages it (`Store.channelStream`, `Store.mergedTimeline`), sync brings it up to date as it does a person's chat, and a
+live message joins the stream of its thread's channel, a thread new since included. A message moved to another topic
+of the channel stays in the stream; one moved to another channel leaves it (`syncmodel.ts` `leaveOtherTimelines`).
+The page and its chip are a lazy chunk (`web/src/ui/Stream.tsx`); the headers and the switch are in the timeline
+(`web/src/ui/Timeline.tsx`). Under the last message, `StreamFoot` is the place for "Next unread topic".
+
+**Matrix.** A Matrix thread (`m.thread`) is a thread of its room (`shape: 'thread'`, its native id `room|root`, the
+room its parent: `packages/adapter-matrix/src/adapter.ts`). Its root message stays in the room, so the stream shows
+the root among the room's messages and the replies under the thread's header. "No thread" on the chip sends to the room.
+
 ## Not built
 
 - Forum unread counts per post (Discord's FORUM_UNREADS): they come only when its own forum view asks, which the
@@ -125,7 +162,10 @@ post's facts in the views, an unfollowed thread as "mentions only", follow and u
 mute, archiving refused on someone else's thread and done (with locking) on your own, a thread from a message, a post
 with tags and a file, archived and private archived threads with first messages, publishing, and a group DM's owner
 removing someone, handing it over (and then refused), its picture, and leaving it silently. `web/test/threads.test.ts`
-covers which menu entries show where. In dither-accounts, `extractors/discord/test/hook-threads.test.ts` runs hook.js's
+covers which menu entries show where. The channel stream: `packages/hub/test/stream.test.ts` (the route, paging,
+a room's own messages, and sync of `k:` with a new thread and a message moved away), `web/test/stream.test.ts` (what
+opens on it, where headers go, the chip's thread), `web/test/moved.test.ts`, and `scripts/verify-back.ts` (a header
+opens its thread; Escape and back come back to the same place). In dither-accounts, `extractors/discord/test/hook-threads.test.ts` runs hook.js's
 section against a replica of the client, and `test/threads.test.ts` the mapping, the About parts and the refusals.
 
 None of it has run against a real Discord account.

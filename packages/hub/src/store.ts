@@ -3293,6 +3293,14 @@ export class Store {
   }
 
   /**
+   * A channel's stream (docs/threads.md "The channel stream"): the channel itself and every thread under it, as one
+   * timeline. A Zulip channel takes no messages of its own; a Matrix room does.
+   */
+  channelStream(channelId: string): string[] {
+    return (this.db.query(`SELECT id FROM conversation WHERE id = ? OR (parent_id = ? AND shape = 'thread') ORDER BY id`).all(channelId, channelId) as Row[]).map((r) => r.id as string);
+  }
+
+  /**
    * Several conversations as one timeline, newest first in pages. `before` is the oldest message held: its time, and
    * its id when known, so a message sharing that time in another conversation is not skipped (chats.ts parseCursor).
    */

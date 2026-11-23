@@ -7,6 +7,7 @@ import type { Deps } from './prefetch.ts';
 import { inboxSnap, shownInbox } from './inbox.ts';
 import { chatPersonOf, directsOf } from './model.ts';
 import { fromSnapshot, pages } from './snapshot.ts';
+import { channelView } from './stream.ts';
 import { connected, db, loaded, loadTimeline, openHooks, timelines } from './state.ts';
 
 /** The timeline a person's page opens: their one DM, or their chat of several routes (ui/Timeline.tsx PersonPane). */
@@ -19,7 +20,8 @@ const convKey = (id: string) => {
   const c = db.conversations.get(id);
   if (!c) return null;
   const p = chatPersonOf(c);
-  return p ? `p:${p.id}` : `c:${c.id}`;
+  // A channel that opens on its stream (stream.ts), its stream; one on its thread cards has no timeline to fetch.
+  return p ? `p:${p.id}` : channelView(c) === 'stream' ? `k:${c.id}` : `c:${c.id}`;
 };
 
 const deps: Deps = {

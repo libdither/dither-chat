@@ -56,7 +56,10 @@ const person = boot.persons.find((p: any) => p.id !== boot.selfPersonId && p.ide
 const account = boot.accounts[0];
 const folder = boot.folders.find((f: any) => f.items.some((i: any) => i.kind === 'conversation'));
 const folderConv = folder?.items.find((i: any) => i.kind === 'conversation').id;
-if (!dm || !channel || !person || !folderConv) throw new Error('the demo world is missing a DM, a channel, a person or a folder with a chat');
+/** A Matrix room with a thread: it opens on its stream (docs/threads.md "The channel stream"). */
+const room = boot.conversations.find((c: any) => c.network === 'matrix' && c.shape === 'channel' && boot.conversations.some((t: any) => t.shape === 'thread' && t.parentId === c.id));
+const roomThread = room && boot.conversations.find((t: any) => t.shape === 'thread' && t.parentId === room.id);
+if (!dm || !channel || !person || !folderConv || !roomThread) throw new Error('the demo world is missing a DM, a channel, a person, a folder with a chat or a Matrix room with a thread');
 
 let failures = 0;
 const check = (ok: unknown, what: string, detail?: unknown) => {
@@ -145,6 +148,7 @@ const PAGES: PageCase[] = [
   { name: 'search, with the cursor in its box', view: 'search', from: '#/inbox', to: '#/search?q=pizza', focus: SEARCH_BOX, cursor: SEARCH_BOX },
   { name: 'searching one conversation', view: 'search', from: `#/inbox/c/${dm.id}`, to: `#/search?q=${e(`hi in:${dm.id}`)}`, cursor: SEARCH_BOX },
   { name: 'Settings', view: 'settings', from: '#/inbox', to: '#/settings' },
+  { name: "a thread from its room's stream", view: 'inbox', from: `#/inbox/c/${room.id}`, to: `#/inbox/c/${roomThread.id}`, cursor: COMPOSER },
 ];
 
 /** Lists and tab roots: Escape has nowhere to go from these, and leaves them be. */
@@ -231,6 +235,38 @@ try {
       else await p.eval('history.back()');
       check(await hashIs(c.from), `${how} from ${c.name} goes back`, { was, now: await hash() });
     }
+  }
+
+  // A thread opened by its header in a stream: Escape and back come back to the stream, at the same place.
+  for (const how of ['Escape', 'back'] as const) {
+    await start('#/inbox');
+    await nav(`#/inbox/c/${room.id}`);
+    await cursorIn(COMPOSER);
+    await p.until(`!!document.querySelector('.stream-head-open')`, 10000);
+    // Up from the newest end: the thread's newest header in the middle of the view.
+    await p.eval(`(() => { const hs = document.querySelectorAll('.stream-head-open'); hs[hs.length - 1].scrollIntoView({ block: 'center' }); })()`);
+    await quiet();
+    const seen = await p.eval<{ id: string; y: number } | null>(
+      `(() => { const top = document.querySelector('.timeline-scroll').getBoundingClientRect().top; const m = [...document.querySelectorAll('.msg[id^="m-"]')].find((x) => x.getBoundingClientRect().bottom > top); return m ? { id: m.id, y: Math.round(m.getBoundingClientRect().top) } : null; })()`,
+    );
+    const head = await p.eval<{ x: number; y: number } | null>(
+      `(() => { const box = document.querySelector('.timeline-scroll').getBoundingClientRect(); const h = [...document.querySelectorAll('.stream-head-open')].find((x) => { const r = x.getBoundingClientRect(); return r.top >= box.top && r.bottom <= box.bottom; }); if (!h) return null; const r = h.getBoundingClientRect(); return { x: r.x + 20, y: r.y + r.height / 2 }; })()`,
+    );
+    if (!head || !seen) {
+      check(false, 'a thread header is on screen in the stream', { head, seen });
+      continue;
+    }
+    for (const type of ['mousePressed', 'mouseReleased']) await p.send('Input.dispatchMouseEvent', { type, x: head.x, y: head.y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 });
+    check(await hashIs(`#/inbox/c/${roomThread.id}`), 'a thread header opens the thread alone', await hash());
+    await cursorIn(COMPOSER);
+    await blur();
+    if (how === 'Escape') await key('Escape');
+    else await p.eval('history.back()');
+    check(await hashIs(`#/inbox/c/${room.id}`), `${how} from a thread opened by its header goes back to the stream`, await hash());
+    await p.until(`!!document.getElementById(${JSON.stringify(seen.id)})`, 5000).catch(() => {});
+    await quiet();
+    const y = await p.eval<number | null>(`(() => { const m = document.getElementById(${JSON.stringify(seen.id)}); return m ? Math.round(m.getBoundingClientRect().top) : null; })()`);
+    check(y !== null && Math.abs(y - seen.y) <= 2, `and the stream is where it was (${how})`, { was: seen.y, now: y });
   }
 
   for (const r of ROOTS) {

@@ -1651,6 +1651,11 @@ export class HubServer {
       }
       return bad('not found', 404);
     }
+    // A channel's stream: its own messages and every thread's, by time (docs/threads.md "The channel stream").
+    if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/stream$/)) && method === 'GET') {
+      if (!s.one('SELECT 1 FROM conversation WHERE id = ?', m[1])) return bad('no such conversation', 404);
+      return ok(s.mergedTimeline(s.channelStream(m[1]), parseCursor(url.searchParams.get('before')), Math.min(num('limit') ?? 60, 200)));
+    }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)\/timeline$/))) return ok(s.personTimeline(m[1], parseCursor(url.searchParams.get('before')), Math.min(num('limit') ?? 60, 200)));
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/notify$/))) return ok(this.triage.effectiveLevel(m[1]));
     // Muting a place on its network itself, with a timer (nativemute.ts, docs/notifications.md "Muted on the network").

@@ -34,7 +34,7 @@ client from before it gets the whole list once.
 ## `POST /api/sync` (`packages/hub/src/sync.ts`)
 
 ```
-{ v, epoch, since, timelines: [{ key: 'c:<conversation>' | 'p:<person>', seq, newest, oldest, newer?, conversationIds? }] }
+{ v, epoch, since, timelines: [{ key: 'c:<conversation>' | 'p:<person>' | 'k:<channel>', seq, newest, oldest, newer?, conversationIds? }] }
 ```
 
 The answer is either `{ full: true, reason }` (another version, another epoch, older than the floor, or ahead of the
@@ -50,7 +50,10 @@ journal, as after restoring an older database) or:
   a page (60) of new ones, when the timeline's `seq` is older than the floor, or when a person timeline now spans
   other conversations (people merged or split), or when a message moved out of it since (a Zulip topic renamed or
   moved: the journal keeps a `movedOut` row for the conversation it left), it gets `replace: true` and the newest page
-  instead. A client open at the time drops the moved message from the old timeline as the live event comes.
+  instead. A client open at the time drops the moved message from the old timeline as the live event comes. A
+  channel's stream (`k:<channel>`, docs/threads.md "The channel stream") spans the channel and its threads as they are
+  now: a thread new since needs no fresh page (its messages are newer than the held ones, or come as changes), and its
+  answer says the conversations it spans (`conversationIds`).
 - `selfPersonId`, `categoryProvider`, and `reactionUsage` (only when messages changed), the identities the messages
   name, and the messages their replies quote.
 

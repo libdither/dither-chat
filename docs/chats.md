@@ -157,7 +157,9 @@ and dither-calendar.
 
 A person's timeline spans conversations, so two messages can share a millisecond. Paging by time alone (`ts < before`)
 skipped the other one. `before` is now `<ts>:<message id>`, the oldest message held. Messages are ordered by
-`(ts, id)`, and a page holds what comes before that pair. A cursor with only a time still works the old way.
+`(ts, id)`, and a page holds what comes before that pair. A cursor with only a time still works the old way. A
+channel's stream (`k:<channel>`, `GET /api/conversations/:id/stream`, docs/threads.md "The channel stream") spans
+conversations too and pages with the same cursor.
 
 ## The page
 
