@@ -529,7 +529,7 @@ const hides = (n: Node): boolean => !!n.marks?.some((m) => m.type === 'spoiler')
 const plainCopy = (d: Node) => ranged(fit(unhidden(d), PROFILES.plain).doc.content ?? [], 'plain').text;
 
 /** A draft already fitted to `pr`, as its wire. */
-export function encode(d: Node, pr: Profile, f: Fields = {}): Encoded {
+function encode(d: Node, pr: Profile, f: Fields = {}): Encoded {
   const list = d.content ?? [];
   const w = pr.wire;
   let body: unknown;

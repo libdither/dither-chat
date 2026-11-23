@@ -56,7 +56,7 @@ export function joinRuns(nodes: Node[]): Node[] {
 }
 
 /** A time as words, for a network that has no moving times. */
-export const timeWords = (at: number) => new Date(at * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+const timeWords = (at: number) => new Date(at * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
 
 /** What stands in the text for a thing that is not words, when a network has no such thing. */
 export function standIn(n: Node): string {

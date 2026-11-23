@@ -8,7 +8,7 @@
  * ladder that forgets to say so is caught there.
  */
 import { hiddenLost, wordsLost } from './check.ts';
-import { contained, joinRuns, sameMark, sound, standIn, words, type Mark, type MarkKind, type Node } from './doc.ts';
+import { contained, joinRuns, sameMark, sound, standIn, words, type Mark, type Node } from './doc.ts';
 import { within, type Profile } from './profile.ts';
 
 /**
@@ -444,7 +444,7 @@ function block(b: Node, pr: Profile, notes: Notes, d: Depth): Node[] {
   }
 }
 
-export interface Fitted {
+interface Fitted {
   doc: Node;
   changes: Change[];
   /** Pictures that were in the text and go beside it. */
@@ -468,4 +468,3 @@ export function carries(pr: Profile, what: string): boolean {
   if (what === 'bulletList' || what === 'orderedList') return pr.blocks.includes('list');
   return (pr.blocks as readonly string[]).includes(what) || (pr.marks as readonly string[]).includes(what) || (pr.entities as readonly string[]).includes(what);
 }
-export type { MarkKind };

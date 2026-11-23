@@ -9,7 +9,7 @@ import type { Change } from './fit.ts';
 import type { Fields, Profile } from './profile.ts';
 
 /** One place a draft goes to. */
-export interface Place {
+interface Place {
   /** Which place: an account and a chat there, as the hub names them. The model does not look inside it. */
   key: string;
   /** Words of its own, where it is written separately. Without them it gets the draft's. */
@@ -60,7 +60,7 @@ export const move = (d: Draft, chat: string | null, keys: string[]): Draft => ({
 export const went = (d: Draft, keys: string[], at: number): Draft => ({ ...d, places: d.places.map((p) => (keys.includes(p.key) ? { ...p, sent: at } : p)) });
 export const done = (d: Draft): boolean => d.places.every((p) => p.sent !== undefined);
 
-export interface Outcome {
+interface Outcome {
   /** What each place still to get it would get. */
   sent: Record<string, Sent>;
   /** The places still to get it. */
