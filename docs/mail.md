@@ -549,9 +549,9 @@ Opening a thread, from a mail row or the Mail page, is in the activity log as a 
 its row and where the shadow order had it when it came from the inbox. The learned order with mail (slice 10) learns
 from those (inbox.md, "Mail in the learned order").
 Tests: `hub/test/mail-classify.test.ts`, `mail-attention.test.ts`, `web/test/inbox-mail.test.ts`; `verify-inbox.ts`
-(mixed rows) and `verify-mail.ts` (Updates, Ranked, Newest, Everything and an old People link on a phone and a desktop
-in both themes, Not a person). Ranked: `mail-attention.test.ts` ("Mail's ranked Inbox": every scored thread in the
-window, Inbox paged by date while a score changes), `web/test/mail-model.test.ts` (`rankedThreads`).
+(mixed rows) and `verify-mail.ts` (the Updates and Everything chips in the Inbox's sidebar and an old People link on a
+phone and a desktop in both themes, Not a person). Ranked: `mail-attention.test.ts` ("Mail's ranked Inbox": every
+scored thread in the window, Inbox paged by date while a score changes), `web/test/mail-model.test.ts` (`rankedThreads`).
 
 ## Search (slice 7)
 
@@ -1227,11 +1227,12 @@ is fetched by id, and the window stays "missed" until it is read.
   `DITHER_MAIL_HOLD_MS=500` shortens the 10 s Undo for scripts (`verify-notifications.ts` uses it).
 
   verify-mail drives it in headless Chromium on a phone (390 px, touch) and a desktop, in the dark and light themes:
-  no page errors, nothing off the side of the screen, list → thread → back on a phone, the quote fold, read here, and
-  the HTML-only message; the views in one row of chips, every folded message with a snippet (yours too), the phone
-  reader's subject whole or on two lines beside Archive and ⋯, and the reply it sends shown as text. Its `--proton` run
-  (two accounts) also checks the account picker under "Mail". `DITHER_DEMO_MAIL_GMAIL=1` adds a Gmail account (a trip
-  labelled Travel and marked Important, that you answered; Mom's photos under Family; a starred recipe; a booking
+  no page errors, nothing off the side of the screen; the Inbox's mail list (`#/inbox?mail=…`) with its four chips in
+  one row; a person's mail as messages in their chat (yours too), with the subject tag and its card, the quote behind
+  …, read here, and back on a phone; a thread of three or more as its own chat, its subject on one line beside
+  Archive and ⋯ on a phone; the HTML-only message; and the reply it sends from the chat's box, under the subject pill,
+  shown as text. Its `--proton` run (two accounts) also checks the account wheels over the Everything list.
+  `DITHER_DEMO_MAIL_GMAIL=1` adds a Gmail account (a trip labelled Travel and marked Important, that you answered; Mom's photos under Family; a starred recipe; a booking
   archived under Travel; list mail), and `--gmail` checks it ("Gmail" above). Use a fresh data dir each run: reading marks threads read. With `--html` it also checks the
   frame (slice 3): no script runs in it, not even one put there by hand; no request leaves for anywhere but the hub;
   link clicks go through the opener, and a misleading one asks first; the image banner and the proxy; quotes, `cid:`
@@ -1253,9 +1254,9 @@ is fetched by id, and the window stays "missed" until it is read.
   files by path and by their bytes, a forward's files, From, a recipient or settings refused (422), a clientId sent
   once, a restart mid-send, the server's recipient suggestions).
   `mail-remote.test.ts` sends a reply through the SMTP sink and checks its headers and its copy in the thread.
-  `verify-mail.ts` writes, undoes and sends on a phone (a chip opened and undone, a bold reply drawn in the
-  theme) and docks a new message on a desktop (the server's suggestions, a chip edited in place, B, the Markdown and
-  HTML views, Ctrl+Z, a picture pasted in the text, a table and centred text kept through edits in HTML and
+  `verify-mail.ts` writes, undoes and sends on a phone (a reply from the chat's box held, undone and sent now; the full
+  editor from a message's menu, a chip opened and undone, a bold reply drawn in the theme) and docks a new message on
+  a desktop (the server's suggestions, a chip edited in place, B, the Markdown and HTML views, Ctrl+Z, a picture pasted in the text, a table and centred text kept through edits in HTML and
   Markdown, Plain, the reader's choice for one mail, a big newsletter forwarded with Link counting what can tell and
   its pictures embedded, discard and its Undo), last, since it sends. Start it a few seconds after the demo hub: the demo's two live notices
   arrive 4 s in, and their toasts would take its taps on a phone.
