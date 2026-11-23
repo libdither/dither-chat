@@ -18,7 +18,8 @@ export const ThreadRow = memo(function ThreadRow({ thread: t, active, account, s
   let row = (
     <button class={`row mail-row ${active ? 'active' : ''} ${t.unread ? 'unread' : ''}`} data-row={t.id} data-thread={t.id} onClick={() => go({ view: 'inbox', mail: list, conv: t.id })}>
       <span class="row-avatar">
-        <Avatar id={other?.email ?? t.id} name={name} size={36} />
+        {/* One colour per sender name: a sender writing from news@ and events@ is one face. */}
+        <Avatar id={other?.name || other?.email || t.id} name={name} size={36} />
       </span>
       <span class="row-main">
         <span class="row-top">

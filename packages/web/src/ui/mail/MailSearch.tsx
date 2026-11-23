@@ -115,7 +115,8 @@ function HitRow({ hit, list, active, showAccount }: { hit: P.MailSearchHit; list
   return (
     <button class={`row mail-row mail-hit ${active ? 'active' : ''} ${t.unread ? 'unread' : ''}`} data-thread={t.id} onClick={() => go({ view: 'inbox', mail: list, conv: t.id })}>
       <span class="row-avatar">
-        <Avatar id={other?.email ?? t.id} name={name} size={36} />
+        {/* One colour per sender name: a sender writing from news@ and events@ is one face. */}
+        <Avatar id={other?.name || other?.email || t.id} name={name} size={36} />
       </span>
       <span class="row-main">
         <span class="row-top">
