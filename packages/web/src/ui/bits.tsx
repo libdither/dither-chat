@@ -1,4 +1,5 @@
 import { createPortal, type ComponentChildren } from 'preact';
+import { memo } from './memo.ts';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
 import { GLYPH } from '../brand.ts';
@@ -23,14 +24,17 @@ export function NetGlyph({ network, size = 14, color, decorative }: { network: P
   );
 }
 
-/** Round source badge: network colour with its glyph. */
-export function NetBadge({ network, size = 16, class: cls }: { network: P.Network; size?: number; class?: string }) {
+/**
+ * Round source badge: network colour with its glyph. Kept when its row is drawn again (its props are plain values): an
+ * inbox row drawn again need not draw its picture's badge.
+ */
+export const NetBadge = memo(function NetBadge({ network, size = 16, class: cls }: { network: P.Network; size?: number; class?: string }) {
   return (
     <span class={`net-badge ${cls ?? ''}`} style={{ width: `${size}px`, height: `${size}px`, background: netColor(network) }} title={netName(network)}>
       <NetGlyph network={network} size={Math.round(size * 0.62)} color="#fff" />
     </span>
   );
-}
+});
 
 /**
  * Coloured dots for the accounts that see something. Hidden when the network has only one account, and where only the

@@ -232,7 +232,12 @@ function placeInList(s: MailState, l: MailList, changed: P.MailThreadView[]) {
  * `next` empty, so the threads the hub sends meanwhile go in wherever they sort.
  */
 export function mergePage(s: MailState, key: string, page: P.MailThreadPage, more: boolean) {
-  for (const t of page.threads) s.threads.set(t.id, t);
+  // A thread the page holds as it was is kept as the same object, so a list opened again (Updates, then Everything)
+  // does not draw its rows again (ui/memo.ts: the same object is the same thing).
+  for (const t of page.threads) {
+    const had = s.threads.get(t.id);
+    if (!had || JSON.stringify(had) !== JSON.stringify(t)) s.threads.set(t.id, t);
+  }
   const l = s.lists.get(key) ?? newList(key);
   let ids = page.threads.map((t) => t.id);
   let dry = false;
