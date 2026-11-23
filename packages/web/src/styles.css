@@ -1363,6 +1363,13 @@ code {
      bar still rises above the first message. scripts/check-overflow.ts looks with it off. */
   overflow-x: clip;
 }
+/* Each row is a whole number of pixels tall, rounded up. Text makes fractional heights (a grouped message is 24.5 px),
+   and the browser's scroll anchoring scrolls by whole pixels: a message coming in below the view moved what you read by
+   half a pixel. Rounding the whole timeline instead would only move the slip to rows growing above the view.
+   No specificity, so a row's own height wins; where calc-size() is unknown, rows are as they were. */
+:where(.timeline-inner > *) {
+  height: calc-size(auto, round(up, size, 1px));
+}
 .timeline-start {
   text-align: center;
   color: var(--text-faint);
