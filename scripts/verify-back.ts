@@ -61,11 +61,13 @@ const room = boot.conversations.find((c: any) => c.network === 'matrix' && c.sha
 const roomThread = room && boot.conversations.find((t: any) => t.shape === 'thread' && t.parentId === room.id);
 if (!dm || !channel || !person || !folderConv || !roomThread) throw new Error('the demo world is missing a DM, a channel, a person, a folder with a chat or a Matrix room with a thread');
 /** Mail as chats (docs/mail.md): a person's email route, and a thread with more people, a chat of its own. */
-const mailChat = boot.mail?.chats?.[0];
+let mailChat: any = boot.mail?.chats?.[0];
 let mailGroup: any;
-for (let i = 0; i < 60 && !mailGroup; i++) {
-  // The demo's mail account may still be fetching its first page.
+for (let i = 0; i < 60 && !(mailChat && mailGroup); i++) {
+  // The demo's mail account may still be fetching its first page: the bootstrap's mail chats and the thread list
+  // both fill once it has.
   if (i) await Bun.sleep(500);
+  if (!mailChat) mailChat = ((await fetch(`${hub}/api/bootstrap`).then((r) => r.json())) as any).mail?.chats?.[0];
   const page = (await fetch(`${hub}/api/mail/threads?list=${e('v:all:*')}&limit=100`).then((r) => r.json())) as any;
   mailGroup = page.threads?.find((t: any) => t.participants > 2);
 }
