@@ -384,14 +384,14 @@
   ],
   "a channel's About / Discord channel": [
    "CallMark",
-   "ChannelRow",
+   "ChannelHead",
    "Count",
    "Icon",
    "M$1"
   ],
   "a channel's About / Mute": [
    "CallMark",
-   "ChannelRow",
+   "ChannelHead",
    "Count",
    "Icon",
    "M$1"
@@ -401,7 +401,7 @@
   ],
   "a channel's About / input:on": [
    "CallMark",
-   "ChannelRow",
+   "ChannelHead",
    "Count",
    "Icon",
    "M$1"
