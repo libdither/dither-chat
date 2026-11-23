@@ -83,7 +83,7 @@ try {
     return p.eval<{ before: number; after: number; below: number; moved: number }>(`new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => {
       const s = document.querySelector('.timeline-scroll');
       const m = [...s.querySelectorAll('.msg')].find((x) => x.textContent.includes(${JSON.stringify(body)}));
-      r({ before: ${before}, after: s.scrollTop, below: Math.round(m.getBoundingClientRect().bottom - s.getBoundingClientRect().bottom), moved: Math.round(document.getElementById(${JSON.stringify(seen.id)}).getBoundingClientRect().top - ${seen.y}) });
+      r({ before: ${before}, after: s.scrollTop, below: Math.round(m.getBoundingClientRect().bottom - s.getBoundingClientRect().bottom), moved: document.getElementById(${JSON.stringify(seen.id)}).getBoundingClientRect().top - ${seen.y} });
     })))`);
   };
 
@@ -99,8 +99,15 @@ try {
     check(r.below <= 1 && r.after === 0, `with a layout forced as it comes in, ${-off}px above the newest end, a new message is shown`, r);
   }
   await p.eval(`window.__forcer.disconnect()`);
-  const far = await arrive(-400, `far ${Date.now()}`);
-  check(far.moved === 0 && far.below > 300, 'far up, what is being read stays where it is', far);
+  // Still means: by less than a pixel. A row is 24.5 px tall, and the browser's anchoring scrolls by whole pixels (the
+  // difference of the anchor's rounded places, before and after), so what is read moves by a part of a pixel, one way
+  // or the other. Which way depends on the heights below it, and a day line is one of them: rounded to a whole
+  // number, the half pixel was 0 one way and 1 the other, and this failed for the first hour of each UTC day, while
+  // the newest seeded message was still yesterday's. Twice, so that both ways are looked at in every run.
+  for (const n of [1, 2]) {
+    const far = await arrive(-400, `far ${n} ${Date.now()}`);
+    check(Math.abs(far.moved) < 1 && far.below > 300, 'far up, what is being read stays where it is', far);
+  }
 
   // A reply to a message far up: its quote line points there.
   // Forty rows up: more than a screen and a half, with messages above it to be centred among.

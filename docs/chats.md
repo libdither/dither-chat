@@ -272,7 +272,8 @@ near one (`bringToCenter` in `ui/Timeline.tsx`; with reduced motion it jumps).
 in, or one growing (a picture loading), stays on screen. The browser's scroll anchoring otherwise holds what is in
 view still whenever the view is not exactly at the end, so a message arriving a pixel above it came in below the view.
 A ResizeObserver puts the view back at the end before it is painted. Further up, what you are reading stays where it
-is. A message you send goes to the newest end from wherever you were. `scripts/verify-timeline-scroll.ts` checks all
+is, to within a pixel: the browser's anchoring scrolls by whole pixels and a row's height is not a whole number of
+them. A message you send goes to the newest end from wherever you were. `scripts/verify-timeline-scroll.ts` checks all
 of this on a computer and a phone, in CI.
 
 ## Not yet
