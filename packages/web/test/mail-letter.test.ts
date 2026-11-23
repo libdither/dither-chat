@@ -18,7 +18,7 @@ test("Sam's booking: the signature folds, the last line stays full size", () => 
   const words = 'Booked for 7:30, under Rivera. Their menu is here: https://ramen.example/menu/friday\n\nSee you there!\n\n-- \nSam Rivera';
   const l = letter(words, SAM);
   expect(shape(l)).toBe('Booked for 7:30, under Rivera. Their menu is here: https://ramen.example/menu/friday\n¶\nSee you there!');
-  expect(l.rest).toBe('--\nSam Rivera');
+  expect(l.rest).toBe('Sam Rivera');
 });
 
 test("your answer to Sam keeps everything (nothing is furniture)", () => {
@@ -63,7 +63,7 @@ test('"Best,\\nSam" is unsure: both lines faint, nothing folded', () => {
 test('"Thanks!" and "Sent from my phone" are faint; a signature under them still folds', () => {
   const l = letter('Running ten minutes late.\n\nThanks!\n\nSent from my phone\n-- \nRobin Lane\nLane & Co', ['Robin Lane']);
   expect(shape(l)).toBe('Running ten minutes late.\n¶\n~Thanks!\n¶\n~Sent from my phone');
-  expect(l.rest).toBe('--\nRobin Lane\nLane & Co');
+  expect(l.rest).toBe('Robin Lane\nLane & Co');
 });
 
 test('the full name, a dash before it, or the account name all fold', () => {

@@ -88,7 +88,10 @@ export function ThreadList({ list, active }: { list: string; active?: string }) 
   const fold = updatesFold(s, list);
   // Where it sorts among the rows by date (after the ranked ones); after them when it is older than all of them.
   const foldAt = fold ? threads.findIndex((t, i) => i >= head && t.lastAt < fold.lastAt) : -1;
-  const rows = threads.map((t) => <ThreadRow key={t.id} thread={t} active={t.id === active} account={s.accounts.get(t.accountId)} showAccount={showAccount} list={list} />);
+  const rows = threads.map((t) => {
+    const account = showAccount ? s.accounts.get(t.accountId) : undefined;
+    return <ThreadRow key={t.id} thread={t} active={t.id === active} dot={account?.color} dotTitle={account ? (account.address ?? account.label) : undefined} />;
+  });
   if (fold) rows.splice(foldAt < 0 ? rows.length : foldAt, 0, <UpdatesRow key={fold.key} fold={fold} />);
   // Where the ranked rows end: the rest are by date.
   if (head > 0 && rows.length > head)

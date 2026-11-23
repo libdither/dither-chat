@@ -124,12 +124,12 @@ asked for, never copied into the message table.
   accounts in `seenVia`. `only`, on a mail of yours in a thread with others that went to fewer of them than are on it
   (`mail_thread.participants`, less your addresses), lists who it went to, so the thread says "to Alice only".
 - **Letter furniture** (`web/src/mail/letter.ts`, `web/test/mail-letter.test.ts`): a chat draws a mail's words as a
-  chat message, in a person's chat and in a group thread alike. Folded behind ···: only what is certainly not the
-  message, everything from a `-- ` line on and a last line that is only the sender's name (first name, full name, or
+  chat message, in a person's chat and in a group thread alike. Folded behind a faint … at the end of the last line:
+  only what is certainly not the message, what follows a `-- ` line (the delimiter itself is never drawn) and a last line that is only the sender's name (first name, full name, or
   their identity's, person's or your account's name). An unsure tail ("Best,\nSam", "Thanks!", "Love, Mom", "Sent from
   my phone") stays in place, small and faint. A greeting ("Hi both,") stays full size, with no blank line after it.
   A run of blank lines is one small gap. A link shows as its host and a short path (the middle cut out), the full
-  address on hover and in its long-press menu. ··· shows only when it hides something: the folded lines, the quoted
+  address on hover and in its long-press menu. The … shows only when it hides something: the folded lines, the quoted
   mail (unless it answers the message drawn right above it), and "Show as sent" for a mail whose HTML plain text would
   lose. A click or tap opens them under the message, and another closes them.
 - **The line over the box** (web `ui/MailChat.tsx`) holds pills, not captions. In a person's chat, after "To Sam
@@ -154,7 +154,7 @@ asked for, never copied into the message table.
   since (where mail's attention has folded the thread, the turn it says you owe must cover it). The chat
   (`ui/MailChat.tsx` `ElsewhereRows`) draws one row per thread, at their newest message there, under its own day line:
   `✉ <subject> · with <others> · <time> ⌄`. The whole line opens and closes the row; open, it shows the text and
-  "Answer there", which opens the thread at that message with "Back to <their full name>" over it. A thread that awaits
+  "Answer there" (or "Open there" when nothing awaits you), which opens the thread at that message with "Back to <their full name>" over it. A thread that awaits
   you starts open, the rest closed; one you closed while it waits says "Waiting on you" at the right. Right-click or
   long-press: "Open in <subject>" and "Hide in this chat"; hidden threads leave a faint "1 hidden thread · Show" line in
   their place. On a narrow row "with …" goes first, then the subject is cut.
@@ -170,10 +170,11 @@ asked for, never copied into the message table.
 - **A thread's name** (web `mail/model.ts` `threadName`, used by `mail/chats.ts` for the thread's conversation): its
   subject as drawn (`bareSubject`: no Re:, Fwd:, AW: and the like; what is sent keeps the subject), or with no subject
   its people by first name ("Alice, Jo"). The same in the inbox's row (with the envelope tile and "Jo: …"), the chat's
-  header (the tile, the name, and beneath it up to two of the people then "+3", a click listing everyone), the mail
+  header (the tile, the name, and beneath it up to two of the people on it, from its mails' From, To and Cc, then "+3",
+  a click listing everyone), the mail
   lists' rows and search hits (the name over who wrote), and Ctrl+K and search's Jump to, which find it by its
-  people's names and addresses too. Every thread has the same grey envelope tile. The header's filing is Archive and
-  Star, with Trash in ⋯.
+  people's names and addresses too. Every thread has the same grey envelope tile. The header's filing is Archive, with
+  Star and Trash in ⋯. In a mail message's menu the thread's trash comes last, under a line of its own.
 - **Events**: `mail.chats` (routes changed, and `removed` route ids) goes out in the flush that sends `mail.threads`,
   for every person on a thread that changed (new mail, a read, a Cc, a merge or a split, which send their threads
   again); `rung` when one is chosen or taken back.

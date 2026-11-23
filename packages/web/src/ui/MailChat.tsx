@@ -7,7 +7,7 @@
 import type * as P from '@dither-chat/protocol';
 import { signal } from '@preact/signals';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { chatSends, chosenRung, chooseRung, loadMailThread, mailThread, refill, sendsIn } from '../mail/chats.ts';
+import { chatSends, chosenRung, chooseRung, loadMailThread, mailThread, refill, sendsIn, sendsShown } from '../mail/chats.ts';
 import { bareSubject, mailboxList, parseMailList, platformScope, searchOfList, viewList } from '@dither-chat/protocol';
 import { archivedInAll } from '../mail/filing.ts';
 import { clock, dayLabel, fullTime } from '../format.ts';
@@ -15,7 +15,7 @@ import { holdsOnlyMailboxes, listName, MAIL_FOLDER_VIEWS, searchIn } from '../ma
 import { rowOpen, toggled, type ElsewhereRow } from '../mail/elsewhere.ts';
 import { letter, shortLink } from '../mail/letter.ts';
 import { linkify } from '../mail/text.ts';
-import { db, go, mailRev, openChat, openProfile, previousRoute, route, timelineRev, toast } from '../state.ts';
+import { db, go, mailRev, openChat, openProfile, previousRoute, route, timelineKey, timelineRev, toast } from '../state.ts';
 import { timelines } from '../store.ts';
 import { details } from '../mail/held.ts';
 import { Icon } from './icons.tsx';
@@ -111,11 +111,16 @@ function MailLetter({ m, text, quoted, quoteAbove }: { m: P.MessageView; text: s
         </div>
       </>
     );
+  const dots = (inline: boolean) => (
+    <button class={`mail-quote-dots ${inline ? 'inline' : ''}`} data-track="mail rest" aria-expanded={open} aria-label={open ? 'Hide the rest of this mail' : 'Show the rest of this mail'} title={open ? 'Hide the rest of this mail' : 'Show the rest of this mail'} onClick={() => setOpen(!open)}>
+      …
+    </button>
+  );
   return (
     <>
       {l.paras.length ? (
         <div class="msg-body mail-words">
-          {l.paras.map((p) => (
+          {l.paras.map((p, pi) => (
             <div class="mail-para">
               {p.map((line, i) => (
                 <>
@@ -129,17 +134,15 @@ function MailLetter({ m, text, quoted, quoteAbove }: { m: P.MessageView; text: s
                   )}
                 </>
               ))}
+              {/* The rest of the mail opens from the end of its last line, not from a row of its own. */}
+              {behind && pi === l.paras.length - 1 && dots(true)}
             </div>
           ))}
         </div>
       ) : (
         !x.hasAttachments && <div class="msg-body mail-words mail-words-empty">No text</div>
       )}
-      {behind && (
-        <button class="mail-quote-dots" data-track="mail rest" aria-expanded={open} title={open ? 'Hide the rest of this mail' : 'Show the rest of this mail'} onClick={() => setOpen(!open)}>
-          ···
-        </button>
-      )}
+      {behind && !l.paras.length && dots(false)}
       {behind && open && (
         <div class="mail-rest">
           {l.rest && (
@@ -253,16 +256,20 @@ function subjectMenu(m: P.MessageView): MenuSpec {
 export function mailMessageMenu(m: P.MessageView, reply: () => void): MenuSpec {
   const x = m.mail!;
   const many = !x.place.startsWith('person:');
+  const extras = mailMessageExtras(m);
+  // The thread's trash goes last, under a line of its own, not among Star and Archive at the same weight.
+  const trash = extras.filter((e) => e.kind !== 'sep' && e.kind !== 'label' && e.kind !== 'row' && e.track === 'mail thread: trash');
   return {
     track: 'mail message menu',
     items: [
       { label: 'Reply', icon: 'reply', track: 'reply', run: reply },
       { label: many ? 'Reply all in the full editor' : 'Reply in the full editor', icon: 'pencil', track: 'full editor', run: () => openCompose({ kind: many ? 'replyAll' : 'reply', messageId: m.id, threadId: x.threadId, accountId: x.accountId }) },
       { label: 'Forward', icon: 'forward', track: 'forward', run: () => openCompose({ kind: 'forward', messageId: m.id, threadId: x.threadId, accountId: x.accountId }) },
-      ...mailMessageExtras(m),
+      ...extras.filter((e) => !trash.includes(e)),
       { kind: 'sep' },
       { label: 'Open the thread on its own', icon: 'mail', track: 'open thread', run: () => openThread(x.threadId, m.id) },
       { label: 'Copy text', icon: 'copy', track: 'copy', run: () => void navigator.clipboard?.writeText(m.body) },
+      ...(trash.length ? [{ kind: 'sep' } as const, ...trash.map((e) => ({ ...e, danger: true }))] : []),
     ],
   };
 }
@@ -536,7 +543,8 @@ function PlaceRow({ view, person, r }: { view: string; person: P.PersonView; r: 
             </p>
           )}
           <button class="link-btn elsewhere-answer" data-track="elsewhere answer" onClick={() => follow(r.place, person.name, r.e.messageId)}>
-            Answer there <Icon name="chevronRight" size={12} />
+            {/* "Answer there" only where something waits on you; an answered thread is only gone to. */}
+            {r.e.awaits ? 'Answer there' : 'Open there'} <Icon name="chevronRight" size={12} />
           </button>
         </div>
       )}
@@ -585,6 +593,15 @@ export function BackBar({ place }: { place: string }) {
 /** Your mail from this chat still in the outbox: held for Undo, on its way, or failed, under the chat's messages. */
 export function MailSends({ places, held }: { places: string[]; held: P.MessageView[] }) {
   mailRev.value;
+  const key = places.join(' ');
+  useEffect(() => {
+    sendsShown.value = new Set([...sendsShown.value, ...places]);
+    return () => {
+      const next = new Set(sendsShown.value);
+      for (const p of places) next.delete(p);
+      sendsShown.value = next;
+    };
+  }, [key]);
   // A sent one goes once its copy in Sent is in the chat.
   const here = new Set(held.map((m) => m.mail?.messageId).filter(Boolean));
   const items = sendsIn(places).filter(({ item }) => !(item.state === 'sent' && item.sentMessageId && here.has(item.sentMessageId)));
@@ -672,13 +689,17 @@ function openMore(from: HTMLElement, scope: string | null, on: string | null) {
     const k = viewList(v.view, scope);
     return { label: v.label, icon: v.view === 'starred' ? 'star' : 'send', ...lit(k), track: `mail list (${v.label})`, run: () => openList(k) };
   });
+  // With one account its Inbox and Sent are the Inbox chip and Sent above, and it needs no heading of its own.
+  const one = s.accounts.size === 1;
   for (const a of s.accounts.values()) {
-    const boxes = [...s.mailboxes.values()].filter((b) => b.accountId === a.id && !holdsOnlyMailboxes(b, s.mailboxes.values())).sort((x, y) => (x.role === 'inbox' ? -1 : y.role === 'inbox' ? 1 : x.path.localeCompare(y.path)));
+    const boxes = [...s.mailboxes.values()]
+      .filter((b) => b.accountId === a.id && !holdsOnlyMailboxes(b, s.mailboxes.values()) && !(one && (b.role === 'inbox' || b.role === 'sent')))
+      .sort((x, y) => (x.role === 'inbox' ? -1 : y.role === 'inbox' ? 1 : x.path.localeCompare(y.path)));
     if (!boxes.length) continue;
-    items.push({ kind: 'label', label: a.address ?? a.label });
+    if (!one) items.push({ kind: 'label', label: a.address ?? a.label });
     for (const b of boxes) {
       const k = mailboxList(b.id);
-      items.push({ label: b.path.replace(/\//g, ' / '), icon: b.role === 'inbox' ? 'inbox' : b.role === 'sent' ? 'send' : b.role === 'trash' ? 'trash' : b.role === 'archive' || b.role === 'all' ? 'archive' : 'folder', ...lit(k), track: 'mail list (mailbox)', run: () => openList(k) });
+      items.push({ label: b.role === 'inbox' ? 'Inbox' : b.path.replace(/\//g, ' / '), icon: b.role === 'inbox' ? 'inbox' : b.role === 'sent' ? 'send' : b.role === 'trash' ? 'trash' : b.role === 'archive' || b.role === 'all' ? 'archive' : 'folder', ...lit(k), track: 'mail list (mailbox)', run: () => openList(k) });
     }
   }
   const r = from.getBoundingClientRect();
@@ -753,6 +774,9 @@ function threadPeopleOf(c: P.ConversationView): { name: string; identityId: stri
   };
   const t = mailThread(c.id);
   t?.from.forEach(add);
+  // Who is on it, not only who wrote: each mail's To and Cc, from the thread's chat page once it is drawn, or from the
+  // thread itself once the mail chunk has it.
+  for (const m of timelines.get(timelineKey('c', c.id))?.messages ?? []) if (m.mail) [m.mail.from, ...m.mail.to, ...m.mail.cc].forEach(add);
   for (const m of details.get(c.id)?.messages ?? []) [m.from, ...m.to, ...m.cc].forEach(add);
   if (!out.size) for (const id of c.participantIds) out.set(id, { name: identityName(id), identityId: id });
   return [...out.values()];
@@ -762,6 +786,7 @@ const PEOPLE_MENU = 'People on this thread';
 
 /** Under a thread's name: up to two of the people on it, then "+3"; a hover names everyone, a click or tap lists them. */
 function ThreadPeople({ c }: { c: P.ConversationView }) {
+  timelineRev(timelineKey('c', c.id)).value;
   const people = threadPeopleOf(c);
   const t = mailThread(c.id);
   // The thread's count has you in it; the people the page has not seen yet still count.

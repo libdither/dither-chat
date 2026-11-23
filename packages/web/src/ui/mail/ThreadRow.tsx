@@ -7,19 +7,26 @@ import type * as P from '@dither-chat/protocol';
 import { bareSubject } from '@dither-chat/protocol';
 import { isGroupThread, senderLine, threadName } from '../../mail/model.ts';
 import { MailTile } from '../MailChat.tsx';
-import { go } from '../../state.ts';
+import { go, route } from '../../state.ts';
 import { memo } from '../memo.ts';
 import { Avatar } from '../bits.tsx';
 import { Icon } from '../icons.tsx';
 import { listTime } from './listTime.ts';
 import { ROW_WRAPPERS } from './slots.tsx';
 
-export const ThreadRow = memo(function ThreadRow({ thread: t, active, account, showAccount, list }: { thread: P.MailThreadView; active: boolean; account: P.MailAccountView | undefined; showAccount: boolean; list: string }) {
+/**
+ * `dot` and `dotTitle`: the account's colour and name when more than one account shows. Strings, not the account: an
+ * account's view is sent again whenever its counts change (a thread read), and every row would be drawn again for it.
+ */
+/** The list a row opens its thread over: the one open when it is clicked (read then, so a row stays drawn as lists change). */
+const openOver = () => (route.value.view === 'inbox' ? route.value.mail : undefined);
+
+export const ThreadRow = memo(function ThreadRow({ thread: t, active, dot, dotTitle }: { thread: P.MailThreadView; active: boolean; dot?: string; dotTitle?: string }) {
   const other = [...t.from].reverse().find((f) => !f.self) ?? t.from[t.from.length - 1];
   const name = other?.name || other?.email || '?';
   const group = isGroupThread(t);
   let row = (
-    <button class={`row mail-row ${active ? 'active' : ''} ${t.unread ? 'unread' : ''}`} data-row={t.id} data-thread={t.id} onClick={() => go({ view: 'inbox', mail: list, conv: t.id })}>
+    <button class={`row mail-row ${active ? 'active' : ''} ${t.unread ? 'unread' : ''}`} data-row={t.id} data-thread={t.id} onClick={() => go({ view: 'inbox', mail: openOver(), conv: t.id })}>
       <span class="row-avatar">
         {/* One colour per sender name: a sender writing from news@ and events@ is one face. A thread with more people is a chat named by its subject, with the envelope tile. */}
         {group ? <MailTile /> : <Avatar id={other?.name || other?.email || t.id} name={name} size={36} />}
@@ -27,7 +34,7 @@ export const ThreadRow = memo(function ThreadRow({ thread: t, active, account, s
       <span class="row-main">
         <span class="row-top">
           <span class="row-title">
-            {showAccount && account && <span class="mail-acc-dot" style={{ background: account.color }} title={account.address ?? account.label} />}
+            {dot && <span class="mail-acc-dot" style={{ background: dot }} title={dotTitle} />}
             <span class="mail-row-who">{group ? threadName(t) : senderLine(t)}</span>
             {t.count > 1 && <span class="mail-count">{t.count}</span>}
           </span>

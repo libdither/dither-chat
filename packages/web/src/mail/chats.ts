@@ -157,6 +157,12 @@ export const chatSends = new Map<string, { place: string; text: string; subject:
  */
 export const refill = signal<{ place: string; text: string; seq: number } | null>(null);
 
+/**
+ * The places whose chat is drawn now, with its sends under its messages (ui/MailChat.tsx MailSends): their Undo is
+ * there, so the outbox's strip at the bottom (ui/mail/Composer.tsx) leaves them out rather than show a second one.
+ */
+export const sendsShown = signal<ReadonlySet<string>>(new Set());
+
 /** The sends of this page still in the outbox for a place, oldest first (the chat shows them under its messages). */
 export function sendsIn(places: string[]): { item: P.MailOutboxView; text: string; subject: string }[] {
   const out: { item: P.MailOutboxView; text: string; subject: string; ts: number }[] = [];

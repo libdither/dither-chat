@@ -93,26 +93,6 @@
   "For you / less like this": [
    "M$1"
   ],
-  "Mail / Search mail": [
-   "M$1"
-  ],
-  "Mail / chip-btn:Everything": [
-   "Icon",
-   "M$1"
-  ],
-  "Mail / chip-btn:Updates": [
-   "M$1"
-  ],
-  "Mail / hub: a visit counted": [
-   "M$1"
-  ],
-  "Mail / mail-row.mail-updates-row.row": [
-   "M$1"
-  ],
-  "Mail / mail-row.row": [
-   "Icon",
-   "M$1"
-  ],
   "Notices / held: the app's clocks": [
    "Age",
    "Ago",
@@ -549,6 +529,27 @@
    "Age",
    "Ago",
    "Owed"
+  ],
+  "a mail list / how it sorts": [
+   "M$1"
+  ],
+  "a mail list / hub: a visit counted": [
+   "M$1"
+  ],
+  "a mail list / less like this": [
+   "M$1"
+  ],
+  "a mail list / mail list (Everything)": [
+   "M$1"
+  ],
+  "a mail list / mail list (Inbox)": [
+   "M$1"
+  ],
+  "a mail list / mail list (Updates)": [
+   "M$1"
+  ],
+  "a mail list / mail-row.row": [
+   "M$1"
   ],
   "a person / # people": [
    "AddButton",

@@ -98,10 +98,11 @@ export function letter(text: string, names: readonly (string | null | undefined)
     while (end > start && blank(lines[end - 1])) end--;
   };
   const rest: string[] = [];
-  // The signature: from its "-- " line on, when something is written above it.
+  // The signature: what follows its "-- " line, when something is written above it. The delimiter itself is mail's
+  // furniture and is not drawn even when the rest is opened.
   const sig = lines.findIndex((l, i) => i > start && l === '--');
   if (sig > start) {
-    rest.push(...lines.slice(sig));
+    rest.push(...lines.slice(sig + 1));
     end = sig;
   }
   trim();
