@@ -101,3 +101,14 @@ test('sync of a stream: a new thread and its message come as a delta; a message 
   expect(fresh.replace).toBe(true);
   expect(fresh.messages.map((m) => m.id)).toEqual([zm('m/1'), zm('m/2'), zm('m/5')]);
 });
+
+test('sync of a stream: a thread no longer under the channel asks for a fresh page without its messages', () => {
+  const pos = store.journal.position();
+  const key = `k:${zc('s/1')}`;
+  const held = store.channelStream(zc('s/1'));
+  store.ingest(z, { t: 'conversation', conversation: { nativeId: 's/1/t/lunch', shape: 'thread', name: 'lunch', parentConversation: 's/2' } });
+  const r = (syncResponse({ store, usage: {} as any, boot: 'b' }, { v: pos.v, epoch: pos.epoch, timelines: [{ key, seq: pos.seq, newest: 400, oldest: 100, conversationIds: held }] }) as Extract<P.SyncResponse, { sync: unknown }>).timelines[0];
+  expect(r.replace).toBe(true);
+  expect(r.messages.map((m) => m.id)).not.toContain(zm('m/2'));
+  expect(r.conversationIds).not.toContain(zc('s/1/t/lunch'));
+});

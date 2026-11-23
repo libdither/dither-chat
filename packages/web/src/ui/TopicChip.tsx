@@ -63,9 +63,10 @@ export function TopicChip({ c, value, newName, own, canNew, onPick, onNew }: {
   if (open) {
     if (own && !needle) rows.push({ kind: 'own' });
     const all = threadsOf(c.id);
+    // A name typed that no thread has: starting it comes first, so Enter does that rather than take a longer name.
+    if (canNew && needle && !all.some((t) => convTitle(t).toLowerCase() === needle)) rows.push({ kind: 'new', name: q.trim() });
     const hits = needle ? all.filter((t) => convTitle(t).toLowerCase().includes(needle)) : all;
     for (const t of hits.slice(0, LISTED)) rows.push({ kind: 'thread', t });
-    if (canNew && needle && !all.some((t) => convTitle(t).toLowerCase() === needle)) rows.push({ kind: 'new', name: q.trim() });
   }
   const choose = (r: Row | undefined) => {
     if (!r) return;

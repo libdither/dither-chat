@@ -342,7 +342,8 @@ export function applyEvents(events: P.ClientEvent[]) {
         // And the stream of its channel (a thread new since too: it is in `db` now).
         const ch = streamChannelOf(db, ev.conversation.id);
         const kt = ch && timelines.get('k:' + ch);
-        if (kt && !kt.detached && last) behind.set(kt.key, last.id);
+        // Only a message newer than the stream holds: a thread's older last message is simply further back.
+        if (kt && !kt.detached && last && last.ts >= (kt.messages[kt.messages.length - 1]?.ts ?? 0)) behind.set(kt.key, last.id);
         break;
       }
       case 'readProgress':
@@ -640,10 +641,11 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
         void fromNetwork(t, id).then(() => timelineChanged(key));
       } else t.hasMore = await fromNetwork(t, id);
     } else if (kind === 'k' && ownMessages(id)) {
-      // A Matrix room's stream: the room's own latest from the network, as the room alone asks (above). Its threads'
-      // come with the room's sync; a Zulip channel has none of its own.
-      if (older && !t.hasMore) t.hasMore = await fromNetwork(t, id, t.messages[0]?.ts);
-      else if (!older && !t.glance) void fromNetwork(t, id).then(() => timelineChanged(key));
+      // A Matrix room's stream: the room's own latest from the network, as the room alone asks (above), then the
+      // stream's own page again, so what is held stays one unbroken span of every thread. Its threads' come with the
+      // room's sync; a Zulip channel has none of its own.
+      if (older && !t.hasMore) t.hasMore = await streamFromNetwork(t, id, t.messages[0]);
+      else if (!older && !t.glance) void streamFromNetwork(t, id).then(() => timelineChanged(key));
     }
   } catch (e) {
     // The page did not come (the network, most likely): the timeline keeps what it shows and catches up later.
@@ -670,6 +672,20 @@ async function fromNetwork(t: Timeline, conversationId: string, beforeTs?: numbe
   page?.identities.forEach(putIdentity);
   for (const m of page?.messages ?? []) upsertInto(t.messages, m);
   return !r.done;
+}
+
+/**
+ * A stream's room asked of its network (`before`: the oldest held, for older ones), then the stream's page from there:
+ * the room's page alone could reach further back than the threads' messages held. Whether there may be older ones.
+ */
+async function streamFromNetwork(t: Timeline, channelId: string, before?: P.MessageView): Promise<boolean> {
+  const r = await api<{ count?: number; done?: boolean }>(`/api/conversations/${channelId}/history`, { body: { beforeTs: before?.ts, limit: 50 } }).catch(() => null);
+  if (!r?.count) return false;
+  const cursor = before ? `&before=${before.ts}:${encodeURIComponent(before.id)}` : '';
+  const page = await api<P.MessagePage>(`/api/conversations/${channelId}/stream?limit=60${cursor}`).catch(() => null);
+  page?.identities.forEach(putIdentity);
+  for (const m of page?.messages ?? []) upsertInto(t.messages, m);
+  return !r.done || !!page?.hasMore;
 }
 
 /** Make sure a message is loaded, replacing the window around it if it is not. */

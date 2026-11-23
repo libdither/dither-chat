@@ -5,7 +5,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { threadNameProblem } from '@dither-chat/protocol';
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { convLabel, convTitle, threadWords } from '../model.ts';
 import { api, db, editing, openMessage, rev, timelineKey, timelineRev, timelines, toast } from '../state.ts';
 import { openConv } from '../opening.ts';
@@ -40,13 +40,34 @@ export function StreamPane({ c, onBack, focus }: { c: P.ConversationView; onBack
   const [reply, setReply] = useState<P.MessageView | null>(null);
   const [picked, setPicked] = useState<string | null>(() => pickedThread(c.id));
   const [newName, setNewName] = useState<string | null>(null);
-  const unreadAt = useMemo(() => firstUnread(ids.map((id) => db.conversations.get(id)).filter((x): x is P.ConversationView => !!x)), [c.id]);
+  // Where each thread was read to as the stream opened: the "New" line is before the first message past its own.
+  const readTo = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const id of ids) {
+      const t = db.conversations.get(id);
+      const at = t && firstUnread([t]);
+      if (at != null) m.set(id, at);
+    }
+    return m;
+  }, [c.id]);
   useEffect(() => void reactionContext(c.id), [c.id]);
   const pick = useMemo(
     () => (id: string) => {
       pickThread(c.id, id);
       setPicked(id);
       setNewName(null);
+      // A reply goes in its own thread: another picked, it is no longer one.
+      setReply((r) => (r && r.conversationId !== id ? null : r));
+    },
+    [],
+  );
+  // A click on a message picks its thread, unless a new topic is named, or the click was selecting text.
+  const named = useRef(false);
+  named.current = newName !== null;
+  const pickByClick = useMemo(
+    () => (id: string) => {
+      if (named.current || !!getSelection()?.toString()) return;
+      pick(id);
     },
     [],
   );
@@ -74,11 +95,12 @@ export function StreamPane({ c, onBack, focus }: { c: P.ConversationView; onBack
   const opts = useMemo<StreamOpts>(
     () => ({
       channel: c.id,
+      readTo,
       onOpen: (id) => {
         const t = db.conversations.get(id);
         if (t) openConv(t);
       },
-      onPick: pick,
+      onPick: pickByClick,
       // A message linked to further back than the stream pages: its thread alone, at it.
       onMissing: () => {
         if (focus)
@@ -86,8 +108,9 @@ export function StreamPane({ c, onBack, focus }: { c: P.ConversationView; onBack
             (p) => {
               const m = p.messages.find((x) => x.id === focus);
               if (m && m.conversationId !== c.id) openMessage(m.conversationId, focus);
+              else toast({ kind: 'info', title: 'That message is further back', body: 'Scroll up in the stream to reach it.' }, 4000);
             },
-            () => {},
+            () => toast({ kind: 'error', title: 'Message not found', body: 'It may have been deleted.' }),
           );
       },
     }),
@@ -118,7 +141,7 @@ export function StreamPane({ c, onBack, focus }: { c: P.ConversationView; onBack
       <ConvHeader c={c} onBack={onBack} />
       <ViewSwitch c={c} shows="stream" />
       {c.pending && <LinkBanner c={c} />}
-      <Timeline tkey={tkey} convIds={ids} onReply={onReply} firstUnreadTs={unreadAt} focus={focus} stream={opts} />
+      <Timeline tkey={tkey} convIds={ids} onReply={onReply} firstUnreadTs={null} focus={focus} stream={opts} />
       <StreamFoot c={c} />
       <TypingBar convIds={ids} lead={<TopicChip c={c} value={target} newName={newName} own={own} canNew={canNew} onPick={pick} onNew={setNewName} />} />
       <Composer

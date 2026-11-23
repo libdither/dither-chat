@@ -124,12 +124,16 @@ says the room's name. Under a header, messages group by author as anywhere else;
   message you last clicked or replied to, else that of the newest message (in a room, the room itself: "No thread"),
   else the thread with the latest activity. The chip's card finds another by name; where the channel starts topics (a
   Zulip channel, a forum), a name no thread has starts a new one, its first message sent through `createPost`. Editing
-  a message of another thread moves the chip there. The half-written message is the stream's, whichever thread it
-  goes to.
-- **Read.** Reaching the newest end marks read the threads whose messages are drawn: what you saw, not every topic of
-  the channel.
+  a message of another thread moves the chip there. Once the stream has loaded, the chip keeps its thread until you
+  change it: a message coming in on another thread does not move it while you write. Picking another thread lets go of
+  a reply to a message of the old one. The half-written message and its files are the stream's, whichever thread it
+  goes to; a new topic's files upload first, and the text and files stay in the box until the topic is started.
+- **Read.** Reaching the newest end marks read the threads that have messages drawn on the page (up to the newest 150
+  or so), not every topic of the channel. The "New" line goes by each thread's own read mark: before the first
+  message past where its thread was read when the stream opened.
 - **Links.** A message link to the channel (`#/inbox/c/<channel>?m=<message>`) pages back through the stream to it;
-  one further back than ten pages opens in its thread alone.
+  a thread's message further back than ten pages opens in its thread alone, and a room's own message that far back
+  says so (scroll up to reach it).
 
 The stream's timeline is `k:<channel>` (docs/sync.md): `GET /api/conversations/:id/stream?before=<ts>:<id>&limit=`
 pages it (`Store.channelStream`, `Store.mergedTimeline`), sync brings it up to date as it does a person's chat, and a

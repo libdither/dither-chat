@@ -975,6 +975,8 @@ interface Drawn {
 /** A channel's stream (StreamPane): its channel, a thread header's click, a click on a message (whose thread it picks). */
 export interface StreamOpts {
   channel: string;
+  /** Each thread with unread messages when the stream opened, read up to when: its "New" line goes by its own. */
+  readTo: Map<string, number>;
   onOpen: (convId: string) => void;
   onPick: (convId: string) => void;
   onMissing: () => void;
@@ -984,8 +986,10 @@ export interface StreamOpts {
  * Where a stream was when a thread header opened that thread alone: back to the stream comes back to it (the message
  * at the top of the view, and how far below the view's top it was). Kept a while, for this session.
  */
-const streamSpots = new Map<string, { id: string; y: number; at: number }>();
+const streamSpots = new Map<string, { id: string; y: number; at: number; thread: string }>();
 const SPOT_KEPT = 30 * 60_000;
+/** The timeline shown last (its key), so that a stream comes back to its spot only from the thread it opened. */
+let lastShown = '';
 
 /**
  * `chat`: a person's chat over several routes (PersonChat): messages name each account by its own name and picture
@@ -1029,6 +1033,8 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
     revealing.current = null;
     // Back to a stream at its spot (streamSpots): not at the newest end.
     following.current = !focus && !spotHeld.current;
+    spotHeld.current = false;
+    lastShown = tkey;
     // A person's chat pages back through every route to the message, a stream through every thread; one too far
     // back shows its route, or its thread, alone.
     if (focus && (tkey.startsWith('p:') || tkey.startsWith('k:'))) void jumpInChat(tkey, focus).then((found) => !found && (chat ?? stream)?.onMissing());
@@ -1066,7 +1072,7 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
     spotTaken.current = tkey;
     const s = streamSpots.get(tkey);
     streamSpots.delete(tkey);
-    const i = s && Date.now() - s.at < SPOT_KEPT ? at.get(s.id) : undefined;
+    const i = s && Date.now() - s.at < SPOT_KEPT && lastShown === `c:${s.thread}` ? at.get(s.id) : undefined;
     if (s && i !== undefined) {
       spot.current = s;
       spotHeld.current = true;
@@ -1181,11 +1187,11 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
       if (Math.abs(el.scrollTop) < 400) void loadNewer(tkey);
     } else if (Math.abs(el.scrollTop) < 40 && document.visibilityState === 'visible') {
       // A stream marks read the threads whose messages are drawn: what you saw, not every topic of the channel.
-      if (stream) new Set(all.slice(start, end).map((m) => m.conversationId)).forEach(markRead);
-      else convIds.forEach(markRead);
+      const seen = stream ? [...new Set(all.slice(start, end).map((m) => m.conversationId))] : convIds;
+      seen.forEach(markRead);
       // The newest message is on screen, read or not: what this stay could have seen (activity.ts).
       const newest = all[all.length - 1];
-      if (newest) noteSeen(convIds, newest.ts);
+      if (newest) noteSeen(seen, newest.ts);
       // Back at the newest after drawing far up: only the newest again. What goes is above the view.
       if (d.from !== null && end - start > WINDOW + STEP) draw(null, null);
     }
@@ -1246,7 +1252,7 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
         const node = document.getElementById(`m-${all[i].id}`);
         const r = node?.getBoundingClientRect();
         if (r && r.bottom > top) {
-          streamSpots.set(tkey, { id: all[i].id, y: r.top - top, at: Date.now() });
+          streamSpots.set(tkey, { id: all[i].id, y: r.top - top, at: Date.now(), thread: convId });
           break;
         }
       }
@@ -1333,7 +1339,11 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
   const byId = new Map(msgs.map((x) => [x.id, x]));
   // A person's chat: how each account in it is named (the routes shown; a bot in a DM is not among them).
   const heads = chat ? headNames(convIds) : null;
-  const unreadFrom = firstUnreadTs === null ? -1 : all.findIndex((m) => m.ts > firstUnreadTs && !isSelfIdentity(m.authorId));
+  const unreadFrom = stream
+    ? all.findIndex((m) => m.ts > (stream.readTo.get(m.conversationId) ?? Infinity) && !isSelfIdentity(m.authorId))
+    : firstUnreadTs === null
+      ? -1
+      : all.findIndex((m) => m.ts > firstUnreadTs && !isSelfIdentity(m.authorId));
   const groups = (prev: P.MessageView | null, m: P.MessageView) =>
     !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId && prev.sms === m.sms;
   // One person's pictures one after another are one run, drawn by its last message (docs/pictures.md); a message of
@@ -1533,7 +1543,9 @@ export function Composer({ targets, placeholder, reply, clearReply, disabledReas
   const sender = accs.find((a) => a.id === targets.accountId) ?? accs.find((a) => a.status === 'online') ?? accs[0];
   const canAttach = !!conv && !!sender?.capabilities.includes('sendMedia') && !(conv.network === 'matrix' && conv.encrypted && !sender.capabilities.includes('e2ee'));
   // Each uploads as it is attached; one that cannot be sent stays in the row with the reason (ComposerFiles.tsx).
-  const att = useAttached(conv?.network, targets.convId);
+  // A stream's box (draft) stays one box whichever thread its chip says: what is attached and open stays with it.
+  const place = draft ?? targets.convId;
+  const att = useAttached(conv?.network, place);
   const [dropping, setDropping] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
   // A phone's attaching: the + panel in the keyboard's place (ui/panel/), the camera and the send screen
@@ -1569,11 +1581,13 @@ export function Composer({ targets, placeholder, reply, clearReply, disabledReas
     setReview(false);
     setEmojiAt(null);
     setViewOnce(false);
-  }, [targets.convId]);
+  }, [place]);
   const files = att.sendable;
   const draftKey = `dither-chat:draft:${draft ?? targets.convId}`;
   const [text, setText] = useState(() => localStorage.getItem(draftKey) ?? '');
   const ta = useRef<HTMLTextAreaElement>(null);
+  const textNow = useRef(text);
+  textNow.current = text;
   const edit = editing.value?.conversationId === targets.convId ? editing.value : null;
   // A half-written message waits for you in its own conversation.
   useEffect(() => {
@@ -1623,14 +1637,19 @@ export function Composer({ targets, placeholder, reply, clearReply, disabledReas
       return;
     }
     if (post) {
+      // A new topic: its files' uploads first, then the topic. Text and files stay in the box until it is started.
       const sent = files;
-      void Promise.all(sent.map((f) => f.job!.settle()))
-        .then((ups) => post(body, ups.map((u) => u.id)))
-        .then((ok) => !ok && type(body));
-      composerDone();
-      type('');
-      att.clear(true);
-      clearReply();
+      void Promise.all(sent.map((f) => f.job!.settle())).then(
+        async (ups) => {
+          if (!(await post(body, ups.map((u) => u.id)))) return;
+          composerDone();
+          // What was typed meanwhile stays.
+          if (textNow.current.trim() === body) type('');
+          att.clear(true);
+          clearReply();
+        },
+        (e) => toast({ kind: 'error', title: 'A file did not upload', body: `${(e as Error)?.message ?? e}. Try it again or remove it.` }),
+      );
       return;
     }
     send(targets.convId, body, { accountId: targets.accountId, replyTo: reply?.id, files: files.map((f) => f.file), uploads: files.map((f) => f.job!), ...extras.opts, ...(viewOnce && offer.viewOnce && files.length ? { media: { viewOnce: true } } : {}) });
@@ -1690,14 +1709,14 @@ export function Composer({ targets, placeholder, reply, clearReply, disabledReas
   const attaching = canAttach && !edit && !disabledReason;
   // Making a poll (docs/polls.md): where an account here makes them, not in an open message request.
   const [polling, setPolling] = useState(false);
-  useEffect(() => setPolling(false), [targets.convId]);
+  useEffect(() => setPolling(false), [place]);
   const pollAccount = conv && !edit && !disabledReason ? pollMaker(targets.convId, sender?.id) : null;
   // A computer's + (docs/sending.md "The + menu"): what this chat's network takes besides words, and only that. Where
   // files are all it takes, the + is a paperclip that opens the file picker at once.
   const [stickerAt, setStickerAt] = useState<DOMRect | null>(null);
-  useEffect(() => setStickerAt(null), [targets.convId]);
+  useEffect(() => setStickerAt(null), [place]);
   const [gifAt, setGifAt] = useState<DOMRect | null>(null);
-  useEffect(() => setGifAt(null), [targets.convId]);
+  useEffect(() => setGifAt(null), [place]);
   const plusRef = useRef<HTMLButtonElement>(null);
   const canSticker = !!conv && !disabledReason && !edit && offer.stickers;
   // GIFs (docs/media-kinds.md "GIFs"): a link on Discord, a file anywhere files go.

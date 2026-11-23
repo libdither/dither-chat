@@ -215,7 +215,10 @@ function timeline(store: Store, t: P.SyncTimelineRequest): P.SyncTimeline {
   const latest = (n: number) => store.raw(`SELECT * FROM message WHERE conversation_id IN (SELECT value FROM json_each(?)) AND ts > ? ORDER BY ts DESC LIMIT ?`, list, newest, n);
 
   let newer: Row[] = [];
-  const regrouped = person && (!Array.isArray(t.conversationIds) || [...t.conversationIds].sort().join() !== [...convs].sort().join());
+  const regrouped =
+    (person && (!Array.isArray(t.conversationIds) || [...t.conversationIds].sort().join() !== [...convs].sort().join())) ||
+    // A stream whose copy spans a thread no longer under the channel (gone, or moved to another): a fresh page.
+    (stream && Array.isArray(t.conversationIds) && ((under) => t.conversationIds!.some((c) => !under.has(c)))(new Set(convs)));
   // A message that moved out since (a Zulip topic renamed): a delta cannot take it away, a fresh page does.
   const movedOut = () => !!store.one(`SELECT 1 FROM sync_change WHERE kind = 'movedOut' AND id IN (SELECT value FROM json_each(?)) AND seq > ? LIMIT 1`, list, t.seq);
   let behind = typeof t.seq !== 'number' || t.seq < j.floor || t.seq > j.seq || regrouped || movedOut();

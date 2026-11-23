@@ -88,7 +88,7 @@ export function chipDefault(o: {
   return best?.id ?? (o.own ? o.channel : null);
 }
 
-/** The thread you last clicked a message of, replied to or sent to, by channel, for this session. */
+/** The thread you last clicked a message of, replied to, picked on the chip or started, by channel, for this session. */
 const picks = new Map<string, string>();
 export const pickedThread = (channelId: string) => picks.get(channelId) ?? null;
 export const pickThread = (channelId: string, convId: string) => void picks.set(channelId, convId);
