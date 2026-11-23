@@ -52,6 +52,7 @@
         "src/ui/MentionPicker.tsx",
         "src/ui/MessageHistory.tsx",
         "src/ui/Moderation.tsx",
+        "src/ui/NextUnread.tsx",
         "src/ui/NoticesPane.tsx",
         "src/ui/PalettePages.tsx",
         "src/ui/panel/Panel.tsx",

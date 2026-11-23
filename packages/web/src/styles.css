@@ -1457,6 +1457,58 @@ code {
   font-size: 12px;
   padding: 16px;
 }
+/* Next unread topic (ui/NextUnread.tsx): at the bottom of a thread's timeline, in its channel's network color. */
+.next-unread {
+  --chan: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: calc(100% - 32px);
+  margin: 12px 16px 8px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in oklab, var(--chan) 45%, transparent);
+  border-left: 3px solid var(--chan);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--chan) 10%, var(--bg-raised));
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+.next-unread:hover {
+  background: color-mix(in oklab, var(--chan) 18%, var(--bg-raised));
+}
+.next-unread-lead {
+  color: var(--text-dim);
+  flex: none;
+}
+.next-unread-chan {
+  color: var(--text-dim);
+  flex: 0 1 auto;
+  max-width: 35%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.next-unread-name {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.next-unread-count {
+  margin-left: auto;
+  flex: none;
+  color: var(--text-dim);
+}
+.next-unread.mention .next-unread-count {
+  color: var(--danger);
+}
+.next-unread-at {
+  font-weight: 700;
+  margin-right: 2px;
+}
 .day-sep,
 .new-sep {
   display: flex;

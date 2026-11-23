@@ -131,6 +131,7 @@ import { PlanChipLazy } from './calendar/lazy.tsx';
 import { EmbedVideo, RichFoot, RichHead, RichMarks, Veil, veiled, Voice } from './rich/parts.tsx';
 import { VoicePeople } from './Ringing.tsx';
 import { ForumLazy } from './ThreadsLazy.tsx';
+import { NextUnreadBar, takeQuietOpen } from './NextUnreadLazy.tsx';
 import { CallRoomLazy, roomCall, roomHasChat, roomSide, RoomSwitch } from './CallRoomLazy.tsx';
 import { CallSlot, fillsPage } from './CallSlot.tsx';
 import { ScheduledStrip, useSendExtras } from './SendExtras.tsx';
@@ -1385,6 +1386,8 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
               </div>
             </div>
           ))}
+        {/* Next unread topic (docs/threads.md "Next unread"): one mount for a thread's page and a channel's stream. */}
+        {!tkey.startsWith('p:') && convIds[0] && <NextUnreadBar at={convIds[0]} stream={!tkey.startsWith('c:')} bottom={end === all.length && !t?.detached && msgs.length > 0} />}
       </div>
     </div>
   );
@@ -1469,7 +1472,9 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
     // Opening a chat puts you in its box, ready to type; not on a phone, where that throws up the keyboard.
     const el = ta.current;
     const busy = document.activeElement instanceof HTMLInputElement || (document.activeElement instanceof HTMLTextAreaElement && document.activeElement !== el);
-    if (el && !busy && !(typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches)) {
+    // Gone to by `n` or the next-unread bar: the caret stays out of the box, so `n` goes on (ui/NextUnreadLazy.tsx).
+    const quiet = takeQuietOpen(targets.convId);
+    if (el && !busy && !quiet && !(typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches)) {
       el.focus({ preventScroll: true });
       el.setSelectionRange(draft.length, draft.length);
     }

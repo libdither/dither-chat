@@ -40,7 +40,7 @@ import { fileKind, fileMime, openFileViewer, VIEWABLE } from '../files.ts';
 import { inviteRef } from '../invites.ts';
 import { installStickerLink, stickerInstaller } from './ComposerMedia.tsx';
 import { canEndPoll, endPoll, pin, pinChoices, pinnable } from '../polls.ts';
-import { threadConvEntries, threadMessageEntries } from '../threads.ts';
+import { readScope, threadConvEntries, threadMessageEntries } from '../threads.ts';
 import { sendingEntries } from './sendingMenu.tsx';
 import { accountEntries } from './accountMenu.tsx';
 
@@ -413,14 +413,20 @@ function followEntries(c: P.ConversationView): MenuEntry[] {
 }
 
 /**
- * Mark As Read. A forum channel (a Zulip channel, a Discord forum) holds no messages of its own and is never unread
- * itself: its threads are marked read, each told to its network through the read queue (hub readqueue.ts).
+ * Mark As Read. A channel with threads (a Zulip channel, a Discord forum or text channel, a Matrix room) is read with
+ * every thread of it, at once and without a confirm: a channel is a small scope. Each goes to its network through the
+ * read queue (hub readqueue.ts). Larger scopes (a server, a folder, everything) still ask.
  */
 function markReadEntry(c: P.ConversationView): MenuEntry {
-  if (c.shape === 'channel' && (c.variant === 'forum' || c.variant === 'media')) {
-    const threads = (db.threads.get(c.id) ?? []).map((id) => db.conversations.get(id)).filter((t): t is P.ConversationView => !!t);
-    return { label: 'Mark As Read', icon: 'check', disabled: !threads.some((t) => unreadOf(t).unread), run: () => markAllRead(threads, convTitle(c)) };
-  }
+  const scope = readScope(c);
+  if (scope.length > 1)
+    return {
+      label: 'Mark As Read',
+      icon: 'check',
+      disabled: !scope.some((t) => unreadOf(t).unread),
+      // The row read without an answer (inbox.md), as a chat's own Mark As Read says it.
+      run: () => (noteRowRead('conversation', [c.id]), markAllRead(scope, convTitle(c), false)),
+    };
   return { label: 'Mark As Read', icon: 'check', disabled: !unreadOf(c).unread, run: () => (noteRowRead('conversation', [c.id]), markRead(c.id)) };
 }
 
@@ -430,8 +436,7 @@ function markReadEntry(c: P.ConversationView): MenuEntry {
  * the read queue (hub readqueue.ts).
  */
 function readChannelEntry(c: P.ConversationView): MenuEntry {
-  const all = [c, ...(db.threads.get(c.id) ?? []).map((id) => db.conversations.get(id)).filter((t): t is P.ConversationView => !!t)];
-  const unread = all.filter((t) => unreadOf(t).unread || unreadOf(t).mentions);
+  const unread = readScope(c).filter((t) => unreadOf(t).unread || unreadOf(t).mentions);
   return {
     label: 'Mark As Read',
     icon: 'check',
