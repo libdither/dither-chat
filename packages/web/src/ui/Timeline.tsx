@@ -76,7 +76,9 @@ import { HoverReactions, InsertPicker, ReactionBar } from './Reactions.tsx';
 import { useLongPress } from './longpress.ts';
 import { Icon } from './icons.tsx';
 import { TriageWhy, tierIcon, tierName } from './Marks.tsx';
-import { MessageHistory, Ticks } from './MessageHistory.tsx';
+import { Ticks } from './Ticks.tsx';
+import { historyOnMenu, openHistory } from '../messageHistory.ts';
+import { markChanged } from '../wordDiff.ts';
 import { detailsShown, showDetails, swipeReply } from './Pager.ts';
 import { openConv } from '../opening.ts';
 import { JoinCallButton } from './Call.tsx';
@@ -438,10 +440,14 @@ function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
   // A role's name comes with the message (docs/rich-messages.md); a relative <t:…:R> moves on with the list.
   const roles = m.rich?.roles;
   const relative = /<t:-?\d+:R>/.test(m.body);
-  const html = useMemo(
-    () => renderMarkdown(m.body, { ...useMdContext(m.network), role: (id) => roles?.find((r) => r.id === id) ?? null }),
-    [m.body, m.network, /<[@#]/.test(m.body) ? metaRev.value : 0, roles, relative ? rev.value : 0],
-  );
+  // The words the last edit put in are underlined, and open the edits (docs/history.md "A message's history"). A
+  // forward shows the forwarded text, which the edit was not to.
+  const prev = m.edits && m.prevBody != null && !m.forward ? m.prevBody : null;
+  const html = useMemo(() => {
+    const ctx = { ...useMdContext(m.network), role: (id: string) => roles?.find((r) => r.id === id) ?? null };
+    const now = renderMarkdown(m.body, ctx);
+    return prev != null ? markChanged(now, renderMarkdown(prev, ctx)) : now;
+  }, [m.body, prev, m.network, /<[@#]/.test(m.body) ? metaRev.value : 0, roles, relative ? rev.value : 0]);
   if (m.deleted) return <div class="msg-body deleted">{m.gone?.how === 'disappeared' ? 'Message disappeared' : 'Message deleted'}</div>;
   if (m.kind === 'encrypted')
     return (
@@ -450,8 +456,15 @@ function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
       </div>
     );
   if (!m.body) return null;
+  // The words the last edit put in, unless they are part of something with a click of its own (a link, a mention).
+  const changedAt = (hit: HTMLElement) =>
+    hit.classList?.contains('msg-changed') && !hit.parentElement?.closest?.('a[href], [data-user], [data-person], [data-identity], .spoiler:not(.shown)') ? hit : null;
   const click = (e: MouseEvent) => {
-    const el = e.target as HTMLElement;
+    // A changed word's mark sits inside whatever it marks (a mention, a link): that is what the click is on.
+    const hit = e.target as HTMLElement;
+    const changed = changedAt(hit);
+    const el = hit.classList?.contains('msg-changed') ? hit.parentElement! : hit;
+    if (changed && !getSelection()?.toString()) openHistory(m, 'edits', changed.getBoundingClientRect());
     if (el.classList?.contains('spoiler')) el.classList.add('shown');
     const user = el.dataset?.user;
     if (user) openProfile(db.identityByNative.get(`${m.network}:${user}`));
@@ -470,14 +483,16 @@ function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
       openMenu({ x: e.clientX, y: e.clientY }, linkMenu(a.href, m));
     }
   };
+  // Right-click on them opens the edits as well; Shift+right-click still gets the browser's own menu.
+  const menu = historyOnMenu(m, 'edits', (e) => changedAt(e.target as HTMLElement));
   if (tail)
     return (
-      <div class={`msg-body ${isJumbo(m.body) ? 'jumbo' : ''}`} onClick={click}>
+      <div class={`msg-body ${isJumbo(m.body) ? 'jumbo' : ''}`} onClick={click} onContextMenu={menu}>
         <span class="msg-text" dangerouslySetInnerHTML={{ __html: html }} />
         {tail}
       </div>
     );
-  return <div class={`msg-body ${isJumbo(m.body) ? 'jumbo' : ''}`} dangerouslySetInnerHTML={{ __html: html }} onClick={click} />;
+  return <div class={`msg-body ${isJumbo(m.body) ? 'jumbo' : ''}`} dangerouslySetInnerHTML={{ __html: html }} onClick={click} onContextMenu={menu} />;
 }
 
 /**
@@ -501,7 +516,7 @@ function Gone({ m, layout }: { m: P.MessageView; layout: PictureLayout }) {
   );
 }
 
-/** "(edited)": with earlier versions kept, a click shows them, with the rest of the message's history. */
+/** "(edited)": with earlier versions kept, a click opens the message's history on its edits. */
 function Edited({ m }: { m: P.MessageView }) {
   if (!m.edits)
     return (
@@ -510,9 +525,14 @@ function Edited({ m }: { m: P.MessageView }) {
       </span>
     );
   return (
-    <Menu trigger={(open) => <button class="msg-edited link" onClick={open} title="See earlier versions">(edited)</button>}>
-      {() => <MessageHistory m={m} />}
-    </Menu>
+    <button
+      class="msg-edited link"
+      onClick={(e) => openHistory(m, 'edits', (e.currentTarget as HTMLElement).getBoundingClientRect())}
+      onContextMenu={historyOnMenu(m, 'edits')}
+      title="See earlier versions"
+    >
+      (edited)
+    </button>
   );
 }
 

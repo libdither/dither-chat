@@ -19,7 +19,7 @@ import { pickerFor, quickReactions, reactionScope, reactorsFor, replacing, toggl
 import { clearReactions, moderatorDelete, moderatorRemoveEmbeds, modOf } from '../moderate.ts';
 import { api, canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
 import { messageSomeone, openPalette } from './Palette.tsx';
-import { hasHistory, historyOf } from './MessageHistory.tsx';
+import { hasHistory, openHistory } from '../messageHistory.ts';
 import { MarkToggles, tierHeading, tierIcon } from './Marks.tsx';
 import { Avatar } from './bits.tsx';
 import { closeMenu, copy, groups, menuPoint, openMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
@@ -187,6 +187,8 @@ function messageEntries(m: P.MessageView, onReply?: () => void, marks = true): M
         track: 'view reactions',
         sub: m.reactions.map((r): MenuEntry => ({ track: 'view reactions (one)', label: `${r.emoji ? `:${r.emoji.name}:` : r.key.match(/^(.+):\d+$/) ? `:${r.key.split(':')[0]}:` : r.key}  ${r.count}${r.style === 'super' ? ' ⚡' : ''}`, run: () => (reactorsFor.value = { message: m, key: r.key, style: r.style, anchor: menuPoint() }) })),
       },
+      // By the reactions, as on the phone's sheet: everything that happened to it, edits, reactions and receipts.
+      hasHistory(m) && { label: 'Message History', icon: 'clock', track: 'history', run: () => openHistory(m, 'all', menuPoint()) },
     ],
     [
       canEdit(m) && { label: 'Edit Message', icon: 'pencil', hint: 'E', track: 'edit', run: () => startEditing(m) },
@@ -206,7 +208,6 @@ function messageEntries(m: P.MessageView, onReply?: () => void, marks = true): M
       m.replyToId && { label: 'Go to Replied Message', icon: 'chevronUp', track: 'go to replied', run: () => document.getElementById(`m-${m.replyToId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }) },
       original && { label: 'Go to Original Message', icon: 'external', track: 'go to original', run: () => go({ view: 'inbox', conv: original.conversationId!, msg: original.messageId! }) },
       m.authorId && { label: self ? 'Your Profile' : 'Profile', icon: 'user', track: 'profile', run: () => openProfile(m.authorId) },
-      hasHistory(m) && { label: 'Message History', icon: 'clock', track: 'history', run: () => (historyOf.value = m) },
     ],
     [canMarkUnread(m, self) && { label: 'Mark Unread', icon: 'mail', track: 'mark unread', run: () => void markUnreadFrom(m) }],
     // Saved on Discord, Remind Me, Remove Embeds, Report (sendingMenu.tsx, docs/sending.md).

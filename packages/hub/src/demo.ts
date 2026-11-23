@@ -2805,9 +2805,14 @@ class DemoAdapter implements InprocAdapter {
     // Presence as it changed, logged only with adversarial features and presence on.
     for (const [state, min, devices] of [['online', 240, ['desktop']], ['idle', 210, ['desktop']], ['offline', 180, []], ['online', 56, ['mobile']], ['dnd', 30, ['mobile', 'desktop']]] as const)
       emit({ t: 'presence', who: S.alice.nativeId, state, devices: [...devices], ts: ago(min) });
+    // Your message, read, then edited twice, with reactions between: its history as one list (docs/history.md).
     msg(`${climb.nativeId}~h-mine`, S.self, 54, 'I can drive, leaving at 6');
     for (const [who, state, min] of [[S.alice, 'delivered', 53], [S.alice, 'read', 52], [S.priya, 'delivered', 53], [S.priya, 'read', 50]] as const)
       emit({ t: 'receipt', conversation: climb.nativeId, messages: [`${climb.nativeId}~h-mine`], who: who.nativeId, state, ts: ago(min) });
+    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-mine`, author: S.alice.nativeId, key: '🚗', ts: ago(51) });
+    msg(`${climb.nativeId}~h-mine`, S.self, 54, 'I can drive, leaving at 5:45', { editedTs: ago(49) });
+    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-mine`, author: S.priya.nativeId, key: '🙌', ts: ago(48) });
+    msg(`${climb.nativeId}~h-mine`, S.self, 54, 'I can drive, leaving at 5:45 from the gym, room for 3', { editedTs: ago(46) });
     this.seedTexts(ago);
     this.seedActivity();
   }
