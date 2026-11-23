@@ -400,34 +400,51 @@ still gets ranges, a mail still gets HTML). It follows from "a paragraph is one 
   by the width of its marker. Code is fenced, a rule is `---`, a table is rows between bars with a line of dashes
   under the first.
 - A style is a pair of the same marker: `**` bold, `*` or `_` italic, `__` underline, `~~` strike, `||` hidden.
-  Each kind is paired by itself (the first with the second, the third with the fourth), so two styles may cross,
-  as they may in the tree and as CommonMark's nesting cannot say. A star alone between spaces, an underscore
-  inside a word and a bare web address are words. A backslash makes any marker a word.
+  Each kind is paired by itself, so two styles may cross, as they may in the tree and as CommonMark's nesting
+  cannot say. A marker opens before a word and closes after one, as on Discord: `*.ts and *.js` and `5* and 4*`
+  stay as typed. An underscore inside a word and a bare web address are words. A backslash makes any marker a
+  word.
+- `[words](address)` is a link only where the address is a web or mail address, the only links a place sends:
+  `handlers[name](event)` is words.
 - In a part the markers always mean what they mean, whatever the place carries: writing to SMS, `**x**` in a
   Markdown part is bold that is then stepped down and said, like bold from a button. (In rich text, typed markers
   become a style only where some place carries it.)
 
-**HTML is read into the tree where the tree says the same thing.** A piece that says more (a style attribute, a
+**HTML is read into the tree where the tree says the same thing** (with the named characters of HTML 4, so
+`&eacute;` is é). A piece that says more (a style attribute, a
 `<p>` with its own margins, a tag with no kind here, a comment) is kept whole as a `raw` block, with what could
-be read of it as its fallback for a place that takes no HTML. So nothing typed is thrown away, a mail gets it
-character for character, and Signal gets its words. The look beneath says how many pieces are kept that way.
+be read of it as its fallback for a place that takes no HTML. So nothing typed is thrown away, and Signal gets its
+words. A mail gets a kept piece as typed unless it would change the text around it (a style sheet, a tag left
+open): then its words, and that is said. What stands for a person or a time is ours, not HTML: a kept piece
+goes with the name, never with the person's ids. The look beneath shows **what the place gets**, not what was
+typed, with what changed on the way.
 
 **In the editor** (the prototype):
 
 - `Rich | Markdown | HTML` at the start of the row of tools writes the **whole draft** that way. It is offered
   where it means something: Markdown where some chosen place carries a style at all, HTML where some chosen place
   takes HTML as typed (a mail, Matrix). The way a kind of writing was last written is how the next one starts (a
-  chat as Markdown stays Markdown), kept on the device.
+  chat as Markdown stays Markdown), kept on the device. HTML is chosen for one mail, never for the next.
 - A tag beside the text, where the box is opened up, says how **the part the caret is in** is written and writes
   that part another way: a mail may be rich text with one table typed as HTML and one paragraph as Markdown.
   Inside a Markdown part only the blocks the selection is in change; the lines around them stay as typed.
 - The buttons work in every way of writing: in a part they put the markers or the tags around the words chosen,
-  and take them away again. Enter in a list is the next item, and on an empty item ends the list.
+  and take them away again; across the edge of a part, the words outside get the style itself.
+- Keys in a Markdown chat are Discord's: Enter sends (but inside a code block or a table), Shift+Enter is the
+  next line or the next item, and on an empty item ends the list. Where Enter does not send, it does the same.
+  Tab sets an item in under the one above it, Shift+Tab takes it out; elsewhere Tab moves on as on any page.
+- A part among blocks written another way has a line down its side. Down from the end of the last part is a line
+  of rich text after it; a blank line is a blank line, as Markdown and HTML need.
+- A style no place the draft goes carries (bold, writing to SMS) is drawn as plain words with a dotted line: the
+  markers mean what they mean, and are stepped down and said like bold from a button.
+- What is pasted into a part is lines: words as they are, and styled words (a link from a page) written the way
+  the part is.
 - A newsletter kept as its own HTML is not touched by a change of the whole draft: its plain words were written
   by its sender, and reading them again from the HTML could change them. Its tag offers "HTML to edit" and
   "Text", both of which say what they do.
 - One step, one undo. The markers shrink away or grow in over a fifth of a second, not at all for someone who
   asked for less motion.
+- On a phone the part's tag is in the row of tools ("This part: MD"), not over the words.
 
 Not done: an HTML part changes as a whole (it is not split by block); alignment is not read from typed HTML (the
 piece is kept whole instead); text typed after a picture in a Markdown draft is rich until its tag is used; there
@@ -498,7 +515,7 @@ Each is a pull request that stands on its own.
 
 ## The prototype
 
-`bun test packages/protocol/test/writing-lens.test.ts`: 19 tests for the ways of writing. Examples of the
+`bun test packages/protocol/test/writing-lens.test.ts`: 20 tests for the ways of writing. Examples of the
 dialect and of typed HTML (what is a marker and what is not, crossing styles, what is kept whole), then for 120
 random drafts each, as Markdown and as HTML, with and without marker characters among the words: written out and
 read back, **the draft hands every place the same thing it did before** (compared as what is sent, not by this
@@ -506,7 +523,12 @@ file's own idea of sameness), and most of each draft could be written (a writer 
 pass otherwise). Sixty more drafts are changed from way to way six times, part of the draft and then all of it.
 Random lines of marker and tag fragments are read without a throw, and ten inputs built to be slow stay fast.
 The first run of these found that what was sent depended on the order an editor listed a run's styles in; styles
-are now kept in one order when a draft is made sound.
+are now kept in one order when a draft is made sound. A review then found what the random drafts did not: words
+read as markers that a person meant as words (`*.ts and *.js`, `handlers[name](event)`), named characters left
+as typed, a person's ids carried into a mail inside a kept piece, HTML nested 9000 deep throwing and 20000 torn
+tags taking 75 seconds, and a random-input test whose numbers repeated after 220 steps. Each is fixed and in the
+tests. A review's case for cutting a part written as Markdown (Markdown for the whole draft only) was not taken:
+a mail with one table typed as HTML and the rest rich is what the feature is for.
 
 `bun test packages/protocol/test/writing.test.ts`: 47 tests. Twelve are examples (offsets in UTF-16 units and in
 bytes, crossing styles, the same line on every wire, each ladder, hidden text through every step, unknown kinds,

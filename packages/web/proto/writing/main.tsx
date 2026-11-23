@@ -10,12 +10,12 @@ import { render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { doc, para, text, type Node as DocNode } from '../../../protocol/src/writing/doc.ts';
 import { add, agree, apart, choose, done, draft as newDraft, leave, move, outcome, together, went, write, type Draft } from '../../../protocol/src/writing/draft.ts';
-import { preview, type Options, type Sent } from '../../../protocol/src/writing/encode.ts';
+import { preview, send, type Options, type Sent } from '../../../protocol/src/writing/encode.ts';
 import { carries, type Change } from '../../../protocol/src/writing/fit.ts';
 import type { Way } from '../../../protocol/src/writing/lens.ts';
 import { PLACES, PROFILES, type Fields, type Profile } from '../../../protocol/src/writing/profile.ts';
 import { live, type Person } from './live.ts';
-import { activeIn, blank, block, offers, partAt, PICTURE, setWay, style, touched, unhide, wayOf, wayOfAll } from './parts.ts';
+import { activeIn, blank, block, offers, partAt, PICTURE, redrawLooks, setWay, style, touched, unhide, wayOf, wayOfAll } from './parts.ts';
 import { extensions } from './schema.ts';
 
 const KIT: Person = { kind: 'user', label: 'Kit', ids: { signal: 'uuid-kit', whatsapp: '15550100', telegram: '7001', discord: '8001', matrix: '@kit:example.org', slack: 'U8KIT', zulip: '17', bluesky: 'did:plc:kit', mastodon: 'kit@example.social', github: 'kit', reddit: 'kit' } };
@@ -116,9 +116,13 @@ const WAYS: [Way, string, string][] = [
   ['html', 'HTML', 'HTML: typed as it is sent, with a look at it beneath'],
 ];
 const TAG: Record<string, string> = { rich: 'Rich', markdown: 'Markdown', html: 'HTML', kept: 'Kept as HTML' };
+const SHORT: Record<string, string> = { rich: 'Rich', markdown: 'MD', html: 'HTML', kept: 'Kept' };
 /** Markdown where some place carries a style at all; HTML where some place takes HTML as it is typed (a mail, Matrix). */
 const waysFor = (keys: string[]): Way[] => ['rich', ...(TOOLS.some((t) => keys.some((k) => carries(PROFILES[k], t.what))) ? (['markdown'] as Way[]) : []), ...(keys.some((k) => PROFILES[k].rules?.raw?.includes('html')) ? (['html'] as Way[]) : [])];
-/** The way a kind of writing was last written, on this device: a chat as Markdown stays so for the next message. */
+/**
+ * The way a kind of writing was last written, on this device: a chat as Markdown stays so for the next message. HTML
+ * is chosen for one mail, never for the next.
+ */
 const liked = (role: Role): Way => {
   try {
     const v = localStorage.getItem('writing.way.' + role);
@@ -225,6 +229,15 @@ function App() {
   // Enter sends a message to one chat, while the box is not opened up. Anywhere else it is a new line.
   live.enterSends = () => role === 'chat' && chosen.length === 1 && !tall;
   live.send = onSend;
+  // Under an HTML part: what the place gets, at the first place chosen that takes HTML (or the first chosen).
+  live.look = (blocks) => {
+    const pr = profiles.find((x) => x.rules?.raw?.includes('html')) ?? profiles[0];
+    if (!pr) return { html: '', where: '', notes: [] };
+    const s = send(doc(...blocks), pr);
+    const w = s.wire as Record<string, unknown>;
+    const html = typeof w?.['text/html'] === 'string' ? w['text/html'] : typeof w?.formatted_body === 'string' ? w.formatted_body : preview(s.reads);
+    return { html: html as string, where: at(pr), notes: s.changes.map((c) => c.say) };
+  };
   live.hint = () => HINT[role] + (role === 'chat' && scene.to ? ' ' + scene.to : '');
 
   useEffect(() => {
@@ -237,7 +250,7 @@ function App() {
     return () => e.destroy();
   }, []);
   // The marks in the text depend on where it goes: draw them again when that changes.
-  useEffect(() => void editor?.view.dispatch(editor.state.tr.setMeta('places', 1)), [chosen.join(), exposedAt, tab, role, editor]);
+  useEffect(() => (editor?.view.dispatch(editor.state.tr.setMeta('places', 1)), redrawLooks()), [chosen.join(), exposedAt, tab, role, editor]);
   useEffect(() => {
     const close = (ev: MouseEvent) => !(ev.target as HTMLElement).closest('.has-menu') && setMenu(null);
     // Escape goes back: out of a menu, out of the question before sending, out of adding a link.
@@ -374,7 +387,7 @@ function App() {
       if (scope === 'all') (el.classList.add('lens-in'), setTimeout(() => el.classList.remove('lens-in'), 300));
     };
     // The whole draft written a way is how the next one of its kind starts.
-    if (scope === 'all') (like(role, to), to === 'rich' && setFmt(true));
+    if (scope === 'all') (to !== 'html' && like(role, to), to === 'rich' && setFmt(true));
     // The markers shrink away before the words are shown without them, and grow in after.
     if (scope !== 'all' || !blocks.some((b) => b.type === 'source') || matchMedia('(prefers-reduced-motion: reduce)').matches) return go();
     el.classList.add('lens-out');
@@ -402,6 +415,28 @@ function App() {
   const inLink = !!editor?.isActive('link');
   const inFold = !!editor?.isActive('fold');
   const reads = (s: Sent) => <div class="reads" dangerouslySetInnerHTML={{ __html: preview(s.reads) }} />;
+
+  const partTag = (where: 'beside' | 'row') =>
+    here && (
+                <span class={`parttag ${where} has-menu`} style={where === 'beside' ? { top: here.top + 'px' } : undefined}>
+                  <button class="tag" title="How this part is written" onMouseDown={(e) => e.preventDefault()} onClick={() => setMenu(menu === 'part-' + where ? null : 'part-' + where)}>{where === 'row' ? 'This part: ' : ''}{here.way ? (where === 'row' ? SHORT[here.way] : TAG[here.way]) : 'Mixed'} ▾</button>
+                  {menu === 'part-' + where && (
+                    <div class="menu right">
+                      <small>{here.way === 'kept' ? 'Kept exactly as it came. Make it' : here.n > 1 ? `Write these ${here.n} parts as` : 'Write this part as'}</small>
+                      {here.way === 'kept' ? (
+                        <>
+                          <button data-way="html" onMouseDown={(e) => e.preventDefault()} onClick={() => change('html', 'here')}>HTML to edit</button>
+                          <button data-way="rich" onMouseDown={(e) => e.preventDefault()} onClick={() => change('rich', 'here')}>Text, as far as it can be read</button>
+                        </>
+                      ) : (
+                        WAYS.filter(([w]) => ways.includes(w)).map(([w, label]) => (
+                          <button data-way={w} onMouseDown={(e) => e.preventDefault()} onClick={() => change(w, 'here')}>{w === 'rich' ? 'Rich text' : label}<small>{here.way === w ? ' ✓' : ''}</small></button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </span>
+                  );
 
   return (
     <div class="page">
@@ -492,6 +527,7 @@ function App() {
                       <button class={wayAll === w ? 'way on' : 'way'} data-way={w} title={title} onMouseDown={(e) => e.preventDefault()} onClick={() => change(w, 'all')}>{label}</button>
                     ))}
                   </span>
+                  {here && partTag('row')}
                   {tools.length > 0 && <i class="sep" />}
                 </>
               )}
@@ -542,26 +578,7 @@ function App() {
             <div class="docwrap">
               <div class="doc" ref={holder} />
               {/* How the part the caret is in is written, and the way to write that part another way. */}
-              {here && (
-                <span class="parttag has-menu" style={{ top: here.top + 'px' }}>
-                  <button class="tag" title="How this part is written" onMouseDown={(e) => e.preventDefault()} onClick={() => setMenu(menu === 'part' ? null : 'part')}>{here.way ? TAG[here.way] : 'Mixed'} ▾</button>
-                  {menu === 'part' && (
-                    <div class="menu right">
-                      <small>{here.way === 'kept' ? 'Kept exactly as it came. Make it' : here.n > 1 ? `Write these ${here.n} parts as` : 'Write this part as'}</small>
-                      {here.way === 'kept' ? (
-                        <>
-                          <button data-way="html" onMouseDown={(e) => e.preventDefault()} onClick={() => change('html', 'here')}>HTML to edit</button>
-                          <button data-way="rich" onMouseDown={(e) => e.preventDefault()} onClick={() => change('rich', 'here')}>Text, as far as it can be read</button>
-                        </>
-                      ) : (
-                        WAYS.filter(([w]) => ways.includes(w)).map(([w, label]) => (
-                          <button data-way={w} onMouseDown={(e) => e.preventDefault()} onClick={() => change(w, 'here')}>{w === 'rich' ? 'Rich text' : label}<small>{here.way === w ? ' ✓' : ''}</small></button>
-                        ))
-                      )}
-                    </div>
-                  )}
-                </span>
-              )}
+              {partTag('beside')}
             </div>
             <div class="side">
               {(tools.length > 0 || ats || ways.length > 1) && <button class={fmt ? 'ico on' : 'ico'} title={`Formatting${wayAll && wayAll !== 'rich' ? ` · written as ${TAG[wayAll]}` : ''}`} onClick={() => setFmt(!fmt)}>{wayAll === 'markdown' ? 'M↓' : wayAll === 'html' ? '</>' : 'Aa'}</button>}

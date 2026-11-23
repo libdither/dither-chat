@@ -63,7 +63,8 @@ const TOGGLES: [string, string][] = [['**', 'bold'], ['__', 'underline'], ['~~',
 const ESC = /[!-\/:-@\[-`{-~ ]/;
 /** An address typed bare is words from end to end: a star in it styles nothing. */
 const BARE = /(?<![\p{L}\p{N}])https?:\/\/[^\s<>\\()\uFFFC]*[^\s<>\\()\uFFFC.,;:!?'"\]*_~|`]/gu;
-const LINK = /\]\(([^()\s\uFFFC]+)\)/y;
+// Only an address a place sends: `handlers[name](event)` is words.
+const LINK = /\]\(((?:https?:\/\/|mailto:)[^()\s\uFFFC]+)\)/iy;
 const BULLET = /([-+*]) /y;
 const NUMBER = /(\d{1,9})([.)]) /y;
 const DELIM = /^\|( *:?-+:? *\|)+ *$/;
@@ -326,18 +327,23 @@ export function inline(s: string, from: number, to: number, table = false): { go
       i += t[0].length;
     } else i++;
   }
-  const gap = (i: number) => i < from || i >= to || s[i] === ' ' || s[i] === '\t';
+  const gap = (i: number) => i < from || i >= to || /\s/.test(s[i]);
   const letter = (i: number) => i >= from && i < to && /[\p{L}\p{N}]/u.test(s[i]);
-  // A star or an underscore alone between spaces is itself, and so is an underscore inside a word.
-  const can = (p: { at: number; mk: string }) => (p.mk !== '*' && p.mk !== '_') || (!(gap(p.at - 1) && gap(p.at + 1)) && !(p.mk === '_' && letter(p.at - 1) && letter(p.at + 1)));
+  // An underscore inside a word is itself (snake_case).
+  const can = (p: { at: number; mk: string }) => !(p.mk === '_' && letter(p.at - 1) && letter(p.at + p.mk.length));
   const by = new Map<string, typeof pairs>();
   for (const p of pairs) if (can(p)) by.set(p.mk, [...(by.get(p.mk) ?? []), p]);
-  for (const list of by.values())
-    for (let k = 0; k + 1 < list.length; k += 2) {
-      const [a, b] = [list[k], list[k + 1]];
-      for (let j = 0; j < a.mk.length; j++) gone.add(a.at + j), gone.add(b.at + j);
-      spans.push({ from: a.at + a.mk.length, to: b.at, kind: a.kind });
+  // A marker opens before a word and closes after one, as on Discord: "*.ts and *.js" and "5* and 4*" stay as typed.
+  for (const list of by.values()) {
+    let open: (typeof pairs)[number] | null = null;
+    for (const p of list) {
+      if (open && !gap(p.at - 1)) {
+        for (let j = 0; j < p.mk.length; j++) gone.add(open.at + j), gone.add(p.at + j);
+        spans.push({ from: open.at + open.mk.length, to: p.at, kind: open.kind });
+        open = null;
+      } else if (!gap(p.at + p.mk.length)) open = p;
     }
+  }
   return { gone, spans };
 }
 
@@ -516,7 +522,8 @@ function build(nodes: Node[], real: Set<string>, escaped: Set<number>, table: bo
 }
 
 /** What at the start of a line would be read as the start of a block. */
-const BLOCKISH = /^(?:>|[-+*] |\d{1,9}[.)] |#{1,6} |`{3,}[\w+#.-]{0,32} *$|-{3,} *$|\|)/;
+// A bar starts a row; two start hidden words.
+const BLOCKISH = /^(?:>|[-+*] |\d{1,9}[.)] |#{1,6} |`{3,}[\w+#.-]{0,32} *$|-{3,} *$|\|(?!\|))/;
 
 /**
  * A line for these runs. It is written, read back, and what was read another way is put right: a character taken for
@@ -776,15 +783,56 @@ interface El {
 const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
 const VERBATIM = /^(script|style|textarea|title|xmp)$/;
 const BLOCK = /^(div|p|h[1-6]|blockquote|ul|ol|li|pre|hr|table|thead|tbody|tfoot|tr|td|th|details|summary|img|section|article|header|footer|main|nav|aside|center|figure|figcaption|address|form|fieldset|dl|dt|dd|script|style|template|head|title|meta|link|body|html)$/;
-const NAMED: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+/** The named characters of HTML 4, which is what mail written by hand and by mail programs uses. */
+const NAMED: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  ...Object.fromEntries(
+    (
+      'AElig:c6 Aacute:c1 Acirc:c2 Agrave:c0 Alpha:391 Aring:c5 Atilde:c3 Auml:c4 Beta:392 Ccedil:c7 ' +
+  'Chi:3a7 Dagger:2021 Delta:394 ETH:d0 Eacute:c9 Ecirc:ca Egrave:c8 Epsilon:395 Eta:397 Euml:cb ' +
+  'Gamma:393 Iacute:cd Icirc:ce Igrave:cc Iota:399 Iuml:cf Kappa:39a Lambda:39b Mu:39c Ntilde:d1 Nu:39d ' +
+  'OElig:152 Oacute:d3 Ocirc:d4 Ograve:d2 Omega:3a9 Omicron:39f Oslash:d8 Otilde:d5 Ouml:d6 Phi:3a6 ' +
+  'Pi:3a0 Prime:2033 Psi:3a8 Rho:3a1 Scaron:160 Sigma:3a3 THORN:de Tau:3a4 Theta:398 Uacute:da Ucirc:db ' +
+  'Ugrave:d9 Upsilon:3a5 Uuml:dc Xi:39e Yacute:dd Yuml:178 Zeta:396 aacute:e1 acirc:e2 acute:b4 ' +
+  'aelig:e6 agrave:e0 alefsym:2135 alpha:3b1 and:2227 ang:2220 aring:e5 asymp:2248 atilde:e3 auml:e4 ' +
+  'bdquo:201e beta:3b2 brvbar:a6 bull:2022 cap:2229 ccedil:e7 cedil:b8 cent:a2 chi:3c7 circ:2c6 ' +
+  'clubs:2663 cong:2245 copy:a9 crarr:21b5 cup:222a curren:a4 dArr:21d3 dagger:2020 darr:2193 deg:b0 ' +
+  'delta:3b4 diams:2666 divide:f7 eacute:e9 ecirc:ea egrave:e8 empty:2205 emsp:2003 ensp:2002 ' +
+  'epsilon:3b5 equiv:2261 eta:3b7 eth:f0 euml:eb euro:20ac exist:2203 fnof:192 forall:2200 frac12:bd ' +
+  'frac14:bc frac34:be frasl:2044 gamma:3b3 ge:2265 hArr:21d4 harr:2194 hearts:2665 hellip:2026 ' +
+  'iacute:ed icirc:ee iexcl:a1 igrave:ec image:2111 infin:221e int:222b iota:3b9 iquest:bf isin:2208 ' +
+  'iuml:ef kappa:3ba lArr:21d0 lambda:3bb lang:2329 laquo:ab larr:2190 lceil:2308 ldquo:201c le:2264 ' +
+  'lfloor:230a lowast:2217 loz:25ca lrm:200e lsaquo:2039 lsquo:2018 macr:af mdash:2014 micro:b5 ' +
+  'middot:b7 minus:2212 mu:3bc nabla:2207 ndash:2013 ne:2260 ni:220b not:ac notin:2209 nsub:2284 ' +
+  'ntilde:f1 nu:3bd oacute:f3 ocirc:f4 oelig:153 ograve:f2 oline:203e omega:3c9 omicron:3bf oplus:2295 ' +
+  'or:2228 ordf:aa ordm:ba oslash:f8 otilde:f5 otimes:2297 ouml:f6 para:b6 part:2202 permil:2030 ' +
+  'perp:22a5 phi:3c6 pi:3c0 piv:3d6 plusmn:b1 pound:a3 prime:2032 prod:220f prop:221d psi:3c8 rArr:21d2 ' +
+  'radic:221a rang:232a raquo:bb rarr:2192 rceil:2309 rdquo:201d real:211c reg:ae rfloor:230b rho:3c1 ' +
+  'rlm:200f rsaquo:203a rsquo:2019 sbquo:201a scaron:161 sdot:22c5 sect:a7 shy:ad sigma:3c3 sigmaf:3c2 ' +
+  'sim:223c spades:2660 sub:2282 sube:2286 sum:2211 sup:2283 sup1:b9 sup2:b2 sup3:b3 supe:2287 szlig:df ' +
+  'tau:3c4 there4:2234 theta:3b8 thetasym:3d1 thinsp:2009 thorn:fe tilde:2dc times:d7 trade:2122 ' +
+  'uArr:21d1 uacute:fa uarr:2191 ucirc:fb ugrave:f9 uml:a8 upsih:3d2 upsilon:3c5 uuml:fc weierp:2118 ' +
+  'xi:3be yacute:fd yen:a5 yuml:ff zeta:3b6 zwj:200d zwnj:200c'
+    )
+      .split(' ')
+      .map((x) => x.split(':'))
+      .map(([k, v]) => [k, String.fromCodePoint(parseInt(v, 16))]),
+  ),
+};
 /** A space written to stay, until it is known whether it stood for a space in a row or for one that does not break. */
 const STAYS = '\uE000';
+const DEEPEST = 100;
 
 function parseHtml(html: string): El[] {
   const root: El = { tag: '', attrs: {}, kids: [], from: 0, to: html.length };
   const stack = [root];
   const top = () => stack[stack.length - 1];
-  const TOKEN = /<!--[\s\S]*?(?:-->|$)|<![^>]*>|<\/([a-zA-Z][\w:-]*)[^>]*>|<([a-zA-Z][\w:-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>|[^<]+|</g;
+  // A tag never runs over another '<', so a row of torn tags is read in one pass, not one pass for each.
+  const TOKEN = /<!--[\s\S]*?(?:-->|$)|<![^<>]*>|<\/([a-zA-Z][\w:-]*)[^<>]*>|<([a-zA-Z][\w:-]*)((?:[^<>"']|"[^"<]*"|'[^'<]*')*)>|[^<]+|</g;
   for (let m: RegExpExecArray | null; (m = TOKEN.exec(html)); ) {
     const [all, close, open, rest] = m;
     const from = m.index;
@@ -805,6 +853,11 @@ function parseHtml(html: string): El[] {
       const el: El = { tag, attrs, kids: [], from, to };
       top().kids.push(el);
       if (VOID.has(tag)) continue;
+      // Deeper than anyone writes by hand: what is in it is read beside it, and the piece is kept whole.
+      if (stack.length > DEEPEST) {
+        el.torn = true;
+        continue;
+      }
       if (VERBATIM.test(tag)) {
         // What is in a style sheet or a script is not HTML: it runs to the tag that closes it.
         const end = new RegExp(`</${tag}[^>]*>`, 'gi');
@@ -825,7 +878,8 @@ function parseHtml(html: string): El[] {
 /** Text as its characters: the references a writer here uses, and numbers. A name not known here is left as typed. */
 function decode(s: string, flaw?: () => void): string {
   return s.replace(/&(#x[0-9a-f]{1,6}|#\d{1,7}|\w{1,32});/gi, (all, name: string) => {
-    const k = name.toLowerCase();
+    // A name is as it is written (&Eacute; is not &eacute;); a number is not.
+    const k = name[0] === '#' ? name.toLowerCase() : name;
     if (k === 'nbsp') return STAYS;
     if (NAMED[k]) return NAMED[k];
     const n = k[0] === '#' ? (k[1] === 'x' ? parseInt(k.slice(2), 16) : parseInt(k.slice(1), 10)) : NaN;
@@ -1060,6 +1114,7 @@ function blockOf(el: El, flaw: () => void): Node[] {
   }
 }
 
+const OURS = /<span data-(mention|time|emoji)="[^"]*">([^<]*)<\/span>/g;
 /** HTML as blocks: each piece at the top is the tree where the tree says the same, or kept whole. */
 function fromHtml(html: string): Node[] {
   const out: Node[] = [];
@@ -1074,7 +1129,8 @@ function fromHtml(html: string): Node[] {
     const nodes = blocksOf(piece, () => (flawed = true));
     const source = html.slice(piece[0].from, piece[piece.length - 1].to).trim();
     if (!flawed) out.push(...nodes);
-    else if (source) out.push({ type: 'raw', attrs: { format: 'html', source, text: nodes.map(words).join('\n'), fallback: nodes } });
+    // What stands for a person or a time is ours, not HTML: a piece kept whole has it as its words, without the ids.
+    else if (source) out.push({ type: 'raw', attrs: { format: 'html', source: source.replace(OURS, '$2'), text: nodes.map(words).join('\n'), fallback: nodes } });
   }
   return out;
 }
@@ -1085,7 +1141,7 @@ const lineText = (l: Node) => (l.content ?? []).map((n) => (n.type === 'text' ? 
 const part = (lang: Lang, lines: Node[]): Node => ({ type: 'source', attrs: { lang }, content: lines.length ? lines : [{ type: 'paragraph' }] });
 const textLine = (t: string): Node => (t ? { type: 'paragraph', content: [{ type: 'text', text: t }] } : { type: 'paragraph' });
 const langOf = (n: Node): Lang => (n.attrs?.lang === 'html' ? 'html' : 'markdown');
-const linesOf = (n: Node) => (n.content ?? []).filter((l) => l.type === 'paragraph');
+const linesOf = (n: Node) => (n.content ?? []).flatMap((l) => (l.type === 'paragraph' ? [l] : words(l).split('\n').map(textLine)));
 
 /** A part as the blocks it says. */
 export function fromSource(n: Node): Node[] {
@@ -1098,7 +1154,8 @@ export function fromSource(n: Node): Node[] {
  * reads back as the blocks it was made from, or it is not made.
  */
 export function toSource(blocks: Node[], lang: Lang): Node[] {
-  const flat = blocks.flatMap((b) => (b.type === 'source' ? fromSource(b) : [b]));
+  // What is checked is what sending reads: the tree made sound first (a control character in a word is no word).
+  const flat = (sound({ type: 'doc', content: blocks })[0]?.content ?? []).flatMap((b) => (b.type === 'source' ? fromSource(b) : [b]));
   const out: Node[] = [];
   let run: { blocks: Node[]; each: Node[][] } | null = null;
   let beside = { type: '', mark: '' };

@@ -60,11 +60,11 @@ test('Markdown: a line is a block, and a marker with a space after it says which
 
 test('Markdown: what no marker says stays in the line as the thing it is', () => {
   const coloured = { type: 'color', attrs: { color: '#c00' } };
-  const blocks = [para('Hi ', KIT, ', ', text('red', coloured), text(' and bold', coloured, 'bold'), '.')];
+  const blocks = [para('Hi ', KIT, ', ', text('red ', coloured), text('and bold', coloured, 'bold'), '.')];
   const [p] = toSource(blocks, 'markdown');
   expect(p.type).toBe('source');
   // The mention is still a mention in the line, the colour is still on its words, and only bold got markers.
-  expect(typed(p)).toEqual(['Hi @, red** and bold**.']);
+  expect(typed(p)).toEqual(['Hi @, red **and bold**.']);
   expect(p.content![0].content!.some((n) => n.type === 'mention')).toBe(true);
   expect(same(fromSource(p), blocks)).toBe(true);
 });
@@ -101,7 +101,7 @@ test('HTML: what the tree says the same is the tree', () => {
 test('HTML: a piece that says more than the tree is kept as typed', () => {
   const kept = (...lines: string[]) => html(...lines).map((b) => (b.type === 'raw' ? `raw:${b.attrs!.source}` : b.type));
   expect(kept('<div>plain</div>', '<p style="margin:0">Hi <b>Kit</b></p>', '<div>after</div>')).toEqual(['paragraph', 'raw:<p style="margin:0">Hi <b>Kit</b></p>', 'paragraph']);
-  for (const s of ['<p>a paragraph has room around it</p>', '<div class="x">a class</div>', '<div>never closed', '<div>a <!-- note --> comment</div>', '<div>&eacute;</div>', '<table width="100%"><tr><td>x</td></tr></table>', '<font color="red">old</font>', '<div><div>a wrapper</div></div>', '<img src="https://example.org/p.png" alt="a" width="40">'])
+  for (const s of ['<p>a paragraph has room around it</p>', '<div class="x">a class</div>', '<div>never closed', '<div>a <!-- note --> comment</div>', '<div>&notaname;</div>', '<table width="100%"><tr><td>x</td></tr></table>', '<font color="red">old</font>', '<div><div>a wrapper</div></div>', '<img src="https://example.org/p.png" alt="a" width="40">'])
     expect(kept(s)).toEqual([`raw:${s}`]);
   // What could be read of it is its fallback, for a place that takes no HTML; a style sheet's text is not words.
   const [raw] = html('<p style="margin:0">Hi <b>Kit</b></p><style>p { color: red }</style>');
@@ -111,6 +111,23 @@ test('HTML: a piece that says more than the tree is kept as typed', () => {
   const d = doc(part('html', '<p style="margin:0">Hi <b>Kit</b></p>'));
   expect((send(d, PROFILES.signal).wire as any).message).toBe('Hi Kit');
   expect(JSON.stringify(send(d, PROFILES.mail).wire)).toContain('<p style=\\"margin:0\\">Hi <b>Kit</b></p>');
+});
+
+test('the reviewers’ cases: what a person types is read as they meant it', () => {
+  // Stars and underscores open before a word and close after one.
+  for (const s of ['*.ts and *.js', 'rated 5* by me, 4* by Kit', '** not bold **', 'use handlers[name](event) here', '[docs](./readme.md)']) expect(md(s)).toEqual([para(s)]);
+  expect(md('a *b* c **d e** f')).toEqual([para('a ', text('b', 'italic'), ' c ', text('d e', 'bold'), ' f')]);
+  // A line that starts with hidden words is not a table.
+  expect(md('||secret|| then')).toEqual([para(text('secret', 'spoiler'), ' then')]);
+  expect(toSource([para(text('secret', 'spoiler'), ' then')], 'markdown').flatMap(typed)).toEqual(['||secret|| then']);
+  // The named characters of HTML.
+  expect(html('<div>caf&eacute; &mdash; ok &Eacute;&hellip;</div>')).toEqual([para('café — ok É…')]);
+  // A piece kept whole does not carry what stands for a person, ids and all, to the mail.
+  const [kept] = html('<p>Hi <span data-mention="{&quot;kind&quot;:&quot;user&quot;,&quot;label&quot;:&quot;Kit&quot;,&quot;ids&quot;:{&quot;signal&quot;:&quot;uuid-kit&quot;}}">@Kit</span></p>');
+  expect(kept.attrs!.source).toBe('<p>Hi @Kit</p>');
+  // A control character in a word does not become a marker when the draft is written out.
+  const odd = [para('~\u0001~x~\u0001~')];
+  expect(wires({ type: 'doc', content: toSource(odd, 'markdown') }, PLACES)).toEqual(wires(doc(...odd), PLACES));
 });
 
 test('HTML: a mention and a hidden word are still themselves', () => {
@@ -172,20 +189,25 @@ test('any lines are some tree, and nothing typed makes it throw or take seconds'
   const next = drafts(5, true);
   const bits = ['*', '**', '_', '__', '~~', '||', '`', '``', '```', '[', '](', ')', '\\', '> ', '- ', '1. ', '# ', '|', '---', ' ', '<b>', '</b>', '<div>', '</div>', '<!--', '&nbsp;', '&', '<', '>', '"', "'", '=', 'https://example.org/a_b', 'W'];
   let seed = 9;
-  const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  // Whole numbers kept whole: a product past 2^53 would lose its low bits and the sequence would repeat early.
+  const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) / 2 ** 32;
+  const seen = new Set<string>();
   for (let i = 0; i < 400; i++) {
     const lines = Array.from({ length: 1 + Math.floor(rnd() * 5) }, () => Array.from({ length: Math.floor(rnd() * 9) }, () => bits[Math.floor(rnd() * bits.length)]).join(''));
+    seen.add(lines.join('\n'));
     for (const lang of ['markdown', 'html'] as const) {
       const blocks = fromSource(part(lang, ...lines));
       // What comes out is a tree the rest of the model takes as it is.
-      expect(sound({ type: 'doc', content: blocks })[0].content ?? []).toEqual(blocks);
+      expect(same(sound({ type: 'doc', content: blocks })[0].content ?? [], blocks)).toBe(true);
       expect(() => send(doc(part(lang, ...lines)), PROFILES.discord)).not.toThrow();
     }
   }
+  // Short ones may come twice; the rest are new.
+  expect(seen.size).toBeGreaterThan(350);
   // A value that is no part at all.
   for (const v of [null, 7, 'x', [], {}, { type: 'doc', content: [{ type: 'source' }, { type: 'source', attrs: { lang: 7 }, content: [null, 3, { type: 'paragraph', content: [{ type: 'text', text: 7 }] }] }] }, sound(next())[0]]) expect(() => resolve(v)).not.toThrow();
   const t0 = performance.now();
-  for (const s of ['*a '.repeat(4000), '`a '.repeat(4000), '[a]('.repeat(3000), '**__~~||'.repeat(2000), '\\*'.repeat(5000), '<b>'.repeat(3000), '<div>x'.repeat(3000), '&nbsp; '.repeat(4000), '> '.repeat(3000) + 'x', '- '.repeat(1500) + 'x'])
+  for (const s of ['*a '.repeat(4000), '`a '.repeat(4000), '[a]('.repeat(3000), '**__~~||'.repeat(2000), '\\*'.repeat(5000), '<b>'.repeat(3000), '<div>x'.repeat(3000), '&nbsp; '.repeat(4000), '> '.repeat(3000) + 'x', '- '.repeat(1500) + 'x', '<ul><li>'.repeat(9000), '<a '.repeat(20000), '<a "'.repeat(20000), '<b>'.repeat(20000) + 'x'])
     for (const lang of ['markdown', 'html'] as const) fromSource(part(lang, s, s));
   fromSource(part('markdown', ...Array.from({ length: 4000 }, (_, i) => (i % 3 ? '- item **' + i + '**' : '> quote'))));
   toSource([para(text('*_`|[]()\\~# '.repeat(600)))], 'markdown');

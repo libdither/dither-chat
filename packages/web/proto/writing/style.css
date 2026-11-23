@@ -136,7 +136,8 @@ main.two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .way:hover { color: var(--ink); }
 .way.on { background: var(--soft); color: var(--accent); }
 .tall .ProseMirror { padding-right: 104px; }
-.parttag { position: absolute; right: 0; margin-top: 3px; }
+.parttag.beside { position: absolute; right: 0; margin-top: 3px; }
+.parttag.row { display: none; }
 .tag { border: 1px solid var(--line); background: var(--card); color: var(--dim); border-radius: 999px; padding: 1px 9px; font-size: 12px; white-space: nowrap; }
 .tag:hover { color: var(--ink); border-color: var(--dim); }
 .menu.right { left: auto; right: 0; }
@@ -153,6 +154,10 @@ main.two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .md-code { background: var(--soft); border-radius: 4px; font: 13px ui-monospace, monospace; }
 .md-spoiler { background: color-mix(in srgb, var(--ink) 22%, transparent); border-radius: 4px; }
 .md-link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+/* A style no place it goes carries: it arrives as plain words. */
+.md-lost { text-decoration: underline dotted var(--warn); text-underline-offset: 3px; cursor: help; }
+/* A part among blocks written another way: where it starts and ends. */
+.w-src-mixed.w-src-markdown { border-left: 2px solid color-mix(in srgb, var(--accent) 35%, transparent); padding-left: 8px; margin: 3px 0; }
 p.md-heading { font-weight: 700; line-height: 1.25; margin: 0.2em 0; }
 p.md-h1 { font-size: 1.45em; }
 p.md-h2 { font-size: 1.25em; }
@@ -229,6 +234,8 @@ p.md-rule { color: var(--dim); background: linear-gradient(var(--line), var(--li
   .tools .menu { top: auto; left: 10px; margin-top: 40px; }
   .way { padding: 9px 11px; }
   .tall .ProseMirror { padding-right: 2px; }
-  /* On a phone the tag sits over the end of the part's first line, small. */
-  .tag { padding: 4px 8px; opacity: 0.92; }
+  /* On a phone the tag is in the row of tools, not over the words. */
+  .parttag.beside { display: none; }
+  .parttag.row { display: inline-flex; flex: none; margin-left: 6px; }
+  .tag { padding: 7px 10px; }
 }

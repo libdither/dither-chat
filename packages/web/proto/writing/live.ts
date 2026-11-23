@@ -1,3 +1,5 @@
+import type { Node as DocNode } from '../../../protocol/src/writing/doc.ts';
+
 /** What the page knows and the editor asks: set by the page on every draw, read when a key is pressed. */
 export interface Person {
   label: string;
@@ -17,4 +19,6 @@ export const live = {
   /** What an empty box says. */
   hint: () => '',
   people: [] as Person[],
+  /** How blocks arrive at the place the draft goes (the first that takes HTML), for the look under an HTML part. */
+  look: null as null | ((blocks: DocNode[]) => { html: string; where: string; notes: string[] }),
 };

@@ -42,6 +42,10 @@ export function sandbox() {
   return { el, show: (h: string) => ((html = h), ready && put()) };
 }
 
+const looks = new Set<() => void>();
+/** The looks under HTML parts drawn again: the places the draft goes have changed. */
+export const redrawLooks = () => looks.forEach((f) => f());
+
 /** A part of the draft kept as it was typed: lines of Markdown or of HTML. Only ever at the top of a draft. */
 export const Source = Node.create({
   name: 'source',
@@ -71,14 +75,19 @@ export const Source = Node.create({
       const frame = sandbox();
       look.append(bar, frame.el);
       dom.append(look);
+      let now = node;
+      // What the place gets, not what was typed: a place may leave a style sheet out, or a link it does not send.
       const draw = (n: PMNode) => {
+        now = n;
         const blocks = fromSource(n.toJSON() as DocNode);
-        const kept = blocks.filter((b) => b.type === 'raw').length;
-        bar.textContent = 'How it looks' + (kept ? ` · ${kept === blocks.length ? 'kept' : `${kept} of ${blocks.length} pieces kept`} exactly as typed` : '');
-        frame.show(shown(blocks));
+        const at = live.look?.(blocks);
+        bar.textContent = (at ? `How it arrives ${at.where}` : 'How it looks') + (at?.notes.length ? ' · ' + at.notes.join(' · ') : '');
+        frame.show(at?.html ?? shown(blocks));
       };
+      const again = () => draw(now);
+      looks.add(again);
       draw(node);
-      return { dom, contentDOM: lines, update: (n) => mine(n) && (draw(n), true), ignoreMutation: (m) => !lines.contains(m.target) };
+      return { dom, contentDOM: lines, update: (n) => mine(n) && (draw(n), true), ignoreMutation: (m) => !lines.contains(m.target), destroy: () => void looks.delete(again) };
     };
   },
 });
@@ -99,11 +108,18 @@ export const langAt = (state: EditorState, pos: number): Lang | null => {
 // ---------------------------------------------------------------------------------------------- drawn as it will read
 
 const HTML_BITS = /<!--.*?(?:-->|$)|<\/?[a-zA-Z][^<>]*>?|&#?\w+;/g;
+const STYLES = ['bold', 'italic', 'underline', 'strike', 'code', 'spoiler', 'link'];
+/** Which styles some place the draft goes carries, as a key: what is drawn depends on it. */
+const carried = () => STYLES.map((k) => (live.carries(k) ? 1 : 0)).join('');
 function drawn(doc: PMNode, exposes: string, hint: string): DecorationSet {
+  // Among blocks written another way, a part shows where it starts and ends.
+  let mixed = false;
+  doc.forEach((n, _, i) => void (n.type.name !== 'source' && !(i === doc.childCount - 1 && n.type.name === 'paragraph' && !n.content.size) && (mixed = true)));
   const out: Decoration[] = [];
   const cls = (from: number, to: number, c: string, title?: string) => void (to > from && out.push(Decoration.inline(from, to, title ? { class: c, title } : { class: c })));
   doc.forEach((node, pos) => {
     if (node.type.name !== 'source') return;
+    if (mixed) out.push(Decoration.node(pos, pos + node.nodeSize, { class: 'w-src-mixed' }));
     const starts: number[] = [];
     node.forEach((_, off) => void starts.push(pos + 1 + off + 1));
     const texts = linesOf(node);
@@ -131,7 +147,9 @@ function drawn(doc: PMNode, exposes: string, hint: string): DecorationSet {
         }
         for (const s of spans) {
           const open = s.kind === 'spoiler' && exposes;
-          cls(at + s.from, at + s.to, `md-${s.kind}${open ? ' w-exposed' : ''}`, s.kind === 'link' ? s.href : open ? `Shown openly on ${exposes}` : undefined);
+          // A style no place carries is drawn as what arrives: plain words, marked so the markers are not a surprise.
+          const lost = !live.carries(s.kind);
+          cls(at + s.from, at + s.to, lost ? 'md-lost' : `md-${s.kind}${open ? ' w-exposed' : ''}`, lost ? 'Goes as plain words: no place this goes to carries it' : s.kind === 'link' ? s.href : open ? `Shown openly on ${exposes}` : undefined);
         }
       };
       if (info.leaf === 'para' || info.leaf === 'heading') styled(info.at, t.length);
@@ -175,32 +193,50 @@ function sample(lang: Lang, what: string): DocNode[] | null {
 /** A button has something to do in a part written this way. */
 export const offers = (lang: Lang, what: string) => !!WRAP[lang][what] || LINEWISE.has(what) || (lang === 'markdown' && REAL.has(what)) || sample(lang, what) !== null;
 
-/** A style's button or keys in a part: its markers go around the words chosen, or come away. False where it is not this file's to do. */
+/**
+ * A style's button or keys where a part is chosen: its markers go around the words chosen in each line of a part, or
+ * come away, and the words chosen outside a part get the style itself. False where no part is chosen.
+ */
 export function style(editor: Editor, what: string): boolean {
-  const part = partAt(editor.state);
-  if (!part) return false;
-  const pair = WRAP[part.lang][what];
-  // In Markdown a colour is put on the words themselves; in HTML there is nothing but what is typed.
-  if (!pair) return part.lang === 'html';
-  const [open, close] = pair;
   const { state } = editor;
   const { from, to } = state.selection;
-  const spans: [number, number][] = [];
+  const typed: { a: number; b: number; lang: Lang }[] = [];
+  const rich: [number, number][] = [];
   state.doc.nodesBetween(from, to, (n, pos, parent) => {
-    if (n.type.name !== 'paragraph') return true;
-    if (parent?.type.name === 'source') spans.push([Math.max(from, pos + 1), Math.min(to, pos + n.nodeSize - 1)]);
-    return false;
+    if (n.type.name === 'source') return true;
+    if (parent?.type.name === 'source') {
+      const [a, b] = [Math.max(from, pos + 1), Math.min(to, pos + n.nodeSize - 1)];
+      const line = lineText(n);
+      // A line of HTML that is only tags has no words to style.
+      if (!(parent.attrs.lang === 'html' && from !== to && /^\s*(<[^<>]*>\s*)*$/.test(line))) typed.push({ a, b, lang: parent.attrs.lang });
+      return false;
+    }
+    if (n.isText) rich.push([Math.max(from, pos), Math.min(to, pos + n.nodeSize)]);
+    return true;
   });
+  if (!typed.length && !partAt(state)) return false;
   const tr = state.tr;
+  // Outside the parts, the style itself (a link needs an address, so it is the box's to ask for).
+  const mark = what !== 'link' ? state.schema.marks[what] : undefined;
+  const real = (lang: Lang) => !WRAP[lang][what] && lang === 'markdown';
+  const plain = [...rich, ...typed.filter((t) => real(t.lang)).map((t) => [t.a, t.b] as [number, number])];
+  if (mark && plain.length) {
+    const all = plain.every(([a, b]) => state.doc.rangeHasMark(a, b, mark));
+    for (const [a, b] of plain) all ? tr.removeMark(a, b, mark) : tr.addMark(a, b, mark.create());
+  }
   let sel: [number, number] | null = null;
-  for (const [a, b] of spans.reverse()) {
+  const marked = typed.filter((t) => WRAP[t.lang][what]);
+  for (const { a, b, lang } of marked.reverse()) {
+    const [open, close] = WRAP[lang][what];
     const $a = state.doc.resolve(a);
     const has = state.doc.textBetween(Math.max($a.start(), a - open.length), a, '', THING) === open && state.doc.textBetween(b, Math.min($a.end(), b + close.length), '', THING) === close;
     if (has) tr.delete(b, b + close.length).delete(a - open.length, a);
     else tr.insertText(close, b).insertText(open, a);
     sel = has ? [a - open.length, b - open.length] : [a + open.length, b + open.length];
+    // A new link: its address is chosen, to be typed over.
+    if (what === 'link' && !has) sel = lang === 'markdown' ? [b + open.length + 2, b + open.length + 10] : [a + 9, a + 17];
   }
-  if (sel && spans.length === 1) tr.setSelection(TextSelection.create(tr.doc, sel[0], sel[1]));
+  if (sel && marked.length === 1 && !rich.length) tr.setSelection(TextSelection.create(tr.doc, sel[0], sel[1]));
   editor.view.dispatch(tr.scrollIntoView());
   editor.view.focus();
   return true;
@@ -286,19 +322,11 @@ function enter(editor: Editor, shift: boolean): boolean {
   const { node, $f } = part;
   const texts = linesOf(node);
   const t = texts[part.line];
-  // In a draft written more than one way, an empty line at the end of a part ends the part.
-  if (!shift && state.selection.empty && state.doc.childCount > 1 && !t && part.line === node.childCount - 1 && node.childCount > 1) {
-    const tr = state.tr.delete($f.before(2), $f.after(2));
-    const after = tr.mapping.map(part.pos + node.nodeSize);
-    tr.insert(after, state.schema.nodes.paragraph.create());
-    editor.view.dispatch(tr.setSelection(TextSelection.create(tr.doc, after + 1)).scrollIntoView());
-    return true;
-  }
   if (part.lang === 'html') return newLine(editor, /^\s*/.exec(t)![0].slice(0, $f.parentOffset));
   const info = scan(texts)[part.line];
-  // In a chat, Enter sends from a line of words; in a list, a quote, a table or a code block it is the next line.
-  const plain = !info.boxes.length && (info.leaf === 'para' || info.leaf === 'heading' || info.leaf === 'rule');
-  if (!shift && live.enterSends() && plain) return live.send(), true;
+  // In a chat Enter sends, as on Discord, but inside a code block or a table; Shift+Enter is the next line, or item.
+  const inside = info.leaf === 'code' || info.leaf === 'fence' || info.leaf === 'row' || info.leaf === 'delim';
+  if (!shift && live.enterSends() && !inside) return live.send(), true;
   if (info.boxes.length && info.leaf === 'para' && state.selection.empty && $f.parentOffset >= info.at) {
     // A marker with nothing after it: Enter ends the list or the quote.
     if (t.length === info.at) return editor.view.dispatch(state.tr.delete($f.start(), $f.end())), true;
@@ -315,6 +343,54 @@ function enter(editor: Editor, shift: boolean): boolean {
   return newLine(editor, '');
 }
 
+/** Tab in a part: an item of a list set in under the one above it (or out again); in HTML, two spaces. */
+function indent(editor: Editor, dir: 1 | -1): boolean {
+  const { state } = editor;
+  const part = partAt(state);
+  if (!part) return false;
+  const { node, lang } = part;
+  const $t = state.selection.$to;
+  const last = $t.depth >= 2 && $t.before(1) === part.pos ? $t.index(1) : node.childCount - 1;
+  const starts: number[] = [];
+  node.forEach((_, off) => void starts.push(part.pos + 2 + off));
+  const texts = linesOf(node);
+  const tr = state.tr;
+  if (lang === 'html') {
+    for (let i = last; i >= part.line; i--) dir > 0 ? tr.insertText('  ', starts[i]) : tr.delete(starts[i], starts[i] + (/^ {0,2}/.exec(texts[i])![0].length));
+  } else {
+    const infos = scan(texts);
+    const item = (k: number) => infos[k].boxes.map((b, j) => (b.kind === 'item' ? j : -1)).filter((j) => j >= 0).pop() ?? -1;
+    let any = false;
+    for (let i = last; i >= part.line; i--) {
+      const k = item(i);
+      if (k < 0 || infos[i].leaf !== 'para') continue;
+      any = true;
+      const at = infos[i].pre[k][0];
+      if (dir > 0) {
+        const p = i > 0 ? item(i - 1) : -1;
+        const by = p >= 0 ? infos[i - 1].pre[p][1] - at : 0;
+        if (by > 0) tr.insertText(' '.repeat(by), starts[i] + at);
+      } else if (k > 0 && infos[i].boxes[k - 1].kind === 'item') tr.delete(starts[i] + infos[i].pre[k - 1][0], starts[i] + infos[i].pre[k - 1][1]);
+    }
+    // Outside a list, Tab moves on, as it does anywhere on a page.
+    if (!any) return false;
+  }
+  editor.view.dispatch(tr.scrollIntoView());
+  return true;
+}
+
+/** Down from the end of the last part, among blocks written another way: a line of rich text after it. */
+function below(editor: Editor): boolean {
+  const { state } = editor;
+  const part = partAt(state);
+  if (!part || !state.selection.empty || state.doc.childCount < 2 || part.pos + part.node.nodeSize !== state.doc.content.size) return false;
+  if (part.line !== part.node.childCount - 1 || part.$f.parentOffset !== part.$f.parent.content.size) return false;
+  const end = state.doc.content.size;
+  const tr = state.tr.insert(end, state.schema.nodes.paragraph.create());
+  editor.view.dispatch(tr.setSelection(TextSelection.create(tr.doc, end + 1)).scrollIntoView());
+  return true;
+}
+
 const KEYS: Record<string, string> = { 'Mod-b': 'bold', 'Mod-B': 'bold', 'Mod-i': 'italic', 'Mod-I': 'italic', 'Mod-u': 'underline', 'Mod-U': 'underline', 'Mod-e': 'code', 'Mod-E': 'code', 'Mod-Shift-s': 'strike', 'Mod-Shift-S': 'strike' };
 const key = new PluginKey('writing-parts');
 /** The keys inside a part, what is drawn over its lines, and what is pasted into one. It goes before every other key. */
@@ -326,6 +402,9 @@ export const Parts = Extension.create({
       ...Object.fromEntries(Object.entries(KEYS).map(([k, what]) => [k, () => style(this.editor, what)])),
       Enter: () => enter(this.editor, false),
       'Shift-Enter': () => enter(this.editor, true),
+      Tab: () => indent(this.editor, 1),
+      'Shift-Tab': () => indent(this.editor, -1),
+      ArrowDown: () => below(this.editor),
       // An empty part that is not the whole draft goes away.
       Backspace: () => {
         const { state } = this.editor;
@@ -338,7 +417,7 @@ export const Parts = Extension.create({
     };
   },
   addProseMirrorPlugins() {
-    let cache: { doc: PMNode; exposes: string; hint: string; set: DecorationSet } | null = null;
+    let cache: { doc: PMNode; exposes: string; hint: string; carry: string; set: DecorationSet } | null = null;
     return [
       new Plugin({
         key,
@@ -346,15 +425,29 @@ export const Parts = Extension.create({
           decorations: (state) => {
             const exposes = live.exposes();
             const hint = live.hint();
-            if (cache?.doc !== state.doc || cache.exposes !== exposes || cache.hint !== hint) cache = { doc: state.doc, exposes, hint, set: drawn(state.doc, exposes, hint) };
+            const carry = carried();
+            if (cache?.doc !== state.doc || cache.exposes !== exposes || cache.hint !== hint || cache.carry !== carry) cache = { doc: state.doc, exposes, hint, carry, set: drawn(state.doc, exposes, hint) };
             return cache.set;
           },
-          // What is pasted into a part is its words, line by line: a part holds what was typed, not another editor's styles.
-          handlePaste: (view, event) => {
-            if (!partAt(view.state)) return false;
-            const text = event.clipboardData?.getData('text/plain') ?? '';
+          // What is pasted into a part is lines. Styled words (a link from a page) are written the way the part is;
+          // words that are only words, or lines copied from a part, go in as they were typed.
+          handlePaste: (view, event, slice) => {
+            const part = partAt(view.state);
+            if (!part) return false;
             const { schema } = view.state;
-            const lines = text.replace(/\r\n?/g, '\n').split('\n').map((l) => schema.nodes.paragraph.create(null, l ? schema.text(l) : null));
+            let styled = false;
+            let typed = false;
+            slice.content.descendants((n) => {
+              if (n.type.name === 'source') typed = true;
+              else if (n.marks.length || !(n.isText || n.type.name === 'paragraph')) styled = true;
+            });
+            let lines: PMNode[] | null = null;
+            if (styled && !typed) {
+              const out = toSource((slice.content.toJSON() ?? []) as DocNode[], part.lang);
+              if (out.every((b) => b.type === 'source')) lines = out.flatMap((b) => (b.content ?? []).map((l) => schema.nodeFromJSON(l)));
+            }
+            const text = event.clipboardData?.getData('text/plain') ?? '';
+            lines ??= text.replace(/\r\n?/g, '\n').split('\n').map((l) => schema.nodes.paragraph.create(null, l ? schema.text(l) : null));
             view.dispatch(view.state.tr.replaceSelection(new Slice(Fragment.from(lines), 1, 1)).scrollIntoView());
             return true;
           },
