@@ -158,9 +158,12 @@ reactions with a known time (docs/reactions.md "When") and receipts.
 One list for everything that happened to a message (ui/MessageHistory.tsx, rows in `messageHistory.ts`), oldest first
 so the latest is at the bottom, as in a chat, and it opens scrolled there. What the message says now sits above it.
 
-- **Sent**, with what it first said when it was edited since.
+- **Sent**, with who and when but no words: the first edit shows what it first said, and the top what it says now,
+  so no version is written out twice.
 - **Each edit**, as the words it took out (struck) and put in, with three words either side and `…` for the rest
-  (`wordDiff.ts`); "Whole text" shows that version whole with its changes marked.
+  (`wordDiff.ts`). A change of more than twelve words keeps its first six and last three, so a rewrite does not
+  repeat the whole of the old text. "Whole text", there only when words were left out, shows that version whole with
+  its changes marked.
 - **Reactions** made and taken back, each with its time (docs/reactions.md "When"); those already there when the hub
   first saw the message, with no time, in one row at the top, with how many the network counts but does not name.
 - **Pins** and unpins, with who.
@@ -171,7 +174,7 @@ It opens on one part or on all of it, never with filters: from "(edited)" or the
 from a reaction on its reactions, and from the ticks or Message History in the message's menu (by its reactions) on
 all of it. On a computer a right-click opens it as a click does on all of these, a reaction too; on a phone a long
 press on a reaction does. "All history" goes from either part to all of it. On a computer it hangs below what opened it (above, when
-there is no room); on a phone it is a page of its own, which back closes. It is a chunk of its own, loaded the first
+there is no room), and is placed again whenever it grows, as its rows load or a "Whole text" opens; on a phone it is a page of its own, which back closes. It is a chunk of its own, loaded the first
 time one opens.
 
 **In the chat**, the words a message's last edit put in are underlined, quietly, and a click on them opens its edits.

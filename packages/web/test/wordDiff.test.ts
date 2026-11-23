@@ -36,6 +36,14 @@ describe('changesInContext', () => {
   test('a short text stays whole', () => {
     expect(show(changesInContext('meet at 6', 'meet at 6:30, traffic'))).toBe('meet at -[6]+[6:30, traffic]');
   });
+  test('a rewrite keeps the first six and last three words of what it took out', () => {
+    const a = 'one two three four five six seven eight nine ten eleven twelve thirteen';
+    expect(show(changesInContext(a, 'test'))).toBe('-[one two three four five six]…-[eleven twelve thirteen]+[test]');
+  });
+  test('a change of twelve words stays whole', () => {
+    const a = 'one two three four five six seven eight nine ten eleven twelve';
+    expect(show(changesInContext(a, 'test'))).toBe(`-[${a}]+[test]`);
+  });
 });
 
 describe('markChanged', () => {

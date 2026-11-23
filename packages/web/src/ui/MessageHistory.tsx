@@ -42,22 +42,31 @@ function HistoryLayer({ m, focus: first, anchor }: { m: P.MessageView; focus: Hi
   }, []);
   const box = useRef<HTMLDivElement>(null);
   const page = phone.value;
-  // The side it first opened on, so switching to all of it grows it there rather than jumping.
+  // The side it first opened on, so growing (its rows loading, or switching to all of it) keeps it there rather than
+  // jumping.
   const side = useRef<'below' | 'above' | null>(null);
-  // Below what opened it when there is room, else above; inside the window either way.
+  // Below what opened it when there is room for most of it, else above; inside the window either way, placed again
+  // whenever its size changes (it first draws as "Loading…", far shorter than its rows).
   useLayoutEffect(() => {
     const el = box.current;
     if (!el || page) return;
-    const { width: w, height: h } = el.getBoundingClientRect();
-    if (!anchor) {
-      el.style.left = `${Math.max(8, (innerWidth - w) / 2)}px`;
-      el.style.top = `${Math.max(8, (innerHeight - h) / 3)}px`;
-      return;
-    }
-    el.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, anchor.left))}px`;
-    side.current ??= innerHeight - anchor.bottom - 8 >= h ? 'below' : 'above';
-    el.style.top = `${side.current === 'below' ? Math.max(8, Math.min(anchor.bottom + 6, innerHeight - h - 8)) : Math.max(8, anchor.top - h - 6)}px`;
-  });
+    const place = () => {
+      const { width: w, height: h } = el.getBoundingClientRect();
+      if (!anchor) {
+        el.style.left = `${Math.max(8, (innerWidth - w) / 2)}px`;
+        el.style.top = `${Math.max(8, (innerHeight - h) / 3)}px`;
+        return;
+      }
+      el.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, anchor.left))}px`;
+      const below = innerHeight - anchor.bottom - 14, above = anchor.top - 14;
+      side.current ??= below >= 300 || below >= above ? 'below' : 'above';
+      el.style.top = `${side.current === 'below' ? Math.max(8, Math.min(anchor.bottom + 6, innerHeight - h - 8)) : Math.max(8, anchor.top - h - 6)}px`;
+    };
+    place();
+    const ro = new ResizeObserver(place);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [page, anchor]);
   const body = <MessageHistory m={m} focus={focus} onAll={() => setFocus('all')} page={page} />;
   if (page)
     return createPortal(
@@ -179,28 +188,34 @@ function Row({ it, glyph, m, face }: { it: HistoryItem; glyph: (key: string) => 
           <Icon name="send" size={14} />
           <span class="mh-what">
             <b>{nameOf(m.authorId)}</b> sent it
-            {it.body !== undefined && <span class="mh-text">{plainBody(it.body, m.network) || 'Empty'}</span>}
           </span>
           <Time at={it.at} />
         </div>
       );
-    case 'edit':
+    case 'edit': {
+      const before = plainBody(it.before, m.network), after = plainBody(it.after, m.network);
+      const short = changesInContext(before, after);
+      // "Whole text" only where words were left out.
+      const cut = short.some((p) => p.k === 'gap');
       return (
         <div class="mh-row">
           <Icon name="pencil" size={14} />
           <span class="mh-what">
             <b>{nameOf(it.actorId)}</b> edited it
             <span class="mh-text">
-              <Diff parts={open ? wordDiff(plainBody(it.before, m.network), plainBody(it.after, m.network)) : changesInContext(plainBody(it.before, m.network), plainBody(it.after, m.network))} />
+              <Diff parts={open ? wordDiff(before, after) : short} />
               {/* At the end of the words, not a line of its own. */}
-              <button class="link mh-more" onClick={() => setOpen(!open)}>
-                {open ? 'Less' : 'Whole text'}
-              </button>
+              {cut && (
+                <button class="link mh-more" onClick={() => setOpen(!open)}>
+                  {open ? 'Less' : 'Whole text'}
+                </button>
+              )}
             </span>
           </span>
           <Time at={it.at} />
         </div>
       );
+    }
     case 'react':
     case 'unreact':
       return (
