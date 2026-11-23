@@ -86,10 +86,14 @@ message (`createPost`), from the cards or by naming it on the stream's chip. A t
 which are Zulip's own (`user_topics`: followed, muted, unmuted). Everything says Zulip's words: topics, not posts or
 threads, and Resolved, not Archived (`model.ts` `threadWords`).
 
-- **The sidebar** lists under each channel its unread topics and the open one, as Zulip's does (a muted topic only
-  for a mention), not its six latest; a Discord forum keeps its six latest posts, since a busy forum's posts are mostly
-  ones you never opened. A forum's own count is its threads' summed (unread and mentions; a Discord forum's open posts
-  only): a Zulip channel takes no messages of its own, so its own count is always 0. Each topic stays its own row in the inbox.
+- **The sidebar** lists under each channel the same rows as for any network's channel with threads (docs/servers.md,
+  "Threads under a channel"): the open topic, the unread ones (a mention first; a muted one only for a mention; at
+  most eight others), the three latest not shown yet, then "N more topics", which opens the channel's topic cards. A
+  chevron folds a channel's topics away. A channel's count is its topics' summed (unread and mentions): a Zulip
+  channel takes no messages of its own, so its own count is always 0.
+- **The inbox** has one row per channel for its topics, not one per topic ([inbox.md](inbox.md), "One row per
+  channel"): a topic that mentions you gives its channel's row the red @ count and comes first when the row opens on
+  its unread topics. The same holds for a Discord channel's threads and a forum's posts, and a Matrix room's threads.
 - **Resolved topics** (Zulip's ✔ in front of the name) are archived here, but stay in the channel's list with a
   Resolved chip, the ✔ left out of the shown name (`resolvedTopic`); the name the hub keeps, and searches, still has
   it. Resolving does not hide the topic as a network's archive hides a chat (`Store.conversation`): it is done, not
@@ -140,11 +144,48 @@ pages it (`Store.channelStream`, `Store.mergedTimeline`), sync brings it up to d
 live message joins the stream of its thread's channel, a thread new since included. A message moved to another topic
 of the channel stays in the stream; one moved to another channel leaves it (`syncmodel.ts` `leaveOtherTimelines`).
 The page and its chip are a lazy chunk (`web/src/ui/Stream.tsx`); the headers and the switch are in the timeline
-(`web/src/ui/Timeline.tsx`). Under the last message, `StreamFoot` is the place for "Next unread topic".
+(`web/src/ui/Timeline.tsx`). Under the last message is the timeline's own "Next unread" bar (below).
 
 **Matrix.** A Matrix thread (`m.thread`) is a thread of its room (`shape: 'thread'`, its native id `room|root`, the
 room its parent: `packages/adapter-matrix/src/adapter.ts`). Its root message stays in the room, so the stream shows
 the root among the room's messages and the replies under the thread's header. "No thread" on the chip sends to the room.
+
+## Next unread, and reading a channel at once
+
+**Next unread topic** (Zulip's name and key; "thread" or "post" elsewhere, `threadWords`) goes to the next unread
+thread after the one you are in:
+
+1. the channel's other unread threads, one that mentions you first, then by latest activity;
+2. then the next channel with one, in sidebar order, through the rest of its space and round to its first channels;
+3. then the spaces after it in the rail's order (and those in its folders), and round to the ones before.
+
+A channel's own unread messages (a Discord text channel's, a Matrix room's) count as one more thing to read in it.
+A muted thread, or one kept to the list, is skipped unless it mentions you (one muted here with a Mute rule too,
+though the sidebar leaves that out). Zulip's resolved topics count; another network's archived threads do not. What
+you went on from is passed over until something new comes in there, so two unread threads don't send you back and
+forth before the one you left is read. A channel listed under two servers goes on from the one you are looking at.
+From a channel's stream (every thread of it together), next is the next channel with anything unread.
+
+- **`n`** (Caps Lock's too), when you are not typing and nothing is over the page (a menu, a sheet, a dialog, a layer
+  Back closes), with a conversation open in the inbox, a server, a folder or search. Nothing else in the app takes a
+  bare N; after a G (docs/desktop.md "Keys to the places") an N is no place, so it puts the card away and goes on, as
+  any other key does. A chat you open yourself puts the caret in its message box, where N is a letter: click the
+  messages first. Going there with `n` or the bar leaves the caret out of the box, so `n` goes on working; click the
+  box to write. With nothing left, a toast says so.
+- **The bar** at the bottom of a thread's timeline, once the newest message is drawn and there is a next one:
+  "Next: <name> · N unread" (the channel first when it is another one, an @ for a mention), in the network's color.
+  A click goes there. It has one mount, at the end of `Timeline` (`NextUnreadBar`), so a channel's stream gets it too.
+
+The order is one pure function, `nextUnread` (`web/src/nextunread.ts`), asked channel by channel so it looks only as
+far as the first hit; `ui/NextUnread.tsx` (a chunk of its own, loaded by `ui/NextUnreadLazy.tsx`) gathers the
+channels in sidebar order and each one's threads, and draws the bar.
+
+**Mark As Read on a channel** reads the channel and every thread of it, on every network: a Zulip channel's topics, a
+Discord text channel's threads and a forum's posts, a Matrix room's threads, archived ones too (`readScope` in
+`web/src/threads.ts`). It asks nothing first: a channel is a small scope. A server, a folder or everything still asks.
+Each goes to its network through the read queue (`POST /api/read-all`), and read state can't be taken back there, so
+there is no Undo. Their notifications on this device close, and the row counts as read without an answer
+([inbox.md](inbox.md)), as a chat's own Mark As Read does.
 
 ## Not built
 
@@ -170,6 +211,11 @@ covers which menu entries show where. The channel stream: `packages/hub/test/str
 a room's own messages, and sync of `k:` with a new thread and a message moved away), `web/test/stream.test.ts` (what
 opens on it, where headers go, the chip's thread), `web/test/moved.test.ts`, and `scripts/verify-back.ts` (a header
 opens its thread; Escape and back come back to the same place). In dither-accounts, `extractors/discord/test/hook-threads.test.ts` runs hook.js's
+
+covers which menu entries show where; `web/test/nextunread.test.ts` the next-unread order (same channel, next
+channel, next space, muted, a mention, none left, a stream) and what a channel's Mark As Read covers;
+`scripts/verify-next-unread.ts <demo hub>` (with `DITHER_DEMO_SCENARIO=zulip`) presses `n` and clicks the bar on the
+demo's Zulip organization in headless Chromium, and marks a Zulip channel and a Discord text channel read. In dither-accounts, `extractors/discord/test/hook-threads.test.ts` runs hook.js's
 section against a replica of the client, and `test/threads.test.ts` the mapping, the About parts and the refusals.
 
 None of it has run against a real Discord account.

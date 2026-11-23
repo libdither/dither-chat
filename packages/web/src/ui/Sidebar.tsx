@@ -1,5 +1,6 @@
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
+import { computed, type ReadonlySignal } from '@preact/signals';
 import { useRef, useState } from 'preact/hooks';
 import { ago, since } from '../format.ts';
 import {
@@ -25,12 +26,15 @@ import {
   placeConv,
   plainBody,
   resolvedTopic,
+  rowConvs,
   ruleIcon,
   spaceChildren,
+  channelUnread,
+  shownThreads,
   spaceUnread,
   sumUnread,
-  threadsOf,
-  topicForum,
+  threadWords,
+  unreadThreadsOf,
   unreadOf,
   visibleConv,
   type InboxRow,
@@ -56,6 +60,8 @@ import { MarkableRow } from './ReplyMark.tsx';
 import { needsReplyLabel, needsReplyOf } from '../replymarks.ts';
 import { pickedRoute } from './Pairs.tsx';
 import { chatKey } from '../chatroutes.ts';
+import { threadDialog } from '../threads.ts';
+import { subThreads } from '../channelrows.ts';
 import { groups, type MenuSpec } from './ContextMenu.tsx';
 import { openAbout } from '../opening.ts';
 import { arrangeDrop, arrangedFolderItems, arrangedPeople, arrangedRail, snapshot } from '../arrange.ts';
@@ -243,8 +249,184 @@ const ConvRow = memo(function ConvRow({
   );
 });
 
+// ------------------------------------------------------------------ a channel's threads as one row
+
+/**
+ * Whether a channel's inbox row is open on its threads, on this device. Closed until opened: kept as `false` in
+ * `collapsed` under `inbox:<channel>`. One computed per row, so opening one draws that row alone.
+ */
+const foldOpen = new Map<string, ReadonlySignal<boolean>>();
+function isFoldOpen(channelId: string): boolean {
+  const key = `inbox:${channelId}`;
+  let s = foldOpen.get(key);
+  if (!s) foldOpen.set(key, (s = computed(() => pref('collapsed')[key] === false)));
+  return s.value;
+}
+function toggleFold(channelId: string) {
+  const key = `inbox:${channelId}`;
+  const next = { ...pref('collapsed') };
+  if (next[key] === false) delete next[key];
+  else next[key] = false;
+  setPrefs({ collapsed: next });
+}
+
+/**
+ * Where a channel's inbox row opens: the channel, as its page opens from the sidebar (a Zulip channel or a Discord
+ * forum on its cards, a Discord text channel or a Matrix room on its messages). The one place a channel row's click
+ * goes, for the stream to take it over.
+ */
+function openChannelRow(channelId: string) {
+  go({ view: 'inbox', conv: channelId });
+}
+
+/** A thread under an open channel row: its name, its own unread count (red where it mentions you), and it opens the thread. */
+const ThreadSubRow = memo(function ThreadSubRow({ t, rowKey, active }: { t: P.ConversationView; rowKey: string; active: boolean }) {
+  // A rule or a mute changes no conversation: it draws again on the settings' version.
+  metaRev.value;
+  const u = unreadOf(t);
+  const ctx = useMenu(() => conversationMenu(t));
+  return (
+    <button
+      class={`inbox-subrow ${active ? 'active' : ''} ${u.muted ? 'muted' : ''}`}
+      data-in-row={rowKey}
+      data-track="row (thread in a channel row)"
+      onClick={opener(`inbox-thread:${t.id}`, () => go({ view: 'inbox', conv: t.id }))}
+      {...ctx}
+    >
+      <Icon name={variantIcon(t.variant, t.shape)} size={12} class="row-kind" />
+      <span class="inbox-subrow-name">{convTitle(t)}</span>
+      <span class="row-time">
+        <Ago ts={t.lastMessageAt} />
+      </span>
+      <Count n={u.unread} muted={!u.badge} />
+    </button>
+  );
+});
+
+/**
+ * A channel's count on its inbox row: its unread threads' summed (a muted one's only where it mentions you, as
+ * `sumUnread` counts), the listed ones and the rest alike, with the place's own messages (likewise). A forum takes none
+ * of its own (Zulip) or may already count its posts' (Discord): the larger, never both added, as the sidebar's channel
+ * row. `loud`: a group's own unread, red as any group's.
+ */
+function channelCount(c: P.ConversationView, threads: P.ConversationView[]) {
+  const own = sumUnread([c]);
+  const sum = sumUnread(threads);
+  const forum = c.variant === 'forum' || c.variant === 'media';
+  const add = (a: number, b: number) => (forum ? Math.max(a, b) : a + b);
+  return { unread: add(own.unread, sum.unread), mentions: add(own.mentions, sum.mentions), loud: own.badge > 0 && (c.shape === 'group' || c.shape === 'direct') };
+}
+
+/**
+ * A channel's threads as one inbox row (docs/inbox.md "One row per channel", channelrows.ts): the channel's name and
+ * place, the latest listed thread's name and its last message, the unread summed over every thread of it, and a red
+ * @ count where you are mentioned. Muted only when every listed part is. A Matrix room drawn so keeps a group's lock,
+ * typing and dot. Its menu is the channel's, whose Mark As Read reads every thread. `unread`: the channel's threads
+ * with something unread, listed or not.
+ */
+const ChannelInboxRow = memo(function ChannelInboxRow({ c, rowKey, parts, unread, latest, active, why, owedSince, needsP }: { c: P.ConversationView; rowKey: string; parts: P.ConversationView[]; unread: P.ConversationView[]; latest: P.ConversationView; active: boolean; why?: string[]; owedSince?: number | null; needsP?: number | null }) {
+  metaRev.value;
+  const n = channelCount(c, unread);
+  const muted = parts.every((p) => unreadOf(p).muted);
+  // The level the muted mark says: the latest listed part's, which is muted when the row is.
+  const lvl = effectiveLevel(latest);
+  const place = placeLine(c);
+  const com = communitiesOf(c)[0];
+  const ctx = useMenu(() => conversationMenu(c, why, true));
+  const channel = c.shape === 'channel';
+  const title = channel ? convTitle(c) : convLabel(c);
+  return (
+    <button
+      class={`row conv-row channel-row ${active ? 'active' : ''} ${n.unread ? 'unread' : ''} ${muted ? 'muted' : ''}`}
+      onClick={opener(`inbox:${rowKey}`, () => openChannelRow(c.id))}
+      title={why?.length ? why.join('\n') : undefined}
+      data-row={rowKey}
+      data-track={rowTrack(convKind(c.shape), !!n.unread, !!owedSince)}
+      {...ctx}
+    >
+      <span class="row-avatar">
+        {channel && com ? (
+          <Avatar id={com.id} name={com.name} url={com.icon} size={36} square network={c.network} accountIds={c.vantages.map((v) => v.accountId)} />
+        ) : (
+          <Avatar id={c.id} name={title} url={c.avatar} size={36} square network={c.network} accountIds={c.vantages.map((v) => v.accountId)} presence={convPresence(c)} />
+        )}
+        {c.shape === 'group' && <RowTyping convIds={parts.map((p) => p.id)} />}
+      </span>
+      <span class="row-main">
+        <span class="row-top">
+          <span class="row-title">
+            {channel && <Icon name={variantIcon(c.variant, c.shape)} size={13} class="row-kind" />}
+            {title}
+          </span>
+          <CallMark convIds={parts.map((p) => p.id)} />
+          {c.encrypted && <Icon name="lock" size={11} class="row-lock" />}
+          <span class="row-time">
+            <Ago ts={latest.lastMessageAt} />
+          </span>
+        </span>
+        {place && <span class="row-place">{place}</span>}
+        <span class="row-bottom">
+          <span class="row-preview">
+            {latest !== c && <span class="row-subject">{convTitle(latest)}</span>}
+            {latest !== c ? ` — ${preview(latest)}` : preview(c)}
+          </span>
+          {muted && <Icon name={ruleIcon(lvl.level)} size={12} class="row-muted" />}
+          {n.mentions ? (
+            <span class="count row-at" title="Mentions you">
+              @{n.mentions > 99 ? '99+' : n.mentions}
+            </span>
+          ) : null}
+          <Count n={n.unread} muted={!n.loud} />
+          {owedSince ? <Owed at={owedSince} p={needsP} /> : null}
+        </span>
+      </span>
+    </button>
+  );
+});
+
+/**
+ * The chevron beside a channel row, and the threads it opens on: the unread ones, mentions of you first, then the
+ * latest, and the one open now. Its name stays; `aria-expanded` says whether it is open.
+ */
+function channelFold(c: P.ConversationView, rowKey: string, threads: P.ConversationView[], activeConv: string | undefined) {
+  const shown = subThreads(
+    threads.map((t) => ({ ...unreadOf(t), id: t.id, t, last: t.lastMessageAt ?? 0 })),
+    activeConv,
+  ).map((x) => x.t);
+  if (!shown.length) return {};
+  const open = isFoldOpen(c.id);
+  const many = threadWords(shown[0]).many;
+  const list = `inbox-fold-${c.id}`;
+  const fold = (
+    <button type="button" class="row-fold" aria-expanded={open} aria-controls={list} aria-label={`Unread ${many}`} title={open ? `Hide unread ${many}` : `Show ${shown.length} unread ${many}`} data-track="channel row fold" onClick={() => toggleFold(c.id)}>
+      <Icon name={open ? 'chevronDown' : 'chevronRight'} size={14} />
+    </button>
+  );
+  const below = (
+    <div class="inbox-subrows" id={list} role="group" aria-label={`Unread ${many} in ${convTitle(c)}`} hidden={!open}>
+      {open && shown.map((t) => <ThreadSubRow key={t.id} t={t} rowKey={rowKey} active={t.id === activeConv} />)}
+    </div>
+  );
+  return { fold, below };
+}
+
 type RowChat = { person: P.PersonView; routes: P.ConversationView[] };
-type InboxRowProps = { rowKey: string; ids: string[]; conv?: P.ConversationView; chat?: RowChat; active: boolean; why?: string[]; owedSince: number | null; needsP: number | null; latest?: string };
+type InboxRowProps = {
+  rowKey: string;
+  ids: string[];
+  conv?: P.ConversationView;
+  chat?: RowChat;
+  /**
+   * A channel's row: its listed conversations, the channel's threads with something unread (listed or not), the
+   * thread it previews, and the open conversation when it is the channel or a thread of it.
+   */
+  channel?: { parts: P.ConversationView[]; unread: P.ConversationView[]; latest: P.ConversationView; open?: string };
+  active: boolean;
+  why?: string[];
+  owedSince: number | null;
+  needsP: number | null;
+  latest?: string;
+};
 /** The same chat: the inbox makes its rows again for each change, so a chat is the same person by the same routes. */
 const sameChat = (a?: RowChat, b?: RowChat) => a === b || (!!a && !!b && a.person === b.person && sameProps({ r: a.routes }, { r: b.routes }));
 
@@ -253,7 +435,17 @@ const sameChat = (a?: RowChat, b?: RowChat) => a === b || (!!a && !!b && a.perso
  * changes (memo.ts), so a message or a visit elsewhere draws the list again but not every row.
  */
 const InboxRowView = memo(
-  function InboxRowView({ rowKey, ids, conv, chat, active, why, owedSince, needsP, latest }: InboxRowProps) {
+  function InboxRowView({ rowKey, ids, conv, chat, channel, active, why, owedSince, needsP, latest }: InboxRowProps) {
+    if (conv && channel) {
+      // Whether a thread is muted is a setting: drawn again on the settings' version (`sameChannel` sees no change).
+      metaRev.value;
+      const { fold, below } = channelFold(conv, rowKey, channel.unread, channel.open);
+      return (
+        <MarkableRow rowKey={rowKey} kind="conversation" ids={ids} owedSince={owedSince} needsP={needsP} canNeed={!!latest} latest={latest} fold={fold} below={below}>
+          <ChannelInboxRow c={conv} rowKey={rowKey} parts={channel.parts} unread={channel.unread} latest={channel.latest} active={active} why={why} owedSince={owedSince} needsP={needsP} />
+        </MarkableRow>
+      );
+    }
     if (!conv)
       return (
         <MarkableRow rowKey={rowKey} kind="mail" ids={ids} owedSince={owedSince} needsP={needsP} canNeed={false}>
@@ -270,8 +462,10 @@ const InboxRowView = memo(
       </MarkableRow>
     );
   },
-  (a, b) => sameProps({ ...a, chat: undefined }, { ...b, chat: undefined }) && sameChat(a.chat, b.chat),
+  (a, b) => sameProps({ ...a, chat: undefined, channel: undefined }, { ...b, chat: undefined, channel: undefined }) && sameChat(a.chat, b.chat) && sameChannel(a.channel, b.channel),
 );
+/** The same channel row: the same conversations, preview and open thread. */
+const sameChannel = (a?: InboxRowProps['channel'], b?: InboxRowProps['channel']) => a === b || (!!a && !!b && a.latest === b.latest && a.open === b.open && sameProps({ p: a.parts, u: a.unread }, { p: b.parts, u: b.unread }));
 
 /** A chat's unread, as one row: summed over its routes, muted only if every route is. */
 function chatUnread(routes: P.ConversationView[]) {
@@ -431,15 +625,28 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
   const [drawn, more] = useShown(rows.length);
   const [q, setQ] = useState('');
   const scroll = useRef<HTMLDivElement>(null);
-  // A row and its ↩ button move as one (ReplyMark.tsx); anything else keyed by its own data-row.
-  useFlip(scroll, snap.v, '[data-row-key], [data-row]:not([data-row-key] > [data-row])');
+  // A row and its ↩ button move as one (ReplyMark.tsx), and a channel row with the threads under it; anything else keyed by its own data-row.
+  useFlip(scroll, snap.v, '[data-row-key], [data-row]:not([data-row-key] [data-row])');
   // A person's chat is one row, active whichever of their DMs is open.
   const activeKey = activeConv ? inboxKeyOf(activeConv) : undefined;
   const row = (r: InboxRow) => {
     const owedSince = r.needs ? r.owedSince : null;
-    const ids = r.kind === 'mail' ? [r.key] : r.chat ? r.chat.routes.map((c) => c.id) : [r.conv.id];
+    // A channel row's ↩ goes on the parts that rank it: a muted thread does not lift it, nor take its marks.
+    const convs = r.kind === 'mail' ? [] : rowConvs(r);
+    const loud = r.kind === 'conv' && r.channel ? convs.filter((c) => !unreadOf(c).muted) : convs;
+    const ids = r.kind === 'mail' ? [r.key] : (loud.length ? loud : convs).map((c) => c.id);
     const needsP = owedSince !== null ? needsReplyOf(ids) : null;
     if (r.kind === 'mail') return <InboxRowView key={r.key} rowKey={r.key} ids={ids} active={r.key === activeConv} why={r.reasons} owedSince={owedSince} needsP={needsP} />;
+    if (r.channel) {
+      const ch = r.channel;
+      const open = activeConv && db.conversations.get(activeConv);
+      const here = open && (open === r.conv || open.parentId === r.conv.id) ? open : undefined;
+      // The open thread stays under the row once read, so it does not go from under you.
+      const unread = unreadThreadsOf(r.conv.id);
+      const threads = here && here !== r.conv && !unread.includes(here) ? [...unread, here] : unread;
+      const channel = { parts: ch.parts, unread: threads, latest: ch.latest, open: here?.id };
+      return <InboxRowView key={r.key} rowKey={r.key} ids={ids} conv={r.conv} channel={channel} active={r.key === activeKey} why={r.reasons} owedSince={owedSince} needsP={needsP} latest={needsTarget(ch.latest)} />;
+    }
     return <InboxRowView key={r.key} rowKey={r.key} ids={ids} conv={r.conv} chat={r.chat} active={r.chat ? r.key === activeKey : r.conv.id === activeConv} why={r.reasons} owedSince={owedSince} needsP={needsP} latest={needsTarget(r.conv)} />;
   };
   return (
@@ -661,48 +868,45 @@ function treeOpener(key: string, open: (c: P.ConversationView) => void) {
   return f;
 }
 
-/** A forum's threads that count toward its badge: every topic of a Zulip channel, a Discord forum's open posts. */
-function forumThreads(c: P.ConversationView): P.ConversationView[] {
-  const out: P.ConversationView[] = [];
-  for (const id of db.threads.get(c.id) ?? []) {
-    const t = db.conversations.get(id);
-    if (t && visibleConv(t) && (!t.archived || topicForum(c))) out.push(t);
-  }
-  return out;
-}
-
-/**
- * A channel's threads shown under it: the open one, unread ones and those of the last three days. A forum of topics
- * (Zulip's channels): the open one and the unread ones, a muted one only for a mention, as Zulip's own sidebar. Another
- * forum (Discord's): its six latest posts, since a busy forum's posts are mostly ones you never opened.
- */
-function shownThreadsOf(c: P.ConversationView, active?: string): P.ConversationView[] {
-  if (topicForum(c))
-    return threadsOf(c.id).filter((t) => {
-      if (t.id === active) return true;
-      const u = unreadOf(t);
-      return u.unread > 0 && (!u.muted || u.badge > 0);
-    });
-  if (c.variant === 'forum') return threadsOf(c.id).slice(0, 6);
-  return threadsOf(c.id).filter((t) => t.id === active || unreadOf(t).unread > 0 || (t.lastMessageAt ?? 0) > Date.now() - 3 * 86_400_000);
-}
-
-/**
- * A channel and the threads under it. Drawn again only when its props change (memo.ts) or a name or setting does
- * (`metaRev`): `active` is the open conversation only when it is this one or a thread shown here, so opening another
- * channel draws two rows, not the list.
- */
-const ChannelRow = memo(function ChannelRow({ c, shownThreads, active, depth, onOpen, alsoIn, dots = true, threadUnread = 0, threadBadge = 0 }: { c: P.ConversationView; shownThreads: P.ConversationView[]; active?: string; depth: number; onOpen: (c: P.ConversationView) => void; alsoIn?: string[]; dots?: boolean; threadUnread?: number; threadBadge?: number }) {
+/** A thread under its channel: drawn again only when it changes or is opened or left, not when another is. */
+const ThreadRow = memo(function ThreadRow({ t, active, depth, onOpen }: { t: P.ConversationView; active: boolean; depth: number; onOpen: (c: P.ConversationView) => void }) {
   metaRev.value;
-  const own = unreadOf(c);
-  // A forum's own count is 0 (Zulip) or may already hold its posts' (Discord): the larger, never both added.
-  const u = { ...own, unread: Math.max(own.unread, threadUnread), badge: Math.max(own.badge, threadBadge) };
+  const tu = unreadOf(t);
+  const ctx = useMenu(() => conversationMenu(t));
+  return (
+    <button class={`chan thread ${active ? 'active' : ''} ${tu.unread && !tu.muted ? 'unread' : ''}`} style={{ paddingLeft: `${26 + depth * 12}px` }} onClick={() => onOpen(t)} title={kindLabel(t)} {...ctx}>
+      <span class="thread-elbow" />
+      <span class="chan-name">{convTitle(t)}</span>
+      {resolvedTopic(t) && (
+        <span class="chan-resolved" title="Resolved">
+          <Icon name="check" size={11} />
+        </span>
+      )}
+      {tu.badge > 0 && <Count n={tu.badge} />}
+    </button>
+  );
+});
+
+/** "N more": a forum's page is its thread cards; another channel has no such page, so its thread browser opens too. */
+function moreThreads(c: P.ConversationView, onOpen: (c: P.ConversationView) => void) {
+  onOpen(c);
+  if (c.variant !== 'forum' && c.variant !== 'media') threadDialog.value = { kind: 'browse', convId: c.id, tab: 'active' };
+}
+
+/** The pref('collapsed') key of a channel whose threads are folded away, on this device. */
+const foldKey = (id: string) => `chan:${id}`;
+
+/** A channel's own line: its name, count and fold. Not drawn again when one of its threads is opened or left. */
+const ChannelHead = memo(function ChannelHead({ c, folded, active, depth, onOpen, alsoIn, dots, unread, badge }: { c: P.ConversationView; folded?: boolean; active: boolean; depth: number; onOpen: (c: P.ConversationView) => void; alsoIn?: string[]; dots: boolean; unread: number; badge: number }) {
+  metaRev.value;
+  const muted = unreadOf(c).muted;
   const lvl = effectiveLevel(c);
   const ctx = useMenu(() => conversationMenu(c));
+  const threads = folded === undefined ? null : threadWords(c);
   return (
-    <>
+    <div class="chan-line">
       <button
-        class={`chan ${c.id === active ? 'active' : ''} ${u.unread && !u.muted ? 'unread' : ''} ${u.muted ? 'muted' : ''}`}
+        class={`chan ${active ? 'active' : ''} ${unread && !muted ? 'unread' : ''} ${muted ? 'muted' : ''}`}
         style={{ paddingLeft: `${10 + depth * 12}px` }}
         onClick={() => onOpen(c)}
         title={kindLabel(c)}
@@ -716,36 +920,53 @@ const ChannelRow = memo(function ChannelRow({ c, shownThreads, active, depth, on
             <Icon name="link" size={11} />
           </span>
         )}
-        {u.muted && <Icon name={ruleIcon(lvl.level)} size={12} class="chan-muted" />}
+        {muted && <Icon name={ruleIcon(lvl.level)} size={12} class="chan-muted" />}
         {dots && <AccountDots network={c.network} accountIds={c.vantages.map((v) => v.accountId)} size={6} />}
-        <Count n={u.badge} />
+        {badge > 0 && <Count n={badge} />}
       </button>
+      {threads && (
+        <button
+          class="chan-fold"
+          aria-expanded={!folded}
+          title={folded ? `Show ${threads.many}` : `Hide ${threads.many}`}
+          aria-label={folded ? `Show ${threads.many}` : `Hide ${threads.many}`}
+          data-track={`channel fold (${threads.many})`}
+          onClick={() => setPrefs({ collapsed: { ...pref('collapsed'), [foldKey(c.id)]: !folded } })}
+        >
+          <Icon name={folded ? 'chevronRight' : 'chevronDown'} size={12} />
+        </button>
+      )}
+    </div>
+  );
+});
+
+/**
+ * A channel and the threads under it (model.ts `shownThreads`, docs/servers.md "Threads under a channel"): a chevron
+ * folds them away, and a last row says how many more its thread list has. Its badge is its threads' count with its own
+ * (`channelUnread`), folded or not. Drawn again only when its props change (memo.ts): `active` is the open
+ * conversation only when it is this one or a thread shown here, so opening another channel draws two rows, not the
+ * list, and opening a thread draws that thread's row and the one left; a fold draws only its own channel.
+ */
+const ChannelRow = memo(function ChannelRow({ c, shownThreads, more = 0, folded, active, depth, onOpen, alsoIn, dots = true, unread = 0, badge = 0 }: { c: P.ConversationView; shownThreads: P.ConversationView[]; more?: number; folded?: boolean; active?: string; depth: number; onOpen: (c: P.ConversationView) => void; alsoIn?: string[]; dots?: boolean; unread?: number; badge?: number }) {
+  const words = folded === undefined ? null : threadWords(c);
+  return (
+    <>
+      <ChannelHead c={c} folded={folded} active={c.id === active} depth={depth} onOpen={onOpen} alsoIn={alsoIn} dots={dots} unread={unread} badge={badge} />
       {(c.variant === 'voice' || c.variant === 'stage') && <VoicePeople conversationId={c.id} class="chan-voice" style={{ paddingLeft: `${36 + depth * 12}px` }} />}
-      {shownThreads.map((t) => {
-        const tu = unreadOf(t);
-        return (
-          <Menuable build={() => conversationMenu(t)}>
-            {(ctx) => (
-              <button
-                class={`chan thread ${t.id === active ? 'active' : ''} ${tu.unread && !tu.muted ? 'unread' : ''}`}
-                style={{ paddingLeft: `${26 + depth * 12}px` }}
-                onClick={() => onOpen(t)}
-                title={kindLabel(t)}
-                {...ctx}
-              >
-                <span class="thread-elbow" />
-                <span class="chan-name">{convTitle(t)}</span>
-                {resolvedTopic(t) && (
-                  <span class="chan-resolved" title="Resolved">
-                    <Icon name="check" size={11} />
-                  </span>
-                )}
-                <Count n={tu.badge} />
-              </button>
-            )}
-          </Menuable>
-        );
-      })}
+      {/* Folded, the open thread still shows: where you are. */}
+      {(folded ? shownThreads.filter((t) => t.id === active) : shownThreads).map((t) => (
+        <ThreadRow key={t.id} t={t} active={t.id === active} depth={depth} onOpen={onOpen} />
+      ))}
+      {/* The rest are in the channel's thread list: a forum's post cards (ui/Threads.tsx), which the channel opens on;
+          else the channel, with its thread browser over it. */}
+      {!folded && words && more > 0 && (
+        <button class="chan thread chan-more" style={{ paddingLeft: `${26 + depth * 12}px` }} data-track={`more threads (${words.many})`} onClick={() => moreThreads(c, onOpen)}>
+          <span class="thread-elbow" />
+          <span class="chan-name">
+            {more} more {more === 1 ? words.one : words.many}
+          </span>
+        </button>
+      )}
     </>
   );
 });
@@ -756,22 +977,24 @@ function SpaceTree({ spaceId, active, onOpen, depth = 0, seen = new Set<string>(
   const kids = spaceChildren(spaceId);
   // Seen through one account, the header's "via" already says which; a dot on every channel would repeat it.
   dots ??= (db.spaces.get(spaceId)?.accountIds.length ?? 0) > 1;
+  const folds = pref('collapsed');
   return (
     <>
       {kids.map((k) => {
         if (k.kind === 'conversation') {
           const c = db.conversations.get(k.id)!;
           const also = c.spaceIds.filter((s) => s !== spaceId).map((s) => communityOfSpace(s)?.name ?? db.spaces.get(s)?.name ?? '');
-          const threads = shownThreadsOf(c, active);
-          const here = active === c.id || threads.some((t) => t.id === active);
-          // A forum takes no messages of its own: its count is its threads', as numbers so the row's memo still holds.
-          const sum = c.variant === 'forum' ? sumUnread(forumThreads(c)) : null;
-          return <ChannelRow key={c.id} c={c} shownThreads={threads} active={here ? active : undefined} depth={depth} onOpen={onOpen} alsoIn={also.filter(Boolean)} dots={dots} threadUnread={sum?.unread} threadBadge={sum?.badge} />;
+          const { shown, more } = shownThreads(c, active);
+          const has = shown.length > 0 || more > 0;
+          const here = active === c.id || shown.some((t) => t.id === active);
+          // Its threads' counts with its own, as numbers so the row's memo still holds.
+          const u = channelUnread(c);
+          return <ChannelRow key={c.id} c={c} shownThreads={shown} more={more} folded={has ? !!folds[foldKey(c.id)] : undefined} active={here ? active : undefined} depth={depth} onOpen={onOpen} alsoIn={also.filter(Boolean)} dots={dots} unread={u.unread} badge={u.badge} />;
         }
         const s = db.spaces.get(k.id)!;
         if (k.kind === 'section' && !spaceChildren(s.id).length) return null; // a category whose channels this account can't see
         const key = `space:${s.id}`;
-        const collapsed = isCollapsed(key);
+        const collapsed = !!folds[key];
         const u = spaceUnread(s.id);
         return (
           <div class={`tree-group ${k.kind}`}>

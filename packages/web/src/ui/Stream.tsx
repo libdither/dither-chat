@@ -1,7 +1,6 @@
 /**
  * A channel's stream (stream.ts, docs/threads.md "The channel stream"), a chunk of its own (Timeline.tsx StreamLazy):
- * the page, its box's thread chip (TopicChip.tsx), and the place under the last message where "Next unread topic"
- * goes (StreamFoot).
+ * the page and its box's thread chip (TopicChip.tsx). "Next unread" under the last message is the timeline's own.
  */
 import type * as P from '@dither-chat/protocol';
 import { threadNameProblem } from '@dither-chat/protocol';
@@ -17,13 +16,6 @@ import { TopicChip } from './TopicChip.tsx';
 import { TypingBar } from './Typing.tsx';
 import './Stream.css';
 import { Composer, composerBlocker, ConvHeader, firstUnread, Timeline, ViewSwitch, type StreamOpts } from './Timeline.tsx';
-
-/**
- * Under a stream's last message, over the box: where "Next unread topic" goes (docs/threads.md). Nothing yet.
- */
-export function StreamFoot(_: { c: P.ConversationView }) {
-  return null;
-}
 
 /**
  * A channel's stream (stream.ts, docs/threads.md "The channel stream"): every thread's messages together by time, with
@@ -142,7 +134,6 @@ export function StreamPane({ c, onBack, focus }: { c: P.ConversationView; onBack
       <ViewSwitch c={c} shows="stream" />
       {c.pending && <LinkBanner c={c} />}
       <Timeline tkey={tkey} convIds={ids} onReply={onReply} firstUnreadTs={null} focus={focus} stream={opts} />
-      <StreamFoot c={c} />
       <TypingBar convIds={ids} lead={<TopicChip c={c} value={target} newName={newName} own={own} canNew={canNew} onPick={pick} onNew={setNewName} />} />
       <Composer
         targets={{ convId: newName === null && to ? to.id : c.id }}

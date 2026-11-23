@@ -73,6 +73,7 @@ Two ways to go to the app's places with the keyboard
 - Each place's tooltip on the rail lists its keys, and the buttons carry their chord in `aria-keyshortcuts`
   (which has no way to write a G then a letter).
 - Ctrl+K (docs/palette.md) still jumps to anything else.
+- N, with a chat open, goes to the next unread topic or thread, as Zulip's N does ([threads.md](threads.md#next-unread-and-reading-a-channel-at-once)).
 
 `bun scripts/verify-place-keys.ts <demo hub>` presses them in headless Chromium with real key input: G then P, G
 then I and G then S, a stray key after G, G typed in a chat's box, Ctrl+Shift+2 from the box, Alt+2 doing nothing,

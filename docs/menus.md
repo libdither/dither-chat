@@ -60,7 +60,8 @@ button that opens this menu.
 
 ### A conversation or channel (sidebar rows, the channel tree, the header)
 
-Mark As Read · Profile (DMs) · About This Channel (or Group, Chat: its settings,
+Mark As Read (a channel with threads: it and every thread of it, without a confirm,
+[threads.md](threads.md#next-unread-and-reading-a-channel-at-once)) · Profile (DMs) · About This Channel (or Group, Chat: its settings,
 members and who may change what, [group-settings.md](group-settings.md)) · Search in Channel · Copy Link ·
 Mute Channel and Notification Settings › (Automatic, Always alert, List only, Mute: the hub's own rules,
 [notifications.md](notifications.md#rules)) · Pin to Top, Add to Sidebar, Move Up/Down, Move to Folder › (with

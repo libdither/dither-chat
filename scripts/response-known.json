@@ -368,14 +368,14 @@
   ],
   "a channel's About / Discord channel": [
    "CallMark",
-   "ChannelRow",
+   "ChannelHead",
    "Count",
    "Icon",
    "M$1"
   ],
   "a channel's About / Mute": [
    "CallMark",
-   "ChannelRow",
+   "ChannelHead",
    "Count",
    "Icon",
    "M$1"
@@ -385,7 +385,7 @@
   ],
   "a channel's About / input:on": [
    "CallMark",
-   "ChannelRow",
+   "ChannelHead",
    "Count",
    "Icon",
    "M$1"
@@ -394,6 +394,15 @@
    "Age",
    "Ago",
    "Owed"
+  ],
+  "a channel's stream / next unread": [
+   "AccountDots",
+   "CallMark",
+   "ConvRow",
+   "Count",
+   "NetBadge",
+   "NetGlyph",
+   "RowTyping"
   ],
   "a channel, a message hovered / held: the app's clocks": [
    "Age",

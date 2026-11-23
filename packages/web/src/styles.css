@@ -709,6 +709,87 @@ code {
     clip-path: inset(50%);
   }
 }
+/* A channel's threads as one row (docs/inbox.md "One row per channel"): a chevron beside the row's own button, at the
+   end of its top line, opens it on its unread threads, indented under the row's name. */
+.row-fold {
+  position: absolute;
+  z-index: 2;
+  top: 6px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--text-faint);
+}
+.row-fold:hover {
+  background: var(--bg-active);
+  color: var(--text);
+}
+.inbox-row:has(> .row-fold) > .row .row-top {
+  padding-right: 22px;
+}
+/* The topic's name and its message as one line of text, cut at its end. */
+.channel-row .row-preview {
+  display: block;
+}
+.channel-row .row-subject {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.channel-row.unread .row-subject {
+  color: var(--text);
+}
+.inbox-subrows {
+  display: flex;
+  flex-direction: column;
+  padding: 0 0 4px 46px;
+}
+.inbox-subrows[hidden] {
+  display: none;
+}
+.inbox-subrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  text-align: left;
+  color: var(--text-dim);
+}
+.inbox-subrow:hover {
+  background: var(--bg-hover);
+}
+.inbox-subrow.active {
+  background: var(--bg-active);
+  color: var(--text);
+}
+.inbox-subrow.muted {
+  opacity: 0.7;
+}
+.inbox-subrow-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: var(--text);
+}
+@media (pointer: coarse) {
+  /* A finger-sized target without a taller row. */
+  .row-fold::after {
+    content: '';
+    position: absolute;
+    inset: -8px -4px;
+  }
+  .inbox-subrow {
+    min-height: 40px;
+  }
+}
 .inbox-empty {
   padding: 16px 10px;
   color: var(--text-faint);
@@ -1038,6 +1119,38 @@ code {
   border-bottom-left-radius: 4px;
   flex: none;
   margin-left: 2px;
+}
+
+.chan-line {
+  position: relative;
+}
+/* Room on the right for a fold's chevron, beside the count: on every channel and thread row, so the counts line up. */
+.chan-line > .chan,
+.chan.thread {
+  padding-right: 28px;
+}
+.chan-line:hover > .chan {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.chan-fold {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  color: var(--text-faint);
+}
+.chan-fold:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.chan.chan-more .chan-name {
+  color: var(--text-faint);
 }
 
 /* folders in sidebar */
@@ -1375,6 +1488,58 @@ code {
   color: var(--text-faint);
   font-size: 12px;
   padding: 16px;
+}
+/* Next unread topic (ui/NextUnread.tsx): at the bottom of a thread's timeline, in its channel's network color. */
+.next-unread {
+  --chan: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: calc(100% - 32px);
+  margin: 12px 16px 8px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in oklab, var(--chan) 45%, transparent);
+  border-left: 3px solid var(--chan);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--chan) 10%, var(--bg-raised));
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+.next-unread:hover {
+  background: color-mix(in oklab, var(--chan) 18%, var(--bg-raised));
+}
+.next-unread-lead {
+  color: var(--text-dim);
+  flex: none;
+}
+.next-unread-chan {
+  color: var(--text-dim);
+  flex: 0 1 auto;
+  max-width: 35%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.next-unread-name {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.next-unread-count {
+  margin-left: auto;
+  flex: none;
+  color: var(--text-dim);
+}
+.next-unread.mention .next-unread-count {
+  color: var(--danger);
+}
+.next-unread-at {
+  font-weight: 700;
+  margin-right: 2px;
 }
 .day-sep,
 .new-sep {
@@ -6816,6 +6981,15 @@ textarea.chip-box {
   .chan.thread {
     min-height: 40px;
   }
+  .chan-fold {
+    width: 40px;
+    height: 40px;
+    right: 0;
+  }
+  .chan-line > .chan,
+  .chan.thread {
+    padding-right: 44px;
+  }
   .section-head {
     padding: 6px 6px 0;
   }
@@ -6849,7 +7023,8 @@ textarea.chip-box {
   /* The same for the list beside it: hundreds of conversations, a screenful on show. It halves the first
      paint's layout on a big hub (docs/android.md). Not the rail, whose unread pills sit outside its items. */
   .side-scroll > .row,
-  .side-scroll > .inbox-row {
+  .side-scroll > .inbox-row,
+  .side-scroll > .inbox-group {
     content-visibility: auto;
     contain-intrinsic-size: auto 60px;
   }

@@ -1171,11 +1171,16 @@ export function deleteMessage(m: P.MessageView) {
 
 export const readProgress = signal<{ pending: number; failed: number }>({ pending: 0, failed: 0 });
 
-/** Clears here at once; the hub tells the networks at a pace they accept (readqueue.ts). */
-export function markAllRead(convs: P.ConversationView[], where: string) {
+/**
+ * Clears here at once; the hub tells the networks at a pace they accept (readqueue.ts). `ask`: a confirm first, for a
+ * server, a folder or everything; a channel and its threads go without one.
+ */
+export function markAllRead(convs: P.ConversationView[], where: string, ask = true) {
   const ids = convs.filter((c) => c.vantages.some((v) => v.unread || v.mentions)).map((c) => c.id);
   if (!ids.length) return toast({ kind: 'info', title: 'Nothing unread', body: where });
-  if (!confirm(`Mark ${ids.length} conversation${ids.length === 1 ? '' : 's'} read in ${where}? This also goes to the networks, and read state cannot be taken back.`)) return;
+  if (ask && !confirm(`Mark ${ids.length} conversation${ids.length === 1 ? '' : 's'} read in ${where}? This also goes to the networks, and read state cannot be taken back.`)) return;
+  // Their notifications on this device have done their job, as markRead's.
+  void closeNotifications(ids);
   api<{ marked: number; pending: number }>('/api/read-all', { body: { conversations: ids } })
     .then((r) => (readProgress.value = { pending: r.pending, failed: 0 }))
     .catch((e) => toast({ kind: 'error', title: 'Could not mark read', body: e.message }));

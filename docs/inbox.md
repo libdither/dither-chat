@@ -20,6 +20,30 @@ conversation of the latest message, so a reply goes where they last wrote, unles
 this session. It is active whichever of their DMs is open, and its menu acts on the whole chat: Mark As Read reads
 every route, Mute and the rule go on each, and search looks in every chat with them.
 
+**One row per channel.** A channel's threads are one row, not one per thread: a Zulip channel's topics, a Discord
+text channel's threads and a forum's posts, a Matrix room's threads (`convRows` in `packages/web/src/model.ts`, the
+fold in `channelrows.ts`). Its key is `channel:<id>`, so ranking, the kept snapshot and the hold on the open row see
+one thing, as for a person's chat; the channel open, or any thread of it, holds it. A place with threads that would
+have had a row of its own (a Matrix room, a Discord channel the hub scored) is that same row, keyed `channel:<id>`
+whether or not a thread of it is listed now, so the key does not change under you as its threads are read or come
+unread. A thread of a DM keeps a row of its own: a DM's row is the person's. The row scores the highest of its parts,
+needs you if any does, is owed since the earliest and is muted only if every part is; a muted thread does not lift it
+(its score, ↩ and time count only while every part is muted), and the ↩ marks go on the parts that are not muted.
+The fold is the page's alone: the hub scores each thread as before (`Attention.input`), so a thread still reaches the
+inbox only by a mention or a message that notified you, and a followed Zulip topic still does not alert by itself.
+
+The row shows the channel's name and place, the latest listed thread's name and its last message, the unread summed
+over every thread of the channel (listed or not, a muted one only for a mention, the place's own messages added; a
+forum's own count or its threads', the larger), and a red @ count when you are mentioned in it. A Matrix room keeps
+a group's lock, typing and red count of its own messages. A chevron at the end of its top line opens it in place on
+its unread threads, those that mention you first, then the latest, each with its own count (red where it mentions
+you), and the thread open now, which stays once read; the row stays open on this device (`collapsed` under
+`inbox:<id>`, kept as `false`). A thread under it opens that thread; the row itself opens the channel as the sidebar
+does (`openChannelRow` in `ui/Sidebar.tsx`). Its menu is the channel's, and its Mark As Read reads the channel and
+every thread of it at once, with no confirm. Fetching ahead (`ahead.ts`) loads what the row leads to: the channel's
+messages, or for a forum, which opens on its cards, its latest listed thread's. `scripts/verify-channel-rows.ts`
+checks it in a browser on the demo world's Zulip organization.
+
 What needs you shows on the row, not in a section. A reply you owe that the hub still counts (they wrote last, the
 row's `owedSince`, and it needs you, `needs`) has ↩ and how long it has waited, in the accent colour, beside the
 unread count when there is one. An unanswered message from long ago, or from someone you rarely answer, has faded
