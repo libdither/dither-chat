@@ -1601,7 +1601,7 @@ export interface MessagePage {
   messages: MessageView[];
   identities: IdentityView[];
   hasMore: boolean;
-  /** A person's chat: what they wrote in threads with others in this page's range, at a rung below full (mail.ts ElsewhereView). */
+  /** A person's chat: what they wrote in threads with others in this page's range (mail.ts ElsewhereView). */
   elsewhere?: ElsewhereView[];
 }
 

@@ -6559,9 +6559,10 @@ textarea.chip-box {
   font-size: 18px;
 }
 
+/* Bottom right, standing on a composer under it (Toasts.tsx sets --toast-lift) so its send button stays in reach. */
 .toasts {
   position: fixed;
-  bottom: 20px;
+  bottom: calc(12px + var(--toast-lift, 8px));
   right: 20px;
   z-index: 200;
   display: flex;

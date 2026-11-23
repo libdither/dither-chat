@@ -92,6 +92,8 @@ export interface Toast {
   action?: () => void;
   /** What the tap does, shown on the toast ("Undo"). */
   actionLabel?: string;
+  /** The chat it is about (`openChat()` when it was made): it goes when you leave that chat, its Undo with it. */
+  chat?: string;
 }
 export const toasts = signal<Toast[]>([]);
 let toastSeq = 0;
@@ -179,6 +181,17 @@ export function setPrefs(p: Partial<Prefs>) {
 export { href, parseHash, type Route };
 
 export const route = signal<Route>(parseHash());
+/** The chat open now, by the route's `conv`: what a toast about it is tied to (`Toast.chat`). */
+export const openChat = (): string | undefined => {
+  const r = route.value;
+  return 'conv' in r ? r.conv : undefined;
+};
+// Leaving a chat closes the toasts that belong to it: an Undo there must not act from another chat.
+effect(() => {
+  const here = openChat();
+  const list = toasts.peek();
+  if (list.some((t) => t.chat && t.chat !== here)) toasts.value = list.filter((t) => !t.chat || t.chat === here);
+});
 /** An old link (`#/groups/…`) shows its new address, in place. */
 function canonicalHash() {
   const h = href(route.value);

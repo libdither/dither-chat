@@ -337,9 +337,9 @@ CREATE TABLE IF NOT EXISTS chat_route (
   set_at          INTEGER NOT NULL
 );
 
--- How much of a place a view shows, when you chose (docs/mail.md "Mail as chats", rungs.ts): a view is a chat id
--- ('person:<id>'), a place what shows in it (a mail thread 'mth_…'); `rung` one of protocol RUNGS. Without a row the
--- view's default rung holds.
+-- How a place shows in a view, when you chose (docs/mail.md "Mail as chats", rungs.ts): a view is a chat id
+-- ('person:<id>'), a place what shows in it (a mail thread 'mth_…'); `rung` one of protocol RUNGS (hidden, closed,
+-- open). Without a row the view's default holds.
 CREATE TABLE IF NOT EXISTS place_rung (
   view_id   TEXT NOT NULL,
   place_id  TEXT NOT NULL,

@@ -156,7 +156,7 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Theme, demo accounts, reset demo | Settings | More tab | You tab |
 | Any one Settings section (Message history, Adversarial features) without scrolling past the rest | Section list beside Settings | More tab, scrolled | Sections in Settings' header: a sheet of the sections, two taps |
 | Adversarial features' warning and its Yes | Dialog | Not there yet | Bottom sheet whose words scroll, Yes pinned at its bottom |
-| Toasts, open the conversation from one | Bottom right | Covered the composer | At the top; tap to open, flick to dismiss |
+| Toasts, open the conversation from one | Bottom right, standing on the composer under it (`Toasts.tsx`); one about a chat closes when you leave it | Covered the composer | At the top; tap to open, flick to dismiss |
 | Unread and mention badges | Rail | None on the tabs | Rail, and the Home tab; You has a dot when an account needs you |
 | Collapse sections and categories | Click | Tap, under 44px | Tap, 40-44px |
 | Escape closes things | Keyboard; with nothing open, it goes back from the page (desktop.md "Escape and back") | Nothing | Back button, swipes, tap outside |

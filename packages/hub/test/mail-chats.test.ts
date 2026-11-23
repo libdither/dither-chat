@@ -1,7 +1,7 @@
 /**
  * Mail as chats (mail/places.ts, mail/chatpage.ts, rungs.ts, docs/mail.md "Mail as chats") against FakeMailBackend, a
  * real chat store and the hub's server: where each thread is shown, a person's routes by email, their chat as chat and
- * mail by one cursor, one mail to two accounts shown once, what they wrote in threads with others and its rungs, and
+ * mail by one cursor, one mail to two accounts shown once, what they wrote in threads with others and how each shows, and
  * the endpoints. Invented people and addresses only.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -16,6 +16,7 @@ import { mailPeople, type MailPeople } from '../src/mail/people.ts';
 import { mailPlaces, type MailPlaces } from '../src/mail/places.ts';
 import { HubServer, mediaSigner } from '../src/server.ts';
 import { Store, type AccountRow } from '../src/store.ts';
+import { excerptOf } from '../src/rungs.ts';
 import { Triage } from '../src/triage.ts';
 
 const ACC = 'acc_chatsMailOne';
@@ -276,40 +277,45 @@ describe('what they wrote elsewhere', () => {
   const alice = () => personOf(ALICE.email)!;
   const page = async () => (await call<P.MessagePage>('GET', `/api/chats/${encodeURIComponent(`person:${alice()}`)}/messages`)).json;
 
-  test('awaiting you: an excerpt, at most two in a gap; answered, old and your own: links or nothing', async () => {
+  test('each with its excerpt and whether it awaits you: answered, old and your own do not', async () => {
     const p = await page();
     expect(p.messages.map((m) => m.mail?.messageId)).toEqual(['<al1@x>', '<al2@x>']);
     const els = p.elsewhere!;
     // Newest last; four lease mails, Movers (hers only), Old plans.
     expect(els.map((e) => e.title)).toEqual(['Old plans', 'Re: Movers', 'Lease 0', 'Lease 1', 'Lease 2', 'Lease 3']);
     const by = new Map(els.map((e) => [e.title, e]));
-    expect(by.get('Lease 3')).toMatchObject({ rung: 'excerpt', why: 'awaits', excerpt: 'Lease note 3\nline two\nline three', toYou: true, unread: true, placeKind: 'mail-thread', others: ['Jo Park'] });
-    expect(by.get('Lease 2')).toMatchObject({ rung: 'excerpt', why: 'awaits' });
-    expect(by.get('Lease 1')).toMatchObject({ rung: 'link', why: 'awaits' });
-    expect(by.get('Lease 0')).toMatchObject({ rung: 'link' });
-    expect(by.get('Lease 1')!.excerpt).toBeUndefined();
-    expect(by.get('Lease 1')!.line).toBe('Lease note 1 line two line three line four');
-    expect(by.get('Re: Movers')).toMatchObject({ rung: 'link', why: 'elsewhere' });
-    expect(by.get('Old plans')).toMatchObject({ rung: 'link', why: 'elsewhere' });
+    expect(by.get('Lease 3')).toMatchObject({ awaits: true, excerpt: 'Lease note 3\nline two\nline three', unread: true, placeKind: 'mail-thread', others: ['Jo Park'] });
+    for (const t of ['Lease 0', 'Lease 1', 'Lease 2']) expect(by.get(t)).toMatchObject({ awaits: true, excerpt: expect.stringContaining('line three') });
+    expect(by.get('Re: Movers')).toMatchObject({ awaits: false });
+    expect(by.get('Old plans')).toMatchObject({ awaits: false });
     // Your own reply in Movers is not listed.
     expect(els.some((e) => e.messageId === messageOf('<gb@x>'))).toBe(false);
   });
 
-  test('a rung you choose stands for that thread: hidden drops it, another is the rung, null takes it back', async () => {
+  test('an excerpt leaves out a signature and a last line that is only the sender\'s name', () => {
+    expect(excerptOf('Hi both,\n\nCould you sign page 3?\n\nAlice', 'Alice Chen')).toBe('Hi both,\nCould you sign page 3?');
+    expect(excerptOf('Booked for 7:30.\n\n-- \nSam Rivera\nsam.example', 'Sam Rivera')).toBe('Booked for 7:30.');
+    expect(excerptOf('Thanks!\nAlice Chen.', 'Alice Chen')).toBe('Thanks!');
+    // Only the name, and only last: a message that is just her name stays.
+    expect(excerptOf('Alice', 'Alice Chen')).toBe('Alice');
+    expect(excerptOf('Alice will bring the keys.\nSee you', 'Alice Chen')).toBe('Alice will bring the keys.\nSee you');
+  });
+
+  test('how a thread shows in their chat is chosen per thread, sent with the bootstrap, and null takes it back', async () => {
     const lease3 = threadOf('<g3@x>');
     const lease0 = threadOf('<g0@x>');
-    expect((await call('PUT', '/api/rungs', { view: `person:${alice()}`, place: lease3, rung: 'sideways' })).status).toBe(400);
-    expect((await call('PUT', '/api/rungs', { view: `person:${alice()}`, place: lease3, rung: 'hidden' })).status).toBe(200);
-    expect((await call('PUT', '/api/rungs', { view: `person:${alice()}`, place: lease0, rung: 'full' })).status).toBe(200);
-    let els = (await page()).elsewhere!;
-    expect(els.some((e) => e.place === lease3)).toBe(false);
-    expect(els.find((e) => e.place === lease0)).toMatchObject({ rung: 'full', why: 'chosen' });
-    // Lease 3 gone, so Lease 1 keeps an excerpt now.
-    expect(els.find((e) => e.title === 'Lease 1')).toMatchObject({ rung: 'excerpt' });
-    expect(hub.bootstrap().rungs).toEqual(expect.arrayContaining([expect.objectContaining({ view: `person:${alice()}`, place: lease3, rung: 'hidden' })]));
-    expect((await call('PUT', '/api/rungs', { view: `person:${alice()}`, place: lease3, rung: null })).status).toBe(200);
-    els = (await page()).elsewhere!;
-    expect(els.find((e) => e.place === lease3)).toMatchObject({ rung: 'excerpt', why: 'awaits' });
+    const view = `person:${alice()}`;
+    expect((await call('PUT', '/api/rungs', { view, place: lease3, rung: 'sideways' })).status).toBe(400);
+    expect((await call('PUT', '/api/rungs', { view, place: lease3, rung: 'excerpt' })).status).toBe(400);
+    expect((await call('PUT', '/api/rungs', { view, place: lease3, rung: 'hidden' })).status).toBe(200);
+    expect((await call('PUT', '/api/rungs', { view, place: lease0, rung: 'closed' })).status).toBe(200);
+    // A hidden thread is still sent: the chat counts it ("1 hidden thread · Show").
+    const els = (await page()).elsewhere!;
+    expect(els.find((e) => e.place === lease3)).toMatchObject({ awaits: true });
+    const chosen = hub.bootstrap().rungs!.filter((r) => r.view === view);
+    expect(chosen).toEqual(expect.arrayContaining([expect.objectContaining({ place: lease3, rung: 'hidden' }), expect.objectContaining({ place: lease0, rung: 'closed' })]));
+    for (const place of [lease3, lease0]) expect((await call('PUT', '/api/rungs', { view, place, rung: null })).status).toBe(200);
+    expect(hub.bootstrap().rungs!.filter((r) => r.view === view)).toEqual([]);
   });
 });
 

@@ -822,13 +822,12 @@ export function hostsDiffer(shown: string, goes: string): boolean {
 // ------------------------------------------------------------------ mail as chats (docs/mail.md "Mail as chats")
 
 /**
- * How much of something a view shows, coarsest to finest (docs/mail.md "Mail as chats"): left out, counted, a link to
- * where it is, one line, a few lines, all of it, and a notification. One ladder for every view, so a person's chat, a
- * group and the feed can use the same words; which rung a thing gets is the view's default (the hub's `defaultRung`)
- * unless you chose one for that place (`PlaceRungView`).
+ * How a place shows in a view, when you chose (docs/mail.md "Mail as chats", "What they wrote elsewhere"): left out,
+ * its row closed, or its row open. Without a choice a person's chat opens the row of a thread that waits on you and
+ * closes the rest (`ElsewhereView.awaits`).
  */
-export type Rung = 'hidden' | 'counted' | 'link' | 'line' | 'excerpt' | 'full' | 'notify';
-export const RUNGS: readonly Rung[] = ['hidden', 'counted', 'link', 'line', 'excerpt', 'full', 'notify'];
+export type Rung = 'hidden' | 'closed' | 'open';
+export const RUNGS: readonly Rung[] = ['hidden', 'closed', 'open'];
 
 /**
  * A mail message drawn as a chat message (`MessageView.mail`): what a chat message has no field for. The message's id
@@ -893,9 +892,8 @@ export interface MailChatView {
 }
 
 /**
- * Something a person wrote somewhere else, shown in their chat at a rung below 'full' (docs/mail.md "Mail as chats",
- * "What they wrote elsewhere"): a message of theirs in a thread with others. The page groups these into one row of
- * links between two of the chat's own messages. `excerpt` is there only when the rung is 'excerpt'.
+ * Something a person wrote somewhere else, shown in their chat (docs/mail.md "Mail as chats", "What they wrote
+ * elsewhere"): a message of theirs in a thread with others. The chat draws one row per thread, at its newest message.
  */
 export interface ElsewhereView {
   /** Where it is: a thread `mth_…`. */
@@ -908,14 +906,10 @@ export interface ElsewhereView {
   messageId: string;
   ts: number;
   unread: boolean;
-  rung: Rung;
-  /** Why it is shown as it is: 'awaits' (to you, from them, under a week, not answered or opened since) or 'elsewhere'. */
-  why: 'awaits' | 'elsewhere' | 'chosen';
+  /** To you (To, or naming you), under a week old, and you have neither answered nor opened the thread since. */
+  awaits: boolean;
+  /** Up to three lines of its words above the quote, what its row shows open. */
   excerpt?: string;
-  /** The start of its words on one line (about 140 characters), always: what "Read here" opens in place. */
-  line: string;
-  /** It was to you (To, or naming you), not only to the others. */
-  toYou: boolean;
 }
 
 /** A page of a chat that has mail in it: the messages, mail among them, and what they wrote elsewhere in its range. */

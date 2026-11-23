@@ -150,13 +150,21 @@ asked for, never copied into the message table.
   is either side's. A person you only mail with has a chat too.
 - **What they wrote elsewhere** (`MessagePage.elsewhere`, `ElsewhereView`): their messages, to you (To or Cc), in
   threads with others, in the page's range (from its oldest message, or the start on the last page, up to where the
-  newer page began, or now), newest last. Each has a rung: `excerpt` (three lines, 280 characters of the words above
-  the quote) when it awaits you (to you, or naming you, under a week old, and you have neither written in nor opened
-  the thread since; where mail's attention has folded the thread, the turn it says you owe must cover it), else
-  `link`; at most two default excerpts between two of the chat's own messages. `line` is its words on one line.
-- **Rungs** (`RUNGS`, from `hidden` to `notify`): one ladder for how much of a thing a view shows. A rung you choose
-  for a place in a view (`PUT /api/rungs {view, place, rung}`, `null` takes it back; table `place_rung`) stands over
-  the default for everything from there (`why: 'chosen'`); `hidden` leaves it out.
+  newer page began, or now), newest last. Each has its excerpt (three lines, 280 characters of the words above the
+  quote) and `awaits`: to you, or naming you, under a week old, and you have neither written in nor opened the thread
+  since (where mail's attention has folded the thread, the turn it says you owe must cover it). The chat
+  (`ui/MailChat.tsx` `ElsewhereRows`) draws one row per thread, at their newest message there, under its own day line:
+  `✉ <subject> · with <others> · <time> ⌄`. The whole line opens and closes the row; open, it shows the text and
+  "Answer there", which opens the thread at that message with "Back to <their full name>" over it. A thread that awaits
+  you starts open, the rest closed; one you closed while it waits says "Waiting on you" at the right. Right-click or
+  long-press: "Open in <subject>" and "Hide in this chat"; hidden threads leave a faint "1 hidden thread · Show" line in
+  their place. On a narrow row "with …" goes first, then the subject is cut.
+- **Rungs** (`RUNGS`: `hidden`, `closed`, `open`): how a thread shows in a person's chat, when you chose
+  (`PUT /api/rungs {view, place, rung}`, `null` takes it back; table `place_rung`; `view` is `person:<id>`, `place` the
+  thread). Kept on the hub, so a row you closed on one device is closed on the others. Without a choice the row is
+  open while it awaits you (`web/src/mail/elsewhere.ts` `rowOpen`). An open or closed choice is for the row it was
+  made on: once newer mail of theirs comes to the thread (a row later than the choice), the row starts as rows do
+  again. `hidden` stays until Show or Undo; hidden threads are still sent, for the line that counts them.
 - **Other chats**: `GET /api/mail/chats/:id/messages?before=&limit=` pages a route by email (its threads only) or one
   thread `mth_…` (any thread, newsletters too) as a chat, in the same shape; `GET /api/mail/chats?person=<id>` lists a
   person's routes. The mail bootstrap carries every route (`MailBootstrap.chats`) and your rungs (`.rungs`).
