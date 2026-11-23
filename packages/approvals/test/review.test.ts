@@ -1,14 +1,15 @@
 /**
  * The review watcher and merge bot (review.ts) against a plain git remote in a temp dir and an in-memory hub: a review
  * branch is asked about once its CI has a result, an approval merges it with its trailers and the bot's signature, a
- * denial sends it back, a newer head or a moved target asks again, a conflict says so.
+ * denial sends it back, a newer head or a moved target asks again, a conflict says so, and a push the target refuses
+ * for any other reason fails once with an alert.
  */
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { ActionSpec, RequestView } from '../src/client.ts';
-import { type ReviewHub, Reviewer } from '../src/review.ts';
+import type { ActionSpec, Hub, RequestView } from '../src/client.ts';
+import { pushRefusal, type ReviewHub, Reviewer, reviewCommand } from '../src/review.ts';
 import { type Ask, askText, cleanTitle, displayHash, keysLine, newId, sha256hex, type Kind } from '../src/statement.ts';
 import { verifyCommit } from '../src/verify.ts';
 import { FakeDevice, sh } from './helpers.ts';
@@ -33,6 +34,10 @@ class FakeHub implements ReviewHub {
   }
   waiting() {
     return [...this.items.values()].filter((v) => v.state === 'waiting');
+  }
+  /** Newest first, as the hub's list. */
+  async byTopic(topic: string) {
+    return { items: [...this.items.values()].filter((v) => v.topic === topic).reverse() };
   }
   async answer(id: string, d: FakeDevice, action: string, message: string | null = null) {
     const v = this.items.get(id)!;
@@ -93,6 +98,13 @@ const pushReview = async (name: string, path: string, content: string) => {
   return head;
 };
 const ciPasses = (rev: string) => writeFileSync(join(root, `ci-${rev}`), '');
+const merges = () => [...hub.items.values()].filter((v) => v.kind === 'merge');
+/** A pre-receive hook in the remote that runs `script` for a push to main (its stderr is what the pusher sees). */
+const refuseMain = (script: string) => {
+  writeFileSync(join(remote, 'hooks', 'pre-receive'), `#!/bin/sh\nwhile read old new ref; do\n  if [ "$ref" = refs/heads/main ]; then\n    ${script}\n  fi\ndone\n`, { mode: 0o755 });
+  // The remote's own hooks, whatever the machine's git config says.
+  Bun.spawnSync(['git', '--git-dir', remote, 'config', 'core.hooksPath', join(remote, 'hooks')]);
+};
 
 describe('review', () => {
   test('asks once CI has a result, merges on a signed approval, and the merge verifies', async () => {
@@ -186,5 +198,67 @@ describe('review', () => {
     const alert = [...hub.items.values()].find((v) => v.kind === 'alert')!;
     expect(alert.title).toContain('conflicts');
     expect(hub.waiting()).toEqual([]);
+  });
+
+  test('a push the target refuses without moving fails once, says why in an alert, and asks nothing more until a new head', async () => {
+    const head = await pushReview('s', 'b.txt', 'b\n');
+    ciPasses(head);
+    refuseMain('echo "error: GH006: Protected branch update failed for refs/heads/main." >&2\n    echo "error: Commits must have verified signatures." >&2\n    exit 1');
+    await bot.tick();
+    expect(merges().length).toBe(1);
+    const before = remoteRef('refs/heads/main');
+    await hub.answer(merges()[0]!.id, phone, 'approve');
+    await bot.tick();
+    const reason = 'GH006: Protected branch update failed for refs/heads/main. Commits must have verified signatures.';
+    expect(bot.snapshot().sys!['review/s']).toMatchObject({ state: 'failed', note: reason });
+    for (let i = 0; i < 3; i++) await bot.tick();
+    expect(remoteRef('refs/heads/main')).toBe(before);
+    expect(merges().length).toBe(1);
+    expect(hub.waiting()).toEqual([]);
+    const alerts = [...hub.items.values()].filter((v) => v.kind === 'alert');
+    expect(alerts.map((v) => [v.title, v.topic])).toEqual([[`review/s: main refused the bot's push: ${reason}`, 'sys:review/s']]);
+    expect(logs.some((l) => l.includes('refused the push') && l.includes('GH006'))).toBe(true);
+    // `review status` says the branch failed, and why.
+    const printed: string[] = [];
+    const log = spyOn(console, 'log').mockImplementation((s: string) => void printed.push(s));
+    const err = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(await reviewCommand(['status', 's'], { repo: 'sys', hub: () => hub as unknown as Hub })).toBe(75);
+    } finally {
+      log.mockRestore();
+      err.mockRestore();
+    }
+    expect(JSON.parse(printed[0]!)).toMatchObject({ kind: 'alert', outcome: 'failed', reason });
+    // A new head is asked about again.
+    const head2 = await pushReview('s', 'b.txt', 'b, again\n');
+    ciPasses(head2);
+    await bot.tick();
+    expect(hub.waiting().map((v) => v.payload.includes(`head ${head2}`))).toEqual([true]);
+  });
+
+  test('a push refused because the target moved meanwhile asks again on the new target', async () => {
+    const head = await pushReview('m', 'b.txt', 'b\n');
+    ciPasses(head);
+    // A commit the hook will move main to while it refuses the bot's push, as a racing push would.
+    sh(work, ['checkout', '-q', '-b', 'side', 'main']);
+    const moved = await commit('c.txt', 'c\n', 'elsewhere');
+    sh(work, ['push', '-q', 'origin', 'side']);
+    sh(work, ['checkout', '-q', 'main']);
+    writeFileSync(join(root, 'move-once'), '');
+    refuseMain(`[ -f "${root}/move-once" ] || exit 0\n    rm "${root}/move-once"\n    env -u GIT_QUARANTINE_PATH -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES git update-ref refs/heads/main ${moved}\n    echo "error: main moved" >&2\n    exit 1`);
+    await bot.tick();
+    await hub.answer(merges()[0]!.id, phone, 'approve');
+    await bot.tick();
+    expect(remoteRef('refs/heads/main')).toBe(moved);
+    expect(bot.snapshot().sys!['review/m']!.state).toBe('ci-wait');
+    await bot.tick();
+    expect(merges().length).toBe(2);
+    expect(hub.waiting().map((v) => v.payload.includes(`base ${moved}`))).toEqual([true]);
+    expect([...hub.items.values()].filter((v) => v.kind === 'alert')).toEqual([]);
+  });
+
+  test("a refused push is said in the remote's words", () => {
+    expect(pushRefusal('remote: error: GH006: Protected branch update failed for refs/heads/main.        \nremote: error: Commits must have verified signatures.        \nTo example.com:o/r.git\n ! [remote rejected] abc -> main (protected branch hook declined)\nerror: failed to push some refs\n')).toBe('GH006: Protected branch update failed for refs/heads/main. Commits must have verified signatures.');
+    expect(pushRefusal('To ../r.git\n ! [rejected]        abc -> main (fetch first)\nerror: failed to push some refs\nhint: Updates were rejected\n')).toBe('! [rejected] abc -> main (fetch first)');
   });
 });
