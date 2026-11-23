@@ -2,7 +2,7 @@
  * One inbox row per channel for its threads (docs/inbox.md "One row per channel"): the fold in channelrows.ts, and
  * model.ts making the inbox's rows of it, with the keys the ranking, the snapshot and the hold on the open row use.
  */
-import { afterEach, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
 import { channelKey, groupChannels, mergeChannel, subThreads, type ChannelPart } from '../src/channelrows.ts';
 import { inboxSnapshot, inboxView, rank, type Ranked } from '../src/ordering.ts';
@@ -107,21 +107,26 @@ function world() {
   for (const a of [score('zt1', 40), score('zt2', 30), score('room', 20), score('mt', 50), score('lone', 10), score('room2', 15), score('dmt', 5)]) db.attention.set(a.id, a);
   changed('meta');
 }
-/** The one db is every test file's (fixtures/state.ts): this world goes when each test is done. */
-const MINE = ['zc', 'zt1', 'zt2', 'zt3', 'room', 'mt', 'lone', 'room2', 'mt2', 'dm', 'dmt'];
-afterEach(() => {
-  for (const id of MINE) {
-    db.conversations.delete(id);
-    db.attention.delete(id);
-  }
-  db.threads.delete('zc');
-  db.threads.delete('room2');
-  db.threads.delete('room');
-  db.threads.delete('dm');
-  db.spaces.delete('org');
-  db.accounts.delete('accz');
+/**
+ * The one db is every test file's (fixtures/state.ts), and others leave their own in it (some partial): each test here
+ * has the db to itself, and what was there is put back after.
+ */
+type Saved = { conversations: Map<string, P.ConversationView>; attention: Map<string, P.AttentionView>; threads: Map<string, string[]>; spaces: Map<string, P.SpaceView>; accounts: Map<string, P.AccountView> };
+let saved: Saved | null = null;
+beforeEach(() => {
+  saved = { conversations: new Map(db.conversations), attention: new Map(db.attention), threads: new Map(db.threads), spaces: new Map(db.spaces), accounts: new Map(db.accounts) };
+  for (const k of ['conversations', 'attention', 'threads', 'spaces', 'accounts'] as const) db[k].clear();
   changed('meta');
 });
+afterEach(() => {
+  for (const k of ['conversations', 'attention', 'threads', 'spaces', 'accounts'] as const) {
+    const m = db[k] as Map<string, unknown>;
+    m.clear();
+    for (const [id, v] of saved![k]) m.set(id, v);
+  }
+  changed('meta');
+});
+const MINE = ['zc', 'zt1', 'zt2', 'zt3', 'room', 'mt', 'lone', 'room2', 'mt2', 'dm', 'dmt'];
 /** The rows of this world, whatever other tests left in the db. */
 const mine = () => inboxRows().filter((r) => r.kind === 'conv' && rowConvs(r).every((c) => MINE.includes(c.id)));
 
