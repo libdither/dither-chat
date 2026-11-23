@@ -163,15 +163,17 @@ so the latest is at the bottom, as in a chat, and it opens scrolled there. What 
   each, so it says who read which version. A click on a row lists each person with their time.
 
 It opens on one part or on all of it, never with filters: from "(edited)" or the words an edit put in on its edits,
-from a reaction held down on a phone on its reactions, and from the ticks or Message History in the message's menu on
-all of it. "All history" goes from either part to all of it. On a computer it hangs below what opened it (above, when
+from a reaction on its reactions, and from the ticks or Message History in the message's menu (by its reactions) on
+all of it. On a computer a right-click opens it as a click does on all of these, a reaction too; on a phone a long
+press on a reaction does. "All history" goes from either part to all of it. On a computer it hangs below what opened it (above, when
 there is no room); on a phone it is a page of its own, which back closes. It is a chunk of its own, loaded the first
 time one opens.
 
 **In the chat**, the words a message's last edit put in are underlined, quietly, and a click on them opens its edits.
 The hub sends the version before (`MessageView.prevBody`, the body the last edit event kept), and the web app
-compares the two as rendered text, so markdown's marks are not words (`markChanged`). Nothing is underlined when the
-edit only took words out, or when no word of the old text is left; "(edited)" is there either way.
+compares the two as rendered text, so markdown's marks are not words (`markChanged`). A right-click on them opens the
+edits too; elsewhere on the message it is the message's menu. Nothing is underlined when the edit only took words out,
+or when no word of the old text is left; "(edited)" is there either way.
 
 ## Not logged
 

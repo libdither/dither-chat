@@ -138,7 +138,7 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Which account a message came through, its encryption warning, the author's handle | Tooltips | **Hidden** | Sheet header; profile |
 | Which tier a message landed in and why, and the two marks | The bell among its hover actions; its menu | **Invisible pill** for silent and digest | Sheet: the reasons and both marks |
 | Who reacted | Right-click a pill | View Reactions in the long-press sheet | View Reactions in the long-press sheet |
-| A message's history: edits, reactions, pins, receipts | "(edited)", the underlined words, the ticks, Message History in its menu; a popover by what opened it | The same, as a page | The same, as a page; a long-pressed pill opens it on its reactions |
+| A message's history: edits, reactions, pins, receipts | "(edited)", the underlined words, the ticks, a reaction, Message History in its menu: a click or right-click (a reaction: right-click); a popover by what opened it | The same, as a page | The same, as a page; a long-pressed pill opens it on its reactions |
 | Reaction picker, skin tone, super reactions, search | Popover | Sheet without drag | Sheet that drags away |
 | Reply, edit, cancel either | Hover bar; Escape | Sheet; X | Swipe or sheet; X |
 | New line in a message | Shift+Enter | **None**: Enter always sent | Enter |

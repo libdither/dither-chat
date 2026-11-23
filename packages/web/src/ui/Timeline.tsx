@@ -447,13 +447,15 @@ function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
       </div>
     );
   if (!m.body) return null;
+  // The words the last edit put in, unless they are part of something with a click of its own (a link, a mention).
+  const changedAt = (hit: HTMLElement) =>
+    hit.classList?.contains('msg-changed') && !hit.parentElement?.closest?.('a[href], [data-user], [data-person], [data-identity], .spoiler:not(.shown)') ? hit : null;
   const click = (e: MouseEvent) => {
     // A changed word's mark sits inside whatever it marks (a mention, a link): that is what the click is on.
     const hit = e.target as HTMLElement;
-    const changed = hit.classList?.contains('msg-changed') ? hit : null;
-    const el = changed?.parentElement ?? hit;
-    if (changed && !el.closest?.('a[href], [data-user], [data-person], [data-identity], .spoiler:not(.shown)') && !getSelection()?.toString())
-      openHistory(m, 'edits', changed.getBoundingClientRect());
+    const changed = changedAt(hit);
+    const el = hit.classList?.contains('msg-changed') ? hit.parentElement! : hit;
+    if (changed && !getSelection()?.toString()) openHistory(m, 'edits', changed.getBoundingClientRect());
     if (el.classList?.contains('spoiler')) el.classList.add('shown');
     const user = el.dataset?.user;
     if (user) openProfile(db.identityByNative.get(`${m.network}:${user}`));
@@ -472,14 +474,21 @@ function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
       openMenu({ x: e.clientX, y: e.clientY }, linkMenu(a.href, m));
     }
   };
+  // Right-click on them opens the edits as well; Shift+right-click still gets the browser's own menu.
+  const menu = (e: MouseEvent) => {
+    const changed = changedAt(e.target as HTMLElement);
+    if (!changed || e.shiftKey || phone.value) return;
+    e.preventDefault();
+    openHistory(m, 'edits', changed.getBoundingClientRect());
+  };
   if (tail)
     return (
-      <div class={`msg-body ${isJumbo(m.body) ? 'jumbo' : ''}`} onClick={click}>
+      <div class={`msg-body ${isJumbo(m.body) ? 'jumbo' : ''}`} onClick={click} onContextMenu={menu}>
         <span class="msg-text" dangerouslySetInnerHTML={{ __html: html }} />
         {tail}
       </div>
     );
-  return <div class={`msg-body ${isJumbo(m.body) ? 'jumbo' : ''}`} dangerouslySetInnerHTML={{ __html: html }} onClick={click} />;
+  return <div class={`msg-body ${isJumbo(m.body) ? 'jumbo' : ''}`} dangerouslySetInnerHTML={{ __html: html }} onClick={click} onContextMenu={menu} />;
 }
 
 /**
@@ -512,7 +521,16 @@ function Edited({ m }: { m: P.MessageView }) {
       </span>
     );
   return (
-    <button class="msg-edited link" onClick={(e) => openHistory(m, 'edits', (e.currentTarget as HTMLElement).getBoundingClientRect())} title="See earlier versions">
+    <button
+      class="msg-edited link"
+      onClick={(e) => openHistory(m, 'edits', (e.currentTarget as HTMLElement).getBoundingClientRect())}
+      onContextMenu={(e) => {
+        if (e.shiftKey || phone.value) return;
+        e.preventDefault();
+        openHistory(m, 'edits', (e.currentTarget as HTMLElement).getBoundingClientRect());
+      }}
+      title="See earlier versions"
+    >
       (edited)
     </button>
   );

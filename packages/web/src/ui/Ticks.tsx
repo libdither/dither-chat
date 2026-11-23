@@ -1,11 +1,12 @@
 /**
  * Your message's ticks (docs/history.md "A message's history"): delivered ✓, read ✓✓ (coloured), played ▶. A click
- * opens its history. Not in ui/MessageHistory.tsx, which loads only when a history opens.
+ * or a right-click opens its history. Not in ui/MessageHistory.tsx, which loads only when a history opens.
  */
 import type * as P from '@dither-chat/protocol';
 import { fullTime } from '../format.ts';
 import { historyOf } from '../messageHistory.ts';
 import { identityName } from '../model.ts';
+import { phone } from '../phone.ts';
 import { db, isSelfIdentity } from '../state.ts';
 import { Icon } from './icons.tsx';
 
@@ -19,7 +20,17 @@ export function Ticks({ m }: { m: P.MessageView }) {
   const who = r.latest.state === top ? (db.persons.get(db.identities.get(r.latest.identityId)?.personId ?? '')?.name ?? identityName(r.latest.identityId)) : null;
   const title = n === 1 && who ? `${STATE[top]} ${who}, ${fullTime(r.latest.at)}` : `${STATE[top]} ${n}${r.delivered > n ? `, delivered to ${r.delivered}` : ''}`;
   return (
-    <button class={`msg-ticks ${top}`} title={title} aria-label={title} onClick={(e) => (historyOf.value = { m, focus: 'all', anchor: (e.currentTarget as HTMLElement).getBoundingClientRect() })}>
+    <button
+      class={`msg-ticks ${top}`}
+      title={title}
+      aria-label={title}
+      onClick={(e) => (historyOf.value = { m, focus: 'all', anchor: (e.currentTarget as HTMLElement).getBoundingClientRect() })}
+      onContextMenu={(e) => {
+        if (e.shiftKey || phone.value) return;
+        e.preventDefault();
+        historyOf.value = { m, focus: 'all', anchor: (e.currentTarget as HTMLElement).getBoundingClientRect() };
+      }}
+    >
       {top === 'played' ? <Icon name="play" size={11} /> : <Icon name={top === 'read' ? 'checks' : 'check'} size={13} />}
       {n > 1 && <span>{n}</span>}
     </button>

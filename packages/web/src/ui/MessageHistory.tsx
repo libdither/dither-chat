@@ -124,32 +124,38 @@ function MessageHistory({ m, focus, onAll, page }: { m: P.MessageView; focus: Hi
           </>
         )}
       </div>
-      <div class="mh-bar">
-        <h4>{TITLE[focus]}</h4>
-        {focus !== 'all' && onAll && (
-          <button class="link" onClick={onAll}>
-            All history
-          </button>
-        )}
-      </div>
+      {/* Opened on a part of it: which, and the way to all of it. All of it needs no heading. */}
+      {focus !== 'all' && (
+        <div class="mh-bar">
+          <h4>{TITLE[focus]}</h4>
+          {onAll && (
+            <button class="link" onClick={onAll}>
+              All history
+            </button>
+          )}
+        </div>
+      )}
       <div class="mh-list" ref={list}>
-        {!h ? <Loading label="Loading…" /> : items.length ? <Rows m={m} items={items} /> : <p class="mh-empty">Nothing kept about this message yet.</p>}
+        {!h ? <Loading label="Loading…" /> : items.length ? <Rows m={m} items={items} page={page} /> : <p class="mh-empty">Nothing kept about this message yet.</p>}
       </div>
     </div>
   );
 }
 
-function Rows({ m, items }: { m: P.MessageView; items: HistoryItem[] }) {
+function Rows({ m, items, page }: { m: P.MessageView; items: HistoryItem[]; page?: boolean }) {
   // A custom emoji still on the message draws as itself; one taken back from it, by its name.
   const glyph = (key: string) => <Glyph k={key} emoji={m.reactions.find((r) => r.key === key)?.emoji} size={15} />;
   const out = [];
+  // Days only where there is more than today to tell apart.
+  const now = Date.now();
+  const days = items.some((it) => !sameDay(it.at, now));
   let day: number | null = null;
   for (const it of items) {
-    if (day === null || !sameDay(day, it.at)) {
+    if (days && (day === null || !sameDay(day, it.at))) {
       day = it.at;
       out.push(<div class="mh-day">{dayLabel(it.at)}</div>);
     }
-    out.push(<Row it={it} glyph={glyph} m={m} />);
+    out.push(<Row it={it} glyph={glyph} m={m} face={page ? 20 : 16} />);
   }
   return <>{out}</>;
 }
@@ -164,7 +170,7 @@ function Time({ at, seen, from }: { at: number; seen?: boolean; from?: number })
   );
 }
 
-function Row({ it, glyph, m }: { it: HistoryItem; glyph: (key: string) => preact.JSX.Element; m: P.MessageView }) {
+function Row({ it, glyph, m, face }: { it: HistoryItem; glyph: (key: string) => preact.JSX.Element; m: P.MessageView; face: number }) {
   const [open, setOpen] = useState(false);
   switch (it.kind) {
     case 'sent':
@@ -186,10 +192,11 @@ function Row({ it, glyph, m }: { it: HistoryItem; glyph: (key: string) => preact
             <b>{nameOf(it.actorId)}</b> edited it
             <span class="mh-text">
               <Diff parts={open ? wordDiff(plainBody(it.before, m.network), plainBody(it.after, m.network)) : changesInContext(plainBody(it.before, m.network), plainBody(it.after, m.network))} />
+              {/* At the end of the words, not a line of its own. */}
+              <button class="link mh-more" onClick={() => setOpen(!open)}>
+                {open ? 'Less' : 'Whole text'}
+              </button>
             </span>
-            <button class="link mh-more" onClick={() => setOpen(!open)}>
-              {open ? 'Only what changed' : 'Whole text'}
-            </button>
           </span>
           <Time at={it.at} />
         </div>
@@ -198,7 +205,7 @@ function Row({ it, glyph, m }: { it: HistoryItem; glyph: (key: string) => preact
     case 'unreact':
       return (
         <div class={`mh-row ${it.kind === 'unreact' ? 'quiet' : ''}`}>
-          <Face id={it.actorId} />
+          <Face id={it.actorId} size={face} />
           <span class="mh-what">
             {it.kind === 'react' ? (
               <>

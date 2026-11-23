@@ -32,12 +32,10 @@ export function Glyph({ k, emoji, size = 18 }: { k: string; emoji?: P.CustomEmoj
 function Pill({ m, r }: { m: P.MessageView; r: P.ReactionView }) {
   const mine = hasMine(r);
   const ref = useRef<HTMLButtonElement>(null);
-  const showWho = () => {
-    const rect = ref.current?.getBoundingClientRect();
-    if (rect) reactorsFor.value = { message: m, key: r.key, style: r.style, anchor: rect };
-  };
-  // On a phone a long press opens the message's reactions, from the start, with a way to all of its history.
-  const press = useLongPress(() => (phone.value ? openHistory(m, 'reactions') : showWho()));
+  // A right-click or a long press opens the message's reactions, from the start, with a way to all of its history.
+  // Who reacted, with the people the network names only when asked, is View Reactions in the message's menu.
+  const history = () => openHistory(m, 'reactions', phone.value ? undefined : ref.current?.getBoundingClientRect());
+  const press = useLongPress(history);
   const superStyle = r.style === 'super' ? { '--r1': r.colors?.[0] ?? '#ff7ad9', '--r2': r.colors?.[1] ?? r.colors?.[0] ?? '#7c5cff' } : undefined;
   return (
     <button
@@ -52,9 +50,10 @@ function Pill({ m, r }: { m: P.MessageView; r: P.ReactionView }) {
         toggleReaction(m, { key: r.key, emoji: r.emoji }, r.style);
       }}
       {...press}
-      onContextMenu={(e: Event) => {
+      onContextMenu={(e: MouseEvent) => {
+        if (e.shiftKey) return;
         e.preventDefault();
-        showWho();
+        history();
       }}
     >
       {r.style === 'super' && <Icon name="zap" size={10} class="reaction-zap" />}

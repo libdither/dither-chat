@@ -50,6 +50,23 @@ try {
   if (shots) await p.shot(`${shots}/history-edits.png`);
   await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
   await p.until(`!document.querySelector('.mh-pop')`, 3000);
+  // A right-click on the underlined words opens the same, not the message's menu.
+  await p.eval(`(() => { const c = (${priya}).querySelector('.msg-changed'); const b = c.getBoundingClientRect(); c.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.x + 2, clientY: b.y + 2 })); })()`);
+  await p.until(`document.querySelectorAll('.mh-pop .mh-row').length >= 2`, 5000);
+  check(!(await p.eval<boolean>(`!!document.querySelector('.cm')`)) && /Edits/i.test(await p.eval<string>(`document.querySelector('.mh-pop .mh-bar')?.innerText ?? ''`)), 'a right-click on the underlined words opens its edits, not the menu');
+  await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  await p.until(`!document.querySelector('.mh-pop')`, 3000);
+  // Elsewhere on the message a right-click is its menu, with Message History by its reactions.
+  await p.eval(`(() => { const m = (${priya}).querySelector('.msg-body'); const b = m.getBoundingClientRect(); m.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.x + 2, clientY: b.y + 2 })); })()`);
+  await p.until(`!!document.querySelector('.cm [role="menuitem"]')`, 3000);
+  const menu = await p.eval<string[]>(`[...document.querySelectorAll('.cm > *')].map((e) => (e.classList.contains('cm-sep') ? '|' : e.textContent.trim())).filter(Boolean)`);
+  const at = menu.findIndex((x) => x.startsWith('Message History'));
+  check(at >= 0 && at < menu.indexOf('|', menu.findIndex((x) => x.includes('Reaction'))), 'the message menu has Message History among its reactions', menu.slice(0, 8));
+  await p.eval(`[...document.querySelectorAll('[role="menuitem"]')].find((i) => i.textContent.includes('Message History')).click()`);
+  await p.until(`!!document.querySelector('.mh-pop .mh-row')`, 5000);
+  check(!(await p.eval<boolean>(`!!document.querySelector('.mh-pop .mh-bar')`)), 'from the menu it opens on all of it');
+  await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  await p.until(`!document.querySelector('.mh-pop')`, 3000);
 
   // Your message, edited twice: a click on its underlined words opens its edits, and from there all of its history.
   const mine = `[...document.querySelectorAll('.msg')].find((m) => m.textContent.includes('I can drive'))`;
@@ -67,17 +84,16 @@ try {
   await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
   await p.until(`!document.querySelector('.mh-pop')`, 3000);
 
-  // Pins, receipts and the message's whole history.
-  await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  // Pins, receipts and the message's whole history. Nothing is open now: another Escape would leave the chat.
   await p.eval(`document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`);
   await Bun.sleep(200);
   check(await p.eval<boolean>(`!!document.querySelector('.msg-pin')`), 'a pinned message is marked');
   const ticks = await p.eval<{ cls: string; title: string } | null>(`(() => { const t = document.querySelector('.msg-ticks'); return t ? { cls: t.className, title: t.title } : null; })()`);
   check(ticks?.cls.includes('read') && /Read by 2/.test(ticks.title), 'your message has read ticks: read by two', ticks);
-  await p.eval(`document.querySelector('.msg-ticks').click()`);
+  await p.eval(`(() => { const t = document.querySelector('.msg-ticks'); const b = t.getBoundingClientRect(); t.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.x + 2, clientY: b.y + 2 })); })()`);
   await p.until(`!!document.querySelector('.mh-pop .mh-row')`, 5000);
   const hist = await p.eval<string>(`document.querySelector('.mh-pop .mh-list').innerText`);
-  check(/Read by\s+Alice Chen and Priya/.test(hist), 'its history lists who read it', hist.split('\n').slice(0, 8));
+  check(/Read by\s+Alice Chen and Priya/.test(hist), 'a right-click on the ticks opens its history, with who read it', hist.split('\n').slice(0, 8));
   await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
   await Bun.sleep(300);
   const pinned = await p.eval<string>(`document.querySelector('.msg-pin')?.closest('.msg')?.id ?? ''`);
