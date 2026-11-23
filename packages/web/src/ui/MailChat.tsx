@@ -666,9 +666,11 @@ const MORE_MENU = 'More mail lists';
 /** More's menu: Starred and Sent of the scope in use, then each account's mailboxes. */
 function openMore(from: HTMLElement, scope: string | null, on: string | null) {
   const s = db.mail;
+  // Only the list open now is marked (a tick), so the rest keep their icons rather than rows of empty boxes.
+  const lit = (k: string): { checked?: boolean } => (k === on ? { checked: true } : {});
   const items: MenuEntry[] = MAIL_FOLDER_VIEWS.map((v) => {
     const k = viewList(v.view, scope);
-    return { label: v.label, icon: v.view === 'starred' ? 'star' : 'send', checked: k === on, track: `mail list (${v.label})`, run: () => openList(k) };
+    return { label: v.label, icon: v.view === 'starred' ? 'star' : 'send', ...lit(k), track: `mail list (${v.label})`, run: () => openList(k) };
   });
   for (const a of s.accounts.values()) {
     const boxes = [...s.mailboxes.values()].filter((b) => b.accountId === a.id && !holdsOnlyMailboxes(b, s.mailboxes.values())).sort((x, y) => (x.role === 'inbox' ? -1 : y.role === 'inbox' ? 1 : x.path.localeCompare(y.path)));
@@ -676,7 +678,7 @@ function openMore(from: HTMLElement, scope: string | null, on: string | null) {
     items.push({ kind: 'label', label: a.address ?? a.label });
     for (const b of boxes) {
       const k = mailboxList(b.id);
-      items.push({ label: b.path.replace(/\//g, ' / '), icon: b.role === 'inbox' ? 'inbox' : b.role === 'sent' ? 'send' : b.role === 'trash' ? 'trash' : b.role === 'archive' || b.role === 'all' ? 'archive' : 'folder', checked: k === on, track: 'mail list (mailbox)', run: () => openList(k) });
+      items.push({ label: b.path.replace(/\//g, ' / '), icon: b.role === 'inbox' ? 'inbox' : b.role === 'sent' ? 'send' : b.role === 'trash' ? 'trash' : b.role === 'archive' || b.role === 'all' ? 'archive' : 'folder', ...lit(k), track: 'mail list (mailbox)', run: () => openList(k) });
     }
   }
   const r = from.getBoundingClientRect();
