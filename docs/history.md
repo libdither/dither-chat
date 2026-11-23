@@ -12,7 +12,7 @@ first two, statuses, presence and server members, Adversarial features), everywh
 | **Read receipts** | who got, read and played your messages, and when (Signal, WhatsApp, Matrix) | ticks beside your messages; click for who |
 | **Changes** (one switch) | names, descriptions, pictures, settings, members and roles of conversations and spaces; pins; people's names, usernames, pictures, bios, pronouns and banners | History on the profile page (docs/profile.md); a pin mark on pinned messages |
 | **Statuses** (adversarial) | each change to people's custom statuses (the About on Signal and WhatsApp); the current one is kept either way | the Activity section of a profile: a list, and marks above its chart (docs/profile.md) |
-| **Presence** (adversarial) | each time people you follow come online, go idle or do not disturb, or go offline, and on which devices; nothing at all while off | the Activity section of a profile: a list, and a band under its chart (docs/profile.md) |
+| **Presence** (adversarial) | each time people you follow come online, go idle or do not disturb, or go offline, and on which devices; the current state is kept either way, for status dots (docs/profile.md "Status dots"), but nothing of the past while off | the Activity section of a profile: a list, and a band under its chart (docs/profile.md) |
 | **Server members** (adversarial, passive) | who your accounts' clients saw as a member of each server, with nick, roles and when they joined, and the server's member and online counts: only what the client loaded anyway (message authors, the member list in view), never a walk of the list | "Members seen: 5 of 1,287 listed" on a server's About; the server under In common on a profile; its links in the people graph (docs/people-graph.md) |
 | **Profiles** (adversarial) | people's profiles opened in the background, one at a time per account and slower than a person would (docs/same-person.md "Collecting profiles"), and each distinct version of a profile as it changes; nothing collected while off | Same person? (People), and the profile pages |
 | **Voice channels** (adversarial, passive) | who is in each Discord voice channel when you are not, as your accounts' clients are told anyway, and each join and leave; nothing while off | a voice channel's row, its page and its chat (docs/calls.md "Voice channels") |
@@ -106,8 +106,12 @@ Rules that keep it honest and small:
 - The same change seen by a second account within ten minutes is one change (`change_log` and `message_event`).
 - A change straight back within a day cancels the first (a Discord name flipping between a server nickname and the
   global one), except for statuses, members and roles, where going back is the story.
-- Presence is a `change_log` row (field `presence`) only while adversarial features are shown and presence is on
-  (and changes are kept, as for statuses); otherwise the event is dropped. The newest row is how they are now, so a
+- Presence over time is a `change_log` row (field `presence`) only while adversarial features are shown and presence
+  is on (and changes are kept, as for statuses); otherwise nothing of the past is kept. How someone is right now is
+  kept whatever the switches say, one row each in `presence_now` (hub presence.ts), and overwritten by the next: that
+  is what the network's own app shows next to their name to anyone who can see it, so a status dot learns nothing the
+  app would not show. What the switch guards is the record of when someone was around, which no network's app keeps.
+  Your own presence is never a dot. The newest row is how they are now, so a
   change is anything else: the same heard from a second account, or again after a restart, is nothing new. The first
   heard is a row from nothing. Changes straight back are kept (going back is the story).
 - Statuses keep each person's newest 100, presence each identity's newest 1000; strangers (identities with no person) keep their newest 20 names and pictures.
@@ -139,7 +143,8 @@ reactions with a known time (docs/reactions.md "When") and receipts.
   from a message, with no name yet, filling in is not a change.
 - Group members: who joined and who left, once the members were known (`shape: 'group'` only).
 - Roles: an adapter's `role` event (Discord roles from member updates, Matrix power levels, admin on Signal and
-  WhatsApp), with who gave or took it where the network says.
+  WhatsApp, a Zulip role or user group), with who gave or took it where the network says. Kept against the place; a
+  person's changes (`/api/persons/:id/changes`, `/api/identities/:id/changes`) have theirs too while changes are kept.
 - Pins: an adapter's `pin` event, with who.
 - Settings: each About answer is compared with the last one kept through the same account.
 - People: display name, username and picture as identity facts arrive; status from an adapter's `customStatus`

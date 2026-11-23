@@ -7,6 +7,8 @@ import type * as P from '@dither-chat/protocol';
 import { RELATIONSHIP_LABEL, withList } from '@dither-chat/protocol';
 import { connections, connectionTags, withChanges, type Connection } from '../connections.ts';
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { memoOn } from './memo.ts';
+import type { ComponentChildren } from 'preact';
 import { ago, fullTime, localTime } from '../format.ts';
 import { bioEditor, bioLeft } from '../bio.ts';
 import { openers } from '../direct.ts';
@@ -25,7 +27,7 @@ import { ActivityCard } from './ActivityCard.tsx';
 import { SameBox } from './SameBox.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
 import { copyEntries, identityMenu, personMenu } from './menus.tsx';
-import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, Tag } from './ProfileShell.tsx';
+import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, StatusEmoji, Tag } from './ProfileShell.tsx';
 import { ConnectActions, ProfileConnections } from './Requests.tsx';
 import { openConv } from '../opening.ts';
 import { Loading } from './Loader.tsx';
@@ -91,15 +93,49 @@ function onePerPerson(list: string[]): string[] {
 /** The same line from two accounts on one network once. */
 const dedupe = (rows: [string, string][]) => rows.filter((r, i) => rows.findIndex((x) => x[0] === r[0] && x[1] === r[1]) === i);
 
+/** The people a fact names, each a link to their profile. */
+function FactPeople({ ids }: { ids: string[] }) {
+  return (
+    <>
+      {ids.map((id, i) => {
+        const p = db.identities.get(id)?.personId ? db.persons.get(db.identities.get(id)!.personId!) : null;
+        return (
+          <>
+            {i > 0 && ', '}
+            <button class="pf-fact-who" onClick={() => openProfile(id)}>
+              {p?.name ?? identityName(id)}
+            </button>
+          </>
+        );
+      })}
+    </>
+  );
+}
+
 const normalized = (s: string | null | undefined) => (s ?? '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 
-/** A conversation's picture: its own, else its server's. */
-function PlaceIcon({ c, size = 22 }: { c: P.ConversationView; size?: number }) {
+/** What a conversation's picture shows: its own, else its server's. */
+function placePicture(c: P.ConversationView) {
   const com = c.spaceIds.length ? rootCommunity(c.spaceIds[0]) : null;
-  if (com) return <Avatar id={com.id} name={com.name} url={com.icon} size={size} square network={c.network} />;
+  if (com) return { id: com.id, name: com.name, url: com.icon, square: true, network: c.network };
   const person = c.peerPersonId ? db.persons.get(c.peerPersonId) : null;
-  return <Avatar id={person?.id ?? c.id} name={convTitle(c)} url={person?.avatar ?? c.avatar} size={size} square={c.shape !== 'direct'} network={c.network} />;
+  return { id: person?.id ?? c.id, name: convTitle(c), url: person?.avatar ?? c.avatar, square: c.shape !== 'direct', network: c.network };
 }
+
+/**
+ * A conversation's picture. Drawn again only when what it shows changes (memoOn): a profile draws its lists again for
+ * a name you give someone, and the places' pictures mostly stay (docs/perf.md "Every click").
+ */
+const PlaceIcon = memoOn(
+  'PlaceIcon',
+  function PlaceIcon({ c, size = 22 }: { c: P.ConversationView; size?: number }) {
+    return <Avatar {...placePicture(c)} size={size} />;
+  },
+  ({ c, size }) => {
+    const p = placePicture(c);
+    return `${size ?? ''}\n${p.id}\n${p.name}\n${p.url ?? ''}\n${p.square}\n${p.network}`;
+  },
+);
 
 /** One account's handle or id, a button that copies it. */
 function HandleChip({ i }: { i: P.IdentityView }) {
@@ -467,7 +503,10 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     .map((i) => i.status)
     .filter((x): x is NonNullable<P.IdentityView['status']> => !!(x?.text || x?.emoji))
     .sort((a, b) => b.at - a.at)[0];
-  const status = live ?? (said.find((a) => a.status?.text) ?? said.find((a) => a.status?.emoji))?.status;
+  const heard = live ?? (said.find((a) => a.status?.text) ?? said.find((a) => a.status?.emoji))?.status;
+  // A custom emoji (`:name:`) with the picture a profile gave for it (Zulip's organization emoji).
+  const emojiPic = heard?.emoji?.startsWith(':') ? said.find((a) => a.status?.emoji === heard.emoji && a.status?.emojiUrl)?.status?.emojiUrl : undefined;
+  const status = heard && emojiPic ? { ...heard, emojiUrl: emojiPic } : heard;
   const changesPath = person ? `/api/persons/${person.id}/changes` : `/api/identities/${first.id}/changes`;
   const chartPath = `/api/people/${person?.id ?? first.id}/activity`;
   // One number written two ways is one link.
@@ -607,6 +646,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       name={name}
       picture={picture}
       onPicture={ownPicture ? (e) => pe!.pictureMenu(e, ownPicture, setPicturing) : undefined}
+      presence={isSelf ? undefined : person ? { person: person.id } : { identity: first?.id }}
       network={nets.length === 1 ? nets[0] : undefined}
       banner={banner}
       accent={accent}
@@ -666,7 +706,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       status={
         status && (
           <>
-            {status.emoji && <span class="pf-status-emoji">{status.emoji}</span>}
+            <StatusEmoji status={status} />
             {status.text}
           </>
         )
@@ -827,7 +867,11 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
             ...dedupe([
               ...said.filter((a) => a.createdAt).map((a): [string, string] => [`On ${netName(a.network)} since`, monthYear(a.createdAt!)]),
               ...facts.map((f): [string, string] => [f.label, f.value]),
-            ]),
+            ]).map(([k, v]): [string, ComponentChildren] => {
+              // A fact that names people (a bot's owner, a person field) links each to their profile.
+              const named = facts.find((f) => f.label === k && f.value === v && f.people?.length)?.people;
+              return [k, named ? <FactPeople ids={named} /> : v];
+            }),
             localNow ? ['Local time', localNow] : null,
             profile.totalMessages > 0 && [
               'Messages stored',
@@ -860,7 +904,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         self={isSelf}
         chart={profile.totalMessages > 0 || profile.conversations.length > 0}
         status={status}
-        at={live && status === live ? live.at : undefined}
+        at={live && heard === live ? live.at : undefined}
+        presence={isSelf ? undefined : person ? { person: person.id } : { identity: first?.id }}
       />
 
       {(sharedSpaces.length > 0 || groupChats.length > 0) && (
@@ -947,7 +992,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           </div>
         </Card>
       )}
-      <HistoryCard path={`${changesPath}?except=status,presence`} />
+      <HistoryCard path={`${changesPath}?except=status,presence`} person />
     </>
   );
 

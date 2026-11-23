@@ -247,7 +247,14 @@ export function MentionPicker({
             onClick={() => choose(r)}
           >
             {who ? (
-              <Avatar id={r.identityId ?? r.personId ?? r.insert} name={r.name} url={r.avatar} size={24} network={r.network as P.Network | undefined} />
+              <Avatar
+                id={r.identityId ?? r.personId ?? r.insert}
+                name={r.name}
+                url={r.avatar}
+                size={24}
+                network={r.network as P.Network | undefined}
+                presence={r.identityId ? { identity: r.identityId } : r.personId ? { person: r.personId } : undefined}
+              />
             ) : (
               <span class="mp-glyph" style={tint}>
                 <Icon name={r.kind === 'role' ? 'users' : 'at'} size={15} />

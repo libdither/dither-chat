@@ -2575,6 +2575,7 @@ class DemoAdapter implements InprocAdapter {
     }
     if (firstRun) this.seedHistory(ago);
     if (firstRun) this.seedHeardReactions();
+    this.seedPresence(ago);
     if (firstRun) writeFileSync(marker, String(Date.now()));
     if (this.network === 'discord') this.startThreads();
     scheduleChatter();
@@ -2737,6 +2738,32 @@ class DemoAdapter implements InprocAdapter {
     this.emit({ t: 'reaction', ...at, author: D.ravi.nativeId });
     this.emit({ t: 'reaction', ...at, author: D.ravi.nativeId, remove: true });
     this.emit({ t: 'reaction', ...at, author: D.ravi.nativeId });
+  }
+
+  /**
+   * How people are now, for status dots (docs/profile.md "Status dots"): told at every start, as an adapter tells
+   * what it hears on connecting. Discord, Matrix and Telegram say presence; Signal and WhatsApp do not.
+   */
+  private seedPresence(ago: (min: number) => number) {
+    const now: Partial<Record<AccKey, [P.IdentityFact, 'online' | 'idle' | 'dnd' | 'offline', number, ('desktop' | 'mobile' | 'web')[]][]>> = {
+      dmain: [
+        [D.ravi, 'online', 12, ['desktop']],
+        [D.jordan, 'dnd', 40, ['mobile']],
+        [D.theo, 'idle', 25, ['desktop']],
+        [D.quinn, 'offline', 300, []],
+        [D.lev, 'online', 5, ['web']],
+      ],
+      mx: [
+        [M.kai, 'online', 8, []],
+        [M.sam, 'idle', 33, []],
+        [M.lina, 'offline', 600, []],
+      ],
+      tg: [
+        [TG.alice, 'online', 3, ['mobile']],
+        [TG.noor, 'offline', 90, []],
+      ],
+    };
+    for (const [who, state, min, devices] of now[this.key] ?? []) this.emit({ t: 'presence', who: who.nativeId, state, devices, ts: ago(min) });
   }
 
   private seedHistory(ago: (min: number) => number) {

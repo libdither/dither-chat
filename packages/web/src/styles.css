@@ -1363,6 +1363,13 @@ code {
      bar still rises above the first message. scripts/check-overflow.ts looks with it off. */
   overflow-x: clip;
 }
+/* Each row is a whole number of pixels tall, rounded up. Text makes fractional heights (a grouped message is 24.5 px),
+   and the browser's scroll anchoring scrolls by whole pixels: a message coming in below the view moved what you read by
+   half a pixel. Rounding the whole timeline instead would only move the slip to rows growing above the view.
+   No specificity, so a row's own height wins; where calc-size() is unknown, rows are as they were. */
+:where(.timeline-inner > *) {
+  height: calc-size(auto, round(up, size, 1px));
+}
 .timeline-start {
   text-align: center;
   color: var(--text-faint);
@@ -7359,16 +7366,38 @@ textarea.chip-box {
     padding-top: 6px;
   }
 }
-/* An installed app with the window controls overlay: the window's own buttons are drawn over the top of the page, so
-   the viewers' bars, the live view's bar and the stories start below them (wider than a phone, the file box already
-   does; the camera's top row is below its own rule). */
+/* An installed app with the window controls overlay: the window's own buttons are drawn over the top of the page.
+   The full-window layers keep their top bar at the very top and leave those buttons their corner, the part of the
+   width outside env(titlebar-area-x/width): right of it, or left of it on a Mac. The bar's empty parts move the
+   window, as the title bar's do. (Wider than a phone, the file box already clears them; the camera's top row has its
+   own rule.) */
 @media (display-mode: window-controls-overlay) {
-  .viewer-bar,
-  .lv-bar {
-    padding-top: calc(6px + env(titlebar-area-height, 0px));
+  :root {
+    --wco-left: env(titlebar-area-x, 0px);
+    --wco-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
   }
-  .story-viewer {
-    padding-top: env(titlebar-area-height, 0px);
+  .viewer-bar {
+    padding-left: calc(16px + var(--wco-left));
+    padding-right: calc(8px + var(--wco-right));
+  }
+  .lv-bar {
+    padding-left: calc(10px + var(--wco-left));
+    padding-right: calc(10px + var(--wco-right));
+  }
+  .story-bar {
+    padding-left: calc(12px + var(--wco-left));
+    padding-right: calc(12px + var(--wco-right));
+  }
+  .viewer-bar,
+  .lv-bar,
+  .story-bar,
+  .cam-top {
+    app-region: drag;
+    -webkit-app-region: drag;
+  }
+  :is(.viewer-bar, .lv-bar, .story-bar, .cam-top) :is(button, input, select, a, form, [role='button']) {
+    app-region: no-drag;
+    -webkit-app-region: no-drag;
   }
 }
 @media (max-width: 820px) and (display-mode: window-controls-overlay) {
@@ -11253,6 +11282,23 @@ html[data-theme='light'] .acc-dot {
 .pf-status-emoji {
   font-size: 16px;
 }
+img.pf-status-emoji {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  vertical-align: -4px;
+}
+.pf-fact-who {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.pf-fact-who:hover {
+  text-decoration: underline;
+}
 .pf-actions {
   display: flex;
   flex-wrap: wrap;
@@ -11754,6 +11800,24 @@ html[data-theme='light'] .acc-dot {
 .presence-dot.offline {
   background: transparent;
   box-shadow: inset 0 0 0 2px var(--text-faint);
+}
+/* A status dot on an avatar (PresenceDot.tsx): bottom right, or top right where the network's badge has that corner.
+   A ring of the surface around it parts it from the picture; offline is a hollow ring there too. No motion. */
+.avatar-presence {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  box-shadow: 0 0 0 2px var(--bg-sidebar);
+}
+.avatar-presence.at-top {
+  top: -1px;
+  bottom: auto;
+}
+.avatar-presence.offline {
+  background: var(--bg-sidebar);
+  box-shadow:
+    inset 0 0 0 2px var(--text-faint),
+    0 0 0 2px var(--bg-sidebar);
 }
 .pf-asking {
   color: var(--text-faint);
@@ -16100,10 +16164,11 @@ button.msg-edited.link:hover {
   padding: calc(8px + env(safe-area-inset-top)) 12px 8px;
   background: linear-gradient(rgb(0 0 0 / 0.45), transparent);
 }
-/* Under the window's own buttons in an installed app with the window controls overlay (see .viewer-bar). */
+/* Beside the window's own buttons in an installed app with the window controls overlay (see .viewer-bar). */
 @media (display-mode: window-controls-overlay) {
   .cam-top {
-    padding-top: calc(8px + env(titlebar-area-height, 0px));
+    padding-left: calc(12px + var(--wco-left));
+    padding-right: calc(12px + var(--wco-right));
   }
 }
 .cam-btn {

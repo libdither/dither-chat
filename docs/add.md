@@ -384,8 +384,8 @@ How each of your accounts stands with someone, and ending it (2026-11-09). An in
     so a friend of two Discord accounts is one identity with two links, and one row. With several accounts on the
     list, the row has a dot in each account's colour, named in the dots' tooltip.
   - **The second line** says when you last talked: the latest message in your DMs with them, on any network
-    ("talked 3 days ago"), else nothing. Presence never reaches the page unless the adversarial presence log is on,
-    so the list does not say who is online. "Friends since" is in the row's tooltip (and on the profile).
+    ("talked 3 days ago"), else nothing. Who is online is the picture's status dot elsewhere (docs/profile.md
+    "Status dots"); these rows do not repeat it. "Friends since" is in the row's tooltip (and on the profile).
   - **An account menu** under "People" when the list has people on several accounts, like Mail's: All accounts, or
     one, each with its colour, and a line saying what the dots are.
   - **The order**: last talked first (people you never talked with after, by name), or A to Z, from the order

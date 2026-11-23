@@ -15,7 +15,8 @@ what an object is now is read from its own table when a client asks. Being compa
 objects that changed, not with the number of changes.
 
 - **Kinds**: `account`, `identity`, `person`, `space`, `conversation`, `message` (with its conversation),
-  `attention` (the inbox score of a conversation), `usage` (`kind:id` of a place), and the lists kept whole, under id
+  `attention` (the inbox score of a conversation), `usage` (`kind:id` of a place), `presence` (an identity's status
+  dot, docs/profile.md), and the lists kept whole, under id
   `*`: `folders`, `placePrefs`, `categories`, `rules`, `arrange`, and `attention:*` / `usage:*` for "all of them".
   Typing, notifications (and `cleared`, which closes them) and mark-all-read progress are of the moment and not kept.
 - **Epoch**: a random id for the journal. Every position belongs to one; a position from another epoch is void.
@@ -47,7 +48,9 @@ journal, as after restoring an older database) or:
 - `timelines`: for each one the client holds, the messages after its newest, and the ones it holds (between `oldest`
   and `newest`) that changed since its `seq`: edits, deletions, reactions, triage, forwards. When there are more than
   a page (60) of new ones, when the timeline's `seq` is older than the floor, or when a person timeline now spans
-  other conversations (people merged or split), it gets `replace: true` and the newest page instead.
+  other conversations (people merged or split), or when a message moved out of it since (a Zulip topic renamed or
+  moved: the journal keeps a `movedOut` row for the conversation it left), it gets `replace: true` and the newest page
+  instead. A client open at the time drops the moved message from the old timeline as the live event comes.
 - `selfPersonId`, `categoryProvider`, and `reactionUsage` (only when messages changed), the identities the messages
   name, and the messages their replies quote.
 

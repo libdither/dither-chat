@@ -170,6 +170,7 @@ function norm(d: Db) {
     rules: d.rules,
     reactionUsage: d.reactionUsage,
     attention: sortBy([...d.attention.values()], (a) => a.id),
+    presence: sortBy([...d.presence.values()], (p) => p.identityId),
   };
 }
 
@@ -363,6 +364,16 @@ const steps: [string, () => void | Promise<unknown>][] = [
     store.ingest(d1, { t: 'conversation', conversation: { nativeId: 'thread-1', shape: 'thread', name: 'A thread', parentConversation: 'general', spaces: [{ nativeId: 'guild' }] } });
     say(d1, 'thread-1', 'carl');
     store.touchConversation(cnv(d1, 'dm-dee'));
+  }],
+  ['status dots: heard, changed, and gone with the account that heard them stopping', async () => {
+    store.ingest(d1, { t: 'presence', who: 'ann', state: 'online', devices: ['desktop'] });
+    store.ingest(d1, { t: 'presence', who: 'dee', state: 'idle' });
+    store.ingest(sig, { t: 'presence', who: 'ann-sig', state: 'dnd' });
+    hub.flush(true);
+    await settle();
+    store.ingest(d1, { t: 'presence', who: 'dee', state: 'offline' });
+    store.ingest(sig, { t: 'status', status: 'offline' });
+    hub.flush(true);
   }],
   ['leaving: a space another account still sees, a conversation no one does', () => {
     store.ingest(d2, { t: 'leave', kind: 'space', nativeId: 'guild' });

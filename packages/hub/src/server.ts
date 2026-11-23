@@ -627,13 +627,14 @@ export class HubServer {
     this.imports.stop();
     this.matches.stop();
     this.collector.stop();
-    this.flush();
+    // The last frame carries presence held for coalescing too, so the journal a clean stop closes has it.
+    this.flush(true);
     this.server?.stop(true);
     this.plain?.stop(true);
     for (const s of this.extra) s.stop(true);
   }
 
-  flush() {
+  flush(all = false) {
     // What a flush writes (attention's folds, one transaction per conversation; the journal) is one transaction: one
     // commit, and each commit waits for the disk on the hub's thread. The frame goes out once it is committed.
     // Every 80 ms: a span only when there was something to send (docs/tracing.md).
@@ -648,7 +649,7 @@ export class HubServer {
       frame = timedWrite('flush', () =>
         this.store.db
           .transaction(() => {
-            events = this.gather();
+            events = this.gather(all);
             return this.record(events);
           })
           .immediate(),
@@ -662,6 +663,12 @@ export class HubServer {
       s.fail(e);
     }
     if (frame) for (const c of this.clients) c.send(frame);
+    // Status dots are written after the commit, so a failed one leaves them to write next time (presence.ts).
+    try {
+      this.store.presenceNow.save();
+    } catch (e) {
+      console.error('flush: presence not written; again next time', e);
+    }
     if (!events.length) s.drop();
     else {
       s.set({ events: events.length });
@@ -670,10 +677,10 @@ export class HubServer {
   }
 
   /** What changed since the last flush: the store's, mail's, and the scores they move. */
-  private gather(): P.ClientEvent[] {
+  private gather(all = false): P.ClientEvent[] {
     // What the store gives up here is no longer dirty: it goes out even when mail's or attention's part fails (a
     // locked database), or devices would miss it until their next bootstrap.
-    const events = this.store.flush();
+    const events = this.store.flush(all);
     if (events.length) noteWork('flush');
     // A picture came without its size: the archive keeps the new files now, and the hub reads their sizes as it does
     // (mediainfo.ts kept), instead of up to a minute later. A walk already under way gets to them by itself.
@@ -1272,7 +1279,9 @@ export class HubServer {
           : [{ kind: kind as P.ChangeView['target']['kind'], id: m[2] }];
       // ?fields=status,presence: only those; ?except=…: all but those.
       const list = (k: string) => url.searchParams.get(k)?.split(',').filter((f) => /^\w{1,32}$/.test(f)).slice(0, 20);
-      const changes = s.changes(targets, limit, { fields: list('fields'), except: list('except') });
+      // A person's page also has the roles they were given and lost in places.
+      const rolesOf = kind === 'identity' ? targets.map((t) => t.id) : undefined;
+      const changes = s.changes(targets, limit, { fields: list('fields'), except: list('except'), rolesOf });
       // Whoever they name, and whoever made them, for rendering.
       const named = new Set(changes.flatMap((c) => [c.identityId, c.actorId, c.target.kind === 'identity' ? c.target.id : undefined].filter((x): x is string => !!x)));
       return ok({ changes, identities: s.identitiesByIds(named) });

@@ -134,6 +134,20 @@ function changedSince(ctx: SyncContext, rows: ChangeRow[]): P.ClientEvent[] {
       out.push({ t: 'attention', items, removed: gone });
     }
   }
+  if (list('presence')) {
+    const xs = of('presence');
+    if (xs.includes('*')) out.push({ t: 'presence', items: store.presenceNow.list(), removed: [], replace: true });
+    else {
+      const items: P.PresenceNowView[] = [];
+      const gone: string[] = [];
+      for (const id of xs) {
+        const v = store.presenceNow.get(id);
+        if (v) items.push(v);
+        else gone.push(id);
+      }
+      out.push({ t: 'presence', items, removed: gone });
+    }
+  }
   if (list('usage')) {
     const xs = of('usage');
     if (xs.includes('*')) out.push({ t: 'usage', places: usage.list(), removed: [], replace: true });
@@ -199,7 +213,9 @@ function timeline(store: Store, t: P.SyncTimelineRequest): P.SyncTimeline {
 
   let newer: Row[] = [];
   const regrouped = person && (!Array.isArray(t.conversationIds) || [...t.conversationIds].sort().join() !== [...convs].sort().join());
-  let behind = typeof t.seq !== 'number' || t.seq < j.floor || t.seq > j.seq || regrouped;
+  // A message that moved out since (a Zulip topic renamed): a delta cannot take it away, a fresh page does.
+  const movedOut = () => !!store.one(`SELECT 1 FROM sync_change WHERE kind = 'movedOut' AND id IN (SELECT value FROM json_each(?)) AND seq > ? LIMIT 1`, list, t.seq);
+  let behind = typeof t.seq !== 'number' || t.seq < j.floor || t.seq > j.seq || regrouped || movedOut();
   if (!behind && t.newer !== false) {
     newer = latest(PAGE + 1);
     behind = newer.length > PAGE;

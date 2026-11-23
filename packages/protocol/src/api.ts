@@ -666,8 +666,8 @@ export interface GraphTuning {
   /** Set when the weights were fitted to what came next (Fit to me): when, and how well before and after. */
   fitted?: { at: number; before: number; after: number };
 }
-/** Where a link came from: members seen (adversarial), a profile's mutual servers, a conversation's participants. */
-export const GRAPH_SOURCE = { members: 1, profile: 2, participant: 4 } as const;
+/** Where a link came from: members seen (adversarial), a profile's mutual servers, a conversation's participants, a thread's authors. */
+export const GRAPH_SOURCE = { members: 1, profile: 2, participant: 4, author: 8 } as const;
 
 /** What one of your accounts can react with in a conversation. */
 export interface ReactionContextView {
@@ -1117,7 +1117,7 @@ export interface PlaceStats {
 
 /** Everything the hub has stored about someone. It only knows what crossed your accounts. */
 /** What one network says about one of a person's identities (docs/profile.md): PersonAbout in hub ids. */
-export interface PersonAboutView extends Omit<PersonAbout, 'avatar' | 'banner' | 'mutualSpaces' | 'mutualFriends' | 'friends' | 'posts'> {
+export interface PersonAboutView extends Omit<PersonAbout, 'avatar' | 'banner' | 'status' | 'facts' | 'mutualSpaces' | 'mutualFriends' | 'friends' | 'posts'> {
   identityId: string;
   network: Network;
   /** The account that asked. */
@@ -1127,6 +1127,10 @@ export interface PersonAboutView extends Omit<PersonAbout, 'avatar' | 'banner' |
   stale?: string;
   avatar?: string | null;
   banner?: string | null;
+  /** As PersonAbout's, with a custom emoji's picture a signed media path. */
+  status?: { text?: string; emoji?: string; emojiUrl?: string };
+  /** As PersonAbout's, with the people each names as hub identity ids. */
+  facts?: { label: string; value: string; people?: string[] }[];
   /** Spaces you share; `spaceId` null for one the hub does not have. */
   mutualSpaces?: { spaceId: string | null; nativeId: string; nick?: string; roles?: { name: string; color?: string }[]; joinedAt?: number; bio?: string; pronouns?: string }[];
   mutualFriends?: string[];
@@ -1522,6 +1526,8 @@ export interface Bootstrap {
   notices?: NoticesBoot;
   /** Changes when the hub process starts again, as in a sync answer: a new one may have brought a new web build. */
   boot?: string;
+  /** Status dots: everyone's presence as last heard (PresenceNowView). Absent from hubs that predate them. */
+  presence?: PresenceNowView[];
 }
 
 /**
@@ -1629,6 +1635,11 @@ export type ClientEvent =
    * pending copy by id before the answer to its POST arrives. Of the moment, like `typing`: not journaled.
    */
   | { t: 'sent'; conversationId: string; clientId: string; messageId: string }
+  /**
+   * Status dots: presence that changed (`items`) or became unknown (`removed`, identity ids), at most once every two
+   * seconds (hub presence.ts). `replace`: these are all of them. Journaled per identity, like attention.
+   */
+  | { t: 'presence'; items: PresenceNowView[]; removed: string[]; replace?: true }
   /**
    * Chats, mail threads and groups of notices read on some device since the hub notified about them (delivery.ts
    * `read`): an open page closes their notifications that show nothing newer than `upTo`, the newest message the hub
@@ -1835,6 +1846,19 @@ export const RETENTION_GUARDED = ['deleted', 'disappearing', 'statuses', 'presen
 /** Whether kept deleted and disappeared messages show in this chat. */
 export const showsGone = (r: RetentionSettings, conversationId: string | null | undefined): boolean =>
   r.adversarial && ((conversationId ? r.showIn?.[conversationId] : undefined) ?? r.show) !== 'hidden';
+
+/**
+ * How someone is on their network right now, for status dots (docs/profile.md, "Status dots"): the latest state the
+ * hub heard, kept always (it is what the network's own app shows), unlike presence over time. No entry: unknown.
+ */
+export interface PresenceNowView {
+  identityId: string;
+  state: 'online' | 'idle' | 'dnd' | 'offline';
+  /** Where they are on, when the network says. */
+  devices?: ('desktop' | 'mobile' | 'web')[];
+  /** When it became so, as near as the hub knows (ms epoch). */
+  at: number;
+}
 
 /** Someone's presence, as a presence change's `old` and `new` (ChangeView, field "presence"). */
 export interface PresenceView {

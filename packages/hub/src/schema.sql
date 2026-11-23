@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS vantage (
   last_read_ts INTEGER,
   unread       INTEGER NOT NULL DEFAULT 0,
   mentions     INTEGER NOT NULL DEFAULT 0,
+  -- Of those mentions, how many were @everyone, @all, @here or @topic (attention.ts weighs them less).
+  wildcards    INTEGER NOT NULL DEFAULT 0,
   native_mute  TEXT,                           -- JSON NativeMute, as the network reports it
   PRIMARY KEY (account_id, target_kind, target_id)
 );
@@ -156,6 +158,8 @@ CREATE TABLE IF NOT EXISTS message (
   mentions_self   INTEGER NOT NULL DEFAULT 0,
   -- The mention of you was @everyone or @here: it notifies like one, but is not addressed to you.
   mentions_all    INTEGER NOT NULL DEFAULT 0,
+  -- The mention of you was of a group you are in (a Zulip user group, a Discord role), not you by name.
+  mentions_group  INTEGER NOT NULL DEFAULT 0,
   deleted         INTEGER NOT NULL DEFAULT 0,
   -- When gone, how and when (docs/history.md): 'deleted' or 'disappeared'; the body stays if the hub kept it.
   gone_how        TEXT,
@@ -562,6 +566,19 @@ CREATE TABLE IF NOT EXISTS needs_prediction (
   PRIMARY KEY (conversation_id, addressed, age)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS needs_prediction_addressed ON needs_prediction(addressed);
+
+-- ------------------------------------------------------------------ status dots (presence.ts, docs/profile.md)
+-- How each person is on their network now, as last heard: one row each, current state only, never a history (that
+-- is the change log's, behind the adversarial presence switch). Hidden while no account that heard it is online; gone
+-- with its accounts, or when stale.
+CREATE TABLE IF NOT EXISTS presence_now (
+  identity_id TEXT PRIMARY KEY,
+  state       TEXT NOT NULL,                   -- online, idle, dnd, offline
+  devices     TEXT,                            -- desktop,mobile,web as the network said, comma-separated
+  at          INTEGER NOT NULL,                -- when it became so
+  heard       INTEGER NOT NULL,                -- when the hub last heard it (written with a change), for staleness
+  accounts    TEXT                             -- the accounts that heard this state, comma-separated: shown while one is online
+) WITHOUT ROWID;
 
 -- ------------------------------------------------------------------ the change journal (journal.ts, docs/sync.md)
 -- What changed, by object, at which position, so a client that comes back asks only for that. Compacted: one row

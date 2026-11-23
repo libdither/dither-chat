@@ -95,6 +95,11 @@ export function changesOf(events: P.ClientEvent[]): Change[] {
       case 'mail.lists':
         for (const k of e.stale) out.push({ kind: 'mailList', id: k });
         break;
+      case 'presence':
+        if (e.replace) out.push({ kind: 'presence', id: '*' });
+        for (const v of e.items) out.push({ kind: 'presence', id: v.identityId });
+        for (const id of e.removed) out.push({ kind: 'presence', id, removed: true });
+        break;
       case 'usage':
         if (e.replace) out.push({ kind: 'usage', id: '*' });
         for (const u of e.places) out.push({ kind: 'usage', id: `${u.kind}:${u.id}` });
@@ -176,9 +181,17 @@ export class Journal {
     return null;
   }
 
-  /** Objects changed after `seq`, messages aside. */
+  /** Objects changed after `seq`, messages and what left a conversation aside. */
   since(seq: number): ChangeRow[] {
-    return this.db.query(`SELECT kind, id, seq, conv, removed FROM sync_change WHERE seq > ? AND kind != 'message' ORDER BY seq`).all(seq) as ChangeRow[];
+    return this.db.query(`SELECT kind, id, seq, conv, removed FROM sync_change WHERE seq > ? AND kind NOT IN ('message', 'movedOut') ORDER BY seq`).all(seq) as ChangeRow[];
+  }
+
+  /**
+   * A message moved out of `conv` (MessageFact.moved): a client's copy of it from before now holds one that is not there,
+   * which a delta of what changed in it cannot say (sync.ts timeline answers such a copy with a fresh page).
+   */
+  movedOut(conv: string, now = Date.now()) {
+    this.record([{ kind: 'movedOut', id: conv, conv }], now);
   }
 
   /** Drop what is too old or too much. Everything before the newest dropped row is then out of reach. */
