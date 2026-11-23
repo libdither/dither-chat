@@ -8,6 +8,7 @@
  * An account the hub may only read shows none of these; one that answered 501 to an op loses that op's buttons, and
  * one whose status lists the writes it makes (`writes`: Gmail's, a kind at a time) shows only those (canWrite).
  */
+import { isMailThread } from '../../mail/chats.ts';
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { lockAxis, rubber } from '../../gesture.ts';
@@ -34,7 +35,7 @@ const canMove = (t: P.MailThreadView, to: P.MailMoveTarget) => {
 /** Leaving the open thread after it was filed away: back to its list. */
 function leave(ids: string[]) {
   const r = route.value;
-  if (r.view === 'mail' && r.thread && ids.includes(r.thread)) go({ view: 'mail', list: r.list }, true);
+  if (r.view === 'inbox' && r.conv && ids.includes(r.conv)) go({ view: 'inbox', ...(r.mail ? { mail: r.mail } : {}) }, true);
 }
 
 function file(ts: P.MailThreadView[], to: P.MailMoveTarget) {
@@ -96,7 +97,8 @@ export const FILING_THREAD_ACTIONS: ThreadAction[] = [
     show: (t) => !inInbox(t) && (t.roles.some((r) => r === 'archive' || r === 'junk' || r === 'trash') || archivedInAll(db.mail.mailboxes, t)) && canMove(t, 'inbox'),
     run: (t) => leaveAfter(t, 'inbox'),
   },
-  { id: 'trash', label: 'Move to the trash', icon: 'trash', place: 'head', show: (t) => roomy() && !only(t, 'trash') && canMove(t, 'trash'), run: (t) => leaveAfter(t, 'trash') },
+  // Trash is in ⋯ (threadMenu), not beside Archive at the same weight; a chat's message menu has it too.
+  { id: 'trash', label: 'Move to the trash', icon: 'trash', place: 'menu', show: (t) => !only(t, 'trash') && canMove(t, 'trash'), run: (t) => leaveAfter(t, 'trash') },
   { id: 'star', label: 'Star', icon: 'star', place: 'head', show: (t, a) => roomy() && !t.flagged && canWrite(a, 'flagged'), run: (t) => star([t.id], true) },
   { id: 'unstar', label: 'Unstar', icon: 'star', place: 'head', show: (t, a) => roomy() && t.flagged && canWrite(a, 'flagged'), run: (t) => star([t.id], false) },
   {
@@ -350,11 +352,12 @@ export function FilingBar({ list }: { list: string }) {
 
 addEventListener('keydown', (e) => {
   const r = route.value;
-  if (r.view !== 'mail' || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+  // In a mail list or a thread's chat (docs/mail.md "Mail as chats").
+  if (r.view !== 'inbox' || !(r.mail || isMailThread(r.conv)) || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
   const el = e.target as HTMLElement | null;
   if (el?.closest?.('input, textarea, select, [contenteditable], .cm, .sheet-layer, .modal-backdrop, .switcher-back')) return;
   if (e.key === 'Escape' && selected.value.size) return void (clearSelected(), e.preventDefault());
-  const ids = selected.value.size ? [...selected.value] : r.thread ? [r.thread] : [];
+  const ids = selected.value.size ? [...selected.value] : isMailThread(r.conv) ? [r.conv] : [];
   const ts = ids.map((id) => db.mail.threads.get(id)).filter((x): x is P.MailThreadView => !!x);
   if (!ts.length) return;
   const all = (kind: P.MailWriteKind) => ts.every((t) => canWrite(acc(t), kind));

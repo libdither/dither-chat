@@ -36,12 +36,16 @@ interface MailState {
   lists: Map<string, MailList>;
   /** What the hub's outbox still shows (slice 5): held, on its way, failed, or just sent. */
   outbox: Map<string, P.MailOutboxView>;
+  /** Each person's email routes (mail as chats, mail/chats.ts), by route id `email:<account>:<address>`. */
+  chats: Map<string, P.MailChatView>;
+  /** The rungs you chose for places in people's chats, by `<view> <place>`. */
+  rungs: Map<string, P.PlaceRungView>;
 }
 
 const OFF: P.MailAccess = { state: 'off', managerUrl: null };
 
 export function emptyMail(): MailState {
-  return { access: OFF, accounts: new Map(), mailboxes: new Map(), threads: new Map(), lists: new Map(), outbox: new Map() };
+  return { access: OFF, accounts: new Map(), mailboxes: new Map(), threads: new Map(), lists: new Map(), outbox: new Map(), chats: new Map(), rungs: new Map() };
 }
 
 /** Newest first; ties by id, as the hub pages them. */
@@ -142,6 +146,8 @@ export function applyMailBootstrap(s: MailState, b: P.MailBootstrap | undefined)
   s.mailboxes = new Map((b?.mailboxes ?? []).map((m) => [m.id, m]));
   s.threads = new Map((b?.threads ?? []).map((t) => [t.id, t]));
   s.outbox = new Map((b?.outbox ?? []).map((o) => [o.id, o]));
+  s.chats = new Map((b?.chats ?? []).map((c) => [c.id, c]));
+  s.rungs = new Map((b?.rungs ?? []).map((r) => [rungKey(r.view, r.place), r]));
   // Loaded lists may be behind what the hub has now: each loads again when shown.
   s.lists = new Map();
 }
@@ -187,10 +193,22 @@ export function applyMailEvent(s: MailState, ev: P.ClientEvent): boolean {
       // The whole list, each time.
       s.outbox = new Map(ev.items.map((o) => [o.id, o]));
       return true;
+    case 'rung': {
+      const k = rungKey(ev.view, ev.place);
+      if (ev.rung) s.rungs.set(k, { view: ev.view, place: ev.place, rung: ev.rung, setAt: Date.now() });
+      else s.rungs.delete(k);
+      return true;
+    }
+    case 'mail.chats':
+      for (const id of ev.removed) s.chats.delete(id);
+      for (const c of ev.chats) s.chats.set(c.id, c);
+      return true;
     default:
       return false;
   }
 }
+
+export const rungKey = (view: string, place: string) => `${view} ${place}`;
 
 function removeThreads(s: MailState, ids: string[]) {
   if (!ids.length) return;
@@ -311,22 +329,21 @@ export function listTitle(s: MailState, key: string): string {
   return acc ? `${names[l.view]} · ${acc.address ?? acc.label}` : names[l.view];
 }
 
-/**
- * The Mail section's chips: Inbox, ranked or newest first (its label follows `prefs.mailOrder`), the whole of Inbox, and its
- * mail not from a person, which is also Inbox's folded row (slice 8).
- */
-export const MAIL_VIEWS: { view: P.MailView; label: string }[] = [
-  { view: 'inbox', label: 'Ranked' },
-  { view: 'all', label: 'Everything' },
-  { view: 'updates', label: 'Updates' },
-];
 /** Views in the folder menu, above each account's mailboxes: newest first, of the scope in use. */
 export const MAIL_FOLDER_VIEWS: { view: P.MailView; label: string }[] = [
   { view: 'starred', label: 'Starred' },
   { view: 'sent', label: 'Sent' },
 ];
 
-export const DEFAULT_LIST = viewList('inbox');
+/**
+ * The mail lists shown in the Inbox's place (docs/mail.md "Mail as chats"): mail is chats, so its Inbox is the
+ * Inbox's; these are what mail has besides, newest first.
+ */
+export const MAIL_LISTS: { view: P.MailView; label: string }[] = [
+  { view: 'updates', label: 'Updates' },
+  { view: 'all', label: 'Everything' },
+  ...MAIL_FOLDER_VIEWS,
+];
 
 /**
  * A mailbox that only holds others (IMAP \Noselect, Gmail's `[Gmail]`): it has no counts and has mailboxes in it. The

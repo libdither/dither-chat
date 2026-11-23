@@ -14035,6 +14035,37 @@ button.msg-edited.link:hover {
   color: var(--warn);
 }
 /* Over the header while threads are picked, so the list under the finger does not move. */
+/* A mail message in a chat, opened up (ChatMail.tsx): its quote, or the mail as it was sent. */
+.chat-mail-quote {
+  margin-top: 4px;
+  padding-left: 9px;
+  border-left: 2px solid var(--border);
+  color: var(--text-dim);
+}
+.chat-mail-sent {
+  margin-top: 6px;
+  max-width: 720px;
+}
+.chat-mail-empty {
+  color: var(--text-faint);
+  font-style: italic;
+}
+/* A mail list in the Inbox's place (ui/mail/MailSidebar.tsx): back to the Inbox, then the list's name. */
+.mail-side .side-head h1 {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.mail-list-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mail-back {
+  margin-left: -6px;
+}
 .mail-side {
   position: relative;
 }

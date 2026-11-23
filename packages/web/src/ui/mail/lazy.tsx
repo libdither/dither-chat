@@ -1,12 +1,12 @@
 /**
- * Mail's screens (the list, the reader and what they draw with) are a chunk of their own, loaded the first time Mail
- * opens, as the people graph is (GraphPane.tsx): the chat app's first load does not carry them (docs/perf.md).
+ * Mail's screens (its lists, bodies, compose and filing) are a chunk of their own, loaded at idle or the first time a
+ * chat draws mail, as the people graph is (GraphPane.tsx): the chat app's first load does not carry them (docs/perf.md).
  */
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { db, mailRev } from '../../state.ts';
-import { Empty } from '../bits.tsx';
+import type { MenuEntry } from '../ContextMenu.tsx';
 import { Loading } from '../Loader.tsx';
 
 type Screens = typeof import('./screens.ts');
@@ -33,7 +33,7 @@ function useScreens(): { m: Screens | null; failed: boolean } {
   return { m, failed };
 }
 
-export function MailSidebarLazy(p: { list?: string; active?: string }) {
+export function MailSidebarLazy(p: { list: string; active?: string }) {
   const { m } = useScreens();
   return m ? (
     <m.MailSidebar {...p} />
@@ -47,14 +47,26 @@ export function MailSidebarLazy(p: { list?: string; active?: string }) {
   );
 }
 
-export function MailCenterLazy({ thread, onBack }: { thread?: string; onBack: () => void }) {
+/** A thread's filing in its chat's header (ChatMail.tsx), once mail's chunk is here. */
+export function MailThreadActionsLazy(p: { threadId: string }) {
+  const { m } = useScreens();
+  return m ? <m.MailThreadActions {...p} /> : null;
+}
+
+/** A mail message's star, tier and its thread's filing for its menu: none until mail's chunk is here (it loads at idle). */
+export const mailMessageExtras = (msg: P.MessageView): MenuEntry[] => screens?.mailMessageItems(msg) ?? [];
+
+/** A mail message in a chat, opened up (ChatMail.tsx): its quote, the mail as sent, or its files. */
+export function ChatMailBodyLazy(p: { m: P.MessageView; show: 'words' | 'quote' | 'sent' | 'files' }) {
   const { m, failed } = useScreens();
-  if (m) return thread ? <m.Reader threadId={thread} onBack={onBack} /> : <m.MailWelcome />;
-  return (
-    <section class="pane welcome">
-      {failed ? <Empty icon="alert" title="Could not load Mail">Check the connection to the hub, then try again.</Empty> : <Loading fill />}
-    </section>
-  );
+  if (m) return <m.ChatMailBody {...p} />;
+  return failed || p.show === 'files' ? null : <Loading inline label="Loading the mail…" />;
+}
+
+/** What a chat box writes, sent as mail (mail/chatsend.ts), once Mail's chunk is here. */
+export async function sendMailFromChat(o: Parameters<typeof import('../../mail/chatsend.ts').sendFromChat>[0]) {
+  const m = await preloadMail();
+  return m.sendFromChat(o);
 }
 
 /** Settings → Indexing → Mail (MailKeep.tsx), in Mail's chunk: loaded there only when the hub has mail accounts. */

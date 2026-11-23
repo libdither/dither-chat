@@ -49,7 +49,8 @@ import { Boot } from './Loader.tsx';
 import { applyUpdate, updateReady } from '../pwa.ts';
 import { noteChannel, readLastChannels, saveLastChannels, withLastChannel } from '../lastchannel.ts';
 import { counting, rendered } from '../perf.ts';
-import { MailCenterLazy, MailComposerLazy, MailSidebarLazy } from './mail/lazy.tsx';
+import { MailComposerLazy, MailSidebarLazy } from './mail/lazy.tsx';
+import { convById, isMailPlace } from '../mail/chats.ts';
 import { RequestsPane } from './Requests.tsx';
 import { NoticesPaneLazy } from './Notices.tsx';
 import { CalendarPane } from './calendar/CalendarPane.tsx';
@@ -59,9 +60,12 @@ import { FeedPaneLazy, FeedSidebarLazy, ThreadLazy } from './feed/lazy.tsx';
 import { isPostKey } from '../feed.ts';
 
 /** A conversation's details panel: the person's, for a DM of someone reached by several routes (their chat's page). */
-function convDetail(id: string): { kind: 'conv' | 'person'; id: string } {
-  const p = chatPersonOf(db.conversations.get(id));
-  return p ? { kind: 'person', id: p.id } : { kind: 'conv', id };
+function convDetail(id: string): { kind: 'conv' | 'person'; id: string } | undefined {
+  const c = convById(id);
+  const p = chatPersonOf(c);
+  if (p) return { kind: 'person', id: p.id };
+  // A mail thread as a chat of its own has no details pane yet: its people are in its header.
+  return isMailPlace(id) ? undefined : { kind: 'conv', id };
 }
 
 /** What the center pane shows, and whether a details pane is available. */
@@ -72,8 +76,6 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
     case 'model':
       return { pane: <HowItSorts onBack={back} /> };
     case 'inbox':
-      // A mail thread from the inbox opens in the reader, beside the inbox (docs/mail.md).
-      if (r.conv?.startsWith('mth_')) return { pane: <MailCenterLazy thread={r.conv} onBack={back} /> };
       // A post's thread (docs/feed.md "Threads"), beside the inbox as a conversation is.
       if (isPostKey(r.conv)) return { pane: <ThreadLazy key={r.conv} postKey={r.conv!} onBack={back} /> };
       // A group of notices (a notification's conversation, quiet hours' summary) opens under Notices.
@@ -104,8 +106,6 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
       return { pane: <DirectoryPane onBack={back} /> };
     case 'search':
       return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: convDetail(r.conv) } : { pane: <SearchPane q={r.q} onBack={isPage(r) ? back : undefined} /> };
-    case 'mail':
-      return { pane: <MailCenterLazy thread={r.thread} onBack={back} /> };
     case 'requests':
       return { pane: <RequestsPane focus={r.request} onBack={back} /> };
     case 'notices':
@@ -123,7 +123,8 @@ function sidebarFor(r: Route, onAdd: () => void): ComponentChildren {
     case 'model':
       return <InboxSidebar />;
     case 'inbox':
-      return <InboxSidebar activeConv={r.conv} />;
+      // A mail list (Updates, Everything, Starred, Sent, a mailbox, a search) in the Inbox's place (docs/mail.md).
+      return r.mail ? <MailSidebarLazy list={r.mail} active={r.conv} /> : <InboxSidebar activeConv={r.conv} />;
     case 'people':
       return <PeopleSidebar activePerson={r.person} />;
     case 'profile': {
@@ -148,8 +149,6 @@ function sidebarFor(r: Route, onAdd: () => void): ComponentChildren {
     case 'search':
       // On a phone a conversation opened from search sits on the list it lives in, which a swipe shows (pages.ts).
       return phone.value && isPage(r) ? sidebarFor(ownList(r, places), onAdd) : <InboxSidebar activeConv={r.conv} />;
-    case 'mail':
-      return <MailSidebarLazy list={r.list} active={r.thread} />;
     case 'requests':
     case 'notices':
       return <InboxSidebar />;

@@ -433,7 +433,7 @@ async function phoneRun(cpu: number, world: World): Promise<Metrics> {
     await step('homeTab', tab('Home'), ['nodes', 'sidebarRenders', 'messageRenders', 'longest', 'busy']);
     await step('people', async () => void (await page.eval(`document.querySelector('.rail-btn[data-track="people"]').click()`)), ['nodes', 'longest', 'busy']);
     await step('person', hash(`#/people/${person}`), ['nodes', 'renders', 'messageRenders', 'longest', 'busy']);
-    await step('mail', hash('#/mail'), ['nodes', 'renders', 'longest', 'busy']);
+    await step('mail', hash('#/inbox?mail=v%3Aupdates%3A*'), ['nodes', 'renders', 'longest', 'busy']);
     if (page.errors.length) console.warn('page errors:', page.errors.slice(0, 5));
   } finally {
     await b.close();

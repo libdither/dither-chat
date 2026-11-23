@@ -20,7 +20,7 @@ const LOCAL = 'dither-chat:mail-draft:';
 export const isBlank = (d: P.MailDraft) => !d.to.length && !d.cc.length && !d.bcc.length && !d.subject.trim() && !d.text.trim() && !d.files.length && d.kind === 'new';
 
 /** The page's time zone, for the quote's date. */
-const timeZone = () => {
+export const timeZone = () => {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
   } catch {

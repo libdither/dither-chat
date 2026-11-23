@@ -78,6 +78,7 @@ import { memo, sameProps } from './memo.ts';
 import { convKind, rowTrack } from '../clicks.ts';
 import { useShown } from './more.tsx';
 import { VoicePeople } from './Ringing.tsx';
+import { MailListChips } from './MailChat.tsx';
 import { CallMark } from './CallBar.tsx';
 
 // ------------------------------------------------------------------ navigation helpers
@@ -86,7 +87,7 @@ import { CallMark } from './CallBar.tsx';
 
 /** Only there if some connected account can actually start a conversation, or join or add (docs/add.md). */
 function NewMessageButton() {
-  if (![...db.accounts.values()].some((a) => a.status === 'online' && (a.capabilities.includes('openDirect') || a.capabilities.includes('resolve')))) return null;
+  if (![...db.accounts.values()].some((a) => a.status === 'online' && (a.capabilities.includes('openDirect') || a.capabilities.includes('resolve'))) && !db.mail.accounts.size) return null;
   return (
     <button class="icon-btn small side-new" data-track="new message" title="New message, join or add" aria-label="New message" onClick={() => openPalette({ kind: 'new' })}>
       <Icon name="plus" size={16} />
@@ -489,7 +490,7 @@ function mailRowMenu(t: P.MailThreadView, why?: string[]): MenuSpec {
   return {
     label: `${title} actions`,
     head: <div class="cm-sheet-title">{title}</div>,
-    items: groups(why?.length ? [{ kind: 'row', render: () => <WhyHere reasons={why} /> }] : [], [{ label: 'Open in Mail', icon: 'mail', run: () => go({ view: 'mail', thread: t.id }) }], personItems([t])),
+    items: groups(why?.length ? [{ kind: 'row', render: () => <WhyHere reasons={why} /> }] : [], [{ label: 'Open the thread', icon: 'mail', run: () => go({ view: 'inbox', conv: t.id }) }], personItems([t])),
   };
 }
 
@@ -677,6 +678,8 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
         />
         <InboxFilterButton filter={filter} />
       </div>
+      {/* Mail is chats (docs/mail.md "Mail as chats"): with the Mail filter on, its other lists are a tap away. */}
+      {filter === 'mail' && <MailListChips on={null} />}
       <div class="side-scroll" ref={scroll}>
         {accounts.length > 0 && (
           <>
@@ -703,8 +706,9 @@ export function InboxSidebar({ activeConv }: { activeConv?: string }) {
               ))}
           </>
         )}
-        <RequestsRow />
-        <NoticesRow />
+        {/* Chat requests and notices are not mail: the Mail filter leaves them out. */}
+        {filter !== 'mail' && <RequestsRow />}
+        {filter !== 'mail' && <NoticesRow />}
         {rows.slice(0, drawn).map(row)}
         {more}
         {!rows.length && <p class="inbox-empty">{EMPTY[filter]}</p>}

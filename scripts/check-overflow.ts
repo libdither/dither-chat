@@ -241,7 +241,7 @@ try {
       ["#/settings", ".set-block"],
       ["#/foryou", ".foryou, .empty"],
       ["#/feed", ".feed-entry, .empty"],
-      ["#/mail", ".mail-row, .empty"],
+      ["#/inbox?mail=v%3Aupdates%3A*", ".mail-row, .empty"],
       ["#/notices", ".notice-card, .empty"],
       ["#/requests", ".request-card, .empty"],
       ["#/directory", ".dir-card, .empty"],

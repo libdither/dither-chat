@@ -9,14 +9,14 @@ import { go } from '../../state.ts';
 import { memo } from '../memo.ts';
 import { Avatar } from '../bits.tsx';
 import { Icon } from '../icons.tsx';
-import { listTime } from './MessageCard.tsx';
+import { listTime } from './listTime.ts';
 import { ROW_WRAPPERS } from './slots.tsx';
 
 export const ThreadRow = memo(function ThreadRow({ thread: t, active, account, showAccount, list }: { thread: P.MailThreadView; active: boolean; account: P.MailAccountView | undefined; showAccount: boolean; list: string }) {
   const other = [...t.from].reverse().find((f) => !f.self) ?? t.from[t.from.length - 1];
   const name = other?.name || other?.email || '?';
   let row = (
-    <button class={`row mail-row ${active ? 'active' : ''} ${t.unread ? 'unread' : ''}`} data-row={t.id} data-thread={t.id} onClick={() => go({ view: 'mail', list, thread: t.id })}>
+    <button class={`row mail-row ${active ? 'active' : ''} ${t.unread ? 'unread' : ''}`} data-row={t.id} data-thread={t.id} onClick={() => go({ view: 'inbox', mail: list, conv: t.id })}>
       <span class="row-avatar">
         <Avatar id={other?.email ?? t.id} name={name} size={36} />
       </span>

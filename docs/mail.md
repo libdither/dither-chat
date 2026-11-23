@@ -68,7 +68,8 @@ The people you write to by mail join the people the hub already knows (`hub/src/
   in, gets an identity on the `email` network (its address is its id and handle) and a person of their own, as a DM
   partner does. Their name is the one on their latest From, else the one you wrote to them under. Anyone else who
   writes to you stays an address, unless classification (slice 8) calls their mail personal: then they get an
-  identity, without a person. Newsletters and notifications never do. Your own addresses are never anyone.
+  identity, without a person. Newsletters and notifications never do. Your own addresses are identities of yours
+  (the self person, "Mail as chats"), never anyone else's.
 - **Never by name.** Sam by mail and Sam on Signal stay two people until you merge them. A profile's "Same name
   elsewhere" hint says who and where ("Alice Chen <alice@…>", "Alice Chen on Signal and Discord"), and the merge
   search finds people by an address too, and the email identities no person holds yet.
@@ -92,6 +93,56 @@ and a merge, a split or a new person sends that person's threads again. The prof
 `GET /api/persons/candidates?q=&except=`. Tests: `hub/test/mail-people.test.ts`, `web/test/mail-people.test.ts`, and
 `scripts/verify-profile.ts` (the Mail card on a desktop in the dark theme and a phone in the light one, the reader's
 sender, all mail with them, the hint, the merge search by address, merge and split).
+
+## Mail as chats
+
+There is no Mail page of its own: mail is read where the chats are (`hub/src/mail/places.ts`, `mail/chatpage.ts`,
+`hub/src/rungs.ts`). Ids stay mail's own (`mth_` threads, `mml_` messages): mail is read with the chats when a page is
+asked for, never copied into the message table.
+
+- **Where a thread goes** (`placeOf`): into the chat of the one person it is with, `person:<id>` (the chat that already
+  holds their Signal, Discord and other direct messages, docs/chats.md), when it is not bulk and every other address on
+  it (`mail_party`, less every one of your accounts' own) is an email identity of that same person, and that person
+  is not you. Anything else is a chat of its own, keyed by the thread's id: more people, a sender with no person, a
+  newsletter, a note to yourself. Worked out from who is on it each time it is asked, never stored, so a Cc added
+  later, a merge or a split moves it at once.
+- **Routes by email.** A person's chat gets a route (`ChatRoute`, network `email`) for each of your mail accounts and
+  each address of theirs it has such threads with: `email:<account>:<address>` (address lower-cased), which is also
+  the `conversationId` of its messages. A thread with two of their addresses goes on the route of the one that wrote
+  last. `MailChatView` says the rest: its threads newest first (the latest is where a reply goes), unread messages,
+  the latest subject and preview. These routes have no conversation row: a chat's default route may be one (the page
+  sends that mail through `POST /api/mail/send`), but `POST /api/chats/:id/messages` never sends through one (asked
+  for one by name, it answers 409).
+- **Yours.** Each of your mail addresses is an email identity of the self person (`Store.ownEmailIdentity`, made as
+  a chat account's own identity is, when mail is connected and when an account's addresses change), so the page's
+  `isSelfIdentity` knows mail you sent. Someone with no identity (a newsletter) is given one in the page only, by the
+  id an identity of that address would have.
+- **A mail as a chat message** (`MessageView.mail`, `MessageMailView`): `ts` is when it reached the server, as mail
+  sorts; the body is the words above the quote when the body is here, else the preview; `rich` when its HTML is more
+  than plain text would show (what the reader's body renderers decide); `quoted` when there is quoted text under it;
+  `opens` on the first message of its thread. One mail that reached two of your accounts (two rows with one
+  Message-ID) is shown once in a person's chat, as its earliest copy, with both accounts in `seenVia`.
+- **A person's chat** (`GET /api/chats/person:<id>/messages?before=<ts>:<id>&limit=`) is their chat timeline and the
+  mail of their threads, merged newest first by `(ts, id)` under the one cursor: `limit` counts both, and `hasMore`
+  is either side's. A person you only mail with has a chat too.
+- **What they wrote elsewhere** (`MessagePage.elsewhere`, `ElsewhereView`): their messages, to you (To or Cc), in
+  threads with others, in the page's range (from its oldest message, or the start on the last page, up to where the
+  newer page began, or now), newest last. Each has a rung: `excerpt` (three lines, 280 characters of the words above
+  the quote) when it awaits you (to you, or naming you, under a week old, and you have neither written in nor opened
+  the thread since; where mail's attention has folded the thread, the turn it says you owe must cover it), else
+  `link`; at most two default excerpts between two of the chat's own messages. `line` is its words on one line.
+- **Rungs** (`RUNGS`, from `hidden` to `notify`): one ladder for how much of a thing a view shows. A rung you choose
+  for a place in a view (`PUT /api/rungs {view, place, rung}`, `null` takes it back; table `place_rung`) stands over
+  the default for everything from there (`why: 'chosen'`); `hidden` leaves it out.
+- **Other chats**: `GET /api/mail/chats/:id/messages?before=&limit=` pages a route by email (its threads only) or one
+  thread `mth_…` (any thread, newsletters too) as a chat, in the same shape; `GET /api/mail/chats?person=<id>` lists a
+  person's routes. The mail bootstrap carries every route (`MailBootstrap.chats`) and your rungs (`.rungs`).
+- **Events**: `mail.chats` (routes changed, and `removed` route ids) goes out in the flush that sends `mail.threads`,
+  for every person on a thread that changed (new mail, a read, a Cc, a merge or a split, which send their threads
+  again); `rung` when one is chosen or taken back.
+- **Marking read** what a chat showed: `POST /api/mail/flag {messageIds, seen: true}` marks only those messages.
+
+Tests: `hub/test/mail-chats.test.ts`.
 
 ## Sending (slice 5)
 

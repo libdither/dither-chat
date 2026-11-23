@@ -464,6 +464,10 @@ export interface MailBootstrap {
   threads: MailThreadView[];
   /** What the outbox still shows (slice 5). */
   outbox?: MailOutboxView[];
+  /** Every person's email routes (mail as chats): a person you mail with one-to-one has a chat. */
+  chats?: MailChatView[];
+  /** The rungs you chose for places in people's chats. */
+  rungs?: PlaceRungView[];
 }
 
 /** GET /api/mail/threads: a page of a list, newest first. */
@@ -813,4 +817,109 @@ export function hostsDiffer(shown: string, goes: string): boolean {
   const a = bareHost(shown);
   const b = bareHost(goes);
   return a !== b && !b.endsWith('.' + a);
+}
+
+// ------------------------------------------------------------------ mail as chats (docs/mail.md "Mail as chats")
+
+/**
+ * How much of something a view shows, coarsest to finest (docs/mail.md "Mail as chats"): left out, counted, a link to
+ * where it is, one line, a few lines, all of it, and a notification. One ladder for every view, so a person's chat, a
+ * group and the feed can use the same words; which rung a thing gets is the view's default (the hub's `defaultRung`)
+ * unless you chose one for that place (`PlaceRungView`).
+ */
+export type Rung = 'hidden' | 'counted' | 'link' | 'line' | 'excerpt' | 'full' | 'notify';
+export const RUNGS: readonly Rung[] = ['hidden', 'counted', 'link', 'line', 'excerpt', 'full', 'notify'];
+
+/**
+ * A mail message drawn as a chat message (`MessageView.mail`): what a chat message has no field for. The message's id
+ * is the mail's own (`mml_`), and `conversationId` is the chat place it is shown in: `email:<account>:<address>` in a
+ * person's chat, else its thread (`mth_`).
+ */
+export interface MessageMailView {
+  threadId: string;
+  accountId: string;
+  subject: string;
+  /** The place the thread belongs to: `person:<id>` while it is you and one other person, else the thread `mth_…`. */
+  place: string;
+  /** The Message-ID header. */
+  messageId: string | null;
+  from: MailAddressView;
+  to: MailAddressView[];
+  cc: MailAddressView[];
+  /** When the sender says they wrote it. `MessageView.ts` is when it reached the server (`receivedAt`), as mail sorts. */
+  date: number;
+  receivedAt: number;
+  seen: boolean;
+  flagged: boolean;
+  hasAttachments: boolean;
+  /** The body here: `MessageView.body` holds its text (the words above the quote) when it is 'cached', else the preview. */
+  bodyState: 'cached' | 'none' | 'loading' | 'failed';
+  /** It has HTML that plain text would lose (styles, pictures, tables): the chat shows it framed. */
+  rich: boolean;
+  /** The text under the words: the quoted mail it answers, folded in the chat. */
+  quoted: boolean;
+  /** The first message of its thread here: the chat shows the subject on it. */
+  opens: boolean;
+}
+
+/**
+ * A route of a person's chat by email (`ChatRoute.network` 'email'): you and one address of theirs, through one of
+ * your mail accounts. Its id, `email:<account>:<address>`, is the `conversationId` of its route and of its messages.
+ */
+export interface MailChatView {
+  id: string;
+  personId: string;
+  /** Their email identity. */
+  identityId: string;
+  accountId: string;
+  address: string;
+  /** The threads between you and only them, newest first: the latest is where a message goes unless you start one. */
+  threadIds: string[];
+  /** The latest thread's subject. */
+  subject: string;
+  lastAt: number;
+  /** The newest message's start, and whether it was yours. */
+  preview: string | null;
+  lastFromMe: boolean;
+  /** Messages in its threads not read yet. */
+  unread: number;
+}
+
+/**
+ * Something a person wrote somewhere else, shown in their chat at a rung below 'full' (docs/mail.md "Mail as chats",
+ * "What they wrote elsewhere"): a message of theirs in a thread with others. The page groups these into one row of
+ * links between two of the chat's own messages. `excerpt` is there only when the rung is 'excerpt'.
+ */
+export interface ElsewhereView {
+  /** Where it is: a thread `mth_…`. */
+  place: string;
+  placeKind: 'mail-thread';
+  /** The place's name: the thread's subject. */
+  title: string;
+  /** The others there besides you and them, by name. */
+  others: string[];
+  messageId: string;
+  ts: number;
+  unread: boolean;
+  rung: Rung;
+  /** Why it is shown as it is: 'awaits' (to you, from them, under a week, not answered or opened since) or 'elsewhere'. */
+  why: 'awaits' | 'elsewhere' | 'chosen';
+  excerpt?: string;
+  /** The start of its words on one line (about 140 characters), always: what "Read here" opens in place. */
+  line: string;
+  /** It was to you (To, or naming you), not only to the others. */
+  toYou: boolean;
+}
+
+/** A page of a chat that has mail in it: the messages, mail among them, and what they wrote elsewhere in its range. */
+export interface MailChatPage {
+  elsewhere?: ElsewhereView[];
+}
+
+/** A rung you chose for a place in a view (PUT /api/rungs): `view` is a chat id (`person:<id>`), `place` the place's id. */
+export interface PlaceRungView {
+  view: string;
+  place: string;
+  rung: Rung;
+  setAt: number;
 }

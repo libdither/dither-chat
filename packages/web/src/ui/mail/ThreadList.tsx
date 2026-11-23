@@ -13,14 +13,14 @@ import { db, go, mailRev, pref } from '../../state.ts';
 import { mailChanged } from '../../versions.ts';
 import { Empty } from '../bits.tsx';
 import { Icon } from '../icons.tsx';
-import { listTime } from './MessageCard.tsx';
+import { listTime } from './listTime.ts';
 import { ThreadRow } from './ThreadRow.tsx';
 import { DitherOrb, Loading } from '../Loader.tsx';
 
 /** Inbox's mail not from a person, as one row where its newest sorts (slice 8): opening it is the Updates view. */
 function UpdatesRow({ fold }: { fold: UpdatesFold }) {
   return (
-    <button class={`row mail-row mail-updates-row ${fold.unread ? 'unread' : ''}`} data-row={fold.key} onClick={() => go({ view: 'mail', list: fold.key })}>
+    <button class={`row mail-row mail-updates-row ${fold.unread ? 'unread' : ''}`} data-row={fold.key} onClick={() => go({ view: 'inbox', mail: fold.key })}>
       <span class="row-avatar">
         <span class="mail-updates-icon">
           <Icon name="inbox" size={18} />

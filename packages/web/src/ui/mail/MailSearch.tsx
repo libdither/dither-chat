@@ -14,7 +14,7 @@ import { api, db, go, mailRev } from '../../state.ts';
 import { mailChanged } from '../../versions.ts';
 import { Avatar, Empty } from '../bits.tsx';
 import { Icon } from '../icons.tsx';
-import { listTime } from './MessageCard.tsx';
+import { listTime } from './listTime.ts';
 import { Loading } from '../Loader.tsx';
 import { MoreResults } from '../more.tsx';
 
@@ -113,7 +113,7 @@ function HitRow({ hit, list, active, showAccount }: { hit: P.MailSearchHit; list
   const name = other?.name || other?.email || '?';
   const account = db.mail.accounts.get(t.accountId);
   return (
-    <button class={`row mail-row mail-hit ${active ? 'active' : ''} ${t.unread ? 'unread' : ''}`} data-thread={t.id} onClick={() => go({ view: 'mail', list, thread: t.id })}>
+    <button class={`row mail-row mail-hit ${active ? 'active' : ''} ${t.unread ? 'unread' : ''}`} data-thread={t.id} onClick={() => go({ view: 'inbox', mail: list, conv: t.id })}>
       <span class="row-avatar">
         <Avatar id={other?.email ?? t.id} name={name} size={36} />
       </span>
@@ -184,7 +184,7 @@ export function MailSearch({ q, active }: { q: string; active?: string }) {
     if (!q.trim()) box.current?.focus();
     else if (!held.has(q)) void run(q);
   }, [q]);
-  const set = (next: string) => go({ view: 'mail', list: searchList(next.trim()) }, true);
+  const set = (next: string) => go({ view: 'inbox', mail: searchList(next.trim()) }, true);
   const showAccount = db.mail.accounts.size > 1;
   const serverHits = f?.server?.hits ?? [];
   return (
@@ -287,13 +287,13 @@ export function MailSearchGroup({ q }: { q: string }) {
   const list = searchList(q);
   return (
     <section class="search-group mail-search-group" aria-label="Mail">
-      <button class="search-group-head" tabIndex={-1} onClick={() => go({ view: 'mail', list })}>
+      <button class="search-group-head" tabIndex={-1} onClick={() => go({ view: 'inbox', mail: list })}>
         <Icon name="mail" size={12} /> Mail
       </button>
       {page.hits.map((h) => (
         <HitRow key={h.thread.id} hit={h} list={list} showAccount={db.mail.accounts.size > 1} />
       ))}
-      <button class="link-btn mail-search-all" onClick={() => go({ view: 'mail', list })}>
+      <button class="link-btn mail-search-all" onClick={() => go({ view: 'inbox', mail: list })}>
         {page.more ? 'More in Mail' : 'Open in Mail'}
       </button>
     </section>
