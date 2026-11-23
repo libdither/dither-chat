@@ -1229,7 +1229,7 @@ is fetched by id, and the window stays "missed" until it is read.
   verify-mail drives it in headless Chromium on a phone (390 px, touch) and a desktop, in the dark and light themes:
   no page errors, nothing off the side of the screen; the Inbox's mail list (`#/inbox?mail=…`) with its four chips in
   one row; a person's mail as messages in their chat (yours too), with the subject tag and its card, the quote behind
-  ···, read here, and back on a phone; a thread of three or more as its own chat, its subject on one line beside
+  …, read here, and back on a phone; a thread of three or more as its own chat, its subject on one line beside
   Archive and ⋯ on a phone; the HTML-only message; and the reply it sends from the chat's box, under the subject pill,
   shown as text. Its `--proton` run (two accounts) also checks the account wheels over the Everything list.
   `DITHER_DEMO_MAIL_GMAIL=1` adds a Gmail account (a trip labelled Travel and marked Important, that you answered; Mom's photos under Family; a starred recipe; a booking

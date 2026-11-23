@@ -10,7 +10,7 @@
  *     chips (Inbox, Updates, Everything, More) in one row, on a phone too;
  *   - on a phone: the Inbox, a person's chat over it, and back (the button and the browser's back);
  *   - a person's chat: their thread's mails as its messages (yours too), the subject as a tag where the thread starts
- *     and as the pill over the box; the quote behind ···, unless the mail answers the one right above; read here after
+ *     and as the pill over the box; the quote behind …, unless the mail answers the one right above; read here after
  *     a second; a thread's own chat named by its subject, cut with an ellipsis on a phone, beside Archive and ⋯ (Star
  *     and Trash are in ⋯ there);
  *   - an HTML-only message shows its text, and none of its script;
@@ -20,7 +20,7 @@
  *     person" from a row's menu.
  *   - filing (slice 4): read in view reaches the server; on a phone a swipe right archives and Undo brings it back,
  *     a swipe left marks unread and read, a long press picks threads and their bar stars them; on a desktop the
- *     thread's header (Archive, Star, ⋯ with the trash), the `e` key, a row's right-click menu, Ctrl-click picking,
+ *     thread's header (Archive, ⋯ with Star and the trash), the `e` key, a row's right-click menu, Ctrl-click picking,
  *     and the read setting.
  *   - search (slice 7): a mail list's search box, the hub's hits (marked) and what only the server has, a hit opening
  *     its chat over the results and back to them; the search page's Mail group and its way into the list.
@@ -28,7 +28,7 @@
  *     reply on that thread, held with Undo (Undo puts them back in the box), then sent. A mail's menu has "Reply in the
  *     full editor", which fills in To, the subject and the quote; a Cc typed in, a file attached; Send, "Sending…
  *     Undo", Undo brings the draft back, Send again, and the reply joins the chat with its file and its Markdown bold,
- *     drawn in the app's theme under ··· (its plain, formatted HTML part is not put on a white sheet); a chip opens
+ *     drawn in the app's theme under … (its plain, formatted HTML part is not put on a white sheet); a chip opens
  *     back into text with Backspace and Ctrl+Z makes it a chip again. On a desktop, New email (the Inbox's +) docks a
  *     new message whose To completes from your mail and from the account's server; a clicked chip opens to edit and
  *     goes back in its place; the editor's bar (B, lists, heading, table), its Markdown and HTML views, a table and
@@ -37,7 +37,7 @@
  *     says how many of its pictures can tell, and it sends its pictures inside the mail when asked from the Drafts
  *     line; discarding offers Undo, then the draft is gone.
  *
- * With --html (slice 3, htmlChecks below), the HTML frame (a mail's ··· then "Show as sent") in Chromium: no script
+ * With --html (slice 3, htmlChecks below), the HTML frame (a mail's … then "Show as sent") in Chromium: no script
  * runs in it, even put there by hand; no request leaves for anywhere but the hub; a link click goes through the app's
  * opener and never moves the frame, and one whose text names another site asks first; the remote-image banner and the
  * proxy; quotes folded; cid: pictures; files open in the viewers; swiping back over a body works on a phone; a white
@@ -292,13 +292,13 @@ async function phone(themeName: string, first: boolean) {
   check(`${tag}: the subject is a tag where the thread starts, without its Re:`, tags.join() === 'Dinner on Friday?', tags);
   const pill = await page.eval<string>(`document.querySelector('.typing-lead .mail-pill')?.textContent ?? ''`);
   check(`${tag}: the pill over the box says the thread an answer goes into`, pill.includes('Dinner on') && pill.includes('Friday?'), pill);
-  // The latest answers the mail right above it, so its quote is no reason for ···: what ··· holds is not the quote.
+  // The latest answers the mail right above it, so its quote is no reason for …: what … holds is not the quote.
   const last = msg(mails.at(-1).id);
   if (await has(`${last} .mail-quote-dots`)) {
     await tap(await at(`${last} .mail-quote-dots`));
     await Bun.sleep(300);
   }
-  check(`${tag}: a mail answering the one right above keeps its quote out of ···`, !(await has(`${last} .chat-mail-quote`)) && !(await page.eval<boolean>(`(document.querySelector('${last}')?.textContent ?? '').includes('Should I book a table')`)));
+  check(`${tag}: a mail answering the one right above keeps its quote out of …`, !(await has(`${last} .chat-mail-quote`)) && !(await page.eval<boolean>(`(document.querySelector('${last}')?.textContent ?? '').includes('Should I book a table')`)));
   if (first) {
     // The tag's card: the thread in a line, its Archive and Star.
     await tap(await at(`${PANE} .mail-tag`));
@@ -319,15 +319,15 @@ async function phone(themeName: string, first: boolean) {
   check(`${tag}: back goes to the Inbox`, !(await hash()).includes('/c/') && (await inView('.sidebar .side-scroll')), await hash());
 
   if (first) {
-    // A quote that answers no mail in the chat: behind ···, which shows it (Alice's garden plan answers a mail of yours
+    // A quote that answers no mail in the chat: behind …, which shows it (Alice's garden plan answers a mail of yours
     // that is not in her chat).
     const [plan] = (await mailsOf(garden.id)).filter((m) => m.addressed !== 'self');
     await page.eval(`location.hash = ${JSON.stringify(`#/inbox/c/${encodeURIComponent(aliceRoute.id)}?m=${plan.id}`)}`);
     await page.until(`!!document.querySelector(${JSON.stringify(`${msg(plan.id)} .mail-quote-dots`)})`, 15000);
-    check(`${tag}: the quote is folded behind ···`, !(await has(`${msg(plan.id)} .chat-mail-quote`)));
+    check(`${tag}: the quote is folded behind …`, !(await has(`${msg(plan.id)} .chat-mail-quote`)));
     await tap(await at(`${msg(plan.id)} .mail-quote-dots`));
     await page.until(`(document.querySelector(${JSON.stringify(`${msg(plan.id)} .chat-mail-quote`)})?.textContent ?? '').includes('Could you send the plan')`, 10000).catch(() => {});
-    check(`${tag}: ··· shows the quote`, await page.eval(`(document.querySelector(${JSON.stringify(`${msg(plan.id)} .chat-mail-quote`)})?.textContent ?? '').includes('Could you send the plan')`));
+    check(`${tag}: … shows the quote`, await page.eval(`(document.querySelector(${JSON.stringify(`${msg(plan.id)} .chat-mail-quote`)})?.textContent ?? '').includes('Could you send the plan')`));
     await page.eval('history.back()');
     await page.until(`!location.hash.includes('/c/')`, 5000).catch(() => {});
   }
@@ -401,7 +401,7 @@ async function desktop(themeName: string) {
   check(`${tag}: every mail of the thread is a message`, await page.eval<boolean>(`${JSON.stringify(mails.map((m) => m.id))}.every((id) => document.getElementById('m-' + id))`));
   const people = await page.eval<string>(`document.querySelector('.mail-thread-head .mail-people')?.textContent ?? ''`);
   check(`${tag}: under its name, the people on it, the Cc'd too`, people.includes('Alice Chen') && people.includes('Jo Park'), people);
-  check(`${tag}: the thread's filing in its header: Archive, Star, ⋯`, (await headButtons()).join() === 'Archive,Star,More', await headButtons());
+  check(`${tag}: the thread's filing in its header: Archive, and ⋯`, (await headButtons()).join() === 'Archive,More', await headButtons());
   check(`${tag}: the open row is marked`, await has(`.sidebar .mail-row.active[data-thread="${lease.id}"]`));
   check(`${tag}: no sideways overflow`, !(await overflow()).length, await overflow());
   await shot(`mail-${tag.replace(' ', '-')}`);
@@ -610,8 +610,9 @@ async function composer(themeName: string, full: boolean) {
     const card = msg(mine.id);
     await page.until(`!!document.querySelector(${JSON.stringify(card)})`, 10000);
     check(`composer phone ${t}: the thread's own chat shows your reply`, await has(`.mail-thread-pane ${card}`));
-    // The reader folded it to a line; the chat draws its words, and its HTML behind ··· as "Show as sent".
-    const said = await page.eval<string>(`document.querySelector('${card} .mail-words')?.textContent ?? ''`);
+    // The reader folded it to a line; the chat draws its words, and its HTML behind … as "Show as sent".
+    // The words without the … at the end of their last line, which opens the rest of the mail.
+    const said = await page.eval<string>(`(() => { const w = document.querySelector('${card} .mail-words')?.cloneNode(true); w?.querySelectorAll('.mail-quote-dots').forEach((d) => d.remove()); return w?.textContent ?? ''; })()`);
     // As its text part says them (mail is never drawn as Markdown: the bold is its stars there).
     check(`composer phone ${t}: your reply's words in the chat, as its text part has them`, said.startsWith('See you at **7:30**!') && String(body.text).startsWith(said.split('\n')[0]), said.slice(0, 120));
     await tap(await at(`${card} .mail-quote-dots`));
@@ -872,7 +873,7 @@ async function forwardWithPictures(tag: string) {
   const card = msg(news.id);
   await page.eval(`location.hash = ${JSON.stringify(inList('v:updates:*', sale.id))}`);
   await page.until(`!!document.querySelector(${JSON.stringify(`${card} .mail-quote-dots`)})`, 15000);
-  // The reader showed a newsletter's HTML; a chat shows its words, and the HTML behind ··· as "Show as sent".
+  // The reader showed a newsletter's HTML; a chat shows its words, and the HTML behind … as "Show as sent".
   await click(await at(`${card} .mail-quote-dots`));
   await click(await at(`${card} .mail-open-chip`, `el => el.textContent.includes('Show as sent')`));
   // Its HTML drawn (the frame grows as it lays out, moving what is below it).
@@ -1440,17 +1441,23 @@ async function filing() {
     await page.until(`document.querySelectorAll('.sidebar .mail-row').length >= 5`, 15000);
     await click(await at(row(c.id)));
     await page.until(`!!document.querySelector('.mail-thread-pane .mail-thread-head .hdr-btn')`, 15000);
-    // The reader's header had Trash beside Archive; a thread's chat has it in ⋯, as a chat's header keeps one row.
-    check(`${tag}: the thread's header has Archive, Star and ⋯`, (await headButtons()).join() === 'Archive,Star,More', await headButtons());
-    await click(await at('.mail-thread-head .hdr-btn[aria-label="More"]'));
-    await page.until(`!!document.querySelector('.cm')`, 5000);
-    check(`${tag}: ⋯ has Move to the trash`, (await page.eval<string>(`document.querySelector('.cm').textContent`)).includes('Move to the trash'));
-    await page.eval(`document.querySelector('.cm')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+    // The reader's header had Star and Trash beside Archive; a thread's chat has them in ⋯, as a chat's header keeps one
+    // row.
+    check(`${tag}: the thread's header has Archive and ⋯`, (await headButtons()).join() === 'Archive,More', await headButtons());
+    const more = async () => {
+      await click(await at('.mail-thread-head .hdr-btn[aria-label="More"]'));
+      await page.until(`!!document.querySelector('.cm .cm-item')`, 5000);
+      return page.eval<string[]>(`[...document.querySelectorAll('.cm .cm-item')].map((b) => b.textContent.trim())`);
+    };
+    const items = await more();
+    check(`${tag}: ⋯ has Star and Move to the trash`, items.some((l) => l.startsWith('Star')) && items.some((l) => l.startsWith('Move to the trash')), items);
+    await click(await at('.cm .cm-item', `el => el.textContent.trim().startsWith('Star')`));
+    check(`${tag}: Star stars it`, await settled(c.id, (t) => t.flagged, 'it starred'));
     await page.until(`!document.querySelector('.cm')`, 5000).catch(() => {});
-    await click(await at('.mail-thread-head .hdr-btn[aria-label="Star"]'));
-    check(`${tag}: Star stars it`, (await page.until(`!!document.querySelector('.mail-thread-head .hdr-btn[aria-label="Unstar"]')`, 5000).then(() => true, () => false)) && (await settled(c.id, (t) => t.flagged, 'it starred')));
-    await click(await at('.mail-thread-head .hdr-btn[aria-label="Unstar"]'));
+    check(`${tag}: ⋯ then says Unstar`, (await more()).some((l) => l.startsWith('Unstar')));
+    await click(await at('.cm .cm-item', `el => el.textContent.trim().startsWith('Unstar')`));
     check(`${tag}: Unstar unstars it`, await settled(c.id, (t) => !t.flagged, 'it unstarred'));
+    await page.until(`!document.querySelector('.cm')`, 5000).catch(() => {});
     await shot(`mail-desktop-${themeName}-thread`);
     await page.eval('document.activeElement?.blur?.()');
     await key('e');
@@ -1511,7 +1518,7 @@ async function swipe(a: Pt, b: Pt, steps = 14) {
 /** The menu item (desktop) or sheet button (phone) with this text. */
 const menuItem = (text: string) => at('.cm-item, .cm-sheet button', `el => el.textContent.includes(${JSON.stringify(text)})`);
 
-/** A mail in a chat as it was sent: its ···, then "Show as sent", and its frame drawn. */
+/** A mail in a chat as it was sent: its …, then "Show as sent", and its frame drawn. */
 async function asSent(card: string, press: (p: Pt) => Promise<void>) {
   await page.until(`!!document.querySelector(${JSON.stringify(`${card} .mail-quote-dots`)})`, 15000);
   await press(await at(`${card} .mail-quote-dots`));
