@@ -142,7 +142,7 @@ describe('the hub’s own search', () => {
   });
 
   test('from:, to:, with:, subject:, in:, label:, has:, is:, account: and dates', () => {
-    const { put, s } = local();
+    const { st, put, s } = local();
     put('INBOX', { subject: 'Dinner on Friday?', from: [{ name: 'Sam Lee', email: 'sam@lee.example' }], receivedAt: T0 + H });
     put('Sent', { subject: 'Plans', from: [{ name: null, email: ME }], to: [{ name: 'Sam Lee', email: 'sam@lee.example' }], receivedAt: T0 + 2 * H, flags: flags({ seen: true }) });
     put('INBOX', { subject: 'Lease renewal', from: [{ name: 'Alex Kim', email: 'alex@work.example' }], cc: [{ name: 'Jo', email: 'jo@q.net' }], hasAttachments: true, labels: ['Work'], receivedAt: T0 + 3 * H, flags: flags({ seen: true, flagged: true }) });
@@ -168,6 +168,11 @@ describe('the hub’s own search', () => {
     expect(find(s, 'is:starred')).toEqual(['Lease renewal']);
     expect(find(s, 'is:unread')).toEqual(['Dinner on Friday?']);
     expect(find(s, 'is:read from:sam')).toEqual([]);
+    // is:update: mail not from a person, the Updates list's (a search in Updates stays there).
+    st.db.run(`UPDATE mail_thread SET class = 'bulk' WHERE subject = 'Rust Weekly 500'`);
+    expect(find(s, 'is:update')).toEqual(['Rust Weekly 500']);
+    expect(find(s, 'is:updates rust')).toEqual(['Rust Weekly 500']);
+    expect(find(s, 'is:update dinner')).toEqual([]);
     expect(find(s, 'account:"work mail" lease')).toEqual(['Lease renewal']);
     expect(find(s, 'account:imap lease')).toEqual(['Lease renewal']);
     expect(find(s, 'account:nobody lease')).toEqual([]);

@@ -38,12 +38,7 @@ export function MailSidebarLazy(p: { list: string; active?: string }) {
   return m ? (
     <m.MailSidebar {...p} />
   ) : (
-    <div class="sidebar-inner">
-      <header class="side-head">
-        <h1>Mail</h1>
-      </header>
-      <Loading />
-    </div>
+    <Loading />
   );
 }
 

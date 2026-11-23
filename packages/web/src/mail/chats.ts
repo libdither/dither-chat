@@ -8,12 +8,13 @@
  * The hub decides where a thread belongs (hub mail/places.ts); the page only follows `MessageMailView.place`.
  */
 import type * as P from '@dither-chat/protocol';
+import { bareSubject } from '@dither-chat/protocol';
 import { signal } from '@preact/signals';
 import { api } from '../api.ts';
 import { db } from '../store.ts';
 import { mailChanged } from '../versions.ts';
 import { details } from './held.ts';
-import { rungKey } from './model.ts';
+import { rungKey, threadName } from './model.ts';
 
 export const isEmailRoute = (id: string | null | undefined): id is string => !!id && id.startsWith('email:');
 export const isMailThread = (id: string | null | undefined): id is string => !!id && id.startsWith('mth_');
@@ -32,7 +33,7 @@ function routeConv(ch: P.MailChatView): P.ConversationView {
       shape: 'direct',
       variant: 'text',
       name: null,
-      topic: ch.subject || null,
+      topic: bareSubject(ch.subject ?? '') || null,
       avatar: null,
       encrypted: false,
       archived: false,
@@ -51,7 +52,7 @@ function routeConv(ch: P.MailChatView): P.ConversationView {
 }
 
 const threadConvs = new WeakMap<P.MailThreadView, P.ConversationView>();
-/** A thread as a chat of its own: a group of everyone on it, named by its subject. */
+/** A thread as a chat of its own: a group of everyone on it, named by its subject without Re: (threadName). */
 function threadConv(t: P.MailThreadView): P.ConversationView {
   let c = threadConvs.get(t);
   if (!c) {
@@ -62,7 +63,7 @@ function threadConv(t: P.MailThreadView): P.ConversationView {
       nativeId: t.id,
       shape: 'group',
       variant: 'text',
-      name: t.subject || '(no subject)',
+      name: threadName(t),
       topic: null,
       avatar: null,
       encrypted: false,

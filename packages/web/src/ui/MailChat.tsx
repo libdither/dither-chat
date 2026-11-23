@@ -8,15 +8,16 @@ import type * as P from '@dither-chat/protocol';
 import { signal } from '@preact/signals';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { chatSends, chosenRung, chooseRung, loadMailThread, mailThread, refill, sendsIn } from '../mail/chats.ts';
-import { bareSubject, viewList } from '@dither-chat/protocol';
+import { bareSubject, mailboxList, parseMailList, platformScope, searchOfList, viewList } from '@dither-chat/protocol';
 import { archivedInAll } from '../mail/filing.ts';
 import { clock, dayLabel, fullTime } from '../format.ts';
-import { MAIL_LISTS } from '../mail/model.ts';
+import { holdsOnlyMailboxes, listName, MAIL_FOLDER_VIEWS, searchIn } from '../mail/model.ts';
 import { rowOpen, toggled, type ElsewhereRow } from '../mail/elsewhere.ts';
 import { letter, shortLink } from '../mail/letter.ts';
 import { linkify } from '../mail/text.ts';
-import { db, go, mailRev, openChat, timelineRev, toast } from '../state.ts';
+import { db, go, mailRev, openChat, openProfile, previousRoute, route, timelineRev, toast } from '../state.ts';
 import { timelines } from '../store.ts';
+import { details } from '../mail/held.ts';
 import { Icon } from './icons.tsx';
 import './MailChat.css';
 import { ChatMailBodyLazy, MailThreadActionsLazy, mailMessageExtras, mailThreadFiling, openCompose, preloadMail } from './mail/lazy.tsx';
@@ -643,19 +644,81 @@ function Held({ until }: { until: number | null }) {
 // ------------------------------------------------------------------ mail lists
 
 /**
- * The chips under the Inbox's search with the Mail filter on, and atop a mail list (ui/mail/MailSidebar.tsx): Inbox,
- * then the lists mail has that chats don't (Updates, Everything, Starred, Sent), each shown in the Inbox's place
- * (`?mail=`). `on`: the list open, or null for the Inbox itself. `scope`: whose mail the lists show.
+ * Back to the Inbox chip from a mail list (Esc, back, the Inbox chip): back where the first list was opened from when
+ * that was the Inbox, so the lists in between leave no steps behind; else the Inbox in the list's place.
  */
-export function MailListChips({ on, scope = null }: { on: string | null; scope?: string | null }) {
-  const chips: { key: string | null; label: string }[] = [{ key: null, label: 'Inbox' }, ...MAIL_LISTS.map((v) => ({ key: viewList(v.view, scope), label: v.label }))];
+export function toInboxChip() {
+  const prev = previousRoute();
+  if (prev && prev.view === 'inbox' && !prev.mail && !prev.conv) history.back();
+  else go({ view: 'inbox' }, true);
+}
+
+/** A list from the chips: from the Inbox a step of its own, from another list in its place, so back is the Inbox. */
+function openList(key: string | null) {
+  const r = route.value;
+  const inList = r.view === 'inbox' && !!r.mail;
+  if (!key) return void (inList && toInboxChip());
+  go({ view: 'inbox', mail: key }, inList);
+}
+
+const MORE_MENU = 'More mail lists';
+
+/** More's menu: Starred and Sent of the scope in use, then each account's mailboxes. */
+function openMore(from: HTMLElement, scope: string | null, on: string | null) {
+  const s = db.mail;
+  const items: MenuEntry[] = MAIL_FOLDER_VIEWS.map((v) => {
+    const k = viewList(v.view, scope);
+    return { label: v.label, icon: v.view === 'starred' ? 'star' : 'send', checked: k === on, track: `mail list (${v.label})`, run: () => openList(k) };
+  });
+  for (const a of s.accounts.values()) {
+    const boxes = [...s.mailboxes.values()].filter((b) => b.accountId === a.id && !holdsOnlyMailboxes(b, s.mailboxes.values())).sort((x, y) => (x.role === 'inbox' ? -1 : y.role === 'inbox' ? 1 : x.path.localeCompare(y.path)));
+    if (!boxes.length) continue;
+    items.push({ kind: 'label', label: a.address ?? a.label });
+    for (const b of boxes) {
+      const k = mailboxList(b.id);
+      items.push({ label: b.path.replace(/\//g, ' / '), icon: b.role === 'inbox' ? 'inbox' : b.role === 'sent' ? 'send' : b.role === 'trash' ? 'trash' : b.role === 'archive' || b.role === 'all' ? 'archive' : 'folder', checked: k === on, track: 'mail list (mailbox)', run: () => openList(k) });
+    }
+  }
+  const r = from.getBoundingClientRect();
+  openMenu({ x: r.left, y: r.bottom + 4 }, { items, label: MORE_MENU, head: <div class="cm-sheet-title">Mail lists</div> }, from);
+}
+
+/**
+ * The chips under the Inbox's search with the Mail filter on, the same over every mail list (docs/inbox.md "Mail
+ * lists"): always Inbox, Updates, Everything and More, so nothing above a list moves as you change lists. More holds
+ * Starred, Sent and the mailboxes, and with one of them open, is lit with its name. `on`: the list open (a search in a
+ * list counts as that list), or null for the Inbox itself.
+ */
+export function MailListChips({ on }: { on: string | null }) {
+  mailRev.value;
+  const search = on ? searchOfList(on) : null;
+  const list = search !== null ? searchIn(search).list : on;
+  const l = list ? parseMailList(list) : null;
+  const scope = l && !('mailbox' in l) ? (l.platform ? platformScope(l.platform) : l.accountId) : null;
+  const main: { key: string | null; label: string }[] = [
+    { key: null, label: 'Inbox' },
+    { key: viewList('updates', scope), label: 'Updates' },
+    { key: viewList('all', scope), label: 'Everything' },
+  ];
+  const lit = (k: string | null) => k === list && (k !== null || on === null);
+  const more = !!on && !main.some((c) => lit(c.key));
   return (
-    <div class="inbox-chips mail-list-chips" role="radiogroup" aria-label="Mail lists">
-      {chips.map((c) => (
-        <button class={`chip-btn ${c.key === on ? 'on' : ''}`} role="radio" aria-checked={c.key === on} data-track={`mail list (${c.label})`} onClick={() => go(c.key ? { view: 'inbox', mail: c.key } : { view: 'inbox' })}>
+    <div class="mail-list-chips" role="radiogroup" aria-label="Mail lists">
+      {main.map((c) => (
+        <button class={`chip-btn ${lit(c.key) ? 'on' : ''}`} role="radio" aria-checked={lit(c.key)} data-track={`mail list (${c.label})`} onClick={() => openList(c.key)}>
           {c.label}
         </button>
       ))}
+      <button
+        class={`chip-btn mail-more-chip ${more ? 'on' : ''}`}
+        aria-haspopup="menu"
+        aria-expanded={contextMenu.value?.label === MORE_MENU}
+        data-track="mail list (More)"
+        onClick={(e) => openMore(e.currentTarget as HTMLElement, scope, list)}
+      >
+        <span class="mail-more-name">{more ? listName(db.mail, on!) : 'More'}</span>
+        <Icon name="chevronDown" size={12} />
+      </button>
     </div>
   );
 }
@@ -663,14 +726,75 @@ export function MailListChips({ on, scope = null }: { on: string | null; scope?:
 // ------------------------------------------------------------------ a thread as a chat
 
 /**
- * A mail thread's chat header (docs/mail.md "Mail as chats"): its subject as the name, who is on it, and the thread's
- * filing (Archive, Trash, Star, ⋯) where a chat has its settings.
+ * A mail thread's tile: the envelope, where a chat has its picture, the same for every thread (its name tells them
+ * apart). In the inbox's row, the mail lists' rows and the thread's header.
+ */
+export function MailTile({ size = 36 }: { size?: number }) {
+  return (
+    <span class="mail-tile" style={{ width: `${size}px`, height: `${size}px` }} aria-hidden="true">
+      <Icon name="mail" size={Math.round(size * 0.5)} />
+    </span>
+  );
+}
+
+/**
+ * Everyone on a thread but you: who wrote, and once the thread is here, who each mail went to. Their names as the
+ * chat knows them.
+ */
+function threadPeopleOf(c: P.ConversationView): { name: string; identityId: string | null }[] {
+  const mine = new Set([...db.mail.accounts.values()].map((a) => a.address?.toLowerCase()).filter(Boolean));
+  const out = new Map<string, { name: string; identityId: string | null }>();
+  const add = (a: P.MailAddressView & { self?: boolean }) => {
+    const e = a.email.toLowerCase();
+    if (a.self || mine.has(e) || out.has(e)) return;
+    out.set(e, { name: (a.identityId && identityName(a.identityId)) || a.name || a.email, identityId: a.identityId ?? null });
+  };
+  const t = mailThread(c.id);
+  t?.from.forEach(add);
+  for (const m of details.get(c.id)?.messages ?? []) [m.from, ...m.to, ...m.cc].forEach(add);
+  if (!out.size) for (const id of c.participantIds) out.set(id, { name: identityName(id), identityId: id });
+  return [...out.values()];
+}
+
+const PEOPLE_MENU = 'People on this thread';
+
+/** Under a thread's name: up to two of the people on it, then "+3"; a hover names everyone, a click or tap lists them. */
+function ThreadPeople({ c }: { c: P.ConversationView }) {
+  const people = threadPeopleOf(c);
+  const t = mailThread(c.id);
+  // The thread's count has you in it; the people the page has not seen yet still count.
+  const total = Math.max(people.length, (t?.participants ?? 0) - 1);
+  if (!total) return null;
+  const all = people.map((p) => p.name).join(', ');
+  const open = (e: MouseEvent) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    openMenu(
+      { x: r.left, y: r.bottom + 4 },
+      {
+        label: PEOPLE_MENU,
+        head: <div class="cm-sheet-title">{total === 1 ? 'On this thread with you' : `${total} people on this thread with you`}</div>,
+        items: people.map((p): MenuEntry => ({ label: p.name, icon: 'user', track: 'mail thread: person', ...(p.identityId ? { run: () => openProfile(p.identityId) } : { disabled: true }) })),
+      },
+      e.currentTarget,
+    );
+  };
+  return (
+    <button class="mail-people" title={all} aria-label={`On this thread: ${all}`} aria-haspopup="menu" aria-expanded={contextMenu.value?.label === PEOPLE_MENU} data-track="mail thread: people" onClick={open}>
+      <span class="mail-people-names">{people.slice(0, 2).map((p) => p.name).join(', ')}</span>
+      {total > 2 && <span class="mail-people-more">+{total - Math.min(2, people.length)}</span>}
+    </button>
+  );
+}
+
+/**
+ * A mail thread's chat header (docs/mail.md "Mail as chats"): the envelope tile and the thread's name (its subject),
+ * as its row in the inbox has them, the people on it beneath, and the thread's filing (Archive, Star, ⋯) where a chat
+ * has its settings.
  */
 export function MailThreadHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void }) {
   mailRev.value;
-  const names = c.participantIds.map((id) => identityName(id)).filter(Boolean);
   const account = db.mail.accounts.get(c.vantages[0]?.accountId ?? '');
-  const sub = [names.length ? names.join(', ') : null, account && db.mail.accounts.size > 1 ? (account.address ?? account.label) : null].filter(Boolean).join(' · ');
+  const several = !!account && db.mail.accounts.size > 1;
   return (
     <header class="conv-head mail-thread-head" data-track-area="chat header">
       {onBack && (
@@ -679,15 +803,16 @@ export function MailThreadHeader({ c, onBack }: { c: P.ConversationView; onBack?
         </button>
       )}
       <span class="conv-head-icon">
-        <span class="conv-head-variant">
-          <Icon name="mail" size={20} />
-        </span>
+        <MailTile size={34} />
       </span>
       <div class="conv-head-text">
         <h2>
           <span class="conv-head-name mail-subject">{c.name}</span>
         </h2>
-        {sub && <div class="conv-head-sub">{sub}</div>}
+        <div class="conv-head-sub mail-thread-sub">
+          <ThreadPeople c={c} />
+          {several && <span class="mail-thread-account">· {account!.address ?? account!.label}</span>}
+        </div>
       </div>
       <div class="conv-head-actions">
         <HeadOrb />

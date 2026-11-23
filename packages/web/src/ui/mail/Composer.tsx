@@ -175,19 +175,6 @@ function OutboxStrip() {
 
 // ------------------------------------------------------------------ where it starts from
 
-/** Mail's ✎: a new message, from the account the list shows (or the first that can send). */
-export function ComposeButton({ accountId }: { accountId: string | null }) {
-  mailRev.value;
-  const accounts = [...db.mail.accounts.values()].filter((a) => a.level !== null);
-  if (!accounts.some((a) => a.level === 'write')) return null;
-  const pickAcc = (accountId && accounts.find((a) => a.id === accountId && canSendFrom(a))) || accounts.find(canSendFrom) || accounts.find((a) => a.level === 'write');
-  return (
-    <button class="icon-btn small side-new mail-compose-btn" aria-label="New message" title="New message (c)" onClick={() => openCompose({ kind: 'new', accountId: pickAcc?.id })}>
-      <Icon name="pencil" size={16} />
-    </button>
-  );
-}
-
 /** "2 drafts" under the views: each opens in the composer. */
 export function DraftsLine() {
   mailRev.value;

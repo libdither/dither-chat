@@ -49,7 +49,8 @@ import { Boot } from './Loader.tsx';
 import { applyUpdate, updateReady } from '../pwa.ts';
 import { noteChannel, readLastChannels, saveLastChannels, withLastChannel } from '../lastchannel.ts';
 import { counting, rendered } from '../perf.ts';
-import { MailComposerLazy, MailSidebarLazy } from './mail/lazy.tsx';
+import { MailComposerLazy } from './mail/lazy.tsx';
+import { toInboxChip } from './MailChat.tsx';
 import { convById, isMailPlace } from '../mail/chats.ts';
 import { RequestsPane } from './Requests.tsx';
 import { NoticesPaneLazy } from './Notices.tsx';
@@ -123,8 +124,8 @@ function sidebarFor(r: Route, onAdd: () => void): ComponentChildren {
     case 'model':
       return <InboxSidebar />;
     case 'inbox':
-      // A mail list (Updates, Everything, Starred, Sent, a mailbox, a search) in the Inbox's place (docs/mail.md).
-      return r.mail ? <MailSidebarLazy list={r.mail} active={r.conv} /> : <InboxSidebar activeConv={r.conv} />;
+      // A mail list (Updates, Everything, Starred, Sent, a mailbox, a search) under the Inbox's header (docs/inbox.md "Mail lists").
+      return <InboxSidebar activeConv={r.conv} mail={r.mail} />;
     case 'people':
       return <PeopleSidebar activePerson={r.person} />;
     case 'profile': {
@@ -256,14 +257,18 @@ effect(() => {
   untracked(() => go({ view: 'feed', source: acc ? `${acc}:activity` : 'activity' }, true));
 });
 
+/** A mail list in the Inbox's place, no thread open from it. */
+const mailList = (r: Route) => r.view === 'inbox' && !!r.mail && !r.conv;
+
 /**
  * Where Escape leaves for, with no layer open (escape.ts, docs/desktop.md "Escape and back"): a page goes where its
  * back button goes; search and Settings, which are no list's page, back where you came from.
  */
 const escapeApp = {
   layers: layerCount,
-  canLeave: () => isPage(route.value) || route.value.view === 'search' || route.value.view === 'settings',
-  leave: () => (isPage(route.value) ? leave(route.value) : back({ view: 'inbox' })),
+  canLeave: () => isPage(route.value) || route.value.view === 'search' || route.value.view === 'settings' || mailList(route.value),
+  // A mail list goes to the Inbox chip first (docs/inbox.md "Mail lists").
+  leave: () => (isPage(route.value) ? leave(route.value) : mailList(route.value) ? toInboxChip() : back({ view: 'inbox' })),
 };
 
 /** Back from page `r`, by a swipe or its back button: to its list, or off the page it was opened over (pages.ts). */

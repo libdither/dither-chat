@@ -7,10 +7,9 @@ Email beside your chats, through dither-accounts' `mail` interface. The design, 
 
 - **Mail in the rail**, after People, once the hub can read mail. A dot while Inbox has unread threads. On a phone it
   sits in Home with the rest; Ctrl+K finds Mail, its views and each mailbox.
-- **The list**: Inbox (ranked, or newest first), Everything and Updates across every account as one row of chips that
-  scrolls sideways, without a scrollbar: its edge fades while more chips lie past it, and the chosen one is scrolled
-  into view. The folder button has Starred and Sent (newest first, of the accounts showing) above each account's
-  mailboxes. **Everything** is the whole of Inbox, Updates too, newest first (`v:all:<scope>`); the old People and
+- **The list**: Inbox (ranked, or newest first), Updates and Everything across every account as chips under the
+  Inbox's header, with **More ⌄** holding Starred and Sent (newest first, of the accounts showing) above each account's
+  mailboxes (docs/inbox.md "Mail lists"). **Everything** is the whole of Inbox, Updates too, newest first (`v:all:<scope>`); the old People and
   Unread views have no chip but their links (`v:people:*`, `v:unread:*`) still list. Under "Mail", **whose mail** is two wheels (`ui/mail/ScopeWheel.tsx`):
   the platform (All mail, then Gmail, Proton, Outlook, Email: `mailPlatform`, by kind and address) when there is more
   than one, then the account (All of that platform's, or one) when it has more than one. Each shows the choice in use
@@ -168,6 +167,13 @@ asked for, never copied into the message table.
 - **Other chats**: `GET /api/mail/chats/:id/messages?before=&limit=` pages a route by email (its threads only) or one
   thread `mth_…` (any thread, newsletters too) as a chat, in the same shape; `GET /api/mail/chats?person=<id>` lists a
   person's routes. The mail bootstrap carries every route (`MailBootstrap.chats`) and your rungs (`.rungs`).
+- **A thread's name** (web `mail/model.ts` `threadName`, used by `mail/chats.ts` for the thread's conversation): its
+  subject as drawn (`bareSubject`: no Re:, Fwd:, AW: and the like; what is sent keeps the subject), or with no subject
+  its people by first name ("Alice, Jo"). The same in the inbox's row (with the envelope tile and "Jo: …"), the chat's
+  header (the tile, the name, and beneath it up to two of the people then "+3", a click listing everyone), the mail
+  lists' rows and search hits (the name over who wrote), and Ctrl+K and search's Jump to, which find it by its
+  people's names and addresses too. Every thread has the same grey envelope tile. The header's filing is Archive and
+  Star, with Trash in ⋯.
 - **Events**: `mail.chats` (routes changed, and `removed` route ids) goes out in the flush that sends `mail.threads`,
   for every person on a thread that changed (new mail, a read, a Cc, a merge or a split, which send their threads
   again); `rung` when one is chosen or taken back.
@@ -177,7 +183,7 @@ Tests: `hub/test/mail-chats.test.ts`.
 
 ## Sending (slice 5)
 
-- **Writing.** ✎ in Mail's header (or `c`) starts a new message. Reply, Reply all and Forward sit under each message; on
+- **Writing.** New email in the Inbox header's + (or `c` in a mail list or thread) starts a new message. Reply, Reply all and Forward sit under each message; on
   a phone a bar under the thread answers the latest (`r`, `a`, `f` on a desktop). The composer is a full-screen card on
   a phone and a panel docked at the bottom right on a desktop, so the list stays usable beside it. Its header has ✕ and
   the trash (discard); Attach, Aa (formatting) and Send are along the bottom, Send at the right. It has From (a picker
@@ -548,9 +554,10 @@ window, Inbox paged by date while a score changes), `web/test/mail-model.test.ts
 
 ## Search (slice 7)
 
-- **Where.** Mail's search button (beside the folders) puts a search box in place of the list. A search is a list key,
-  `s:<query>` (protocol `searchList`), so `#/mail/l/s%3A<query>` links to one and a thread opens beside its results as
-  from any list, and back returns to them. Chips: Unread, Starred, Attachment. The search page gets a **Mail** group
+- **Where.** A mail list's search box, the Inbox header's (docs/inbox.md "Mail lists"), searches that list: the query
+  starts with the list's operators (web `mail/model.ts` `listSearch`, read back by `searchIn`). A search is a list key,
+  `s:<query>` (protocol `searchList`), so `#/inbox?mail=s%3A<query>` links to one and a thread opens beside its results
+  as from any list. The search page gets a **Mail** group
   above the chats' results: the hub's own top five threads and the way into Mail's search. It shows only while the hub
   has mail and the query means something in mail (`mailSearchable`), and it is a request of its own, drawn by Mail's
   chunk, so the chats' results never wait for it (docs/search.md).
@@ -569,6 +576,7 @@ window, Inbox paged by date while a score changes), `web/test/mail-model.test.ts
   | `has:attachment` | with a file |
   | `filename:lease` | an attachment's name ("Keeping all mail": for every account, once its body was fetched) |
   | `is:unread`, `is:read`, `is:starred` (or `is:flagged`) | as the hub has it |
+  | `is:update` (or `is:updates`) | mail not from a person, the Updates list's; this hub's own sorting, so servers are not asked it |
   | `account:proton`, `account:me@x.org` | one mail account, by label, address, kind or id |
   | `before:`, `after:`, `during:`, `sort:oldest` | as in chat search, on when the server got it |
 

@@ -141,7 +141,8 @@ Escape is the back button of a keyboard (packages/web/src/escape.ts). One Escape
    How it sorts, search and Settings go where their back button goes (pages.ts `wayBack`), or for search and Settings,
    where you came from.
 
-A list (the inbox, People, a server, a folder, the calendar, the Feed, a mail list) has nowhere to go and stays. Neither does a
+A list (the inbox, People, a server, a folder, the calendar, the Feed) has nowhere to go and stays; a mail list goes to
+the Inbox chip (docs/inbox.md "Mail lists"). Neither does a
 page while the cursor is in text being written (a message, a bio): a half-written message stays on screen. A one-line
 box is no such place, so Escape in search's box leaves search once its suggestions are closed.
 

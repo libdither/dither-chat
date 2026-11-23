@@ -8,7 +8,7 @@
  * longer does comes out.
  */
 import type * as P from '@dither-chat/protocol';
-import { MAIL_PLATFORM_NAMES, mailPlatform, parseMailList, parseWithList, platformScope, viewList } from '@dither-chat/protocol';
+import { bareSubject, MAIL_PLATFORM_NAMES, mailboxList, mailPlatform, parseMailList, parseWithList, platformScope, searchOfList, viewList } from '@dither-chat/protocol';
 import { inboxView, type Ranked } from '../ordering.ts';
 
 interface MailList {
@@ -306,6 +306,33 @@ export function senderLine(t: P.MailThreadView, max = 3): string {
   return shown.join(', ');
 }
 
+/**
+ * A thread with more people than you and one other: a chat of its own (docs/mail.md "Mail as chats"), named by its
+ * subject (threadName) where a thread with one person is named by them.
+ */
+export const isGroupThread = (t: P.MailThreadView) => t.participants > 2;
+
+/** "Alice, Jo": who wrote in a thread besides you, by first name, in the order they first wrote. */
+export function threadPeople(t: P.MailThreadView): string {
+  return [...new Set(t.from.filter((f) => !f.self).map((f) => firstName(f.name ?? f.email, true)))].join(', ');
+}
+
+/**
+ * A thread's name where it is a chat of its own: its subject as drawn (no Re: or Fwd:), or with no subject its people
+ * ("Alice, Jo"). The same in the inbox's row, the chat's header, Ctrl+K, search and the mail lists.
+ */
+export function threadName(t: P.MailThreadView): string {
+  return bareSubject(t.subject ?? '') || threadPeople(t) || '(no subject)';
+}
+
+/** "Jo: Done on my side too…": a group thread's preview with who wrote it, as a group chat's row has ("You" for you). */
+export function threadSnippet(t: P.MailThreadView): string {
+  if (!t.preview) return '';
+  const last = t.from[t.from.length - 1];
+  const who = t.lastFromMe || last?.self ? 'You' : last ? firstName(last.name ?? last.email, true) : null;
+  return who ? `${who}: ${t.preview}` : t.preview;
+}
+
 /** A name for a list row: the whole name alone, the first name among several. */
 function firstName(n: string, several: boolean): string {
   if (!several) return n;
@@ -327,6 +354,47 @@ export function listTitle(s: MailState, key: string): string {
   const acc = l.accountId ? s.accounts.get(l.accountId) : null;
   if (l.platform) return `${names[l.view]} · ${MAIL_PLATFORM_NAMES[l.platform] ?? l.platform}`;
   return acc ? `${names[l.view]} · ${acc.address ?? acc.label}` : names[l.view];
+}
+
+/** A list's name on its chip: Starred, Sent, a mailbox's name, without whose mail it is (the account picker says that). */
+export function listName(s: MailState, key: string): string {
+  const search = searchOfList(key);
+  if (search !== null) return searchIn(search).list ? listName(s, searchIn(search).list!) : 'Search';
+  return listTitle(s, key).split(' · ')[0];
+}
+
+/** The operators that keep a search in a list (the mail lists' search box), by view. */
+const VIEW_SCOPE: Partial<Record<P.MailView, string>> = { updates: 'in:inbox is:update', all: 'in:inbox', starred: 'is:starred', sent: 'in:sent' };
+
+/**
+ * What a search in list `key` starts with, so it finds only that list's mail (docs/inbox.md "Mail lists"): its view's
+ * or mailbox's operators, and its account. Null for a list a search cannot keep to.
+ */
+export function listScope(key: string): string | null {
+  const l = parseMailList(key);
+  if (!l) return null;
+  if ('mailbox' in l) return `in:${l.mailbox}`;
+  const view = VIEW_SCOPE[l.view];
+  if (!view) return null;
+  return l.accountId ? `${view} account:${l.accountId}` : view;
+}
+
+/** A search in a list as its key (`s:<the list's operators> <words>`). */
+export const listSearch = (key: string, words: string) => {
+  const scope = listScope(key);
+  return `s:${scope ? `${scope} ${words.trim()}` : words.trim()}`;
+};
+
+/** A search's list (listScope's operators at its start) and the words typed after them; no list when it has none. */
+export function searchIn(q: string): { list: string | null; words: string } {
+  const lead = q.match(/^((?:(?:in|is|account):\S+\s+)+)/)?.[1] ?? '';
+  const ops = lead.trim().split(/\s+/).filter(Boolean);
+  const acc = ops.find((o) => o.startsWith('account:'))?.slice(8) ?? null;
+  const box = ops.find((o) => /^in:mbx_/.test(o))?.slice(3);
+  const view = (Object.keys(VIEW_SCOPE) as P.MailView[]).find((v) => VIEW_SCOPE[v] === ops.filter((o) => !o.startsWith('account:')).join(' '));
+  const list = box ? mailboxList(box) : view ? viewList(view, acc) : null;
+  if (!list || listScope(list) !== ops.join(' ')) return { list: null, words: q };
+  return { list, words: q.slice(lead.length) };
 }
 
 /** Views in the folder menu, above each account's mailboxes: newest first, of the scope in use. */
