@@ -1,6 +1,7 @@
 /**
  * The editor's schema for the writing-model demo: the document of protocol/src/writing/doc.ts, as Tiptap has it, and
- * the typing rules. What the rules do depends on where the draft is going, which the page keeps in `live`.
+ * the typing rules. What the rules do depends on where the draft is going, which the page keeps in `live` (live.ts).
+ * A part typed as Markdown or as HTML is parts.ts.
  */
 import { Extension, InputRule, Mark, Node, markInputRule, mergeAttributes, nodeInputRule, textblockTypeInputRule, wrappingInputRule } from '@tiptap/core';
 import Image from '@tiptap/extension-image';
@@ -8,25 +9,8 @@ import { TableKit } from '@tiptap/extension-table';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import StarterKit from '@tiptap/starter-kit';
-
-export interface Person {
-  label: string;
-  kind: string;
-  ids: Record<string, string>;
-}
-/** What the page knows and the editor asks: set by the page on every draw. */
-export const live = {
-  /** Some place the draft goes to carries this as itself. */
-  carries: (_what: string) => true,
-  /** The places that would show hidden text, by name; empty when none would. */
-  exposes: () => '',
-  /** The places that have no way to tell this person, by name. */
-  quiet: (_attrs: Record<string, any>) => '',
-  /** Enter sends (a chat box that is not opened up). */
-  enterSends: () => false,
-  send: () => {},
-  people: [] as Person[],
-};
+import { live } from './live.ts';
+import { langAt, Parts, sandbox, Source } from './parts.ts';
 
 const simple = (name: string, tag: string, cls?: string) =>
   Mark.create({
@@ -64,6 +48,18 @@ const Time = Node.create({
   parseHTML: () => [{ tag: 'span[data-time]', getAttrs: (el) => ({ at: Number((el as HTMLElement).dataset.time) }) }],
   renderHTML: ({ node }) => ['span', { class: 'w-time', 'data-time': String(node.attrs.at) }, new Date(node.attrs.at * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })],
 });
+/** A network's own emoji: here only so that a draft holding one can be shown. */
+const Emoji = Node.create({
+  name: 'emoji',
+  group: 'inline',
+  inline: true,
+  atom: true,
+  addAttributes: () => ({ name: { default: '' }, id: { default: null }, alt: { default: null }, space: { default: null }, animated: { default: null } }),
+  parseHTML: () => [{ tag: 'span[data-emoji]', getAttrs: (el) => ({ name: (el as HTMLElement).dataset.emoji }) }],
+  renderHTML: ({ node }) => ['span', { class: 'w-emoji', 'data-emoji': node.attrs.name }, node.attrs.alt || `:${node.attrs.name}:`],
+});
+/** A draft is blocks, and parts typed another way between them: a part is never inside a block. */
+const Draft = Node.create({ name: 'doc', topNode: true, content: '(block | source)+' });
 const Fold = Node.create({
   name: 'fold',
   group: 'block',
@@ -80,7 +76,8 @@ const Raw = Node.create({
   group: 'block',
   atom: true,
   selectable: true,
-  addAttributes: () => ({ format: { default: 'html' }, source: { default: '' }, text: { default: '' } }),
+  // `fallback`: what could be read of it, for a place that takes no HTML (a piece of typed HTML kept whole has one).
+  addAttributes: () => ({ format: { default: 'html' }, source: { default: '' }, text: { default: '' }, fallback: { default: null } }),
   parseHTML: () => [{ tag: 'div[data-raw]' }],
   renderHTML: ({ node }) => ['div', { 'data-raw': node.attrs.format }],
   addNodeView() {
@@ -91,10 +88,9 @@ const Raw = Node.create({
       const bar = document.createElement('div');
       bar.className = 'w-raw-bar';
       bar.textContent = `Kept as its own ${String(node.attrs.format).toUpperCase()} · ${kb(new Blob([node.attrs.source]).size)}`;
-      const frame = document.createElement('iframe');
-      frame.setAttribute('sandbox', '');
-      frame.srcdoc = `<body style="margin:8px;font:14px system-ui">${node.attrs.source}</body>`;
-      dom.append(bar, frame);
+      const frame = sandbox();
+      frame.show(String(node.attrs.source));
+      dom.append(bar, frame.el);
       return { dom };
     };
   },
@@ -109,7 +105,8 @@ const Typing = Extension.create({
   name: 'typing',
   addInputRules() {
     const { marks, nodes } = this.editor.schema;
-    const gate = (what: string, rule: InputRule) => new InputRule({ find: rule.find, handler: (p) => (live.carries(what) ? rule.handler(p) : null) });
+    // In a part typed as Markdown or HTML the markers stay as typed: nothing is made of them here.
+    const gate = (what: string, rule: InputRule) => new InputRule({ find: rule.find, handler: (p) => (live.carries(what) && !langAt(p.state, p.range.from) ? rule.handler(p) : null) });
     return [
       gate('bold', markInputRule({ find: /(?:^|\s)(\*\*(?!\s)([^*]+?)(?<!\s)\*\*)$/, type: marks.bold })),
       // One star or underscore on each side, tight against the words: "a * b * c" and snake_case stay as typed.
@@ -118,7 +115,7 @@ const Typing = Extension.create({
       gate('strike', markInputRule({ find: /(?:^|\s)(~~(?!\s)([^~]+?)(?<!\s)~~)$/, type: marks.strike })),
       gate('code', markInputRule({ find: /(?:^|\s)(`([^`]+)`)$/, type: marks.code })),
       gate('spoiler', markInputRule({ find: /(?:^|\s)(\|\|(?!\s)([^|]+?)(?<!\s)\|\|)$/, type: marks.spoiler })),
-      gate('heading', textblockTypeInputRule({ find: /^(#{1,3})\s$/, type: nodes.heading, getAttributes: (m) => ({ level: m[1].length }) })),
+      gate('heading', textblockTypeInputRule({ find: /^(#{1,6})\s$/, type: nodes.heading, getAttributes: (m) => ({ level: m[1].length }) })),
       gate('blockquote', wrappingInputRule({ find: /^\s*>\s$/, type: nodes.blockquote })),
       gate('bulletList', wrappingInputRule({ find: /^\s*([-+*])\s$/, type: nodes.bulletList })),
       gate('orderedList', wrappingInputRule({ find: /^(\d+)\.\s$/, type: nodes.orderedList, getAttributes: (m) => ({ start: +m[1] }) })),
@@ -136,7 +133,7 @@ const Typing = Extension.create({
       new InputRule({
         find: /(?:^|\s)@(\w+)\s$/,
         handler: ({ state, range, match }) => {
-          const who = live.carries('mention') && live.people.find((x) => x.label.toLowerCase() === match[1].toLowerCase());
+          const who = live.carries('mention') && langAt(state, range.from) !== 'html' && live.people.find((x) => x.label.toLowerCase() === match[1].toLowerCase());
           if (!who) return null;
           const from = range.to - match[1].length - 2;
           state.tr.replaceWith(from, range.to, [nodes.mention.create(who), state.schema.text(' ')]);
@@ -189,7 +186,9 @@ const Typing = Extension.create({
 });
 
 export const extensions = () => [
-  StarterKit.configure({ link: { openOnClick: false, autolink: false }, heading: { levels: [1, 2, 3] }, hardBreak: false }),
+  // No empty paragraph is kept after a part: a draft typed as Markdown is that part and nothing else.
+  StarterKit.configure({ document: false, link: { openOnClick: false, autolink: false }, heading: { levels: [1, 2, 3, 4, 5, 6] }, hardBreak: false, trailingNode: { notAfter: ['source'] } }),
+  Draft,
   TableKit.configure({ table: { resizable: false } }),
   Image.configure({ inline: false }),
   Spoiler,
@@ -198,7 +197,10 @@ export const extensions = () => [
   Color,
   Mention,
   Time,
+  Emoji,
   Fold,
   Raw,
+  Source,
+  Parts,
   Typing,
 ];

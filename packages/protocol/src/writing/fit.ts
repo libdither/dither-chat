@@ -8,6 +8,7 @@
  * ladder that forgets to say so is caught there.
  */
 import { hiddenLost, wordsLost } from './check.ts';
+import { resolve } from './lens.ts';
 import { contained, joinRuns, sameMark, sound, standIn, words, type Mark, type Node } from './doc.ts';
 import { within, type Profile } from './profile.ts';
 
@@ -454,7 +455,8 @@ interface Fitted {
 export function fit(draft: Node, pr: Profile): Fitted {
   const notes = new Notes();
   // Nothing is assumed of the tree: it may come from another device.
-  const d: Node = sound({ type: 'doc', content: draft?.content })[0] ?? { type: 'doc', content: [] };
+  // A part written as Markdown or HTML is read as the tree it says first (lens.ts).
+  const d: Node = sound(resolve(draft))[0] ?? { type: 'doc', content: [] };
   const content = blocks(d.content ?? [], pr, notes, { quote: 0, list: 0 });
   const fitted: Node = { type: 'doc', content };
   // The two things that must never happen unsaid are found on the result itself, not left to each step to say.

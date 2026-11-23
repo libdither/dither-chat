@@ -40,6 +40,14 @@ export const text = (t: string, ...marks: (MarkKind | Mark)[]): Node => ({ type:
 export const para = (...content: (Node | string)[]): Node => ({ type: 'paragraph', content: content.map((c) => (typeof c === 'string' ? text(c) : c)) });
 export const doc = (...content: Node[]): Node => ({ type: 'doc', content });
 
+/**
+ * The order a run's styles are kept in. What hides is outermost: a network takes a hidden link, not a link with hidden
+ * words. A draft is sent the same whichever order its editor listed them in.
+ */
+const MARK_ORDER: string[] = ['spoiler', 'link', 'color', 'bold', 'italic', 'underline', 'strike', 'sub', 'sup', 'code'];
+const rank = (m: Mark) => (MARK_ORDER.indexOf(m.type) + 1 || MARK_ORDER.length + 1) - 1;
+export const ordered = (marks: Mark[] = []) => [...marks].sort((a, b) => rank(a) - rank(b));
+
 export const sameMark = (a: Mark, b: Mark) => a.type === b.type && JSON.stringify(a.attrs ?? {}) === JSON.stringify(b.attrs ?? {});
 const sameMarks = (a: Mark[] = [], b: Mark[] = []) => a.length === b.length && a.every((m) => b.some((n) => sameMark(m, n)));
 
@@ -129,7 +137,7 @@ export function sound(v: unknown, inCode = false, depth = 0): Node[] {
   // An attribute is a word, a number or a yes: anything else (but the two that hold more, read below) is left out.
   const plain = (a: Record<string, any>) => Object.fromEntries(Object.entries(a).filter(([k, x]) => x === null || typeof x !== 'object' || k === 'ids' || k === 'fallback'));
   const attrs: Record<string, any> = obj(v.attrs) ? plain(v.attrs) : {};
-  const marks = (Array.isArray(v.marks) ? v.marks : []).filter((m): m is Mark => obj(m) && typeof m.type === 'string').map((m) => ({ type: m.type, ...(obj(m.attrs) ? { attrs: plain(m.attrs) } : {}) }));
+  const marks = ordered((Array.isArray(v.marks) ? v.marks : []).filter((m): m is Mark => obj(m) && typeof m.type === 'string').map((m) => ({ type: m.type, ...(obj(m.attrs) ? { attrs: plain(m.attrs) } : {}) })));
   const styled = marks.length ? { marks } : {};
   if (v.type === 'text') {
     const text = typeof v.text === 'string' ? v.text.replace(CONTROL, '') : '';
@@ -170,7 +178,9 @@ export function sound(v: unknown, inCode = false, depth = 0): Node[] {
   if (v.type === 'image') Object.assign(attrs, { src: line(attrs.src), alt: line(attrs.alt) });
   if (v.type === 'raw') {
     Object.assign(attrs, { format: line(attrs.format), source: typeof attrs.source === 'string' ? attrs.source : '', text: typeof attrs.text === 'string' ? attrs.text.replace(CONTROL, '') : '' });
-    if (attrs.fallback !== undefined) attrs.fallback = Array.isArray(attrs.fallback) ? attrs.fallback.flatMap((c: unknown) => sound(c)) : [];
+    // What could be read of it, where there is such a thing: an editor's empty attribute is none, and its words stand.
+    if (Array.isArray(attrs.fallback)) attrs.fallback = attrs.fallback.flatMap((c: unknown) => sound(c));
+    else delete attrs.fallback;
   }
   // Everything stands where its kind can stand, so no step after this one can drop a word for being in the wrong place.
   if (content && HOLDS_BLOCKS.has(v.type)) content = lines(content);

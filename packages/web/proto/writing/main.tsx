@@ -12,8 +12,11 @@ import { doc, para, text, type Node as DocNode } from '../../../protocol/src/wri
 import { add, agree, apart, choose, done, draft as newDraft, leave, move, outcome, together, went, write, type Draft } from '../../../protocol/src/writing/draft.ts';
 import { preview, type Options, type Sent } from '../../../protocol/src/writing/encode.ts';
 import { carries, type Change } from '../../../protocol/src/writing/fit.ts';
+import type { Way } from '../../../protocol/src/writing/lens.ts';
 import { PLACES, PROFILES, type Fields, type Profile } from '../../../protocol/src/writing/profile.ts';
-import { extensions, live, type Person } from './schema.ts';
+import { live, type Person } from './live.ts';
+import { activeIn, blank, block, offers, partAt, PICTURE, setWay, style, touched, unhide, wayOf, wayOfAll } from './parts.ts';
+import { extensions } from './schema.ts';
 
 const KIT: Person = { kind: 'user', label: 'Kit', ids: { signal: 'uuid-kit', whatsapp: '15550100', telegram: '7001', discord: '8001', matrix: '@kit:example.org', slack: 'U8KIT', zulip: '17', bluesky: 'did:plc:kit', mastodon: 'kit@example.social', github: 'kit', reddit: 'kit' } };
 const SAM: Person = { kind: 'user', label: 'Sam', ids: { discord: '8002', slack: 'U8SAM' } };
@@ -73,7 +76,6 @@ interface Tool {
   block?: boolean;
 }
 const mark = (what: string, label: string, title: string, run: (e: Editor) => void): Tool => ({ what, label, title, run, on: (e) => e.isActive(what) });
-const PICTURE = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22120%22 height=%2270%22%3E%3Crect width=%22120%22 height=%2270%22 fill=%22%237aa7d9%22/%3E%3Ccircle cx=%2290%22 cy=%2220%22 r=%2210%22 fill=%22%23ffe08a%22/%3E%3C/svg%3E';
 const TOOLS: Tool[] = [
   mark('bold', 'B', 'Bold', (e) => e.chain().focus().toggleBold().run()),
   mark('italic', 'I', 'Italic', (e) => e.chain().focus().toggleItalic().run()),
@@ -107,7 +109,34 @@ const roleOf = (keys: string[]): Role => {
 const HINT: Record<Role, string> = { chat: 'Message', post: 'What’s happening?', comment: 'Write a comment', mail: 'Write your mail' };
 const WORD: Record<Role, string> = { chat: 'Send', post: 'Post', comment: 'Comment', mail: 'Send' };
 const CHOICE: Record<keyof Options, string> = { lead: 'Title as the first line', warn: 'Warning first', thread: 'A thread' };
-const start = (s: Scene) => newDraft(s.chat, s.chosen, s.doc, s.fields);
+/** The ways a draft can be written: with the buttons, or typed. */
+const WAYS: [Way, string, string][] = [
+  ['rich', 'Rich', 'Rich text: a style is put on the words, with the buttons or by typing its markers'],
+  ['markdown', 'Markdown', 'Markdown: the markers stay where you type them, drawn as they will read'],
+  ['html', 'HTML', 'HTML: typed as it is sent, with a look at it beneath'],
+];
+const TAG: Record<string, string> = { rich: 'Rich', markdown: 'Markdown', html: 'HTML', kept: 'Kept as HTML' };
+/** Markdown where some place carries a style at all; HTML where some place takes HTML as it is typed (a mail, Matrix). */
+const waysFor = (keys: string[]): Way[] => ['rich', ...(TOOLS.some((t) => keys.some((k) => carries(PROFILES[k], t.what))) ? (['markdown'] as Way[]) : []), ...(keys.some((k) => PROFILES[k].rules?.raw?.includes('html')) ? (['html'] as Way[]) : [])];
+/** The way a kind of writing was last written, on this device: a chat as Markdown stays so for the next message. */
+const liked = (role: Role): Way => {
+  try {
+    const v = localStorage.getItem('writing.way.' + role);
+    return v === 'markdown' || v === 'html' ? v : 'rich';
+  } catch {
+    return 'rich';
+  }
+};
+const like = (role: Role, way: Way) => {
+  try {
+    localStorage.setItem('writing.way.' + role, way);
+  } catch {
+    // Not kept, then: it is a convenience.
+  }
+};
+const fresh = (keys: string[]) => blank(waysFor(keys).includes(liked(roleOf(keys))) ? liked(roleOf(keys)) : 'rich');
+const first = (s: Scene) => (s.doc.content?.length === 1 && !s.doc.content[0].content?.length ? fresh(s.chosen) : s.doc);
+const start = (s: Scene) => newDraft(s.chat, s.chosen, first(s), s.fields);
 /** An address as it was meant: "example.org" is a web page, "kit@example.org" a mail address. */
 const address = (v: string) => {
   const s = v.trim();
@@ -137,6 +166,7 @@ function App() {
   /** A link is being added where nothing is selected: its address is asked for, and goes in as its own words. */
   const [newLink, setNewLink] = useState(false);
   const [log, setLog] = useState<string[]>([]);
+  const [note, setNote] = useState('');
   const tabRef = useRef(tab);
   const roleRef = useRef<Role>('chat');
   const toRef = useRef(scene.to);
@@ -179,8 +209,9 @@ function App() {
     }
     // A new draft for the same places. What was beside the text went with it; whom it is for stays.
     const kept = Object.fromEntries(Object.entries(draft.fields).map(([k, v]) => [k, k === 'to' || k === 'place' ? v : '']));
-    setDraft(newDraft(scene.chat, draft.places.map((p) => p.key), doc(para()), kept));
-    put('all', doc(para()));
+    const keys = draft.places.map((p) => p.key);
+    setDraft(newDraft(scene.chat, keys, fresh(keys), kept));
+    put('all', fresh(keys));
   };
   const onSend = () => out.ready && (exposing.length ? setAsk(true) : deliver(chosen));
 
@@ -194,10 +225,11 @@ function App() {
   // Enter sends a message to one chat, while the box is not opened up. Anywhere else it is a new line.
   live.enterSends = () => role === 'chat' && chosen.length === 1 && !tall;
   live.send = onSend;
+  live.hint = () => HINT[role] + (role === 'chat' && scene.to ? ' ' + scene.to : '');
 
   useEffect(() => {
     const hint = () => HINT[roleRef.current] + (roleRef.current === 'chat' && toRef.current ? ' ' + toRef.current : '');
-    const e = new Editor({ element: holder.current!, extensions: [...extensions(), Placeholder.configure({ placeholder: hint })], content: scene.doc, enableInputRules: ['typing'], enablePasteRules: false });
+    const e = new Editor({ element: holder.current!, extensions: [...extensions(), Placeholder.configure({ placeholder: hint })], content: first(scene), enableInputRules: ['typing'], enablePasteRules: false });
     e.on('update', () => setDraft((d) => write(d, e.getJSON() as DocNode, tabRef.current === 'all' ? undefined : tabRef.current)));
     e.on('transaction', () => tick((n) => n + 1));
     setEditor(e);
@@ -223,7 +255,8 @@ function App() {
     setAsk(false);
     setMenu(null);
     setLog([]);
-    put('all', s.doc);
+    setNote('');
+    put('all', first(s));
   };
   const show = (next: string) => put(next, own(next)?.doc ?? draft.doc);
   const setApart = (id: string) => {
@@ -295,7 +328,7 @@ function App() {
     if (c.key === 'title') out.push(['Put it as the first line there', () => ids.forEach((id) => opt(id, { lead: true }))]);
     const warns = ids.filter((id) => PROFILES[id].fields?.warning);
     // Where nothing can hide it, the writer may decide it need not be hidden.
-    if (c.key === 'hidden' && chosen.length === 1) out.push(['Show the words openly', () => editor?.chain().focus().selectAll().unsetMark('spoiler').run()]);
+    if (c.key === 'hidden' && chosen.length === 1) out.push(['Show the words openly', () => editor && unhide(editor)]);
     if (c.key === 'hidden' && warns.length) out.push([`Give it a content warning${one ? '' : ` on ${names(warns)}`}`, () => document.querySelector<HTMLInputElement>('input[data-field=warning]')?.focus()]);
     if (one && chosen.length > 1 && bad(c)) {
       if (/^(hidden|limit|warning|lost)$/.test(c.key) && !own(one.id)?.doc) out.push([`Write ${one.name} separately`, () => setApart(one.id)]);
@@ -312,9 +345,52 @@ function App() {
     if (s.n <= s.max * 0.8 && !(PROFILES[id].role === 'post' && s.max <= 1000)) return null;
     return <small class={s.over ? 'count over' : 'count'}>{s.n}/{s.max}</small>;
   };
+  // How the draft is written, and the part the caret is in.
+  const blocks = (editor?.getJSON().content ?? []) as DocNode[];
+  const wayAll = wayOfAll(blocks);
+  const part = editor ? partAt(editor.state) : null;
+  const act = editor ? activeIn(editor.state) : null;
+  const ways = [...new Set([...waysFor(chosen), ...blocks.filter((b) => b.type === 'source').map((b) => wayOf(b) as Way)])];
+  const isOn = (t: Tool) => (act ? act.has(t.what) : !!(editor && t.on?.(editor)));
   // A tool is there when a place carries what it makes, or when the caret is on such a thing: it can always be undone.
-  const tools = TOOLS.filter((t) => live.carries(t.what) || (editor && t.on?.(editor)));
-  const ats = live.carries('mention');
+  // In a part typed as Markdown or HTML it puts the markers in, where that way of writing has some.
+  const tools = TOOLS.filter((t) => (!part || offers(part.lang, t.what)) && (live.carries(t.what) || isOn(t)));
+  const ats = live.carries('mention') && part?.lang !== 'html';
+  const use = (t: Tool) => {
+    if (!editor) return;
+    if (part && (t.block ? block(editor, t.what) : style(editor, t.what))) return;
+    if (t.what === 'link') linkTool();
+    else t.run(editor);
+  };
+  /** The whole draft, or the part the caret is in, written another way. What is sent stays what it was. */
+  const change = (to: Way, scope: 'all' | 'here') => {
+    if (!editor) return;
+    setMenu(null);
+    setNote('');
+    const el = holder.current!;
+    const go = () => {
+      el.classList.remove('lens-out');
+      if (!setWay(editor, to, scope)) return setNote('This part holds something the editor here cannot show that way. It is left as it was.');
+      if (scope === 'all') (el.classList.add('lens-in'), setTimeout(() => el.classList.remove('lens-in'), 300));
+    };
+    // The whole draft written a way is how the next one of its kind starts.
+    if (scope === 'all') (like(role, to), to === 'rich' && setFmt(true));
+    // The markers shrink away before the words are shown without them, and grow in after.
+    if (scope !== 'all' || !blocks.some((b) => b.type === 'source') || matchMedia('(prefers-reduced-motion: reduce)').matches) return go();
+    el.classList.add('lens-out');
+    setTimeout(go, 160);
+  };
+  /** The blocks the caret is in, for the tag beside them: only where the box is opened up, for long writing. */
+  const here = (() => {
+    if (!editor || !tall || ways.length < 2 || !blocks.length) return null;
+    const [a, b] = touched(editor.state);
+    let pos = 0;
+    for (let i = 0; i < a; i++) pos += editor.state.doc.child(i).nodeSize;
+    const dom = editor.view.nodeDOM(pos);
+    if (!(dom instanceof HTMLElement)) return null;
+    const kinds = new Set(blocks.slice(a, b).map(wayOf));
+    return { top: dom.offsetTop, way: kinds.size === 1 ? [...kinds][0] : null, n: b - a };
+  })();
   const problems = grouped(chosen, bad);
   /** The choices made for a place that are at work now, each with its way back. */
   const choices = draft.places.flatMap((p) => {
@@ -407,12 +483,22 @@ function App() {
               ))}
             </div>
           )}
-          {fmt && editor && (tools.length > 0 || ats) && (
+          {fmt && editor && (tools.length > 0 || ats || ways.length > 1) && (
             <div class="tools">
+              {ways.length > 1 && (
+                <>
+                  <span class="ways" role="group" aria-label="How the message is written">
+                    {WAYS.filter(([w]) => ways.includes(w)).map(([w, label, title]) => (
+                      <button class={wayAll === w ? 'way on' : 'way'} data-way={w} title={title} onMouseDown={(e) => e.preventDefault()} onClick={() => change(w, 'all')}>{label}</button>
+                    ))}
+                  </span>
+                  {tools.length > 0 && <i class="sep" />}
+                </>
+              )}
               {tools.map((t, i) => (
                 <>
                   {t.block && !tools[i - 1]?.block && i > 0 && <i class="sep" />}
-                  <button class={t.on?.(editor) ? 'tool on' : 'tool'} title={t.title} onMouseDown={(e) => e.preventDefault()} onClick={() => (t.what === 'link' ? linkTool() : t.run(editor))}>{t.label}</button>
+                  <button class={isOn(t) ? 'tool on' : 'tool'} title={t.title} onMouseDown={(e) => e.preventDefault()} onClick={() => use(t)}>{t.label}</button>
                 </>
               ))}
               {ats && (
@@ -453,14 +539,38 @@ function App() {
             </div>
           )}
           <div class="write">
-            <div class="doc" ref={holder} />
+            <div class="docwrap">
+              <div class="doc" ref={holder} />
+              {/* How the part the caret is in is written, and the way to write that part another way. */}
+              {here && (
+                <span class="parttag has-menu" style={{ top: here.top + 'px' }}>
+                  <button class="tag" title="How this part is written" onMouseDown={(e) => e.preventDefault()} onClick={() => setMenu(menu === 'part' ? null : 'part')}>{here.way ? TAG[here.way] : 'Mixed'} ▾</button>
+                  {menu === 'part' && (
+                    <div class="menu right">
+                      <small>{here.way === 'kept' ? 'Kept exactly as it came. Make it' : here.n > 1 ? `Write these ${here.n} parts as` : 'Write this part as'}</small>
+                      {here.way === 'kept' ? (
+                        <>
+                          <button data-way="html" onMouseDown={(e) => e.preventDefault()} onClick={() => change('html', 'here')}>HTML to edit</button>
+                          <button data-way="rich" onMouseDown={(e) => e.preventDefault()} onClick={() => change('rich', 'here')}>Text, as far as it can be read</button>
+                        </>
+                      ) : (
+                        WAYS.filter(([w]) => ways.includes(w)).map(([w, label]) => (
+                          <button data-way={w} onMouseDown={(e) => e.preventDefault()} onClick={() => change(w, 'here')}>{w === 'rich' ? 'Rich text' : label}<small>{here.way === w ? ' ✓' : ''}</small></button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </span>
+              )}
+            </div>
             <div class="side">
-              {(tools.length > 0 || ats) && <button class={fmt ? 'ico on' : 'ico'} title="Formatting" onClick={() => setFmt(!fmt)}>Aa</button>}
+              {(tools.length > 0 || ats || ways.length > 1) && <button class={fmt ? 'ico on' : 'ico'} title={`Formatting${wayAll && wayAll !== 'rich' ? ` · written as ${TAG[wayAll]}` : ''}`} onClick={() => setFmt(!fmt)}>{wayAll === 'markdown' ? 'M↓' : wayAll === 'html' ? '</>' : 'Aa'}</button>}
               <button class={tall ? 'ico on' : 'ico'} title={tall ? 'Make it small again' : 'Open it up'} onClick={() => setTall(!tall)}>{tall ? '⤡' : '⤢'}</button>
               {/* A draft goes whole: while one place cannot take it, it waits. */}
               <button class="send" disabled={!out.ready} title={stopped.length ? `${names(stopped)}: ${sent[stopped[0]].changes[0].say.toLowerCase()}` : ''} onClick={onSend}>{WORD[role]}{chosen.length > 1 ? ` to ${chosen.length}` : ''}</button>
             </div>
           </div>
+          {note && <div class="notice">{note}</div>}
           {/* Nothing below the box while what arrives is what was typed. */}
           {ask && (
             <div class="ask">

@@ -12,7 +12,7 @@
  */
 import { differs, hiddenLost, wordsLost } from './check.ts';
 import { measure, type Measure } from './count.ts';
-import { standIn, type Mark, type MarkKind, type Node } from './doc.ts';
+import { ordered, standIn, type Mark, type MarkKind, type Node } from './doc.ts';
 import { fit, RANK, type Change, type Level } from './fit.ts';
 import { PROFILES, type Fields, type Markers, type Profile, type Ranges } from './profile.ts';
 import { DELIMITER, read, URL_AT } from './read.ts';
@@ -32,9 +32,6 @@ const ZW = '​';
 const NB = ' ';
 const PUNCT = /[!-\/:-@\[-`{-~\p{P}\p{S}]/u;
 const FLANKS = /^[*_~]/;
-// What hides is outermost: a network takes a hidden link, not a link with hidden words.
-const ORDER = ['spoiler', 'link', 'color', 'bold', 'italic', 'underline', 'strike', 'sub', 'sup', 'code'];
-const ordered = (marks: Mark[] = []) => [...marks].sort((a, b) => ORDER.indexOf(a.type) - ORDER.indexOf(b.type));
 const same = (a: Mark, b: Mark) => a.type === b.type && JSON.stringify(a.attrs ?? {}) === JSON.stringify(b.attrs ?? {});
 
 interface Writer {
