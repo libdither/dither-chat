@@ -8,10 +8,18 @@ export function ago(ts: number | null | undefined, now = Date.now()): string {
   const d = now - ts;
   if (d < MIN) return 'now';
   if (d < HOUR) return `${Math.floor(d / MIN)}m`;
-  if (d < DAY && new Date(ts).getDate() === new Date(now).getDate()) return `${Math.floor(d / HOUR)}h`;
-  if (d < 6 * DAY) return (weekdayFmt ??= new Intl.DateTimeFormat(undefined, { weekday: 'short' })).format(ts);
-  return (dayFmt ??= new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })).format(ts);
+  const at = new Date(ts);
+  if (d < DAY && at.getDate() === new Date(now).getDate()) return `${Math.floor(d / HOUR)}h`;
+  // A day's label depends on its local date alone, so each is formatted once: a list draws hundreds of rows, and a
+  // formatter's call costs more than the rest of this together (docs/perf.md "Times in lists").
+  if (d < 6 * DAY) return (weekdayLabels[at.getDay()] ??= (weekdayFmt ??= new Intl.DateTimeFormat(undefined, { weekday: 'short' })).format(ts));
+  const key = at.getFullYear() * 512 + at.getMonth() * 32 + at.getDate();
+  let s = dayLabels.get(key);
+  if (s === undefined) dayLabels.set(key, (s = (dayFmt ??= new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })).format(ts)));
+  return s;
 }
+const weekdayLabels: string[] = [];
+const dayLabels = new Map<number, string>();
 /** How long, compactly: "now", "20m", "5h", "3d". */
 export function since(ts: number, now = Date.now()): string {
   const d = Math.max(0, now - ts);
