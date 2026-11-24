@@ -147,7 +147,7 @@ typing (none of App or messages, one of the list, 35 layouts), the tabs, the per
 
 Last comes the slow link's pass (`s1x.`), once at 1×, about 21 s more (the job took about 2 min 10 s on 2026-11-24,
 against its 10-minute limit); most of it is the precache, 1.35 MB over 1.6 Mbit/s. Five runs on GitHub's runners
-(dispatched on its branch, 2026-11-24) set what is judged: 27 of its 54 numbers. Judged: requests of each kind before
+(dispatched on its branch, 2026-11-24) set what is judged: 28 of its 55 numbers (with `socket.resyncs`, added by hand at 0). Judged: requests of each kind before
 the list showed, the bootstrap's bytes, how many requests came down beside it, the socket's opens, drops, closes,
 pings and extra catch-ups, and the relaunch's requests, answers and bytes before the list and requests before fresh data. Printed only:
 every time; bytes that are the build's own sizes (scripts, stylesheet, index.html, the whole precache and its file
