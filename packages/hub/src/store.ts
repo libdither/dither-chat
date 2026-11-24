@@ -328,7 +328,7 @@ export class Store {
       this.addColumns('triage', { shadow: 'TEXT', explore: 'TEXT', propensity: 'REAL', was: 'TEXT', alert_mark: 'INTEGER', less_mark: 'INTEGER', marked_at: 'INTEGER' });
       this.addColumns('owed_turn', { dismissed: 'INTEGER NOT NULL DEFAULT 0' });
       this.addColumns('visit', { depth: 'INTEGER', seen_to_ts: 'INTEGER', owed_since: 'INTEGER', owed_shown: 'INTEGER', typed: 'INTEGER NOT NULL DEFAULT 0', draft_left: 'INTEGER', exit: 'TEXT', shadow_rank: 'INTEGER' });
-      this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'" });
+      this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'", main_identity_id: 'TEXT', picture_identity_id: 'TEXT' });
       this.addColumns('attachment', { alt: 'TEXT', extra: 'TEXT' });
       this.addColumns('notice', { caught: 'INTEGER NOT NULL DEFAULT 0', shown_ts: 'INTEGER', held_at: 'INTEGER' });
       this.addColumns('place_pref', { mention_scope: 'TEXT', mention_same: 'INTEGER', pictures: 'TEXT' });
@@ -1164,6 +1164,7 @@ export class Store {
 
   /** Auto persons with a single identity follow that identity's name and avatar. */
   private syncAutoPerson(pid: string) {
+    if (this.followSources(pid)) return;
     const p = this.db.query('SELECT manual, is_self FROM person WHERE id = ?').get(pid) as Row | null;
     if (!p || p.manual || p.is_self) return;
     const ids = this.db.query('SELECT nickname, display_name, handle, native_id, avatar_url FROM identity WHERE person_id = ?').all(pid) as Row[];
@@ -1181,6 +1182,7 @@ export class Store {
   private derivePersonName(pid: string) {
     const p = this.db.query('SELECT is_self FROM person WHERE id = ?').get(pid) as Row | null;
     if (!p || p.is_self) return;
+    if (this.followSources(pid)) return;
     const ids = this.db
       .query(`SELECT nickname, display_name, handle, native_id, avatar_url FROM identity WHERE person_id = ? ORDER BY COALESCE(nickname, '') = '', updated_at DESC`)
       .all(pid) as Row[];
@@ -1188,6 +1190,46 @@ export class Store {
     if (ids.length === 1) this.db.query(`UPDATE person SET name = ?, avatar_url = COALESCE(?, avatar_url), manual = 0, name_source = 'network' WHERE id = ?`).run(shownName(ids[0]), ids[0].avatar_url, pid);
     else this.db.query(`UPDATE person SET name = ?, manual = 1, name_source = 'merge' WHERE id = ?`).run(shownName(ids[0]), pid);
     this.dirty.persons.add(pid);
+  }
+
+  /**
+   * A person whose main account or picture account you chose (docs/profile.md, "Which account speaks for them"): the
+   * name is the main account's as you see it, the picture the picture account's, else the main's. False when no main
+   * account is chosen (or the one chosen is no longer theirs), for the caller to name them the usual way.
+   */
+  private followSources(pid: string): boolean {
+    const p = this.db.query('SELECT name, avatar_url, is_self, main_identity_id, picture_identity_id FROM person WHERE id = ?').get(pid) as Row | null;
+    if (!p || p.is_self || (!p.main_identity_id && !p.picture_identity_id)) return false;
+    const own = (id: string | null) => (id ? (this.db.query('SELECT nickname, display_name, handle, native_id, avatar_url FROM identity WHERE id = ? AND person_id = ?').get(id, pid) as Row | null) : null);
+    const main = own(p.main_identity_id);
+    const pic = own(p.picture_identity_id) ?? main;
+    if (!main && !pic) return false;
+    const name = main ? shownName(main) : p.name;
+    const avatar = pic?.avatar_url ?? p.avatar_url;
+    if (name !== p.name || avatar !== p.avatar_url) {
+      this.db.query(`UPDATE person SET name = ?, avatar_url = ?, manual = 1, name_source = 'merge' WHERE id = ?`).run(name, avatar, pid);
+      this.dirty.persons.add(pid);
+    }
+    // A picture account chosen with no main one leaves the name to the usual way.
+    return !!main;
+  }
+
+  /**
+   * Which of their accounts speaks for them (docs/profile.md): `main`, whose name, picture and bio come first;
+   * `picture`, whose picture shows instead of the main one's. An identity id of theirs sets one, null clears it, and
+   * cleared they keep the name and picture they had. False for no such person, your own, or an account not theirs.
+   */
+  setPersonSources(pid: string, patch: { main?: string | null; picture?: string | null }): boolean {
+    const p = this.db.query('SELECT is_self FROM person WHERE id = ?').get(pid) as Row | null;
+    if (!p || p.is_self) return false;
+    for (const id of [patch.main, patch.picture]) if (id && !this.db.query('SELECT 1 FROM identity WHERE id = ? AND person_id = ?').get(id, pid)) return false;
+    if (patch.main !== undefined) this.db.query('UPDATE person SET main_identity_id = ? WHERE id = ?').run(patch.main, pid);
+    if (patch.picture !== undefined) this.db.query('UPDATE person SET picture_identity_id = ? WHERE id = ?').run(patch.picture, pid);
+    this.dirty.persons.add(pid);
+    // Cleared, they keep the name and picture they had: the name stays one of their accounts', as a merge's does.
+    this.followSources(pid);
+    this.personsChanged?.([pid]);
+    return true;
   }
 
   /**
@@ -1207,6 +1249,7 @@ export class Store {
     // One account names them. Of several, the name follows the account it was taken from, and only that one: a
     // nickname that tells one alt apart does not rename them.
     if (n === 1) this.derivePersonName(r.person_id);
+    else if (this.followSources(r.person_id)) return true;
     else if (p.name === was) {
       this.db.query(`UPDATE person SET name = ? WHERE id = ?`).run(shownName({ ...r, nickname: nick }), r.person_id);
       this.dirty.persons.add(r.person_id);
@@ -1784,6 +1827,8 @@ export class Store {
     if (!r?.person_id) return;
     const old = r.person_id as string;
     this.db.query('UPDATE identity SET person_id = NULL WHERE id = ?').run(identityId);
+    // The account that went no longer speaks for the person it left.
+    this.db.query('UPDATE person SET main_identity_id = CASE WHEN main_identity_id = ?1 THEN NULL ELSE main_identity_id END, picture_identity_id = CASE WHEN picture_identity_id = ?1 THEN NULL ELSE picture_identity_id END WHERE id = ?2').run(identityId, old);
     const left = (this.db.query('SELECT COUNT(*) AS n FROM identity WHERE person_id = ?').get(old) as Row).n as number;
     // Its deterministic person may be the merged one, kept going by the others: that would rejoin them.
     const natural = 'per_' + identityId.slice(4);
@@ -2596,7 +2641,7 @@ export class Store {
   personView(r: Row, identityIds?: string[], vias?: Map<string, { via: string; url: string | null }[]>): P.PersonView {
     const ids = identityIds ?? (this.db.query('SELECT id FROM identity WHERE person_id = ?').all(r.id) as Row[]).map((x) => x.id);
     const avatar = !r.avatar_url ? null : vias ? this.media(r.avatar_url, pickVia(vias.get(r.id), r.avatar_url)) : this.personPicture(r.id, r.avatar_url);
-    return { id: r.id, name: r.name, avatar, starred: false, isSelf: !!r.is_self, identityIds: ids, nameSource: (r.name_source ?? 'network') as P.NameSource };
+    return { id: r.id, name: r.name, avatar, starred: false, isSelf: !!r.is_self, identityIds: ids, nameSource: (r.name_source ?? 'network') as P.NameSource, ...(r.main_identity_id ? { mainIdentityId: r.main_identity_id } : {}), ...(r.picture_identity_id ? { pictureIdentityId: r.picture_identity_id } : {}) };
   }
 
   /**

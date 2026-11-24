@@ -67,7 +67,9 @@ CREATE TABLE IF NOT EXISTS person (
   is_self    INTEGER NOT NULL DEFAULT 0,
   manual     INTEGER NOT NULL DEFAULT 0,      -- the user merged or renamed it; ingest won't touch the name
   created_at INTEGER NOT NULL,
-  name_source TEXT NOT NULL DEFAULT 'network' -- network | merge (P.NameSource); 'user' until 2026-11-11, when nicknames moved to identity
+  name_source TEXT NOT NULL DEFAULT 'network', -- network | merge (P.NameSource); 'user' until 2026-11-11, when nicknames moved to identity
+  main_identity_id    TEXT,                 -- the account of theirs you chose to speak for them: its name, picture, bio first (docs/profile.md)
+  picture_identity_id TEXT                  -- the account whose picture they show, when not the main one's
 );
 
 CREATE TABLE IF NOT EXISTS identity (

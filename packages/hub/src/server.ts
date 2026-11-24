@@ -2129,8 +2129,13 @@ export class HubServer {
       return ok();
     }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)$/)) && method === 'PATCH') {
-      const b = await body<{ name?: unknown; note?: unknown }>();
+      const b = await body<{ name?: unknown; note?: unknown; main?: unknown; picture?: unknown }>();
       if (b.name !== undefined) return bad(NICKNAME_MOVED);
+      // Which of their accounts speaks for them (docs/profile.md): an identity id of theirs, or null to clear it.
+      const src = (v: unknown) => v === undefined || v === null || typeof v === 'string';
+      if (!src(b.main) || !src(b.picture)) return bad('Say main and picture: an identity id of theirs, or null');
+      if ((b.main !== undefined || b.picture !== undefined) && !s.setPersonSources(m[1], { main: b.main as string | null | undefined, picture: b.picture as string | null | undefined }))
+        return bad('not one of their accounts', 404);
       s.updatePerson(m[1], { ...(typeof b.note === 'string' ? { note: b.note } : {}) });
       // Kept on their networks too, where an account keeps notes (capability 'contactNotes').
       if (typeof b.note === 'string') this.people.pushPersonNote(m[1], b.note);

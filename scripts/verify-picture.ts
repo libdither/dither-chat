@@ -125,10 +125,10 @@ try {
   await clickText('.pic-foot .btn', 'Save');
   await toastSays('Picture changed');
 
-  // An account tile's menu opens the editor ticked to that account.
-  await p.until(`!!document.querySelector('.pf-acct-grid [aria-label^="More for"]')`, 5000);
-  await click('.pf-acct-grid [aria-label^="More for"]');
-  await clickText('[role="menuitem"]', 'Change Picture');
+  // An account row's Edit opens the editor ticked to that account.
+  await p.until(`!!document.querySelector('.pf-acct-list .pf-acct-edit-btn')`, 5000);
+  await click('.pf-acct-list .pf-acct-edit-btn');
+  await clickText('.pf-acct-edit .btn', 'Change Picture');
   await p.until(`!!document.querySelector('.pic-editor')`, 3000);
   check(await p.eval(`!document.querySelector('.pic-editor .pic-img') && !!document.querySelector('.pic-empty')`), 'from an account tile’s menu: the editor asks for a picture');
   const ticked = await p.eval<string[]>(`[...document.querySelectorAll('.pic-dest')].filter((d) => d.querySelector('input').checked).map((d) => d.textContent.trim())`);

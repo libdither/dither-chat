@@ -318,3 +318,48 @@ test('nicknames move onto the accounts, once: a named person’s name goes to ea
     rmSync(d2, { recursive: true, force: true });
   }
 });
+
+test('a main account speaks for them: its name and picture, following it, until it is cleared or split off', () => {
+  const d2 = mkdtempSync(join(tmpdir(), 'dither-main-'));
+  try {
+    const s = new Store(join(d2, 'hub.sqlite'), mediaSigner('s'));
+    const a = s.createAccount({ network: 'discord', label: 'x', color: '#000', adapter: 'discord' });
+    const acc = () => s.account(a.id)!;
+    s.ingest(acc(), { t: 'identity', identity: { nativeId: 'r1', handle: 'rowan.k', displayName: 'Rowan', avatarUrl: 'https://pics.example/r1.png' } });
+    s.ingest(acc(), { t: 'identity', identity: { nativeId: 'r2', handle: 'rkestrel', displayName: 'rowan kestrel', avatarUrl: 'https://pics.example/r2.png' } });
+    const [r1, r2] = [hubId('idn', 'discord', 'r1'), hubId('idn', 'discord', 'r2')];
+    const pid = s.ensurePerson(r1);
+    s.mergePersons(pid, s.ensurePerson(r2));
+    const row = () => s.one<{ name: string; avatar_url: string }>('SELECT name, avatar_url FROM person WHERE id = ?', pid)!;
+    expect(row()).toEqual({ name: 'Rowan', avatar_url: 'https://pics.example/r1.png' });
+
+    expect(s.setPersonSources(pid, { main: r2 })).toBe(true);
+    expect(row()).toEqual({ name: 'rowan kestrel', avatar_url: 'https://pics.example/r2.png' });
+    // It follows the main account: a rename, a new picture, your nickname for it.
+    s.ingest(acc(), { t: 'identity', identity: { nativeId: 'r2', handle: 'rkestrel', displayName: 'Rowan K', avatarUrl: 'https://pics.example/r2b.png' } });
+    expect(row()).toEqual({ name: 'Rowan K', avatar_url: 'https://pics.example/r2b.png' });
+    s.setIdentityNickname(r2, 'Ro');
+    expect(row().name).toBe('Ro');
+    // The picture can come from another account than the name.
+    s.setPersonSources(pid, { picture: r1 });
+    expect(row()).toEqual({ name: 'Ro', avatar_url: 'https://pics.example/r1.png' });
+    const view = s.personView(s.one('SELECT * FROM person WHERE id = ?', pid)!);
+    expect([view.mainIdentityId, view.pictureIdentityId]).toEqual([r2, r1]);
+
+    // Cleared, they keep the name and picture they had.
+    s.setPersonSources(pid, { main: null, picture: null });
+    expect(row()).toEqual({ name: 'Ro', avatar_url: 'https://pics.example/r1.png' });
+    s.setPersonSources(pid, { main: r2, picture: r1 });
+    // Not theirs, or your own: refused.
+    s.ingest(acc(), { t: 'identity', identity: { nativeId: 'z9', handle: 'z9', displayName: 'Zed' } });
+    expect(s.setPersonSources(pid, { main: hubId('idn', 'discord', 'z9') })).toBe(false);
+
+    // Split off, the main account no longer speaks for them.
+    s.splitIdentity(r2);
+    expect(s.one('SELECT main_identity_id, picture_identity_id FROM person WHERE id = ?', pid)).toEqual({ main_identity_id: null, picture_identity_id: r1 });
+    expect(row().name).toBe('Rowan');
+    s.db.close();
+  } finally {
+    rmSync(d2, { recursive: true, force: true });
+  }
+});

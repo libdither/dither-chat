@@ -96,6 +96,10 @@ export interface PersonView {
   identityIds: string[];
   /** Where `name` came from (NameSource). */
   nameSource: NameSource;
+  /** The account of theirs you chose to speak for them: its name and picture are theirs, its bio first (docs/profile.md). */
+  mainIdentityId?: string;
+  /** The account whose picture they show, when you chose one other than the main account's. */
+  pictureIdentityId?: string;
 }
 
 /**
