@@ -88,9 +88,16 @@ Those passes fetch nothing ahead (`?ahead=0`), so their counts stay what they we
 | metric | what |
 |---|---|
 | `ahead.pages`, `ahead.pictures`, `ahead.requests`, `ahead.bytes` | a device that never saw the hub loads the inbox and waits until fetching ahead is done: pages and pictures it fetched, its requests and their bytes on the wire |
-| `ahead.open`, `ahead.served` | then the first five conversations of the inbox open one after another (median time to `dither:timeline`), and how many came from what was fetched ahead |
+| `ahead.open`, `ahead.served` | then the first five chats of the inbox (below) open one after another (median time to `dither:timeline`), and how many came from what was fetched ahead |
 | `ahead.relaunch`, `ahead.relaunchServed` | the app opened again, and the next three rows open at once, before this start fetched anything: time, and how many came from the device |
 | `noahead.open`, `noahead.relaunch` | the same in a browser that fetches nothing ahead (not in CI, which judges no times) |
+
+The eight rows are the first eight chats among the 12 rows fetching ahead takes (`AHEAD`): conversations and people's
+chats, in the order on screen; not a channel's row, which can open on a forum's cards, nor mail. Until 2026-11-24 the
+pass took the first eight conversations wherever they were, so once people's chats and channels filled the top of the
+list the eighth was the 13th row or lower, which nothing fetches ahead: `a4x.ahead.relaunchServed` read 2 in three of
+the first nightly's five runs at 4× ("the next three rows were not all kept"), and the same at 1× locally once earlier
+runs had moved the order. The app was right; the pass asked it for a row it never meant to have.
 
 `ahead.served` and `ahead.relaunchServed` have floors (`FLOORS`): every open there should come from the device.
 
