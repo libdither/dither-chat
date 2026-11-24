@@ -1,6 +1,6 @@
 import { computed, effect, signal, type ReadonlySignal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { ATTACHMENT_LIMITS, fileBatches, splitsFiles, SYNC_VERSION } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, fileBatches, LIVE_PROTOCOL, LIVE_RESUME, splitsFiles, SYNC_VERSION } from '@dither-chat/protocol';
 import { leaveLayerEntry, takeOverLayers } from './phone.ts';
 import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snapshot.ts';
 import { arrivedInto, carryArrived, doneArrived, dropArrived, heldEnds, isArrivedCopy, stripArrived } from './arrived.ts';
@@ -34,7 +34,7 @@ export async function loadMailTriage() {
   const page = await api<P.MailTriagePage>('/api/mail/triage').catch(() => null);
   if (!page) return;
   mailTriage.value = page.items;
-  changed('list');
+  changed('inbox');
 }
 
 /** Thread views carry their newest decision: the week's mail decisions follow them (new mail, a read, a mark elsewhere). */
@@ -51,7 +51,7 @@ function mergeMailTriage(threads: P.MailThreadView[]) {
   }
   if (!moved) return;
   mailTriage.value = [...by.values()].sort((a, b) => b.ts - a.ts);
-  changed('list');
+  changed('inbox');
 }
 
 interface PendingSend {
@@ -275,7 +275,7 @@ export { api, apiHooks } from './api.ts';
 
 // ------------------------------------------------------------------ applying hub data
 
-const putIdentity = (i: P.IdentityView) => void (put(db, i) && changed('shown'));
+const putIdentity = (i: P.IdentityView) => void (put(db, i) && changed('identity'));
 /** People a page brought that the client may not know yet (For you's items). */
 export const adoptIdentities = (list: P.IdentityView[]) => list.forEach(putIdentity);
 
@@ -326,9 +326,12 @@ export function applyEvents(events: P.ClientEvent[]) {
   let shown = false;
   let mail = false;
   let opened = false;
+  let devices = false;
   for (const ev of events) {
     // Mail has its own signal: chat's lists do not draw again for it.
     if (ev.t.startsWith('mail.')) mail = true;
+    // The hub's list of devices, sent at every start: Settings shows it, and nothing a place, a count or a name reads.
+    else if (ev.t === 'devices') devices = true;
     else if (!NOT_DB.has(ev.t)) {
       list = true;
       // What only moves a conversation's last message and counts, or the inbox's order, leaves names alone. An
@@ -463,6 +466,7 @@ export function applyEvents(events: P.ClientEvent[]) {
     if (opened) changed('open');
     if (shown || identityVersion() !== ids) changed('shown');
     else if (list) changed('list');
+    else if (devices) changed('devices');
   }
   if (mail) mailChanged();
 }
@@ -470,7 +474,7 @@ export function applyEvents(events: P.ClientEvent[]) {
 function mergeInbox(ms: P.MessageView[]) {
   if (!ms.length) return;
   inbox.value = merged(inbox.value, ms);
-  changed('list');
+  changed('inbox');
 }
 
 export function isSelfIdentity(id: string | null | undefined): boolean {
@@ -941,8 +945,8 @@ async function loadInbox() {
   const [page] = await Promise.all([api<P.InboxPage>('/api/inbox'), loadMailTriage()]);
   page.identities.forEach(putIdentity);
   inbox.value = page.items.map((i) => i.message);
-  // The badge is counted from the inbox, behind a memo keyed on the data version.
-  changed('list');
+  // The inbox button's count is counted from the inbox (model.ts `board`); the rail's places and the badge are not.
+  changed('inbox');
 }
 
 // ------------------------------------------------------------------ actions
@@ -1469,6 +1473,18 @@ function bootstrap() {
   });
 }
 
+/**
+ * The socket's catch-up (`Resume`), or null: not one (an older hub), or not come within `every` of the socket opening,
+ * the wait after which a catch-up by POST is asked again on another connection (api.ts hedged). A socket that opens
+ * and then says nothing is caught up by POST, as before.
+ */
+function resumeAnswer(sr: Resume, every: number): Promise<P.SyncResponse | null> {
+  return new Promise((done) => {
+    const t = setTimeout(() => done(null), Math.max(0, openedAt + every - Date.now()));
+    void sr.answer.then((r) => (clearTimeout(t), done(r)));
+  });
+}
+
 /** Catch up from this copy's position; a full bootstrap where that cannot be done. */
 function resync() {
   return serial(async () => {
@@ -1484,11 +1500,32 @@ function resync() {
     // kept under another epoch loads afresh; those loading now catch up on their own.
     const mine = [...timelines.values()].filter((t) => !t.loading && (t.fetchedAt || t.from));
     const tls = mine.filter((t) => !t.from || (t.from.v === pos.v && t.from.epoch === pos.epoch));
-    let r: P.SyncResponse;
-    const asked = Date.now();
+    let r: P.SyncResponse | null = null;
+    let asked = Date.now();
+    let onSocket = false;
+    const every = Math.max(HEDGE_MIN, HEDGE_ROUNDS * openMs);
+    const ask = (body: P.SyncRequest) => hedged((o) => api<P.SyncResponse>('/api/sync', { body, quiet: SYNC_QUIET, ...o }), { every, tries: HEDGE_TRIES, signal: link.signal });
+    const tlAsk = tls.map((t) => timelineRequest(t, t.from?.seq ?? pos.seq));
     try {
-      const body = { v: pos.v, epoch: pos.epoch, since: pos.seq, timelines: tls.map((t) => timelineRequest(t, t.from?.seq ?? pos.seq)) } satisfies P.SyncRequest;
-      r = await hedged((o) => api<P.SyncResponse>('/api/sync', { body, quiet: SYNC_QUIET, ...o }), { every: Math.max(HEDGE_MIN, HEDGE_ROUNDS * openMs), tries: HEDGE_TRIES, signal: link.signal });
+      // The socket's own catch-up, asked from this copy's position or one before it, came as its first frame (docs/sync.md
+      // "On the socket"): no request, no round trip. Timelines are not in it; they are asked for beside it.
+      const sr = resume?.gen === gen && resume.from.v === pos.v && resume.from.epoch === pos.epoch && resume.from.seq <= pos.seq ? resume : null;
+      let side: Promise<P.SyncResponse> | null = null;
+      if (sr) {
+        if (tlAsk.length) (side = ask({ v: pos.v, epoch: pos.epoch, timelines: tlAsk })).catch(() => {});
+        r = await resumeAnswer(sr, every);
+        // An answer older than this copy, or a refusal of a position older than its own: asked by POST, from its own.
+        if (r && (r.full ? sr.from.seq < pos.seq : r.sync.epoch !== pos.epoch || r.sync.seq < pos.seq)) r = null;
+        if (r) (asked = sr.startedAt), (onSocket = true);
+        else side = null;
+      }
+      r ??= await ask({ v: pos.v, epoch: pos.epoch, since: pos.seq, timelines: tlAsk });
+      if (side && !r.full) {
+        const t = await side;
+        // Refused (another epoch since): those timelines load afresh below.
+        r = t.full ? { ...r, timelines: [] } : { ...r, timelines: t.timelines, identities: [...r.identities, ...t.identities], quoted: [...r.quoted, ...t.quoted] };
+        if (t.full) tls.length = 0;
+      }
     } catch (e) {
       release();
       // No answer (or given up): the next socket tries again. An answer that is an error (a hub without /api/sync)
@@ -1507,15 +1544,22 @@ function resync() {
     applyTimelines(r);
     for (const t of tls) t.from = undefined;
     for (const t of mine) if (!tls.includes(t)) void reload(t.key);
+    const was = { self: db.selfPersonId, provider: db.categoryProvider, manager: JSON.stringify(db.accountsManager ?? null), usage: JSON.stringify(db.reactionUsage), ids: identityVersion() };
     applySyncTo(db, { ...r, events: [] });
-    changed('meta');
+    // Only what the sync's own fields changed (its identities through putIdentity, its events below): most change
+    // nothing, and a 'meta' for every sync walked every server and worked out every level again (docs/perf.md).
+    if (db.selfPersonId !== was.self || db.categoryProvider !== was.provider) changed('meta');
+    if (JSON.stringify(db.reactionUsage) !== was.usage) changed('shown');
+    if (JSON.stringify(db.accountsManager ?? null) !== was.manager) changed('list');
+    if (identityVersion() !== was.ids) changed('identity');
     applyEvents(r.events);
     if (r.inbox) mergeInbox(r.inbox);
     synced = ws?.readyState === WebSocket.OPEN && gen === socketGen;
     sawHub(r.boot);
     freshFromHub();
     doneArrived(asked);
-    performance.mark('dither:fresh');
+    // Which way the catch-up came, for verify-sync.ts.
+    performance.mark('dither:fresh', { detail: { socket: onSocket } });
     for (const h of freshHooks) h();
     release();
     persistSoon();
@@ -1568,7 +1612,35 @@ export function sayLive(msg: string): boolean {
   }
 }
 
-const liveUrl = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live`;
+const liveUrl = (from?: P.SyncPosition | null) =>
+  `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live${from ? `?v=${from.v}&epoch=${encodeURIComponent(from.epoch)}&since=${from.seq}` : ''}`;
+
+
+/**
+ * What a socket asked from a position brings as its first frame: the catch-up from `from`, which `answer` settles
+ * with; null when it does not come (an older hub, the socket gone). `startedAt`: the socket was asked for then, so
+ * the answer covers what was kept before it (arrived.ts).
+ */
+interface Resume {
+  sock: WebSocket;
+  gen: number;
+  from: P.SyncPosition;
+  startedAt: number;
+  answer: Promise<P.SyncResponse | null>;
+  settle: (r: P.SyncResponse | null) => void;
+  /** Its first frame has come. */
+  seen: boolean;
+}
+let resume: Resume | null = null;
+
+/** The catch-up frame: text, or gzip'd when long. */
+async function readResume(data: unknown): Promise<P.SyncResponse | null> {
+  const text =
+    typeof data === 'string'
+      ? data
+      : await new Response((data instanceof Blob ? data : new Blob([data as ArrayBuffer])).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  return (JSON.parse(text) as P.LiveResume).resume ?? null;
+}
 
 /**
  * What index.html started before this script came (its first inline script): the live socket, the frames it got
@@ -1576,6 +1648,8 @@ const liveUrl = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${loca
  */
 interface Early {
   ws: WebSocket | null;
+  /** The position it asked to be caught up from, kept by snapshot.ts where index.html can read it. */
+  from?: P.SyncPosition | null;
   at: number;
   openedAt: number;
   frames: unknown[];
@@ -1612,13 +1686,16 @@ export function connect() {
   if (!connected.value) setConnected(false);
   if (e?.ws && e.ws.readyState <= WebSocket.OPEN) {
     socketStartedAt = e.at;
-    use(e.ws, e.at, e);
+    use(e.ws, e.at, e, e.from ?? null);
     // No sync is asked for before the snapshot is read, so the socket's own catch-up finds this here.
     earlyOf = { e, gen: socketGen };
   } else {
     if (e) (e.taken = true), e.abort?.();
     socketStartedAt = Date.now();
-    use(new WebSocket(liveUrl()), socketStartedAt);
+    // Asked from this copy's position, once there is one: a hub that can answers LIVE_RESUME and sends the catch-up as
+    // its first frame (docs/sync.md "On the socket"). Only where a long one can be read (gzip'd: DecompressionStream).
+    const from = loaded.value && db.sync?.v === SYNC_VERSION && typeof DecompressionStream === 'function' ? db.sync : null;
+    use(from ? new WebSocket(liveUrl(from), [LIVE_PROTOCOL, LIVE_RESUME]) : new WebSocket(liveUrl()), socketStartedAt, undefined, from);
   }
   // The socket gets its own connection; this one opens the HTTP connection the sync will use, at the same time.
   fetch('/api/health', { cache: 'no-store' }).catch(() => {});
@@ -1628,16 +1705,25 @@ export function connect() {
  * `sock` is the live socket from now: a new one, a spare that won its race (probe), already open, or the one index.html
  * opened (`e`), with the frames that came before this script did.
  */
-function use(sock: WebSocket, startedAt: number, e?: Early) {
+function use(sock: WebSocket, startedAt: number, e?: Early, from: P.SyncPosition | null = null) {
   ws = sock;
   synced = false;
   socketGen++;
   link.abort();
   link = new AbortController();
+  resume?.settle(null);
+  resume = null;
+  if (from) {
+    let settle!: (r: P.SyncResponse | null) => void;
+    const answer = new Promise<P.SyncResponse | null>((r) => (settle = r));
+    resume = { sock, gen: socketGen, from, startedAt, answer, settle, seen: false };
+  }
   // A bootstrap of a socket no longer in use: its frames will not come to this page.
   if (earlyOf) takeEarly(-1);
   const onopen = () => {
     if (ws !== sock) return;
+    // An older hub: no catch-up will come on it.
+    if (resume?.sock === sock && sock.protocol !== LIVE_RESUME) resume.settle(null);
     setConnected(true);
     backoff = 500;
     openedAt = lastPong = Date.now();
@@ -1651,6 +1737,12 @@ function use(sock: WebSocket, startedAt: number, e?: Early) {
   };
   sock.onmessage = (e) => {
     if (ws !== sock) return;
+    // The catch-up it asked for, before any live frame (docs/sync.md "On the socket"); resync takes it.
+    const r = resume?.sock === sock && !resume.seen && sock.protocol === LIVE_RESUME ? resume : null;
+    if (r && (typeof e.data !== 'string' || e.data.startsWith('{"resume"'))) {
+      r.seen = true;
+      return void readResume(e.data).then(r.settle, () => r.settle(null));
+    }
     if (e.data === 'pong') {
       lastPong = Date.now();
       clearTimeout(pongTimer);
@@ -1696,6 +1788,7 @@ function dropped(since = Date.now()) {
   ws = null;
   synced = false;
   link.abort();
+  resume?.settle(null);
   endRace();
   setConnected(false, since);
   clearTimeout(retry);

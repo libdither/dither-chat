@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import type * as P from '@dither-chat/protocol';
 import type { DownloadAs } from '@dither-chat/protocol';
 import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, isEmailRoute, parseCursor } from './chats.ts';
-import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, downloadsAs, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, RUNGS, sendBlocker, UPLOAD_CHUNK, WATCH_EVERY } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, LIVE_RESUME, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, downloadsAs, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, RUNGS, sendBlocker, UPLOAD_CHUNK, WATCH_EVERY } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { ACCOUNT_COLORS, loudViewOf, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
@@ -36,7 +36,7 @@ import { ImportSources } from './imports/sources.ts';
 import { Calls, type CallSocketData, type TurnConfig, type VoiceSocketData } from './calls.ts';
 import { type CallRoomSocketData, demoCallRoom } from './democalls.ts';
 import { clampDays, parseZone } from './activitychart.ts';
-import { compress } from './compress.ts';
+import { compress, PackedFiles, pickEncoding } from './compress.ts';
 import { forwardMessage } from './forward.ts';
 import { firstLink, unfurl } from './unfurl.ts';
 import { UsageStore } from './usage.ts';
@@ -97,7 +97,21 @@ import { Auth, bearerOf, clientIp, COOKIE, cookieOf, fileTicket, fromOwnPage, MI
 
 
 /** A page's socket, and what it says it is watching (`P.ClientWatching`), with when it said so. */
-type ClientData = { kind: 'client'; watching?: { label: string; conversationIds: string[]; at: number } };
+/** `resume`: the position it asked to be caught up from, as its first frame (docs/sync.md "On the socket"). */
+type ClientData = { kind: 'client'; watching?: { label: string; conversationIds: string[]; at: number }; resume?: P.SyncPosition };
+/** A catch-up on the socket longer than this goes gzip'd, as the same answer by POST would go compressed. */
+const RESUME_GZIP_OVER = 2048;
+
+/** The position a live socket asks to be caught up from, when it offers LIVE_RESUME (docs/sync.md "On the socket"). */
+function liveResume(url: URL, protocols: string | null): P.SyncPosition | undefined {
+  if (!protocols?.split(',').some((p) => p.trim() === LIVE_RESUME)) return undefined;
+  const q = url.searchParams;
+  const v = Number(q.get('v'));
+  const seq = Number(q.get('since'));
+  const epoch = q.get('epoch');
+  if (!epoch || !Number.isSafeInteger(v) || !Number.isSafeInteger(seq) || seq < 0) return undefined;
+  return { v, epoch, seq };
+}
 /** What a send carries (POST /api/conversations/:id/send, and a chat's /messages). */
 type SendBody = {
   body?: string;
@@ -569,8 +583,11 @@ export class HubServer {
       maxPayloadLength: 32 * 1024 * 1024,
         open(ws) {
           const d = ws.data;
-          if (d.kind === 'client') self.clients.add(ws as ServerWebSocket<ClientData>);
-          else if (d.kind === 'adapter') self.sup.attach(ws as ServerWebSocket<AdapterSocketData>);
+          if (d.kind === 'client') {
+            // Its catch-up first, then it joins: every frame it gets after is newer than the answer.
+            if (d.resume) self.resumeOn(ws as ServerWebSocket<ClientData>, d.resume);
+            self.clients.add(ws as ServerWebSocket<ClientData>);
+          } else if (d.kind === 'adapter') self.sup.attach(ws as ServerWebSocket<AdapterSocketData>);
           else if (d.kind === 'call') return;
           else if (d.kind === 'voice') self.calls.voiceOpen(ws as ServerWebSocket<VoiceSocketData>);
           else if (d.kind === 'callroom') demoCallRoom.attach(ws as ServerWebSocket<CallRoomSocketData>);
@@ -827,6 +844,33 @@ export class HubServer {
     this.broadcast([{ t: 'resync' }]);
   }
 
+  private syncContext() {
+    return { store: this.store, attention: this.opts.attention, usage: this.usage, devices: this.opts.devices, mail: this.opts.mail, boot: this.boot };
+  }
+
+  /**
+   * A socket's catch-up from `pos`, as its first frame, before it joins the clients (docs/sync.md "On the socket"): what
+   * POST /api/sync would answer without timelines. Flushed first, so what was waiting to go out is in the answer, and
+   * all of it in this one task: no frame can fall between the answer and the socket's first live one.
+   */
+  resumeOn(ws: ServerWebSocket<ClientData>, pos: P.SyncPosition) {
+    const s = startSpan('live resume');
+    let answer: P.SyncResponse | null = null;
+    try {
+      this.flush();
+      answer = syncResponse(this.syncContext(), { v: pos.v, epoch: pos.epoch, since: pos.seq });
+    } catch (e) {
+      // The client asks by POST instead.
+      console.error('live resume failed', e);
+      s.fail(e);
+    }
+    const text = JSON.stringify({ resume: answer } satisfies P.LiveResume);
+    if (text.length > RESUME_GZIP_OVER) ws.send(Bun.gzipSync(Buffer.from(text)));
+    else ws.send(text);
+    s.set({ bytes: text.length });
+    s.end();
+  }
+
   /** To every client, and into the journal: a frame that changed something ends with its position (docs/sync.md). */
   broadcast(events: P.ClientEvent[]) {
     const frame = this.record(events);
@@ -966,7 +1010,7 @@ export class HubServer {
       if (dave) return this.daveFile(dave[1]!, dave[2]!);
       if (!ticketed) {
         if (GATED.test(path)) return this.signIn();
-        return this.static(path);
+        return this.static(path, req);
       }
     }
     // Cross-site: a browser's write or socket must come from this page (its cookie is SameSite=Lax, and this is the
@@ -1077,7 +1121,10 @@ export class HubServer {
     }
 
     if (path === '/api/live') {
-      if (server.upgrade(req, { data: { kind: 'client' } satisfies ClientData })) return undefined;
+      // Asked from a position: the catch-up comes as its first frame, and LIVE_RESUME back says it will.
+      const resume = liveResume(url, req.headers.get('sec-websocket-protocol'));
+      const data: ClientData = resume ? { kind: 'client', resume } : { kind: 'client' };
+      if (server.upgrade(req, { data, ...(resume ? { headers: { 'Sec-WebSocket-Protocol': LIVE_RESUME } } : {}) })) return undefined;
       return new Response('upgrade failed', { status: 400 });
     }
     if (path === '/api/call') {
@@ -1125,7 +1172,7 @@ export class HubServer {
     if ((m = path.match(/^\/emoji\/discord\/(\d+)(\.animated)?$/))) return this.fetchMedia(discordEmojiUrl(m[1], !!m[2]), null);
     if (path === '/api/errors' && req.method === 'POST') return this.clientError(req, clientIp(req, ip));
     if (path.startsWith('/api/')) return this.api(req, url, path);
-    return this.static(path);
+    return this.static(path, req);
   }
 
   /** At most 60 of the page's error reports a minute from one address. */
@@ -1194,7 +1241,7 @@ export class HubServer {
     if (path === '/api/sync' && method === 'POST') {
       const b = await body<P.SyncRequest>();
       this.flush();
-      return ok(syncResponse({ store: s, attention: this.opts.attention, usage: this.usage, devices: this.opts.devices, mail: this.opts.mail, boot: this.boot }, b));
+      return ok(syncResponse(this.syncContext(), b));
     }
     // Calls ringing you and voice channels (callstate.ts, docs/calls.md "Ringing").
     if (path.startsWith('/api/calls/') || path === '/api/voice') {
@@ -3219,23 +3266,34 @@ export class HubServer {
 
   // ---------------------------------------------------------------- static PWA
 
-  private static(path: string): Response {
+  private static(path: string, req: Request): Response {
     const root = resolve(this.opts.webDist);
     const candidate = resolve(join(root, normalize(decodeURIComponent(path))));
     if (candidate.startsWith(root) && existsSync(candidate) && statSync(candidate).isFile()) {
       const immutable = path.startsWith('/assets/');
-      return new Response(Bun.file(candidate), {
-        headers: {
-          'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
-          ...(path.endsWith('.webmanifest') ? { 'content-type': 'application/manifest+json' } : {}),
-        },
+      return this.webFile(req, candidate, {
+        'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
+        ...(path.endsWith('.webmanifest') ? { 'content-type': 'application/manifest+json' } : {}),
       });
     }
     // A hashed asset from another build must fail as itself: as HTML it would poison a cache.
     if (path.startsWith('/assets/')) return new Response('not found', { status: 404 });
     const index = join(root, 'index.html');
-    if (existsSync(index)) return new Response(Bun.file(index), { headers: { 'cache-control': 'no-cache', 'content-type': 'text/html; charset=utf-8' } });
+    if (existsSync(index)) return this.webFile(req, index, { 'cache-control': 'no-cache', 'content-type': 'text/html; charset=utf-8' });
     return new Response('dither-chat hub is running; the web app has not been built yet (bun run web:build).', { status: 200 });
+  }
+
+  /** The web build's files, packed once with zstd at its hardest for a client that takes it (compress.ts PackedFiles). */
+  readonly packed = new PackedFiles();
+
+  private webFile(req: Request, file: string, headers: Record<string, string>): Response {
+    const f = Bun.file(file);
+    if (req.method === 'GET' && !req.headers.has('range') && pickEncoding(req.headers.get('accept-encoding')) === 'zstd') {
+      const st = statSync(file);
+      const body = this.packed.get(file, st.size, st.mtimeMs);
+      if (body) return new Response(body, { headers: { 'content-type': f.type, ...headers, 'content-encoding': 'zstd', vary: 'accept-encoding' } });
+    }
+    return new Response(f, { headers });
   }
 
   /** Queue a notification for connected clients. */

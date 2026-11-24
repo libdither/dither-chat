@@ -51,6 +51,9 @@ const CPUS = opt('cpu', CI ? '1' : '1,4').split(',').map(Number).filter((x) => x
 const PHONE_CPUS = opt('phone-cpu', CI ? '1' : '4').split(',').map(Number).filter((x) => x > 0);
 /** Throttles for fetching ahead (aheadRun), at a phone's size; `--ahead-cpu 0` leaves it out. */
 const AHEAD_CPUS = opt('ahead-cpu', CI ? '1' : '4').split(',').map(Number).filter((x) => x > 0);
+/** Inbox rows fetched ahead: prefetch.ts `AHEAD` (not imported: it is written for the page, and scripts have no DOM types). */
+const AHEAD = 12;
+if (!readFileSync(resolve(import.meta.dir, '../packages/web/src/prefetch.ts'), 'utf8').includes(`export const AHEAD = ${AHEAD};`)) throw new Error('prefetch.ts AHEAD changed: change it here too');
 /** The round trip the ahead pass puts between page and hub, as a phone on the tailnet has (docs/android.md: 80 ms, 20/10 Mbit/s). */
 const AHEAD_RTT = Number(opt('ahead-rtt', '80'));
 /** Throttles for the slow link's pass (slowRun), at a phone's size; `--slow-cpu 0` leaves it out. */
@@ -506,9 +509,12 @@ async function aheadRun(cpu: number): Promise<Metrics> {
         })()`);
         Object.assign(out, x);
       }
-      // Conversations, not mail threads, in the order on screen.
-      const rows = await page.eval<string[]>(`[...document.querySelectorAll('.side-scroll [data-row]')].map((e) => e.getAttribute('data-row')).filter((id) => id.startsWith('cnv_')).slice(0, 8)`);
-      if (rows.length < 8) throw new Error(`only ${rows.length} conversations in the inbox`);
+      // The rows fetching ahead takes (its first AHEAD, whatever they are), in the order on screen: a conversation's or
+      // a person's chat. Not a channel's row, which can open on a forum's cards and no timeline, nor mail. Rows further
+      // down were never meant to be fetched ahead: taking the first eight conversations wherever they were reached
+      // past them once people's chats and channels filled the top (the relaunch's third open, 2 of 3, at 4×).
+      const rows = await page.eval<string[]>(`[...document.querySelectorAll('.side-scroll [data-row]')].slice(0, ${AHEAD}).map((e) => e.getAttribute('data-row')).filter((id) => id.startsWith('cnv_') || id.startsWith('person:')).slice(0, 8)`);
+      if (rows.length < 8) throw new Error(`only ${rows.length} chats among the first ${AHEAD} rows of the inbox`);
       const before = ahead ? await page.eval<number>('__ditherAhead.opens.ahead') : 0;
       const times: number[] = [];
       for (const id of rows.slice(0, 5)) times.push(await openRow(page, id));
@@ -519,7 +525,7 @@ async function aheadRun(cpu: number): Promise<Metrics> {
       await page.eval(`Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }), document.dispatchEvent(new Event('visibilitychange'))`);
       await Bun.sleep(1500);
       if (ahead)
-        await page.until(`new Promise((res) => { const r = indexedDB.open('dither-chat'); r.onsuccess = () => { const t = r.result.transaction('pages'); const k = t.objectStore('pages').getAllKeys(); t.oncomplete = () => { r.result.close(); res(${JSON.stringify(rows.slice(5, 8).map((id) => `c:${id}`))}.every((x) => k.result.includes(x))); }; }; r.onerror = () => res(false); })`, 15_000).catch(() => console.warn('the next three rows were not all kept'));
+        await page.until(`new Promise((res) => { const r = indexedDB.open('dither-chat'); r.onsuccess = () => { const t = r.result.transaction('pages'); const k = t.objectStore('pages').getAllKeys(); t.oncomplete = () => { r.result.close(); res(${JSON.stringify(rows.slice(5, 8).map(rowTimeline))}.every((x) => k.result.includes(x))); }; }; r.onerror = () => res(false); })`, 15_000).catch(() => console.warn('the next three rows were not all kept'));
       await page.goto(`${base}/api/health`);
       await page.goto(url);
       await page.until(`window.__perf?.list != null`, 30_000);
@@ -724,17 +730,27 @@ function log(reqs: Req[], origin: number) {
   slowLog.push(reqs.map((r) => [r.kind, r.path, r.dest, ms(r.at), ms(r.first), ms(r.last), r.bytes]));
 }
 
-/** On a phone: from the inbox to a row's conversation, timed to its `dither:timeline` mark; then back to the inbox. */
-async function openRow(page: Page, id: string): Promise<number> {
+/** The timeline an inbox row opens: a conversation's, or a person's chat of several routes (`person:<id>`, docs/chats.md). */
+const rowTimeline = (row: string) => (row.startsWith('person:') ? `p:${row.slice('person:'.length)}` : `c:${row}`);
+
+/**
+ * On a phone: from the inbox to a row's timeline, timed to its `dither:timeline` mark; then back to the inbox. A
+ * conversation opens by its address, a person's chat by its row (it has no address of its own).
+ */
+async function openRow(page: Page, row: string): Promise<number> {
+  const sel = `.side-scroll [data-row="${row}"]`;
+  // Right after a relaunch the list may not have drawn that far yet (a screenful first, the rest when idle).
+  if (row.startsWith('person:')) await page.until(`!!document.querySelector('${sel}')`, 10_000);
+  const open = row.startsWith('person:') ? `document.querySelector('${sel}').click()` : `location.hash = '#/inbox/c/${row}'`;
   const ms = await page.eval<number>(`(async () => {
-    const key = 'c:${id}';
+    const key = '${rowTimeline(row)}';
     const t0 = performance.now();
     const seen = new Promise((res, rej) => {
       const o = new PerformanceObserver((l) => { for (const e of l.getEntries()) if (e.name === 'dither:timeline' && e.detail?.key === key && e.startTime >= t0) { o.disconnect(); res(e.startTime - t0); } });
       o.observe({ type: 'mark' });
       setTimeout(() => rej(new Error('no dither:timeline mark for ' + key)), 30000);
     });
-    location.hash = '#/inbox/c/${id}';
+    ${open};
     return seen;
   })()`);
   await settle(page);
