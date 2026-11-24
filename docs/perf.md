@@ -560,6 +560,19 @@ the times rough):
 | phone: a conversation opened as the data came in | 644 ms (586–707) | 667 ms (607–738) |
 | …opened 1.5 s later | 466 ms (396–1,448) | 419 ms (414–525) |
 
+Then what the sidebar and App used of three files that are otherwise a conversation's or a layer's. The inbox's mail
+chips and tiles are in ui/MailLists.tsx (and MailLists.css), the rest of mail in a chat (MailChat.tsx) went into the
+conversation's chunk; a merge suggestion's picked pair and where it came from are in pairpick.ts, the page itself
+(Pairs.tsx) went with the conversation too; the reaction picker and who reacted (Reactions.tsx) are a layer loaded with
+the pages, and the emoji catalog still loads 4 s after start, as before. `shared/startup`: 718 KB (245.6 KB gzip) to
+665 KB (228.3 KB gzip); the conversation's chunk grew from 94 KB to 128 KB (33 to 44 KB gzip).
+
+Against the step before, full size, 4×, interleaved (load 9 to 22, so the times are rough): on a phone, medians of
+twelve, the list painted at 2,447 ms (2,004–6,844) instead of 2,659 ms (2,074–10,827), with 2,050 ms of main-thread
+work before it instead of 2,341; on a computer, in the seven pairs not overlapping a build, sooner in all seven (median
+1,792 ms against 2,144). A conversation opened as the data came in or 1.5 s later was as fast as before (each of the
+two quicker in half the pairs or more, within noise).
+
 ### The startup set (2026-11-10)
 
 907 KB (278 KB gzip) in ten files: the entry (269 KB), `shared/Accounts` (353 KB), `shared/state` (72 KB), the
@@ -1334,11 +1347,10 @@ What these numbers point at, not done yet:
   help ([above](#over-a-slow-link-2026-11-24), the end). With a bootstrap the live hub's size it may.
 - **The bootstrap now shares the link with the startup script** on a cold start: 405 KB of it came down beside the
   bootstrap. Each is wanted for the list; a smaller one of either is the next gain there.
-- **The startup script, 245 KB compressed** since [Left out of the first load](#left-out-of-the-first-load-2026-11-24)
-  (345 KB before), is the longest wait of a cold start on a slow link. Every KB off it is 5 ms there. Of what is
-  left, the sidebar's and App's few uses keep Pairs.tsx, MailChat.tsx and Reactions.tsx whole in it (about 40 KB,
-  13 KB gzip, the rest of them used only by a conversation), and Requests.tsx's page and a profile's connections
-  (about 10 KB).
+- **The startup script, 228 KB compressed** since [Left out of the first load](#left-out-of-the-first-load-2026-11-24)
+  (352 KB before), is the longest wait of a cold start on a slow link. Every KB off it is 5 ms there. Of what is
+  left: Requests.tsx's page and a profile's connections (about 10 KB), the details panel (about 8 KB), and calls
+  (about 35 KB, tied up with ringing, which has to be there from the start).
 
 - **The bootstrap is 4.4–5.4 MB**, two thirds of it conversations, and most of those channels nobody has written in.
   On the live hub's copy, leaving out null and default fields saves 25%, leaving out the 3,489 channels without

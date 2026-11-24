@@ -4,7 +4,7 @@
  */
 import { computed, signal, type ReadonlySignal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { canonicalReactionKey, REACTION_RULES } from '@dither-chat/protocol';
+import { canonicalReactionKey, NETWORK_META, REACTION_RULES } from '@dither-chat/protocol';
 import { fullTime, stamp } from './format.ts';
 import { api, changed, db, isSelfIdentity, patchMessage, pref, toast } from './state.ts';
 import { metaRev } from './versions.ts';
@@ -217,4 +217,16 @@ function reactorsLabel(r: P.ReactionView, nameOf: (id: string) => string): strin
   if (!names.length) return rest === 1 ? '1 person' : `${rest} people`;
   if (rest > 0) return `${names.join(', ')} and ${rest} ${rest === 1 ? 'other' : 'others'}`;
   return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0];
+}
+
+/** How a reaction reads in a sentence: its emoji, or a custom one by its name. */
+export const keyText = (r: { key: string; emoji?: P.CustomEmojiView }) => (r.emoji ? `:${r.emoji.name}:` : r.key);
+
+/**
+ * The add button's face. Where a network keeps one reaction per person (Signal, WhatsApp) and you already have one,
+ * a pick replaces it rather than adding another, and the button says so: arrows where the plus was.
+ */
+export function addLook(m: P.MessageView): { icon: string; title: string } {
+  const r = replacing(m);
+  return r ? { icon: 'smileSwap', title: `Change your reaction (${keyText(r)}): ${NETWORK_META[m.network].name} keeps one per person` } : { icon: 'smilePlus', title: 'Add reaction' };
 }

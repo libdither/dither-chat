@@ -27,7 +27,7 @@ import { closeMenu, copy, groups, menuPoint, openMenu, type MenuEntry, type Menu
 import { DEVICE_LEVELS } from './DeviceRules.tsx';
 import { forwarding } from './Forward.tsx';
 import { appsFor, can } from '../apps.ts';
-import { addLook } from './Reactions.tsx';
+import { addLook } from '../reactions.ts';
 import { Icon } from './icons.tsx';
 import { nicknameEntries } from './Nickname.tsx';
 import { openAbout } from '../opening.ts';

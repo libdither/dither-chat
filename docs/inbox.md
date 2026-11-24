@@ -89,7 +89,7 @@ list's chip stays lit over its results; emptied, the list is back. In the Inbox 
 without the filter.
 
 From the Inbox a list is a step of its own; from one list to another replaces it, so back, and Escape, go to the Inbox
-chip first (`ui/MailChat.tsx` `toInboxChip`). Turning the Mail filter off goes back to the whole inbox. Chat requests and
+chip first (`ui/MailLists.tsx` `toInboxChip`). Turning the Mail filter off goes back to the whole inbox. Chat requests and
 notices are not mail: under the Mail filter there is no Requests row.
 
 **Mail from people** is in the same list (docs/mail.md, slice 8): a thread in Inbox from someone you know that is

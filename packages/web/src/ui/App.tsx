@@ -20,7 +20,8 @@ import { SendingLayer } from './SendExtras.tsx';
 import { indexing } from '../indexjobs.ts';
 import { ForYou, refreshForYou } from './ForYou.tsx';
 import { Palette } from './Palette.tsx';
-import { ReactionLayer } from './Reactions.tsx';
+import { loadEmoji } from '../emoji.ts';
+import { pickerFor, reactorsFor } from '../reactions.ts';
 import { SamePane } from './SamePane.tsx';
 import { GraphPane } from './GraphPane.tsx';
 import { MessageHistoryLayer } from './MessageHistoryLazy.tsx';
@@ -48,7 +49,7 @@ import { noteChannel, readLastChannels, saveLastChannels, withLastChannel } from
 import { counting, rendered } from '../perf.ts';
 import { MailComposerLazy } from './mail/lazy.tsx';
 import { WhyFollowUpLazy } from './LoudnessLazy.tsx';
-import { toInboxChip } from './MailChat.tsx';
+import { toInboxChip } from './MailLists.tsx';
 import { convById, isMailPlace } from '../mail/chats.ts';
 import { RequestsPane } from './Requests.tsx';
 import { NoticesPaneLazy } from './Notices.tsx';
@@ -70,8 +71,18 @@ const AttentionPaneLazy = lazyPane(() => import('./HowItSorts.tsx').then((m) => 
 // Layers over the app that draw nothing until they are opened: the picture and file viewer, the index dialog.
 const Viewer = lazyPane(() => import('./Viewer.tsx').then((m) => m.Viewer), 'the viewer', { layer: true });
 const IndexDialog = lazyPane(() => import('./Indexing.tsx').then((m) => m.IndexLayer), 'indexing', { layer: true });
+const Reactions = lazyPane(() => import('./Reactions.tsx').then((m) => m.ReactionLayer), 'reactions', { layer: true });
 const ViewerLayer = () => (viewer.value || fileViewer.value ? <Viewer /> : null);
 const IndexLayer = () => (indexing.value ? <IndexDialog /> : null);
+
+/** The reaction picker and who reacted, while one is open. The emoji catalog loads once the app is idle, so even the first picker opens whole rather than filling in. */
+function ReactionLayer() {
+  useEffect(() => {
+    const t = setTimeout(() => void loadEmoji(), 4000);
+    return () => clearTimeout(t);
+  }, []);
+  return pickerFor.value || reactorsFor.value ? <Reactions /> : null;
+}
 
 /** A conversation's details panel: the person's, for a DM of someone reached by several routes (their chat's page). */
 function convDetail(id: string): { kind: 'conv' | 'person'; id: string } | undefined {
