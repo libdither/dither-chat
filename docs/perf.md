@@ -362,7 +362,10 @@ What made the difference:
   order changes.
 - **`/api/inbox`** sorted a week of triage (200k rows on the live hub) for each of its picks. An index on the tier
   and score (`triage_tier_score`; `triage_level_score` before the tiers) lets each pick stop at its limit;
-  `test/inbox-plan.test.ts` checks the plans.
+  `test/inbox-plan.test.ts` checks the plans. Alerts and Conversations still sorted every one ever (the prune keeps
+  them): 50 ms on the perf world and 250 to 370 ms on a copy of the live hub by 2026-11-24, growing. Their decisions
+  now keep the message's time (`triage.message_ts`), and a partial index on it (`triage_notified`) lets that pick
+  stop at its limit too: 2.5 ms and 4 ms, the whole inbox 93 to 41 ms on the perf world.
 
 ## Scoped renders and a window
 
@@ -1207,6 +1210,22 @@ has anything unread before whether it is shown (most are read), the rail's added
 rows look up the place's settings before making a default for it (`placePref` makes one for each of the 5,600 that
 have none), the quiet shelf too, and `visibleConv` is a loop. Six cold loads of each at 4×, medians: the rail 214 → 166
 ms, the badge 78 → 60 ms, the inbox list 96 → 86 ms; a relaunch's rail and badge 25–35 ms less in all.
+
+### Memo keys (2026-11-24)
+
+model.ts's memos were kept in one map each, by a key made of what is worked out and the place it is for:
+`'lvl:' + id`, `'su:' + id`, `'under:' + id`. Each lookup built that string and hashed it, hit or miss, and a first draw
+makes tens of thousands of them (every unread conversation's level in each count, each server's count, activity and
+conversations). In a cold load's CPU profile at 4× the two memo wrappers' own time was 46 ms (`metaMemo` 30,
+`placesMemo` 17), more than the levels they kept. Now each memo is kept by kind (a literal) and then by id, two maps,
+and an id from the hub is a string already hashed once. The rules are looked up by scope and then target the same way,
+and `unreadOf` is a loop rather than a filter and two maps.
+
+CPU profiles of five cold loads and relaunches of each at 4× on the full-size world, interleaved against the build
+before, medians of each function's own time [spread]: on a cold load `metaMemo` 37 [26–56] → 12 [6–15] ms, `unreadOf`
+16 [10–42] → 8 [3–10], `placesMemo` 17 [12–22] → 15 [7–17], `effectiveLevel` 7 → 3: about 40 ms less; on a relaunch
+about 16 ms less. In a benchmark of the same passes in Bun on this world's bootstrap (least of 40 runs), working the
+rail, the badge, the servers' counts, the inbox and people out after a meta change took 8–9 ms instead of 10–14.
 
 ## One setting at a time (2026-11-20)
 
