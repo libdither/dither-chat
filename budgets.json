@@ -120,7 +120,7 @@
     "js/shared/selfparts.bytes": { "measured": 602, "budget": 615 },
     "js/shared/selfparts.gzip": { "measured": 416, "budget": 425 },
     "js/shared/startup.bytes": { "measured": 980711, "budget": 1000325, "reason": "One row per channel (docs/inbox.md \"One row per channel\"): a channel's threads folded into one inbox row with its chevron and the unread threads it opens on (channelrows.ts, ui/Sidebar.tsx ChannelInboxRow), drawn at start with the inbox, about 6 kB (1.5 kB gzip)" },
-    "js/shared/startup.gzip": { "measured": 327864, "budget": 334421, "reason": "A message's history (docs/history.md): the words an edit put in, compared and underlined in the chat (wordDiff.ts markChanged), and the ticks, clicks and right-clicks that open the history, about 1 kB gzip on top of the status dots" },
+    "js/shared/startup.gzip": { "measured": 334591, "budget": 341283, "reason": "Profiles (docs/profile.md): friends say which network each is from, with a chip per network, and one account of someone's can be made their main account (its name, picture and bio first), from an Edit on each account row, about 0.2 kB gzip" },
     "js/shared/TextView.bytes": { "measured": 8500, "budget": 8670 },
     "js/shared/TextView.gzip": { "measured": 3868, "budget": 3943 },
     "js/shared/w3c-keyname.bytes": { "measured": 1536, "budget": 1567, "reason": "The mail editor (docs/mail.md \"Writing\"): rich text with pictures in place, Markdown and HTML views, forwards and quotes kept whole; the rich editor and the CodeMirror views load as chunks of their own when a message is first written" },

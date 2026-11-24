@@ -87,6 +87,8 @@ in the hub's `store.ts`).
 - several accounts: the name a merge kept, one of their accounts' names. It follows the account it was taken from:
   giving that account a nickname, or taking it away, renames them. A nickname on another of their accounts names only
   that account, so telling one alt apart ("Kit, raid nights") does not rename Kit.
+- several accounts with a main one (docs/profile.md "Which account speaks for them"): the main account's name as you
+  see it, which follows that account; cleared, the name it last gave stays.
 
 Merging two people keeps the name of the one kept; the nicknames are the accounts' and go along with them. Splitting
 an account off keeps its nickname, which names the new person; the person it left takes their name from their

@@ -901,7 +901,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           <div class="pf-acct-list">
             {tiles.map((i) => {
               const r = reach(i);
-              return <AccountRow i={i} since={sinceOf.get(i.id)} main={speaker?.id === i.id} picture={pictureOf?.id === i.id} go={r?.run} goLabel={r?.label} menu={(edit) => accountMenu(i, edit)} />;
+              return <AccountRow key={i.id} i={i} since={sinceOf.get(i.id)} main={speaker?.id === i.id} picture={pictureOf?.id === i.id} go={r?.run} goLabel={r?.label} menu={(edit) => accountMenu(i, edit)} />;
             })}
           </div>
           {!isSelf && person && (
