@@ -172,7 +172,12 @@ function Panel({ items, x, y, flipX, flipY, depth, onClose, onBack, autoFocus, t
     el.focus({ preventScroll: true });
     // A row that fills in after it opens (a message's loudness, fetched) makes it taller: placed again, so it stays
     // inside the window.
-    const grown = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(put);
+    // Only when it would hang past an edge: moved under the pointer otherwise, a right-click's release could land on it.
+    const past = () => {
+      const r = el.getBoundingClientRect();
+      if (r.bottom > innerHeight || r.right > innerWidth) put();
+    };
+    const grown = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(past);
     grown?.observe(el);
     return () => grown?.disconnect();
   }, [x, y]);
