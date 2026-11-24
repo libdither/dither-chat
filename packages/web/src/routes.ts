@@ -10,6 +10,8 @@ export type Route =
   | { view: 'foryou' }
   /** How it sorts (docs/notifications.md): which tier triage put each conversation's messages in this week, and why. */
   | { view: 'model' }
+  /** Your attention (docs/scorecard.md, "The weekly report"): what notifications cost, and who waits on you. */
+  | { view: 'attention' }
   /** graph: the people graph (graph/GraphView.tsx) in place of a thread. */
   | { view: 'people'; person?: string; graph?: boolean; same?: boolean }
   /** A profile page (docs/profile.md): a person, an identity not merged into one, or a conversation or space. */
@@ -75,6 +77,8 @@ export function parseHash(h = location.hash): Route {
       return { view: 'foryou' };
     case 'model':
       return { view: 'model' };
+    case 'attention':
+      return { view: 'attention' };
     case 'directory':
       return { view: 'directory' };
     case 'search':
@@ -131,6 +135,8 @@ export function href(r: Route): string {
       return '#/foryou';
     case 'model':
       return '#/model';
+    case 'attention':
+      return '#/attention';
     case 'directory':
       return '#/directory';
     case 'search':

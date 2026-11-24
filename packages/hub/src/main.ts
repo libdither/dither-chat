@@ -18,7 +18,7 @@ import { Approvals } from './approvals.ts';
 import { DemoApprovalLink } from './approvals-demo.ts';
 import { FakeNoticeSource, seedDemoNotices } from './notices/fake.ts';
 import { clearRead } from './clears.ts';
-import { Delivery } from './delivery.ts';
+import { capped, Delivery } from './delivery.ts';
 import { Notifier } from './notify.ts';
 import { listByPrior, PhoneList, phoneListBudget, phoneListMode } from './phonelist.ts';
 import { RequestNotifier, requestChain, type RequestNotice } from './requestnotify.ts';
@@ -33,6 +33,9 @@ import { Store } from './store.ts';
 import { RoutedSupervisor } from './remote.ts';
 import { Supervisor } from './supervisor.ts';
 import { STOP_QUESTION, Triage, URGENT, type Judge } from './triage.ts';
+import { LoudLearner } from './loudlearn.ts';
+import { attentionMode } from './loudness.ts';
+import { NextLook } from './nextlook.ts';
 import { TriageVotes } from './votes.ts';
 import { Scorecard, seedDemoScores } from './scorecard.ts';
 import { loadVapidKeys } from './webpush.ts';
@@ -134,13 +137,31 @@ activity.prune(Date.now(), true);
 startup.mark('activity log');
 const triage = new Triage(store, activity);
 const votes = new TriageVotes(store, triage);
+// One loudness scale (loudness.ts, docs/notifications.md): DITHER_ATTENTION=tiers leaves it out, `shadow` (the default)
+// works it out and stores it beside the tiers while they decide, `on` lets it decide.
+const loud = new LoudLearner(store, attentionMode(process.env.DITHER_ATTENTION));
+triage.loud = loud;
+loud.mark = (id, marks) => void votes.mark(id, marks);
+loud.namer = votes.namer();
+if (loud.mode !== 'shadow') console.log(`attention: ${loud.mode} (DITHER_ATTENTION)`);
+/** When the last sound went out: a second one minutes later costs more (loudness.ts momentKeys). */
+let lastSoundAt: number | null = null;
+// Messages held for the next look (DITHER_ATTENTION=on): one bundle when you next look.
+const nextLook = new NextLook(store);
 // For you (docs/foryou.md): served items and their events are logged only while the activity log is on.
-const foryou = new ForYou(store, { logging: () => activity.enabled, levelOf: (id) => triage.effectiveLevel(id).level });
+const foryou = new ForYou(store, {
+  logging: () => activity.enabled,
+  levelOf: (id) => triage.effectiveLevel(id).level,
+  // Asked "worth seeing?" one card a day, and, once the loudness decides, ordered by what those answers taught.
+  ask: (items) => loud.checkins.pickForYou(items, loud.prefs()),
+  ...(loud.mode === 'on' ? { worth: (c: { conv: string; author: string | null }) => loud.worth(c) } : {}),
+});
 // How the models did, day by day (scorecard.ts, docs/scorecard.md): each day scored once its outcomes are in. A demo
 // world has three invented weeks of it.
 const scorecard = new Scorecard(store.db);
 if (demo) seedDemoScores(store.db, Date.now());
 const attention = new Attention(store, triage);
+attention.byLoudness = loud.mode === 'on';
 // The inbox's learned order (ranker.ts, docs/inbox.md). DITHER_INBOX_RANK=shadow works it out without sorting by it; off.
 // DITHER_INBOX_EXPLORE=0 sorts by its mean instead of a Thompson sample. DITHER_INBOX_MAIL: the order with mail is
 // worked out in shadow (the default), sorts chats and mail (`model`), or is left out (`off`).
@@ -161,6 +182,15 @@ ranker.needsModel = () => attention.needsModel;
 const devices = new Devices(store, triage);
 // One notification per conversation, buzzing once a burst (docs/notifications.md).
 const delivery = new Delivery(store, triage);
+// A chat's row keeps its loudest band for an hour once the loudness decides.
+if (loud.mode === 'on') delivery.keepTop = 3_600_000;
+triage.momentOf = (now) => ({ desk: delivery.inUse(now), sinceSound: lastSoundAt !== null && lastSoundAt <= now ? now - lastSoundAt : null });
+// A person waiting on you: the inbox's needs-reply chance, more the longer they have waited (up to twice, at a day).
+triage.owedOf = (cid) => {
+  const v = attention.view(cid);
+  if (!v?.needsReply || !v.owedSince) return null;
+  return v.needsReply * (1 + Math.min(1, Math.max(0, Date.now() - v.owedSince) / 86_400_000));
+};
 // New requests from someone you know notify once (docs/add.md "Requests").
 const requestNotices = new RequestNotifier(store);
 devices.otherChain = (id) => otherChain(id);
@@ -193,6 +223,15 @@ function alertJudge(): Judge | null {
     console.error(`alerts: ${(e as Error).message}; only your rules alert`);
     jobFailed('alerts: model', e);
     return null;
+  }
+}
+// Your words in a "why" (loudlearn.ts): read by the local model alone, as the alert question is; keywords on a demo hub.
+if (!demo && process.env.DITHER_ALERT_MODEL !== 'off' && process.env.DITHER_ALERT_MODEL !== 'keyword') {
+  try {
+    const jev = new Jev(process.env.DITHER_JEV_URL ?? 'http://127.0.0.1:7862', 10_000);
+    loud.ask = async (question, text) => (await jev.judge(question, [text]))[0] ?? null;
+  } catch (e) {
+    console.error(`attention: ${(e as Error).message}; reasons from your words by keywords`);
   }
 }
 startup.mark('models');
@@ -234,7 +273,13 @@ async function triageOne(id: string, sp: Span) {
     );
     done = true;
     store.dirty.messages.set(id, true);
-    if (d.decision === 'push' || d.decision === 'quiet' || d.decision === 'digest') deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message', d.decision, d.score, listByPrior(d.facts));
+    if (d.decision === 'push') lastSoundAt = Date.now();
+    // Once the loudness decides: the next look holds what can wait an hour or more; the inbox band sends nothing.
+    const band = loud.mode === 'on' && d.loud?.live && !d.forced ? d.loud.band : null;
+    if (band === 'next') nextLook.hold(id, conversationId, !!d.loud?.parts?.quiet);
+    else if (band === 'inbox' || band === 'unread') {
+      // Ranked in the inbox, or left unread: nothing goes to the devices.
+    } else if (d.decision === 'push' || d.decision === 'quiet' || d.decision === 'digest') deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message', d.decision, d.score, listByPrior(d.facts), { rule: !!d.alwaysNotify, capped: capped(d.decision, d.facts) });
     // The local model was too slow: the message went out silent, and is read again once it has had time.
     if (d.unjudged) setTimeout(() => void judgeLate(id), LATE_JUDGE_MS);
   } catch (e) {
@@ -285,7 +330,7 @@ function deliverRequest(n: RequestNotice) {
   server.notify({ t: 'notify', requestId: n.requestId, title: n.title, body: n.body, reasons: [n.reason], level: 'digest', ...look, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}) });
   push
     .notify(n.title, n.body, undefined, { ...look, requestId: n.requestId, level: 'quiet', tier: 'digest', importance: REQUEST_IMPORTANCE, ...(nid ? { nid } : {}) }, [...quiet, ...push.desktops()], 'quiet')
-    .then((r) => nid && activity.sent(nid, r))
+    .then((r) => nid && activity.sent(nid, r, false))
     .catch((e) => {
       console.error('push failed', e);
       jobFailed('push: request', e);
@@ -320,7 +365,7 @@ onRing(store, (n) => {
   const nid = activity.notification({ kind: 'ring', conversationId: c.conversationId });
   push
     .notify(title, body, c.conversationId, { ...look, call, level: 'push', tier: 'push', ...(nid ? { nid } : {}) }, devices.quietOn(c.conversationId, false), 'push')
-    .then((r) => nid && activity.sent(nid, r))
+    .then((r) => nid && activity.sent(nid, r, true))
     .catch((e) => console.error('push failed', e));
 });
 
@@ -383,6 +428,9 @@ setInterval(
   () =>
     span('votes and held alerts', {}, () => {
       votes.daily();
+      loud.daily();
+      // The next look at the times you set (DITHER_ATTENTION=on).
+      if (nextLook.dueAt(loud.prefs(), Date.now())) flushNextLook('times');
       const held = triage.takeHeldSummary();
       // The last held one may be a notice: its tap opens Notices, not a chat.
       if (held) deliver(held.title, held.body, held.conversationId, held.messageId, ['Quiet hours ended'], held.messageId.startsWith('ntc_') ? { noticeId: held.messageId } : {});
@@ -524,6 +572,7 @@ const server = new HubServer(store, sup, triage, {
   foryou,
   devices,
   votes,
+  loud,
   scorecard,
   archiveMedia: !demo,
   // JPEG XL (jxl.ts, docs/files.md "JPEG XL"): cjxl and djxl from PATH, DITHER_JXL_DIR or nix; kept pictures packed.
@@ -559,7 +608,28 @@ const server = new HubServer(store, sup, triage, {
   },
 });
 
-notifier = new Notifier({ store, activity, devices, push, delivery, server, phone });
+notifier = new Notifier({ store, activity, devices, push, delivery, server, phone, computerFirst: () => loud.prefs().computerFirst });
+
+/**
+ * The next look (DITHER_ATTENTION=on): what was held arrives together, as one silent bundle on the phones, when the
+ * Android app says the phone was unlocked or at the times you set. Opening the app is a look: the held items are in
+ * the inbox, so nothing is sent then and the bundle is let go.
+ */
+function flushNextLook(why: 'open' | 'unlock' | 'times') {
+  const b = nextLook.flush(why);
+  if (!b || why === 'open') return;
+  const nid = activity.notification({ kind: 'held' });
+  push
+    .notify(b.title, b.body, undefined, { tag: 'next-look', level: 'quiet', tier: 'digest', band: 'next', nextLook: { count: b.count, chats: b.chats }, keep: true, ...(nid ? { nid } : {}) }, push.desktops(), 'quiet')
+    .then((r) => nid && activity.sent(nid, r))
+    .catch((e) => (console.error('push failed', e), jobFailed('push: next look', e)));
+}
+server.onLook = (why) => {
+  if (loud.mode !== 'on') return;
+  const prefs = loud.prefs();
+  if (why === 'unlock' ? prefs.nextLook !== 'times' : true) flushNextLook(why);
+};
+server.nextLookHeld = () => nextLook.count();
 
 const realAccounts = store.accounts().filter((a) => !a.demo);
 if (demo && realAccounts.length) {

@@ -2,7 +2,7 @@
  * Notification tiers and marks (docs/notifications.md), end to end against a demo hub in headless Chromium: How it
  * sorts' Alerts, Conversations and List, the list by importance, and what fell below it; a mark ticking at once and
  * moving nothing; what the alert model learned from it, with its backtest; the next message in that place alerting
- * because of it, and "Not urgent" on that one; the two marks and the model's answer in a message's bell; forgetting
+ * because of it, and "Not urgent" on that one; Louder, Quieter and the model's answer in a message's bell; forgetting
  * what it learned; a rule on a conversation (Automatic, Always alert, List only, Mute) from its header; and your
  * message's read ticks after its text.
  *
@@ -39,7 +39,7 @@ const put = (path: string, body: unknown) => fetch(`${hub}${path}`, { method: 'P
 
 const { page: p, close } = await launch();
 /** A mark's button on one message of How it sorts, and whether it is ticked. */
-const markOf = (id: string, mark: 'alert' | 'less') => `.model-msg[data-mid="${id}"] [data-mark=${mark}]`;
+const markOf = (id: string, mark: 'louder' | 'quieter' | 'less') => `.model-msg[data-mid="${id}"] [data-mark=${mark}]`;
 const ticked = (sel: string) => p.eval<boolean>(`document.querySelector(${JSON.stringify(sel)})?.getAttribute('aria-pressed') === 'true'`);
 /** Each section's messages on How it sorts, every line's Why opened so its messages are on the page. */
 const lists = async () => {
@@ -83,13 +83,15 @@ try {
   check(await p.eval<boolean>(`!!document.querySelector('details.below summary')`), 'what fell below the list, the most important of it');
   if (shots) await p.shot(`${shots}/notif-01-board.png`);
 
-  // Mark a Conversation DM message "Should have alerted": ticked at once, and it stays where it is.
+  // Louder on a Conversation DM message (it stands as "Should have alerted"): ticked at once, and it stays where it is.
   const first = l['Conversations'].find((id) => talking.some((m: any) => m.id === id));
   check(!!first, 'a Conversation message from a DM on How it sorts', first);
-  await p.eval(`document.querySelector(${JSON.stringify(markOf(first!, 'alert'))}).click()`);
+  await p.eval(`document.querySelector(${JSON.stringify(markOf(first!, 'louder'))}).click()`);
   await Bun.sleep(150);
+  // The one optional why may open: skipped.
+  await p.eval(`[...document.querySelectorAll('.loud-actions .btn')].find((b) => b.textContent.includes('Skip'))?.click()`);
   l = await lists();
-  check((await ticked(markOf(first!, 'alert'))) && l['Conversations'].includes(first!) && !l['Alerts'].includes(first!), 'marking it "Should have alerted" ticks it at once, and it stays under Conversations');
+  check((await ticked(markOf(first!, 'louder'))) && l['Conversations'].includes(first!) && !l['Alerts'].includes(first!), 'Louder ticks it at once, and it stays under Conversations');
   await Bun.sleep(800);
   const policy = await get('/api/triage/policy');
   const top = policy.factors[0];
@@ -118,11 +120,11 @@ try {
   l = await lists();
   check(!!next && l['Alerts'].includes(next.id), 'and How it sorts lists it under Alerts', l['Alerts']);
 
-  // "Not urgent", as the notification's button says it: the alert was wrong.
+  // "Not urgent", as a notification shown before the scale says it: the alert was wrong.
   const wrong = await post(`/api/messages/${next?.id}/feedback`, { alert: false });
   check(wrong.ok && (await wrong.json()).marks?.alert === false, '"Not urgent" from the notification marks the alert wrong');
-  await p.until(`document.querySelector(${JSON.stringify(markOf(next?.id, 'alert'))})?.getAttribute('aria-pressed') === 'true'`, 8000).catch(() => {});
-  check((await ticked(markOf(next?.id, 'alert'))) && (await p.eval<string>(`document.querySelector(${JSON.stringify(markOf(next?.id, 'alert'))})?.getAttribute('aria-label') ?? ''`)) === 'Alert was wrong', 'How it sorts shows it ticked, as "Alert was wrong"');
+  await p.until(`document.querySelector(${JSON.stringify(markOf(next?.id, 'quieter'))})?.getAttribute('aria-pressed') === 'true'`, 8000).catch(() => {});
+  check(await ticked(markOf(next?.id, 'quieter')), 'How it sorts shows it as Quieter, ticked');
   // A list row or a Conversation never shows here: a message that only reaches those tiers raises nothing.
   await p.eval(`document.querySelectorAll('.toast.notify .toast-x').forEach((x) => x.click())`);
   const other = talking.find((m: any) => m.conversationId !== conv);
@@ -151,7 +153,7 @@ try {
     `(() => { const pop = document.querySelector('.triage-pop'); return { title: pop?.querySelector('.menu-title')?.textContent ?? '', marks: [...(pop?.querySelectorAll('[data-mark]') ?? [])].map((b) => ({ text: b.textContent.trim(), on: b.getAttribute('aria-pressed') === 'true' })), judge: pop?.querySelector('[data-judge]')?.textContent ?? '', importance: pop?.querySelector('[data-importance]')?.textContent ?? '' }; })()`,
   );
   check(bell.title.startsWith('Conversation:'), 'a message’s bell names its tier', bell.title);
-  check(bell.marks.map((m) => m.text).join() === 'Should have alerted,Less like this', '…offers the two marks', bell.marks);
+  check(bell.marks.map((m) => m.text).join() === 'Louder,Quieter', '…offers Louder and Quieter', bell.marks);
   check(bell.marks[0]?.on === true && bell.marks[1]?.on === false, '…with yours ticked', bell.marks);
   const said = talking.find((m: any) => m.id === first).triage;
   check(bell.judge === `The local model's answer: ${said.judge} (the bar here is ${policy.bars.direct})` && bell.importance.startsWith(`Importance ${Math.round(said.score * 100)}%`), '…and says its importance and the local model’s answer against the bar for a DM', [bell.importance, bell.judge]);
@@ -252,7 +254,7 @@ async function mail() {
   check(JSON.stringify(policyBefore.factors) === JSON.stringify((await get('/api/triage/policy')).factors), 'chat’s policy is unchanged by mail that came without a mark');
 
   // "Less like this" from How it sorts, the one mark mail takes: ticked at once, and learned, about Sam.
-  check(!!got && !(await p.eval<boolean>(`!!document.querySelector(${JSON.stringify(markOf(got?.id, 'alert'))})`)) && (await p.eval<boolean>(`!!document.querySelector(${JSON.stringify(markOf(got?.id, 'less'))})`)), 'mail has "Less like this" and no alert mark');
+  check(!!got && !(await p.eval<boolean>(`!!document.querySelector(${JSON.stringify(markOf(got?.id, 'louder'))})`)) && (await p.eval<boolean>(`!!document.querySelector(${JSON.stringify(markOf(got?.id, 'less'))})`)), 'mail has "Less like this" and no Louder');
   await p.eval(`document.querySelector(${JSON.stringify(markOf(got?.id, 'less'))}).click()`);
   await Bun.sleep(200);
   l = await lists();

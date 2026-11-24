@@ -1,7 +1,4 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { Store } from '../src/store.ts';
 
 /**
@@ -9,14 +6,14 @@ import { Store } from '../src/store.ts';
  * and stop at its limit, not sort the week (it took 1.5 s on the live hub, blocking every request behind it).
  */
 describe('the inbox query', () => {
-  let dir: string;
   let store: Store;
   const now = Date.now();
   const since = now - 7 * 86_400_000;
 
   beforeAll(() => {
-    dir = mkdtempSync(join(tmpdir(), 'dither-inbox-plan-'));
-    store = new Store(join(dir, 'hub.sqlite'), () => null);
+    // In memory: no file, no log, no checkpoint or fsync, so a busy disk can't slow the setup. The plans don't depend on
+    // where the rows live, nor (without ANALYZE) on how many there are.
+    store = new Store(':memory:', () => null);
     const acc = store.createAccount({ id: 'acc_t', network: 'discord', label: 't', color: '#888', adapter: 'test' });
     store.ingest(acc, { t: 'identity', identity: { nativeId: 'ann', displayName: 'Ann' } });
     store.ingest(acc, { t: 'conversation', conversation: { nativeId: 'c1', shape: 'channel', name: 'general' } });
@@ -26,13 +23,15 @@ describe('the inbox query', () => {
     store.db.exec('DROP TRIGGER message_fts_insert; DROP TRIGGER search_time_insert');
     const msg = store.db.query(`INSERT INTO message (id, conversation_id, network, native_id, author_id, ts, body) VALUES (?, ?, 'discord', ?, ?, ?, 'hi')`);
     const tri = store.db.query(`INSERT INTO triage (message_id, decision, score, reasons, decided_by, created_at) VALUES (?, ?, ?, '[]', 'rules', ?)`);
+    // Enough for every pick to fill (210 alerted or Conversation for 150) and no more: building the rows is the setup.
+    const N = 20_000;
     let seed = 7;
     const rnd = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
     store.db.transaction(() => {
-      // Ten days of 80k messages. The last day was scored (the model), mostly below the list, too few on it to fill
+      // Ten days of N messages. The last day was scored (the model), mostly below the list, too few on it to fill
       // its share; before that, rules only (no score), mostly on the list: the live hub's week as of 2026-11, compressed.
-      for (let i = 0; i < 80_000; i++) {
-        const ts = now - Math.round((i / 80_000) * 10 * 86_400_000);
+      for (let i = 0; i < N; i++) {
+        const ts = now - Math.round((i / N) * 10 * 86_400_000);
         const scored = ts > now - 86_400_000;
         const r = rnd();
         const decision = scored ? (r < 0.945 ? 'drop' : r < 0.95 ? 'digest' : r < 0.99 ? 'quiet' : 'push') : r < 0.95 ? 'digest' : r < 0.98 ? 'drop' : r < 0.99 ? 'push' : 'silent';
@@ -43,7 +42,6 @@ describe('the inbox query', () => {
   });
   afterAll(() => {
     store.db.close();
-    rmSync(dir, { recursive: true, force: true });
   });
 
   test('every pick walks an index', () => {

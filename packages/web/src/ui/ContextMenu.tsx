@@ -162,11 +162,24 @@ function Panel({ items, x, y, flipX, flipY, depth, onClose, onBack, autoFocus, t
     if (!el) return;
     // Its size without the opening animation's scale: measured mid-animation, a tall menu came out a few pixels
     // short and hung past the window's edge.
-    const p = place(x, y, el.offsetWidth, el.offsetHeight, innerWidth, innerHeight, flipX, flipY);
-    el.style.left = `${p.left}px`;
-    el.style.top = `${p.top}px`;
+    const put = () => {
+      const p = place(x, y, el.offsetWidth, el.offsetHeight, innerWidth, innerHeight, flipX, flipY);
+      el.style.left = `${p.left}px`;
+      el.style.top = `${p.top}px`;
+    };
+    put();
     el.style.visibility = 'visible';
     el.focus({ preventScroll: true });
+    // A row that fills in after it opens (a message's loudness, fetched) makes it taller: placed again, so it stays
+    // inside the window.
+    // Only when it would hang past an edge: moved under the pointer otherwise, a right-click's release could land on it.
+    const past = () => {
+      const r = el.getBoundingClientRect();
+      if (r.bottom > innerHeight || r.right > innerWidth) put();
+    };
+    const grown = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(past);
+    grown?.observe(el);
+    return () => grown?.disconnect();
   }, [x, y]);
   useEffect(() => () => clearTimeout(hover.current), []);
 

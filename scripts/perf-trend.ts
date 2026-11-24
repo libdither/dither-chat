@@ -208,7 +208,7 @@ function markdown(nights: Night[], rows: Row[]) {
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
-/** One chart per step and pass (desktop, phone, fetching ahead, hub…), a line per CPU throttle. */
+/** One chart per step and pass (desktop, phone, fetching ahead, hub…), a line per CPU throttle; another file's key per pass, a line per pass. */
 function charts(nights: Night[], rows: Row[]) {
   const flags = new Map(rows.map((r) => [r.k, r]));
   type Chart = { section: string; name: string; kind: string; series: { label: string; key: string }[] };
@@ -217,13 +217,16 @@ function charts(nights: Night[], rows: Row[]) {
   for (const key of keys) {
     const kind = [...nights].reverse().find((n) => n.metrics[key])!.metrics[key].kind;
     const p = key.match(/^([pas]?)(\d+)x\.(.+)$/);
-    const section = p ? PASSES[p[1]] : key.split('.')[0];
-    const name = p ? p[3] : key.split('.').slice(1).join('.') || key;
+    const parts = key.split('.');
+    // Another file's key that names a pass second ('memory.phone.nodes.growth'): one chart for both passes.
+    const pass = !p && parts.length > 2 && Object.values(PASSES).includes(parts[1]) ? parts[1] : '';
+    const section = p ? PASSES[p[1]] : parts[0];
+    const name = p ? p[3] : parts.slice(pass ? 2 : 1).join('.') || key;
     const id = `${section}|${name}`;
     if (!byId.has(id)) byId.set(id, { section, name, kind, series: [] });
-    byId.get(id)!.series.push({ label: p ? `${p[2]}×` : name, key });
+    byId.get(id)!.series.push({ label: p ? `${p[2]}×` : pass || name, key });
   }
-  for (const c of byId.values()) c.series.sort((a, b) => parseFloat(a.label) - parseFloat(b.label));
+  for (const c of byId.values()) c.series.sort((a, b) => parseFloat(a.label) - parseFloat(b.label) || 0);
   const W = 320, H = 132, L = 46, R = 10, T = 8, B = 20;
   const x = (i: number) => (nights.length === 1 ? L + (W - L - R) / 2 : L + (i * (W - L - R)) / (nights.length - 1));
   const one = (c: Chart) => {

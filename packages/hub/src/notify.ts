@@ -18,20 +18,38 @@ import { pushPayload } from './webpush.ts';
 interface NotifierDeps {
   /** With messageView and conversationView, a message's push carries a copy of it (arrived.ts). */
   store: Pick<Store, 'notifyLook' | 'one'> & Partial<Pick<Store, 'messageView' | 'conversationView'>>;
-  activity: Pick<ActivityStore, 'notification' | 'sent'>;
+  activity: Pick<ActivityStore, 'notification' | 'sent' | 'skipped'>;
   devices: Pick<Devices, 'addressed' | 'quietOn'>;
   push: Pick<PushService, 'desktops' | 'notify'>;
-  delivery: Pick<Delivery, 'listDue' | 'plan'>;
-  server: Pick<HubServer, 'notify' | 'warm'>;
+  delivery: Pick<Delivery, 'listDue' | 'conversationDue' | 'plan'>;
+  server: Pick<HubServer, 'notify' | 'warm' | 'watched'>;
   /** Which list rows reach the phones (phonelist.ts). */
   phone: Pick<PhoneList, 'list' | 'higher'>;
+  /** The computer comes first (Settings): a chat being read on a computer gets no push. Absent: it does. */
+  computerFirst?: () => boolean;
 }
 
 export type Tier = 'push' | 'quiet' | 'digest';
 
+/** What the decision says about how a message's push may be held (notify.ts `Notifier.message`). */
+export interface Hold {
+  /** A rule of yours made it an alert (Always alert): it goes even to a chat being read on a computer. */
+  rule?: boolean;
+  /** A silent Conversation not in a DM and not about you (delivery.ts `capped`): at most one push per chat per ten minutes. */
+  capped?: boolean;
+}
+
 /** The pictures a push names: the phone fetches each from the hub while it draws the notification. */
 function pictures(look: { icon?: string } | undefined, g: { conv?: { icon?: string }; sender?: { icon?: string }; icons?: Record<string, string> } | null): (string | undefined)[] {
   return [look?.icon, g?.conv?.icon, g?.sender?.icon, ...Object.values(g?.icons ?? {})];
+}
+
+/**
+ * Whether a push sounds where it goes, as the devices read it (sw.js, the Android app): an alert's row, unless the hub
+ * said this update is silent (delivery.ts `alert`). Kept with the notification for the scorecard's sounds a day.
+ */
+export function sounded(level: 'push' | 'quiet', extra: { tier?: unknown; alert?: unknown }): boolean {
+  return level === 'push' && (extra.tier ?? 'push') === 'push' && extra.alert !== false;
 }
 
 /** Room for the device id push.ts adds to each device's payload, when measuring what fits. */
@@ -56,11 +74,20 @@ export class Notifier {
    *
    * A held one (a reminder you set on a network, the summary when quiet hours end) carries `keep`: it shows no
    * message's time, and no read closes it, only a tap or a swipe (docs/notifications.md, "Read elsewhere, gone here").
+   *
+   * A message's push is not sent at all, and the skip is logged (`push_skip`), when its chat is open at its newest
+   * message on a computer in use (server.ts `watched`), unless a rule of yours made it an alert; or when it is a
+   * capped silent Conversation (`hold.capped`) and its chat had a push in the last ten minutes. Its line goes with the
+   * chat's next push, as a list row's does.
    */
-  message(title: string, body: string, conversationId: string, messageId: string, reasons: string[], pushExtra: Record<string, unknown> = {}, kind: 'message' | 'held' = 'held', tier: Tier = 'push', importance: number | null = null, prior = true) {
+  message(title: string, body: string, conversationId: string, messageId: string, reasons: string[], pushExtra: Record<string, unknown> = {}, kind: 'message' | 'held' = 'held', tier: Tier = 'push', importance: number | null = null, prior = true, hold: Hold = {}) {
     const { store, activity, devices, push, delivery, server, phone } = this.d;
     // A chat's row in the list is brought up to date now and then, not with every message.
     if (tier === 'digest' && !delivery.listDue(conversationId)) return;
+    if (kind === 'message') {
+      const skip = !hold.rule && (this.d.computerFirst?.() ?? true) && server.watched(conversationId) ? 'watched' : hold.capped && !delivery.conversationDue(conversationId) ? 'capped' : null;
+      if (skip) return activity.skipped({ messageId, conversationId, why: skip });
+    }
     if (kind === 'message' && tier === 'digest') {
       if (!phone.list(conversationId, prior, store.one<{ ts: number }>('SELECT ts FROM message WHERE id = ?', messageId)?.ts ?? Date.now(), Date.now(), importance).send) return;
     } else if (kind === 'message') phone.higher(conversationId);
@@ -82,10 +109,11 @@ export class Notifier {
     const copy = kind === 'message' && store.messageView && store.conversationView ? arrivedCopy(store as Required<NotifierDeps['store']>, conversationId, messageId) : null;
     const arrived = copy && fitArrived(pushPayload(title, body, conversationId, { ...extra, device: DEVICE_ROOM }), copy);
     if (arrived) extra.arrived = arrived;
+    const sounds = sounded(level, extra);
     this.last = server
       .warm(pictures(look, grouped))
       .then(() => push.notify(title, body, conversationId, extra, skip, level))
-      .then((r) => nid && activity.sent(nid, r))
+      .then((r) => nid && activity.sent(nid, r, sounds))
       .catch((e) => (console.error('push failed', e), jobFailed('push: request', e)));
   }
 
@@ -107,10 +135,11 @@ export class Notifier {
     server.notify({ t: 'notify', messageId: n.messageId, conversationId: n.threadId, title: n.title, body: n.body, reasons: n.reasons, ...n.look, ...mail, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}), ...(n.level !== 'push' ? { level: n.level } : {}) });
     const skip = n.level === 'push' ? quiet : [...quiet, ...push.desktops()];
     const grouped = delivery.plan(n.threadId, n.messageId, n.level, n.addressed);
+    const extra = { ...n.look, ...mail, messageId: n.messageId, level, tier: n.level, ...(n.importance !== null ? { importance: n.importance } : {}), ...grouped, ...(nid ? { nid } : {}) };
     this.last = server
       .warm(pictures(n.look, grouped))
-      .then(() => push.notify(n.title, n.body, n.threadId, { ...n.look, ...mail, messageId: n.messageId, level, tier: n.level, ...(n.importance !== null ? { importance: n.importance } : {}), ...grouped, ...(nid ? { nid } : {}) }, skip, level))
-      .then((r) => nid && activity.sent(nid, r))
+      .then(() => push.notify(n.title, n.body, n.threadId, extra, skip, level))
+      .then((r) => nid && activity.sent(nid, r, sounded(level, extra)))
       .catch((e) => (console.error('push failed', e), jobFailed('push: request', e)));
   }
 
@@ -131,9 +160,10 @@ export class Notifier {
     server.notify({ t: 'notify', messageId: n.id, conversationId: n.group, noticeId: n.id, title: n.title, body: n.body, reasons: n.reasons, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}), ...(n.level !== 'push' ? { level: n.level } : {}) });
     const skip = n.level === 'push' ? quiet : [...quiet, ...push.desktops()];
     const grouped = delivery.plan(n.group, n.id, n.level, n.addressed);
+    const extra = { ...n.look, noticeId: n.id, messageId: n.id, level, tier: n.level, ...(n.importance !== null ? { importance: n.importance } : {}), ...grouped, ...(nid ? { nid } : {}) };
     this.last = push
-      .notify(n.title, n.body, n.group, { ...n.look, noticeId: n.id, messageId: n.id, level, tier: n.level, ...(n.importance !== null ? { importance: n.importance } : {}), ...grouped, ...(nid ? { nid } : {}) }, skip, level)
-      .then((r) => nid && activity.sent(nid, r))
+      .notify(n.title, n.body, n.group, extra, skip, level)
+      .then((r) => nid && activity.sent(nid, r, sounded(level, extra)))
       .catch((e) => (console.error('push failed', e), jobFailed('push: request', e)));
     return true;
   }

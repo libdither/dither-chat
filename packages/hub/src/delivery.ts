@@ -1,6 +1,7 @@
 import type { Store } from './store.ts';
 import { previewText } from './store.ts';
 import { namedTokens } from './mentionrefs.ts';
+import type { Facts } from './learn.ts';
 import type { Triage } from './triage.ts';
 
 type Row = Record<string, any>;
@@ -12,8 +13,13 @@ const ORDER: Record<Level, number> = { digest: 0, quiet: 1, push: 2 };
 export const BURST_MS = 5 * 60_000;
 /** A chat's row in the phone's list is brought up to date at most this often: a busy channel is one row, not a stream of pushes. */
 export const LIST_EVERY = 10 * 60_000;
+/**
+ * A chat's silent Conversation push that is not a DM and not about you goes at most this often: a busy channel you
+ * wrote in is one row brought up to date now and then. Chosen by a replay of two weeks (docs/notifications.md).
+ */
+export const CONVERSATION_EVERY = 10 * 60_000;
 /** Someone using a page on a computer this recently: a phone buzz adds nothing. */
-const ACTIVE_MS = 2 * 60_000;
+export const ACTIVE_MS = 2 * 60_000;
 const LINES = 6;
 const BODY = 200;
 /** A push carries about 4 KB, encrypted; what goes in stays under this. */
@@ -23,7 +29,18 @@ const BUDGET = 3500;
  * reading one then still takes it away.
  */
 export const FORGET_MS = 3 * 24 * 3_600_000;
-const PHONE = /android|iphone|ipad|\bios\b/i;
+/** A device label that says phone (push registrations, visits, a page's `watching`). */
+export const PHONE = /android|iphone|ipad|\bios\b/i;
+
+/**
+ * Is this message's push held to its chat's ten minutes (`CONVERSATION_EVERY`)? A silent Conversation that is not in a
+ * DM and not about you: not a mention of you, a reply to you, one of your keywords or a reply to a post you follow.
+ * Alerts and the list are not (the list has its own ten minutes); a message without facts is not either.
+ */
+export function capped(tier: Level, f: Partial<Pick<Facts, 'shape' | 'mention' | 'reply' | 'keyword' | 'followed'>> | null | undefined): boolean {
+  if (tier !== 'quiet' || !f?.shape) return false;
+  return f.shape !== 'direct' && !f.mention && !f.reply && !f.keyword && !f.followed;
+}
 
 /** A conversation read since it was notified, and the newest message its notifications showed (Delivery.read). */
 export interface Read {
@@ -81,6 +98,11 @@ interface OtherThreads {
 
 export class Delivery {
   private showing = new Map<string, Showing>();
+  /**
+   * How long a chat's row keeps its loudest tier (docs/notifications.md: an hour once the loudness decides), so one
+   * chat does not flicker between bands message to message. 0: a burst's five minutes, as before.
+   */
+  keepTop = 0;
   /** Mail threads (mail/triage.ts). */
   other: OtherThreads | null = null;
 
@@ -114,8 +136,18 @@ export class Delivery {
 
   /** May a list row for this conversation go out now? Not when one went out in the last `LIST_EVERY`. */
   listDue(conversationId: string, now = Date.now()): boolean {
+    return this.due(conversationId, LIST_EVERY, now);
+  }
+
+  /** May a capped Conversation push (`capped`) go out now? Not when any push about its chat went out in the last `CONVERSATION_EVERY`. */
+  conversationDue(conversationId: string, now = Date.now()): boolean {
+    return this.due(conversationId, CONVERSATION_EVERY, now);
+  }
+
+  /** No push about it in the last `every`; reading the chat anywhere forgets its pushes (`read`), so the next one goes. */
+  private due(conversationId: string, every: number, now: number): boolean {
     const prev = this.showing.get(conversationId);
-    return !prev || now - prev.at >= LIST_EVERY;
+    return !prev || now - prev.at >= every;
   }
 
   /** Decide whether this push sounds, note it as showing, and gather what the devices draw. */
@@ -126,8 +158,15 @@ export class Delivery {
     const g = this.gather(conversationId, messageId);
     if (!g) return null;
     const ts = g.lines.at(-1)?.ts ?? now;
-    this.showing.set(conversationId, { at: now, ts: Math.max(ts, prev?.ts ?? 0), top: fresh && ORDER[fresh.top] > ORDER[level] ? fresh.top : level });
-    return { ...g, alert };
+    const kept = prev && now - prev.at < Math.max(BURST_MS, this.keepTop) ? prev : undefined;
+    const top = kept && ORDER[kept.top] > ORDER[level] ? kept.top : level;
+    this.showing.set(conversationId, { at: now, ts: Math.max(ts, prev?.ts ?? 0), top });
+    return { ...g, ...(this.keepTop && (!g.tier || ORDER[top] > ORDER[g.tier]) ? { tier: top } : {}), alert };
+  }
+
+  /** A computer is in use (the loudness's moment, loudness.ts). */
+  inUse(now = Date.now()): boolean {
+    return this.elsewhere(now);
   }
 
   /** Someone is at a computer with the app in use. Phones pass this way only while their app is open, which suppresses anyway. */

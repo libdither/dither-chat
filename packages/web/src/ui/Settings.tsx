@@ -14,6 +14,7 @@ import { HeadOrb } from './Offline.tsx';
 import { DeviceRules } from './DeviceRules.tsx';
 import { percent } from './Marks.tsx';
 import { PushSettings } from './Push.tsx';
+import { LoudnessSettingsLazy } from './LoudnessLazy.tsx';
 import { PrivacySettings } from './Privacy.tsx';
 import { HistorySettings } from './HistorySettings.tsx';
 import { IndexingSettings } from './Indexing.tsx';
@@ -286,11 +287,22 @@ export function SettingsPane() {
             Alerts sound; conversations are people talking with you, silent; the list is everything else that is important enough, silent, the most important first.
           </p>
           <ListLevel />
+          <div id="set-loudness">
+            <LoudnessSettingsLazy />
+          </div>
           <button class="link-row set-sorts" data-track="how it sorts" onClick={() => go({ view: 'model' })}>
             <Icon name="sparkles" size={15} />
             <span>
               <b>How it sorts</b>
               <small>Where each conversation's messages landed this week and why, your marks, and what was learned from them</small>
+            </span>
+            <Icon name="chevronRight" size={15} />
+          </button>
+          <button class="link-row set-sorts" data-track="your attention" onClick={() => go({ view: 'attention' })}>
+            <Icon name="activity" size={15} />
+            <span>
+              <b>Your attention</b>
+              <small>How often notifications sounded, the people waiting on you, and who you talk with, over two weeks</small>
             </span>
             <Icon name="chevronRight" size={15} />
           </button>

@@ -23,11 +23,15 @@ class NotificationsTest {
     }
 
     @Test
-    fun theMarksEachTierOffers() {
+    fun theAnswersEachTierOffers() {
         val m = JSONObject().put("messageId", "msg_1")
-        assertEquals(listOf(Notifications.Mark.CALM), Notifications.marksOf(m, "push")!!.offered)
-        assertEquals(listOf(Notifications.Mark.ALERT), Notifications.marksOf(m, "quiet")!!.offered)
-        assertEquals(listOf(Notifications.Mark.LESS, Notifications.Mark.ALERT), Notifications.marksOf(m, "digest")!!.offered)
+        assertEquals(listOf(Notifications.Mark.WORTH, Notifications.Mark.COULD_WAIT), Notifications.marksOf(m, "push")!!.offered)
+        assertEquals(listOf(Notifications.Mark.LOUDER), Notifications.marksOf(m, "quiet")!!.offered)
+        assertEquals(listOf(Notifications.Mark.QUIETER, Notifications.Mark.LOUDER), Notifications.marksOf(m, "digest")!!.offered)
+        // A notice keeps the marks from before the scale.
+        val notice = JSONObject(m.toString()).put("noticeId", "ntc_1")
+        assertEquals(listOf(Notifications.Mark.CALM), Notifications.marksOf(notice, "push")!!.offered)
+        assertEquals(listOf(Notifications.Mark.LESS, Notifications.Mark.ALERT), Notifications.marksOf(notice, "digest")!!.offered)
         // Mail has no alert marks, and its marks go to mail's own route.
         val mail = Notifications.marksOf(JSONObject(m.toString()).put("mailThreadId", "t1"), "push")!!
         assertTrue(mail.mail)
@@ -41,9 +45,19 @@ class NotificationsTest {
         assertEquals("""{"alert":true}""", Notifications.Mark.ALERT.body().toString())
         assertEquals("""{"alert":false}""", Notifications.Mark.CALM.body().toString())
         assertEquals("""{"less":true}""", Notifications.Mark.LESS.body().toString())
+        assertEquals("/api/messages/msg_1/feedback", Notifications.Mark.LESS.path("msg_1", false))
+        assertEquals("/api/mail/triage/mml_1/vote", Notifications.Mark.LESS.path("mml_1", true))
+        // An answer goes to the scale's answers, saying where it came from.
+        assertEquals("/api/loudness/answers", Notifications.Mark.COULD_WAIT.path("msg_1", false))
+        val b = Notifications.Mark.COULD_WAIT.body("msg_1")
+        assertEquals("msg_1", b.getString("messageId"))
+        assertEquals("could_wait", b.getString("answer"))
+        assertEquals("notification", b.getString("source"))
         assertEquals(Notifications.Mark.LESS, Notifications.Mark.of("less"))
+        assertEquals(Notifications.Mark.WORTH, Notifications.Mark.of("worth"))
         assertNull(Notifications.Mark.of("nope"))
         assertFalse(Notifications.Mark.ALERT.closes)
+        assertFalse(Notifications.Mark.LOUDER.closes)
     }
 
     private fun line(author: String, key: String, body: String, ts: Long) = JSONObject().put("author", author).put("key", key).put("body", body).put("ts", ts)
@@ -99,5 +113,26 @@ class NotificationsTest {
         val chat = Notifications.Chat(JSONObject().put("lines", JSONArray().put(l)))
         assertEquals("Dee", chat.last.key)
         assertEquals("dither-chat", chat.name)
+    }
+
+    @Test
+    fun aClearDropsOnlyWhatWasRead() {
+        val ts = longArrayOf(100, 200, 300)
+        // Read up to the second: the third, which came after the read, stays.
+        assertEquals(listOf(2), Notifications.unreadAfter(ts, 200))
+        // At its time counts as read.
+        assertEquals(emptyList<Int>(), Notifications.unreadAfter(ts, 300))
+        assertEquals(listOf(0, 1, 2), Notifications.unreadAfter(ts, 50))
+        // Without upTo (a read here, an older hub) the whole notification goes.
+        assertEquals(emptyList<Int>(), Notifications.unreadAfter(ts, null))
+        assertEquals(emptyList<Int>(), Notifications.unreadAfter(LongArray(0), 10))
+    }
+
+    @Test
+    fun theNewestMessageAPushShows() {
+        assertEquals(500L, Notifications.newest(JSONObject().put("ts", 500).put("lines", JSONArray().put(line("A", "a", "x", 400)))))
+        assertEquals(400L, Notifications.newest(JSONObject().put("lines", JSONArray().put(line("A", "a", "x", 300)).put(line("A", "a", "y", 400)))))
+        assertNull(Notifications.newest(JSONObject().put("body", "no lines")))
+        assertNull(Notifications.newest(JSONObject().put("lines", JSONArray().put(JSONObject().put("body", "no time")))))
     }
 }

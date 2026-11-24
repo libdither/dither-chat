@@ -3,12 +3,13 @@
  * words, in a real browser against a demo hub:
  *
  *   - four sections in this order: Alerts, Conversations, List, Below the list; one line per conversation in each,
- *     with its importance and the two marks, its messages under Why; the counts at the top are the sections'
+ *     with its importance and Louder and Quieter (mail: Less like this), its messages under Why; the counts at the top are the sections'
  *     lengths, said plainly, and no "need you" among them;
  *   - the badge on the inbox button is the unread alerts and the unread Conversation messages plus accounts that need
  *     you; the list does not count;
- *   - a mark on a line ticks at once on its newest message, the hub has it, and nothing moves: every count and the
- *     badge stay; a click on the ticked mark takes it back. On an alert the mark reads "Alert was wrong";
+ *   - Louder or Quieter on a line ticks at once on its newest message, the hub has it as the mark it stands for
+ *     (Louder "Should have alerted", Quieter "Alert was wrong" on an alert and "Less like this" elsewhere), and
+ *     nothing moves: every count and the badge stay;
  *   - the same on a phone, reached from For you's header;
  *   - tiers are named Alert, Conversation and List everywhere, with no level name from before them; what it learned
  *     says the two bars, the list's level with its preview, and the marks;
@@ -83,8 +84,8 @@ const state = async () => {
       tab: badge('.tabbar .tab:nth-child(2) .tab-badge'),
       heads: [...document.querySelectorAll('.board-block[data-tier]')].map((b) => (b.querySelector(':scope > h3') ?? b.querySelector(':scope > summary')).childNodes[1].textContent.trim()),
       lists: by(ids), lines: by(lines), unreadCards: by(unreadCards), allShown: by(shownAll),
-      // Every line has its importance and its marks: both for chat, "Less like this" alone for mail.
-      bare: [...document.querySelectorAll('.board-block[data-tier] .model-line')].filter((l) => !l.querySelector('.model-line-row [data-importance]') || !l.querySelector('.model-line-row [data-mark=less]') || (!l.dataset.mail && !l.querySelector('.model-line-row [data-mark=alert]'))).map((l) => l.dataset.line),
+      // Every line has its importance and its buttons: Louder and Quieter for chat, "Less like this" alone for mail.
+      bare: [...document.querySelectorAll('.board-block[data-tier] .model-line')].filter((l) => !l.querySelector('.model-line-row [data-importance]') || (l.dataset.mail ? !l.querySelector('.model-line-row [data-mark=less]') : !l.querySelector('.model-line-row [data-mark=louder]') || !l.querySelector('.model-line-row [data-mark=quieter]'))).map((l) => l.dataset.line),
       words: [...document.querySelectorAll('.model-intro, .model-stats, .board-block > h3, .board-block > summary, .board-block > p.muted, .learned > p')].map((e) => e.innerText).join('\\n'),
     };
   })()`);
@@ -105,8 +106,9 @@ const agree = (s: any, where: string, badge: number) => {
 };
 
 /** A mark's button: on a line (its row) or on one message under Why. */
-const lineMark = (tier: Tier, key: string, mark: 'alert' | 'less') => `.board-block[data-tier=${tier}] .model-line[data-line="${key}"] .model-line-row [data-mark=${mark}]`;
-const msgMark = (id: string, mark: 'alert' | 'less') => `.model-msg[data-mid="${id}"] [data-mark=${mark}]`;
+type Mark = 'louder' | 'quieter' | 'less';
+const lineMark = (tier: Tier, key: string, mark: Mark) => `.board-block[data-tier=${tier}] .model-line[data-line="${key}"] .model-line-row [data-mark=${mark}]`;
+const msgMark = (id: string, mark: Mark) => `.model-msg[data-mid="${id}"] [data-mark=${mark}]`;
 const pressed = (sel: string) => page.eval<boolean>(`document.querySelector(${JSON.stringify(sel)})?.getAttribute('aria-pressed') === 'true'`);
 const click = (sel: string) => page.eval(`document.querySelector(${JSON.stringify(sel)}).click()`);
 const until = (expr: string) => page.until(expr, 5000).catch(() => {});
@@ -152,58 +154,48 @@ try {
     return { reasons: rs, dupes: new Set(rs).size !== rs.length };
   })()`);
   check("Why lists the line's reasons once each", why.reasons.length > 0 && !why.dupes, why.reasons);
-  check('on a Conversation the alert mark reads "Should have alerted", not ticked', (await page.eval<string>(`document.querySelector(${JSON.stringify(lineMark('quiet', line.key, 'alert'))}).getAttribute('aria-label')`)) === 'Should have alerted' && !(await pressed(lineMark('quiet', line.key, 'alert'))));
-  await click(lineMark('quiet', line.key, 'alert'));
-  await until(`document.querySelector(${JSON.stringify(lineMark('quiet', line.key, 'alert'))})?.getAttribute('aria-pressed') === 'true'`);
-  check('marked a line "Should have alerted": ticked at once, on the line and on its newest message', (await pressed(lineMark('quiet', line.key, 'alert'))) && (await pressed(msgMark(line.newest, 'alert'))), line);
+  /** The follow-up "Why?" may open after an answer: skipped here (verify-loudness is about it). */
+  const skipWhy = () => page.eval(`[...document.querySelectorAll('.loud-actions .btn')].find((b) => b.textContent.includes('Skip'))?.click()`);
+  check('on a Conversation, Louder is not ticked', !(await pressed(lineMark('quiet', line.key, 'louder'))));
+  await click(lineMark('quiet', line.key, 'louder'));
+  await until(`document.querySelector(${JSON.stringify(lineMark('quiet', line.key, 'louder'))})?.getAttribute('aria-pressed') === 'true'`);
+  await skipWhy();
+  check('Louder on a line: ticked at once, on the line and on its newest message', (await pressed(lineMark('quiet', line.key, 'louder'))) && (await pressed(msgMark(line.newest, 'louder'))), line);
   await Bun.sleep(600);
   const marked = await state();
   check('…and nothing moved: every count, every section and the badge as they were', same(before, marked), { before: counts(before), now: counts(marked) });
-  agree(marked, 'after the mark', marked.rail);
-  check('…the hub has the mark, on that message', (await marksOf(line.newest)).alert === true, await marksOf(line.newest));
+  agree(marked, 'after the answer', marked.rail);
+  check('…the hub has it as "Should have alerted", on that message', (await marksOf(line.newest)).alert === true, await marksOf(line.newest));
   const policy1 = await hub('/api/triage/policy');
   check('…and counts it', policy1.votes === policy0.votes + 1, { before: policy0.votes, after: policy1.votes });
   const learnedNow = await page.eval<string>(`document.querySelector('.learned [data-learned=marks]')?.innerText ?? ''`);
   check('…what it learned says so: the marks, how many the model gets wrong, and how many without what it learned', learnedNow.includes(`${policy1.votes} mark${policy1.votes === 1 ? '' : 's'}; the model gets ${policy1.errors} of them wrong, ${policy1.baseline} without what it learned.`), learnedNow);
-  check('…and "Less like this" on it is still not ticked', !(await pressed(msgMark(line.newest, 'less'))));
+  check('…and Quieter on it is not ticked', !(await pressed(msgMark(line.newest, 'quieter'))));
 
-  await click(msgMark(line.newest, 'alert'));
-  await until(`document.querySelector(${JSON.stringify(msgMark(line.newest, 'alert'))})?.getAttribute('aria-pressed') === 'false'`);
-  await Bun.sleep(400);
-  check("a click on the ticked mark, from the message's own buttons, takes it back", !(await pressed(msgMark(line.newest, 'alert'))) && !(await pressed(lineMark('quiet', line.key, 'alert'))) && (await marksOf(line.newest)).alert === undefined, await marksOf(line.newest));
-
-  // "Less like this", on the list.
+  // Quieter, on the list: "Less like this".
   const listed = await lineIn('digest');
   if (listed) {
-    await click(lineMark('digest', listed.key, 'less'));
-    await until(`document.querySelector(${JSON.stringify(lineMark('digest', listed.key, 'less'))})?.getAttribute('aria-pressed') === 'true'`);
+    await click(lineMark('digest', listed.key, 'quieter'));
+    await until(`document.querySelector(${JSON.stringify(lineMark('digest', listed.key, 'quieter'))})?.getAttribute('aria-pressed') === 'true'`);
+    await skipWhy();
     await Bun.sleep(400);
-    check('"Less like this" on a list line: ticked, and the hub has it', (await pressed(msgMark(listed.newest, 'less'))) && (await marksOf(listed.newest)).less === true, await marksOf(listed.newest));
-    check('…beside it "Should have alerted" stays as it was', !(await pressed(msgMark(listed.newest, 'alert'))));
+    check('Quieter on a list line: ticked, and the hub has it as "Less like this"', (await pressed(msgMark(listed.newest, 'quieter'))) && (await marksOf(listed.newest)).less === true, await marksOf(listed.newest));
+    check('…beside it Louder stays as it was', !(await pressed(msgMark(listed.newest, 'louder'))));
     const less = await state();
     check('…and it stays on the list', less.lists.digest.includes(listed.newest) && same(before, less), counts(less));
-    await click(lineMark('digest', listed.key, 'less'));
-    await until(`document.querySelector(${JSON.stringify(lineMark('digest', listed.key, 'less'))})?.getAttribute('aria-pressed') === 'false'`);
-    await Bun.sleep(400);
-    check('…a second click takes it back', !(await pressed(msgMark(listed.newest, 'less'))) && (await marksOf(listed.newest)).less === undefined, await marksOf(listed.newest));
-  } else console.log('      nothing on the list on this hub: "Less like this" is not checked');
+  } else console.log('      nothing on the list on this hub: Quieter on the list is not checked');
 
-  // On an alert the mark is "Alert was wrong".
+  // Quieter on an alert: "the alert was wrong".
   const alerted = await lineIn('push');
   if (alerted) {
-    const label = await page.eval<string>(`document.querySelector(${JSON.stringify(lineMark('push', alerted.key, 'alert'))}).getAttribute('aria-label')`);
-    check('on an alert the mark reads "Alert was wrong"', label === 'Alert was wrong', label);
-    await click(lineMark('push', alerted.key, 'alert'));
-    await until(`document.querySelector(${JSON.stringify(lineMark('push', alerted.key, 'alert'))})?.getAttribute('aria-pressed') === 'true'`);
+    await click(lineMark('push', alerted.key, 'quieter'));
+    await until(`document.querySelector(${JSON.stringify(lineMark('push', alerted.key, 'quieter'))})?.getAttribute('aria-pressed') === 'true'`);
+    await skipWhy();
     await Bun.sleep(400);
-    check('…ticked, the hub has "the alert was wrong", and it stays under Alerts', (await pressed(msgMark(alerted.newest, 'alert'))) && (await marksOf(alerted.newest)).alert === false && (await state()).lists.push.includes(alerted.newest), await marksOf(alerted.newest));
-    await click(msgMark(alerted.newest, 'alert'));
-    await until(`document.querySelector(${JSON.stringify(msgMark(alerted.newest, 'alert'))})?.getAttribute('aria-pressed') === 'false'`);
-    await Bun.sleep(400);
-    check('…and a second click takes it back', (await marksOf(alerted.newest)).alert === undefined, await marksOf(alerted.newest));
-  } else console.log('      no alert on this hub: "Alert was wrong" is not checked');
+    check('Quieter on an alert: ticked, the hub has "the alert was wrong", and it stays under Alerts', (await pressed(msgMark(alerted.newest, 'quieter'))) && (await marksOf(alerted.newest)).alert === false && (await state()).lists.push.includes(alerted.newest), await marksOf(alerted.newest));
+  } else console.log('      no alert on this hub: Quieter on an alert is not checked');
   const back = await state();
-  check('with every mark taken back, every count and every section is as it was', same(before, back), { before: counts(before), now: counts(back), moved: moved(before, back).map((t) => [t, before.lists[t], back.lists[t]]) });
+  check('after the answers, every count and every section is as it was', same(before, back), { before: counts(before), now: counts(back), moved: moved(before, back).map((t) => [t, before.lists[t], back.lists[t]]) });
 
   // ------------------------------------------------------------------ what it learned stays at the bottom
 
@@ -302,7 +294,7 @@ try {
     check(`…it opens on the tier's name and why`, bell.title.startsWith(`${tier}:`), bell.title);
     check('…its importance as a percentage', bell.importance.startsWith(`Importance ${Math.round(m.triage.score * 100)}%`), bell.importance);
     check("…the local model's answer, against the hub's bar for it", bell.judge === `The local model's answer: ${m.triage.judge} (the bar here is ${bar})`, bell.judge);
-    check('…and the two marks, by name', bell.marks.join() === `${tier === 'Alert' ? 'Alert was wrong' : 'Should have alerted'},Less like this`, bell.marks);
+    check('…and Louder and Quieter, by name', bell.marks.join() === 'Louder,Quieter', bell.marks);
     if (shots) await page.shot(`${shots}/desk-bell-${tier.toLowerCase()}.png`);
     await page.eval(`document.querySelector('.cm')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
     await Bun.sleep(200);

@@ -524,7 +524,25 @@ for (const ps of passes) {
 console.log(`\nhub: ${hubBefore.rss} MB resident before the rounds, ${hubAfter.rss} MB after (peak ${hubAfter.peak} MB); printed only`);
 console.log(`${failed ? `${failed} grew past what they may` : 'nothing grew past what it may'} in ${secs()} s`);
 
-if (OUT) writeFileSync(OUT, JSON.stringify({ world: world.counts, cycles: CYCLES, first: FIRST, cpu: CPU, scale: SCALE, hub: { before: hubBefore, after: hubAfter }, passes }, null, 1));
+/**
+ * The numbers the nightly perf run charts (scripts/perf-trend.ts reads `metrics`; docs/perf.md, "Nightly trends"), by
+ * pass and count: `<pass>.<count>.growth`, from round FIRST to the last, and `<pass>.<count>.last`, the last round's
+ * value. The heap's growth is `<pass>.heap.perRound`, bytes a round, as the table prints it. The hub's resident memory
+ * before and after the rounds and its peak are in MB (kind `MB`), as /proc gives it to the nearest one.
+ */
+const metrics: Record<string, { v: number; kind: string }> = {};
+for (const r of rows) {
+  const bytes = r.k === 'heap';
+  if (bytes) metrics[`${r.pass}.heap.perRound`] = { v: Math.round(r.growth / (passes.find((p) => p.name === r.pass)!.samples.length - FIRST)), kind: 'bytes' };
+  else metrics[`${r.pass}.${r.k}.growth`] = { v: r.growth, kind: 'count' };
+  metrics[`${r.pass}.${r.k}.last`] = { v: r.last, kind: bytes ? 'bytes' : 'count' };
+}
+if (passes.length) {
+  metrics['hub.rss.before'] = { v: hubBefore.rss, kind: 'MB' };
+  metrics['hub.rss.after'] = { v: hubAfter.rss, kind: 'MB' };
+  metrics['hub.rss.peak'] = { v: hubAfter.peak, kind: 'MB' };
+}
+if (OUT) writeFileSync(OUT, JSON.stringify({ world: world.counts, cycles: CYCLES, first: FIRST, cpu: CPU, scale: SCALE, hub: { before: hubBefore, after: hubAfter }, metrics, passes }, null, 1));
 if (process.env.GITHUB_STEP_SUMMARY) {
   const line = (r: (typeof rows)[number]) =>
     `| ${r.verdict.startsWith('FAIL') ? `**${r.verdict}**` : r.verdict} | ${r.pass} | \`${r.k}\` | ${r.k === 'heap' ? (r.first / 1e6).toFixed(2) + ' MB' : r.first} | ${r.k === 'heap' ? (r.last / 1e6).toFixed(2) + ' MB' : r.last} | ${r.k === 'heap' ? (r.growth / 1e6).toFixed(2) + ' MB' : r.growth} | ${r.perRound} | ${r.allowed ?? ''} |`;

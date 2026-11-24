@@ -172,7 +172,9 @@ kill %1 %2 %3 %4                                                       # or let 
   On a busy disk one fsync can take tens of milliseconds; one transaction around the setup makes it one. When the
   writes are the code under test, one at a time (the media archiver's, in gapfill.test.ts), `PRAGMA synchronous = OFF`
   on the test's database drops their fsyncs: nothing in a test has to outlive the process. A store the test never
-  opens again from its file can be `new Store(':memory:', …)`, with no disk at all (jobs.test.ts). `strace -f -c -e
+  opens again from its file can be `new Store(':memory:', …)`, with no disk at all (jobs.test.ts). When the syncs
+  can't be switched off (secret files, the checkpointer's own connection), put the test's files on a memory
+  filesystem: `memTempDir` (test/fixtures/memdir.ts) makes the directory under `/dev/shm`. `strace -f -c -e
   trace=fsync bun test <file>` counts them, and `strace -f -w -c` shows the wall time they take.
 - A test clock moved hours on steps through every timer due on the way: a loop that looks for work every 5 s fires
   17,000 times in a day, each with a few turns of the event loop and its queries (0.6 s of jobs.test.ts's repeat run).

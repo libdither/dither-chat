@@ -229,6 +229,8 @@ export function describeActivity(f: P.PlaceActivity): string | null {
 
 /** `reminder`: a calendar reminder from before calendar accounts, with no message or conversation (old rows; now a reminder is a message). */
 type NotificationKind = 'message' | 'held' | 'digest' | 'request' | 'reminder' | 'ring';
+/** Why a push was not sent (`push_skip`). */
+type PushSkip = 'watched' | 'capped';
 
 export interface Features {
   conversation: P.PlaceActivity;
@@ -301,9 +303,18 @@ export class ActivityStore {
     return id;
   }
 
-  /** How many push registrations it went to, and how many push servers took it. */
-  sent(id: string, r: { devices: number; accepted: number }) {
-    this.db.query('UPDATE notification SET devices = ?, accepted = ? WHERE id = ?').run(r.devices, r.accepted, id);
+  /** A push not sent (`push_skip`): the chat was watched on a computer, or a silent Conversation within its ten minutes. */
+  skipped(s: { messageId: string; conversationId: string; why: PushSkip }, now = Date.now()) {
+    if (!this.enabled) return;
+    this.db.query('INSERT INTO push_skip (message_id, conversation_id, why, at) VALUES (?, ?, ?, ?)').run(s.messageId, s.conversationId, s.why, now);
+  }
+
+  /**
+   * How many push registrations it went to, how many push servers took it, and whether it sounded there (`alert`: an
+   * alert's first push of a burst, a ring; the scorecard's sounds a day, docs/scorecard.md).
+   */
+  sent(id: string, r: { devices: number; accepted: number }, alert?: boolean) {
+    this.db.query('UPDATE notification SET devices = ?, accepted = ?, alert = ? WHERE id = ?').run(r.devices, r.accepted, alert === undefined ? null : +alert, id);
   }
 
   /** What devices say happened. Each device's first word on each event counts; repeats change nothing. */
@@ -432,6 +443,7 @@ export class ActivityStore {
       this.db.query('DELETE FROM notification_event WHERE notification_id NOT IN (SELECT id FROM notification)').run();
       this.db.query('DELETE FROM triage_input WHERE at < ?').run(cutoff);
       n += this.db.query('DELETE FROM inbox_action WHERE at < ?').run(cutoff).changes;
+      n += this.db.query('DELETE FROM push_skip WHERE at < ?').run(cutoff).changes;
       // For you's served items and what devices said of them (foryou.ts).
       n += this.db.query('DELETE FROM foryou_item WHERE created_at < ?').run(cutoff).changes;
       const f = over('foryou_item', caps.foryou ?? MAX_FORYOU);
@@ -459,7 +471,7 @@ export class ActivityStore {
 
   /** Everything in the log. Usage totals (place_usage) are separate and stay. */
   clear() {
-    this.db.exec('DELETE FROM visit; DELETE FROM notification; DELETE FROM notification_event; DELETE FROM triage_input; DELETE FROM inbox_action; DELETE FROM foryou_item; DELETE FROM foryou_event;');
+    this.db.exec('DELETE FROM visit; DELETE FROM notification; DELETE FROM notification_event; DELETE FROM triage_input; DELETE FROM inbox_action; DELETE FROM push_skip; DELETE FROM foryou_item; DELETE FROM foryou_event;');
     this.cache.clear();
   }
 

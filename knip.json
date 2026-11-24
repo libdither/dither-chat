@@ -58,6 +58,7 @@
         "src/ui/PalettePages.tsx",
         "src/ui/panel/Panel.tsx",
         "src/ui/PictureEditor.tsx",
+        "src/ui/Loudness.tsx",
         "src/ui/Poll.tsx",
         "src/ui/ProfileSelf.tsx",
         "src/ui/rich/Rich.tsx",

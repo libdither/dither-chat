@@ -38,7 +38,10 @@ import { namedTokens } from './mentionrefs.ts';
 import { describeActivity, type ActivityStore, type Features } from './activity.ts';
 import { alertBar, describeWeight, emptyModel, importance, learnedFrom, predict, prior, THRESHOLDS, tierFrom, TIER_NAME, words, type Facts, type Level, type Model, type Namer, type TierContext } from './learn.ts';
 import { InteractionLog } from './interact.ts';
-import { conversing, CONVERSING_REASON } from './tiers.ts';
+import { conversing, conversingAll, CONVERSING_REASON } from './tiers.ts';
+import { BAND_DECISION, loudness, momentKeys } from './loudness.ts';
+import type { LoudLearner } from './loudlearn.ts';
+import type { StoredLoud } from './store.ts';
 import { blockedByYou, requestHeld } from './add.ts';
 import { quietAuthor } from './accountself.ts';
 import { inQuietHours } from './quiethours.ts';
@@ -72,6 +75,10 @@ export interface Decision {
   unjudged?: boolean;
   /** The candidate model's chances, kept next to the live ones; it never decides (shadow.ts). */
   shadow?: P.TriageProbs;
+  /** The Conversation rule's reasons that hold (tiers.ts conversingAll): features of the loudness. */
+  why?: ReturnType<typeof conversingAll>;
+  /** Its loudness on the one scale (loudness.ts): deciding (DITHER_ATTENTION=on) or worked out beside the tiers. */
+  loud?: StoredLoud;
 }
 
 /** The local model's reading of a message: its chance, 0 to 1, that it cannot wait an hour or two; null when it did not answer. */
@@ -113,6 +120,12 @@ export class Triage {
    * features, only the shadow model weighs them.
    */
   content: ((messageId: string) => Record<string, number>) | null = null;
+  /** The loudness scale's learning and settings (loudlearn.ts); null or mode `tiers`: no loudness. */
+  loud: LoudLearner | null = null;
+  /** The moment a message arrives in: a computer in use, and how long since the last sound (main.ts). */
+  momentOf: ((now: number) => { desk: boolean; sinceSound: number | null }) | null = null;
+  /** The inbox's needs-reply chance for a chat (attention.ts), where it has one. */
+  owedOf: ((conversationId: string) => number | null) | null = null;
   private interactions: InteractionLog | null = null;
   private markedCache: { at: number; convs: Set<string>; authors: Set<string> } | null = null;
 
@@ -345,11 +358,13 @@ export class Triage {
     const d = this.decideByRules(messageId);
     if (d) await this.withActivity(d, messageId, now);
     if (d?.facts) await this.withModel(d, messageId, now);
-    if (d?.decision === 'push' && this.sentSilently(messageId)) {
+    const silently = !!d && d.decision !== 'silent' && this.sentSilently(messageId);
+    if (d?.decision === 'push' && silently) {
       // Its sender asked that it not notify anyone (Discord's @silent): it stays where it would be, silent.
       d.decision = d.facts?.conv ? 'quiet' : 'digest';
       d.reasons.unshift('Sent silently: it never alerts');
     }
+    if (d) this.withLoudness(d, messageId, now, silently);
     if (d?.decision !== 'push') return d;
     const q = this.store.quietHours();
     if (!inQuietHours(q, now) || (q!.allowStarred && d.alwaysNotify)) return d;
@@ -387,8 +402,10 @@ export class Triage {
     const f = d.facts!;
     const m = this.store.one<Row>('SELECT conversation_id, ts, body FROM message WHERE id = ?', messageId)!;
     const fold = this.interact().fold;
-    const why = conversing(f, { lastOwn: fold.lastOwn(m.conversation_id), answerRate: fold.answerRate(m.conversation_id, m.ts) }, m.ts);
+    const part = { lastOwn: fold.lastOwn(m.conversation_id), answerRate: fold.answerRate(m.conversation_id, m.ts) };
+    const why = conversing(f, part, m.ts);
     f.conv = !!why;
+    d.why = conversingAll(f, part, m.ts);
     const marked = this.marked(now);
     const eligible = !f.cap && (f.conv || marked.convs.has(m.conversation_id) || (!!f.author && marked.authors.has(f.author)));
     if (eligible && !d.forced) {
@@ -427,6 +444,64 @@ export class Triage {
       d.reasons.unshift(`${TIER_NAME[tier]}, ${learnedFrom(tier, before)} (was ${TIER_NAME[before]})`, ...said);
       d.decidedBy = 'learned';
     }
+  }
+
+  /**
+   * Its loudness (loudness.ts), worked out after the tiers: stored beside them in shadow, deciding when
+   * DITHER_ATTENTION=on. Your rules stay absolute: Always alert is 100, a muted place 0, List only at most the next
+   * look; a message sent silently never sounds.
+   */
+  private withLoudness(d: Decision, messageId: string, now: number, silently: boolean) {
+    const L = this.loud;
+    if (!L || L.mode === 'tiers') return;
+    const live = L.mode === 'on';
+    if (d.decision === 'silent' || !d.facts) {
+      d.loud = { loudness: 0, band: 'unread', live, rule: 'Silenced', reasons: [{ text: d.reasons[0] ?? 'Silenced', by: 0 }] };
+      return;
+    }
+    const f = d.facts;
+    const m = this.store.one<Row>('SELECT conversation_id, body FROM message WHERE id = ?', messageId);
+    if (!m) return;
+    const q = this.store.quietHours();
+    const quiet = inQuietHours(q, now) && !(q!.allowStarred && d.alwaysNotify);
+    const prefs = L.prefs();
+    const mo = this.momentOf?.(now) ?? { desk: false, sinceSound: null };
+    const moment = { desk: prefs.computerFirst && mo.desk, hour: new Date(now).getHours(), sinceSound: mo.sinceSound, quiet };
+    const probs = d.probs ?? prior(f);
+    const out = loudness(
+      {
+        facts: f,
+        words: words(m.body ?? ''),
+        importance: probs.important,
+        ...(f.judge !== undefined ? { alert: probs.alert } : {}),
+        why: d.why ?? [],
+        owed: this.owedOf?.(m.conversation_id) ?? null,
+        moment,
+        ...(d.forced ? { rule: 'always' as const } : f.cap ? { rule: 'list' as const } : {}),
+      },
+      L.model,
+      prefs.readily,
+      this.namer,
+    );
+    if (silently && out.band === 'sound') {
+      out.band = 'show';
+      out.loudness = 79;
+      out.reasons.unshift({ text: 'Sent silently: it never sounds', by: 0 });
+    }
+    d.loud = {
+      loudness: out.loudness,
+      band: out.band,
+      live,
+      parts: out.parts,
+      reasons: out.reasons.slice(0, 10),
+      why: d.why ?? [],
+      moment: momentKeys(moment),
+      ...(d.forced ? { rule: 'Always alert' } : f.cap ? { rule: 'List only' } : {}),
+    };
+    if (!live || d.forced) return;
+    d.decision = BAND_DECISION[out.band];
+    d.decidedBy = 'model';
+    d.reasons.unshift(...out.reasons.filter((r) => r.by !== 0 || r === out.reasons[0]).slice(0, 3).map((r) => (r.by ? `${r.text} (${r.by > 0 ? '+' : ''}${r.by})` : r.text)));
   }
 
   /** Ask the local model, for at most `judgeTimeoutMs`. null: it has no answer; undefined: it did not answer in time. */

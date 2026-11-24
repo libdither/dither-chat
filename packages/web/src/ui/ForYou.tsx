@@ -10,6 +10,7 @@ import { signal } from '@preact/signals';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { burstLine, FRESH_EVERY, Impressions, onScreen, wantsFresh } from '../foryou.ts';
 import { deviceId } from '../activity.ts';
+import { answerCheckin } from '../loudness.ts';
 import { countKey } from '../clicklog.ts';
 import { ago, fullTime } from '../format.ts';
 import { authorName, convLabel, crumbs, plainBody } from '../model.ts';
@@ -365,6 +366,8 @@ function Item({ it, quoted, focused, mark: marked }: { it: P.ForYouItem; quoted?
   const where = c ? convLabel(c) : 'this chat';
   const text = plainBody(m.body, m.network);
   const [all, setAll] = useState(false);
+  // For you's one check-in a day (docs/foryou.md, "Worth seeing"): answered here, it goes.
+  const [asked, setAsked] = useState(false);
   const long = text.length > 420 || text.split('\n').length > 6;
   const images = m.attachments.filter(isImage);
   const files = m.attachments.filter((a) => !isImage(a));
@@ -437,6 +440,17 @@ function Item({ it, quoted, focused, mark: marked }: { it: P.ForYouItem; quoted?
           ))}
         </div>
       </div>
+      {it.ask && !asked && (
+        <div class="fy-ask" data-fy-ask>
+          <span>Worth seeing?</span>
+          <button class="chip-btn" data-track="foryou glad" onClick={() => (setAsked(true), void answerCheckin({ id: it.ask! }, 'glad'))}>
+            Glad I saw this
+          </button>
+          <button class="chip-btn" data-track="foryou not for me" onClick={() => (setAsked(true), void answerCheckin({ id: it.ask! }, 'not'))}>
+            Not for me
+          </button>
+        </div>
+      )}
       <div class="fy-foot">
         {burst && <span class="fy-burst">{burst}</span>}
         {also.length > 0 && <span class="fy-also">also in {also.map(convLabel).join(', ')}</span>}

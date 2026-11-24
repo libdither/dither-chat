@@ -37,6 +37,7 @@ const ROUTES = [
   '#/inbox/c/mth_1',
   '#/foryou',
   '#/model',
+  '#/attention',
   '#/people',
   '#/people/pal',
   '#/people/graph',
