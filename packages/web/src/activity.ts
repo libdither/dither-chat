@@ -9,8 +9,9 @@
  */
 import { effect, signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
+import { WATCH_EVERY } from '@dither-chat/protocol';
 import { inboxKeyOf, inboxRows, placeConv, rootCommunity, rowMuted, type InboxRow } from './model.ts';
-import { api, apiHooks, db, eventHooks, href, listUnderHooks, parseHash, route, showsHere, type Route } from './state.ts';
+import { api, apiHooks, db, eventHooks, href, listUnderHooks, parseHash, route, sayLive, showsHere, socketOpenHooks, type Route } from './state.ts';
 import { NEW_VISIT_AFTER } from './tracker.ts';
 import { typedHooks } from './typing.ts';
 import { inUse } from './usage.ts';
@@ -230,6 +231,36 @@ export function noteRowRead(kind: 'conversation' | 'mail', ids: string[]) {
 export function noteSeen(conversationIds: string[], ts: number) {
   if (!log || !enabled) return;
   log.seen(conversationIds, ts);
+}
+
+// ------------------------------------------------------------------ what this page is watching
+
+/** The chats each open timeline shows at their newest message (Timeline's `noteNewest`). */
+const atNewest = new Map<object, string[]>();
+let watchSaid: string | null = null;
+let watchSaidAt = 0;
+
+/**
+ * A timeline shows these chats (a chat's routes) at their newest message, or (null) no longer does. The hub hears,
+ * while the page is in use, so it sends no push about them (P.ClientWatching, docs/notifications.md). Not part of the
+ * activity log: it holds nothing and is said even with the log off.
+ */
+export function noteNewest(owner: object, conversationIds: string[] | null) {
+  if (conversationIds?.length) atNewest.set(owner, conversationIds);
+  else atNewest.delete(owner);
+  sayWatching();
+}
+
+/** Tells the hub when what this page watches changed, and again every WATCH_EVERY while it watches something. */
+function sayWatching() {
+  if (typeof document === 'undefined') return;
+  const ids = inUse() ? [...new Set([...atNewest.values()].flat())].sort() : [];
+  const key = ids.join(',');
+  if (key === watchSaid && (!ids.length || Date.now() - watchSaidAt < WATCH_EVERY)) return;
+  const msg: P.ClientWatching = { t: 'watching', label: deviceLabel(), conversationIds: ids };
+  if (!sayLive(JSON.stringify(msg))) return;
+  watchSaid = key;
+  watchSaidAt = Date.now();
 }
 
 function collect() {
@@ -490,5 +521,13 @@ export function startActivity() {
   });
   setInterval(tick, 5000);
   setInterval(() => void flush(), 60_000);
+  // What this page watches: said again on a new socket, and checked as the page comes and goes and goes idle.
+  socketOpenHooks.add(() => {
+    watchSaid = null;
+    sayWatching();
+  });
+  for (const ev of ['focus', 'blur']) window.addEventListener(ev, sayWatching);
+  document.addEventListener('visibilitychange', sayWatching);
+  setInterval(sayWatching, 5000);
   void fetchActivity().then(() => flush());
 }

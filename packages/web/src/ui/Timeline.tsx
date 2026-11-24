@@ -103,7 +103,7 @@ import { CAPTURE_ACCEPT, MEDIA_ACCEPT, opensSendScreen } from '../camera.ts';
 import { gifLinkOf, plainGifs } from '../gifs.ts';
 import { closePanel, openPanel, panelOpen, panelShown, phone, touchOnly } from '../phone.ts';
 import { composerDone, composerTyped } from '../typing.ts';
-import { noteSeen } from '../activity.ts';
+import { noteNewest, noteSeen } from '../activity.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { ForwardCard, forwarding } from './Forward.tsx';
 import { InviteCards } from './InviteCard.tsx';
@@ -996,8 +996,12 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     }
     return first;
   };
+  const watchKey = useRef({}).current;
+  useEffect(() => () => noteNewest(watchKey, null), []);
   const onScroll = () => {
     const el = scroller.current;
+    // Shown at the newest message (read as it comes): the hub sends the phones no push about it (activity.ts).
+    noteNewest(watchKey, el && drawn.current.to === null && !t?.detached && Math.abs(el.scrollTop) < 40 ? convIds : null);
     if (!el) return;
     // column-reverse: scrollTop is 0 at the bottom and negative going up.
     if (el.scrollHeight + el.scrollTop - el.clientHeight < 400) {

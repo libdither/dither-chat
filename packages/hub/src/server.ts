@@ -5,7 +5,7 @@ import { join, normalize, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type * as P from '@dither-chat/protocol';
 import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, parseCursor } from './chats.ts';
-import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, sendBlocker, UPLOAD_CHUNK, WATCH_EVERY } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { ACCOUNT_COLORS, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
@@ -78,6 +78,7 @@ import { ReplyMarks, type ReplyMark } from './replymarks.ts';
 import { mailAttention } from './mail/attention.ts';
 import { AnswerClock, clientReport, jobFailed, lossCovered, PerClientCap, reportedInRequest, reportError, withRequest } from './errors.ts';
 import { callRoute } from './callstate.ts';
+import { PHONE } from './delivery.ts';
 import { handlesPolls, pollRoute } from './polls.ts';
 import { SendExtras } from './sendextras.ts';
 import { reminderWords } from './saved.ts';
@@ -85,7 +86,8 @@ import { ASK_LEVEL, isChatKind, type ManagerLink } from './accounts-manager.ts';
 import { Auth, bearerOf, clientIp, COOKIE, cookieOf, fileTicket, fromOwnPage, MIN_PASSWORD, overHttps, sessionCookie, ticketGood, USER, type Who } from './auth.ts';
 
 
-type ClientData = { kind: 'client' };
+/** A page's socket, and what it says it is watching (`P.ClientWatching`), with when it said so. */
+type ClientData = { kind: 'client'; watching?: { label: string; conversationIds: string[]; at: number } };
 /** What a send carries (POST /api/conversations/:id/send, and a chat's /messages). */
 type SendBody = {
   body?: string;
@@ -547,6 +549,7 @@ export class HubServer {
           if (d.kind === 'client') {
             // The client's heartbeat: after a phone wakes, a dead socket shows in seconds rather than at a TCP timeout.
             if (msg === 'ping') ws.send('pong');
+            else if (typeof msg === 'string' && msg.startsWith('{')) self.clientSaid(ws as ServerWebSocket<ClientData>, msg);
           } else if (d.kind === 'adapter') self.sup.receive(ws as ServerWebSocket<AdapterSocketData>, msg);
           else if (d.kind === 'call') self.calls.message(ws as ServerWebSocket<CallSocketData>, msg);
           else if (d.kind === 'voice') self.calls.voiceMessage(ws as ServerWebSocket<VoiceSocketData>, msg);
@@ -2955,5 +2958,30 @@ export class HubServer {
   /** Queue a notification for connected clients. */
   notify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
     this.store.dirty.extra.push(ev);
+  }
+
+  /** A page's word over its socket: what it is watching (`P.ClientWatching`). Anything else is ignored. */
+  private clientSaid(ws: ServerWebSocket<ClientData>, msg: string, now = Date.now()) {
+    let m: Partial<P.ClientWatching>;
+    try {
+      m = JSON.parse(msg);
+    } catch {
+      return;
+    }
+    if (m?.t !== 'watching' || !Array.isArray(m.conversationIds)) return;
+    const ids = m.conversationIds.filter((x): x is string => typeof x === 'string').slice(0, 20);
+    ws.data.watching = ids.length ? { label: String(m.label ?? '').slice(0, 100), conversationIds: ids, at: now } : undefined;
+  }
+
+  /**
+   * Is this chat open at its newest message on a computer in use, as its page last said (within twice
+   * `P.WATCH_EVERY`)? Then a push about it would only buzz a phone about what is being read (notify.ts).
+   */
+  watched(conversationId: string, now = Date.now()): boolean {
+    for (const ws of this.clients) {
+      const w = ws.data.watching;
+      if (w && now - w.at <= 2 * WATCH_EVERY && !PHONE.test(w.label) && w.conversationIds.includes(conversationId)) return true;
+    }
+    return false;
   }
 }

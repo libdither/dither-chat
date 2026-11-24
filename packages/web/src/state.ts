@@ -1376,6 +1376,20 @@ export function afterSync(): Promise<void> {
   return Promise.race([settle, socketOpen().then(() => chain).then(() => {})]);
 }
 
+/** Called each time the live socket opens: what the hub held about this page went with the old one. */
+export const socketOpenHooks = new Set<() => void>();
+
+/** Says something to the hub over the live socket (`P.ClientWatching`); false when it is not open. */
+export function sayLive(msg: string): boolean {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+  try {
+    ws.send(msg);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function connect() {
   clearTimeout(retry);
   // Signed out: nothing to connect to until the sign-in screen has reloaded the page (login.ts).
@@ -1399,6 +1413,7 @@ export function connect() {
     held ??= [];
     void resync();
     void loadPlans();
+    for (const h of socketOpenHooks) h();
   };
   sock.onmessage = (e) => {
     if (ws !== sock) return;

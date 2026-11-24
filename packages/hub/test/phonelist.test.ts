@@ -315,7 +315,7 @@ describe('alerts and Conversations go out as before', () => {
     const notifier = new Notifier({
       store,
       phone,
-      activity: { notification: (n) => `n-${n.messageId}`, sent: () => {} },
+      activity: { notification: (n) => `n-${n.messageId}`, sent: () => {}, skipped: () => {} },
       devices: { addressed: () => false, quietOn: () => [] },
       push: {
         desktops: () => ['reg-desk'],
@@ -328,7 +328,7 @@ describe('alerts and Conversations go out as before', () => {
         listDue: () => true,
         plan: (cid, mid, tier) => ({ alert: tier === 'push', tier, count: 1, conv: { title: cid, shape: 'channel' }, sender: { name: 'Ann', key: 'ann' }, lines: [{ author: 'Ann', key: 'ann', body: mid, ts: 1 }], icons: {} }),
       },
-      server: { notify: (ev) => void pages.push({ messageId: current, payload: ev }), warm: async () => {} },
+      server: { notify: (ev) => void pages.push({ messageId: current, payload: ev }), warm: async () => {}, watched: () => false },
     });
     for (const [mid, cid, tier, prior] of script) {
       current = mid;

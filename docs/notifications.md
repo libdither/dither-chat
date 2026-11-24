@@ -101,7 +101,8 @@ messages, about a second on a busy hub, and every later one folds what arrived s
 **How large it is.** A median of 17.5 chats a day were in the Conversation tier (20 at most), with 58.5 silent
 updates a day: messages that came after a five-minute lull while you were away. By the first reason that held, a
 day: 51 messages in DMs, 2 about you elsewhere, 84 where you had written in the last day, 62 where you usually
-answer. When the rate was chosen (an earlier count over the same days, which had 14 chats a day at 0.1), a rate of
+answer. Those last two are held to one push per chat per ten minutes
+([A Conversation's ten minutes](#one-notification-per-conversation)). When the rate was chosen (an earlier count over the same days, which had 14 chats a day at 0.1), a rate of
 0.05 made it 16 and 0.02 made it 19 with twice the silent updates.
 
 ## Alert
@@ -413,6 +414,29 @@ conversation's unread lines, so the notification grows instead of being replaced
   (`BURST_MS`), or comes after only silent ones in this burst, or mentions or replies to you. Every other update
   changes the notification silently. Nothing sounds while a page on a computer has been in use in the last two
   minutes (a visit from a device whose label is not a phone's): you are already looking.
+- **Read here, not pushed there** (`server.ts` `watched`). A message's push is not sent at all, to any device, while
+  its chat is open at its newest message on a computer in use, unless a rule of yours made it an alert (Always
+  alert). The page says so itself over its live socket (`{ t: 'watching', label, conversationIds }`,
+  `P.ClientWatching`, from `activity.ts` `noteNewest`): the chats a timeline shows scrolled to its newest message
+  while the page is visible, focused and used in the last five minutes, none otherwise. It says it whenever that
+  changes, on each new socket, and again every 30 s (`WATCH_EVERY`) while it watches something; the hub forgets it
+  after a minute without word or when the socket closes. A page whose label says phone does not count. Such a page
+  marks the chat read as each message comes, so a push would only buzz the phone about what is being read: in a week
+  before this, 143 pushes (8% of the phone's) went out while their chat was open on the computer, and 129 were shown.
+  The page still gets its `notify` event. Each skip is logged (`push_skip`, `why` `watched`,
+  [activity.md](activity.md#push_skip-pushes-not-sent)).
+- **A Conversation's ten minutes** (`CONVERSATION_EVERY`, `delivery.ts` `capped`). A silent Conversation that is not
+  in a DM and not about you (not a mention of you, a reply to you, one of your keywords or a reply to a post you
+  follow), that is, one there because you wrote in its chat in the last day or usually answer there, is not pushed
+  when any push about its chat went out in the last ten minutes. Its line goes with the chat's next push, as a list
+  row's does, and reading the chat anywhere ends the ten minutes, so the next message pushes at once. DMs, messages
+  about you and alerts are never held. Each held one is logged (`push_skip`, `why` `capped`).
+  Why: on 2026-11-15 one Discord channel you had written in pushed 1,155 times ("You wrote here in the last day"),
+  and on 2026-11-23 four Signal groups 1,102 times, for the same reason. Replayed over the two weeks to 2026-11-24
+  (5,918 pushes; a chat's ten minutes ended by a visit to it, standing in for a read), Conversation pushes went from
+  352 a day (median 151, 1,366 at most) to 105 (median 79, 197 at most), and all pushes from 423 a day to 176. Of
+  582 times a chat was opened after a push, none would have lost its only push; with no read ending the ten minutes
+  it would have been 25. Five minutes kept 120 a day, fifteen 98 and thirty 90: past ten little more goes.
 - **The phone's list.** A list row reaches the phones only as [the phone's list](#the-phones-list) allows.
 - **The list's ten minutes** (`LIST_EVERY`). A list row is not pushed when any push about its chat went out in the
   last ten minutes, so a busy channel is one row brought up to date now and then, not a stream of pushes. The message
@@ -723,7 +747,8 @@ notifies once. (Before calendar accounts it came as POST /api/calendar/notify, w
 
 - **At a computer, the phone stays quiet.** While a page on a computer has been in use in the last two minutes
   (`delivery.ts` `elsewhere`, `ACTIVE_MS`), no push sounds: the alert still arrives on the phone, silently, and the
-  computer shows its notification.
+  computer shows its notification. While the chat itself is open there at its newest message, nothing is pushed
+  at all unless a rule made it an alert ([Read here, not pushed there](#one-notification-per-conversation)).
 - **The inbox** ([inbox.md](inbox.md)) puts a conversation with an alert you have not seen first, lifts one with an
   unread Conversation message, and adds the importance of an unread message on the list. Server channels are listed
   while they hold an unread message on the list or above.
