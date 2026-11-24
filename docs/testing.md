@@ -15,6 +15,7 @@
 | `boot` | the built web app in Chrome against a demo hub (scripts/check-boot.ts), then the sign-in screen against a hub behind the login, clicked and typed into (scripts/verify-login.ts), then notifications closing once their chat is read, pushed to the service worker over DevTools (scripts/verify-clear.ts), then the start with the hub out of reach right after a deploy (scripts/check-offline.ts), then the hub out of reach and back, tapped and clicked (scripts/verify-offline.ts), then the app over a bad link through a proxy it steers: a silent socket, a hanging catch-up, a flapping link, a slow link filled by a download (scripts/verify-link.ts, docs/sync.md "A bad link"), then a push's copy of its message shown offline and replaced once the hub answers (scripts/verify-arrived.ts), then status dots on each place in both themes (scripts/verify-presence.ts) | `bun run check:boot`, `bun run web:build && bun scripts/verify-login.ts`, `bun scripts/verify-clear.ts`, `bun run web:build && bun scripts/check-offline.ts --web packages/web/dist`, `bun run web:build && bun scripts/verify-offline.ts`, `bun run web:build && bun scripts/verify-link.ts`, `bun run web:build && bun scripts/verify-arrived.ts`, `bun run web:build && bun scripts/verify-presence.ts` |
 | `back` | back from every kind of page and layer, by Escape and the browser's back, on a computer and a phone, against a demo hub of its own (scripts/verify-back.ts, docs/desktop.md "Escape and back") | `bun run web:build && bun scripts/verify-back.ts` |
 | `response` | every control on each kind of page clicked, in four parts side by side: a click that draws most of a list again (every message, every row) fails unless scripts/response-known.json has it (scripts/verify-response.ts, docs/perf.md "Every click") | `bun scripts/verify-response.ts` (`--shard 1/4` for a part) |
+| `memory` | the same round of pages again and again on a tenth-size world, a computer's and a phone's side by side: DOM nodes, listeners, intervals, object URLs, sockets, observers, marks and the app's caches may not keep growing; the heap and the hub's memory printed (scripts/verify-memory.ts, docs/perf.md "Memory") | `bun scripts/verify-memory.ts` |
 | `perf` | load and chat switching on a tenth-size world, a warm-up and one run, then a cold start and a relaunch over a slow phone link, its counts against a baseline (docs/perf.md) | `bun scripts/verify-perf.ts --ci` |
 | `check` | passes only when each job above passed, or was skipped because `changes` said so | |
 
@@ -27,6 +28,9 @@
 - A new push to a pull request cancels its older run. Runs on main never cancel each other.
 - The Android app has workflows of its own, outside `check`: android.yml (unit tests and the APK, when apps/android
   changes) and android-device.yml (the app on an emulator; [below](#android-on-an-emulator)).
+- Two workflows run once a night on main, outside `check`, and never block a merge: stress.yml (the hub's suite many
+  times over; [below](#the-stress-run)) and perf-nightly.yml (verify-perf at 1× and 4× CPU, five runs each, its
+  numbers kept on the `perf-history` branch and charted; [below](#the-nightly-perf-run)).
 - The run takes as long as its slowest job, and every job sets up in a few seconds, so a long step gets a job of its
   own rather than waiting behind another: `perf` (about 70 s of browser runs, 21 s of them the slow link's), `test-hub-mail` (one file of 20 to
   30 s) and `test-hub` (the other 69 files) run side by side. A code pull request's run took about 70 s on 2026-11-10,
@@ -208,6 +212,14 @@ failed. Nothing else happens: no issue, no message beyond GitHub's own.
 
 The same locally: `bun scripts/stress.ts --rerun-each=3`, and after `--`, files or `-t` for bun test. What it finds
 gets fixed. If that can't happen at once, the test is quarantined with a note naming the issue.
+
+### The nightly perf run
+
+`.github/workflows/perf-nightly.yml` runs `verify-perf` once a night (04:41 UTC) on the full-size world, at 1× and 4×
+CPU for the desktop, the phone and fetching ahead, five runs each, and by hand from Actions > Perf nightly > Run
+workflow. It judges nothing: each night's medians and spread go as one line onto the `perf-history` branch, and the
+job's summary flags what moved against the nights before (a time by 15%, a count outside what its runs came to), with a page of charts as the
+artifact `perf-trend`. It fails only when measuring breaks. docs/perf.md, "Nightly trends".
 
 ## Checks across the code
 

@@ -556,7 +556,9 @@ async function aheadRun(cpu: number): Promise<Metrics> {
  */
 const SOCKETS = `(() => {
   const W = window.WebSocket;
-  window.__sock = { opened: 0, dropped: 0, closed: 0, pings: 0, pongMax: 0 };
+  window.__sock = { opened: 0, dropped: 0, closed: 0, pings: 0, pongMax: 0, fresh: 0 };
+  // Each catch-up with the hub marks dither:fresh (state.ts); counted as they come, whatever is kept of them.
+  new PerformanceObserver((l) => (__sock.fresh += l.getEntriesByName('dither:fresh').length)).observe({ type: 'mark' });
   window.WebSocket = class extends W {
     constructor(u, p) {
       super(u, p);
@@ -606,7 +608,7 @@ async function slowRun(cpu: number): Promise<Metrics> {
     })()`);
   };
   /** Catch-ups with the hub in this page (a bootstrap or a sync from the journal: state.ts marks each `dither:fresh`). */
-  const freshes = () => page.eval<number>(`performance.getEntriesByName('dither:fresh').length`);
+  const freshes = () => page.eval<number>('__sock.fresh');
   const sockets = () => page.eval<{ opened: number; dropped: number; closed: number; pings: number; pongMax: number }>('({ ...__sock })');
   try {
     await page.size(390, 844, true);
