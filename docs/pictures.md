@@ -79,6 +79,10 @@ that chat, as its Pictures menu would (`place_pref.pictures`), with no toast: th
   saves it if it is a new one. A tap opens the list of the five, with the one in use where the chip was.
 
 While a slide is under way the timeline is scrolled to keep the chip (or, for a pinch, the run's top) under the
-finger: the timeline keeps its bottom still, and the run grows or shrinks below it. A second finger on a message
+finger: the timeline keeps its bottom still, and the run grows or shrinks below it. It is put back in the same
+frame, before paint (`keepStill`, from the run's layout effect), and once more as the run takes its new way. Meanwhile
+the browser's scroll anchoring is off (`.pics-holding`) and the timeline doesn't snap back to the newest message:
+either would move the chat on its own, which showed as a jump of the run's whole change in height when it settled. A
+second finger on a message
 is a pinch, so it never opens the message's long-press menu.
 

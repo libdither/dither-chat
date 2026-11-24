@@ -13,6 +13,7 @@ import { render, type ComponentChildren, type JSX } from 'preact';
 import { useRef, useState } from 'preact/hooks';
 import { PICTURE_LABELS, setPlacePictures } from '../arrange.ts';
 import { PICTURE_ORDER, settleAt, slidePosition, SLIDE_GIVE, type PictureRef } from '../pictures.ts';
+import { flush } from '../versions.ts';
 import { veiled } from './rich/parts.tsx';
 
 const LAST = PICTURE_ORDER.length - 1;
@@ -267,16 +268,32 @@ const rawOf = (runKey: string, layout: PictureLayout) => switchOf(runKey).value?
 
 /**
  * What stays under the finger while the run grows and shrinks: the chip, or the pictures' top. The timeline keeps its
- * bottom still (it is a column-reverse scroller), so it is scrolled by however far that moved.
+ * bottom still (it is a column-reverse scroller), so it is scrolled by however far that moved: in the same frame, from
+ * Pictures' layout effect (keepStill), before it is painted. The browser's own scroll anchoring is off meanwhile
+ * (.pics-holding): it held a different element still, was suppressed while the run as it was left the flow, and on
+ * the last frame, as the run took its new way, moved the chat by the whole change in height. The timeline doesn't
+ * snap back to the newest end meanwhile either (Timeline.tsx, heldByPictures).
  */
-let still: { el: HTMLElement; top: number } | null = null;
-function holdStill() {
-  requestAnimationFrame(() => {
-    if (!still?.el.isConnected) return;
-    const d = still.el.getBoundingClientRect().top - still.top;
-    const scroller = still.el.closest<HTMLElement>('.timeline-scroll');
-    if (scroller && Math.abs(d) > 0.5) scroller.scrollTop += d;
-  });
+let still: { el: HTMLElement; top: number; scroller: HTMLElement; runKey: string } | null = null;
+
+/** The timeline is held by a slide: its scroll anchoring and its following of the newest end wait. */
+export const heldByPictures = (scroller: HTMLElement) => scroller.classList.contains('pics-holding');
+
+function release() {
+  const s = still;
+  still = null;
+  // The next frame: anchoring comes back once the run as it is now has been laid out and painted where it was held.
+  if (s) requestAnimationFrame(() => still?.scroller !== s.scroller && s.scroller.classList.remove('pics-holding'));
+}
+
+/** Puts the held element back where it was; once the slide is over and drawn, lets go of the timeline. */
+export function keepStill(runKey: string) {
+  const s = still;
+  if (!s || s.runKey !== runKey) return;
+  if (!s.el.isConnected) return release();
+  const d = s.el.getBoundingClientRect().top - s.top;
+  if (Math.abs(d) > 0.5) s.scroller.scrollTop += d;
+  if (!switchOf(runKey).value) release();
 }
 
 function start(runKey: string, layout: PictureLayout, anchor: HTMLElement | null, busy: boolean): Sliding | null {
@@ -285,7 +302,11 @@ function start(runKey: string, layout: PictureLayout, anchor: HTMLElement | null
   const m = measurers.get(runKey);
   const geo = m && measureRun(m);
   if (!geo) return null;
-  still = anchor ? { el: anchor, top: anchor.getBoundingClientRect().top } : null;
+  const scroller = anchor?.closest<HTMLElement>('.timeline-scroll');
+  if (anchor && scroller) {
+    scroller.classList.add('pics-holding');
+    still = { el: anchor, top: anchor.getBoundingClientRect().top, scroller, runKey };
+  } else still = null;
   return (s.value = { g: IDX[layout], raw: IDX[layout], busy, geo, from: layout });
 }
 
@@ -302,7 +323,6 @@ function slide(runKey: string, layout: PictureLayout, raw: number, anchor: HTMLE
   stopAnim(runKey);
   const r = Math.max(-SLIDE_GIVE, Math.min(LAST + SLIDE_GIVE, raw));
   switchOf(runKey).value = { ...cur, raw: r, g: slidePosition(r), busy: true };
-  holdStill();
 }
 
 /** Eases the drawing to `to`, then saves that way if it is a new one and draws the run as it is again. */
@@ -319,12 +339,18 @@ function settleTo(runKey: string, convId: string, to: PictureLayout) {
     const k = Math.min(1, (now - t0) / 240);
     const e = 1 - Math.pow(1 - k, 3);
     s.value = { ...cur, g: lerp(from, target, e), raw: lerp(from, target, e) };
-    holdStill();
     if (k < 1) return void anims.set(runKey, requestAnimationFrame(step));
     anims.delete(runKey);
-    if (to !== cur.from) choose(runKey, convId, to);
+    if (to !== cur.from) {
+      choose(runKey, convId, to);
+      // The chat's new way now, not on the next timer: drawn in the same pass that takes the slide away, so the run
+      // never shows the way it was for a frame between them.
+      flush();
+    }
+    // The run is drawn as it now is, and held where it was one last time (keepStill), which lets go of the timeline;
+    // a run no longer drawn (scrolled out of the drawn slice) can't, so it is let go here a frame later.
     s.value = null;
-    still = null;
+    requestAnimationFrame(() => still?.runKey === runKey && !switchOf(runKey).value && release());
   };
   anims.set(runKey, requestAnimationFrame(step));
 }
