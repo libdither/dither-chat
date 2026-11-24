@@ -12,7 +12,7 @@ import { Icon } from './icons.tsx';
 import { HeadOrb } from './Offline.tsx';
 import { dropPlace } from './Organize.tsx';
 import { openPlaceMenu } from './menus.tsx';
-import { saveThreshold, thresholdOf } from './Reorganize.tsx';
+import { saveThreshold, thresholdOf } from './OrganizeServers.tsx';
 import { pct, Sensitivity } from './Sensitivity.tsx';
 
 interface Place {

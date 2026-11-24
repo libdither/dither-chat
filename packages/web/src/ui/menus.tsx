@@ -31,7 +31,7 @@ import { addLook } from './Reactions.tsx';
 import { Icon } from './icons.tsx';
 import { nicknameEntries } from './Nickname.tsx';
 import { openAbout } from '../opening.ts';
-import { canIndex, startIndexing } from './Indexing.tsx';
+import { canIndex, startIndexing } from '../indexjobs.ts';
 import { arrangeEntries, folderEntries, placeConvs } from './Organize.tsx';
 import { openConv } from '../opening.ts';
 import { viewer, type ViewerImage } from '../viewer.ts';

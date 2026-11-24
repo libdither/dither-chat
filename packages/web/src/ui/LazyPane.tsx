@@ -27,9 +27,9 @@ export function preloadPagesLater() {
 
 /**
  * A pane component from a chunk loaded with `load`. Until it is here, the pane shows the loading orb (or, when it could
- * not load, says so); `what` names the page in that message.
+ * not load, says so); `what` names the page in that message. A layer over the app (`pane` null) shows nothing meanwhile.
  */
-export function lazyPane<P extends object>(load: () => Promise<FunctionComponent<P>>, what: string): FunctionComponent<P> {
+export function lazyPane<P extends object>(load: () => Promise<FunctionComponent<P>>, what: string, pane: 'pane' | null = 'pane'): FunctionComponent<P> {
   let View: FunctionComponent<P> | null = null;
   let loading: Promise<FunctionComponent<P>> | null = null;
   const preload = () =>
@@ -48,6 +48,7 @@ export function lazyPane<P extends object>(load: () => Promise<FunctionComponent
       if (!V) preload().then((v) => setV(() => v), () => setFailed(true));
     }, []);
     if (V) return <V {...p} />;
+    if (!pane) return null;
     return (
       <section class="pane">
         {failed ? <Empty icon="alert" title={`Could not load ${what}`}>Check the connection to the hub, then try again.</Empty> : <Loading fill label="Loading…" />}
