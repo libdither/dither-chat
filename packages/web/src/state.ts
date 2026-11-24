@@ -327,6 +327,11 @@ export function applyEvents(events: P.ClientEvent[]) {
   let mail = false;
   let opened = false;
   let devices = false;
+  /**
+   * The conversations whose last message, counts or inbox score changed, while that is all that changed (versions.ts
+   * `convsChangedSince`); null once anything else did.
+   */
+  let scoped: Set<string> | null = new Set();
   for (const ev of events) {
     // Mail has its own signal: chat's lists do not draw again for it.
     if (ev.t.startsWith('mail.')) mail = true;
@@ -342,6 +347,13 @@ export function applyEvents(events: P.ClientEvent[]) {
       // A folder opened or closed (here or on another device): nothing a message or a row shows.
       else if (ev.t === 'placePrefs' && onlyOpens(db, ev.prefs)) opened = true;
       else if (!LIST_ONLY.has(ev.t)) meta = true;
+    }
+    // A message's own place is its timeline and the inbox, which no count reads; its conversation comes with it, and who
+    // wrote it, if new, moves `identityVersion` (below). Reactions' usage is only what the reaction picker offers.
+    if (scoped && !NOT_DB.has(ev.t) && ev.t !== 'devices' && !ev.t.startsWith('mail.')) {
+      if (ev.t === 'conversation') scoped.add(ev.conversation.id);
+      else if (ev.t === 'attention' && !ev.replace) for (const id of [...ev.items.map((a) => a.id), ...ev.removed]) scoped.add(id);
+      else if (ev.t !== 'message' && ev.t !== 'usage') scoped = null;
     }
     threadsDirty = applyEventTo(db, ev) || threadsDirty;
     switch (ev.t) {
@@ -423,6 +435,7 @@ export function applyEvents(events: P.ClientEvent[]) {
       case 'mail.chats':
         // Who has an email route moves people's directs and the inbox's rows (model.ts), as a conversation does.
         list = true;
+        scoped = null;
         mailMoved(ev.chats.flatMap((c) => [`c:${c.id}`, `p:${c.personId}`]));
         break;
       case 'typing':
@@ -465,7 +478,7 @@ export function applyEvents(events: P.ClientEvent[]) {
   else {
     if (opened) changed('open');
     if (shown || identityVersion() !== ids) changed('shown');
-    else if (list) changed('list');
+    else if (list) changed('list', scoped ?? undefined);
     else if (devices) changed('devices');
   }
   if (mail) mailChanged();
