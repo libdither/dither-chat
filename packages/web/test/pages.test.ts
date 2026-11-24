@@ -29,6 +29,7 @@ const ROUTES: [hash: string, kind: 'list' | 'tab' | 'page' | 'over', own: string
   ['#/inbox/c/pst_x_2', 'page', '#/inbox'],
   ['#/foryou', 'tab', '#/foryou'],
   ['#/model', 'over', '#/foryou'],
+  ['#/attention', 'over', '#/settings'],
   ['#/people', 'list', '#/people'],
   ['#/people/pal', 'page', '#/people'],
   ['#/people/graph', 'page', '#/people'],
@@ -80,7 +81,7 @@ test("the Mail page's old addresses open the same place in the Inbox", () => {
 
 test('the table covers every kind of route', () => {
   const views = new Set(ROUTES.map(([h]) => R(h).view));
-  expect([...views].sort()).toEqual(['accounts', 'calendar', 'directory', 'feed', 'folder', 'foryou', 'inbox', 'model', 'notices', 'people', 'profile', 'requests', 'search', 'settings', 'space', 'spaces']);
+  expect([...views].sort()).toEqual(['accounts', 'attention', 'calendar', 'directory', 'feed', 'folder', 'foryou', 'inbox', 'model', 'notices', 'people', 'profile', 'requests', 'search', 'settings', 'space', 'spaces']);
 });
 
 test("Catch up's old address opens For you, which took its place", () => {

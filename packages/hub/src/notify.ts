@@ -42,6 +42,14 @@ function pictures(look: { icon?: string } | undefined, g: { conv?: { icon?: stri
   return [look?.icon, g?.conv?.icon, g?.sender?.icon, ...Object.values(g?.icons ?? {})];
 }
 
+/**
+ * Whether a push sounds where it goes, as the devices read it (sw.js, the Android app): an alert's row, unless the hub
+ * said this update is silent (delivery.ts `alert`). Kept with the notification for the scorecard's sounds a day.
+ */
+export function sounded(level: 'push' | 'quiet', extra: { tier?: unknown; alert?: unknown }): boolean {
+  return level === 'push' && (extra.tier ?? 'push') === 'push' && extra.alert !== false;
+}
+
 /** Room for the device id push.ts adds to each device's payload, when measuring what fits. */
 const DEVICE_ROOM = 'x'.repeat(40);
 
@@ -99,10 +107,11 @@ export class Notifier {
     const copy = kind === 'message' && store.messageView && store.conversationView ? arrivedCopy(store as Required<NotifierDeps['store']>, conversationId, messageId) : null;
     const arrived = copy && fitArrived(pushPayload(title, body, conversationId, { ...extra, device: DEVICE_ROOM }), copy);
     if (arrived) extra.arrived = arrived;
+    const sounds = sounded(level, extra);
     this.last = server
       .warm(pictures(look, grouped))
       .then(() => push.notify(title, body, conversationId, extra, skip, level))
-      .then((r) => nid && activity.sent(nid, r))
+      .then((r) => nid && activity.sent(nid, r, sounds))
       .catch((e) => (console.error('push failed', e), jobFailed('push: request', e)));
   }
 
@@ -124,10 +133,11 @@ export class Notifier {
     server.notify({ t: 'notify', messageId: n.messageId, conversationId: n.threadId, title: n.title, body: n.body, reasons: n.reasons, ...n.look, ...mail, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}), ...(n.level !== 'push' ? { level: n.level } : {}) });
     const skip = n.level === 'push' ? quiet : [...quiet, ...push.desktops()];
     const grouped = delivery.plan(n.threadId, n.messageId, n.level, n.addressed);
+    const extra = { ...n.look, ...mail, messageId: n.messageId, level, tier: n.level, ...(n.importance !== null ? { importance: n.importance } : {}), ...grouped, ...(nid ? { nid } : {}) };
     this.last = server
       .warm(pictures(n.look, grouped))
-      .then(() => push.notify(n.title, n.body, n.threadId, { ...n.look, ...mail, messageId: n.messageId, level, tier: n.level, ...(n.importance !== null ? { importance: n.importance } : {}), ...grouped, ...(nid ? { nid } : {}) }, skip, level))
-      .then((r) => nid && activity.sent(nid, r))
+      .then(() => push.notify(n.title, n.body, n.threadId, extra, skip, level))
+      .then((r) => nid && activity.sent(nid, r, sounded(level, extra)))
       .catch((e) => (console.error('push failed', e), jobFailed('push: request', e)));
   }
 
@@ -148,9 +158,10 @@ export class Notifier {
     server.notify({ t: 'notify', messageId: n.id, conversationId: n.group, noticeId: n.id, title: n.title, body: n.body, reasons: n.reasons, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}), ...(n.level !== 'push' ? { level: n.level } : {}) });
     const skip = n.level === 'push' ? quiet : [...quiet, ...push.desktops()];
     const grouped = delivery.plan(n.group, n.id, n.level, n.addressed);
+    const extra = { ...n.look, noticeId: n.id, messageId: n.id, level, tier: n.level, ...(n.importance !== null ? { importance: n.importance } : {}), ...grouped, ...(nid ? { nid } : {}) };
     this.last = push
-      .notify(n.title, n.body, n.group, { ...n.look, noticeId: n.id, messageId: n.id, level, tier: n.level, ...(n.importance !== null ? { importance: n.importance } : {}), ...grouped, ...(nid ? { nid } : {}) }, skip, level)
-      .then((r) => nid && activity.sent(nid, r))
+      .notify(n.title, n.body, n.group, extra, skip, level)
+      .then((r) => nid && activity.sent(nid, r, sounded(level, extra)))
       .catch((e) => (console.error('push failed', e), jobFailed('push: request', e)));
     return true;
   }

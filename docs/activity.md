@@ -91,7 +91,9 @@ once per device and outcome.
 | `replied` | an answer typed into the notification went out (Chromium only) | same, from the reply action |
 
 Delivery is only confirmed where the device runs code for the push. A push server that took the push
-(`accepted`) does not mean it arrived: a phone that is off or a distributor that is not running drops it.
+(`accepted`) does not mean it arrived: a phone that is off or a distributor that is not running drops it. Whether it
+sounded there (`alert`: an alert starting a burst, a ring, quiet hours' summary) is kept with it for the scorecard's
+sounds a day ([scorecard.md](scorecard.md#the-cost-side)).
 
 A dismissal is also how the inbox knows you saw a notification without opening its conversation: the conversation
 stays unread, and its alert, its boost and its importance stop counting there

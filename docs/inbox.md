@@ -510,6 +510,7 @@ in the order on screen, a DM as its person, then the rest by the latest message.
 | `GET /api/attention` | `{ now, items }` |
 | `GET /api/attention/:conversationId` | everything about one score: the formula's parts, noise, relationship, reply rate, usual reply time; `learned`: the model's open and send chances and points, and the sampled points the inbox sorts by while exploring |
 | `GET /api/attention/needs-reply` | `?days=60`: how the "needs a reply" chances held up (`NeedsReplyCalibration`): by day, in bins, against the table's |
+| `GET /api/attention/report` | the weekly report of what attention cost (`AttentionReport`, [scorecard.md](scorecard.md#the-weekly-report)): sounds a day, stale pushes, checks with nothing new, people waiting on you, waits, breadth, at most one drifting person |
 | `GET /api/attention/model` | the learned order: its mode, when it last learned and from how many opens, its prior, what it learned as changes to weights on named features, the examination curve (fitted, the guess, and how often the list was on screen down to each row), and exploring (`explore`) |
 | `GET /api/attention/waiting` | `{ waiting }`: whether scores are still to come out of what already happened (a conversation to send, to fold, or stale and waiting out its 5 s); scripts/verify-response.ts waits for false after each click |
 | `POST /api/attention/rebuild` | `{ conversations?: string[] }`: fold these, or all, again from the start |

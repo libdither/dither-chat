@@ -294,6 +294,14 @@ export function SettingsPane() {
             </span>
             <Icon name="chevronRight" size={15} />
           </button>
+          <button class="link-row set-sorts" data-track="your attention" onClick={() => go({ view: 'attention' })}>
+            <Icon name="activity" size={15} />
+            <span>
+              <b>Your attention</b>
+              <small>How often notifications sounded, the people waiting on you, and who you talk with, over two weeks</small>
+            </span>
+            <Icon name="chevronRight" size={15} />
+          </button>
           <label class="toggle-row">
             <input type="checkbox" checked={!!pref('notifications')} onChange={async (e) => {
               const on = (e.target as HTMLInputElement).checked;

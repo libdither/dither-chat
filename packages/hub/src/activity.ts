@@ -309,9 +309,12 @@ export class ActivityStore {
     this.db.query('INSERT INTO push_skip (message_id, conversation_id, why, at) VALUES (?, ?, ?, ?)').run(s.messageId, s.conversationId, s.why, now);
   }
 
-  /** How many push registrations it went to, and how many push servers took it. */
-  sent(id: string, r: { devices: number; accepted: number }) {
-    this.db.query('UPDATE notification SET devices = ?, accepted = ? WHERE id = ?').run(r.devices, r.accepted, id);
+  /**
+   * How many push registrations it went to, how many push servers took it, and whether it sounded there (`alert`: an
+   * alert's first push of a burst, a ring; the scorecard's sounds a day, docs/scorecard.md).
+   */
+  sent(id: string, r: { devices: number; accepted: number }, alert?: boolean) {
+    this.db.query('UPDATE notification SET devices = ?, accepted = ?, alert = ? WHERE id = ?').run(r.devices, r.accepted, alert === undefined ? null : +alert, id);
   }
 
   /** What devices say happened. Each device's first word on each event counts; repeats change nothing. */
