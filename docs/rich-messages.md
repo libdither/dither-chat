@@ -61,7 +61,8 @@ message carries anyway (`attachment://name`) is not added twice: the component's
 A video embed whose video is a player page (YouTube, Twitch, Vimeo) shows its thumbnail with a play button, and loads
 the player only when clicked: nothing of the player's site is loaded before. YouTube's is loaded from its no-cookie
 host, and Twitch's is told the page it is on (it refuses to play otherwise). The frame is sandboxed. Any other video
-plays from Discord's own media proxy (never from the host the embed names), and a GIF embed (`gifv`) loops silently.
+plays from Discord's own media proxy (never from the host the embed names) in the app's video player (docs/media-kinds.md
+"Videos"), and a GIF embed (`gifv`) loops silently.
 
 ## Web code
 

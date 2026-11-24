@@ -388,6 +388,8 @@ const DEMO_FILES: Record<string, { mime: string; bytes: Uint8Array }> = {
   'demo:dither-sim-0.4.zip': { mime: 'application/zip', bytes: SIM_ZIP },
   'demo:bench-483.json': { mime: 'application/octet-stream', bytes: text(BENCH) },
   'demo:rent-split.xlsx': { mime: 'application/octet-stream', bytes: RENT_XLSX },
+  // An invented clip (ffmpeg's test pattern and a beeping tone, 10 s, 480×270), for the video player (docs/media-kinds.md).
+  'demo:bouldering.webm': { mime: 'video/webm', bytes: new Uint8Array(readFileSync(join(import.meta.dir, 'demo-clip.webm'))) },
 };
 /** A demo file as an attachment. */
 const file = (key: string, name: string): P.AttachmentFact => ({ kind: 'file', mime: DEMO_FILES[key].mime, name, size: DEMO_FILES[key].bytes.length, url: key });
@@ -988,7 +990,7 @@ const CONVS: DemoConv[] = [
   {
     acc: ['wa'],
     fact: { nativeId: W.alice.nativeId, shape: 'direct', participants: [W.self.nativeId, W.alice.nativeId], encrypted: true },
-    msgs: [[6 * H, W.alice, 'sent you the bouldering video on whatsapp, signal kept compressing it']],
+    msgs: [[6 * H, W.alice, 'sent you the bouldering video on whatsapp, signal kept compressing it', { att: [{ kind: 'video', mime: 'video/webm', name: 'bouldering.webm', size: DEMO_FILES['demo:bouldering.webm'].bytes.length, width: 480, height: 270, url: 'demo:bouldering.webm' }] }]],
     unread: 1,
   },
   {

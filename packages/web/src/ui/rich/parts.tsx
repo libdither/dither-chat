@@ -14,6 +14,7 @@ import { authorName, plainBody } from '../../model.ts';
 import { db, openMessage } from '../../state.ts';
 import { canPress, picksOf, press, pressState, stateWords } from '../../apps.ts';
 import { Icon } from '../icons.tsx';
+import { Video } from '../Video.tsx';
 
 /** What the chunk uses of the app, handed to it: importing these there would split them off the app's start. */
 const kit = {
@@ -23,6 +24,8 @@ const kit = {
   when: clock,
   open: openMessage,
   icon: (name: string, size: number) => <Icon name={name} size={size} />,
+  // The app's video player (Video.tsx), for an embed's video.
+  Video,
   points: waveformPoints,
   // A bot's controls (apps.ts, docs/apps.md).
   canPress,

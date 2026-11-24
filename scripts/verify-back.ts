@@ -226,6 +226,7 @@ const UNCOVERED: Record<string, string> = {
   'ui/Sheet.tsx': "a phone's sheets: verify-phone.ts",
   'ui/Stories.tsx': 'stories: a network that has them',
   'ui/Viewer.tsx': 'the demo pictures open in the viewer on a phone: verify-phone.ts',
+  'ui/VideoPlayer.tsx': "a video filling the page where the browser has no full screen: verify-video.ts takes it down with back",
 };
 void UNCOVERED;
 
