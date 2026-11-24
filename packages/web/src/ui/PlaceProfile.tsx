@@ -18,7 +18,7 @@ import { HistoryCard } from './HistoryCard.tsx';
 import { retention, setShowIn } from '../history.ts';
 import { Icon } from './icons.tsx';
 import { conversationMenu, spaceMenu } from './menus.tsx';
-import { Action, Card, Columns, Facts, Hero, ProfilePage, Tag } from './ProfileShell.tsx';
+import { Action, Card, Columns, Facts, Hero, ProfilePage, Tag, viewPicture } from './ProfileShell.tsx';
 import { openConv } from '../opening.ts';
 import { Loading } from './Loader.tsx';
 import { peopleExtras } from './peopleExtras.ts';
@@ -100,7 +100,7 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
       picture={picture}
       square={conv?.shape !== 'direct'}
       network={network}
-      onPicture={picTarget ? (e) => pe!.pictureMenu(e, picTarget, setPicturing) : undefined}
+      onPicture={picTarget ? (e) => pe!.pictureMenu(e, picTarget, setPicturing, picture ? () => viewPicture(picture, title) : undefined) : undefined}
       title={<EditableText setting={f.name} fallback={title} label="Name" busy={busy === 'name'} big onSave={(v) => change({ key: 'name', value: v }, 'Name changed')} max={ABOUT_RULES[network].nameMax} />}
       sub={
         <span class="pf-kind">
