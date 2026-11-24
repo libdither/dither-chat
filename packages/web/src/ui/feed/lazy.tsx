@@ -7,7 +7,7 @@
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { fullTime, ago } from '../../format.ts';
-import { authorName } from '../../model.ts';
+import { authorName, faceOf } from '../../model.ts';
 import { db, go, isSelfIdentity, previousRoute, toast } from '../../state.ts';
 import { Avatar, Empty, Linked } from '../bits.tsx';
 import { useLongPress } from '../longpress.ts';
@@ -38,7 +38,7 @@ function load(): Promise<Chunk> {
 export const kit = {
   name: authorName,
   handle: (identityId: string | null | undefined) => (identityId ? (db.identities.get(identityId)?.handle?.replace(/^@/, '') ?? null) : null),
-  avatarUrl: (identityId: string | null | undefined) => (identityId ? (db.identities.get(identityId)?.avatar ?? null) : null),
+  avatarUrl: (identityId: string | null | undefined) => faceOf(identityId).url,
   ago,
   fullTime,
   isSelf: (identityId: string | null | undefined) => !!identityId && isSelfIdentity(identityId),

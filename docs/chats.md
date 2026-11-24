@@ -82,17 +82,36 @@ shows, the nickname shows instead: an account's name as you see it is your nickn
 else its handle, else its id (`accountName` in `chatroutes.ts`, `identityName` in `model.ts`, `shownName` and `SHOWN`
 in the hub's `store.ts`).
 
-**A person's name is made of their accounts' names**, never set on the person:
+**A person is shown by one of their accounts, their face** (`person.face_id`, `faceId` on a PersonView): its name as
+you see it is their name, and its picture is their picture. Name and picture never come from two accounts, and both
+follow that account as it changes, unless you chose another of their accounts for the picture (docs/profile.md
+"Which account speaks for them"). Neither is ever set on the person:
 
-- one account: that account's name as you see it, so a nickname for it is their name everywhere (header, inbox row,
-  people list, message box, notifications), and the network renaming the account changes nothing while it has one;
-- several accounts: the name a merge kept, one of their accounts' names. It follows the account it was taken from:
-  giving that account a nickname, or taking it away, renames them. A nickname on another of their accounts names only
-  that account, so telling one alt apart ("Kit, raid nights") does not rename Kit.
+- one account: it is their face, so a nickname for it is their name everywhere (header, inbox row, people list,
+  message box, notifications), and the network renaming the account changes nothing while it has one;
+- several accounts: one of them is their face. A nickname on another of their accounts names only that account, so
+  telling one alt apart ("Kit, raid nights") does not rename Kit.
 
-Merging two people keeps the name of the one kept; the nicknames are the accounts' and go along with them. Splitting
-an account off keeps its nickname, which names the new person; the person it left takes their name from their
-accounts again when one is left, or when the name was the account's that went.
+Where the face has no picture, the picture of another of their accounts stands in (the one you talked with last) until
+it has one. **Choosing the face.** The hub keeps the face it has. It chooses one when there is none: when a merge
+brings together people who had none, when the face is split off, and when you ask. It takes the one you talked with
+last (its latest message, or the latest in a direct conversation with it), else one with a picture (`chooseFace` in
+`store.ts`). A nickname does not count, since one that tells an alt apart must not name them. You can choose yourself:
+each account row on a merged person's profile has **Make Main Account** (`PATCH /api/persons/:id` `{ face: <identity
+id> }`, `facePinned`), and on the main account it shows checked, **Main Account**, where pressing it again
+(`{ face: null }`) asks the hub to choose again. The row that is their face is marked **Main**; the line under the rows
+says whether you chose it or the hub did.
+
+Merging two people keeps the face of the one kept; the nicknames are the accounts' and go along with them. Splitting
+an account off keeps its nickname, which names the new person; the person it left keeps their face, or has another
+chosen when the face was the one that went.
+
+**One face everywhere.** Wherever a person's account shows outside its own tile (message heads in a group or channel,
+reactions, call faces, the ringing card, search results, feed posts), it is drawn with the person's picture and the
+initials' colour of the person, not the account (`faceOf` in `model.ts`). In a message head the picture gets the
+network's badge only when it came from another network's account, so a Discord message from Kit with Kit's Telegram
+picture says it was written on Discord. A group with no name of its own is titled with its first three people's names
+as their messages name them (`convTitle`).
 
 The chat has one name, the person's: the header, the inbox row, the people list and the message box's line ("Message
 Kit on Telegram") say it. **The messages name accounts.** On a page of several routes every message head shows the
@@ -125,7 +144,12 @@ empty takes the nickname away. Your own accounts take none.
 | value | means |
 | --- | --- |
 | `network` | one account: its name as you see it, kept up to date |
-| `merge` | several accounts: the name a merge kept, one account's |
+| `merge` | several accounts: their face's name as you see it, kept up to date |
+
+Until 2026-11-23 a merged person's name followed the account it was taken from, but their picture stayed whatever it
+was at the merge, so it went stale, and could be another account's than the name. On its first start with faces the
+hub gives each person one, once (`facesOnce`, meta `person_faces`; MIGRATIONS 6 → 7): the account whose name they have
+(as you see it, else its display name or handle), else one chosen as above; then their name and picture are its.
 
 Until 2026-11-11 a nickname was the person's (`user`), set with `PATCH /api/persons/:id` or `PATCH
 /api/chats/person:<id>` with `name`, and it stood for every account's name in the chat's title while the messages

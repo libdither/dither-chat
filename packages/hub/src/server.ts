@@ -2146,8 +2146,19 @@ export class HubServer {
       return ok();
     }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)$/)) && method === 'PATCH') {
-      const b = await body<{ name?: unknown; note?: unknown }>();
+      const b = await body<{ name?: unknown; note?: unknown; face?: unknown; picture?: unknown }>();
       if (b.name !== undefined) return bad(NICKNAME_MOVED);
+      // Shown by one of their accounts (its name and picture), or null to let the hub choose (docs/chats.md, Names);
+      // `picture`: another of theirs whose picture shows instead, or null for the face's (docs/profile.md).
+      const idOrNull = (v: unknown) => v === undefined || v === null || typeof v === 'string';
+      if (!idOrNull(b.face) || !idOrNull(b.picture)) return bad('face and picture are an identity id or null');
+      if (b.face !== undefined || b.picture !== undefined) {
+        if (!s.one('SELECT 1 FROM person WHERE id = ? AND is_self = 0', m[1])) return bad('no such person', 404);
+        // Both checked before either is saved, so a refused request changes nothing.
+        for (const id of [b.face, b.picture]) if (typeof id === 'string' && !s.one('SELECT 1 FROM identity WHERE id = ? AND person_id = ?', id, m[1])) return bad('that account is not theirs');
+        if (b.face !== undefined) s.setPersonFace(m[1], b.face as string | null);
+        if (b.picture !== undefined) s.setPersonPicture(m[1], b.picture as string | null);
+      }
       s.updatePerson(m[1], { ...(typeof b.note === 'string' ? { note: b.note } : {}) });
       // Kept on their networks too, where an account keeps notes (capability 'contactNotes').
       if (typeof b.note === 'string') this.people.pushPersonNote(m[1], b.note);

@@ -40,22 +40,25 @@ It grows with the person. Someone with one account looks as a single profile doe
 bio in About, the account on the right. Someone with several gets **Accounts** at the top of the left column instead.
 
 Left:
-- **Accounts**, for someone with several accounts (Kit's seven, Mo's two, yours): a tile each, grouped by network
-  (`AccountTile` in ui/Profile.tsx). Each has the account's own picture with its network's badge, its name as you see
+- **Accounts**, for someone with several accounts (Kit's seven, Mo's two, yours): a row each, grouped by network
+  (`AccountRow` in ui/Profile.tsx). Each has the account's own picture with its network's badge, its name as you see
   it (your nickname for it, else its display name, else handle, else id; with a nickname, the account's own name
   beneath it, muted: "their name: kitty"), its handle or address as a chip that copies, the network and since when
-  they are on it, and that account's bio (three lines, the network's stock lines left out). A button goes to the
-  account: its chat (the person's page, sending there), else Start a chat on that network where an account of yours
-  can, else Email. ⋯, a right-click or a hold opens the account's menu: the same, Set Nickname… (Change Nickname… and
-  Remove Nickname once it has one, editing the name on the tile in place; only you see it, docs/chats.md "Names"),
-  Copy the handle and the id, Open on the network, Split Into Its Own Person. The merge hint and search sit under the tiles. Before 2026-11-11 the hero
-  had a chip per handle and the right column a plain row per identity, with one picture for the person.
+  they are on it, and **Main** or **Picture** when it speaks for them (below, "Which account speaks for them"). Its
+  bio is in About. A button goes to the account: its chat (the person's page, sending there), else Start a chat on that
+  network where an account of yours can, else Email. **Edit** opens the account's menu as buttons under the row (a
+  right-click or a hold opens it as a menu): Make Main Account, Use Its Picture, Set Nickname… (Change Nickname… and
+  Remove Nickname once it has one, editing the name on the row in place; only you see it, docs/chats.md "Names"), Copy
+  the handle and the id, Open on the network, Split Into Its Own Person. A line under the rows says which account
+  speaks for them, and whether you chose it or the hub did. The merge hint and search sit under it. Before 2026-11-23 each account was a
+  tile with its bio on it and its menu behind ⋯; before 2026-11-11 the hero had a chip per handle and the right
+  column a plain row per identity, with one picture for the person.
 - **Maybe the same person**: up to four Same person? suggestions with this person in them (docs/same-person.md), each
   with the other side's name and accounts, the chance, the strongest three pieces of evidence, Merge and Not the same;
   All opens the whole list. Only when there are some, and never on your own page.
-- **About**: each network's bio (on the account tiles instead, for someone with several), its links as links (an
-  address with or without `https://`, a Markdown link, and on X an @handle; `links.ts`, `bits.tsx` Linked), the longest first, labelled
-  by network when there is more than one (a network's
+- **About**: each account's bio, its links as links (an address with or without `https://`, a Markdown link, and on
+  X an @handle; `links.ts`, `bits.tsx` Linked), the main account's first, then the longest, labelled by network when
+  there is more than one (with the account's name too when two are on one network, and "main" on the main one's; a network's
   stock line such as WhatsApp's "Available" is left out); their links (connected accounts, GitHub, a phone number
   written two ways once); On Discord since; facts a network adds (Business), the people a fact names (a bot's owner,
   a Zulip person field: `facts[].people`) each a link to their profile; their **Local time** where the network
@@ -88,8 +91,12 @@ Left:
   kept against the place and show in its History too.
 
 Right:
-- **Mutual friends** (Discord), or on your own page **Friends**: your Discord friends, Signal and WhatsApp
-  contacts and Matrix direct chats, each person once. Click one for theirs.
+- **Mutual friends** (Discord), or on your own page **Friends and contacts** (`FriendsCard`): your Discord friends,
+  Signal and WhatsApp contacts and Matrix direct chats, each person once, saying which network each is from. Each
+  network has a chip with its count in its own word ("5 friends", "4 contacts", "mutuals" for a follow network); a chip
+  shows only that network's, All shows everyone again. Each row ends with its networks' badges, and a line says how
+  many are on more than one. With one network the chip is a plain line ("3 friends on Discord"). The card's title
+  takes the words of its networks. Click one for theirs. Before 2026-11-23 it was one merged count with no network.
 - **Connections** (below): how each of your accounts stands with them, grouped by kind, with Remove friend, Cancel
   request, Unblock, Remove contact or Unfollow where the account can; each asks first (docs/add.md,
   "Relationships"). Called How you stand until 2026-11-13.
@@ -107,6 +114,20 @@ Right:
 More on a person also has **Block on <network>…** (asks first) or **Unblock on <network>** where an account can
 (capability `block`: `POST /api/identities/:id/block { unblock? }`). Nothing from someone your account's list says you
 blocked alerts (triage: "From someone you blocked"); on Signal their messages stop coming at all.
+
+### Which account speaks for them
+
+Someone with several accounts shows one name, one picture and the bios of all of them. One account speaks for them,
+their face (docs/chats.md "Names"): the hub chooses the one you talked with last until you choose. Its name as you
+see it is theirs everywhere (with your nickname for it, if you gave one), its picture is theirs, its bio comes first
+in About, and its banner shows where it has one (else Discord's). They follow it: the network renaming the account, a
+new picture, a nickname you give it. **Make Main Account** on one of their accounts (its Edit, or its menu) keeps
+that one; pressing it again (checked, **Main Account**) lets the hub choose again. **Use Its Picture** on another
+account takes the picture from that one instead, while it has one; pressing it again goes back to the main account's,
+and so does making that account main or splitting it off. The hub keeps both on the person (`person.face_id` with `face_pinned`, and
+`person.picture_identity_id`, set with `PATCH /api/persons/:id { face, picture }`, an identity id of theirs or null;
+`PersonView.faceId`, `facePinned`, `pictureIdentityId`). Not on your own page: your own accounts go by the names you
+gave them on their networks.
 
 ### Your own bio
 

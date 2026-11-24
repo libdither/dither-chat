@@ -12509,21 +12509,87 @@ a.pf-link:hover {
   gap: 10px;
   min-width: 0;
 }
-/* A person's several accounts (Profile.tsx AccountTile): each its own picture, name, handle and bio, by network. */
-.pf-acct-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-  gap: 8px;
+/* A person's several accounts (Profile.tsx AccountRow): a row each, its picture, name, handle, and Main or Picture
+   when it speaks for them; Edit opens its menu's choices as buttons under it. */
+.pf-acct-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0 -6px;
 }
 .pf-acct {
   display: flex;
   align-items: flex-start;
   gap: 10px;
   min-width: 0;
-  padding: 10px;
+  padding: 8px 6px;
   border-radius: var(--radius);
+}
+.pf-acct + .pf-acct {
+  border-top: 1px solid var(--border-soft);
+}
+.pf-acct.editing {
   background: var(--bg-center);
-  border: 1px solid var(--border-soft);
+}
+.pf-acct-mark {
+  flex: none;
+  font-size: 11px;
+  padding: 0 7px;
+  margin: 0 4px;
+  border-radius: 10px;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.pf-acct-edit-btn {
+  flex: none;
+}
+.pf-acct-edit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 6px;
+}
+.pf-acct-edit .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.pf-acct-edit .btn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.pf-acct-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.pf-acct-note .net-glyph {
+  display: inline-block;
+  vertical-align: -1px;
+}
+/* Friends (Profile.tsx FriendsCard): which network each is from, a chip per network that shows only its own. */
+.pf-friend-nets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pf-friend-nets .chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.pf-friend-net {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.pf-person-nets {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 4px;
+  flex: none;
+  color: var(--text-faint);
 }
 .pf-acct-text {
   display: flex;
@@ -12579,17 +12645,6 @@ a.pf-link:hover {
 .pf-acct-handle small {
   font-size: 11.5px;
   color: var(--text-faint);
-}
-.pf-acct-bio {
-  margin: 2px 0 0;
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--text-dim);
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  overflow-wrap: anywhere;
 }
 .pf-acct-sum {
   cursor: pointer;

@@ -218,7 +218,7 @@ const PRESENCE_DEVICES = new Set<string>(['desktop', 'mobile', 'web']);
  * Bump when a migration step changes without schema.sql changing, so the database is copied before it runs. Mail's
  * migration steps (mail/store.ts) count here too, when no mail schema file changes with them.
  */
-const MIGRATIONS = 6;
+const MIGRATIONS = 7;
 
 /** How long a write waits for another connection's lock before it fails (PRAGMA busy_timeout). */
 export const BUSY_MS = 2000;
@@ -330,7 +330,7 @@ export class Store {
       this.addColumns('triage', { shadow: 'TEXT', explore: 'TEXT', propensity: 'REAL', was: 'TEXT', alert_mark: 'INTEGER', less_mark: 'INTEGER', marked_at: 'INTEGER' });
       this.addColumns('owed_turn', { dismissed: 'INTEGER NOT NULL DEFAULT 0' });
       this.addColumns('visit', { depth: 'INTEGER', seen_to_ts: 'INTEGER', owed_since: 'INTEGER', owed_shown: 'INTEGER', typed: 'INTEGER NOT NULL DEFAULT 0', draft_left: 'INTEGER', exit: 'TEXT', shadow_rank: 'INTEGER' });
-      this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'" });
+      this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'", face_id: 'TEXT', face_pinned: 'INTEGER NOT NULL DEFAULT 0', picture_identity_id: 'TEXT' });
       this.addColumns('attachment', { alt: 'TEXT', extra: 'TEXT' });
       this.addColumns('notice', { caught: 'INTEGER NOT NULL DEFAULT 0', shown_ts: 'INTEGER', held_at: 'INTEGER' });
       this.addColumns('place_pref', { mention_scope: 'TEXT', mention_same: 'INTEGER', pictures: 'TEXT' });
@@ -349,6 +349,7 @@ export class Store {
       this.toTiers();
       this.sourceNames();
       this.nicknamesToAccounts();
+      this.facesOnce();
       this.forgetGoneSeenVia();
       this.db.query(`INSERT INTO meta (key, value) VALUES ('schema_sig', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(sig);
     })();
@@ -455,6 +456,31 @@ export class Store {
   }
 
   /**
+   * Each person is shown by one of their accounts since 2026-11-23 (`person.face_id`, docs/chats.md "Names"), once:
+   * the account whose name they have (as you see it, else its display name or handle), else one chosen as a merge
+   * would. Their name and picture are then that account's: a merged person's picture had stayed as it was at the merge.
+   */
+  private facesOnce() {
+    if (this.db.query(`SELECT 1 FROM meta WHERE key = 'person_faces'`).get()) return;
+    const people = this.db.query(`SELECT id, name, avatar_url FROM person WHERE is_self = 0 AND face_id IS NULL`).all() as Row[];
+    let renamed = 0;
+    let repictured = 0;
+    const norm = (x: unknown) => (typeof x === 'string' ? x.trim().toLowerCase().replace(/^@/, '') : null);
+    for (const p of people) {
+      const ids = this.db.query('SELECT * FROM identity WHERE person_id = ?').all(p.id) as Row[];
+      if (!ids.length) continue;
+      const named = ids.find((i) => shownName(i) === p.name) ?? ids.find((i) => [i.display_name, i.handle].some((n) => norm(n) === norm(p.name)));
+      if (named) this.db.query('UPDATE person SET face_id = ? WHERE id = ?').run(named.id, p.id);
+      this.refreshFace(p.id);
+      const now = this.db.query('SELECT name, avatar_url FROM person WHERE id = ?').get(p.id) as Row;
+      if (now.name !== p.name) renamed++;
+      if (now.avatar_url !== p.avatar_url) repictured++;
+    }
+    if (people.length) console.log(`faces: ${people.length} people shown by one of their accounts; ${renamed} renamed, ${repictured} with a new picture`);
+    this.db.query(`INSERT INTO meta (key, value) VALUES ('person_faces', ?)`).run(String(Date.now()));
+  }
+
+  /**
    * Nicknames belong to accounts since 2026-11-11, once: a person you had named (`user`) gives that name to each of
    * their accounts that has none of its own, and their name is then made from their accounts' names again.
    */
@@ -465,7 +491,7 @@ export class Store {
       this.db.query(`UPDATE identity SET nickname = ? WHERE person_id = ? AND (nickname IS NULL OR nickname = '')`).run(p.name, p.id);
       const n = (this.db.query('SELECT COUNT(*) AS n FROM identity WHERE person_id = ?').get(p.id) as Row).n as number;
       // One account: its name now, which is the nickname. Several keep the name, an account's now (`merge`).
-      if (n === 1) this.derivePersonName(p.id);
+      if (n === 1) this.refreshFace(p.id);
       else this.db.query(`UPDATE person SET manual = 1, name_source = 'merge' WHERE id = ?`).run(p.id);
     }
     if (named.length) console.log(`names: ${named.length} nickname${named.length === 1 ? '' : 's'} moved onto the accounts of the person named`);
@@ -1024,7 +1050,7 @@ export class Store {
     } else if (name && name !== before.display_name) {
       this.db.query('UPDATE identity SET display_name = ?, updated_at = ? WHERE id = ?').run(name, Date.now(), id);
       this.dirty.identities.add(id);
-      if (before.person_id) this.syncAutoPerson(before.person_id);
+      if (before.person_id) this.refreshFace(before.person_id);
     }
     return id;
   }
@@ -1108,9 +1134,9 @@ export class Store {
       // A contact always has a person; one first heard without a name (Signal before its profile arrives) is named by
       // its id, so a later name or picture reaches the person too (the person keeps a name you gave it: manual).
       const pid = this.ensurePerson(id);
-      if (changed && after.person_id) this.syncAutoPerson(pid);
+      if (changed && after.person_id) this.refreshFace(pid);
     } else if (changed && after.person_id) {
-      this.syncAutoPerson(after.person_id);
+      this.refreshFace(after.person_id);
     }
     return id;
   }
@@ -1169,6 +1195,7 @@ export class Store {
     const pid = 'per_' + identityId.slice(4);
     this.db.query('INSERT OR IGNORE INTO person (id, name, avatar_url, created_at) VALUES (?, ?, ?, ?)').run(pid, shownName(r), r.avatar_url, Date.now());
     this.db.query('UPDATE identity SET person_id = ? WHERE id = ?').run(pid, identityId);
+    this.refreshFace(pid);
     this.dirty.persons.add(pid);
     this.dirty.identities.add(identityId);
     // A direct conversation shows who it is with by person.
@@ -1177,32 +1204,97 @@ export class Store {
     return pid;
   }
 
-  /** Auto persons with a single identity follow that identity's name and avatar. */
-  private syncAutoPerson(pid: string) {
-    const p = this.db.query('SELECT manual, is_self FROM person WHERE id = ?').get(pid) as Row | null;
-    if (!p || p.manual || p.is_self) return;
-    const ids = this.db.query('SELECT nickname, display_name, handle, native_id, avatar_url FROM identity WHERE person_id = ?').all(pid) as Row[];
-    if (ids.length !== 1) return;
-    const i = ids[0];
-    this.db.query('UPDATE person SET name = ?, avatar_url = ? WHERE id = ?').run(shownName(i), i.avatar_url, pid);
-    this.dirty.persons.add(pid);
+  /**
+   * When you last heard from or wrote to each account (docs/chats.md, Names): its latest message, or the latest in a
+   * direct conversation with it.
+   */
+  private lastTalked(ids: string[]): Map<string, number> {
+    const out = new Map<string, number>();
+    for (const id of ids) {
+      const said = (this.db.query('SELECT MAX(ts) AS t FROM message WHERE author_id = ?').get(id) as Row | null)?.t ?? 0;
+      const dm =
+        (
+          this.db
+            .query(`SELECT MAX(c.last_message_at) AS t FROM participant p JOIN conversation c ON c.id = p.conversation_id WHERE p.identity_id = ? AND c.shape = 'direct'`)
+            .get(id) as Row | null
+        )?.t ?? 0;
+      out.set(id, Math.max(said, dm));
+    }
+    return out;
   }
 
   /**
-   * A person's name, made again from their accounts' names as you see them (docs/chats.md, Names): with one account,
-   * its name (`network`, which then follows it); with several, the name of one you gave a nickname, else of the one
-   * heard from last (`merge`). Your own person is named by your accounts' networks, not here.
+   * The account a person is shown by when nobody pinned one: the one you talked with last, else one with a picture. A
+   * nickname does not count: one that tells an alt apart ("Kit, raid nights") must not name them.
    */
-  private derivePersonName(pid: string) {
-    const p = this.db.query('SELECT is_self FROM person WHERE id = ?').get(pid) as Row | null;
+  private chooseFace(ids: Row[]): Row {
+    const talked = this.lastTalked(ids.map((i) => i.id));
+    return [...ids].sort(
+      (a, b) =>
+        (talked.get(b.id) ?? 0) - (talked.get(a.id) ?? 0) ||
+        Number(!a.avatar_url) - Number(!b.avatar_url) ||
+        (b.updated_at ?? 0) - (a.updated_at ?? 0),
+    )[0];
+  }
+
+  /**
+   * A person's name and picture, made again from their face (docs/chats.md, Names): the one account they are shown
+   * by, its name as you see it and its picture (the picture account's when you chose one), else the picture of
+   * another of theirs you talked with last. The face
+   * stays until you pin another, it leaves them, or (`rechoose`) you ask the hub to choose again; a new one is chosen by
+   * chooseFace. Your own person is named by your accounts' networks, not here.
+   */
+  private refreshFace(pid: string, rechoose = false) {
+    const p = this.db.query('SELECT name, avatar_url, face_id, face_pinned, picture_identity_id, manual, name_source, is_self FROM person WHERE id = ?').get(pid) as Row | null;
     if (!p || p.is_self) return;
-    const ids = this.db
-      .query(`SELECT nickname, display_name, handle, native_id, avatar_url FROM identity WHERE person_id = ? ORDER BY COALESCE(nickname, '') = '', updated_at DESC`)
-      .all(pid) as Row[];
+    const ids = this.db.query('SELECT id, nickname, display_name, handle, native_id, avatar_url, updated_at FROM identity WHERE person_id = ?').all(pid) as Row[];
     if (!ids.length) return;
-    if (ids.length === 1) this.db.query(`UPDATE person SET name = ?, avatar_url = COALESCE(?, avatar_url), manual = 0, name_source = 'network' WHERE id = ?`).run(shownName(ids[0]), ids[0].avatar_url, pid);
-    else this.db.query(`UPDATE person SET name = ?, manual = 1, name_source = 'merge' WHERE id = ?`).run(shownName(ids[0]), pid);
+    const kept = ids.find((i) => i.id === p.face_id);
+    const pinned = !!kept && !!p.face_pinned;
+    const face = kept && (pinned || !rechoose) ? kept : this.chooseFace(ids);
+    // A picture account you chose shows its picture instead, while it is theirs and has one.
+    let avatar = (ids.find((i) => i.id === p.picture_identity_id)?.avatar_url ?? face.avatar_url) as string | null;
+    if (!avatar) {
+      const others = ids.filter((i) => i.avatar_url && i.id !== face.id);
+      const talked = this.lastTalked(others.map((i) => i.id));
+      avatar = others.sort((a, b) => (talked.get(b.id) ?? 0) - (talked.get(a.id) ?? 0))[0]?.avatar_url ?? null;
+    }
+    const several = ids.length > 1;
+    const next = { name: shownName(face), avatar_url: avatar, face_id: face.id, face_pinned: pinned ? 1 : 0, manual: several ? 1 : 0, name_source: several ? 'merge' : 'network' };
+    if ((Object.keys(next) as (keyof typeof next)[]).every((k) => p[k] === next[k])) return;
+    this.db
+      .query('UPDATE person SET name = ?, avatar_url = ?, face_id = ?, face_pinned = ?, manual = ?, name_source = ? WHERE id = ?')
+      .run(next.name, next.avatar_url, next.face_id, next.face_pinned, next.manual, next.name_source, pid);
     this.dirty.persons.add(pid);
+    if (p.name !== next.name) this.touchDirectsOf(pid);
+  }
+
+  /**
+   * Shows a person by one of their accounts (its name and picture), or (null) lets the hub choose again. False for an
+   * account that is not theirs.
+   */
+  setPersonFace(pid: string, identityId: string | null): boolean {
+    if (identityId !== null && !this.db.query('SELECT 1 FROM identity WHERE id = ? AND person_id = ?').get(identityId, pid)) return false;
+    this.db.query('UPDATE person SET face_id = COALESCE(?, face_id), face_pinned = ? WHERE id = ?').run(identityId, identityId ? 1 : 0, pid);
+    // A picture account made main is no longer a picture of its own: their picture is the main account's again.
+    if (identityId) this.db.query('UPDATE person SET picture_identity_id = NULL WHERE id = ? AND picture_identity_id = ?').run(pid, identityId);
+    this.refreshFace(pid, identityId === null);
+    this.dirty.persons.add(pid);
+    this.personsChanged?.([pid]);
+    return true;
+  }
+
+  /**
+   * Shows a person with the picture of one of their accounts, whatever their face (docs/profile.md, "Which account
+   * speaks for them"), or (null) their face's picture again. False for an account that is not theirs.
+   */
+  setPersonPicture(pid: string, identityId: string | null): boolean {
+    if (identityId !== null && !this.db.query('SELECT 1 FROM identity WHERE id = ? AND person_id = ?').get(identityId, pid)) return false;
+    this.db.query('UPDATE person SET picture_identity_id = ? WHERE id = ?').run(identityId, pid);
+    this.refreshFace(pid);
+    this.dirty.persons.add(pid);
+    this.personsChanged?.([pid]);
+    return true;
   }
 
   /**
@@ -1212,20 +1304,11 @@ export class Store {
   setIdentityNickname(identityId: string, nickname: string | null): boolean {
     const r = this.db.query('SELECT * FROM identity WHERE id = ?').get(identityId) as Row | null;
     if (!r) return false;
-    const was = shownName(r);
     const nick = nickname?.trim() || null;
     this.db.query('UPDATE identity SET nickname = ? WHERE id = ?').run(nick, identityId);
     this.dirty.identities.add(identityId);
-    const p = r.person_id ? (this.db.query('SELECT name, is_self FROM person WHERE id = ?').get(r.person_id) as Row | null) : null;
-    if (!p || p.is_self) return true;
-    const n = (this.db.query('SELECT COUNT(*) AS n FROM identity WHERE person_id = ?').get(r.person_id) as Row).n as number;
-    // One account names them. Of several, the name follows the account it was taken from, and only that one: a
-    // nickname that tells one alt apart does not rename them.
-    if (n === 1) this.derivePersonName(r.person_id);
-    else if (p.name === was) {
-      this.db.query(`UPDATE person SET name = ? WHERE id = ?`).run(shownName({ ...r, nickname: nick }), r.person_id);
-      this.dirty.persons.add(r.person_id);
-    }
+    // The name follows their face's, and only that one: a nickname that tells one alt apart does not rename them.
+    if (r.person_id) this.refreshFace(r.person_id);
     return true;
   }
 
@@ -1786,6 +1869,8 @@ export class Store {
       this.db.query('DELETE FROM person WHERE id = ?').run(fromId);
     });
     tx();
+    // Shown as before by the one kept's face, unless it had none; the face's picture, or another's where it has none.
+    this.refreshFace(intoId);
     this.dirty.persons.add(intoId);
     this.dirty.removed.push({ t: 'person.removed', id: fromId });
     for (const r of this.db.query('SELECT id FROM identity WHERE person_id = ?').all(intoId) as Row[]) this.dirty.identities.add(r.id);
@@ -1799,6 +1884,8 @@ export class Store {
     if (!r?.person_id) return;
     const old = r.person_id as string;
     this.db.query('UPDATE identity SET person_id = NULL WHERE id = ?').run(identityId);
+    // The account that went no longer gives the person it left their picture (their face is chosen again below).
+    this.db.query('UPDATE person SET picture_identity_id = NULL WHERE id = ? AND picture_identity_id = ?').run(old, identityId);
     const left = (this.db.query('SELECT COUNT(*) AS n FROM identity WHERE person_id = ?').get(old) as Row).n as number;
     // Its deterministic person may be the merged one, kept going by the others: that would rejoin them.
     const natural = 'per_' + identityId.slice(4);
@@ -1808,6 +1895,7 @@ export class Store {
       pid = randomId('per');
       this.db.query('INSERT INTO person (id, name, avatar_url, created_at) VALUES (?, ?, ?, ?)').run(pid, shownName(i), i.avatar_url, Date.now());
       this.db.query('UPDATE identity SET person_id = ? WHERE id = ?').run(pid, identityId);
+      this.refreshFace(pid);
     } else {
       if (natural === old) this.db.query('DELETE FROM person WHERE id = ?').run(old);
       pid = this.ensurePerson(identityId);
@@ -1817,10 +1905,8 @@ export class Store {
       this.db.query('DELETE FROM person WHERE id = ?').run(old);
       this.dirty.removed.push({ t: 'person.removed', id: old });
     } else if (left) {
-      // One account left names them now, as does another when the name was the one that went's.
-      const went = shownName(this.db.query('SELECT * FROM identity WHERE id = ?').get(identityId) as Row);
-      const name = (this.db.query('SELECT name FROM person WHERE id = ?').get(old) as Row | null)?.name;
-      if (left === 1 || name === went) this.derivePersonName(old);
+      // Their face stays unless it was the one that went; then another of theirs is chosen.
+      this.refreshFace(old);
       this.dirty.persons.add(old);
     }
     this.dirty.persons.add(pid);
@@ -1836,7 +1922,13 @@ export class Store {
    * people it merges, as a merge would.
    */
   updatePerson(id: string, patch: { name?: string; note?: string }) {
-    if (patch.name !== undefined) this.db.query(`UPDATE person SET name = ?, manual = 1, name_source = 'merge' WHERE id = ?`).run(patch.name, id);
+    if (patch.name !== undefined) {
+      // Shown by the account that goes by that name, as a merge would choose. A name none goes by is kept only until
+      // their face's account changes (refreshFace names them after it again).
+      const face = (this.db.query('SELECT * FROM identity WHERE person_id = ?').all(id) as Row[]).find((i) => shownName(i) === patch.name);
+      if (face) this.db.query('UPDATE person SET face_id = ? WHERE id = ?').run(face.id, id), this.refreshFace(id);
+      else this.db.query(`UPDATE person SET name = ?, manual = 1, name_source = 'merge' WHERE id = ?`).run(patch.name, id);
+    }
     if (patch.note !== undefined) this.db.query('UPDATE person SET note = ? WHERE id = ?').run(patch.note, id);
     this.dirty.persons.add(id);
   }
@@ -2611,7 +2703,7 @@ export class Store {
   personView(r: Row, identityIds?: string[], vias?: Map<string, { via: string; url: string | null }[]>): P.PersonView {
     const ids = identityIds ?? (this.db.query('SELECT id FROM identity WHERE person_id = ?').all(r.id) as Row[]).map((x) => x.id);
     const avatar = !r.avatar_url ? null : vias ? this.media(r.avatar_url, pickVia(vias.get(r.id), r.avatar_url)) : this.personPicture(r.id, r.avatar_url);
-    return { id: r.id, name: r.name, avatar, starred: false, isSelf: !!r.is_self, identityIds: ids, nameSource: (r.name_source ?? 'network') as P.NameSource };
+    return { id: r.id, name: r.name, avatar, starred: false, isSelf: !!r.is_self, identityIds: ids, nameSource: (r.name_source ?? 'network') as P.NameSource, ...(ids.length > 1 && r.face_id ? { faceId: r.face_id } : {}), ...(ids.length > 1 && r.face_pinned ? { facePinned: true } : {}), ...(ids.length > 1 && r.picture_identity_id ? { pictureIdentityId: r.picture_identity_id } : {}) };
   }
 
   /**

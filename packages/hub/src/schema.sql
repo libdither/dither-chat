@@ -67,7 +67,10 @@ CREATE TABLE IF NOT EXISTS person (
   is_self    INTEGER NOT NULL DEFAULT 0,
   manual     INTEGER NOT NULL DEFAULT 0,      -- the user merged or renamed it; ingest won't touch the name
   created_at INTEGER NOT NULL,
-  name_source TEXT NOT NULL DEFAULT 'network' -- network | merge (P.NameSource); 'user' until 2026-11-11, when nicknames moved to identity
+  name_source TEXT NOT NULL DEFAULT 'network', -- network | merge (P.NameSource); 'user' until 2026-11-11, when nicknames moved to identity
+  face_id    TEXT,                            -- the account they are shown by: its name as you see it and its picture
+  face_pinned INTEGER NOT NULL DEFAULT 0,     -- you chose face_id (Make Main Account); else the hub keeps or chooses one
+  picture_identity_id TEXT                    -- the account whose picture they show, when you chose one other than face_id's
 );
 
 CREATE TABLE IF NOT EXISTS identity (

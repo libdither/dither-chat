@@ -149,8 +149,8 @@ test('a contact first heard without a name is renamed on its person once its pro
   expect(row('SELECT name FROM person WHERE id = ?', pid)!.name).toBe(BOB);
   ingest({ t: 'identity', identity: { nativeId: BOB, displayName: 'Bob Diaz', contact: true } });
   expect(row('SELECT name FROM person WHERE id = ?', pid)!.name).toBe('Bob Diaz');
-  // A name you gave the person stays.
-  store.db.query('UPDATE person SET name = ?, manual = 1 WHERE id = ?').run('Bobby', pid);
+  // A nickname you gave the account stays (docs/chats.md, Names).
+  store.setIdentityNickname(bob, 'Bobby');
   ingest({ t: 'identity', identity: { nativeId: BOB, displayName: 'Robert Diaz', contact: true } });
   expect(row('SELECT name FROM person WHERE id = ?', pid)!.name).toBe('Bobby');
 });
