@@ -219,12 +219,12 @@ bun scripts/verify-memory.ts --scale 1 --cpu 4 --cycles 10 --phone-cycles 10 --o
 A count it would fail on is a warning here, like verify-perf's ceilings; its numbers are recorded all the same, as
 `memory.<pass>.<count>.growth` (round 2 to the last) and `.last`, the heap's growth as `memory.<pass>.heap.perRound`
 (bytes a round), and the hub's resident memory as `memory.hub.rss.before`, `.after` and `.peak` (in MB). It adds
-about 7 minutes: a minute to build and seed, a warm-up round of 45 s, then about 28 s a round on the computer and 21
-on the phone, side by side (2026-11-24, a loaded 16-core machine).
+about 5 minutes on a standard runner: under a minute to build and seed, a warm-up round of about 40 s, then 22-25 s a
+round on the computer and 18-20 on the phone, side by side (the first nightly run, 2026-11-24).
 
 - **When:** 04:41 UTC every night on main (stress.yml runs at 07:17, android-device.yml at 09:23), and by hand from
   Actions > Perf nightly > Run workflow, which asks for the world's size, the runs, and whether to record the run.
-  The measuring takes about 20 minutes on a standard runner (4 cores) and the memory check about 7 more.
+  The measuring takes about 23 minutes on a standard runner (4 cores) and the memory check about 5 more.
 - **Never red on a number.** It has no baseline: nothing is judged, and a ceiling or floor verify-perf reports is a
   warning on the run. It fails only when measuring breaks (the build, the hub, a page that never answers).
 - **History:** each night is one JSON line on the `perf-history` branch (`history.jsonl`; a branch of data only,
