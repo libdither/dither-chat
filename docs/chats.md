@@ -83,9 +83,9 @@ else its handle, else its id (`accountName` in `chatroutes.ts`, `identityName` i
 in the hub's `store.ts`).
 
 **A person is shown by one of their accounts, their face** (`person.face_id`, `faceId` on a PersonView): its name as
-you see it is their name, and its picture is their picture. Name and picture never come from two accounts, and both
-follow that account as it changes, unless you chose another of their accounts for the picture (docs/profile.md
-"Which account speaks for them"). Neither is ever set on the person:
+you see it is their name, and its picture is their picture. Both follow that account as it changes, unless you chose
+another of their names or another account's picture from their profile's hero (docs/profile.md "Which account speaks
+for them"). Neither is ever typed in on the person:
 
 - one account: it is their face, so a nickname for it is their name everywhere (header, inbox row, people list,
   message box, notifications), and the network renaming the account changes nothing while it has one;

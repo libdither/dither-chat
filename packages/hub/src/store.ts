@@ -133,6 +133,10 @@ const shownName = (r: Row): string =>
   r.nickname || r.display_name || r.handle || r.native_id;
 export const SHOWN = `COALESCE(NULLIF(i.nickname, ''), i.display_name, i.handle, i.native_id)`;
 
+/** One of an account's names (P.NameField), or null where it has none. */
+const nameIn = (r: Row, field: unknown): string | null =>
+  ((field === 'nickname' ? r.nickname : field === 'display' ? r.display_name : field === 'handle' ? r.handle : null) as string | null) || null;
+
 const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => '\\' + c);
 
 /** A snippet for a match SQLite's tokens could not see. */
@@ -330,7 +334,7 @@ export class Store {
       this.addColumns('triage', { shadow: 'TEXT', explore: 'TEXT', propensity: 'REAL', was: 'TEXT', alert_mark: 'INTEGER', less_mark: 'INTEGER', marked_at: 'INTEGER' });
       this.addColumns('owed_turn', { dismissed: 'INTEGER NOT NULL DEFAULT 0' });
       this.addColumns('visit', { depth: 'INTEGER', seen_to_ts: 'INTEGER', owed_since: 'INTEGER', owed_shown: 'INTEGER', typed: 'INTEGER NOT NULL DEFAULT 0', draft_left: 'INTEGER', exit: 'TEXT', shadow_rank: 'INTEGER' });
-      this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'", face_id: 'TEXT', face_pinned: 'INTEGER NOT NULL DEFAULT 0', picture_identity_id: 'TEXT' });
+      this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'", face_id: 'TEXT', face_pinned: 'INTEGER NOT NULL DEFAULT 0', picture_identity_id: 'TEXT', name_identity_id: 'TEXT', name_field: 'TEXT' });
       this.addColumns('attachment', { alt: 'TEXT', extra: 'TEXT' });
       this.addColumns('notice', { caught: 'INTEGER NOT NULL DEFAULT 0', shown_ts: 'INTEGER', held_at: 'INTEGER' });
       this.addColumns('place_pref', { mention_scope: 'TEXT', mention_same: 'INTEGER', pictures: 'TEXT' });
@@ -1239,13 +1243,13 @@ export class Store {
 
   /**
    * A person's name and picture, made again from their face (docs/chats.md, Names): the one account they are shown
-   * by, its name as you see it and its picture (the picture account's when you chose one), else the picture of
-   * another of theirs you talked with last. The face
+   * by, its name as you see it (the name you chose, while that account has it) and its picture (the picture account's
+   * when you chose one), else the picture of another of theirs you talked with last. The face
    * stays until you pin another, it leaves them, or (`rechoose`) you ask the hub to choose again; a new one is chosen by
    * chooseFace. Your own person is named by your accounts' networks, not here.
    */
   private refreshFace(pid: string, rechoose = false) {
-    const p = this.db.query('SELECT name, avatar_url, face_id, face_pinned, picture_identity_id, manual, name_source, is_self FROM person WHERE id = ?').get(pid) as Row | null;
+    const p = this.db.query('SELECT name, avatar_url, face_id, face_pinned, picture_identity_id, name_identity_id, name_field, manual, name_source, is_self FROM person WHERE id = ?').get(pid) as Row | null;
     if (!p || p.is_self) return;
     const ids = this.db.query('SELECT id, nickname, display_name, handle, native_id, avatar_url, updated_at FROM identity WHERE person_id = ?').all(pid) as Row[];
     if (!ids.length) return;
@@ -1260,7 +1264,8 @@ export class Store {
       avatar = others.sort((a, b) => (talked.get(b.id) ?? 0) - (talked.get(a.id) ?? 0))[0]?.avatar_url ?? null;
     }
     const several = ids.length > 1;
-    const next = { name: shownName(face), avatar_url: avatar, face_id: face.id, face_pinned: pinned ? 1 : 0, manual: several ? 1 : 0, name_source: several ? 'merge' : 'network' };
+    const chosen = ids.find((i) => i.id === p.name_identity_id);
+    const next = { name: (chosen && nameIn(chosen, p.name_field)) || shownName(face), avatar_url: avatar, face_id: face.id, face_pinned: pinned ? 1 : 0, manual: several ? 1 : 0, name_source: several ? 'merge' : 'network' };
     if ((Object.keys(next) as (keyof typeof next)[]).every((k) => p[k] === next[k])) return;
     this.db
       .query('UPDATE person SET name = ?, avatar_url = ?, face_id = ?, face_pinned = ?, manual = ?, name_source = ? WHERE id = ?')
@@ -1291,6 +1296,24 @@ export class Store {
   setPersonPicture(pid: string, identityId: string | null): boolean {
     if (identityId !== null && !this.db.query('SELECT 1 FROM identity WHERE id = ? AND person_id = ?').get(identityId, pid)) return false;
     this.db.query('UPDATE person SET picture_identity_id = ? WHERE id = ?').run(identityId, pid);
+    this.refreshFace(pid);
+    this.dirty.persons.add(pid);
+    this.personsChanged?.([pid]);
+    return true;
+  }
+
+  /**
+   * Shows a person by one name of one of their accounts (docs/profile.md, "Which account speaks for them"): your
+   * nickname for it, its display name or its handle, whatever their face; or (null) their face's name again. It
+   * follows that account as it changes, and while it lacks that name the face's shows. False for an account that is
+   * not theirs or a name it does not have.
+   */
+  setPersonName(pid: string, from: P.NameFrom | null): boolean {
+    if (from) {
+      const i = this.db.query('SELECT * FROM identity WHERE id = ? AND person_id = ?').get(from.identityId, pid) as Row | null;
+      if (!i || !nameIn(i, from.field)) return false;
+    }
+    this.db.query('UPDATE person SET name_identity_id = ?, name_field = ? WHERE id = ?').run(from?.identityId ?? null, from?.field ?? null, pid);
     this.refreshFace(pid);
     this.dirty.persons.add(pid);
     this.personsChanged?.([pid]);
@@ -1886,6 +1909,8 @@ export class Store {
     this.db.query('UPDATE identity SET person_id = NULL WHERE id = ?').run(identityId);
     // The account that went no longer gives the person it left their picture (their face is chosen again below).
     this.db.query('UPDATE person SET picture_identity_id = NULL WHERE id = ? AND picture_identity_id = ?').run(old, identityId);
+    // Nor their name, where you chose one of its names.
+    this.db.query('UPDATE person SET name_identity_id = NULL, name_field = NULL WHERE id = ? AND name_identity_id = ?').run(old, identityId);
     const left = (this.db.query('SELECT COUNT(*) AS n FROM identity WHERE person_id = ?').get(old) as Row).n as number;
     // Its deterministic person may be the merged one, kept going by the others: that would rejoin them.
     const natural = 'per_' + identityId.slice(4);
@@ -2703,7 +2728,7 @@ export class Store {
   personView(r: Row, identityIds?: string[], vias?: Map<string, { via: string; url: string | null }[]>): P.PersonView {
     const ids = identityIds ?? (this.db.query('SELECT id FROM identity WHERE person_id = ?').all(r.id) as Row[]).map((x) => x.id);
     const avatar = !r.avatar_url ? null : vias ? this.media(r.avatar_url, pickVia(vias.get(r.id), r.avatar_url)) : this.personPicture(r.id, r.avatar_url);
-    return { id: r.id, name: r.name, avatar, starred: false, isSelf: !!r.is_self, identityIds: ids, nameSource: (r.name_source ?? 'network') as P.NameSource, ...(ids.length > 1 && r.face_id ? { faceId: r.face_id } : {}), ...(ids.length > 1 && r.face_pinned ? { facePinned: true } : {}), ...(ids.length > 1 && r.picture_identity_id ? { pictureIdentityId: r.picture_identity_id } : {}) };
+    return { id: r.id, name: r.name, avatar, starred: false, isSelf: !!r.is_self, identityIds: ids, nameSource: (r.name_source ?? 'network') as P.NameSource, ...(ids.length > 1 && r.face_id ? { faceId: r.face_id } : {}), ...(ids.length > 1 && r.face_pinned ? { facePinned: true } : {}), ...(ids.length > 1 && r.picture_identity_id ? { pictureIdentityId: r.picture_identity_id } : {}), ...(r.name_identity_id && r.name_field ? { nameFrom: { identityId: r.name_identity_id, field: r.name_field } } : {}) };
   }
 
   /**

@@ -55,6 +55,7 @@ export function Hero({
   status,
   actions,
   onPicture,
+  pictureMenu,
   presence,
 }: {
   id: string;
@@ -75,6 +76,8 @@ export function Hero({
    * among it). Elsewhere a picture is a button that opens it full screen.
    */
   onPicture?: (e: MouseEvent) => void;
+  /** Where the picture may come from one of several accounts: it opens this menu (View Picture among it) instead. */
+  pictureMenu?: (e: MouseEvent) => void;
   /** Whose status dot the picture shows (PresenceDot.tsx). */
   presence?: PresenceOf;
 }) {
@@ -95,7 +98,7 @@ export function Hero({
             </span>
           </button>
         ) : picture ? (
-          <button class={`pf-avatar pf-avatar-view ${square ? 'square' : ''}`} data-track="profile: view picture" onClick={() => viewPicture(picture, name)} aria-label="View the picture" title="View the picture">
+          <button class={`pf-avatar pf-avatar-view ${square ? 'square' : ''}`} data-track="profile: view picture" onClick={(e) => (pictureMenu ? pictureMenu(e) : viewPicture(picture, name))} aria-label={pictureMenu ? 'Their picture' : 'View the picture'} title={pictureMenu ? 'View it, or choose which account’s picture shows' : 'View the picture'}>
             {pic}
           </button>
         ) : (

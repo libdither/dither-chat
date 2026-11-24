@@ -105,6 +105,18 @@ export interface PersonView {
   facePinned?: true;
   /** The account whose picture they show instead of their face's, when you chose one (PATCH `{ picture }`). */
   pictureIdentityId?: string;
+  /**
+   * The name you chose to show for them instead of their face's (PATCH `{ nameFrom }`): one of their accounts' nickname
+   * (yours), display name or handle. `name` is it while that account has it; absent where it follows the face.
+   */
+  nameFrom?: NameFrom;
+}
+
+/** Which of an account's names a person's name is (docs/profile.md, "Which account speaks for them"). */
+export type NameField = 'nickname' | 'display' | 'handle';
+export interface NameFrom {
+  identityId: string;
+  field: NameField;
 }
 
 /**

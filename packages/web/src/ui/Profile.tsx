@@ -20,13 +20,14 @@ import { api, db, go, isSelfIdentity, openMessage, openProfile, rev, setRule, to
 import { messageSomeone } from './Palette.tsx';
 import { Avatar, Empty, Linked, NetBadge, NetGlyph } from './bits.tsx';
 import { isQuietConv } from '../feed.ts';
-import { copy, groups, useMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
+import { copy, groups, openMenu, useMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
 import { nicknamable, nicknameEntries, NicknamedName, NicknameInput, ownName } from './Nickname.tsx';
 import { ActivityCard } from './ActivityCard.tsx';
 import { SameBox } from './SameBox.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
 import { copyEntries, identityMenu, personMenu } from './menus.tsx';
+import { nameChoices, pictureChoices } from '../namechoices.ts';
 import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, StatusEmoji, Tag, viewPicture } from './ProfileShell.tsx';
 import { ConnectActions, ProfileConnections } from './Requests.tsx';
 import { openConv } from '../opening.ts';
@@ -752,7 +753,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const pictureChosen = (several && ids.find((i) => i.id === person?.pictureIdentityId)) || null;
   // It shows only while it has a picture and is not the main account's own; its entry stays to clear it.
   const pictureOf = pictureChosen?.avatar && pictureChosen.id !== speaker?.id ? pictureChosen : null;
-  const sources = (patch: { face?: string | null; picture?: string | null }) =>
+  const sources = (patch: { face?: string | null; picture?: string | null; nameFrom?: P.NameFrom | null }) =>
     person && api(`/api/persons/${person.id}`, { method: 'PATCH', body: patch }).catch((e) => toast({ kind: 'error', title: 'Could not save that', body: e.message }));
   const sinceOf = new Map(said.filter((a) => a.createdAt).map((a) => [a.identityId, monthYear(a.createdAt!)]));
   /** How to reach one account: its chat (the person's page, sending there), else start one, else mail it. */
@@ -806,12 +807,45 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const ownPicture = picTarget();
   editing.current = picturing ? ((picturing.came ? picTarget(picturing.came) : ownPicture) ?? editing.current) : null;
 
+  // Which name and which picture show for them, chosen in the hero (docs/profile.md "Which account speaks for them").
+  const names = isSelf || !person ? [] : nameChoices(ids, person, identityName((speaker ?? first)?.id));
+  const pictures = several && !isSelf && person ? pictureChoices(ids, person, speaker) : [];
+  const nameMenu = (e: MouseEvent) =>
+    openMenu(
+      { x: e.clientX, y: e.clientY },
+      {
+        label: 'Name shown',
+        head: <div class="cm-sheet-title">Name shown</div>,
+        track: 'name menu',
+        items: groups(
+          [{ kind: 'label', label: 'Name shown' }],
+          names.map((c): MenuEntry => ({ label: c.text, detail: c.detail, radio: true, checked: c.on, track: 'name: choose', run: () => void sources({ nameFrom: c.from }) })),
+        ),
+      },
+      e.currentTarget,
+    );
+  const pictureMenu = (e: MouseEvent) =>
+    openMenu(
+      { x: e.clientX, y: e.clientY },
+      {
+        label: 'Picture',
+        head: <div class="cm-sheet-title">Picture</div>,
+        track: 'picture menu',
+        items: groups(
+          [!!picture && { label: 'View Picture', icon: 'image', track: 'picture: view', run: () => viewPicture(picture, name) }],
+          [{ kind: 'label', label: 'Picture shown' }, ...pictures.map((c): MenuEntry => ({ label: c.label, detail: c.detail, pic: c.url, radio: true, checked: c.on, track: 'picture: choose', run: () => void sources({ picture: c.id === speaker?.id ? null : c.id }) }))],
+        ),
+      },
+      e.currentTarget,
+    );
+
   const hero = (
     <Hero
       id={person?.id ?? first?.id ?? ''}
       name={name}
       picture={picture}
       onPicture={ownPicture ? (e) => pe!.pictureMenu(e, ownPicture, setPicturing, picture ? () => viewPicture(picture, name) : undefined) : undefined}
+      pictureMenu={pictures.length > 1 ? pictureMenu : undefined}
       presence={isSelf ? undefined : person ? { person: person.id } : { identity: first?.id }}
       network={nets.length === 1 ? nets[0] : undefined}
       banner={banner}
@@ -819,7 +853,12 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       title={
         <h1>
           {/* One account: their name is its name, and the pencil gives that account a nickname. */}
-          {!several && nicknamable(first) && !first.isBot ? <NicknamedName i={first} label={name} title={first.nickname ? `Your nickname for ${ownName(first)}` : name} editing={naming} setEditing={setNaming} class="pf-name" /> : name}
+          {!several && nicknamable(first) && !first.isBot ? <NicknamedName i={first} label={name} title={first.nickname && !person?.nameFrom ? `Your nickname for ${ownName(first)}` : name} editing={naming} setEditing={setNaming} class="pf-name" /> : name}
+          {names.length > 1 && !naming && (
+            <button class="icon-btn pf-name-swap" data-track="profile: name shown" onClick={nameMenu} aria-label="Choose the name shown" title="Choose the name shown: a nickname, or one of their accounts’ names">
+              <Icon name="repeat" size={15} />
+            </button>
+          )}
         </h1>
       }
       sub={

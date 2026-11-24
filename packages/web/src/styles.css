@@ -18833,3 +18833,19 @@ h1:hover > .pair-nick-edit,
   border: 1px solid var(--border);
   background: var(--bg-center);
 }
+/* Which account's picture a menu item is (Profile.tsx pictureChoices). */
+.cm-pic {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+/* Beside a person's name: choose which of their names shows (Profile.tsx nameChoices). */
+.pf-name-swap {
+  vertical-align: middle;
+  margin-left: 6px;
+  width: 28px;
+  height: 28px;
+  color: var(--muted);
+}

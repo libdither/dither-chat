@@ -131,6 +131,20 @@ and so does making that account main or splitting it off. The hub keeps both on 
 `PersonView.faceId`, `facePinned`, `pictureIdentityId`). Not on your own page: your own accounts go by the names you
 gave them on their networks.
 
+**Choosing from the hero.** A button beside their name (⇄, "Choose the name shown") opens **Name shown**: the main
+account's name as you see it first ("as it changes"), then each account's nickname of yours, display name and handle,
+each text once and each with what it is and where (`Display name · Discord (kit.work)`; a handle that is a phone
+number is left out). A pick names them everywhere their name shows, ticked when the menu opens again, and follows that
+account: a new display name renames them, and while it lacks that name (a nickname you removed) the main account's
+shows. The first entry puts the main account's back. The same for someone of one account, choosing among its
+nickname, display name and handle. Kept on the person (`person.name_identity_id` with `name_field`, set with `PATCH
+/api/persons/:id { nameFrom: { identityId, field: nickname | display | handle } | null }`, refused whole for an
+account not theirs or a name it lacks; `PersonView.nameFrom`) and cleared when that account is split off. Where their
+accounts have more than one picture, their picture opens a menu instead of the viewer: **View Picture**, then **Picture
+shown**, each account's picture once with its name and network, the main account's first (choosing it is `{ picture:
+null }`). Helpers in `namechoices.ts`; checked end to end by `scripts/verify-name-picture.ts` on the `multiaccount`
+demo.
+
 ### Your own bio
 
 On your own page, the bio on each network whose adapter can change it (capability `editProfile`: Discord, Signal,
@@ -151,7 +165,8 @@ and its code under My code (docs/add.md, "QR codes"), come from the last time it
 ### Changing a picture
 
 A hero's picture you may not change is a button that opens it full screen in the image viewer (ui/Viewer.tsx), to
-zoom and pan; one you may change has **View Picture** first in its menu.
+zoom and pan (or, for someone whose accounts have several pictures, a menu with View Picture first and the pictures
+to choose from: "Which account speaks for them"); one you may change has **View Picture** first in its menu.
 
 Where you may change a picture, the hero's picture is a button with a camera on it ("Change" over it on hover):
 a group's or server's where its About says `fields.avatar.canEdit`, and yours on each network whose profile lists
