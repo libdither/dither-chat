@@ -1157,8 +1157,50 @@ to three times. In a CPU profile, six cold loads and relaunches of each, interle
 badge and the inbox list 415 → 284 ms of a cold load, the page's script in all 1,606 → 1,340 ms; a relaunch's script
 976 → 892 ms. Times to the list did not move beyond the noise of a loaded machine: the work saved came after it.
 
-What is still worked out again for every message or read (`changed('list')`): each server's activity and count, the
-badge's total and the rail's order, all from the conversations' objects, though one conversation changed.
+What was still worked out again for every message or read (`changed('list')`): each server's activity and count, the
+badge's total and the rail's order, all from the conversations' objects, though one conversation changed. Now it is
+not ([below](#one-conversation-at-a-time-2026-11-24)).
+
+Then the passes over every conversation that most of them leave at once: the badge's total asks whether a conversation
+has anything unread before whether it is shown (most are read), the rail's added conversations and the inbox's hidden
+rows look up the place's settings before making a default for it (`placePref` makes one for each of the 5,600 that
+have none), the quiet shelf too, and `visibleConv` is a loop. Six cold loads of each at 4×, medians: the rail 214 → 166
+ms, the badge 78 → 60 ms, the inbox list 96 → 86 ms; a relaunch's rail and badge 25–35 ms less in all.
+
+### One conversation at a time (2026-11-24)
+
+An arriving message is three frames from the hub: the conversation's new last message and counts, the reaction
+picker's usage, and, a second later, the read. Each was a `changed('list')`, and each worked out every server's
+activity and count, the badge's total, people's directs and the inbox's rows again from all 5,600 conversations.
+
+Now a change says which conversations it changed, when that is all it changed: `changed('list', ids)`, from the
+socket's events (state.ts `applyEvents`: a conversation's event that leaves its names and place alone, an inbox score,
+a message, reactions' usage) and from the copies a notification brings before the hub answers (arrived.ts). versions.ts
+keeps the last 64 of them by version (`convsChangedSince`); any other change, or more than 64 conversations at once,
+reads as "anything". `placesMemo` then brings a value up to date from those conversations alone where it can:
+
+- what is worked out from a server's conversations (their objects, its count, its activity, its channels' order) is
+  kept when none of them is under it; a folder's, a channel's with its threads, the same;
+- the badge's total is a sum kept by conversation: a changed one's part is taken out and put in again;
+- people's directs: the person's list, with the new copy in the old one's place, sorted again;
+- the inbox's rows: the changed conversations' own rows made again in their places, and the rows the hub has not
+  scored yet (their order moves with the time), then grouped as before; a conversation that comes into the inbox or
+  leaves it makes them all again;
+- what reads only names, settings and what is where (a server's tree, your rules) is kept;
+- with nothing changed that any of them reads (reactions' usage), all are kept.
+
+A native mute that ran out since a value was worked out makes it all again: levels change then with nothing in `db`
+changing (`levelsHeld`). `test/model-incremental.test.ts` runs random worlds through random runs of messages, reads,
+new scores and time passing, and checks every few steps that what was brought up to date equals what working it all
+out again gives.
+
+Five runs of four arrivals each at 4× on the full-size world, CPU profiles, interleaved against the build before,
+medians per arrival [spread]: `placesMemo` 65 [40–157] → 16 [10–35] ms, the rail 45 [28–113] → 18 [15–34] ms, the
+badge 13 [8–30] → 1 [0–2] ms, the inbox list 15 → 8 ms, the page's script in all 148 [96–374] → 79 [71–180] ms. The
+main thread's whole busy time per arrival, 772 → 694 ms, is mostly the rail's paints and within the noise. A cold load
+and a relaunch work everything out the first time as before: in a benchmark of the same passes in Bun on this world's
+bootstrap (least of 40 runs), working everything out after a meta change took as long as before, and after one
+conversation's change 0.5–0.9 ms instead of 3–6.
 
 Then the passes over every conversation that most of them leave at once: the badge's total asks whether a conversation
 has anything unread before whether it is shown (most are read), the rail's added conversations and the inbox's hidden
