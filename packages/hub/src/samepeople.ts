@@ -47,7 +47,21 @@ export class SameMatches {
     const r = this.last;
     const decided = new Map<string, Row>((s.db.query('SELECT key, decision, until FROM match_decision').all() as Row[]).map((x) => [x.key, x]));
     const now = Date.now();
+    // The run may be older than a merge made elsewhere (a profile's merge box, the details panel, or during the run
+    // itself): a pair now one person, or with a side merged away, is not offered again.
+    const all = [...(r?.suggestions ?? []), ...(r?.faint ?? [])];
+    const wanted = JSON.stringify([...new Set(all.flatMap((x) => [x.a.id, x.b.id, ...x.a.identities.map((i) => i.id), ...x.b.identities.map((i) => i.id)]))]);
+    const holder = new Map((s.db.query('SELECT id, person_id FROM identity WHERE id IN (SELECT value FROM json_each(?))').all(wanted) as Row[]).map((x) => [x.id as string, (x.person_id as string | null) ?? (x.id as string)]));
+    const persons = new Set((s.db.query('SELECT id FROM person WHERE id IN (SELECT value FROM json_each(?))').all(wanted) as Row[]).map((x) => x.id as string));
+    const heldBy = (x: P.MatchSide) => new Set(x.identities.map((i) => holder.get(i.id) ?? i.id));
+    const standing = (x: P.MatchSuggestion) => {
+      if (x.a.id.startsWith('per_') && !persons.has(x.a.id)) return false;
+      if (x.b.id.startsWith('per_') && !persons.has(x.b.id)) return false;
+      const a = heldBy(x.a);
+      return ![...heldBy(x.b)].some((id) => a.has(id));
+    };
     const open = (x: P.MatchSuggestion) => {
+      if (!standing(x)) return false;
       const d = decided.get(x.key);
       return !d || (d.decision === 'later' && !!d.until && d.until < now);
     };
@@ -154,6 +168,11 @@ export class SameMatches {
     } finally {
       this.asking = false;
     }
+  }
+
+  /** People were merged or split somewhere else (a profile, the details panel): the list is worked out again soon. */
+  changed() {
+    this.soon();
   }
 
   private soon() {
