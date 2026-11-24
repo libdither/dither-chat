@@ -15,17 +15,29 @@ import { accountName, chatKey, groupChats } from './chatroutes.ts';
 import { channelKey, groupChannels } from './channelrows.ts';
 import { isQuietConv } from './feed.ts';
 
-const memos = new Map<string, { rev: number; value: unknown }>();
-function memo<T>(key: string, fn: () => T): T {
-  const m = memos.get(key);
+/**
+ * The memos below are kept by what is worked out (`kind`, a literal) and then by the place it is for (`id`, '' for one of
+ * a kind), two maps: a key made of the two (`'lvl:' + id`) was a new string to build and hash in each of the tens of
+ * thousands of lookups of a first draw (docs/perf.md "Memo keys").
+ */
+function entries<E>(all: Map<string, Map<string, E>>, kind: string): Map<string, E> {
+  let m = all.get(kind);
+  if (!m) all.set(kind, (m = new Map()));
+  return m;
+}
+
+const memos = new Map<string, Map<string, { rev: number; value: unknown }>>();
+function memo<T>(kind: string, id: string, fn: () => T): T {
+  const byId = entries(memos, kind);
+  const m = byId.get(id);
   const v = dataVersion();
   if (m && m.rev === v) return m.value as T;
   const value = fn();
-  memos.set(key, { rev: v, value });
+  byId.set(id, { rev: v, value });
   return value;
 }
 
-const placesMemos = new Map<string, { rev: number; value: unknown; at: number }>();
+const placesMemos = new Map<string, Map<string, { rev: number; value: unknown; at: number }>>();
 /**
  * The same, for what reads no identity and not the inbox's messages (versions.ts `placesDataVersion`): the rail's
  * places, their counts and order, the badge, people's directs and the inbox's rows. Identities that come with a page or
@@ -37,8 +49,9 @@ const placesMemos = new Map<string, { rev: number; value: unknown; at: number }>
  * conversations (docs/perf.md "One conversation at a time"). With none changed (reactions' usage), the value holds.
  * It must give what `fn` would; test/model-incremental.test.ts checks that it does.
  */
-function placesMemo<T>(key: string, fn: () => T, update?: (prev: T, ids: ReadonlySet<string>) => T | undefined): T {
-  const m = placesMemos.get(key);
+function placesMemo<T>(kind: string, id: string, fn: () => T, update?: (prev: T, ids: ReadonlySet<string>) => T | undefined): T {
+  const byId = entries(placesMemos, kind);
+  const m = byId.get(id);
   const v = placesDataVersion();
   if (m && m.rev === v) return m.value as T;
   const now = Date.now();
@@ -55,7 +68,7 @@ function placesMemo<T>(key: string, fn: () => T, update?: (prev: T, ids: Readonl
     }
   }
   const value = fn();
-  placesMemos.set(key, { rev: v, value, at: now });
+  byId.set(id, { rev: v, value, at: now });
   return value;
 }
 
@@ -69,7 +82,7 @@ const keepUnless = (set: () => ReadonlySet<string>) => <T>(prev: T, ids: Readonl
 /** An update for what no conversation's last message or counts change. */
 const keep = <T>(prev: T) => prev;
 
-const metaMemos = new Map<string, { rev: number; value: unknown; until: number }>();
+const metaMemos = new Map<string, Map<string, { rev: number; value: unknown; until: number }>>();
 /** The soonest a native mute looked at while working something out runs out (nativeLevel): no later than that is it kept. */
 let expires = Infinity;
 /**
@@ -77,14 +90,15 @@ let expires = Infinity;
  * arriving or a conversation read does not work it out again, where it did for every conversation under every server
  * the rail shows (docs/perf.md). It holds conversations' ids, never the objects, which a message replaces.
  */
-function metaMemo<T>(key: string, fn: () => T): T {
-  const m = metaMemos.get(key);
+function metaMemo<T>(kind: string, id: string, fn: () => T): T {
+  const byId = entries(metaMemos, kind);
+  const m = byId.get(id);
   const v = metaDataVersion();
   if (m && m.rev === v && (m.until === Infinity || Date.now() < m.until)) return m.value as T;
   const outer = expires;
   expires = Infinity;
   const value = fn();
-  metaMemos.set(key, { rev: v, value, until: expires });
+  byId.set(id, { rev: v, value, until: expires });
   if (expires !== Infinity) {
     if (untilsOf !== v) (untilsOf = v), (untils.length = 0);
     untils.push(expires);
@@ -221,7 +235,7 @@ export function resolveTokens(text: string, network: P.Network): string {
  * (`metaMemo`), not a scan per link, nor a new map for every message or read.
  */
 export function convByNative(network: P.Network, nativeId: string): P.ConversationView | undefined {
-  const id = metaMemo('convByNative', () => {
+  const id = metaMemo('convByNative', '', () => {
     const m = new Map<string, string>();
     for (const c of db.conversations.values()) if (!m.has(`${c.network}:${c.nativeId}`)) m.set(`${c.network}:${c.nativeId}`, c.id);
     return m;
@@ -465,7 +479,7 @@ interface TreeNode {
 }
 
 export function spaceChildren(id: string): TreeNode[] {
-  return placesMemo('children:' + id, () =>
+  return placesMemo('children', id, () =>
     (db.children.get(id) ?? [])
       .map((e): TreeNode | null => {
         if (e.childKind === 'conversation') {
@@ -546,7 +560,7 @@ interface ShownThreads {
  * rest are `more`.
  */
 export function shownThreads(c: P.ConversationView, active?: string): ShownThreads {
-  const base = placesMemo('shownThreads:' + c.id, () => pickThreads(c), keepUnlessChannel(c.id));
+  const base = placesMemo('shownThreads', c.id, () => pickThreads(c), keepUnlessChannel(c.id));
   if (!active || active === c.id) return remember(c.id, base);
   const open = db.conversations.get(active);
   if (!open || open.parentId !== c.id || open.shape !== 'thread' || !visibleConv(open)) return remember(c.id, base);
@@ -619,7 +633,7 @@ const keepUnlessChannel =
   };
 
 export function channelUnread(c: P.ConversationView): Unread {
-  return placesMemo('cu:' + c.id, () => {
+  return placesMemo('cu', c.id, () => {
     const ids = db.threads.get(c.id);
     const own = unreadOf(c);
     if (!ids?.length) return own;
@@ -694,9 +708,9 @@ const placeActivity = (e: RailEntry) =>
  * Communities are listed by default; a conversation only once you add it. Whatever sits in a folder lives there instead.
  */
 export function railEntries(which: 'shown' | 'hidden' = 'shown'): RailEntry[] {
-  return placesMemo('rail:' + which, () => {
+  return placesMemo('rail', which, () => {
     // Conversations you added to the rail and not to a folder: by id, since what is where moves only with settings.
-    const railed = metaMemo('railed', () => {
+    const railed = metaMemo('railed', '', () => {
       const inFolder = new Set(db.folders.flatMap((f) => f.items.map((i) => `${i.kind}:${i.id}`)));
       // Whether you added it first: most conversations have no place settings, and `placePref` makes them some.
       return { inFolder, convs: [...db.conversations.values()].filter((c) => db.placePrefs.get(`conversation:${c.id}`)?.railed && visibleConv(c) && !inFolder.has(`conversation:${c.id}`)).map((c) => c.id) };
@@ -730,8 +744,8 @@ export function railEntries(which: 'shown' | 'hidden' = 'shown'): RailEntry[] {
 
 
 export function allCommunities(): P.SpaceView[] {
-  return placesMemo('allCommunities', () => {
-    const top = metaMemo('communities', () => [...db.spaces.values()].filter((s) => s.kind === 'community' && visibleSpace(s) && !spaceParents(s.id).some((p) => p.kind === 'community' && visibleSpace(p))));
+  return placesMemo('allCommunities', '', () => {
+    const top = metaMemo('communities', '', () => [...db.spaces.values()].filter((s) => s.kind === 'community' && visibleSpace(s) && !spaceParents(s.id).some((p) => p.kind === 'community' && visibleSpace(p))));
     const act = new Map(top.map((s) => [s.id, activityOfSpace(s.id)]));
     return [...top].sort((a, b) => act.get(b.id)! - act.get(a.id)!);
   });
@@ -740,7 +754,8 @@ export function allCommunities(): P.SpaceView[] {
 /** Every conversation under a space, through sections, subspaces and threads. */
 export function convsUnder(id: string): P.ConversationView[] {
   return placesMemo(
-    'under:' + id,
+    'under',
+    id,
     () => {
       const out: P.ConversationView[] = [];
       for (const cid of idsUnder(id)) {
@@ -761,7 +776,7 @@ const keepUnlessUnder = (id: string) => keepUnless(() => idsUnder(id));
  * first by their newest message there or in a thread of theirs: a Zulip channel takes no messages itself.
  */
 export function channelsUnder(id: string): P.ConversationView[] {
-  return placesMemo('chans:' + id, () => {
+  return placesMemo('chans', id, () => {
     const under = convsUnder(id);
     const latest = new Map<string, number>();
     for (const c of under) {
@@ -774,7 +789,7 @@ export function channelsUnder(id: string): P.ConversationView[] {
 
 /** Their ids: the walk is done again only when what is where may have changed. */
 function idsUnder(id: string): ReadonlySet<string> {
-  return metaMemo('under:' + id, () => {
+  return metaMemo('under', id, () => {
     const out = new Set<string>();
     const seen = new Set<string>();
     const walk = (sid: string) => {
@@ -801,7 +816,8 @@ function idsUnder(id: string): ReadonlySet<string> {
 
 export function activityOfSpace(id: string): number {
   return placesMemo(
-    'act:' + id,
+    'act',
+    id,
     () => {
       let max = 0;
       for (const c of convsUnder(id)) if ((c.lastMessageAt ?? 0) > max) max = c.lastMessageAt!;
@@ -831,10 +847,22 @@ export type Level = Exclude<P.NotifyLevel, 'smart'>;
 const rank = (l: Level) => ({ none: 0, digest: 1, mentions: 2, all: 3 })[l];
 
 /** Your rules that still mean something. */
-export const liveRules = () => placesMemo('liveRules', () => db.rules.filter((r): r is P.RuleView & { level: Level } => r.level !== 'smart'), keep);
-const ruleMap = () => placesMemo('rules', () => new Map(liveRules().map((r) => [`${r.scope}:${r.target ?? ''}`, r.level])), keep);
+export const liveRules = () => placesMemo('liveRules', '', () => db.rules.filter((r): r is P.RuleView & { level: Level } => r.level !== 'smart'), keep);
+/** Your rules by scope, then by target ('' for none): no string made for each look (effectiveLevel looks up several). */
+const ruleMap = () =>
+  placesMemo(
+    'rules',
+    '',
+    () => {
+      const m = new Map<string, Map<string, Level>>();
+      // Of two rules on one place, the later holds (as a Map made from them in order).
+      for (const r of liveRules()) entries(m, r.scope).set(r.target ?? '', r.level);
+      return m;
+    },
+    keep,
+  );
 /** The rule set on this very place, person or keyword; null with none. */
-export const ruleOn = (scope: P.NotifyScope, target: string | null): Level | null => ruleMap().get(`${scope}:${target ?? ''}`) ?? null;
+export const ruleOn = (scope: P.NotifyScope, target: string | null): Level | null => ruleMap().get(scope)?.get(target ?? '') ?? null;
 
 interface Effective {
   /**
@@ -852,9 +880,9 @@ interface Effective {
 
 export function effectiveLevel(c: P.ConversationView): Effective {
   // From rules, places and native mutes, all of which move metaRev: not worked out again for a message or a read.
-  return metaMemo('lvl:' + c.id, () => {
+  return metaMemo('lvl', c.id, () => {
     const rules = ruleMap();
-    const hit = (scope: string, target: string | null) => rules.get(`${scope}:${target ?? ''}`);
+    const hit = (scope: string, target: string | null) => rules.get(scope)?.get(target ?? '');
     const set = (level: Level, source: string, explicit: boolean, scope: Effective['scope']): Effective => ({ level, rule: level, source, explicit, scope });
     let l: Level | undefined;
     if ((l = hit('conversation', c.id))) return set(l, 'this conversation', true, 'conversation');
@@ -978,9 +1006,14 @@ interface Unread {
 }
 
 export function unreadOf(c: P.ConversationView): Unread {
-  const vs = c.vantages.filter((v) => visibleAccount(v.accountId));
-  const unread = Math.max(0, ...vs.map((v) => v.unread));
-  const mentions = Math.max(0, ...vs.map((v) => v.mentions));
+  // A loop, not filter and map: this runs for every unread conversation in each count.
+  let unread = 0,
+    mentions = 0;
+  for (const v of c.vantages) {
+    if (!visibleAccount(v.accountId)) continue;
+    if (v.unread > unread) unread = v.unread;
+    if (v.mentions > mentions) mentions = v.mentions;
+  }
   const lvl = effectiveLevel(c).level;
   const muted = lvl === 'none' || lvl === 'digest';
   const loud = (c.shape === 'direct' || c.shape === 'group') && !muted;
@@ -1052,8 +1085,7 @@ function tallyTotal(t: Tally): Unread {
  * (docs/feed.md).
  */
 export function totalUnread(): Unread {
-  return placesMemo(
-    'totalUnread',
+  return placesMemo('totalUnread', '',
     () => {
       const t = newTally(true);
       const held = heldByRequest();
@@ -1076,7 +1108,7 @@ export function totalUnread(): Unread {
 }
 
 export function spaceUnread(id: string): Unread {
-  return placesMemo('su:' + id, () => sumUnread(convsUnder(id)), keepUnlessUnder(id));
+  return placesMemo('su', id, () => sumUnread(convsUnder(id)), keepUnlessUnder(id));
 }
 
 /** The folder a folder sits in, if it is inside one. */
@@ -1090,7 +1122,7 @@ export function folderLeaves(f: P.FolderView): P.FolderView['items'] {
 }
 
 export function folderConvs(f: P.FolderView): P.ConversationView[] {
-  return placesMemo('fc:' + f.id, () => {
+  return placesMemo('fc', f.id, () => {
     const out = new Map<string, P.ConversationView>();
     for (const it of folderLeaves(f)) {
       if (it.kind === 'space') for (const c of convsUnder(it.id)) out.set(c.id, c);
@@ -1121,8 +1153,7 @@ function idSet(convs: readonly P.ConversationView[]): ReadonlySet<string> {
 
 /** One pass over the conversations, not one per person: `people()` asks for every person on each `rev`. */
 function directsByPerson(): Map<string, P.ConversationView[]> {
-  return placesMemo(
-    'directsByPerson',
+  return placesMemo('directsByPerson', '',
     () => {
       // A person's email routes are among their directs (mail/chats.ts): mail with them is part of their chat.
       const found = routesByPerson();
@@ -1168,7 +1199,7 @@ export function directsOf(personId: string): P.ConversationView[] {
 export function people(): { person: P.PersonView; directs: P.ConversationView[]; last: number }[] {
   // An open message request waits under Requests, not among the people you talk with.
   const held = heldByRequest();
-  return placesMemo('people', () =>
+  return placesMemo('people', '', () =>
     [...db.persons.values()]
       .filter((p) => !p.isSelf)
       .map((person) => {
@@ -1312,7 +1343,7 @@ const hasThreads = (c: P.ConversationView) => c.shape !== 'direct' && c.shape !=
  * this is one pass, once per change.
  */
 export function unreadThreadsOf(channelId: string): P.ConversationView[] {
-  return memo(`ut:${channelId}`, () => {
+  return memo('ut', channelId, () => {
     const out: P.ConversationView[] = [];
     for (const id of db.threads.get(channelId) ?? []) {
       const t = db.conversations.get(id);
@@ -1349,8 +1380,7 @@ function baseRow(c: P.ConversationView, held: Set<string>): BaseRow | null {
 }
 
 function convRows(): ConvInboxRow[] {
-  return placesMemo(
-    'inboxConvRows',
+  return placesMemo('inboxConvRows', '',
     () => {
       const base = new Map<string, BaseRow>();
       const held = heldByRequest();
@@ -1495,7 +1525,7 @@ export function mailRowsWaiting(): boolean {
 
 /** Accounts that need you to act (a QR to scan, a login): the rows above the conversations. */
 export function accountsNeedingYou(): P.AccountView[] {
-  return placesMemo('accountsNeedingYou', () => [...db.accounts.values()].filter((a) => a.attention && visibleAccount(a.id)), keep);
+  return placesMemo('accountsNeedingYou', '', () => [...db.accounts.values()].filter((a) => a.attention && visibleAccount(a.id)), keep);
 }
 
 /** A triaged message you have not read: its conversation has unread messages, and you last read it before this one. */
@@ -1515,7 +1545,7 @@ export const boardUnread = (m: BoardItem) => (isMailItem(m) ? mailUnread(m) : me
 
 /** How it sorts' lists and counts (board.ts), for what is shown here: chat's messages and mail's. */
 export function board(): Board {
-  return memo('board', () =>
+  return memo('board', '', () =>
     triageBoard<BoardItem>([...inbox.value, ...mailTriage.value], {
       now: Date.now(),
       shown: (m) => {
