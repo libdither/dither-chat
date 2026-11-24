@@ -6,6 +6,7 @@
 import { computed, signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { api, inbox, patchMessage, toast } from './state.ts';
+import { loadPolicy } from './triage.ts';
 
 /** The mode, settings and what it learned, as of the last look (GET /api/loudness/state). */
 export const attnState = signal<P.AttentionStateView | null>(null);
@@ -60,6 +61,8 @@ export async function answer(m: { id: string; triage?: P.TriageView | null }, a:
   try {
     const r = await api<P.AttnAnswerResult>('/api/loudness/answers', { body: { messageId: m.id, answer: a, source, ...(scope ? { scope } : {}), ...(checkinId ? { checkinId } : {}) } });
     if (r?.why) whyAsk.value = { answerId: r.answerId, side: r.why };
+    // Louder / Quieter stand as marks: what the tiers learned from them, for How it sorts.
+    if (a === 'louder' || a === 'quieter') void loadPolicy();
     return r;
   } catch (e) {
     if (t) showMarks(m.id, before);
