@@ -9,7 +9,8 @@ export class RetryLater {
   constructor(
     private readonly first: number,
     private readonly most: number,
-    private readonly later: (f: () => void, ms: number) => unknown = setTimeout,
+    // A browser's setTimeout called as this.later(...) throws "Illegal invocation": it is called as a plain function.
+    private readonly later: (f: () => void, ms: number) => unknown = (f, ms) => setTimeout(f, ms),
     private readonly cancel: (t: unknown) => void = (t) => clearTimeout(t as ReturnType<typeof setTimeout>),
   ) {
     this.wait = first;
