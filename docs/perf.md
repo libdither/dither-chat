@@ -2,10 +2,13 @@
 
 `scripts/verify-perf.ts` times what the app feels like on a hub the size of the real one, and fails when a change
 makes it slower. Run it before and after a change that touches rendering, the sync model or the hub's hot queries. CI
-runs a small version on every push that judges its counts, never its times ([In CI](#in-ci---ci)), and ordinary tests
+runs a small version on every push that judges its counts, never its times ([In CI](#in-ci---ci)), a nightly run keeps
+every number at 1× and 4× and shows how they move ([Nightly trends](#nightly-trends)), and ordinary tests
 hold sizes and counts of what the hub sends and the web build weighs ([Budgets](#budgets-sizes-and-counts-in-every-test-run)).
 `scripts/verify-response.ts` clicks every control on each kind of page and fails on a click that draws a whole list
 again ([Every click](#every-click-2026-11-20)).
+`scripts/verify-memory.ts` goes round the same pages again and again and fails when what the page holds keeps growing
+([Memory](#memory-2026-11-24)).
 
 ```sh
 bun scripts/verify-perf.ts                 # 3 runs each at 1× and 4× CPU, compared with scripts/perf-baseline.json
@@ -15,14 +18,16 @@ bun scripts/verify-perf.ts --runs 1 --cpu 4 --pages 5   # a quick look
 
 Options: `--port` (8620; the hub it starts listens there), `--runs`, `--cpu 1,4` (`0`: no desktop pass), `--phone-cpu 4`
 (the phone pass's throttles, below; `0` leaves it out), `--ahead-cpu 4` (the fetching-ahead pass's, below; `0` leaves it
-out), `--ahead-rtt 80` (its link's round trip in ms), `--pages` (older pages to load in the
+out), `--ahead-rtt 80` (its link's round trip in ms), `--slow-cpu 4` (the slow link's pass, below; `0` leaves it out),
+`--slow-rtt 300`, `--slow-down 1.6` and `--slow-up 0.75` (that link's round trip in ms and its Mbit/s each way),
+`--slow-queue fair` (or `fifo`: [below](#over-a-slow-link-2026-11-24)), `--pages` (older pages to load in the
 biggest conversation, 15), `--web <dist>` (a build to use instead of building one), `--out <file.json>` (every run's
 numbers), `--baseline <file>`, `--keep` (leave the temp dir with the world, the build and the hub's log), `--css <css>`
 (added to every page, to try a style change without a build), `--work <dir>` (an empty dir to work in instead of a
 temp dir, kept afterwards), `--size <w>x<h>` (1280x800; below 700 wide it emulates a phone, as `--size 390x844`),
 `--scale` (the world's size against the live hub's, 1), `--ci` (below).
 
-It takes about five minutes. It builds the web app, seeds a world in a temp dir, starts its own demo hub on it
+It takes about eight minutes, three of them the slow link's pass. It builds the web app, seeds a world in a temp dir, starts its own demo hub on it
 (`--demo`, with the demo's random chatter off, `DITHER_DEMO_CHATTER=0`), and drives a fresh headless Chromium per
 run. Nothing touches a real hub.
 
@@ -89,6 +94,25 @@ Those passes fetch nothing ahead (`?ahead=0`), so their counts stay what they we
 
 `ahead.served` and `ahead.relaunchServed` have floors (`FLOORS`): every open there should come from the device.
 
+Last, a poor phone link ([below](#over-a-slow-link-2026-11-24)): 300 ms round trip, 1.6 Mbit/s down and 0.75 up, at a
+phone's size, `--slow-cpu` (4× here, 1× in CI), its keys starting `s4x.`. Every request goes through one link, the
+service worker's too, and fetching ahead is on, as in the app. Times are from the page's start.
+
+| metric | what |
+|---|---|
+| `cold.content`, `cold.fresh` | a device that never saw the hub, not even the app: time to the list shown (`dither:content`) and to the hub's data in (`dither:fresh`) |
+| `cold.toContent.*`, `cold.toFresh.*` | requests sent and bytes that reached the browser before each |
+| `cold.<kind>.requests`, `cold.<kind>.bytes` | the same before the list showed, by kind: `document`, `script`, `style`, `bootstrap`, `api` (the rest of /api), `pages` (a conversation's messages), `pictures`, `precache` (the service worker's script and every file it keeps), `socket` (the live socket's upgrade and frames), `other` (the manifest) |
+| `cold.bootstrap`, `cold.bootstrap.bytes` | the bootstrap on the wire: from asked to its last byte, and its bytes as sent (compressed) |
+| `cold.competing.requests`, `cold.competing.bytes` | other requests whose bytes came down the link while the bootstrap was on it, and those bytes (not the socket's) |
+| `cold.beforeBootstrap.precache`, `.pictures`, `.pages` | requests of each kind sent before the bootstrap's last byte |
+| `open.ms` | then the first conversation in the list opened (to `dither:timeline`) |
+| `precache.*`, `ahead.*` | the page stays until the service worker has kept the whole build and taken the page over (`precache.tookOver`, 1; at most 90 s) and fetching ahead is done: the precache's requests, bytes and when its last byte came; fetching ahead's requests and bytes. `cold.stay`: how long the page was open |
+| `relaunch.content`, `relaunch.fresh`, `relaunch.fromSnapshot` | the app opened again: times to the list and to fresh data, and whether the list came from the snapshot (1) |
+| `relaunch.toContent.requests`, `.answers`, `.bytes`, `.shell` | requests sent before the list showed, how many of them had their answer by then (the socket's health check and the activity report answer on their own while the list is drawn: the list waits on none of them), their bytes, and how many were the app itself (`document`, `script`, `style`): none once the service worker has the build |
+| `relaunch.toFresh.*` | requests and bytes before the hub's data was in |
+| `socket.resyncs`, `socket.opens`, `socket.drops`, `socket.closes`, `socket.pings`, `socket.pongMax` | over both starts: catch-ups with the hub (a bootstrap, or a sync from the journal: each marks `dither:fresh`) more than one a start, which is what a socket replaced costs (a sync of kept conversations alone is not one); live sockets opened (one a start, one more for a spare that races a late pong: state.ts `probe`), closed by the app (one given up on, or a spare that lost its race), closed from the hub's end, the heartbeat's pings, and the longest wait for a pong (a time). Once the bootstrap's first bytes have come on the cold start the pass sends the page a `focus`, as when someone comes back to the app while it loads, so one ping always goes out while the link is at its busiest |
+
 Each step waits until nothing has rendered for half a second before it counts. A plain reload is not measured: it
 swings 30–80% between runs, because the old page is still saving its snapshot on the way out.
 
@@ -104,7 +128,9 @@ branch against it.
 
 Some render counts also have ceilings of their own (`CEILINGS` in the script), whatever the baseline says: at most
 two App renders and three of the inbox list per switch, none of App and at most five messages for an arriving message,
-and at most 250 messages drawn on a reopen. An `--update` over one of them fails and writes nothing.
+and at most 250 messages drawn on a reopen. Over the slow link: one catch-up a start (`socket.resyncs` 0), and none of the
+app's own files fetched on a relaunch; and floors: the service worker took the page over,
+and the relaunch drew its list from the snapshot. An `--update` over one of them fails and writes nothing.
 
 ## In CI (`--ci`)
 
@@ -121,6 +147,15 @@ out the same in five runs on GitHub's runners. On 2026-11-11 (#103's run and fou
 ci.yml --ref <branch>`) 24 of its 25 did: DOM nodes on each screen, renders and layouts of the flicks, the open and
 typing (none of App or messages, one of the list, 35 layouts), the tabs, the person's page. Its cold load's layouts
 (8 to 10) did not, and are printed only.
+
+Last comes the slow link's pass (`s1x.`), once at 1×, about 21 s more (the job took about 2 min 10 s on 2026-11-24,
+against its 10-minute limit); most of it is the precache, 1.35 MB over 1.6 Mbit/s. Five runs on GitHub's runners
+(dispatched on its branch, 2026-11-24) set what is judged: 28 of its 55 numbers (with `socket.resyncs`, added by hand at 0). Judged: requests of each kind before
+the list showed, the bootstrap's bytes, how many requests came down beside it, the socket's opens, drops, closes,
+pings and extra catch-ups, and the relaunch's requests, answers and bytes before the list and requests before fresh data. Printed only:
+every time; bytes that are the build's own sizes (scripts, stylesheet, index.html, the whole precache and its file
+count), which budgets.json holds with reasons; and what moved with timing, such as the requests before the list (26 to
+29) and the precache's requests before the bootstrap's end (7 to 9).
 
 It seeds the same world at a tenth of the size (`--scale 0.1`: 574 conversations, 150 with messages, 22k messages,
 the biggest 8,000), then does a warm-up run that is not counted and one run at 1×, with five older pages. Only
@@ -159,6 +194,71 @@ after a relaunch 16 to 18 (17 or 18), all within the two a tally may go over, th
 the 21 that fails; `long.reopen.nodes` 8214, the first run's (above); and the bootstrap's bytes, by an arriving message
 or so (`hub.bootstrap.bytes`, taken after the warm-up now, 539,634 against 539,665; `cold.bootstrapBytes` 539,733
 against 539,932).
+
+## Nightly trends
+
+CI judges counts at 1× on a tenth-size world and never looks at a time, so a slow creep passes every check, and the
+counts at 4× (renders batch differently on a slow CPU) were only ever looked at by hand. So once a night
+`.github/workflows/perf-nightly.yml` runs verify-perf at both throttles and keeps what it measured:
+
+```sh
+bun scripts/verify-perf.ts --scale 1 --runs 5 --warmup 1 --cpu 1,4 --phone-cpu 1,4 --ahead-cpu 1,4 --slow-cpu 4 \
+  --baseline <none> --out out/perf.json
+```
+
+The slow link's pass ([Over a slow link](#over-a-slow-link-2026-11-24)) runs at 4× only: its waits are the link's,
+about a minute a run at full size, and 1× is what CI runs.
+
+- **When:** 04:41 UTC every night on main (stress.yml runs at 07:17, android-device.yml at 09:23), and by hand from
+  Actions > Perf nightly > Run workflow, which asks for the world's size, the runs, and whether to record the run.
+  The measuring takes about 20 minutes on a standard runner (4 cores), the whole run about 21.
+- **Never red on a number.** It has no baseline: nothing is judged, and a ceiling or floor verify-perf reports is a
+  warning on the run. It fails only when measuring breaks (the build, the hub, a page that never answers).
+- **History:** each night is one JSON line on the `perf-history` branch (`history.jsonl`; a branch of data only,
+  never merged): the date, the commit, the runner (CPU, cores, memory, image, browser), the settings, the world's
+  counts, and every metric's median with the lowest and highest of its runs. A run on main is recorded; a run by hand
+  on another branch only when asked (`record`), else it goes in the summary only. Only the small job that adds the
+  line has write access to the repository; the one that runs the browser can only read.
+- **What it shows:** the job's summary has the last night against the medians of the 7 and 30 nights before it
+  (nights run with the same settings), flagging a time that moved more than 15% from the 7 nights' median (and 5 ms,
+  or 2 slow frames), and a count, tally or byte size outside every value those 7 nights' runs came to: a count that
+  never moves flags on any move, and one whose runs spread by themselves (the bytes fetching ahead pulls: 22 to 32 kB
+  in one night) only when it leaves that spread. Then the counts that came out different at 1× and 4×; then every
+  metric. Flags only: the job stays green. The artifact `perf-trend` is a page of small charts, one per step and
+  pass, a line per throttle, each night's median with the band of its runs, that needs nothing from the network
+  (light and dark). The artifact `perf-night` has the night's line and verify-perf's whole output.
+- **No key list.** `scripts/perf-trend.ts night` records whatever is in `out/*.json`: a new verify-perf metric is
+  recorded and charted the first night it appears. Another script's numbers are one line in the workflow, the script
+  writing `out/<name>.json` as `{ "metrics": { "<key>": { "v": 12, "kind": "ms", "runs": [11, 12, 14] } } }`
+  (verify-perf's own `--out` shape); its keys are kept as `<name>.<key>`. A kind of `ms` or `frames` is a time, any
+  other a count.
+
+The same page from the history, locally:
+
+```sh
+git fetch origin perf-history
+bun scripts/perf-trend.ts report --html /tmp/perf-trend.html      # the table on stdout, the charts in the file
+bun scripts/perf-trend.ts report --history <file.jsonl>             # a history of your own
+```
+
+Why the full-size world: on 2026-11-24 the same run took 18 minutes at a quarter of the size and 20 at full size (the
+runs mostly wait for the page to settle), and only the full size has what a slow creep would show first: a bootstrap of
+4.5 MB rather than 1.2 MB, conversations of 80,000 messages, and an arriving message that keeps the main thread busy for
+63 ms at 1× rather than 23. Its counts also compare with the local baseline's (`scripts/perf-baseline.json`); its times are of another machine.
+
+The first night (2026-11-24, medians of five on a 4-core runner):
+
+| | 1× | 4× |
+|---|---|---|
+| desktop cold load, list painted | 587 ms | 1,340 ms |
+| desktop first open (median of six) | 61 ms | 211 ms |
+| desktop message arriving, main thread busy | 63 ms | 205 ms |
+| desktop relaunch, list painted | 193 ms | 606 ms |
+| desktop an older page | 57 ms | 318 ms |
+| phone cold load | 516 ms | 1,306 ms |
+| phone opening the biggest channel | 113 ms | 403 ms |
+| phone keystroke to frame, p90 | 11 ms | 25 ms |
+| phone, first five rows opened with fetching ahead (without) | 39 ms (147) | 148 ms (268) |
 
 ## Baselines and when to update them
 
@@ -1022,9 +1122,129 @@ bun scripts/verify-response.ts --only control:react  # controls whose name has t
 bun scripts/verify-response.ts --cpu 4 --out x.json  # slower, and every click's numbers
 ```
 
+## Over a slow link (2026-11-24)
+
+The other passes run on loopback, or, for fetching ahead, over a link set on the page alone. The slow pass loads the
+app as a phone on a poor link would. `scripts/slowlink.ts` is a TCP proxy between Chromium and the hub that holds
+every byte as that link would: each direction sends one packet at a time at its rate, each packet arrives half a round
+trip after it left, and a new connection waits a round trip (the handshake) before its first byte goes. DevTools' own
+throttling (`Network.emulateNetworkConditions`) is not enough here: it is set on a page, and the service worker's
+requests, its whole precache, go round it. The proxy reads each request's head (HTTP/1.1, one request at a time on
+a connection: Chromium does not pipeline) and puts every byte the hub sends back to the request it answers, with the
+time it reached the browser; the page's marks are on the same clock (`performance.timeOrigin`). Chromium asks for
+zstd on loopback as it does over https, so the bytes are the ones a phone gets.
+
+The link: 1.6 Mbit/s down, 0.75 up, a 300 ms round trip. The rates are
+[Lighthouse's phone on "slow 4G"](https://github.com/GoogleChrome/lighthouse/blob/main/docs/throttling.md), the
+slowest link pages are commonly tested on. Its round trip is 150 ms where Lighthouse simulates the link and 562.5 ms
+where it has DevTools throttle it (DevTools adds the latency per request, not per packet, so it scales it up to make
+the same page as slow); 300 ms is between, a phone at the edge of 4G coverage or on good 3G, and a phone on the
+tailnet sometimes goes through a relay as well. Which connection sends next: each in turn (`--slow-queue fair`, the
+default), as a router that queues each flow on its own does and about what TCP's congestion control comes to when
+flows share a bottleneck; or first come first served (`--slow-queue fifo`), a deep buffer shared by everything, as
+many cellular links have.
+
+First numbers, on main (2026-11-24, with #359; a full-size world, 4× CPU, fair, three runs on a machine at load
+average 8 to 10, so the times are rough; counts are of the median run):
+
+| | |
+|---|---|
+| cold start: list shown, hub's data in | 8.9 s, 8.2 s (8.8–9.0, 8.1–8.3) |
+| on the link before the list showed | 54 requests, 1.24 MB: 5 scripts 349 KB, the stylesheet 60 KB, the bootstrap 435 KB, 34 of the precache's requests 377 KB, 10 other /api requests 22 KB |
+| the startup script | 345 KB, from 0.65 s to 3.3 s: the longest wait before anything is drawn |
+| the bootstrap asked for | 650–660 ms after the socket was: it waits for the socket to open (`resync` runs from `onopen`), a handshake and an upgrade, two round trips |
+| the bootstrap on the wire | 3.8 s for 435 KB (3.5–3.9), beside 228 KB (160–254 KB) of 30 of the precache's requests, all sent before its last byte. Alone, 435 KB takes about 2.5 s here, and with `--slow-queue fifo`, where the precache queues behind it, it took 2.7–2.9 s |
+| the precache | 81 requests, 1.37 MB, its last byte at 17.5–18.9 s (`/sw.js` asked for at 3.6 s, as soon as the app ran) |
+| first conversation opened | 1.2–1.8 s |
+| relaunch from the snapshot: list shown, hub's data in | 0.6–0.7 s, 1.0–1.1 s; none of the app from the network (the service worker had it), 3 requests answered before the list was drawn (the health check, the activity report, the manifest), none of which it waits on |
+| the live socket | opened once a start, kept, one catch-up a start; the ping sent while the bootstrap came back in 319–324 ms |
+
+With `--slow-queue fifo` the same ping waited 443 to 2,970 ms for its pong, the longest 30 ms short of `PONG_WAIT`
+(3 s). At 1.2 Mbit/s down (`--slow-down 1.2 --slow-queue fifo`, one run, load average 26) the build before #359 dropped
+one: the ping went out as the bootstrap began to come, no pong came in time, the app closed the socket at 10.1 s and
+opened another, which took until 12.4 s to open behind the precache, and synced again. Since #359 a late pong is raced
+by a new socket instead ([docs/sync.md](sync.md#a-bad-link)): the same run on it waited 4,280 ms for the pong, kept the
+socket (two opened over both starts, none closed by the app) and caught up once a start.
+## Memory (2026-11-24)
+
+`scripts/verify-memory.ts` (CI's `memory` job) looks for leaks: what the page holds growing as it is used. Against a
+demo hub of its own on the perf world at a tenth of its size, a computer's page and a phone's go round the same pages
+again and again, side by side: the six conversations the perf runs open and a thread, the top of the biggest channel
+drawn (older messages from memory), the details panel opened and closed (on the computer), a person's page, their
+profile, Settings, Mail and Feed, back, and the inbox again. After each round the page is let settle, the garbage is
+collected twice (`HeapProfiler.collectGarbage`), and it counts:
+
+| count | from |
+|---|---|
+| `heap` | `Performance.getMetrics`'s JSHeapUsedSize: printed only |
+| `nodes`, `listeners`, `documents` | `Memory.getDOMCounters`: every DOM node alive, detached ones too, and event listeners |
+| `detached` | `DOM.getDetachedDomNodes`: nodes off the page that something still holds |
+| `elements` | the page's own elements |
+| `intervals`, `timeouts`, `objectUrls`, `sockets`, `observers` | counted from the start by a script before the app's (its `INIT`): intervals set and not cleared, timeouts pending (printed only), `URL.createObjectURL` not revoked, sockets open, Resize-, Intersection- and MutationObservers still observing and not collected |
+| `marks` | performance marks and measures kept |
+| `held.*` | the app's own caches, from `window.__ditherPerf.held()` (`sized` in perf.ts, under `?perf=1`): timelines, messages held in them, quoted messages, kept pages, identities, mail bodies, the maps state.ts keeps for the page's life |
+
+What is judged is growth from round 2 to the last (6 on the computer, 5 on the phone), never a size. The page's own
+counts (elements, nodes, listeners) may move by 2% in all, once; what the app keeps running or holds not at all; and
+nothing may grow in each of the last three rounds, however little: a leak grows every round, a clock's step once.
+`scripts/memory-known.json` (none yet) is where growth known to be needed would go, with why. A count that grew past
+what it may says where its new intervals, object URLs or observers were made.
+
+The first round is the warm-up: it loads three older pages of the biggest channel from the hub, so that the later
+rounds draw from memory. Every page from the hub stays in memory for as long as the page is open (`timelines` in
+store.ts, by design), so a round that loaded one more each time would grow by a page whatever else it did. The app's
+visits (`POST /api/usage`) are answered in the page, as in the click check, so the hub's order stays put.
+
+```sh
+bun scripts/verify-memory.ts                       # what CI runs, about two minutes
+bun scripts/verify-memory.ts --cycles 50 --phone-cycles 0 --cpu 4 --scale 1   # the long run, below
+bun scripts/verify-memory.ts --snapshots <dir>     # heap snapshots after round 2 and the last, for DevTools' Comparison
+```
+
+Other options: `--first` (the round growth is counted from), `--web <dist>`, `--out <file.json>` (every round's
+counts), `--keep`, `--verbose` (each step's time). The hub's resident memory (`/proc/<pid>/status`, it has no endpoint
+for its heap) is printed before and after, never judged.
+
+**Steady.** Five runs here and five on GitHub's runners (dispatched with `gh workflow run ci.yml --ref <branch>`), on
+2026-11-24: every judged count came out the same in rounds 2 to 6 and 2 to 5, in every run. The heap grew 190 to 260
+KB a round on the computer and 145 to 170 KB on the phone, which is why it is printed and not judged. The job takes
+about two minutes on a runner, beside `response`'s four, so the run takes no longer.
+
+**It catches one.** A page made to leak an interval, a click listener and a detached `div` on every visit to Settings
+failed on nodes, listeners and intervals, each +4 over four rounds.
+
+**What it found.** Every chat opened added a `dither:timeline` mark (`markPainted`, perf.ts) to the page's list of
+performance marks, which nothing emptied: nine a round, about 130 bytes each. Now each name keeps its last: the checks
+that wait for them watch with a `PerformanceObserver`, which sees each. `marks` holds at 4.
+
+**The long run** (2026-11-24, full-size world, 4× CPU, 50 rounds on the computer, a loaded machine, about 28 s a
+round): elements, nodes, listeners, intervals, object URLs, sockets, observers and every cache held still from round 2
+to 50, but for one step: the page's elements went 2,270 → 2,269 at round 11 and → 2,291 at round 22 (nodes 2,931 →
+2,962, listeners back to 771), and stayed. That is the inbox's rows changing as the hub's attention rescores (every
+five minutes), not growth, and why the page's counts may move once. The heap went from 17.5 MB after round 2 to 19.7
+MB after round 50: about 160 KB a round to round 10, and 23 KB a round from round 20 to 50 (19.0 to 19.7 MB). The
+hub's resident memory went from 230 MB before to 195 MB after (peak 389 MB).
+
+What the heap's growth is, from heap snapshots (`--snapshots`, compared by constructor) on the tenth-size world. From
+round 2 to 8 (the heap 11.1 to 12.2 MB): two thirds compiled code (V8's InstructionStream, Code, FeedbackVector: the
+JIT warming up), and a quarter the tables of perf.ts's own WeakMap and WeakSet that count renders (only under
+`?perf=1`). From round 10 to 30 (12.6 to 13.2 MB; the snapshots' totals 1.0 MB apart): compiled code again (about
+620 KB), the response bodies DevTools keeps for the check's own `Network.enable` (160 KB), and the browser's
+performance entries (long animation frames, paints, events). No object of the app's grew in number.
+
 ## Next
 
 What these numbers point at, not done yet:
+
+- **On a slow link the precache shares it with the bootstrap** ([above](#over-a-slow-link-2026-11-24)): 228 KB of
+  it came down beside the bootstrap's 435 KB, about 1.3 s of the 3.8 s it took. Registering the service worker after
+  `dither:fresh` (and idle), rather than as the app starts (main.tsx), would leave the link to the bootstrap; check-offline
+  still needs the worker installed by the time the snapshot is.
+- **A cold start asks for the bootstrap only once the socket is open**, two round trips after it began (650–660 ms
+  there): `resync` runs from the socket's `onopen`. With no snapshot to resume from there is nothing to sync, and the
+  bootstrap could go at once beside the socket, with frames that come meanwhile held as they are now.
+- **The startup script, 345 KB compressed**, is the longest wait of a cold start on a slow link: 2.6 s before any
+  of the app runs. Every KB off it is 5 ms there.
 
 - **The bootstrap is 4.4–5.4 MB**, two thirds of it conversations, and most of those channels nobody has written in.
   On the live hub's copy, leaving out null and default fields saves 25%, leaving out the 3,489 channels without
