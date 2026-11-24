@@ -2,7 +2,7 @@
 import { expect, test } from 'bun:test';
 import { effect, signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { changed, dataVersion, flush, metaDataVersion, metaRev, onceListed, rev, timelineChanged, timelineRev } from '../src/versions.ts';
+import { changed, convsChangedSince, dataVersion, flush, metaDataVersion, metaRev, onceListed, placesDataVersion, rev, timelineChanged, timelineRev } from '../src/versions.ts';
 import { applyEventTo, conversationMetaChanged, emptyDb, identityVersion, onlyOpens, prefKey, putIdentity } from '../src/syncmodel.ts';
 import { sameProps } from '../src/ui/memo.ts';
 
@@ -177,4 +177,34 @@ test('onceListed runs at once when the list has it already, and only then', asyn
   changed('list');
   flush();
   expect(runs).toBe(1);
+});
+
+test('what a message or a read changed is kept by version, and anything else is "anything"', () => {
+  const v0 = placesDataVersion();
+  expect(convsChangedSince(v0)).toEqual(new Set());
+  changed('list', new Set(['a']));
+  changed('list', new Set());
+  changed('list', new Set(['b']));
+  expect(convsChangedSince(v0)).toEqual(new Set(['a', 'b']));
+  expect(convsChangedSince(v0 + 2)).toEqual(new Set(['b']));
+  // Who wrote and the inbox move no place: nothing in the log.
+  changed('identity');
+  changed('inbox');
+  expect(convsChangedSince(v0 + 2)).toEqual(new Set(['b']));
+  // A list change that does not say what changed, or any other kind: anything may have.
+  const v1 = placesDataVersion();
+  changed('list');
+  expect(convsChangedSince(v1)).toBeNull();
+  expect(convsChangedSince(v0)).toBeNull();
+  const v2 = placesDataVersion();
+  changed('meta', new Set(['c']));
+  expect(convsChangedSince(v2)).toBeNull();
+  // Too many at once, and too long ago: anything.
+  const v3 = placesDataVersion();
+  changed('list', new Set(Array.from({ length: 100 }, (_, i) => `x${i}`)));
+  expect(convsChangedSince(v3)).toBeNull();
+  const v4 = placesDataVersion();
+  for (let i = 0; i < 70; i++) changed('list', new Set(['d']));
+  expect(convsChangedSince(v4)).toBeNull();
+  expect(convsChangedSince(placesDataVersion() - 3)).toEqual(new Set(['d']));
 });
