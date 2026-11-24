@@ -13,7 +13,7 @@
  * a markdown table of the last night against the 7 and 30 nights before it (to GITHUB_STEP_SUMMARY when set, else
  * stdout), and with --html a page of small line charts, one per metric, that needs nothing from the network. It
  * flags a time that moved more than 15% (and 5 ms, or 2 slow frames) from the 7 nights' median, and a count, tally or
- * byte size that moved at all. It always exits 0 once it has read the history.
+ * byte size outside every value the 7 nights' runs came to (for one that never moves: any move). It always exits 0 once it has read the history.
  */
 import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -121,16 +121,22 @@ const change = (kind: string, now: number, was?: number) =>
   was === undefined ? '' : isTime(kind) ? showPct(pct(now, was)) : now === was ? '±0' : `${now > was ? '+' : ''}${fmt(now - was)}`;
 const fmt = (x?: number) => (x === undefined ? '' : Number.isInteger(x) ? x.toLocaleString('en-US') : x.toLocaleString('en-US', { maximumFractionDigits: 1 }));
 
-/** Its flag, if any: a time past 15% (and 5 ms, or 2 frames) of the 7 nights' median, any other kind moved at all. */
-function flagOf(kind: string, now: number, med7?: number) {
-  if (med7 === undefined) return '';
-  const d = now - med7;
-  if (isTime(kind)) {
-    const floor = kind === 'frames' ? 2 : 5;
+/**
+ * Its flag, if any. A time: past 15% (and 5 ms, or 2 slow frames) of the 7 nights' median. Anything else: outside every
+ * value the 7 nights' runs came to, so a count that never moves flags on any move, and one whose runs spread anyway (the
+ * bytes fetching ahead pulls) flags when it leaves that spread.
+ */
+function flagOf(now: Stat, prior: Stat[], med7?: number) {
+  if (med7 === undefined || !prior.length) return '';
+  if (isTime(now.kind)) {
+    const d = now.v - med7;
+    const floor = now.kind === 'frames' ? 2 : 5;
     if (Math.abs(d) < floor || Math.abs(d) <= Math.abs(med7) * 0.15) return '';
     return d > 0 ? 'slower' : 'faster';
   }
-  return d === 0 ? '' : d > 0 ? 'up' : 'down';
+  const lo = Math.min(...prior.map((p) => p.lo ?? p.v));
+  const hi = Math.max(...prior.map((p) => p.hi ?? p.v));
+  return now.v > hi ? 'up' : now.v < lo ? 'down' : '';
 }
 
 function rowsOf(nights: Night[]): Row[] {
@@ -139,10 +145,11 @@ function rowsOf(nights: Night[]): Row[] {
   const same = JSON.stringify(last.meta ?? {});
   const before = nights.slice(0, -1).filter((n) => JSON.stringify(n.meta ?? {}) === same);
   return Object.entries(last.metrics).map(([k, now]) => {
-    const xs = before.map((n) => n.metrics[k]?.v).filter((x): x is number => typeof x === 'number');
+    const prior = before.map((n) => n.metrics[k]).filter((m): m is Stat => typeof m?.v === 'number');
+    const xs = prior.map((m) => m.v);
     const med7 = xs.length ? median(xs.slice(-7)) : undefined;
     const med30 = xs.length ? median(xs.slice(-30)) : undefined;
-    return { k, kind: now.kind, now, med7, med30, flag: flagOf(now.kind, now.v, med7) };
+    return { k, kind: now.kind, now, med7, med30, flag: flagOf(now, prior.slice(-7), med7) };
   });
 }
 
@@ -177,7 +184,7 @@ function markdown(nights: Night[], rows: Row[]) {
     `${nights.length} ${nights.length === 1 ? 'night' : 'nights'} in the history (from ${nights[0].at.slice(0, 10)}). This one: ${Object.entries(last.meta ?? {}).map(([k, v]) => `${k} ${v}`).join(', ') || 'no settings recorded'}; ${r.cores} × ${r.cpu}, ${r.memGB} GB, ${r.os}${r.browser ? `, ${r.browser}` : ''}.`,
     last.world ? `World: ${Object.entries(last.world).map(([k, v]) => `${fmt(v)} ${k}`).join(', ')}.` : '',
     '',
-    'Flags only, never a failure: a time past 15% of the 7 nights before (medians of nights run the same way), any other kind moved at all.',
+    'Flags only, never a failure: a time past 15% of the median of the 7 nights before (nights run the same way), any other kind outside every value their runs came to.',
     '',
     `#### Moved (${flagged.length})`,
     '',
@@ -305,7 +312,7 @@ td, th { padding: 3px 8px; border-bottom: 1px solid var(--grid); text-align: rig
 <body>
 <header>
 <h1 style="font-size:18px;margin:0">Nightly perf trends</h1>
-<p>${nights.length} ${nights.length === 1 ? 'night' : 'nights'}, ${nights[0].at.slice(0, 10)} to ${last.at.slice(0, 10)} (last at <code>${last.sha.slice(0, 12)}</code>, ${esc(Object.entries(last.meta ?? {}).map(([k, v]) => `${k} ${v}`).join(', '))}; ${esc(`${last.runner.cores} × ${last.runner.cpu}`)}). A dot is a night's median, the band its runs from lowest to highest. ${flagged} moved past their threshold on the last night (a time 15% from the 7 nights before, any count): outlined.</p>
+<p>${nights.length} ${nights.length === 1 ? 'night' : 'nights'}, ${nights[0].at.slice(0, 10)} to ${last.at.slice(0, 10)} (last at <code>${last.sha.slice(0, 12)}</code>, ${esc(Object.entries(last.meta ?? {}).map(([k, v]) => `${k} ${v}`).join(', '))}; ${esc(`${last.runner.cores} × ${last.runner.cpu}`)}). A dot is a night's median, the band its runs from lowest to highest. ${flagged} moved past their threshold on the last night (a time 15% from the 7 nights before, a count outside what their runs came to): outlined.</p>
 </header>
 <div class="controls"><input type="search" placeholder="Filter, e.g. cold or typing" aria-label="Filter charts"><label><input type="checkbox" id="moved"> Only what moved</label></div>
 ${charts(nights, rows)}

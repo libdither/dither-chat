@@ -183,8 +183,10 @@ bun scripts/verify-perf.ts --scale 0.25 --runs 5 --warmup 1 --cpu 1,4 --phone-cp
   on another branch only when asked (`record`), else it goes in the summary only. Only the job that writes the line
   may write to the repository, and only it.
 - **What it shows:** the job's summary has the last night against the medians of the 7 and 30 nights before it
-  (nights run with the same settings), flagging a time that moved more than 15% (and 5 ms, or 2 slow frames) and a
-  count, tally or byte size that moved at all; then the counts that came out different at 1× and 4×; then every
+  (nights run with the same settings), flagging a time that moved more than 15% from the 7 nights' median (and 5 ms,
+  or 2 slow frames), and a count, tally or byte size outside every value those 7 nights' runs came to: a count that
+  never moves flags on any move, and one whose runs spread by themselves (the bytes fetching ahead pulls: 22 to 32 kB
+  in one night) only when it leaves that spread. Then the counts that came out different at 1× and 4×; then every
   metric. Flags only: the job stays green. The artifact `perf-trend` is a page of small charts, one per step and
   pass, a line per throttle, each night's median with the band of its runs, that needs nothing from the network
   (light and dark). The artifact `perf-night` has the night's line and verify-perf's whole output.
