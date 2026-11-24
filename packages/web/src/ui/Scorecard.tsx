@@ -30,11 +30,11 @@ function useWidth(): [(el: HTMLDivElement | null) => void, number] {
   return [setEl, w];
 }
 
-/** The y-axis: shares and ranks 0 to 1, an AUC from a coin toss (or lower, if a day was) to 1, a count from 0. */
+/** The y-axis: shares and ranks 0 to 1, an AUC from a coin toss (or lower, if a day was) to 1, a count or hours from 0. */
 function domain(c: ScoreChart, v: ModelScoresView): [number, number] {
   const kind = c.metrics[0].kind;
   const vals = c.metrics.flatMap((m) => v.metrics[m.key]?.v ?? []).filter((x): x is number => x !== null);
-  if (kind === 'count') return [0, Math.max(2, ...vals)];
+  if (kind === 'count' || kind === 'hours') return [0, Math.max(2, ...vals.map((x) => Math.ceil(x)))];
   if (kind === 'auc') return [Math.min(0.5, ...vals.map((x) => Math.floor(x * 10) / 10)), 1];
   // A Brier score: from 0 (perfect) to a coin toss's 0.25, or higher if a day was worse.
   if (kind === 'brier') return [0, Math.max(0.25, ...vals.map((x) => Math.ceil(x * 20) / 20))];
@@ -42,7 +42,7 @@ function domain(c: ScoreChart, v: ModelScoresView): [number, number] {
 }
 
 function ticks(kind: ScoreKind, lo: number, hi: number): number[] {
-  if (kind === 'count') {
+  if (kind === 'count' || kind === 'hours') {
     const step = Math.max(1, Math.ceil(hi / 3));
     const out: number[] = [];
     for (let t = 0; t <= hi; t += step) out.push(t);

@@ -20,7 +20,7 @@ import { AppsHostLazy } from './apps/lazy.tsx';
 import { SendingLayer } from './SendExtras.tsx';
 import { IndexLayer } from './Indexing.tsx';
 import { ForYou, refreshForYou } from './ForYou.tsx';
-import { HowItSorts } from './HowItSorts.tsx';
+import { AttentionPaneLazy, HowItSorts } from './HowItSorts.tsx';
 import { Palette } from './Palette.tsx';
 import { ReactionLayer } from './Reactions.tsx';
 import { ProfilePane } from './Profile.tsx';
@@ -77,6 +77,8 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
       return { pane: <ForYou /> };
     case 'model':
       return { pane: <HowItSorts onBack={back} /> };
+    case 'attention':
+      return { pane: <AttentionPaneLazy onBack={back} /> };
     case 'inbox':
       // A post's thread (docs/feed.md "Threads"), beside the inbox as a conversation is.
       if (isPostKey(r.conv)) return { pane: <ThreadLazy key={r.conv} postKey={r.conv!} onBack={back} /> };
@@ -145,6 +147,7 @@ function sidebarFor(r: Route, onAdd: () => void): ComponentChildren {
     case 'accounts':
       return <AccountsSidebar active={r.account} onAdd={onAdd} />;
     case 'settings':
+    case 'attention':
       return <div class="sidebar-inner settings-side"><SettingsNav /></div>;
     case 'directory':
       return <SpacesSidebar />;
@@ -281,7 +284,7 @@ function leave(r: Route) {
 
 type Tab = 'home' | 'foryou' | 'feed' | 'search' | 'calendar' | 'you';
 const tabOf = (r: Route): Tab =>
-  r.view === 'foryou' || r.view === 'model' ? 'foryou' : r.view === 'feed' ? 'feed' : r.view === 'search' ? 'search' : r.view === 'calendar' ? 'calendar' : r.view === 'settings' || r.view === 'accounts' ? 'you' : 'home';
+  r.view === 'foryou' || r.view === 'model' ? 'foryou' : r.view === 'feed' ? 'feed' : r.view === 'search' ? 'search' : r.view === 'calendar' ? 'calendar' : r.view === 'settings' || r.view === 'accounts' || r.view === 'attention' ? 'you' : 'home';
 /** The Feed's tab shows where it was left: its source (docs/feed.md "The Feed page"). */
 let lastFeed: Route = { view: 'feed' };
 

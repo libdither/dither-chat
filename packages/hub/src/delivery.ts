@@ -19,7 +19,7 @@ export const LIST_EVERY = 10 * 60_000;
  */
 export const CONVERSATION_EVERY = 10 * 60_000;
 /** Someone using a page on a computer this recently: a phone buzz adds nothing. */
-const ACTIVE_MS = 2 * 60_000;
+export const ACTIVE_MS = 2 * 60_000;
 const LINES = 6;
 const BODY = 200;
 /** A push carries about 4 KB, encrypted; what goes in stays under this. */

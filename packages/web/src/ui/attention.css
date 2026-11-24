@@ -1,0 +1,201 @@
+/* Your attention (AttentionReport.tsx, docs/scorecard.md "The weekly report"): tiles, the sounds' bars, the people. */
+.at-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  max-width: 720px;
+  margin: 6px 0 24px;
+}
+.at-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-raised);
+  min-width: 0;
+}
+.at-tile-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.at-tile-value {
+  font-size: 24px;
+  font-weight: 650;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.at-tile-sub {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.at-plot {
+  --at-bar: #3987e5;
+  position: relative;
+  max-width: 720px;
+}
+html[data-theme='light'] .at-plot {
+  --at-bar: #2a78d6;
+}
+.at-plot svg {
+  display: block;
+  overflow: visible;
+  touch-action: pan-y;
+  outline: none;
+}
+.at-plot svg:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.at-grid {
+  stroke: var(--border-soft);
+  stroke-width: 1;
+}
+.at-tick {
+  fill: var(--text-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.at-bar rect {
+  fill: var(--at-bar);
+  opacity: 0.85;
+}
+.at-bar.on rect {
+  opacity: 1;
+}
+.at-plot svg:hover .at-bar:not(.on) rect {
+  opacity: 0.55;
+}
+.at-tip {
+  position: absolute;
+  top: 0;
+  z-index: 3;
+  width: 180px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-center);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  color: var(--text-dim);
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.at-tip b {
+  color: var(--text);
+  font-weight: 650;
+}
+.at-tip-when,
+.at-tip-sub {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.at-line {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin: 8px 0 0;
+  max-width: 720px;
+}
+.at-line b {
+  color: var(--text);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.at-was {
+  color: var(--text-faint);
+}
+.at-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 720px;
+}
+.at-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-raised);
+  text-align: left;
+  color: var(--text-dim);
+  min-width: 0;
+}
+.at-row:hover {
+  background: var(--bg-hover);
+}
+.at-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 13px;
+}
+.at-row-age {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.at-more {
+  margin: 2px 0 0 4px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.at-drift {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 720px;
+  padding: 8px 10px;
+  margin-top: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-raised);
+}
+.at-drift-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.at-drift-text b {
+  color: var(--text);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.at-drift-text small {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.at-foot {
+  margin-top: 4px;
+}
+/* A phone: tiles in one column, each a row of label and value. */
+@media (max-width: 640px) {
+  .at-tiles {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .at-tile {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: baseline;
+    column-gap: 10px;
+  }
+  .at-tile-value {
+    grid-row: span 2;
+    font-size: 20px;
+  }
+}

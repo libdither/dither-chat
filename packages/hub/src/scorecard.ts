@@ -19,6 +19,7 @@ import { sliced } from './slices.ts';
 import { jobFailed } from './errors.ts';
 import { needsOutcomes } from './needsreply.ts';
 import { REPLY_WINDOW } from './tally.ts';
+import { ACTIVE_MS, BURST_MS, FORGET_MS, PHONE } from './delivery.ts';
 
 type Row = Record<string, any>;
 const MIN = 60_000;
@@ -32,9 +33,10 @@ const DAY = 24 * HOUR;
  */
 /**
  * 2: the needs-reply chance's calibration (needsReply) and For you's opens, scored back over the days already kept.
- * 3: the loudness scale's check-ins and its comparison with the tiers (loudnessScores).
+ * 3: the cost side (sounds, stale pushes, checks with nothing new, and the people metrics), scored back the same way.
+ * 4: the loudness scale's check-ins and its comparison with the tiers (loudnessScores).
  */
-export const SCORE_VERSION = 3;
+export const SCORE_VERSION = 4;
 /** A notification was followed when you opened its chat within this long. */
 const FOLLOW_WITHIN = 3 * HOUR;
 /** A chat-day was opened when you opened the chat within this long of one of its messages. */
@@ -73,6 +75,8 @@ interface DayContext {
   self: string[];
   /** Opens of 5 s or more, by conversation: from a day before the day to its scoring. */
   opens: OpenIndex;
+  /** What a scorer reads once a run and keeps for every day of it (the turns open now). */
+  cache: Record<string, unknown>;
 }
 
 /**
@@ -476,25 +480,293 @@ export function* loudnessScores(c: DayContext): Generator<number, ScoreRow[]> {
   return out;
 }
 
-const SCORERS: DayScorer[] = [notified, decisions, unprompted, inbox, needsReply, foryou, loudnessScores];
+// ---------------------------------------------------------------- the cost side: attention and people
+
+/** Phones, by the label their page or app gave (delivery.ts): every other device is a computer. */
+const isPhone = (label: unknown) => PHONE.test(typeof label === 'string' ? label : '');
+/** An app open is a stay that begins this long after every earlier one on any device ended. */
+const LOOK_GAP = 10 * MIN;
+/** Notifications are read this much at a time: a noisy day sends over a thousand. */
+const NOTICE_WINDOW = 2 * HOUR;
+/** Spans of a month are read this much at a time. */
+const SPAN_WINDOW = 5 * DAY;
+/** A reply owed for longer than this is long owed. */
+const LONG_OWED = 3 * DAY;
+/** Turns begun longer ago than this are left out of what is owed: they ran out long since. */
+export const OWED_LOOKBACK = 30 * DAY;
+/** Who you talk with: the people you wrote to in this long, against the same span before it. */
+const BREADTH_SPAN = 30 * DAY;
+/** People only: a DM, or a group of at most this many, you included (attention.ts SMALL_GROUP). */
+const PEOPLE_GROUP = 6;
+
+/**
+ * A conversation with people, for the people metrics: a DM, or a group of six or fewer, on a network of people.
+ * Not channels, threads, feeds, mail (its threads are not conversations), a calendar or an agent's threads.
+ */
+export const PEOPLE_SQL = (c: string) =>
+  `(${c}.network NOT IN ('calendar', 't3') AND (${c}.shape = 'direct' OR (${c}.shape = 'group' AND (SELECT COUNT(*) FROM participant pp WHERE pp.conversation_id = ${c}.id) BETWEEN 1 AND ${PEOPLE_GROUP})))`;
+
+const hasColumn = (db: Database, table: string, col: string) => (db.query(`PRAGMA table_info(${table})`).all() as Row[]).some((r) => r.name === col);
+const hasTable = (db: Database, name: string) => !!db.query(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(name);
+
+/** A sorted list's quantile (nearest rank), or null of nothing. */
+export function quantile(sorted: readonly number[], q: number): number | null {
+  if (!sorted.length) return null;
+  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(q * sorted.length) - 1))];
+}
+
+/** Stays on a computer with the app in use, within [a, b): [start, end] each. */
+function computerStays(db: Database, a: number, b: number): [number, number][] {
+  return (db.query(`SELECT start_at AS s, end_at AS e, device_label AS label FROM visit WHERE start_at >= ? AND start_at < ? AND end_at >= ? AND active > 0 LIMIT 20000`).all(a - DAY, b, a) as Row[])
+    .filter((r) => !isPhone(r.label))
+    .map((r) => [r.s, r.e]);
+}
+
+/**
+ * Sounds a day (docs/scorecard.md, "The cost side"): notifications a push server took that sounded where they went,
+ * an alert's first push in a burst or a ring, as the hub kept it (`notification.alert`). Before that was kept, the
+ * hub's own rule is played back over the log (delivery.ts): an alert sounds when it is the first push about its chat in
+ * five minutes, follows only silent ones, or is to you, and not while a computer was in use in the two minutes before;
+ * a ring and quiet hours' summary sound. Also per hour a computer was in use: the sounds in clock hours in which one
+ * was, over those hours.
+ */
+function* sounds(c: DayContext): Generator<number, ScoreRow[]> {
+  const alertCol = hasColumn(c.db, 'notification', 'alert') ? 'n.alert' : 'NULL';
+  const q = c.db.query(
+    `SELECT n.kind, n.conversation_id AS conv, n.sent_at AS at, ${alertCol} AS alert, COALESCE(n.accepted, 1) AS accepted, t.decision, m.mentions_self AS me
+     FROM notification n LEFT JOIN triage t ON t.message_id = n.message_id LEFT JOIN message m ON m.id = n.message_id
+     WHERE n.sent_at >= ? AND n.sent_at < ? ORDER BY n.sent_at LIMIT 50000`,
+  );
+  const rows: Row[] = [];
+  for (let w = c.from - BURST_MS; w < c.to; w += NOTICE_WINDOW) {
+    const part = q.all(w, Math.min(w + NOTICE_WINDOW, c.to)) as Row[];
+    rows.push(...part);
+    yield part.length + 1;
+  }
+  const stays = computerStays(c.db, c.from - ACTIVE_MS, c.to);
+  yield stays.length;
+  const atComputer = (t: number) => stays.some(([s, e]) => s <= t && e >= t - ACTIVE_MS);
+  const hours = new Set<number>();
+  for (const [s, e] of stays) for (let h = Math.max(0, Math.floor((s - c.from) / HOUR)); h <= Math.floor((Math.min(e, c.to - 1) - c.from) / HOUR); h++) hours.add(h);
+  const ORDER: Record<string, number> = { digest: 0, quiet: 1, push: 2 };
+  const showing = new Map<string, { at: number; top: string }>();
+  let n = 0;
+  let sounded = 0;
+  let estimated = 0;
+  let rings = 0;
+  let inHours = 0;
+  for (const r of rows) {
+    let est = false;
+    if (r.kind === 'ring' || r.kind === 'held') est = true;
+    else if (r.kind === 'message' && r.conv) {
+      const level = r.decision === 'push' || r.decision === 'quiet' || r.decision === 'digest' ? r.decision : 'digest';
+      const prev = showing.get(r.conv);
+      const fresh = prev && r.at - prev.at < BURST_MS ? prev : undefined;
+      est = level === 'push' && (!fresh || fresh.top !== 'push' || !!r.me) && !atComputer(r.at);
+      showing.set(r.conv, { at: r.at, top: fresh && ORDER[fresh.top] > ORDER[level] ? fresh.top : level });
+    }
+    if (r.at < c.from || r.accepted <= 0) continue;
+    n++;
+    const s = r.alert === null ? est : !!r.alert;
+    if (!s) continue;
+    sounded++;
+    if (r.alert === null) estimated++;
+    if (r.kind === 'ring') rings++;
+    if (hours.has(Math.floor((r.at - c.from) / HOUR))) inHours++;
+  }
+  return [row(c.day, 'attn.sounds', sounded, n, { estimated, rings }), row(c.day, 'attn.sounds_computer_hour', hours.size ? inHours / hours.size : null, hours.size, { sounds: inHours })];
+}
+
+/**
+ * Pushes that came too late to matter, from what the devices report:
+ *  - `attn.stale`: of the message notifications a push server took, the share sent while that chat was open on a
+ *    computer in use and read past the message there (a stay spanning the push whose read point reached it);
+ *  - `attn.stale_shown`: notifications still up on a device after their chat was read on a computer, as far as the
+ *    devices say: tapped or swiped away after a stay on a computer read past them. A phone does not report a clear,
+ *    and a notification left alone says nothing, so this counts only those you then had to tap or swipe.
+ */
+function* stale(c: DayContext): Generator<number, ScoreRow[]> {
+  const q = c.db.query(
+    `SELECT n.conversation_id AS conv, n.sent_at AS at, m.ts, n.visit_id AS visit, MIN(COALESCE(n.tapped_at, n.dismissed_at), COALESCE(n.dismissed_at, n.tapped_at)) AS gone
+     FROM notification n LEFT JOIN message m ON m.id = n.message_id
+     WHERE n.sent_at >= ? AND n.sent_at < ? AND n.kind = 'message' AND n.conversation_id IS NOT NULL AND COALESCE(n.accepted, 1) > 0 LIMIT 50000`,
+  );
+  const rows: Row[] = [];
+  for (let w = c.from; w < c.to; w += NOTICE_WINDOW) {
+    const part = q.all(w, Math.min(w + NOTICE_WINDOW, c.to)) as Row[];
+    rows.push(...part);
+    yield part.length + 1;
+  }
+  const reads = new Map<string, Row[]>();
+  for (const v of c.db
+    .query(
+      `SELECT id, conversation_id AS conv, start_at AS s, end_at AS e, COALESCE(read_to_ts, seen_to_ts) AS upTo, device_label AS label FROM visit
+       WHERE start_at >= ? AND start_at < ? AND end_at >= ? AND conversation_id IS NOT NULL AND active > 0 LIMIT 50000`,
+    )
+    .all(c.from - DAY, c.to + FORGET_MS, c.from) as Row[]) {
+    if (isPhone(v.label)) continue;
+    const a = reads.get(v.conv);
+    if (a) a.push(v);
+    else reads.set(v.conv, [v]);
+  }
+  yield reads.size;
+  let staleN = 0;
+  let swiped = 0;
+  let lingered = 0;
+  for (const r of rows) {
+    const vs = reads.get(r.conv) ?? [];
+    const ts = r.ts ?? r.at;
+    if (vs.some((v) => v.s <= r.at && v.e >= r.at && (r.ts === null || (v.upTo ?? 0) >= ts))) staleN++;
+    if (r.gone === null) continue;
+    swiped++;
+    if (vs.some((v) => v.id !== r.visit && v.s > r.at && v.s < r.gone && (v.upTo ?? 0) >= ts)) lingered++;
+  }
+  return [row(c.day, 'attn.stale', share(staleN, rows.length), rows.length, { stale: staleN }), row(c.day, 'attn.stale_shown', lingered, swiped)];
+}
+
+/**
+ * Checks with nothing new: app opens (a stay on any device that begins ten minutes or more after every earlier one
+ * ended) with nothing at the list or above since the last look (no chat message triage put on the list, in a
+ * Conversation or alerted, and no such mail, in between).
+ */
+function* checks(c: DayContext): Generator<number, ScoreRow[]> {
+  const stays = c.db.query(`SELECT start_at AS s, end_at AS e FROM visit WHERE start_at >= ? AND start_at < ? AND active > 0 ORDER BY start_at LIMIT 50000`).all(c.from - DAY, c.to) as Row[];
+  yield stays.length;
+  // On the time index (`+decision`): by tier, SQLite would walk every list row there is.
+  const chat = c.db.query(`SELECT 1 FROM triage WHERE created_at > ? AND created_at <= ? AND +decision IN ('push', 'quiet', 'digest') LIMIT 1`);
+  const mail = hasTable(c.db, 'mail_triage') ? c.db.query(`SELECT 1 FROM mail_triage WHERE created_at > ? AND created_at <= ? AND +decision IN ('push', 'quiet', 'digest') LIMIT 1`) : null;
+  let lastEnd: number | null = null;
+  let opens = 0;
+  let empty = 0;
+  for (const v of stays) {
+    if (v.s >= c.from && lastEnd !== null && v.s - lastEnd >= LOOK_GAP) {
+      opens++;
+      if (!chat.get(lastEnd, v.s) && !mail?.get(lastEnd, v.s)) empty++;
+      yield 1;
+    }
+    lastEnd = Math.max(lastEnd ?? 0, v.e);
+  }
+  return [row(c.day, 'attn.checks', empty, opens)];
+}
+
+/** Turns answered that day in conversations with people: the median and 90th-percentile wait, in hours. */
+function* peopleWait(c: DayContext): Generator<number, ScoreRow[]> {
+  const waits = (
+    c.db
+      .query(
+        `SELECT o.answered_at - o.addressed AS wait FROM owed_turn o JOIN conversation c ON c.id = o.conversation_id
+         WHERE o.answered_at >= ? AND o.answered_at < ? AND o.timed = 1 AND o.dismissed = 0 AND ${PEOPLE_SQL('c')} LIMIT 50000`,
+      )
+      .all(c.from, c.to) as Row[]
+  )
+    .map((r) => Math.max(0, r.wait as number) / HOUR)
+    .sort((a, b) => a - b);
+  yield waits.length;
+  return [row(c.day, 'people.wait', quantile(waits, 0.5), waits.length), row(c.day, 'people.wait_p90', quantile(waits, 0.9), waits.length)];
+}
+
+/**
+ * Replies owed to people for over 3 days, at the day's end: in each conversation with people, its latest turn begun
+ * in the last 30 days, when it began 3 days or more before and was neither answered by then nor marked "No reply
+ * needed". The turns still open now are in the fold's state (conv_feature), read once a run.
+ */
+function* owedLong(c: DayContext): Generator<number, ScoreRow[]> {
+  const open = (c.cache.openTurns ??= yield* openTurns(c.db)) as Map<string, number>;
+  const latest = new Map<string, { addressed: number; answered: number | null; dismissed: boolean }>();
+  const q = c.db.query(
+    `SELECT o.conversation_id AS conv, o.addressed, o.answered_at AS answered, o.dismissed FROM owed_turn o JOIN conversation c ON c.id = o.conversation_id
+     WHERE o.addressed >= ? AND o.addressed < ? AND ${PEOPLE_SQL('c')} LIMIT 50000`,
+  );
+  const rows: Row[] = [];
+  for (let w = c.to - OWED_LOOKBACK; w <= c.to; w += SPAN_WINDOW) {
+    const part = q.all(w, Math.min(w + SPAN_WINDOW, c.to + 1)) as Row[];
+    rows.push(...part);
+    yield part.length + 1;
+  }
+  for (const r of rows) {
+    const l = latest.get(r.conv);
+    if (!l || r.addressed > l.addressed) latest.set(r.conv, { addressed: r.addressed, answered: r.answered, dismissed: !!r.dismissed });
+  }
+  for (const [conv, addressed] of open) {
+    if (addressed < c.to - OWED_LOOKBACK || addressed > c.to) continue;
+    const l = latest.get(conv);
+    if (!l || addressed > l.addressed) latest.set(conv, { addressed, answered: null, dismissed: false });
+  }
+  let owed = 0;
+  for (const l of latest.values()) if (l.addressed <= c.to - LONG_OWED && !l.dismissed && (l.answered === null || l.answered > c.to)) owed++;
+  return [row(c.day, 'people.owed_3d', owed, latest.size)];
+}
+
+/** The turns open now, in conversations with people: when each began, by conversation. Read in pages. */
+function* openTurns(db: Database): Generator<number, Map<string, number>> {
+  const out = new Map<string, number>();
+  const page = db.query(
+    `SELECT f.conversation_id AS conv, json_extract(f.state, '$.turn.addressed') AS addressed FROM conv_feature f JOIN conversation c ON c.id = f.conversation_id
+     WHERE f.conversation_id > ? AND ${PEOPLE_SQL('c')} ORDER BY f.conversation_id LIMIT 300`,
+  );
+  let after = '';
+  for (;;) {
+    const rows = page.all(after) as Row[];
+    for (const r of rows) if (typeof r.addressed === 'number') out.set(r.conv, r.addressed);
+    yield rows.length + 1;
+    if (rows.length < 300) return out;
+    after = rows[rows.length - 1].conv;
+  }
+}
+
+/** The people you wrote to in [a, b): in conversations with people you wrote in then, everyone else there but bots. */
+function* peopleWritten(db: Database, self: readonly string[], a: number, b: number): Generator<number, Set<string>> {
+  const out = new Set<string>();
+  if (!self.length) return out;
+  const convs = new Set<string>();
+  const mine = db.query(`SELECT DISTINCT conversation_id AS conv FROM message WHERE author_id = ? AND ts >= ? AND ts < ? LIMIT 20000`);
+  for (const id of self)
+    for (let w = a; w < b; w += SPAN_WINDOW) {
+      const rows = mine.all(id, w, Math.min(w + SPAN_WINDOW, b)) as Row[];
+      for (const r of rows) convs.add(r.conv);
+      yield rows.length + 1;
+    }
+  const selfSet = new Set(self);
+  const people = db.query(
+    `SELECT i.id, i.person_id AS person FROM conversation c JOIN participant p ON p.conversation_id = c.id JOIN identity i ON i.id = p.identity_id
+     WHERE c.id = ? AND i.is_bot = 0 AND ${PEOPLE_SQL('c')}`,
+  );
+  const selfPerson = db.query(`SELECT 1 FROM person WHERE id = ? AND is_self = 1`);
+  for (const conv of convs) {
+    const rows = people.all(conv) as Row[];
+    for (const r of rows) if (!selfSet.has(r.id) && !(r.person && selfPerson.get(r.person))) out.add(r.person ?? r.id);
+    yield rows.length + 1;
+  }
+  return out;
+}
+
+/** Who you talk with: how many people you wrote to in the 30 days to the day's end, and in the 30 before. */
+function* breadth(c: DayContext): Generator<number, ScoreRow[]> {
+  const recent = yield* peopleWritten(c.db, c.self, c.to - BREADTH_SPAN, c.to);
+  const before = yield* peopleWritten(c.db, c.self, c.to - 2 * BREADTH_SPAN, c.to - BREADTH_SPAN);
+  const both = [...recent].filter((p) => before.has(p)).length;
+  return [row(c.day, 'people.breadth', recent.size, recent.size, { kept: both }), row(c.day, 'people.breadth_before', before.size, before.size)];
+}
+
+const SCORERS: DayScorer[] = [notified, decisions, unprompted, inbox, needsReply, foryou, sounds, stale, checks, peopleWait, owedLong, breadth, loudnessScores];
 
 /**
  * Your identities: what you wrote is by one of these. As interact.ts SELF_SQL, but on identity's person index: SQLite
  * plans SELF_SQL's join as a scan of every identity (60 ms on a real hub).
  */
-function selfIds(db: Database): string[] {
+export function selfIds(db: Database): string[] {
   return (db.query(`SELECT self_identity AS id FROM account WHERE self_identity IS NOT NULL UNION SELECT id FROM identity WHERE person_id IN (SELECT id FROM person WHERE is_self = 1)`).all() as Row[]).map((r) => r.id);
 }
 
 /** Score one day with every scorer. Reads only. */
-function* scoreDay(db: Database, day: string, self = selfIds(db), scorers: DayScorer[] = SCORERS): Generator<number, ScoreRow[]> {
+function* scoreDay(db: Database, day: string, self = selfIds(db), scorers: DayScorer[] = SCORERS, cache: Record<string, unknown> = {}): Generator<number, ScoreRow[]> {
   const [from, to] = dayBounds(day);
   const opens = new OpenIndex();
   const vs = db.query(`SELECT conversation_id AS conv, start_at AS at FROM visit WHERE start_at >= ? AND start_at < ? AND conversation_id IS NOT NULL AND active >= ? LIMIT 100000`).all(from, to + MATURE_AFTER, OPEN_DWELL) as Row[];
   for (const v of vs) opens.add(v.conv, v.at);
   opens.seal();
   yield vs.length;
-  const ctx: DayContext = { db, day, from, to, self, opens };
+  const ctx: DayContext = { db, day, from, to, self, opens, cache };
   const out: ScoreRow[] = [];
   for (const s of scorers) out.push(...(yield* s(ctx)));
   return out;
@@ -518,8 +790,9 @@ function maturedDays(db: Database, now: number): string[] {
 /** Score every matured day, without writing: for the script and tests. */
 export function* scoreAll(db: Database, now: number, scorers: DayScorer[] = SCORERS): Generator<number, ScoreRow[]> {
   const self = selfIds(db);
+  const cache = {};
   const out: ScoreRow[] = [];
-  for (const d of maturedDays(db, now)) out.push(...(yield* scoreDay(db, d, self, scorers)));
+  for (const d of maturedDays(db, now)) out.push(...(yield* scoreDay(db, d, self, scorers, cache)));
   return out;
 }
 
@@ -570,9 +843,10 @@ export class Scorecard {
     const self = selfIds(db);
     const put = db.query('INSERT OR REPLACE INTO model_score (day, metric, value, n, extra, at) VALUES (?, ?, ?, ?, ?, ?)');
     let done = 0;
+    const cache = {};
     for (const d of maturedDays(db, now)) {
       if (have.has(d)) continue;
-      const rows = yield* scoreDay(db, d, self, this.scorers);
+      const rows = yield* scoreDay(db, d, self, this.scorers, cache);
       db.transaction(() => {
         for (const r of rows) put.run(r.day, r.metric, r.value, r.n, r.extra ? JSON.stringify(r.extra) : null, now);
       })();
@@ -636,6 +910,16 @@ export function seedDemoScores(db: Database, now: number) {
         ['needs.brier_table', clamp(0.19 + 0.02 * wob(i, 21)), 30 + (i % 12)],
         ['foryou.clicked', i < 10 ? null : clamp(0.08 + 0.06 * t + 0.03 * wob(i, 18)), i < 10 ? 0 : 30 + ((i * 5) % 25)],
         ['foryou.clicked_explore', i < 10 ? null : clamp(0.05 + 0.04 * t + 0.04 * wob(i, 19)), i < 10 ? 0 : 6 + (i % 5)],
+        ['attn.sounds', Math.max(0, Math.round(5 - 2.5 * t + 2.5 * wob(i, 26))), 140 + ((i * 17) % 60)],
+        ['attn.sounds_computer_hour', Math.max(0, 0.3 - 0.15 * t + 0.1 * wob(i, 27)), 4 + (i % 5)],
+        ['attn.stale', clamp(0.08 - 0.03 * t + 0.02 * wob(i, 28)), 140 + ((i * 17) % 60)],
+        ['attn.stale_shown', Math.max(0, Math.round(3 - t + wob(i, 29))), 10 + (i % 6)],
+        ['attn.checks', Math.max(0, Math.round(6 - 2 * t + 2 * wob(i, 30))), 14 + (i % 7)],
+        ['people.wait', Math.max(0.1, 4.4 - 1.3 * t + 0.8 * wob(i, 31)), 6 + (i % 5)],
+        ['people.wait_p90', Math.max(1, 20 - 4 * t + 5 * wob(i, 32)), 6 + (i % 5)],
+        ['people.owed_3d', Math.max(0, Math.round(3 - t + wob(i, 33))), 9 + (i % 4)],
+        ['people.breadth', 24 + Math.round(2 * wob(i, 34) - 2 * t), 24],
+        ['people.breadth_before', 26 + Math.round(wob(i, 35)), 26],
         // The loudness scale: asked from the second week, its shadow from the start.
         ['foryou.worth', i < 7 ? null : clamp(0.55 + 0.1 * t + 0.1 * wob(i, 26)), i < 7 ? 0 : 1],
         ['attn.worth', i < 7 ? null : clamp(0.6 + 0.15 * t + 0.1 * wob(i, 27)), i < 7 ? 0 : 1 + (i % 2)],

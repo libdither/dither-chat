@@ -16,6 +16,7 @@ import { HubServer, mediaSigner, validAdapterName } from '../src/server.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
 import { NightlyBackup, pruneMediaCache, rotateAdapterLogs, tightenPermissions } from '../src/housekeeping.ts';
+import { memTempDir } from './fixtures/memdir.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'dither-hard-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -104,8 +105,10 @@ describe('adapters the hub starts', () => {
 });
 
 describe('secret.json', () => {
-  const p = join(dir, 'acct', 'secret.json');
-  beforeAll(() => mkdirSync(join(dir, 'acct'), { recursive: true }));
+  // Every write syncs the file and its directory: in memory, so a busy disk does not hold the test for seconds.
+  const acct = memTempDir('dither-hard-secret-');
+  const p = join(acct, 'secret.json');
+  afterAll(() => rmSync(acct, { recursive: true, force: true }));
 
   test('written whole, private, with the last good copy kept', () => {
     writeSecretFile(p, { a: 1 });
@@ -113,7 +116,7 @@ describe('secret.json', () => {
     expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ a: 2 });
     expect(JSON.parse(readFileSync(p + '.bak', 'utf8'))).toEqual({ a: 1 });
     expect(statSync(p).mode & 0o077).toBe(0);
-    expect(readdirSync(join(dir, 'acct')).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+    expect(readdirSync(acct).filter((f) => f.endsWith('.tmp'))).toEqual([]);
   });
 
   test('a torn file reads as the backup, and a missing one as {}', () => {
@@ -123,7 +126,7 @@ describe('secret.json', () => {
     writeSecretFile(p, { a: 4 });
     expect(JSON.parse(readFileSync(p + '.bak', 'utf8'))).toEqual({ a: 1 });
     expect(readSecretFile(p)).toEqual({ a: 4 });
-    expect(readSecretFile(join(dir, 'acct', 'none.json'))).toEqual({});
+    expect(readSecretFile(join(acct, 'none.json'))).toEqual({});
   });
 });
 

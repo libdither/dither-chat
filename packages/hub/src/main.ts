@@ -330,7 +330,7 @@ function deliverRequest(n: RequestNotice) {
   server.notify({ t: 'notify', requestId: n.requestId, title: n.title, body: n.body, reasons: [n.reason], level: 'digest', ...look, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}) });
   push
     .notify(n.title, n.body, undefined, { ...look, requestId: n.requestId, level: 'quiet', tier: 'digest', importance: REQUEST_IMPORTANCE, ...(nid ? { nid } : {}) }, [...quiet, ...push.desktops()], 'quiet')
-    .then((r) => nid && activity.sent(nid, r))
+    .then((r) => nid && activity.sent(nid, r, false))
     .catch((e) => {
       console.error('push failed', e);
       jobFailed('push: request', e);
@@ -365,7 +365,7 @@ onRing(store, (n) => {
   const nid = activity.notification({ kind: 'ring', conversationId: c.conversationId });
   push
     .notify(title, body, c.conversationId, { ...look, call, level: 'push', tier: 'push', ...(nid ? { nid } : {}) }, devices.quietOn(c.conversationId, false), 'push')
-    .then((r) => nid && activity.sent(nid, r))
+    .then((r) => nid && activity.sent(nid, r, true))
     .catch((e) => console.error('push failed', e));
 });
 

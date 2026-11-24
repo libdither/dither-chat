@@ -17,7 +17,8 @@ import { markUnreadFrom } from './unread.ts';
 import { validQuietHours, type Triage } from './triage.ts';
 import type { TriageVotes } from './votes.ts';
 import type { LoudLearner } from './loudlearn.ts';
-import type { Scorecard } from './scorecard.ts';
+import { selfIds, type Scorecard } from './scorecard.ts';
+import { attentionReport } from './attnreport.ts';
 import { cleanFileName, Uploads } from './uploads.ts';
 import { ImportRunner } from './imports/engine.ts';
 import { GapFill } from './imports/gapfill.ts';
@@ -1275,6 +1276,8 @@ export class HubServer {
       if (path === '/api/attention/model' && method === 'GET') return ok((a.judge as { view?: () => unknown } | undefined)?.view?.() ?? { mode: 'off' });
       // How well "needs a reply" chances matched what you did (needsreply.ts): by day, and in bins.
       if (path === '/api/attention/needs-reply' && method === 'GET') return ok(a.needsCalibration(Date.now(), Math.min(365, Math.max(1, num('days') ?? 60))));
+      // The weekly report of what attention cost (attnreport.ts, docs/scorecard.md "The weekly report").
+      if (path === '/api/attention/report' && method === 'GET') return ok(attentionReport(this.store.db, { owed: () => a.list(), self: () => selfIds(this.store.db) }));
       if ((m = path.match(/^\/api\/attention\/([\w-]+)$/)) && method === 'GET') {
         const x = a.explain(m[1]);
         return x ? ok(x) : bad('not in the inbox', 404);
