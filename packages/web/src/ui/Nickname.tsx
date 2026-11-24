@@ -13,10 +13,11 @@ import type { MenuEntry } from './ContextMenu.tsx';
 /** What the account calls itself on its network, without your nickname. */
 export const ownName = (i: P.IdentityView) => accountName({ ...i, nickname: null });
 
-/** Gives one account a nickname, or takes it away (null or empty). */
+/** Gives one account a nickname, or takes it away (null or empty): whether it was saved. */
 async function saveNickname(identityId: string, nickname: string | null) {
-  await api(`/api/identities/${identityId}`, { method: 'PATCH', body: { nickname: nickname?.trim() || null } }).catch((e) =>
-    toast({ kind: 'error', title: 'Could not save that', body: e.message }),
+  return api(`/api/identities/${identityId}`, { method: 'PATCH', body: { nickname: nickname?.trim() || null } }).then(
+    () => true,
+    (e) => (toast({ kind: 'error', title: 'Could not save that', body: e.message }), false),
   );
 }
 
@@ -39,12 +40,15 @@ export function nicknameEntries(i: P.IdentityView | null | undefined, edit?: () 
   ].filter(Boolean) as MenuEntry[];
 }
 
-/** The inline editor: Enter or leaving it saves, Escape keeps what was there, empty takes the nickname away. */
-export function NicknameInput({ i, onDone, class: cls = 'pair-nick-input' }: { i: P.IdentityView; onDone: () => void; class?: string }) {
+/**
+ * The inline editor: Enter or leaving it saves, Escape keeps what was there, empty takes the nickname away. `onSaved`
+ * hears the new nickname (null: taken away) once the hub has it.
+ */
+export function NicknameInput({ i, onDone, onSaved, class: cls = 'pair-nick-input' }: { i: P.IdentityView; onDone: () => void; onSaved?: (nickname: string | null) => void; class?: string }) {
   const save = (v: string) => {
     onDone();
     if (v.trim() === (i.nickname ?? '')) return;
-    void saveNickname(i.id, v);
+    void saveNickname(i.id, v).then((ok) => ok && onSaved?.(v.trim() || null));
   };
   return (
     <input

@@ -1,8 +1,9 @@
 /**
  * Choosing a person's name and picture from their profile's hero (namechoices.ts, docs/profile.md "Which account
- * speaks for them"), end to end against a demo hub in headless Chromium: the button beside the name lists the main
- * account's name and each account's nickname, display name and handle; a pick names them, ticked when the menu opens
- * again, and the main account's puts it back. Their picture opens their accounts' pictures full screen, on the one
+ * speaks for them"), end to end against a demo hub in headless Chromium: the name, a button, lists the main account's
+ * name, then each account under its heading with its nickname, display name and handle and a row to set its nickname;
+ * a pick names them, ticked when the menu opens again, and the main account's puts it back. A nickname set there is
+ * edited in place of the name and becomes the name shown; taken away, the main account's shows again. Their picture opens their accounts' pictures full screen, on the one
  * shown, with a row of them to page through and a button that shows the one in view. One account's names on a page of
  * their own. On a phone: the names as a sheet, the pictures swiped through.
  *
@@ -86,10 +87,29 @@ const tapItem = async (label: string, detail: string) => {
 /** The viewer closed, and the history entry it held given back: a page change before that is undone by it. */
 const viewerGone = () => p.until(`!document.querySelector('.viewer') && history.state?.layer == null`, 3000);
 const escape = () => p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
-/** The name's chooser: the name itself, or the chevron beside a one-account name with its nickname pencil. */
-const NAME_BTN = '.pf-name-pick, .pf-name-swap';
+/** The name's chooser: the name itself, a button. */
+const NAME_BTN = '.pf-name-pick';
 const heroName = () => p.eval<string>(`document.querySelector('.pf-title h1')?.innerText.trim() ?? ''`);
 const heroPic = () => p.eval<string>(`document.querySelector('.pf-avatar img')?.getAttribute('src') ?? ''`);
+/** The open menu as it reads: each heading with the items under it (the first, the menu's title, over the main account's name). */
+const grouped = () =>
+  p.eval<{ head: string; items: string[] }[]>(
+    `[...document.querySelectorAll('.cm-label, [role^="menuitem"]')].reduce((gs, e) => (e.classList.contains('cm-label') ? gs.push({ head: e.textContent.trim(), items: [] }) : gs.at(-1)?.items.push((e.querySelector('.cm-two > .cm-text') ?? e.querySelector('.cm-text'))?.textContent.trim() ?? ''), gs), [])`,
+  );
+/** Clicks the item of that label under that heading. */
+const pickIn = async (head: string, label: string) => {
+  const r = await p.eval<{ x: number; y: number } | null>(
+    `(() => { let under = ''; for (const e of document.querySelectorAll('.cm-label, [role^="menuitem"]')) { if (e.classList.contains('cm-label')) { under = e.textContent.trim(); continue; } if (under === ${JSON.stringify(head)} && (e.querySelector('.cm-two > .cm-text') ?? e.querySelector('.cm-text'))?.textContent.trim() === ${JSON.stringify(label)}) { e.scrollIntoView({ block: 'nearest' }); const b = e.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; } } return null; })()`,
+  );
+  if (!r) throw new Error(`no ${label} under ${head}`);
+  for (const type of ['mousePressed', 'mouseReleased']) await p.send('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: 'left', clickCount: 1 });
+};
+const key = async (k: string, code: number) => {
+  await p.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: k, code: k, windowsVirtualKeyCode: code });
+  await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code: k, windowsVirtualKeyCode: code });
+};
+const editing = () => p.eval<boolean>(`!!document.activeElement?.matches('.pf-title input')`);
+const person = async (id: string) => (await fetch(`${hub}/api/bootstrap`).then((r) => r.json())).persons.find((x: any) => x.id === id);
 const menuOpen = () => p.until(`!!document.querySelector('[role="menuitemradio"], [role="menuitem"]')`, 3000);
 const menuShut = () => p.until(`!document.querySelector('[role="menuitemradio"], [role="menuitem"]')`, 3000);
 /** The viewer's pictures to choose from: each one's src, which is in view, which is shown, and the button. */
@@ -108,7 +128,7 @@ const shoot = async (file: string) => {
 try {
   await p.size(1280, 860);
   await p.goto(`${hub}/#/p/${kit.id}`);
-  await p.until(`!!document.querySelector('.profile-page :is(.pf-name-pick, .pf-name-swap)')`, 15000);
+  await p.until(`!!document.querySelector('.profile-page .pf-name-pick')`, 15000);
   const first = await heroName();
 
   // The name.
@@ -117,11 +137,14 @@ try {
   let names = await items();
   check(names[0]?.label === first && names[0].on && names[0].detail === 'Follows their main account', 'the main account’s name first, ticked', names[0]);
   // At the button's left edge, as Enter would open it too, not where the pointer was (a long menu moves up to fit).
-  const opened = await p.eval<{ btn: number; menu: number }>(`({ btn: document.querySelector('.pf-name-pick, .pf-name-swap').getBoundingClientRect().left, menu: document.querySelector('[role="menuitemradio"], [role="menuitem"]').getBoundingClientRect().left })`);
+  const opened = await p.eval<{ btn: number; menu: number }>(`({ btn: document.querySelector('.pf-name-pick').getBoundingClientRect().left, menu: document.querySelector('[role="menuitemradio"], [role="menuitem"]').getBoundingClientRect().left })`);
   check(Math.abs(opened.menu - opened.btn) < 24, 'the menu opens at the name, not at the pointer', opened);
   check(names.some((n) => n.detail.startsWith('Display name')) && names.some((n) => n.detail.startsWith('Handle')), 'each account’s display names and handles', names.map((n) => `${n.label} — ${n.detail}`));
   check(!names.some((n) => /^\+?[\d\s]+$/.test(n.label)), 'no phone number among them');
-  check(new Set(names.map((n) => n.label)).size === names.length, 'each name once');
+  const heads = await grouped();
+  check(heads[0]?.head === 'Name shown' && heads[0].items.length === 1 && heads[1]?.head.endsWith(' · main account') && heads.length === kit.identityIds.length + 1, 'the main account’s name, then a heading for each account, the main one first', heads);
+  check(heads.slice(1).every((g) => g.items.at(-1) === 'Set Nickname…' || g.items.at(-1) === 'Change Nickname…'), 'each account ends with its nickname to set', heads);
+  check(heads.every((g) => new Set(g.items).size === g.items.length), 'each name once in an account');
   await shoot('name-menu.png');
   const other = names.find((n) => n.detail.startsWith('Handle') && n.label !== first)!;
   await pick(other.label, other.detail);
@@ -136,6 +159,40 @@ try {
   await pick(names[0].label, names[0].detail);
   await p.until(`document.querySelector('.pf-title h1')?.innerText.trim() === ${JSON.stringify(first)}`, 5000).catch(() => {});
   check((await heroName()) === first, 'the main account’s name puts it back', await heroName());
+
+  // A nickname from the menu, for an account not the main one: edited in place of the name, then the name shown.
+  await click(NAME_BTN);
+  await menuOpen();
+  const acct = (await grouped()).slice(2).find((g) => g.items.includes('Set Nickname…'))!;
+  await pickIn(acct.head, 'Set Nickname…');
+  await p.until(`!!document.activeElement?.matches('.pf-title input')`, 3000).catch(() => {});
+  check(await editing(), 'Set Nickname… edits it in place of the name', acct.head);
+  await p.send('Input.insertText', { text: 'Kit the Tester' });
+  await shoot('name-nickname-edit.png');
+  await key('Enter', 13);
+  await p.until(`document.querySelector('.pf-title h1')?.innerText.trim() === 'Kit the Tester'`, 5000).catch(() => {});
+  check((await heroName()) === 'Kit the Tester', 'saved, it is the name shown', await heroName());
+  const nicked = await person(kit.id);
+  check(nicked?.name === 'Kit the Tester' && nicked?.nameFrom?.field === 'nickname', 'the hub shows them by it', { name: nicked?.name, nameFrom: nicked?.nameFrom });
+  await click(NAME_BTN);
+  await menuOpen();
+  const after = (await grouped()).find((g) => g.head === acct.head);
+  names = await items();
+  check(after?.items[0] === 'Kit the Tester' && after.items.at(-1) === 'Change Nickname…' && names.find((n) => n.on)?.label === 'Kit the Tester', 'under its account, ticked, and Change Nickname…', { after, on: names.filter((n) => n.on) });
+  await shoot('name-menu-nickname.png');
+  await pickIn(acct.head, 'Change Nickname…');
+  await p.until(`!!document.activeElement?.matches('.pf-title input')`, 3000).catch(() => {});
+  // Empty takes it away.
+  await key('Backspace', 8);
+  await key('Enter', 13);
+  await p.until(`document.querySelector('.pf-title h1')?.innerText.trim() === ${JSON.stringify(first)}`, 5000).catch(() => {});
+  check((await heroName()) === first, 'taken away, the main account’s name shows again', await heroName());
+  await click(NAME_BTN);
+  await menuOpen();
+  names = await items();
+  check(names[0].on && names.filter((n) => n.on).length === 1 && !names.some((n) => n.label === 'Kit the Tester'), 'and it is the one ticked', names.filter((n) => n.on));
+  await pick(names[0].label, names[0].detail);
+  await menuShut();
 
   // The picture: their pictures in the viewer, to choose from.
   check(await p.eval(`!!document.querySelector('.pf-avatar-view .pf-avatar-badge')`), 'a badge on their picture says there are more to choose from');
@@ -183,12 +240,13 @@ try {
   // One account: its display name and its handle.
   await p.goto(`${hub}/#/p/${solo.id}`);
   // Their page, not the one before it still on its way out.
-  await p.until(`!!document.querySelector('.profile-page :is(.pf-name-pick, .pf-name-swap)') && document.querySelector('.pf-title h1')?.innerText.trim().split('\\n')[0] === ${JSON.stringify(solo.name)}`, 15000);
+  await p.until(`!!document.querySelector('.profile-page .pf-name-pick') && document.querySelector('.pf-title h1')?.innerText.trim().split('\\n')[0] === ${JSON.stringify(solo.name)}`, 15000);
   await click(NAME_BTN);
   await menuOpen();
   const one = await items();
   const i = ids.get(solo.identityIds[0]);
-  check(one.length === 2 && one[1].label === i.handle, 'one account: its name, then its handle', one);
+  check(one.length === 3 && one[1].label === i.handle && one[2].label === 'Set Nickname…', 'one account: its name, its handle, then its nickname to set', one);
+  check((await grouped()).length === 1, 'and no heading but the menu’s own');
   await shoot('one-account-menu.png');
   await escape();
   await menuShut();
@@ -196,12 +254,13 @@ try {
   // A phone: the names as a sheet; the pictures full screen, swiped through.
   await p.size(390, 844, true);
   await p.goto(`${hub}/#/p/${kit.id}`);
-  await p.until(`!!document.querySelector('.profile-page :is(.pf-name-pick, .pf-name-swap)') && document.querySelector('.pf-title h1')?.innerText.trim().split('\\n')[0] === ${JSON.stringify(first)}`, 15000);
+  await p.until(`!!document.querySelector('.profile-page .pf-name-pick') && document.querySelector('.pf-title h1')?.innerText.trim().split('\\n')[0] === ${JSON.stringify(first)}`, 15000);
   await shoot('phone-hero.png');
   await tap(NAME_BTN);
   await p.until(`!!document.querySelector('.cm-sheet [role^="menuitem"]')`, 3000).catch(() => {});
   check(await p.eval(`document.querySelectorAll('.cm-sheet .cm-detail').length >= 3`), 'on a phone, the names in a sheet');
-  check(await p.eval(`!document.querySelector('.cm-sheet .cm-label')`), 'its title said once, not again as a heading');
+  const sheetHeads = await p.eval<string[]>(`[...document.querySelectorAll('.cm-sheet .cm-label')].map((e) => e.textContent.trim())`);
+  check(!sheetHeads.includes('Name shown') && sheetHeads.length === kit.identityIds.length, 'its title said once, and a heading for each account', sheetHeads);
   await shoot('phone-name-sheet.png');
   const phoneName = names.find((n) => n.detail.startsWith('Display name') && n.label !== first)!;
   await tapItem(phoneName.label, phoneName.detail);

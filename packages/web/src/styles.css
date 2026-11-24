@@ -17148,8 +17148,8 @@ button.pair-last:hover {
   width: 10px !important;
   height: 10px !important;
 }
-/* Nickname (ui/Nickname.tsx): a one-route chat's name, or a one-account profile's, with a pencil that shows on hover
-   for your nickname for their account. */
+/* Nickname (ui/Nickname.tsx): a one-route chat's name, with a pencil that shows on hover for your nickname for their
+   account. */
 .pair-nick-edit {
   margin-left: 4px;
   padding: 0 4px;
@@ -17158,7 +17158,6 @@ button.pair-last:hover {
   opacity: 0;
 }
 .conv-head h2:hover .pair-nick-edit,
-h1:hover > .pair-nick-edit,
 .pair-nick-edit:focus-visible {
   opacity: 1;
 }
@@ -18926,8 +18925,8 @@ h1:hover > .pair-nick-edit,
   border: 1px solid var(--border);
   background: var(--bg-center);
 }
-/* A person's name, a button with a chevron, chooses which of their names shows (Profile.tsx nameChoices); for one
-   account, whose name has the nickname pencil, the chevron is a button of its own beside it. */
+/* A person's name, a button with a chevron, chooses which of their names shows and sets their accounts' nicknames
+   (Profile.tsx nameItems); with only a nickname to set, a pencil. */
 .pf-name-pick {
   display: inline-flex;
   align-items: center;
@@ -18937,8 +18936,7 @@ h1:hover > .pair-nick-edit,
   padding: 0 6px 0 8px;
   border-radius: 10px;
 }
-.pf-name-pick > svg,
-.pf-name-swap {
+.pf-name-pick > svg {
   flex: none;
   color: var(--muted);
 }
@@ -18948,8 +18946,4 @@ h1:hover > .pair-nick-edit,
 .pf-name-pick:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-}
-.pf-name-swap {
-  width: 36px;
-  height: 36px;
 }

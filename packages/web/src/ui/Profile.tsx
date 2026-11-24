@@ -22,12 +22,12 @@ import { Avatar, Empty, Linked, NetBadge, NetGlyph } from './bits.tsx';
 import { isQuietConv } from '../feed.ts';
 import { copy, groups, openMenu, useMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
-import { nicknamable, nicknameEntries, NicknamedName, NicknameInput, ownName } from './Nickname.tsx';
+import { nicknamable, nicknameEntries, NicknameInput, ownName } from './Nickname.tsx';
 import { ActivityCard } from './ActivityCard.tsx';
 import { SameBox } from './SameBox.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
 import { copyEntries, identityMenu, personMenu } from './menus.tsx';
-import { nameChoices, pictureChoices } from '../namechoices.ts';
+import { type NameChoice, nameChoices, pictureChoices } from '../namechoices.ts';
 import { viewer } from '../viewer.ts';
 import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, StatusEmoji, Tag, viewPicture } from './ProfileShell.tsx';
 import { ConnectActions, ProfileConnections } from './Requests.tsx';
@@ -528,8 +528,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const S = selfParts.value;
   useEffect(() => void loadSelf(), []);
   const [merging, setMerging] = useState(false);
-  // The hero's pencil, for a person of one account: its nickname (Nickname.tsx).
-  const [naming, setNaming] = useState(false);
+  // The hero's nickname editor, in place of the name: the account it names (Nickname.tsx), from the name's menu or More.
+  const [naming, setNaming] = useState<string | null>(null);
   // How this page changed where an account stands with them (`account|identity` → the newest word), until the profile
   // is fetched again: ended (stranger), or made (Add friend, Accept). connections.ts withChanges.
   const [changed, setChanged] = useState<Record<string, P.PersonRelationship>>({});
@@ -732,7 +732,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     const base = person ? personMenu(person) : identityMenu(first?.id);
     const extra: MenuEntry[] = groups(
       // One account's nickname is theirs (with several, each tile has its own).
-      ids.length === 1 && !first?.isBot ? nicknameEntries(first, () => setNaming(true)) : [],
+      ids.length === 1 && !first?.isBot ? nicknameEntries(first, () => setNaming(first!.id)) : [],
       [{ label: 'Ask the Networks Again', icon: 'refresh', run: refresh }],
       // Ignore on their networks (ProfileSelf.tsx).
       isSelf || !S ? [] : S.selfEntries(ids, profile, profile.links ?? [], update),
@@ -818,25 +818,40 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   editing.current = picturing ? ((picturing.came ? picTarget(picturing.came) : ownPicture) ?? editing.current) : null;
 
   // Which name and which picture show for them, chosen in the hero (docs/profile.md "Which account speaks for them").
-  const names = isSelf || !person ? [] : nameChoices(ids, person, identityName((speaker ?? first)?.id));
+  // In the Accounts card's order (by network), the main account's first.
+  const names = isSelf || !person ? null : nameChoices(tiles, person, identityName((speaker ?? first)?.id));
   const pictures = several && !isSelf && person ? pictureChoices(ids, person, speaker) : [];
-  const nicked = !several && nicknamable(first) && !first.isBot;
+  const choice = (c: NameChoice): MenuEntry => ({ label: c.text, detail: c.detail, radio: true, checked: c.on, track: 'name: choose', run: () => void sources({ nameFrom: c.from }) });
+  /** The name's menu's row for one account's nickname: it opens the editor in place of the name. */
+  const nickRow = (i: P.IdentityView | undefined): MenuEntry | false =>
+    !isSelf && nicknamable(i) && !i.isBot && { label: i.nickname ? 'Change Nickname…' : 'Set Nickname…', icon: 'pencil', track: 'name: nickname', run: () => setNaming(i.id) };
+  // The name's menu: the main account's name, then each account's names under its heading with its nickname; one
+  // account's names need no heading.
+  const nameItems: MenuEntry[] = !names
+    ? groups([nickRow(first)])
+    : several
+      ? groups(
+          [{ kind: 'label', label: 'Name shown' }, choice(names.auto)],
+          ...names.accounts.map((a) => {
+            const rows = [...a.names.map(choice), nickRow(a.i)].filter(Boolean) as MenuEntry[];
+            return rows.length ? [{ kind: 'label', label: a.heading } as MenuEntry, ...rows] : [];
+          }),
+        )
+      : groups([{ kind: 'label', label: 'Name shown' }, ...[names.auto, ...names.accounts.flatMap((a) => a.names)].map(choice)], [nickRow(first)]);
+  // Nothing to choose but a nickname: the name opens its editor.
+  const nickOnly = nameItems.filter((e) => 'radio' in e).length < 2 && !!nickRow(first) && !several;
+  const nicking = (naming && ids.find((i) => i.id === naming)) || null;
+  /** A nickname set here is the name shown: the main account's follows by itself, another account's is chosen. */
+  const nicknamed = (i: P.IdentityView) => (v: string | null) => {
+    if (!v || !person) return;
+    const want: P.NameFrom | null = !several || i.id === (speaker ?? first)?.id ? null : { identityId: i.id, field: 'nickname' };
+    const now = person.nameFrom ?? null;
+    if (now?.identityId !== want?.identityId || now?.field !== want?.field) void sources({ nameFrom: want });
+  };
   const nameMenu = (e: MouseEvent) => {
     // Under the button, as the hero's other menus open (and Enter or Space has no pointer to open at).
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    openMenu(
-      { x: r.left, y: r.bottom + 4 },
-      {
-        label: 'Name shown',
-        head: <div class="cm-sheet-title">Name shown</div>,
-        track: 'name menu',
-        items: groups(
-          [{ kind: 'label', label: 'Name shown' }],
-          names.map((c): MenuEntry => ({ label: c.text, detail: c.detail, radio: true, checked: c.on, track: 'name: choose', run: () => void sources({ nameFrom: c.from }) })),
-        ),
-      },
-      e.currentTarget,
-    );
+    openMenu({ x: r.left, y: r.bottom + 4 }, { label: 'Name shown', head: <div class="cm-sheet-title">Name shown</div>, track: 'name menu', items: nameItems }, e.currentTarget);
   };
   // Their pictures, full screen, the one shown first in view: swipe or page through them and use another.
   const viewPictures = () => {
@@ -861,22 +876,22 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       accent={accent}
       title={
         <h1>
-          {/* One account: their name is its name, and the pencil gives that account a nickname; the chevron beside it
-              chooses among its names. Otherwise the name itself, with its chevron, opens the names to choose from. */}
-          {nicked ? (
-            <NicknamedName i={first} label={name} title={first.nickname && !person?.nameFrom ? `Your nickname for ${ownName(first)}` : name} editing={naming} setEditing={setNaming} class="pf-name" />
-          ) : names.length > 1 ? (
-            <button class="pf-name-pick" data-track="profile: name shown" onClick={nameMenu} aria-haspopup="menu" aria-label={`${name}, choose the name shown`} title="Choose the name shown: a nickname, or one of their accounts’ names">
+          {/* The name opens the names to choose from, with each account's nickname to set; with nothing to choose
+              but a nickname, the editor at once. */}
+          {nicking ? (
+            <NicknameInput i={nicking} onDone={() => setNaming(null)} onSaved={nicknamed(nicking)} />
+          ) : nickOnly ? (
+            <button class="pf-name-pick" data-track="profile: nickname" onClick={() => setNaming(first!.id)} aria-label={`${name}, give them a nickname`} title={`Give ${ownName(first!)} a nickname (only you see it)`}>
+              {name}
+              <Icon name="pencil" size={16} />
+            </button>
+          ) : nameItems.length ? (
+            <button class="pf-name-pick" data-track="profile: name shown" onClick={nameMenu} aria-haspopup="menu" aria-label={`${name}, choose the name shown`} title="Choose the name shown, or set a nickname">
               {name}
               <Icon name="chevronDown" size={18} />
             </button>
           ) : (
             name
-          )}
-          {nicked && names.length > 1 && !naming && (
-            <button class="icon-btn pf-name-swap" data-track="profile: name shown" onClick={nameMenu} aria-haspopup="menu" aria-label="Choose the name shown" title="Choose the name shown: your nickname, their name or their handle">
-              <Icon name="chevronDown" size={18} />
-            </button>
           )}
         </h1>
       }
