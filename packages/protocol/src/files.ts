@@ -148,3 +148,22 @@ export function guessKind(mime: string | null | undefined, name: string | null |
   if (lang || TEXT_EXTS.has(ext) || /^text\//.test(m) || /\+xml$|\/xml$|\/(javascript|x-sh|x-shellscript|toml|yaml|sql)$/.test(m)) return 'text';
   return 'binary';
 }
+
+/**
+ * Forms a kept picture can be downloaded in: the hub's media links take `?as=` (docs/files.md "Downloading").
+ * `original` is the bytes as they came, a picture the hub keeps as JPEG XL rebuilt.
+ */
+export type DownloadAs = 'original' | 'jxl' | 'png' | 'jpeg';
+
+/**
+ * What a file of this type can be downloaded as, its own form first. A JPEG: as JPEG XL (lossless and smaller) or a
+ * PNG; a PNG: as JPEG XL; a JPEG XL: as a JPEG (the one it was repacked from, else re-encoded) or a PNG. Anything
+ * else only as it is.
+ */
+export function downloadsAs(mime: string | null | undefined): DownloadAs[] {
+  const m = (mime ?? '').split(';')[0].trim().toLowerCase();
+  if (m === 'image/jpeg') return ['original', 'jxl', 'png'];
+  if (m === 'image/png') return ['original', 'jxl'];
+  if (m === 'image/jxl') return ['original', 'jpeg', 'png'];
+  return ['original'];
+}

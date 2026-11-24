@@ -15,6 +15,7 @@ import { alertToggle, isTier, lessToggle } from '../marks.ts';
 import { phone } from '../phone.ts';
 import { mark } from '../triage.ts';
 import { desk, openLink } from '../desk.ts';
+import { asLabel, downloadsAs, hubMedia } from '../download.ts';
 import { pickerFor, quickReactions, reactionScope, reactorsFor, replacing, toggleReaction } from '../reactions.ts';
 import { clearReactions, moderatorDelete, moderatorRemoveEmbeds, modOf } from '../moderate.ts';
 import { api, canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
@@ -285,6 +286,7 @@ const absolute = (url: string) => new URL(url, location.href).href;
 export function attachmentMenu(a: P.AttachmentView, m: P.MessageView | null, images: ViewerImage[] = [], onReply?: () => void): MenuSpec {
   // A Lottie sticker is an animation's JSON, not a picture to open or copy.
   const image = a.kind === 'image' && !isLottie(a);
+  const forms = image && hubMedia(a.url) ? downloadsAs(fileMime(a)) : [];
   const noun = image ? 'Image' : a.kind === 'video' ? 'Video' : a.kind === 'audio' ? 'Audio' : 'File';
   const items = groups(
     [
@@ -297,6 +299,8 @@ export function attachmentMenu(a: P.AttachmentView, m: P.MessageView | null, ima
       !!desk.value && !!fileMime(a) && { label: 'Open With…', icon: 'external', run: () => void openWith(a) },
       image && { label: 'Copy Image', icon: 'copy', run: () => void copyImage(a.url) },
       { label: `Save ${noun}`, icon: 'download', run: () => save(a.url, a.name) },
+      // A picture in another form: a JPEG as JPEG XL, a JPEG XL as a JPEG (download.ts).
+      forms.length > 1 && { label: 'Save Image As', icon: 'download', sub: forms.map((as) => ({ label: asLabel(as, fileMime(a)), track: `save as ${as}`, run: () => save(a.url, a.name, as) })) },
       { label: 'Copy Link', icon: 'link', run: () => copy(absolute(a.url), 'Link copied') },
     ],
     // A run of pictures: how this chat shows them (the rail beside it does the same; ui/PictureSwitch.tsx).

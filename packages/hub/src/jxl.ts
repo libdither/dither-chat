@@ -16,7 +16,8 @@
 import { existsSync, openSync, readSync, closeSync, readFileSync, renameSync, rmSync, statSync, utimesSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
-import { isJxl, repackedJpeg } from './jxlformat.ts';
+import type { DownloadAs } from '@dither-chat/protocol';
+import { isJxl, JXL as JXL_MIME, repackedJpeg } from './jxlformat.ts';
 import type { Store } from './store.ts';
 import { noteWork } from './stalls.ts';
 
@@ -170,6 +171,39 @@ export async function toCommon(t: JxlTools, src: string, outBase: string): Promi
   return { path: png, mime: 'image/png' };
 }
 
+const TO_MIME: Record<Exclude<DownloadAs, 'original'>, string> = { jxl: JXL_MIME, png: 'image/png', jpeg: 'image/jpeg' };
+
+/**
+ * `src` (a JPEG, PNG or JPEG XL, `from`) as `to`, made in a scratch file beside `base`. A JPEG goes to JPEG XL
+ * losslessly and comes out of it byte for byte; a PNG goes through JPEG XL losslessly. Null when a tool failed.
+ */
+async function convert(t: JxlTools, src: string, from: string, to: Exclude<DownloadAs, 'original'>, base: string): Promise<{ bytes: Uint8Array; mime: string } | null> {
+  const made: string[] = [];
+  const tmp = (ext: string) => {
+    const p = scratch(base, ext);
+    made.push(p);
+    return p;
+  };
+  const read = (p: string) => ({ bytes: new Uint8Array(readFileSync(p)), mime: TO_MIME[to] });
+  try {
+    if (TO_MIME[to] === from) return read(src);
+    let jxl = src;
+    if (from !== JXL_MIME) {
+      // A JPEG repacked (it comes back as it was, and a PNG from it has its pixels); a PNG lossless, at an effort that
+      // takes a fraction of a second, not the packer's.
+      jxl = tmp('jxl');
+      const args = from === 'image/jpeg' ? ['--lossless_jpeg=1', '-e', '7'] : ['-d', '0', '-e', to === 'jxl' ? '5' : '1'];
+      if (!(await run([t.cjxl, src, jxl, ...args]))) return null;
+      if (to === 'jxl') return read(jxl);
+    }
+    const out = tmp(to === 'png' ? 'png' : 'jpg');
+    const pixels = to === 'jpeg' && !repackedJpeg(readHead(jxl, 1024 * 1024)) ? ['--jpeg_quality=92'] : [];
+    return (await run([t.djxl, jxl, out, ...pixels])) ? read(out) : null;
+  } finally {
+    for (const p of made) rmSync(p, { force: true });
+  }
+}
+
 /** Whether a request comes from a device that shows JPEG XL: the app's cookie, or the browser's Accept header. */
 export function takesJxl(req: Request): boolean {
   const cookie = req.headers.get('cookie') ?? '';
@@ -210,6 +244,11 @@ export class JxlServe {
         rmSync(r.path, { force: true });
       }
     });
+  }
+
+  /** A kept picture (`src`, of type `from`) as `to`, for a download; scratch files beside `base`. */
+  as(key: string, src: string, from: string, to: Exclude<DownloadAs, 'original'>, base: string) {
+    return this.once(`${to}:${key}`, (t) => convert(t, src, from, to, base));
   }
 
   private async once(id: string, make: (t: JxlTools) => Promise<{ bytes: Uint8Array; mime: string } | null>) {

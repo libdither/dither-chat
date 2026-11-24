@@ -5,7 +5,7 @@
  * machine without them (CI installs libjxl-tools).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
@@ -237,6 +237,11 @@ withTools('serving pictures to each device, and sending them on', () => {
     'mxc://x.org/photo': { mime: 'image/jpeg', bytes: JPEG },
     'mxc://x.org/shot': { mime: 'image/png', bytes: png },
     'mxc://x.org/sent': { mime: 'image/jxl', bytes: sent },
+    'mxc://x.org/dl-photo': { mime: 'image/jpeg', bytes: JPEG },
+    'mxc://x.org/dl-shot': { mime: 'image/png', bytes: png },
+    'mxc://x.org/dl-sent': { mime: 'image/jxl', bytes: b64(REPACKED_120x80) },
+    'mxc://x.org/dl-made': { mime: 'image/jxl', bytes: sent },
+    'mxc://x.org/dl-doc': { mime: 'application/pdf', bytes: new TextEncoder().encode('%PDF-1.4 invented') },
   };
   let store: Store;
   let hub: HubServer;
@@ -316,6 +321,98 @@ withTools('serving pictures to each device, and sending them on', () => {
     const a = sends.at(-1).attachments[0];
     expect({ name: a.name, mime: a.mime, kind: a.kind }).toEqual({ name: 'holiday.jpg', mime: 'image/jpeg', kind: 'image' });
     expect([...a.bytes.subarray(0, 3)]).toEqual([0xff, 0xd8, 0xff]);
+  });
+
+  const getAs = (raw: string, as: string, name?: string, headers: Record<string, string> = {}) =>
+    fetch(url + store.mediaUrl(raw, account)! + `&as=${as}` + (name ? `&name=${encodeURIComponent(name)}` : ''), { headers });
+  const filename = (r: Response) => r.headers.get('content-disposition')?.match(/filename="([^"]*)"/)?.[1];
+
+  test('?as=info says what a picture came as, how it is kept and what this device gets, fetching it first', async () => {
+    const key = mediaKey('mxc://x.org/dl-photo');
+    expect(existsSync(join(dir, 'media-cache', key))).toBe(false);
+    const r = await getAs('mxc://x.org/dl-photo', 'info');
+    expect(r.headers.get('cache-control')).toBe('no-store');
+    expect(await r.json()).toEqual({ type: 'image/jpeg', size: JPEG.length, kept: { type: 'image/jpeg', size: JPEG.length }, sent: 'image/jpeg', as: ['original', 'jxl', 'png'] });
+
+    // Packed, as the packer does it: media_info keeps the size it came at.
+    store.db.query("INSERT INTO media_info (key, mime, kind, size, partial, version, at) VALUES (?, 'image/jpeg', 'image', ?, 0, 2, 0)").run(key, JPEG.length);
+    expect((await pack(tools!, join(dir, 'media-cache', key), 'image/jpeg')).packed).toBe(true);
+    const kept = statSync(join(dir, 'media-cache', key + '.jxl')).size;
+    expect(await (await getAs('mxc://x.org/dl-photo', 'info', undefined, { cookie: 'dither_jxl=1' })).json()).toEqual({ type: 'image/jpeg', size: JPEG.length, kept: { type: 'image/jxl', size: kept }, sent: 'image/jxl', as: ['original', 'jxl', 'png'] });
+    expect(((await (await getAs('mxc://x.org/dl-photo', 'info')).json()) as any).sent).toBe('image/jpeg');
+  });
+
+  test('a packed JPEG downloads as it came, as JPEG XL or as a PNG, each named for its form, whatever the device shows', async () => {
+    await getAs('mxc://x.org/dl-photo', 'info');
+    const key = mediaKey('mxc://x.org/dl-photo');
+    if (existsSync(join(dir, 'media-cache', key))) expect((await pack(tools!, join(dir, 'media-cache', key), 'image/jpeg')).packed).toBe(true);
+    const original = await getAs('mxc://x.org/dl-photo', 'original', 'IMG_0001.jpg', { cookie: 'dither_jxl=1' });
+    expect(original.headers.get('content-type')).toBe('image/jpeg');
+    expect(original.headers.get('content-disposition')).toStartWith('attachment;');
+    expect(filename(original)).toBe('IMG_0001.jpg');
+    expect(Buffer.from(await bytes(original)).equals(JPEG)).toBe(true);
+
+    const jxl = await getAs('mxc://x.org/dl-photo', 'jxl', 'IMG_0001.jpg');
+    expect(jxl.headers.get('content-type')).toBe('image/jxl');
+    expect(filename(jxl)).toBe('IMG_0001.jxl');
+    expect(Buffer.from(await bytes(jxl)).equals(readFileSync(join(dir, 'media-cache', key + '.jxl')))).toBe(true);
+
+    const png = await getAs('mxc://x.org/dl-photo', 'png', 'IMG_0001.jpg');
+    expect(png.headers.get('content-type')).toBe('image/png');
+    expect(filename(png)).toBe('IMG_0001.png');
+    expect(pngSize(await bytes(png))).toEqual({ width: 240, height: 160 });
+  });
+
+  test('a PNG kept as it is converts to JPEG XL that comes back to the same pixels; a JPEG is not offered for it', async () => {
+    const jxl = await getAs('mxc://x.org/dl-shot', 'jxl', 'screen shot.png');
+    expect(jxl.headers.get('content-type')).toBe('image/jxl');
+    expect(filename(jxl)).toBe('screen shot.jxl');
+    const made = await bytes(jxl);
+    expect(isJxl(made)).toBe(true);
+    expect(jxlDims(made)).toEqual({ width: 160, height: 120 });
+    expect((await getAs('mxc://x.org/dl-shot', 'jpeg')).status).toBe(400);
+    // Nothing left behind but the kept file and its type.
+    const key = mediaKey('mxc://x.org/dl-shot');
+    expect(readdirSync(join(dir, 'media-cache')).filter((f) => f.startsWith(key)).sort()).toEqual([key, key + '.mime']);
+  });
+
+  test('a JPEG XL someone sent downloads as itself, as the JPEG it was repacked from, or as a PNG', async () => {
+    const original = await getAs('mxc://x.org/dl-sent', 'original', 'holiday.jxl');
+    expect(original.headers.get('content-type')).toBe('image/jxl');
+    expect(filename(original)).toBe('holiday.jxl');
+    expect(Buffer.from(await bytes(original)).equals(Buffer.from(b64(REPACKED_120x80)))).toBe(true);
+    const jpeg = await getAs('mxc://x.org/dl-sent', 'jpeg', 'holiday.jxl');
+    expect(filename(jpeg)).toBe('holiday.jpg');
+    expect([...(await bytes(jpeg)).subarray(0, 3)]).toEqual([0xff, 0xd8, 0xff]);
+    const png = await getAs('mxc://x.org/dl-sent', 'png', 'holiday.jxl');
+    expect(pngSize(await bytes(png))).toEqual({ width: 120, height: 80 });
+    // One made as JPEG XL has no JPEG inside: it is encoded as one.
+    const made = await getAs('mxc://x.org/dl-made', 'jpeg');
+    expect(made.headers.get('content-type')).toBe('image/jpeg');
+    expect([...(await bytes(made)).subarray(0, 3)]).toEqual([0xff, 0xd8, 0xff]);
+    expect(await (await getAs('mxc://x.org/dl-made', 'info')).json()).toMatchObject({ type: 'image/jxl', sent: null, as: ['original', 'jpeg', 'png'] });
+  });
+
+  test('a picture kept under the hub\'s data (an import) is read where it is', async () => {
+    mkdirSync(join(dir, 'imports'), { recursive: true });
+    const p = join(dir, 'imports', 'IMG_0002');
+    writeFileSync(p, b64(REPACKED_120x80));
+    const raw = 'file://' + p;
+    expect(await (await getAs(raw, 'info')).json()).toMatchObject({ type: 'image/jxl', kept: { type: 'image/jxl' }, as: ['original', 'jpeg', 'png'] });
+    const jpeg = await getAs(raw, 'jpeg', 'IMG_0002');
+    expect(filename(jpeg)).toBe('IMG_0002.jpg');
+    expect([...(await bytes(jpeg)).subarray(0, 3)]).toEqual([0xff, 0xd8, 0xff]);
+    expect(existsSync(join(dir, 'media-cache', mediaKey(raw)))).toBe(false);
+  });
+
+  test('another file downloads only as it is, and a wrong ?as= or signature is refused', async () => {
+    const doc = await getAs('mxc://x.org/dl-doc', 'original', 'notes.pdf');
+    expect(doc.headers.get('content-type')).toBe('application/pdf');
+    expect(filename(doc)).toBe('notes.pdf');
+    expect((await getAs('mxc://x.org/dl-doc', 'png')).status).toBe(400);
+    expect((await getAs('mxc://x.org/dl-doc', 'webp')).status).toBe(400);
+    const forged = store.mediaUrl('mxc://x.org/dl-doc', account)!.replace(/\/media\/[\w-]+\//, '/media/AAAAAAAAAAAAAAAA/');
+    expect((await fetch(url + forged + '&as=original')).status).toBe(403);
   });
 
   test('an upload that is no JPEG XL goes as it is', async () => {
