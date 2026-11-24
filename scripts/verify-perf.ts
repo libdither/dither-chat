@@ -97,10 +97,9 @@ const CEILINGS: Record<string, number> = {
   'arrival.messageRenders': 5, // the new message and its neighbours
   'arrival.sidebarRenders': 2,
   'long.reopen.msgs': 250, // the window
-  // Over the slow link (slowRun): one socket a start and none dropped by the heartbeat, and the app itself from the
+  // Over the slow link (slowRun): one catch-up a start (one more is a socket replaced), and the app itself from the
   // service worker on a relaunch.
-  'socket.opens': 2,
-  'socket.drops': 0,
+  'socket.resyncs': 0,
   'relaunch.toContent.shell': 0,
 };
 /** Counts no run may come under, whatever the baseline says: every open fetching ahead was meant to serve did (aheadRun), and more. */
@@ -200,7 +199,7 @@ async function main() {
       });
       runs[key].push(m);
       if (slow)
-        console.log(`slow link ${cpu}× run ${i + 1}: cold to content ${m['cold.content'].v} ms (${m['cold.toContent.requests'].v} requests, ${m['cold.toContent.bytes'].v} B), the bootstrap ${m['cold.bootstrap.bytes'].v} B in ${m['cold.bootstrap'].v} ms beside ${m['cold.competing.bytes'].v} B of ${m['cold.competing.requests'].v} others; first open ${m['open.ms'].v} ms; precache ${m['precache.requests'].v} requests, ${m['precache.bytes'].v} B, done at ${m['precache.ms'].v} ms; relaunch to content ${m['relaunch.content'].v} ms after ${m['relaunch.toContent.answers'].v} answers, to fresh ${m['relaunch.fresh'].v} ms; socket opened ${m['socket.opens'].v}, ${m['socket.pings'].v} pings, the slowest pong ${m['socket.pongMax'].v} ms, dropped by the heartbeat ${m['socket.drops'].v}`);
+        console.log(`slow link ${cpu}× run ${i + 1}: cold to content ${m['cold.content'].v} ms (${m['cold.toContent.requests'].v} requests, ${m['cold.toContent.bytes'].v} B), the bootstrap ${m['cold.bootstrap.bytes'].v} B in ${m['cold.bootstrap'].v} ms beside ${m['cold.competing.bytes'].v} B of ${m['cold.competing.requests'].v} others; first open ${m['open.ms'].v} ms; precache ${m['precache.requests'].v} requests, ${m['precache.bytes'].v} B, done at ${m['precache.ms'].v} ms; relaunch to content ${m['relaunch.content'].v} ms after ${m['relaunch.toContent.answers'].v} answers, to fresh ${m['relaunch.fresh'].v} ms; socket opened ${m['socket.opens'].v}, ${m['socket.pings'].v} pings, the slowest pong ${m['socket.pongMax'].v} ms, ${m['socket.drops'].v} closed by the app, ${m['socket.resyncs'].v} catch-ups more than one a start`);
       else if (ahead)
         console.log(`ahead ${cpu}× run ${i + 1}: ${m['ahead.pages'].v} pages and ${m['ahead.pictures'].v} pictures fetched ahead, ${m['ahead.requests'].v} requests, ${m['ahead.bytes'].v} B; the first five rows open in ${m['ahead.open'].v} ms (${m['ahead.served'].v} of 5 from it), ${m['noahead.open']?.v ?? '-'} ms without; right after a relaunch ${m['ahead.relaunch'].v} ms (${m['ahead.relaunchServed'].v} of 3 kept), ${m['noahead.relaunch']?.v ?? '-'} ms without`);
       else if (phone)
@@ -551,8 +550,9 @@ async function aheadRun(cpu: number): Promise<Metrics> {
 }
 
 /**
- * The live socket's life in the page: opened, closed by the app (its heartbeat gave up on it), closed from the far end,
- * and the heartbeat's pings with the longest wait for a pong.
+ * The live socket's life in the page: opened, closed by the app (one its heartbeat gave up on, or a spare that lost the
+ * race with a late pong: state.ts probe), closed from the far end, and the heartbeat's pings with the longest wait for
+ * a pong.
  */
 const SOCKETS = `(() => {
   const W = window.WebSocket;
@@ -579,7 +579,8 @@ const SOCKETS = `(() => {
  * hub loads the app, opens the first conversation in its list, and stays until the service worker has kept the whole
  * build and fetching ahead is done; then the app is opened again, from the snapshot it kept. Requests and bytes on the
  * link before the list showed (`dither:content`) and before the hub's data was in (`dither:fresh`), by kind; what shared
- * the link with the bootstrap; and the live socket, which should open once a start and never be dropped.
+ * the link with the bootstrap; and the live socket, which should never be given up while it works: each start catches
+ * up with the hub once (a bootstrap or a sync), and one more means a socket was replaced.
  */
 async function slowRun(cpu: number): Promise<Metrics> {
   const link = await slowLink({ target: PORT, rtt: SLOW_RTT, down: SLOW_DOWN * 1e6, up: SLOW_UP * 1e6, queue: SLOW_QUEUE });
@@ -604,6 +605,8 @@ async function slowRun(cpu: number): Promise<Metrics> {
       return { origin: performance.timeOrigin, content: performance.timeOrigin + c.startTime, fresh: performance.timeOrigin + performance.getEntriesByName('dither:fresh')[0].startTime, source: c.detail?.source };
     })()`);
   };
+  /** Catch-ups with the hub in this page (a bootstrap or a sync from the journal: state.ts marks each `dither:fresh`). */
+  const freshes = () => page.eval<number>(`performance.getEntriesByName('dither:fresh').length`);
   const sockets = () => page.eval<{ opened: number; dropped: number; closed: number; pings: number; pongMax: number }>('({ ...__sock })');
   try {
     await page.size(390, 844, true);
@@ -666,6 +669,7 @@ async function slowRun(cpu: number): Promise<Metrics> {
     put('ahead.requests', ahead.length, 'count');
     put('ahead.bytes', ahead.reduce((s, r) => s + r.bytes, 0), 'bytes');
     const s1 = await sockets();
+    const coldFresh = await freshes();
     put('cold.stay', Date.now() - cold.origin);
     log(link.reqs, cold.origin);
 
@@ -695,6 +699,7 @@ async function slowRun(cpu: number): Promise<Metrics> {
     put('socket.drops', s1.dropped + s2.dropped, 'count');
     put('socket.closes', s1.closed + s2.closed, 'count');
     put('socket.pings', s1.pings + s2.pings, 'count');
+    put('socket.resyncs', coldFresh + (await freshes()) - 2, 'count');
     put('socket.pongMax', Math.max(s1.pongMax, s2.pongMax));
     log(link.reqs.slice(n0), warm.origin);
     if (page.errors.length) console.warn('page errors:', page.errors.slice(0, 5));

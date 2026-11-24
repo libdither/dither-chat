@@ -11,6 +11,9 @@
  *
  * It reads the browser's requests (HTTP/1.1, one at a time on a connection: Chromium does not pipeline) and puts each
  * byte the hub sends on that connection to the request it answers, with the time it reached the browser.
+ *
+ * scripts/link-proxy.ts is the other proxy: it breaks a link on purpose (a silent socket, a hanging request, cuts) for
+ * verify-link's checks of what the app does then; this one only slows it, the same way every run, and measures.
  */
 
 /** What a request is for, from its path and the browser's Sec-Fetch-Dest. */
