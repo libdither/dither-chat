@@ -168,20 +168,20 @@ counts at 4× (renders batch differently on a slow CPU) were only ever looked at
 `.github/workflows/perf-nightly.yml` runs verify-perf at both throttles and keeps what it measured:
 
 ```sh
-bun scripts/verify-perf.ts --scale 0.25 --runs 5 --warmup 1 --cpu 1,4 --phone-cpu 1,4 --ahead-cpu 1,4 \
+bun scripts/verify-perf.ts --scale 1 --runs 5 --warmup 1 --cpu 1,4 --phone-cpu 1,4 --ahead-cpu 1,4 \
   --baseline <none> --out out/perf.json
 ```
 
 - **When:** 04:41 UTC every night on main (stress.yml runs at 07:17, android-device.yml at 09:23), and by hand from
   Actions > Perf nightly > Run workflow, which asks for the world's size, the runs, and whether to record the run.
-  NIGHTLY_DURATION
+  The measuring takes about 20 minutes on a standard runner (4 cores), the whole run about 21.
 - **Never red on a number.** It has no baseline: nothing is judged, and a ceiling or floor verify-perf reports is a
   warning on the run. It fails only when measuring breaks (the build, the hub, a page that never answers).
 - **History:** each night is one JSON line on the `perf-history` branch (`history.jsonl`; a branch of data only,
   never merged): the date, the commit, the runner (CPU, cores, memory, image, browser), the settings, the world's
   counts, and every metric's median with the lowest and highest of its runs. A run on main is recorded; a run by hand
-  on another branch only when asked (`record`), else it goes in the summary only. Only the job that writes the line
-  may write to the repository, and only it.
+  on another branch only when asked (`record`), else it goes in the summary only. Only the small job that adds the
+  line has write access to the repository; the one that runs the browser can only read.
 - **What it shows:** the job's summary has the last night against the medians of the 7 and 30 nights before it
   (nights run with the same settings), flagging a time that moved more than 15% from the 7 nights' median (and 5 ms,
   or 2 slow frames), and a count, tally or byte size outside every value those 7 nights' runs came to: a count that
@@ -204,7 +204,24 @@ bun scripts/perf-trend.ts report --html /tmp/perf-trend.html      # the table on
 bun scripts/perf-trend.ts report --history <file.jsonl>             # a history of your own
 ```
 
-NIGHTLY_SCALE
+Why the full-size world: on 2026-11-24 the same run took 18 minutes at a quarter of the size and 20 at full size (the
+runs mostly wait for the page to settle), and only the full size has what a slow creep would show first: a bootstrap of
+4.5 MB rather than 1.2 MB, conversations of 80,000 messages, and an arriving message that keeps the main thread busy for
+63 ms at 1× rather than 23. Its counts also compare with the local baseline's (`scripts/perf-baseline.json`); its times are of another machine.
+
+The first night (2026-11-24, medians of five on a 4-core runner):
+
+| | 1× | 4× |
+|---|---|---|
+| desktop cold load, list painted | 587 ms | 1,340 ms |
+| desktop first open (median of six) | 61 ms | 211 ms |
+| desktop message arriving, main thread busy | 63 ms | 205 ms |
+| desktop relaunch, list painted | 193 ms | 606 ms |
+| desktop an older page | 57 ms | 318 ms |
+| phone cold load | 516 ms | 1,306 ms |
+| phone opening the biggest channel | 113 ms | 403 ms |
+| phone keystroke to frame, p90 | 11 ms | 25 ms |
+| phone, first five rows opened with fetching ahead (without) | 39 ms (147) | 148 ms (268) |
 
 ## Baselines and when to update them
 

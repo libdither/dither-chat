@@ -214,7 +214,7 @@ gets fixed. If that can't happen at once, the test is quarantined with a note na
 
 ### The nightly perf run
 
-`.github/workflows/perf-nightly.yml` runs `verify-perf` once a night (04:41 UTC) on a quarter-size world, at 1× and 4×
+`.github/workflows/perf-nightly.yml` runs `verify-perf` once a night (04:41 UTC) on the full-size world, at 1× and 4×
 CPU for the desktop, the phone and fetching ahead, five runs each, and by hand from Actions > Perf nightly > Run
 workflow. It judges nothing: each night's medians and spread go as one line onto the `perf-history` branch, and the
 job's summary flags what moved against the nights before (a time by 15%, a count outside what its runs came to), with a page of charts as the
