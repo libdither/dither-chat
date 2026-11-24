@@ -24,6 +24,9 @@ const DAY = 24 * HOUR;
 /** A fresh id: `chk_…` for questions, `ans_…` for answers. */
 export const newId = (prefix: string) => `${prefix}_${Buffer.from(crypto.getRandomValues(new Uint8Array(12))).toString('base64url')}`;
 
+/** It sounded where it went: a push of it played a sound (not merely decided an alert: a burst, a computer in use or a watched chat keeps it silent). */
+const SOUNDED = `EXISTS (SELECT 1 FROM notification n WHERE n.message_id = t.message_id AND n.alert = 1)`;
+
 /** Questions a day by setting, before "Ask me less". */
 const QUOTA: Record<P.AttentionPrefs['ask'], number> = { never: 0, rarely: 1, often: 3 };
 /** Skips in a row that pause the check-ins, and for how long. */
@@ -41,6 +44,9 @@ export interface CheckinState {
   skipsInRow: number;
   pausedUntil: number | null;
   lastPick: number | null;
+  /** The day the leftover chance was drawn, and whether it came up. */
+  extraDay?: number | null;
+  extra?: boolean;
 }
 const START: CheckinState = { rate: 1, skipsInRow: 0, pausedUntil: null, lastPick: null };
 
@@ -59,9 +65,18 @@ export class Checkins {
   }
 
   /** Today's quota, after the setting and "Ask me less". */
-  quota(prefs: P.AttentionPrefs): number {
+  quota(prefs: P.AttentionPrefs, now = Date.now()): number {
     const base = QUOTA[prefs.ask] ?? 0;
-    return base ? Math.max(1, Math.floor(base * this.state().rate + 1e-9)) : 0;
+    if (!base) return 0;
+    const want = base * this.state().rate;
+    const whole = Math.floor(want + 1e-9);
+    const part = want - whole;
+    if (part < 1e-9) return whole;
+    // The part of a question left over is a chance a day, drawn once a day: at a rate of an eighth, about one a week.
+    const st = this.state();
+    const day = this.dayStart(now);
+    if (st.extraDay !== day) this.meta.set({ ...st, extraDay: day, extra: this.random() < part });
+    return whole + (this.state().extra ? 1 : 0);
   }
 
   private dayStart(now: number): number {
@@ -88,16 +103,18 @@ export class Checkins {
     const paused = st.pausedUntil !== null && st.pausedUntil > now;
     if (paused || !QUOTA[prefs.ask]) return [];
     let rows = open();
-    const left = this.quota(prefs) - this.askedToday(now);
+    const left = this.quota(prefs, now) - this.askedToday(now);
     if (!rows.length && left > 0 && (st.lastPick === null || now - st.lastPick >= PICK_EVERY || now < st.lastPick)) {
       const asked = this.db.query(`SELECT side, arm FROM checkin WHERE created_at >= ?`).all(this.dayStart(now)) as Row[];
       const sides: ('sounded' | 'quiet')[] = (['sounded', 'quiet'] as const).filter((s) => !asked.some((a) => a.side === s));
+      // One question today: either side, at even odds, so "Rarely" asks about quiet ones too.
+      if (left === 1 && sides.length === 2 && this.random() < 0.5) sides.reverse();
       // A third question goes to whichever side the day has more of.
       if (!sides.length) sides.push(this.count('sounded', now) > this.count('quiet', now) / 20 ? 'sounded' : 'quiet');
       let picked = 0;
       for (const side of sides.slice(0, left)) {
-        // Alternate the arms through the day, so each side gets both over a few days.
-        const arm: 'random' | 'unsure' = asked.filter((a) => a.side === side).length % 2 === 0 ? (this.random() < 0.5 ? 'random' : 'unsure') : asked.find((a) => a.side === side)?.arm === 'random' ? 'unsure' : 'random';
+        // The arm is a fair coin every time, so the stored chance of a random pick (a half, then one of n) holds.
+        const arm: 'random' | 'unsure' = this.random() < 0.5 ? 'random' : 'unsure';
         if (this.pick(side, arm, now)) picked++;
       }
       if (picked) this.meta.set({ ...st, lastPick: now });
@@ -109,7 +126,8 @@ export class Checkins {
   private candidates(side: 'sounded' | 'quiet', now: number): string {
     // Others' messages decided in the last day and settled, not silenced, with a loudness, not asked about already.
     return `FROM triage t INDEXED BY triage_created JOIN message m ON m.id = t.message_id
-      WHERE t.created_at > ${now - DAY} AND t.created_at < ${now - SETTLE} AND t.decision ${side === 'sounded' ? "= 'push'" : "IN ('quiet', 'digest', 'drop')"}
+      WHERE t.created_at > ${now - DAY} AND t.created_at < ${now - SETTLE}
+        AND t.decision != 'silent' AND ${side === 'sounded' ? SOUNDED : `NOT ${SOUNDED}`}
         AND t.loud IS NOT NULL AND m.author_id NOT IN (SELECT self_identity FROM account WHERE self_identity IS NOT NULL)
         AND NOT EXISTS (SELECT 1 FROM checkin c WHERE c.message_id = t.message_id)`;
   }

@@ -187,6 +187,8 @@ if (loud.mode === 'on') delivery.keepTop = 3_600_000;
 triage.momentOf = (now) => ({ desk: delivery.inUse(now), sinceSound: lastSoundAt !== null && lastSoundAt <= now ? now - lastSoundAt : null });
 // A person waiting on you: the inbox's needs-reply chance, more the longer they have waited (up to twice, at a day).
 triage.owedOf = (cid) => {
+  // Before the first (sliced) scores are in, view() would score every chat at once on triage's thread.
+  if (!attention.hasScores) return null;
   const v = attention.view(cid);
   if (!v?.needsReply || !v.owedSince) return null;
   return v.needsReply * (1 + Math.min(1, Math.max(0, Date.now() - v.owedSince) / 86_400_000));
