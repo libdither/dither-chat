@@ -191,10 +191,14 @@ alert otherwise. Each tier has a channel, so Android's own settings can change o
   heads-up. When it is the conversation's first notification it is muted with `GROUP_ALERT_SUMMARY`: a notification
   in a group that leaves alerting to the group's summary never alerts, and its group has none. That is what
   `setSilent(true)` does on Android 12+, and it also works on 10 and 11.
-- **Read elsewhere.** A `{ clear: <conversationId> }` push cancels that conversation's notification, whichever kind
-  it has, without any outcome event. It also carries `upTo`, the newest message the hub notified about, which the app
-  does not read yet ([notifications.md](notifications.md#read-elsewhere-gone-here)). Opening the conversation in the app does the same, and tells the system it is on
-  screen (`setLocusContext`).
+- **Read elsewhere.** A `{ clear: <conversationId>, upTo }` push takes what was read off that conversation's
+  notification, whichever kind it has, without any outcome event ([notifications.md](notifications.md#read-elsewhere-gone-here)).
+  `upTo` is where it was read, in the hub's time: the messages at or before it go (a list row's lines, kept with
+  their times in its extras, likewise), and the notification is re-posted quietly with the rest, or cancelled when
+  nothing newer from anyone but you is left. A notice's notification goes when its `ts` (kept in its extras) is not
+  newer. A clear without `upTo` cancels it whole, and a reminder or the quiet hours' summary (`keep`) stays whatever
+  was read. Opening the conversation in the app cancels it whole too, and tells the system it is on screen
+  (`setLocusContext`).
 - **Reply** sends through the hub, then re-posts the notification (recovered from the one showing) with what you wrote
   as its newest message, quietly, and reports the shortcut as used. On failure it says why, with what you typed.
 
@@ -215,7 +219,7 @@ Conversations section.
 - **At most 20 rows.** A 21st takes the place of the row that comes last; if it would be last itself it is not shown
   (and reports no `shown`).
 - **A chat shows once.** An alert or a Conversation cancels the chat's list row, and a list row cancels the chat's
-  conversation notification. A clear cancels whichever is there. The hub sends a push at the highest tier among the
+  conversation notification. A clear takes what was read off whichever is there. The hub sends a push at the highest tier among the
   unread lines it carries, so a list message arriving in a chat whose alert or Conversation is still unread comes as
   that tier and only adds a line to the row that is there.
 - **The summary's upkeep.** It is posted with the first row and re-posted on every change, from the rows the system

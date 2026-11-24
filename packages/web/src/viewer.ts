@@ -9,5 +9,7 @@ export interface ViewerImage {
   name?: string | null;
   width?: number | null;
   height?: number | null;
+  /** Fit it to the screen even where that enlarges it: a profile's picture, often smaller than the screen. */
+  fill?: boolean;
 }
 export const viewer = signal<{ images: ViewerImage[]; index: number } | null>(null);

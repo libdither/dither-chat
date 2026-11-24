@@ -8,6 +8,7 @@
  * - `timelineRev(key)`, one per timeline: its messages, its loading and what replies in it quote.
  * - `mailRev`, mail (docs/mail.md): its accounts, threads, lists and what the reader has loaded. Mail moving leaves the
  *   chat lists alone, and chat moving leaves mail alone.
+ * - `presenceRev`, status dots (presence.ts): only the dots read it.
  * - `minute`, the clock: what says how long ago something was (`readMinute`).
  *
  * Changes are counted at once (`dataVersion`, which model.ts memoizes on); the signals move once the task that made
@@ -18,6 +19,8 @@ import { batch, effect, signal, untracked, type Signal } from '@preact/signals';
 export const rev = signal(0);
 export const metaRev = signal(0);
 export const mailRev = signal(0);
+/** Status dots: moves when `db.presence` changes (presence.ts). Only the dots read it, so lists stay as they are. */
+export const presenceRev = signal(0);
 const timelineRevs = new Map<string, Signal<number>>();
 
 let version = 0;

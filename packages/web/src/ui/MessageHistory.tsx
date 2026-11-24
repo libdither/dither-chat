@@ -1,59 +1,100 @@
 /**
- * One message's history (docs/history.md): its versions, oldest first; pins, and reactions made and taken back, by
- * whom and when (docs/reactions.md "When"); and for your own, who got, read and played it. From "(edited)", the ticks
- * on your message, or History in its menu.
+ * One message's history as one list (docs/history.md "A message's history"), latest at the bottom: what it says now
+ * on top, then from when it was sent, each edit as the words it took out and put in, reactions made and taken back
+ * (docs/reactions.md "When"), pins, and for your own who got and read it. On a computer it hangs from what opened it;
+ * on a phone it is a page of its own. Rows and focus: messageHistory.ts. A chunk of its own, loaded the first time one
+ * opens (MessageHistoryLazy.tsx).
  */
-import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { useEffect, useState } from 'preact/hooks';
-import { fullTime } from '../format.ts';
+import { createPortal } from 'preact/compat';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { clock, dayLabel, fullTime, sameDay } from '../format.ts';
+import { changesInContext, historyItems, type HistoryItem } from '../historyRows.ts';
+import { historyOf, type HistoryFocus } from '../messageHistory.ts';
 import { identityName, plainBody } from '../model.ts';
+import { phone, useLayer } from '../phone.ts';
 import { whenTitle } from '../reactions.ts';
 import { api, db, isSelfIdentity, rev } from '../state.ts';
-import { Avatar, Modal } from './bits.tsx';
+import { wordDiff, type Part } from '../wordDiff.ts';
+import { Avatar } from './bits.tsx';
 import { Icon } from './icons.tsx';
-import { Glyph } from './Reactions.tsx';
 import { Loading } from './Loader.tsx';
+import { Glyph } from './Reactions.tsx';
+import './MessageHistory.css';
 
-export const historyOf = signal<P.MessageView | null>(null);
+import { STATE } from './Ticks.tsx';
+const TITLE: Record<HistoryFocus, string> = { all: 'History', edits: 'Edits', reactions: 'Reactions' };
 
 export function MessageHistoryLayer() {
-  const m = historyOf.value;
-  return m ? (
-    <Modal title="Message history" onClose={() => (historyOf.value = null)}>
-      <MessageHistory m={m} />
-    </Modal>
-  ) : null;
+  const open = historyOf.value;
+  return open ? <HistoryLayer key={open.m.id} m={open.m} focus={open.focus} anchor={open.anchor} /> : null;
 }
 
-/** Whether there is anything to show beyond the message itself: a reaction with a time counts. */
-export const hasHistory = (m: P.MessageView) => !!(m.edits || m.events || m.receipts || m.reactions.some((r) => r.at || r.seenAt));
-
-/** One line of "What happened to it". `seen`: the time is when the hub heard, not the network's own. */
-interface Happening {
-  at: number;
-  seen?: boolean;
-  actorId?: string;
-  what: 'reacted' | 'took back' | 'cleared' | 'pinned' | 'unpinned';
-  key?: string;
+/** A computer's popover by what opened it, or a phone's page; Escape and back close it (phone.ts layers). */
+function HistoryLayer({ m, focus: first, anchor }: { m: P.MessageView; focus: HistoryFocus; anchor?: DOMRect }) {
+  const [focus, setFocus] = useState(first);
+  const close = () => (historyOf.value = null);
+  useLayer(close);
+  useLayoutEffect(() => {
+    const k = (e: KeyboardEvent) => e.key === 'Escape' && (e.preventDefault(), close());
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  }, []);
+  const box = useRef<HTMLDivElement>(null);
+  const page = phone.value;
+  // The side it first opened on, so growing (its rows loading, or switching to all of it) keeps it there rather than
+  // jumping.
+  const side = useRef<'below' | 'above' | null>(null);
+  // Below what opened it when there is room for most of it, else above; inside the window either way, placed again
+  // whenever its size changes (it first draws as "Loading…", far shorter than its rows).
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el || page) return;
+    const place = () => {
+      const { width: w, height: h } = el.getBoundingClientRect();
+      if (!anchor) {
+        el.style.left = `${Math.max(8, (innerWidth - w) / 2)}px`;
+        el.style.top = `${Math.max(8, (innerHeight - h) / 3)}px`;
+        return;
+      }
+      el.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, anchor.left))}px`;
+      const below = innerHeight - anchor.bottom - 14, above = anchor.top - 14;
+      side.current ??= below >= 300 || below >= above ? 'below' : 'above';
+      el.style.top = `${side.current === 'below' ? Math.max(8, Math.min(anchor.bottom + 6, innerHeight - h - 8)) : Math.max(8, anchor.top - h - 6)}px`;
+    };
+    place();
+    const ro = new ResizeObserver(place);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [page, anchor]);
+  const body = <MessageHistory m={m} focus={focus} onAll={() => setFocus('all')} page={page} />;
+  if (page)
+    return createPortal(
+      <div class="mh-page" role="dialog" aria-modal="true" aria-label="Message history" ref={box}>
+        <header class="mh-page-head">
+          <button class="icon-btn" onClick={close} aria-label="Back">
+            <Icon name="back" />
+          </button>
+          <h2>{focus === 'all' ? 'Message history' : TITLE[focus]}</h2>
+        </header>
+        {body}
+      </div>,
+      document.body,
+    );
+  return createPortal(
+    <div class="mh-layer" onMouseDown={(e) => e.target === e.currentTarget && close()}>
+      <div class="mh-pop" role="dialog" aria-label="Message history" ref={box}>
+        {body}
+      </div>
+    </div>,
+    document.body,
+  );
 }
 
-/** Pins, reactions made (those there now and those taken back), and reactions taken back, in the order they happened. */
-function happenings(h: P.MessageHistoryView): Happening[] {
-  const out: Happening[] = (h.reactions ?? []).map((r) => ({ at: r.at, seen: r.seen, actorId: r.identityId, what: 'reacted', key: r.key }));
-  for (const e of h.events) {
-    if (e.kind === 'pin' || e.kind === 'unpin') out.push({ at: e.at, actorId: e.actorId, what: e.kind === 'pin' ? 'pinned' : 'unpinned' });
-    if (e.kind !== 'unreact') continue;
-    const d = (e.data ?? {}) as Partial<P.UnreactData>;
-    if (d.added != null) out.push({ at: d.added, seen: d.addedSeen, actorId: e.actorId, what: 'reacted', key: d.key });
-    out.push({ at: e.at, seen: e.seen, actorId: e.actorId, what: d.cleared ? 'cleared' : 'took back', key: d.key });
-  }
-  return out.sort((a, b) => a.at - b.at);
-}
+const nameOf = (id?: string | null) => (!id ? 'Someone' : isSelfIdentity(id) ? 'You' : (db.persons.get(db.identities.get(id)?.personId ?? '')?.name ?? identityName(id)));
 
-const STATE: Record<P.ReceiptState, string> = { delivered: 'Delivered to', read: 'Read by', played: 'Played by' };
-
-export function MessageHistory({ m }: { m: P.MessageView }) {
+/** The list itself: what it says now, then its history from the start, scrolled to the latest. */
+function MessageHistory({ m, focus, onAll, page }: { m: P.MessageView; focus: HistoryFocus; onAll?: () => void; page?: boolean }) {
   rev.value;
   const [h, setH] = useState<P.MessageHistoryView | null>(null);
   useEffect(() => {
@@ -62,92 +103,211 @@ export function MessageHistory({ m }: { m: P.MessageView }) {
         for (const i of x.identities) if (!db.identities.has(i.id)) db.identities.set(i.id, i);
         setH(x);
       },
-      () => setH({ versions: [], events: [], reactions: [], receipts: [], identities: [] }),
+      () => setH({ versions: [{ body: m.body, at: m.editedTs ?? m.ts }], events: [], reactions: [], receipts: [], identities: [] }),
     );
   }, [m.id, m.body, m.events, m.reactions, m.receipts?.read, m.receipts?.delivered]);
-  if (!h) return <Loading label="Loading…" />;
-  const name = (id?: string) => (!id ? 'Someone' : isSelfIdentity(id) ? 'You' : (db.persons.get(db.identities.get(id)?.personId ?? '')?.name ?? identityName(id)));
-  // Each person once per state, the first time.
-  const by = new Map<P.ReceiptState, { identityId: string; at: number }[]>();
-  for (const r of h.receipts) by.set(r.state, [...(by.get(r.state) ?? []), r]);
-  const happened = happenings(h);
-  // A custom emoji still on the message draws as itself; one taken back from it, by its name.
-  const emojiOf = (key?: string) => m.reactions.find((r) => r.key === key)?.emoji;
+  const items = useMemo(() => (h ? historyItems(m, h, focus) : []), [h, focus, m]);
+  const list = useRef<HTMLDivElement>(null);
+  // The latest is at the bottom: start there, and again when the list changes under you.
+  useLayoutEffect(() => {
+    const el = list.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [items]);
+  const last = h?.versions.at(-1);
+  const edited = (h?.versions.length ?? 0) > 1;
   return (
-    <div class="msg-history">
-      {h.versions.length > 1 && (
-        <section>
-          <h4>Versions</h4>
-          {h.versions.map((v, i) => (
-            <div class={`edit-version ${i === h.versions.length - 1 ? 'now' : ''}`}>
-              <span class="edit-when">
-                {i === h.versions.length - 1 ? 'Now' : i === 0 ? 'First' : `Edit ${i}`}
-                {v.at ? ` · ${fullTime(v.at)}` : ''}
-              </span>
-              <span class="edit-body">{plainBody(v.body, m.network) || 'Empty'}</span>
+    <div class={`mh ${page ? 'page' : ''}`}>
+      <div class="mh-now">
+        {page ? (
+          <div class="mh-now-who">
+            <Face id={m.authorId} size={36} />
+            <div>
+              <b>{nameOf(m.authorId)}</b> <time>{fullTime(m.ts)}</time>
+              <p>{plainBody(m.body, m.network) || 'Empty'}</p>
             </div>
-          ))}
-        </section>
+          </div>
+        ) : (
+          <>
+            <span class="mh-meta">{edited && last?.at ? `Now · edited ${clock(last.at)}` : 'Now'}</span>
+            <p>{plainBody(m.body, m.network) || 'Empty'}</p>
+          </>
+        )}
+      </div>
+      {/* Opened on a part of it: which, and the way to all of it. All of it needs no heading. */}
+      {focus !== 'all' && (
+        <div class="mh-bar">
+          <h4>{TITLE[focus]}</h4>
+          {onAll && (
+            <button class="link" onClick={onAll}>
+              All history
+            </button>
+          )}
+        </div>
       )}
-      {happened.length > 0 && (
-        <section>
-          <h4>What happened to it</h4>
-          {happened.map((e) => {
-            const glyph = <Glyph k={e.key ?? ''} emoji={emojiOf(e.key)} size={15} />;
-            return (
-              <div class="msg-history-event">
-                <Icon name={e.what === 'pinned' || e.what === 'unpinned' ? 'pin' : 'smile'} size={13} />
-                <span>
-                  <b>{name(e.actorId)}</b>{' '}
-                  {e.what === 'pinned' ? 'pinned it' : e.what === 'unpinned' ? 'unpinned it' : e.what === 'cleared' ? <>had {glyph} removed by a moderator</> : e.what === 'reacted' ? <>reacted {glyph}</> : <>took back {glyph}</>}
-                </span>
-                <time title={e.seen ? whenTitle({ at: e.at, seen: true }) : undefined}>
-                  {e.seen ? '~' : ''}
-                  {fullTime(e.at)}
-                </time>
-              </div>
-            );
-          })}
-        </section>
-      )}
-      {(['played', 'read', 'delivered'] as P.ReceiptState[]).map((s) => {
-        const list = by.get(s);
-        return list?.length ? (
-          <section>
-            <h4>
-              {STATE[s]} {list.length}
-            </h4>
-            {list.map((r) => {
-              const i = db.identities.get(r.identityId);
-              const p = i?.personId ? db.persons.get(i.personId) : null;
-              return (
-                <div class="msg-history-event">
-                  <Avatar id={p?.id ?? r.identityId} name={name(r.identityId)} url={p?.avatar ?? i?.avatar} size={20} />
-                  <span>{name(r.identityId)}</span>
-                  <time>{fullTime(r.at)}</time>
-                </div>
-              );
-            })}
-          </section>
-        ) : null;
-      })}
-      {h.versions.length <= 1 && !happened.length && !h.receipts.length && <p class="edit-loading">Nothing kept about this message yet.</p>}
+      <div class="mh-list" ref={list}>
+        {!h ? <Loading label="Loading…" /> : items.length ? <Rows m={m} items={items} page={page} /> : <p class="mh-empty">Nothing kept about this message yet.</p>}
+      </div>
     </div>
   );
 }
 
-/** Your message's ticks: delivered ✓, read ✓✓ (coloured), played ▶. */
-export function Ticks({ m }: { m: P.MessageView }) {
-  const r = m.receipts;
-  if (!r || !isSelfIdentity(m.authorId)) return null;
-  const top: P.ReceiptState = r.played ? 'played' : r.read ? 'read' : 'delivered';
-  const n = r[top];
-  const who = r.latest.state === top ? (db.persons.get(db.identities.get(r.latest.identityId)?.personId ?? '')?.name ?? identityName(r.latest.identityId)) : null;
-  const title = n === 1 && who ? `${STATE[top]} ${who}, ${fullTime(r.latest.at)}` : `${STATE[top]} ${n}${r.delivered > n ? `, delivered to ${r.delivered}` : ''}`;
+function Rows({ m, items, page }: { m: P.MessageView; items: HistoryItem[]; page?: boolean }) {
+  // A custom emoji still on the message draws as itself; one taken back from it, by its name.
+  const glyph = (key: string) => <Glyph k={key} emoji={m.reactions.find((r) => r.key === key)?.emoji} size={15} />;
+  const out = [];
+  // Days only where there is more than today to tell apart.
+  const now = Date.now();
+  const days = items.some((it) => !sameDay(it.at, now));
+  let day: number | null = null;
+  for (const it of items) {
+    if (days && (day === null || !sameDay(day, it.at))) {
+      day = it.at;
+      out.push(<div class="mh-day">{dayLabel(it.at)}</div>);
+    }
+    out.push(<Row it={it} glyph={glyph} m={m} face={page ? 20 : 16} />);
+  }
+  return <>{out}</>;
+}
+
+function Time({ at, seen, from }: { at: number; seen?: boolean; from?: number }) {
+  const span = from != null && clock(from) !== clock(at) ? `${clock(from)}–${clock(at)}` : clock(at);
   return (
-    <button class={`msg-ticks ${top}`} title={title} aria-label={title} onClick={() => (historyOf.value = m)}>
-      {top === 'played' ? <Icon name="play" size={11} /> : <Icon name={top === 'read' ? 'checks' : 'check'} size={13} />}
-      {n > 1 && <span>{n}</span>}
-    </button>
+    <time title={seen ? whenTitle({ at, seen: true }) : fullTime(at)}>
+      {seen ? '~' : ''}
+      {span}
+    </time>
+  );
+}
+
+function Row({ it, glyph, m, face }: { it: HistoryItem; glyph: (key: string) => preact.JSX.Element; m: P.MessageView; face: number }) {
+  const [open, setOpen] = useState(false);
+  switch (it.kind) {
+    case 'sent':
+      return (
+        <div class="mh-row">
+          <Icon name="send" size={14} />
+          <span class="mh-what">
+            <b>{nameOf(m.authorId)}</b> sent it
+          </span>
+          <Time at={it.at} />
+        </div>
+      );
+    case 'edit': {
+      const before = plainBody(it.before, m.network), after = plainBody(it.after, m.network);
+      const short = changesInContext(before, after);
+      // "Whole text" only where words were left out.
+      const cut = short.some((p) => p.k === 'gap');
+      return (
+        <div class="mh-row">
+          <Icon name="pencil" size={14} />
+          <span class="mh-what">
+            <b>{nameOf(it.actorId)}</b> edited it
+            <span class="mh-text">
+              <Diff parts={open ? wordDiff(before, after) : short} />
+              {/* At the end of the words, not a line of its own. */}
+              {cut && (
+                <button class="link mh-more" onClick={() => setOpen(!open)}>
+                  {open ? 'Less' : 'Whole text'}
+                </button>
+              )}
+            </span>
+          </span>
+          <Time at={it.at} />
+        </div>
+      );
+    }
+    case 'react':
+    case 'unreact':
+      return (
+        <div class={`mh-row ${it.kind === 'unreact' ? 'quiet' : ''}`}>
+          <Face id={it.actorId} size={face} />
+          <span class="mh-what">
+            {it.kind === 'react' ? (
+              <>
+                <b>{nameOf(it.actorId)}</b> reacted {glyph(it.key)}
+              </>
+            ) : it.cleared ? (
+              <>
+                <b>{nameOf(it.actorId)}</b> had {glyph(it.key)} removed by a moderator
+              </>
+            ) : (
+              <>
+                <b>{nameOf(it.actorId)}</b> took back {glyph(it.key)}
+              </>
+            )}
+          </span>
+          <Time at={it.at} seen={it.seen} />
+        </div>
+      );
+    case 'pin':
+    case 'unpin':
+      return (
+        <div class="mh-row">
+          <Icon name="pin" size={14} />
+          <span class="mh-what">
+            <b>{nameOf(it.actorId)}</b> {it.kind === 'pin' ? 'pinned it' : 'unpinned it'}
+          </span>
+          <Time at={it.at} />
+        </div>
+      );
+    case 'before':
+      return (
+        <div class="mh-row">
+          <Icon name="smile" size={14} />
+          <span class="mh-what">
+            Reactions already there when it arrived
+            <span class="mh-pills">
+              {it.reactions.map((r) => (
+                <span class="mh-pill" title={nameOf(r.actorId)}>
+                  <Face id={r.actorId} size={16} />
+                  {glyph(r.key)}
+                </span>
+              ))}
+              {it.more > 0 && <span class="mh-pill">+{it.more} not named</span>}
+            </span>
+          </span>
+        </div>
+      );
+    case 'receipts': {
+      const names = it.who.map((w) => nameOf(w.identityId));
+      const shown = it.state === 'delivered' ? `${it.who.length}` : names.length <= 3 ? and(names) : `${names.slice(0, 2).join(', ')} and ${names.length - 2} others`;
+      return (
+        <div class="mh-row">
+          <Icon name={it.state === 'played' ? 'play' : it.state === 'read' ? 'eye' : 'check'} size={14} />
+          <span class="mh-what">
+            <button class="mh-who" onClick={() => setOpen(!open)} aria-expanded={open}>
+              {STATE[it.state]} <b>{shown}</b>
+            </button>
+            {open && (
+              <span class="mh-people">
+                {it.who.map((w) => (
+                  <span>
+                    <Face id={w.identityId} size={18} />
+                    {nameOf(w.identityId)} <time>{clock(w.at)}</time>
+                  </span>
+                ))}
+              </span>
+            )}
+          </span>
+          <Time at={it.at} from={it.from} />
+        </div>
+      );
+    }
+  }
+}
+
+const and = (xs: string[]) => (xs.length <= 1 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
+
+function Face({ id, size = 20 }: { id?: string | null; size?: number }) {
+  const i = db.identities.get(id ?? '');
+  const p = i?.personId ? db.persons.get(i.personId) : null;
+  return <Avatar id={p?.id ?? id ?? '?'} name={p?.name ?? (id ? identityName(id) : '?')} url={p?.avatar ?? i?.avatar} size={size} />;
+}
+
+function Diff({ parts }: { parts: (Part | { k: 'gap' })[] }) {
+  return (
+    <>
+      {parts.map((p, i) => (p.k === 'gap' ? <span class="mh-gap">{i === 0 ? '… ' : i === parts.length - 1 ? ' …' : ' … '}</span> : p.k === '=' ? p.t : p.k === '-' ? <del>{p.t}</del> : <ins>{p.t}</ins>))}
+    </>
   );
 }

@@ -1,0 +1,60 @@
+/* A channel stream's chunk (ui/Stream.tsx): the line over its box says which thread a message goes to. */
+.topic-chip-line {
+  display: inline;
+}
+.topic-chip {
+  max-width: 320px;
+}
+.topic-chip-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.topic-chip-new {
+  color: var(--accent);
+}
+.topic-card {
+  padding: 6px;
+  gap: 4px;
+}
+.topic-find {
+  flex: none;
+  font-size: 12.5px;
+}
+.topic-rows {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  min-height: 0;
+}
+.topic-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.topic-row.hi {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.topic-row.on {
+  font-weight: 600;
+  color: var(--text);
+}
+.topic-row-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.topic-none,
+.topic-problem {
+  padding: 5px 8px;
+  color: var(--text-faint);
+}

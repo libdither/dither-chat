@@ -48,7 +48,6 @@ Two ways to go to the app's places with the keyboard
 | -------- | ------ | -------------- |
 | Inbox    | I      | 1              |
 | People   | P      | 2              |
-| Mail     | M      | 3              |
 | Calendar | C      | 4              |
 | Feed     | F      | 5              |
 | For you  | Y      |                |
@@ -66,13 +65,15 @@ Two ways to go to the app's places with the keyboard
   a place's letter hits the browsers' own keys: I (developer tools), C (inspect), M (responsive design), P
   (Firefox's private window) and N, T and W, which a page can't take at all. Super belongs to the desktop
   elsewhere (GNOME, KDE and Windows open docked apps with Super+number).
-- A place this hub doesn't offer (Mail without mail access, the Calendar without its account, the Feed without an
-  account with posts) has no key, and the numbers don't move up to fill its gap.
+- A place this hub doesn't offer (the Calendar without its account, the Feed without an account with posts) has no
+  key, and the numbers don't move up to fill its gap. 3 was Mail's until mail became chats (docs/mail.md "Mail as
+  chats"); it stays unused.
 - The calendar's frame passes its keys on, so both ways work with the calendar in focus, and the calendar's own
   letters (M for month, C for a new event, A for the agenda) don't take the letter that followed a G.
 - Each place's tooltip on the rail lists its keys, and the buttons carry their chord in `aria-keyshortcuts`
   (which has no way to write a G then a letter).
 - Ctrl+K (docs/palette.md) still jumps to anything else.
+- N, with a chat open, goes to the next unread topic or thread, as Zulip's N does ([threads.md](threads.md#next-unread-and-reading-a-channel-at-once)).
 
 `bun scripts/verify-place-keys.ts <demo hub>` presses them in headless Chromium with real key input: G then P, G
 then I and G then S, a stray key after G, G typed in a chat's box, Ctrl+Shift+2 from the box, Alt+2 doing nothing,
@@ -90,6 +91,12 @@ except for its own minimize, maximize and close buttons, and the app draws the r
 `env(titlebar-area-x/y/width/height)`, its empty parts move the window (`app-region: drag`; double-click
 usually maximizes), and its buttons opt out (`app-region: no-drag`). The chevron turns it back off; Chromium
 remembers the choice per app. Firefox and Safari ignore `display_override` and use `standalone`.
+
+Whatever covers the whole window (the picture viewer, an account's live view, stories, the camera) keeps its top
+bar at the very top in overlay mode and leaves the window's buttons their corner: the bar is padded by the width
+outside `env(titlebar-area-x/width)`, so its own close button sits just beside the window's, never under it. Its
+empty parts move the window, like the title bar's. The file viewer, full-window on a narrow window, starts below
+`env(titlebar-area-height)` instead.
 
 What is not possible, and why there are no buttons of our own: in overlay mode the browser always draws its
 window buttons, and they cannot be hidden or restyled beyond following `theme-color`. The web has no
@@ -134,7 +141,8 @@ Escape is the back button of a keyboard (packages/web/src/escape.ts). One Escape
    How it sorts, search and Settings go where their back button goes (pages.ts `wayBack`), or for search and Settings,
    where you came from.
 
-A list (the inbox, People, a server, a folder, the calendar, the Feed, Mail) has nowhere to go and stays. Neither does a
+A list (the inbox, People, a server, a folder, the calendar, the Feed) has nowhere to go and stays; a mail list goes to
+the Inbox chip (docs/inbox.md "Mail lists"). Neither does a
 page while the cursor is in text being written (a message, a bio): a half-written message stays on screen. A one-line
 box is no such place, so Escape in search's box leaves search once its suggestions are closed.
 

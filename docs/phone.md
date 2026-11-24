@@ -42,7 +42,8 @@ the desktop is unchanged apart from the fixes listed below.
 | Swipe right, tap the page, or back | The details panel | Closes it |
 | Swipe a message left | Conversation | Reply to it. A tick when it crosses the line |
 | Long-press | A message | Its action sheet (below) |
-| Long-press | A reaction | Who reacted |
+| Long-press | A reaction | The message's reactions in its history, a page of its own, with All history a tap away ([history.md](history.md) "A message's history") |
+| Tap | The underlined words an edit put in | The message's edits in its history, the same page |
 | Long-press, or hold and drag | A rail entry, a row, a card in All communities | The arrange sheet; or drag to reorder and make folders |
 | Drag down | A sheet's grabber or header; anywhere in it once scrolled to its top | Dismisses it. A short drag springs back |
 | Pull down | The top of a list or For you | Reloads everything from the hub, or reconnects; on For you, takes a fresh snapshot too |
@@ -91,7 +92,8 @@ resizes. The keyboard's height is remembered per orientation (`dither-chat:keybo
 its place (`keyboardroom.ts`). Fields are 16px
 so iOS does not zoom into them. The notch and the home indicator are kept clear with the safe-area insets;
 while the keyboard is up the bottom inset is dropped and the tab bar steps aside. On a touch keyboard Enter makes a new line (there
-is no Shift+Enter) and the send button sends; Ctrl+Enter also sends.
+is no Shift+Enter) and the send button sends, leaving the keyboard up for the next message (tapping it never takes
+the focus from the box); Ctrl+Enter also sends.
 
 **The message box** grows with the text, as Discord's does, up to about five lines on a phone and never more than
 40% of what is visible above the keyboard; past that it scrolls inside. It shrinks as text is deleted and is one
@@ -136,7 +138,8 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Exact time of a grouped message | Hover | **Hidden** | Sheet header |
 | Which account a message came through, its encryption warning, the author's handle | Tooltips | **Hidden** | Sheet header; profile |
 | Which tier a message landed in and why, and the two marks | The bell among its hover actions; its menu | **Invisible pill** for silent and digest | Sheet: the reasons and both marks |
-| Who reacted | Right-click a pill | Long-press | Long-press, as a sheet |
+| Who reacted | Right-click a pill | View Reactions in the long-press sheet | View Reactions in the long-press sheet |
+| A message's history: edits, reactions, pins, receipts | "(edited)", the underlined words, the ticks, a reaction, Message History in its menu: a click or right-click (a reaction: right-click); a popover by what opened it | The same, as a page | The same, as a page; a long-pressed pill opens it on its reactions |
 | Reaction picker, skin tone, super reactions, search | Popover | Sheet without drag | Sheet that drags away |
 | Reply, edit, cancel either | Hover bar; Escape | Sheet; X | Swipe or sheet; X |
 | New line in a message | Shift+Enter | **None**: Enter always sent | Enter |
@@ -154,7 +157,7 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Theme, demo accounts, reset demo | Settings | More tab | You tab |
 | Any one Settings section (Message history, Adversarial features) without scrolling past the rest | Section list beside Settings | More tab, scrolled | Sections in Settings' header: a sheet of the sections, two taps |
 | Adversarial features' warning and its Yes | Dialog | Not there yet | Bottom sheet whose words scroll, Yes pinned at its bottom |
-| Toasts, open the conversation from one | Bottom right | Covered the composer | At the top; tap to open, flick to dismiss |
+| Toasts, open the conversation from one | Bottom right, standing on the composer under it (`Toasts.tsx`); one about a chat closes when you leave it | Covered the composer | At the top; tap to open, flick to dismiss |
 | Unread and mention badges | Rail | None on the tabs | Rail, and the Home tab; You has a dot when an account needs you |
 | Collapse sections and categories | Click | Tap, under 44px | Tap, 40-44px |
 | Escape closes things | Keyboard; with nothing open, it goes back from the page (desktop.md "Escape and back") | Nothing | Back button, swipes, tap outside |

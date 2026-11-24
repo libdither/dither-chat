@@ -69,6 +69,13 @@ object Notifications {
     private const val LINE = "org.libdither.chat.line"
     /** How many rows the list's summary speaks of, kept in its extras. */
     private const val COUNT = "org.libdither.chat.count"
+    /** The newest message a notification shows, in the hub's milliseconds (the push's `ts`, else its last line's). */
+    private const val TS = "org.libdither.chat.ts"
+    /** A list row's lines and their times, kept in its extras so a clear can drop those already read. */
+    private const val LINES = "org.libdither.chat.lines"
+    private const val LINE_TS = "org.libdither.chat.lineTs"
+    /** A reminder or the quiet hours' summary (the push's `keep`): no read closes it, only a tap or a swipe. */
+    private const val KEEP = "org.libdither.chat.keep"
     /** How long this app's own note of what it posted or cancelled stands in for the system's list. */
     private const val SETTLE_MS = 5_000L
     /** A time in milliseconds is taken from this for the sort key, so that the newer comes first; fourteen digits. */
@@ -102,7 +109,8 @@ object Notifications {
     fun show(c: Context, d: JSONObject) {
         channels(c)
         // Read on some device: its notification goes, quietly, and that is no outcome of the notification's own.
-        d.optString("clear").ifEmpty { null }?.let { return clear(c, it) }
+        // Only what was read: a newer message that came after the read stays (`upTo`, docs/notifications.md).
+        d.optString("clear").ifEmpty { null }?.let { return clear(c, it, if (d.opt("upTo") is Number) d.getLong("upTo") else null) }
         val conv = d.optString("conversationId").ifEmpty { null }
         val inbox = d.optBoolean("inbox")
         val test = d.optBoolean("test")
@@ -139,7 +147,7 @@ object Notifications {
                 // Not a conversation: no shortcut, no Conversations section. One plain notification per group (tagged
                 // with it, so the hub's clear takes it away), sounding only when the hub says so.
                 val look = Looks.of(app, d.optString("network"), d.optString("icon").ifEmpty { null }, title)
-                post(app, conv ?: "notice:$notice", title, d.optString("body"), hash, nid = nid, device = device, look = look, quiet = !d.optBoolean("alert", true), marks = marks)
+                post(app, conv ?: "notice:$notice", title, d.optString("body"), hash, nid = nid, device = device, look = look, quiet = !d.optBoolean("alert", true), marks = marks, ts = newest(d), keep = d.optBoolean("keep"))
                 true
             } else if (conv != null) {
                 conversation(app, conv, d, tier, hash, replyTo, canReply, nid, device, marks)
@@ -213,6 +221,20 @@ object Notifications {
         }
         return Marks(id, mail, offered)
     }
+
+    /** The newest message a push shows: the hub's `ts`, else its last line's (as sw.js `newest`); null without either. */
+    internal fun newest(d: JSONObject): Long? {
+        if (d.opt("ts") is Number) return d.getLong("ts")
+        val lines = d.optJSONArray("lines") ?: return null
+        val last = lines.optJSONObject(lines.length() - 1) ?: return null
+        return if (last.opt("ts") is Number) last.getLong("ts") else null
+    }
+
+    /**
+     * Which of a notification's lines, by their times, a read up to `upTo` leaves: those newer than it. None without
+     * `upTo` (a read here, or a clear from a hub that sends none): the whole notification goes.
+     */
+    internal fun unreadAfter(ts: LongArray, upTo: Long?): List<Int> = if (upTo == null) emptyList() else ts.indices.filter { ts[it] > upTo }
 
     /** One message in a notification, from the payload's `lines`. */
     internal class Line(val author: String, val key: String, val body: String, val ts: Long)
@@ -310,6 +332,10 @@ object Notifications {
         // Not even a new one may sound: a notification in a group that leaves alerting to the group's summary is
         // muted, and this group has none. setSilent (Android 12+) does exactly this; this also works on 10 and 11.
         if (!alert) b.setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY)
+        b.addExtras(Bundle().apply {
+            newest(d)?.let { putLong(TS, it) }
+            putBoolean(KEEP, d.optBoolean("keep"))
+        })
         actions(c, b, conv, nid, device, marks, canReply, replyTo, list = false)
         nm(c).notify(conv, ID, b.build())
     }
@@ -368,7 +394,11 @@ object Notifications {
             .setGroup(LIST_GROUP)
             .setSortKey(row.sort)
             .setOnlyAlertOnce(true)
-            .addExtras(Bundle().apply { putCharSequence(LINE, row.line) })
+            .addExtras(Bundle().apply {
+                putCharSequence(LINE, row.line)
+                putCharSequenceArray(LINES, chat.lines.map { chat.text(it) }.toTypedArray())
+                putLongArray(LINE_TS, chat.lines.map { it.ts }.toLongArray())
+            })
         // Several messages are a line each; one is shown whole.
         if (chat.lines.size > 1) b.setStyle(Notification.InboxStyle().also { s -> chat.lines.forEach { s.addLine(chat.text(it)) } })
         else b.setStyle(Notification.BigTextStyle().bigText(text))
@@ -486,7 +516,7 @@ object Notifications {
     }
 
     /** A notification that is neither a conversation's nor a list row: a test, a reply that did not go. */
-    fun post(c: Context, tag: String, title: String, body: String, hash: String?, sticky: Boolean = false, nid: String? = null, device: String? = null, look: Looks.Look? = null, quiet: Boolean = false, marks: Marks? = null) {
+    fun post(c: Context, tag: String, title: String, body: String, hash: String?, sticky: Boolean = false, nid: String? = null, device: String? = null, look: Looks.Look? = null, quiet: Boolean = false, marks: Marks? = null, ts: Long? = null, keep: Boolean = false) {
         val b = Notification.Builder(c, if (quiet) QUIET else MESSAGES)
             .setSmallIcon(look?.small ?: R.drawable.ic_notification)
             .setColor(look?.color ?: c.getColor(R.color.accent))
@@ -496,6 +526,10 @@ object Notifications {
             .setCategory(Notification.CATEGORY_MESSAGE)
             .setContentIntent(open(c, hash, tag.hashCode()))
             .setAutoCancel(!sticky)
+            .addExtras(Bundle().apply {
+                ts?.let { putLong(TS, it) }
+                putBoolean(KEEP, keep)
+            })
         look?.large?.let { b.setLargeIcon(Icon.createWithBitmap(it)) }
         actions(c, b, tag, nid, device, marks, false, null, list = false)
         nm(c).notify(tag, ID, b.build())
@@ -549,11 +583,66 @@ object Notifications {
 
     /**
      * A chat read here or elsewhere: its notification goes, whichever of the two it has, and the list's summary is
-     * brought up to date.
+     * brought up to date. With `upTo` (a clear push: where it was read, in the hub's time) only the lines at or
+     * before it go: one newer that came after the read stays, and so does the notification while any is left. A
+     * reminder or the quiet hours' summary (`keep`) stays whatever was read.
      */
-    fun clear(c: Context, chat: String) {
-        nm(c).cancel(chat, ID)
-        unlist(c, chat)
+    fun clear(c: Context, chat: String, upTo: Long? = null) {
+        val active = nm(c).activeNotifications
+        val shown = active.firstOrNull { it.tag == chat && it.id == ID }?.notification
+        if (shown == null || (!shown.extras.getBoolean(KEEP) && !trim(c, chat, shown, upTo))) nm(c).cancel(chat, ID)
+        val row = active.firstOrNull { it.tag == "list:$chat" && it.id == ID }?.notification
+        if (row == null || !trimRow(c, "list:$chat", row, upTo)) unlist(c, chat)
+    }
+
+    /**
+     * A conversation notification read up to `upTo`: its messages at or before it go, quietly. False when nothing
+     * newer from anyone but you is left, and it should go; true when it stays. One that is not a conversation's (a
+     * notice) stays only when it shows something newer, by its `ts`.
+     */
+    private fun trim(c: Context, tag: String, n: Notification, upTo: Long?): Boolean {
+        if (upTo == null) return false
+        val b = Notification.Builder.recoverBuilder(c, n)
+        val style = b.style as? Notification.MessagingStyle ?: return n.extras.containsKey(TS) && n.extras.getLong(TS) > upTo
+        val all = style.messages
+        val left = unreadAfter(LongArray(all.size) { all[it].timestamp }, upTo).map { all[it] }
+        // What you wrote from the shade is no reason to keep it.
+        val last = left.lastOrNull { it.senderPerson != null } ?: return false
+        if (left.size == all.size) return true
+        val s = Notification.MessagingStyle(style.user).setConversationTitle(style.conversationTitle).setGroupConversation(style.isGroupConversation)
+        left.forEach { s.addMessage(it) }
+        b.setStyle(s)
+            .setContentText(if (style.isGroupConversation) "${last.senderPerson?.name}: ${last.text}" else last.text)
+            .setWhen(last.timestamp)
+            .setOnlyAlertOnce(true)
+            .setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY)
+        nm(c).notify(tag, ID, b.build())
+        return true
+    }
+
+    /**
+     * A list row read up to `upTo`: its lines at or before it go. False when none is left, and the row should leave
+     * the list; true when it stays. A row posted before its lines' times were kept stays only when its newest line,
+     * its `when`, is newer. The row's line in the summary is its newest, which stays, so the summary needs nothing.
+     */
+    private fun trimRow(c: Context, tag: String, n: Notification, upTo: Long?): Boolean {
+        if (upTo == null) return false
+        val ts = n.extras.getLongArray(LINE_TS) ?: return n.`when` > upTo
+        val texts = n.extras.getCharSequenceArray(LINES)?.takeIf { it.size == ts.size } ?: return n.`when` > upTo
+        val left = unreadAfter(ts, upTo)
+        if (left.isEmpty()) return false
+        if (left.size == ts.size) return true
+        val lines = left.map { texts[it] }
+        val b = Notification.Builder.recoverBuilder(c, n)
+            .setContentText(lines.last())
+            .setWhen(left.maxOf { ts[it] })
+            .setOnlyAlertOnce(true)
+        if (lines.size > 1) b.setStyle(Notification.InboxStyle().also { s -> lines.forEach { s.addLine(it) } })
+        else b.setStyle(Notification.BigTextStyle().bigText(lines.single()))
+        b.extras.putCharSequenceArray(LINES, lines.toTypedArray())
+        b.extras.putLongArray(LINE_TS, left.map { ts[it] }.toLongArray())
+        synchronized(changes) { nm(c).notify(tag, ID, b.build()) }
+        return true
     }
 
     /**

@@ -1,11 +1,12 @@
 import type { Server, ServerWebSocket, Socket, WebSocketHandler } from 'bun';
 import { createHmac } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type * as P from '@dither-chat/protocol';
-import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, parseCursor } from './chats.ts';
-import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, sendBlocker, UPLOAD_CHUNK, WATCH_EVERY } from '@dither-chat/protocol';
+import type { DownloadAs } from '@dither-chat/protocol';
+import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, isEmailRoute, parseCursor } from './chats.ts';
+import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, downloadsAs, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, RUNGS, sendBlocker, UPLOAD_CHUNK, WATCH_EVERY } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { ACCOUNT_COLORS, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
@@ -24,9 +25,11 @@ import { type PaceConfig, READING, ReadingPace } from './readingpace.ts';
 import { realClock } from './clock.ts';
 import { NetSearch } from './netsearch.ts';
 import { linkPath, MediaArchiver } from './mediaarchive.ts';
-import { infoFor, MediaInfo } from './mediainfo.ts';
+import { infoFor, MediaInfo, mediaKey } from './mediainfo.ts';
 import { genericType } from './fileinfo.ts';
-import { mediaHeaders, SAFE_HEADERS, sniffMime } from './mediaheaders.ts';
+import { downloadDisposition, mediaHeaders, SAFE_HEADERS, sniffMime } from './mediaheaders.ts';
+import { findJxl, JxlServe, MediaPacker, PACKED_TYPES, takesJxl, type JxlTools } from './jxl.ts';
+import { JXL } from './jxlformat.ts';
 import { ImportSources } from './imports/sources.ts';
 import { Calls, type CallSocketData, type TurnConfig, type VoiceSocketData } from './calls.ts';
 import { type CallRoomSocketData, demoCallRoom } from './democalls.ts';
@@ -66,10 +69,15 @@ import type { MailHub } from './mail/index.ts';
 import type { Notices } from './notices/index.ts';
 import type { Approvals } from './approvals.ts';
 import { mailPeople } from './mail/people.ts';
+import { mailPlaces } from './mail/places.ts';
+import { personPage } from './mail/chatpage.ts';
+import { isRung, setPlaceRung } from './rungs.ts';
 import { Adding, profileLinksOf, requestHeld, requestViews } from './add.ts';
 import { feedRefusalFor, isFeed } from './feed.ts';
 import { Posts, PostsError } from './posts.ts';
 import { Follows, type FollowConfig } from './follows.ts';
+import { Events } from './events.ts';
+import { eventsOf } from './eventseen.ts';
 import { Timelines } from './timelines.ts';
 import { TranslateError, Translator } from './translate.ts';
 import { calendarOff, type CalendarLink } from './calendar.ts';
@@ -166,6 +174,13 @@ interface ServerOpts {
   scorecard?: Scorecard;
   /** Fetch every remote attachment into the media cache soon after it arrives (mediaarchive.ts). A real hub, not a demo. */
   archiveMedia?: boolean;
+  /**
+   * cjxl and djxl (jxl.ts, docs/files.md "JPEG XL"): to show a JPEG XL to a device that doesn't, and send one to a
+   * network as a JPEG or PNG. Asked once, when first needed. Absent: looked for on PATH and in DITHER_JXL_DIR.
+   */
+  jxl?: () => Promise<JxlTools | null>;
+  /** Store kept JPEGs and PNGs as JPEG XL (jxl.ts MediaPacker). A real hub, not a demo. */
+  packMedia?: boolean;
   /** How index jobs and the gap fill read (readingpace.ts): a person's pace unless told otherwise. */
   pace?: PaceConfig;
   /** Mail (mail/index.ts, docs/mail.md): its routes, its part of the bootstrap and of each flush. */
@@ -336,6 +351,12 @@ export class HubServer {
   private archiver?: MediaArchiver;
   /** What each kept file is (mediainfo.ts, docs/files.md). */
   readonly mediaInfo: MediaInfo;
+  /** cjxl and djxl, asked for once (jxl.ts). */
+  private readonly jxlTools: () => Promise<JxlTools | null>;
+  /** Pictures rebuilt for devices that don't show JPEG XL (jxl.ts). */
+  private readonly jxlServe: JxlServe;
+  /** Kept pictures stored as JPEG XL (jxl.ts). */
+  readonly packer?: MediaPacker;
   private typingGate = new TypingGate();
   private usage: UsageStore;
   /** Button counts (clicks.ts). */
@@ -354,6 +375,8 @@ export class HubServer {
   /** Posts you follow, read again for new replies (follows.ts, docs/feed.md "Following a post"). */
   readonly follows: Follows;
   readonly timelines: Timelines;
+  /** Events from Luma and Partiful: an event's page and RSVPs (events.ts, docs/events.md). */
+  readonly events: Events;
   /** Translating posts and messages: the network's own, or a translation server (translate.ts). */
   readonly translator: Translator;
   /** The account's own self, block, ignore and notes (accountself.ts). */
@@ -418,6 +441,10 @@ export class HubServer {
     });
     if (opts.archiveMedia)
       this.archiver = new MediaArchiver(store, join(opts.dataDir, 'media-cache'), (url, acc, from) => this.archiveOne(url, acc, from), (msg) => console.warn(msg), (acc, urls) => this.refreshUrls(acc, urls), (a) => this.mediaInfo.kept(a));
+    let tools: Promise<JxlTools | null> | null = null;
+    this.jxlTools = () => (tools ??= (opts.jxl ?? (() => findJxl()))().catch(() => null));
+    this.jxlServe = new JxlServe(this.jxlTools);
+    if (opts.packMedia) this.packer = new MediaPacker(store, join(opts.dataDir, 'media-cache'), this.jxlTools, (msg) => console.warn(msg));
     this.calls = new Calls(store, sup, { turn: opts.turn, pickAccount: (c, a) => this.pickAccount(c, a) });
     this.abouts = new Abouts({
       store,
@@ -430,7 +457,8 @@ export class HubServer {
     this.posts = new Posts({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), changed: () => this.flush(), fresh: (ids) => this.opts.onFresh?.(ids) });
     // Through the same pace: a check never reads while a job or the gap fill does on that account.
     this.follows = new Follows({ store, posts: this.posts, online: (a) => sup.online(a), pace, config: opts.follow, changed: () => this.flush(), log: (l) => console.warn(l) });
-    this.timelines = new Timelines({ store, posts: this.posts, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), files: (ids) => this.uploads.get(ids), changed: () => this.flush() });
+    this.events = new Events({ store, posts: this.posts, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
+    this.timelines = new Timelines({ store, posts: this.posts, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), files: (ids) => this.postFiles(ids), changed: () => this.flush() });
     this.translator = new Translator({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     this.self = new AccountSelf({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), quietHours: () => store.quietHours() });
@@ -607,6 +635,7 @@ export class HubServer {
     this.jobs.start();
     void this.archiver?.start();
     this.mediaInfo.start();
+    this.packer?.start();
     this.store.journal.prune();
     this.pruneTimer = setInterval(() => this.store.journal.prune(), 3_600_000);
     this.sendExtras.later.start();
@@ -627,16 +656,18 @@ export class HubServer {
     this.jobs.stop();
     this.archiver?.stop();
     this.mediaInfo.stop();
+    this.packer?.stop();
     this.imports.stop();
     this.matches.stop();
     this.collector.stop();
-    this.flush();
+    // The last frame carries presence held for coalescing too, so the journal a clean stop closes has it.
+    this.flush(true);
     this.server?.stop(true);
     this.plain?.stop(true);
     for (const s of this.extra) s.stop(true);
   }
 
-  flush() {
+  flush(all = false) {
     // What a flush writes (attention's folds, one transaction per conversation; the journal) is one transaction: one
     // commit, and each commit waits for the disk on the hub's thread. The frame goes out once it is committed.
     // Every 80 ms: a span only when there was something to send (docs/tracing.md).
@@ -651,7 +682,7 @@ export class HubServer {
       frame = timedWrite('flush', () =>
         this.store.db
           .transaction(() => {
-            events = this.gather();
+            events = this.gather(all);
             return this.record(events);
           })
           .immediate(),
@@ -665,6 +696,12 @@ export class HubServer {
       s.fail(e);
     }
     if (frame) for (const c of this.clients) c.send(frame);
+    // Status dots are written after the commit, so a failed one leaves them to write next time (presence.ts).
+    try {
+      this.store.presenceNow.save();
+    } catch (e) {
+      console.error('flush: presence not written; again next time', e);
+    }
     if (!events.length) s.drop();
     else {
       s.set({ events: events.length });
@@ -673,10 +710,10 @@ export class HubServer {
   }
 
   /** What changed since the last flush: the store's, mail's, and the scores they move. */
-  private gather(): P.ClientEvent[] {
+  private gather(all = false): P.ClientEvent[] {
     // What the store gives up here is no longer dirty: it goes out even when mail's or attention's part fails (a
     // locked database), or devices would miss it until their next bootstrap.
-    const events = this.store.flush();
+    const events = this.store.flush(all);
     if (events.length) noteWork('flush');
     // A picture came without its size: the archive keeps the new files now, and the hub reads their sizes as it does
     // (mediainfo.ts kept), instead of up to a minute later. A walk already under way gets to them by itself.
@@ -1009,7 +1046,7 @@ export class HubServer {
     if ((m = path.match(DAVE_FILE))) return this.daveFile(m[1]!, m[2]!);
     if (path === '/api/voice/sounds') return this.callSounds();
     if ((m = path.match(/^\/voice\/sounds\/([a-z0-9_]{1,40})\.mp3$/))) return this.callSound(m[1]);
-    if ((m = path.match(/^\/media\/([\w-]+)\/([\w-]+)$/))) return this.media(m[1], m[2], url.searchParams.get('a'));
+    if ((m = path.match(/^\/media\/([\w-]+)\/([\w-]+)$/))) return this.media(m[1], m[2], url.searchParams.get('a'), takesJxl(req), url.searchParams.get('as'), url.searchParams.get('name'));
     // Custom emoji inside message bodies: the id is all a body has, and it can only reach Discord's CDN.
     if ((m = path.match(/^\/emoji\/discord\/(\d+)(\.animated)?$/))) return this.fetchMedia(discordEmojiUrl(m[1], !!m[2]), null);
     if (path === '/api/errors' && req.method === 'POST') return this.clientError(req, clientIp(req, ip));
@@ -1249,7 +1286,7 @@ export class HubServer {
     if ((m = path.match(/^\/api\/persons\/([\w-]+)\/profile$/)) || (m = path.match(/^\/api\/identities\/([\w-]+)\/profile$/))) {
       const p = s.profile(path.startsWith('/api/persons/') ? { personId: m[1] } : { identityId: m[1] });
       const mail = p && mailPeople(this.opts.mail)?.profile(p.identityIds);
-      return p ? ok({ ...p, abouts: this.people.kept(p.identityIds), links: profileLinksOf(s.db, p.identityIds), ...((i) => (i.length ? { ignored: i } : {}))(ignoredOf(s.db, p.identityIds)), ...(mail ? { mail } : {}) }) : bad('nobody by that id', 404);
+      return p ? ok({ ...p, abouts: this.people.kept(p.identityIds), links: profileLinksOf(s.db, p.identityIds), ...((ev) => (ev.length ? { events: ev } : {}))(eventsOf(s, p.identityIds)), ...((i) => (i.length ? { ignored: i } : {}))(ignoredOf(s.db, p.identityIds)), ...(mail ? { mail } : {}) }) : bad('nobody by that id', 404);
     }
     // Their message count per server, estimated from what the hub holds (msgcount.ts, docs/profile.md).
     if ((m = path.match(/^\/api\/(persons|identities)\/([\w-]+)\/activity$/))) {
@@ -1275,7 +1312,9 @@ export class HubServer {
           : [{ kind: kind as P.ChangeView['target']['kind'], id: m[2] }];
       // ?fields=status,presence: only those; ?except=…: all but those.
       const list = (k: string) => url.searchParams.get(k)?.split(',').filter((f) => /^\w{1,32}$/.test(f)).slice(0, 20);
-      const changes = s.changes(targets, limit, { fields: list('fields'), except: list('except') });
+      // A person's page also has the roles they were given and lost in places.
+      const rolesOf = kind === 'identity' ? targets.map((t) => t.id) : undefined;
+      const changes = s.changes(targets, limit, { fields: list('fields'), except: list('except'), rolesOf });
       // Whoever they name, and whoever made them, for rendering.
       const named = new Set(changes.flatMap((c) => [c.identityId, c.actorId, c.target.kind === 'identity' ? c.target.id : undefined].filter((x): x is string => !!x)));
       return ok({ changes, identities: s.identitiesByIds(named) });
@@ -1389,7 +1428,7 @@ export class HubServer {
           else {
             const file = typeof b.avatar === 'string' ? this.uploads.get([b.avatar])?.[0] : undefined;
             if (!file) return bad('avatar: an upload id, or null to remove the picture');
-            change.avatar = file;
+            change.avatar = (await this.uploads.common([file], await this.jxlTools()))[0];
           }
         }
         // Pronouns, the banner and its colour (docs/account-self.md, Discord).
@@ -1402,7 +1441,7 @@ export class HubServer {
           else {
             const file = typeof b.banner === 'string' ? this.uploads.get([b.banner])?.[0] : undefined;
             if (!file) return bad('banner: an upload id, or null to remove it');
-            change.banner = file;
+            change.banner = (await this.uploads.common([file], await this.jxlTools()))[0];
           }
         }
         if (b.accent !== undefined) {
@@ -1504,6 +1543,17 @@ export class HubServer {
         const r = await this.posts.unpublish(network, m[2], typeof b.account === 'string' && b.account ? b.account : undefined);
         this.flush();
         return ok(r);
+      } catch (e) {
+        return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
+      }
+    }
+    // An event (events.ts, docs/events.md): its page with every guest the site showed, and an RSVP sent as an account.
+    if ((m = path.match(/^\/api\/events\/([a-z]+)\/([A-Za-z0-9_.~:-]{1,120})(\/rsvp)?$/)) && (m[3] ? method === 'POST' : method === 'GET')) {
+      try {
+        if (!m[3]) return ok(this.events.page(m[1], m[2], url.searchParams.get('account')));
+        const v = await this.events.rsvp(m[1], m[2], await body<unknown>());
+        this.flush();
+        return ok(v);
       } catch (e) {
         return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
       }
@@ -1613,7 +1663,7 @@ export class HubServer {
       const ref = chatRef(s, decodeURIComponent(m[1]));
       if (!ref) return bad('no such chat', 404);
       const id = chatIdOf(ref);
-      const convs = () => [...new Set(chatRoutes(s, ref).map((r) => r.conversationId))];
+      const convs = () => [...new Set(chatRoutes(s, ref).filter((r) => !isEmailRoute(r)).map((r) => r.conversationId))];
       if (!m[2] && method === 'GET') return ok(chatView(s, ref));
       if (!m[2] && method === 'PATCH') {
         const b = await body<{ route?: { conversationId?: unknown; accountId?: unknown } | null; name?: unknown }>();
@@ -1628,6 +1678,10 @@ export class HubServer {
         // A person's chat is their person timeline, so live events and sync (journal.ts) know it by the same key.
         const before = parseCursor(url.searchParams.get('before'));
         const limit = Math.min(num('limit') ?? 60, 200);
+        // With mail (docs/mail.md "Mail as chats"): their mail with you alone, merged in by the same cursor, and what
+        // they wrote in threads with others in the page's range.
+        const places = ref.kind === 'person' ? mailPlaces(this.opts.mail) : null;
+        if (ref.kind === 'person' && places?.chat) return ok(personPage(this.opts.mail!, places, s, ref.personId, before, limit));
         return ok(ref.kind === 'person' ? s.personTimeline(ref.personId, before, limit) : s.mergedTimeline([ref.conversationId], before, limit));
       }
       if (m[2] === '/messages' && method === 'POST') {
@@ -1644,6 +1698,21 @@ export class HubServer {
         return ok();
       }
       return bad('not found', 404);
+    }
+    // How much of a place a view shows, chosen (rungs.ts, docs/mail.md "Mail as chats"): null takes the choice back.
+    if (path === '/api/rungs' && method === 'PUT') {
+      const b = await body<{ view?: unknown; place?: unknown; rung?: unknown }>();
+      if (typeof b.view !== 'string' || !b.view || b.view.length > 300) return bad('view: a chat id');
+      if (typeof b.place !== 'string' || !b.place || b.place.length > 300) return bad('place: a place id');
+      if (b.rung !== null && !isRung(b.rung)) return bad(`rung: one of ${RUNGS.join(', ')}, or null`);
+      setPlaceRung(s.db, b.view, b.place, b.rung);
+      this.broadcast([{ t: 'rung', view: b.view, place: b.place, rung: b.rung }]);
+      return ok();
+    }
+    // A channel's stream: its own messages and every thread's, by time (docs/threads.md "The channel stream").
+    if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/stream$/)) && method === 'GET') {
+      if (!s.one('SELECT 1 FROM conversation WHERE id = ?', m[1])) return bad('no such conversation', 404);
+      return ok(s.mergedTimeline(s.channelStream(m[1]), parseCursor(url.searchParams.get('before')), Math.min(num('limit') ?? 60, 200)));
     }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)\/timeline$/))) return ok(s.personTimeline(m[1], parseCursor(url.searchParams.get('before')), Math.min(num('limit') ?? 60, 200)));
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/notify$/))) return ok(this.triage.effectiveLevel(m[1]));
@@ -1672,8 +1741,9 @@ export class HubServer {
           if (change?.key === 'avatar') {
             if (!req.headers.get('origin')) return bad('The picture is changed from the app itself', 403);
             upload = typeof change.value === 'string' ? change.value : null;
-            const file = upload ? this.uploads.get([upload])?.[0] : undefined;
-            if (!file) return bad('avatar: an upload id');
+            const got = upload ? this.uploads.get([upload])?.[0] : undefined;
+            if (!got) return bad('avatar: an upload id');
+            const [file] = await this.uploads.common([got], await this.jxlTools());
             if (!P_PICTURE_TYPES.includes(file.mime)) return bad('A picture is a PNG, JPEG, GIF or WebP image', 415);
             if (file.size > P_PICTURE_MAX) return bad(`A picture is at most ${P_PICTURE_MAX / 1024 / 1024} MB`, 413);
             change = { key: 'avatar', value: pathToFileURL(file.path).href };
@@ -2118,8 +2188,19 @@ export class HubServer {
       return ok();
     }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)$/)) && method === 'PATCH') {
-      const b = await body<{ name?: unknown; note?: unknown }>();
+      const b = await body<{ name?: unknown; note?: unknown; face?: unknown; picture?: unknown }>();
       if (b.name !== undefined) return bad(NICKNAME_MOVED);
+      // Shown by one of their accounts (its name and picture), or null to let the hub choose (docs/chats.md, Names);
+      // `picture`: another of theirs whose picture shows instead, or null for the face's (docs/profile.md).
+      const idOrNull = (v: unknown) => v === undefined || v === null || typeof v === 'string';
+      if (!idOrNull(b.face) || !idOrNull(b.picture)) return bad('face and picture are an identity id or null');
+      if (b.face !== undefined || b.picture !== undefined) {
+        if (!s.one('SELECT 1 FROM person WHERE id = ? AND is_self = 0', m[1])) return bad('no such person', 404);
+        // Both checked before either is saved, so a refused request changes nothing.
+        for (const id of [b.face, b.picture]) if (typeof id === 'string' && !s.one('SELECT 1 FROM identity WHERE id = ? AND person_id = ?', id, m[1])) return bad('that account is not theirs');
+        if (b.face !== undefined) s.setPersonFace(m[1], b.face as string | null);
+        if (b.picture !== undefined) s.setPersonPicture(m[1], b.picture as string | null);
+      }
       s.updatePerson(m[1], { ...(typeof b.note === 'string' ? { note: b.note } : {}) });
       // Kept on their networks too, where an account keeps notes (capability 'contactNotes').
       if (typeof b.note === 'string') this.people.pushPersonNote(m[1], b.note);
@@ -2558,7 +2639,9 @@ export class HubServer {
     const s = this.store;
     const ref = chatRef(s, chatId);
     if (!ref) return 'no such chat';
-    const routes = chatRoutes(s, ref);
+    // Mail is sent through POST /api/mail/send (docs/mail.md "Mail as chats"): a chat route by email is not one here.
+    if (b.route?.conversationId && isEmailRoute({ conversationId: b.route.conversationId })) return 'mail is sent through /api/mail/send';
+    const routes = chatRoutes(s, ref).filter((r) => !isEmailRoute(r));
     const asked = b.route ? routes.find((r) => r.conversationId === b.route!.conversationId && (!b.route!.accountId || r.accountId === b.route!.accountId)) : undefined;
     if (b.route && !asked) return 'that is not a route of this chat';
     const replied = !asked && b.replyTo ? s.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', b.replyTo) : null;
@@ -2622,6 +2705,8 @@ export class HubServer {
     const replyTo = b.replyTo ? s.nativeOf('message', b.replyTo)?.nativeId : undefined;
     let files = this.uploads.get(ids);
     if (!files) return bad('that upload has expired, attach the file again', 410);
+    // A JPEG XL goes as a JPEG or PNG: no chat network shows one as a picture (jxl.ts). Mail keeps the file as it is.
+    if (conv.network !== 'email') files = await this.uploads.common(files, await this.jxlTools());
     const acc = s.account(accountId)!;
     const accCaps = JSON.parse(acc.capabilities) as P.Capability[];
     const name = NETWORK_META[conv.network].name;
@@ -2813,11 +2898,93 @@ export class HubServer {
 
   // ---------------------------------------------------------------- media
 
-  private async media(sig: string, b64: string, accountId: string | null): Promise<Response> {
+  /** A post's pictures (timelines.ts), a JPEG XL as a JPEG or PNG: no feed network shows one (jxl.ts). */
+  private async postFiles(ids: string[]): Promise<P.OutgoingAttachment[] | null> {
+    const f = this.uploads.get(ids);
+    return f && this.uploads.common(f, await this.jxlTools());
+  }
+
+  /** `jxl`: the device shows JPEG XL (jxl.ts takesJxl). `as`: what it is, or a download in a chosen form (mediaAs). */
+  private async media(sig: string, b64: string, accountId: string | null, jxl = false, as: string | null = null, name: string | null = null): Promise<Response> {
     const raw = Buffer.from(b64, 'base64url').toString('utf8');
     const expect = createHmac('sha256', this.opts.secret).update(`${raw}|${accountId ?? ''}`).digest('base64url').slice(0, 16);
     if (sig !== expect) return new Response('bad signature', { status: 403 });
-    return this.fetchMedia(raw, accountId);
+    if (as !== null) return this.mediaAs(raw, accountId, as, name, jxl);
+    return this.fetchMedia(raw, accountId, undefined, jxl);
+  }
+
+  /**
+   * Where a kept file's bytes are and what it is: the media cache's file, or its packed `.jxl` (`packed`), or a file
+   * under the hub's data. Null when it is not kept (yet).
+   */
+  private keptFile(raw: string): { src: string; key: string; type: string; packed: boolean; base: string } | null {
+    const key = mediaKey(raw);
+    const file = join(this.opts.dataDir, 'media-cache', key);
+    if (raw.startsWith('file://')) {
+      // One under the hub's data is read where it is; an account's own (fetchMedia asks the account) is in the cache.
+      const p = normalize(decodeURIComponent(raw.slice('file://'.length)));
+      if (resolve(p).startsWith(resolve(this.opts.dataDir) + '/')) return existsSync(p) && statSync(p).isFile() ? { src: p, key, type: this.diskType(p, key), packed: false, base: file } : null;
+    }
+    if (!existsSync(file + '.mime')) return null;
+    const type = this.trueType(key, readFileSync(file + '.mime', 'utf8'));
+    if (existsSync(file)) return { src: file, key, type, packed: false, base: file };
+    if (existsSync(file + '.jxl')) return { src: file + '.jxl', key, type, packed: true, base: file };
+    return null;
+  }
+
+  /** A file kept on disk (an import, Signal's own copy) has no type recorded: by its name, else by its first bytes. */
+  private diskType(p: string, key: string): string {
+    const f = Bun.file(p);
+    const named = f.type.split(';')[0];
+    if (named !== 'application/octet-stream') return f.type;
+    const fd = openSync(p, 'r');
+    const head = new Uint8Array(16);
+    try {
+      readSync(fd, head, 0, 16, 0);
+    } finally {
+      closeSync(fd);
+    }
+    return sniffMime(head) ?? this.trueType(key, named);
+  }
+
+  /**
+   * A kept file as the viewer's download menu asks for it (docs/files.md "Downloading"). `info`: what it came as, how it
+   * is kept and what this device is sent, as JSON. Otherwise a download (`attachment`, named `name` with the form's
+   * extension): `original` the bytes as they came (a packed picture rebuilt), `jxl`, `png` or `jpeg` converted.
+   */
+  private async mediaAs(raw: string, accountId: string | null, as: string, name: string | null, jxl: boolean): Promise<Response> {
+    if (as !== 'info' && !['original', 'jxl', 'png', 'jpeg'].includes(as)) return new Response('as: info, original, jxl, png or jpeg', { status: 400 });
+    let k = this.keptFile(raw);
+    if (!k) {
+      // Not fetched yet: fetched as showing it would, then looked at.
+      const res = await this.fetchMedia(raw, accountId, undefined, true);
+      await res.body?.cancel().catch(() => {});
+      if (!res.ok) return new Response('not found', { status: res.status });
+      k = this.keptFile(raw);
+      if (!k) return new Response('not kept', { status: 404 });
+    }
+    const essence = k.type.split(';')[0].trim().toLowerCase();
+    const forms = downloadsAs(essence);
+    if (as === 'info') {
+      const kept = statSync(k.src).size;
+      const known = k.packed ? (this.store.db.query('SELECT size FROM media_info WHERE key = ?').get(k.key) as { size: number } | null) : null;
+      // What a plain fetch of the link sends this device (serveKept): null when it is made for it (a JPEG XL turned
+      // into a JPEG or PNG).
+      const sent = k.packed ? (jxl ? JXL : essence) : essence === JXL && !jxl ? null : essence;
+      const body = { type: essence, size: k.packed ? (known?.size ?? null) : kept, kept: { type: k.packed ? JXL : essence, size: kept }, sent, as: forms };
+      return Response.json(body, { headers: { 'cache-control': 'no-store', ...SAFE_HEADERS } });
+    }
+    if (!forms.includes(as as DownloadAs)) return new Response(`a ${essence} file is not offered as ${as}`, { status: 400 });
+    const send = (body: BodyInit, mime: string) =>
+      new Response(body, { headers: { ...mediaHeaders(raw, k.key, mime), 'content-disposition': downloadDisposition(raw, k.key, mime, name) } });
+    if (as === 'original') {
+      if (!k.packed) return send(Bun.file(k.src), k.type);
+      const r = await this.jxlServe.rebuilt(k.key, k.src);
+      return r ? send(Buffer.from(r.bytes), r.mime) : new Response('this picture could not be rebuilt', { status: 503 });
+    }
+    if (as === 'jxl' && k.packed) return send(Bun.file(k.src), JXL);
+    const r = await this.jxlServe.as(k.key, k.src, k.packed ? JXL : essence, as as Exclude<DownloadAs, 'original'>, k.base);
+    return r ? send(Buffer.from(r.bytes), r.mime) : new Response('this picture could not be converted', { status: 503 });
   }
 
   /**
@@ -2832,7 +2999,8 @@ export class HubServer {
 
   /** Fetch one URL into the media cache, as showing it would (mediaarchive.ts); true when it is there. */
   private async archiveOne(url: string, accountId: string | null, from?: string): Promise<boolean> {
-    const res = await this.fetchMedia(url, accountId, from);
+    // Whether it is there, not its bytes: a packed picture isn't rebuilt for it.
+    const res = await this.fetchMedia(url, accountId, from, true);
     await res.body?.cancel().catch(() => {});
     return res.ok;
   }
@@ -2883,19 +3051,18 @@ export class HubServer {
    * The bytes behind `raw`, from the media cache, else fetched and kept there. `from` is where to fetch them when not
    * from `raw` itself: a Discord link signed again, whose bytes are kept under the old link the message has.
    */
-  private async fetchMedia(raw: string, accountId: string | null, from?: string): Promise<Response> {
+  private async fetchMedia(raw: string, accountId: string | null, from?: string, jxl = false): Promise<Response> {
     const cacheDir = join(this.opts.dataDir, 'media-cache');
     if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
     const key = new Bun.CryptoHasher('sha256').update(raw).digest('hex');
     const file = join(cacheDir, key);
-    const headers = (mime: string) => mediaHeaders(raw, key, mime);
-    if (existsSync(file) && existsSync(file + '.mime')) {
+    if (existsSync(file + '.mime') && (existsSync(file) || existsSync(file + '.jxl'))) {
       // Recently seen stays longest when the cache is trimmed (mediacache.ts).
       try {
         const t = new Date();
-        utimesSync(file, t, t);
+        utimesSync(existsSync(file) ? file : file + '.jxl', t, t);
       } catch {}
-      return new Response(Bun.file(file), { headers: headers(this.trueType(key, readFileSync(file + '.mime', 'utf8'))) });
+      return this.serveKept(file, key, raw, this.trueType(key, readFileSync(file + '.mime', 'utf8')), jxl);
     }
 
     let bytes: Uint8Array;
@@ -2910,16 +3077,16 @@ export class HubServer {
       const r = await fetchPublicToFile(from ?? raw, file);
       if (!r.ok) return new Response(r.error, { status: r.status });
       writeFileSync(file + '.mime', r.mime, { mode: 0o600 });
-      return new Response(Bun.file(file), { headers: headers(r.mime) });
+      return this.serveKept(file, key, raw, r.mime, jxl);
     } else if (raw.startsWith('file://') && resolve(normalize(decodeURIComponent(raw.slice('file://'.length)))).startsWith(resolve(this.opts.dataDir) + '/')) {
       // A file under this hub's data (an import, an account whose session the hub keeps): read here. One elsewhere is
       // the account's own (an account dither-accounts made keeps its files in its own folder): asked of it below.
       const p = normalize(decodeURIComponent(raw.slice('file://'.length)));
       if (!existsSync(p) || !statSync(p).isFile()) return new Response('not found', { status: 404 });
-      // A file kept on disk (an import, Signal's own copy) has no type recorded: by its name, else by its first bytes.
       const f = Bun.file(p);
-      const named = f.type.split(';')[0];
-      const type = named !== 'application/octet-stream' ? f.type : (sniffMime(new Uint8Array(await f.slice(0, 16).arrayBuffer())) ?? this.trueType(key, named));
+      const type = this.diskType(p, key);
+      const common = !jxl && type.split(';')[0] === JXL ? await this.jxlServe.common(key, p) : null;
+      if (common) return new Response(Buffer.from(common.bytes), { headers: mediaHeaders(raw, key, common.mime) });
       return new Response(f, { headers: mediaHeaders(raw, key, type) });
     } else {
       if (!accountId) return new Response('no account to resolve media', { status: 404 });
@@ -2931,7 +3098,34 @@ export class HubServer {
     // Decrypted attachments end up here too.
     writeFileSync(file, bytes, { mode: 0o600 });
     writeFileSync(file + '.mime', mime, { mode: 0o600 });
-    return new Response(Buffer.from(bytes), { headers: headers(mime) });
+    return this.serveKept(file, key, raw, mime, jxl);
+  }
+
+  /**
+   * A file in the media cache as this device gets it (jxl.ts, docs/files.md "JPEG XL"): a packed picture as JPEG XL
+   * where the device shows it, else rebuilt as it came; a JPEG XL someone sent as a JPEG or PNG where it doesn't.
+   * `type`: what the file is; `jxl`: the device shows JPEG XL.
+   */
+  private async serveKept(file: string, key: string, raw: string, type: string, jxl: boolean): Promise<Response> {
+    const headers = (mime: string) => mediaHeaders(raw, key, mime);
+    const essence = type.split(';')[0].trim().toLowerCase();
+    if (!existsSync(file) && existsSync(file + '.jxl')) {
+      if (jxl) return new Response(Bun.file(file + '.jxl'), { headers: headers(JXL) });
+      const r = await this.jxlServe.rebuilt(key, file + '.jxl');
+      return r ? new Response(Buffer.from(r.bytes), { headers: headers(r.mime) }) : new Response('this picture could not be rebuilt', { status: 503 });
+    }
+    if (essence === JXL && !jxl) {
+      const r = await this.jxlServe.common(key, file);
+      if (r) return new Response(Buffer.from(r.bytes), { headers: headers(r.mime) });
+    }
+    if (!PACKED_TYPES.has(essence)) return new Response(Bun.file(file), { headers: headers(type) });
+    // One the packer may pack meanwhile is read now, not as the answer goes out.
+    try {
+      return new Response(readFileSync(file), { headers: headers(type) });
+    } catch (e) {
+      if (existsSync(file + '.jxl')) return this.serveKept(file, key, raw, type, jxl);
+      throw e;
+    }
   }
 
   // ---------------------------------------------------------------- static PWA

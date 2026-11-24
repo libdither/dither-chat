@@ -48,6 +48,33 @@ export function stamp(ts: number, now = Date.now()): string {
 }
 let yearDayFmt: Intl.DateTimeFormat | undefined;
 
+/** Minutes a time zone is ahead of UTC at that moment, or null for a zone this browser does not know. */
+function zoneOffset(zone: string, ts: number): number | null {
+  try {
+    const p = new Intl.DateTimeFormat('en-US', { timeZone: zone, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' }).formatToParts(ts);
+    const n = (t: string) => Number(p.find((x) => x.type === t)?.value);
+    return Math.round((Date.UTC(n('year'), n('month') - 1, n('day'), n('hour'), n('minute')) - Math.floor(ts / 60_000) * 60_000) / 60_000);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Someone's local time from their IANA time zone, with how far it is from yours: "Tue 3:41 PM · Europe/Berlin, 7 hours
+ * ahead". Null for a zone this browser does not know.
+ */
+export function localTime(zone: string, now = Date.now()): string | null {
+  const theirs = zoneOffset(zone, now);
+  if (theirs === null) return null;
+  const t = new Intl.DateTimeFormat(undefined, { timeZone: zone, weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(now);
+  const d = theirs + new Date(now).getTimezoneOffset();
+  const h = Math.floor(Math.abs(d) / 60);
+  const m = Math.abs(d) % 60;
+  const span = m ? `${h ? `${h} h ` : ''}${m} min` : `${h} hour${h === 1 ? '' : 's'}`;
+  const gap = d === 0 ? 'your time' : `${span} ${d > 0 ? 'ahead' : 'behind'}`;
+  return `${t} · ${zone.replace(/_/g, ' ')}, ${gap}`;
+}
+
 export function fullTime(ts: number): string {
   return (fullFmt ??= new Intl.DateTimeFormat(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })).format(ts);
 }

@@ -8,8 +8,8 @@ import { ABOUT_KEYS, ABOUT_LABEL } from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { ago, fullTime } from '../format.ts';
 import { loadChanges, presenceText, retention } from '../history.ts';
-import { identityName, netName } from '../model.ts';
-import { db, openProfile, rev } from '../state.ts';
+import { convTitle, identityName, netName } from '../model.ts';
+import { db, go, openProfile, rev } from '../state.ts';
 import { valueText } from './About.tsx';
 import { Avatar, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -58,9 +58,25 @@ function Who({ id }: { id: string }) {
   );
 }
 
+/** Where a role was given or lost, as a link to its page: on a person's History, whose rows come from many places. */
+function Place({ target }: { target: P.ChangeView['target'] }) {
+  const space = target.kind === 'space' ? db.spaces.get(target.id) : null;
+  const conv = target.kind === 'conversation' ? db.conversations.get(target.id) : null;
+  if (!space && !conv) return null;
+  return (
+    <>
+      <span>in</span>
+      <button class="hist-who" onClick={() => go(space ? { view: 'profile', space: target.id } : { view: 'profile', conv: target.id })}>
+        {space ? space.name : convTitle(conv)}
+      </button>
+    </>
+  );
+}
+
 const SHOWN = 8;
 
-export function HistoryCard({ path, network }: { path: string; network?: P.Network }) {
+/** `person`: a person's History, where roles they were given in places show with the place. */
+export function HistoryCard({ path, network, person }: { path: string; network?: P.Network; person?: boolean }) {
   rev.value;
   const [changes, setChanges] = useState<P.ChangeView[] | null>(null);
   const [all, setAll] = useState(false);
@@ -74,8 +90,12 @@ export function HistoryCard({ path, network }: { path: string; network?: P.Netwo
   const shown = all ? changes : changes.slice(0, SHOWN);
   return (
     <Card title="History" icon="clock" count={changes.length || undefined}>
-      {!changes.length && <p class="pf-empty">No changes seen yet. Renames, new descriptions and pictures, settings and members show here as they happen.</p>}
-      <ol class="hist-list">{shown.map((c) => <Change c={c} network={network} />)}</ol>
+      {!changes.length && (
+        <p class="pf-empty">
+          {person ? 'No changes seen yet. New names, pictures, bios and roles show here as they happen.' : 'No changes seen yet. Renames, new descriptions and pictures, settings and members show here as they happen.'}
+        </p>
+      )}
+      <ol class="hist-list">{shown.map((c) => <Change c={c} network={network} person={person} />)}</ol>
       {!all && changes.length > SHOWN && (
         <button class="btn ghost small" onClick={() => setAll(true)}>
           Show all {changes.length}
@@ -85,7 +105,7 @@ export function HistoryCard({ path, network }: { path: string; network?: P.Netwo
   );
 }
 
-export function Change({ c, network }: { c: P.ChangeView; network?: P.Network }) {
+export function Change({ c, network, person }: { c: P.ChangeView; network?: P.Network; person?: boolean }) {
   const [open, setOpen] = useState(false);
   const ident = c.target.kind === 'identity' ? db.identities.get(c.target.id) : null;
   const where = ident && !network ? (
@@ -129,6 +149,7 @@ export function Change({ c, network }: { c: P.ChangeView; network?: P.Network })
         <span class="pf-role" style={r.color ? { '--role': r.color } : undefined}>
           {r.role}
         </span>
+        {person && c.target.kind !== 'identity' && <Place target={c.target} />}
         {by}
         {when}
       </li>

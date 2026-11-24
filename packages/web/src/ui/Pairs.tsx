@@ -14,7 +14,7 @@ import type * as P from '@dither-chat/protocol';
 import { effect, signal } from '@preact/signals';
 import type { ComponentChildren } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { badgeDiffers, cameFromThem, headIdents, lastRouteTells, leadTells, pickHolds, tagTells, tagText, tells, type HeadName, type RouteKey, type Side } from '../chatroutes.ts';
+import { badgeDiffers, cameFromThem, headIdents, lastRouteTells, leadTells, pickHolds, tagTells, tagText, tells, yourAccount, yourName, type HeadName, type RouteKey, type Side } from '../chatroutes.ts';
 import { ago, hueOf, initials } from '../format.ts';
 import { convLabel, identityName, netColor, netName, visibleAccount } from '../model.ts';
 import { phone } from '../phone.ts';
@@ -32,6 +32,8 @@ interface Pair {
   mine: P.IdentityView | null;
   /** Theirs in the conversation. */
   theirs: P.IdentityView | null;
+  /** A person's email route goes from a mail account, which is not among the chat accounts (mail/chats.ts). */
+  mail: P.MailAccountView | null;
 }
 
 function pairOf(conv: P.ConversationView): Pair {
@@ -39,7 +41,8 @@ function pairOf(conv: P.ConversationView): Pair {
   const mine = acc?.selfIdentityId ? (db.identities.get(acc.selfIdentityId) ?? null) : null;
   const peer = conv.participantIds.find((p) => !isSelfIdentity(p));
   const theirs = peer ? (db.identities.get(peer) ?? null) : null;
-  return { conv, acc, mine, theirs };
+  const mail = acc ? null : (conv.vantages.map((v) => db.mail.accounts.get(v.accountId)).find((a) => !!a) ?? null);
+  return { conv, acc, mine, theirs, mail };
 }
 
 /** A handle that is a phone number (Signal, WhatsApp): never shown beside a name. */
@@ -51,12 +54,17 @@ const theirName = (p: Pair) => {
   if (h && PHONE.test(h) && p.theirs?.displayName) return p.theirs.displayName;
   return h ?? p.theirs?.displayName ?? netName(p.conv.network);
 };
-const myName = (p: Pair) => p.acc?.label || identityName(p.mine?.id) || 'you';
+const yours = (p: Pair) => ({ chat: p.acc, mail: p.mail, identity: p.mine ? identityName(p.mine.id) : null });
+const myName = (p: Pair) => yourName(yours(p));
+/** Your account on this route: a chat account, else a mail account. */
+const myId = (p: Pair) => yourAccount(yours(p));
+/** Your account's colour on this route. */
+const myColor = (p: Pair) => p.acc?.color ?? p.mail?.color ?? hueOf(p.conv.id);
 
 /** A route as chatroutes.ts sees it. */
 function routeKey(c: P.ConversationView): RouteKey {
   const p = pairOf(c);
-  return { id: c.id, network: c.network, theirs: p.theirs?.id ?? null, mine: p.acc?.id ?? null };
+  return { id: c.id, network: c.network, theirs: p.theirs?.id ?? null, mine: myId(p) };
 }
 
 /** What tells this route from the chat's others (chatroutes.ts). */
@@ -229,7 +237,7 @@ function MyPicture({ p, size }: { p: Pair; size: number }) {
   if (p.mine?.avatar) return <Avatar id={p.acc?.id ?? p.conv.id} name={name} url={p.mine.avatar} size={size} network={p.conv.network} />;
   return (
     <span class="avatar" style={{ width: `${size}px`, height: `${size}px` }}>
-      <span class="avatar-fallback" style={{ borderRadius: `${size / 2}px`, background: p.acc?.color ?? hueOf(p.conv.id), color: '#14161d', fontSize: `${Math.max(9, Math.round(size * 0.38))}px` }}>
+      <span class="avatar-fallback" style={{ borderRadius: `${size / 2}px`, background: myColor(p), color: '#14161d', fontSize: `${Math.max(9, Math.round(size * 0.38))}px` }}>
         {initials(name.replace(/^[@+]/, ''))}
       </span>
       <NetBadge network={p.conv.network} size={Math.max(11, Math.round(size * 0.5))} class="avatar-net" />
@@ -320,7 +328,7 @@ export function PairLead({ person, directs, focus, onFocus }: { person: P.Person
   for (const p of pairs) if (!theirs.some((x) => x.theirs?.id === p.theirs?.id)) theirs.push(p);
   const pickTheirs = (identityId: string) => {
     const withThem = pairs.filter((p) => p.theirs?.id === identityId);
-    const next = withThem.find((p) => p.acc?.id === cur.acc?.id) ?? withThem.sort((a, b) => (b.conv.lastMessageAt ?? 0) - (a.conv.lastMessageAt ?? 0))[0];
+    const next = withThem.find((p) => myId(p) === myId(cur)) ?? withThem.sort((a, b) => (b.conv.lastMessageAt ?? 0) - (a.conv.lastMessageAt ?? 0))[0];
     if (next) onFocus(next.conv.id);
   };
   const mine = pairs.filter((p) => p.theirs?.id === cur.theirs?.id && p.conv.network === focus.network);
@@ -523,7 +531,7 @@ export function PairDropdown({ person, directs, focus, view: v, onPick }: { pers
     if (t.mine)
       sub.push(
         <span class="pair-row-via">
-          via <span class="acc-dot" style={{ background: p.acc?.color ?? hueOf(id) }} />
+          via <span class="acc-dot" style={{ background: p.acc?.color ?? p.mail?.color ?? hueOf(id) }} />
           {myName(p)}
         </span>,
       );
@@ -572,7 +580,7 @@ export function PairDropdown({ person, directs, focus, view: v, onPick }: { pers
         data-track="chats list"
         aria-haspopup="listbox"
         aria-expanded={open}
-        title={`${routeTitle(focus).replace(/^Send/, 'Sending')}. ${v === 'all' ? `${others.length} more ${others.length === 1 ? 'chat' : 'chats'} with them` : 'Showing only this chat'}: press and drag to pick, or click`}
+        title={`${routeTitle(focus).replace(/^Send/, 'Sending')}. ${v === 'all' ? (others.length === 0 ? 'No other chats with them' : `${others.length} more ${others.length === 1 ? 'chat' : 'chats'} with them`) : 'Showing only this chat'}: press and drag to pick, or click`}
         onPointerDown={(e) => {
           if (e.button !== 0) return;
           press.current = { x: e.clientX, y: e.clientY, moved: false };
@@ -611,7 +619,8 @@ export function PairDropdown({ person, directs, focus, view: v, onPick }: { pers
         }}
       >
         <SendLine c={focus} accounts={routeAccounts(focus)} to={to} />
-        {v === 'all' && (
+        {/* One route (someone reached only by email, mail/chats.ts): nothing more to pick. */}
+        {v === 'all' && others.length > 0 && (
           <span class="pair-more">
             <span class="pair-more-nets">
               {otherNets.map((n) => (

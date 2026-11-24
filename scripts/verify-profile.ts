@@ -87,15 +87,16 @@ async function mailPeople() {
     if (shots) await p.shot(`${shots}/profile-mail-${w < 500 ? 'phone' : 'desktop'}.png`);
   }
 
-  // The thread opens in Mail, and its sender's name opens theirs. The demo has two threads with her (the newest is hers
-  // alone); the lease one ends with Jo's message.
+  // The thread opens as a chat of its own (docs/mail.md "Mail as chats"), and its sender's name opens theirs. The demo
+  // has two threads with her (the newest is hers alone); the lease one ends with Jo's message.
   await p.eval(`[...document.querySelectorAll('.pf-mail-row')].find((r) => r.innerText.includes('Re: Lease renewal'))?.setAttribute('data-pick', '')`);
   await click('.pf-mail-row[data-pick]');
-  await p.until(`location.hash.startsWith('#/mail') && !!document.querySelector('.mail-msg.open')`, 8000);
-  check((await text('.mail-subject')) === 'Re: Lease renewal', 'a Mail card row opens the thread', await text('.mail-subject'));
-  await click('.mail-msg.open .mail-msg-person');
+  await p.until(`location.hash.startsWith('#/inbox/c/mth_') && !!document.querySelector('.mail-thread-head') && !!document.querySelector('.msg-author')`, 8000);
+  check((await text('.mail-thread-head .mail-subject')) === 'Re: Lease renewal', 'a Mail card row opens the thread', await text('.mail-thread-head .mail-subject'));
+  await p.eval(`[...document.querySelectorAll('.msg-author')].at(-1).setAttribute('data-pick-author', '')`);
+  await click('[data-pick-author]');
   await settled();
-  check((await text('.pf-title h1')).startsWith('Jo Park'), 'the sender’s name in the reader opens their page', await text('.pf-title h1'));
+  check((await text('.pf-title h1')).startsWith('Jo Park'), 'the sender’s name in the thread opens their page', await text('.pf-title h1'));
   // All mail with them: a list of its own.
   await p.size(1360, 900);
   await p.goto(`${hub}/${page}`);
@@ -128,10 +129,10 @@ async function mailPeople() {
   );
   check(merged.hash === `#/p/${alice.id}` && merged.mail.includes('Re: Lease renewal') && merged.accounts.includes('alice.chen@example.org'), 'merged in, her mail comes with her address', merged);
   if (shots) await p.shot(`${shots}/profile-mail-merged.png`);
-  // Split again, from the address's own tile and its menu: the mail goes back with the address.
-  await p.eval(`[...document.querySelectorAll('.pf-acct')].find((e) => e.innerText.includes('alice.chen@example.org')).querySelector('button[aria-label^="More for"]').click()`);
-  await p.until(`[...document.querySelectorAll('[role="menuitem"]')].some((b) => b.textContent.trim() === 'Split Into Its Own Person')`, 3000).catch(() => {});
-  await p.eval(`[...document.querySelectorAll('[role="menuitem"]')].find((b) => b.textContent.trim() === 'Split Into Its Own Person').click()`);
+  // Split again, from the address's own row and its Edit: the mail goes back with the address.
+  await p.eval(`[...document.querySelectorAll('.pf-acct')].find((e) => e.innerText.includes('alice.chen@example.org')).querySelector('.pf-acct-edit-btn').click()`);
+  await p.until(`[...document.querySelectorAll('.pf-acct-edit .btn')].some((b) => b.textContent.trim() === 'Split Into Its Own Person')`, 3000).catch(() => {});
+  await p.eval(`[...document.querySelectorAll('.pf-acct-edit .btn')].find((b) => b.textContent.trim() === 'Split Into Its Own Person').click()`);
   await p.until(`!document.querySelector('.pf-mail')`, 8000).catch(() => {});
   check(!(await p.eval<boolean>(`!!document.querySelector('.pf-mail')`)), 'split again, the mail goes back with the address');
 }
@@ -145,12 +146,12 @@ try {
   check((await p.eval('location.hash')) === `#/p/${alice.id}`, 'the name at the top of a DM opens their profile', await p.eval('location.hash'));
   check((await text('.pf-title h1')).startsWith('Alice Chen'), 'the hero names them');
   const about = await card('About');
-  // Several accounts: each is a tile with its own picture, name, handle and bio (docs/profile.md).
+  // Several accounts: each is a row with its own picture, name and handle; their bios are in About (docs/profile.md).
   const accounts = await card('Accounts');
   const tiles = await p.eval<{ n: number; pics: number; chips: number }>(`({ n: document.querySelectorAll('.pf-acct').length, pics: document.querySelectorAll('.pf-acct .avatar').length, chips: document.querySelectorAll('.pf-acct .pf-handle').length })`);
-  check(tiles.n >= 5 && tiles.pics === tiles.n && tiles.chips === tiles.n, 'each of her accounts is a tile with its picture and handle', tiles);
+  check(tiles.n >= 5 && tiles.pics === tiles.n && tiles.chips === tiles.n, 'each of her accounts is a row with its picture and handle', tiles);
   check(!(await p.eval<boolean>(`!!document.querySelector('.pf-hero .pf-handles .pf-handle:not(.pf-acct-sum)')`)), 'and the hero says how many, not a chip each');
-  check(accounts.includes('film photography'), 'their Discord bio, on the Discord tile', accounts.split('\n').slice(0, 6));
+  check(about.includes('film photography') && !about.includes('No bio'), 'their Discord bio, in About, labelled by its network', about.split('\n').slice(0, 6));
   check(!/\bAvailable\b/.test(about + accounts), 'not WhatsApp’s stock “Available”');
   check((await text('.pf-status')).includes('at the crag'), 'their status, with its text');
   const tags = await text('.pf-tags');
@@ -161,7 +162,7 @@ try {
   const groupIcons = await p.eval<number>(`[...document.querySelectorAll('.pf-card .pf-row')].filter((r) => r.querySelector('.avatar')).length`);
   check(groupIcons >= 3, 'group chats and recent messages each have a picture', groupIcons);
   const mutual = await card('Mutual friends');
-  check(['Ravi', 'Jordan', 'Theo'].every((n) => mutual.includes(n)), 'mutual friends', mutual.split('\n'));
+  check(['Ravi', 'Jordan', 'Theo'].every((n) => mutual.includes(n)) && mutual.includes('on Discord'), 'mutual friends, saying they are Discord’s', mutual.split('\n'));
   const recent = await p.eval<number>(`document.querySelectorAll('.pf-msg').length`);
   check(recent > 3, 'recent messages', recent);
   if (shots) await p.shot(`${shots}/profile-person.png`);
@@ -198,6 +199,22 @@ try {
     await Bun.sleep(150);
   }
 
+  // A main account speaks for her: Edit on an account named otherwise, Make Main Account, and the hero takes its name.
+  const hero = await text('.pf-title h1');
+  const pick = await p.eval<string>(`[...document.querySelectorAll('.pf-acct')].map((e) => e.querySelector('.pf-acct-name')?.textContent ?? '').find((n) => n && n !== ${JSON.stringify(hero.trim())}) ?? ''`);
+  const pressIn = (row: string, label: string) =>
+    p.eval(`(() => { const r = [...document.querySelectorAll('.pf-acct')].find((e) => e.querySelector('.pf-acct-name')?.textContent === ${JSON.stringify(row)}); r.querySelector('.pf-acct-edit') || r.querySelector('.pf-acct-edit-btn').click(); return new Promise((ok) => setTimeout(() => { [...r.querySelectorAll('.pf-acct-edit .btn')].find((b) => b.textContent.trim() === ${JSON.stringify(label)}).click(); ok(true); }, 100)); })()`);
+  await pressIn(pick, 'Make Main Account');
+  await p.until(`!!document.querySelector('.pf-acct[data-chosen]') && document.querySelector('.pf-title h1')?.innerText.trim() === ${JSON.stringify(pick)}`, 5000).catch(() => {});
+  check(!!pick && (await text('.pf-title h1')).trim() === pick && (await text('.pf-acct-note')).includes('speaks for them'), 'Make Main Account: its name is hers, and the card says so', { pick, hero: await text('.pf-title h1') });
+  // Another account made main instead takes over; pressed again, the hub chooses for her again.
+  await pressIn(hero.trim(), 'Make Main Account');
+  await p.until(`document.querySelectorAll('.pf-acct[data-chosen]').length === 1 && document.querySelector('.pf-title h1')?.innerText.trim() === ${JSON.stringify(hero.trim())}`, 5000).catch(() => {});
+  check((await text('.pf-title h1')).trim() === hero.trim(), 'another account made main takes over', await text('.pf-title h1'));
+  await pressIn(hero.trim(), 'Main Account');
+  await p.until(`!document.querySelector('.pf-acct[data-chosen]') && document.querySelectorAll('.pf-acct[data-main]').length === 1`, 5000).catch(() => {});
+  check(!(await p.eval<boolean>(`!!document.querySelector('.pf-acct[data-chosen]')`)) && (await text('.pf-acct-note')).includes('for now'), 'pressed again, the hub chooses her main account again, and the card says so', await text('.pf-acct-note'));
+
   // A mutual friend's name opens theirs.
   await click('.pf-person');
   await settled();
@@ -206,8 +223,16 @@ try {
   // Your own page: your friends, each person once.
   await p.goto(`${hub}/#/p/per_self`);
   await settled();
-  const friends = await p.eval<string[]>(`[...document.querySelectorAll('.pf-card')].find((c) => c.querySelector('h3')?.textContent.startsWith('Friends'))?.querySelectorAll('.pf-person > span:last-child') ? [...[...document.querySelectorAll('.pf-card')].find((c) => c.querySelector('h3')?.textContent.startsWith('Friends')).querySelectorAll('.pf-person > span:last-child')].map((s) => s.textContent) : []`);
+  const friends = await p.eval<string[]>(`[...document.querySelectorAll('.pf-friends .pf-person-name')].map((s) => s.textContent)`);
   check(friends.length > 5 && new Set(friends).size === friends.length && friends.includes('Alice Chen'), 'your page lists your friends, each person once', friends);
+  // Which network each is from: a chip per network, each row's networks at its end, and a chip shows only its own.
+  const chips = await p.eval<string[]>(`[...document.querySelectorAll('.pf-friends .pf-friend-nets .chip-btn')].map((b) => b.textContent.trim())`);
+  check(chips[0]?.startsWith('All') && chips.some((c) => c.includes('friends')) && chips.some((c) => c.includes('contacts')), 'a chip per network, in its own word', chips);
+  check(await p.eval<boolean>(`[...document.querySelectorAll('.pf-friends .pf-person')].every((r) => r.querySelector('.pf-person-nets .net-glyph'))`), 'each friend says their networks');
+  await p.eval(`document.querySelector('.pf-friends .chip-btn[data-network="signal"]').click()`);
+  await Bun.sleep(150);
+  const signalOnly = await p.eval<boolean>(`[...document.querySelectorAll('.pf-friends .pf-person')].every((r) => r.querySelector('.pf-person-nets').innerHTML.includes('Signal'))`);
+  check(signalOnly, 'the Signal chip shows only Signal contacts');
   check(!(await text('.pf-actions')).includes('Message'), 'and no Message button to yourself');
   if (shots) await p.shot(`${shots}/profile-self.png`);
 

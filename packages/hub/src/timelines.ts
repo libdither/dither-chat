@@ -16,9 +16,10 @@
  */
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
-import { HOME_FEEDS, NETWORK_META, postIdOf, postNativeId, postRulesFor, REPLY_GATES, splitThread } from '@dither-chat/protocol';
+import { HOME_FEEDS, homeFeedsOf, isEventNetwork, NETWORK_META, postIdOf, postNativeId, postRulesFor, REPLY_GATES, splitThread, withoutHiddenGuests } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { engagement, MIX_ORDERS, orderMix, SHARE_WEIGHTS, type MixItem, type MixOrder } from '@dither-chat/protocol/mix';
+import { eventDecorated } from './eventseen.ts';
 import { postAuthors, postView } from './feed.ts';
 import { type Posts, PostsError } from './posts.ts';
 import type { AccountRow, Store } from './store.ts';
@@ -31,7 +32,7 @@ interface TimelinesDeps {
   online: (accountId: string) => boolean;
   command: <T>(accountId: string, cmd: { t: 'home'; feed: P.HomeFeed; cursor?: string; count?: number } | { t: 'profile'; who: string }, timeoutMs?: number) => Promise<T>;
   /** Upload ids to files (uploads.ts), null when one is gone. */
-  files?: (ids: string[]) => P.OutgoingAttachment[] | null;
+  files?: (ids: string[]) => P.OutgoingAttachment[] | null | Promise<P.OutgoingAttachment[] | null>;
   changed?: () => void;
 }
 
@@ -55,11 +56,17 @@ const DRAFTS_MAX = 200;
 const MIXES_MAX = 20;
 /** A share's step for an even share (SHARE_WEIGHTS). */
 const EVEN = 2;
-/** Feeds always there: as they are until changed, and put back by DELETE. */
-const BUILT_IN: Record<string, { name: string; order: MixOrder; on: P.HomeFeed }> = {
-  following: { name: 'Following', order: 'newest', on: 'following' },
-  discover: { name: 'Discover', order: 'turns', on: 'foryou' },
+/**
+ * Feeds always there: as they are until changed, and put back by DELETE. Events (docs/events.md) takes the event sites'
+ * Explore and Your events, which Following and Discover leave out: a party list is not a timeline of posts.
+ */
+const BUILT_IN: Record<string, { name: string; order: MixOrder; on: (network: P.Network, feed: P.HomeFeed) => boolean }> = {
+  following: { name: 'Following', order: 'newest', on: (n, f) => f === 'following' && !isEventNetwork(n) },
+  discover: { name: 'Discover', order: 'turns', on: (n, f) => f === 'foryou' && !isEventNetwork(n) },
+  events: { name: 'Events', order: 'turns', on: (n) => isEventNetwork(n) },
 };
+/** A timeline the network orders by time (a Following of posts); the others keep the network's order. */
+const byTime = (network: P.Network, feed: P.HomeFeed) => feed === 'following' && !isEventNetwork(network);
 
 const made = new WeakSet<Database>();
 function tables(db: Database) {
@@ -178,7 +185,7 @@ export class Timelines {
 
   // ------------------------------------------------------------------ your feeds
 
-  /** Following and Discover, then the feeds you made, each listing every timeline it could take. */
+  /** Following, Discover and (with an event site) Events, then the feeds you made, each listing every timeline it could take. */
   mixes(): P.FeedMixView[] {
     const homes = this.accounts().filter((a) => caps(this.d.store, a.id).includes('home'));
     const rows = new Map((this.db.query('SELECT * FROM feed_mix ORDER BY made_at').all() as Row[]).map((r) => [r.id as string, r]));
@@ -193,11 +200,13 @@ export class Timelines {
         name: r?.name ?? built?.name ?? id,
         order: (r?.ord as MixOrder) ?? built?.order ?? 'turns',
         // A timeline it does not name (an account added since) is in Following's or Discover's own kind, else out.
-        sources: homes.flatMap((a) => HOME_FEEDS.map((feed) => ({ accountId: a.id, feed, share: shares[`${a.id}:${feed}`] ?? (built?.on === feed ? EVEN : 0) }))),
+        sources: homes.flatMap((a) => homeFeedsOf(a.network).map((feed) => ({ accountId: a.id, feed, share: shares[`${a.id}:${feed}`] ?? (built?.on(a.network, feed) ? EVEN : 0) }))),
         custom: !built,
       };
     };
-    return [...Object.keys(BUILT_IN).map((id) => view(id, rows.get(id))), ...[...rows.values()].filter((r) => !BUILT_IN[r.id]).map((r) => view(r.id, r))];
+    // Events only once there is an event site to read.
+    const built = Object.keys(BUILT_IN).filter((id) => id !== 'events' || homes.some((a) => isEventNetwork(a.network)));
+    return [...built.map((id) => view(id, rows.get(id))), ...[...rows.values()].filter((r) => !BUILT_IN[r.id]).map((r) => view(r.id, r))];
   }
 
   /** A feed saved: any of its name, order and shares; a new id makes one. */
@@ -215,12 +224,14 @@ export class Timelines {
       shares = row ? JSON.parse(row.shares) : {};
     } catch {}
     // A feed's timelines as they were (a new one starts with every Following, even), then what was sent.
-    if (!row) for (const x of had?.sources ?? this.mixes()[0].sources) shares[`${x.accountId}:${x.feed}`] = had ? x.share : x.feed === 'following' ? EVEN : 0;
+    const netOf = (accountId: string) => this.d.store.account(accountId)?.network ?? 'x';
+    if (!row) for (const x of had?.sources ?? this.mixes()[0].sources) shares[`${x.accountId}:${x.feed}`] = had ? x.share : BUILT_IN.following.on(netOf(x.accountId), x.feed) ? EVEN : 0;
     if (b.sources !== undefined) {
       if (!Array.isArray(b.sources)) throw new PostsError('sources: [{ accountId, feed, share }]', 400);
       for (const x of b.sources) {
         if (!x || typeof x.accountId !== 'string' || !HOME_FEEDS.includes(x.feed) || !Number.isInteger(x.share) || x.share < 0 || x.share >= SHARE_WEIGHTS.length)
-          throw new PostsError(`sources: [{ accountId, feed: following or foryou, share: 0 to ${SHARE_WEIGHTS.length - 1} }]`, 400);
+          throw new PostsError(`sources: [{ accountId, feed: ${HOME_FEEDS.join(', ')}, share: 0 to ${SHARE_WEIGHTS.length - 1} }]`, 400);
+        if (!homeFeedsOf(netOf(x.accountId)).includes(x.feed)) throw new PostsError(`${NETWORK_META[netOf(x.accountId)].name} has no ${x.feed} timeline.`, 400);
         shares[`${x.accountId}:${x.feed}`] = x.share;
       }
     }
@@ -250,11 +261,12 @@ export class Timelines {
       const lines = mix.sources.filter((x) => x.share > 0).map((x) => ({ accountId: x.accountId, feed: x.feed, weight: SHARE_WEIGHTS[x.share] }));
       return { lines, order: mix.order, mine: false };
     }
-    const m = source.match(/^([\w-]+):(following|foryou|mine)$/);
-    if (!m) throw new PostsError('source: a feed, mine, or <account>:following, :foryou or :mine', 400);
+    const m = source.match(/^([\w-]+):(following|foryou|explore|mine)$/);
+    if (!m) throw new PostsError('source: a feed, mine, or <account>:following, :foryou, :explore or :mine', 400);
     const acc = this.d.store.account(m[1]);
     if (!acc || !postRulesFor(acc.network)) throw new PostsError('No such account.', 404);
     if (m[2] === 'mine') return { lines: [], mine: true };
+    if (!homeFeedsOf(acc.network).includes(m[2] as P.HomeFeed)) throw new PostsError(`${NETWORK_META[acc.network].name} has no ${m[2]} timeline.`, 404);
     // One timeline alone, in its own order.
     return { lines: [{ accountId: acc.id, feed: m[2] as P.HomeFeed, weight: 1 }], order: 'turns', mine: false };
   }
@@ -311,7 +323,9 @@ export class Timelines {
 
   /** A page of a timeline: its posts logged, its items in order. */
   keep(acc: AccountRow, feed: P.HomeFeed, page: P.HomePage, older: boolean) {
-    const items = (page?.items ?? []).filter((i) => i?.post?.id);
+    // A hidden guest list's guests are never kept (docs/events.md "Who is going"), in the item as in its logged post.
+    const items = (page?.items ?? []).filter((i) => i?.post?.id).map((i) => ({ ...i, post: withoutHiddenGuests(i.post), ...(i.above ? { above: i.above.map(withoutHiddenGuests) } : {}) }));
+    const timed = byTime(acc.network, feed);
     this.d.posts.log(acc.id, items.flatMap((i) => [...(i.above ?? []), i.post]));
     const now = Date.now();
     const lowest = (this.db.query('SELECT MIN(pos) p FROM feed_item WHERE account_id = ? AND feed = ?').get(acc.id, feed) as Row).p as number | null;
@@ -321,10 +335,11 @@ export class Timelines {
     );
     this.db.transaction(() => {
       items.forEach((it, i) => {
-        // Following: by time. For you: this read's batch on top in the network's order; an older page below the rest.
-        const pos = feed === 'following' ? it.post.ts : older ? (lowest ?? now) - 1 - i : now - i;
+        // Following: by time. For you, Explore and an event site's own events: this read's batch on top in the network's
+        // order; an older page below the rest.
+        const pos = timed ? it.post.ts : older ? (lowest ?? now) - 1 - i : now - i;
         const shown = shownOf(it.post);
-        put.run(acc.id, feed, it.post.id, hubId('msg', acc.network, postNativeId(shown.id)), pos, JSON.stringify(it), now, feed === 'foryou' && !older ? 1 : 0);
+        put.run(acc.id, feed, it.post.id, hubId('msg', acc.network, postNativeId(shown.id)), pos, JSON.stringify(it), now, !timed && !older ? 1 : 0);
       });
       const bottom = page?.more ?? null;
       const top = page?.top ?? null;
@@ -430,7 +445,9 @@ export class Timelines {
     const q = p.repostOf ? { ...p, repostOf: fresh } : fresh;
     for (const n of postAuthors(q)) named.add(hubId('idn', network, n));
     if (q.replyTo?.author) named.add(hubId('idn', network, q.replyTo.author));
-    return { ...postView(q, network, (u) => s.mediaUrl(u, accountId)), messageId: m && !m.deleted ? m.id : null };
+    const v: P.PostView = { ...postView(withoutHiddenGuests(q), network, (u) => s.mediaUrl(u, accountId)), messageId: m && !m.deleted ? m.id : null };
+    // An event's card: the people you know first, a few guests, its conversation (docs/events.md).
+    return v.event ? eventDecorated(s, v, network, accountId, named) : v;
   }
 
   /**
@@ -598,7 +615,7 @@ export class Timelines {
     }
     if (r.replies !== undefined && !REPLY_GATES.includes(r.replies)) throw new PostsError('replies: everyone, following, mentioned or verified', 400);
     const ids = Array.isArray(r.media) ? r.media.filter((x): x is string => typeof x === 'string') : [];
-    const media = ids.length ? this.d.files?.(ids) : [];
+    const media = ids.length ? await this.d.files?.(ids) : [];
     if (ids.length && !media) throw new PostsError('A picture is gone from the hub: add it again.', 410);
     const key = r.key!;
     const results = await Promise.all(

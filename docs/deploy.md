@@ -224,8 +224,9 @@ restarts").
 Every six hours it clears partial downloads from `media-cache/`. The cache itself is kept indefinitely: the media
 archive (`packages/hub/src/mediaarchive.ts`) fills it with every remote attachment soon after it arrives, because Discord's links
 expire. Each kept file is then looked at once for what it really is (`mediainfo.ts`, [files.md](files.md)), in the
-background, a few seconds of work every half minute. Setting `DITHER_MEDIA_CACHE_MB` caps the cache again, least
-recently shown first. Adapter logs rotate at 10 MB.
+background, a few seconds of work every half minute. Its JPEGs and PNGs are then stored as JPEG XL, losslessly
+(`jxl.ts`, [files.md](files.md) "JPEG XL"), one at a time at a low priority, with cjxl and djxl from nix when PATH has
+none. Setting `DITHER_MEDIA_CACHE_MB` caps the cache again, least recently shown first. Adapter logs rotate at 10 MB.
 Triage rows older than `DITHER_TRIAGE_KEEP_DAYS` (90) go when nothing can be learned from them: below the list or
 silent, never marked (nor voted on before the tiers), in conversations you never wrote in.
 
@@ -396,7 +397,9 @@ own hub on another port with its own data dir.
 `DITHER_DEMO_SCENARIO` adds to the demo world, comma separated (packages/hub/src/demo.ts): `multiaccount` (Kit, one
 person on seven accounts, and Mo on two), `servers` (35 more Discord servers with folders, docs/organize.md) and
 `crowd` (about 120 more people in eight servers and eleven groups, with pairs planted for Same person? to find from
-sure to faint, demo-crowd.ts; `scripts/shots-same-person.ts` screenshots it, docs/same-person.md). Without it the
+sure to faint, demo-crowd.ts; `scripts/shots-same-person.ts` screenshots it, docs/same-person.md) and `zulip` (a
+made-up Zulip organization whose channels are forums of topics, with unread, muted and resolved topics, a moved message
+and profiles with time zones, demo-zulip.ts; `scripts/shots-zulip.ts` screenshots it, docs/threads.md). Without it the
 world is the one tests and perf baselines expect.
 
 A demo hub runs without the login (its data is invented); any other hub is behind it, a throwaway one too. Scripts

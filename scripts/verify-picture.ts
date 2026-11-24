@@ -1,6 +1,7 @@
 /**
  * Changing a picture (ui/PictureEditor.tsx, docs/profile.md "Changing a picture"), end to end against a demo hub in
- * headless Chromium: a group's big picture is a button with a camera and opens its menu; a picture dropped on the
+ * headless Chromium: a group's big picture is a button with a camera and opens its menu, View Picture first; someone
+ * else's picture opens full screen in the image viewer; a picture dropped on the
  * page opens the editor, which crops it, shows it at three sizes and sends nothing until Save; Save changes it on the
  * network, and Undo in the toast puts the old one back. On your own page, the editor lists each network you may
  * change it on with only one ticked; the account tile's menu ticks that account. The same on a phone.
@@ -19,7 +20,9 @@ const boot = (await fetch(`${hub}/api/bootstrap`).then((r) => r.json())) as any;
 if (!boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub');
 const group = boot.conversations.find((c: any) => c.network === 'discord' && c.shape === 'group')?.id;
 const self = boot.persons.find((p: any) => p.isSelf)?.id;
-if (!group || !self) throw new Error('the demo world lacks a place this checks');
+// Someone else with a picture: theirs opens full screen.
+const other = boot.identities.find((i: any) => i.avatar && i.personId && i.personId !== self)?.personId;
+if (!group || !self || !other) throw new Error('the demo world lacks a place this checks');
 
 let failures = 0;
 const check = (ok: unknown, what: string, detail: unknown = '') => {
@@ -88,6 +91,7 @@ try {
   const items = await p.eval<string[]>(`[...document.querySelectorAll('[role="menuitem"]')].map((e) => e.textContent.trim())`);
   check(items.some((t) => t.includes('Upload a Picture')) && items.some((t) => t.includes('From This Chat')), 'its menu: upload, and this chat’s pictures', items);
   if (shots) await p.shot(`${shots}/group-menu.png`);
+  check(!items.some((t) => t.includes('View Picture')), 'no View Picture while it has none', items);
   await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
 
   await dropPicture();
@@ -112,6 +116,22 @@ try {
   const undone = (await about()).fields.avatar?.value ?? null;
   check(undone !== after, 'Undo put the old picture back', { after, undone });
 
+  // Someone else's page: the picture opens full screen, to zoom, and Escape puts it away.
+  await p.goto(`${hub}/#/p/${other}`);
+  await p.until(`!!document.querySelector('.profile-page .pf-avatar-view')`, 15000);
+  check(!(await p.eval(`!!document.querySelector('.profile-page .pf-avatar-edit')`)), 'someone else’s picture has no camera');
+  await click('.pf-avatar-view');
+  await p.until(`document.querySelector('.viewer .viewer-img')?.naturalWidth > 0`, 3000);
+  const shown = await p.eval<string>(`document.querySelector('.viewer .viewer-img').getAttribute('src')`);
+  const theirs = await p.eval<string>(`document.querySelector('.pf-avatar-view img')?.getAttribute('src') ?? ''`);
+  check(!!shown && shown === theirs, 'clicking their picture opens it full screen', { shown, theirs });
+  const box = await p.eval<{ w: number; h: number; W: number; H: number }>(`(() => { const b = document.querySelector('.viewer .viewer-img').getBoundingClientRect(); return { w: Math.round(b.width), h: Math.round(b.height), W: innerWidth, H: innerHeight }; })()`);
+  check(box.w >= box.W - 2 || box.h >= box.H - 2, 'filling the screen, though the picture is smaller', box);
+  if (shots) await p.shot(`${shots}/other-viewer.png`);
+  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await p.until(`!document.querySelector('.viewer') && !!document.querySelector('.profile-page .pf-avatar-view')`, 3000);
+  check(true, 'Escape closes it, back on their page');
+
   // Your own page: each network you may change it on, one ticked.
   await p.goto(`${hub}/#/p/${self}`);
   await p.until(`!!document.querySelector('.profile-page .pf-avatar-edit')`, 15000);
@@ -124,11 +144,23 @@ try {
   if (shots) await p.shot(`${shots}/self-editor.png`);
   await clickText('.pic-foot .btn', 'Save');
   await toastSays('Picture changed');
+  // Now it has one, its menu shows it full screen first.
+  await p.until(`!document.querySelector('.pic-editor')`, 3000);
+  await click('.pf-avatar-edit');
+  await p.until(`!!document.querySelector('[role="menuitem"]')`, 3000);
+  const own = await p.eval<string[]>(`[...document.querySelectorAll('[role="menuitem"]')].map((e) => e.textContent.trim())`);
+  check(own[0]?.includes('View Picture'), 'View Picture first in the menu', own);
+  if (shots) await p.shot(`${shots}/self-menu.png`);
+  await clickText('[role="menuitem"]', 'View Picture');
+  await p.until(`document.querySelector('.viewer .viewer-img')?.naturalWidth > 0`, 3000);
+  check(await p.eval(`document.querySelector('.viewer .viewer-img').getAttribute('src') === document.querySelector('.pf-avatar-edit img')?.getAttribute('src')`), 'View Picture opens it full screen');
+  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await p.until(`!document.querySelector('.viewer')`, 3000);
 
-  // An account tile's menu opens the editor ticked to that account.
-  await p.until(`!!document.querySelector('.pf-acct-grid [aria-label^="More for"]')`, 5000);
-  await click('.pf-acct-grid [aria-label^="More for"]');
-  await clickText('[role="menuitem"]', 'Change Picture');
+  // An account row's Edit opens the editor ticked to that account.
+  await p.until(`!!document.querySelector('.pf-acct-list .pf-acct-edit-btn')`, 5000);
+  await click('.pf-acct-list .pf-acct-edit-btn');
+  await clickText('.pf-acct-edit .btn', 'Change Picture');
   await p.until(`!!document.querySelector('.pic-editor')`, 3000);
   check(await p.eval(`!document.querySelector('.pic-editor .pic-img') && !!document.querySelector('.pic-empty')`), 'from an account tile’s menu: the editor asks for a picture');
   const ticked = await p.eval<string[]>(`[...document.querySelectorAll('.pic-dest')].filter((d) => d.querySelector('input').checked).map((d) => d.textContent.trim())`);

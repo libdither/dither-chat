@@ -9,10 +9,12 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { chmodSync, closeSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
+import { chmodSync, closeSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { attachmentKind, MAX_UPLOAD } from '@dither-chat/protocol';
+import { toCommon, type JxlTools } from './jxl.ts';
+import { isJxl } from './jxlformat.ts';
 
 /** How long an upload waits unused. */
 export const KEEP = 60 * 60_000;
@@ -229,7 +231,34 @@ export class Uploads {
       if (!this.items.delete(id)) continue;
       rmSync(this.path(id), { force: true });
       rmSync(join(this.dir, `${id}.json`), { force: true });
+      for (const ext of ['jpg', 'png']) rmSync(`${this.path(id)}.common.${ext}`, { force: true });
     }
+  }
+
+  /**
+   * The files as a network that doesn't show JPEG XL takes them (docs/files.md "JPEG XL"): a JPEG XL goes as the JPEG
+   * it was repacked from, else a PNG or JPEG (jxl.ts toCommon), written beside its upload and removed with it. Anything
+   * else, or everything when there are no tools, as it is.
+   */
+  async common(files: P.OutgoingAttachment[], tools: JxlTools | null): Promise<P.OutgoingAttachment[]> {
+    if (!tools) return files;
+    return Promise.all(
+      files.map(async (f) => {
+        const head = new Uint8Array(12);
+        const fd = openSync(f.path, 'r');
+        try {
+          readSync(fd, head, 0, 12, 0);
+        } finally {
+          closeSync(fd);
+        }
+        if (!isJxl(head)) return f;
+        const out = await toCommon(tools, f.path, `${f.path}.common`).catch(() => null);
+        if (!out) return f;
+        const ext = out.mime === 'image/jpeg' ? 'jpg' : 'png';
+        const name = /\.jxl$/i.test(f.name) ? f.name.replace(/\.jxl$/i, `.${ext}`) : `${f.name}.${ext}`;
+        return { ...f, path: out.path, name, mime: out.mime, size: statSync(out.path).size, kind: 'image' as const };
+      }),
+    );
   }
 
   /** Uploads something else still waits to send (a message to send later, sendlater.ts): the sweep leaves them. */

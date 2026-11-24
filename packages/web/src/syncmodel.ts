@@ -7,6 +7,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { applyMailBootstrap, applyMailEvent, emptyMail } from './mail/model.ts';
+import { applyPresence } from './presence.ts';
 
 export function emptyDb() {
   return {
@@ -37,6 +38,8 @@ export function emptyDb() {
     reactionUsage: [] as P.ReactionUsage[],
     /** The hub's inbox ranking, by conversation (docs/inbox.md). */
     attention: new Map<string, P.AttentionView>(),
+    /** Status dots: the latest presence by identity (presence.ts). None: unknown. */
+    presence: new Map<string, P.PresenceNowView>(),
     /** Where in the hub's change journal this copy stands (docs/sync.md). Null: nowhere a delta can start from. */
     sync: null as P.SyncPosition | null,
     /** Mail (mail/model.ts, docs/mail.md). */
@@ -169,6 +172,7 @@ export function applyBootstrapTo(db: Db, b: P.Bootstrap) {
   db.rules = b.rules;
   db.devices = b.devices ?? [];
   db.attention = new Map((b.attention ?? []).map((a) => [a.id, a]));
+  db.presence = new Map((b.presence ?? []).map((v) => [v.identityId, v]));
   db.sync = b.sync ?? null;
   db.requests = b.requests ?? [];
   applyMailBootstrap(db.mail, b.mail);
@@ -254,6 +258,9 @@ export function applyEventTo(db: Db, ev: P.ClientEvent): boolean {
       for (const a of ev.items) db.attention.set(a.id, a);
       for (const id of ev.removed) db.attention.delete(id);
       return false;
+    case 'presence':
+      applyPresence(db.presence, ev);
+      return false;
     default:
       return false;
   }
@@ -285,6 +292,36 @@ export function upsertInto(list: P.MessageView[], m: P.MessageView) {
   let j = list.length;
   while (j > 0 && list[j - 1].ts > m.ts) j--;
   list.splice(j, 0, m);
+}
+
+/**
+ * The channel whose stream (`k:<channel>`) holds a conversation's messages: a thread's channel, else the conversation
+ * itself (a Matrix room's own messages are in its stream). Undefined where the conversation is not known.
+ */
+export function streamChannelOf(db: Pick<Db, 'conversations'>, convId: string): string | undefined {
+  const c = db.conversations.get(convId);
+  if (!c) return undefined;
+  return c.shape === 'thread' && c.parentId ? c.parentId : c.id;
+}
+
+/**
+ * A message now in `m.conversationId` goes from every other conversation's timeline (keys `c:<id>`) that holds it: it
+ * moved (MessageFact.moved, a Zulip topic renamed or messages moved to another topic). A channel's stream (`k:<id>`)
+ * keeps it while it moved within the channel (`channel`: the stream its conversation is in now), and lets it go when
+ * it moved to another. Person timelines span conversations and keep it. Returns the keys of the timelines it left.
+ */
+export function leaveOtherTimelines(timelines: Iterable<{ key: string; messages: P.MessageView[] }>, m: P.MessageView, channel?: string): string[] {
+  const here = 'c:' + m.conversationId;
+  const stream = channel === undefined ? undefined : 'k:' + channel;
+  const left: string[] = [];
+  for (const o of timelines) {
+    if (o.key === here || o.key === stream || !(o.key.startsWith('c:') || (o.key.startsWith('k:') && channel !== undefined))) continue;
+    const i = o.messages.findIndex((x) => x.id === m.id);
+    if (i < 0) continue;
+    o.messages.splice(i, 1);
+    left.push(o.key);
+  }
+  return left;
 }
 
 export interface TimelineCopy {

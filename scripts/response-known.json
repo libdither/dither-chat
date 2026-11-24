@@ -93,26 +93,6 @@
   "For you / less like this": [
    "M$1"
   ],
-  "Mail / Search mail": [
-   "M$1"
-  ],
-  "Mail / chip-btn:Everything": [
-   "Icon",
-   "M$1"
-  ],
-  "Mail / chip-btn:Updates": [
-   "M$1"
-  ],
-  "Mail / hub: a visit counted": [
-   "M$1"
-  ],
-  "Mail / mail-row.mail-updates-row.row": [
-   "M$1"
-  ],
-  "Mail / mail-row.row": [
-   "Icon",
-   "M$1"
-  ],
   "Notices / held: the app's clocks": [
    "Age",
    "Ago",
@@ -224,10 +204,20 @@
    "Menuable",
    "Snippet"
   ],
+  "a DM / # people": [
+   "AddButton",
+   "HoverReactions",
+   "M$1"
+  ],
   "a DM / held: the app's clocks": [
    "Age",
    "Ago",
    "Owed"
+  ],
+  "a DM, details open / # people": [
+   "AddButton",
+   "HoverReactions",
+   "M$1"
   ],
   "a DM, details open / Conversations and alerts are worked out for you": [
    "AccountDots",
@@ -338,32 +328,6 @@
    "Ago",
    "Owed"
   ],
-  "a channel / # people": [
-   "AccountDots",
-   "Attachments",
-   "Body",
-   "CallMark",
-   "ContactCards",
-   "ConvRow",
-   "Count",
-   "DisappearsMark",
-   "Embeds",
-   "Icon",
-   "InviteCards",
-   "M$1",
-   "Marks",
-   "MessageItem",
-   "MissingFiles",
-   "NetBadge",
-   "NetGlyph",
-   "ReactionBar",
-   "RichHead",
-   "RichMarks",
-   "RowTyping",
-   "SendFailures",
-   "StoryReplyLine",
-   "TriageNote"
-  ],
   "a channel / held: the app's clocks": [
    "Age",
    "Ago",
@@ -384,14 +348,14 @@
   ],
   "a channel's About / Discord channel": [
    "CallMark",
-   "ChannelRow",
+   "ChannelHead",
    "Count",
    "Icon",
    "M$1"
   ],
   "a channel's About / Mute": [
    "CallMark",
-   "ChannelRow",
+   "ChannelHead",
    "Count",
    "Icon",
    "M$1"
@@ -401,10 +365,24 @@
   ],
   "a channel's About / input:on": [
    "CallMark",
-   "ChannelRow",
+   "ChannelHead",
    "Count",
    "Icon",
    "M$1"
+  ],
+  "a channel's stream / held: the app's clocks": [
+   "Age",
+   "Ago",
+   "Owed"
+  ],
+  "a channel's stream / next unread": [
+   "AccountDots",
+   "CallMark",
+   "ConvRow",
+   "Count",
+   "NetBadge",
+   "NetGlyph",
+   "RowTyping"
   ],
   "a channel, a message hovered / held: the app's clocks": [
    "Age",
@@ -542,10 +520,41 @@
    "Icon",
    "M$1"
   ],
+  "a group / # people": [
+   "AddButton",
+   "HoverReactions",
+   "M$1"
+  ],
   "a group / held: the app's clocks": [
    "Age",
    "Ago",
    "Owed"
+  ],
+  "a mail list / how it sorts": [
+   "M$1"
+  ],
+  "a mail list / hub: a visit counted": [
+   "M$1"
+  ],
+  "a mail list / less like this": [
+   "M$1"
+  ],
+  "a mail list / mail list (Everything)": [
+   "M$1"
+  ],
+  "a mail list / mail list (Inbox)": [
+   "M$1"
+  ],
+  "a mail list / mail list (Updates)": [
+   "M$1"
+  ],
+  "a mail list / mail-row.row": [
+   "M$1"
+  ],
+  "a person / # people": [
+   "AddButton",
+   "HoverReactions",
+   "M$1"
   ],
   "a person / Profile of You": [
    "AccountDots",
@@ -561,16 +570,14 @@
   ],
   "a person's profile / Message": [
    "Icon",
-   "M$1",
-   "PlaceIcon"
+   "M$1"
   ],
   "a person's profile / held: the app's clocks": [
    "Ago"
   ],
   "a person's profile / hub: a visit counted": [
    "Icon",
-   "M$1",
-   "PlaceIcon"
+   "M$1"
   ],
   "a person's profile / input:on": [
    "AccountDots",
@@ -581,11 +588,7 @@
    "NetBadge",
    "NetGlyph",
    "PersonRow",
-   "PlaceIcon",
    "RowTyping"
-  ],
-  "a person's profile / nickname": [
-   "PlaceIcon"
   ],
   "the directory / hub: a visit counted": [
    "SpacesEntry"

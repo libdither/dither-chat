@@ -11,8 +11,9 @@
  * check found it, read when your own reading did.
  */
 import type * as P from '@dither-chat/protocol';
-import { composeState, followNativeId, isPostId, NETWORK_META, placeName, POST_ACTS, postFieldsProblem, postIdOf, postNativeId, postRulesFor, rulesForReply } from '@dither-chat/protocol';
+import { composeState, followNativeId, isPostId, NETWORK_META, placeName, POST_ACTS, postFieldsProblem, postIdOf, postNativeId, postRulesFor, rulesForReply, withoutHiddenGuests } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
+import { recordEvents } from './eventseen.ts';
 import { postAuthors, postView } from './feed.ts';
 import { rankReactors, type ReactorIn } from './reactors.ts';
 import type { AccountRow, Store } from './store.ts';
@@ -113,6 +114,8 @@ interface PublishIn {
 /** Why these files cannot go with one post on this network, or null. */
 function postMediaProblem(media: readonly P.OutgoingAttachment[], rules: P.PostRules, net: string): string | null {
   if (!media.length) return null;
+  // LessWrong's comments are words only.
+  if (!rules.media.images && !rules.media.gif && !rules.media.video) return `${net} takes words only here: no pictures or videos.`;
   const images = media.filter((m) => m.kind === 'image' && m.mime !== 'image/gif').length;
   const gifs = media.filter((m) => m.mime === 'image/gif').length;
   const videos = media.filter((m) => m.kind === 'video').length;
@@ -180,10 +183,12 @@ export class Posts {
    * (follows.ts), so they are news, decided by triage like any chat's message; a thread you are reading shows them
    * anyway, so they come in unread and silent.
    */
-  private record(accountId: string, posts: readonly P.PostFact[], live: boolean): { fresh: number; followed: number } {
+  private record(accountId: string, given: readonly P.PostFact[], live: boolean): { fresh: number; followed: number } {
     const s = this.d.store;
     const acc = s.account(accountId);
-    if (!acc || !posts.length) return { fresh: 0, followed: 0 };
+    if (!acc || !given.length) return { fresh: 0, followed: 0 };
+    // A hidden guest list's guests are never kept (docs/events.md "Who is going"), whatever an extractor sent.
+    const posts = given.map(withoutHiddenGuests);
     const conv = postsConvNative(s, acc);
     const cid = hubId('cnv', acc.network, conv);
     let fresh = 0;
@@ -221,6 +226,8 @@ export class Posts {
         s.ingest(acc, { t: 'message', message: had && had.conversation_id !== cid ? { ...f, conversation: s.nativeOf('conversation', had.conversation_id)!.nativeId } : f });
       }
     })();
+    // Hosts and guests seen at the events among them (eventseen.ts).
+    recordEvents(s.db, acc, posts, now);
     this.d.changed?.();
     if (triage.length) this.d.fresh?.(triage);
     return { fresh, followed };
@@ -376,6 +383,8 @@ export class Posts {
     const quote = id(b.quote, 'quote');
     const rules = replyTo ? rulesForReply(base) : base;
     if (replyTo && !rules.actions.reply) throw new PostsError(`${net} has no replies here.`, 409);
+    // LessWrong: comments only; a new post is an article written on the site.
+    if (!replyTo && rules.replyOnly) throw new PostsError(`${net} takes only comments from here: answer a post or a comment.`, 409);
     if (quote && !rules.actions.quote) throw new PostsError(`${net} has no quotes here.`, 409);
     if (b.replies !== undefined && b.replies !== null && !(rules.replyGates as readonly unknown[]).includes(b.replies)) throw new PostsError(`replies: ${net} has no such choice`, 400);
     const replies = b.replies === undefined || b.replies === null || b.replies === 'everyone' ? undefined : (b.replies as P.ReplyGate);

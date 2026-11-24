@@ -87,7 +87,8 @@ export function rankFeatures(x: ScoreInput, s: Scored): Features {
     messageDay: 2 ** (-message / DAY),
     wrote: 2 ** (-since(x.state.lastSent) / DAY),
     unread: Math.min(x.unread, 10) / 10,
-    mentions: Math.min(x.mentions, 3) / 3,
+    // An @everyone counts half a mention of you (attention.ts unreadWildcard).
+    mentions: Math.min(x.mentions - Math.min(x.wildcards ?? 0, x.mentions) / 2, 3) / 3,
     owed: (s.parts.owed ?? 0) / 60,
     live: (s.parts.live ?? 0) / 30,
     pinged: x.pinged ? 1 : 0,

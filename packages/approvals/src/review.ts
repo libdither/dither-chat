@@ -221,20 +221,64 @@ export class Reviewer {
     const c = await verifyCommit(this.mirror(repo), commit, { keys: this.keys, repo: repo.name });
     if (!c.covered) return void Object.assign(s, { state: 'failed', note: c.reason }, this.log(`[${repo.name}] ${branch}: the merge would not verify (${c.reason}); not pushed`));
     const push = this.git(repo, ['push', '-q', repo.remote, `${commit}:refs/heads/${repo.target}`], { ok: [0, 1] });
-    if (push.code !== 0) {
-      this.log(`[${repo.name}] ${branch}: the push was refused (${push.err.trim().slice(0, 200)}); asking again on the new ${repo.target}`);
-      return void Object.assign(s, { state: 'ci-wait', id: undefined });
-    }
+    if (push.code !== 0) return this.refused(repo, branch, s, push.err);
     this.git(repo, ['update-ref', `refs/heads/${repo.target}`, commit]);
     this.git(repo, ['push', '-q', repo.remote, `:refs/heads/${branch}`], { ok: [0, 1] });
     Object.assign(s, { state: 'merged', note: commit });
     this.log(`[${repo.name}] ${branch}: merged as ${commit.slice(0, 12)}`);
   }
 
+  /**
+   * The remote refused the merge. Only a target that moved since is worth a new question (on the new base); any other
+   * refusal (a protected branch, a hook, a signature rule) would refuse the same merge again, so the branch fails and
+   * the user is told once, on the branch's topic, until a new head is pushed.
+   */
+  private async refused(repo: RepoConfig, branch: string, s: BranchState, err: string) {
+    const reason = pushRefusal(err);
+    const { target } = this.fetch(repo);
+    if (target !== s.base) {
+      this.log(`[${repo.name}] ${branch}: the push was refused (${reason}); ${repo.target} moved, asking again on the new ${repo.target}`);
+      return void Object.assign(s, { state: 'ci-wait', id: undefined });
+    }
+    // Failed first: an alert the hub won't take must not leave the approval to be pushed again every pass.
+    Object.assign(s, { state: 'failed', id: undefined, note: reason });
+    this.log(`[${repo.name}] ${branch}: ${repo.target} refused the push (${reason}); not asking again until a new head`);
+    const v = await this.hub.create({
+      kind: 'alert',
+      title: refusedTitle(branch, repo.target, reason),
+      body: `The approved merge of ${branch} into ${repo.target} (${repo.name}) was not pushed. ${repo.target} has not moved, so asking again would be refused the same way: nothing more is asked for this head. Fix the cause, then push a new head to ${branch} to be asked again.\n\n${err.trim().slice(0, 4000)}`,
+      urgency: 'normal',
+      topic: this.topic(repo, branch),
+    });
+    s.id = v.id;
+  }
+
   /** For tests and `status`: what the bot remembers. */
   snapshot() {
     return structuredClone(this.state);
   }
+}
+
+/**
+ * A refused push in one line: the remote's own words when it said any (GitHub's "GH006: Protected branch update failed
+ * for refs/heads/main. Commits must have verified signatures."), else git's "! [rejected]" line, else its first line.
+ */
+export function pushRefusal(err: string): string {
+  const lines = err.split('\n').map((l) => l.trim()).filter(Boolean);
+  const remote = lines.filter((l) => l.startsWith('remote:')).map((l) => l.slice('remote:'.length).trim().replace(/^error:\s*/i, '')).filter(Boolean);
+  const said = remote.length ? remote.slice(0, 2).join(' ') : (lines.find((l) => l.startsWith('! ')) ?? lines.find((l) => !/^(To |hint:)/.test(l)) ?? 'no reason given');
+  return said.replace(/\s+/g, ' ').slice(0, 300);
+}
+
+const REFUSED = " refused the bot's push: ";
+const refusedTitle = (branch: string, target: string, reason: string) => `${branch}: ${target}${REFUSED}${reason}`;
+
+/** What the bot's alert on a branch's topic says, for `review status`: a conflict, or a merge the target refused. */
+function alertOutcome(title: string, branch: string): { outcome: 'failed' | 'conflict'; reason: string } | null {
+  if (title.startsWith(`${branch} conflicts with `)) return { outcome: 'conflict', reason: title.slice(branch.length + 1) };
+  const at = title.indexOf(REFUSED);
+  if (title.startsWith(`${branch}: `) && at > 0) return { outcome: 'failed', reason: title.slice(at + REFUSED.length) };
+  return null;
 }
 
 function readConfig(file: string): ReviewConfig {
@@ -252,8 +296,11 @@ export async function reviewCommand(args: string[], o: { repo?: string; config?:
     const { items } = await o.hub().byTopic(`${o.repo}:${name}`);
     const v = items[0];
     if (!v) return console.error(`nothing asked for ${name} in ${o.repo} yet`), 75;
-    console.log(JSON.stringify({ id: v.id, kind: v.kind, title: v.title, state: v.state, action: v.action, message: v.message, created: v.created }, null, 2));
+    // The bot's alert says the branch can't go on as it is: a conflict, or the target refused the approved merge.
+    const said = v.kind === 'alert' ? alertOutcome(v.title, name) : null;
+    console.log(JSON.stringify({ id: v.id, kind: v.kind, title: v.title, state: v.state, action: v.action, message: v.message, created: v.created, ...(said ?? {}) }, null, 2));
     if (v.message) console.error(`The user's message: ${v.message}`);
+    if (said) console.error(`${name}: ${said.outcome}: ${said.reason}; push a new head to be asked again`);
     if (v.kind === 'alert') return 75;
     return v.state !== 'answered' ? 75 : v.action === 'deny' ? 77 : 0;
   }

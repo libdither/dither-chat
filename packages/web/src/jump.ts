@@ -8,6 +8,8 @@ import { allCommunities, communitiesOf, convLabel, convTitle, directsOf, netName
 import { db, type Route } from './state.ts';
 import { homeRoute } from './opening.ts';
 import { fuzzyScore, rootKeys } from './palette.ts';
+import { convById } from './mail/chats.ts';
+import { isGroupThread, threadName, threadPeople } from './mail/model.ts';
 
 export interface JumpTarget {
   key: string;
@@ -43,6 +45,13 @@ export function jumpTargets(): JumpTarget[] {
     if (!visibleConv(c) || c.shape === 'direct') continue;
     const com = communitiesOf(c)[0];
     out.push({ key: c.id, kind: 'place', label: c.shape === 'channel' ? convLabel(c) : convTitle(c), sub: com ? com.name : netName(c.network), to: homeRoute(c), last: c.lastMessageAt ?? 0, score: scoreOf([c.id]), conv: c });
+  }
+  // A mail thread with more people is a chat of its own, named by its subject (docs/mail.md "Mail as chats"); its
+  // people still find it, since its name no longer says who is on it.
+  for (const t of db.mail.threads.values()) {
+    if (!isGroupThread(t) || !t.roles.includes('inbox') || !db.mail.accounts.has(t.accountId)) continue;
+    const also = [...new Set(t.from.filter((f) => !f.self).flatMap((f) => [f.name, f.email]).filter((n): n is string => !!n))];
+    out.push({ key: t.id, kind: 'place', label: threadName(t), sub: `Mail with ${threadPeople(t)}`, to: { view: 'inbox', conv: t.id }, last: t.lastAt, score: scoreOf([t.id]), also, conv: convById(t.id) });
   }
   return out;
 }

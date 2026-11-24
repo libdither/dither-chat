@@ -21,7 +21,8 @@ command (`packages/protocol/src/about.ts` `PersonAbout`).
   member and channel counts. Tags under it: pronouns, one per kind of connection with the networks' marks (Friend,
   Contact, You follow, Follows you, Request sent, Blocked: "Connections" below), Wants to be friends, You, Bot;
   for a place End-to-end encrypted, Age-restricted, Only admins send, your role there, Muted. A person's status line
-  last.
+  last, a custom emoji in it as its picture where a profile gave one (`status.emojiUrl`: Zulip's organization emoji),
+  else as `:name:`.
 - **Actions.** One row. A person: Message (straight to your chat with them, every route together, where the message
   box's line chooses the accounts; with no chat yet, starting one, a menu where there are several ways: each account's
   own menu always has it), Merge (opens the search for someone to merge in; again closes it), Copy (a menu: the
@@ -39,24 +40,30 @@ It grows with the person. Someone with one account looks as a single profile doe
 bio in About, the account on the right. Someone with several gets **Accounts** at the top of the left column instead.
 
 Left:
-- **Accounts**, for someone with several accounts (Kit's seven, Mo's two, yours): a tile each, grouped by network
-  (`AccountTile` in ui/Profile.tsx). Each has the account's own picture with its network's badge, its name as you see
+- **Accounts**, for someone with several accounts (Kit's seven, Mo's two, yours): a row each, grouped by network
+  (`AccountRow` in ui/Profile.tsx). Each has the account's own picture with its network's badge, its name as you see
   it (your nickname for it, else its display name, else handle, else id; with a nickname, the account's own name
   beneath it, muted: "their name: kitty"), its handle or address as a chip that copies, the network and since when
-  they are on it, and that account's bio (three lines, the network's stock lines left out). A button goes to the
-  account: its chat (the person's page, sending there), else Start a chat on that network where an account of yours
-  can, else Email. ⋯, a right-click or a hold opens the account's menu: the same, Set Nickname… (Change Nickname… and
-  Remove Nickname once it has one, editing the name on the tile in place; only you see it, docs/chats.md "Names"),
-  Copy the handle and the id, Open on the network, Split Into Its Own Person. The merge hint and search sit under the tiles. Before 2026-11-11 the hero
-  had a chip per handle and the right column a plain row per identity, with one picture for the person.
+  they are on it, and **Main** or **Picture** when it speaks for them (below, "Which account speaks for them"). Its
+  bio is in About. A button goes to the account: its chat (the person's page, sending there), else Start a chat on that
+  network where an account of yours can, else Email. **Edit** opens the account's menu as buttons under the row (a
+  right-click or a hold opens it as a menu): Make Main Account, Use Its Picture, Set Nickname… (Change Nickname… and
+  Remove Nickname once it has one, editing the name on the row in place; only you see it, docs/chats.md "Names"), Copy
+  the handle and the id, Open on the network, Split Into Its Own Person. A line under the rows says which account
+  speaks for them, and whether you chose it or the hub did. The merge hint and search sit under it. Before 2026-11-23 each account was a
+  tile with its bio on it and its menu behind ⋯; before 2026-11-11 the hero had a chip per handle and the right
+  column a plain row per identity, with one picture for the person.
 - **Maybe the same person**: up to four Same person? suggestions with this person in them (docs/same-person.md), each
   with the other side's name and accounts, the chance, the strongest three pieces of evidence, Merge and Not the same;
   All opens the whole list. Only when there are some, and never on your own page.
-- **About**: each network's bio (on the account tiles instead, for someone with several), its links as links (an
-  address with or without `https://`, a Markdown link, and on X an @handle; `links.ts`, `bits.tsx` Linked), the longest first, labelled
-  by network when there is more than one (a network's
+- **About**: each account's bio, its links as links (an address with or without `https://`, a Markdown link, and on
+  X an @handle; `links.ts`, `bits.tsx` Linked), the main account's first, then the longest, labelled by network when
+  there is more than one (with the account's name too when two are on one network, and "main" on the main one's; a network's
   stock line such as WhatsApp's "Available" is left out); their links (connected accounts, GitHub, a phone number
-  written two ways once); On Discord since; facts a network adds (Business, Time zone); how many of their messages
+  written two ways once); On Discord since; facts a network adds (Business), the people a fact names (a bot's owner,
+  a Zulip person field: `facts[].people`) each a link to their profile; their **Local time** where the network
+  says their time zone (`PersonAbout.timeZone`, an IANA name, else a "Time zone" fact from an older adapter: Zulip,
+  Matrix's `m.tz`), with how far it is from yours; how many of their messages
   the hub has, since when; follower, following and post counts (X). A network that could not be asked says why, in a line.
   Badges, the frame on their picture and their profile's colours, where the network shows them. On your own page,
   under your bio: your name, pronouns and banner on each network that lets you change them here
@@ -67,6 +74,8 @@ Left:
   from them. Discord's mutual servers count even where they never wrote; the rest comes from messages and member
   lists the hub has. A server they wrote in says how many of their messages the hub holds there, and an estimate of
   how many they posted when one can be made (below, "Message counts").
+- **Events** (docs/events.md, "People"): the Luma and Partiful events any of their accounts hosted or went to, hosting
+  first, then upcoming soonest, then the past, each with when, where and their part; one opens the event's page.
 - **Mail** (docs/mail.md, "People"), for someone with an email address: their newest threads across your mail
   accounts, how many, and All mail with them. A thread opens in Mail.
 - **Recent posts** (X, [feed.md](feed.md#profiles)): their posts as their profile said them, pinned, reposts, replies
@@ -74,15 +83,22 @@ Left:
   and each is logged as a message.
 - **Recent messages**: each with the place's picture (the server's icon for a channel), the place, and when. A feed
   item says what they did ("X notifications", "Liked your post: “…”"). Not shown for someone known only by mail.
-- **Activity** (ui/ActivityCard.tsx): the current status and since when, and their presence now when it is logged; then
+- **Activity** (ui/ActivityCard.tsx): the current status and since when, and their presence now (from the log when it
+  is logged, else the status dot's words: "Online on Zulip"); then
   the activity chart (below, "Activity"); then, with adversarial features shown (docs/history.md), the logged status
   history and presence history (each stretch with how long it lasted), each collapsed until opened. Absent when there
   is no status, nothing logged and no message or conversation with them.
-- **History**: what changed about them, except statuses and presence (ui/HistoryCard.tsx).
+- **History**: what changed about them, except statuses and presence (ui/HistoryCard.tsx), and, while changes are kept,
+  the roles and user groups they were given or lost in a place ("was given designers in Example Org"), which are
+  kept against the place and show in its History too.
 
 Right:
-- **Mutual friends** (Discord), or on your own page **Friends**: your Discord friends, Signal and WhatsApp
-  contacts and Matrix direct chats, each person once. Click one for theirs.
+- **Mutual friends** (Discord), or on your own page **Friends and contacts** (`FriendsCard`): your Discord friends,
+  Signal and WhatsApp contacts and Matrix direct chats, each person once, saying which network each is from. Each
+  network has a chip with its count in its own word ("5 friends", "4 contacts", "mutuals" for a follow network); a chip
+  shows only that network's, All shows everyone again. Each row ends with its networks' badges, and a line says how
+  many are on more than one. With one network the chip is a plain line ("3 friends on Discord"). The card's title
+  takes the words of its networks. Click one for theirs. Before 2026-11-23 it was one merged count with no network.
 - **Connections** (below): how each of your accounts stands with them, grouped by kind, with Remove friend, Cancel
   request, Unblock, Remove contact or Unfollow where the account can; each asks first (docs/add.md,
   "Relationships"). Called How you stand until 2026-11-13.
@@ -100,6 +116,20 @@ Right:
 More on a person also has **Block on <network>…** (asks first) or **Unblock on <network>** where an account can
 (capability `block`: `POST /api/identities/:id/block { unblock? }`). Nothing from someone your account's list says you
 blocked alerts (triage: "From someone you blocked"); on Signal their messages stop coming at all.
+
+### Which account speaks for them
+
+Someone with several accounts shows one name, one picture and the bios of all of them. One account speaks for them,
+their face (docs/chats.md "Names"): the hub chooses the one you talked with last until you choose. Its name as you
+see it is theirs everywhere (with your nickname for it, if you gave one), its picture is theirs, its bio comes first
+in About, and its banner shows where it has one (else Discord's). They follow it: the network renaming the account, a
+new picture, a nickname you give it. **Make Main Account** on one of their accounts (its Edit, or its menu) keeps
+that one; pressing it again (checked, **Main Account**) lets the hub choose again. **Use Its Picture** on another
+account takes the picture from that one instead, while it has one; pressing it again goes back to the main account's,
+and so does making that account main or splitting it off. The hub keeps both on the person (`person.face_id` with `face_pinned`, and
+`person.picture_identity_id`, set with `PATCH /api/persons/:id { face, picture }`, an identity id of theirs or null;
+`PersonView.faceId`, `facePinned`, `pictureIdentityId`). Not on your own page: your own accounts go by the names you
+gave them on their networks.
 
 ### Your own bio
 
@@ -120,10 +150,13 @@ and its code under My code (docs/add.md, "QR codes"), come from the last time it
 
 ### Changing a picture
 
+A hero's picture you may not change is a button that opens it full screen in the image viewer (ui/Viewer.tsx), to
+zoom and pan; one you may change has **View Picture** first in its menu.
+
 Where you may change a picture, the hero's picture is a button with a camera on it ("Change" over it on hover):
 a group's or server's where its About says `fields.avatar.canEdit`, and yours on each network whose profile lists
-`avatar` under `editable`. It opens a menu (a sheet on a phone): **Upload a Picture…**, **From This Chat's
-Pictures…** (a conversation), **An Earlier Picture…** (where it had one), and **Remove Picture** where the network
+`avatar` under `editable`. It opens a menu (a sheet on a phone): **View Picture** (where there is one), **Upload a
+Picture…**, **From This Chat's Pictures…** (a conversation), **An Earlier Picture…** (where it had one), and **Remove Picture** where the network
 can take it away (a Discord group, your own profile; not a Signal group or a server's icon). A picture dropped
 anywhere on the page, or pasted where nothing is being typed, opens the editor too.
 
@@ -186,8 +219,9 @@ null for one it does not have), friends into identities, pictures into signed me
 | Discord | bio | custom status | yes | from the id | friend, requests, blocked | servers, with nick and roles | yes | friends list | connections | |
 | Signal | About | About emoji | | | contact, blocked | (hub's own) | | contacts | phone | |
 | WhatsApp | About | | | | contact, blocked | (hub's own) | | address book | phone | business |
-| Matrix | | | where the server keeps them | | has a DM | (hub's own) | | DM partners | matrix.to | time zone |
+| Matrix | | | where the server keeps them | | has a DM | (hub's own) | | DM partners | matrix.to | time zone (`timeZone`) |
 | X | bio | | | from the profile | following, Follows you | (hub's own) | | | website | follower, following and post counts; recent posts |
+| Zulip | the first long-text field | custom status (an organization emoji as its picture) | the pronouns field | joined | | the organization, with their role and user groups | | | link and external-account fields | role, profile fields (person fields and a bot's owner linked, dates in words), time zone (`timeZone`) |
 
 **X** also answers with the person's recent posts (`PersonAbout.posts`, up to 20, a pinned one first), shown in a
 **Recent posts** card after About; its counts go in About and its following and `followsYou` in Connections
@@ -320,6 +354,41 @@ The presence band, the status marks and the grid's Online need adversarial featu
 `presence` only while presence is logged and `statuses` only while statuses are (shown, and their switches on), and
 leaves the fields out otherwise rather than sending zeros. Until then a line under the chart says they appear once
 those are turned on, with a link to Settings → Adversarial features. The rest needs nothing turned on.
+
+## Status dots
+
+A small dot on a person's picture says how they are on their networks right now: green online, amber idle, red do not
+disturb, a hollow ring offline. No dot: nothing known. Where: DM and group rows in the inbox and the sidebar, people
+rows, a DM's header, the profile's picture, member lists on About, and the @ picker. On a row whose picture carries
+the network's badge in its bottom corner, the dot sits at the top.
+
+- **One person, one dot.** Their most present account wins (online, then do not disturb, then idle, then offline, as
+  the Activity chart merges), and the tooltip names where: "Online on Zulip", "Idle on Discord and Matrix". An account
+  not yet joined to a person is its own dot.
+- **Groups** show a dot only while someone in them is around (online, busy or idle), the most present of them, and the
+  tooltip names up to three ("Around: Bo (online), Ann (idle)"). Offline people are no dot there.
+- **Kept always, unlike presence over time.** The hub keeps each identity's latest state whatever the adversarial
+  presence switch says (docs/history.md): it is what the network's own app shows. It is in memory and in
+  `presence_now`, so a restart keeps it (adapters tell a state once, when it changes).
+- **Unknown rather than stale.** A state is hidden (sent as unknown) while no account that heard it is online
+  (offline, connecting, needing attention, error, disabled, or the hub cut off from dither-accounts), and shows again
+  when one is back: adapters tell only changes, so what one told is still its word then, and anything newer comes as a
+  change. It goes with the last account that heard it, and when it has not been heard for three days (online, idle,
+  busy) or a week (offline). The hub keeps it only for people it already knows: presence makes no identity.
+- **Cheap on a big server.** Presence goes to the page in the bootstrap and as `presence` frames on the live socket, at
+  most one every two seconds, each identity once at its newest (hub presence.ts); the journal keeps it by identity
+  (docs/sync.md). On the page it moves `presenceRev` only (versions.ts), so a change draws again the dots it changed and
+  not the rows or lists they sit in; a row drawn again for something else leaves its dot alone (`memoOn`, docs/perf.md). The offline snapshot keeps it too.
+- **Which networks say it** (`{t:'presence'}` in packages/protocol adapter.ts, from dither-accounts' extractors):
+  Discord (friends and people with a DM, with devices), Matrix (people with a direct chat, `m.presence`), Zulip
+  (everyone in the organization, read once a minute as Zulip's apps do), and Telegram (contacts and people with a
+  DM, from the status updates Telegram pushes to every client anyway). Signal, WhatsApp, Google Messages, X and the
+  Meta apps say none. WhatsApp could, but only by subscribing to each person, which its own app does only for the chat
+  on screen: left out on purpose. Slack has no account kind here yet.
+
+Code: hub `presence.ts`; web `presence.ts` (which dot), `ui/PresenceDot.tsx` (drawing it). Tests:
+`packages/hub/test/presence.test.ts`, `packages/web/test/presence.test.ts`, and `scripts/verify-presence.ts`
+(a demo hub in headless Chromium: dots on each place, both themes).
 
 ## A place
 

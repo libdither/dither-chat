@@ -7,7 +7,9 @@ import type * as P from '@dither-chat/protocol';
 import { RELATIONSHIP_LABEL, withList } from '@dither-chat/protocol';
 import { connections, connectionTags, withChanges, type Connection } from '../connections.ts';
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { ago, fullTime } from '../format.ts';
+import { memoOn } from './memo.ts';
+import type { ComponentChildren } from 'preact';
+import { ago, fullTime, localTime } from '../format.ts';
 import { bioEditor, bioLeft } from '../bio.ts';
 import { openers } from '../direct.ts';
 import { composeTo } from '../mail/people.ts';
@@ -18,14 +20,14 @@ import { api, db, go, isSelfIdentity, openMessage, openProfile, rev, setRule, to
 import { messageSomeone } from './Palette.tsx';
 import { Avatar, Empty, Linked, NetBadge, NetGlyph } from './bits.tsx';
 import { isQuietConv } from '../feed.ts';
-import { copy, groups, openMenu, useMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
+import { copy, groups, useMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
 import { nicknamable, nicknameEntries, NicknamedName, NicknameInput, ownName } from './Nickname.tsx';
 import { ActivityCard } from './ActivityCard.tsx';
 import { SameBox } from './SameBox.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
 import { copyEntries, identityMenu, personMenu } from './menus.tsx';
-import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, Tag } from './ProfileShell.tsx';
+import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, StatusEmoji, Tag, viewPicture } from './ProfileShell.tsx';
 import { ConnectActions, ProfileConnections } from './Requests.tsx';
 import { openConv } from '../opening.ts';
 import { Loading } from './Loader.tsx';
@@ -42,7 +44,7 @@ const selfParts = signal<Self | null>(null);
 let selfLoading: Promise<unknown> | null = null;
 const loadSelf = () => (selfLoading ??= import('./ProfileSelf.tsx').then((m) => (selfParts.value = m), () => (selfLoading = null)));
 import { RecentPostsLazy } from './feed/lazy.tsx';
-import { clip, feedVerb } from '../feed.ts';
+import { clip, feedVerb, postKey } from '../feed.ts';
 
 /** A feed item in their Recent messages (docs/feed.md): "Liked your post: “…”" ("Favourited" on Mastodon), or what they wrote. */
 function feedLine(f: P.FeedItem, body: string, network: P.Network): string {
@@ -72,7 +74,10 @@ const WHAT_NETWORKS_SHARE: Record<P.Network, string> = {
   lemmy: 'Name, handle, bio and picture, as their Lemmy profile shows them.',
   substack: 'Name, handle, bio and picture, and the publications they write.',
   bluesky: 'Name, handle, bio and picture, as their Bluesky profile shows them.',
+  lesswrong: 'Name, bio and karma, as their LessWrong profile shows them.',
   zulip: 'Name, picture and role in the organization, their status, time zone and the profile fields the organization asks for.',
+  luma: 'Name, username, picture, a short bio and the links they chose (X, Instagram, LinkedIn, TikTok, YouTube, a website), as their Luma profile shows them, and the events you saw them at.',
+  partiful: 'Name, picture, bio and the links they chose, as Partiful shows them on an event, and the events you saw them at.',
 };
 
 /** What a network says when someone wrote nothing. */
@@ -90,15 +95,49 @@ function onePerPerson(list: string[]): string[] {
 /** The same line from two accounts on one network once. */
 const dedupe = (rows: [string, string][]) => rows.filter((r, i) => rows.findIndex((x) => x[0] === r[0] && x[1] === r[1]) === i);
 
+/** The people a fact names, each a link to their profile. */
+function FactPeople({ ids }: { ids: string[] }) {
+  return (
+    <>
+      {ids.map((id, i) => {
+        const p = db.identities.get(id)?.personId ? db.persons.get(db.identities.get(id)!.personId!) : null;
+        return (
+          <>
+            {i > 0 && ', '}
+            <button class="pf-fact-who" onClick={() => openProfile(id)}>
+              {p?.name ?? identityName(id)}
+            </button>
+          </>
+        );
+      })}
+    </>
+  );
+}
+
 const normalized = (s: string | null | undefined) => (s ?? '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 
-/** A conversation's picture: its own, else its server's. */
-function PlaceIcon({ c, size = 22 }: { c: P.ConversationView; size?: number }) {
+/** What a conversation's picture shows: its own, else its server's. */
+function placePicture(c: P.ConversationView) {
   const com = c.spaceIds.length ? rootCommunity(c.spaceIds[0]) : null;
-  if (com) return <Avatar id={com.id} name={com.name} url={com.icon} size={size} square network={c.network} />;
+  if (com) return { id: com.id, name: com.name, url: com.icon, square: true, network: c.network };
   const person = c.peerPersonId ? db.persons.get(c.peerPersonId) : null;
-  return <Avatar id={person?.id ?? c.id} name={convTitle(c)} url={person?.avatar ?? c.avatar} size={size} square={c.shape !== 'direct'} network={c.network} />;
+  return { id: person?.id ?? c.id, name: convTitle(c), url: person?.avatar ?? c.avatar, square: c.shape !== 'direct', network: c.network };
 }
+
+/**
+ * A conversation's picture. Drawn again only when what it shows changes (memoOn): a profile draws its lists again for
+ * a name you give someone, and the places' pictures mostly stay (docs/perf.md "Every click").
+ */
+const PlaceIcon = memoOn(
+  'PlaceIcon',
+  function PlaceIcon({ c, size = 22 }: { c: P.ConversationView; size?: number }) {
+    return <Avatar {...placePicture(c)} size={size} />;
+  },
+  ({ c, size }) => {
+    const p = placePicture(c);
+    return `${size ?? ''}\n${p.id}\n${p.name}\n${p.url ?? ''}\n${p.square}\n${p.network}`;
+  },
+);
 
 /** One account's handle or id, a button that copies it. */
 function HandleChip({ i }: { i: P.IdentityView }) {
@@ -111,56 +150,166 @@ function HandleChip({ i }: { i: P.IdentityView }) {
 }
 
 /**
- * One of several accounts of a person, on their profile: its own picture with its network's badge, its own name, its
- * handle (copies), what it says about itself (`bio`), and when it joined its network. A button goes to it (its chat,
- * or starts one, or a mail), and its menu (⋯, right-click or hold) has the rest: your nickname for it, copy, open
- * on the network, split. With a nickname, the tile says it as the name and the account's own beneath it.
+ * One of several accounts of a person, on their profile (docs/profile.md "Their accounts"): its own picture with its
+ * network's badge, its own name, its handle (copies), and when it joined its network; Main or Picture when it speaks
+ * for them. A button goes to it (its chat, or starts one, or a mail); Edit opens what its menu (right-click or hold)
+ * has as buttons under it: make it the main account, use its picture, your nickname for it, copy, open on the
+ * network, split. Its bio is in About, with the others'.
  */
-function AccountTile({ i, bio, since, go: open, goLabel, menu: menuOf }: { i: P.IdentityView; bio?: string; since?: string; go?: () => void; goLabel?: string; menu: (editNickname: () => void) => MenuSpec }) {
+function AccountRow({ i, since, main, chosen, picture, go: open, goLabel, menu: menuOf }: { i: P.IdentityView; since?: string; main: boolean; chosen: boolean; picture: boolean; go?: () => void; goLabel?: string; menu: (editNickname: () => void) => MenuSpec }) {
+  const [naming, setNaming] = useState(false);
   const [editing, setEditing] = useState(false);
-  const menu = () => menuOf(() => setEditing(true));
+  const menu = () => menuOf(() => setNaming(true));
   const ctx = useMenu(menu);
   const name = identityName(i.id);
+  const net = netName(i.network);
+  // The menu's entries as buttons; the way to it is the button beside the name already.
+  const entries = editing ? menu().items.filter((e): e is Extract<MenuEntry, { run?: () => void }> => 'run' in e && !!e.run && e.label !== goLabel) : [];
   return (
-    <div class="pf-acct" data-identity={i.id} {...ctx}>
-      <Avatar id={i.id} name={name} url={i.avatar} size={44} network={i.network} />
+    <div class={`pf-acct ${editing ? 'editing' : ''}`} data-identity={i.id} data-main={main || undefined} data-chosen={chosen || undefined} {...ctx}>
+      <Avatar id={i.id} name={name} url={i.avatar} size={36} network={i.network} />
       <div class="pf-acct-text">
         <div class="pf-acct-top">
-          {editing ? (
-            <NicknameInput i={i} onDone={() => setEditing(false)} class="pair-nick-input pf-acct-nick-input" />
+          {naming ? (
+            <NicknameInput i={i} onDone={() => setNaming(false)} class="pair-nick-input pf-acct-nick-input" />
           ) : (
             <b class="pf-acct-name" title={i.nickname ? `${name}: your nickname (only you see it)` : name}>
               {name}
             </b>
+          )}
+          {main && (
+            <span class="pf-acct-mark" title={chosen ? 'You made it their main account: its name, picture and bio speak for them' : 'Its name, picture and bio speak for them for now, as the account you talked with last; Make Main Account keeps one'}>
+              Main
+            </span>
+          )}
+          {picture && (
+            <span class="pf-acct-mark" title="Their picture is this account's">
+              Picture
+            </span>
           )}
           {open && (
             <button class="icon-btn small" title={goLabel} aria-label={goLabel} onClick={open}>
               <Icon name={i.network === 'email' ? 'mail' : 'send'} size={14} />
             </button>
           )}
-          <button class="icon-btn small" title={`${name} on ${netName(i.network)}`} aria-label={`More for ${name} on ${netName(i.network)}`} onClick={(e) => openMenu(anchorOf(e), menu(), e.currentTarget)}>
-            <Icon name="more" size={14} />
+          <button class="btn ghost small pf-acct-edit-btn" aria-expanded={editing} aria-label={`${editing ? 'Done with' : 'Edit'} ${name} on ${net}`} data-track="account edit" onClick={() => setEditing(!editing)}>
+            {editing ? 'Done' : 'Edit'}
           </button>
         </div>
         {i.nickname && <small class="pf-acct-own">their name: {ownName(i)}</small>}
         <span class="pf-acct-handle">
           <HandleChip i={i} />
           <small>
-            {netName(i.network)}
+            {net}
             {since ? ` · since ${since}` : ''}
           </small>
         </span>
-        {bio && <p class="pf-acct-bio"><Linked text={bioText(bio, i.network)} network={i.network} /></p>}
+        {editing && (
+          <div class="pf-acct-edit" role="group" aria-label={`${name} on ${net}`}>
+            {entries.map((e) => (
+              <button class={`btn small ${e.checked ? 'on' : ''}`} data-track={e.track} aria-pressed={e.checked} onClick={() => e.run!()}>
+                {e.icon && <Icon name={e.icon} size={13} />}
+                {e.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-/** Where a menu opened from a button goes: under it. */
-const anchorOf = (e: MouseEvent) => {
-  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-  return { x: r.left, y: r.bottom + 4 };
+/** What a network calls the people on your list there: Discord's friends, a phone network's contacts, a follow network's mutual follows. */
+const FRIEND_WORD: Partial<Record<P.Network, string>> = {
+  signal: 'contacts',
+  whatsapp: 'contacts',
+  telegram: 'contacts',
+  gmessages: 'contacts',
+  x: 'mutuals',
+  bluesky: 'mutuals',
+  mastodon: 'mutuals',
+  lemmy: 'mutuals',
+  substack: 'mutuals',
 };
+const friendWord = (n: P.Network) => FRIEND_WORD[n] ?? 'friends';
+const andList = (xs: string[]) => (xs.length < 2 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+
+/**
+ * Your friends on your own profile, or the friends you share on someone's (docs/profile.md "Friends"), saying which
+ * network each is from: a chip per network with its count, in its own word (friends, contacts, mutuals), which shows
+ * only that network's; and each row's networks at its end. Someone on two networks is one row, with both.
+ */
+function FriendsCard({ said, of, mutual }: { said: P.PersonAboutView[]; of: (a: P.PersonAboutView) => string[] | undefined; mutual?: boolean }) {
+  const [only, setOnly] = useState<P.Network | null>(null);
+  const byNet = new Map<P.Network, string[]>();
+  for (const a of said) {
+    const list = (of(a) ?? []).filter((iid) => !isSelfIdentity(iid));
+    if (list.length) byNet.set(a.network, [...new Set([...(byNet.get(a.network) ?? []), ...list])]);
+  }
+  if (!byNet.size) return null;
+  const key = (iid: string) => db.identities.get(iid)?.personId ?? iid;
+  const netsOf = new Map<string, P.Network[]>();
+  for (const [n, list] of byNet) for (const iid of list) netsOf.set(key(iid), [...new Set([...(netsOf.get(key(iid)) ?? []), n])]);
+  const all = onePerPerson([...byNet.values()].flat());
+  const on = only && byNet.has(only) ? only : null;
+  const list = on ? onePerPerson(byNet.get(on)!) : all;
+  const several = byNet.size > 1;
+  const twice = [...netsOf.values()].filter((x) => x.length > 1).length;
+  const words = [...new Set([...byNet.keys()].map(friendWord))];
+  const title = mutual ? `${words.includes('friends') ? 'Mutual' : 'Shared'} ${andList(words)}` : andList(words);
+  return (
+    <Card title={title[0].toUpperCase() + title.slice(1)} icon="users" count={all.length} class="pf-friends">
+      <div class="pf-friend-nets" role={several ? 'radiogroup' : undefined} aria-label={several ? 'Show' : undefined}>
+        {several && (
+          <button class={`chip-btn ${on ? '' : 'on'}`} role="radio" aria-checked={!on} data-track="friends (all)" onClick={() => setOnly(null)}>
+            <b>All</b> {all.length.toLocaleString()}
+          </button>
+        )}
+        {[...byNet].map(([n, l]) => {
+          const label = `${l.length.toLocaleString()} ${l.length === 1 ? friendWord(n).replace(/s$/, '') : friendWord(n)} on ${netName(n)}`;
+          return several ? (
+            <button class={`chip-btn ${on === n ? 'on' : ''}`} role="radio" aria-checked={on === n} data-network={n} data-track="friends (network)" title={label} onClick={() => setOnly(on === n ? null : n)}>
+              <NetGlyph network={n} size={12} decorative />
+              <b>{l.length.toLocaleString()}</b> {friendWord(n)}
+            </button>
+          ) : (
+            <span class="pf-friend-net" data-network={n}>
+              <NetGlyph network={n} size={12} decorative /> {label}
+            </span>
+          );
+        })}
+      </div>
+      <div class="pf-people">
+        {list.slice(0, 60).map((iid) => {
+          const i = db.identities.get(iid);
+          const p = i?.personId ? db.persons.get(i.personId) : null;
+          const n = p?.name ?? identityName(iid);
+          const where = netsOf.get(key(iid)) ?? [];
+          return (
+            <button class="pf-person" onClick={() => openProfile(iid)} title={`${n}: ${where.map(netName).join(', ')}`}>
+              <Avatar id={p?.id ?? iid} name={n} url={p?.avatar ?? i?.avatar} size={30} />
+              <span class="pf-person-name">{n}</span>
+              {several && (
+                <span class="pf-person-nets">
+                  {where.map((w) => (
+                    <NetGlyph network={w} size={11} />
+                  ))}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      {(list.length > 60 || (several && !on && twice > 0)) && (
+        <p class="pf-empty">
+          {list.length > 60 && `and ${(list.length - 60).toLocaleString()} more`}
+          {list.length > 60 && several && !on && twice > 0 && ' · '}
+          {several && !on && twice > 0 && `${twice.toLocaleString()} on more than one network`}
+        </p>
+      )}
+    </Card>
+  );
+}
 
 /** The profile and what each network says, the kept answers first and fresh ones as they come. */
 function useProfile(personId?: string, identityId?: string) {
@@ -303,7 +452,7 @@ function ConnectionsCard({ ids, list, onEnded }: { ids: P.IdentityView[]; list: 
 function MailCard({ mail, list, name }: { mail: NonNullable<P.ProfileView['mail']>; list: string; name: string }) {
   const open = (t: P.MailThreadView) => {
     db.mail.threads.set(t.id, t);
-    go({ view: 'mail', thread: t.id });
+    go({ view: 'inbox', conv: t.id });
   };
   return (
     <Card title="Mail" icon="mail" count={mail.total || undefined} class="pf-mail">
@@ -325,10 +474,48 @@ function MailCard({ mail, list, name }: { mail: NonNullable<P.ProfileView['mail'
         ))}
       </div>
       {mail.total > 0 && (
-        <button class="link-btn pf-mail-all" onClick={() => go({ view: 'mail', list })}>
+        <button class="link-btn pf-mail-all" onClick={() => go({ view: 'inbox', mail: list })}>
           {mail.total > mail.threads.length ? `All ${mail.total.toLocaleString()} threads with ${name}` : `All mail with ${name}`}
         </button>
       )}
+    </Card>
+  );
+}
+
+/** What an event's role and RSVP say of them, in words. */
+const EVENT_ROLE: Record<string, string> = { going: 'going', maybe: 'maybe', interested: 'interested', waitlist: 'on the waitlist', pending: 'asked to come', declined: "can't go", invited: 'invited' };
+
+/**
+ * The events they were seen at (docs/events.md "People"): hosting first, then upcoming, then past. Each opens the event
+ * on the Feed page.
+ */
+function EventsCard({ events }: { events: P.PersonEventView[] }) {
+  const now = Date.now();
+  return (
+    <Card title="Events" icon="calendar" count={events.length} class="pf-events">
+      <div class="pf-rows">
+        {events.map((e) => {
+          const role = e.role === 'host' ? 'Hosting' : e.rsvp ? `Guest, ${EVENT_ROLE[e.rsvp] ?? e.rsvp}` : 'On the guest list';
+          // A short day on the row ("Nov 26", the year when it is another), the full time on hover.
+          const day = e.start ? new Date(e.start).toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(new Date(e.start).getFullYear() !== new Date(now).getFullYear() ? { year: 'numeric' } : {}) }) : '';
+          const when = e.start ? day : `seen ${ago(e.seenAt)}`;
+          return (
+            <button class="pf-row pf-event-row" onClick={() => go({ view: 'feed', source: 'events', post: postKey(e.network, e.event) })} title={e.url ?? ''}>
+              <NetBadge network={e.network} size={28} />
+              <span class="pf-row-text">
+                <b>{e.title || 'An event'}</b>
+                <small>
+                  {role}
+                  {e.place ? ` · ${e.place}` : ''}
+                </small>
+              </span>
+              <span class="pf-row-time" title={e.start ? `${e.start >= now ? '' : 'Was '}${fullTime(e.start)}` : undefined}>
+                {when}
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </Card>
   );
 }
@@ -442,8 +629,6 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const sharedSpaces = [...spaces.values()].sort((a, b) => b.messages - a.messages || a.s.name.localeCompare(b.s.name));
   // A network's notifications are not a place you share (docs/feed.md): what they did there is in Recent messages.
   const groupChats = convs.filter((x) => !isQuietConv(x.c) && (x.c.shape === 'group' || (x.c.shape === 'channel' && !x.c.spaceIds.length)));
-  const mutualFriends = onePerPerson([...new Set(said.flatMap((a) => a.mutualFriends ?? []))]);
-  const friends = onePerPerson([...new Set(said.flatMap((a) => a.friends ?? []))]).filter((iid) => !isSelfIdentity(iid));
 
   // ---- who they are
   // Your own bio, on each network that lets you change it from here: shown with its editor, not below.
@@ -457,7 +642,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       return st && st.at > a.fetchedAt ? { ...a, bio: st.text ?? '' } : a;
     })
     .filter((a) => a.bio?.trim() && !STOCK_BIO.test(a.bio.trim()))
-    .sort((a, b) => b.bio!.length - a.bio!.length);
+    .sort((a, b) => Number(b.identityId === person?.faceId) - Number(a.identityId === person?.faceId) || b.bio!.length - a.bio!.length);
   const pronouns = said.find((a) => a.pronouns)?.pronouns;
   // The newest heard: an adapter's live status on an identity, else what a profile said. On Signal and WhatsApp the
   // live status is their About, which shows as the bio instead.
@@ -466,7 +651,10 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     .map((i) => i.status)
     .filter((x): x is NonNullable<P.IdentityView['status']> => !!(x?.text || x?.emoji))
     .sort((a, b) => b.at - a.at)[0];
-  const status = live ?? (said.find((a) => a.status?.text) ?? said.find((a) => a.status?.emoji))?.status;
+  const heard = live ?? (said.find((a) => a.status?.text) ?? said.find((a) => a.status?.emoji))?.status;
+  // A custom emoji (`:name:`) with the picture a profile gave for it (Zulip's organization emoji).
+  const emojiPic = heard?.emoji?.startsWith(':') ? said.find((a) => a.status?.emoji === heard.emoji && a.status?.emojiUrl)?.status?.emojiUrl : undefined;
+  const status = heard && emojiPic ? { ...heard, emojiUrl: emojiPic } : heard;
   const changesPath = person ? `/api/persons/${person.id}/changes` : `/api/identities/${first.id}/changes`;
   const chartPath = `/api/people/${person?.id ?? first.id}/activity`;
   // One number written two ways is one link.
@@ -477,7 +665,11 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       const k = `${l.label}|${l.label === 'Phone' ? l.value.replace(/\D/g, '') : l.value}`;
       return !seen.has(k) && seen.add(k);
     });
-  const facts = said.flatMap((a) => (a.facts ?? []).map((f) => ({ ...f, network: a.network })));
+  // Their time zone (Zulip's): the profile's own field, else a "Time zone" fact from an older extractor.
+  const zone = [...said.map((a) => a.timeZone), ...said.flatMap((a) => a.facts ?? []).map((f) => (f.label === 'Time zone' ? f.value : undefined))].find((z) => z && localTime(z));
+  const localNow = zone ? localTime(zone) : null;
+  // The Local time row names the zone, so its bare fact goes.
+  const facts = said.flatMap((a) => (a.facts ?? []).filter((f) => !(localNow && f.label === 'Time zone' && f.value === zone)).map((f) => ({ ...f, network: a.network })));
   // How your accounts stand with them, in one vocabulary (connections.ts), with what this page changed laid over it.
   const now = withChanges(profile.links ?? [], abouts, changed);
   const conns = isSelf ? [] : connections(ids, now.links, now.abouts);
@@ -553,9 +745,15 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   // Block or unblock, where an account can (Signal): asked again after, so the page says how you stand.
   const blocks = isSelf ? [] : (extras?.blockEntries(ids, profile.links ?? [], abouts, () => void refresh()) ?? []);
 
-  // ---- each account: one account is the hero's chip and a row on the right; several are tiles of their own
+  // ---- each account: one account is the hero's chip and a row on the right; several are rows of their own
   const several = ids.length > 1;
-  const bioOf = new Map(bios.map((a) => [a.identityId, a.bio!]));
+  // The account they are shown by, their face (docs/chats.md "Names"), and the one whose picture they show instead.
+  const speaker = (several && ids.find((i) => i.id === person?.faceId)) || null;
+  const pictureChosen = (several && ids.find((i) => i.id === person?.pictureIdentityId)) || null;
+  // It shows only while it has a picture and is not the main account's own; its entry stays to clear it.
+  const pictureOf = pictureChosen?.avatar && pictureChosen.id !== speaker?.id ? pictureChosen : null;
+  const sources = (patch: { face?: string | null; picture?: string | null }) =>
+    person && api(`/api/persons/${person.id}`, { method: 'PATCH', body: patch }).catch((e) => toast({ kind: 'error', title: 'Could not save that', body: e.message }));
   const sinceOf = new Map(said.filter((a) => a.createdAt).map((a) => [a.identityId, monthYear(a.createdAt!)]));
   /** How to reach one account: its chat (the person's page, sending there), else start one, else mail it. */
   const reach = (i: P.IdentityView): { run: () => void; label: string } | null => {
@@ -581,6 +779,16 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           !!i.handle && i.handle !== i.nativeId && { label: 'Copy ID', icon: 'copy', run: () => copy(i.nativeId, 'Copied') },
           !!link && { label: `Open on ${netName(i.network)}`, icon: 'external', run: () => void window.open(link, '_blank', 'noreferrer') },
         ],
+        // Which account speaks for them (docs/chats.md "Names"): their face, whose name, picture and bio come first,
+        // kept once you make it the main account, else chosen by the hub; a picture from another.
+        several && !isSelf && !!person
+          ? [
+              speaker?.id === i.id && person.facePinned
+                ? { label: 'Main Account', icon: 'star', checked: true, track: 'main account', run: () => void sources({ face: null }) }
+                : { label: 'Make Main Account', icon: 'star', track: 'main account', run: () => void sources({ face: i.id }) },
+              (pictureChosen?.id === i.id || (!!i.avatar && speaker?.id !== i.id)) && { label: pictureChosen?.id === i.id ? 'Their Picture' : 'Use Its Picture', icon: 'image', checked: pictureChosen?.id === i.id, track: 'use picture', run: () => void sources({ picture: pictureChosen?.id === i.id ? null : i.id }) },
+            ]
+          : [],
         [several && !isSelf && { label: 'Split Into Its Own Person', icon: 'unlink', run: () => void split(i) }],
         [!!ownPicture?.dests.some((d) => d.key === i.id) && { label: 'Change Picture…', icon: 'image', track: 'change picture', run: () => setPicturing({ came: i.id }) }],
       ),
@@ -589,8 +797,10 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   // Grouped by network, in the order the person's accounts first name them.
   const tiles = [...ids].sort((a, b) => nets.indexOf(a.network) - nets.indexOf(b.network));
 
-  const accent = discord?.accent ?? null;
-  const banner = discord?.banner ?? null;
+  // The main account's banner where it has one, else Discord's (the one network with banners and accents).
+  const look = (speaker && said.find((a) => a.identityId === speaker.id && (a.banner || a.accent))) || discord;
+  const accent = look?.accent ?? null;
+  const banner = look?.banner ?? null;
   const picture = person?.avatar ?? first?.avatar ?? said.find((a) => a.avatar)?.avatar;
   const picTarget = (came?: string) => (isSelf && pe ? pe.selfTarget({ ids, abouts, came: came ?? identityId, picture: picture ?? null, historyPath: changesPath, onSaved: learn }) : null);
   const ownPicture = picTarget();
@@ -601,7 +811,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       id={person?.id ?? first?.id ?? ''}
       name={name}
       picture={picture}
-      onPicture={ownPicture ? (e) => pe!.pictureMenu(e, ownPicture, setPicturing) : undefined}
+      onPicture={ownPicture ? (e) => pe!.pictureMenu(e, ownPicture, setPicturing, picture ? () => viewPicture(picture, name) : undefined) : undefined}
+      presence={isSelf ? undefined : person ? { person: person.id } : { identity: first?.id }}
       network={nets.length === 1 ? nets[0] : undefined}
       banner={banner}
       accent={accent}
@@ -661,7 +872,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       status={
         status && (
           <>
-            {status.emoji && <span class="pf-status-emoji">{status.emoji}</span>}
+            <StatusEmoji status={status} />
             {status.text}
           </>
         )
@@ -732,12 +943,25 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     <>
       {several && (
         <Card title="Accounts" icon="idBadge" count={ids.length} class="pf-accounts">
-          <div class="pf-acct-grid">
+          <div class="pf-acct-list">
             {tiles.map((i) => {
               const r = reach(i);
-              return <AccountTile i={i} bio={bioOf.get(i.id)} since={sinceOf.get(i.id)} go={r?.run} goLabel={r?.label} menu={(edit) => accountMenu(i, edit)} />;
+              return <AccountRow key={i.id} i={i} since={sinceOf.get(i.id)} main={speaker?.id === i.id} chosen={speaker?.id === i.id && !!person?.facePinned} picture={pictureOf?.id === i.id} go={r?.run} goLabel={r?.label} menu={(edit) => accountMenu(i, edit)} />;
             })}
           </div>
+          {!isSelf && person && (
+            <p class="pf-acct-note">
+              {speaker ? (
+                <span>
+                  <NetGlyph network={speaker.network} size={11} /> {identityName(speaker.id)} speaks for them{person.facePinned ? '' : ' for now, as the account you talked with last'}: its name{pictureOf ? '' : ' and picture'} everywhere, its bio first in About.
+                  {pictureOf && ` Their picture is from ${netName(pictureOf.network)}.`}
+                  {!person.facePinned && ' Make Main Account on one to keep it.'}
+                </span>
+              ) : (
+                <>No account speaks for them yet. Edit one and Make Main Account.</>
+              )}
+            </p>
+          )}
           {mergeUi}
         </Card>
       )}
@@ -750,15 +974,15 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           </>
         ))}
         {isSelf && S && ids.map((i) => <S.OwnProfileFields identity={i} about={abouts[i.id]} onSaved={learn} />)}
-        {several ? (
-          // Each account's bio is on its tile (Accounts, above).
-          !bios.length && !editable.length && !asking && <p class="pf-empty">No bio on any of their accounts.</p>
-        ) : bios.length || editable.length ? (
+        {bios.length || editable.length ? (
           bios.map((a) => (
-            <div class="pf-bio">
+            <div class="pf-bio" data-identity={a.identityId}>
               {(bios.length > 1 || nets.length > 1) && (
                 <span class="pf-bio-net">
                   <NetGlyph network={a.network} size={11} /> {netName(a.network)}
+                  {/* Two accounts on one network: which one. */}
+                  {ids.filter((i) => i.network === a.network).length > 1 && ` · ${identityName(a.identityId)}`}
+                  {a.identityId === speaker?.id && ' · main'}
                 </span>
               )}
               <p>
@@ -770,7 +994,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           <Loading inline label="Asking the networks…" />
         ) : (
           <p class="pf-empty" title={nets.map((n) => `${netName(n)}: ${WHAT_NETWORKS_SHARE[n]}`).join('\n')}>
-            No bio on {nets.length > 1 ? 'any of their networks' : netName(nets[0])}.
+            No bio on {several ? 'any of their accounts' : netName(nets[0])}.
           </p>
         )}
         {links.length > 0 && (
@@ -822,7 +1046,12 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
             ...dedupe([
               ...said.filter((a) => a.createdAt).map((a): [string, string] => [`On ${netName(a.network)} since`, monthYear(a.createdAt!)]),
               ...facts.map((f): [string, string] => [f.label, f.value]),
-            ]),
+            ]).map(([k, v]): [string, ComponentChildren] => {
+              // A fact that names people (a bot's owner, a person field) links each to their profile.
+              const named = facts.find((f) => f.label === k && f.value === v && f.people?.length)?.people;
+              return [k, named ? <FactPeople ids={named} /> : v];
+            }),
+            localNow ? ['Local time', localNow] : null,
             profile.totalMessages > 0 && [
               'Messages stored',
               `${profile.totalMessages.toLocaleString()}${profile.firstSeenTs ? ` since ${new Date(profile.firstSeenTs).toLocaleDateString()}` : ''}`,
@@ -854,7 +1083,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         self={isSelf}
         chart={profile.totalMessages > 0 || profile.conversations.length > 0}
         status={status}
-        at={live && status === live ? live.at : undefined}
+        at={live && heard === live ? live.at : undefined}
+        presence={isSelf ? undefined : person ? { person: person.id } : { identity: first?.id }}
       />
 
       {(sharedSpaces.length > 0 || groupChats.length > 0) && (
@@ -919,6 +1149,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         .map((i) => (
           <Stories identityId={i.id} network={i.network} />
         ))}
+      {!!profile.events?.length && <EventsCard events={profile.events} />}
       {profile.mail && <MailCard mail={profile.mail} list={withList(person?.id ?? first.id)} name={name} />}
 
       {(profile.recent.length > 0 || chatNets.length > 0) && (
@@ -941,40 +1172,13 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           </div>
         </Card>
       )}
-      <HistoryCard path={`${changesPath}?except=status,presence`} />
+      <HistoryCard path={`${changesPath}?except=status,presence`} person />
     </>
-  );
-
-  const people = (list: string[]) => (
-    <div class="pf-people">
-      {list.slice(0, 60).map((iid) => {
-        const i = db.identities.get(iid);
-        const p = i?.personId ? db.persons.get(i.personId) : null;
-        const n = p?.name ?? identityName(iid);
-        return (
-          <button class="pf-person" onClick={() => openProfile(iid)} title={n}>
-            <Avatar id={p?.id ?? iid} name={n} url={p?.avatar ?? i?.avatar} size={30} />
-            <span>{n}</span>
-          </button>
-        );
-      })}
-      {list.length > 60 && <p class="pf-empty">and {list.length - 60} more</p>}
-    </div>
   );
 
   const side = (
     <>
-      {isSelf
-        ? friends.length > 0 && (
-            <Card title="Friends" icon="users" count={friends.length}>
-              {people(friends)}
-            </Card>
-          )
-        : mutualFriends.length > 0 && (
-            <Card title="Mutual friends" icon="users" count={mutualFriends.length}>
-              {people(mutualFriends)}
-            </Card>
-          )}
+      {isSelf ? <FriendsCard said={said} of={(a) => a.friends} /> : <FriendsCard said={said} of={(a) => a.mutualFriends} mutual />}
 
       {!isSelf && extras && <extras.SafetyCard abouts={said} name={name} onChanged={learn} />}
 

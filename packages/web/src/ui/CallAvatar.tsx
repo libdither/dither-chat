@@ -8,6 +8,7 @@ import type * as P from '@dither-chat/protocol';
 import { type ActiveCall, callLevels, callName, isCallSelf, mutedTalking } from '../call.ts';
 import { BADGE_WORDS, badgeSize, type CallBadge, callBadge } from '../callmarks.ts';
 import { db } from '../state.ts';
+import { faceOf } from '../model.ts';
 import { Avatar } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import './CallAvatar.css';
@@ -39,7 +40,7 @@ export function callMarks(call: ActiveCall | null, p: MarkPerson): CallMarkProps
   return {
     id: idn?.personId ?? p.id,
     name: callName(p.id),
-    picture: idn?.avatar ?? null,
+    picture: faceOf(p.id).url,
     speaking: !!p.speaking,
     ...(level !== undefined ? { level } : {}),
     tone: self && call.muted && mutedTalking.value ? 'warn' : 'good',

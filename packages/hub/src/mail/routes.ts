@@ -17,6 +17,7 @@ import type * as P from '@dither-chat/protocol';
 import { bigRoutes, pageOnDemand } from './backfill.ts';
 import type { MailHub } from './index.ts';
 import { peopleRoutes } from './people.ts';
+import { placesRoutes } from './places.ts';
 import { sendRoutes } from './outbox.ts';
 import { opsRoutes } from './ops.ts';
 import { partRoutes } from './parts.ts';
@@ -120,7 +121,7 @@ const readRoutes: MailRouter = (hub) => [
 ];
 
 /** Every slice's router. Add yours here. */
-const ROUTERS: MailRouter[] = [readRoutes, peopleRoutes, sendRoutes, opsRoutes, partRoutes, bigRoutes, classifyRoutes, attentionRoutes, searchRoutes, triageRoutes, keepRoutes];
+const ROUTERS: MailRouter[] = [readRoutes, peopleRoutes, placesRoutes, sendRoutes, opsRoutes, partRoutes, bigRoutes, classifyRoutes, attentionRoutes, searchRoutes, triageRoutes, keepRoutes];
 
 export function mountRouters(hub: MailHub): MailRoute[] {
   return ROUTERS.flatMap((r) => r(hub));

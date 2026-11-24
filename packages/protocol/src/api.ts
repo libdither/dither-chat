@@ -28,13 +28,13 @@ import type { PictureLayout } from './pictures.ts';
 import type { AboutModerationView, MemberMod, MessageModeration } from './moderation.ts';
 import type { RichView, VoiceFact } from './rich.ts';
 import type { PollView } from './poll.ts';
-import type { MailAccess, MailAccountView, MailboxView, MailBootstrap, MailOutboxView, MailThreadView } from './mail.ts';
+import type { ElsewhereView, MailAccess, MailAccountView, MailboxView, MailBootstrap, MailChatView, MailOutboxView, MailThreadView, MessageMailView, PlaceRungView } from './mail.ts';
 import type { CalendarLinkView, CalendarNotifyRef, CalendarPlanView } from './calendar.ts';
 import type { AccountsManagerView } from './accounts.ts';
 import type { AccountSelfView } from './self.ts';
 import type { ContactCardView, MissingAttachmentFact, QuoteView, SendFailureView, StoryReplyView } from './extra.ts';
 import type { ForumView, ThreadView } from './threads.ts';
-import type { FeedItem, HomeFeed, HomeReason, PostFact, ReplyGate } from './feed.ts';
+import type { EventRsvp, FeedItem, HomeFeed, HomeReason, PostFact, ReplyGate } from './feed.ts';
 import type { MixOrder } from './mix.ts';
 import type { NoticesBoot } from './notices.ts';
 
@@ -96,6 +96,15 @@ export interface PersonView {
   identityIds: string[];
   /** Where `name` came from (NameSource). */
   nameSource: NameSource;
+  /**
+   * The account they are shown by, for someone of several: `name` is its name as you see it, `avatar` its picture
+   * (else another of theirs). Absent for one account, which is it.
+   */
+  faceId?: string;
+  /** You chose `faceId` (PATCH /api/persons/:id `{ face }`, Make Main Account); absent where the hub keeps one or chooses again. */
+  facePinned?: true;
+  /** The account whose picture they show instead of their face's, when you chose one (PATCH `{ picture }`). */
+  pictureIdentityId?: string;
 }
 
 /**
@@ -666,8 +675,8 @@ export interface GraphTuning {
   /** Set when the weights were fitted to what came next (Fit to me): when, and how well before and after. */
   fitted?: { at: number; before: number; after: number };
 }
-/** Where a link came from: members seen (adversarial), a profile's mutual servers, a conversation's participants. */
-export const GRAPH_SOURCE = { members: 1, profile: 2, participant: 4 } as const;
+/** Where a link came from: members seen (adversarial), a profile's mutual servers, a conversation's participants, a thread's authors. */
+export const GRAPH_SOURCE = { members: 1, profile: 2, participant: 4, author: 8 } as const;
 
 /** What one of your accounts can react with in a conversation. */
 export interface ReactionContextView {
@@ -710,6 +719,12 @@ export interface MessageView {
   gone?: { how: 'deleted' | 'disappeared'; at: number; kept: boolean };
   /** Earlier versions the hub kept: GET /api/messages/:id/history. */
   edits?: number;
+  /** The version before this one, when the hub kept it: the chat marks the words the last edit put in (docs/history.md "A message's history"). */
+  prevBody?: string;
+  /** When it was last moved to the conversation it is in now (ms epoch): a Zulip message moved to another topic (extra.ts movedAt). */
+  movedAt?: number;
+  /** An event host's announcement to every guest (extra.ts blast; docs/events.md "Conversations"). */
+  blast?: true;
   /** Other things that happened to it the hub kept: reactions taken back, pins (docs/history.md). Reaction times are on `reactions`. */
   events?: number;
   /** Pinned, as the last pin or unpin the hub saw says. */
@@ -750,6 +765,8 @@ export interface MessageView {
    * with each post's `author` a hub identity id and its pictures the hub's signed media paths.
    */
   feed?: FeedItem;
+  /** A mail message, drawn in a chat (docs/mail.md "Mail as chats"). */
+  mail?: MessageMailView;
   /**
    * A logged post's message (variant 'posts', docs/feed.md "Threads"): the post as the network last showed it, with
    * each `author` a hub identity id and its pictures signed media paths.
@@ -783,8 +800,62 @@ export interface PostFollow {
   fresh?: string[];
 }
 
-/** A post with the hub message it was logged as (docs/feed.md "Threads"). */
-export type PostView = PostFact & { messageId: string | null };
+/**
+ * A post with the hub message it was logged as (docs/feed.md "Threads"). An event's (docs/events.md) `event.hosts` and
+ * `event.guests` are hub identity ids, the guests the people you know first; on a card the guests are only the first
+ * few (EVENT_CARD_GUESTS), `guestsMore` saying how many more the site showed.
+ */
+export type PostView = PostFact & { messageId: string | null; eventView?: EventPostView };
+
+/** What the hub adds to an event post (docs/events.md "The event card"). */
+export interface EventPostView {
+  /** Hosts and guests who belong to someone you have a direct chat or a group with (not an event's own chat). */
+  known: string[];
+  /** Guests the site showed beyond those in `event.guests` here (a card's trimmed row). */
+  guestsMore: number;
+  /** The event's conversation on the hub, when it holds one (event.conversation). */
+  conversationId: string | null;
+  /** Your account it came through, which an RSVP is sent as. */
+  accountId: string | null;
+}
+
+/** Guests a card names; the event's page names all the site showed. */
+export const EVENT_CARD_GUESTS = 12;
+
+/**
+ * GET /api/events/:network/:event: one event as the hub holds it (logged from a timeline), every guest the site showed,
+ * hosts and guests as identities. POST /api/events/:network/:event/rsvp { account, status, note? } sends an RSVP
+ * (EventRsvpArgs) as that account and answers this again.
+ */
+export interface EventPageView {
+  network: Network;
+  event: string;
+  post: PostView;
+  identities: IdentityView[];
+  /** The account can send an RSVP from here (connected, an event site's account). */
+  canRsvp: boolean;
+}
+
+/** An event someone was seen at (docs/events.md "People"), for their profile's Events. */
+export interface PersonEventView {
+  network: Network;
+  event: string;
+  identityId: string;
+  /** 'host': they host it; 'guest': on the guest list the site showed; 'self': you, by your own RSVP. */
+  role: 'host' | 'guest';
+  /** Their RSVP when the site said it (yours, always). */
+  rsvp: EventRsvp | null;
+  title: string | null;
+  start: number | null;
+  timeZone?: string;
+  url: string | null;
+  place: string | null;
+  /** The event post's message, which opens it. */
+  messageId: string | null;
+  /** First and last seen there. */
+  firstAt: number;
+  seenAt: number;
+}
 
 /**
  * GET /api/posts/:network/:post/thread: a post's thread (PostThread in hub ids), each post logged as a message as it
@@ -1115,7 +1186,7 @@ export interface PlaceStats {
 
 /** Everything the hub has stored about someone. It only knows what crossed your accounts. */
 /** What one network says about one of a person's identities (docs/profile.md): PersonAbout in hub ids. */
-export interface PersonAboutView extends Omit<PersonAbout, 'avatar' | 'banner' | 'mutualSpaces' | 'mutualFriends' | 'friends' | 'posts'> {
+export interface PersonAboutView extends Omit<PersonAbout, 'avatar' | 'banner' | 'status' | 'facts' | 'mutualSpaces' | 'mutualFriends' | 'friends' | 'posts'> {
   identityId: string;
   network: Network;
   /** The account that asked. */
@@ -1125,6 +1196,10 @@ export interface PersonAboutView extends Omit<PersonAbout, 'avatar' | 'banner' |
   stale?: string;
   avatar?: string | null;
   banner?: string | null;
+  /** As PersonAbout's, with a custom emoji's picture a signed media path. */
+  status?: { text?: string; emoji?: string; emojiUrl?: string };
+  /** As PersonAbout's, with the people each names as hub identity ids. */
+  facts?: { label: string; value: string; people?: string[] }[];
   /** Spaces you share; `spaceId` null for one the hub does not have. */
   mutualSpaces?: { spaceId: string | null; nativeId: string; nick?: string; roles?: { name: string; color?: string }[]; joinedAt?: number; bio?: string; pronouns?: string }[];
   mutualFriends?: string[];
@@ -1168,6 +1243,8 @@ export interface ProfileView {
    * there are. Only when they have an email identity; `withList` opens all of it.
    */
   mail?: { threads: MailThreadView[]; total: number };
+  /** Events they were seen at (docs/events.md "People"): hosting first, then the newest. */
+  events?: PersonEventView[];
 }
 
 /**
@@ -1520,6 +1597,8 @@ export interface Bootstrap {
   notices?: NoticesBoot;
   /** Changes when the hub process starts again, as in a sync answer: a new one may have brought a new web build. */
   boot?: string;
+  /** Status dots: everyone's presence as last heard (PresenceNowView). Absent from hubs that predate them. */
+  presence?: PresenceNowView[];
 }
 
 /**
@@ -1589,6 +1668,8 @@ export interface MessagePage {
   messages: MessageView[];
   identities: IdentityView[];
   hasMore: boolean;
+  /** A person's chat: what they wrote in threads with others in this page's range (mail.ts ElsewhereView). */
+  elsewhere?: ElsewhereView[];
 }
 
 export interface InboxItem {
@@ -1627,6 +1708,11 @@ export type ClientEvent =
    * pending copy by id before the answer to its POST arrives. Of the moment, like `typing`: not journaled.
    */
   | { t: 'sent'; conversationId: string; clientId: string; messageId: string }
+  /**
+   * Status dots: presence that changed (`items`) or became unknown (`removed`, identity ids), at most once every two
+   * seconds (hub presence.ts). `replace`: these are all of them. Journaled per identity, like attention.
+   */
+  | { t: 'presence'; items: PresenceNowView[]; removed: string[]; replace?: true }
   /**
    * Chats, mail threads and groups of notices read on some device since the hub notified about them (delivery.ts
    * `read`): an open page closes their notifications that show nothing newer than `upTo`, the newest message the hub
@@ -1672,6 +1758,10 @@ export type ClientEvent =
   | { t: 'mail.mailboxes'; accountId: string; mailboxes: MailboxView[] }
   /** Threads new or changed, and threads gone (emptied, or merged into another). */
   | { t: 'mail.threads'; threads: MailThreadView[]; removed: string[] }
+  /** A person's email routes that changed (mail as chats): new mail, a read, a merge. `removed`: ids that went. */
+  | { t: 'mail.chats'; chats: MailChatView[]; removed: string[] }
+  /** A rung chosen for a place in a view, or taken back (`rung` null). */
+  | { t: 'rung'; view: string; place: string; rung: PlaceRungView['rung'] | null }
   /** Lists the page holds that the hub changed without sending each thread: fetch them again when shown (slice 2). `w:*` names every list of mail with someone. */
   | { t: 'mail.lists'; stale: string[] }
   /** An account's sync, as it goes. Of the moment: not journaled (slice 2). */
@@ -1701,7 +1791,7 @@ export interface SyncPosition {
 }
 
 export interface SyncTimelineRequest {
-  /** `c:<conversation>` or `p:<person>`, as the client keys its timelines. */
+  /** `c:<conversation>`, `p:<person>` or `k:<channel>` (a channel's stream), as the client keys its timelines. */
   key: string;
   /** The journal position this copy of the timeline is current to. */
   seq: number;
@@ -1710,7 +1800,10 @@ export interface SyncTimelineRequest {
   oldest: number;
   /** False for a window around an old message: only changes inside it, nothing newer. */
   newer?: boolean;
-  /** A person timeline: the conversations it merged. Another set now (people merged or split) means a fresh page. */
+  /**
+   * A person timeline: the conversations it merged. Another set now (people merged or split) means a fresh page. A
+   * channel's stream sends it too; a thread new since does not need one.
+   */
   conversationIds?: string[];
 }
 
@@ -1833,6 +1926,19 @@ export const RETENTION_GUARDED = ['deleted', 'disappearing', 'statuses', 'presen
 /** Whether kept deleted and disappeared messages show in this chat. */
 export const showsGone = (r: RetentionSettings, conversationId: string | null | undefined): boolean =>
   r.adversarial && ((conversationId ? r.showIn?.[conversationId] : undefined) ?? r.show) !== 'hidden';
+
+/**
+ * How someone is on their network right now, for status dots (docs/profile.md, "Status dots"): the latest state the
+ * hub heard, kept always (it is what the network's own app shows), unlike presence over time. No entry: unknown.
+ */
+export interface PresenceNowView {
+  identityId: string;
+  state: 'online' | 'idle' | 'dnd' | 'offline';
+  /** Where they are on, when the network says. */
+  devices?: ('desktop' | 'mobile' | 'web')[];
+  /** When it became so, as near as the hub knows (ms epoch). */
+  at: number;
+}
 
 /** Someone's presence, as a presence change's `old` and `new` (ChangeView, field "presence"). */
 export interface PresenceView {

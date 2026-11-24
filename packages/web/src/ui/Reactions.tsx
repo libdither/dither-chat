@@ -4,11 +4,12 @@ import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, REACTION_RULES } from '@dither-chat/protocol';
 import { emojiNow, loadEmoji, searchEmoji, SKIN_TONES, skinOf } from '../emoji.ts';
 import { customMarkup } from '../emojiComplete.ts';
-import { authorName } from '../model.ts';
+import { authorName, faceOf } from '../model.ts';
 import { clearReactions, modOf } from '../moderate.ts';
 import { hasMine, knownReactionContext, pickerFor, quickReactions, reactedAt, reactionContext, reactionScope, reactionTip, reactorsFor, replacing, toggleReaction, whenText, whenTitle, type Picked } from '../reactions.ts';
 import { api, db, isSelfIdentity, pref, rev, setPrefs } from '../state.ts';
-import { useLayer } from '../phone.ts';
+import { phone, useLayer } from '../phone.ts';
+import { historyOnMenu, openHistory } from '../messageHistory.ts';
 import { Avatar } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { Sheet } from './Sheet.tsx';
@@ -31,11 +32,9 @@ export function Glyph({ k, emoji, size = 18 }: { k: string; emoji?: P.CustomEmoj
 function Pill({ m, r }: { m: P.MessageView; r: P.ReactionView }) {
   const mine = hasMine(r);
   const ref = useRef<HTMLButtonElement>(null);
-  const showWho = () => {
-    const rect = ref.current?.getBoundingClientRect();
-    if (rect) reactorsFor.value = { message: m, key: r.key, style: r.style, anchor: rect };
-  };
-  const press = useLongPress(showWho);
+  // A right-click or a long press opens the message's reactions, from the start, with a way to all of its history.
+  // Who reacted, with the people the network names only when asked, is View Reactions in the message's menu.
+  const press = useLongPress(() => openHistory(m, 'reactions', phone.value ? undefined : ref.current?.getBoundingClientRect()));
   const superStyle = r.style === 'super' ? { '--r1': r.colors?.[0] ?? '#ff7ad9', '--r2': r.colors?.[1] ?? r.colors?.[0] ?? '#7c5cff' } : undefined;
   return (
     <button
@@ -50,10 +49,7 @@ function Pill({ m, r }: { m: P.MessageView; r: P.ReactionView }) {
         toggleReaction(m, { key: r.key, emoji: r.emoji }, r.style);
       }}
       {...press}
-      onContextMenu={(e: Event) => {
-        e.preventDefault();
-        showWho();
-      }}
+      onContextMenu={historyOnMenu(m, 'reactions')}
     >
       {r.style === 'super' && <Icon name="zap" size={10} class="reaction-zap" />}
       <Glyph k={r.key} emoji={r.emoji} />
@@ -654,7 +650,7 @@ function Reactors({ m, reactionKey, style, anchor, onClose }: { m: P.MessageView
           const past = turns(pastOf.get(id) ?? []);
           return (
             <div class="reactor">
-              <Avatar id={id} name={name} url={db.identities.get(id)?.avatar} size={24} />
+              <Avatar id={faceOf(id).id} name={name} url={faceOf(id).url} size={24} />
               <span class="reactor-who">
                 <span>{name}</span>
                 {past.length > 0 && <small class="reactor-past">{past.join(' · ')}</small>}
@@ -677,7 +673,7 @@ function Reactors({ m, reactionKey, style, anchor, onClose }: { m: P.MessageView
           const past = turns(pastOf.get(id)!);
           return (
             <div class="reactor gone">
-              <Avatar id={id} name={name} url={db.identities.get(id)?.avatar} size={24} />
+              <Avatar id={faceOf(id).id} name={name} url={faceOf(id).url} size={24} />
               <span class="reactor-who">
                 <span>{name}</span>
                 {past.length > 1 && <small class="reactor-past">{past.slice(0, -1).join(' · ')}</small>}

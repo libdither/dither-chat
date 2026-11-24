@@ -1,0 +1,542 @@
+/* Mail as chats (docs/mail.md "Mail as chats"): a mail's words in a chat, what a person wrote elsewhere, sends on their
+   way, the subject chip's rows and a thread's chat header. */
+
+/* A mail's words: plain text with its links, kept as written (mail's line breaks are its own), as a letter
+   (mail/letter.ts): paragraphs a small gap apart instead of a blank line, an unsure sign-off small and faint. */
+.mail-words {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.mail-words a {
+  color: var(--link);
+}
+.mail-para + .mail-para {
+  margin-top: 10px;
+}
+.mail-faint {
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.mail-words-empty {
+  color: var(--text-faint);
+  font-style: italic;
+}
+.mail-opens {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+/* ···: the rest of this mail (its folded name and signature, its quote, Show as sent), opened under it. */
+.mail-quote-dots {
+  display: block;
+  margin-top: 2px;
+  padding: 0 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: none;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 14px;
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+.mail-quote-dots:hover,
+.mail-quote-dots[aria-expanded='true'] {
+  background: var(--bg-raised);
+  color: var(--text);
+}
+/* At the end of the last line: a faint "…" with no box, its hit area 24px tall around it. */
+.mail-quote-dots.inline {
+  display: inline-block;
+  position: relative;
+  margin: 0 0 0 6px;
+  padding: 0 5px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 1;
+  letter-spacing: 0;
+  vertical-align: baseline;
+}
+.mail-quote-dots.inline::before {
+  content: '';
+  position: absolute;
+  inset: -6px -4px;
+}
+.mail-rest {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+}
+.mail-rest > .mail-words {
+  margin: 0;
+}
+.mail-open-chip {
+  padding: 0 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+}
+.mail-open-chip:hover,
+.mail-open-chip.on {
+  background: var(--bg-raised);
+  color: var(--text);
+}
+/* A finger needs more than the glyph: the same look, a taller target. */
+@media (pointer: coarse) {
+  .mail-quote-dots:not(.inline) {
+    padding: 5px 12px;
+    background-clip: content-box;
+  }
+  .mail-quote-dots.inline::before {
+    inset: -8px -10px;
+  }
+  .mail-open-chip {
+    padding: 4px 10px;
+  }
+}
+/* What a person wrote in threads with others, between their chat's own messages: a row per thread, its header line the
+   toggle. On a narrow row "with …" goes first, then the subject is cut; the time and the chevron stay. */
+.elsewhere {
+  margin: 4px 16px 0 52px;
+  font-size: 13px;
+  color: var(--text-dim);
+  container-type: inline-size;
+}
+.elsewhere-row {
+  margin-bottom: 8px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border-soft);
+}
+.elsewhere-row.waits {
+  border-left-color: var(--accent);
+}
+.elsewhere-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-width: 0;
+  min-height: 24px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.elsewhere-head > svg {
+  flex: none;
+}
+.elsewhere-head:hover {
+  color: var(--text-dim);
+}
+.elsewhere-title {
+  flex: 0 1 auto;
+  min-width: 3em;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.elsewhere-title.unread {
+  color: var(--text);
+}
+.elsewhere-with {
+  flex: 0 1000 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.elsewhere-time {
+  flex: none;
+  white-space: nowrap;
+}
+.elsewhere-waiting {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+@container (max-width: 420px) {
+  .elsewhere-with {
+    display: none;
+  }
+}
+.elsewhere-body {
+  padding-bottom: 2px;
+}
+.elsewhere-text {
+  margin: 0 0 2px;
+  color: var(--text);
+  font-size: 13.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.elsewhere-answer {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+.elsewhere-hidden {
+  margin-bottom: 8px;
+  padding-left: 12px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.elsewhere-hidden .link-btn {
+  padding: 0;
+  font-size: 12px;
+}
+@media (max-width: 820px) {
+  .elsewhere-head {
+    min-height: 32px;
+  }
+}
+
+/* The bar over a place gone to from a person's chat: back to them, quiet beside the header. */
+.back-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 14px;
+  border: none;
+  border-bottom: 1px solid var(--border-soft);
+  background: color-mix(in oklab, var(--bg-hover) 45%, transparent);
+  color: var(--text-dim);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.back-bar:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* Your mail from a chat, held for Undo, on its way or failed. */
+.mail-sends {
+  padding-bottom: 4px;
+}
+.mail-send .msg-body {
+  opacity: 0.75;
+}
+.mail-send.failed .msg-body {
+  opacity: 1;
+}
+.mail-send-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.mail-send-subject {
+  color: var(--text-dim);
+}
+.mail-send-failed {
+  color: var(--danger);
+}
+
+/* The line over the box (pick A): real pills, after "To Sam Rivera" (the thread the mail goes into) or alone in a
+   thread's chat (who the answer goes to). A neutral raised fill at rest; the accent outline only while its list is open
+   or when it is not at its default (a new subject, "Only Alice"). 24px on a computer, 30px on a phone; at most ~60% of
+   the line, a long subject cut in the middle. */
+/* css-scope: the typing line (ui/Typing.tsx) is the row the pills sit in; only a row holding one grows to fit it. */
+.typing-bar:has(.mail-pill) {
+  container-type: inline-size;
+  height: 32px;
+  margin-top: -4px;
+}
+.app.phone .typing-bar:has(.mail-pill) {
+  height: 38px;
+}
+.mail-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 60cqw;
+  height: 24px;
+  margin-left: 8px;
+  padding: 0 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  vertical-align: middle;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.app.phone .mail-pill {
+  height: 30px;
+  padding: 0 11px;
+  font-size: 13px;
+}
+/* Alone on the line (a thread's chat): no name before it to keep apart from. */
+.typing-lead > .mail-pill:first-child {
+  margin-left: 0;
+}
+.mail-pill:hover {
+  background: var(--bg-hover);
+}
+.mail-pill.open,
+.mail-pill.set {
+  border-color: var(--accent);
+}
+.mail-pill.fixed {
+  cursor: default;
+}
+.mail-pill.fixed:hover {
+  background: var(--bg-raised);
+}
+.mail-pill > svg {
+  flex: none;
+  color: var(--text-dim);
+}
+.mail-pill-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Cut in the middle: the head gives way, its last letters stay. */
+.mail-pill-text.mid {
+  display: inline-flex;
+}
+.mail-pill-head {
+  white-space: pre;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mail-pill-tail {
+  white-space: pre;
+  flex: none;
+}
+/* New subject: the pill is a field of its size, in place. */
+.mail-pill-field {
+  cursor: text;
+  padding-right: 3px;
+}
+.mail-pill-field input {
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: none;
+  color: var(--text);
+  font: inherit;
+}
+.mail-pill-field input::placeholder {
+  color: var(--text-faint);
+  font-weight: 500;
+}
+.mail-pill-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.mail-pill-more:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* The subject tag in a message's head: the pill's envelope and bare subject, small. Hover only outlines it; a click or
+   tap opens its card. On a phone padding makes it a 28px target without a bigger label. */
+.route-tag.mail-tag {
+  max-width: min(320px, 50%);
+  font-size: 11px;
+  border: 1px solid transparent;
+  background: none;
+  cursor: pointer;
+}
+.route-tag.mail-tag:hover {
+  background: none;
+  border-color: var(--border);
+  color: var(--text-dim);
+}
+.route-tag.mail-tag.open {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.route-tag.mail-tag .route-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.app.phone .route-tag.mail-tag {
+  min-height: 28px;
+  padding: 6px 8px;
+  margin: -7px 0;
+}
+.mail-tag-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 10px 6px;
+  max-width: 320px;
+}
+.mail-tag-card b {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+}
+.mail-tag-card small {
+  padding-left: 17px;
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+/* A mail you sent to only some on a thread. */
+.mail-only {
+  margin-left: 4px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* A thread's chat header. */
+.mail-thread-head .mail-subject {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* The mail lists' chips (MailListChips): always the same four in one row, the same over every list, never scrolled
+   or wrapped. More takes the room left and shortens a long mailbox name. */
+.mail-list-chips {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  padding: 8px 12px 2px;
+  min-width: 0;
+}
+.mail-list-chips .chip-btn {
+  position: relative;
+  flex: none;
+  padding-left: 8px;
+  padding-right: 8px;
+  border-radius: 999px;
+}
+/* The list open: filled, so it reads stronger than the rest in both themes (the title says Inbox throughout). */
+.mail-list-chips .chip-btn.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.mail-list-chips .mail-more-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  gap: 3px;
+}
+/* Open, as the pills over the box are while their menu is up. */
+.mail-list-chips .mail-more-chip[aria-expanded='true'] {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.mail-more-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* A phone's chips are bigger: the four still fit one row of a phone's list, More shortening first. */
+@media (max-width: 820px), (pointer: coarse) {
+  .mail-list-chips {
+    gap: 4px;
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+  .mail-list-chips .chip-btn {
+    min-height: 34px;
+    padding: 5px 8px;
+    font-size: 12.5px;
+  }
+}
+@media (pointer: coarse) {
+  /* A finger-sized target without a taller row of chips. */
+  .mail-list-chips .chip-btn::after {
+    content: '';
+    position: absolute;
+    inset: -9px -3px;
+  }
+}
+
+/* A mail thread's tile, where a chat has its picture: the same envelope for every thread. */
+.mail-tile {
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 30%;
+  background: var(--bg-raised);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text-dim);
+}
+/* Under a thread's name: the people on it, a button that lists them all. */
+.mail-thread-sub {
+  min-width: 0;
+}
+.mail-people {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.mail-people:hover .mail-people-names,
+.mail-people[aria-expanded='true'] .mail-people-names {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.mail-people-names {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mail-people-more {
+  flex: none;
+  font-weight: 600;
+}
+.mail-thread-account {
+  flex: none;
+  white-space: nowrap;
+}

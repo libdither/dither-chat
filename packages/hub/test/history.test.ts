@@ -88,6 +88,8 @@ describe('edits', () => {
     const id = hubId('msg', 'signal', 'e1');
     expect(store.messageHistory(id)!.versions.map((v) => v.body)).toEqual(['see you at 6', 'see you at 7', 'see you at 7:30']);
     expect(msg(id).edits).toBe(2);
+    // The version before, for the chat to mark what the last edit put in.
+    expect(msg(id).prevBody).toBe('see you at 7');
   });
 
   test('not kept where edits are off for the source', () => {
@@ -95,6 +97,7 @@ describe('edits', () => {
     say(sig, 'g1', 'one', 'ann', 'e2');
     store.ingest(sig, { t: 'message', message: { nativeId: 'e2', conversation: 'g1', author: 'ann', ts: 1, editedTs: 2, body: 'two' } });
     expect(msg(hubId('msg', 'signal', 'e2')).edits).toBeUndefined();
+    expect(msg(hubId('msg', 'signal', 'e2')).prevBody).toBeUndefined();
     store.setRetention(ADV);
   });
 

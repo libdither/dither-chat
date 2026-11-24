@@ -224,7 +224,7 @@ export class Delivery {
       const author = r.person_name ?? r.display_name ?? r.handle ?? 'Someone';
       const body = (previewText(namedTokens(s, c.network, r.body), r.kind) || (r.kind === 'media' ? 'Sent an attachment' : '')).slice(0, BODY);
       lines.push({ author, key, body, ts: r.ts });
-      const icon = r.avatar_url ? s.media(r.avatar_url, r.seen_via ?? via) : r.person_avatar ? s.media(r.person_avatar, null) : null;
+      const icon = r.avatar_url ? s.media(r.avatar_url, r.seen_via ?? via) : r.person_avatar ? s.personPicture(r.person_id, r.person_avatar) : null;
       if (icon && small(icon)) icons[key] ??= icon;
       if (own) sender = { name: author, key, ...(icons[key] ? { icon: icons[key] } : {}) };
     }

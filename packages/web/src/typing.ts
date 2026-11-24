@@ -42,8 +42,11 @@ export const typedHooks = new Set<(conversationId: string) => void>();
 
 /** The composer's text changed by hand: maybe a start. */
 export function composerTyped(target: TypingTarget, text: string) {
-  if (!privacy.value) void loadPrivacy();
-  sender.input(target, text);
+  // Mail has no typing: an email route or a mail thread is no network conversation (docs/mail.md).
+  if (!/^(email:|mth_)/.test(target.conversationId)) {
+    if (!privacy.value) void loadPrivacy();
+    sender.input(target, text);
+  }
   for (const h of typedHooks) h(target.conversationId);
 }
 

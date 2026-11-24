@@ -15,7 +15,8 @@ what an object is now is read from its own table when a client asks. Being compa
 objects that changed, not with the number of changes.
 
 - **Kinds**: `account`, `identity`, `person`, `space`, `conversation`, `message` (with its conversation),
-  `attention` (the inbox score of a conversation), `usage` (`kind:id` of a place), and the lists kept whole, under id
+  `attention` (the inbox score of a conversation), `usage` (`kind:id` of a place), `presence` (an identity's status
+  dot, docs/profile.md), and the lists kept whole, under id
   `*`: `folders`, `placePrefs`, `categories`, `rules`, `arrange`, and `attention:*` / `usage:*` for "all of them".
   Typing, notifications (and `cleared`, which closes them) and mark-all-read progress are of the moment and not kept.
 - **Epoch**: a random id for the journal. Every position belongs to one; a position from another epoch is void.
@@ -33,7 +34,7 @@ client from before it gets the whole list once.
 ## `POST /api/sync` (`packages/hub/src/sync.ts`)
 
 ```
-{ v, epoch, since, timelines: [{ key: 'c:<conversation>' | 'p:<person>', seq, newest, oldest, newer?, conversationIds? }] }
+{ v, epoch, since, timelines: [{ key: 'c:<conversation>' | 'p:<person>' | 'k:<channel>', seq, newest, oldest, newer?, conversationIds? }] }
 ```
 
 The answer is either `{ full: true, reason }` (another version, another epoch, older than the floor, or ahead of the
@@ -47,7 +48,12 @@ journal, as after restoring an older database) or:
 - `timelines`: for each one the client holds, the messages after its newest, and the ones it holds (between `oldest`
   and `newest`) that changed since its `seq`: edits, deletions, reactions, triage, forwards. When there are more than
   a page (60) of new ones, when the timeline's `seq` is older than the floor, or when a person timeline now spans
-  other conversations (people merged or split), it gets `replace: true` and the newest page instead.
+  other conversations (people merged or split), or when a message moved out of it since (a Zulip topic renamed or
+  moved: the journal keeps a `movedOut` row for the conversation it left), it gets `replace: true` and the newest page
+  instead. A client open at the time drops the moved message from the old timeline as the live event comes. A
+  channel's stream (`k:<channel>`, docs/threads.md "The channel stream") spans the channel and its threads as they are
+  now: a thread new since needs no fresh page (its messages are newer than the held ones, or come as changes), and its
+  answer says the conversations it spans (`conversationIds`).
 - `selfPersonId`, `categoryProvider`, and `reactionUsage` (only when messages changed), the identities the messages
   name, and the messages their replies quote.
 
@@ -91,10 +97,13 @@ adapter announcing the same things again, and a send retried after a lost answer
 - **Timelines**: held ones are caught up in the same request; a kept page ([below](#kept-pages)) catches up from its
   own position when opened. A pull to refresh still reloads everything.
 - **Heartbeat**: a `ping` text frame every 25 s while in sight, and at once on `visibilitychange`, `focus`, `online`
-  and `pageshow`. Without a `pong` within 3 s the socket is dropped and a new one opens at once, rather than waiting
-  for TCP to notice a socket that died while the phone slept.
-- **Quiet**: no banner for a drop. Only when the hub has not answered for 4 s, counted from the unanswered ping, or
-  at once when a send is waiting, the rail's logo becomes the loader's sphere turning slowly in amber (on a phone page
+  and `pageshow`. Without a `pong` within 3 s a new socket races it: if the new one opens first, the old one was dead
+  and the new one takes its place at once, with nothing shown, rather than waiting for TCP to notice a socket that
+  died while the phone slept; if the pong comes first, the link was only busy and the new one is closed. A new socket
+  refused, or neither within 5 s more, and the socket is dropped ([A bad link](#a-bad-link)).
+- **Quiet**: no banner for a drop. Only when the hub has not answered for 4 s, counted from the unanswered ping (or
+  later, once the race above is lost: up to 8 s on a link that swallows everything without a word), or at once when a
+  send is waiting, the rail's logo becomes the loader's sphere turning slowly in amber (on a phone page
   that covers the rail, a small one at the start of the page header's buttons), the row over the message box ends
   with "Offline · sends when the hub is back" ("Offline · sends later" on a phone, and only "Offline" where the route
   beside it leaves no room for more), and the top of a timeline says "Older messages load when the hub is
@@ -124,6 +133,47 @@ adapter announcing the same things again, and a send retried after a lost answer
   never handed it on) shows the copy again as failed. A copy whose message never comes keeps the 30 s rule.
 - `pwa.ts` used to fetch `sw.js` on every return. It now checks when the hub process changed (the sync says which
   process answered), at most every 10 minutes on a return, and hourly.
+
+## A bad link
+
+Taking the network away and giving it back (verify-sync.ts, verify-offline.ts) is the easy case: every request fails at
+once. A phone meets worse: a connection that stays open and carries nothing (it slept, it switched networks, a NAT
+forgot the mapping), requests that hang rather than fail, a link that drops every few seconds, and a slow link full of a
+download. `scripts/verify-link.ts` puts a TCP proxy between the page and a demo hub (`scripts/link-proxy.ts`) that can
+silence one connection or all of them, hang a request, cut everything, or shape the hub's bytes through one queue at a
+rate, and drives the app's clocks itself (the heartbeat's interval and the catch-up's quiet timeout are held; a probe is
+a `focus` event). What it found, and what the app does now (times are real, from one run on a laptop):
+
+| Case | Before | Now |
+|---|---|---|
+| The live socket goes silent | found by the next probe; a new socket 3.0 s after it, one delta, no notice | the same |
+| `POST /api/sync` hangs, the socket answers | stuck for good: frames held and never applied, a send's copy never cleared, every later catch-up queued behind it | given up after 20 s with nothing coming, the held frames applied, a new socket and one delta 1 s later |
+| Every open connection dies, new ones work (a phone waking) | the catch-up after the new socket could go onto one of the browser's dead idle connections and wait until that closed (here never; on a phone, TCP's timeout of many minutes) | the catch-up asked again on another connection after 1 s; caught up 3 to 4 s after the probe |
+| Every connection cut as soon as the socket is back, 6 times, a send in the middle | one socket per cut, about 1 s apart; the send stored once, nothing shown twice | the same |
+| 1.5 Mbit/s with a router's queue of 1 s, filled by a download, then a probe | pong after 1.0 s, kept | the same |
+| The same with a queue of 4 s (common on mobile networks) | pong after 4 s, past the 3 s wait: a healthy socket dropped, and its replacement's handshake waits behind the same queue | the race's new socket waits behind the queue too; the pong comes first and the socket stays, no notice |
+
+So:
+
+- **The catch-up and the bootstrap give up** (`hubFetch` in `api.ts`): after 20 s with nothing coming (no answer yet,
+  or no more of a long one: a big bootstrap on a slow link keeps going as long as bytes do), and at once when the socket
+  they were for is found dead or replaced. Given up is no answer, like a fetch that could not connect: on the socket in
+  use, that socket goes and a new one after the backoff asks again; one already replaced has its own catch-up queued.
+- **The catch-up is asked again alongside** (`hedged` in `api.ts`) when no answer has begun after 4 times the round
+  trip the socket took to open (at least 1 s), up to 8 tries, two waiting at most (the older given up, which closes its
+  connection). After a phone sleeps, the browser keeps its idle connections to the hub and puts the next request on one;
+  a dead one swallows it without a word. Each try takes another connection. On a link that is only slow the first try
+  answers first and the rest are given up; the hub answers a catch-up from the journal, so asking twice costs nothing
+  else.
+- **Sends** are given up with their socket too, and go out again after the next catch-up under the same `clientId`,
+  which the hub answers with the first one's answer: once, either way. A send has no quiet timeout of its own: the hub
+  waits for the network for up to 3 minutes with files, and says 504 itself.
+- **A late pong is not a dead socket**: the race described under Heartbeat above. A fixed wait cannot tell a socket
+  that is dead from one whose pong is behind 4 s of someone else's bytes; a new socket asked for at the same moment
+  can, because it waits in the same queue.
+
+Not covered: a link that loses packets without closing anything (TCP retransmits, which the shaping cannot show), and
+uploads over a flapping link ([uploads.md](uploads.md) has their own retries).
 
 ## Keeping a connection open
 
@@ -219,6 +269,8 @@ position from before them, and checks each one caught up from where it was kept 
   hub's `sent` event and by the page alone, for two identical quick sends too, and a 504 whose message came shows no
   failed copy; and a send made with the hub stopped survives a reload and goes out once when it is back. `bun test packages/web/test/outbox.test.ts` for the outbox and the matching.
 - `bun scripts/measure-sync.ts <hub> [--open N]` for the table above.
+- `bun scripts/verify-link.ts` for [a bad link](#a-bad-link): starts its own demo hub and proxy, and prints the numbers
+  in that section's table. `bun test packages/web/test/hedged.test.ts` for giving up and asking again.
 
 ## Limits
 

@@ -19,6 +19,7 @@ import { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines } from './
 import { calendarLink } from './plans.ts';
 import { changed, dataVersion, mailChanged, timelineChanged } from './versions.ts';
 import { bodies as mailBodies, details as mailDetails } from './mail/held.ts';
+import { sized } from './perf.ts';
 
 declare const __SNAPSHOT_SCHEMA__: string;
 const SCHEMA = typeof __SNAPSHOT_SCHEMA__ === 'string' ? __SNAPSHOT_SCHEMA__ : 'dev';
@@ -135,6 +136,7 @@ function currentBootstrap(): P.Bootstrap {
     devices: db.devices,
     reactionUsage: db.reactionUsage,
     attention: [...db.attention.values()],
+    presence: [...db.presence.values()],
     requests: db.requests,
     ...(calendarLink.value ? { calendar: calendarLink.value } : {}),
     now: Date.now(),
@@ -146,6 +148,10 @@ function currentBootstrap(): P.Bootstrap {
             accounts: [...db.mail.accounts.values()],
             mailboxes: [...db.mail.mailboxes.values()],
             threads: [...db.mail.threads.values()].sort((a, b) => b.lastAt - a.lastAt).slice(0, MAX_MAIL_WINDOW),
+            // Mail as chats (mail/chats.ts): a cold start resumes with people's email routes and the rungs you chose,
+            // which only a bootstrap brings whole.
+            chats: [...db.mail.chats.values()],
+            rungs: [...db.mail.rungs.values()],
           },
         }
       : {}),
@@ -210,6 +216,15 @@ function tx<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T
 
 /** The kept message pages (keptpages.ts): read with the snapshot, opened from here. */
 export const pages = new PageCache(SCHEMA);
+
+// What the app holds, for verify-memory.ts (docs/perf.md "Memory"): read under ?perf=1 only.
+sized('timelines', () => timelines.size);
+sized('messagesHeld', () => [...timelines.values()].reduce((s, t) => s + t.messages.length, 0));
+sized('quoted', () => quoted.size);
+sized('keptPages', () => pages.count);
+sized('identities', () => db.identities.size);
+sized('mailBodies', () => mailBodies.size);
+sized('mailDetails', () => mailDetails.size);
 
 /**
  * A conversation or person gone from the hub (an account removed with them) takes its kept page along. Added at the
@@ -424,7 +439,7 @@ async function savePages() {
       const t = timelines.get(k);
       return t ? { ...t, sync: t.from ?? (t.fetchedAt && !t.loading ? (db.sync ?? undefined) : undefined) } : undefined;
     },
-    exists: (k) => (k.startsWith('c:') ? db.conversations.has(k.slice(2)) : k.startsWith('p:') && db.persons.has(k.slice(2))),
+    exists: (k) => (k.startsWith('c:') || k.startsWith('k:') ? db.conversations.has(k.slice(2)) : k.startsWith('p:') && db.persons.has(k.slice(2))),
     identities: db.identities,
     quoted,
   });

@@ -75,7 +75,7 @@ and not in your notes to self, and the first of these that holds:
 | --- | --- |
 | it is in a DM | A direct message |
 | it is in a post you follow: a reply the hub's check found ([feed.md](feed.md#following-a-post)) | A reply to a post you follow |
-| it mentions you by name or replies to your message (`@everyone` does not count) | About you |
+| it mentions you by name, or a group you are in (a Zulip user group, a Discord role you hold), or replies to your message (`@everyone` does not count) | About you |
 | it says one of your keywords ([Rules](#rules)) | Says “…”, one of your keywords |
 | you wrote in its chat in the last 24 hours (`TOOK_PART`) | You wrote here in the last day |
 | you answer openings there at 10% or more (`ANSWER_RATE` 0.1) | You usually answer here |
@@ -126,7 +126,7 @@ question is a fixed string. Its answers are low and uncalibrated: on real messag
 So the answer is not used as a chance. It is set against a bar.
 
 **The bars** (`learn.ts` `ALERT_BAR`): 0.05 in a DM and for a message that mentions you or replies to you, 0.2
-elsewhere. Before any mark the alert chance is
+elsewhere (a mention of a group you are in too). Before any mark the alert chance is
 
 ```
 alert = sigmoid(logit(answer) − logit(bar))
@@ -164,10 +164,13 @@ alert, sorts the phone's list, and counts in the inbox's order. No language mode
 **Where it starts** (`learn.ts` `prior`): from the network's own notification setting for the place.
 
 - **0.8** (`NOTIFIED`) where the network itself would have notified you: every message in a place it notifies on
-  every message, and a mention of you, a reply to you or `@everyone` in a place it notifies on mentions.
+  every message, and a mention of you or of a group you are in, a reply to you or `@everyone` in a place it notifies
+  on mentions. A followed Zulip topic with Zulip's followed-topic notifications on is a place that notifies every
+  message: it starts here, and like any other it alerts only when the local model says so.
   A message that says one of your keywords starts here too, wherever it is.
 - **Otherwise** `0.05 + 0.75 × addressed`, at most 0.6, where `addressed` is triage's own sense of how much the
-  message is about you (`Triage.addressed`): from 0.15, mentions you +0.5 (or `@everyone` +0.2), replies to you +0.4,
+  message is about you (`Triage.addressed`): from 0.15, mentions you +0.5 (or a group you are in +0.35, or
+  `@everyone` +0.2), replies to you +0.4,
   a question to you or in a group chat +0.15, sounds urgent +0.3, a small group of six or fewer +0.1, you wrote there
   in the half hour before +0.25, an announcement channel −0.1.
 - **Half** of either from a bot.
@@ -490,7 +493,10 @@ Their notifications go:
   it (`clears: true` on `POST /api/push/subscribe`, the Android app from 0.7): an older app would show an empty
   notification. A registration made before an app said so keeps its endpoint and so never registers again: the app's
   page also says it in its device hello (`clears: true` on `POST /api/devices/hello`, sent when the app reports
-  version 0.7 or later), which sets it on that endpoint's registration. The app does not read `upTo` yet.
+  version 0.7 or later), which sets it on that endpoint's registration. From 0.15 the app drops only the messages at
+  or before `upTo` (a list row's lines too), and closes the notification only when none newer than it is left; one
+  that came after the read stays, without sounding again. Without `upTo` (a read in the app itself) the whole
+  notification goes, and a kept one (`keep`) stays either way. Older apps close the whole notification.
 - **From desktop browsers with no page in use.** One push to each for everything it shows that was read:
   `{ clear, upTo, more: [{ clear, upTo }, …] }`. In `sw.js` each closes the notification with its tag only when that
   shows nothing newer than `upTo` (its `ts`), so a clear that comes late never closes an alert that came after the
@@ -513,7 +519,8 @@ decide what one costs, and the hub sends them only where they are cheap or cappe
 - **Not to a page in use.** A browser whose page was in use in the last two minutes (its device's latest stay, as
   visits report it, not over) gets none: the page closes it itself, and it stops counting as showing there. Most
   reads at a computer are made in its own page, and would otherwise spend the cap meant for reads on another device.
-- **Chrome** (an endpoint on `fcm.googleapis.com`): a push is free while another of the app's notifications still
+- **Chrome** (an endpoint on `fcm.googleapis.com`, or on `/fcm/send/` at one of the `jmt<N>.google.com` hosts that
+  Chrome now gives its subscriptions; nothing else on google.com): a push is free while another of the app's notifications still
   shows there, or the app's tab is in front; otherwise it costs 2 of a budget that earns 12/24 × engagement/100 an
   hour (engagement is Chrome's 0 to 100 for how much the site is used), and with the budget spent Chrome shows its
   own "updated in the background" notification. A clear that closes the last notification there goes at most 2 times
@@ -705,9 +712,15 @@ arrives a little late.
   live message is, so a mention found a minute late can still be a Conversation or an alert. Older, it never notifies.
   A message the hub already had is never news again. @everyone, @here and role mentions found this way are
   `mentionsAll`, never "about you".
-- **@everyone suppressed.** A server set in Discord to suppress @everyone and @here (`NativeMute.suppressEveryone` on
-  its space) makes an @everyone there something the network would not have notified you about, so its importance
-  starts lower (`Triage.suppressesEveryone`). Role mentions suppressed are kept (`suppressRoles`) but not used yet.
+- **@everyone suppressed.** A Discord server set to suppress @everyone and @here, or a Zulip channel or topic with
+  wildcard mentions off (`NativeMute.suppressEveryone`), makes an @everyone there something the network would not have
+  notified you about, so its importance starts lower (`Triage.suppressesEveryone`). The most specific place that says
+  either way decides: the conversation, its parent channel, then its spaces, so a followed Zulip topic whose wildcards
+  notify (Zulip's followed-topic setting) counts them in a channel that has them off.
+- **Groups you are in.** A mention of a Zulip user group or a Discord role you hold, and not of you by name
+  (`MessageFact.mentionsGroup`), is about you (a Conversation) but held to the higher alert bar (0.2), and weighs
+  between your name and `@everyone`. A Discord server set to suppress role mentions (`suppressRoles`) makes one
+  there something it would not have notified you about. An older extractor sends a role ping as a mention by name.
 - **Mutes changed in Discord** come at once: a mute set, changed or cleared in any Discord app, or running out,
   sends the place's fact again; a cleared one carries an empty `mute` (`{}`), which clears the hub's (a fact without
   `mute` leaves it as it was). "Muted on the network" in triage follows.

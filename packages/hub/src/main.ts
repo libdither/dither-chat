@@ -1,3 +1,4 @@
+import { findJxl } from './jxl.ts';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Categorizer, JevProvider, KeywordProvider, OllamaProvider, type CategoryProvider } from './categorize.ts';
@@ -525,6 +526,9 @@ const server = new HubServer(store, sup, triage, {
   votes,
   scorecard,
   archiveMedia: !demo,
+  // JPEG XL (jxl.ts, docs/files.md "JPEG XL"): cjxl and djxl from PATH, DITHER_JXL_DIR or nix; kept pictures packed.
+  jxl: () => findJxl({ nix: true }),
+  packMedia: !demo && process.env.DITHER_JXL_PACK !== '0',
   // Same person? on a thread of its own; jev reads unsure pairs' profiles, never on a demo world (docs/same-person.md).
   matches: { file: join(dataDir, 'hub.sqlite'), jevUrl: demo || process.env.DITHER_MATCH_MODEL === 'off' ? null : (process.env.DITHER_JEV_URL ?? 'http://127.0.0.1:7862') },
   // Index jobs and the gap fill read like a person (readingpace.ts); a demo's networks are fake, so no need there.
@@ -676,7 +680,8 @@ const shutdown = async () => {
   // From here to exit nothing awaits, so no event can come in between.
   sup.settle(stopBy);
   // What stopping changed is in the journal too; then the next start can trust it (journal.ts).
-  server.flush();
+  // Presence held for coalescing goes too (presence.ts).
+  server.flush(true);
   store.journal.close();
   // Commits reach the disk at checkpoints (synchronous = NORMAL, store.ts): a clean stop leaves none behind.
   try {

@@ -45,7 +45,7 @@ const SWITCHES: { key: 'deleted' | 'disappearing' | 'statuses' | 'presence' | 'm
     key: 'presence',
     label: 'Log presence (online/idle/offline)',
     help:
-      'Each time people you follow (friends, contacts, people you have a DM with) come online, go idle or do not disturb, or go offline, and on which devices, where the network says. Nothing of it is kept while this is off.',
+      'Each time people you follow (friends, contacts, people you have a DM with) come online, go idle or do not disturb, or go offline, and on which devices, where the network says. While this is off only how they are now is kept, for their status dot, as their network’s own app shows it.',
     where: 'the Activity section of a profile',
   },
   {

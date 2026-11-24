@@ -100,4 +100,25 @@ class NotificationsTest {
         assertEquals("Dee", chat.last.key)
         assertEquals("dither-chat", chat.name)
     }
+
+    @Test
+    fun aClearDropsOnlyWhatWasRead() {
+        val ts = longArrayOf(100, 200, 300)
+        // Read up to the second: the third, which came after the read, stays.
+        assertEquals(listOf(2), Notifications.unreadAfter(ts, 200))
+        // At its time counts as read.
+        assertEquals(emptyList<Int>(), Notifications.unreadAfter(ts, 300))
+        assertEquals(listOf(0, 1, 2), Notifications.unreadAfter(ts, 50))
+        // Without upTo (a read here, an older hub) the whole notification goes.
+        assertEquals(emptyList<Int>(), Notifications.unreadAfter(ts, null))
+        assertEquals(emptyList<Int>(), Notifications.unreadAfter(LongArray(0), 10))
+    }
+
+    @Test
+    fun theNewestMessageAPushShows() {
+        assertEquals(500L, Notifications.newest(JSONObject().put("ts", 500).put("lines", JSONArray().put(line("A", "a", "x", 400)))))
+        assertEquals(400L, Notifications.newest(JSONObject().put("lines", JSONArray().put(line("A", "a", "x", 300)).put(line("A", "a", "y", 400)))))
+        assertNull(Notifications.newest(JSONObject().put("body", "no lines")))
+        assertNull(Notifications.newest(JSONObject().put("lines", JSONArray().put(JSONObject().put("body", "no time")))))
+    }
 }

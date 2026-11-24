@@ -182,6 +182,8 @@ const PAGES: PageCase[] = [
   { name: 'a channel', at: `#/inbox/c/${bigChannel.id}` },
   { name: 'a channel, details open', at: `#/inbox/c/${bigChannel.id}`, prefs: { details: true } },
   { name: 'a channel, a message hovered', at: `#/inbox/c/${bigChannel.id}`, hover: '.timeline-scroll .msg .msg-body' },
+  // Its stream (docs/threads.md "The channel stream"): the channel's own messages and its threads', where it has any.
+  ...(boot.conversations.some((c: any) => c.parentId === bigChannel.id) ? [{ name: "a channel's stream", at: `#/inbox/c/${bigChannel.id}`, prefs: { channelViews: { [bigChannel.id]: 'stream' } } }] : []),
   { name: 'a DM', at: `#/inbox/c/${bigDm.id}` },
   { name: 'a DM, details open', at: `#/inbox/c/${bigDm.id}`, prefs: { details: true } },
   { name: 'a group', at: `#/inbox/c/${bigGroup.id}` },
@@ -197,7 +199,7 @@ const PAGES: PageCase[] = [
   { name: 'Accounts', at: `#/accounts/${account.id}` },
   { name: 'Settings', at: '#/settings' },
   { name: 'the directory', at: '#/directory' },
-  { name: 'Mail', at: '#/mail' },
+  { name: 'a mail list', at: '#/inbox?mail=v%3Aupdates%3A*' },
   { name: 'Feed', at: '#/feed' },
 ];
 

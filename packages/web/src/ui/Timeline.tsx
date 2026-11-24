@@ -17,6 +17,8 @@ import {
   chatPersonOf,
   plainBody,
   convByNative,
+  resolvedTopic,
+  threadWords,
   convLabel,
   convTitle,
   crumbs,
@@ -26,7 +28,8 @@ import {
   identityName,
   netName,
   peerIdentity,
-  personOf,
+  faceOf,
+  personRouteOf,
   ruleIcon,
   ruleName,
   ruleOn,
@@ -67,15 +70,24 @@ import {
   timelineRev,
   timelines,
 } from '../state.ts';
+import { mailRev } from '../versions.ts';
+import { convById, isMailPlace, isMailThread, loadMailThread, mailThread, refill, threadsFailed } from '../mail/chats.ts';
 import { openPalette } from './Palette.tsx';
+import { BackBar, ElsewhereRows, MailSends, MailThreadHeader, MailWords, MailThreadLead, ReplySubject, SubjectChip, SubjectTag, answerEveryone, mailMessageMenu, onlyOf, pickSubject, subjectOf, threadPlaceholder } from './MailChat.tsx';
+import { threadRows } from '../mail/elsewhere.ts';
+import { openCompose, sendMailFromChat } from './mail/lazy.tsx';
 import { reactionContext } from '../reactions.ts';
 import { openAbout } from '../opening.ts';
 import { Avatar, Empty, FromChips, Menu, variantIcon } from './bits.tsx';
+import { convPresence } from './PresenceDot.tsx';
 import { HoverReactions, InsertPicker, ReactionBar } from './Reactions.tsx';
 import { useLongPress } from './longpress.ts';
 import { Icon } from './icons.tsx';
+import { Video } from './Video.tsx';
 import { TriageWhy, tierIcon, tierName } from './Marks.tsx';
-import { MessageHistory, Ticks } from './MessageHistory.tsx';
+import { Ticks } from './Ticks.tsx';
+import { historyOnMenu, openHistory } from '../messageHistory.ts';
+import { markChanged } from '../wordDiff.ts';
 import { detailsShown, showDetails, swipeReply } from './Pager.ts';
 import { openConv } from '../opening.ts';
 import { JoinCallButton } from './Call.tsx';
@@ -87,7 +99,7 @@ import { useChipBox } from './ChipBox.tsx';
 import { loadEmoji } from '../emoji.ts';
 import { isSticker, Sticker } from './Sticker.tsx';
 import { openViewer, Pictures } from './Pictures.tsx';
-import { PictureChip } from './PictureSwitch.tsx';
+import { heldByPictures, PictureChip } from './PictureSwitch.tsx';
 import { isPicture, onlyPictures, pictureRuns, picturesOf } from '../pictures.ts';
 import { pictureLayout } from '../arrange.ts';
 import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
@@ -101,7 +113,7 @@ import { GifPicker, gifSend, mediaOffer, preloadStickers, StickerPicker, sticker
 import type { GifPick } from './ComposerMediaParts.tsx';
 import { CAPTURE_ACCEPT, MEDIA_ACCEPT, opensSendScreen } from '../camera.ts';
 import { gifLinkOf, plainGifs } from '../gifs.ts';
-import { closePanel, openPanel, panelOpen, panelShown, phone, touchOnly } from '../phone.ts';
+import { closePanel, openPanel, panelOpen, panelShown, phone, reducedMotion, touchOnly } from '../phone.ts';
 import { composerDone, composerTyped } from '../typing.ts';
 import { noteNewest, noteSeen } from '../activity.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
@@ -128,6 +140,8 @@ import { PlanChipLazy } from './calendar/lazy.tsx';
 import { EmbedVideo, RichFoot, RichHead, RichMarks, Veil, veiled, Voice } from './rich/parts.tsx';
 import { VoicePeople } from './Ringing.tsx';
 import { ForumLazy } from './ThreadsLazy.tsx';
+import { channelView, channelViews, headBefore, setChannelView, viewLabel, type ChannelView } from '../stream.ts';
+import { NextUnreadBar, takeQuietOpen } from './NextUnreadLazy.tsx';
 import { CallRoomLazy, roomCall, roomHasChat, roomSide, RoomSwitch } from './CallRoomLazy.tsx';
 import { CallSlot, fillsPage } from './CallSlot.tsx';
 import { ScheduledStrip, useSendExtras } from './SendExtras.tsx';
@@ -315,7 +329,7 @@ function HeadMore({ c, also, profile }: { c: P.ConversationView; also?: P.Conver
  * `chat`: someone you reach through several routes (PersonChat), and `c` the route messages go through. The header is
  * the same, saying the same of that route; it adds one control, the pill that opens the list of routes (Pairs.tsx).
  */
-function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () => void; chat?: { person: P.PersonView; directs: P.ConversationView[]; all: boolean; onView: (view: string) => void } }) {
+export function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () => void; chat?: { person: P.PersonView; directs: P.ConversationView[]; all: boolean; onView: (view: string) => void } }) {
   // Names it shows come from people and accounts, which change without `c` changing (a nickname, a rename).
   metaRev.value;
   const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && visibleAccount(a.id));
@@ -338,7 +352,15 @@ function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () =>
       {/* The picture and the name open its profile page: theirs for a DM, the place's otherwise. */}
       <button class="conv-head-icon conv-head-who" tabIndex={-1} data-track="picture" title={whoTitle} onClick={openWho}>
         {isDirect || c.shape === 'group' || c.shape === 'self' ? (
-          <Avatar id={person?.id ?? c.id} name={convTitle(c)} url={person?.avatar ?? c.avatar} size={34} square={!isDirect} network={c.network} />
+          <Avatar
+            id={person?.id ?? c.id}
+            name={convTitle(c)}
+            url={person?.avatar ?? c.avatar}
+            size={34}
+            square={!isDirect}
+            network={c.network}
+            presence={isDirect ? (person ? { person: person.id } : convPresence(c)) : undefined}
+          />
         ) : (
           <span class="conv-head-variant">
             <Icon name={variantIcon(c.variant, c.shape)} size={20} />
@@ -429,10 +451,14 @@ function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
   // A role's name comes with the message (docs/rich-messages.md); a relative <t:…:R> moves on with the list.
   const roles = m.rich?.roles;
   const relative = /<t:-?\d+:R>/.test(m.body);
-  const html = useMemo(
-    () => renderMarkdown(m.body, { ...useMdContext(m.network), role: (id) => roles?.find((r) => r.id === id) ?? null }),
-    [m.body, m.network, /<[@#]/.test(m.body) ? metaRev.value : 0, roles, relative ? rev.value : 0],
-  );
+  // The words the last edit put in are underlined, and open the edits (docs/history.md "A message's history"). A
+  // forward shows the forwarded text, which the edit was not to.
+  const prev = m.edits && m.prevBody != null && !m.forward ? m.prevBody : null;
+  const html = useMemo(() => {
+    const ctx = { ...useMdContext(m.network), role: (id: string) => roles?.find((r) => r.id === id) ?? null };
+    const now = renderMarkdown(m.body, ctx);
+    return prev != null ? markChanged(now, renderMarkdown(prev, ctx)) : now;
+  }, [m.body, prev, m.network, /<[@#]/.test(m.body) ? metaRev.value : 0, roles, relative ? rev.value : 0]);
   if (m.deleted) return <div class="msg-body deleted">{m.gone?.how === 'disappeared' ? 'Message disappeared' : 'Message deleted'}</div>;
   if (m.kind === 'encrypted')
     return (
@@ -441,8 +467,15 @@ function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
       </div>
     );
   if (!m.body) return null;
+  // The words the last edit put in, unless they are part of something with a click of its own (a link, a mention).
+  const changedAt = (hit: HTMLElement) =>
+    hit.classList?.contains('msg-changed') && !hit.parentElement?.closest?.('a[href], [data-user], [data-person], [data-identity], .spoiler:not(.shown)') ? hit : null;
   const click = (e: MouseEvent) => {
-    const el = e.target as HTMLElement;
+    // A changed word's mark sits inside whatever it marks (a mention, a link): that is what the click is on.
+    const hit = e.target as HTMLElement;
+    const changed = changedAt(hit);
+    const el = hit.classList?.contains('msg-changed') ? hit.parentElement! : hit;
+    if (changed && !getSelection()?.toString()) openHistory(m, 'edits', changed.getBoundingClientRect());
     if (el.classList?.contains('spoiler')) el.classList.add('shown');
     const user = el.dataset?.user;
     if (user) openProfile(db.identityByNative.get(`${m.network}:${user}`));
@@ -461,14 +494,16 @@ function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
       openMenu({ x: e.clientX, y: e.clientY }, linkMenu(a.href, m));
     }
   };
+  // Right-click on them opens the edits as well; Shift+right-click still gets the browser's own menu.
+  const menu = historyOnMenu(m, 'edits', (e) => changedAt(e.target as HTMLElement));
   if (tail)
     return (
-      <div class={`msg-body ${isJumbo(m.body) ? 'jumbo' : ''}`} onClick={click}>
+      <div class={`msg-body ${isJumbo(m.body) ? 'jumbo' : ''}`} onClick={click} onContextMenu={menu}>
         <span class="msg-text" dangerouslySetInnerHTML={{ __html: html }} />
         {tail}
       </div>
     );
-  return <div class={`msg-body ${isJumbo(m.body) ? 'jumbo' : ''}`} dangerouslySetInnerHTML={{ __html: html }} onClick={click} />;
+  return <div class={`msg-body ${isJumbo(m.body) ? 'jumbo' : ''}`} dangerouslySetInnerHTML={{ __html: html }} onClick={click} onContextMenu={menu} />;
 }
 
 /**
@@ -492,7 +527,7 @@ function Gone({ m, layout }: { m: P.MessageView; layout: PictureLayout }) {
   );
 }
 
-/** "(edited)": with earlier versions kept, a click shows them, with the rest of the message's history. */
+/** "(edited)": with earlier versions kept, a click opens the message's history on its edits. */
 function Edited({ m }: { m: P.MessageView }) {
   if (!m.edits)
     return (
@@ -501,9 +536,23 @@ function Edited({ m }: { m: P.MessageView }) {
       </span>
     );
   return (
-    <Menu trigger={(open) => <button class="msg-edited link" onClick={open} title="See earlier versions">(edited)</button>}>
-      {() => <MessageHistory m={m} />}
-    </Menu>
+    <button
+      class="msg-edited link"
+      onClick={(e) => openHistory(m, 'edits', (e.currentTarget as HTMLElement).getBoundingClientRect())}
+      onContextMenu={historyOnMenu(m, 'edits')}
+      title="See earlier versions"
+    >
+      (edited)
+    </button>
+  );
+}
+
+/** "(moved)": moved here from another topic (Zulip), when it says in its tooltip. */
+function Moved({ m }: { m: P.MessageView }) {
+  return (
+    <span class="msg-edited msg-moved" title={`Moved here ${fullTime(m.movedAt!)}`}>
+      (moved)
+    </span>
   );
 }
 
@@ -544,7 +593,7 @@ function Attachments({ m, run, absorbed, layout, switchable }: { m: P.MessageVie
             a.gif && plainGifs() ? (
               <video class="att-video att-gif" data-att={i} src={a.url} autoplay loop muted playsInline preload="auto" aria-label={a.alt ?? 'GIF'} style={a.width && a.height ? { aspectRatio: `${a.width} / ${a.height}` } : undefined} />
             ) : (
-              <video class="att-video" data-att={i} src={a.url} controls preload="metadata" onPlay={() => played(m)} />
+              <Video src={a.url} att={i} name={a.name} facts={fileFacts(a)} width={a.width ?? a.info?.width} height={a.height ?? a.info?.height} label={a.alt} onPlay={() => played(m)} />
             );
           return withNote(a, veiled(a) ? <Veil a={a}>{video}</Veil> : video);
         }
@@ -675,20 +724,24 @@ function TriageNote({ m }: { m: P.MessageView }) {
  * draws them; `run`, the messages whose pictures this one draws after its own, when it ends a run of them; `absorbed`,
  * a message of a run whose pictures the run's last message draws.
  */
-const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, highlight, target, thread, who, whoIdent, net, tag, onTag, pictures, run, absorbed, chipRun }: { m: P.MessageView; grouped: boolean; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; who?: string; whoIdent?: string; net?: boolean; tag?: boolean; onTag?: (convId: string) => void; pictures: PictureLayout; run?: P.MessageView[]; absorbed?: boolean; chipRun?: P.MessageView[] }) {
+const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, highlight, target, thread, who, whoIdent, net, tag, onTag, pictures, run, absorbed, chipRun, subject, quoteAbove }: { m: P.MessageView; grouped: boolean; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; who?: string; whoIdent?: string; net?: boolean; tag?: boolean; onTag?: (convId: string) => void; pictures: PictureLayout; run?: P.MessageView[]; absorbed?: boolean; chipRun?: P.MessageView[]; subject?: boolean; quoteAbove?: boolean }) {
   if (counting) rendered('MessageItem');
   metaRev.value;
   // On a touch screen the action bar (it shows on hover) and the tooltips are not drawn: a long-press opens the same
   // actions. That is a third of a message's DOM nodes on a phone (docs/perf.md).
   const hover = !touchOnly.value;
   const author = m.authorId ? db.identities.get(m.authorId) : null;
-  const person = personOf(m.authorId);
   const self = isSelfIdentity(m.authorId);
   // In a person's chat, each account by its own name and picture (`who`); elsewhere theirs by the person's name.
   const name = who ?? (self ? identityName(m.authorId) || 'You' : authorName(m.authorId));
-  const picture = who !== undefined ? author?.avatar : (person?.avatar ?? author?.avatar);
-  const conv = net || tag ? db.conversations.get(m.conversationId) : undefined;
+  // Their face elsewhere (model.ts faceOf): with the network's badge where the picture is from another network's account.
+  const face = who !== undefined ? null : faceOf(m.authorId);
+  const picture = face ? face.url : author?.avatar;
+  const faceElsewhere = !!face?.network && face.network !== m.network && !self;
+  const conv = net || tag ? convById(m.conversationId) : undefined;
   const chatPerson = tag ? chatPersonOf(conv) : null;
+  // A mail message (mail/chats.ts): its subject is its tag, its words are plain text, and it has mail's menu.
+  const mail = m.mail;
   const reply = () => onReply(m);
   // Right-click or hold: the innermost thing that has a menu of its own (a file, a link, a person), else the message.
   const menuAt = (target: EventTarget | null): MenuSpec | null => {
@@ -711,7 +764,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
     }
     const link = el?.closest<HTMLAnchorElement>('a[href]');
     if (link && /^https?:/i.test(link.href)) return linkMenu(link.href, m, reply);
-    return messageMenu(m, reply);
+    return mail ? mailMessageMenu(m, reply) : messageMenu(m, reply);
   };
   const press = useLongPress((e) => openMenu({ x: e.clientX, y: e.clientY }, menuAt(e.target)));
   const menuProps = { ...press, onContextMenu: (e: MouseEvent) => onMenu(() => menuAt(e.target))(e) };
@@ -734,7 +787,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
   const gif = !m.deleted && !m.forward && !m.poll ? gifLinkOf(m) : null;
   return (
     <div
-      class={`msg ${grouped ? 'grouped' : target || m.quote ? '' : 'head'} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''}`}
+      class={`msg ${grouped ? 'grouped' : target || m.quote ? '' : 'head'} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''} ${m.blast ? 'blast' : ''}`}
       id={`m-${m.id}`}
       ref={(el) => void (el && swipeReply.set(el, () => onReply(m)))}
       {...menuProps}
@@ -748,7 +801,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           </span>
         ) : (
           <button class="avatar-btn" data-identity={m.authorId ?? undefined} onClick={() => openProfile(m.authorId)} aria-label={`Profile of ${name}`}>
-            <Avatar id={(who !== undefined ? m.authorId : person?.id) ?? m.authorId ?? m.id} name={name} url={picture} size={36} network={net ? m.network : undefined} accountIds={net ? conv?.vantages.map((v) => v.accountId) : undefined} />
+            <Avatar id={(who !== undefined ? m.authorId : face?.id) || m.authorId || m.id} name={name} url={picture} size={36} network={net || faceElsewhere ? m.network : undefined} accountIds={net ? conv?.vantages.map((v) => v.accountId) : undefined} />
           </button>
         )}
       </div>
@@ -776,8 +829,9 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
               {clock(m.ts)}
             </span>
             {/* A person's chat (ui/Pairs.tsx): where the route changes, which one, quietly. A click sends through it. */}
-            {conv && chatPerson && onTag && <RouteTag c={conv} directs={directsOf(chatPerson.id)} side={self ? 'mine' : who !== undefined ? 'theirs' : 'other'} onPick={() => onTag(conv.id)} />}
+            {mail ? (subject || mail.only) && <SubjectTag m={m} tag={!!subject} /> : conv && chatPerson && onTag && <RouteTag c={conv} directs={directsOf(chatPerson.id)} side={self ? 'mine' : who !== undefined ? 'theirs' : 'other'} onPick={() => onTag(conv.id)} />}
             {(m.editedTs || m.edits) && <Edited m={m} />}
+            {m.movedAt && <Moved m={m} />}
             <DisappearsMark m={m} self={self} />
             <Marks m={m} />
             {m.encryptionWarning && (
@@ -787,7 +841,9 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
             )}
           </div>
         )}
-        {m.deleted && m.gone?.kept ? (
+        {mail ? (
+          <MailWords m={m} quoteAbove={quoteAbove} />
+        ) : m.deleted && m.gone?.kept ? (
           <Gone m={m} layout={pictures} />
         ) : m.forward && !m.deleted ? (
           <ForwardCard m={m}>
@@ -800,6 +856,12 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           </ForwardCard>
         ) : (
           <>
+            {/* An event host's blast to every guest (docs/events.md): an announcement, marked as one. */}
+            {m.blast && (
+              <span class="msg-blast">
+                <Icon name="announcement" size={12} /> Announcement to every guest
+              </span>
+            )}
             <RichHead m={m} />
             <StoryReplyLine m={m} />
             {m.poll ? <PollCardLazy m={m} fallback={<Body m={m} />} /> : gif ? null : <Body m={m.contacts ? withoutCardLines(m) : m} tail={ticks} />}
@@ -814,6 +876,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
         <SendFailures m={m} />
         {ticks && (!m.body || gif || m.deleted || (m.poll && !m.forward)) && <span class="msg-marks">{ticks}</span>}
         {grouped && (m.editedTs || m.edits) && <Edited m={m} />}
+        {grouped && m.movedAt && <Moved m={m} />}
         {grouped && <DisappearsMark m={m} self={self} />}
         {grouped && (m.pinned || m.rich?.silent || m.rich?.marks) && (
           <span class="msg-marks">
@@ -833,7 +896,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
       </div>
       {hover && (
         <div class="msg-actions" data-track-area="message">
-          <HoverReactions m={m} />
+          {!mail && <HoverReactions m={m} />}
           {canEdit(m) && (
             <button class="icon-btn small" data-track="edit" title="Edit" onClick={() => startEditing(m)}>
               <Icon name="pencil" size={14} />
@@ -848,7 +911,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
             <Icon name="reply" size={15} />
           </button>
           {!m.deleted && m.kind !== 'encrypted' && (
-            <button class="icon-btn small" data-track="forward" title="Forward" aria-label="Forward" onClick={() => (forwarding.value = m)}>
+            <button class="icon-btn small" data-track="forward" title="Forward" aria-label="Forward" onClick={() => (mail ? openCompose({ kind: 'forward', messageId: m.id, threadId: mail.threadId, accountId: mail.accountId }) : (forwarding.value = m))}>
               <Icon name="forward" size={15} />
             </button>
           )}
@@ -859,7 +922,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
             aria-label="More"
             onClick={(e) => {
               const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              openMenu({ x: r.left, y: r.bottom + 4 }, messageMenu(m, reply), e.currentTarget);
+              openMenu({ x: r.left, y: r.bottom + 4 }, mail ? mailMessageMenu(m, reply) : messageMenu(m, reply), e.currentTarget);
             }}
           >
             <Icon name="more" size={15} />
@@ -878,6 +941,50 @@ const WINDOW = 150;
 /** How many more are drawn each time the view nears an end of what is drawn. */
 const STEP = 100;
 
+/**
+ * How far from the newest end (px) the view still follows it: a new message, or one growing (a picture loading),
+ * keeps it on screen. Further up, what you are reading stays still.
+ */
+const FOLLOW = 32;
+
+/**
+ * Brings a message to the middle of the view, as Discord does: one more than a screen and a half away is jumped to most
+ * of the way at once, and the rest glides, so a far one takes no longer than a near one. `then` runs once it is there.
+ */
+function bringToCenter(scroller: HTMLElement | null, el: HTMLElement, then: () => void) {
+  if (!scroller || reducedMotion()) {
+    el.scrollIntoView({ block: 'center' });
+    return then();
+  }
+  const box = scroller.getBoundingClientRect();
+  /** How far the message's middle is below the view's (above: negative). */
+  const offset = () => {
+    const r = el.getBoundingClientRect();
+    return r.top + r.height / 2 - (box.top + box.height / 2);
+  };
+  /** In the middle, or as near it as the view goes (column-reverse: scrollTop 0 at the newest end). */
+  const there = () => {
+    const o = offset();
+    const top = Math.abs(scroller.scrollTop);
+    return Math.abs(o) < 2 || (o > 0 && top < 1) || (o < 0 && top > scroller.scrollHeight - scroller.clientHeight - 1);
+  };
+  if (there()) return then();
+  const off = offset();
+  if (Math.abs(off) > box.height * 1.5) scroller.scrollTop += off - Math.sign(off) * box.height * 0.75;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    scroller.removeEventListener('scrollend', onEnd);
+    then();
+  };
+  // The jump most of the way ends a scroll of its own before the glide: only the one that ends there counts.
+  const onEnd = () => there() && finish();
+  scroller.addEventListener('scrollend', onEnd);
+  setTimeout(finish, 1200);
+}
+
 /** What is drawn: from `from` (a message id; '^' the oldest held; null the newest WINDOW) to `to` (an id; null the newest). */
 interface Drawn {
   key: string;
@@ -885,25 +992,72 @@ interface Drawn {
   to: string | null;
 }
 
+/** A channel's stream (StreamPane): its channel, a thread header's click, a click on a message (whose thread it picks). */
+export interface StreamOpts {
+  channel: string;
+  /** Each thread with unread messages when the stream opened, read up to when: its "New" line goes by its own. */
+  readTo: Map<string, number>;
+  onOpen: (convId: string) => void;
+  onPick: (convId: string) => void;
+  onMissing: () => void;
+}
+
+/**
+ * Where a stream was when a thread header opened that thread alone: back to the stream comes back to it (the message
+ * at the top of the view, and how far below the view's top it was). Kept a while, for this session.
+ */
+const streamSpots = new Map<string, { id: string; y: number; at: number; thread: string }>();
+const SPOT_KEPT = 30 * 60_000;
+/** The timeline shown last (its key), so that a stream comes back to its spot only from the thread it opened. */
+let lastShown = '';
+
 /**
  * `chat`: a person's chat over several routes (PersonChat): messages name each account by its own name and picture
  * (Pairs.tsx headNames, over the routes shown); `badge`, whether pictures
  * carry the network's badge; `onFocus`, a route tag's click; `onMissing`, a message linked to (`focus`) that paging
- * back through the chat did not reach.
+ * back through the chat did not reach. `stream`: a channel's stream (StreamPane), a header where the thread changes.
  */
-function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey: string; convIds: string[]; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string; chat?: { badge: boolean; onFocus: (convId: string) => void; onMissing: () => void } }) {
+export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, stream }: { tkey: string; convIds: string[]; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string; chat?: { badge: boolean; onFocus: (convId: string) => void; onMissing: () => void }; stream?: StreamOpts }) {
   if (counting) rendered('Timeline');
   timelineRev(tkey).value;
   const scroller = useRef<HTMLDivElement>(null);
   const t = timelines.get(tkey);
   const [flash, setFlash] = useState<string | null>(null);
   const scrolledTo = useRef<string | null>(null);
+  // A message gone to (a link, a quote) is lit up for a moment; lit again from the start if gone to again.
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const flashIt = (id: string) => {
+    clearTimeout(flashTimer.current);
+    setFlash(null);
+    requestAnimationFrame(() => setFlash(id));
+    flashTimer.current = setTimeout(() => setFlash((f) => (f === id ? null : f)), 2500);
+  };
+  useEffect(() => () => clearTimeout(flashTimer.current), []);
+  /** Whether the view follows the newest message (FOLLOW): it is drawn, and the view is at it. */
+  const following = useRef(true);
+  /** A jump to a message under way (goTo): its glide away from the newest end does not follow it back. */
+  const jumping = useRef(false);
+  const goTo = (el: HTMLElement, id: string) => {
+    following.current = false;
+    jumping.current = true;
+    bringToCenter(scroller.current, el, () => {
+      jumping.current = false;
+      flashIt(id);
+    });
+  };
+  /** The content's height when last looked at (onScroll, and the ResizeObserver below). */
+  const heightSeen = useRef(0);
   /** A quoted message on its way to the screen (onQuote below). */
   const revealing = useRef<string | null>(null);
   useEffect(() => {
     revealing.current = null;
-    // A person's chat pages back through every route to the message; one too far back shows its route alone.
-    if (focus && tkey.startsWith('p:')) void jumpInChat(tkey, focus).then((found) => !found && chat?.onMissing());
+    // Back to a stream at its spot (streamSpots): not at the newest end.
+    following.current = !focus && !spotHeld.current;
+    spotHeld.current = false;
+    lastShown = tkey;
+    // A person's chat pages back through every route to the message, a stream through every thread; one too far
+    // back shows its route, or its thread, alone.
+    if (focus && (tkey.startsWith('p:') || tkey.startsWith('k:'))) void jumpInChat(tkey, focus).then((found) => !found && (chat ?? stream)?.onMissing());
     else if (focus) void jumpTo(convIds[0], focus);
     else loadTimeline(tkey);
     scrolledTo.current = null;
@@ -913,10 +1067,9 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     const el = document.getElementById(`m-${focus}`);
     if (!el) return;
     scrolledTo.current = focus;
+    following.current = false;
     el.scrollIntoView({ block: 'center' });
-    setFlash(focus);
-    const id = setTimeout(() => setFlash(null), 2500);
-    return () => clearTimeout(id);
+    flashIt(focus);
   });
 
   const msgs = t?.messages ?? [];
@@ -931,6 +1084,22 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   const [, redraw] = useState(0);
   const drawn = useRef<Drawn>({ key: tkey, from: null, to: null });
   if (drawn.current.key !== tkey) drawn.current = { key: tkey, from: null, to: null };
+  // Back from a thread a header opened: the stream where it was (streamSpots), drawn around that message.
+  const spot = useRef<{ id: string; y: number } | null>(null);
+  const spotHeld = useRef(false);
+  const spotTaken = useRef('');
+  if (stream && spotTaken.current !== tkey && !focus && t) {
+    spotTaken.current = tkey;
+    const s = streamSpots.get(tkey);
+    streamSpots.delete(tkey);
+    const i = s && Date.now() - s.at < SPOT_KEPT && lastShown === `c:${s.thread}` ? at.get(s.id) : undefined;
+    if (s && i !== undefined) {
+      spot.current = s;
+      spotHeld.current = true;
+      following.current = false;
+      if (i < all.length - WINDOW) drawn.current = { key: tkey, from: all[Math.max(0, i - STEP / 2)].id, to: i + STEP / 2 >= all.length - 1 ? null : all[i + STEP / 2].id };
+    }
+  }
   // And of that, the newest FIRST when it shows, then a slice more each time the page is idle (slices.ts).
   const [slices] = useState(() => new Slices());
   slices.begin(tkey);
@@ -1003,6 +1172,13 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     // Shown at the newest message (read as it comes): the hub sends the phones no push about it (activity.ts).
     noteNewest(watchKey, el && drawn.current.to === null && !t?.detached && Math.abs(el.scrollTop) < 40 ? convIds : null);
     if (!el) return;
+    // A scroll that comes with the content's height changed, while following, is the browser's anchoring and not you:
+    // when a layout is forced before the ResizeObserver's turn (a measure in an effect), its scroll event comes first.
+    const grew = el.scrollHeight !== heightSeen.current;
+    heightSeen.current = el.scrollHeight;
+    if (heldByPictures(el)) following.current = false;
+    else if (following.current && grew && el.scrollTop !== 0) el.scrollTop = 0;
+    else following.current = !jumping.current && Math.abs(el.scrollTop) < FOLLOW && drawn.current.to === null && !t?.detached;
     // column-reverse: scrollTop is 0 at the bottom and negative going up.
     if (el.scrollHeight + el.scrollTop - el.clientHeight < 400) {
       if (more) {
@@ -1035,10 +1211,12 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     } else if (t?.detached) {
       if (Math.abs(el.scrollTop) < 400) void loadNewer(tkey);
     } else if (Math.abs(el.scrollTop) < 40 && document.visibilityState === 'visible') {
-      convIds.forEach(markRead);
+      // A stream marks read the threads whose messages are drawn: what you saw, not every topic of the channel.
+      const seen = stream ? [...new Set(all.slice(start, end).map((m) => m.conversationId))] : convIds;
+      seen.forEach(markRead);
       // The newest message is on screen, read or not: what this stay could have seen (activity.ts).
       const newest = all[all.length - 1];
-      if (newest) noteSeen(convIds, newest.ts);
+      if (newest) noteSeen(seen, newest.ts);
       // Back at the newest after drawing far up: only the newest again. What goes is above the view.
       if (d.from !== null && end - start > WINDOW + STEP) draw(null, null);
     }
@@ -1081,22 +1259,51 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     if (el && Math.abs(moved) >= 1) el.scrollTop += moved;
   });
 
+  useLayoutEffect(() => {
+    const s = spot.current;
+    const el = scroller.current;
+    const node = s && document.getElementById(`m-${s.id}`);
+    if (!s || !el || !node) return;
+    spot.current = null;
+    el.scrollTop += node.getBoundingClientRect().top - el.getBoundingClientRect().top - s.y;
+  });
+  /** A thread header's click: where the stream is goes into streamSpots, then the thread opens alone. */
+  const openThread = useRef((_: string) => {});
+  openThread.current = (convId: string) => {
+    const el = scroller.current;
+    if (el) {
+      const top = el.getBoundingClientRect().top;
+      for (let i = start; i < end; i++) {
+        const node = document.getElementById(`m-${all[i].id}`);
+        const r = node?.getBoundingClientRect();
+        if (r && r.bottom > top) {
+          streamSpots.set(tkey, { id: all[i].id, y: r.top - top, at: Date.now(), thread: convId });
+          break;
+        }
+      }
+    }
+    stream?.onOpen(convId);
+  };
+  const onHead = useMemo(() => (id: string) => openThread.current(id), []);
   // A reply's quote shows the message it quotes: drawn first if it is held but not drawn. One further back than the
   // timeline holds is fetched with the page around it, in place, as a link to a message is (jumpTo, jumpInChat); one
   // in another chat, or too far back in a person's chat, opens its own chat at it.
   const quote = useRef((_: string) => {});
   quote.current = (id: string) => {
     const el = document.getElementById(`m-${id}`);
-    if (el) return el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    revealing.current = id;
+    following.current = false;
     const i = at.get(id);
+    // Near the top of what is drawn there is nothing above it to centre it among: what is around it is drawn first.
+    const edge = i !== undefined && i - start < 20 && (start > 0 || more);
+    if (el && !edge) return goTo(el, id);
+    revealing.current = id;
     if (i !== undefined) return draw(...around(i));
     const q = quoted.get(id);
     const away = () => {
       if (revealing.current === id) revealing.current = null;
       if (q) openMessage(q.conversationId, id);
     };
-    if (tkey.startsWith('p:')) void jumpInChat(tkey, id).then((found) => !found && away());
+    if (tkey.startsWith('p:') || tkey.startsWith('k:')) void jumpInChat(tkey, id).then((found) => !found && away());
     else if (q?.conversationId === convIds[0]) void jumpTo(convIds[0], id);
     else away();
   };
@@ -1110,9 +1317,37 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
     const el = id && document.getElementById(`m-${id}`);
     if (!el) return;
     revealing.current = null;
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    setFlash(id);
-    setTimeout(() => setFlash((f) => (f === id ? null : f)), 2500);
+    goTo(el, id);
+  });
+
+  // The browser holds what is in view still while the content changes (scroll anchoring), unless the view is right at
+  // the newest end: a pixel above it, a new message came in below the view and stayed out of sight. So while the view
+  // follows the newest (FOLLOW), it is put back at the end whenever the content grows or shrinks, before it is painted.
+  const inner = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    const box = inner.current;
+    if (!el || !box || typeof ResizeObserver !== 'function') return;
+    const stick = () => {
+      heightSeen.current = el.scrollHeight;
+      // A run of pictures changing its way holds itself under the finger (PictureSwitch.tsx keepStill).
+      if (following.current && el.scrollTop !== 0 && !heldByPictures(el)) el.scrollTop = 0;
+    };
+    const ro = new ResizeObserver(stick);
+    ro.observe(box);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [tkey]);
+  // A message of your own just sent goes to the newest end, from wherever the view was (Discord does the same).
+  const sent = useRef(0);
+  useLayoutEffect(() => {
+    const n = mine.length;
+    const grew = n > sent.current;
+    sent.current = n;
+    const el = scroller.current;
+    if (!grew || !el || end !== all.length) return;
+    following.current = true;
+    el.scrollTop = 0;
   });
 
   // A switch is done once the newest message is on screen, or the hub has answered (docs/perf.md).
@@ -1130,9 +1365,37 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   const byId = new Map(msgs.map((x) => [x.id, x]));
   // A person's chat: how each account in it is named (the routes shown; a bot in a DM is not among them).
   const heads = chat ? headNames(convIds) : null;
-  const unreadFrom = firstUnreadTs === null ? -1 : all.findIndex((m) => m.ts > firstUnreadTs && !isSelfIdentity(m.authorId));
+  const unreadFrom = stream
+    ? all.findIndex((m) => m.ts > (stream.readTo.get(m.conversationId) ?? Infinity) && !isSelfIdentity(m.authorId))
+    : firstUnreadTs === null
+      ? -1
+      : all.findIndex((m) => m.ts > firstUnreadTs && !isSelfIdentity(m.authorId));
   const groups = (prev: P.MessageView | null, m: P.MessageView) =>
-    !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId && prev.sms === m.sms;
+    !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId && prev.sms === m.sms && prev.mail?.threadId === m.mail?.threadId && !m.mail?.only;
+  // Mail (mail/chats.ts): the subject where the thread changes, except in the thread's own chat, which it names.
+  const ownThread = tkey.startsWith('c:mth_');
+  let lastThread: string | null = null;
+  // The day of the last thing drawn, for day lines: a message, or a row of what they wrote elsewhere.
+  let drawnDay: number | null = null;
+  // What a person wrote in threads with others (MailChat.tsx ElsewhereRows), a row per thread at its own time among the
+  // chat's own messages, under its own day.
+  const elsewherePerson = tkey.startsWith('p:') ? db.persons.get(tkey.slice(2)) : undefined;
+  const elsewhere = elsewherePerson ? threadRows(t?.elsewhere ?? []) : [];
+  let ew = 0;
+  const elsewhereUpTo = (ts: number) => {
+    while (ew < elsewhere.length && elsewhere[ew].ts <= ts) {
+      const from = ew;
+      const day = elsewhere[ew].ts;
+      while (ew < elsewhere.length && elsewhere[ew].ts <= ts && sameDay(elsewhere[ew].ts, day)) ew++;
+      if (drawnDay === null || !sameDay(drawnDay, day)) items.push(<div class="day-sep"><span>{dayLabel(day)}</span></div>);
+      drawnDay = elsewhere[ew - 1].ts;
+      items.push(<ElsewhereRows key={`ew-${elsewhere[from].place}`} view={`person:${elsewherePerson!.id}`} person={elsewherePerson!} rows={elsewhere.slice(from, ew)} />);
+      above = null;
+    }
+  };
+  // Before the first message drawn, nothing older than it: those are above, with older pages. At the start of the
+  // history they come first.
+  if (elsewhere.length && all[start] && (t?.hasMore || start > 0)) while (ew < elsewhere.length && elsewhere[ew].ts < all[start].ts) ew++;
   // One person's pictures one after another are one run, drawn by its last message (docs/pictures.md); a message of
   // it that is nothing but pictures has no row of its own. How each chat draws them, once per chat.
   const runs = pictureRuns(all, start, end, (p, m, i) => groups(p, m) && i !== unreadFrom);
@@ -1144,8 +1407,16 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
   let above: P.MessageView | null = null;
   for (let i = start; i < end; i++) {
     const m = all[i];
-    if (!prev || !sameDay(prev.ts, m.ts)) items.push(<div class="day-sep"><span>{dayLabel(m.ts)}</span></div>);
+    const newDay = !prev || !sameDay(prev.ts, m.ts);
+    if (elsewhere.length) elsewhereUpTo(m.ts - 1);
+    if (drawnDay === null || !sameDay(drawnDay, m.ts)) items.push(<div class="day-sep"><span>{dayLabel(m.ts)}</span></div>);
+    drawnDay = m.ts;
     if (i === unreadFrom) items.push(<div class="new-sep"><span>New</span></div>);
+    // A stream: the thread's name where it changes (stream.ts headBefore), and its messages grouped under it.
+    if (stream && headBefore(prev, m, newDay)) {
+      items.push(<ThreadHead key={`h-${m.id}`} conv={db.conversations.get(m.conversationId)} onOpen={onHead} />);
+      above = null;
+    }
     // A push's copy, before the hub has answered (arrived.ts): what came before it may not be here yet.
     if (isArrivedCopy(m) && !(prev && isArrivedCopy(prev)))
       items.push(
@@ -1160,6 +1431,8 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
       continue;
     }
     const grouped = groups(above, m);
+    const subject = !!m.mail && !ownThread && m.mail.threadId !== lastThread;
+    if (m.mail) lastThread = m.mail.threadId;
     const target = m.replyToId ? (byId.get(m.replyToId) ?? quoted.get(m.replyToId) ?? null) : null;
     const thread = m.threadId ? (db.conversations.get(m.threadId) ?? null) : null;
     // All chats together: where the route changes, grouping breaks (above) and the head line says which route.
@@ -1184,14 +1457,20 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
         run={ends ? run : undefined}
         absorbed={!!run && !ends}
         chipRun={run && !chipped.has(run) ? (chipped.add(run), run) : undefined}
+        subject={subject}
+        quoteAbove={!!m.mail?.inReplyTo && prev?.mail?.messageId === m.mail.inReplyTo}
       />,
     );
     prev = above = m;
   }
+  if (elsewhere.length && end === all.length) elsewhereUpTo(Infinity);
+  // Your mail from here still in the outbox (MailChat.tsx): under the newest message.
+  const mailPlaces = end === all.length ? convIds.filter(isMailPlace) : [];
+  if (mailPlaces.length) items.push(<MailSends key="sends" places={mailPlaces} held={msgs} />);
 
   return (
     <div class="timeline-scroll" ref={scroller} onScroll={onScroll}>
-      <div class="timeline-inner">
+      <div class="timeline-inner" ref={inner} onClick={stream ? (e) => pickFrom(e, byId, stream) : undefined}>
         {t && !t.hasMore && msgs.length > 0 && start === 0 && <div class="timeline-start">This is the start of what dither-chat has stored here.</div>}
         {t?.detached && (
           <button
@@ -1246,10 +1525,52 @@ function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat }: { tkey
               </div>
             </div>
           ))}
+        {/* Next unread topic (docs/threads.md "Next unread"): one mount for a thread's page and a channel's stream. */}
+        {!tkey.startsWith('p:') && convIds[0] && <NextUnreadBar at={convIds[0]} stream={!tkey.startsWith('c:')} bottom={end === all.length && !t?.detached && msgs.length > 0} />}
       </div>
     </div>
   );
 }
+
+/** A click on a stream's message picks its thread for the box (StreamPane), unless it was on a link or a button. */
+function pickFrom(e: MouseEvent, byId: Map<string, P.MessageView>, stream: StreamOpts) {
+  const target = e.target as Element;
+  if (target.closest('a, button, input, textarea, .stream-head')) return;
+  const row = target.closest('.msg[id^="m-"]');
+  const m = row && byId.get(row.id.slice(2));
+  if (m) stream.onPick(m.conversationId);
+}
+
+/**
+ * Where a stream's thread changes: the thread's name (a resolved topic's Resolved chip, its name without the ✔), a
+ * click opening it alone; or, back among a room's own messages, the room's name.
+ */
+const ThreadHead = memo(function ThreadHead({ conv, onOpen }: { conv: P.ConversationView | undefined; onOpen: (convId: string) => void }) {
+  if (counting) rendered('ThreadHead');
+  if (!conv) return <div class="stream-head" />;
+  if (conv.shape !== 'thread')
+    return (
+      <div class="stream-head own" role="heading" aria-level={3}>
+        <span class="stream-head-own">
+          <Icon name="hash" size={12} /> {convLabel(conv)}
+        </span>
+      </div>
+    );
+  return (
+    <div class="stream-head" role="heading" aria-level={3}>
+      <button class="stream-head-open" data-track="thread header" title={`Open this ${threadWords(conv).one} alone`} onClick={() => onOpen(conv.id)}>
+        <Icon name="thread" size={12} />
+        <span class="stream-head-name">{convTitle(conv)}</span>
+        {resolvedTopic(conv) && (
+          <span class="forum-tag resolved">
+            <Icon name="check" size={11} /> Resolved
+          </span>
+        )}
+        <Icon name="chevronRight" size={12} class="stream-head-go" />
+      </button>
+    </div>
+  );
+});
 
 // ------------------------------------------------------------------ composer
 
@@ -1266,9 +1587,13 @@ const loadPanels = () =>
     },
   ));
 
-function Composer({ targets, placeholder, reply, clearReply, disabledReason, routed }: {
+export function Composer({ targets, placeholder, reply, clearReply, disabledReason, routed, draft, post }: {
   targets: { convId: string; accountId?: string };
   placeholder: string;
+  /** Where the half-written message is kept, when not by its conversation: a stream's, whichever thread it goes to. */
+  draft?: string;
+  /** Sends a new topic's first message instead (StreamPane): false when it did not go, and the text comes back. */
+  post?: (body: string, attachments: string[]) => Promise<boolean>;
   /** A person page: the line over the box says where the message goes (ui/Pairs.tsx), so the placeholder is just "Message". */
   routed?: boolean;
   reply: P.MessageView | null;
@@ -1280,7 +1605,9 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
   const sender = accs.find((a) => a.id === targets.accountId) ?? accs.find((a) => a.status === 'online') ?? accs[0];
   const canAttach = !!conv && !!sender?.capabilities.includes('sendMedia') && !(conv.network === 'matrix' && conv.encrypted && !sender.capabilities.includes('e2ee'));
   // Each uploads as it is attached; one that cannot be sent stays in the row with the reason (ComposerFiles.tsx).
-  const att = useAttached(conv?.network, targets.convId);
+  // A stream's box (draft) stays one box whichever thread its chip says: what is attached and open stays with it.
+  const place = draft ?? targets.convId;
+  const att = useAttached(conv?.network, place);
   const [dropping, setDropping] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
   // A phone's attaching: the + panel in the keyboard's place (ui/panel/), the camera and the send screen
@@ -1293,6 +1620,8 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
   const panelUp = onPhone && !!panelMod && (panelOpen.value || panelShown.value > 0);
   const [camera, setCamera] = useState(false);
   const [review, setReview] = useState(false);
+  // The tile tapped in the row, for the send screen to open at.
+  const [reviewAt, setReviewAt] = useState<number | undefined>();
   // The emoji button's picker, beside what opened it (Reactions.tsx).
   const [emojiAt, setEmojiAt] = useState<DOMRect | null>(null);
   // Stickers, recording and view-once, where the sending account has them (ComposerMedia.tsx).
@@ -1314,11 +1643,13 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
     setReview(false);
     setEmojiAt(null);
     setViewOnce(false);
-  }, [targets.convId]);
+  }, [place]);
   const files = att.sendable;
-  const draftKey = `dither-chat:draft:${targets.convId}`;
+  const draftKey = `dither-chat:draft:${draft ?? targets.convId}`;
   const [text, setText] = useState(() => localStorage.getItem(draftKey) ?? '');
   const ta = useRef<HTMLTextAreaElement>(null);
+  const textNow = useRef(text);
+  textNow.current = text;
   const edit = editing.value?.conversationId === targets.convId ? editing.value : null;
   // A half-written message waits for you in its own conversation.
   useEffect(() => {
@@ -1328,7 +1659,9 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
     // Opening a chat puts you in its box, ready to type; not on a phone, where that throws up the keyboard.
     const el = ta.current;
     const busy = document.activeElement instanceof HTMLInputElement || (document.activeElement instanceof HTMLTextAreaElement && document.activeElement !== el);
-    if (el && !busy && !(typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches)) {
+    // Gone to by `n` or the next-unread bar: the caret stays out of the box, so `n` goes on (ui/NextUnreadLazy.tsx).
+    const quiet = takeQuietOpen(targets.convId);
+    if (el && !busy && !quiet && !(typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches)) {
       el.focus({ preventScroll: true });
       el.setSelectionRange(draft.length, draft.length);
     }
@@ -1347,6 +1680,14 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
     if (v) localStorage.setItem(draftKey, v);
     else localStorage.removeItem(draftKey);
   };
+  // A mail sent from this box and undone comes back to it (mail/chats.ts refill), unless you have started another.
+  const back = refill.value;
+  useEffect(() => {
+    if (!back || (back.place !== targets.convId && back.place !== draft) || textNow.current.trim()) return;
+    refill.value = null;
+    type(back.text);
+    ta.current?.focus();
+  }, [back?.seq]);
   const cancelEdit = () => {
     if (edit) editDrafts.delete(edit.id);
     editing.value = null;
@@ -1365,6 +1706,22 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
       const m = edit;
       cancelEdit();
       if (body !== m.body) void editMessage(m, body);
+      return;
+    }
+    if (post) {
+      // A new topic: its files' uploads first, then the topic. Text and files stay in the box until it is started.
+      const sent = files;
+      void Promise.all(sent.map((f) => f.job!.settle())).then(
+        async (ups) => {
+          if (!(await post(body, ups.map((u) => u.id)))) return;
+          composerDone();
+          // What was typed meanwhile stays.
+          if (textNow.current.trim() === body) type('');
+          att.clear(true);
+          clearReply();
+        },
+        (e) => toast({ kind: 'error', title: 'A file did not upload', body: `${(e as Error)?.message ?? e}. Try it again or remove it.` }),
+      );
       return;
     }
     send(targets.convId, body, { accountId: targets.accountId, replyTo: reply?.id, files: files.map((f) => f.file), uploads: files.map((f) => f.job!), ...extras.opts, ...(viewOnce && offer.viewOnce && files.length ? { media: { viewOnce: true } } : {}) });
@@ -1424,14 +1781,14 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
   const attaching = canAttach && !edit && !disabledReason;
   // Making a poll (docs/polls.md): where an account here makes them, not in an open message request.
   const [polling, setPolling] = useState(false);
-  useEffect(() => setPolling(false), [targets.convId]);
+  useEffect(() => setPolling(false), [place]);
   const pollAccount = conv && !edit && !disabledReason ? pollMaker(targets.convId, sender?.id) : null;
   // A computer's + (docs/sending.md "The + menu"): what this chat's network takes besides words, and only that. Where
   // files are all it takes, the + is a paperclip that opens the file picker at once.
   const [stickerAt, setStickerAt] = useState<DOMRect | null>(null);
-  useEffect(() => setStickerAt(null), [targets.convId]);
+  useEffect(() => setStickerAt(null), [place]);
   const [gifAt, setGifAt] = useState<DOMRect | null>(null);
-  useEffect(() => setGifAt(null), [targets.convId]);
+  useEffect(() => setGifAt(null), [place]);
   const plusRef = useRef<HTMLButtonElement>(null);
   const canSticker = !!conv && !disabledReason && !edit && offer.stickers;
   // GIFs (docs/media-kinds.md "GIFs"): a link on Discord, a file anywhere files go.
@@ -1571,10 +1928,12 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
   );
   const recording = attaching && offer.record && !text.trim() && !files.length;
   // The chat's disappearing timer is on: a stopwatch on whatever sits in send's place (Disappearing.tsx).
+  // Send never takes the focus from the box: on a phone that would drop the keyboard after every message.
+  const keepFocus = (e: MouseEvent) => e.preventDefault();
   const sendBtn = recording ? (
       <VoiceButton conversationId={targets.convId} onPhone={onPhone} voice={offer.voice} onSend={(f, voice) => sendMedia({ files: [f], ...(voice ? { media: { voice } } : {}) })} />
   ) : (
-    <button class={"send-btn"} data-track="send" disabled={!canSend} onClick={submit} aria-label="Send" title={`${sendTitle ?? 'Send'}${extras.timer ? `, disappears after ${durationLabel(extras.timer).toLowerCase()}` : ''}`}>
+    <button class={"send-btn"} data-track="send" disabled={!canSend} onMouseDown={keepFocus} onClick={submit} aria-label="Send" title={`${sendTitle ?? 'Send'}${extras.timer ? `, disappears after ${durationLabel(extras.timer).toLowerCase()}` : ''}`}>
       <Icon name="send" size={17} />
     </button>
   );
@@ -1588,6 +1947,7 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
         class={`send-btn ${extras.silent ? 'silent' : ''}`}
         data-track="send"
         disabled={!canSend}
+        onMouseDown={keepFocus}
         onClick={submit}
         {...sendHold}
         onContextMenu={(e) => {
@@ -1641,7 +2001,19 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
           </button>
         </div>
       )}
-      <AttachedFiles files={att.files} remove={att.remove} network={conv?.network} />
+      <AttachedFiles
+        files={att.files}
+        remove={att.remove}
+        network={conv?.network}
+        open={
+          onPhone
+            ? (f) => {
+                setReviewAt(f.key);
+                setReview(true);
+              }
+            : undefined
+        }
+      />
       {viewOnceChip}
       <EmojiComplete ta={ta} convId={targets.convId} network={conv?.network} />
       {!edit && <SlashCommandsLazy ta={ta} convId={targets.convId} accountId={sender?.id} text={text} />}
@@ -1810,10 +2182,14 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
           sendTitle={sendTitle}
           onSend={submit}
           onAddMore={() => photos.current?.click()}
-          onClose={() => setReview(false)}
+          onClose={() => {
+            setReview(false);
+            setReviewAt(undefined);
+          }}
           enterSends={() => !touchKeyboard()}
           extra={viewOnceChip}
           network={conv?.network}
+          start={reviewAt}
         />
       )}
     </div>
@@ -1823,16 +2199,62 @@ function Composer({ targets, placeholder, reply, clearReply, disabledReason, rou
 const touchKeyboard = () => matchMedia('(pointer: coarse)').matches;
 
 /** Why the composer cannot send here, or null. */
-function composerBlocker(c: P.ConversationView, accountId?: string): string | null {
+export function composerBlocker(c: P.ConversationView, accountId?: string): string | null {
   // An open message request is read-only until accepted (docs/add.md).
   if (heldRequest(db.requests, c.id)) return 'Accept the message request first, under Requests';
+  // Mail (mail/chats.ts): the mail account's own say on sending.
+  if (isMailPlace(c.id)) return mailBlocker(c.vantages[0]?.accountId);
   const vs = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a);
   return sendBlocker(c, (accountId && vs.find((a) => a.id === accountId)) || vs.find((a) => a.status === 'online') || vs[0]);
 }
 
+/** Why a mail account cannot send from a chat now, or null. */
+function mailBlocker(accountId: string | undefined): string | null {
+  const a = accountId ? db.mail.accounts.get(accountId) : undefined;
+  if (!a) return 'This mail account is gone';
+  if (a.level !== 'write') return `${a.address ?? a.label} is read-only here: dither-accounts did not grant sending`;
+  if (a.send.ok === false) return `Sending from ${a.address ?? a.label} is off${a.send.why ? `: ${a.send.why}` : ''}`;
+  return null;
+}
+
+/**
+ * A chat box's mail send (mail/chatsend.ts): into the thread the subject chip says (or the one replied to), the newest
+ * message of it as the timeline holds it answered. False when it did not go: the text stays in the box.
+ */
+function mailPost(place: string, tkey: string, reply: P.MessageView | null) {
+  return async (body: string) => {
+    const held = timelines.get(tkey)?.messages ?? [];
+    const pick = isMailThread(place) ? { threadId: place, subject: null } : subjectOf(place);
+    const threadId = reply?.mail?.threadId ?? pick.threadId;
+    const latest = [...held].reverse().find((m) => m.mail && m.mail.threadId === threadId) ?? null;
+    // A thread's box: everyone on it, or the one person its pill picked ("Only Alice", MailChat.tsx MailThreadLead).
+    const one = isMailThread(place) ? onlyOf(place) : null;
+    const r = await sendMailFromChat({ place, text: body, subject: reply ? null : pick.subject, threadId, replyTo: reply?.mail ? reply : null, latest, only: one ? [one] : null });
+    if (!r.ok) toast({ kind: 'error', title: 'The mail did not go', body: r.error });
+    else {
+      // A new subject is one mail's: the next goes on with the thread it starts, which the pill then follows.
+      if (pick.subject !== null && !reply) pickSubject(place, null);
+      // "Only Alice" is one mail's too: the pill goes back to everyone.
+      if (one) answerEveryone(place);
+    }
+    return r.ok;
+  };
+}
+
+/** The subjects of the mail threads a timeline holds, newest first: what the subject chip offers. */
+function heldSubjects(tkey: string): { threadId: string; subject: string }[] {
+  const out = new Map<string, string>();
+  const ms = timelines.get(tkey)?.messages ?? [];
+  for (let i = ms.length - 1; i >= 0; i--) {
+    const x = ms[i].mail;
+    if (x && !out.has(x.threadId)) out.set(x.threadId, x.subject);
+  }
+  return [...out].map(([threadId, subject]) => ({ threadId, subject }));
+}
+
 // ------------------------------------------------------------------ panes
 
-function firstUnread(convs: P.ConversationView[]): number | null {
+export function firstUnread(convs: P.ConversationView[]): number | null {
   const ts = convs.flatMap((c) => c.vantages.filter((v) => v.unread > 0).map((v) => v.lastReadTs ?? 0));
   return ts.length ? Math.min(...ts) : null;
 }
@@ -1849,7 +2271,34 @@ function NotStartedNote({ c }: { c: P.ConversationView }) {
  */
 export function ConversationPane({ convId, onBack, focus }: { convId: string; onBack?: () => void; focus?: string }) {
   rev.value;
-  const c = db.conversations.get(convId);
+  mailRev.value;
+  // An email route or a mail thread is a conversation too (mail/chats.ts); a thread the page does not hold loads.
+  const c = convById(convId);
+  useEffect(() => {
+    if (!c && isMailThread(convId)) void loadMailThread(convId);
+  }, [convId, !c]);
+  if (!c && isMailThread(convId)) {
+    const failed = threadsFailed.get(convId);
+    return failed ? (
+      <section class="pane">
+        <Empty icon="mail" title="This thread did not load">
+          {failed}{' '}
+          <button class="link-btn" onClick={() => void loadMailThread(convId)}>
+            Try again
+          </button>
+        </Empty>
+      </section>
+    ) : (
+      <section class="pane">
+        <Loading fill label="Loading the thread…" />
+      </section>
+    );
+  }
+  // A thread between you and one person, opened from a mail list or a link, is part of their chat.
+  const t = isMailThread(convId) ? mailThread(convId) : undefined;
+  const route = t ? personRouteOf(t) : null;
+  const via = route ? chatPersonOf(route) : null;
+  if (route && via) return <PersonChat person={via} directs={directsOf(via.id)} at={route} onBack={onBack} msg={focus} />;
   const person = chatPersonOf(c);
   if (c && person) return <PersonChat person={person} directs={directsOf(person.id)} at={c} onBack={onBack} msg={focus} />;
   return <PlainPane convId={convId} onBack={onBack} focus={focus} />;
@@ -1857,12 +2306,23 @@ export function ConversationPane({ convId, onBack, focus }: { convId: string; on
 
 function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => void; focus?: string }) {
   rev.value;
-  const c = db.conversations.get(convId);
+  const c = convById(convId);
   const [reply, setReply] = useState<P.MessageView | null>(null);
   const unreadAt = useMemo(() => (c ? firstUnread([c]) : null), [convId]);
   useEffect(() => setReply(null), [convId]);
-  useEffect(() => void reactionContext(convId), [convId]);
+  useEffect(() => void (!isMailPlace(convId) && reactionContext(convId)), [convId]);
   if (!c) return <Empty icon="groups" title="Conversation not found" />;
+  // A mail thread as a chat of its own (mail/chats.ts): everyone on it answered, from the box.
+  if (isMailThread(c.id))
+    return (
+      <section class="pane mail-thread-pane">
+        <MailThreadHeader c={c} onBack={onBack} />
+        <BackBar place={c.id} />
+        <Timeline tkey={timelineKey('c', c.id)} convIds={[c.id]} onReply={setReply} firstUnreadTs={unreadAt} focus={focus} />
+        <TypingBar convIds={[c.id]} lead={<MailThreadLead c={c} tkey={timelineKey('c', c.id)} />} />
+        <Composer targets={{ convId: c.id }} placeholder={threadPlaceholder(c.id)} reply={reply} clearReply={() => setReply(null)} disabledReason={composerBlocker(c)} post={mailPost(c.id, timelineKey('c', c.id), reply)} />
+      </section>
+    );
   // A network's notifications about you: cards, and no composer (docs/feed.md).
   if (c.variant === 'feed')
     return (
@@ -1883,6 +2343,9 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
     );
   // A post you follow (docs/feed.md "Following a post"): its thread, what came since it was read marked new.
   if (c.variant === 'follow') return <FollowChatLazy c={c} onBack={onBack} />;
+  // A channel with threads shows its stream, its thread cards or its own messages (stream.ts, docs/threads.md).
+  const shows = channelView(c);
+  if (shows === 'stream') return <StreamLazy key={c.id} c={c} onBack={onBack} focus={focus} />;
   const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && visibleAccount(a.id));
   const sendAsValue = pref('sendAs')[c.id] ?? accounts.find((a) => a.status === 'online')?.id ?? accounts[0]?.id;
   const voice = c.variant === 'voice' || c.variant === 'stage';
@@ -1893,10 +2356,12 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
   const chat = !room || roomHasChat(c);
   const body = chat && (
     <>
+      <ViewSwitch c={c} shows={shows} />
       {!held && c.pending && <LinkBanner c={c} />}
-      {/* A forum's or media channel's messages are its posts (ui/Threads.tsx, docs/threads.md). */}
-      {c.variant === 'forum' || c.variant === 'media' ? (
-        <ForumLazy c={c} />
+      {/* A forum's or media channel's messages are its posts (ui/Threads.tsx, docs/threads.md), as are a channel's
+          threads when its switch says so. */}
+      {shows === 'cards' ? (
+        <ForumLazy key={c.id} c={c} />
       ) : (
         <>
           {voice && !room && <div class="voice-note"><Icon name="voice" size={14} /> Voice isn't relayed. This shows the channel's text chat.</div>}
@@ -1921,7 +2386,7 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
       />
       {held ? (
         <RequestBar r={held} />
-      ) : c.variant === 'forum' || c.variant === 'media' ? null : (
+      ) : shows === 'cards' ? null : (
         <Composer
           targets={{ convId: c.id, accountId: sendAsValue }}
           placeholder={`Message ${c.shape === 'direct' ? convTitle(c) : convLabel(c)}`}
@@ -1955,6 +2420,51 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
   );
 }
 
+// A channel's stream is a chunk of its own (ui/Stream.tsx), loaded the first time one opens.
+type StreamParts = typeof import('./Stream.tsx');
+let streamParts: StreamParts | null = null;
+let streamLoading: Promise<StreamParts> | null = null;
+const loadStream = () =>
+  (streamLoading ??= import('./Stream.tsx').then(
+    (m) => (streamParts = m),
+    (e) => {
+      streamLoading = null;
+      throw e;
+    },
+  ));
+
+function StreamLazy({ c, onBack, focus }: { c: P.ConversationView; onBack?: () => void; focus?: string }) {
+  const [m, setM] = useState(streamParts);
+  useEffect(() => {
+    if (!m) loadStream().then(setM, () => {});
+  }, []);
+  if (m) return <m.StreamPane c={c} onBack={onBack} focus={focus} />;
+  return (
+    <section class="pane stream-pane">
+      <ConvHeader c={c} onBack={onBack} />
+      <ViewSwitch c={c} shows="stream" />
+      <Loading label="Loading messages…" />
+    </section>
+  );
+}
+
+/** Between a channel's stream, its thread cards and its own messages, where it has more than one (stream.ts). */
+export function ViewSwitch({ c, shows }: { c: P.ConversationView; shows: ChannelView }) {
+  const vs = channelViews(c);
+  if (!vs) return null;
+  const many = threadWords(c).many;
+  return (
+    <div class="view-switch" role="tablist" aria-label="Show">
+      {vs.map((v) => (
+        <button key={v} role="tab" aria-selected={v === shows} class={`view-switch-btn ${v === shows ? 'on' : ''}`} data-track={`channel view ${v}`} onClick={() => setChannelView(c.id, v)}>
+          {viewLabel(c, v, many)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+
 /** A person's page: the chat with them. One conversation is that conversation's page; several are one chat over them. */
 export function PersonPane({ personId, onBack }: { personId: string; onBack?: () => void }) {
   rev.value;
@@ -1962,7 +2472,7 @@ export function PersonPane({ personId, onBack }: { personId: string; onBack?: ()
   const directs = directsOf(personId);
   if (!person) return <Empty icon="user" title="Person not found" />;
   if (!directs.length) return <Empty icon="user" title={`No chats with ${person.name}`} />;
-  if (directs.length === 1) return <PlainPane convId={directs[0].id} onBack={onBack} />;
+  if (directs.length === 1 && directs[0].network !== 'email') return <PlainPane convId={directs[0].id} onBack={onBack} />;
   return <PersonChat person={person} directs={directs} onBack={onBack} />;
 }
 
@@ -1979,10 +2489,11 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
   useEffect(() => void loadChat(person.id), [person.id]);
   // Where a message goes: the route of the message you are replying to, else the route in use (Pairs.tsx).
   const focus = (reply && directs.find((d) => d.id === reply.conversationId)) || focusedPair(person.id, directs, at?.id);
-  useEffect(() => void reactionContext(focus.id), [focus.id]);
+  useEffect(() => void (!isMailPlace(focus.id) && reactionContext(focus.id)), [focus.id]);
   // Showing one route's history follows the route you send through, so switching it in the message box switches both.
   const view = viewOf(person.id, directs) !== 'all' ? focus.id : 'all';
   const shown = view === 'all' ? directs : [focus];
+  const tkey = view === 'all' ? timelineKey('p', person.id) : timelineKey('c', view);
   const onFocus = (id: string) => {
     if (reply && reply.conversationId !== id) setReply(null);
     focusPair(person.id, focus.id, id, at?.id);
@@ -2001,7 +2512,7 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
       <NotStartedNote c={focus} />
       <Timeline
         key={view}
-        tkey={view === 'all' ? timelineKey('p', person.id) : timelineKey('c', view)}
+        tkey={tkey}
         convIds={shown.map((d) => d.id)}
         onReply={setReply}
         firstUnreadTs={unreadAt}
@@ -2009,17 +2520,30 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
         chat={{ badge: view === 'all' && badgeShows(directs), onFocus, onMissing }}
       />
       {/* The route line shares the typing line's row, over the box (docs/chats.md "The message box"). */}
-      <TypingBar convIds={shown.map((d) => d.id)} lead={!held && <PairLead person={person} directs={directs} focus={focus} onFocus={onFocus} />} />
+      <TypingBar
+        convIds={shown.map((d) => d.id)}
+        lead={
+          !held && (
+            <>
+              <PairLead person={person} directs={directs} focus={focus} onFocus={onFocus} />
+              {/* An email route: the thread it goes into, or a new subject (MailChat.tsx SubjectChip). */}
+              {focus.network === 'email' && !reply && <SubjectChip routeId={focus.id} subjects={heldSubjects(tkey)} />}
+              {focus.network === 'email' && reply?.mail && <ReplySubject m={reply} />}
+            </>
+          )
+        }
+      />
       {held ? (
         <RequestBar r={held} />
       ) : (
         <Composer
           targets={{ convId: focus.id }}
-          placeholder={`Message ${person.name}`}
+          placeholder={focus.network === 'email' ? `Email ${person.name}` : `Message ${person.name}`}
           reply={reply}
           clearReply={() => setReply(null)}
           disabledReason={composerBlocker(focus)}
           routed
+          post={isMailPlace(focus.id) ? mailPost(focus.id, tkey, reply) : undefined}
         />
       )}
     </section>

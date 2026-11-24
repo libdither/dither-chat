@@ -83,6 +83,14 @@ export class MailPeople {
     });
   }
 
+  /** Called once the chat store is connected (mail/places.ts). */
+  readonly connected: ((chat: Store) => void)[] = [];
+
+  /** The chat store, once connected. */
+  get chatStore(): Store | null {
+    return this.chat;
+  }
+
   /** The chat store, where identities and persons live. Until then mail_party is kept, and nobody is made. */
   connect(chat: Store) {
     this.chat = chat;
@@ -91,6 +99,7 @@ export class MailPeople {
     // Mail stored before this existed: who is on each of its threads, once.
     this.rebuild = (db.query('SELECT id FROM mail_thread t WHERE NOT EXISTS (SELECT 1 FROM mail_party p WHERE p.thread_id = t.id)').all() as Row[]).map((r) => r.id);
     this.schedule();
+    for (const f of this.connected) f(chat);
   }
 
   stop() {

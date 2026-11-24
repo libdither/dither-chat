@@ -281,6 +281,11 @@ no answer) and how long it lasted where the network says.
 - **It stops everywhere.** As soon as the network says it no longer rings you (answered or declined on any device, or
   given up), or you decline here, the ring card goes and the Android app's notification is taken back (`push.clear`).
   A browser keeps its notification until it is tapped: a browser must show something for every push.
+- **Answer only while it lasts.** The Android notification's Answer opens the app, which joins the call
+  (`android.ts` `answer`) only while the hub still has that call ringing or going on (`answerable` in `ringing.ts`).
+  Joining a one-to-one call that is over places a new one, so an Answer handed over again later (the app brought
+  back from Recents, or after Android stopped it, comes with the intent it first started from) joins nothing. The
+  app itself also answers only a fresh tap.
 - **Never again.** The hub remembers each call it rang for, so an adapter reconnecting and saying it all again rings
   nothing. A call that started more than 90 s (`RING.freshMs`) before the hub heard it ring is old news and never
   rings: the call's own time, not the hub's. A ring left hanging for 3 minutes (`RING.maxMs`) is over, as missed.

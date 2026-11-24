@@ -147,6 +147,7 @@ What each network will do once its adapter has it. **None of the real adapters d
 | Google Messages | phones | none | none | none: its spam folder has nothing to accept |
 | Zulip | a channel's link (`…/#narrow/channel/12-name`) or `#name`; people by email | Join (subscribe) | none; Message opens a DM | none: Zulip has no requests |
 | Instagram, X, Messenger | handles, profile names | none | Follow (Instagram, X) | message requests, follow requests |
+| Luma, Partiful | none: events come from Explore (docs/events.md) | RSVP, from an event's page | none | none |
 
 ### What a dither-accounts adapter would call
 
@@ -384,8 +385,8 @@ How each of your accounts stands with someone, and ending it (2026-11-09). An in
     so a friend of two Discord accounts is one identity with two links, and one row. With several accounts on the
     list, the row has a dot in each account's colour, named in the dots' tooltip.
   - **The second line** says when you last talked: the latest message in your DMs with them, on any network
-    ("talked 3 days ago"), else nothing. Presence never reaches the page unless the adversarial presence log is on,
-    so the list does not say who is online. "Friends since" is in the row's tooltip (and on the profile).
+    ("talked 3 days ago"), else nothing. Who is online is the picture's status dot elsewhere (docs/profile.md
+    "Status dots"); these rows do not repeat it. "Friends since" is in the row's tooltip (and on the profile).
   - **An account menu** under "People" when the list has people on several accounts, like Mail's: All accounts, or
     one, each with its colour, and a line saying what the dots are.
   - **The order**: last talked first (people you never talked with after, by name), or A to Z, from the order

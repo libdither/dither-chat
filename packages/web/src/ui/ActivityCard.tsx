@@ -7,18 +7,53 @@
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { ago, fullTime, since } from '../format.ts';
+import { dotFor, dotLooks, whose as whoseDot, type PresenceOf } from './PresenceDot.tsx';
+import { memo } from './memo.ts';
 import { keeping, loadChanges, presenceText, retention } from '../history.ts';
 import { netName } from '../model.ts';
-import { db, rev } from '../state.ts';
+import { db, readMinute } from '../state.ts';
 import { ActivityChart } from './ActivityChart.tsx';
 import { NetGlyph } from './bits.tsx';
 import { Change } from './HistoryCard.tsx';
 import { Icon } from './icons.tsx';
+import { StatusEmoji } from './ProfileShell.tsx';
 
 const SHOWN = 8;
 
-export function ActivityCard({ path, chartPath, self, chart, status, at }: { path: string; chartPath: string; self: boolean; chart: boolean; status?: { text?: string; emoji?: string } | null; at?: number }) {
-  rev.value;
+type CardProps = {
+  path: string;
+  chartPath: string;
+  self: boolean;
+  chart: boolean;
+  status?: { text?: string; emoji?: string; emojiUrl?: string } | null;
+  at?: number;
+  /** Whose status dot to say in words when presence is not logged (PresenceDot.tsx). */
+  presence?: PresenceOf;
+};
+const sameStatus = (a: CardProps['status'], b: CardProps['status']) =>
+  a === b || (!!a && !!b && a.text === b.text && a.emoji === b.emoji && a.emojiUrl === b.emojiUrl);
+
+/**
+ * Drawn again when what it is handed changes, not with the whole profile (a nickname, a message): the profile hands it
+ * new objects each time, so they are compared by value (docs/perf.md "Every click"). What it loads, the retention
+ * settings, presence frames and the minute clock draw it themselves.
+ */
+export const ActivityCard = memo(
+  ActivityCardBody,
+  (a: CardProps, b: CardProps) =>
+    a.path === b.path &&
+    a.chartPath === b.chartPath &&
+    a.self === b.self &&
+    a.chart === b.chart &&
+    a.at === b.at &&
+    sameStatus(a.status, b.status) &&
+    whoseDot(a.presence) === whoseDot(b.presence),
+);
+
+function ActivityCardBody({ path, chartPath, self, chart, status, at, presence: whose }: CardProps) {
+  // "since …" moves with the clock; the dot with presence frames (dotLooks reads them).
+  readMinute();
+  const dot = whose && dotLooks(whose) ? dotFor(whose) : null;
   const r = retention.value;
   const [statuses, setStatuses] = useState<P.ChangeView[]>([]);
   const [presence, setPresence] = useState<P.ChangeView[]>([]);
@@ -36,7 +71,7 @@ export function ActivityCard({ path, chartPath, self, chart, status, at }: { pat
   }, [path, r.adversarial]);
 
   const hasStatus = !!(status?.text || status?.emoji);
-  if (!chart && !hasStatus && !statuses.length && !presence.length) return null;
+  if (!chart && !hasStatus && !statuses.length && !presence.length && !dot) return null;
   const now = presence[0];
   const shownStatuses = all.statuses ? statuses : statuses.slice(0, SHOWN);
   const shownPresence = all.presence ? presence : presence.slice(0, SHOWN);
@@ -51,7 +86,7 @@ export function ActivityCard({ path, chartPath, self, chart, status, at }: { pat
       <div class="pf-status-now">
         {hasStatus ? (
           <p class="pf-status">
-            {status!.emoji && <span class="pf-status-emoji">{status!.emoji}</span>}
+            <StatusEmoji status={status!} />
             <span>{status!.text}</span>
             {at ? (
               <time class="hist-when" title={fullTime(at)}>
@@ -62,7 +97,16 @@ export function ActivityCard({ path, chartPath, self, chart, status, at }: { pat
         ) : (
           <p class="pf-empty">No status now.</p>
         )}
-        {now && <PresenceNow c={now} logging={r.presence} />}
+        {now && r.presence ? (
+          <PresenceNow c={now} logging />
+        ) : dot ? (
+          <p class="pf-status pf-presence">
+            <span class={`presence-dot ${dot.state}`} />
+            <span>{dot.title}</span>
+          </p>
+        ) : (
+          now && <PresenceNow c={now} logging={false} />
+        )}
       </div>
 
       {chart && <ActivityChart path={chartPath} self={self} statusesKept={keeping(r, 'statuses')} presenceKept={keeping(r, 'presence')} />}

@@ -58,8 +58,6 @@ export function isPage(r: Route): boolean {
       return !!(r.conv || r.person);
     case 'accounts':
       return !!r.account;
-    case 'mail':
-      return !!r.thread;
     case 'feed':
       return !!r.post;
     case 'profile':
@@ -96,6 +94,9 @@ export function opensOver(r: Route): boolean {
 export function ownList(r: Route, places: Places): Route {
   switch (r.view) {
     case 'inbox':
+      // A thread opened from a list of mail sits on that list (docs/mail.md "Mail as chats").
+      if (r.mail) return { view: 'inbox', mail: r.mail };
+    // falls through
     case 'requests':
     case 'notices':
       // A chat or a mail thread opened in the inbox (a notification opens one there too), and Requests and Notices, rows in it.
@@ -108,8 +109,6 @@ export function ownList(r: Route, places: Places): Route {
       return { view: 'folder', folder: r.folder };
     case 'accounts':
       return { view: 'accounts' };
-    case 'mail':
-      return r.list ? { view: 'mail', list: r.list } : { view: 'mail' };
     case 'feed':
       return r.source ? { view: 'feed', source: r.source } : { view: 'feed' };
     case 'directory':

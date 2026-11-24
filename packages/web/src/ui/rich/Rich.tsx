@@ -260,7 +260,7 @@ export function EmbedVideo({ e, kit }: { e: P.EmbedView; kit: Kit }) {
         <video class="embed-video" src={v.url} autoplay loop muted playsinline style={{ aspectRatio: ratio }} />
       )
     ) : (
-      <video class="embed-video" src={v.url} controls preload="metadata" poster={e.image} style={{ aspectRatio: ratio }} />
+      <kit.Video src={v.url} poster={e.image} width={v.width ?? 16} height={v.height ?? 9} label={e.title ?? 'Video'} />
     );
   const page = playerUrl(v.url);
   if (on && page)

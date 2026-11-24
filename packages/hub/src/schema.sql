@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS vantage (
   last_read_ts INTEGER,
   unread       INTEGER NOT NULL DEFAULT 0,
   mentions     INTEGER NOT NULL DEFAULT 0,
+  -- Of those mentions, how many were @everyone, @all, @here or @topic (attention.ts weighs them less).
+  wildcards    INTEGER NOT NULL DEFAULT 0,
   native_mute  TEXT,                           -- JSON NativeMute, as the network reports it
   PRIMARY KEY (account_id, target_kind, target_id)
 );
@@ -65,7 +67,10 @@ CREATE TABLE IF NOT EXISTS person (
   is_self    INTEGER NOT NULL DEFAULT 0,
   manual     INTEGER NOT NULL DEFAULT 0,      -- the user merged or renamed it; ingest won't touch the name
   created_at INTEGER NOT NULL,
-  name_source TEXT NOT NULL DEFAULT 'network' -- network | merge (P.NameSource); 'user' until 2026-11-11, when nicknames moved to identity
+  name_source TEXT NOT NULL DEFAULT 'network', -- network | merge (P.NameSource); 'user' until 2026-11-11, when nicknames moved to identity
+  face_id    TEXT,                            -- the account they are shown by: its name as you see it and its picture
+  face_pinned INTEGER NOT NULL DEFAULT 0,     -- you chose face_id (Make Main Account); else the hub keeps or chooses one
+  picture_identity_id TEXT                    -- the account whose picture they show, when you chose one other than face_id's
 );
 
 CREATE TABLE IF NOT EXISTS identity (
@@ -156,6 +161,8 @@ CREATE TABLE IF NOT EXISTS message (
   mentions_self   INTEGER NOT NULL DEFAULT 0,
   -- The mention of you was @everyone or @here: it notifies like one, but is not addressed to you.
   mentions_all    INTEGER NOT NULL DEFAULT 0,
+  -- The mention of you was of a group you are in (a Zulip user group, a Discord role), not you by name.
+  mentions_group  INTEGER NOT NULL DEFAULT 0,
   deleted         INTEGER NOT NULL DEFAULT 0,
   -- When gone, how and when (docs/history.md): 'deleted' or 'disappeared'; the body stays if the hub kept it.
   gone_how        TEXT,
@@ -331,6 +338,17 @@ CREATE TABLE IF NOT EXISTS chat_route (
   conversation_id TEXT NOT NULL,
   account_id      TEXT NOT NULL,
   set_at          INTEGER NOT NULL
+);
+
+-- How a place shows in a view, when you chose (docs/mail.md "Mail as chats", rungs.ts): a view is a chat id
+-- ('person:<id>'), a place what shows in it (a mail thread 'mth_…'); `rung` one of protocol RUNGS (hidden, closed,
+-- open). Without a row the view's default holds.
+CREATE TABLE IF NOT EXISTS place_rung (
+  view_id   TEXT NOT NULL,
+  place_id  TEXT NOT NULL,
+  rung      TEXT NOT NULL,
+  set_at    INTEGER NOT NULL,
+  PRIMARY KEY (view_id, place_id)
 );
 
 -- Categories are questions; scores are a provider's answers; overrides are yours and always win.
@@ -562,6 +580,19 @@ CREATE TABLE IF NOT EXISTS needs_prediction (
   PRIMARY KEY (conversation_id, addressed, age)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS needs_prediction_addressed ON needs_prediction(addressed);
+
+-- ------------------------------------------------------------------ status dots (presence.ts, docs/profile.md)
+-- How each person is on their network now, as last heard: one row each, current state only, never a history (that
+-- is the change log's, behind the adversarial presence switch). Hidden while no account that heard it is online; gone
+-- with its accounts, or when stale.
+CREATE TABLE IF NOT EXISTS presence_now (
+  identity_id TEXT PRIMARY KEY,
+  state       TEXT NOT NULL,                   -- online, idle, dnd, offline
+  devices     TEXT,                            -- desktop,mobile,web as the network said, comma-separated
+  at          INTEGER NOT NULL,                -- when it became so
+  heard       INTEGER NOT NULL,                -- when the hub last heard it (written with a change), for staleness
+  accounts    TEXT                             -- the accounts that heard this state, comma-separated: shown while one is online
+) WITHOUT ROWID;
 
 -- ------------------------------------------------------------------ the change journal (journal.ts, docs/sync.md)
 -- What changed, by object, at which position, so a client that comes back asks only for that. Compacted: one row
@@ -1096,3 +1127,19 @@ END;
 CREATE TRIGGER IF NOT EXISTS people_dirty_change_log AFTER INSERT ON change_log WHEN new.target_kind = 'identity' AND new.field IN ('displayName', 'handle') BEGIN
   INSERT INTO people_dirty (id) SELECT new.target_id WHERE NOT EXISTS (SELECT 1 FROM people_dirty WHERE id = new.target_id);
 END;
+
+-- Who was seen at which event (docs/events.md "People"): hosts, and guests on a list the site showed by name. Never a
+-- guest of a list the host hid (guestsShown 'count' or 'hidden'): such a read removes the event's guest rows instead.
+-- rsvp: theirs when the site said it (your own account's, from the event's `rsvp`). The event is the post the hub logged
+-- as message `post:<event>` on its network.
+CREATE TABLE IF NOT EXISTS event_seen (
+  identity_id TEXT NOT NULL,
+  network     TEXT NOT NULL,
+  event_id    TEXT NOT NULL,
+  role        TEXT NOT NULL,                -- 'host' | 'guest'
+  rsvp        TEXT,
+  first_at    INTEGER NOT NULL,
+  seen_at     INTEGER NOT NULL,
+  PRIMARY KEY (identity_id, network, event_id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS event_seen_event ON event_seen(network, event_id);

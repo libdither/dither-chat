@@ -11,6 +11,7 @@ import { installDeskLinks } from './desk.ts';
 import { trackViewport } from './phone.ts';
 import { startAhead } from './ahead.ts';
 import { registerServiceWorker } from './pwa.ts';
+import { noteJxl } from './jxl.ts';
 import { dropPages, dropSnapshot, readSnapshot, restore } from './snapshot.ts';
 import { applyBootstrap, applyEvents, beforeSync, connect, loaded, restoreOutbox } from './state.ts';
 import { installErrorReports } from './errors.ts';
@@ -83,6 +84,8 @@ try {
   location.reload();
 }
 
+// Tells the hub whether pictures may come as JPEG XL (jxl.ts).
+void noteJxl();
 registerServiceWorker();
 // Fetching ahead what you will likely open next (prefetch.ts): a chunk of its own, off the first screen's path.
 startAhead();

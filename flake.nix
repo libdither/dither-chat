@@ -17,6 +17,7 @@
         chromium            # Discord sandbox: the real web client
         matrix-continuwuity # local Matrix homeserver for the adapter testbed
         sqlite
+        libjxl.bin          # cjxl/djxl: pictures kept as JPEG XL and rebuilt for devices without it (hub jxl.ts)
       ];
       waBridge = pkgs: pkgs.callPackage ./packages/adapter-whatsapp/bridge/package.nix { };
     in {

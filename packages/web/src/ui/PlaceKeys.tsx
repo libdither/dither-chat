@@ -11,12 +11,11 @@ import { calendarOn } from '../plans.ts';
 import { G_WAIT_MS, PLACES, readKey, type Place } from '../placekeys.ts';
 import { db, go, type Route } from '../state.ts';
 
-/** Whether the Feed is offered: an account with posts (X, Mastodon, Reddit, Lemmy, Substack, Bluesky), or its notifications already held. */
+/** Whether the Feed is offered: an account with posts (X, Mastodon, Reddit, Lemmy, Substack, Bluesky, LessWrong), or its notifications already held. */
 export const feedOn = () => [...db.accounts.values()].some((a) => POST_NETWORKS.includes(a.network)) || [...db.conversations.values()].some((c) => c.variant === 'feed');
 
-/** What the rail shows (Rail.tsx): Mail with mail access, the calendar with its account, the Feed with posts. */
+/** What the rail shows (Rail.tsx): the calendar with its account, the Feed with posts. */
 function offered(p: Place): boolean {
-  if (p === 'mail') return db.mail.access.state !== 'off';
   if (p === 'calendar') return calendarOn;
   if (p === 'feed') return feedOn();
   return true;
@@ -25,7 +24,6 @@ function offered(p: Place): boolean {
 const ROUTES: Record<Place, Route> = {
   inbox: { view: 'inbox' },
   people: { view: 'people' },
-  mail: { view: 'mail' },
   calendar: { view: 'calendar' },
   feed: { view: 'feed' },
   foryou: { view: 'foryou' },

@@ -7,9 +7,16 @@ import type { ComponentChildren } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 import { Avatar } from './bits.tsx';
+import type { PresenceOf } from './PresenceDot.tsx';
 import { openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
 import { HeadOrb } from './Offline.tsx';
+import { viewer } from '../viewer.ts';
+
+/** The picture, filling the screen in the image viewer (ui/Viewer.tsx), where it can be zoomed further. */
+export function viewPicture(url: string, name: string) {
+  viewer.value = { images: [{ url, name, fill: true }], index: 0 };
+}
 
 export function ProfilePage({ title, onBack, children, label }: { title: string; onBack: () => void; children: ComponentChildren; label: string }) {
   return (
@@ -48,6 +55,7 @@ export function Hero({
   status,
   actions,
   onPicture,
+  presence,
 }: {
   id: string;
   name: string;
@@ -62,10 +70,15 @@ export function Hero({
   tags?: ComponentChildren;
   status?: ComponentChildren;
   actions?: ComponentChildren;
-  /** Where you may change the picture: it is a button, with a camera on it, that opens what you can do. */
+  /**
+   * Where you may change the picture: it is a button, with a camera on it, that opens what you can do (View Picture
+   * among it). Elsewhere a picture is a button that opens it full screen.
+   */
   onPicture?: (e: MouseEvent) => void;
+  /** Whose status dot the picture shows (PresenceDot.tsx). */
+  presence?: PresenceOf;
 }) {
-  const pic = <Avatar id={id} name={name} url={picture} size={92} square={square} />;
+  const pic = <Avatar id={id} name={name} url={picture} size={92} square={square} presence={presence} />;
   return (
     <section class="pf-hero">
       <div class={`pf-banner ${banner ? 'pic' : ''}`} style={bannerStyle(banner, accent, network)} />
@@ -80,6 +93,10 @@ export function Hero({
             <span class="pf-avatar-badge" aria-hidden="true">
               <Icon name="camera" size={13} />
             </span>
+          </button>
+        ) : picture ? (
+          <button class={`pf-avatar pf-avatar-view ${square ? 'square' : ''}`} data-track="profile: view picture" onClick={() => viewPicture(picture, name)} aria-label="View the picture" title="View the picture">
+            {pic}
           </button>
         ) : (
           <span class={`pf-avatar ${square ? 'square' : ''}`}>{pic}</span>
@@ -168,6 +185,12 @@ export function Facts({ rows }: { rows: ([ComponentChildren, ComponentChildren] 
       ))}
     </dl>
   );
+}
+
+/** A status's emoji: a custom one's picture where a profile gave it, else the emoji (or its `:name:`). */
+export function StatusEmoji({ status }: { status: { emoji?: string; emojiUrl?: string } }) {
+  if (status.emojiUrl) return <img class="pf-status-emoji" src={status.emojiUrl} alt={status.emoji ?? ''} title={status.emoji} />;
+  return status.emoji ? <span class="pf-status-emoji">{status.emoji}</span> : null;
 }
 
 export const monthYear = (ms: number) => new Date(ms).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });

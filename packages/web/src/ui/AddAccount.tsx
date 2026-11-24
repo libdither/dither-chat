@@ -94,6 +94,11 @@ const NET_HELP: Record<P.Network, { adapter: string; blurb: string; fields: { ke
     blurb: 'Brings your Bluesky Following and Discover feeds, threads and notifications to the Feed page, where you can reply, like, repost and quote. It runs in dither-accounts; after you add it, sign in to Bluesky there.',
     fields: [],
   },
+  lesswrong: {
+    adapter: 'lesswrong',
+    blurb: 'Brings LessWrong\'s front page, the posts you subscribe to, whole posts with their comment threads, and replies to you to the Feed page, where you can upvote and comment. New posts are written on LessWrong itself. It runs in dither-accounts; after you add it, sign in to LessWrong there.',
+    fields: [],
+  },
   // Runs only in dither-accounts (its docs/zulip.md): the organization's address and email are settings, the key a secret.
   zulip: {
     adapter: 'zulip',
@@ -105,6 +110,20 @@ const NET_HELP: Record<P.Network, { adapter: string; blurb: string; fields: { ke
       { key: 'password', label: 'Password (instead of an API key)', secret: true, optional: true },
     ],
     config: ['server', 'email'],
+  },
+  // Event sites (docs/events.md), run only in dither-accounts (its docs/luma.md, docs/partiful.md). The city is a setting:
+  // the site's own place slug or words, empty for the site's default listing; Explore reads work before you sign in.
+  luma: {
+    adapter: 'luma',
+    blurb: "Brings Luma's events to the Feed page: Explore, the listing for your city, and the events you are going to or hosting, with who is going as Luma shows it, and RSVP after you confirm. Your Luma chats and each event's chat come as chats. It runs in dither-accounts; Explore works before you sign in, and you sign in there with the code Luma emails you.",
+    fields: [{ key: 'city', label: 'City (optional)', placeholder: "Luma's place, like sf or london", optional: true }],
+    config: ['city'],
+  },
+  partiful: {
+    adapter: 'partiful',
+    blurb: "Brings Partiful's parties to the Feed page: Explore, the listing for your city, and the parties you are going to, hosting or invited to, with who is going as Partiful shows it, and RSVP after you confirm. Each party's comments and text blasts come as its chat, with Partiful's own chats. It runs in dither-accounts; Explore works before you sign in, and you sign in there with the code Partiful texts you.",
+    fields: [{ key: 'city', label: 'City (optional)', placeholder: "Partiful's place, like sf or nyc", optional: true }],
+    config: ['city'],
   },
   // Runs only in dither-accounts, beside T3 Code on the same machine (its docs/t3.md).
   t3: {

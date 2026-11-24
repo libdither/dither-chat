@@ -709,6 +709,87 @@ code {
     clip-path: inset(50%);
   }
 }
+/* A channel's threads as one row (docs/inbox.md "One row per channel"): a chevron beside the row's own button, at the
+   end of its top line, opens it on its unread threads, indented under the row's name. */
+.row-fold {
+  position: absolute;
+  z-index: 2;
+  top: 6px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--text-faint);
+}
+.row-fold:hover {
+  background: var(--bg-active);
+  color: var(--text);
+}
+.inbox-row:has(> .row-fold) > .row .row-top {
+  padding-right: 22px;
+}
+/* The topic's name and its message as one line of text, cut at its end. */
+.channel-row .row-preview {
+  display: block;
+}
+.channel-row .row-subject {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.channel-row.unread .row-subject {
+  color: var(--text);
+}
+.inbox-subrows {
+  display: flex;
+  flex-direction: column;
+  padding: 0 0 4px 46px;
+}
+.inbox-subrows[hidden] {
+  display: none;
+}
+.inbox-subrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  text-align: left;
+  color: var(--text-dim);
+}
+.inbox-subrow:hover {
+  background: var(--bg-hover);
+}
+.inbox-subrow.active {
+  background: var(--bg-active);
+  color: var(--text);
+}
+.inbox-subrow.muted {
+  opacity: 0.7;
+}
+.inbox-subrow-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: var(--text);
+}
+@media (pointer: coarse) {
+  /* A finger-sized target without a taller row. */
+  .row-fold::after {
+    content: '';
+    position: absolute;
+    inset: -8px -4px;
+  }
+  .inbox-subrow {
+    min-height: 40px;
+  }
+}
 .inbox-empty {
   padding: 16px 10px;
   color: var(--text-faint);
@@ -1018,6 +1099,7 @@ code {
   text-overflow: ellipsis;
 }
 .chan-also,
+.chan-resolved,
 .chan-muted {
   color: var(--text-faint);
   flex: none;
@@ -1037,6 +1119,38 @@ code {
   border-bottom-left-radius: 4px;
   flex: none;
   margin-left: 2px;
+}
+
+.chan-line {
+  position: relative;
+}
+/* Room on the right for a fold's chevron, beside the count: on every channel and thread row, so the counts line up. */
+.chan-line > .chan,
+.chan.thread {
+  padding-right: 28px;
+}
+.chan-line:hover > .chan {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.chan-fold {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  color: var(--text-faint);
+}
+.chan-fold:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.chan.chan-more .chan-name {
+  color: var(--text-faint);
 }
 
 /* folders in sidebar */
@@ -1362,11 +1476,70 @@ code {
      bar still rises above the first message. scripts/check-overflow.ts looks with it off. */
   overflow-x: clip;
 }
+/* Each row is a whole number of pixels tall, rounded up. Text makes fractional heights (a grouped message is 24.5 px),
+   and the browser's scroll anchoring scrolls by whole pixels: a message coming in below the view moved what you read by
+   half a pixel. Rounding the whole timeline instead would only move the slip to rows growing above the view.
+   No specificity, so a row's own height wins; where calc-size() is unknown, rows are as they were. */
+:where(.timeline-inner > *) {
+  height: calc-size(auto, round(up, size, 1px));
+}
 .timeline-start {
   text-align: center;
   color: var(--text-faint);
   font-size: 12px;
   padding: 16px;
+}
+/* Next unread topic (ui/NextUnread.tsx): at the bottom of a thread's timeline, in its channel's network color. */
+.next-unread {
+  --chan: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: calc(100% - 32px);
+  margin: 12px 16px 8px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in oklab, var(--chan) 45%, transparent);
+  border-left: 3px solid var(--chan);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--chan) 10%, var(--bg-raised));
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+.next-unread:hover {
+  background: color-mix(in oklab, var(--chan) 18%, var(--bg-raised));
+}
+.next-unread-lead {
+  color: var(--text-dim);
+  flex: none;
+}
+.next-unread-chan {
+  color: var(--text-dim);
+  flex: 0 1 auto;
+  max-width: 35%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.next-unread-name {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.next-unread-count {
+  margin-left: auto;
+  flex: none;
+  color: var(--text-dim);
+}
+.next-unread.mention .next-unread-count {
+  color: var(--danger);
+}
+.next-unread-at {
+  font-weight: 700;
+  margin-right: 2px;
 }
 .day-sep,
 .new-sep {
@@ -1387,6 +1560,82 @@ code {
 }
 .new-sep {
   color: var(--danger);
+}
+/* A channel's stream (docs/threads.md "The channel stream", Timeline.tsx StreamPane): where the thread changes, its
+   name as a bar; a click opens it alone. Back among a room's own messages, the room's name. */
+.stream-head {
+  display: flex;
+  align-items: center;
+  margin: 10px 16px 2px;
+  padding: 0;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.stream-head-open,
+.stream-head-own {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 3px 8px 3px 4px;
+  border: none;
+  border-radius: 6px 6px 0 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+}
+.stream-head-open {
+  cursor: pointer;
+}
+.stream-head-open:hover {
+  background: var(--bg-hover);
+}
+.stream-head-own {
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.stream-head-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.stream-head-go {
+  flex: none;
+  opacity: 0;
+  color: var(--text-faint);
+}
+.stream-head-open:hover .stream-head-go,
+.stream-head-open:focus-visible .stream-head-go {
+  opacity: 1;
+}
+/* A channel's views: its stream, its thread cards, its own messages (stream.ts). */
+.view-switch {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  margin: 6px 16px 4px;
+  padding: 2px;
+  align-self: flex-start;
+  border-radius: 8px;
+  background: var(--bg-hover, var(--border-soft));
+}
+.view-switch-btn {
+  padding: 2px 10px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.view-switch-btn.on {
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 600;
 }
 /* Above a push's copy, before the hub has answered (arrived.ts). */
 .arrived-sep {
@@ -1418,6 +1667,17 @@ code {
 .msg.mentioned {
   background: color-mix(in oklab, var(--mention-border) 14%, transparent);
   box-shadow: inset 2px 0 0 var(--mention-border);
+}
+.msg.blast {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.msg-blast {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent);
 }
 .msg.grouped {
   padding-top: 1px;
@@ -1655,14 +1915,20 @@ code {
 .msg.system .reactions {
   margin-top: 0;
 }
+/* A message gone to (a quote, a link): lit up once the view gets there, then fading, as Discord does. */
 .msg.flash {
-  animation: flash 1.4s;
+  animation: flash 2s ease-out;
 }
 @keyframes flash {
   0%,
-  40% {
+  45% {
     background: var(--accent-soft);
   }
+}
+/* The message a reply's quote line points to, while the pointer is on that line: which one a click goes to. */
+.msg.quoted-hover {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .reply-quote {
@@ -1873,19 +2139,13 @@ code {
   height: 15px;
   flex: none;
 }
-/* A computer: a rail of the five ways beside the run, in the space the chat leaves there. Invisible until you point
-   at the message; then only the way in use shows, faint, in its place on the rail. Pointing at it (or tabbing to it)
-   brings the other four in around it, in full. The hidden four take no pointer, so passing beside the run doesn't
-   open the rail. */
-.pics.has-rail {
-  max-width: calc(100% - 40px);
-}
-.pics.has-rail.wide {
-  max-width: min(560px, calc(100% - 40px));
-}
+/* A computer: a rail of the five ways in the message's gutter, left of the run and level with its top, under the
+   avatar (.msg's 56px first column). Invisible until you point at the message; then only the way in use shows, faint,
+   at the rail's top (PictureRail puts it first). Pointing at it (or tabbing to it) brings the other four in below it,
+   in full. The hidden four take no pointer, so passing through the gutter doesn't open the rail. */
 .pics-rail {
   position: absolute;
-  left: calc(100% + 6px);
+  right: calc(100% + 11px);
   top: 0;
   z-index: 2;
   display: flex;
@@ -1894,6 +2154,11 @@ code {
   padding: 3px;
   opacity: 0;
   transition: opacity 0.18s;
+}
+/* A grouped message's time shows at the gutter's top when you point at it: a run that starts the message starts its
+   rail below that. */
+.msg.grouped .msg-main > .atts:first-child .pics-rail {
+  top: 16px;
 }
 .msg:hover .pics-rail {
   opacity: 0.45;
@@ -2106,6 +2371,11 @@ code {
 .pics-pinch {
   touch-action: pan-y;
 }
+/* While a run changes its way the switch holds it under the finger itself (PictureSwitch.tsx keepStill), so the
+   browser's scroll anchoring, which would hold some other message still, is off. */
+.timeline-scroll.pics-holding {
+  overflow-anchor: none;
+}
 /* While a slide is under way the run as it was stays in the page, out of sight, and the drawing between two ways is
    the block's size. */
 .pics-sliding > :not(.pics-morph-box) {
@@ -2291,11 +2561,6 @@ code {
   object-fit: contain;
   align-self: flex-start;
   border-radius: 6px;
-}
-.att-video {
-  max-width: 400px;
-  max-height: 300px;
-  border-radius: 10px;
 }
 .att-file {
   display: flex;
@@ -3154,6 +3419,151 @@ code {
 .composer-file.refused > svg {
   opacity: 0.5;
 }
+.composer-files-row {
+  flex: 1 1 100%;
+  min-width: 0;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.app.phone .composer-files-row {
+  scrollbar-width: none;
+}
+.composer-files-row > .composer-file {
+  flex: none;
+}
+/* A photo or video attached: a tile at its own shape, within bounds, that opens it large (ComposerFiles.tsx). Its
+   name and size show over its foot on a hover; × in its corner. */
+.composer-media {
+  position: relative;
+  flex: none;
+  height: 112px;
+  border-radius: 10px;
+}
+.app.phone .composer-media {
+  height: 84px;
+}
+.composer-media-open {
+  position: relative;
+  display: block;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: inherit;
+  background: var(--bg-raised);
+  cursor: zoom-in;
+}
+.composer-media-open img,
+.composer-media-open video {
+  display: block;
+  height: 100%;
+  width: auto;
+  min-width: 64px;
+  max-width: 220px;
+  object-fit: cover;
+}
+.app.phone .composer-media-open img,
+.app.phone .composer-media-open video {
+  min-width: 56px;
+  max-width: 150px;
+}
+.composer-media-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.composer-media-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin: -16px 0 0 -16px;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.55);
+  color: #fff;
+}
+.composer-media-play svg {
+  fill: currentColor;
+}
+.composer-media-cap {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 16px 8px 5px;
+  background: linear-gradient(transparent, rgb(0 0 0 / 0.7));
+  color: #fff;
+  font-size: 11px;
+  text-align: left;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.composer-media-cap > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.composer-media-cap > small {
+  flex: none;
+  color: rgb(255 255 255 / 0.75);
+  font-size: 10px;
+}
+.composer-media-open:hover .composer-media-cap,
+.composer-media-open:focus-visible .composer-media-cap {
+  opacity: 1;
+}
+.composer-media-remove {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+}
+.composer-media-remove:hover {
+  background: rgb(0 0 0 / 0.85);
+}
+.composer-media-bar {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  background: rgb(0 0 0 / 0.45);
+}
+.composer-media-why {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--danger) 82%, #000);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.3;
+}
+.composer-media.failed .composer-media-open {
+  border-color: var(--danger);
+}
 .upload-bar {
   display: block;
   height: 4px;
@@ -3984,6 +4394,27 @@ textarea.chip-box {
 }
 .forum-tag.muted {
   color: var(--text-faint);
+}
+.forum-tag.resolved {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-dim);
+}
+.forum-post-head .forum-count {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.forum-post.unread .forum-post-head b {
+  color: var(--text);
+}
+.forum-post.muted {
+  opacity: 0.75;
 }
 .forum-post span.forum-preview {
   color: var(--text-dim);
@@ -6139,9 +6570,10 @@ textarea.chip-box {
   font-size: 18px;
 }
 
+/* Bottom right, standing on a composer under it (Toasts.tsx sets --toast-lift) so its send button stays in reach. */
 .toasts {
   position: fixed;
-  bottom: 20px;
+  bottom: calc(12px + var(--toast-lift, 8px));
   right: 20px;
   z-index: 200;
   display: flex;
@@ -6561,6 +6993,15 @@ textarea.chip-box {
   .chan.thread {
     min-height: 40px;
   }
+  .chan-fold {
+    width: 40px;
+    height: 40px;
+    right: 0;
+  }
+  .chan-line > .chan,
+  .chan.thread {
+    padding-right: 44px;
+  }
   .section-head {
     padding: 6px 6px 0;
   }
@@ -6594,7 +7035,8 @@ textarea.chip-box {
   /* The same for the list beside it: hundreds of conversations, a screenful on show. It halves the first
      paint's layout on a big hub (docs/android.md). Not the rail, whose unread pills sit outside its items. */
   .side-scroll > .row,
-  .side-scroll > .inbox-row {
+  .side-scroll > .inbox-row,
+  .side-scroll > .inbox-group {
     content-visibility: auto;
     contain-intrinsic-size: auto 60px;
   }
@@ -7221,10 +7663,27 @@ textarea.chip-box {
 .viewer-name {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  font-weight: 600;
+}
+.viewer-name > span,
+.viewer-name > .viewer-format {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 600;
+}
+.viewer-name > .viewer-format {
+  font-size: 12px;
+}
+@media (max-width: 600px) {
+  .viewer-name > .viewer-format {
+    white-space: normal;
+  }
+}
+.viewer-bar .viewer-as {
+  width: 28px;
+  margin-left: -6px;
 }
 .viewer-name small {
   color: rgb(255 255 255 / 0.7);
@@ -7332,11 +7791,38 @@ textarea.chip-box {
     padding-top: 6px;
   }
 }
-/* An installed app with the window controls overlay: the window's own buttons are drawn over the top of the page, so
-   the viewers' bars start below them (wider than a phone, the file box already does). */
+/* An installed app with the window controls overlay: the window's own buttons are drawn over the top of the page.
+   The full-window layers keep their top bar at the very top and leave those buttons their corner, the part of the
+   width outside env(titlebar-area-x/width): right of it, or left of it on a Mac. The bar's empty parts move the
+   window, as the title bar's do. (Wider than a phone, the file box already clears them; the camera's top row has its
+   own rule.) */
 @media (display-mode: window-controls-overlay) {
+  :root {
+    --wco-left: env(titlebar-area-x, 0px);
+    --wco-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  }
   .viewer-bar {
-    padding-top: calc(6px + env(titlebar-area-height, 0px));
+    padding-left: calc(16px + var(--wco-left));
+    padding-right: calc(8px + var(--wco-right));
+  }
+  .lv-bar {
+    padding-left: calc(10px + var(--wco-left));
+    padding-right: calc(10px + var(--wco-right));
+  }
+  .story-bar {
+    padding-left: calc(12px + var(--wco-left));
+    padding-right: calc(12px + var(--wco-right));
+  }
+  .viewer-bar,
+  .lv-bar,
+  .story-bar,
+  .cam-top {
+    app-region: drag;
+    -webkit-app-region: drag;
+  }
+  :is(.viewer-bar, .lv-bar, .story-bar, .cam-top) :is(button, input, select, a, form, [role='button']) {
+    app-region: no-drag;
+    -webkit-app-region: no-drag;
   }
 }
 @media (max-width: 820px) and (display-mode: window-controls-overlay) {
@@ -7380,6 +7866,9 @@ textarea.chip-box {
 }
 .fv-none .icon {
   color: var(--text-faint);
+}
+.fv-video {
+  margin: 24px auto;
 }
 .fv-media {
   display: block;
@@ -11092,7 +11581,16 @@ html[data-theme='light'] .acc-dot {
   color: inherit;
   cursor: pointer;
 }
-.pf-avatar-edit:focus-visible {
+/* Anyone else's picture opens full screen in the image viewer, to zoom. */
+.pf-avatar-view {
+  display: block;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  cursor: zoom-in;
+}
+.pf-avatar-edit:focus-visible,
+.pf-avatar-view:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -11220,6 +11718,23 @@ html[data-theme='light'] .acc-dot {
 }
 .pf-status-emoji {
   font-size: 16px;
+}
+img.pf-status-emoji {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  vertical-align: -4px;
+}
+.pf-fact-who {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.pf-fact-who:hover {
+  text-decoration: underline;
 }
 .pf-actions {
   display: flex;
@@ -11723,6 +12238,24 @@ html[data-theme='light'] .acc-dot {
   background: transparent;
   box-shadow: inset 0 0 0 2px var(--text-faint);
 }
+/* A status dot on an avatar (PresenceDot.tsx): bottom right, or top right where the network's badge has that corner.
+   A ring of the surface around it parts it from the picture; offline is a hollow ring there too. No motion. */
+.avatar-presence {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  box-shadow: 0 0 0 2px var(--bg-sidebar);
+}
+.avatar-presence.at-top {
+  top: -1px;
+  bottom: auto;
+}
+.avatar-presence.offline {
+  background: var(--bg-sidebar);
+  box-shadow:
+    inset 0 0 0 2px var(--text-faint),
+    0 0 0 2px var(--bg-sidebar);
+}
 .pf-asking {
   color: var(--text-faint);
   animation: pf-pulse 1.4s ease-in-out infinite;
@@ -12013,21 +12546,87 @@ a.pf-link:hover {
   gap: 10px;
   min-width: 0;
 }
-/* A person's several accounts (Profile.tsx AccountTile): each its own picture, name, handle and bio, by network. */
-.pf-acct-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-  gap: 8px;
+/* A person's several accounts (Profile.tsx AccountRow): a row each, its picture, name, handle, and Main or Picture
+   when it speaks for them; Edit opens its menu's choices as buttons under it. */
+.pf-acct-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0 -6px;
 }
 .pf-acct {
   display: flex;
   align-items: flex-start;
   gap: 10px;
   min-width: 0;
-  padding: 10px;
+  padding: 8px 6px;
   border-radius: var(--radius);
+}
+.pf-acct + .pf-acct {
+  border-top: 1px solid var(--border-soft);
+}
+.pf-acct.editing {
   background: var(--bg-center);
-  border: 1px solid var(--border-soft);
+}
+.pf-acct-mark {
+  flex: none;
+  font-size: 11px;
+  padding: 0 7px;
+  margin: 0 4px;
+  border-radius: 10px;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.pf-acct-edit-btn {
+  flex: none;
+}
+.pf-acct-edit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 6px;
+}
+.pf-acct-edit .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.pf-acct-edit .btn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.pf-acct-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.pf-acct-note .net-glyph {
+  display: inline-block;
+  vertical-align: -1px;
+}
+/* Friends (Profile.tsx FriendsCard): which network each is from, a chip per network that shows only its own. */
+.pf-friend-nets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pf-friend-nets .chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.pf-friend-net {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.pf-person-nets {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 4px;
+  flex: none;
+  color: var(--text-faint);
 }
 .pf-acct-text {
   display: flex;
@@ -12084,17 +12683,6 @@ a.pf-link:hover {
   font-size: 11.5px;
   color: var(--text-faint);
 }
-.pf-acct-bio {
-  margin: 2px 0 0;
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--text-dim);
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-}
 .pf-acct-sum {
   cursor: pointer;
 }
@@ -12148,43 +12736,6 @@ button.msg-edited.link {
 }
 button.msg-edited.link:hover {
   color: var(--link);
-}
-.edit-history {
-  min-width: 260px;
-  max-width: 420px;
-  max-height: 360px;
-  overflow-y: auto;
-  padding: 4px 0;
-}
-.edit-loading {
-  margin: 4px 10px;
-  font-size: 12px;
-  color: var(--text-faint);
-}
-.edit-version {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 6px 10px;
-  border-top: 1px solid var(--border-soft);
-}
-.edit-version:first-of-type {
-  border-top: 0;
-}
-.edit-when {
-  font-size: 10.5px;
-  color: var(--text-faint);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.edit-body {
-  font-size: 13px;
-  color: var(--text-dim);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.edit-version.now .edit-body {
-  color: var(--text);
 }
 
 /* History on profile pages */
@@ -12397,46 +12948,15 @@ button.msg-edited.link:hover {
   gap: 2px;
   margin-left: 2px;
 }
-.msg-history {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-width: 300px;
+/* The words a message's last edit put in, in the chat: a quiet underline that opens the edits. */
+.msg-changed {
+  text-decoration: underline dotted color-mix(in oklab, var(--accent) 70%, transparent);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+  cursor: pointer;
 }
-.msg-history h4 {
-  margin: 0 0 4px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-faint);
-}
-.msg-history-event {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 0;
-  font-size: 13px;
-  color: var(--text-dim);
-  border-top: 1px solid var(--border-soft);
-}
-.msg-history-event:first-of-type {
-  border-top: 0;
-}
-.msg-history-event b {
-  color: var(--text);
-}
-.msg-history-event time {
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--text-faint);
-  white-space: nowrap;
-}
-.edit-history .msg-history,
-.menu .msg-history {
-  padding: 8px 10px;
-  max-width: 420px;
-  max-height: 380px;
-  overflow-y: auto;
+.msg-changed:hover {
+  text-decoration-style: solid;
 }
 
 /* Settings → Adversarial features */
@@ -13205,30 +13725,6 @@ button.msg-edited.link:hover {
 .mail-acc-dot.warn {
   box-shadow: 0 0 0 2px var(--bg-sidebar), 0 0 0 3.5px var(--warn);
 }
-/* Mail's views: one row that scrolls sideways, with no scrollbar, rather than wrapping onto a second. */
-.mail-chips {
-  flex-wrap: nowrap;
-  align-items: center;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-  overscroll-behavior-x: contain;
-}
-.mail-chips::-webkit-scrollbar {
-  display: none;
-}
-.mail-chips.fade-r {
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
-  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
-}
-.mail-chips.fade-l {
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 28px);
-  mask-image: linear-gradient(to right, transparent, #000 28px);
-}
-.mail-chips.fade-l.fade-r {
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
-  mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
-}
 /* Under "Mail": whose mail the views show, as wheels (ScopeWheel): the choice in use, the rest a click or a turn away. */
 .scope-wheels {
   display: flex;
@@ -13611,8 +14107,31 @@ button.msg-edited.link:hover {
   color: var(--warn);
 }
 /* Over the header while threads are picked, so the list under the finger does not move. */
+/* A mail message in a chat, opened up (ChatMail.tsx): its quote, or the mail as it was sent. */
+.chat-mail-quote {
+  margin-top: 4px;
+  padding-left: 9px;
+  border-left: 2px solid var(--border);
+  color: var(--text-dim);
+}
+.chat-mail-sent {
+  margin-top: 6px;
+  max-width: 720px;
+}
+.chat-mail-empty {
+  color: var(--text-faint);
+  font-style: italic;
+}
+/* A mail list in the Inbox's place (ui/mail/MailSidebar.tsx), under the Inbox's header and chips: the rest of the column. */
 .mail-side {
   position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.mail-side > .scope-wheels {
+  padding: 8px 12px 0;
 }
 .mail-pickbar {
   position: absolute;
@@ -13695,24 +14214,12 @@ button.msg-edited.link:hover {
   }
 }
 
-/* Mail search (slice 7): in Mail's sidebar, and as a group on the search page. */
-.mail-search-btn + .mail-boxes-btn {
-  margin-left: 0;
-}
-.mail-search-btn.on {
-  color: var(--accent);
-}
+/* Mail search (slice 7): in a mail list's place, and as a group on the search page. */
 .mail-search {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
-.mail-search-box {
-  margin: 4px 12px 2px;
-}
-.mail-search-box input {
-  min-width: 0;
 }
 .mail-hit .mail-hit-snip {
   display: -webkit-box;
@@ -14114,9 +14621,6 @@ button.msg-edited.link:hover {
 }
 
 /* Mail: the composer and the outbox strip (slice 5, ui/mail/Composer.tsx). */
-.side-new + .mail-compose-btn {
-  margin-left: 0;
-}
 .mail-drafts-line {
   display: inline-flex;
   align-items: center;
@@ -16068,6 +16572,13 @@ button.msg-edited.link:hover {
   padding: calc(8px + env(safe-area-inset-top)) 12px 8px;
   background: linear-gradient(rgb(0 0 0 / 0.45), transparent);
 }
+/* Beside the window's own buttons in an installed app with the window controls overlay (see .viewer-bar). */
+@media (display-mode: window-controls-overlay) {
+  .cam-top {
+    padding-left: calc(12px + var(--wco-left));
+    padding-right: calc(12px + var(--wco-right));
+  }
+}
 .cam-btn {
   width: 48px;
   height: 48px;
@@ -16209,6 +16720,19 @@ button.msg-edited.link:hover {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+/* The picture viewer open from its photo: it is in the app, under this, so this goes until the viewer closes. */
+.send-screen.under-viewer {
+  visibility: hidden;
+}
+/* The photo, a button that opens it in the picture viewer. */
+.ss-zoom {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: zoom-in;
 }
 .ss-file {
   display: flex;

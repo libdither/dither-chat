@@ -20,6 +20,30 @@ conversation of the latest message, so a reply goes where they last wrote, unles
 this session. It is active whichever of their DMs is open, and its menu acts on the whole chat: Mark As Read reads
 every route, Mute and the rule go on each, and search looks in every chat with them.
 
+**One row per channel.** A channel's threads are one row, not one per thread: a Zulip channel's topics, a Discord
+text channel's threads and a forum's posts, a Matrix room's threads (`convRows` in `packages/web/src/model.ts`, the
+fold in `channelrows.ts`). Its key is `channel:<id>`, so ranking, the kept snapshot and the hold on the open row see
+one thing, as for a person's chat; the channel open, or any thread of it, holds it. A place with threads that would
+have had a row of its own (a Matrix room, a Discord channel the hub scored) is that same row, keyed `channel:<id>`
+whether or not a thread of it is listed now, so the key does not change under you as its threads are read or come
+unread. A thread of a DM keeps a row of its own: a DM's row is the person's. The row scores the highest of its parts,
+needs you if any does, is owed since the earliest and is muted only if every part is; a muted thread does not lift it
+(its score, ↩ and time count only while every part is muted), and the ↩ marks go on the parts that are not muted.
+The fold is the page's alone: the hub scores each thread as before (`Attention.input`), so a thread still reaches the
+inbox only by a mention or a message that notified you, and a followed Zulip topic still does not alert by itself.
+
+The row shows the channel's name and place, the latest listed thread's name and its last message, the unread summed
+over every thread of the channel (listed or not, a muted one only for a mention, the place's own messages added; a
+forum's own count or its threads', the larger), and a red @ count when you are mentioned in it. A Matrix room keeps
+a group's lock, typing and red count of its own messages. A chevron at the end of its top line opens it in place on
+its unread threads, those that mention you first, then the latest, each with its own count (red where it mentions
+you), and the thread open now, which stays once read; the row stays open on this device (`collapsed` under
+`inbox:<id>`, kept as `false`). A thread under it opens that thread; the row itself opens the channel as the sidebar
+does (`openChannelRow` in `ui/Sidebar.tsx`). Its menu is the channel's, and its Mark As Read reads the channel and
+every thread of it at once, with no confirm. Fetching ahead (`ahead.ts`) loads what the row leads to: the channel's
+messages, or for a forum, which opens on its cards, its latest listed thread's. `scripts/verify-channel-rows.ts`
+checks it in a browser on the demo world's Zulip organization.
+
 What needs you shows on the row, not in a section. A reply you owe that the hub still counts (they wrote last, the
 row's `owedSince`, and it needs you, `needs`) has ↩ and how long it has waited, in the accent colour, beside the
 unread count when there is one. An unanswered message from long ago, or from someone you rarely answer, has faded
@@ -43,17 +67,40 @@ far down, about 45 minutes after you last wrote. Now there is one order, and the
 the top for a few hours ([You were here](#you-were-here)).
 
 A filter button beside the search box opens a menu: **All**, **Direct messages** (DMs), **Groups** (the other
-chats: groups, rooms, notes to self), **Mail** (with a mail account). With a filter on, the button is tinted and
+chats: groups, rooms, notes to self), **Mail** (with a mail account: chats with mail in them). With a filter on, the button is tinted and
 says which (DMs, Groups, Mail). The choice is kept per device. Until 2026-11-09 these were chips under the search
 box, with People and Unread: a stored People became Direct messages, and Unread became All, where unread rows are
 bold.
 
+### Mail lists
+
+With Mail on, a row of chips under the search box goes to mail's other lists, shown in the inbox's place (docs/mail.md
+"Mail as chats"): always exactly **Inbox**, **Updates**, **Everything** and **More ⌄**, in one row that neither wraps
+nor scrolls, on a computer and a phone. More's menu has Starred and Sent, then each account's mailboxes; with one of
+them open, More is lit and says its name ("Starred ⌄"). The open list's chip is filled with the accent colour, in both
+themes, since the title stays "Inbox".
+
+A list keeps the Inbox's own header (`ui/Sidebar.tsx` `InboxSidebar` with `mail`, the list under it from
+`ui/mail/MailSidebar.tsx`): the title, the search box, the Mail filter and its +, which has New email. Nothing above the
+list moves as you change lists. The search box says which list it searches ("Search Updates") and keeps to it: Enter
+runs a mail search that starts with the list's operators (`mail/model.ts` `listSearch`: `in:inbox is:update` for
+Updates, `in:inbox` for Everything, `is:starred`, `in:sent`, `in:<mailbox>`, and `account:` for one account's), so the
+list's chip stays lit over its results; emptied, the list is back. In the Inbox chip the box is the app's search, as
+without the filter.
+
+From the Inbox a list is a step of its own; from one list to another replaces it, so back, and Escape, go to the Inbox
+chip first (`ui/MailChat.tsx` `toInboxChip`). Turning the Mail filter off goes back to the whole inbox. Chat requests and
+notices are not mail: under the Mail filter there is no Requests row.
+
 **Mail from people** is in the same list (docs/mail.md, slice 8): a thread in Inbox from someone you know that is
 unread, owes a reply, is recent or you just opened. It is scored by this formula on its own fold
 (`hub/src/mail/attention.ts`: you and one other is a DM, you in To a mention), and how you answer someone sums their
-mail and their chats. Its `AttentionView` has `kind: 'mail'` and the thread's id. The Mail filter shows only these;
-Direct messages and Groups only chats. Tapping one opens the reader beside the inbox. With no mail account nothing
-here changes.
+mail and their chats. Its `AttentionView` has `kind: 'mail'` and the thread's id. Mail is chats (docs/mail.md "Mail as chats"): a thread
+between you and one person is folded into that person's row (web `model.ts` `foldMailIntoChats`), so their chat and
+their mail are one row ranked by the better of the two; a thread with more people is a row of its own and opens as a
+group chat, named by its subject: the envelope tile, the subject without Re: or Fwd:, and "Jo: …" (`mail/model.ts`
+`threadName`, `threadSnippet`). Ctrl+K and search's Jump to find it by its people's names too. The Mail filter keeps rows with mail in them; Direct messages keeps people's rows, mail or not; Groups the
+rest. With no mail account nothing here changes.
 
 The score uses metadata only: who wrote, when, who replied to whom, mentions, the conversation's shape and member
 count, unread state, triage's stored decisions (the tier and the importance) and time spent and where you were
@@ -263,8 +310,10 @@ and through the journal like any message change. Marks are not part of the activ
 
 ### Unread, alerts and importance
 
-DM messages and mentions count 12 each (up to 3). Other unread messages count 3 each (up to 3). Anything unread
-adds 8. An unread busy group you never take part in therefore does not need you, and a mention in it lifts
+DM messages and mentions count 12 each (up to 3). An unread `@everyone`, `@all`, `@here` or `@topic` counts 6 (up
+to 3): it pinged you along with everyone else (`vantage.wildcards`, from the network's own count where it gives one,
+else from the messages the hub holds). Other unread messages count 3 each (up to 3). Anything unread adds 8. In the
+learned order's `mentions` feature an `@everyone` is half a mention. An unread busy group you never take part in therefore does not need you, and a mention in it lifts
 it.
 
 Where triage put the conversation's newest unread message that it put in a tier at all (an alert, a Conversation or
@@ -364,7 +413,7 @@ the row's tooltip and at the top of its right-click menu (a sheet on a phone):
 | owed, reply rate known (3+ turns) | You reply to Sam most of the time / about half the time / rarely; unanswered for 2 days |
 | owed, otherwise | Sam wrote to you / mentioned you / replied to you / asked the group something / answered you 3 hours ago; not answered yet |
 | owed, the chance (after any of the four above) | . Likely needs a reply: 70% · . May need a reply: 30% |
-| unread | 2 unread messages · 1 unread mention, 4 more unread |
+| unread | 2 unread messages · 1 unread mention, 4 more unread · 1 unread mention, 2 @everyone |
 | an alert you have not seen | Alerted you: (triage's first reason) |
 | an unread Conversation message | triage's first reason as it stands: A direct message · You wrote here in the last day |
 | importance, for a message on the list | On your list: importance 72% |
@@ -592,9 +641,11 @@ Mail threads from a person are rows of the same inbox (mail.md). One model for b
 mail**, learns from the opens of chats and mail threads alike, and when it is turned on chats and mail compete in one
 ranking. Until then it runs in shadow.
 
-- **Mail opens** are in the visit log as `mail` stays on the thread's id (`mth_…`), from the Mail page or an inbox row,
-  with the row's position when opened from the inbox, as a chat's (`web/src/activity.ts`). Before 2026-11-20 a mail
-  row's open was a `conversation` stay with the thread's id, and the Mail page's had none; the rebuild reads both.
+- **Mail opens** are in the visit log as `mail` stays on the thread's id (`mth_…`), from a thread's chat or an inbox
+  row, with the row's position when opened from the inbox, as a chat's (`web/src/activity.ts`). A person's chat open on
+  their email route counts as a stay on that route's newest thread. Before 2026-11-20 a mail row's open was a
+  `conversation` stay with the thread's id, and the Mail page's (gone since 2026-11-23) had none; the rebuild reads
+  both.
 - **The rebuild** (`rankhistory.ts`, `loadWorld`'s `mail`) adds every thread the one-list inbox may have listed: from a
   person, in Inbox, not muted, on an account not hidden, and, if personal only because the sender looks human, rated
   by mail triage. Their messages fold in the same time order as the chats' (a second query, merged by time), as

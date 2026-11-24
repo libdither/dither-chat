@@ -1,4 +1,5 @@
 import { createPortal, type ComponentChildren } from 'preact';
+import { memo } from './memo.ts';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
 import { GLYPH } from '../brand.ts';
@@ -12,6 +13,7 @@ import { Sheet } from './Sheet.tsx';
 import { onMenu } from './ContextMenu.tsx';
 import { accountMenu } from './accountMenu.tsx';
 import { drawLater } from './Later.tsx';
+import { PresenceDot, type PresenceOf } from './PresenceDot.tsx';
 
 /** `decorative`: hidden from screen readers, for where the network is already said in words around it. */
 export function NetGlyph({ network, size = 14, color, decorative }: { network: P.Network; size?: number; color?: string; decorative?: boolean }) {
@@ -22,14 +24,17 @@ export function NetGlyph({ network, size = 14, color, decorative }: { network: P
   );
 }
 
-/** Round source badge: network colour with its glyph. */
-export function NetBadge({ network, size = 16, class: cls }: { network: P.Network; size?: number; class?: string }) {
+/**
+ * Round source badge: network colour with its glyph. Kept when its row is drawn again (its props are plain values): an
+ * inbox row drawn again need not draw its picture's badge.
+ */
+export const NetBadge = memo(function NetBadge({ network, size = 16, class: cls }: { network: P.Network; size?: number; class?: string }) {
   return (
     <span class={`net-badge ${cls ?? ''}`} style={{ width: `${size}px`, height: `${size}px`, background: netColor(network) }} title={netName(network)}>
       <NetGlyph network={network} size={Math.round(size * 0.62)} color="#fff" />
     </span>
   );
-}
+});
 
 /**
  * Coloured dots for the accounts that see something. Hidden when the network has only one account, and where only the
@@ -120,6 +125,7 @@ export function Avatar({
   network,
   accountIds,
   icon,
+  presence,
 }: {
   id: string;
   name: string;
@@ -129,6 +135,8 @@ export function Avatar({
   network?: P.Network;
   accountIds?: string[];
   icon?: string;
+  /** Whose status dot it shows (PresenceDot.tsx): none without, and none while their presence is unknown. */
+  presence?: PresenceOf;
 }) {
   // The picture that failed, not "failed": a group whose picture arrives later (or changes) shows the new one.
   const [broken, setBroken] = useState<string | null>(null);
@@ -148,6 +156,7 @@ export function Avatar({
           <AccountDots network={network} accountIds={accountIds} size={Math.max(6, Math.round(size * 0.2))} />
         </span>
       )}
+      {presence && <PresenceDot of={presence} size={size} corner={network ? 'top' : undefined} />}
     </span>
   );
 }

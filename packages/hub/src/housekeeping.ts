@@ -182,7 +182,8 @@ export function* pruneMediaCacheSteps(dir: string, maxBytes = mediaCacheCap(), n
       continue;
     }
     if (!st.isFile()) continue;
-    if (name.endsWith('.tmp')) {
+    // A tool's output on its way (jxl.ts: `<key>.<random>.tmp.png`) is a .tmp too.
+    if (/\.tmp(\.(jxl|jpg|png))?$/.test(name)) {
       if (now - st.mtimeMs > HOUR) rmSync(p, { force: true }), removed++;
       continue;
     }
@@ -194,7 +195,8 @@ export function* pruneMediaCacheSteps(dir: string, maxBytes = mediaCacheCap(), n
   for (const f of files) {
     if (total <= maxBytes) break;
     rmSync(join(dir, f.name), { force: true });
-    rmSync(join(dir, f.name + '.mime'), { force: true });
+    // A picture stored as JPEG XL (jxl.ts) is `<key>.jxl` beside `<key>.mime`.
+    rmSync(join(dir, f.name.replace(/\.jxl$/, '') + '.mime'), { force: true });
     total -= f.size;
     removed++;
     if (++done >= CACHE_STEP) {
@@ -204,7 +206,7 @@ export function* pruneMediaCacheSteps(dir: string, maxBytes = mediaCacheCap(), n
   }
   // A .mime whose file is gone answers nothing.
   for (const name of yield* entries(dir)) {
-    if (name.endsWith('.mime') && !existsSync(join(dir, name.slice(0, -5)))) rmSync(join(dir, name), { force: true });
+    if (name.endsWith('.mime') && !existsSync(join(dir, name.slice(0, -5))) && !existsSync(join(dir, name.slice(0, -5) + '.jxl'))) rmSync(join(dir, name), { force: true });
     if (++done >= CACHE_STEP) {
       done = 0;
       yield CACHE_STEP;

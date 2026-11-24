@@ -12,6 +12,7 @@ import { reportAppCrashes } from './errors.ts';
 import { addArrived, onArrivedDone } from './arrived.ts';
 import { db, go, parseHash, pref } from './state.ts';
 import { onceListed } from './versions.ts';
+import { answerable } from './ringing.ts';
 import { api } from './api.ts';
 import type * as P from '@dither-chat/protocol';
 import { onIme, keepKeyboardRoom } from './phone.ts';
@@ -262,18 +263,20 @@ export function startAndroid() {
 
 /**
  * Answer on a ring's notification (the app's Notifications.ring): join the call from here, as the ring card's Answer
- * does. A page the tap started has no accounts yet: it waits for them, a minute at most. A hub that did not say which
- * account the ring is for is asked by the call's id.
+ * does, while it is still ringing or going on (ringing.ts `answerable`). An Answer the app hands over again later, for
+ * a call that is over, joins nothing: joining it would call the other side anew. A page the tap started has no
+ * accounts yet: it waits for them, a minute at most.
  */
 async function answer(d: { call?: string; conversationId?: string; accountId?: string }) {
   const conv = d.conversationId;
   if (typeof conv !== 'string' || !conv) return;
   if (activeCall.value?.conversationId === conv && activeCall.value.phase !== 'ended') return;
-  let account = d.accountId || '';
-  if (!account && d.call) {
-    const r = await api<{ calls: P.CallView[] }>(`/api/calls/ringing?conversation=${encodeURIComponent(conv)}`).catch(() => null);
-    account = r?.calls.find((c) => c.id === d.call)?.accountId ?? '';
+  const r = await api<{ calls: P.CallView[] }>(`/api/calls/ringing?conversation=${encodeURIComponent(conv)}`).catch(() => null);
+  const call = answerable(r?.calls ?? [], d.call || undefined);
+  if (!call) {
+    console.info('android: Answer for a call that is over; not joining', d.call ?? conv);
+    return;
   }
-  if (!account) return;
+  const account = d.accountId || call.accountId;
   onceListed(() => db.accounts.has(account), () => void startCall(conv, account, pref('callMode')), 60_000);
 }

@@ -119,11 +119,18 @@ describe('cards, story replies, failures and files', () => {
   });
 
   test('your message that some did not get: who, and why', () => {
-    put({ nativeId: `${SELF}:${T + 20}`, author: SELF, extra: { failed: [{ who: ALICE, reason: 'unregistered' }, { who: 'stranger', number: '+15550188', reason: 'network' }, { who: null, reason: 'bogus' }] } }, GROUP);
+    put({ nativeId: `${SELF}:${T + 20}`, author: SELF, extra: { failed: [{ who: ALICE, reason: 'identity' }, { who: 'stranger', number: '+15550188', reason: 'network' }, { who: null, reason: 'bogus' }] } }, GROUP);
     expect(view(`${SELF}:${T + 20}`).failed).toEqual([
-      { identityId: hubId('idn', 'signal', ALICE), name: null, reason: 'unregistered' },
+      { identityId: hubId('idn', 'signal', ALICE), name: null, reason: 'identity' },
       { identityId: null, name: '+15550188', reason: 'network' },
     ]);
+  });
+
+  test('someone gone from the network is not named under every message to their group', () => {
+    put({ nativeId: `${SELF}:${T + 21}`, author: SELF, extra: { failed: [{ who: ALICE, reason: 'unregistered' }] } }, GROUP);
+    expect(view(`${SELF}:${T + 21}`).failed).toBeUndefined();
+    put({ nativeId: `${SELF}:${T + 22}`, author: SELF, extra: { failed: [{ who: ALICE, reason: 'unregistered' }, { who: 'stranger', number: '+15550188', reason: 'rateLimit' }] } }, GROUP);
+    expect(view(`${SELF}:${T + 22}`).failed).toEqual([{ identityId: null, name: '+15550188', reason: 'rateLimit' }]);
   });
 
   test("a disappearing message: its timer, in seconds", () => {
