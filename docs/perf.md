@@ -362,7 +362,10 @@ What made the difference:
   order changes.
 - **`/api/inbox`** sorted a week of triage (200k rows on the live hub) for each of its picks. An index on the tier
   and score (`triage_tier_score`; `triage_level_score` before the tiers) lets each pick stop at its limit;
-  `test/inbox-plan.test.ts` checks the plans.
+  `test/inbox-plan.test.ts` checks the plans. Alerts and Conversations still sorted every one ever (the prune keeps
+  them): 50 ms on the perf world and 250 to 370 ms on a copy of the live hub by 2026-11-24, growing. Their decisions
+  now keep the message's time (`triage.message_ts`), and a partial index on it (`triage_notified`) lets that pick
+  stop at its limit too: 2.5 ms and 4 ms, the whole inbox 93 to 41 ms on the perf world.
 
 ## Scoped renders and a window
 

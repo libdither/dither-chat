@@ -454,11 +454,14 @@ CREATE TABLE IF NOT EXISTS triage (
   less_mark   INTEGER,                       -- your mark: 1 less like this
   marked_at   INTEGER,
   loud        REAL,                          -- its loudness on the one scale, 0 to 100 (loudness.ts), deciding or in shadow
-  loud_view   TEXT                           -- JSON { band, live, parts, reasons, why, moment }: what the loudness was worked out from
+  loud_view   TEXT,                          -- JSON { band, live, parts, reasons, why, moment }: what the loudness was worked out from
+  message_ts  INTEGER                        -- the message's ts, kept with the decision (setTriage) for triage_notified
 );
 CREATE INDEX IF NOT EXISTS triage_created ON triage(created_at);
 -- The inbox's picks by tier, best first (store.ts inboxQueries).
 CREATE INDEX IF NOT EXISTS triage_tier_score ON triage(decision, score);
+-- Alerts and Conversations newest first: the inbox's notified pick walks it and stops at its limit.
+CREATE INDEX IF NOT EXISTS triage_notified ON triage(message_ts) WHERE decision IN ('push', 'quiet');
 CREATE INDEX IF NOT EXISTS triage_feedback ON triage(feedback_at) WHERE feedback IS NOT NULL;
 CREATE INDEX IF NOT EXISTS triage_marked ON triage(marked_at) WHERE marked_at IS NOT NULL;
 
