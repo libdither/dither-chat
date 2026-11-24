@@ -1,0 +1,283 @@
+/* Events from Luma and Partiful (Event.tsx, docs/events.md): a card in a feed, and the event's page. */
+.ev-card {
+  cursor: pointer;
+  padding: 10px 12px;
+}
+.ev-card:hover {
+  background: var(--bg-hover);
+}
+.ev-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.ev-reason {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin: 0 0 4px 58px;
+}
+.ev-card-body {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.ev-card-main {
+  flex: 1;
+  min-width: 0;
+}
+.ev-date {
+  flex: none;
+  align-self: flex-start;
+  width: 46px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-raised);
+  line-height: 1.1;
+}
+.ev-date-mon {
+  width: 100%;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 2px 0;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.ev-date-day {
+  font-size: 19px;
+  font-weight: 700;
+  padding-top: 3px;
+}
+.ev-date-wd {
+  font-size: 10px;
+  color: var(--text-faint);
+  padding-bottom: 3px;
+}
+.ev-title {
+  margin: 0 0 3px;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.ev-title.big {
+  font-size: 21px;
+}
+.ev-cover {
+  flex: none;
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+.ev-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.ev-here {
+  color: var(--text-faint);
+}
+.ev-where.hidden {
+  font-style: italic;
+  color: var(--text-faint);
+}
+.ev-chips,
+.ev-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+}
+.ev-chip {
+  font-size: 11.5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.ev-chip.mine {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.ev-chip.net {
+  border-color: currentColor;
+}
+.ev-hosts-line,
+.ev-going,
+.ev-know {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.ev-going {
+  flex-wrap: wrap;
+}
+.ev-know {
+  color: var(--accent);
+  margin-top: 3px;
+}
+.ev-faces {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+}
+.ev-face {
+  display: inline-flex;
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  margin-left: -6px;
+}
+.ev-face:first-child {
+  margin-left: 0;
+}
+.ev-face.known {
+  border-color: var(--accent);
+}
+.ev-faces-more {
+  white-space: nowrap;
+  margin-left: 4px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.ev-going-n {
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text);
+}
+.ev-head-title {
+  margin: 0;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ev-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 16px 24px;
+}
+.ev-hero {
+  display: block;
+  width: 100%;
+  max-height: 260px;
+  object-fit: cover;
+  border-radius: 10px;
+  margin-top: 12px;
+}
+.ev-top {
+  display: flex;
+  gap: 12px;
+  margin-top: 14px;
+}
+.ev-address {
+  font-size: 12.5px;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+.ev-links,
+.ev-rsvp {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+  align-items: center;
+}
+.ev-links a {
+  text-decoration: none;
+}
+.ev-rsvp-btn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.ev-rsvp-why {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.ev-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+}
+.ev-confirm p {
+  margin: 0 8px 0 0;
+  font-size: 13px;
+}
+.ev-about {
+  margin-top: 14px;
+  white-space: pre-wrap;
+  font-size: 14px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.ev-sub {
+  margin: 18px 0 6px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+.ev-sub-n {
+  text-transform: none;
+  letter-spacing: 0;
+  margin-left: 6px;
+  color: var(--text-dim);
+}
+.ev-sub2 {
+  margin: 10px 0 4px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.ev-people {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 4px;
+}
+.ev-person {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+.ev-person:hover {
+  background: var(--bg-hover);
+}
+.ev-person.known .ev-person-name {
+  color: var(--accent);
+  font-weight: 600;
+}
+.ev-person-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.ev-person-note {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.ev-note {
+  font-size: 12.5px;
+  color: var(--text-faint);
+  margin: 4px 0;
+}

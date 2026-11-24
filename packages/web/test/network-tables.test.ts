@@ -42,6 +42,8 @@ const SAMPLE: Record<P.Network, { identity: { nativeId: string; handle?: string 
   bluesky: { identity: { nativeId: 'did:plc:ann', handle: 'ann.bsky.social' }, conversation: 'at://did:plc:ann/post/1' },
   lesswrong: { identity: { nativeId: 'ann-id', handle: 'ann-l' }, conversation: 'post-1' },
   zulip: { identity: { nativeId: 'chat.example.org/u/7', handle: 'ann@example.org' }, conversation: 'chat.example.org/s/3/t/plans' },
+  luma: { identity: { nativeId: 'usr-ann', handle: 'annl' }, conversation: 'event:evt-1' },
+  partiful: { identity: { nativeId: 'pfann' }, conversation: 'event:pfe1' },
 };
 
 const notBuilt = (what: string) => ({ gap: `no ${what} built for it yet` });
@@ -64,6 +66,7 @@ test("deepLink: a chat's address on its network's own site", () => {
     substack: notBuilt('post link'),
     bluesky: notBuilt('post link'),
     lesswrong: notBuilt('post link'),
+    luma: { na: 'an event’s conversation is opened from its event, which has its link' },
   });
 });
 

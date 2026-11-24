@@ -787,7 +787,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
   const gif = !m.deleted && !m.forward && !m.poll ? gifLinkOf(m) : null;
   return (
     <div
-      class={`msg ${grouped ? 'grouped' : target || m.quote ? '' : 'head'} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''}`}
+      class={`msg ${grouped ? 'grouped' : target || m.quote ? '' : 'head'} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''} ${m.blast ? 'blast' : ''}`}
       id={`m-${m.id}`}
       ref={(el) => void (el && swipeReply.set(el, () => onReply(m)))}
       {...menuProps}
@@ -856,6 +856,12 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           </ForwardCard>
         ) : (
           <>
+            {/* An event host's blast to every guest (docs/events.md): an announcement, marked as one. */}
+            {m.blast && (
+              <span class="msg-blast">
+                <Icon name="announcement" size={12} /> Announcement to every guest
+              </span>
+            )}
             <RichHead m={m} />
             <StoryReplyLine m={m} />
             {m.poll ? <PollCardLazy m={m} fallback={<Body m={m} />} /> : gif ? null : <Body m={m.contacts ? withoutCardLines(m) : m} tail={ticks} />}

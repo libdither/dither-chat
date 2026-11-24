@@ -45,7 +45,7 @@ function kindsOf(events: { t: string }[]): string {
 }
 
 /** The kinds this hub hands to the manager when they are new. */
-const MANAGED_KINDS = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x', 't3', 'zulip'];
+const MANAGED_KINDS = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x', 't3', 'zulip', 'luma', 'partiful'];
 
 /**
  * The kinds this hub asks to add and run: its chat kinds, and Proton Mail, which Add account adds through the manager

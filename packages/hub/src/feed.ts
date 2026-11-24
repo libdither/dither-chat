@@ -5,7 +5,7 @@
  */
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
-import { FEED_ITEM_TYPES, NETWORK_META } from '@dither-chat/protocol';
+import { FEED_ITEM_TYPES, NETWORK_META, withoutHiddenGuests } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 
 /** Variants that are not chats (a feed, logged posts): nothing learns from them (docs/feed.md "Threads"). */
@@ -79,6 +79,8 @@ export function postView(p: P.PostFact, network: P.Network, media: (raw: string)
     ...(p.repostOf ? { repostOf: postView(p.repostOf, network, media) } : {}),
     ...(p.quoteOf ? { quoteOf: postView(p.quoteOf, network, media) } : {}),
     ...(p.media ? { media: p.media.map((m) => ({ ...m, url: media(m.url) ?? '' })).filter((m) => m.url) } : {}),
+    // An event's hosts and guests as hub identity ids (docs/events.md).
+    ...(p.event ? { event: { ...p.event, hosts: (p.event.hosts ?? []).map((h) => hubId('idn', network, h)), ...(p.event.guests ? { guests: p.event.guests.map((g) => hubId('idn', network, g)) } : {}) } } : {}),
   };
 }
 
@@ -88,6 +90,19 @@ export function feedView(f: P.FeedItem, network: P.Network, media: (raw: string)
     ...(f.post ? { post: postView(f.post, network, media) } : {}),
     ...(f.theirs ? { theirs: postView(f.theirs, network, media) } : {}),
   };
+}
+
+/**
+ * A message's `extra` with no guest of a hidden guest list in the posts it carries (its `post`, its feed item's), as
+ * the hub keeps it (docs/events.md "Who is going"). The same object when there was nothing to drop.
+ */
+export function scrubEventGuests(extra: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!extra) return extra;
+  const post = extra.post as P.PostFact | undefined;
+  const feed = extra.feed as P.FeedItem | undefined;
+  const p2 = post && typeof post === 'object' && post.event ? withoutHiddenGuests(post) : post;
+  const f2 = feed && typeof feed === 'object' && (feed.post?.event || feed.theirs?.event) ? { ...feed, ...(feed.post ? { post: withoutHiddenGuests(feed.post) } : {}), ...(feed.theirs ? { theirs: withoutHiddenGuests(feed.theirs) } : {}) } : feed;
+  return p2 === post && f2 === feed ? extra : { ...extra, ...(post ? { post: p2 } : {}), ...(feed ? { feed: f2 } : {}) };
 }
 
 /** Every identity a feed item or a post names (native), so their facts can be checked. */

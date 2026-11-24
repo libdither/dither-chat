@@ -44,7 +44,7 @@ const selfParts = signal<Self | null>(null);
 let selfLoading: Promise<unknown> | null = null;
 const loadSelf = () => (selfLoading ??= import('./ProfileSelf.tsx').then((m) => (selfParts.value = m), () => (selfLoading = null)));
 import { RecentPostsLazy } from './feed/lazy.tsx';
-import { clip, feedVerb } from '../feed.ts';
+import { clip, feedVerb, postKey } from '../feed.ts';
 
 /** A feed item in their Recent messages (docs/feed.md): "Liked your post: “…”" ("Favourited" on Mastodon), or what they wrote. */
 function feedLine(f: P.FeedItem, body: string, network: P.Network): string {
@@ -76,6 +76,8 @@ const WHAT_NETWORKS_SHARE: Record<P.Network, string> = {
   bluesky: 'Name, handle, bio and picture, as their Bluesky profile shows them.',
   lesswrong: 'Name, bio and karma, as their LessWrong profile shows them.',
   zulip: 'Name, picture and role in the organization, their status, time zone and the profile fields the organization asks for.',
+  luma: 'Name, username, picture, a short bio and the links they chose (X, Instagram, LinkedIn, TikTok, YouTube, a website), as their Luma profile shows them, and the events you saw them at.',
+  partiful: 'Name, picture, bio and the links they chose, as Partiful shows them on an event, and the events you saw them at.',
 };
 
 /** What a network says when someone wrote nothing. */
@@ -476,6 +478,44 @@ function MailCard({ mail, list, name }: { mail: NonNullable<P.ProfileView['mail'
           {mail.total > mail.threads.length ? `All ${mail.total.toLocaleString()} threads with ${name}` : `All mail with ${name}`}
         </button>
       )}
+    </Card>
+  );
+}
+
+/** What an event's role and RSVP say of them, in words. */
+const EVENT_ROLE: Record<string, string> = { going: 'going', maybe: 'maybe', interested: 'interested', waitlist: 'on the waitlist', pending: 'asked to come', declined: "can't go", invited: 'invited' };
+
+/**
+ * The events they were seen at (docs/events.md "People"): hosting first, then upcoming, then past. Each opens the event
+ * on the Feed page.
+ */
+function EventsCard({ events }: { events: P.PersonEventView[] }) {
+  const now = Date.now();
+  return (
+    <Card title="Events" icon="calendar" count={events.length} class="pf-events">
+      <div class="pf-rows">
+        {events.map((e) => {
+          const role = e.role === 'host' ? 'Hosting' : e.rsvp ? `Guest, ${EVENT_ROLE[e.rsvp] ?? e.rsvp}` : 'On the guest list';
+          // A short day on the row ("Nov 26", the year when it is another), the full time on hover.
+          const day = e.start ? new Date(e.start).toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(new Date(e.start).getFullYear() !== new Date(now).getFullYear() ? { year: 'numeric' } : {}) }) : '';
+          const when = e.start ? day : `seen ${ago(e.seenAt)}`;
+          return (
+            <button class="pf-row pf-event-row" onClick={() => go({ view: 'feed', source: 'events', post: postKey(e.network, e.event) })} title={e.url ?? ''}>
+              <NetBadge network={e.network} size={28} />
+              <span class="pf-row-text">
+                <b>{e.title || 'An event'}</b>
+                <small>
+                  {role}
+                  {e.place ? ` · ${e.place}` : ''}
+                </small>
+              </span>
+              <span class="pf-row-time" title={e.start ? `${e.start >= now ? '' : 'Was '}${fullTime(e.start)}` : undefined}>
+                {when}
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </Card>
   );
 }
@@ -1109,6 +1149,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         .map((i) => (
           <Stories identityId={i.id} network={i.network} />
         ))}
+      {!!profile.events?.length && <EventsCard events={profile.events} />}
       {profile.mail && <MailCard mail={profile.mail} list={withList(person?.id ?? first.id)} name={name} />}
 
       {(profile.recent.length > 0 || chatNets.length > 0) && (

@@ -11,8 +11,9 @@
  * check found it, read when your own reading did.
  */
 import type * as P from '@dither-chat/protocol';
-import { composeState, followNativeId, isPostId, NETWORK_META, placeName, POST_ACTS, postFieldsProblem, postIdOf, postNativeId, postRulesFor, rulesForReply } from '@dither-chat/protocol';
+import { composeState, followNativeId, isPostId, NETWORK_META, placeName, POST_ACTS, postFieldsProblem, postIdOf, postNativeId, postRulesFor, rulesForReply, withoutHiddenGuests } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
+import { recordEvents } from './eventseen.ts';
 import { postAuthors, postView } from './feed.ts';
 import { rankReactors, type ReactorIn } from './reactors.ts';
 import type { AccountRow, Store } from './store.ts';
@@ -182,10 +183,12 @@ export class Posts {
    * (follows.ts), so they are news, decided by triage like any chat's message; a thread you are reading shows them
    * anyway, so they come in unread and silent.
    */
-  private record(accountId: string, posts: readonly P.PostFact[], live: boolean): { fresh: number; followed: number } {
+  private record(accountId: string, given: readonly P.PostFact[], live: boolean): { fresh: number; followed: number } {
     const s = this.d.store;
     const acc = s.account(accountId);
-    if (!acc || !posts.length) return { fresh: 0, followed: 0 };
+    if (!acc || !given.length) return { fresh: 0, followed: 0 };
+    // A hidden guest list's guests are never kept (docs/events.md "Who is going"), whatever an extractor sent.
+    const posts = given.map(withoutHiddenGuests);
     const conv = postsConvNative(s, acc);
     const cid = hubId('cnv', acc.network, conv);
     let fresh = 0;
@@ -223,6 +226,8 @@ export class Posts {
         s.ingest(acc, { t: 'message', message: had && had.conversation_id !== cid ? { ...f, conversation: s.nativeOf('conversation', had.conversation_id)!.nativeId } : f });
       }
     })();
+    // Hosts and guests seen at the events among them (eventseen.ts).
+    recordEvents(s.db, acc, posts, now);
     this.d.changed?.();
     if (triage.length) this.d.fresh?.(triage);
     return { fresh, followed };

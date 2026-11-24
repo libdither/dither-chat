@@ -18,7 +18,7 @@ interface ExtraDeps {
   stored(messageId: string): boolean;
 }
 
-type ExtraView = Pick<P.MessageView, 'quote' | 'contacts' | 'storyReply' | 'failed' | 'missingAttachments' | 'disappears' | 'sms' | 'movedAt'> & {
+type ExtraView = Pick<P.MessageView, 'quote' | 'contacts' | 'storyReply' | 'failed' | 'missingAttachments' | 'disappears' | 'sms' | 'movedAt' | 'blast'> & {
   /** One per attachment position. */
   notes?: (P.AttachmentNote | null)[];
 };
@@ -86,6 +86,9 @@ export function extraView(extra: Record<string, unknown> | null, replyToId: stri
       ...(str(m.mime) ? { mime: m.mime } : {}),
       ...(typeof m.size === 'number' ? { size: m.size } : {}),
     }));
+
+  // A host's blast to every guest of an event (docs/events.md): an announcement.
+  if (e.blast === true) out.blast = true;
 
   if (typeof e.expiresInSeconds === 'number' && e.expiresInSeconds > 0) out.disappears = e.expiresInSeconds;
   if (e.sms === 'sms' || e.sms === 'mms') out.sms = e.sms;

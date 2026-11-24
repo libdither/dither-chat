@@ -15,7 +15,7 @@
  * (persons, folders, notification rules, triage) are never written back.
  */
 
-export type Network = 'discord' | 'signal' | 'matrix' | 'whatsapp' | 'telegram' | 'gmessages' | 'messenger' | 'instagram' | 'x' | 'email' | 'calendar' | 't3' | 'mastodon' | 'reddit' | 'lemmy' | 'substack' | 'bluesky' | 'lesswrong' | 'zulip';
+export type Network = 'discord' | 'signal' | 'matrix' | 'whatsapp' | 'telegram' | 'gmessages' | 'messenger' | 'instagram' | 'x' | 'email' | 'calendar' | 't3' | 'mastodon' | 'reddit' | 'lemmy' | 'substack' | 'bluesky' | 'lesswrong' | 'zulip' | 'luma' | 'partiful';
 /**
  * The chat networks this hub offers. telegram, gmessages (Google Messages: SMS and RCS), messenger, instagram and x
  * (X's direct messages) run only in dither-accounts. `email` is a Network for people's addresses (identities) and the
@@ -26,15 +26,20 @@ export type Network = 'discord' | 'signal' | 'matrix' | 'whatsapp' | 'telegram' 
  * mastodon, reddit, lemmy, substack, bluesky and lesswrong are networks of posts, not chats (docs/feed.md): their
  * accounts bring a home timeline, threads of comments and notifications to the Feed page, and run only in dither-accounts.
  * `zulip` is a Zulip organization (dither-accounts' docs/zulip.md): its channels as forums whose topics are threads,
- * and direct messages; it too runs only there.
+ * and direct messages; it too runs only there. `luma` and `partiful` are event sites (docs/events.md): chats like X's (their
+ * own chats, a read-only `feed` of notifications, one conversation per event you are in) and a feed of events, the
+ * city's listing (`explore`) and your own; they too run only there.
  */
-export const NETWORKS: readonly Network[] = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x', 'calendar', 't3', 'mastodon', 'reddit', 'lemmy', 'substack', 'bluesky', 'lesswrong', 'zulip'];
+export const NETWORKS: readonly Network[] = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x', 'calendar', 't3', 'mastodon', 'reddit', 'lemmy', 'substack', 'bluesky', 'lesswrong', 'zulip', 'luma', 'partiful'];
 
 /**
  * The networks of posts: an account of one brings the Feed page (docs/feed.md) its home timelines, threads and
  * notifications. X is also a chat network (its direct messages); the others are posts only.
  */
-export const POST_NETWORKS: readonly Network[] = ['x', 'mastodon', 'reddit', 'lemmy', 'substack', 'bluesky', 'lesswrong'];
+export const POST_NETWORKS: readonly Network[] = ['x', 'mastodon', 'reddit', 'lemmy', 'substack', 'bluesky', 'lesswrong', 'luma', 'partiful'];
+/** Event sites (docs/events.md): their posts are events (PostFact.event), their timelines Explore and your events. */
+export const EVENT_NETWORKS: readonly Network[] = ['luma', 'partiful'];
+export const isEventNetwork = (n: string | null | undefined): boolean => n === 'luma' || n === 'partiful';
 /** Posts only, no chats: an account of one has no inbox of its own. */
 export const POSTS_ONLY: readonly Network[] = ['mastodon', 'reddit', 'lemmy', 'substack', 'bluesky', 'lesswrong'];
 
@@ -185,6 +190,10 @@ export const REACTION_RULES: Record<Network, ReactionRules> = {
   lesswrong: { exclusive: true, freeText: false, maxDistinct: 0 },
   // Zulip: any number of emoji on a message, each person once per emoji; Unicode, the organization's own and :zulip:.
   zulip: { exclusive: false, freeText: false },
+  // Luma's chat takes any emoji, one each; its events have no comments to react to.
+  luma: { exclusive: true, freeText: false },
+  // Partiful: reactions on an event's comments and in its chats (Stream Chat), several per person.
+  partiful: { exclusive: false, freeText: false },
 };
 
 export function discordEmojiUrl(id: string, animated?: boolean): string {
@@ -260,6 +269,9 @@ export const ATTACHMENT_LIMITS: Record<Network, { bytes: number; files: number }
   lesswrong: { bytes: 0, files: 0 },
   // Zulip's default upload limit (each organization may set its own: max_file_upload_size_mib); files go as links.
   zulip: { bytes: 25 * 1024 * 1024, files: 10 },
+  // Event sites: words only from here (a photo album is the site's own; docs/events.md).
+  luma: { bytes: 0, files: 0 },
+  partiful: { bytes: 0, files: 0 },
 };
 
 /**
@@ -300,4 +312,7 @@ export const NETWORK_META: Record<Network, { name: string; color: string; spaceN
   // LessWrong has no communities either: posts carry tags, so a space, if one were made, would be a tag.
   lesswrong: { name: 'LessWrong', color: '#5F9B65', spaceNoun: 'tag', sectionNoun: 'section' },
   zulip: { name: 'Zulip', color: '#6492FE', spaceNoun: 'organization', sectionNoun: 'folder' },
+  // Event sites have no communities: a space, if one were made, would be a calendar (Luma's word) or a host's page.
+  luma: { name: 'Luma', color: '#E0399F', spaceNoun: 'calendar', sectionNoun: 'section' },
+  partiful: { name: 'Partiful', color: '#7C3AED', spaceNoun: 'host', sectionNoun: 'section' },
 };

@@ -24,7 +24,7 @@ people graph. You, bots, and T3 and calendar accounts are left out.
 Not every pair is compared. Pairs come from keys two sides share (blocking):
 
 - **Claims and contacts**: a profile's connected accounts and bio links (X, Telegram, GitHub, Instagram, Bluesky,
-  Reddit, Twitch, YouTube, Steam, Matrix), phone numbers (last ten digits) and email addresses, set against what each
+  Reddit, Twitch, YouTube, Steam, Matrix, LinkedIn, TikTok, Luma, Partiful), phone numbers (last ten digits) and email addresses, set against what each
   side's own accounts are: a Signal or WhatsApp number, a Telegram phone, a Matrix id, a handle on a site.
 - **Bridges**: a Matrix puppet of a Discord, Telegram, Signal, WhatsApp, X, Instagram or Facebook user
   (`@discord_…:server`) and the account it stands for.
@@ -37,6 +37,8 @@ Not every pair is compared. Pairs come from keys two sides share (blocking):
   with nothing to merge.
 
 Each key brings in a few pairs at most, so a common name or a big group adds little work.
+Two sides known only from events (guests and hosts on Luma or Partiful, with no chat of yours) are never a pair: a
+party's guest list would fill the page with strangers (docs/events.md, "People").
 
 ## Scoring
 
@@ -81,7 +83,8 @@ It runs when the list is first asked for, when it is older than 15 minutes, a fe
 (several clicks make one run), and from the page's refresh button. On a copy of a large hub it takes about a second.
 
 **Pictures.** The hub decodes no images, so the page hashes them: `GET /api/matches/pictures` hands it pictures to
-hash (the sides of pairs first, then people you have direct chats or groups with), the page draws each to a 9×8 canvas
+hash (the sides of pairs first, then people you have direct chats or groups with, then up to 300 people seen at
+events, the latest first: docs/events.md "People"), the page draws each to a 9×8 canvas
 and makes a 64-bit difference hash, and `POST /api/matches/pictures` stores them in `picture_hash` with the URL they
 came from, so a changed picture is hashed again. The status line says "Comparing pictures" while it works.
 
@@ -120,6 +123,7 @@ person clicking through them, through the same command as opening a profile:
 | Telegram | 60 s | 500 |
 | Discord | 90 s | 400 |
 | Zulip | 90 s | 400 |
+| Luma, Partiful | 10 min | 60 |
 | X | 5 min | 120 |
 | Messenger | 5 min | 100 |
 | WhatsApp | 6 min | 100 |
