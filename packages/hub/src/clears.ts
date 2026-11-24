@@ -62,6 +62,12 @@ const GONE = new Set(['tapped', 'dismissed', 'suppressed', 'replied', 'blocked']
 
 type ClearRelay = 'chrome' | 'firefox';
 
+/**
+ * Chrome's push servers: FCM's own host, or the hosts Chrome now hands out (`jmt<N>.google.com`), which serve FCM's
+ * legacy send path. Only that path on those: anything else under google.com is not a push endpoint.
+ */
+const CHROME_PUSH = (u: URL) => u.hostname === 'fcm.googleapis.com' || (/^[a-z0-9-]+\.google\.com$/.test(u.hostname) && u.pathname.startsWith('/fcm/send/') && u.port === '');
+
 /** Which browser's rules a registration's clears follow; null: it never gets one. */
 export function clearRelay(endpoint: string, label: string | null | undefined): ClearRelay | null {
   if (PHONE.test(label ?? '') || /safari/i.test(label ?? '')) return null;
@@ -72,7 +78,7 @@ export function clearRelay(endpoint: string, label: string | null | undefined): 
     return null;
   }
   if (u.protocol !== 'https:' || u.username || u.password) return null;
-  if (u.hostname === 'fcm.googleapis.com') return 'chrome';
+  if (CHROME_PUSH(u)) return 'chrome';
   if (/(^|\.)push\.services\.mozilla\.com$/.test(u.hostname)) return 'firefox';
   return null;
 }

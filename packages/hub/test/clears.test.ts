@@ -38,7 +38,8 @@ function decrypt(body: Uint8Array, ua: ReturnType<typeof createECDH>, auth: Buff
 
 const ENDPOINTS = {
   app: ['https://fcm.googleapis.com/fcm/send/app', 'Android app, Pixel', true],
-  chrome: ['https://fcm.googleapis.com/fcm/send/chrome', 'Linux, Chrome', false],
+  // Chrome's push servers now hand out endpoints on `jmt<N>.google.com`, as the app's are still on FCM's own host.
+  chrome: ['https://jmt0.google.com/fcm/send/chrome', 'Linux, Chrome', false],
   firefox: ['https://updates.push.services.mozilla.com/wpush/v2/firefox', 'Linux, Firefox', false],
   phoneChrome: ['https://fcm.googleapis.com/fcm/send/phone', 'Android, Chrome', false],
   safari: ['https://web.push.apple.com/safari', 'Mac, Safari', false],
@@ -112,6 +113,19 @@ describe('who gets a clear', () => {
     expect(clearRelay('https://fcm.googleapis.com/fcm/send/x', 'iPhone or iPad, Chrome')).toBeNull();
     expect(clearRelay('https://ntfy.sh/up123', 'Linux, Firefox')).toBeNull();
     expect(clearRelay('https://evil.example/fcm.googleapis.com', 'Linux, Chrome')).toBeNull();
+    // Chrome's own shards of google.com, on FCM's send path only: nothing else under google.com, nor a look-alike.
+    expect(clearRelay('https://fcm.googleapis.com/wp/x', 'Windows, Chrome')).toBe('chrome');
+    expect(clearRelay('https://xyz-2.google.com/fcm/send/x', 'Linux, Chromium')).toBe('chrome');
+    expect(clearRelay('https://xyz-2.google.com/fcm/send/x', 'Android, Chrome')).toBeNull();
+    expect(clearRelay('https://www.google.com/search?q=fcm', 'Linux, Chrome')).toBeNull();
+    expect(clearRelay('https://xyz.google.com/fcm/sendx/x', 'Linux, Chrome')).toBeNull();
+    expect(clearRelay('https://xyz.google.com/other/fcm/send/x', 'Linux, Chrome')).toBeNull();
+    expect(clearRelay('https://a.b.google.com/fcm/send/x', 'Linux, Chrome')).toBeNull();
+    expect(clearRelay('https://xyz.google.com.evil.example/fcm/send/x', 'Linux, Chrome')).toBeNull();
+    expect(clearRelay('https://xyzgoogle.com/fcm/send/x', 'Linux, Chrome')).toBeNull();
+    expect(clearRelay('https://xyz.google.com:8443/fcm/send/x', 'Linux, Chrome')).toBeNull();
+    expect(clearRelay('http://xyz.google.com/fcm/send/x', 'Linux, Chrome')).toBeNull();
+    expect(clearRelay('https://user@xyz.google.com/fcm/send/x', 'Linux, Chrome')).toBeNull();
     expect(clearRelay('not a url', 'Linux, Chrome')).toBeNull();
   });
 
