@@ -32,7 +32,7 @@ concurrency:
 jobs:
   measure:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
     steps:
       # The browser's files from a cold disk in the background, as in ci.yml's perf job.
       - run: b=$(command -v chromium || command -v google-chrome) && (find -L "$(dirname "$(readlink -f "$b")")" -type f -print0 | xargs -0 cat > /dev/null 2>&1 &) || true
@@ -47,7 +47,7 @@ jobs:
       # No baseline: nothing is judged here. Its own summary is left out (perf-trend.ts writes this job's).
       - name: verify-perf at 1× and 4×
         env:
-          SCALE: ${{ inputs.scale || '0.25' }}
+          SCALE: ${{ inputs.scale || '1' }}
           RUNS: ${{ inputs.runs || '5' }}
         run: |
           GITHUB_STEP_SUMMARY= bun scripts/verify-perf.ts --scale "$SCALE" --runs "$RUNS" --warmup 1 \
@@ -57,7 +57,7 @@ jobs:
       - name: The night as one line
         if: always()
         env:
-          SCALE: ${{ inputs.scale || '0.25' }}
+          SCALE: ${{ inputs.scale || '1' }}
           RUNS: ${{ inputs.runs || '5' }}
         run: bun scripts/perf-trend.ts night --dir out --meta "scale=$SCALE" --meta "runs=$RUNS" > night.json
       - uses: actions/upload-artifact@v4
@@ -85,7 +85,7 @@ jobs:
           path: night
       - name: Add the night
         env:
-          RECORD: ${{ github.ref == 'refs/heads/main' || inputs.record || github.event_name == 'push' }}
+          RECORD: ${{ github.ref == 'refs/heads/main' || inputs.record }}
         run: |
           if git fetch -q --depth=1 origin perf-history; then
             git worktree add -q -B perf-history hist FETCH_HEAD
