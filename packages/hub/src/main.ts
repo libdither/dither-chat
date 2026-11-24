@@ -149,12 +149,19 @@ let lastSoundAt: number | null = null;
 // Messages held for the next look (DITHER_ATTENTION=on): one bundle when you next look.
 const nextLook = new NextLook(store);
 // For you (docs/foryou.md): served items and their events are logged only while the activity log is on.
-const foryou = new ForYou(store, { logging: () => activity.enabled, levelOf: (id) => triage.effectiveLevel(id).level });
+const foryou = new ForYou(store, {
+  logging: () => activity.enabled,
+  levelOf: (id) => triage.effectiveLevel(id).level,
+  // Asked "worth seeing?" one card a day, and, once the loudness decides, ordered by what those answers taught.
+  ask: (items) => loud.checkins.pickForYou(items, loud.prefs()),
+  ...(loud.mode === 'on' ? { worth: (c: { conv: string; author: string | null }) => loud.worth(c) } : {}),
+});
 // How the models did, day by day (scorecard.ts, docs/scorecard.md): each day scored once its outcomes are in. A demo
 // world has three invented weeks of it.
 const scorecard = new Scorecard(store.db);
 if (demo) seedDemoScores(store.db, Date.now());
 const attention = new Attention(store, triage);
+attention.byLoudness = loud.mode === 'on';
 // The inbox's learned order (ranker.ts, docs/inbox.md). DITHER_INBOX_RANK=shadow works it out without sorting by it; off.
 // DITHER_INBOX_EXPLORE=0 sorts by its mean instead of a Thompson sample. DITHER_INBOX_MAIL: the order with mail is
 // worked out in shadow (the default), sorts chats and mail (`model`), or is left out (`off`).

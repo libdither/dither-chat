@@ -14,6 +14,7 @@ import { BAND_DECISION, emptyAttnModel, loudness, momentKeys, trainAttn, type At
 import { behaviourLabel, LoudLearner, routed } from '../src/loudlearn.ts';
 import { PAUSE, SKIPS_TO_PAUSE } from '../src/checkin.ts';
 import { Store, type AccountRow } from '../src/store.ts';
+import { dayBounds, dayOf, loudnessScores } from '../src/scorecard.ts';
 import { Triage } from '../src/triage.ts';
 import { TriageVotes } from '../src/votes.ts';
 
@@ -304,5 +305,27 @@ describe('through the hub', () => {
     loud.fromMark(id, { alert: true } satisfies P.TriageMarks);
     expect(store.one<{ answer: string }>('SELECT answer FROM attn_answer ORDER BY at DESC, rowid DESC LIMIT 1')!.answer).toBe('louder');
     expect(store.one<{ n: number }>('SELECT COUNT(*) AS n FROM attn_answer')!.n).toBe(before + 1);
+  });
+
+  test('the scorecard weighs the random half back by each question\'s chance, and leaves the least-sure half out', () => {
+    const day = dayOf(new Date(2031, 2, 3, 12).getTime());
+    const [from, to] = dayBounds(day);
+    const put = store.db.query(`INSERT INTO checkin (id, side, message_id, arm, propensity, pool, shadow_band, created_at, answer) VALUES (?, ?, 'x', ?, ?, 1, ?, ?, ?)`);
+    put.run('s1', 'sounded', 'random', 0.5 / 2, 'sound', from + HOUR, 'worth');
+    put.run('s2', 'sounded', 'random', 0.5 / 8, 'show', from + HOUR, 'could_wait');
+    put.run('s3', 'sounded', 'unsure', 0.5, 'sound', from + HOUR, 'shouldnt');
+    put.run('q1', 'quiet', 'random', 0.5 / 100, 'next', from + HOUR, 'sooner');
+    const gen = loudnessScores({ db: store.db, day, from, to, self: [], opens: null } as never);
+    let r = gen.next();
+    while (!r.done) r = gen.next();
+    const by = Object.fromEntries(r.value.map((x) => [x.metric, x]));
+    // 1/0.25 = 4 worth against 1/0.0625 = 16 could wait: 4 of 20.
+    expect(by['attn.worth']).toMatchObject({ value: 0.2, n: 2 });
+    expect(by['attn.could_wait'].value).toBe(0.8);
+    expect(by['attn.shouldnt'].value).toBe(0);
+    expect(by['attn.worth_shadow']).toMatchObject({ value: 1, n: 1 });
+    expect(by['attn.missed']).toMatchObject({ value: 1, n: 1 });
+    expect(by['attn.asked']).toMatchObject({ value: 4, extra: { answered: 4, skipped: 0 } });
+    expect(by['foryou.worth'].value).toBeNull();
   });
 });

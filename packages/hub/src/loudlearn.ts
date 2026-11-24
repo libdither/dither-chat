@@ -319,6 +319,12 @@ export class LoudLearner {
     this.learn(now);
   }
 
+  /** For you's factor from what you said was worth seeing: the chat's and the author's want, 0 to 2, 1 knowing nothing. */
+  worth(c: { conv: string; author: string | null }): number {
+    const z = (this.model.want[`conv:${c.conv}`] ?? 0) + (c.author ? (this.model.want[`author:${c.author}`] ?? 0) : 0);
+    return 2 / (1 + Math.exp(-z));
+  }
+
   view(now = Date.now(), held = 0): P.AttentionStateView {
     const st = this.checkins.state();
     const day = new Date(now);
