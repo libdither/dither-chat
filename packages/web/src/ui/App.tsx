@@ -8,7 +8,6 @@ import { isPage, isTabRoot, listKey, listToWrite, ownList, restAfter, wayBack, t
 import { dropLayer, layerCount, phone, pushLayer } from '../phone.ts';
 import { AccountPane, AccountsSidebar, AddAccount, addingAccount } from './Accounts.tsx';
 import { ConversationDetails, PersonDetails } from './Details.tsx';
-import { DirectoryPane } from './Directory.tsx';
 import { DragLayer } from './dnd.tsx';
 import { Icon } from './icons.tsx';
 import { ContextMenuLayer } from './ContextMenu.tsx';
@@ -20,11 +19,8 @@ import { AppsHostLazy } from './apps/lazy.tsx';
 import { SendingLayer } from './SendExtras.tsx';
 import { IndexLayer } from './Indexing.tsx';
 import { ForYou, refreshForYou } from './ForYou.tsx';
-import { AttentionPaneLazy, HowItSorts } from './HowItSorts.tsx';
 import { Palette } from './Palette.tsx';
 import { ReactionLayer } from './Reactions.tsx';
-import { ProfilePane } from './Profile.tsx';
-import { PlaceProfile } from './PlaceProfile.tsx';
 import { SamePane } from './SamePane.tsx';
 import { GraphPane } from './GraphPane.tsx';
 import { MessageHistoryLayer } from './MessageHistoryLazy.tsx';
@@ -32,7 +28,8 @@ import { ThreadsLayerLazy } from './ThreadsLazy.tsx';
 import { Rail } from './Rail.tsx';
 import { TitleBar } from './TitleBar.tsx';
 import { FindShortcut, SearchPane } from './SearchLazy.tsx';
-import { SECTIONS, SettingsPane } from './Settings.tsx';
+import { SECTIONS } from './settingsSections.ts';
+import { lazyPane, preloadPagesLater } from './LazyPane.tsx';
 import { showSection } from './bits.tsx';
 import { FolderSidebar, InboxSidebar, PeopleSidebar, SpaceSidebar, SpacesSidebar } from './Sidebar.tsx';
 import { homeRoute } from '../opening.ts';
@@ -60,6 +57,14 @@ import { calendarLink, calendarOn } from '../plans.ts';
 import { countKey } from '../clicklog.ts';
 import { FeedPaneLazy, FeedSidebarLazy, ThreadLazy } from './feed/lazy.tsx';
 import { isPostKey } from '../feed.ts';
+
+// Pages never on the first screen, each a chunk of its own (LazyPane.tsx).
+const ProfilePane = lazyPane(() => import('./Profile.tsx').then((m) => m.ProfilePane), 'the profile');
+const PlaceProfile = lazyPane(() => import('./PlaceProfile.tsx').then((m) => m.PlaceProfile), 'the page');
+const SettingsPane = lazyPane(() => import('./Settings.tsx').then((m) => m.SettingsPane), 'Settings');
+const DirectoryPane = lazyPane(() => import('./Directory.tsx').then((m) => m.DirectoryPane), 'the directory');
+const HowItSorts = lazyPane(() => import('./HowItSorts.tsx').then((m) => m.HowItSorts), 'How it sorts');
+const AttentionPaneLazy = lazyPane(() => import('./HowItSorts.tsx').then((m) => m.AttentionPaneLazy), 'Your attention');
 
 /** A conversation's details panel: the person's, for a DM of someone reached by several routes (their chat's page). */
 function convDetail(id: string): { kind: 'conv' | 'person'; id: string } | undefined {
@@ -358,6 +363,8 @@ export function App() {
   useEffect(() => {
     if (loaded.value) adoptOpened();
   }, [loaded.value]);
+  // The pages left out of the first load (LazyPane.tsx) load once the list is drawn and the app idle.
+  useEffect(preloadPagesLater, []);
 
   // On a phone the page you are on is a card over the lists; see Pager.ts.
   const detailRoute = isPage(r);
