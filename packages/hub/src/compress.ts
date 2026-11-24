@@ -132,10 +132,17 @@ export class PackedFiles {
     if (this.queued.has(file)) return;
     this.queued.add(file);
     this.queue.push(file);
-    this.running ??= this.drain().finally(() => (this.running = null));
+    this.running ??= this.drain();
   }
 
+  /**
+   * Packs what is queued, one file at a time. `running` is cleared in the same step that finds the queue empty, so a
+   * file added after that starts a new drain: cleared later (a `.finally`), a file added in between was left queued
+   * with nothing to pack it.
+   */
   private async drain() {
+    // Never done before `running` holds it: with only small files queued it would otherwise end synchronously.
+    await null;
     for (let file = this.queue.shift(); file; file = this.queue.shift()) {
       try {
         const st = statSync(file);
@@ -152,5 +159,6 @@ export class PackedFiles {
         this.queued.delete(file);
       }
     }
+    this.running = null;
   }
 }

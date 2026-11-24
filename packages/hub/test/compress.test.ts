@@ -78,3 +78,27 @@ test('the web build is packed once, hard, and a changed file is never answered w
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('files queued after the packer ran dry are packed: none is left queued with nothing to pack it', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dither-packed-dry-'));
+  try {
+    const text = (n: number) => Array.from({ length: 200 }, (_, i) => `.c${(i * n) % 97}{margin:${i}px}`).join('\n');
+    // Small files first (under a kilobyte, nothing to pack: the packer runs through them without waiting), then big ones.
+    for (let i = 0; i < 5; i++) writeFileSync(join(dir, `a${i}.css`), 'a{}');
+    for (let i = 0; i < 3; i++) writeFileSync(join(dir, `b${i}.css`), text(i + 1));
+    const packed = new PackedFiles();
+    await packed.packAll(dir);
+    expect(packed.stats().files).toBe(3);
+    // Then one at a time, each asked for after the last was packed, as files are asked for once the hub is running.
+    for (let i = 0; i < 3; i++) {
+      const f = join(dir, `c${i}.css`);
+      writeFileSync(f, text(i + 7));
+      const st = statSync(f);
+      expect(packed.get(f, st.size, st.mtimeMs)).toBeNull();
+      await packed.idle();
+      expect(packed.get(f, st.size, st.mtimeMs)).not.toBeNull();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
