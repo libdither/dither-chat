@@ -163,10 +163,14 @@ try {
   check('emptied: one line again', m.ta === one, m);
   const text = `${LINES}\nsent ${Date.now().toString(36)}`;
   await setText(text);
-  await page.eval(`document.querySelector('.composer .send-btn').click()`);
-  await Bun.sleep(300);
+  // A finger on send, as on a phone: the box keeps focus, so the keyboard stays up for the next message.
+  const sendAt = await page.eval<{ x: number; y: number }>(`(() => { const r = document.querySelector('.composer .send-btn').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+  await page.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: sendAt.x, y: sendAt.y, id: 1, radiusX: 6, radiusY: 6, force: 1 }] });
+  await page.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await page.until(`document.querySelector('.composer textarea').value === ''`, 5000);
   m = await measure();
-  check('sent: one line again', m.ta === one && (await page.eval<string>(`document.querySelector('.composer textarea').value`)) === '', m);
+  check('sent: one line again', m.ta === one, m);
+  check('tapping send keeps the box focused, so the keyboard stays up', await page.eval<boolean>(`document.activeElement === document.querySelector('.composer textarea')`));
   await until(async () => ((await fetch(`${base}/api/conversations/${conv.id}/messages?limit=10`).then((r) => r.json())) as any).messages.some((x: any) => x.body === text), 10_000, 'the message on the hub').then(
     () => check('…and the message went', true),
     () => check('…and the message went', false),
