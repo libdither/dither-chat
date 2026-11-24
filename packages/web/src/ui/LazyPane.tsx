@@ -2,7 +2,7 @@
  * Panes that are not the first screen are chunks of their own, so the app's first load does not download, parse and
  * run them before the list shows (docs/perf.md "Left out of the first load"): a conversation, a profile, a place's
  * page, Settings, the directory, How it sorts, and layers drawn only once opened (the viewer, the index dialog,
- * Organize). Each loads when first opened. Once the hub's data is in (or at a first tap or key, if sooner), the
+ * Organize, the reaction picker). Each loads when first opened. Once the hub's data is in (or at a first tap or key, if sooner), the
  * conversation's chunk loads at once, as the next thing tapped is usually one, and the rest a few seconds later, one
  * per idle moment, so a first open is drawn at once, as it was when they were in the startup chunk.
  */

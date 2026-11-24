@@ -6,7 +6,7 @@
 import type * as P from '@dither-chat/protocol';
 import { bareSubject } from '@dither-chat/protocol';
 import { isGroupThread, senderLine, threadName } from '../../mail/model.ts';
-import { MailTile } from '../MailChat.tsx';
+import { MailTile } from '../MailLists.tsx';
 import { go, route } from '../../state.ts';
 import { memo } from '../memo.ts';
 import { Avatar } from '../bits.tsx';
