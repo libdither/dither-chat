@@ -132,11 +132,12 @@ async function undo(target: PictureTarget, ds: PictureDest[]) {
   else toast({ kind: 'info', title: 'Picture put back', body: '' }, 3000);
 }
 
-/** The menu the big picture opens. */
-export function pictureMenu(e: MouseEvent, target: PictureTarget, open: (s: PictureStart) => void) {
+/** The menu the big picture opens. `view`: shows the picture as it is now full screen, when there is one. */
+export function pictureMenu(e: MouseEvent, target: PictureTarget, open: (s: PictureStart) => void, view?: () => void) {
   const can = target.dests.filter((d) => d.can);
   const had = target.dests.some((d) => d.current);
   const items: MenuEntry[] = groups(
+    [view && { label: 'View Picture', icon: 'image', track: 'picture: view', run: view }],
     [
       { label: 'Upload a Picture…', icon: 'image', track: 'picture: upload', run: () => chooseFile((file) => open({ file })) },
       !!target.chatId && { label: 'From This Chat’s Pictures…', icon: 'media', track: 'picture: from chat', run: () => open({}) },

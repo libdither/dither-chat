@@ -148,10 +148,13 @@ and its code under My code (docs/add.md, "QR codes"), come from the last time it
 
 ### Changing a picture
 
+A hero's picture you may not change is a button that opens it full screen in the image viewer (ui/Viewer.tsx), to
+zoom and pan; one you may change has **View Picture** first in its menu.
+
 Where you may change a picture, the hero's picture is a button with a camera on it ("Change" over it on hover):
 a group's or server's where its About says `fields.avatar.canEdit`, and yours on each network whose profile lists
-`avatar` under `editable`. It opens a menu (a sheet on a phone): **Upload a Picture…**, **From This Chat's
-Pictures…** (a conversation), **An Earlier Picture…** (where it had one), and **Remove Picture** where the network
+`avatar` under `editable`. It opens a menu (a sheet on a phone): **View Picture** (where there is one), **Upload a
+Picture…**, **From This Chat's Pictures…** (a conversation), **An Earlier Picture…** (where it had one), and **Remove Picture** where the network
 can take it away (a Discord group, your own profile; not a Signal group or a server's icon). A picture dropped
 anywhere on the page, or pasted where nothing is being typed, opens the editor too.
 
