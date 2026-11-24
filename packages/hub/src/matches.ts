@@ -451,6 +451,7 @@ function load(db: Database, now = Date.now()): Loaded {
     const s = sides.get(sideOf.get(r.identity_id) ?? '');
     if (!s || !/^[0-9a-f]{16}$/.test(r.hash)) continue;
     const h = BigInt('0x' + r.hash);
+    if (flat(h)) continue;
     if (!s.hashes.includes(h)) {
       s.hashes.push(h);
       hashCount.set(h, (hashCount.get(h) ?? 0) + 1);
@@ -538,6 +539,14 @@ const popcount = (x: bigint) => {
   }
   return n;
 };
+
+/**
+ * A difference hash with few cells brighter than the next: a mostly flat picture, one colour with initials or a small
+ * mark (a network's letter picture). Every such picture hashes within a few bits of every other, so it tells nobody
+ * apart: unrelated people's letter pictures came out "Nearly the same profile picture".
+ */
+const FLAT_BITS = 12;
+const flat = (h: bigint) => popcount(h) < FLAT_BITS;
 
 /** Pairs worth comparing, from keys they share. */
 function candidates(L: Loaded): Set<string> {

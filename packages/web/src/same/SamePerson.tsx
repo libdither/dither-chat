@@ -152,7 +152,8 @@ export default function SamePerson({ onBack }: { onBack: () => void }) {
       .finally(() => {
         if (!alive.current) return;
         setHashing(null);
-        load();
+        // A run with the new hashes in it: the hub's own after them comes only once they settle.
+        load(true);
       });
   }, [view?.picturesWaiting]);
 
