@@ -1795,6 +1795,20 @@ export interface SyncPosition {
   seq: number;
 }
 
+/**
+ * The catch-up on the live socket (docs/sync.md "On the socket"): a socket asked for at `/api/live?v=&epoch=&since=`
+ * with the subprotocols `[LIVE_PROTOCOL, LIVE_RESUME]` gets, from a hub that can, LIVE_RESUME back and `LiveResume` as
+ * its first frame: what `POST /api/sync` would answer for that position without timelines, read as the socket joined,
+ * so every frame after it is newer. As text, or gzip'd as a binary frame when it is long. A hub without it takes the
+ * first subprotocol offered (Bun does) or none, and sends nothing of the kind: the client asks by POST as before.
+ */
+export const LIVE_PROTOCOL = 'dither-live';
+export const LIVE_RESUME = 'dither-resume';
+/** null: the hub could not say (it failed): ask by POST. */
+export interface LiveResume {
+  resume: SyncResponse | null;
+}
+
 export interface SyncTimelineRequest {
   /** `c:<conversation>`, `p:<person>` or `k:<channel>` (a channel's stream), as the client keys its timelines. */
   key: string;

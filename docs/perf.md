@@ -1205,6 +1205,23 @@ nothing: the precache starts as the app runs, which is now about when the bootst
 7.5 s and 5.9 s without). Started that late, all at once, it made the first conversation opened after the list wait
 for its six connections (4.1 s once); two files at a time fixed that but took the precache from 19 s to 26 s. Not
 kept. On the live hub, whose bootstrap is about twice this one on the wire, it may be worth trying again.
+
+**A relaunch's catch-up on the socket** (2026-11-24). A relaunch had the list from the snapshot at about 0.65 s and
+the hub's data about 0.35 s after: the catch-up (`POST /api/sync`) was asked once the socket had opened, one more
+round trip. Now the socket asks from the snapshot's position (index.html reads it from `localStorage`, where
+snapshot.ts keeps it) and the hub sends the catch-up as its first frame ([docs/sync.md](sync.md#on-the-socket)), so it
+comes with the socket. Full size, 4×, fair, base and change in turn, six runs each (load average 10 to 20, so the
+times spread):
+
+| | before | after |
+|---|---|---|
+| slow link: relaunch, list shown | 0.78 s (0.58–1.50) | 0.63 s (0.61–1.27) |
+| slow link: relaunch, hub's data in | 1.22 s (1.01–2.13) | 0.72 s (0.67–1.30) |
+| from the list to the data | 483 ms (325–633) | 66 ms (17–104) |
+| requests before the data | 12 | 8 to 10 |
+
+The data now comes about as soon as the list is drawn: what is left before it is the socket's two round trips (a new
+connection and its upgrade) and the snapshot's read and first draw, which take about as long.
 ## Memory (2026-11-24)
 
 `scripts/verify-memory.ts` (CI's `memory` job) looks for leaks: what the page holds growing as it is used. Against a
