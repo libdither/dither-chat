@@ -365,11 +365,90 @@ shows follows from where the draft goes.
   arrive with its source under it, a code block is a code editor, a quote of an original carries who wrote it.
   A draft is in that sense already "different editors for different sections", and that is the only place the
   idea is needed.
-- **Source views are a writer and a scope.** Seeing or editing the draft as HTML, as our chat marks or as one
-  place's own marks is one feature: write the scope (the whole draft or one block) with that writer, edit the
-  text, read it back with the same reader that checks sending. It is offered where that round trip is exact, so
-  Markdown is offered on your own text and not on a newsletter. "What is sent" in the prototype is the read-only
-  half; the mail editor's Markdown and HTML views and "Edit HTML" on a block are the same thing at two scopes.
+- **Three ways to write the same draft.** Rich text with the buttons, Markdown with the markers left standing,
+  HTML. The next section.
+
+### Ways of writing: rich text, Markdown, HTML
+
+A person may write the draft, or one part of it, another way (`packages/protocol/src/writing/lens.ts`, and
+`packages/web/proto/writing/parts.ts` for the editor side):
+
+- **Rich text**: the tree itself. A style is put on the words with a button, a key or typed markers that go away.
+- **Markdown**: the markers stay where they were typed, drawn quietly, and the words between them are drawn as
+  they will read (bold is bold while the stars are still there), the way Discord's box does it.
+- **HTML**: typed as it is sent, with a look at it beneath that runs nothing and fetches nothing.
+
+A part written another way is a `source` block in the draft: `{ type: 'source', attrs: { lang }, content: lines }`,
+where a line is a paragraph. It is kept **as typed**, never tidied, and only ever at the top of a draft. `fit()`
+reads every part into the tree first, so fitting, writing out, counting and reading back do not know that ways of
+writing exist, and every check they make holds for a part as it does for a paragraph.
+
+The rule everything here follows: **changing the way a part is written never changes what is sent.** `toSource`
+writes blocks out, reads its own lines back, and leaves as it was whatever does not come back the same. So:
+
+- A block the way of writing has no words for (a picture or a fold, in Markdown) stays between the parts as
+  itself. A draft "written as Markdown" may hold a picture; it is still one draft.
+- Inside a Markdown line, what no marker says (a colour, raised text, a mention, a time) stays in the line as the
+  thing it is. The line is a hybrid: typed markers and real styles side by side.
+- Reading is total. Any lines are some tree, and it is the tree that draft sends.
+
+**The Markdown is ours**, the same wherever the draft goes: it is a way of typing, not what a network gets (Signal
+still gets ranges, a mail still gets HTML). It follows from "a paragraph is one line":
+
+- A line is one block. A marker ends with a space (`- `, `> `, `# `, `1. `), so a `-` or a `#tag` being typed is
+  not a list or a heading for a moment. Containers are a chain of markers (`> - text`); more of an item is set in
+  by the width of its marker. Code is fenced, a rule is `---`, a table is rows between bars with a line of dashes
+  under the first.
+- A style is a pair of the same marker: `**` bold, `*` or `_` italic, `__` underline, `~~` strike, `||` hidden.
+  Each kind is paired by itself, so two styles may cross, as they may in the tree and as CommonMark's nesting
+  cannot say. A marker opens before a word and closes after one, as on Discord: `*.ts and *.js` and `5* and 4*`
+  stay as typed. An underscore inside a word and a bare web address are words. A backslash makes any marker a
+  word.
+- `[words](address)` is a link only where the address is a web or mail address, the only links a place sends:
+  `handlers[name](event)` is words.
+- In a part the markers always mean what they mean, whatever the place carries: writing to SMS, `**x**` in a
+  Markdown part is bold that is then stepped down and said, like bold from a button. (In rich text, typed markers
+  become a style only where some place carries it.)
+
+**HTML is read into the tree where the tree says the same thing** (with the named characters of HTML 4, so
+`&eacute;` is é). A piece that says more (a style attribute, a
+`<p>` with its own margins, a tag with no kind here, a comment) is kept whole as a `raw` block, with what could
+be read of it as its fallback for a place that takes no HTML. So nothing typed is thrown away, and Signal gets its
+words. A mail gets a kept piece as typed unless it would change the text around it (a style sheet, a tag left
+open): then its words, and that is said. What stands for a person or a time is ours, not HTML: a kept piece
+goes with the name, never with the person's ids. The look beneath shows **what the place gets**, not what was
+typed, with what changed on the way.
+
+**In the editor** (the prototype):
+
+- `Rich | Markdown | HTML` at the start of the row of tools writes the **whole draft** that way. It is offered
+  where it means something: Markdown where some chosen place carries a style at all, HTML where some chosen place
+  takes HTML as typed (a mail, Matrix). The way a kind of writing was last written is how the next one starts (a
+  chat as Markdown stays Markdown), kept on the device. HTML is chosen for one mail, never for the next.
+- A tag beside the text, where the box is opened up, says how **the part the caret is in** is written and writes
+  that part another way: a mail may be rich text with one table typed as HTML and one paragraph as Markdown.
+  Inside a Markdown part only the blocks the selection is in change; the lines around them stay as typed.
+- The buttons work in every way of writing: in a part they put the markers or the tags around the words chosen,
+  and take them away again; across the edge of a part, the words outside get the style itself.
+- Keys in a Markdown chat are Discord's: Enter sends (but inside a code block or a table), Shift+Enter is the
+  next line or the next item, and on an empty item ends the list. Where Enter does not send, it does the same.
+  Tab sets an item in under the one above it, Shift+Tab takes it out; elsewhere Tab moves on as on any page.
+- A part among blocks written another way has a line down its side. Down from the end of the last part is a line
+  of rich text after it; a blank line is a blank line, as Markdown and HTML need.
+- A style no place the draft goes carries (bold, writing to SMS) is drawn as plain words with a dotted line: the
+  markers mean what they mean, and are stepped down and said like bold from a button.
+- What is pasted into a part is lines: words as they are, and styled words (a link from a page) written the way
+  the part is.
+- A newsletter kept as its own HTML is not touched by a change of the whole draft: its plain words were written
+  by its sender, and reading them again from the HTML could change them. Its tag offers "HTML to edit" and
+  "Text", both of which say what they do.
+- One step, one undo. The markers shrink away or grow in over a fifth of a second, not at all for someone who
+  asked for less motion.
+- On a phone the part's tag is in the row of tools ("This part: MD"), not over the words.
+
+Not done: an HTML part changes as a whole (it is not split by block); alignment is not read from typed HTML (the
+piece is kept whole instead); text typed after a picture in a Markdown draft is rich until its tag is used; there
+is no key for the switch; the caret goes to the end of what changed.
 
 ### A draft and its places
 
@@ -435,6 +514,21 @@ Each is a pull request that stands on its own.
    Substack's marks are read into the tree instead of being flattened.
 
 ## The prototype
+
+`bun test packages/protocol/test/writing-lens.test.ts`: 20 tests for the ways of writing. Examples of the
+dialect and of typed HTML (what is a marker and what is not, crossing styles, what is kept whole), then for 120
+random drafts each, as Markdown and as HTML, with and without marker characters among the words: written out and
+read back, **the draft hands every place the same thing it did before** (compared as what is sent, not by this
+file's own idea of sameness), and most of each draft could be written (a writer that left everything alone would
+pass otherwise). Sixty more drafts are changed from way to way six times, part of the draft and then all of it.
+Random lines of marker and tag fragments are read without a throw, and ten inputs built to be slow stay fast.
+The first run of these found that what was sent depended on the order an editor listed a run's styles in; styles
+are now kept in one order when a draft is made sound. A review then found what the random drafts did not: words
+read as markers that a person meant as words (`*.ts and *.js`, `handlers[name](event)`), named characters left
+as typed, a person's ids carried into a mail inside a kept piece, HTML nested 9000 deep throwing and 20000 torn
+tags taking 75 seconds, and a random-input test whose numbers repeated after 220 steps. Each is fixed and in the
+tests. A review's case for cutting a part written as Markdown (Markdown for the whole draft only) was not taken:
+a mail with one table typed as HTML and the rest rich is what the feature is for.
 
 `bun test packages/protocol/test/writing.test.ts`: 47 tests. Twelve are examples (offsets in UTF-16 units and in
 bytes, crossing styles, the same line on every wire, each ladder, hidden text through every step, unknown kinds,
@@ -524,9 +618,10 @@ wherever the network has one (Reddit and Slack do).
 
 ## Open questions
 
-- **Markers while typing.** Discord shows them; Signal, Telegram and Slack hide them. The design hides them,
-  and only where some chosen place carries the style. Showing them is a source view of your own text, which could
-  instead be the default.
+- **Markers while typing: answered.** Both, by choice: rich text hides them, Markdown keeps them, and the box
+  remembers which per kind of writing (above, "Ways of writing").
+- **A Markdown part's markers on a place that carries nothing.** They mean what they mean and are stepped down
+  (the design). The other way is to read them as plain words there, as typed markers in rich text are.
 - **Hidden text that would show.** The design marks it, says it and asks at Send. It could refuse instead.
 - **A draft goes whole.** Send waits while one chosen place cannot take the draft (the design). The other way is
   to send to the rest and keep the draft for that place, said plainly; that is what "to the others only" already

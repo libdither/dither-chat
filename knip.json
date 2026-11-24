@@ -23,6 +23,7 @@
     "packages/web": {
       "entry": [
         "index.html",
+        "proto/writing/main.tsx",
         "test/**/*.{ts,tsx}",
         "public/sw.js",
         "src/graph/GraphView.tsx",
