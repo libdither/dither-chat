@@ -1,4 +1,5 @@
-# verify-perf once a night at 1× and 4× CPU (desktop, phone and fetching ahead; the slow link at 4× only), five runs each, every number kept:
+# verify-perf once a night at 1× and 4× CPU (desktop, phone and fetching ahead; the slow link at 4× only), five runs each,
+# then the memory check at 4×, every number kept:
 # each night's medians and spread go as one line onto the perf-history branch, and the job's summary and an HTML
 # page of charts (the artifact perf-trend) show the last night against the nights before. It never fails on a time
 # or a count: it flags them. It fails only when the measuring itself breaks. docs/perf.md, "Nightly trends".
@@ -30,8 +31,8 @@ concurrency:
 jobs:
   measure:
     runs-on: ubuntu-latest
-    # About 20 minutes on a standard runner (2026-11-24): runs wait for the page to settle, so a world a quarter
-    # the size took 18. Past 45 something hangs.
+    # About 20 minutes on a standard runner (2026-11-24) for verify-perf, and about 7 more for verify-memory: runs wait
+    # for the page to settle, so a world a quarter the size took 18. Past 45 something hangs.
     timeout-minutes: 45
     steps:
       # The browser's files from a cold disk in the background, as in ci.yml's perf job.
@@ -54,6 +55,18 @@ jobs:
             --cpu 1,4 --phone-cpu 1,4 --ahead-cpu 1,4 --slow-cpu 4 --baseline "$RUNNER_TEMP/no-baseline.json" --out out/perf.json \
             || echo "::warning::verify-perf exited $? (a ceiling or floor; its numbers are recorded all the same)"
           test -s out/perf.json
+      # The memory check at full size and 4× (docs/perf.md, "Memory"): its growth, last values, heap and the hub's
+      # memory, charted night to night as memory.<key>. A count it would fail on is a warning here, as above.
+      # Ten rounds on each page, side by side: about 7 minutes (a minute to build and seed, as verify-perf's own 42 s
+      # here; the warm-up round 45 s; then 21 s a round on the phone and 28 on the computer on a loaded 16-core machine).
+      - name: verify-memory at full size and 4×
+        if: ${{ !cancelled() }}
+        env:
+          SCALE: ${{ inputs.scale || '1' }}
+        run: |
+          GITHUB_STEP_SUMMARY= bun scripts/verify-memory.ts --scale "$SCALE" --cpu 4 --cycles 10 --phone-cycles 10 --out out/memory.json \
+            || echo "::warning::verify-memory exited $? (a count grew past what it may; its numbers are recorded all the same)"
+          test -s out/memory.json
       - name: The night as one line
         if: always()
         env:

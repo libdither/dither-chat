@@ -209,9 +209,22 @@ bun scripts/verify-perf.ts --scale 1 --runs 5 --warmup 1 --cpu 1,4 --phone-cpu 1
 The slow link's pass ([Over a slow link](#over-a-slow-link-2026-11-24)) runs at 4× only: its waits are the link's,
 about a minute a run at full size, and 1× is what CI runs.
 
+Then the memory check ([Memory](#memory-2026-11-24)) at full size and 4×, so a leak too slow for CI's six rounds on a
+tenth-size world shows as a line that climbs night after night:
+
+```sh
+bun scripts/verify-memory.ts --scale 1 --cpu 4 --cycles 10 --phone-cycles 10 --out out/memory.json
+```
+
+A count it would fail on is a warning here, like verify-perf's ceilings; its numbers are recorded all the same, as
+`memory.<pass>.<count>.growth` (round 2 to the last) and `.last`, the heap's growth as `memory.<pass>.heap.perRound`
+(bytes a round), and the hub's resident memory as `memory.hub.rss.before`, `.after` and `.peak` (in MB). It adds
+about 7 minutes: a minute to build and seed, a warm-up round of 45 s, then about 28 s a round on the computer and 21
+on the phone, side by side (2026-11-24, a loaded 16-core machine).
+
 - **When:** 04:41 UTC every night on main (stress.yml runs at 07:17, android-device.yml at 09:23), and by hand from
   Actions > Perf nightly > Run workflow, which asks for the world's size, the runs, and whether to record the run.
-  The measuring takes about 20 minutes on a standard runner (4 cores), the whole run about 21.
+  The measuring takes about 20 minutes on a standard runner (4 cores) and the memory check about 7 more.
 - **Never red on a number.** It has no baseline: nothing is judged, and a ceiling or floor verify-perf reports is a
   warning on the run. It fails only when measuring breaks (the build, the hub, a page that never answers).
 - **History:** each night is one JSON line on the `perf-history` branch (`history.jsonl`; a branch of data only,
@@ -225,8 +238,9 @@ about a minute a run at full size, and 1× is what CI runs.
   never moves flags on any move, and one whose runs spread by themselves (the bytes fetching ahead pulls: 22 to 32 kB
   in one night) only when it leaves that spread. Then the counts that came out different at 1× and 4×; then every
   metric. Flags only: the job stays green. The artifact `perf-trend` is a page of small charts, one per step and
-  pass, a line per throttle, each night's median with the band of its runs, that needs nothing from the network
-  (light and dark). The artifact `perf-night` has the night's line and verify-perf's whole output.
+  pass, a line per throttle (the memory check's: one per count, a line for the computer and one for the phone),
+  each night's median with the band of its runs, that needs nothing from the network
+  (light and dark). The artifact `perf-night` has the night's line and verify-perf's and verify-memory's whole output.
 - **No key list.** `scripts/perf-trend.ts night` records whatever is in `out/*.json`: a new verify-perf metric is
   recorded and charted the first night it appears. Another script's numbers are one line in the workflow, the script
   writing `out/<name>.json` as `{ "metrics": { "<key>": { "v": 12, "kind": "ms", "runs": [11, 12, 14] } } }`
@@ -1202,8 +1216,12 @@ bun scripts/verify-memory.ts --snapshots <dir>     # heap snapshots after round 
 ```
 
 Other options: `--first` (the round growth is counted from), `--web <dist>`, `--out <file.json>` (every round's
-counts), `--keep`, `--verbose` (each step's time). The hub's resident memory (`/proc/<pid>/status`, it has no endpoint
-for its heap) is printed before and after, never judged.
+counts, and under `metrics` the numbers the nightly run charts), `--keep`, `--verbose` (each step's time). The hub's
+resident memory (`/proc/<pid>/status`, it has no endpoint for its heap) is printed before and after, never judged.
+
+**Every night** it runs again at full size and 4×, ten rounds on each page ([Nightly trends](#nightly-trends)), and
+its growth, last values, heap and the hub's memory are charted night to night: never judged there, only flagged when
+a count leaves what the nights before came to.
 
 **Steady.** Five runs here and five on GitHub's runners (dispatched with `gh workflow run ci.yml --ref <branch>`), on
 2026-11-24: every judged count came out the same in rounds 2 to 6 and 2 to 5, in every run. The heap grew 190 to 260
