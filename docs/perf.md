@@ -1268,6 +1268,25 @@ list, so the script's 55 KB fewer come off that shared wait:
 
 The script's bytes are the steady part: 356 ms sooner in every run. The bootstrap gains less, because the
 precache, its files smaller, gets further while the bootstrap comes (29 requests beside it in both).
+
+### The bootstrap's window
+
+zstd at level 3 looks back at most 2 MB for a match. A full-size bootstrap is 4.4 MB (the live hub's 4.9–5.4 MB), and
+it names the same ids megabytes apart: each conversation's in `edges`, near the start, and again in `conversations`,
+which runs from about 0.9 to 3.8 MB. Further back than 2 MB, an id went out again in full. Every zstd answer now has
+a 4 MB window (`WINDOW_LOG` in compress.ts; browsers take up to 8 MB, RFC 9659). zstd fits the window to a smaller
+answer by itself, so anything up to 2 MB comes out byte for byte as before: every budget at a tenth of the size is the
+same. The full-size bootstrap is 406.7 KB on the wire against 389.5 KB (−4.2%; 430 against 411 KB with an empty
+attention, on the perf world as verify-perf starts it), about 85 ms less over the slow link. It goes through
+node:zlib's zstd, which takes a window, rather than `Bun.zstdCompress`, which does not: 10 ms rather than 7 for the
+4.4 MB, on the thread pool.
+
+What else the bootstrap's bytes are, at full size and level 3 with that window (each the bytes saved by leaving it out,
+so as a share of 411 KB): conversations' ids 79 KB, topics 51 KB, last messages' ids 25 KB and texts 28 KB, the edges
+of conversations (which repeat each conversation's `spaceIds`, with a position) 29 KB, of which their positions
+12 KB. Leaving out every null, false and empty field of conversations saves only 7 KB on the wire (1.3 MB of the
+4.4 MB before compression), identities' 2 KB, spaces' 1 KB. A higher level costs the hub's time on every bootstrap:
+level 6 gives 396 KB in 37 ms, level 9 376 KB in 42 ms.
 ## Memory (2026-11-24)
 
 `scripts/verify-memory.ts` (CI's `memory` job) looks for leaks: what the page holds growing as it is used. Against a
