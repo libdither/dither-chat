@@ -49,7 +49,7 @@ export function chatRoutes(store: Store, ref: ChatRef): P.ChatRoute[] {
              WHERE c.id = ? ORDER BY a.position, a.id`,
           )
           .all(ref.conversationId);
-  return (rows as Row[]).map((r) => ({
+  const routes: P.ChatRoute[] = (rows as Row[]).map((r) => ({
     conversationId: r.id,
     accountId: r.account_id,
     network: r.network,
@@ -59,7 +59,16 @@ export function chatRoutes(store: Store, ref: ChatRef): P.ChatRoute[] {
     unread: r.unread,
     mentions: r.mentions,
   }));
+  // A person's mail with you alone (docs/mail.md "Mail as chats"): a route per mail account and address of theirs,
+  // with no conversation row. Mail is sent through /api/mail/send, never through a chat route (isEmailRoute).
+  const mail = ref.kind === 'person' ? (store.mailRoutes?.(ref.personId) ?? []) : [];
+  if (!mail.length) return routes;
+  const at = (r: P.ChatRoute) => r.lastTs ?? 0;
+  return [...routes, ...mail].sort((a, b) => at(b) - at(a));
 }
+
+/** A route by email (`email:<account>:<address>`): read in the chat, written through mail's own send. */
+export const isEmailRoute = (r: { conversationId: string }) => r.conversationId.startsWith('email:');
 
 const same = (a: { conversationId: string; accountId: string }, b: { conversationId: string; accountId: string }) => a.conversationId === b.conversationId && a.accountId === b.accountId;
 

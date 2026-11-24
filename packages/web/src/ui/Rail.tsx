@@ -2,9 +2,8 @@ import { startRetention } from '../history.ts';
 import type * as P from '@dither-chat/protocol';
 import { Fragment } from 'preact';
 import { accountsNeedingYou, convTitle, directsOf, folderConvs, folderLeaves, people, inboxBadge, placePref, spaceUnread, sumUnread, netName, unreadOf, visibleConv, type RailEntry } from '../model.ts';
-import { db, go, mailRev, markAllRead, patchPlaces, rev, route, type Route } from '../state.ts';
+import { db, go, markAllRead, patchPlaces, rev, route, type Route } from '../state.ts';
 import { memo } from './memo.ts';
-import { unreadInbox } from '../mail/model.ts';
 import { preloadMail } from './mail/lazy.tsx';
 import { preloadFeed } from './feed/lazy.tsx';
 import { calendarLink, calendarOn } from '../plans.ts';
@@ -276,12 +275,12 @@ export function inboxMenu(): MenuSpec {
   };
 }
 
-/** Mail, once the hub can read it (docs/mail.md): a dot while Inbox has unread threads. Reads only mail's signal. */
-function RailMail({ active }: { active: boolean }) {
-  mailRev.value;
-  const s = db.mail;
-  // Nothing hovers on a phone: Mail's chunk loads once the app has been up a while and is idle, so its first open
-  // draws at once instead of fetching, parsing and drawing in one go (docs/perf.md).
+/**
+ * Mail's chunk (its bodies, compose and lists; docs/mail.md "Mail as chats") loads once the app has been up a while and
+ * is idle, so the first mail opened in a chat draws at once instead of fetching, parsing and drawing in one go
+ * (docs/perf.md).
+ */
+function useMailChunk() {
   useEffect(() => {
     let cancel = () => {};
     const t = setTimeout(() => (cancel = whenIdle(() => db.mail.access.state !== 'off' && void preloadMail().catch(() => {}), 3000)), 3000);
@@ -290,16 +289,6 @@ function RailMail({ active }: { active: boolean }) {
       cancel();
     };
   }, []);
-  if (s.access.state === 'off') return null;
-  const unread = unreadInbox(s);
-  return (
-    <RailItem active={active} unread={unread > 0} title="Mail" track="mail" keys={placeKeys('mail')} sub={unread ? `${unread} unread ${unread === 1 ? 'thread' : 'threads'} in Inbox` : 'Your email, through dither-accounts'} onClick={() => go({ view: 'mail' })}>
-      <span class="rail-mail" onPointerEnter={() => void preloadMail().catch(() => {})}>
-        <Icon name="mail" size={21} />
-        {unread > 0 && <span class="rail-mail-dot" />}
-      </span>
-    </RailItem>
-  );
 }
 
 /**
@@ -340,6 +329,7 @@ function RailCalendar({ active }: { active: boolean }) {
 
 export function Rail() {
   rev.value;
+  useMailChunk();
   const r = route.value;
   const priorityCount = inboxBadge() + accountsNeedingYou().length;
   const peopleBadge = sumUnread(people().flatMap((p) => p.directs)).badge;
@@ -382,7 +372,6 @@ export function Rail() {
       <RailItem active={is((r) => r.view === 'people')} title="People" track="people" keys={placeKeys('people')} sub="Every DM, merged per person" badge={peopleBadge} onClick={() => go({ view: 'people' })}>
         <Icon name="users" size={22} />
       </RailItem>
-      <RailMail active={r.view === 'mail'} />
       <RailCalendar active={r.view === 'calendar'} />
       <RailFeed active={r.view === 'feed'} />
       <div class="rail-sep" />

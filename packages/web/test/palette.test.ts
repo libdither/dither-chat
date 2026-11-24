@@ -120,6 +120,9 @@ describe('New', () => {
     expect(newMenu({ newGroup: false, canAdd: true, here: 'Climbing crew' })[0]).toEqual({ key: 'n:add-here', label: 'Add people to Climbing crew' });
     expect(newMenu({ newGroup: false, canAdd: false }).map((m) => m.key)).toEqual(['n:scan', 'n:mine']);
   });
+  test('with mail that can send, New email comes before adding', () => {
+    expect(newMenu({ newGroup: false, canAdd: true, email: true }).map((m) => m.key)).toEqual(['n:email', 'n:add', 'n:scan', 'n:mine']);
+  });
   test('New group is one switch away', () => {
     expect(newMenu({ newGroup: true, canAdd: true }).map((m) => m.key)).toEqual(['n:add', 'n:group', 'n:scan', 'n:mine']);
   });

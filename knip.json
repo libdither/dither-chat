@@ -65,6 +65,7 @@
         "src/ui/SignalPeople.tsx",
         "src/ui/Stream.tsx",
         "src/ui/Threads.tsx",
+        "src/ui/VideoPlayer.tsx",
         "src/voice/discord.ts"
       ],
       "project": [

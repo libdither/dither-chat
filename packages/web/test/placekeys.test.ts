@@ -4,7 +4,7 @@ import { PLACES, readKey, type KeyIn, type Place } from '../src/placekeys.ts';
 
 const k = (key: string, more: Partial<KeyIn> = {}): KeyIn => ({ key, code: '', alt: false, ctrl: false, meta: false, shift: false, repeat: false, composing: false, typing: false, covered: false, ...more });
 const all = () => true;
-const noMail = (p: Place) => p !== 'mail';
+const noCalendar = (p: Place) => p !== 'calendar';
 
 describe('G then a letter', () => {
   test('G waits, and each letter goes to its place', () => {
@@ -21,7 +21,7 @@ describe('G then a letter', () => {
     expect(readKey(k('i', { ctrl: true }), true, all)).toEqual({ kind: 'cancel' });
   });
   test("a place the hub doesn't offer is not a letter", () => {
-    expect(readKey(k('m'), true, noMail)).toEqual({ kind: 'cancel' });
+    expect(readKey(k('c'), true, noCalendar)).toEqual({ kind: 'cancel' });
   });
   test('G is a letter like any other while typing, under a menu, held down or with a modifier', () => {
     expect(readKey(k('g', { typing: true }), false, all)).toBeNull();
@@ -48,8 +48,8 @@ describe('Ctrl+Shift and a number', () => {
     expect(readKey(k('!', { ...cs, code: 'Digit1', typing: true }), false, all)).toEqual({ kind: 'go', place: 'inbox', how: 'chord' });
   });
   test('the numbers stay put when a place is missing', () => {
-    expect(readKey(k('#', { ...cs, code: 'Digit3' }), false, noMail)).toBeNull();
-    expect(readKey(k('$', { ...cs, code: 'Digit4' }), false, noMail)).toEqual({ kind: 'go', place: 'calendar', how: 'chord' });
+    expect(readKey(k('$', { ...cs, code: 'Digit4' }), false, noCalendar)).toBeNull();
+    expect(readKey(k('%', { ...cs, code: 'Digit5' }), false, noCalendar)).toEqual({ kind: 'go', place: 'feed', how: 'chord' });
   });
   test("Alt is the window manager's: Alt+number does nothing", () => {
     expect(readKey(k('1', { alt: true, code: 'Digit1' }), false, all)).toBeNull();

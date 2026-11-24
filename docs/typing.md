@@ -13,6 +13,7 @@ their own clients tell it.
   [chats.md](chats.md)), at its start, and who is typing moves to its end.
 - Small dots on the avatar of a DM or group row in the inbox and the people list, where Discord puts them.
 - Never yourself: not your other accounts, and not an identity merged into you.
+- Never in mail: typing in a person's mail chat or a mail thread tells no one (`typing.ts`).
 - A typer lasts as long as their network's own clients show one without a refresh (Discord 10 s, Signal 15 s, Matrix
   30 s while the server lists them, WhatsApp 25 s). A stop from the network, or their message arriving, ends it at
   once.

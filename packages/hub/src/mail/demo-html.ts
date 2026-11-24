@@ -225,7 +225,10 @@ export function demoStoreNewsletter(): string {
   );
 }
 
-/** Bytes for files the slice 1 seed names (its lease PDF). */
+/** Bytes for files the slice 1 seed names (the lease PDF, and the copy you sent back signed). */
 export function demoFileBytes(): Record<string, Uint8Array | string> {
-  return { 'att-lease': demoPdf(['Lease renewal', '', 'Signed by Alice Chen, page 2.', 'Please sign pages 3 and 4.']) };
+  return {
+    'att-lease': demoPdf(['Lease renewal', '', 'Signed by Alice Chen, page 2.', 'Please sign pages 3 and 4.']),
+    'att-lease-signed': demoPdf(['Lease renewal', '', 'Signed by Alice Chen, page 2.', 'Signed, pages 3 and 4.']),
+  };
 }

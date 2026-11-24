@@ -199,7 +199,7 @@ const PAGES: PageCase[] = [
   { name: 'Accounts', at: `#/accounts/${account.id}` },
   { name: 'Settings', at: '#/settings' },
   { name: 'the directory', at: '#/directory' },
-  { name: 'Mail', at: '#/mail' },
+  { name: 'a mail list', at: '#/inbox?mail=v%3Aupdates%3A*' },
   { name: 'Feed', at: '#/feed' },
 ];
 

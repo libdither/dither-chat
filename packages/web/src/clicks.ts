@@ -60,7 +60,7 @@ export function recordClick(tally: ClickTally, target: ElementLike | null, page:
 export function pageOf(r: Route): string {
   switch (r.view) {
     case 'inbox':
-      return r.conv ? (r.conv.startsWith('mth_') ? 'mail thread' : r.conv.startsWith('pst_') ? 'post' : 'conversation') : 'inbox';
+      return r.conv ? (r.conv.startsWith('mth_') ? 'mail thread' : r.conv.startsWith('pst_') ? 'post' : 'conversation') : r.mail ? 'mail list' : 'inbox';
     case 'people':
       return r.person ? 'conversation' : r.graph ? 'people graph' : r.same ? 'same person' : 'people';
     case 'space':
@@ -68,8 +68,6 @@ export function pageOf(r: Route): string {
       return r.conv ? 'conversation' : r.view;
     case 'folder':
       return r.conv || r.person ? 'conversation' : 'folder';
-    case 'mail':
-      return r.thread ? 'mail thread' : 'mail';
     default:
       return r.view;
   }

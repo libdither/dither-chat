@@ -2,7 +2,7 @@
 import { expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
 import { mailPlatform, parseMailList, platformScope, viewList } from '@dither-chat/protocol';
-import { accountTrouble, applyMailBootstrap, PROBLEM_GRACE_MS, scopeAccounts, listTitle, applyMailEvent, emptyMail, inList, listThreads, mergePage, rankable, rankedThreads, senderLine, unreadInbox, updatesFold } from '../src/mail/model.ts';
+import { accountTrouble, applyMailBootstrap, PROBLEM_GRACE_MS, scopeAccounts, listTitle, applyMailEvent, emptyMail, inList, isGroupThread, listName, listScope, listSearch, listThreads, mergePage, rankable, rankedThreads, searchIn, senderLine, threadName, threadSnippet, unreadInbox, updatesFold } from '../src/mail/model.ts';
 
 const ACC = 'acc_a';
 const t = (id: string, lastAt: number, x: Partial<P.MailThreadView> = {}): P.MailThreadView => ({
@@ -102,6 +102,39 @@ test('the unread count for the rail, and sender lines', () => {
   expect(senderLine(t('x', 1, { from: [{ name: 'Alex Kim', email: 'a@x' }, { name: 'Jo Park', email: 'j@x' }, { name: null, email: 'me@x.org', self: true }] }))).toBe('Alex, Jo, me');
   expect(senderLine(t('x', 1, { from: [{ name: null, email: 'news@list.example' }] }))).toBe('news@list.example');
   expect(senderLine(t('x', 1, { from: ['A', 'B', 'C', 'D'].map((n) => ({ name: `${n} X`, email: `${n}@x` })) }))).toBe('A, …, C, D');
+});
+
+test('a thread with more people is named by its subject without Re:, else by its people, and its preview says who wrote', () => {
+  const three: P.MailThreadView['from'] = [{ name: 'Alice Chen', email: 'a@x' }, { name: null, email: 'me@x.org', self: true }, { name: 'Jo Park', email: 'j@x' }];
+  const g = t('g', 1, { subject: 'Re: Fwd: Lease renewal', from: three, participants: 3, preview: 'Done on my side too' });
+  expect(isGroupThread(g)).toBe(true);
+  expect(isGroupThread(t('x', 1))).toBe(false);
+  expect(threadName(g)).toBe('Lease renewal');
+  expect(threadName({ ...g, subject: 'Re: ' })).toBe('Alice, Jo');
+  expect(threadName({ ...g, subject: '', from: [{ name: null, email: 'me@x.org', self: true }] })).toBe('(no subject)');
+  expect(threadSnippet(g)).toBe('Jo: Done on my side too');
+  expect(threadSnippet({ ...g, lastFromMe: true })).toBe('You: Done on my side too');
+  expect(threadSnippet({ ...g, preview: null })).toBe('');
+});
+
+test("a search in a mail list keeps to that list: its operators first, then the words, and back again", () => {
+  expect(listSearch('v:updates:*', 'rust')).toBe('s:in:inbox is:update rust');
+  expect(listSearch('v:starred:acc_one', ' lease ')).toBe('s:is:starred account:acc_one lease');
+  expect(listSearch('mb:mbx_work', 'quote')).toBe('s:in:mbx_work quote');
+  // A list no search keeps to: the words alone.
+  expect(listScope('v:inbox:*')).toBeNull();
+  expect(listSearch('w:per_x', 'hi')).toBe('s:hi');
+  expect(searchIn('in:inbox is:update rust weekly')).toEqual({ list: 'v:updates:*', words: 'rust weekly' });
+  expect(searchIn('in:inbox rust')).toEqual({ list: 'v:all:*', words: 'rust' });
+  expect(searchIn('in:sent account:acc_one plans')).toEqual({ list: 'v:sent:acc_one', words: 'plans' });
+  expect(searchIn('in:mbx_work quote')).toEqual({ list: 'mb:mbx_work', words: 'quote' });
+  // Operators typed by hand that no list starts with: a search of all mail.
+  expect(searchIn('is:unread rust')).toEqual({ list: null, words: 'is:unread rust' });
+  expect(searchIn('in:inbox is:starred rust')).toEqual({ list: null, words: 'in:inbox is:starred rust' });
+  const s = emptyMail();
+  expect(listName(s, 'v:starred:*')).toBe('Starred');
+  expect(listName(s, 's:in:sent plans')).toBe('Sent');
+  expect(listName(s, 's:plans')).toBe('Search');
 });
 
 test('the outbox (slice 5): from the bootstrap, then the whole list in each event', () => {

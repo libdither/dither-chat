@@ -284,6 +284,8 @@ export class Store {
   readonly presenceNow: PresenceNow;
   /** People a merge, a split or a new person changed: mail/people.ts sends their mail threads again. */
   personsChanged: ((personIds: string[]) => void) | null = null;
+  /** A person's chat routes by email (mail/places.ts, docs/mail.md "Mail as chats"): set once mail is connected. */
+  mailRoutes: ((personId: string) => P.ChatRoute[]) | null = null;
   /** A reminder set on a network came due (saved.ts): the server notifies. Called inside ingest's transaction. */
   reminderDue: ((r: DueReminder) => void) | null = null;
   /** How long each step of opening the database took (startup.ts). */
@@ -1028,15 +1030,28 @@ export class Store {
   }
 
   /**
+   * One of your own mail addresses as an email identity of yours (docs/mail.md "Mail as chats"): it belongs to the self
+   * person, made as a chat account's own identity makes it when there is none yet, so mail you sent reads as yours
+   * wherever an identity's person is checked. An address already given to someone else by a merge is left as it is.
+   */
+  ownEmailIdentity(address: string, name: string | null): string {
+    const id = this.emailIdentity(address, name);
+    const r = this.db.query('SELECT person_id FROM identity WHERE id = ?').get(id) as Row | null;
+    if (r && !r.person_id) this.linkSelf(id, { nativeId: address, handle: address, ...(name ? { displayName: name } : {}) });
+    return id;
+  }
+
+  /**
    * Email identities whose mail is all gone from the hub (its account was deleted): each leaves its person, a person
    * left with nothing goes, and the identity goes. A person you named or merged keeps it, as it keeps chat ones.
    */
   dropEmailIdentities(ids: string[]) {
     const tx = this.db.transaction(() => {
       for (const id of ids) {
-        const r = this.db.query(`SELECT i.person_id, p.manual, (SELECT COUNT(*) FROM identity o WHERE o.person_id = i.person_id AND o.id != i.id) AS others
+        const r = this.db.query(`SELECT i.person_id, p.manual, p.is_self, (SELECT COUNT(*) FROM identity o WHERE o.person_id = i.person_id AND o.id != i.id) AS others
                                  FROM identity i LEFT JOIN person p ON p.id = i.person_id WHERE i.id = ? AND i.network = 'email'`).get(id) as Row | null;
-        if (!r || (r.person_id && (r.manual || r.others))) continue;
+        // Your own addresses (ownEmailIdentity) stay with you.
+        if (!r || (r.person_id && (r.manual || r.others || r.is_self))) continue;
         this.db.query('DELETE FROM identity WHERE id = ?').run(id);
         this.db.query('DELETE FROM about WHERE target_id = ?').run(id);
         this.dirty.identities.delete(id);

@@ -15,6 +15,7 @@ import { applyPlanEvent, calendarAt, calendarFromBootstrap, loadPlans } from './
 import { api } from './api.ts';
 import { isLoginRefusal, login, needLogin } from './login.ts';
 import { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines, type Timeline } from './store.ts';
+import { convById, holdsMail, isMailPlace, isMailThread, mailPageUrl } from './mail/chats.ts';
 import { applyCalls, applyVoice, loadCalls } from './ringing.ts';
 import { closeCleared, closeNotifications, readIn, tidyNotifications } from './shade.ts';
 
@@ -91,6 +92,8 @@ export interface Toast {
   action?: () => void;
   /** What the tap does, shown on the toast ("Undo"). */
   actionLabel?: string;
+  /** The chat it is about (`openChat()` when it was made): it goes when you leave that chat, its Undo with it. */
+  chat?: string;
 }
 export const toasts = signal<Toast[]>([]);
 let toastSeq = 0;
@@ -178,6 +181,17 @@ export function setPrefs(p: Partial<Prefs>) {
 export { href, parseHash, type Route };
 
 export const route = signal<Route>(parseHash());
+/** The chat open now, by the route's `conv`: what a toast about it is tied to (`Toast.chat`). */
+export const openChat = (): string | undefined => {
+  const r = route.value;
+  return 'conv' in r ? r.conv : undefined;
+};
+// Leaving a chat closes the toasts that belong to it: an Undo there must not act from another chat.
+effect(() => {
+  const here = openChat();
+  const list = toasts.peek();
+  if (list.some((t) => t.chat && t.chat !== here)) toasts.value = list.filter((t) => !t.chat || t.chat === here);
+});
 /** An old link (`#/groups/…`) shows its new address, in place. */
 function canonicalHash() {
   const h = href(route.value);
@@ -399,6 +413,13 @@ export function applyEvents(events: P.ClientEvent[]) {
         break;
       case 'mail.threads':
         mergeMailTriage(ev.threads);
+        // Mail as chats: a thread's own chat, and the people on it, whose chats show it (mail/chats.ts).
+        mailMoved(ev.threads.flatMap((x) => [`c:${x.id}`, ...x.personIds.map((p) => `p:${p}`)]));
+        break;
+      case 'mail.chats':
+        // Who has an email route moves people's directs and the inbox's rows (model.ts), as a conversation does.
+        list = true;
+        mailMoved(ev.chats.flatMap((c) => [`c:${c.id}`, `p:${c.personId}`]));
         break;
       case 'typing':
         typing.value = applyTyping(typing.value, ev, Date.now(), isSelfIdentity);
@@ -489,7 +510,7 @@ export const freshHooks = new Set<() => void>([() => void tidyNotifications(read
 function onNotify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
   if (!showsHere(ev)) return;
   const r = route.value;
-  const here = (!!ev.conversationId && 'conv' in r && r.conv === ev.conversationId) || (!!ev.mailThreadId && r.view === 'mail' && r.thread === ev.mailThreadId) || (!!ev.noticeId && r.view === 'notices');
+  const here = (!!ev.conversationId && 'conv' in r && r.conv === ev.conversationId) || (!!ev.mailThreadId && 'conv' in r && r.conv === ev.mailThreadId) || (!!ev.noticeId && r.view === 'notices');
   const viewing = here && document.visibilityState === 'visible';
   if (viewing) return;
   // A calendar reminder (docs/calendar.md) opens the calendar where it is.
@@ -590,8 +611,10 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
   // A person's timeline and a channel's stream span conversations, where two messages can share a time: their cursor
   // names the message too.
   const oldest = older ? t.messages[0] : undefined;
-  const before = oldest ? (kind !== 'c' ? `${oldest.ts}:${encodeURIComponent(oldest.id)}` : oldest.ts) : undefined;
-  const url = kind === 'c' ? `/api/conversations/${id}/messages` : kind === 'k' ? `/api/conversations/${id}/stream` : `/api/chats/person:${id}/messages`;
+  // Mail as chats (mail/chats.ts): an email route or a thread pages from the hub's mail, by time and id as a person's.
+  const mail = kind === 'c' && isMailPlace(id);
+  const before = oldest ? (kind !== 'c' || mail ? `${oldest.ts}:${encodeURIComponent(oldest.id)}` : oldest.ts) : undefined;
+  const url = mail ? mailPageUrl(id) : kind === 'c' ? `/api/conversations/${id}/messages` : kind === 'k' ? `/api/conversations/${id}/stream` : `/api/chats/person:${id}/messages`;
   try {
     // After the socket, so nothing can fall between this page and the live events.
     if (!older) {
@@ -600,7 +623,8 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
     }
     // A kept copy needs only what changed since it was kept: messages after its newest, and edits inside it.
     const from = t.from;
-    const caught = !older && !!from && t.messages.length > 0 ? await syncTimelines([t], () => from) : 'refused';
+    // The hub's sync of timelines knows chat only: one with mail is asked for again.
+    const caught = !older && !!from && t.messages.length > 0 && !holdsMail(key) ? await syncTimelines([t], () => from) : 'refused';
     // No network: what is shown stays, and the sync after the next connection brings it up to date, or a try of its
     // own when the socket outlived the blip.
     if (caught === 'failed') return void retryKept(key);
@@ -622,13 +646,16 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
         t.messages = t.messages.filter((m) => !stale!.has(m.id) || got.has(m.id) || m.ts < from);
       }
       for (const m of page.messages) upsertInto(t.messages, m);
+      if (page.elsewhere) t.elsewhere = mergeElsewhere(t.elsewhere, page.elsewhere);
       t.hasMore = page.hasMore;
       got = page.messages.length;
       if (page.conversationIds) t.conversationIds = page.conversationIds;
     }
     // The hub's page came: pushes' copies left here while it loaded go, if the hub has caught up (arrived.ts).
     stripArrived(t);
-    if (kind === 'c' && older) {
+    if (mail) {
+      // Mail has no network to ask for more: the hub holds it, or asks its server itself.
+    } else if (kind === 'c' && older) {
       // Stored messages ran out, which is not the start of the conversation: Discord and Matrix can backfill.
       if (!t.hasMore) t.hasMore = await fromNetwork(t, id, t.messages[0]?.ts);
     } else if (kind === 'c') {
@@ -692,6 +719,11 @@ async function streamFromNetwork(t: Timeline, channelId: string, before?: P.Mess
 export async function jumpTo(conversationId: string, messageId: string) {
   const key = timelineKey('c', conversationId);
   if (timelines.get(key)?.messages.some((m) => m.id === messageId)) return;
+  // A mail place has no page around a message (its messages are mail, not the hub's): page back to it instead.
+  if (isMailPlace(conversationId)) {
+    if (!(await jumpInChat(key, messageId))) toast({ kind: 'error', title: 'Message not found', body: 'It may have been moved or deleted.' });
+    return;
+  }
   const page = await api<P.MessageContext>(`/api/messages/${messageId}/context`).catch(() => null);
   if (!page) return toast({ kind: 'error', title: 'Message not found', body: 'It may have been deleted.' });
   page.identities.forEach(putIdentity);
@@ -763,6 +795,44 @@ export function openMessage(conversationId: string, messageId: string) {
 }
 
 /** Load a timeline's newest page again, keeping what it held. */
+/** What they wrote elsewhere, by message: newer copies replace older ones. */
+function mergeElsewhere(had: P.ElsewhereView[] | undefined, got: P.ElsewhereView[]): P.ElsewhereView[] {
+  const by = new Map((had ?? []).map((e) => [e.messageId, e]));
+  for (const e of got) by.set(e.messageId, e);
+  return [...by.values()].sort((a, b) => a.ts - b.ts);
+}
+
+/**
+ * A timeline with mail, brought up to date after mail moved (a message, a read, a send): its newest page again, laid
+ * over what it holds, so nothing it shows goes away meanwhile.
+ */
+async function refreshMail(key: string) {
+  const t = timelines.get(key);
+  if (!t || t.loading || t.detached) return;
+  const [kind, id] = [key.slice(0, 1), key.slice(2)];
+  const url = kind === 'p' ? `/api/chats/person:${id}/messages` : mailPageUrl(id);
+  const page = await api<P.MessagePage>(`${url}?limit=60`).catch(() => null);
+  if (!page || timelines.get(key) !== t) return;
+  page.identities.forEach(putIdentity);
+  for (const m of page.messages) upsertInto(t.messages, m);
+  if (page.elsewhere) t.elsewhere = mergeElsewhere(t.elsewhere, page.elsewhere);
+  timelineChanged(key);
+}
+
+/** Timelines to bring up to date once a burst of mail events is over. */
+const mailStale = new Set<string>();
+let mailStaleTimer: ReturnType<typeof setTimeout> | undefined;
+function mailMoved(keys: string[]) {
+  for (const k of keys) if (timelines.has(k)) mailStale.add(k);
+  if (!mailStale.size || mailStaleTimer) return;
+  mailStaleTimer = setTimeout(() => {
+    mailStaleTimer = undefined;
+    const ks = [...mailStale];
+    mailStale.clear();
+    for (const k of ks) void catchUp(k);
+  }, 150);
+}
+
 function reload(key: string) {
   const t = timelines.get(key);
   if (!t) return Promise.resolve();
@@ -804,7 +874,8 @@ async function catchUp(key: string) {
   if (!t || catching.has(key)) return;
   catching.add(key);
   try {
-    if (!pos || (await syncTimelines([t], () => pos)) === 'refused') await reload(key);
+    if (holdsMail(key)) await refreshMail(key);
+    else if (!pos || (await syncTimelines([t], () => pos)) === 'refused') await reload(key);
   } finally {
     catching.delete(key);
     timelineChanged(key);
@@ -1197,12 +1268,20 @@ export function markRead(conversationId: string) {
     closedAt.set(conversationId, now);
     void closeNotifications([conversationId]);
   }
-  const c = db.conversations.get(conversationId);
+  const c = convById(conversationId);
   if (!c || !c.vantages.some((v) => v.unread || v.mentions)) return;
   clearTimeout(readTimers.get(conversationId));
   readTimers.set(
     conversationId,
-    setTimeout(() => api(`/api/conversations/${conversationId}/read`, { body: {} }).catch(() => {}), 600),
+    setTimeout(() => {
+      // Mail as chats: an email route reads its threads, a thread itself (mail/chats.ts).
+      if (isMailPlace(conversationId)) {
+        const threadIds = isMailThread(conversationId) ? [conversationId] : (db.mail.chats.get(conversationId)?.threadIds ?? []);
+        if (threadIds.length) api('/api/mail/flag', { body: { threadIds, seen: true, clientId: `read-${conversationId}-${Date.now()}` } }).catch(() => {});
+        return;
+      }
+      api(`/api/conversations/${conversationId}/read`, { body: {} }).catch(() => {});
+    }, 600),
   );
 }
 

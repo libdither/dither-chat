@@ -388,6 +388,8 @@ const DEMO_FILES: Record<string, { mime: string; bytes: Uint8Array }> = {
   'demo:dither-sim-0.4.zip': { mime: 'application/zip', bytes: SIM_ZIP },
   'demo:bench-483.json': { mime: 'application/octet-stream', bytes: text(BENCH) },
   'demo:rent-split.xlsx': { mime: 'application/octet-stream', bytes: RENT_XLSX },
+  // An invented clip (ffmpeg's test pattern and a beeping tone, 10 s, 480×270), for the video player (docs/media-kinds.md).
+  'demo:bouldering.webm': { mime: 'video/webm', bytes: new Uint8Array(readFileSync(join(import.meta.dir, 'demo-clip.webm'))) },
 };
 /** A demo file as an attachment. */
 const file = (key: string, name: string): P.AttachmentFact => ({ kind: 'file', mime: DEMO_FILES[key].mime, name, size: DEMO_FILES[key].bytes.length, url: key });
@@ -988,7 +990,7 @@ const CONVS: DemoConv[] = [
   {
     acc: ['wa'],
     fact: { nativeId: W.alice.nativeId, shape: 'direct', participants: [W.self.nativeId, W.alice.nativeId], encrypted: true },
-    msgs: [[6 * H, W.alice, 'sent you the bouldering video on whatsapp, signal kept compressing it']],
+    msgs: [[6 * H, W.alice, 'sent you the bouldering video on whatsapp, signal kept compressing it', { att: [{ kind: 'video', mime: 'video/webm', name: 'bouldering.webm', size: DEMO_FILES['demo:bouldering.webm'].bytes.length, width: 480, height: 270, url: 'demo:bouldering.webm' }] }]],
     unread: 1,
   },
   {
@@ -3544,8 +3546,11 @@ export function seedDemoMail(fake: FakeMailBackend, now = Date.now()) {
 
   // The lease: Alice, with Jo in Cc and a PDF; you answered; Jo added a line.
   put({ messageId: id('lease-1'), from: [alice], to: [ME], cc: [jo], subject: 'Lease renewal', receivedAt: now - 3 * D, text: 'Hi both,\n\nThe landlord sent the renewal. I signed page 2; could you sign pages 3 and 4 and send it back by the 15th?\n\nAlice', attachments: [{ id: 'att-lease', filename: 'lease-renewal.pdf', mime: 'application/pdf', size: 184_320, inline: false, contentId: null }], files: demoFileBytes() });
-  put({ mailboxId: 'Sent', messageId: id('lease-2'), inReplyTo: id('lease-1'), references: [id('lease-1')], from: [ME], to: [alice], cc: [jo], subject: 'Re: Lease renewal', receivedAt: now - 2 * D, text: 'Signed and scanned, it is attached. Thanks for sorting this out!\n\nOn Mon, Alice Chen <alice.chen@example.org> wrote:\n> The landlord sent the renewal.' });
+  put({ mailboxId: 'Sent', messageId: id('lease-2'), inReplyTo: id('lease-1'), references: [id('lease-1')], from: [ME], to: [alice], cc: [jo], subject: 'Re: Lease renewal', receivedAt: now - 2 * D, text: 'Signed and scanned, it is attached. Thanks for sorting this out!\n\nOn Mon, Alice Chen <alice.chen@example.org> wrote:\n> The landlord sent the renewal.', attachments: [{ id: 'att-lease-signed', filename: 'lease-renewal-signed.pdf', mime: 'application/pdf', size: 212_992, inline: false, contentId: null }], files: demoFileBytes() });
   put({ messageId: id('lease-3'), inReplyTo: id('lease-2'), references: [id('lease-1'), id('lease-2')], from: [jo], to: [alice, ME], subject: 'Re: Lease renewal', receivedAt: now - 9 * H, flags: { seen: false }, text: 'Done on my side too. Do we want to ask about the parking spot while we are at it?\n\nJo' });
+
+  // Alice asks you and Jo something today: it waits on you, so her chat shows it open.
+  put({ messageId: id('moveout-1'), from: [alice], to: [ME], cc: [jo], subject: 'Move-out checklist', receivedAt: now - 2 * H, flags: { seen: false }, text: 'The landlord sent what needs doing before we hand back the keys. Could you take the kitchen and the hall closet?\n\nAlice' });
 
   // A newsletter and a notification: list headers say so.
   put({

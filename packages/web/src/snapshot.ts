@@ -147,6 +147,10 @@ function currentBootstrap(): P.Bootstrap {
             accounts: [...db.mail.accounts.values()],
             mailboxes: [...db.mail.mailboxes.values()],
             threads: [...db.mail.threads.values()].sort((a, b) => b.lastAt - a.lastAt).slice(0, MAX_MAIL_WINDOW),
+            // Mail as chats (mail/chats.ts): a cold start resumes with people's email routes and the rungs you chose,
+            // which only a bootstrap brings whole.
+            chats: [...db.mail.chats.values()],
+            rungs: [...db.mail.rungs.values()],
           },
         }
       : {}),

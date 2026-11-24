@@ -252,12 +252,19 @@ export class MailHub {
 
   /** What changed since the last flush, as the page's events (server.ts flush). */
   flush(): P.ClientEvent[] {
-    return [...this.store.flush(() => this.access()), ...this.outbox.flush()];
+    // The threads that changed, before the store's flush clears them: people's chats by email follow (places.ts).
+    const touched = this.chats && (this.store.dirty.threads.size || this.store.dirty.threadsRemoved.size) ? [...this.store.dirty.threads, ...this.store.dirty.threadsRemoved] : [];
+    const out = [...this.store.flush(() => this.access()), ...this.outbox.flush()];
+    if (touched.length && this.chats) out.push(...this.chats.touched(touched));
+    return out;
   }
 
   bootstrap(): P.MailBootstrap {
-    return { ...this.store.bootstrap(this.access()), outbox: this.outbox.views() };
+    return { ...this.store.bootstrap(this.access()), outbox: this.outbox.views(), ...this.chats?.boot() };
   }
+
+  /** Mail as chats (places.ts): people's email routes for the bootstrap, and `mail.chats` for threads that changed. */
+  chats: { touched(threadIds: string[]): P.ClientEvent[]; boot(): Pick<P.MailBootstrap, 'chats' | 'rungs'> } | null = null;
 
   // ---------------------------------------------------------- for the routes
 
