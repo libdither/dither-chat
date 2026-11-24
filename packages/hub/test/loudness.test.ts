@@ -205,9 +205,8 @@ describe('through the hub', () => {
     const row = store.one<{ loud: number }>('SELECT loud FROM triage WHERE message_id = ?', id)!;
     expect(row.loud).toBe(d.loud!.loudness);
     const view = store.messageView(id)!;
-    expect(view.triage?.loud?.band).toBe(d.loud!.band);
-    // Only the number and band ride with the message; the Why sheet asks for the reasons.
-    expect(view.triage?.loud?.reasons).toEqual([]);
+    // Only the number rides with the message; the Why sheet asks for the rest.
+    expect(view.triage?.loudness).toBe(d.loud!.loudness);
   });
 
   test('on, the band decides; a rule of yours still wins', async () => {

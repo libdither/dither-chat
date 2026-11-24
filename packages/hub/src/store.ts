@@ -107,8 +107,8 @@ function triageView(t: Row): P.TriageView {
     probs: probs && typeof probs.important === 'number' && typeof probs.alert === 'number' ? { alert: probs.alert, important: probs.important } : null,
     ...(Object.keys(marks).length ? { marks } : {}),
     ...(judge !== undefined ? { judge, bar: alertBar({ shape: facts!.shape ?? '', mention: !!facts!.mention, reply: !!facts!.reply }) } : {}),
-    // Only the number and band ride with every message; the reasons are asked for when the Why sheet opens.
-    ...(t.loud_view ? { loud: loudViewOf(t.loud_view, false) } : {}),
+    // Only the number rides with every message; the Why sheet asks for the rest.
+    ...(typeof t.loud === 'number' ? { loudness: t.loud } : {}),
   };
 }
 
@@ -119,11 +119,11 @@ export interface StoredLoud extends P.LoudView {
   moment?: string[];
 }
 
-/** A stored loudness as the app sees it: whole (the Why sheet), or its number and band alone (every message's view). */
-export function loudViewOf(raw: string, whole = true): P.LoudView | null {
+/** A stored loudness as the Why sheet shows it. */
+export function loudViewOf(raw: string): P.LoudView | null {
   const v = json<StoredLoud | null>(raw, null);
   if (!v || typeof v.loudness !== 'number') return null;
-  return { loudness: v.loudness, band: v.band, live: !!v.live, ...(v.rule ? { rule: v.rule } : {}), ...(whole && v.parts ? { parts: v.parts } : {}), reasons: whole ? (v.reasons ?? []) : [] };
+  return { loudness: v.loudness, band: v.band, live: !!v.live, ...(v.rule ? { rule: v.rule } : {}), ...(v.parts ? { parts: v.parts } : {}), reasons: v.reasons ?? [] };
 }
 
 export function previewText(body: string, kind: string): string {
