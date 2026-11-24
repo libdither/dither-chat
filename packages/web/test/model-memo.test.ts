@@ -1,14 +1,15 @@
 /**
  * src/model.ts: what depends only on names, settings and what is where is worked out again when those change
  * (`changed('meta')`), not for a message or a read (`changed('list')`); what changes with those is up to date either way.
+ * The places, their counts and order are not worked out again for identities, the inbox or the devices list.
  */
-import { expect, mock, test } from 'bun:test';
+import { beforeEach, expect, mock, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
 import { changed } from '../src/versions.ts';
-import { db, stateMock } from './fixtures/state.ts';
+import { db, resetDb, stateMock } from './fixtures/state.ts';
 
 mock.module('../src/state.ts', stateMock);
-const { activityOfSpace, allCommunities, channelsUnder, convsUnder, effectiveLevel, firstChannel, railEntries, spaceUnread } = await import('../src/model.ts');
+const { activityOfSpace, allCommunities, channelsUnder, convsUnder, effectiveLevel, firstChannel, railEntries, spaceUnread, totalUnread } = await import('../src/model.ts');
 
 const acc = { id: 'acc', network: 'discord', label: 'me' } as unknown as P.AccountView;
 const space = (id: string, name: string): P.SpaceView => ({ id, network: 'discord', nativeId: id, kind: 'community', name, topic: null, icon: null, accountIds: ['acc'], nativeMute: null });
@@ -20,14 +21,18 @@ function link(e: P.SpaceEdgeView) {
   db.parents.set(e.childId, [...(db.parents.get(e.childId) ?? []), e]);
 }
 
-db.accounts.set('acc', acc);
-db.spaces.set('s1', space('s1', 'One'));
-db.spaces.set('s2', space('s2', 'Two'));
-for (const [id, sid, at] of [['a', 's1', 100], ['b', 's1', 200], ['c', 's2', 300]] as const) {
-  db.conversations.set(id, conv(id, at, 0, { spaceIds: [sid] }));
-  link(edge(sid, id));
-}
-changed('meta');
+// Each test starts from the same two servers, so none depends on what another left (or on running once only).
+beforeEach(() => {
+  resetDb();
+  db.accounts.set('acc', acc);
+  db.spaces.set('s1', space('s1', 'One'));
+  db.spaces.set('s2', space('s2', 'Two'));
+  for (const [id, sid, at] of [['a', 's1', 100], ['b', 's1', 200], ['c', 's2', 300]] as const) {
+    db.conversations.set(id, conv(id, at, 0, { spaceIds: [sid] }));
+    link(edge(sid, id));
+  }
+  changed('meta');
+});
 
 test('a message or a read changes counts and order at once, with the same walk', () => {
   expect(convsUnder('s1').map((c) => c.id).sort()).toEqual(['a', 'b']);
@@ -46,8 +51,26 @@ test('a message or a read changes counts and order at once, with the same walk',
   expect(railEntries().map((e) => e.key)).toEqual(['space:s1', 'space:s2']);
 });
 
+test("identities arriving, the inbox and the hub's devices leave the places, their counts and order as they were", () => {
+  const under = convsUnder('s1');
+  const rail = railEntries();
+  const total = totalUnread();
+  for (const kind of ['identity', 'inbox', 'devices'] as const) {
+    changed(kind);
+    expect(convsUnder('s1')).toBe(under);
+    expect(railEntries()).toBe(rail);
+    expect(totalUnread()).toBe(total);
+  }
+  // A message or a read: worked out again.
+  changed('list');
+  expect(convsUnder('s1')).not.toBe(under);
+  expect(railEntries()).not.toBe(rail);
+  expect(totalUnread()).not.toBe(total);
+});
+
 test('what is where is walked again only when it may have changed', () => {
   // A conversation joins s2 without a meta change: not seen, as no real change does that.
+  expect(convsUnder('s2').map((c) => c.id)).toEqual(['c']);
   db.conversations.set('d', conv('d', 500, 0, { spaceIds: ['s2'] }));
   link(edge('s2', 'd'));
   changed('list');

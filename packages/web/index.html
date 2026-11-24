@@ -27,17 +27,23 @@
     <script>
       // The live socket from here, not once the app's script has come, which on a slow link takes seconds: state.ts
       // connect() takes it over, with the frames it got meanwhile. On a device that keeps no snapshot yet, the hub's
-      // state is asked for as soon as the socket is open, as the app would itself (docs/sync.md "The client").
+      // state is asked for as soon as the socket is open, as the app would itself (docs/sync.md "The client"). With one,
+      // the socket asks from its position (snapshot.ts), and the hub's catch-up is its first frame ("On the socket").
       (() => {
         try {
-          const e = (window.__ditherEarly = { ws: null, at: Date.now(), openedAt: 0, frames: [], cold: null, boot: null, abort: null, taken: false });
+          let f = null;
+          try {
+            f = self.DecompressionStream && JSON.parse(localStorage.getItem('dither-chat:sync-from'));
+          } catch {}
+          const e = (window.__ditherEarly = { ws: null, from: f, at: Date.now(), openedAt: 0, frames: [], cold: null, boot: null, abort: null, taken: false });
           const ask = () => {
             if (e.boot || e.taken || e.cold !== true || !e.openedAt) return;
             const c = new AbortController();
             e.abort = () => c.abort();
             (e.boot = fetch('/api/bootstrap', { signal: c.signal })).catch(() => {});
           };
-          const ws = (e.ws = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/api/live'));
+          const u = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/api/live';
+          const ws = (e.ws = f ? new WebSocket(u + '?v=' + f.v + '&epoch=' + encodeURIComponent(f.epoch) + '&since=' + f.seq, ['dither-live', 'dither-resume']) : new WebSocket(u));
           ws.onmessage = (m) => e.frames.push(m.data);
           ws.addEventListener('open', () => ((e.openedAt = Date.now()), ask()));
           // Whether a snapshot is kept, without making the database: the app opens it at its own version (snapshot.ts).

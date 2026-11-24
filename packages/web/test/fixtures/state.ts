@@ -9,6 +9,10 @@ import { emptyDb } from '../../src/syncmodel.ts';
 import { dataVersion } from '../../src/versions.ts';
 
 export const db = emptyDb();
+/** Empties `db` in place (the mock hands out this one object), for a test that builds its own world each time. */
+export function resetDb() {
+  Object.assign(db, emptyDb());
+}
 export const selfIds = new Set<string>();
 /** Whether the live socket is open, as state.ts says it. */
 export const connected = signal(false);
