@@ -6,7 +6,7 @@
 import { afterAll, expect, mock, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
 import { emptyDb } from '../src/syncmodel.ts';
-import { changed } from '../src/versions.ts';
+import { changed, flush } from '../src/versions.ts';
 import { db, stateMock } from './fixtures/state.ts';
 
 mock.module('../src/state.ts', stateMock);
@@ -17,6 +17,8 @@ let clock = 1_800_000_000_000;
 Date.now = () => clock;
 afterAll(() => {
   Date.now = realNow;
+  // The signals move now, not in another file's test.
+  flush();
 });
 
 /** A fixed sequence of numbers in [0, 1) from a seed (mulberry32). */

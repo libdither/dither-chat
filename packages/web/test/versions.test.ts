@@ -207,4 +207,6 @@ test('what a message or a read changed is kept by version, and anything else is 
   for (let i = 0; i < 70; i++) changed('list', new Set(['d']));
   expect(convsChangedSince(v4)).toBeNull();
   expect(convsChangedSince(placesDataVersion() - 3)).toEqual(new Set(['d']));
+  // The signals move now, not in the next test.
+  flush();
 });
