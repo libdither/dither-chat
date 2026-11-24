@@ -85,7 +85,7 @@ type Kind = 'ms' | 'count' | 'tally' | 'bytes' | 'frames';
 /** gate (CI's baseline only): whether CI judges it; false for one that moved between runs of the same code. */
 type Metrics = Record<string, { v: number; kind: Kind; gate?: boolean }>;
 /**
- * Render counts no baseline may go over, at any throttle: what scoped renders bought (docs/perf.md). An --update
+ * Counts no baseline may go over, at any throttle: what scoped renders bought (docs/perf.md), and more. An --update
  * fails on them too, so a regression cannot become the new baseline.
  */
 const CEILINGS: Record<string, number> = {
@@ -97,11 +97,19 @@ const CEILINGS: Record<string, number> = {
   'arrival.messageRenders': 5, // the new message and its neighbours
   'arrival.sidebarRenders': 2,
   'long.reopen.msgs': 250, // the window
+  // Over the slow link (slowRun): one socket a start and none dropped by the heartbeat, and the app itself from the
+  // service worker on a relaunch.
+  'socket.opens': 2,
+  'socket.drops': 0,
+  'relaunch.toContent.shell': 0,
 };
-/** Counts no run may come under, whatever the baseline says: every open fetching ahead was meant to serve did (aheadRun). */
+/** Counts no run may come under, whatever the baseline says: every open fetching ahead was meant to serve did (aheadRun), and more. */
 const FLOORS: Record<string, number> = {
   'ahead.served': 5,
   'ahead.relaunchServed': 3,
+  // Over the slow link: the worker took the page over, and the relaunch drew the list from the snapshot.
+  'precache.tookOver': 1,
+  'relaunch.fromSnapshot': 1,
 };
 // The world, the build and the hub's log. Its own prefix: a cleanup of someone else's temp dirs must not take it.
 const work = args.includes('--work') ? opt('work', '') : mkdtempSync(join(tmpdir(), `dither-verify-perf-${PORT}-`));
