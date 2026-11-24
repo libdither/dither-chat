@@ -31,7 +31,7 @@ concurrency:
 jobs:
   measure:
     runs-on: ubuntu-latest
-    # About 20 minutes on a standard runner (2026-11-24) for verify-perf, and about 7 more for verify-memory: runs wait
+    # About 23 minutes on a standard runner (2026-11-24) for verify-perf, and about 5 more for verify-memory: runs wait
     # for the page to settle, so a world a quarter the size took 18. Past 45 something hangs.
     timeout-minutes: 45
     steps:
@@ -57,8 +57,8 @@ jobs:
           test -s out/perf.json
       # The memory check at full size and 4× (docs/perf.md, "Memory"): its growth, last values, heap and the hub's
       # memory, charted night to night as memory.<key>. A count it would fail on is a warning here, as above.
-      # Ten rounds on each page, side by side: about 7 minutes (a minute to build and seed, as verify-perf's own 42 s
-      # here; the warm-up round 45 s; then 21 s a round on the phone and 28 on the computer on a loaded 16-core machine).
+      # Ten rounds on each page, side by side: about 5 minutes on a standard runner (under a minute to build and seed;
+      # the warm-up round about 40 s; then 18-20 s a round on the phone and 22-25 on the computer; 2026-11-24).
       - name: verify-memory at full size and 4×
         if: ${{ !cancelled() }}
         env:
