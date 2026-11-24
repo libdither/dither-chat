@@ -97,6 +97,23 @@ export function tagText(t: Tells, n: RouteNames, side: Side): string {
 }
 
 /**
+ * Your side of a route: the chat account it goes from, else the mail account (a person's email route, mail/chats.ts: mail
+ * accounts are not among the chat accounts), and your identity on it.
+ */
+export interface YourSide {
+  chat: { id: string; label: string } | null;
+  mail: { id: string; label: string; address: string | null } | null;
+  /** Your identity's name on the account, where it has one. */
+  identity: string | null;
+}
+
+/** The account a route goes from, as RouteKey.mine. */
+export const yourAccount = (s: YourSide): string | null => s.chat?.id ?? s.mail?.id ?? null;
+
+/** Your side as a route's label names it ("via Home mail"): the account's label, a mail account's address, else "you". */
+export const yourName = (s: YourSide): string => s.chat?.label || s.mail?.label || s.mail?.address || s.identity || 'you';
+
+/**
  * An account's name as you see it (docs/chats.md, Names): your nickname for it, else its display name, else its
  * handle, else its id. A person's name is made of these on the hub, so it follows.
  */
