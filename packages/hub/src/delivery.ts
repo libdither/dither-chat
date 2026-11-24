@@ -98,6 +98,11 @@ interface OtherThreads {
 
 export class Delivery {
   private showing = new Map<string, Showing>();
+  /**
+   * How long a chat's row keeps its loudest tier (docs/notifications.md: an hour once the loudness decides), so one
+   * chat does not flicker between bands message to message. 0: a burst's five minutes, as before.
+   */
+  keepTop = 0;
   /** Mail threads (mail/triage.ts). */
   other: OtherThreads | null = null;
 
@@ -153,8 +158,15 @@ export class Delivery {
     const g = this.gather(conversationId, messageId);
     if (!g) return null;
     const ts = g.lines.at(-1)?.ts ?? now;
-    this.showing.set(conversationId, { at: now, ts: Math.max(ts, prev?.ts ?? 0), top: fresh && ORDER[fresh.top] > ORDER[level] ? fresh.top : level });
-    return { ...g, alert };
+    const kept = prev && now - prev.at < Math.max(BURST_MS, this.keepTop) ? prev : undefined;
+    const top = kept && ORDER[kept.top] > ORDER[level] ? kept.top : level;
+    this.showing.set(conversationId, { at: now, ts: Math.max(ts, prev?.ts ?? 0), top });
+    return { ...g, ...(this.keepTop && (!g.tier || ORDER[top] > ORDER[g.tier]) ? { tier: top } : {}), alert };
+  }
+
+  /** A computer is in use (the loudness's moment, loudness.ts). */
+  inUse(now = Date.now()): boolean {
+    return this.elsewhere(now);
   }
 
   /** Someone is at a computer with the app in use. Phones pass this way only while their app is open, which suppresses anyway. */

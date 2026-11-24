@@ -3,6 +3,7 @@
  * Every id here is a hub id; native ids are included for display and deep links only.
  */
 
+import type { LoudView } from './loudness.ts';
 import type { About, AboutFields, AddWho, GroupRule, PersonAbout, PersonRelationship } from './about.ts';
 import type { AddAction, AddCheck, AddPreview, AddRef, LinkRelationship, RequestAnswer, RequestFact } from './add.ts';
 import type { Capability, NativeMute, ReceiptState } from './adapter.ts';
@@ -340,6 +341,8 @@ export interface TriageView {
   judge?: number | null;
   /** The bar that answer was held to: lower in DMs and messages about you (learn.ts `ALERT_BAR`). With `judge`. */
   bar?: number;
+  /** Its loudness on the one scale (docs/notifications.md), when it was worked out: deciding, or in shadow. */
+  loud?: LoudView | null;
 }
 
 /**

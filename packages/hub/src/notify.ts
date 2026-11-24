@@ -25,6 +25,8 @@ interface NotifierDeps {
   server: Pick<HubServer, 'notify' | 'warm' | 'watched'>;
   /** Which list rows reach the phones (phonelist.ts). */
   phone: Pick<PhoneList, 'list' | 'higher'>;
+  /** The computer comes first (Settings): a chat being read on a computer gets no push. Absent: it does. */
+  computerFirst?: () => boolean;
 }
 
 export type Tier = 'push' | 'quiet' | 'digest';
@@ -75,7 +77,7 @@ export class Notifier {
     // A chat's row in the list is brought up to date now and then, not with every message.
     if (tier === 'digest' && !delivery.listDue(conversationId)) return;
     if (kind === 'message') {
-      const skip = !hold.rule && server.watched(conversationId) ? 'watched' : hold.capped && !delivery.conversationDue(conversationId) ? 'capped' : null;
+      const skip = !hold.rule && (this.d.computerFirst?.() ?? true) && server.watched(conversationId) ? 'watched' : hold.capped && !delivery.conversationDue(conversationId) ? 'capped' : null;
       if (skip) return activity.skipped({ messageId, conversationId, why: skip });
     }
     if (kind === 'message' && tier === 'digest') {

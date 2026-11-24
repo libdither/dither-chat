@@ -47,6 +47,22 @@ export function conversing(f: Pick<Facts, 'shape' | 'bot' | 'mention' | 'group' 
   return null;
 }
 
+/**
+ * Every reason the rule would give, not only the first: on the one loudness scale (loudness.ts) they are features of
+ * the want and can-wait models, each with a strong starting weight, and none decides by itself.
+ */
+export function conversingAll(f: Pick<Facts, 'shape' | 'bot' | 'mention' | 'group' | 'reply' | 'keyword' | 'cap' | 'followed'>, part: Part, ts: number): Exclude<Conversing, null>[] {
+  if (f.bot || f.shape === 'self') return [];
+  const out: Exclude<Conversing, null>[] = [];
+  if (f.shape === 'direct') out.push('dm');
+  if (f.followed) out.push('followed');
+  if (f.mention || f.group || f.reply) out.push('about');
+  if (f.keyword) out.push('keyword');
+  if (part.lastOwn !== null && part.lastOwn <= ts && ts - part.lastOwn <= TOOK_PART) out.push('wrote');
+  if (part.answerRate >= ANSWER_RATE) out.push('answers');
+  return out;
+}
+
 export const CONVERSING_REASON: Record<Exclude<Conversing, null>, string> = {
   dm: 'A direct message',
   followed: 'A reply to a post you follow',
