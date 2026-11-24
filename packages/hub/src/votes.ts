@@ -1,8 +1,8 @@
 /**
  * Your marks on triage's decisions, and the model learned from them (learn.ts, docs/notifications.md). A mark says a
  * message should have alerted, that an alert was wrong, or "less like this"; after each one the model is fitted
- * again to everything it learns from (it takes well under a second) and backtested. Once a day too, as marks age,
- * decisions stand and what you did is read again.
+ * again to everything it learns from (a fraction of a second once what you did has been read) and backtested. Once a
+ * day too, as marks age, decisions stand and what you did is read again.
  *
  * What each chance learns from:
  *  - alert: your marks; alerts you left unmarked for half a day (a little, as "that was right"); Conversation
@@ -13,7 +13,10 @@
  *
  * Next to it, a candidate model learns from the same and from every outcome of the last two weeks, with the
  * interaction and content features kept with each decision (interact.ts, embeddings.ts, triage_input). It runs in
- * shadow (shadow.ts): its chances are kept with every decision, it never decides.
+ * shadow (shadow.ts): its chances are kept with every decision, it never decides. It learns again once a day (or when you
+ * ask), not after a mark: it reads every example's content features, a nearest-neighbour search each, and on a busy
+ * hub a mark that waited for it held everything else for 20 to 40 s, longer than the 10 s Android gives a button in
+ * the phone's shade.
  */
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
@@ -37,6 +40,8 @@ interface State {
   /** The shadow model, and how many examples of each kind it learned from. */
   candidate?: Model | null;
   candidateFrom?: { votes: number; implicit: number } | null;
+  /** When everything, the candidate too, last learned; a mark refits only the live model. Null on a hub from before it. */
+  fullAt?: number | null;
 }
 
 /** What you did is learned from over this long. */
@@ -86,6 +91,7 @@ export class TriageVotes {
       lastReason: ok ? (saved.lastReason ?? null) : null,
       candidate: validModel(saved.candidate) ? saved.candidate : null,
       candidateFrom: validModel(saved.candidate) ? (saved.candidateFrom ?? null) : null,
+      fullAt: ok ? (saved.fullAt ?? null) : null,
     };
     if (!ok && saved.model) {
       // Start over at once from the marks and the old votes, which is quick. What you did is two weeks of messages
@@ -180,13 +186,13 @@ export class TriageVotes {
     return out;
   }
 
-  /** Mark a decision (null takes a mark back), then learn again. */
+  /** Mark a decision (null takes a mark back), then learn again: the live model, not the candidate (see the top). */
   mark(messageId: string, marks: P.TriageMarks, now = Date.now()): { marks: P.TriageMarks; policy: P.TriagePolicyView } {
     for (const o of this.others) {
       const made = o.mark(messageId, marks, now);
       if (made === undefined) continue;
       const ex = this.examples(now);
-      this.learn('a mark', now, ex);
+      this.learn('a mark', now, ex, false);
       return { marks: made, policy: this.view(now, ex) };
     }
     const s = this.store;
@@ -201,27 +207,36 @@ export class TriageVotes {
     this.triage.forgetMarked();
     const r = s.one<Row>('SELECT alert_mark, less_mark FROM triage WHERE message_id = ?', messageId)!;
     const ex = this.examples(now);
-    this.learn('a mark', now, ex);
+    this.learn('a mark', now, ex, false);
     return { marks: { ...(r.alert_mark != null ? { alert: !!r.alert_mark } : {}), ...(r.less_mark ? { less: true } : {}) }, policy: this.view(now, ex) };
   }
 
   /** Once a day: marks age, decisions stand and what you did joins in. */
   daily(now = Date.now()) {
-    if (!this.state.learnedAt || now - this.state.learnedAt > DAY) this.learn('daily', now);
+    // A day after everything last learned, not after the last mark: marks every day must not keep the candidate from
+    // ever learning. A hub from before fullAt goes by learnedAt once.
+    const full = this.state.fullAt ?? this.state.learnedAt;
+    if (!full || now - full > DAY) this.learn('daily', now);
     else if (this.state.candidate == null) {
       // A hub from before the shadow model: it learns at the first tick, not a day later.
       this.learnCandidate(now);
+      // The daily refit stays a day after the live model's last one, as if both had learned then.
+      this.state.fullAt ??= this.state.learnedAt;
       this.save();
     }
   }
 
-  learn(reason: string, now = Date.now(), ex?: Example[]) {
+  /** Fit the live model again, and the candidate unless `candidate` is false (a mark: see the top). */
+  learn(reason: string, now = Date.now(), ex?: Example[], candidate = true) {
     // The daily refit reads what you did again; a mark refits on it as last read.
     if (reason === 'daily') this.implicit(now, true);
     ex ??= this.examples(now);
     const model = train(ex, new Set(this.state.rejected));
     this.state = { ...this.state, model, learnedAt: now, lastReason: reason };
-    this.learnCandidate(now, ex.filter((e) => e.vote));
+    if (candidate) {
+      this.learnCandidate(now, ex.filter((e) => e.vote));
+      this.state.fullAt = now;
+    }
     this.save();
   }
 

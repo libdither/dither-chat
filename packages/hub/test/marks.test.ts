@@ -460,6 +460,23 @@ describe('the list’s level and what the app is shown', () => {
     w.votes.daily(w.clock + DAY + HOUR);
     expect(w.votes.view(w.clock)).toMatchObject({ lastReason: 'daily', learnedAt: w.clock + DAY + HOUR });
   });
+
+  test('a mark refits the live model only; the candidate learns at the daily refit, which later marks do not put off', async () => {
+    const w = world();
+    const kept = () => w.store.triagePolicy<{ candidateFrom: { votes: number } | null; learnedAt: number }>()!;
+    const a = await w.say('alerts', 'bob', 'build 7 finished');
+    const b = await w.say('alerts', 'bob', 'build 8 finished');
+    w.votes.mark(a.id, { less: true }, w.clock);
+    // A fresh hub's candidate learns at the first tick.
+    w.votes.daily(w.clock + HOUR);
+    expect(kept().candidateFrom?.votes).toBe(1);
+    // The second mark moves the live model, not the candidate: it is a search over every example's neighbours.
+    w.votes.mark(b.id, { less: true }, w.clock + 20 * HOUR);
+    expect(kept()).toMatchObject({ learnedAt: w.clock + 20 * HOUR, candidateFrom: { votes: 1 } });
+    // A day after the candidate last learned, though a mark came since.
+    w.votes.daily(w.clock + DAY + 2 * HOUR);
+    expect(kept()).toMatchObject({ learnedAt: w.clock + DAY + 2 * HOUR, candidateFrom: { votes: 2 } });
+  });
 });
 
 describe('a model saved before the tiers', () => {
