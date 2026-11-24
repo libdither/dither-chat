@@ -19,6 +19,7 @@ import { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines } from './
 import { calendarLink } from './plans.ts';
 import { changed, dataVersion, mailChanged, timelineChanged } from './versions.ts';
 import { bodies as mailBodies, details as mailDetails } from './mail/held.ts';
+import { sized } from './perf.ts';
 
 declare const __SNAPSHOT_SCHEMA__: string;
 const SCHEMA = typeof __SNAPSHOT_SCHEMA__ === 'string' ? __SNAPSHOT_SCHEMA__ : 'dev';
@@ -215,6 +216,15 @@ function tx<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T
 
 /** The kept message pages (keptpages.ts): read with the snapshot, opened from here. */
 export const pages = new PageCache(SCHEMA);
+
+// What the app holds, for verify-memory.ts (docs/perf.md "Memory"): read under ?perf=1 only.
+sized('timelines', () => timelines.size);
+sized('messagesHeld', () => [...timelines.values()].reduce((s, t) => s + t.messages.length, 0));
+sized('quoted', () => quoted.size);
+sized('keptPages', () => pages.count);
+sized('identities', () => db.identities.size);
+sized('mailBodies', () => mailBodies.size);
+sized('mailDetails', () => mailDetails.size);
 
 /**
  * A conversation or person gone from the hub (an account removed with them) takes its kept page along. Added at the

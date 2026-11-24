@@ -96,6 +96,11 @@ export class PageCache {
   /** Records to write that were not made from a timeline in memory (an older snapshot's pages). */
   private loose = new Map<string, string>();
 
+  /** Pages it knows of, kept or to keep (verify-memory.ts). */
+  get count() {
+    return this.at.size;
+  }
+
   constructor(
     readonly schema: string,
     private now: () => number = Date.now,

@@ -18,6 +18,7 @@ import { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines, type Time
 import { convById, holdsMail, isMailPlace, isMailThread, mailPageUrl } from './mail/chats.ts';
 import { applyCalls, applyVoice, loadCalls } from './ringing.ts';
 import { closeCleared, closeNotifications, readIn, tidyNotifications } from './shade.ts';
+import { sized } from './perf.ts';
 
 // ------------------------------------------------------------------ data
 
@@ -1669,3 +1670,11 @@ export function loadTranslation(fresh = false): Promise<void> {
 export async function setTranslation(patch: Partial<P.TranslateSettings>): Promise<void> {
   translation.value = await api<{ settings: P.TranslateSettings; networks: P.Network[] }>('/api/translate/settings', { method: 'PUT', body: patch });
 }
+
+// The maps above that live as long as the page, for verify-memory.ts (docs/perf.md "Memory"): read under ?perf=1 only.
+sized('readTimers', () => readTimers.size);
+sized('readClosedAt', () => closedAt.size);
+sized('glancing', () => glancing.size);
+sized('outgoing', () => outgoing.size);
+sized('sendUploads', () => sendUploads.size);
+sized('editDrafts', () => editDrafts.size);

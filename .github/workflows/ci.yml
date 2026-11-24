@@ -8,7 +8,7 @@
 # bun run check:boot, bun scripts/verify-login.ts, bun scripts/verify-clear.ts, bun run check:offline,
 # bun scripts/verify-offline.ts, bun scripts/verify-arrived.ts, bun scripts/verify-timeline-scroll.ts,
 # bun scripts/verify-presence.ts, bun scripts/verify-video.ts, bun scripts/verify-back.ts, bun scripts/verify-response.ts,
-# bun scripts/verify-perf.ts --ci.
+# bun scripts/verify-memory.ts, bun scripts/verify-perf.ts --ci.
 name: CI
 
 on:
@@ -210,6 +210,24 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun scripts/verify-response.ts --shard ${{ matrix.shard }}/4
 
+  # The same round of clicks again and again on a tenth-size world, a desktop's and a phone's side by side: DOM nodes,
+  # listeners, intervals, object URLs, sockets, observers, marks and the app's own caches may not grow from the second
+  # round to the last. The JS heap and the hub's memory go in the job's summary, never judged (scripts/verify-memory.ts,
+  # docs/perf.md "Memory").
+  memory:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - run: b=$(command -v chromium || command -v google-chrome) && (find -L "$(dirname "$(readlink -f "$b")")" -type f -print0 | xargs -0 cat > /dev/null 2>&1 &) || true
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun scripts/verify-memory.ts
+
   # Load and chat switching on a tenth-size world in the runner's browser, a warm-up and then one run: renders, DOM
   # nodes and bytes against scripts/perf-baseline-ci.json; its times go in the job's summary and are never judged
   # (docs/perf.md, "In CI").
@@ -238,7 +256,7 @@ jobs:
   # `changes` said the pull request does not need it. It runs on failure and cancellation too, so it never reads as
   # skipped (which GitHub would count as passed).
   check:
-    needs: [changes, typecheck, test-hub, test-hub-mail, test-packages, web, boot, back, response, perf]
+    needs: [changes, typecheck, test-hub, test-hub-mail, test-packages, web, boot, back, response, memory, perf]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
