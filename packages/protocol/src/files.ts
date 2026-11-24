@@ -138,7 +138,7 @@ export function guessKind(mime: string | null | undefined, name: string | null |
   const ext = extOf(name);
   const lang = languageOf(name);
   if (m === 'application/pdf' || ext === 'pdf') return 'pdf';
-  if (/^image\/(png|jpeg|gif|webp|avif|bmp|x-icon|vnd\.microsoft\.icon)$/.test(m)) return 'image';
+  if (/^image\/(png|jpeg|gif|webp|avif|jxl|bmp|x-icon|vnd\.microsoft\.icon)$/.test(m)) return 'image';
   if (/^video\//.test(m)) return 'video';
   if (/^audio\//.test(m)) return 'audio';
   if (m === 'text/markdown' || lang === 'markdown') return 'markdown';

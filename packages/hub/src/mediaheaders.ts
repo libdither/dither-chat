@@ -13,6 +13,7 @@
  */
 import { showsInline } from '@dither-chat/protocol';
 import { genericType } from './fileinfo.ts';
+import { isJxl } from './jxlformat.ts';
 
 /** Every response: a document opened in a tab gets an opaque origin and no script, and loads only the file itself. */
 export const SANDBOX_CSP = "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'";
@@ -99,6 +100,7 @@ export function sniffMime(head: Uint8Array): string | null {
   if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return 'image/jpeg';
   if (ascii(0, 4) === 'GIF8') return 'image/gif';
   if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return 'image/webp';
+  if (isJxl(head)) return 'image/jxl';
   if (ascii(0, 5) === '%PDF-') return 'application/pdf';
   if (ascii(4, 8) === 'ftyp') {
     const brand = ascii(8, 12);

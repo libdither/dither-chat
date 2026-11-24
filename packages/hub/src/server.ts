@@ -27,6 +27,8 @@ import { linkPath, MediaArchiver } from './mediaarchive.ts';
 import { infoFor, MediaInfo } from './mediainfo.ts';
 import { genericType } from './fileinfo.ts';
 import { mediaHeaders, SAFE_HEADERS, sniffMime } from './mediaheaders.ts';
+import { findJxl, JxlServe, MediaPacker, PACKED_TYPES, takesJxl, type JxlTools } from './jxl.ts';
+import { JXL } from './jxlformat.ts';
 import { ImportSources } from './imports/sources.ts';
 import { Calls, type CallSocketData, type TurnConfig, type VoiceSocketData } from './calls.ts';
 import { type CallRoomSocketData, demoCallRoom } from './democalls.ts';
@@ -167,6 +169,13 @@ interface ServerOpts {
   scorecard?: Scorecard;
   /** Fetch every remote attachment into the media cache soon after it arrives (mediaarchive.ts). A real hub, not a demo. */
   archiveMedia?: boolean;
+  /**
+   * cjxl and djxl (jxl.ts, docs/files.md "JPEG XL"): to show a JPEG XL to a device that doesn't, and send one to a
+   * network as a JPEG or PNG. Asked once, when first needed. Absent: looked for on PATH and in DITHER_JXL_DIR.
+   */
+  jxl?: () => Promise<JxlTools | null>;
+  /** Store kept JPEGs and PNGs as JPEG XL (jxl.ts MediaPacker). A real hub, not a demo. */
+  packMedia?: boolean;
   /** How index jobs and the gap fill read (readingpace.ts): a person's pace unless told otherwise. */
   pace?: PaceConfig;
   /** Mail (mail/index.ts, docs/mail.md): its routes, its part of the bootstrap and of each flush. */
@@ -337,6 +346,12 @@ export class HubServer {
   private archiver?: MediaArchiver;
   /** What each kept file is (mediainfo.ts, docs/files.md). */
   readonly mediaInfo: MediaInfo;
+  /** cjxl and djxl, asked for once (jxl.ts). */
+  private readonly jxlTools: () => Promise<JxlTools | null>;
+  /** Pictures rebuilt for devices that don't show JPEG XL (jxl.ts). */
+  private readonly jxlServe: JxlServe;
+  /** Kept pictures stored as JPEG XL (jxl.ts). */
+  readonly packer?: MediaPacker;
   private typingGate = new TypingGate();
   private usage: UsageStore;
   /** Button counts (clicks.ts). */
@@ -419,6 +434,10 @@ export class HubServer {
     });
     if (opts.archiveMedia)
       this.archiver = new MediaArchiver(store, join(opts.dataDir, 'media-cache'), (url, acc, from) => this.archiveOne(url, acc, from), (msg) => console.warn(msg), (acc, urls) => this.refreshUrls(acc, urls), (a) => this.mediaInfo.kept(a));
+    let tools: Promise<JxlTools | null> | null = null;
+    this.jxlTools = () => (tools ??= (opts.jxl ?? (() => findJxl()))().catch(() => null));
+    this.jxlServe = new JxlServe(this.jxlTools);
+    if (opts.packMedia) this.packer = new MediaPacker(store, join(opts.dataDir, 'media-cache'), this.jxlTools, (msg) => console.warn(msg));
     this.calls = new Calls(store, sup, { turn: opts.turn, pickAccount: (c, a) => this.pickAccount(c, a) });
     this.abouts = new Abouts({
       store,
@@ -431,7 +450,7 @@ export class HubServer {
     this.posts = new Posts({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), changed: () => this.flush(), fresh: (ids) => this.opts.onFresh?.(ids) });
     // Through the same pace: a check never reads while a job or the gap fill does on that account.
     this.follows = new Follows({ store, posts: this.posts, online: (a) => sup.online(a), pace, config: opts.follow, changed: () => this.flush(), log: (l) => console.warn(l) });
-    this.timelines = new Timelines({ store, posts: this.posts, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), files: (ids) => this.uploads.get(ids), changed: () => this.flush() });
+    this.timelines = new Timelines({ store, posts: this.posts, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), files: (ids) => this.postFiles(ids), changed: () => this.flush() });
     this.translator = new Translator({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     this.self = new AccountSelf({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), quietHours: () => store.quietHours() });
@@ -607,6 +626,7 @@ export class HubServer {
     this.jobs.start();
     void this.archiver?.start();
     this.mediaInfo.start();
+    this.packer?.start();
     this.store.journal.prune();
     this.pruneTimer = setInterval(() => this.store.journal.prune(), 3_600_000);
     this.sendExtras.later.start();
@@ -627,6 +647,7 @@ export class HubServer {
     this.jobs.stop();
     this.archiver?.stop();
     this.mediaInfo.stop();
+    this.packer?.stop();
     this.imports.stop();
     this.matches.stop();
     this.collector.stop();
@@ -1016,7 +1037,7 @@ export class HubServer {
     if ((m = path.match(DAVE_FILE))) return this.daveFile(m[1]!, m[2]!);
     if (path === '/api/voice/sounds') return this.callSounds();
     if ((m = path.match(/^\/voice\/sounds\/([a-z0-9_]{1,40})\.mp3$/))) return this.callSound(m[1]);
-    if ((m = path.match(/^\/media\/([\w-]+)\/([\w-]+)$/))) return this.media(m[1], m[2], url.searchParams.get('a'));
+    if ((m = path.match(/^\/media\/([\w-]+)\/([\w-]+)$/))) return this.media(m[1], m[2], url.searchParams.get('a'), takesJxl(req));
     // Custom emoji inside message bodies: the id is all a body has, and it can only reach Discord's CDN.
     if ((m = path.match(/^\/emoji\/discord\/(\d+)(\.animated)?$/))) return this.fetchMedia(discordEmojiUrl(m[1], !!m[2]), null);
     if (path === '/api/errors' && req.method === 'POST') return this.clientError(req, clientIp(req, ip));
@@ -1398,7 +1419,7 @@ export class HubServer {
           else {
             const file = typeof b.avatar === 'string' ? this.uploads.get([b.avatar])?.[0] : undefined;
             if (!file) return bad('avatar: an upload id, or null to remove the picture');
-            change.avatar = file;
+            change.avatar = (await this.uploads.common([file], await this.jxlTools()))[0];
           }
         }
         // Pronouns, the banner and its colour (docs/account-self.md, Discord).
@@ -1411,7 +1432,7 @@ export class HubServer {
           else {
             const file = typeof b.banner === 'string' ? this.uploads.get([b.banner])?.[0] : undefined;
             if (!file) return bad('banner: an upload id, or null to remove it');
-            change.banner = file;
+            change.banner = (await this.uploads.common([file], await this.jxlTools()))[0];
           }
         }
         if (b.accent !== undefined) {
@@ -1700,8 +1721,9 @@ export class HubServer {
           if (change?.key === 'avatar') {
             if (!req.headers.get('origin')) return bad('The picture is changed from the app itself', 403);
             upload = typeof change.value === 'string' ? change.value : null;
-            const file = upload ? this.uploads.get([upload])?.[0] : undefined;
-            if (!file) return bad('avatar: an upload id');
+            const got = upload ? this.uploads.get([upload])?.[0] : undefined;
+            if (!got) return bad('avatar: an upload id');
+            const [file] = await this.uploads.common([got], await this.jxlTools());
             if (!P_PICTURE_TYPES.includes(file.mime)) return bad('A picture is a PNG, JPEG, GIF or WebP image', 415);
             if (file.size > P_PICTURE_MAX) return bad(`A picture is at most ${P_PICTURE_MAX / 1024 / 1024} MB`, 413);
             change = { key: 'avatar', value: pathToFileURL(file.path).href };
@@ -2652,6 +2674,8 @@ export class HubServer {
     const replyTo = b.replyTo ? s.nativeOf('message', b.replyTo)?.nativeId : undefined;
     let files = this.uploads.get(ids);
     if (!files) return bad('that upload has expired, attach the file again', 410);
+    // A JPEG XL goes as a JPEG or PNG: no chat network shows one as a picture (jxl.ts). Mail keeps the file as it is.
+    if (conv.network !== 'email') files = await this.uploads.common(files, await this.jxlTools());
     const acc = s.account(accountId)!;
     const accCaps = JSON.parse(acc.capabilities) as P.Capability[];
     const name = NETWORK_META[conv.network].name;
@@ -2843,11 +2867,18 @@ export class HubServer {
 
   // ---------------------------------------------------------------- media
 
-  private async media(sig: string, b64: string, accountId: string | null): Promise<Response> {
+  /** A post's pictures (timelines.ts), a JPEG XL as a JPEG or PNG: no feed network shows one (jxl.ts). */
+  private async postFiles(ids: string[]): Promise<P.OutgoingAttachment[] | null> {
+    const f = this.uploads.get(ids);
+    return f && this.uploads.common(f, await this.jxlTools());
+  }
+
+  /** `jxl`: the device shows JPEG XL (jxl.ts takesJxl). */
+  private async media(sig: string, b64: string, accountId: string | null, jxl = false): Promise<Response> {
     const raw = Buffer.from(b64, 'base64url').toString('utf8');
     const expect = createHmac('sha256', this.opts.secret).update(`${raw}|${accountId ?? ''}`).digest('base64url').slice(0, 16);
     if (sig !== expect) return new Response('bad signature', { status: 403 });
-    return this.fetchMedia(raw, accountId);
+    return this.fetchMedia(raw, accountId, undefined, jxl);
   }
 
   /**
@@ -2862,7 +2893,8 @@ export class HubServer {
 
   /** Fetch one URL into the media cache, as showing it would (mediaarchive.ts); true when it is there. */
   private async archiveOne(url: string, accountId: string | null, from?: string): Promise<boolean> {
-    const res = await this.fetchMedia(url, accountId, from);
+    // Whether it is there, not its bytes: a packed picture isn't rebuilt for it.
+    const res = await this.fetchMedia(url, accountId, from, true);
     await res.body?.cancel().catch(() => {});
     return res.ok;
   }
@@ -2913,19 +2945,18 @@ export class HubServer {
    * The bytes behind `raw`, from the media cache, else fetched and kept there. `from` is where to fetch them when not
    * from `raw` itself: a Discord link signed again, whose bytes are kept under the old link the message has.
    */
-  private async fetchMedia(raw: string, accountId: string | null, from?: string): Promise<Response> {
+  private async fetchMedia(raw: string, accountId: string | null, from?: string, jxl = false): Promise<Response> {
     const cacheDir = join(this.opts.dataDir, 'media-cache');
     if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
     const key = new Bun.CryptoHasher('sha256').update(raw).digest('hex');
     const file = join(cacheDir, key);
-    const headers = (mime: string) => mediaHeaders(raw, key, mime);
-    if (existsSync(file) && existsSync(file + '.mime')) {
+    if (existsSync(file + '.mime') && (existsSync(file) || existsSync(file + '.jxl'))) {
       // Recently seen stays longest when the cache is trimmed (mediacache.ts).
       try {
         const t = new Date();
-        utimesSync(file, t, t);
+        utimesSync(existsSync(file) ? file : file + '.jxl', t, t);
       } catch {}
-      return new Response(Bun.file(file), { headers: headers(this.trueType(key, readFileSync(file + '.mime', 'utf8'))) });
+      return this.serveKept(file, key, raw, this.trueType(key, readFileSync(file + '.mime', 'utf8')), jxl);
     }
 
     let bytes: Uint8Array;
@@ -2940,7 +2971,7 @@ export class HubServer {
       const r = await fetchPublicToFile(from ?? raw, file);
       if (!r.ok) return new Response(r.error, { status: r.status });
       writeFileSync(file + '.mime', r.mime, { mode: 0o600 });
-      return new Response(Bun.file(file), { headers: headers(r.mime) });
+      return this.serveKept(file, key, raw, r.mime, jxl);
     } else if (raw.startsWith('file://') && resolve(normalize(decodeURIComponent(raw.slice('file://'.length)))).startsWith(resolve(this.opts.dataDir) + '/')) {
       // A file under this hub's data (an import, an account whose session the hub keeps): read here. One elsewhere is
       // the account's own (an account dither-accounts made keeps its files in its own folder): asked of it below.
@@ -2950,6 +2981,8 @@ export class HubServer {
       const f = Bun.file(p);
       const named = f.type.split(';')[0];
       const type = named !== 'application/octet-stream' ? f.type : (sniffMime(new Uint8Array(await f.slice(0, 16).arrayBuffer())) ?? this.trueType(key, named));
+      const common = !jxl && type.split(';')[0] === JXL ? await this.jxlServe.common(key, p) : null;
+      if (common) return new Response(Buffer.from(common.bytes), { headers: mediaHeaders(raw, key, common.mime) });
       return new Response(f, { headers: mediaHeaders(raw, key, type) });
     } else {
       if (!accountId) return new Response('no account to resolve media', { status: 404 });
@@ -2961,7 +2994,34 @@ export class HubServer {
     // Decrypted attachments end up here too.
     writeFileSync(file, bytes, { mode: 0o600 });
     writeFileSync(file + '.mime', mime, { mode: 0o600 });
-    return new Response(Buffer.from(bytes), { headers: headers(mime) });
+    return this.serveKept(file, key, raw, mime, jxl);
+  }
+
+  /**
+   * A file in the media cache as this device gets it (jxl.ts, docs/files.md "JPEG XL"): a packed picture as JPEG XL
+   * where the device shows it, else rebuilt as it came; a JPEG XL someone sent as a JPEG or PNG where it doesn't.
+   * `type`: what the file is; `jxl`: the device shows JPEG XL.
+   */
+  private async serveKept(file: string, key: string, raw: string, type: string, jxl: boolean): Promise<Response> {
+    const headers = (mime: string) => mediaHeaders(raw, key, mime);
+    const essence = type.split(';')[0].trim().toLowerCase();
+    if (!existsSync(file) && existsSync(file + '.jxl')) {
+      if (jxl) return new Response(Bun.file(file + '.jxl'), { headers: headers(JXL) });
+      const r = await this.jxlServe.rebuilt(key, file + '.jxl');
+      return r ? new Response(Buffer.from(r.bytes), { headers: headers(r.mime) }) : new Response('this picture could not be rebuilt', { status: 503 });
+    }
+    if (essence === JXL && !jxl) {
+      const r = await this.jxlServe.common(key, file);
+      if (r) return new Response(Buffer.from(r.bytes), { headers: headers(r.mime) });
+    }
+    if (!PACKED_TYPES.has(essence)) return new Response(Bun.file(file), { headers: headers(type) });
+    // One the packer may pack meanwhile is read now, not as the answer goes out.
+    try {
+      return new Response(readFileSync(file), { headers: headers(type) });
+    } catch (e) {
+      if (existsSync(file + '.jxl')) return this.serveKept(file, key, raw, type, jxl);
+      throw e;
+    }
   }
 
   // ---------------------------------------------------------------- static PWA
