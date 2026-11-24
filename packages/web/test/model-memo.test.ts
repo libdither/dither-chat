@@ -1,6 +1,7 @@
 /**
  * src/model.ts: what depends only on names, settings and what is where is worked out again when those change
  * (`changed('meta')`), not for a message or a read (`changed('list')`); what changes with those is up to date either way.
+ * The places, their counts and order are not worked out again for identities, the inbox or the devices list.
  */
 import { expect, mock, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
@@ -8,7 +9,7 @@ import { changed } from '../src/versions.ts';
 import { db, stateMock } from './fixtures/state.ts';
 
 mock.module('../src/state.ts', stateMock);
-const { activityOfSpace, allCommunities, channelsUnder, convsUnder, effectiveLevel, firstChannel, railEntries, spaceUnread } = await import('../src/model.ts');
+const { activityOfSpace, allCommunities, channelsUnder, convsUnder, effectiveLevel, firstChannel, railEntries, spaceUnread, totalUnread } = await import('../src/model.ts');
 
 const acc = { id: 'acc', network: 'discord', label: 'me' } as unknown as P.AccountView;
 const space = (id: string, name: string): P.SpaceView => ({ id, network: 'discord', nativeId: id, kind: 'community', name, topic: null, icon: null, accountIds: ['acc'], nativeMute: null });
@@ -44,6 +45,23 @@ test('a message or a read changes counts and order at once, with the same walk',
   expect(activityOfSpace('s1')).toBe(400);
   expect(allCommunities().map((s) => s.id)).toEqual(['s1', 's2']);
   expect(railEntries().map((e) => e.key)).toEqual(['space:s1', 'space:s2']);
+});
+
+test("identities arriving, the inbox and the hub's devices leave the places, their counts and order as they were", () => {
+  const under = convsUnder('s1');
+  const rail = railEntries();
+  const total = totalUnread();
+  for (const kind of ['identity', 'inbox', 'devices'] as const) {
+    changed(kind);
+    expect(convsUnder('s1')).toBe(under);
+    expect(railEntries()).toBe(rail);
+    expect(totalUnread()).toBe(total);
+  }
+  // A message or a read: worked out again.
+  changed('list');
+  expect(convsUnder('s1')).not.toBe(under);
+  expect(railEntries()).not.toBe(rail);
+  expect(totalUnread()).not.toBe(total);
 });
 
 test('what is where is walked again only when it may have changed', () => {

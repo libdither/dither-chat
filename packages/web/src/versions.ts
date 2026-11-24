@@ -26,6 +26,13 @@ const timelineRevs = new Map<string, Signal<number>>();
 let version = 0;
 /** Moves on every change to `db` at once, before the signals do: memos keyed on it are never stale. */
 export const dataVersion = () => version;
+let placesVersion = 0;
+/**
+ * The same, but not for who wrote (identities that came with a page of messages or the inbox, `changed('identity')`)
+ * nor the inbox's messages (`changed('inbox')`): what counts, finds and orders conversations, places and people reads
+ * neither (model.ts `placesMemo`), so the inbox arriving after a start does not work out the rail and the badge again.
+ */
+export const placesDataVersion = () => placesVersion;
 let metaVersion = 0;
 /**
  * The same for names, settings and what is where (a change that moves `metaRev`), not a conversation's last message
@@ -50,11 +57,15 @@ let scheduled = false;
  * 'shown': only how things already where they are look (people's names and pictures, what a message's reaction row
  * offers), which moves `metaRev` but not what is where. 'open': only which folders are open, which moves what is where
  * (`metaDataVersion`) but nothing a message or a row shows, so `metaRev` stays and the rail draws it from `rev`.
+ * 'identity': only identities, the names and pictures of who wrote: as 'shown', but `placesDataVersion` stays.
+ * 'inbox': only the inbox's messages (`inbox`, `mailTriage`), and 'devices' only the hub's list of devices: `rev`
+ * moves, `placesDataVersion` stays.
  */
-export function changed(kind: 'list' | 'meta' | 'shown' | 'open') {
+export function changed(kind: 'list' | 'meta' | 'shown' | 'open' | 'identity' | 'inbox' | 'devices') {
   version++;
+  if (kind !== 'identity' && kind !== 'inbox' && kind !== 'devices') placesVersion++;
   dirty.list = true;
-  if (kind === 'meta' || kind === 'shown') dirty.meta = true;
+  if (kind === 'meta' || kind === 'shown' || kind === 'identity') dirty.meta = true;
   if (kind === 'meta' || kind === 'open') metaVersion++;
   schedule();
 }
