@@ -192,7 +192,7 @@ async function main() {
       });
       runs[key].push(m);
       if (slow)
-        console.log(`slow link ${cpu}× run ${i + 1}: cold to content ${m['cold.content'].v} ms (${m['cold.toContent.requests'].v} requests, ${m['cold.toContent.bytes'].v} B), the bootstrap ${m['cold.bootstrap.bytes'].v} B in ${m['cold.bootstrap'].v} ms beside ${m['cold.competing.bytes'].v} B of ${m['cold.competing.requests'].v} others; first open ${m['open.ms'].v} ms; precache ${m['precache.requests'].v} requests, ${m['precache.bytes'].v} B, done at ${m['precache.ms'].v} ms; relaunch to content ${m['relaunch.content'].v} ms after ${m['relaunch.toContent.answers'].v} answers, to fresh ${m['relaunch.fresh'].v} ms; socket opened ${m['socket.opens'].v}, dropped by the heartbeat ${m['socket.drops'].v}`);
+        console.log(`slow link ${cpu}× run ${i + 1}: cold to content ${m['cold.content'].v} ms (${m['cold.toContent.requests'].v} requests, ${m['cold.toContent.bytes'].v} B), the bootstrap ${m['cold.bootstrap.bytes'].v} B in ${m['cold.bootstrap'].v} ms beside ${m['cold.competing.bytes'].v} B of ${m['cold.competing.requests'].v} others; first open ${m['open.ms'].v} ms; precache ${m['precache.requests'].v} requests, ${m['precache.bytes'].v} B, done at ${m['precache.ms'].v} ms; relaunch to content ${m['relaunch.content'].v} ms after ${m['relaunch.toContent.answers'].v} answers, to fresh ${m['relaunch.fresh'].v} ms; socket opened ${m['socket.opens'].v}, ${m['socket.pings'].v} pings, the slowest pong ${m['socket.pongMax'].v} ms, dropped by the heartbeat ${m['socket.drops'].v}`);
       else if (ahead)
         console.log(`ahead ${cpu}× run ${i + 1}: ${m['ahead.pages'].v} pages and ${m['ahead.pictures'].v} pictures fetched ahead, ${m['ahead.requests'].v} requests, ${m['ahead.bytes'].v} B; the first five rows open in ${m['ahead.open'].v} ms (${m['ahead.served'].v} of 5 from it), ${m['noahead.open']?.v ?? '-'} ms without; right after a relaunch ${m['ahead.relaunch'].v} ms (${m['ahead.relaunchServed'].v} of 3 kept), ${m['noahead.relaunch']?.v ?? '-'} ms without`);
       else if (phone)
@@ -542,10 +542,13 @@ async function aheadRun(cpu: number): Promise<Metrics> {
   return m;
 }
 
-/** The live socket's life in the page: opened, closed by the app (its heartbeat gave up on it), closed from the far end. */
+/**
+ * The live socket's life in the page: opened, closed by the app (its heartbeat gave up on it), closed from the far end,
+ * and the heartbeat's pings with the longest wait for a pong.
+ */
 const SOCKETS = `(() => {
   const W = window.WebSocket;
-  window.__sock = { opened: 0, dropped: 0, closed: 0 };
+  window.__sock = { opened: 0, dropped: 0, closed: 0, pings: 0, pongMax: 0 };
   window.WebSocket = class extends W {
     constructor(u, p) {
       super(u, p);
@@ -555,6 +558,10 @@ const SOCKETS = `(() => {
       const close = this.close.bind(this);
       this.close = (...a) => { if (!mine && this.readyState <= 1) (mine = true), __sock.dropped++; return close(...a); };
       this.addEventListener('close', () => mine || __sock.closed++);
+      let sent = 0;
+      const send = this.send.bind(this);
+      this.send = (d) => { if (d === 'ping') (sent = performance.now()), __sock.pings++; return send(d); };
+      this.addEventListener('message', (e) => { if (e.data === 'pong' && sent) (__sock.pongMax = Math.max(__sock.pongMax, performance.now() - sent)), (sent = 0); });
     }
   };
 })()`;
@@ -589,15 +596,20 @@ async function slowRun(cpu: number): Promise<Metrics> {
       return { origin: performance.timeOrigin, content: performance.timeOrigin + c.startTime, fresh: performance.timeOrigin + performance.getEntriesByName('dither:fresh')[0].startTime, source: c.detail?.source };
     })()`);
   };
-  const sockets = () => page.eval<{ opened: number; dropped: number; closed: number }>('({ ...__sock })');
+  const sockets = () => page.eval<{ opened: number; dropped: number; closed: number; pings: number; pongMax: number }>('({ ...__sock })');
   try {
     await page.size(390, 844, true);
     if (cpu > 1) await page.send('Emulation.setCPUThrottlingRate', { rate: cpu });
     await page.send('Page.addScriptToEvaluateOnNewDocument', { source: INIT });
     await page.send('Page.addScriptToEvaluateOnNewDocument', { source: SOCKETS });
 
-    // Cold: nothing on the device, not even the app.
+    // Cold: nothing on the device, not even the app. Once the bootstrap is asked for, the app is brought back to the
+    // front, as someone who looked away while it loaded would: its heartbeat pings the socket (state.ts probe) while
+    // the link is at its busiest, and a pong later than PONG_WAIT drops a socket that was fine.
     await page.goto(url);
+    const n = link.reqs.length;
+    for (let i = 0; i < 1200 && !link.reqs.slice(n).some((r) => r.kind === 'bootstrap'); i++) await Bun.sleep(50);
+    await page.eval(`window.dispatchEvent(new Event('focus'))`);
     const cold = await marks();
     put('cold.content', cold.content - cold.origin);
     put('cold.fresh', cold.fresh - cold.origin);
@@ -674,6 +686,8 @@ async function slowRun(cpu: number): Promise<Metrics> {
     put('socket.opens', s1.opened + s2.opened, 'count');
     put('socket.drops', s1.dropped + s2.dropped, 'count');
     put('socket.closes', s1.closed + s2.closed, 'count');
+    put('socket.pings', s1.pings + s2.pings, 'count');
+    put('socket.pongMax', Math.max(s1.pongMax, s2.pongMax));
     log(link.reqs.slice(n0), warm.origin);
     if (page.errors.length) console.warn('page errors:', page.errors.slice(0, 5));
   } finally {
