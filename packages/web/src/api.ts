@@ -20,6 +20,8 @@ interface HubCall {
   signal?: AbortSignal;
   /** Told when the answer begins: its status and headers are here. */
   onAnswer?: () => void;
+  /** Asked for already (index.html's bootstrap, state.ts): its answer is read here, and `abort` gives it up. */
+  early?: { res: Promise<Response>; abort: () => void };
 }
 
 /**
@@ -27,7 +29,7 @@ interface HubCall {
  * TypeError, so every caller treats it as no answer at all, not as a refusal.
  */
 export async function hubFetch(path: string, init: HubCall & { headers?: Record<string, string>; cache?: RequestCache } = {}): Promise<{ res: Response; text: string }> {
-  const { quiet, signal } = init;
+  const { quiet, signal, early } = init;
   const ctl = quiet || signal ? new AbortController() : null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let why = '';
@@ -41,14 +43,16 @@ export async function hubFetch(path: string, init: HubCall & { headers?: Record<
   if (signal?.aborted) linkGone();
   signal?.addEventListener('abort', linkGone, { once: true });
   poke();
+  if (early) ctl?.signal.addEventListener('abort', early.abort, { once: true });
   try {
-    const res = await fetch(path, {
-      method: init.method,
-      body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
-      headers: init.headers,
-      cache: init.cache,
-      signal: ctl?.signal,
-    });
+    const res = await (early?.res ??
+      fetch(path, {
+        method: init.method,
+        body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+        headers: init.headers,
+        cache: init.cache,
+        signal: ctl?.signal,
+      }));
     init.onAnswer?.();
     if (!ctl || !res.body) return { res, text: await res.text() };
     // Read a piece at a time: a long answer on a slow link is still coming, which is not quiet.

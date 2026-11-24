@@ -94,6 +94,13 @@ adapter announcing the same things again, and a send retried after a lost answer
   keeps too, so a cold start resumes from the snapshot rather than starting over. It waits for the snapshot read
   (at most 1.5 s) before asking. Only a refusal leads to a full bootstrap. Frames that arrive while a sync is in
   flight are held and applied after its answer, in order, so the answer cannot undo them.
+- **Before the app's script**: `index.html` opens the live socket itself, so it is open by the time the app's script
+  has come (seconds on a slow link), and `connect` takes it over with the frames it got meanwhile, which are held as
+  any others. On a device that keeps no snapshot (it looks in IndexedDB for one, without making the database), it
+  also asks for the bootstrap once that socket is open: the same order as the app's own, socket first, so nothing
+  that happens in between is missed, and the bootstrap no longer waits for the script, the snapshot read and a second
+  handshake. The app reads that answer as its own; a snapshot found after all, or the socket replaced before the
+  answer was read, gives it up.
 - **Timelines**: held ones are caught up in the same request; a kept page ([below](#kept-pages)) catches up from its
   own position when opened. A pull to refresh still reloads everything.
 - **Heartbeat**: a `ping` text frame every 25 s while in sight, and at once on `visibilitychange`, `focus`, `online`
