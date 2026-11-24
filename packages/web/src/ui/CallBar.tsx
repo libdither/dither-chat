@@ -12,7 +12,7 @@ import type { JSX } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { type ActiveCall, activeCall, callControls, callName, callStatus, featuredSpeaker } from '../call.ts';
 import { barKinds, barShows, idleFaces } from '../callbar.ts';
-import { communitiesOf, convTitle, inboxKeyOf } from '../model.ts';
+import { communitiesOf, convTitle, faceOf, inboxKeyOf } from '../model.ts';
 import { PANE_DEFAULT, paneWidths } from '../panes.ts';
 import { useLayer } from '../phone.ts';
 import { callIn } from '../ringing.ts';
@@ -64,8 +64,8 @@ function BarFace({ call, phase }: { call: ActiveCall; phase: string }) {
     <span class={`call-bar-idle n${faces.length}`}>
       {faces.length
         ? faces.map((id) => {
-            const i = db.identities.get(id);
-            return <Avatar id={i?.personId ?? id} name={callName(id)} url={i?.avatar ?? null} size={faces.length === 1 ? 32 : 22} />;
+            const f = faceOf(id);
+            return <Avatar id={f.id} name={callName(id)} url={f.url} size={faces.length === 1 ? 32 : 22} />;
           })
         : c && <ConvFace c={c} size={32} />}
       <i class={`call-bar-phase call-dot ${phase === 'reaching' ? 'connecting' : phase}`} />

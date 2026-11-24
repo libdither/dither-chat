@@ -2146,13 +2146,17 @@ export class HubServer {
       return ok();
     }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)$/)) && method === 'PATCH') {
-      const b = await body<{ name?: unknown; note?: unknown; main?: unknown; picture?: unknown }>();
+      const b = await body<{ name?: unknown; note?: unknown; face?: unknown; picture?: unknown }>();
       if (b.name !== undefined) return bad(NICKNAME_MOVED);
-      // Which of their accounts speaks for them (docs/profile.md): an identity id of theirs, or null to clear it.
-      const src = (v: unknown) => v === undefined || v === null || typeof v === 'string';
-      if (!src(b.main) || !src(b.picture)) return bad('Say main and picture: an identity id of theirs, or null');
-      if ((b.main !== undefined || b.picture !== undefined) && !s.setPersonSources(m[1], { main: b.main as string | null | undefined, picture: b.picture as string | null | undefined }))
-        return bad('not one of their accounts', 404);
+      // Shown by one of their accounts (its name and picture), or null to let the hub choose (docs/chats.md, Names);
+      // `picture`: another of theirs whose picture shows instead, or null for the face's (docs/profile.md).
+      const idOrNull = (v: unknown) => v === undefined || v === null || typeof v === 'string';
+      if (!idOrNull(b.face) || !idOrNull(b.picture)) return bad('face and picture are an identity id or null');
+      if (b.face !== undefined || b.picture !== undefined) {
+        if (!s.one('SELECT 1 FROM person WHERE id = ? AND is_self = 0', m[1])) return bad('no such person', 404);
+        if (b.face !== undefined && !s.setPersonFace(m[1], b.face as string | null)) return bad('that account is not theirs');
+        if (b.picture !== undefined && !s.setPersonPicture(m[1], b.picture as string | null)) return bad('that account is not theirs');
+      }
       s.updatePerson(m[1], { ...(typeof b.note === 'string' ? { note: b.note } : {}) });
       // Kept on their networks too, where an account keeps notes (capability 'contactNotes').
       if (typeof b.note === 'string') this.people.pushPersonNote(m[1], b.note);

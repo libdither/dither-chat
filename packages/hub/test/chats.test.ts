@@ -253,6 +253,89 @@ describe('names', () => {
   });
 });
 
+describe('faces: one account shows them, its name and its picture', () => {
+  const kitRow = () => store.one<{ name: string; avatar_url: string | null; face_id: string; face_pinned: number }>('SELECT name, avatar_url, face_id, face_pinned FROM person WHERE id = ?', kit)!;
+  const exe = idn('discord', 'k-exe');
+  const work = idn('discord', 'k-work');
+  const sigKit = idn('signal', 'aci-kit');
+
+  test('a merged person’s picture follows their face’s, and comes from another of theirs while it has none', () => {
+    expect(kitRow()).toMatchObject({ name: 'Kit', face_id: exe, face_pinned: 0 });
+    // kit.exe has no picture: Kit (work)'s stands in, until kit.exe has one, and then follows it.
+    store.ingest(main, { t: 'identity', identity: { nativeId: 'k-work', handle: 'kit.work', displayName: 'Kit (work)', avatarUrl: 'https://cdn.example/work.png' } });
+    expect(kitRow().avatar_url).toBe('https://cdn.example/work.png');
+    store.ingest(main, { t: 'identity', identity: { nativeId: 'k-exe', handle: 'kit.exe', displayName: 'Kit', avatarUrl: 'https://cdn.example/exe1.png' } });
+    expect(kitRow().avatar_url).toBe('https://cdn.example/exe1.png');
+    store.ingest(main, { t: 'identity', identity: { nativeId: 'k-exe', handle: 'kit.exe', displayName: 'Kit', avatarUrl: 'https://cdn.example/exe2.png' } });
+    expect(kitRow()).toMatchObject({ name: 'Kit', avatar_url: 'https://cdn.example/exe2.png' });
+    // Another account's new name or picture does not change them.
+    store.ingest(main, { t: 'identity', identity: { nativeId: 'k-work', handle: 'kit.work', displayName: 'K at work', avatarUrl: 'https://cdn.example/work2.png' } });
+    expect(kitRow()).toMatchObject({ name: 'Kit', avatar_url: 'https://cdn.example/exe2.png' });
+  });
+
+  test('you choose their face: name and picture both come from it, and null lets the hub choose again', async () => {
+    let r = await call('PATCH', `/api/persons/${kit}`, { face: work });
+    expect(r.status).toBe(200);
+    expect(kitRow()).toEqual({ name: 'K at work', avatar_url: 'https://cdn.example/work2.png', face_id: work, face_pinned: 1 });
+    const view = store.personView(store.one('SELECT * FROM person WHERE id = ?', kit)!);
+    expect(view).toMatchObject({ name: 'K at work', faceId: work, facePinned: true });
+    // Another person's account, a bad value, nobody.
+    expect((await call('PATCH', `/api/persons/${kit}`, { face: idn('discord', 'solo') })).status).toBe(400);
+    expect((await call('PATCH', `/api/persons/${kit}`, { face: 3 })).status).toBe(400);
+    expect((await call('PATCH', '/api/persons/per_nobody', { face: work })).status).toBe(404);
+    // Chosen again: the one talked with last (Kit on Signal and kit.work both at 3000, kit.exe's DM at 4000).
+    r = await call('PATCH', `/api/persons/${kit}`, { face: null });
+    expect(r.status).toBe(200);
+    expect(kitRow()).toMatchObject({ name: 'Kit', face_id: exe, face_pinned: 0 });
+  });
+
+  test('a nickname on another account names only it, even when the hub chooses again', async () => {
+    await call('PATCH', `/api/identities/${sigKit}`, { nickname: 'Kit, raid nights' });
+    expect(kitRow().name).toBe('Kit');
+    await call('PATCH', `/api/persons/${kit}`, { face: null });
+    expect(kitRow()).toMatchObject({ name: 'Kit', face_id: exe });
+    await call('PATCH', `/api/identities/${sigKit}`, { nickname: null });
+  });
+
+  test('splitting off their face: another of theirs shows them, with its own picture', () => {
+    store.ingest(main, { t: 'identity', identity: { nativeId: 'k-solo', handle: 'kit.solo', displayName: 'Kit Solo', avatarUrl: 'https://cdn.example/solo.png' } });
+    const solo = idn('discord', 'k-solo');
+    const other = store.ensurePerson(solo);
+    store.mergePersons(kit, other);
+    // The one kept keeps its face.
+    expect(kitRow()).toMatchObject({ name: 'Kit', face_id: exe });
+    store.setPersonFace(kit, solo);
+    expect(kitRow()).toMatchObject({ name: 'Kit Solo', avatar_url: 'https://cdn.example/solo.png', face_pinned: 1 });
+    const pid = store.splitIdentity(solo)!;
+    expect(kitRow()).toMatchObject({ name: 'Kit', face_id: exe, face_pinned: 0, avatar_url: 'https://cdn.example/exe2.png' });
+    expect(store.one('SELECT name, avatar_url FROM person WHERE id = ?', pid)).toEqual({ name: 'Kit Solo', avatar_url: 'https://cdn.example/solo.png' });
+  });
+});
+
+test('faces, once: a merged person is shown by the account they are named after, and takes its picture', () => {
+  const d2 = mkdtempSync(join(tmpdir(), 'dither-faces-'));
+  try {
+    const path = join(d2, 'hub.sqlite');
+    let s = new Store(path, mediaSigner('s'));
+    const a = s.createAccount({ network: 'discord', label: 'x', color: '#000', adapter: 'discord' });
+    const fact = (id: string, name: string, pic: string) => s.ingest(s.account(a.id)!, { t: 'identity', identity: { nativeId: id, handle: name.toLowerCase(), displayName: name, avatarUrl: pic } });
+    fact('f1', 'Fay', 'https://cdn.example/f1.png');
+    fact('f2', 'Fae', 'https://cdn.example/f2.png');
+    const i = (n: string) => hubId('idn', 'discord', n);
+    const fay = s.ensurePerson(i('f1'));
+    s.mergePersons(fay, s.ensurePerson(i('f2')));
+    // As a hub from before faces: named after Fae (by handle), the picture left from before, no face.
+    s.db.query(`UPDATE person SET name = '@fae', avatar_url = 'https://cdn.example/stale.png', face_id = NULL WHERE id = ?`).run(fay);
+    s.db.query(`DELETE FROM meta WHERE key = 'person_faces'`).run();
+    s.db.close();
+    s = new Store(path, mediaSigner('s'));
+    expect(s.one('SELECT name, avatar_url, face_id FROM person WHERE id = ?', fay)).toEqual({ name: 'Fae', avatar_url: 'https://cdn.example/f2.png', face_id: i('f2') });
+    s.db.close();
+  } finally {
+    rmSync(d2, { recursive: true, force: true });
+  }
+});
+
 test('where old names came from: merged under an account’s name is a merge, anything else a nickname, on their account', () => {
   const d2 = mkdtempSync(join(tmpdir(), 'dither-names-'));
   try {
@@ -319,7 +402,7 @@ test('nicknames move onto the accounts, once: a named person’s name goes to ea
   }
 });
 
-test('a main account speaks for them: its name and picture, following it, until it is cleared or split off', () => {
+test('a picture account: their picture from one account, their name from their face, until cleared or split off', () => {
   const d2 = mkdtempSync(join(tmpdir(), 'dither-main-'));
   try {
     const s = new Store(join(d2, 'hub.sqlite'), mediaSigner('s'));
@@ -331,33 +414,29 @@ test('a main account speaks for them: its name and picture, following it, until 
     const pid = s.ensurePerson(r1);
     s.mergePersons(pid, s.ensurePerson(r2));
     const row = () => s.one<{ name: string; avatar_url: string }>('SELECT name, avatar_url FROM person WHERE id = ?', pid)!;
-    expect(row()).toEqual({ name: 'Rowan', avatar_url: 'https://pics.example/r1.png' });
 
-    expect(s.setPersonSources(pid, { main: r2 })).toBe(true);
-    expect(row()).toEqual({ name: 'rowan kestrel', avatar_url: 'https://pics.example/r2.png' });
-    // It follows the main account: a rename, a new picture, your nickname for it.
+    // Their main account (a pinned face) names them; the picture can come from another of theirs, and follows it.
+    expect(s.setPersonFace(pid, r2)).toBe(true);
+    expect(s.setPersonPicture(pid, r1)).toBe(true);
+    expect(row()).toEqual({ name: 'rowan kestrel', avatar_url: 'https://pics.example/r1.png' });
+    s.ingest(acc(), { t: 'identity', identity: { nativeId: 'r1', handle: 'rowan.k', displayName: 'Rowan', avatarUrl: 'https://pics.example/r1b.png' } });
     s.ingest(acc(), { t: 'identity', identity: { nativeId: 'r2', handle: 'rkestrel', displayName: 'Rowan K', avatarUrl: 'https://pics.example/r2b.png' } });
-    expect(row()).toEqual({ name: 'Rowan K', avatar_url: 'https://pics.example/r2b.png' });
-    s.setIdentityNickname(r2, 'Ro');
-    expect(row().name).toBe('Ro');
-    // The picture can come from another account than the name.
-    s.setPersonSources(pid, { picture: r1 });
-    expect(row()).toEqual({ name: 'Ro', avatar_url: 'https://pics.example/r1.png' });
+    expect(row()).toEqual({ name: 'Rowan K', avatar_url: 'https://pics.example/r1b.png' });
     const view = s.personView(s.one('SELECT * FROM person WHERE id = ?', pid)!);
-    expect([view.mainIdentityId, view.pictureIdentityId]).toEqual([r2, r1]);
+    expect(view).toMatchObject({ faceId: r2, facePinned: true, pictureIdentityId: r1 });
 
-    // Cleared, they keep the name and picture they had.
-    s.setPersonSources(pid, { main: null, picture: null });
-    expect(row()).toEqual({ name: 'Ro', avatar_url: 'https://pics.example/r1.png' });
-    s.setPersonSources(pid, { main: r2, picture: r1 });
-    // Not theirs, or your own: refused.
+    // Cleared, the face's picture again.
+    s.setPersonPicture(pid, null);
+    expect(row()).toEqual({ name: 'Rowan K', avatar_url: 'https://pics.example/r2b.png' });
+    // Not theirs: refused.
     s.ingest(acc(), { t: 'identity', identity: { nativeId: 'z9', handle: 'z9', displayName: 'Zed' } });
-    expect(s.setPersonSources(pid, { main: hubId('idn', 'discord', 'z9') })).toBe(false);
+    expect(s.setPersonPicture(pid, hubId('idn', 'discord', 'z9'))).toBe(false);
 
-    // Split off, the main account no longer speaks for them.
-    s.splitIdentity(r2);
-    expect(s.one('SELECT main_identity_id, picture_identity_id FROM person WHERE id = ?', pid)).toEqual({ main_identity_id: null, picture_identity_id: r1 });
-    expect(row().name).toBe('Rowan');
+    // Split off, the picture account no longer gives them its picture.
+    s.setPersonPicture(pid, r1);
+    s.splitIdentity(r1);
+    expect(s.one('SELECT picture_identity_id FROM person WHERE id = ?', pid)).toEqual({ picture_identity_id: null });
+    expect(row()).toEqual({ name: 'Rowan K', avatar_url: 'https://pics.example/r2b.png' });
     s.db.close();
   } finally {
     rmSync(d2, { recursive: true, force: true });

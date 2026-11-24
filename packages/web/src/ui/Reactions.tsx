@@ -4,7 +4,7 @@ import type * as P from '@dither-chat/protocol';
 import { NETWORK_META, REACTION_RULES } from '@dither-chat/protocol';
 import { emojiNow, loadEmoji, searchEmoji, SKIN_TONES, skinOf } from '../emoji.ts';
 import { customMarkup } from '../emojiComplete.ts';
-import { authorName } from '../model.ts';
+import { authorName, faceOf } from '../model.ts';
 import { clearReactions, modOf } from '../moderate.ts';
 import { hasMine, knownReactionContext, pickerFor, quickReactions, reactedAt, reactionContext, reactionScope, reactionTip, reactorsFor, replacing, toggleReaction, whenText, whenTitle, type Picked } from '../reactions.ts';
 import { api, db, isSelfIdentity, pref, rev, setPrefs } from '../state.ts';
@@ -650,7 +650,7 @@ function Reactors({ m, reactionKey, style, anchor, onClose }: { m: P.MessageView
           const past = turns(pastOf.get(id) ?? []);
           return (
             <div class="reactor">
-              <Avatar id={id} name={name} url={db.identities.get(id)?.avatar} size={24} />
+              <Avatar id={faceOf(id).id} name={name} url={faceOf(id).url} size={24} />
               <span class="reactor-who">
                 <span>{name}</span>
                 {past.length > 0 && <small class="reactor-past">{past.join(' · ')}</small>}
@@ -673,7 +673,7 @@ function Reactors({ m, reactionKey, style, anchor, onClose }: { m: P.MessageView
           const past = turns(pastOf.get(id)!);
           return (
             <div class="reactor gone">
-              <Avatar id={id} name={name} url={db.identities.get(id)?.avatar} size={24} />
+              <Avatar id={faceOf(id).id} name={name} url={faceOf(id).url} size={24} />
               <span class="reactor-who">
                 <span>{name}</span>
                 {past.length > 1 && <small class="reactor-past">{past.slice(0, -1).join(' · ')}</small>}

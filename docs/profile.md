@@ -50,7 +50,7 @@ Left:
   right-click or a hold opens it as a menu): Make Main Account, Use Its Picture, Set Nickname… (Change Nickname… and
   Remove Nickname once it has one, editing the name on the row in place; only you see it, docs/chats.md "Names"), Copy
   the handle and the id, Open on the network, Split Into Its Own Person. A line under the rows says which account
-  speaks for them, or that none does. The merge hint and search sit under it. Before 2026-11-23 each account was a
+  speaks for them, and whether you chose it or the hub did. The merge hint and search sit under it. Before 2026-11-23 each account was a
   tile with its bio on it and its menu behind ⋯; before 2026-11-11 the hero had a chip per handle and the right
   column a plain row per identity, with one picture for the person.
 - **Maybe the same person**: up to four Same person? suggestions with this person in them (docs/same-person.md), each
@@ -117,16 +117,17 @@ blocked alerts (triage: "From someone you blocked"); on Signal their messages st
 
 ### Which account speaks for them
 
-Someone with several accounts shows one name, one picture and the bios of all of them. By default the name is the one
-a merge kept (docs/chats.md "Names"), the picture the person's (the first account's), the banner Discord's, and the
-bios longest first. **Make Main Account** on one of their accounts (its Edit, or its menu) makes that account speak
-for them: its name as you see it is theirs everywhere (with your nickname for it, if you gave one), its picture is
-theirs, its bio comes first in About, and its banner shows where it has one. They follow it: the network renaming the
-account, a new picture, a nickname you give it. **Use Its Picture** on another account takes the picture from that
-one instead. Pressing either again clears it, and they keep the name and picture they had. Splitting the account off
-clears it too. The hub keeps both on the person (`person.main_identity_id`, `person.picture_identity_id`, set with
-`PATCH /api/persons/:id { main, picture }`, an identity id of theirs or null; `PersonView.mainIdentityId`,
-`pictureIdentityId`). Not on your own page: your own accounts go by the names you gave them on their networks.
+Someone with several accounts shows one name, one picture and the bios of all of them. One account speaks for them,
+their face (docs/chats.md "Names"): the hub chooses the one you talked with last until you choose. Its name as you
+see it is theirs everywhere (with your nickname for it, if you gave one), its picture is theirs, its bio comes first
+in About, and its banner shows where it has one (else Discord's). They follow it: the network renaming the account, a
+new picture, a nickname you give it. **Make Main Account** on one of their accounts (its Edit, or its menu) keeps
+that one; pressing it again (checked, **Main Account**) lets the hub choose again. **Use Its Picture** on another
+account takes the picture from that one instead, while it has one; pressing it again goes back to the main account's,
+and so does splitting that account off. The hub keeps both on the person (`person.face_id` with `face_pinned`, and
+`person.picture_identity_id`, set with `PATCH /api/persons/:id { face, picture }`, an identity id of theirs or null;
+`PersonView.faceId`, `facePinned`, `pictureIdentityId`). Not on your own page: your own accounts go by the names you
+gave them on their networks.
 
 ### Your own bio
 

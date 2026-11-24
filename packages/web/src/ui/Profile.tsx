@@ -154,7 +154,7 @@ function HandleChip({ i }: { i: P.IdentityView }) {
  * has as buttons under it: make it the main account, use its picture, your nickname for it, copy, open on the
  * network, split. Its bio is in About, with the others'.
  */
-function AccountRow({ i, since, main, picture, go: open, goLabel, menu: menuOf }: { i: P.IdentityView; since?: string; main: boolean; picture: boolean; go?: () => void; goLabel?: string; menu: (editNickname: () => void) => MenuSpec }) {
+function AccountRow({ i, since, main, chosen, picture, go: open, goLabel, menu: menuOf }: { i: P.IdentityView; since?: string; main: boolean; chosen: boolean; picture: boolean; go?: () => void; goLabel?: string; menu: (editNickname: () => void) => MenuSpec }) {
   const [naming, setNaming] = useState(false);
   const [editing, setEditing] = useState(false);
   const menu = () => menuOf(() => setNaming(true));
@@ -164,7 +164,7 @@ function AccountRow({ i, since, main, picture, go: open, goLabel, menu: menuOf }
   // The menu's entries as buttons; the way to it is the button beside the name already.
   const entries = editing ? menu().items.filter((e): e is Extract<MenuEntry, { run?: () => void }> => 'run' in e && !!e.run && e.label !== goLabel) : [];
   return (
-    <div class={`pf-acct ${editing ? 'editing' : ''}`} data-identity={i.id} data-main={main || undefined} {...ctx}>
+    <div class={`pf-acct ${editing ? 'editing' : ''}`} data-identity={i.id} data-main={main || undefined} data-chosen={chosen || undefined} {...ctx}>
       <Avatar id={i.id} name={name} url={i.avatar} size={36} network={i.network} />
       <div class="pf-acct-text">
         <div class="pf-acct-top">
@@ -176,7 +176,7 @@ function AccountRow({ i, since, main, picture, go: open, goLabel, menu: menuOf }
             </b>
           )}
           {main && (
-            <span class="pf-acct-mark" title="Its name, picture and bio speak for them">
+            <span class="pf-acct-mark" title={chosen ? 'You made it their main account: its name, picture and bio speak for them' : 'Its name, picture and bio speak for them for now, as the account you talked with last; Make Main Account keeps one'}>
               Main
             </span>
           )}
@@ -602,7 +602,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       return st && st.at > a.fetchedAt ? { ...a, bio: st.text ?? '' } : a;
     })
     .filter((a) => a.bio?.trim() && !STOCK_BIO.test(a.bio.trim()))
-    .sort((a, b) => Number(b.identityId === person?.mainIdentityId) - Number(a.identityId === person?.mainIdentityId) || b.bio!.length - a.bio!.length);
+    .sort((a, b) => Number(b.identityId === person?.faceId) - Number(a.identityId === person?.faceId) || b.bio!.length - a.bio!.length);
   const pronouns = said.find((a) => a.pronouns)?.pronouns;
   // The newest heard: an adapter's live status on an identity, else what a profile said. On Signal and WhatsApp the
   // live status is their About, which shows as the bio instead.
@@ -707,10 +707,10 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
 
   // ---- each account: one account is the hero's chip and a row on the right; several are rows of their own
   const several = ids.length > 1;
-  // The account you chose to speak for them, and the one whose picture they show (docs/profile.md).
-  const speaker = ids.find((i) => i.id === person?.mainIdentityId) ?? null;
-  const pictureOf = ids.find((i) => i.id === person?.pictureIdentityId) ?? null;
-  const sources = (patch: { main?: string | null; picture?: string | null }) =>
+  // The account they are shown by, their face (docs/chats.md "Names"), and the one whose picture they show instead.
+  const speaker = (several && ids.find((i) => i.id === person?.faceId)) || null;
+  const pictureOf = (several && ids.find((i) => i.id === person?.pictureIdentityId)) || null;
+  const sources = (patch: { face?: string | null; picture?: string | null }) =>
     person && api(`/api/persons/${person.id}`, { method: 'PATCH', body: patch }).catch((e) => toast({ kind: 'error', title: 'Could not save that', body: e.message }));
   const sinceOf = new Map(said.filter((a) => a.createdAt).map((a) => [a.identityId, monthYear(a.createdAt!)]));
   /** How to reach one account: its chat (the person's page, sending there), else start one, else mail it. */
@@ -737,10 +737,13 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           !!i.handle && i.handle !== i.nativeId && { label: 'Copy ID', icon: 'copy', run: () => copy(i.nativeId, 'Copied') },
           !!link && { label: `Open on ${netName(i.network)}`, icon: 'external', run: () => void window.open(link, '_blank', 'noreferrer') },
         ],
-        // Which account speaks for them: the main one's name, picture and bio; a picture from another.
+        // Which account speaks for them (docs/chats.md "Names"): their face, whose name, picture and bio come first,
+        // kept once you make it the main account, else chosen by the hub; a picture from another.
         several && !isSelf && !!person
           ? [
-              { label: speaker?.id === i.id ? 'Main Account' : 'Make Main Account', icon: 'star', checked: speaker?.id === i.id, track: 'main account', run: () => void sources({ main: speaker?.id === i.id ? null : i.id }) },
+              speaker?.id === i.id && person.facePinned
+                ? { label: 'Main Account', icon: 'star', checked: true, track: 'main account', run: () => void sources({ face: null }) }
+                : { label: 'Make Main Account', icon: 'star', track: 'main account', run: () => void sources({ face: i.id }) },
               !!i.avatar && speaker?.id !== i.id && { label: pictureOf?.id === i.id ? 'Their Picture' : 'Use Its Picture', icon: 'image', checked: pictureOf?.id === i.id, track: 'use picture', run: () => void sources({ picture: pictureOf?.id === i.id ? null : i.id }) },
             ]
           : [],
@@ -901,18 +904,19 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           <div class="pf-acct-list">
             {tiles.map((i) => {
               const r = reach(i);
-              return <AccountRow key={i.id} i={i} since={sinceOf.get(i.id)} main={speaker?.id === i.id} picture={pictureOf?.id === i.id} go={r?.run} goLabel={r?.label} menu={(edit) => accountMenu(i, edit)} />;
+              return <AccountRow key={i.id} i={i} since={sinceOf.get(i.id)} main={speaker?.id === i.id} chosen={speaker?.id === i.id && !!person?.facePinned} picture={pictureOf?.id === i.id} go={r?.run} goLabel={r?.label} menu={(edit) => accountMenu(i, edit)} />;
             })}
           </div>
           {!isSelf && person && (
             <p class="pf-acct-note">
               {speaker ? (
                 <span>
-                  <NetGlyph network={speaker.network} size={11} /> {identityName(speaker.id)} speaks for them: its name{pictureOf ? '' : ' and picture'} everywhere, its bio first in About.
+                  <NetGlyph network={speaker.network} size={11} /> {identityName(speaker.id)} speaks for them{person.facePinned ? '' : ' for now, as the account you talked with last'}: its name{pictureOf ? '' : ' and picture'} everywhere, its bio first in About.
                   {pictureOf && ` Their picture is from ${netName(pictureOf.network)}.`}
+                  {!person.facePinned && ' Make Main Account on one to keep it.'}
                 </span>
               ) : (
-                <>No main account: their name is the one kept when the accounts were joined. Edit one to make it speak for them.</>
+                <>No account speaks for them yet. Edit one and Make Main Account.</>
               )}
             </p>
           )}

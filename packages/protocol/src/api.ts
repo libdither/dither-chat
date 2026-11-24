@@ -96,9 +96,14 @@ export interface PersonView {
   identityIds: string[];
   /** Where `name` came from (NameSource). */
   nameSource: NameSource;
-  /** The account of theirs you chose to speak for them: its name and picture are theirs, its bio first (docs/profile.md). */
-  mainIdentityId?: string;
-  /** The account whose picture they show, when you chose one other than the main account's. */
+  /**
+   * The account they are shown by, for someone of several: `name` is its name as you see it, `avatar` its picture
+   * (else another of theirs). Absent for one account, which is it.
+   */
+  faceId?: string;
+  /** You chose `faceId` (PATCH /api/persons/:id `{ face }`, Make Main Account); absent where the hub keeps one or chooses again. */
+  facePinned?: true;
+  /** The account whose picture they show instead of their face's, when you chose one (PATCH `{ picture }`). */
   pictureIdentityId?: string;
 }
 

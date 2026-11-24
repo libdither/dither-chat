@@ -3,7 +3,7 @@ import { mailSearchable, NETWORKS, parseSearch, searchOp, searchOps, setSearchOp
 import type { ComponentType } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { clock, dayLabel } from '../format.ts';
-import { authorName, communitiesOf, convLabel, convTitle, netName, plainBody, plainMarkdown, resolveTokens, visibleConv } from '../model.ts';
+import { authorName, communitiesOf, convLabel, faceOf, convTitle, netName, plainBody, plainMarkdown, resolveTokens, visibleConv } from '../model.ts';
 import { api, back, db, go, mailRev, openMessage, openProfile, rev } from '../state.ts';
 import { retention } from '../history.ts';
 import { Avatar, Empty, NetBadge, NetGlyph } from './bits.tsx';
@@ -321,7 +321,7 @@ function Line({ m, hit, snippet, why }: { m: P.MessageView; hit?: boolean; snipp
     );
   return (
     <Menuable build={() => messageMenu(m)}>{(ctx) => <button class="search-hit" onClick={open} {...ctx}>
-      <Avatar id={m.authorId ?? m.id} name={authorName(m.authorId)} url={db.identities.get(m.authorId ?? '')?.avatar} size={30} network={m.network} />
+      <Avatar id={faceOf(m.authorId).id || m.id} name={authorName(m.authorId)} url={faceOf(m.authorId).url} size={30} network={m.network} />
       <span class="search-hit-main">
         <span class="search-hit-top">
           <b>{authorName(m.authorId)}</b>

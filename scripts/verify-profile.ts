@@ -205,15 +205,15 @@ try {
   const pressIn = (row: string, label: string) =>
     p.eval(`(() => { const r = [...document.querySelectorAll('.pf-acct')].find((e) => e.querySelector('.pf-acct-name')?.textContent === ${JSON.stringify(row)}); r.querySelector('.pf-acct-edit') || r.querySelector('.pf-acct-edit-btn').click(); return new Promise((ok) => setTimeout(() => { [...r.querySelectorAll('.pf-acct-edit .btn')].find((b) => b.textContent.trim() === ${JSON.stringify(label)}).click(); ok(true); }, 100)); })()`);
   await pressIn(pick, 'Make Main Account');
-  await p.until(`!!document.querySelector('.pf-acct[data-main]') && document.querySelector('.pf-title h1')?.innerText.trim() === ${JSON.stringify(pick)}`, 5000).catch(() => {});
+  await p.until(`!!document.querySelector('.pf-acct[data-chosen]') && document.querySelector('.pf-title h1')?.innerText.trim() === ${JSON.stringify(pick)}`, 5000).catch(() => {});
   check(!!pick && (await text('.pf-title h1')).trim() === pick && (await text('.pf-acct-note')).includes('speaks for them'), 'Make Main Account: its name is hers, and the card says so', { pick, hero: await text('.pf-title h1') });
-  // Another account made main instead takes over; cleared, she keeps the name she had.
+  // Another account made main instead takes over; pressed again, the hub chooses for her again.
   await pressIn(hero.trim(), 'Make Main Account');
-  await p.until(`document.querySelectorAll('.pf-acct[data-main]').length === 1 && document.querySelector('.pf-title h1')?.innerText.trim() === ${JSON.stringify(hero.trim())}`, 5000).catch(() => {});
+  await p.until(`document.querySelectorAll('.pf-acct[data-chosen]').length === 1 && document.querySelector('.pf-title h1')?.innerText.trim() === ${JSON.stringify(hero.trim())}`, 5000).catch(() => {});
   check((await text('.pf-title h1')).trim() === hero.trim(), 'another account made main takes over', await text('.pf-title h1'));
   await pressIn(hero.trim(), 'Main Account');
-  await p.until(`!document.querySelector('.pf-acct[data-main]')`, 5000).catch(() => {});
-  check(!(await p.eval<boolean>(`!!document.querySelector('.pf-acct[data-main]')`)) && (await text('.pf-title h1')).trim() === hero.trim(), 'pressed again it clears, and she keeps her name', await text('.pf-title h1'));
+  await p.until(`!document.querySelector('.pf-acct[data-chosen]') && document.querySelectorAll('.pf-acct[data-main]').length === 1`, 5000).catch(() => {});
+  check(!(await p.eval<boolean>(`!!document.querySelector('.pf-acct[data-chosen]')`)) && (await text('.pf-acct-note')).includes('for now'), 'pressed again, the hub chooses her main account again, and the card says so', await text('.pf-acct-note'));
 
   // A mutual friend's name opens theirs.
   await click('.pf-person');
