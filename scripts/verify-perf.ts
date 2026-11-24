@@ -4,6 +4,7 @@
  *   bun scripts/verify-perf.ts [--port 8620] [--runs 3] [--cpu 1,4] [--pages 15] [--web <built dist>]
  *                              [--update] [--out results.json] [--baseline scripts/perf-baseline.json] [--css <css>]
  *                              [--work <empty dir>] [--keep] [--size 390x844] [--scale 1] [--phone-cpu 4] [--ci]
+ *                              [--slow-cpu 4] [--slow-rtt 300] [--slow-down 1.6] [--slow-up 0.75] [--slow-queue fair]
  *
  * Builds the web app (unless --web names a build), seeds a fresh world (scripts/perf-world.ts) in a temp dir, starts
  * a hub on it, and measures in headless Chromium at each CPU throttle, `runs` times each:
@@ -13,7 +14,8 @@
  *   same six opened again. Times, long tasks, and counts: renders of App, the inbox list and messages, LayoutCount,
  *   DOM nodes, .msg elements. Then a phone's pass (`--phone-cpu`, 4× here and 1× in CI): flicking the lists, typing,
  *   the tabs, a person's page and Mail (phoneRun). Those passes fetch nothing ahead (?ahead=0); the phone's `ahead` pass
- *   measures fetching ahead (prefetch.ts) against the same steps without it (aheadRun).
+ *   measures fetching ahead (prefetch.ts) against the same steps without it (aheadRun). Last, the `slow` pass loads the
+ *   app over a poor phone link (slowlink.ts): a cold start, then a relaunch from the device's snapshot (slowRun).
  *
  * Medians go against the baseline: a count over its baseline fails (bytes get 1%), a time over baseline × 1.25 +
  * 50 ms fails. --update writes the medians as the new baseline.
@@ -30,6 +32,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { findBrowser, launch, type Page } from './browser.ts';
 import { seedWorld, type World, type WorldConv } from './perf-world.ts';
+import { REQ_KINDS, slowLink, type Req } from './slowlink.ts';
 
 const args = process.argv.slice(2);
 const opt = (k: string, d: string) => (args.includes(`--${k}`) ? args[args.indexOf(`--${k}`) + 1] : d);
@@ -50,6 +53,17 @@ const PHONE_CPUS = opt('phone-cpu', CI ? '1' : '4').split(',').map(Number).filte
 const AHEAD_CPUS = opt('ahead-cpu', CI ? '1' : '4').split(',').map(Number).filter((x) => x > 0);
 /** The round trip the ahead pass puts between page and hub, as a phone on the tailnet has (docs/android.md: 80 ms, 20/10 Mbit/s). */
 const AHEAD_RTT = Number(opt('ahead-rtt', '80'));
+/** Throttles for the slow link's pass (slowRun), at a phone's size; `--slow-cpu 0` leaves it out. */
+const SLOW_CPUS = opt('slow-cpu', CI ? '1' : '4').split(',').map(Number).filter((x) => x > 0);
+/**
+ * The slow link (slowlink.ts): its round trip in ms, and Mbit/s down and up. Lighthouse's phone on "slow 4G" (1.6 and
+ * 0.75 Mbit/s) with a round trip between its 150 ms and the 562.5 ms it gives DevTools for the same link (docs/perf.md).
+ */
+const SLOW_RTT = Number(opt('slow-rtt', '300'));
+const SLOW_DOWN = Number(opt('slow-down', '1.6'));
+const SLOW_UP = Number(opt('slow-up', '0.75'));
+/** Which connection sends next on it: in turn (`fair`) or first come first served (`fifo`, a deep shared buffer). */
+const SLOW_QUEUE = opt('slow-queue', 'fair') === 'fifo' ? 'fifo' : 'fair';
 const PAGES = Number(opt('pages', CI ? '5' : '15'));
 /** The world's size against the live hub's (perf-world.ts). */
 const SCALE = Number(opt('scale', CI ? '0.1' : '1'));
@@ -71,7 +85,7 @@ type Kind = 'ms' | 'count' | 'tally' | 'bytes' | 'frames';
 /** gate (CI's baseline only): whether CI judges it; false for one that moved between runs of the same code. */
 type Metrics = Record<string, { v: number; kind: Kind; gate?: boolean }>;
 /**
- * Render counts no baseline may go over, at any throttle: what scoped renders bought (docs/perf.md). An --update
+ * Counts no baseline may go over, at any throttle: what scoped renders bought (docs/perf.md), and more. An --update
  * fails on them too, so a regression cannot become the new baseline.
  */
 const CEILINGS: Record<string, number> = {
@@ -83,15 +97,24 @@ const CEILINGS: Record<string, number> = {
   'arrival.messageRenders': 5, // the new message and its neighbours
   'arrival.sidebarRenders': 2,
   'long.reopen.msgs': 250, // the window
+  // Over the slow link (slowRun): one catch-up a start (one more is a socket replaced), and the app itself from the
+  // service worker on a relaunch.
+  'socket.resyncs': 0,
+  'relaunch.toContent.shell': 0,
 };
-/** Counts no run may come under, whatever the baseline says: every open fetching ahead was meant to serve did (aheadRun). */
+/** Counts no run may come under, whatever the baseline says: every open fetching ahead was meant to serve did (aheadRun), and more. */
 const FLOORS: Record<string, number> = {
   'ahead.served': 5,
   'ahead.relaunchServed': 3,
+  // Over the slow link: the worker took the page over, and the relaunch drew the list from the snapshot.
+  'precache.tookOver': 1,
+  'relaunch.fromSnapshot': 1,
 };
 // The world, the build and the hub's log. Its own prefix: a cleanup of someone else's temp dirs must not take it.
 const work = args.includes('--work') ? opt('work', '') : mkdtempSync(join(tmpdir(), `dither-verify-perf-${PORT}-`));
 const running: { hub?: ReturnType<typeof Bun.spawn> } = {};
+/** Every request of each slow run, for --out: kind, path, sent, first and last byte (ms from the page's start), bytes. */
+const slowLog: unknown[][][] = [];
 
 async function main() {
   const t0 = performance.now();
@@ -154,13 +177,14 @@ async function main() {
   // Desktop passes ("4x.…"), then the phone's ("p4x.…").
   const runs: Record<string, Metrics[]> = {};
   const passes = [
-    ...CPUS.map((cpu) => ({ key: String(cpu), cpu, phone: false, ahead: false })),
-    ...PHONE_CPUS.map((cpu) => ({ key: `p${cpu}`, cpu, phone: true, ahead: false })),
-    ...AHEAD_CPUS.map((cpu) => ({ key: `a${cpu}`, cpu, phone: true, ahead: true })),
+    ...CPUS.map((cpu) => ({ key: String(cpu), cpu, phone: false, ahead: false, slow: false })),
+    ...PHONE_CPUS.map((cpu) => ({ key: `p${cpu}`, cpu, phone: true, ahead: false, slow: false })),
+    ...AHEAD_CPUS.map((cpu) => ({ key: `a${cpu}`, cpu, phone: true, ahead: true, slow: false })),
+    ...SLOW_CPUS.map((cpu) => ({ key: `s${cpu}`, cpu, phone: true, ahead: false, slow: true })),
   ];
-  for (const { key, cpu, phone, ahead } of passes) {
+  for (const { key, cpu, phone, ahead, slow } of passes) {
     runs[key] = [];
-    const go = () => (ahead ? aheadRun(cpu) : phone ? phoneRun(cpu, world) : run(cpu, world));
+    const go = () => (slow ? slowRun(cpu) : ahead ? aheadRun(cpu) : phone ? phoneRun(cpu, world) : run(cpu, world));
     for (let i = 0; i < (phone ? 0 : WARMUP); i++) {
       const m = await run(cpu, world);
       console.log(`${cpu}× warm-up run, not counted: cold ${m['cold.list'].v} ms, first open ${m['open.first'].v} ms, message renders ${m['open.first.messageRenders'].v}`);
@@ -174,7 +198,9 @@ async function main() {
         return go();
       });
       runs[key].push(m);
-      if (ahead)
+      if (slow)
+        console.log(`slow link ${cpu}× run ${i + 1}: cold to content ${m['cold.content'].v} ms (${m['cold.toContent.requests'].v} requests, ${m['cold.toContent.bytes'].v} B), the bootstrap ${m['cold.bootstrap.bytes'].v} B in ${m['cold.bootstrap'].v} ms beside ${m['cold.competing.bytes'].v} B of ${m['cold.competing.requests'].v} others; first open ${m['open.ms'].v} ms; precache ${m['precache.requests'].v} requests, ${m['precache.bytes'].v} B, done at ${m['precache.ms'].v} ms; relaunch to content ${m['relaunch.content'].v} ms after ${m['relaunch.toContent.answers'].v} answers, to fresh ${m['relaunch.fresh'].v} ms; socket opened ${m['socket.opens'].v}, ${m['socket.pings'].v} pings, the slowest pong ${m['socket.pongMax'].v} ms, ${m['socket.drops'].v} closed by the app, ${m['socket.resyncs'].v} catch-ups more than one a start`);
+      else if (ahead)
         console.log(`ahead ${cpu}× run ${i + 1}: ${m['ahead.pages'].v} pages and ${m['ahead.pictures'].v} pictures fetched ahead, ${m['ahead.requests'].v} requests, ${m['ahead.bytes'].v} B; the first five rows open in ${m['ahead.open'].v} ms (${m['ahead.served'].v} of 5 from it), ${m['noahead.open']?.v ?? '-'} ms without; right after a relaunch ${m['ahead.relaunch'].v} ms (${m['ahead.relaunchServed'].v} of 3 kept), ${m['noahead.relaunch']?.v ?? '-'} ms without`);
       else if (phone)
         console.log(`phone ${cpu}× run ${i + 1}: cold ${m['cold.list'].v} ms, ${m['cold.nodes'].v} nodes; open ${m['open.ms'].v} ms; keystroke to frame p90 ${m['typing.keyP90'].v} ms; slow frames: list ${m['listScroll.slowFrames'].v}, timeline ${m['tlScroll.slowFrames'].v}; longest task: open ${m['open.longest'].v}, Home ${m['homeTab.longest'].v}, For you ${m['forYou.longest'].v}, You ${m['you.longest'].v}, person ${m['person.longest'].v}, Mail ${m['mail.longest'].v} ms`);
@@ -188,7 +214,7 @@ async function main() {
   }
 
   // ------------------------------------------------------------------ against the baseline
-  if (OUT) writeFileSync(OUT, JSON.stringify({ world, metrics, runs }, null, 1));
+  if (OUT) writeFileSync(OUT, JSON.stringify({ world, metrics, runs, ...(slowLog.length ? { slowRequests: slowLog } : {}) }, null, 1));
   if (CI && UPDATE) {
     if (RUNS < 5) throw new Error('--ci --update wants --runs 5 or more, to tell the steady counts from the rest');
     for (const [k, m] of Object.entries(metrics)) if (m.kind !== 'ms') m.gate = steady(m.kind, spread(k, runs) ?? [m.v]);
@@ -199,8 +225,8 @@ async function main() {
   console.log(`\n${'metric'.padEnd(34)} ${'baseline'.padStart(10)} ${'now'.padStart(10)}  change`);
   for (const [k, m] of Object.entries(metrics)) {
     const b = old?.metrics[k];
-    const ceiling = CEILINGS[k.replace(/^[pa]?\d+x\./, '')];
-    const floor = FLOORS[k.replace(/^[pa]?\d+x\./, '')];
+    const ceiling = CEILINGS[k.replace(/^[pas]?\d+x\./, '')];
+    const floor = FLOORS[k.replace(/^[pas]?\d+x\./, '')];
     const capped = (ceiling !== undefined && m.v > ceiling) || (floor !== undefined && m.v < floor);
     if (capped) failed++;
     // In CI: times never, and of the rest only what the baseline found steady.
@@ -523,6 +549,181 @@ async function aheadRun(cpu: number): Promise<Metrics> {
   return m;
 }
 
+/**
+ * The live socket's life in the page: opened, closed by the app (one its heartbeat gave up on, or a spare that lost the
+ * race with a late pong: state.ts probe), closed from the far end, and the heartbeat's pings with the longest wait for
+ * a pong.
+ */
+const SOCKETS = `(() => {
+  const W = window.WebSocket;
+  window.__sock = { opened: 0, dropped: 0, closed: 0, pings: 0, pongMax: 0, fresh: 0 };
+  // Each catch-up with the hub marks dither:fresh (state.ts); counted as they come, whatever is kept of them.
+  new PerformanceObserver((l) => (__sock.fresh += l.getEntriesByName('dither:fresh').length)).observe({ type: 'mark' });
+  window.WebSocket = class extends W {
+    constructor(u, p) {
+      super(u, p);
+      if (!String(u).includes('/api/live')) return;
+      __sock.opened++;
+      let mine = false;
+      const close = this.close.bind(this);
+      this.close = (...a) => { if (!mine && this.readyState <= 1) (mine = true), __sock.dropped++; return close(...a); };
+      this.addEventListener('close', () => mine || __sock.closed++);
+      let sent = 0;
+      const send = this.send.bind(this);
+      this.send = (d) => { if (d === 'ping') (sent = performance.now()), __sock.pings++; return send(d); };
+      this.addEventListener('message', (e) => { if (e.data === 'pong' && sent) (__sock.pongMax = Math.max(__sock.pongMax, performance.now() - sent)), (sent = 0); });
+    }
+  };
+})()`;
+
+/**
+ * Over a poor phone link (slowlink.ts, docs/perf.md "Over a slow link"), at a phone's size: a device that never saw the
+ * hub loads the app, opens the first conversation in its list, and stays until the service worker has kept the whole
+ * build and fetching ahead is done; then the app is opened again, from the snapshot it kept. Requests and bytes on the
+ * link before the list showed (`dither:content`) and before the hub's data was in (`dither:fresh`), by kind; what shared
+ * the link with the bootstrap; and the live socket, which should never be given up while it works: each start catches
+ * up with the hub once (a bootstrap or a sync), and one more means a socket was replaced.
+ */
+async function slowRun(cpu: number): Promise<Metrics> {
+  const link = await slowLink({ target: PORT, rtt: SLOW_RTT, down: SLOW_DOWN * 1e6, up: SLOW_UP * 1e6, queue: SLOW_QUEUE });
+  const via = `http://127.0.0.1:${link.port}`;
+  const url = `${via}/?perf=1#/inbox`;
+  const b = await launch();
+  const page = b.page;
+  const m: Metrics = {};
+  const put = (k: string, v: number, kind: Kind = 'ms') => (m[k] = { v: Math.round(v), kind });
+  /** Requests sent from `from` until `t`: how many, how many had their whole answer by then, and the bytes that had come. */
+  const upTo = (from: number, t: number, kind?: string) => {
+    const rs = link.reqs.filter((r) => r.at >= from && r.at <= t && (!kind || r.kind === kind));
+    return { requests: rs.length, answers: rs.filter((r) => r.last && r.last <= t).length, bytes: rs.reduce((s, r) => s + bytesBy(r, t), 0) };
+  };
+  /** The page's start (epoch ms), and when the list showed and the hub's data was in. Over this link, two minutes at most. */
+  const marks = async () => {
+    await page.until(`window.__perf?.list != null && performance.getEntriesByName('dither:content').length > 0 && performance.getEntriesByName('dither:fresh').length > 0`, 120_000).catch(() => {
+      throw new Error(`no list and fresh data over the slow link; page errors: ${JSON.stringify(page.errors.slice(0, 5))}`);
+    });
+    return page.eval<{ origin: number; content: number; fresh: number; source: string }>(`(() => {
+      const c = performance.getEntriesByName('dither:content')[0];
+      return { origin: performance.timeOrigin, content: performance.timeOrigin + c.startTime, fresh: performance.timeOrigin + performance.getEntriesByName('dither:fresh')[0].startTime, source: c.detail?.source };
+    })()`);
+  };
+  /** Catch-ups with the hub in this page (a bootstrap or a sync from the journal: state.ts marks each `dither:fresh`). */
+  const freshes = () => page.eval<number>('__sock.fresh');
+  const sockets = () => page.eval<{ opened: number; dropped: number; closed: number; pings: number; pongMax: number }>('({ ...__sock })');
+  try {
+    await page.size(390, 844, true);
+    if (cpu > 1) await page.send('Emulation.setCPUThrottlingRate', { rate: cpu });
+    await page.send('Page.addScriptToEvaluateOnNewDocument', { source: INIT });
+    await page.send('Page.addScriptToEvaluateOnNewDocument', { source: SOCKETS });
+
+    // Cold: nothing on the device, not even the app. Once the bootstrap has begun to come, the app is brought back to
+    // the front, as someone who looked away while it loaded would: its heartbeat pings the socket (state.ts probe)
+    // while the link is at its busiest, and a pong later than PONG_WAIT drops a socket that was fine.
+    await page.goto(url);
+    const n = link.reqs.length;
+    for (let i = 0; i < 1200 && !link.reqs.slice(n).some((r) => r.kind === 'bootstrap' && r.first); i++) await Bun.sleep(50);
+    await page.eval(`window.dispatchEvent(new Event('focus'))`);
+    const cold = await marks();
+    put('cold.content', cold.content - cold.origin);
+    put('cold.fresh', cold.fresh - cold.origin);
+    const toContent = upTo(cold.origin, cold.content);
+    put('cold.toContent.requests', toContent.requests, 'count');
+    put('cold.toContent.bytes', toContent.bytes, 'bytes');
+    const toFresh = upTo(cold.origin, cold.fresh);
+    put('cold.toFresh.requests', toFresh.requests, 'count');
+    put('cold.toFresh.bytes', toFresh.bytes, 'bytes');
+    for (const k of REQ_KINDS) {
+      const x = upTo(cold.origin, cold.content, k);
+      put(`cold.${k}.requests`, x.requests, 'count');
+      put(`cold.${k}.bytes`, x.bytes, 'bytes');
+    }
+    // The bootstrap on the wire, from asked to its last byte, and what else came down the link meanwhile.
+    const boot = link.reqs.find((r) => r.kind === 'bootstrap' && r.at >= cold.origin);
+    if (!boot?.last) throw new Error('no bootstrap over the slow link');
+    put('cold.bootstrap', boot.last - boot.at);
+    put('cold.bootstrap.bytes', boot.bytes, 'bytes');
+    const others = link.reqs.filter((r) => r !== boot && r.kind !== 'socket' && r.arrivals.some(([t]) => t > boot.at && t <= boot.last));
+    put('cold.competing.requests', others.length, 'count');
+    put('cold.competing.bytes', others.reduce((s, r) => s + bytesBy(r, boot.last) - bytesBy(r, boot.at), 0), 'bytes');
+    for (const k of ['precache', 'pictures', 'pages'] as const) put(`cold.beforeBootstrap.${k}`, link.reqs.filter((r) => r.kind === k && r.at >= cold.origin && r.at < boot.last).length, 'count');
+
+    // The first conversation in the list, as someone who just got the app would.
+    const row = await page.eval<string | undefined>(`[...document.querySelectorAll('.side-scroll [data-row]')].map((e) => e.getAttribute('data-row')).find((id) => id.startsWith('cnv_'))`);
+    if (!row) throw new Error('no conversation in the inbox');
+    put('open.ms', await openRow(page, row));
+
+    // Until the service worker has the whole build (it claims the page once it has) and fetching ahead is done.
+    const took = await page.until(`!!navigator.serviceWorker.controller`, 90_000).then(
+      () => 1,
+      async () => {
+        const st = await page.eval(`navigator.serviceWorker.getRegistration().then((r) => JSON.stringify({ installing: r?.installing?.state, waiting: r?.waiting?.state, active: r?.active?.state }))`).catch((e) => e.message);
+        console.warn(`the service worker did not take over within 90 s: ${st}`);
+        return 0;
+      },
+    );
+    put('precache.tookOver', took, 'count');
+    await page.until(`window.__ditherAhead?.idle`, 60_000).catch(() => console.warn('fetching ahead did not finish'));
+    const kept = link.reqs.filter((r) => r.kind === 'precache' && r.at >= cold.origin);
+    put('precache.requests', kept.length, 'count');
+    put('precache.bytes', kept.reduce((s, r) => s + r.bytes, 0), 'bytes');
+    put('precache.ms', Math.max(0, ...kept.map((r) => r.last)) - cold.origin);
+    const ahead = link.reqs.filter((r) => r.kind === 'pages' && r.at >= cold.origin);
+    put('ahead.requests', ahead.length, 'count');
+    put('ahead.bytes', ahead.reduce((s, r) => s + r.bytes, 0), 'bytes');
+    const s1 = await sockets();
+    const coldFresh = await freshes();
+    put('cold.stay', Date.now() - cold.origin);
+    log(link.reqs, cold.origin);
+
+    // Away and back: the page saves its snapshot as it goes out of sight; then the app opened again.
+    await page.eval(`Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }), document.dispatchEvent(new Event('visibilitychange'))`);
+    await Bun.sleep(1500);
+    await page.goto(`${via}/api/health`);
+    const n0 = link.reqs.length;
+    await page.goto(url);
+    const warm = await marks();
+    put('relaunch.content', warm.content - warm.origin);
+    put('relaunch.fresh', warm.fresh - warm.origin);
+    put('relaunch.fromSnapshot', warm.source === 'snapshot' ? 1 : 0, 'count');
+    if (warm.source !== 'snapshot') console.warn(`slow relaunch loaded from the ${warm.source}, not the snapshot`);
+    const r1 = upTo(warm.origin, warm.content);
+    put('relaunch.toContent.requests', r1.requests, 'count');
+    put('relaunch.toContent.answers', r1.answers, 'count');
+    put('relaunch.toContent.bytes', r1.bytes, 'bytes');
+    // The app itself from the network: none once the service worker has it.
+    put('relaunch.toContent.shell', link.reqs.filter((r) => r.at >= warm.origin && r.at <= warm.content && ['document', 'script', 'style'].includes(r.kind)).length, 'count');
+    const r2 = upTo(warm.origin, warm.fresh);
+    put('relaunch.toFresh.requests', r2.requests, 'count');
+    put('relaunch.toFresh.bytes', r2.bytes, 'bytes');
+    await settle(page);
+    const s2 = await sockets();
+    put('socket.opens', s1.opened + s2.opened, 'count');
+    put('socket.drops', s1.dropped + s2.dropped, 'count');
+    put('socket.closes', s1.closed + s2.closed, 'count');
+    put('socket.pings', s1.pings + s2.pings, 'count');
+    put('socket.resyncs', coldFresh + (await freshes()) - 2, 'count');
+    put('socket.pongMax', Math.max(s1.pongMax, s2.pongMax));
+    log(link.reqs.slice(n0), warm.origin);
+    if (page.errors.length) console.warn('page errors:', page.errors.slice(0, 5));
+  } finally {
+    await b.close();
+    link.close();
+  }
+  return m;
+}
+
+/** Bytes of a request's answer that had reached the browser by `t`. */
+function bytesBy(r: Req, t: number) {
+  let n = 0;
+  for (const [at, k] of r.arrivals) if (at <= t) n += k;
+  return n;
+}
+/** For --out: each request, its times from the page's start. */
+function log(reqs: Req[], origin: number) {
+  const ms = (t: number) => (t ? Math.round(t - origin) : null);
+  slowLog.push(reqs.map((r) => [r.kind, r.path, r.dest, ms(r.at), ms(r.first), ms(r.last), r.bytes]));
+}
+
 /** On a phone: from the inbox to a row's conversation, timed to its `dither:timeline` mark; then back to the inbox. */
 async function openRow(page: Page, id: string): Promise<number> {
   const ms = await page.eval<number>(`(async () => {
@@ -690,7 +891,7 @@ const SNAPSHOT_TIMELINES = `new Promise((res) => {
 
 /** Every run's value of a per-throttle metric ("1x.cold.nodes"), or null for the hub's own. */
 function spread(k: string, runs: Record<string, Metrics[]>): number[] | null {
-  const m = k.match(/^([pa]?\d+)x\.(.+)$/);
+  const m = k.match(/^([pas]?\d+)x\.(.+)$/);
   return m ? runs[m[1]].map((r) => r[m[2]]?.v).filter((x) => x !== undefined) : null;
 }
 /**

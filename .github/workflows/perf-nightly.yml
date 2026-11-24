@@ -1,4 +1,4 @@
-# verify-perf once a night at 1× and 4× CPU (desktop, phone and fetching ahead), five runs each, every number kept:
+# verify-perf once a night at 1× and 4× CPU (desktop, phone and fetching ahead; the slow link at 4× only), five runs each, every number kept:
 # each night's medians and spread go as one line onto the perf-history branch, and the job's summary and an HTML
 # page of charts (the artifact perf-trend) show the last night against the nights before. It never fails on a time
 # or a count: it flags them. It fails only when the measuring itself breaks. docs/perf.md, "Nightly trends".
@@ -51,7 +51,7 @@ jobs:
           RUNS: ${{ inputs.runs || '5' }}
         run: |
           GITHUB_STEP_SUMMARY= bun scripts/verify-perf.ts --scale "$SCALE" --runs "$RUNS" --warmup 1 \
-            --cpu 1,4 --phone-cpu 1,4 --ahead-cpu 1,4 --baseline "$RUNNER_TEMP/no-baseline.json" --out out/perf.json \
+            --cpu 1,4 --phone-cpu 1,4 --ahead-cpu 1,4 --slow-cpu 4 --baseline "$RUNNER_TEMP/no-baseline.json" --out out/perf.json \
             || echo "::warning::verify-perf exited $? (a ceiling or floor; its numbers are recorded all the same)"
           test -s out/perf.json
       - name: The night as one line

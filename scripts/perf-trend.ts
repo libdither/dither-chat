@@ -55,7 +55,7 @@ const sh = (cmd: string, ...a: string[]) => {
 /** Every run's values of a metric: its own `runs`, or verify-perf's per-pass runs ("p4x.open.ms" → runs.p4[i]["open.ms"]). */
 function spreadOf(k: string, m: { v: number; runs?: number[] }, runs?: Record<string, Record<string, { v: number }>[]>) {
   if (Array.isArray(m.runs) && m.runs.length) return m.runs;
-  const p = k.match(/^([pa]?\d+)x\.(.+)$/);
+  const p = k.match(/^([pas]?\d+)x\.(.+)$/);
   const xs = p && runs?.[p[1]] ? runs[p[1]].map((r) => r[p[2]]?.v).filter((x): x is number => typeof x === 'number') : [];
   return xs.length ? xs : [m.v];
 }
@@ -157,7 +157,7 @@ function rowsOf(nights: Night[]): Row[] {
 function throttleDiffs(last: Night) {
   const groups = new Map<string, { k: string; kind: string; vals: Map<string, number> }>();
   for (const [k, m] of Object.entries(last.metrics)) {
-    const p = k.match(/^([pa]?)(\d+)x\.(.+)$/);
+    const p = k.match(/^([pas]?)(\d+)x\.(.+)$/);
     if (!p || isTime(m.kind)) continue;
     const g = `${PASSES[p[1]]} ${p[3]}`; // "phone open.layouts", at every throttle
     if (!groups.has(g)) groups.set(g, { k: g, kind: m.kind, vals: new Map() });
@@ -168,7 +168,7 @@ function throttleDiffs(last: Night) {
   return { cpus, rows };
 }
 
-const PASSES: Record<string, string> = { '': 'desktop', p: 'phone', a: 'fetching ahead' };
+const PASSES: Record<string, string> = { '': 'desktop', p: 'phone', a: 'fetching ahead', s: 'slow link' };
 
 function markdown(nights: Night[], rows: Row[]) {
   const last = nights[nights.length - 1];
@@ -216,7 +216,7 @@ function charts(nights: Night[], rows: Row[]) {
   const keys = [...new Set(nights.flatMap((n) => Object.keys(n.metrics)))];
   for (const key of keys) {
     const kind = [...nights].reverse().find((n) => n.metrics[key])!.metrics[key].kind;
-    const p = key.match(/^([pa]?)(\d+)x\.(.+)$/);
+    const p = key.match(/^([pas]?)(\d+)x\.(.+)$/);
     const section = p ? PASSES[p[1]] : key.split('.')[0];
     const name = p ? p[3] : key.split('.').slice(1).join('.') || key;
     const id = `${section}|${name}`;
