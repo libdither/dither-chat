@@ -393,7 +393,8 @@ These live in the web app, so the PWA gets them too.
    is ever sent anywhere.
 3. **Compression at the hub** (`packages/hub/src/compress.ts`): zstd, or gzip for clients without it, on every text
    response of 1 KB or more. A real bootstrap is 4.9 MB of JSON: 758 KB as zstd in 9 ms, 901 KB as gzip in 19 ms.
-   Caddy passes it through untouched.
+   Caddy passes it through untouched. The web build's own files are packed once with zstd at level 19 when the hub
+   starts and kept, a sixth smaller than at level 3 ([docs/perf.md](perf.md#the-web-build-on-the-wire-2026-11-24)).
 4. **Cheaper renders**. On a large hub every `rev` change re-rendered the whole app. Three fixes:
    - `directsOf()` scanned all 5,200 conversations once for each of 430 people (`people()`). It is now one indexed
      pass.
