@@ -199,7 +199,8 @@ route among the chat's routes, what tells it apart. Of the routes on the same ne
 
 - it is the only one: the **network** alone (`Signal`);
 - they differ in their account: **their account's name** there (`kit.work`);
-- they differ in yours: **your account's name** (`via zyn.alt`);
+- they differ in yours: **your account's name** (`via zyn.alt`); an email route's is its mail account's label, else
+  its address (`via Home mail`), as mail accounts are not among the chat accounts;
 - both differ: both (`kit.work ⇄ zyn.alt`).
 
 The network's icon goes in front only when the chat spans more than one network. So Sam, on Signal and Matrix, has
