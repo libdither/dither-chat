@@ -1427,11 +1427,13 @@ function bootstrap() {
     held ??= [];
     const since = openedAt;
     const gen = socketGen;
-    // When this was asked: pushes kept before then are in the answer (arrived.ts doneArrived).
-    const asked = Date.now();
+    const early = takeEarly(gen);
+    // When this was asked: pushes kept before then are in the answer (arrived.ts doneArrived). One index.html asked for
+    // goes by when its socket began, before it was asked: a push kept in between stays for the next start.
+    const asked = early?.at ?? Date.now();
     try {
       // As text too: the snapshot keeps the hub's answer as it came, without serializing it again.
-      const { res, text } = await hubFetch('/api/bootstrap', { quiet: SYNC_QUIET, signal: link.signal });
+      const { res, text } = await hubFetch('/api/bootstrap', { quiet: SYNC_QUIET, signal: link.signal, early });
       if (res.status === 401) {
         let body: { setup?: boolean } | null = null;
         try {
@@ -1476,6 +1478,8 @@ function resync() {
     await Promise.race([beforeSync.wait, new Promise((r) => setTimeout(r, 1500))]);
     const pos = db.sync;
     if (!loaded.value || !pos || pos.v !== SYNC_VERSION) return void (release(), bootstrap());
+    // A snapshot after all (index.html could not tell): the bootstrap it asked for is not wanted.
+    takeEarly(gen)?.abort();
     // Timelines in memory are as current as `db`, or as their kept copy when it has not been caught up yet. One
     // kept under another epoch loads afresh; those loading now catch up on their own.
     const mine = [...timelines.values()].filter((t) => !t.loading && (t.fetchedAt || t.from));
@@ -1566,30 +1570,78 @@ export function sayLive(msg: string): boolean {
 
 const liveUrl = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live`;
 
+/**
+ * What index.html started before this script came (its first inline script): the live socket, the frames it got
+ * meanwhile, and on a device that keeps no snapshot, the bootstrap, asked for once that socket was open.
+ */
+interface Early {
+  ws: WebSocket | null;
+  at: number;
+  openedAt: number;
+  frames: unknown[];
+  boot: Promise<Response> | null;
+  abort: (() => void) | null;
+  /** Set here once the app has asked for its own (or decided it wants none): index.html asks for nothing after. */
+  taken: boolean;
+}
+let early: Early | null = (globalThis as { __ditherEarly?: Early }).__ditherEarly ?? null;
+/** The early socket's generation, while its bootstrap is not taken: it is the bootstrap of that socket only. */
+let earlyOf: { e: Early; gen: number } | null = null;
+
+/** The bootstrap index.html asked for, if it belongs to socket `gen`; asked for once, so taken once. */
+function takeEarly(gen: number): { res: Promise<Response>; abort: () => void; at: number } | undefined {
+  const o = earlyOf;
+  if (!o) return undefined;
+  earlyOf = null;
+  o.e.taken = true;
+  if (!o.e.boot) return undefined;
+  const abort = o.e.abort ?? (() => {});
+  if (o.gen !== gen) return void abort();
+  return { res: o.e.boot, abort, at: o.e.at };
+}
+
 export function connect() {
   clearTimeout(retry);
+  const e = early;
+  early = null;
   // Signed out: nothing to connect to until the sign-in screen has reloaded the page (login.ts).
-  if (login.value) return;
+  if (login.value) {
+    if (e) (e.taken = true), e.abort?.(), e.ws?.close();
+    return;
+  }
   if (!connected.value) setConnected(false);
-  socketStartedAt = Date.now();
-  use(new WebSocket(liveUrl()), socketStartedAt);
+  if (e?.ws && e.ws.readyState <= WebSocket.OPEN) {
+    socketStartedAt = e.at;
+    use(e.ws, e.at, e);
+    // No sync is asked for before the snapshot is read, so the socket's own catch-up finds this here.
+    earlyOf = { e, gen: socketGen };
+  } else {
+    if (e) (e.taken = true), e.abort?.();
+    socketStartedAt = Date.now();
+    use(new WebSocket(liveUrl()), socketStartedAt);
+  }
   // The socket gets its own connection; this one opens the HTTP connection the sync will use, at the same time.
   fetch('/api/health', { cache: 'no-store' }).catch(() => {});
 }
 
-/** `sock` is the live socket from now: a new one, or a spare that won its race (probe), already open. */
-function use(sock: WebSocket, startedAt: number) {
+/**
+ * `sock` is the live socket from now: a new one, a spare that won its race (probe), already open, or the one index.html
+ * opened (`e`), with the frames that came before this script did.
+ */
+function use(sock: WebSocket, startedAt: number, e?: Early) {
   ws = sock;
   synced = false;
   socketGen++;
   link.abort();
   link = new AbortController();
+  // A bootstrap of a socket no longer in use: its frames will not come to this page.
+  if (earlyOf) takeEarly(-1);
   const onopen = () => {
     if (ws !== sock) return;
     setConnected(true);
     backoff = 500;
     openedAt = lastPong = Date.now();
-    openMs = openedAt - startedAt;
+    openMs = (e?.openedAt || openedAt) - startedAt;
     markOpen?.();
     opened = markOpen = null;
     held ??= [];
@@ -1623,6 +1675,8 @@ function use(sock: WebSocket, startedAt: number) {
   };
   sock.onopen = onopen;
   if (sock.readyState === WebSocket.OPEN) onopen();
+  // Held behind the catch-up onopen began, as any frame that comes while it is on its way.
+  for (const data of e?.frames.splice(0) ?? []) sock.onmessage?.call(sock, new MessageEvent('message', { data }));
 }
 
 let socketStartedAt = 0;

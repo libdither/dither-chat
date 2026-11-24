@@ -518,6 +518,27 @@ one of them loaded at startup anyway. The group puts them back together: 1,072 K
 1,079 KB (335 KB gzip) in 10 on main the day before. A lazy chunk imports what it shares with startup from that chunk,
 already loaded. A module only lazy chunks use is not in it.
 
+### Left out of the first load (2026-11-24)
+
+Coverage of a cold load (the DevTools protocol's precise coverage, mapped back through the source map) found three
+quarters of the startup chunk never ran before the list showed. The biggest share no first screen uses were whole
+pages, and those are now chunks of their own (ui/LazyPane.tsx `lazyPane`): a person's profile, a place's page,
+Settings, the directory and How it sorts. Each loads when it is first opened, and all of them a few seconds after the
+hub's data is in, one per idle moment, so a first open is drawn at once as before. Going to one of Settings' sections
+(its nav, Adversarial features, Indexing) waits for the section to be drawn (bits.tsx `showSection`). The list of
+sections, which the nav beside Settings reads, is in ui/settingsSections.ts.
+
+Full-size world, 4× CPU, main against this, interleaved, medians of seven (the machine's load was 6 to 20, so the
+times are rough; the bytes are exact):
+
+| | before | after |
+|---|---|---|
+| `shared/startup` | 1,050 KB (352.6 KB gzip) | 857 KB (292.5 KB gzip) |
+| desktop: list painted | 2,078 ms (1,776–2,431, and one stall of 17 s) | 1,960 ms (1,650–2,577) |
+| desktop: script run before the list | 740 ms (652–925) | 697 ms (565–916) |
+| phone: list painted | 2,740 ms (2,316–4,760) | 2,431 ms (1,809–3,963) |
+| first open after a cold load, desktop: Settings, How it sorts | 180, 391 ms | 149, 308 ms |
+
 ### The startup set (2026-11-10)
 
 907 KB (278 KB gzip) in ten files: the entry (269 KB), `shared/Accounts` (353 KB), `shared/state` (72 KB), the
@@ -1186,6 +1207,32 @@ one: the ping went out as the bootstrap began to come, no pong came in time, the
 opened another, which took until 12.4 s to open behind the precache, and synced again. Since #359 a late pong is raced
 by a new socket instead ([docs/sync.md](sync.md#a-bad-link)): the same run on it waited 4,280 ms for the pong, kept the
 socket (two opened over both starts, none closed by the app) and caught up once a start.
+
+**The bootstrap before the app's script** (2026-11-24). A cold start asked for the bootstrap only once the app's
+script had come (3.3 s), the socket had opened (two round trips) and the snapshot read had found nothing: at 4.2 s.
+Now `index.html` opens the socket itself and, on a device that keeps no snapshot, asks for the bootstrap as soon as
+that socket is open, at 1.3 s here ([docs/sync.md](sync.md#the-client)). It then shares the link with the startup
+script (405 KB came down beside it, so it takes 4.2 s on the wire rather than 3.5 s, and the script's last byte comes
+at 4.8 s rather than 3.3 s), but both are in by about 5.5 s. Full size, 4×, fair, base and change in turn, three runs
+each (load average 10 to 16):
+
+| | before | after |
+|---|---|---|
+| slow link: list shown, hub's data in | 10.5 s, 9.7 s (8.5–15.3, 7.8–14.6) | 6.6 s, 5.7 s (6.3–8.3, 5.7–7.2) |
+| slow link: relaunch, list and data | 0.65 s, 1.16 s | 0.68 s, 1.03 s |
+| phone at 4×, loopback: list shown | 2.7 s (1.5–2.9) | 1.5 s (1.5–2.0) |
+| desktop at 4×, loopback: list shown, data in | 1.8 s, 1.07 s | 1.9 s, 0.92 s (one run of three at 8.8 s, in a stall of the machine: its longest task 1.6 s) |
+
+An earlier round of four runs each had the slow link's list at 9.3 s against 6.9 s (6.5–7.3), its data at 8.6 s
+against 5.8 s (5.7–5.8). The first open after it, the relaunch and the socket's counts did not move.
+
+Registering the service worker only once the list was shown and the data in (so that its precache does not share the
+link with the bootstrap) took the bootstrap on the wire from 3.4 s to 2.8 s and the bytes before the list from 1.10
+to 0.88 MB on its own, but the list only from 9.3 s to 8.6 s, and with the bootstrap asked for early it bought
+nothing: the precache starts as the app runs, which is now about when the bootstrap ends (6.9 s and 5.8 s with it,
+7.5 s and 5.9 s without). Started that late, all at once, it made the first conversation opened after the list wait
+for its six connections (4.1 s once); two files at a time fixed that but took the precache from 19 s to 26 s. Not
+kept. On the live hub, whose bootstrap is about twice this one on the wire, it may be worth trying again.
 ## Memory (2026-11-24)
 
 `scripts/verify-memory.ts` (CI's `memory` job) looks for leaks: what the page holds growing as it is used. Against a
@@ -1261,13 +1308,11 @@ performance entries (long animation frames, paints, events). No object of the ap
 
 What these numbers point at, not done yet:
 
-- **On a slow link the precache shares it with the bootstrap** ([above](#over-a-slow-link-2026-11-24)): 228 KB of
-  it came down beside the bootstrap's 435 KB, about 1.3 s of the 3.8 s it took. Registering the service worker after
-  `dither:fresh` (and idle), rather than as the app starts (main.tsx), would leave the link to the bootstrap; check-offline
-  still needs the worker installed by the time the snapshot is.
-- **A cold start asks for the bootstrap only once the socket is open**, two round trips after it began (650–660 ms
-  there): `resync` runs from the socket's `onopen`. With no snapshot to resume from there is nothing to sync, and the
-  bootstrap could go at once beside the socket, with frames that come meanwhile held as they are now.
+- **On a slow link the precache shared it with the bootstrap** ([above](#over-a-slow-link-2026-11-24)). Since the
+  bootstrap is asked for from `index.html` it is mostly in before the precache starts, here; registering later did not
+  help ([above](#over-a-slow-link-2026-11-24), the end). With a bootstrap the live hub's size it may.
+- **The bootstrap now shares the link with the startup script** on a cold start: 405 KB of it came down beside the
+  bootstrap. Each is wanted for the list; a smaller one of either is the next gain there.
 - **The startup script, 345 KB compressed**, is the longest wait of a cold start on a slow link: 2.6 s before any
   of the app runs. Every KB off it is 5 ms there.
 
