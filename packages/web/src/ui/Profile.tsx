@@ -340,7 +340,7 @@ function ConnectionsCard({ ids, list, onEnded }: { ids: P.IdentityView[]; list: 
 function MailCard({ mail, list, name }: { mail: NonNullable<P.ProfileView['mail']>; list: string; name: string }) {
   const open = (t: P.MailThreadView) => {
     db.mail.threads.set(t.id, t);
-    go({ view: 'mail', thread: t.id });
+    go({ view: 'inbox', conv: t.id });
   };
   return (
     <Card title="Mail" icon="mail" count={mail.total || undefined} class="pf-mail">
@@ -362,7 +362,7 @@ function MailCard({ mail, list, name }: { mail: NonNullable<P.ProfileView['mail'
         ))}
       </div>
       {mail.total > 0 && (
-        <button class="link-btn pf-mail-all" onClick={() => go({ view: 'mail', list })}>
+        <button class="link-btn pf-mail-all" onClick={() => go({ view: 'inbox', mail: list })}>
           {mail.total > mail.threads.length ? `All ${mail.total.toLocaleString()} threads with ${name}` : `All mail with ${name}`}
         </button>
       )}

@@ -7,10 +7,9 @@ Email beside your chats, through dither-accounts' `mail` interface. The design, 
 
 - **Mail in the rail**, after People, once the hub can read mail. A dot while Inbox has unread threads. On a phone it
   sits in Home with the rest; Ctrl+K finds Mail, its views and each mailbox.
-- **The list**: Inbox (ranked, or newest first), Everything and Updates across every account as one row of chips that
-  scrolls sideways, without a scrollbar: its edge fades while more chips lie past it, and the chosen one is scrolled
-  into view. The folder button has Starred and Sent (newest first, of the accounts showing) above each account's
-  mailboxes. **Everything** is the whole of Inbox, Updates too, newest first (`v:all:<scope>`); the old People and
+- **The list**: Inbox (ranked, or newest first), Updates and Everything across every account as chips under the
+  Inbox's header, with **More ⌄** holding Starred and Sent (newest first, of the accounts showing) above each account's
+  mailboxes (docs/inbox.md "Mail lists"). **Everything** is the whole of Inbox, Updates too, newest first (`v:all:<scope>`); the old People and
   Unread views have no chip but their links (`v:people:*`, `v:unread:*`) still list. Under "Mail", **whose mail** is two wheels (`ui/mail/ScopeWheel.tsx`):
   the platform (All mail, then Gmail, Proton, Outlook, Email: `mailPlatform`, by kind and address) when there is more
   than one, then the account (All of that platform's, or one) when it has more than one. Each shows the choice in use
@@ -68,7 +67,8 @@ The people you write to by mail join the people the hub already knows (`hub/src/
   in, gets an identity on the `email` network (its address is its id and handle) and a person of their own, as a DM
   partner does. Their name is the one on their latest From, else the one you wrote to them under. Anyone else who
   writes to you stays an address, unless classification (slice 8) calls their mail personal: then they get an
-  identity, without a person. Newsletters and notifications never do. Your own addresses are never anyone.
+  identity, without a person. Newsletters and notifications never do. Your own addresses are identities of yours
+  (the self person, "Mail as chats"), never anyone else's.
 - **Never by name.** Sam by mail and Sam on Signal stay two people until you merge them. A profile's "Same name
   elsewhere" hint says who and where ("Alice Chen <alice@…>", "Alice Chen on Signal and Discord"), and the merge
   search finds people by an address too, and the email identities no person holds yet.
@@ -93,9 +93,98 @@ and a merge, a split or a new person sends that person's threads again. The prof
 `scripts/verify-profile.ts` (the Mail card on a desktop in the dark theme and a phone in the light one, the reader's
 sender, all mail with them, the hint, the merge search by address, merge and split).
 
+## Mail as chats
+
+There is no Mail page of its own: mail is read where the chats are (`hub/src/mail/places.ts`, `mail/chatpage.ts`,
+`hub/src/rungs.ts`). Ids stay mail's own (`mth_` threads, `mml_` messages): mail is read with the chats when a page is
+asked for, never copied into the message table.
+
+- **Where a thread goes** (`placeOf`): into the chat of the one person it is with, `person:<id>` (the chat that already
+  holds their Signal, Discord and other direct messages, docs/chats.md), when it is not bulk and every other address on
+  it (`mail_party`, less every one of your accounts' own) is an email identity of that same person, and that person
+  is not you. Anything else is a chat of its own, keyed by the thread's id: more people, a sender with no person, a
+  newsletter, a note to yourself. Worked out from who is on it each time it is asked, never stored, so a Cc added
+  later, a merge or a split moves it at once.
+- **Routes by email.** A person's chat gets a route (`ChatRoute`, network `email`) for each of your mail accounts and
+  each address of theirs it has such threads with: `email:<account>:<address>` (address lower-cased), which is also
+  the `conversationId` of its messages. A thread with two of their addresses goes on the route of the one that wrote
+  last. `MailChatView` says the rest: its threads newest first (the latest is where a reply goes), unread messages,
+  the latest subject and preview. These routes have no conversation row: a chat's default route may be one (the page
+  sends that mail through `POST /api/mail/send`), but `POST /api/chats/:id/messages` never sends through one (asked
+  for one by name, it answers 409).
+- **Yours.** Each of your mail addresses is an email identity of the self person (`Store.ownEmailIdentity`, made as
+  a chat account's own identity is, when mail is connected and when an account's addresses change), so the page's
+  `isSelfIdentity` knows mail you sent. Someone with no identity (a newsletter) is given one in the page only, by the
+  id an identity of that address would have.
+- **A mail as a chat message** (`MessageView.mail`, `MessageMailView`): `ts` is when it reached the server, as mail
+  sorts; the body is the words above the quote when the body is here, else the preview; `rich` when its HTML is more
+  than plain text would show (what the reader's body renderers decide); `quoted` when there is quoted text under it;
+  `opens` on the first message of its thread; `inReplyTo`, the Message-ID it answers. One mail that reached two of
+  your accounts (two rows with one Message-ID) is shown once in a person's chat, as its earliest copy, with both
+  accounts in `seenVia`. `only`, on a mail of yours in a thread with others that went to fewer of them than are on it
+  (`mail_thread.participants`, less your addresses), lists who it went to, so the thread says "to Alice only".
+- **Letter furniture** (`web/src/mail/letter.ts`, `web/test/mail-letter.test.ts`): a chat draws a mail's words as a
+  chat message, in a person's chat and in a group thread alike. Folded behind a faint … at the end of the last line:
+  only what is certainly not the message, what follows a `-- ` line (the delimiter itself is never drawn) and a last line that is only the sender's name (first name, full name, or
+  their identity's, person's or your account's name). An unsure tail ("Best,\nSam", "Thanks!", "Love, Mom", "Sent from
+  my phone") stays in place, small and faint. A greeting ("Hi both,") stays full size, with no blank line after it.
+  A run of blank lines is one small gap. A link shows as its host and a short path (the middle cut out), the full
+  address on hover and in its long-press menu. The … shows only when it hides something: the folded lines, the quoted
+  mail (unless it answers the message drawn right above it), and "Show as sent" for a mail whose HTML plain text would
+  lose. A click or tap opens them under the message, and another closes them.
+- **The line over the box** (web `ui/MailChat.tsx`) holds pills, not captions. In a person's chat, after "To Sam
+  Rivera", the thread the mail goes into (`✉ Dinner on Friday? ⌄`): its list has "New subject…" first, then your
+  threads with them newest first; New subject turns the pill into a field of its size, and Esc puts the thread back.
+  In a thread's own chat, who the answer goes to: up to two names, else "Everyone · N", with Everyone, Only <each
+  person> and Full editor. "Only Alice" sends the reply all to her alone (`mail/chatsend.ts`), says "Reply to Alice
+  only" in the box, and is everyone again after the send. A pill at rest is a neutral fill; it is outlined while its
+  list is open or when it is not at its default. Subjects are drawn without their Re: and Fwd: (`bareSubject`);
+  what is sent keeps them.
+- **The subject tag** in a message's head, where the thread changes, has the pill's envelope and bare subject. A
+  click or tap opens the thread's card ("3 mails · with Sam Rivera · newest today") with Archive and Star;
+  archiving says "Archived · Undo", and an archived thread's tags show the archive glyph. Every mail message's menu
+  has the same two for its thread: "Archive “Dinner on Friday?”" (or Unarchive) and "Star thread" (or Unstar).
+- **A person's chat** (`GET /api/chats/person:<id>/messages?before=<ts>:<id>&limit=`) is their chat timeline and the
+  mail of their threads, merged newest first by `(ts, id)` under the one cursor: `limit` counts both, and `hasMore`
+  is either side's. A person you only mail with has a chat too.
+- **What they wrote elsewhere** (`MessagePage.elsewhere`, `ElsewhereView`): their messages, to you (To or Cc), in
+  threads with others, in the page's range (from its oldest message, or the start on the last page, up to where the
+  newer page began, or now), newest last. Each has its excerpt (three lines, 280 characters of the words above the
+  quote) and `awaits`: to you, or naming you, under a week old, and you have neither written in nor opened the thread
+  since (where mail's attention has folded the thread, the turn it says you owe must cover it). The chat
+  (`ui/MailChat.tsx` `ElsewhereRows`) draws one row per thread, at their newest message there, under its own day line:
+  `✉ <subject> · with <others> · <time> ⌄`. The whole line opens and closes the row; open, it shows the text and
+  "Answer there" (or "Open there" when nothing awaits you), which opens the thread at that message with "Back to <their full name>" over it. A thread that awaits
+  you starts open, the rest closed; one you closed while it waits says "Waiting on you" at the right. Right-click or
+  long-press: "Open in <subject>" and "Hide in this chat"; hidden threads leave a faint "1 hidden thread · Show" line in
+  their place. On a narrow row "with …" goes first, then the subject is cut.
+- **Rungs** (`RUNGS`: `hidden`, `closed`, `open`): how a thread shows in a person's chat, when you chose
+  (`PUT /api/rungs {view, place, rung}`, `null` takes it back; table `place_rung`; `view` is `person:<id>`, `place` the
+  thread). Kept on the hub, so a row you closed on one device is closed on the others. Without a choice the row is
+  open while it awaits you (`web/src/mail/elsewhere.ts` `rowOpen`). An open or closed choice is for the row it was
+  made on: once newer mail of theirs comes to the thread (a row later than the choice), the row starts as rows do
+  again. `hidden` stays until Show or Undo; hidden threads are still sent, for the line that counts them.
+- **Other chats**: `GET /api/mail/chats/:id/messages?before=&limit=` pages a route by email (its threads only) or one
+  thread `mth_…` (any thread, newsletters too) as a chat, in the same shape; `GET /api/mail/chats?person=<id>` lists a
+  person's routes. The mail bootstrap carries every route (`MailBootstrap.chats`) and your rungs (`.rungs`).
+- **A thread's name** (web `mail/model.ts` `threadName`, used by `mail/chats.ts` for the thread's conversation): its
+  subject as drawn (`bareSubject`: no Re:, Fwd:, AW: and the like; what is sent keeps the subject), or with no subject
+  its people by first name ("Alice, Jo"). The same in the inbox's row (with the envelope tile and "Jo: …"), the chat's
+  header (the tile, the name, and beneath it up to two of the people on it, from its mails' From, To and Cc, then "+3",
+  a click listing everyone), the mail
+  lists' rows and search hits (the name over who wrote), and Ctrl+K and search's Jump to, which find it by its
+  people's names and addresses too. Every thread has the same grey envelope tile. The header's filing is Archive, with
+  Star and Trash in ⋯. In a mail message's menu the thread's trash comes last, under a line of its own.
+- **Events**: `mail.chats` (routes changed, and `removed` route ids) goes out in the flush that sends `mail.threads`,
+  for every person on a thread that changed (new mail, a read, a Cc, a merge or a split, which send their threads
+  again); `rung` when one is chosen or taken back.
+- **Marking read** what a chat showed: `POST /api/mail/flag {messageIds, seen: true}` marks only those messages.
+
+Tests: `hub/test/mail-chats.test.ts`.
+
 ## Sending (slice 5)
 
-- **Writing.** ✎ in Mail's header (or `c`) starts a new message. Reply, Reply all and Forward sit under each message; on
+- **Writing.** New email in the Inbox header's + (or `c` in a mail list or thread) starts a new message. Reply, Reply all and Forward sit under each message; on
   a phone a bar under the thread answers the latest (`r`, `a`, `f` on a desktop). The composer is a full-screen card on
   a phone and a panel docked at the bottom right on a desktop, so the list stays usable beside it. Its header has ✕ and
   the trash (discard); Attach, Aa (formatting) and Send are along the bottom, Send at the right. It has From (a picker
@@ -460,15 +549,16 @@ Opening a thread, from a mail row or the Mail page, is in the activity log as a 
 its row and where the shadow order had it when it came from the inbox. The learned order with mail (slice 10) learns
 from those (inbox.md, "Mail in the learned order").
 Tests: `hub/test/mail-classify.test.ts`, `mail-attention.test.ts`, `web/test/inbox-mail.test.ts`; `verify-inbox.ts`
-(mixed rows) and `verify-mail.ts` (Updates, Ranked, Newest, Everything and an old People link on a phone and a desktop
-in both themes, Not a person). Ranked: `mail-attention.test.ts` ("Mail's ranked Inbox": every scored thread in the
-window, Inbox paged by date while a score changes), `web/test/mail-model.test.ts` (`rankedThreads`).
+(mixed rows) and `verify-mail.ts` (the Updates and Everything chips in the Inbox's sidebar and an old People link on a
+phone and a desktop in both themes, Not a person). Ranked: `mail-attention.test.ts` ("Mail's ranked Inbox": every
+scored thread in the window, Inbox paged by date while a score changes), `web/test/mail-model.test.ts` (`rankedThreads`).
 
 ## Search (slice 7)
 
-- **Where.** Mail's search button (beside the folders) puts a search box in place of the list. A search is a list key,
-  `s:<query>` (protocol `searchList`), so `#/mail/l/s%3A<query>` links to one and a thread opens beside its results as
-  from any list, and back returns to them. Chips: Unread, Starred, Attachment. The search page gets a **Mail** group
+- **Where.** A mail list's search box, the Inbox header's (docs/inbox.md "Mail lists"), searches that list: the query
+  starts with the list's operators (web `mail/model.ts` `listSearch`, read back by `searchIn`). A search is a list key,
+  `s:<query>` (protocol `searchList`), so `#/inbox?mail=s%3A<query>` links to one and a thread opens beside its results
+  as from any list. The search page gets a **Mail** group
   above the chats' results: the hub's own top five threads and the way into Mail's search. It shows only while the hub
   has mail and the query means something in mail (`mailSearchable`), and it is a request of its own, drawn by Mail's
   chunk, so the chats' results never wait for it (docs/search.md).
@@ -487,6 +577,7 @@ window, Inbox paged by date while a score changes), `web/test/mail-model.test.ts
   | `has:attachment` | with a file |
   | `filename:lease` | an attachment's name ("Keeping all mail": for every account, once its body was fetched) |
   | `is:unread`, `is:read`, `is:starred` (or `is:flagged`) | as the hub has it |
+  | `is:update` (or `is:updates`) | mail not from a person, the Updates list's; this hub's own sorting, so servers are not asked it |
   | `account:proton`, `account:me@x.org` | one mail account, by label, address, kind or id |
   | `before:`, `after:`, `during:`, `sort:oldest` | as in chat search, on when the server got it |
 
@@ -1136,11 +1227,12 @@ is fetched by id, and the window stays "missed" until it is read.
   `DITHER_MAIL_HOLD_MS=500` shortens the 10 s Undo for scripts (`verify-notifications.ts` uses it).
 
   verify-mail drives it in headless Chromium on a phone (390 px, touch) and a desktop, in the dark and light themes:
-  no page errors, nothing off the side of the screen, list → thread → back on a phone, the quote fold, read here, and
-  the HTML-only message; the views in one row of chips, every folded message with a snippet (yours too), the phone
-  reader's subject whole or on two lines beside Archive and ⋯, and the reply it sends shown as text. Its `--proton` run
-  (two accounts) also checks the account picker under "Mail". `DITHER_DEMO_MAIL_GMAIL=1` adds a Gmail account (a trip
-  labelled Travel and marked Important, that you answered; Mom's photos under Family; a starred recipe; a booking
+  no page errors, nothing off the side of the screen; the Inbox's mail list (`#/inbox?mail=…`) with its four chips in
+  one row; a person's mail as messages in their chat (yours too), with the subject tag and its card, the quote behind
+  …, read here, and back on a phone; a thread of three or more as its own chat, its subject on one line beside
+  Archive and ⋯ on a phone; the HTML-only message; and the reply it sends from the chat's box, under the subject pill,
+  shown as text. Its `--proton` run (two accounts) also checks the account wheels over the Everything list.
+  `DITHER_DEMO_MAIL_GMAIL=1` adds a Gmail account (a trip labelled Travel and marked Important, that you answered; Mom's photos under Family; a starred recipe; a booking
   archived under Travel; list mail), and `--gmail` checks it ("Gmail" above). Use a fresh data dir each run: reading marks threads read. With `--html` it also checks the
   frame (slice 3): no script runs in it, not even one put there by hand; no request leaves for anywhere but the hub;
   link clicks go through the opener, and a misleading one asks first; the image banner and the proxy; quotes, `cid:`
@@ -1162,9 +1254,9 @@ is fetched by id, and the window stays "missed" until it is read.
   files by path and by their bytes, a forward's files, From, a recipient or settings refused (422), a clientId sent
   once, a restart mid-send, the server's recipient suggestions).
   `mail-remote.test.ts` sends a reply through the SMTP sink and checks its headers and its copy in the thread.
-  `verify-mail.ts` writes, undoes and sends on a phone (a chip opened and undone, a bold reply drawn in the
-  theme) and docks a new message on a desktop (the server's suggestions, a chip edited in place, B, the Markdown and
-  HTML views, Ctrl+Z, a picture pasted in the text, a table and centred text kept through edits in HTML and
+  `verify-mail.ts` writes, undoes and sends on a phone (a reply from the chat's box held, undone and sent now; the full
+  editor from a message's menu, a chip opened and undone, a bold reply drawn in the theme) and docks a new message on
+  a desktop (the server's suggestions, a chip edited in place, B, the Markdown and HTML views, Ctrl+Z, a picture pasted in the text, a table and centred text kept through edits in HTML and
   Markdown, Plain, the reader's choice for one mail, a big newsletter forwarded with Link counting what can tell and
   its pictures embedded, discard and its Undo), last, since it sends. Start it a few seconds after the demo hub: the demo's two live notices
   arrive 4 s in, and their toasts would take its taps on a phone.

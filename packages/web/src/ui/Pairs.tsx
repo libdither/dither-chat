@@ -611,7 +611,8 @@ export function PairDropdown({ person, directs, focus, view: v, onPick }: { pers
         }}
       >
         <SendLine c={focus} accounts={routeAccounts(focus)} to={to} />
-        {v === 'all' && (
+        {/* One route (someone reached only by email, mail/chats.ts): nothing more to pick. */}
+        {v === 'all' && others.length > 0 && (
           <span class="pair-more">
             <span class="pair-more-nets">
               {otherNets.map((n) => (

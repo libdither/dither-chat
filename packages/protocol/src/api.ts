@@ -28,7 +28,7 @@ import type { PictureLayout } from './pictures.ts';
 import type { AboutModerationView, MemberMod, MessageModeration } from './moderation.ts';
 import type { RichView, VoiceFact } from './rich.ts';
 import type { PollView } from './poll.ts';
-import type { MailAccess, MailAccountView, MailboxView, MailBootstrap, MailOutboxView, MailThreadView } from './mail.ts';
+import type { ElsewhereView, MailAccess, MailAccountView, MailboxView, MailBootstrap, MailChatView, MailOutboxView, MailThreadView, MessageMailView, PlaceRungView } from './mail.ts';
 import type { CalendarLinkView, CalendarNotifyRef, CalendarPlanView } from './calendar.ts';
 import type { AccountsManagerView } from './accounts.ts';
 import type { AccountSelfView } from './self.ts';
@@ -754,6 +754,8 @@ export interface MessageView {
    * with each post's `author` a hub identity id and its pictures the hub's signed media paths.
    */
   feed?: FeedItem;
+  /** A mail message, drawn in a chat (docs/mail.md "Mail as chats"). */
+  mail?: MessageMailView;
   /**
    * A logged post's message (variant 'posts', docs/feed.md "Threads"): the post as the network last showed it, with
    * each `author` a hub identity id and its pictures signed media paths.
@@ -1599,6 +1601,8 @@ export interface MessagePage {
   messages: MessageView[];
   identities: IdentityView[];
   hasMore: boolean;
+  /** A person's chat: what they wrote in threads with others in this page's range (mail.ts ElsewhereView). */
+  elsewhere?: ElsewhereView[];
 }
 
 export interface InboxItem {
@@ -1687,6 +1691,10 @@ export type ClientEvent =
   | { t: 'mail.mailboxes'; accountId: string; mailboxes: MailboxView[] }
   /** Threads new or changed, and threads gone (emptied, or merged into another). */
   | { t: 'mail.threads'; threads: MailThreadView[]; removed: string[] }
+  /** A person's email routes that changed (mail as chats): new mail, a read, a merge. `removed`: ids that went. */
+  | { t: 'mail.chats'; chats: MailChatView[]; removed: string[] }
+  /** A rung chosen for a place in a view, or taken back (`rung` null). */
+  | { t: 'rung'; view: string; place: string; rung: PlaceRungView['rung'] | null }
   /** Lists the page holds that the hub changed without sending each thread: fetch them again when shown (slice 2). `w:*` names every list of mail with someone. */
   | { t: 'mail.lists'; stale: string[] }
   /** An account's sync, as it goes. Of the moment: not journaled (slice 2). */

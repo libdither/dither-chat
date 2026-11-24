@@ -8,7 +8,7 @@
  *
  * Mail (slice 9, docs/mail.md), when the demo hub has its mail account: an answer from someone you write to is a
  * list row, with no notification here; How it sorts lists it with the envelope, and "Less like this" ticks at once
- * and is learned about Sam; the reader's Notification button has that one mark; with Sam set to always alert the
+ * and is learned about Sam; the bell on his mail in his chat has that one mark; with Sam set to always alert the
  * next answer is an alert that shows here with the email mark; Email off for this device keeps the one after off it;
  * and chat's policy is the same before any mail mark.
  *
@@ -73,7 +73,8 @@ try {
   await Bun.sleep(600);
   let l = await lists();
   const heads = Object.keys(l);
-  check(heads.join() === 'Alerts,Conversations,List,Below the list,What it learned from your marks', 'How it sorts lists Alerts, Conversations, List and Below the list, then what it learned', heads);
+  // Then what needs a reply (docs/inbox.md) and the scorecard (docs/scorecard.md), after the tiers.
+  check(heads.join() === 'Alerts,Conversations,List,Below the list,What it learned from your marks,Needs a reply,How well it is doing', 'How it sorts lists Alerts, Conversations, List and Below the list, then what it learned, what needs a reply and how well it does', heads);
   // Lines on the list go by their first message, the most important first; within a line, the same.
   const scores = await p.eval<number[]>(`(() => { const b = document.querySelector('.board-block[data-tier=digest]'); return [...b.querySelectorAll('.model-line')].map((x) => x.querySelector('.model-msg[data-mid]')?.dataset.mid); })()`).then(
     async (ids) => ids.map((id) => inbox.items.find((i: any) => i.message.id === id)?.message.triage.score ?? -1),
@@ -264,21 +265,29 @@ async function mail() {
   check(lessGroup.length === 1 && lessGroup[0].startsWith('Less important:') && /Sam Rivera|Dinner on Friday/.test(lessGroup[0]), 'How it sorts says so under "Less important"', lessGroup);
   check((await get('/api/mail/triage')).items.find((x: any) => x.id === got?.id)?.triage.marks?.less === true, 'and the hub has the mark on that mail');
 
-  // The reader's Notification button.
-  await p.goto(`${hub}/#/mail/t/${dinner.id}`);
-  await p.until(`!!document.querySelector('.mail-msg.open')`, 15000);
+  // The Mail page's reader had a Notification button under each mail; mail is in Sam's chat now (docs/mail.md "Mail
+  // as chats"), where his mail has a chat message's bell among its hover actions.
+  const sam = ((await get('/api/bootstrap')).mail?.chats ?? []).find((c: any) => c.address.startsWith('sam@'));
+  const bellOf = `#m-${got?.id} [aria-label^="Notification"]`;
+  await p.goto(`${hub}/#/inbox/c/${encodeURIComponent(sam?.id ?? '')}?m=${got?.id}`);
+  await p.until(`!!document.querySelector(${JSON.stringify(bellOf)})`, 15000).catch(() => {});
   await Bun.sleep(400);
-  const opened = await p.eval<boolean>(`(() => { const b = [...document.querySelectorAll('.mail-msg-actions button')].filter((x) => x.textContent.includes('Notification')).at(-1); if (!b) return false; b.click(); return true; })()`);
-  await Bun.sleep(300);
+  // Hovered first, as a mouse shows a message's actions, so the bell's menu opens beside it.
+  const over = await p.eval<{ x: number; y: number } | null>(`(() => { const b = document.querySelector('#m-${got?.id} .msg-body'); if (!b) return null; b.scrollIntoView({ block: 'center' }); const r = b.getBoundingClientRect(); return { x: r.x + 20, y: r.y + r.height / 2 }; })()`);
+  if (over) await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...over });
+  await p.until(`(document.querySelector(${JSON.stringify(bellOf)})?.getBoundingClientRect().width ?? 0) > 0`, 3000).catch(() => {});
+  const opened = await p.eval<boolean>(`(() => { const b = document.querySelector(${JSON.stringify(bellOf)}); if (!b) return false; b.click(); return true; })()`);
+  await p.until(`!!document.querySelector('.triage-pop')`, 5000).catch(() => {});
   const pop = opened
     ? await p.eval<{ title: string; marks: { text: string; on: boolean }[]; old: boolean }>(
         `(() => { const pop = document.querySelector('.triage-pop'); return { title: pop?.querySelector('.menu-title')?.textContent ?? '', marks: [...(pop?.querySelectorAll('[data-mark]') ?? [])].map((b) => ({ text: b.textContent.trim(), on: b.getAttribute('aria-pressed') === 'true' })), old: !!pop?.querySelector('[data-old-vote]') }; })()`,
       )
     : { title: '', marks: [], old: false };
-  check(pop.title.startsWith('List:'), 'the reader’s Notification button names the tier', pop.title);
+  check(opened, 'Sam’s mail in his chat has a bell among its actions', bellOf);
+  check(pop.title.startsWith('List:'), '…which names the tier', pop.title);
   check(pop.marks.map((m) => m.text).join() === 'Less like this', '…and offers the one mark mail takes', pop.marks);
   check(pop.marks[0]?.on === true && !pop.old, '…ticked, and not said again as a vote from before the tiers', pop);
-  if (shots) await p.shot(`${shots}/notif-06-mail-reader.png`);
+  if (shots) await p.shot(`${shots}/notif-06-mail-bell.png`);
   await p.eval(`document.querySelector('.cm')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
 
   // Sam set to always alert: the next answer is an alert, and an alert shows here.

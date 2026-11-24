@@ -23,7 +23,7 @@ Devices only send to it.
 |---|---|
 | `id` | made by the device; the device sends the same visit again while it lasts |
 | `device`, `device_label` | a random id per install (localStorage), and "Firefox on Linux" / "Android app" |
-| `view` | `inbox`, `triage`, `conversation` (any open timeline: DM, group, channel, thread), `space`, `person`, `people`, `profile`, `folder`, `spaces`, `search`, `settings`, `accounts`, `directory`, `mail` (the Mail page, or a thread with its id as `conversation_id`, since 2026-11-20) |
+| `view` | `inbox`, `triage`, `conversation` (any open timeline: DM, group, channel, thread), `space`, `person`, `people`, `profile`, `folder`, `spaces`, `search`, `settings`, `accounts`, `directory`, `mail` (a mail thread's chat, or a person's chat on their email route, with the thread's id as `conversation_id`, since 2026-11-20; the Mail page until 2026-11-23) |
 | `conversation_id`, `space_id`, `person_id` | the place: the open conversation, its community, and for a DM the person |
 | `start_at`, `end_at` | when the stay began, and when it was last in use |
 | `active` | seconds in use, by the usage rules: page visible, window focused, input in the last 5 minutes, at most 30 s per tick |

@@ -57,8 +57,8 @@ export const SEARCH_OPS: { op: string; hint: string }[] = [
   { op: 'sort', hint: 'newest, oldest, relevance' },
 ];
 
-/** What mail's is: takes (`flagged` is starred). */
-export const MAIL_SEARCH_IS = ['unread', 'read', 'starred'] as const;
+/** What mail's is: takes (`flagged` is starred; `update` is mail not from a person, the Updates list's). */
+export const MAIL_SEARCH_IS = ['unread', 'read', 'starred', 'update'] as const;
 
 /** Mail's operators, in the order its box suggests them. */
 export const MAIL_SEARCH_OPS: { op: string; hint: string }[] = [
@@ -70,7 +70,7 @@ export const MAIL_SEARCH_OPS: { op: string; hint: string }[] = [
   { op: 'label', hint: 'a label' },
   { op: 'has', hint: 'attachment' },
   { op: 'filename', hint: "an attachment's name" },
-  { op: 'is', hint: 'unread, read, starred' },
+  { op: 'is', hint: 'unread, read, starred, update' },
   { op: 'account', hint: 'one of your mail accounts' },
   { op: 'before', hint: 'a date' },
   { op: 'during', hint: 'a day or a month' },
@@ -147,7 +147,7 @@ function mailOp(q: SearchQuery, key: string, val: string, low: string): boolean 
       q.has.push('attachment');
       return true;
     case 'is': {
-      const is = low === 'flagged' ? 'starred' : low;
+      const is = low === 'flagged' ? 'starred' : low === 'updates' ? 'update' : low;
       if (!(MAIL_SEARCH_IS as readonly string[]).includes(is)) return false;
       q.is.push(is);
       return true;

@@ -337,6 +337,17 @@ CREATE TABLE IF NOT EXISTS chat_route (
   set_at          INTEGER NOT NULL
 );
 
+-- How a place shows in a view, when you chose (docs/mail.md "Mail as chats", rungs.ts): a view is a chat id
+-- ('person:<id>'), a place what shows in it (a mail thread 'mth_…'); `rung` one of protocol RUNGS (hidden, closed,
+-- open). Without a row the view's default holds.
+CREATE TABLE IF NOT EXISTS place_rung (
+  view_id   TEXT NOT NULL,
+  place_id  TEXT NOT NULL,
+  rung      TEXT NOT NULL,
+  set_at    INTEGER NOT NULL,
+  PRIMARY KEY (view_id, place_id)
+);
+
 -- Categories are questions; scores are a provider's answers; overrides are yours and always win.
 CREATE TABLE IF NOT EXISTS category (
   id       TEXT PRIMARY KEY,

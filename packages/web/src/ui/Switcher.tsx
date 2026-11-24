@@ -8,7 +8,7 @@ import { useMemo } from 'preact/hooks';
 import { shownInbox } from '../inbox.ts';
 import { db, go, type Route } from '../state.ts';
 import { describeAddRef, joinsSomething, mailboxList, parseAdd, viewList } from '@dither-chat/protocol';
-import { holdsOnlyMailboxes, MAIL_FOLDER_VIEWS, MAIL_VIEWS } from '../mail/model.ts';
+import { holdsOnlyMailboxes, MAIL_LISTS } from '../mail/model.ts';
 import { calendarOn } from '../plans.ts';
 import { JOIN, NEW, rootKeys, SEARCH, type Entry, type PageRef } from '../palette.ts';
 import { addableGroups } from './AddMembers.tsx';
@@ -63,12 +63,12 @@ function items(): Item[] {
   }
   // Mail, its views and each account's mailboxes (docs/mail.md).
   if (db.mail.access.state !== 'off') {
-    out.push(view('v:mail', 'Mail', 'mail', { view: 'mail' }));
-    for (const v of [...MAIL_VIEWS.slice(1), ...MAIL_FOLDER_VIEWS]) out.push(view(`v:mail:${v.view}`, `Mail: ${v.label}`, 'mail', { view: 'mail', list: viewList(v.view) }));
+    // Mail is chats (docs/mail.md "Mail as chats"): its lists show in the Inbox's place.
+    for (const v of MAIL_LISTS) out.push(view(`v:mail:${v.view}`, `Mail: ${v.label}`, 'mail', { view: 'inbox', mail: viewList(v.view) }));
     for (const b of db.mail.mailboxes.values()) {
       if (holdsOnlyMailboxes(b, db.mail.mailboxes.values())) continue;
       const acc = db.mail.accounts.get(b.accountId);
-      out.push({ key: b.id, label: b.path.replace(/\//g, ' / '), sub: `Mailbox${acc ? ` · ${acc.address ?? acc.label}` : ''}`, icon: <Icon name="folder" size={18} />, to: { view: 'mail', list: mailboxList(b.id) }, last: 0, track: 'row (mailbox)' });
+      out.push({ key: b.id, label: b.path.replace(/\//g, ' / '), sub: `Mailbox${acc ? ` · ${acc.address ?? acc.label}` : ''}`, icon: <Icon name="folder" size={18} />, to: { view: 'inbox', mail: mailboxList(b.id) }, last: 0, track: 'row (mailbox)' });
     }
   }
   const online = [...db.accounts.values()].filter((a) => a.status === 'online');

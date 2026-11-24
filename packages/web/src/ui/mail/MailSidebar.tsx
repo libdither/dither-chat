@@ -1,17 +1,16 @@
 /**
- * Mail's side of the screen (docs/mail.md): where mail access stands, whose mail (two wheels, with muted warnings), the
- * views (Inbox ranked or newest first, Everything, Updates) in one row of chips, Starred, Sent and each account's
- * mailboxes in the folder menu, then the list. With several accounts the line under
- * "Mail" picks whose mail the views show. On a phone it is the list a thread opens over.
+ * A mail list in the Inbox's place (docs/mail.md "Mail as chats", docs/inbox.md "Mail lists"): mail is chats, and its
+ * threads live in the Inbox and in people's chats; this is what mail has besides, as lists. Where mail access stands,
+ * whose mail (two wheels, with muted warnings), then the list. On a phone it is the list a thread opens over.
  */
 import type * as P from '@dither-chat/protocol';
-import { MAIL_PLATFORM_NAMES, mailboxList, mailPlatform, platformScope, searchList, searchOfList, viewList } from '@dither-chat/protocol';
-import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { accountTrouble, DEFAULT_LIST, holdsOnlyMailboxes, inboxUnread, listTitle, MAIL_FOLDER_VIEWS, MAIL_VIEWS } from '../../mail/model.ts';
-import { db, go, mailRev, pref, setPrefs } from '../../state.ts';
+import { MAIL_PLATFORM_NAMES, mailPlatform, platformScope, searchOfList, viewList } from '@dither-chat/protocol';
+import { useEffect, useState } from 'preact/hooks';
+import { accountTrouble, inboxUnread } from '../../mail/model.ts';
+import { db, go, mailRev } from '../../state.ts';
 import { openMenu, type MenuEntry } from '../ContextMenu.tsx';
 import { Icon } from '../icons.tsx';
-import { ComposeButton, DraftsLine } from './Composer.tsx';
+import { DraftsLine } from './Composer.tsx';
 import { MailAccessNote } from './MailAccounts.tsx';
 import { LIST_BARS } from './slots.tsx';
 import { MailSearch } from './MailSearch.tsx';
@@ -35,21 +34,6 @@ function useTrouble(accounts: P.MailAccountView[]) {
     return () => clearTimeout(id);
   }, [next]);
   return new Map(all.flatMap(({ a, t }) => (t.message ? [[a.id, t.message] as const] : [])));
-}
-
-/** The folder menu: Starred and Sent of the scope in use (newest first), then each account's mailboxes. */
-function mailboxMenu(s: typeof db.mail, scope: string, at: { x: number; y: number }, from: EventTarget | null) {
-  const items: MenuEntry[] = MAIL_FOLDER_VIEWS.map((v) => {
-    const k = viewList(v.view, scope === '*' ? null : scope);
-    return { label: v.label, icon: v.view === 'starred' ? 'star' : 'send', run: () => go({ view: 'mail', list: k }) };
-  });
-  for (const a of s.accounts.values()) {
-    const boxes = [...s.mailboxes.values()].filter((b) => b.accountId === a.id && !holdsOnlyMailboxes(b, s.mailboxes.values())).sort((x, y) => (x.role === 'inbox' ? -1 : y.role === 'inbox' ? 1 : x.path.localeCompare(y.path)));
-    if (!boxes.length) continue;
-    items.push({ kind: 'label', label: a.address ?? a.label });
-    for (const b of boxes) items.push({ label: b.path.replace(/\//g, ' / '), icon: b.role === 'inbox' ? 'inbox' : b.role === 'sent' ? 'send' : b.role === 'trash' ? 'trash' : b.role === 'archive' || b.role === 'all' ? 'archive' : 'folder', run: () => go({ view: 'mail', list: mailboxList(b.id) }) });
-  }
-  openMenu(at, { items, label: 'Mailboxes', head: <div class="cm-sheet-title">Mailboxes</div> }, from);
 }
 
 /** Every account's colour in one dot: all of their mail. */
@@ -144,108 +128,27 @@ function ScopeWheels({ accounts, scope, trouble, pickScope, openMenu }: { accoun
   );
 }
 
-export function MailSidebar({ list, active }: { list?: string; active?: string }) {
+/**
+ * A mail list in the Inbox's place (`#/?mail=<list>`): Updates, Everything, Starred, Sent, a mailbox or a search in
+ * one, under the Inbox's own header and chips (ui/Sidebar.tsx InboxSidebar, MailChat.tsx MailListChips), so nothing
+ * above a list moves as you change lists. Writing a mail is the header's +.
+ */
+export function MailSidebar({ list, active }: { list: string; active?: string }) {
   mailRev.value;
   const s = db.mail;
-  const key = list ?? DEFAULT_LIST;
+  const key = list;
   const accounts = [...s.accounts.values()];
-  const scoped = key.startsWith('v:') ? key.split(':')[2] : '*';
+  const scoped = (key.startsWith('v:') && key.split(':')[2]) || '*';
   const view = key.startsWith('v:') ? key.split(':')[1] : null;
-  const pick = (v: string, acc: string) => go({ view: 'mail', list: viewList(v as P.MailView, acc === '*' ? null : acc) });
+  const pick = (v: string, acc: string) => go({ view: 'inbox', mail: viewList(v as P.MailView, acc === '*' ? null : acc) }, true);
   const search = searchOfList(key);
-  const newest = pref('mailOrder') === 'newest';
   const trouble = useTrouble(accounts);
-  const openPicker = (from: HTMLElement) => openAccountMenu(from, accounts, scoped, trouble, (acc) => pick(view ?? 'inbox', acc));
-  const chips = search === null && accounts.length > 0;
-  const row = useRef<HTMLDivElement>(null);
-  // An edge with more chips past it fades out.
-  const edges = () => {
-    const el = row.current;
-    if (!el) return;
-    el.classList.toggle('fade-l', el.scrollLeft > 2);
-    el.classList.toggle('fade-r', el.scrollLeft + el.clientWidth < el.scrollWidth - 2);
-  };
-  // One row that scrolls sideways: the chosen chip is brought into it.
-  const opened = useRef(false);
-  useLayoutEffect(() => {
-    const el = row.current;
-    const on = el?.querySelector<HTMLElement>('.chip-btn.on');
-    // Mail opening on its first chip: nothing to scroll, and the ResizeObserver below sets the edges once the row is
-    // laid out. Measuring here forced the layout of the whole page into the task that drew it (140 ms at 4x on a phone).
-    const first = !opened.current && on === el?.querySelector('.chip-btn');
-    if (el) opened.current = true;
-    if (first) return;
-    if (el && on) {
-      const r = el.getBoundingClientRect();
-      const c = on.getBoundingClientRect();
-      if (c.left < r.left + 8) el.scrollLeft -= r.left + 12 - c.left;
-      else if (c.right > r.right - 8) el.scrollLeft += c.right - r.right + 12;
-    }
-    edges();
-  }, [view, chips]);
-  useEffect(() => {
-    const el = row.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(edges);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [chips]);
+  const openPicker = (from: HTMLElement) => openAccountMenu(from, accounts, scoped, trouble, (acc) => pick(view ?? 'all', acc));
   return (
-    <div class="sidebar-inner mail-side">
-      <header class="side-head">
-        <h1>
-          Mail
-          {accounts.length > 0 && (
-            <button class={`icon-btn small side-new mail-search-btn ${search !== null ? 'on' : ''}`} aria-label="Search mail" title="Search mail" onClick={() => go(search !== null ? { view: 'mail' } : { view: 'mail', list: searchList('') })}>
-              <Icon name="search" size={16} />
-            </button>
-          )}
-          {accounts.length > 0 && (
-            <button
-              class={`icon-btn small side-new mail-boxes-btn ${key.startsWith('mb:') || view === 'starred' || view === 'sent' ? 'on' : ''}`}
-              aria-label="Starred, Sent and mailboxes"
-              title="Starred, Sent and mailboxes"
-              onClick={(e) => {
-                const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                mailboxMenu(s, scoped, { x: r.left, y: r.bottom + 4 }, e.currentTarget);
-              }}
-            >
-              <Icon name="folder" size={16} />
-            </button>
-          )}
-          <ComposeButton accountId={scoped === '*' || scoped.startsWith('k.') ? null : scoped} />
-        </h1>
-        {search === null && view && accounts.length > 0 ? (
-          <ScopeWheels accounts={accounts} scope={scoped} trouble={trouble} pickScope={(sc) => pick(view, sc)} openMenu={openPicker} />
-        ) : (
-          <span class="side-sub">{search !== null ? 'Search' : view ? 'Through dither-accounts' : listTitle(s, key)}</span>
-        )}
-      </header>
+    <div class="mail-side">
       <MailAccessNote />
+      {search === null && view && accounts.length > 1 ? <ScopeWheels accounts={accounts} scope={scoped} trouble={trouble} pickScope={(sc) => pick(view, sc)} openMenu={openPicker} /> : null}
       {search !== null && <MailSearch q={search} active={active} />}
-      {chips && (
-        <div class="inbox-chips mail-chips" role="radiogroup" aria-label="Show" ref={row} onScroll={edges}>
-          {MAIL_VIEWS.map((v) => {
-            const on = view === v.view;
-            // Inbox's chip names its order; tapped again, it turns to the other (docs/mail.md "Ranked").
-            const order = v.view === 'inbox' ? (newest ? 'Newest' : 'Ranked') : null;
-            const flip = order && on ? (newest ? 'Sort by importance' : 'Sort newest first') : undefined;
-            return (
-              <button
-                class={`chip-btn ${on ? 'on' : ''} ${order ? 'mail-order-chip' : ''}`}
-                role="radio"
-                aria-checked={on}
-                title={flip}
-                data-track={flip ? `mail: ${newest ? 'ranked' : 'newest'}` : undefined}
-                onClick={() => (flip ? setPrefs({ mailOrder: newest ? 'ranked' : 'newest' }) : pick(v.view, scoped))}
-              >
-                {order ?? v.label}
-                {flip && <Icon name="repeat" size={11} />}
-              </button>
-            );
-          })}
-        </div>
-      )}
       {search === null && <DraftsLine />}
       {search === null &&
         LIST_BARS.map((B) => (

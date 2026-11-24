@@ -6564,9 +6564,10 @@ textarea.chip-box {
   font-size: 18px;
 }
 
+/* Bottom right, standing on a composer under it (Toasts.tsx sets --toast-lift) so its send button stays in reach. */
 .toasts {
   position: fixed;
-  bottom: 20px;
+  bottom: calc(12px + var(--toast-lift, 8px));
   right: 20px;
   z-index: 200;
   display: flex;
@@ -13634,30 +13635,6 @@ button.msg-edited.link:hover {
 .mail-acc-dot.warn {
   box-shadow: 0 0 0 2px var(--bg-sidebar), 0 0 0 3.5px var(--warn);
 }
-/* Mail's views: one row that scrolls sideways, with no scrollbar, rather than wrapping onto a second. */
-.mail-chips {
-  flex-wrap: nowrap;
-  align-items: center;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-  overscroll-behavior-x: contain;
-}
-.mail-chips::-webkit-scrollbar {
-  display: none;
-}
-.mail-chips.fade-r {
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
-  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
-}
-.mail-chips.fade-l {
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 28px);
-  mask-image: linear-gradient(to right, transparent, #000 28px);
-}
-.mail-chips.fade-l.fade-r {
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
-  mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
-}
 /* Under "Mail": whose mail the views show, as wheels (ScopeWheel): the choice in use, the rest a click or a turn away. */
 .scope-wheels {
   display: flex;
@@ -14040,8 +14017,31 @@ button.msg-edited.link:hover {
   color: var(--warn);
 }
 /* Over the header while threads are picked, so the list under the finger does not move. */
+/* A mail message in a chat, opened up (ChatMail.tsx): its quote, or the mail as it was sent. */
+.chat-mail-quote {
+  margin-top: 4px;
+  padding-left: 9px;
+  border-left: 2px solid var(--border);
+  color: var(--text-dim);
+}
+.chat-mail-sent {
+  margin-top: 6px;
+  max-width: 720px;
+}
+.chat-mail-empty {
+  color: var(--text-faint);
+  font-style: italic;
+}
+/* A mail list in the Inbox's place (ui/mail/MailSidebar.tsx), under the Inbox's header and chips: the rest of the column. */
 .mail-side {
   position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.mail-side > .scope-wheels {
+  padding: 8px 12px 0;
 }
 .mail-pickbar {
   position: absolute;
@@ -14124,24 +14124,12 @@ button.msg-edited.link:hover {
   }
 }
 
-/* Mail search (slice 7): in Mail's sidebar, and as a group on the search page. */
-.mail-search-btn + .mail-boxes-btn {
-  margin-left: 0;
-}
-.mail-search-btn.on {
-  color: var(--accent);
-}
+/* Mail search (slice 7): in a mail list's place, and as a group on the search page. */
 .mail-search {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
-.mail-search-box {
-  margin: 4px 12px 2px;
-}
-.mail-search-box input {
-  min-width: 0;
 }
 .mail-hit .mail-hit-snip {
   display: -webkit-box;
@@ -14543,9 +14531,6 @@ button.msg-edited.link:hover {
 }
 
 /* Mail: the composer and the outbox strip (slice 5, ui/mail/Composer.tsx). */
-.side-new + .mail-compose-btn {
-  margin-left: 0;
-}
 .mail-drafts-line {
   display: inline-flex;
   align-items: center;

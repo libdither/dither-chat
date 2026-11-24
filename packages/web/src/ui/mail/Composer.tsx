@@ -9,10 +9,12 @@
  * draft has its Undo there too (discard.ts). An account that cannot send (a read grant, or sending turned off) says
  * why, and the rest of mail keeps working.
  */
+import { chatSends, isMailThread, sendsShown } from '../../mail/chats.ts';
 import type * as P from '@dither-chat/protocol';
+import { bareSubject } from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { details } from '../../mail/held.ts';
-import { canSendFrom, cannotSend, dismissSend, drafts, loadDrafts, loadOutbox, sendingAgain, sendNow, undoSend } from '../../mail/drafts.ts';
+import { canSendFrom, dismissSend, drafts, loadDrafts, loadOutbox, sendNow, undoSend } from '../../mail/drafts.ts';
 import { connected, db, go, mailRev, route } from '../../state.ts';
 import { openMenu } from '../ContextMenu.tsx';
 import { Icon } from '../icons.tsx';
@@ -62,7 +64,11 @@ function OutboxStrip() {
   mailRev.value;
   const [, tick] = useState(0);
   const now = Date.now();
+  const shown = sendsShown.value;
   const items = [...db.mail.outbox.values()].filter((o) => {
+    // Sent from a chat that is open now: the chat shows it, with its own Undo.
+    const from = chatSends.get(o.clientId);
+    if (from && shown.has(from.place)) return false;
     if (o.state !== 'sent') return true;
     if (!sentSeen.has(o.id)) sentSeen.set(o.id, (o.createdAt ?? 0) > now - 60_000 ? now : 0);
     return now - sentSeen.get(o.id)! < SENT_SHOWN_MS;
@@ -80,7 +86,10 @@ function OutboxStrip() {
     if (up) void loadOutbox();
   }, [up]);
   if (!items.length && !gone.length) return null;
-  const quoted = (s: string) => (s ? `“${s.length > 40 ? `${s.slice(0, 39)}…` : s}”` : 'your message');
+  const quoted = (raw: string) => {
+    const s = bareSubject(raw);
+    return s ? `“${s.length > 40 ? `${s.slice(0, 39)}…` : s}”` : 'your message';
+  };
   return (
     <div class="mc-strip" role="status" aria-live="polite">
       {gone.map((x) => (
@@ -145,8 +154,8 @@ function OutboxStrip() {
               Undo
             </button>
           )}
-          {o.state === 'sent' && o.threadId && route.value.view === 'mail' && (
-            <button class="link-btn" onClick={() => go({ view: 'mail', list: (route.value as { list?: string }).list, thread: o.threadId! })}>
+          {o.state === 'sent' && o.threadId && route.value.view === 'inbox' && (
+            <button class="link-btn" onClick={() => go({ view: 'inbox', conv: o.threadId! })}>
               View
             </button>
           )}
@@ -173,19 +182,6 @@ function OutboxStrip() {
 }
 
 // ------------------------------------------------------------------ where it starts from
-
-/** Mail's ✎: a new message, from the account the list shows (or the first that can send). */
-export function ComposeButton({ accountId }: { accountId: string | null }) {
-  mailRev.value;
-  const accounts = [...db.mail.accounts.values()].filter((a) => a.level !== null);
-  if (!accounts.some((a) => a.level === 'write')) return null;
-  const pickAcc = (accountId && accounts.find((a) => a.id === accountId && canSendFrom(a))) || accounts.find(canSendFrom) || accounts.find((a) => a.level === 'write');
-  return (
-    <button class="icon-btn small side-new mail-compose-btn" aria-label="New message" title="New message (c)" onClick={() => openCompose({ kind: 'new', accountId: pickAcc?.id })}>
-      <Icon name="pencil" size={16} />
-    </button>
-  );
-}
 
 /** "2 drafts" under the views: each opens in the composer. */
 export function DraftsLine() {
@@ -222,24 +218,6 @@ export function DraftsLine() {
   );
 }
 
-/** Under the reader: why this account cannot send, where reply would be. */
-export function SendNote({ account }: { account: P.MailAccountView | undefined }) {
-  if (!account || account.level !== 'write' || account.send.ok !== false) return null;
-  return (
-    <p class="mail-reader-note mail-send-note">
-      {cannotSend(account)}
-      {account.send.refused && (
-        <>
-          {' '}
-          <button class="link-btn" onClick={() => void sendingAgain(account.id)}>
-            Try sending again
-          </button>
-        </>
-      )}
-    </p>
-  );
-}
-
 // ------------------------------------------------------------------ answering
 
 /** Answering works from this message's account. */
@@ -262,21 +240,23 @@ export function latestOf(threadId: string): P.MailMessageView | undefined {
   return ms[ms.length - 1];
 }
 
-// Keys (§6.5): c composes; r, a and f answer the open thread's latest message.
+// Keys (§6.5), in a mail list or a thread's chat (docs/mail.md "Mail as chats"): c composes; r, a and f answer the
+// open thread's latest message.
 if (typeof window !== 'undefined')
   window.addEventListener('keydown', (e) => {
     if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || mailCompose.value) return;
     const t = e.target as HTMLElement | null;
     if (t && (t.isContentEditable || /^(input|textarea|select)$/i.test(t.tagName))) return;
     const r = route.value;
-    if (r.view !== 'mail') return;
+    if (r.view !== 'inbox' || !(r.mail || isMailThread(r.conv))) return;
+    const thread = isMailThread(r.conv) ? r.conv : undefined;
     if (e.key === 'c') {
       const acc = [...db.mail.accounts.values()].find(canSendFrom);
       if (acc) (e.preventDefault(), openCompose({ kind: 'new', accountId: acc.id }));
       return;
     }
     const kind = ({ r: 'reply', a: 'replyAll', f: 'forward' } as const)[e.key as 'r' | 'a' | 'f'];
-    if (!kind || !r.thread) return;
-    const m = latestOf(r.thread);
+    if (!kind || !thread) return;
+    const m = latestOf(thread);
     if (m && canAnswer(db.mail.accounts.get(m.accountId))) (e.preventDefault(), answer(kind, m));
   });

@@ -6,7 +6,7 @@
  */
 import { effect, signal } from '@preact/signals';
 import { isInteracting } from './arrange.ts';
-import { inboxKeyOf, inboxRows, mailRowsWaiting, rowDirect, rowLast, rowMuted, type InboxRow } from './model.ts';
+import { inboxKeyOf, inboxRows, mailRowsWaiting, rowConvs, rowDirect, rowLast, rowMuted, type InboxRow } from './model.ts';
 import { filterKeeps, inboxChanged, inboxSnapshot, inboxView, sameInbox, shouldResort, type Hold, type InboxSnapshot, type Ranked, type ResortReason } from './ordering.ts';
 import { loaded, mailRev, rev, route, type InboxFilter } from './state.ts';
 import { onForeground } from './usage.ts';
@@ -30,7 +30,6 @@ export const inboxSnap = signal<{ v: number; at: number | null; snap: InboxSnaps
  */
 const openHere = () => {
   const r = route.value;
-  if (r.view === 'mail') return r.thread;
   return r.view === 'inbox' && r.conv ? inboxKeyOf(r.conv) : undefined;
 };
 const hold = (): Hold | undefined => {
@@ -66,7 +65,7 @@ export function shownInbox(filter: InboxFilter): InboxRow[] {
   const snap = inboxSnap.value.snap;
   const keep = (id: string) => {
     const r = byId.get(id)!;
-    return filterKeeps(filter, { mail: r.kind === 'mail', direct: rowDirect(r) });
+    return filterKeeps(filter, { mail: r.kind === 'mail' || rowConvs(r).some((c) => c.network === 'email'), direct: rowDirect(r) });
   };
   return inboxView(snap, ranked(rows), keep).map((k) => byId.get(k)!);
 }
