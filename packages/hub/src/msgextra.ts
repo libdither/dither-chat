@@ -70,7 +70,9 @@ export function extraView(extra: Record<string, unknown> | null, replyToId: stri
     out.storyReply = { mine: !!author && d.isSelf(author), authorId: author ? d.identity(author) : null, ...(str(s.emoji) ? { emoji: s.emoji } : {}) };
   }
 
-  const failed = arr<P.SendFailureFact>(e.failed).filter((f) => f && REASONS.has(f.reason));
+  // Someone gone from the network ('unregistered') is left out, as Signal's apps leave them out: they are gone for good,
+  // so every message to their group would say so again. Adapters no longer send it; this hides what was stored before.
+  const failed = arr<P.SendFailureFact>(e.failed).filter((f) => f && REASONS.has(f.reason) && f.reason !== 'unregistered');
   if (failed.length)
     out.failed = failed.map((f) => {
       const identityId = str(f.who) ? d.identity(f.who!) : null;
