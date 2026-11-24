@@ -92,7 +92,8 @@ resizes. The keyboard's height is remembered per orientation (`dither-chat:keybo
 its place (`keyboardroom.ts`). Fields are 16px
 so iOS does not zoom into them. The notch and the home indicator are kept clear with the safe-area insets;
 while the keyboard is up the bottom inset is dropped and the tab bar steps aside. On a touch keyboard Enter makes a new line (there
-is no Shift+Enter) and the send button sends; Ctrl+Enter also sends.
+is no Shift+Enter) and the send button sends, leaving the keyboard up for the next message (tapping it never takes
+the focus from the box); Ctrl+Enter also sends.
 
 **The message box** grows with the text, as Discord's does, up to about five lines on a phone and never more than
 40% of what is visible above the keyboard; past that it scrolls inside. It shrinks as text is deleted and is one

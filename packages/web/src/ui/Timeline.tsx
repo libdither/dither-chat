@@ -1861,10 +1861,12 @@ export function Composer({ targets, placeholder, reply, clearReply, disabledReas
   );
   const recording = attaching && offer.record && !text.trim() && !files.length;
   // The chat's disappearing timer is on: a stopwatch on whatever sits in send's place (Disappearing.tsx).
+  // Send never takes the focus from the box: on a phone that would drop the keyboard after every message.
+  const keepFocus = (e: MouseEvent) => e.preventDefault();
   const sendBtn = recording ? (
       <VoiceButton conversationId={targets.convId} onPhone={onPhone} voice={offer.voice} onSend={(f, voice) => sendMedia({ files: [f], ...(voice ? { media: { voice } } : {}) })} />
   ) : (
-    <button class={"send-btn"} data-track="send" disabled={!canSend} onClick={submit} aria-label="Send" title={`${sendTitle ?? 'Send'}${extras.timer ? `, disappears after ${durationLabel(extras.timer).toLowerCase()}` : ''}`}>
+    <button class={"send-btn"} data-track="send" disabled={!canSend} onMouseDown={keepFocus} onClick={submit} aria-label="Send" title={`${sendTitle ?? 'Send'}${extras.timer ? `, disappears after ${durationLabel(extras.timer).toLowerCase()}` : ''}`}>
       <Icon name="send" size={17} />
     </button>
   );
@@ -1878,6 +1880,7 @@ export function Composer({ targets, placeholder, reply, clearReply, disabledReas
         class={`send-btn ${extras.silent ? 'silent' : ''}`}
         data-track="send"
         disabled={!canSend}
+        onMouseDown={keepFocus}
         onClick={submit}
         {...sendHold}
         onContextMenu={(e) => {
