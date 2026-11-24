@@ -132,7 +132,8 @@ export class LoudLearner {
   answer(b: P.AttnAnswerBody, now = Date.now()): P.AttnAnswerResult {
     const s = this.store;
     const t = s.one<Row>(
-      `SELECT t.decision, t.loud, m.conversation_id, COALESCE(i.person_id, m.author_id) AS author
+      `SELECT t.decision, t.loud, m.conversation_id, COALESCE(i.person_id, m.author_id) AS author,
+         EXISTS (SELECT 1 FROM notification n WHERE n.message_id = m.id AND n.alert = 1) AS sounded
        FROM message m LEFT JOIN triage t ON t.message_id = m.id LEFT JOIN identity i ON i.id = m.author_id WHERE m.id = ?`,
       b.messageId,
     );
@@ -144,12 +145,21 @@ export class LoudLearner {
       .query(
         `INSERT INTO attn_answer (id, message_id, conversation_id, author, answer, source, scope, checkin_id, band, sounded, why_asked, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, b.messageId, t.conversation_id, t.author, b.answer, b.source, b.scope ?? null, b.checkinId ?? null, t.loud != null ? bandOf(t.loud) : null, t.decision === 'push' ? 1 : 0, asked ? 1 : 0, now);
+      .run(id, b.messageId, t.conversation_id, t.author, b.answer, b.source, b.scope ?? null, b.checkinId ?? null, t.loud != null ? bandOf(t.loud) : null, t.sounded ? 1 : 0, asked ? 1 : 0, now);
     if (b.checkinId) this.checkins.answer(b.checkinId, b.answer, now);
-    // The tiers keep learning from Louder / Quieter as from the marks they replace.
-    if (this.mark && t.decision && t.decision !== 'silent' && (b.answer === 'louder' || b.answer === 'quieter')) {
+    // The tiers keep learning from these as from the marks they replace: Louder as "Should have alerted"; Quieter as
+    // "Alert was wrong" on an alert, else "Less like this"; "Could have waited" on an alert as "Not urgent" did;
+    // "Shouldn't have reached me" as both.
+    const push = t.decision === 'push';
+    const asMark: P.TriageMarks | null =
+      b.answer === 'louder' ? { alert: true }
+      : b.answer === 'quieter' ? (push ? { alert: false } : { less: true })
+      : b.answer === 'could_wait' ? (push ? { alert: false } : null)
+      : b.answer === 'shouldnt' ? (push ? { alert: false, less: true } : { less: true })
+      : null;
+    if (this.mark && t.decision && t.decision !== 'silent' && asMark) {
       try {
-        this.mark(b.messageId, b.answer === 'louder' ? { alert: true } : t.decision === 'push' ? { alert: false } : { less: true });
+        this.mark(b.messageId, asMark);
       } catch (e) {
         console.error('attention: the mark could not be kept', e);
       }
@@ -160,6 +170,15 @@ export class LoudLearner {
 
   /** A mark from the old route (POST /api/messages/:id/feedback), kept as the answer it now is. */
   fromMark(messageId: string, marks: P.TriageMarks, now = Date.now()) {
+    // A mark taken back (`alert: null`, `less: false`) takes back the answer it stood as.
+    const back: P.AttnAnswer[] = [];
+    if ('alert' in marks && marks.alert == null) back.push('louder', 'quieter');
+    if ('less' in marks && marks.less === false) back.push('quieter');
+    if (back.length) {
+      const ph = back.map(() => '?').join(', ');
+      this.store.db.query(`DELETE FROM attn_answer WHERE message_id = ? AND source = 'sheet' AND answer IN (${ph})`).run(messageId, ...back);
+      this.learn(now);
+    }
     const answer: P.AttnAnswer | null = marks.alert === true ? 'louder' : marks.alert === false || marks.less === true ? 'quieter' : null;
     if (!answer) return;
     const mark = this.mark;

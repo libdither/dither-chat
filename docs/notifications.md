@@ -68,20 +68,28 @@ After Louder, Quieter, Could have waited or Shouldn't have reached me it may ask
 chips (it could have waited, not this chat, not this person, not this topic, a bad moment, already seen it; or, for
 louder, time-sensitive, this person matters, this chat matters, this topic matters, I was free), how long it could
 have waited (or when you'd have wanted it), your own words, and an optional end date (*until …*). Your words are read
-by the local model on the hub's machine and mapped to a chip; they are not kept. It asks at most once a chat a day,
+by the local model on the hub's machine and mapped to a chip; they are not kept (the hub stores only the chip, and the
+local model's cache keeps only a hash of the question and the words, with its answer). It asks at most once a chat a day,
 and never twice in a row for the same answer.
 
 A reason routes the answer: *not this chat* moves only that chat's want, *not this person* the person's, *not this
 topic* the words, *it could have waited* and the wait chips only the can-wait part, *a bad moment* only the moment's
-cost. Louder and Quieter also stand as the marks they replace (below), so the tiers keep learning from them.
+cost. Louder and Quieter also stand as the marks they replace (below), so the tiers keep learning from them: Louder as
+Should have alerted; Quieter as Alert was wrong on an alert and Less like this elsewhere; Could have waited on an
+alert as the old Not urgent; Shouldn't have reached me as Less like this (and Alert was wrong on an alert). A mark
+taken back on the old route takes back the answer it stood as.
 
 ### Check-ins
 
 A question at the top of the inbox (`checkin.ts`), in the app only: up to three a day, one about something that
-sounded and one about something that stayed quiet. Half are picked at random, with the chance each had of being picked
-kept, so the scorecard can weigh them back honestly; half where the model is least sure. **Ask me less** halves the
-rate; three skips in a row pause it for a week. For you asks one card a day, *Worth seeing?*
-([foryou.md](foryou.md)).
+sounded and one about something that stayed quiet. *Sounded* means a push of it played a sound (`notification.alert`),
+not only that it was decided an alert: one in a burst, while a computer was in use or in a watched chat stayed silent.
+With one question a day (*Rarely*), either side is asked at even odds. Each pick tosses a fair coin between the two
+arms: at random, with the chance it had of being picked kept (a half, then one of the side's pool), so the scorecard
+can weigh them back honestly; or where the model is least sure. **Ask me less** halves the rate, down to an eighth;
+what is left over of a question is a chance drawn once a day, so at an eighth of three it is about one a week. Three
+skips in a row pause it for a week. For you asks one card a day on top of these, *Worth seeing?*
+([foryou.md](foryou.md)), thinned by the same rate.
 
 ### What it learns from
 
