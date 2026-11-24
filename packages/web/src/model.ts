@@ -7,7 +7,7 @@
 import type * as P from '@dither-chat/protocol';
 import { categoryThreshold, mutedNow, NETWORK_META, POST_NETWORKS, RULE_LABEL } from '@dither-chat/protocol';
 import { dataVersion, db, inbox, isSelfIdentity, mailTriage } from './state.ts';
-import { mailDataVersion, metaDataVersion } from './versions.ts';
+import { mailDataVersion, metaDataVersion, placesDataVersion } from './versions.ts';
 import { isMailItem, triageBoard, type Board, type BoardItem } from './board.ts';
 import { mailInboxRows, mailNames, scopeAccounts } from './mail/model.ts';
 import { routesByPerson } from './mail/chats.ts';
@@ -22,6 +22,21 @@ function memo<T>(key: string, fn: () => T): T {
   if (m && m.rev === v) return m.value as T;
   const value = fn();
   memos.set(key, { rev: v, value });
+  return value;
+}
+
+const placesMemos = new Map<string, { rev: number; value: unknown }>();
+/**
+ * The same, for what reads no identity and not the inbox's messages (versions.ts `placesDataVersion`): the rail's
+ * places, their counts and order, the badge, people's directs and the inbox's rows. Identities that come with a page or
+ * the inbox, and the inbox itself, do not work these out again.
+ */
+function placesMemo<T>(key: string, fn: () => T): T {
+  const m = placesMemos.get(key);
+  const v = placesDataVersion();
+  if (m && m.rev === v) return m.value as T;
+  const value = fn();
+  placesMemos.set(key, { rev: v, value });
   return value;
 }
 
@@ -402,7 +417,7 @@ interface TreeNode {
 }
 
 export function spaceChildren(id: string): TreeNode[] {
-  return memo('children:' + id, () =>
+  return placesMemo('children:' + id, () =>
     (db.children.get(id) ?? [])
       .map((e): TreeNode | null => {
         if (e.childKind === 'conversation') {
@@ -481,7 +496,7 @@ interface ShownThreads {
  * rest are `more`.
  */
 export function shownThreads(c: P.ConversationView, active?: string): ShownThreads {
-  const base = memo('shownThreads:' + c.id, () => pickThreads(c));
+  const base = placesMemo('shownThreads:' + c.id, () => pickThreads(c));
   if (!active || active === c.id) return remember(c.id, base);
   const open = db.conversations.get(active);
   if (!open || open.parentId !== c.id || open.shape !== 'thread' || !visibleConv(open)) return remember(c.id, base);
@@ -546,7 +561,7 @@ function pickThreads(c: P.ConversationView): ShownThreads {
  * threads' add up; a forum's own count may already hold its posts', so `sumUnread` takes the larger.
  */
 export function channelUnread(c: P.ConversationView): Unread {
-  return memo('cu:' + c.id, () => {
+  return placesMemo('cu:' + c.id, () => {
     const ids = db.threads.get(c.id);
     const own = unreadOf(c);
     if (!ids?.length) return own;
@@ -621,7 +636,7 @@ const placeActivity = (e: RailEntry) =>
  * Communities are listed by default; a conversation only once you add it. Whatever sits in a folder lives there instead.
  */
 export function railEntries(which: 'shown' | 'hidden' = 'shown'): RailEntry[] {
-  return memo('rail:' + which, () => {
+  return placesMemo('rail:' + which, () => {
     // Conversations you added to the rail and not to a folder: by id, since what is where moves only with settings.
     const railed = metaMemo('railed', () => {
       const inFolder = new Set(db.folders.flatMap((f) => f.items.map((i) => `${i.kind}:${i.id}`)));
@@ -656,7 +671,7 @@ export function railEntries(which: 'shown' | 'hidden' = 'shown'): RailEntry[] {
 
 
 export function allCommunities(): P.SpaceView[] {
-  return memo('allCommunities', () => {
+  return placesMemo('allCommunities', () => {
     const top = metaMemo('communities', () => [...db.spaces.values()].filter((s) => s.kind === 'community' && visibleSpace(s) && !spaceParents(s.id).some((p) => p.kind === 'community' && visibleSpace(p))));
     const act = new Map(top.map((s) => [s.id, activityOfSpace(s.id)]));
     return [...top].sort((a, b) => act.get(b.id)! - act.get(a.id)!);
@@ -665,7 +680,7 @@ export function allCommunities(): P.SpaceView[] {
 
 /** Every conversation under a space, through sections, subspaces and threads. */
 export function convsUnder(id: string): P.ConversationView[] {
-  return memo('under:' + id, () => {
+  return placesMemo('under:' + id, () => {
     const out: P.ConversationView[] = [];
     for (const cid of idsUnder(id)) {
       const c = db.conversations.get(cid);
@@ -680,7 +695,7 @@ export function convsUnder(id: string): P.ConversationView[] {
  * first by their newest message there or in a thread of theirs: a Zulip channel takes no messages itself.
  */
 export function channelsUnder(id: string): P.ConversationView[] {
-  return memo('chans:' + id, () => {
+  return placesMemo('chans:' + id, () => {
     const under = convsUnder(id);
     const latest = new Map<string, number>();
     for (const c of under) {
@@ -719,7 +734,7 @@ function idsUnder(id: string): string[] {
 }
 
 export function activityOfSpace(id: string): number {
-  return memo('act:' + id, () => Math.max(0, ...convsUnder(id).map((c) => c.lastMessageAt ?? 0)));
+  return placesMemo('act:' + id, () => Math.max(0, ...convsUnder(id).map((c) => c.lastMessageAt ?? 0)));
 }
 
 // ------------------------------------------------------------------ categories
@@ -742,8 +757,8 @@ export type Level = Exclude<P.NotifyLevel, 'smart'>;
 const rank = (l: Level) => ({ none: 0, digest: 1, mentions: 2, all: 3 })[l];
 
 /** Your rules that still mean something. */
-export const liveRules = () => memo('liveRules', () => db.rules.filter((r): r is P.RuleView & { level: Level } => r.level !== 'smart'));
-const ruleMap = () => memo('rules', () => new Map(liveRules().map((r) => [`${r.scope}:${r.target ?? ''}`, r.level])));
+export const liveRules = () => placesMemo('liveRules', () => db.rules.filter((r): r is P.RuleView & { level: Level } => r.level !== 'smart'));
+const ruleMap = () => placesMemo('rules', () => new Map(liveRules().map((r) => [`${r.scope}:${r.target ?? ''}`, r.level])));
 /** The rule set on this very place, person or keyword; null with none. */
 export const ruleOn = (scope: P.NotifyScope, target: string | null): Level | null => ruleMap().get(`${scope}:${target ?? ''}`) ?? null;
 
@@ -943,14 +958,14 @@ export function sumUnread(convs: P.ConversationView[]): Unread {
  * (docs/feed.md).
  */
 export function totalUnread(): Unread {
-  return memo('totalUnread', () => {
+  return placesMemo('totalUnread', () => {
     const held = heldByRequest();
     return sumUnread([...db.conversations.values()].filter((c) => visibleConv(c) && !held.has(c.id) && !isQuietConv(c)));
   });
 }
 
 export function spaceUnread(id: string): Unread {
-  return memo('su:' + id, () => sumUnread(convsUnder(id)));
+  return placesMemo('su:' + id, () => sumUnread(convsUnder(id)));
 }
 
 /** The folder a folder sits in, if it is inside one. */
@@ -964,7 +979,7 @@ export function folderLeaves(f: P.FolderView): P.FolderView['items'] {
 }
 
 export function folderConvs(f: P.FolderView): P.ConversationView[] {
-  return memo('fc:' + f.id, () => {
+  return placesMemo('fc:' + f.id, () => {
     const out = new Map<string, P.ConversationView>();
     for (const it of folderLeaves(f)) {
       if (it.kind === 'space') for (const c of convsUnder(it.id)) out.set(c.id, c);
@@ -987,7 +1002,7 @@ export function folderConvs(f: P.FolderView): P.ConversationView[] {
 
 /** One pass over the conversations, not one per person: `people()` asks for every person on each `rev`. */
 function directsByPerson(): Map<string, P.ConversationView[]> {
-  return memo('directsByPerson', () => {
+  return placesMemo('directsByPerson', () => {
     // A person's email routes are among their directs (mail/chats.ts): mail with them is part of their chat.
     const m = routesByPerson();
     for (const c of db.conversations.values()) {
@@ -1009,7 +1024,7 @@ export function directsOf(personId: string): P.ConversationView[] {
 export function people(): { person: P.PersonView; directs: P.ConversationView[]; last: number }[] {
   // An open message request waits under Requests, not among the people you talk with.
   const held = heldByRequest();
-  return memo('people', () =>
+  return placesMemo('people', () =>
     [...db.persons.values()]
       .filter((p) => !p.isSelf)
       .map((person) => {
@@ -1172,7 +1187,7 @@ export function inboxKeyOf(convId: string): string {
 }
 
 function convRows(): ConvInboxRow[] {
-  return memo('inboxConvRows', () => {
+  return placesMemo('inboxConvRows', () => {
     const rows: (ConvInboxRow & { last: number; unread: number; badge: number; muted: boolean })[] = [];
     const held = heldByRequest();
     for (const c of db.conversations.values()) {
@@ -1295,7 +1310,7 @@ export function mailRowsWaiting(): boolean {
 
 /** Accounts that need you to act (a QR to scan, a login): the rows above the conversations. */
 export function accountsNeedingYou(): P.AccountView[] {
-  return memo('accountsNeedingYou', () => [...db.accounts.values()].filter((a) => a.attention && visibleAccount(a.id)));
+  return placesMemo('accountsNeedingYou', () => [...db.accounts.values()].filter((a) => a.attention && visibleAccount(a.id)));
 }
 
 /** A triaged message you have not read: its conversation has unread messages, and you last read it before this one. */

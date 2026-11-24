@@ -367,7 +367,7 @@ async function onServer(m: P.CallServerMessage) {
     case 'state': {
       const st = m.state as P.CallState & { identities?: P.IdentityView[] };
       for (const i of st.identities ?? []) db.identities.set(i.id, i);
-      if (st.identities?.length) changed('shown');
+      if (st.identities?.length) changed('identity');
       const participants = st.participants.map((p) => {
         const native = db.identities.get(p.id)?.nativeId;
         const local = native ? speakingLocal.get(native) : undefined;

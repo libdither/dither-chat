@@ -34,7 +34,7 @@ export async function loadMailTriage() {
   const page = await api<P.MailTriagePage>('/api/mail/triage').catch(() => null);
   if (!page) return;
   mailTriage.value = page.items;
-  changed('list');
+  changed('inbox');
 }
 
 /** Thread views carry their newest decision: the week's mail decisions follow them (new mail, a read, a mark elsewhere). */
@@ -51,7 +51,7 @@ function mergeMailTriage(threads: P.MailThreadView[]) {
   }
   if (!moved) return;
   mailTriage.value = [...by.values()].sort((a, b) => b.ts - a.ts);
-  changed('list');
+  changed('inbox');
 }
 
 interface PendingSend {
@@ -275,7 +275,7 @@ export { api, apiHooks } from './api.ts';
 
 // ------------------------------------------------------------------ applying hub data
 
-const putIdentity = (i: P.IdentityView) => void (put(db, i) && changed('shown'));
+const putIdentity = (i: P.IdentityView) => void (put(db, i) && changed('identity'));
 /** People a page brought that the client may not know yet (For you's items). */
 export const adoptIdentities = (list: P.IdentityView[]) => list.forEach(putIdentity);
 
@@ -326,9 +326,12 @@ export function applyEvents(events: P.ClientEvent[]) {
   let shown = false;
   let mail = false;
   let opened = false;
+  let devices = false;
   for (const ev of events) {
     // Mail has its own signal: chat's lists do not draw again for it.
     if (ev.t.startsWith('mail.')) mail = true;
+    // The hub's list of devices, sent at every start: Settings shows it, and nothing a place, a count or a name reads.
+    else if (ev.t === 'devices') devices = true;
     else if (!NOT_DB.has(ev.t)) {
       list = true;
       // What only moves a conversation's last message and counts, or the inbox's order, leaves names alone. An
@@ -463,6 +466,7 @@ export function applyEvents(events: P.ClientEvent[]) {
     if (opened) changed('open');
     if (shown || identityVersion() !== ids) changed('shown');
     else if (list) changed('list');
+    else if (devices) changed('devices');
   }
   if (mail) mailChanged();
 }
@@ -470,7 +474,7 @@ export function applyEvents(events: P.ClientEvent[]) {
 function mergeInbox(ms: P.MessageView[]) {
   if (!ms.length) return;
   inbox.value = merged(inbox.value, ms);
-  changed('list');
+  changed('inbox');
 }
 
 export function isSelfIdentity(id: string | null | undefined): boolean {
@@ -941,8 +945,8 @@ async function loadInbox() {
   const [page] = await Promise.all([api<P.InboxPage>('/api/inbox'), loadMailTriage()]);
   page.identities.forEach(putIdentity);
   inbox.value = page.items.map((i) => i.message);
-  // The badge is counted from the inbox, behind a memo keyed on the data version.
-  changed('list');
+  // The inbox button's count is counted from the inbox (model.ts `board`); the rail's places and the badge are not.
+  changed('inbox');
 }
 
 // ------------------------------------------------------------------ actions
@@ -1507,8 +1511,14 @@ function resync() {
     applyTimelines(r);
     for (const t of tls) t.from = undefined;
     for (const t of mine) if (!tls.includes(t)) void reload(t.key);
+    const was = { self: db.selfPersonId, provider: db.categoryProvider, manager: JSON.stringify(db.accountsManager ?? null), usage: JSON.stringify(db.reactionUsage), ids: identityVersion() };
     applySyncTo(db, { ...r, events: [] });
-    changed('meta');
+    // Only what the sync's own fields changed (its identities through putIdentity, its events below): most change
+    // nothing, and a 'meta' for every sync walked every server and worked out every level again (docs/perf.md).
+    if (db.selfPersonId !== was.self || db.categoryProvider !== was.provider) changed('meta');
+    if (JSON.stringify(db.reactionUsage) !== was.usage) changed('shown');
+    if (JSON.stringify(db.accountsManager ?? null) !== was.manager) changed('list');
+    if (identityVersion() !== was.ids) changed('identity');
     applyEvents(r.events);
     if (r.inbox) mergeInbox(r.inbox);
     synced = ws?.readyState === WebSocket.OPEN && gen === socketGen;
