@@ -5,6 +5,8 @@
 name: Perf nightly
 
 on:
+  push: # TEMPORARY: the branch's own runs, removed before merge
+    branches: [t3/nightly-perf-trends]
   schedule:
     - cron: '41 4 * * *'
   workflow_dispatch:
@@ -83,7 +85,7 @@ jobs:
           path: night
       - name: Add the night
         env:
-          RECORD: ${{ github.ref == 'refs/heads/main' || inputs.record }}
+          RECORD: ${{ github.ref == 'refs/heads/main' || inputs.record || github.event_name == 'push' }}
         run: |
           if git fetch -q --depth=1 origin perf-history; then
             git worktree add -q -B perf-history hist FETCH_HEAD
