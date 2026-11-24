@@ -3,10 +3,10 @@
  * (`changed('meta')`), not for a message or a read (`changed('list')`); what changes with those is up to date either way.
  * The places, their counts and order are not worked out again for identities, the inbox or the devices list.
  */
-import { expect, mock, test } from 'bun:test';
+import { beforeEach, expect, mock, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
 import { changed } from '../src/versions.ts';
-import { db, stateMock } from './fixtures/state.ts';
+import { db, resetDb, stateMock } from './fixtures/state.ts';
 
 mock.module('../src/state.ts', stateMock);
 const { activityOfSpace, allCommunities, channelsUnder, convsUnder, effectiveLevel, firstChannel, railEntries, spaceUnread, totalUnread } = await import('../src/model.ts');
@@ -21,14 +21,18 @@ function link(e: P.SpaceEdgeView) {
   db.parents.set(e.childId, [...(db.parents.get(e.childId) ?? []), e]);
 }
 
-db.accounts.set('acc', acc);
-db.spaces.set('s1', space('s1', 'One'));
-db.spaces.set('s2', space('s2', 'Two'));
-for (const [id, sid, at] of [['a', 's1', 100], ['b', 's1', 200], ['c', 's2', 300]] as const) {
-  db.conversations.set(id, conv(id, at, 0, { spaceIds: [sid] }));
-  link(edge(sid, id));
-}
-changed('meta');
+// Each test starts from the same two servers, so none depends on what another left (or on running once only).
+beforeEach(() => {
+  resetDb();
+  db.accounts.set('acc', acc);
+  db.spaces.set('s1', space('s1', 'One'));
+  db.spaces.set('s2', space('s2', 'Two'));
+  for (const [id, sid, at] of [['a', 's1', 100], ['b', 's1', 200], ['c', 's2', 300]] as const) {
+    db.conversations.set(id, conv(id, at, 0, { spaceIds: [sid] }));
+    link(edge(sid, id));
+  }
+  changed('meta');
+});
 
 test('a message or a read changes counts and order at once, with the same walk', () => {
   expect(convsUnder('s1').map((c) => c.id).sort()).toEqual(['a', 'b']);
@@ -66,6 +70,7 @@ test("identities arriving, the inbox and the hub's devices leave the places, the
 
 test('what is where is walked again only when it may have changed', () => {
   // A conversation joins s2 without a meta change: not seen, as no real change does that.
+  expect(convsUnder('s2').map((c) => c.id)).toEqual(['c']);
   db.conversations.set('d', conv('d', 500, 0, { spaceIds: ['s2'] }));
   link(edge('s2', 'd'));
   changed('list');
