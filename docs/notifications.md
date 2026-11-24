@@ -469,7 +469,10 @@ Their notifications go:
   it (`clears: true` on `POST /api/push/subscribe`, the Android app from 0.7): an older app would show an empty
   notification. A registration made before an app said so keeps its endpoint and so never registers again: the app's
   page also says it in its device hello (`clears: true` on `POST /api/devices/hello`, sent when the app reports
-  version 0.7 or later), which sets it on that endpoint's registration. The app does not read `upTo` yet.
+  version 0.7 or later), which sets it on that endpoint's registration. From 0.15 the app drops only the messages at
+  or before `upTo` (a list row's lines too), and closes the notification only when none newer than it is left; one
+  that came after the read stays, without sounding again. Without `upTo` (a read in the app itself) the whole
+  notification goes, and a kept one (`keep`) stays either way. Older apps close the whole notification.
 - **From desktop browsers with no page in use.** One push to each for everything it shows that was read:
   `{ clear, upTo, more: [{ clear, upTo }, …] }`. In `sw.js` each closes the notification with its tag only when that
   shows nothing newer than `upTo` (its `ts`), so a clear that comes late never closes an alert that came after the
@@ -492,7 +495,8 @@ decide what one costs, and the hub sends them only where they are cheap or cappe
 - **Not to a page in use.** A browser whose page was in use in the last two minutes (its device's latest stay, as
   visits report it, not over) gets none: the page closes it itself, and it stops counting as showing there. Most
   reads at a computer are made in its own page, and would otherwise spend the cap meant for reads on another device.
-- **Chrome** (an endpoint on `fcm.googleapis.com`): a push is free while another of the app's notifications still
+- **Chrome** (an endpoint on `fcm.googleapis.com`, or on `/fcm/send/` at one of the `jmt<N>.google.com` hosts that
+  Chrome now gives its subscriptions; nothing else on google.com): a push is free while another of the app's notifications still
   shows there, or the app's tab is in front; otherwise it costs 2 of a budget that earns 12/24 × engagement/100 an
   hour (engagement is Chrome's 0 to 100 for how much the site is used), and with the budget spent Chrome shows its
   own "updated in the background" notification. A clear that closes the last notification there goes at most 2 times
