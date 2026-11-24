@@ -1,5 +1,8 @@
 import { expect, test } from 'bun:test';
-import { compress, pickEncoding } from '../src/compress.ts';
+import { mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { compress, PackedFiles, pickEncoding } from '../src/compress.ts';
 
 const req = (enc: string | null, method = 'GET') => new Request('http://hub/api/bootstrap', { method, headers: enc ? { 'accept-encoding': enc } : {} });
 const big = { items: Array.from({ length: 2000 }, (_, i) => ({ id: `cnv_${i}`, name: 'general' })) };
@@ -40,4 +43,38 @@ test('an event stream passes through unread: it never ends', async () => {
   // Resolves at once with the same response: nothing waited for a body that never ends.
   expect(await compress(req('gzip, zstd'), sse)).toBe(sse);
   expect(sse.bodyUsed).toBe(false);
+});
+
+test('the web build is packed once, hard, and a changed file is never answered with its old bytes', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dither-packed-'));
+  try {
+    mkdirSync(join(dir, 'assets'));
+    // Script-like text with some repetition, as a bundle has: level 19 finds more of it than level 3.
+    const words = Array.from({ length: 400 }, (_, i) => `function f${i}(a,b){return a.${['map', 'filter', 'reduce'][i % 3]}((x)=>x+b*${i})}`);
+    const js = Array.from({ length: 3000 }, (_, i) => words[(i * 7919) % words.length]).join(';\n');
+    writeFileSync(join(dir, 'assets', 'app-1.js'), js);
+    writeFileSync(join(dir, 'index.html'), '<script src="/assets/app-1.js"></script>');
+    writeFileSync(join(dir, 'tiny.css'), 'a{}');
+    const packed = new PackedFiles();
+    await packed.packAll(dir);
+    const file = join(dir, 'assets', 'app-1.js');
+    const st = statSync(file);
+    const body = packed.get(file, st.size, st.mtimeMs)!;
+    expect(new TextDecoder().decode(Bun.zstdDecompressSync(body))).toBe(js);
+    expect(body.byteLength).toBeLessThan(Bun.zstdCompressSync(Buffer.from(js), { level: 3 }).byteLength);
+    // Under a kilobyte: not worth packing, as compress() leaves it.
+    const tiny = statSync(join(dir, 'tiny.css'));
+    expect(packed.get(join(dir, 'tiny.css'), tiny.size, tiny.mtimeMs)).toBeNull();
+    expect(packed.stats().files).toBe(1);
+
+    // Rewritten (a new build in the same place): its old bytes are not served, and it is packed again for the next ask.
+    writeFileSync(file, js + ';\nf1(1,2)');
+    utimesSync(file, new Date(), new Date(Date.now() + 5000));
+    const st2 = statSync(file);
+    expect(packed.get(file, st2.size, st2.mtimeMs)).toBeNull();
+    await packed.idle();
+    expect(new TextDecoder().decode(Bun.zstdDecompressSync(packed.get(file, st2.size, st2.mtimeMs)!))).toBe(js + ';\nf1(1,2)');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

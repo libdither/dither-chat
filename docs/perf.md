@@ -1179,6 +1179,40 @@ one: the ping went out as the bootstrap began to come, no pong came in time, the
 opened another, which took until 12.4 s to open behind the precache, and synced again. Since #359 a late pong is raced
 by a new socket instead ([docs/sync.md](sync.md#a-bad-link)): the same run on it waited 4,280 ms for the pong, kept the
 socket (two opened over both starts, none closed by the app) and caught up once a start.
+
+## The web build on the wire (2026-11-24)
+
+The hub compressed every file of the web build at zstd level 3 on each request (compress.ts), the startup script
+and stylesheet included: 412 KB on the wire for the startup set. They are the same bytes every time, so now the hub
+packs each once, at level 19, and keeps it (`PackedFiles` in compress.ts): it starts packing the whole build when it
+starts listening, what index.html names first, one file at a time on the thread pool (89 files, 5.8 MB to 1.56 MB, in
+2.9 s at load average 8), and a file asked for before it is packed, or changed since, goes out at level 3 as before
+and is packed for the next ask. Each kept file carries the size and change time it was packed from, so a new build in
+the same place is never answered with old bytes. Source maps are left out (only DevTools asks for them), as are gzip
+clients, whom nothing changes for. The client unpacks level 19 as fast as level 3.
+
+| on the wire, as zstd | level 3 | level 19 |
+|---|---|---|
+| the startup script | 349 KB | 294 KB (−16%) |
+| the stylesheet | 60 KB | 44 KB (−26%) |
+| the whole build (the service worker's precache) | 1.88 MB | 1.60 MB (−15%) |
+
+Over the slow link (the slow pass alone, `--cpu 0 --phone-cpu 0 --ahead-cpu 0 --slow-cpu 4`, full size, nine runs of
+main and of this taken in turn, at load average 8 to 14; medians and ranges, in ms from when the page was asked for,
+since on a loaded machine the browser sometimes asked seconds late):
+
+| | main | packed |
+|---|---|---|
+| the startup script's last byte | 3,306 (3,278–3,358) | 2,950 (2,837–3,034) |
+| the bootstrap's last byte | 7,629 (7,476–8,718) | 7,459 (7,144–8,342) |
+| hub's data in (`cold.fresh`) | 7,901 (7,688–9,006) | 7,710 (7,361–8,934) |
+| list shown (`cold.content`) | 8,627 (8,399–10,259) | 8,461 (8,145–11,430) |
+| the precache's last byte | 17,775 (17,634–22,518) | 16,956 (16,484–24,335) |
+| relaunch: list shown, hub's data in | 1,004, 1,453 | 632, 1,194 |
+
+The script's bytes are the steady part: 356 ms sooner in every run. The bootstrap gains less, because the
+precache, its files smaller, gets further while the bootstrap comes (29 requests beside it in both).
+
 ## Memory (2026-11-24)
 
 `scripts/verify-memory.ts` (CI's `memory` job) looks for leaks: what the page holds growing as it is used. Against a
@@ -1261,8 +1295,9 @@ What these numbers point at, not done yet:
 - **A cold start asks for the bootstrap only once the socket is open**, two round trips after it began (650–660 ms
   there): `resync` runs from the socket's `onopen`. With no snapshot to resume from there is nothing to sync, and the
   bootstrap could go at once beside the socket, with frames that come meanwhile held as they are now.
-- **The startup script, 345 KB compressed**, is the longest wait of a cold start on a slow link: 2.6 s before any
-  of the app runs. Every KB off it is 5 ms there.
+- **The startup script, 294 KB compressed** (345 KB before the hub packed it at level 19,
+  [above](#the-web-build-on-the-wire-2026-11-24)), is the longest wait of a cold start on a slow link: over 2 s before
+  any of the app runs. Every KB off it is 5 ms there.
 
 - **The bootstrap is 4.4–5.4 MB**, two thirds of it conversations, and most of those channels nobody has written in.
   On the live hub's copy, leaving out null and default fields saves 25%, leaving out the 3,489 channels without

@@ -36,7 +36,7 @@ import { ImportSources } from './imports/sources.ts';
 import { Calls, type CallSocketData, type TurnConfig, type VoiceSocketData } from './calls.ts';
 import { type CallRoomSocketData, demoCallRoom } from './democalls.ts';
 import { clampDays, parseZone } from './activitychart.ts';
-import { compress } from './compress.ts';
+import { compress, PackedFiles, pickEncoding } from './compress.ts';
 import { forwardMessage } from './forward.ts';
 import { firstLink, unfurl } from './unfurl.ts';
 import { UsageStore } from './usage.ts';
@@ -966,7 +966,7 @@ export class HubServer {
       if (dave) return this.daveFile(dave[1]!, dave[2]!);
       if (!ticketed) {
         if (GATED.test(path)) return this.signIn();
-        return this.static(path);
+        return this.static(path, req);
       }
     }
     // Cross-site: a browser's write or socket must come from this page (its cookie is SameSite=Lax, and this is the
@@ -1125,7 +1125,7 @@ export class HubServer {
     if ((m = path.match(/^\/emoji\/discord\/(\d+)(\.animated)?$/))) return this.fetchMedia(discordEmojiUrl(m[1], !!m[2]), null);
     if (path === '/api/errors' && req.method === 'POST') return this.clientError(req, clientIp(req, ip));
     if (path.startsWith('/api/')) return this.api(req, url, path);
-    return this.static(path);
+    return this.static(path, req);
   }
 
   /** At most 60 of the page's error reports a minute from one address. */
@@ -3219,23 +3219,34 @@ export class HubServer {
 
   // ---------------------------------------------------------------- static PWA
 
-  private static(path: string): Response {
+  private static(path: string, req: Request): Response {
     const root = resolve(this.opts.webDist);
     const candidate = resolve(join(root, normalize(decodeURIComponent(path))));
     if (candidate.startsWith(root) && existsSync(candidate) && statSync(candidate).isFile()) {
       const immutable = path.startsWith('/assets/');
-      return new Response(Bun.file(candidate), {
-        headers: {
-          'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
-          ...(path.endsWith('.webmanifest') ? { 'content-type': 'application/manifest+json' } : {}),
-        },
+      return this.webFile(req, candidate, {
+        'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
+        ...(path.endsWith('.webmanifest') ? { 'content-type': 'application/manifest+json' } : {}),
       });
     }
     // A hashed asset from another build must fail as itself: as HTML it would poison a cache.
     if (path.startsWith('/assets/')) return new Response('not found', { status: 404 });
     const index = join(root, 'index.html');
-    if (existsSync(index)) return new Response(Bun.file(index), { headers: { 'cache-control': 'no-cache', 'content-type': 'text/html; charset=utf-8' } });
+    if (existsSync(index)) return this.webFile(req, index, { 'cache-control': 'no-cache', 'content-type': 'text/html; charset=utf-8' });
     return new Response('dither-chat hub is running; the web app has not been built yet (bun run web:build).', { status: 200 });
+  }
+
+  /** The web build's files, packed once with zstd at its hardest for a client that takes it (compress.ts PackedFiles). */
+  readonly packed = new PackedFiles();
+
+  private webFile(req: Request, file: string, headers: Record<string, string>): Response {
+    const f = Bun.file(file);
+    if (req.method === 'GET' && !req.headers.has('range') && pickEncoding(req.headers.get('accept-encoding')) === 'zstd') {
+      const st = statSync(file);
+      const body = this.packed.get(file, st.size, st.mtimeMs);
+      if (body) return new Response(body, { headers: { 'content-type': f.type, ...headers, 'content-encoding': 'zstd', vary: 'accept-encoding' } });
+    }
+    return new Response(f, { headers });
   }
 
   /** Queue a notification for connected clients. */
