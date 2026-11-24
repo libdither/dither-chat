@@ -87,15 +87,16 @@ async function mailPeople() {
     if (shots) await p.shot(`${shots}/profile-mail-${w < 500 ? 'phone' : 'desktop'}.png`);
   }
 
-  // The thread opens in Mail, and its sender's name opens theirs. The demo has two threads with her (the newest is hers
-  // alone); the lease one ends with Jo's message.
+  // The thread opens as a chat of its own (docs/mail.md "Mail as chats"), and its sender's name opens theirs. The demo
+  // has two threads with her (the newest is hers alone); the lease one ends with Jo's message.
   await p.eval(`[...document.querySelectorAll('.pf-mail-row')].find((r) => r.innerText.includes('Re: Lease renewal'))?.setAttribute('data-pick', '')`);
   await click('.pf-mail-row[data-pick]');
-  await p.until(`location.hash.startsWith('#/mail') && !!document.querySelector('.mail-msg.open')`, 8000);
-  check((await text('.mail-subject')) === 'Re: Lease renewal', 'a Mail card row opens the thread', await text('.mail-subject'));
-  await click('.mail-msg.open .mail-msg-person');
+  await p.until(`location.hash.startsWith('#/inbox/c/mth_') && !!document.querySelector('.mail-thread-head') && !!document.querySelector('.msg-author')`, 8000);
+  check((await text('.mail-thread-head .mail-subject')) === 'Re: Lease renewal', 'a Mail card row opens the thread', await text('.mail-thread-head .mail-subject'));
+  await p.eval(`[...document.querySelectorAll('.msg-author')].at(-1).setAttribute('data-pick-author', '')`);
+  await click('[data-pick-author]');
   await settled();
-  check((await text('.pf-title h1')).startsWith('Jo Park'), 'the sender’s name in the reader opens their page', await text('.pf-title h1'));
+  check((await text('.pf-title h1')).startsWith('Jo Park'), 'the sender’s name in the thread opens their page', await text('.pf-title h1'));
   // All mail with them: a list of its own.
   await p.size(1360, 900);
   await p.goto(`${hub}/${page}`);

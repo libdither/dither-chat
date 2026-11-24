@@ -175,17 +175,21 @@ export function inboxFilterOf(stored: unknown): InboxFilter {
 
 /** What the filter asks of an inbox row. */
 interface Filtered {
-  /** A thread of mail (docs/mail.md), not a chat. */
+  /** It has mail in it: a mail thread's row, or a person's with an email route (docs/mail.md "Mail as chats"). */
   mail: boolean;
   /** A DM: one other person. */
   direct: boolean;
 }
 
-/** Whether the filter shows a row: Direct messages the DMs, Groups the other chats, Mail the mail. */
+/**
+ * Whether the filter shows a row: Direct messages the chats with one person, Groups the other chats, Mail the ones with
+ * mail in them. Mail is chats (docs/mail.md "Mail as chats"): a person's chat with mail is a DM and has mail, a thread
+ * with others is a group and has mail.
+ */
 export function filterKeeps(filter: InboxFilter, r: Filtered): boolean {
   if (filter === 'mail') return r.mail;
-  if (filter === 'direct') return !r.mail && r.direct;
-  if (filter === 'groups') return !r.mail && !r.direct;
+  if (filter === 'direct') return r.direct;
+  if (filter === 'groups') return !r.direct;
   return true;
 }
 

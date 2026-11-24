@@ -60,6 +60,18 @@ const folderConv = folder?.items.find((i: any) => i.kind === 'conversation').id;
 const room = boot.conversations.find((c: any) => c.network === 'matrix' && c.shape === 'channel' && boot.conversations.some((t: any) => t.shape === 'thread' && t.parentId === c.id));
 const roomThread = room && boot.conversations.find((t: any) => t.shape === 'thread' && t.parentId === room.id);
 if (!dm || !channel || !person || !folderConv || !roomThread) throw new Error('the demo world is missing a DM, a channel, a person, a folder with a chat or a Matrix room with a thread');
+/** Mail as chats (docs/mail.md): a person's email route, and a thread with more people, a chat of its own. */
+let mailChat: any = boot.mail?.chats?.[0];
+let mailGroup: any;
+for (let i = 0; i < 60 && !(mailChat && mailGroup); i++) {
+  // The demo's mail account may still be fetching its first page: the bootstrap's mail chats and the thread list
+  // both fill once it has.
+  if (i) await Bun.sleep(500);
+  if (!mailChat) mailChat = ((await fetch(`${hub}/api/bootstrap`).then((r) => r.json())) as any).mail?.chats?.[0];
+  const page = (await fetch(`${hub}/api/mail/threads?list=${e('v:all:*')}&limit=100`).then((r) => r.json())) as any;
+  mailGroup = page.threads?.find((t: any) => t.participants > 2);
+}
+if (!mailChat || !mailGroup) throw new Error('the demo world is missing mail from a person or a mail thread with more people');
 
 let failures = 0;
 const check = (ok: unknown, what: string, detail?: unknown) => {
@@ -149,6 +161,11 @@ const PAGES: PageCase[] = [
   { name: 'searching one conversation', view: 'search', from: `#/inbox/c/${dm.id}`, to: `#/search?q=${e(`hi in:${dm.id}`)}`, cursor: SEARCH_BOX },
   { name: 'Settings', view: 'settings', from: '#/inbox', to: '#/settings' },
   { name: "a thread from its room's stream", view: 'inbox', from: `#/inbox/c/${room.id}`, to: `#/inbox/c/${roomThread.id}`, cursor: COMPOSER },
+  // Mail as chats: a person's email chat, and a group thread from a mail list.
+  { name: "a person's email chat from the inbox", view: 'inbox', from: '#/inbox', to: `#/inbox/c/${e(mailChat.id)}`, cursor: COMPOSER },
+  { name: 'a mail thread from a mail list', view: 'inbox', from: `#/inbox?mail=${e('v:all:*')}`, to: `#/inbox/c/${mailGroup.id}?mail=${e('v:all:*')}`, cursor: COMPOSER },
+  // A mail list under the Inbox's header: Escape and back go to the Inbox chip (docs/inbox.md "Mail lists").
+  { name: 'a mail list from the inbox', view: 'inbox', from: '#/inbox', to: `#/inbox?mail=${e('v:updates:*')}` },
 ];
 
 /** Lists and tab roots: Escape has nowhere to go from these, and leaves them be. */
@@ -162,7 +179,6 @@ const ROOTS: { view: string; at: string }[] = [
   { view: 'accounts', at: '#/accounts' },
   { view: 'calendar', at: '#/calendar' },
   { view: 'feed', at: '#/feed' },
-  { view: 'mail', at: '#/mail' },
 ];
 
 /** A layer, opened on page `at`: it closes by Escape and by back, the page staying. */
@@ -210,6 +226,7 @@ const UNCOVERED: Record<string, string> = {
   'ui/Sheet.tsx': "a phone's sheets: verify-phone.ts",
   'ui/Stories.tsx': 'stories: a network that has them',
   'ui/Viewer.tsx': 'the demo pictures open in the viewer on a phone: verify-phone.ts',
+  'ui/VideoPlayer.tsx': "a video filling the page where the browser has no full screen: verify-video.ts takes it down with back",
 };
 void UNCOVERED;
 

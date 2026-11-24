@@ -54,10 +54,10 @@ const ROUTES: [hash: string, kind: 'list' | 'tab' | 'page' | 'over', own: string
   ['#/search/c/dm?q=hello', 'page', '#/people'],
   ['#/search/c/group?q=hello', 'page', '#/inbox'],
   ['#/search?q=in%3Achan%20hello', 'over', '#/s/srv'],
-  ['#/mail', 'list', '#/mail'],
-  ['#/mail/l/inbox', 'list', '#/mail/l/inbox'],
-  ['#/mail/l/inbox/t/th', 'page', '#/mail/l/inbox'],
-  ['#/mail/t/th', 'page', '#/mail'],
+  // Mail is chats (docs/mail.md "Mail as chats"): its lists are in the Inbox's place, a thread a chat beside them.
+  ['#/inbox?mail=v%3Aall', 'list', '#/inbox?mail=v%3Aall'],
+  ['#/inbox/c/mth_th?mail=v%3Aall', 'page', '#/inbox?mail=v%3Aall'],
+  ['#/inbox/c/mth_th', 'page', '#/inbox'],
   ['#/requests', 'page', '#/inbox'],
   ['#/requests/req1', 'page', '#/inbox'],
   ['#/notices', 'page', '#/inbox'],
@@ -71,9 +71,16 @@ const ROUTES: [hash: string, kind: 'list' | 'tab' | 'page' | 'over', own: string
   ['#/feed/acc_1:activity/p/pst_x_2', 'page', '#/feed/acc_1:activity'],
 ];
 
+test("the Mail page's old addresses open the same place in the Inbox", () => {
+  expect(href(R('#/mail'))).toBe('#/inbox');
+  expect(href(R('#/mail/l/v:inbox'))).toBe('#/inbox');
+  expect(href(R('#/mail/l/v:all/t/mth_th'))).toBe('#/inbox/c/mth_th?mail=v%3Aall');
+  expect(href(R('#/mail/t/mth_th'))).toBe('#/inbox/c/mth_th');
+});
+
 test('the table covers every kind of route', () => {
   const views = new Set(ROUTES.map(([h]) => R(h).view));
-  expect([...views].sort()).toEqual(['accounts', 'calendar', 'directory', 'feed', 'folder', 'foryou', 'inbox', 'mail', 'model', 'notices', 'people', 'profile', 'requests', 'search', 'settings', 'space', 'spaces']);
+  expect([...views].sort()).toEqual(['accounts', 'calendar', 'directory', 'feed', 'folder', 'foryou', 'inbox', 'model', 'notices', 'people', 'profile', 'requests', 'search', 'settings', 'space', 'spaces']);
 });
 
 test("Catch up's old address opens For you, which took its place", () => {
@@ -178,7 +185,7 @@ test("back from a list's page always goes to its list, and steps back through hi
   // From its own list: history.
   expect(way('#/s/srv/c/chan', '#/s/srv')).toEqual(['#/s/srv', 'back']);
   expect(way('#/inbox/c/group', '#/inbox')).toEqual(['#/inbox', 'back']);
-  expect(way('#/mail/l/inbox/t/th', '#/mail/l/inbox')).toEqual(['#/mail/l/inbox', 'back']);
+  expect(way('#/inbox/c/mth_th?mail=v%3Aall', '#/inbox?mail=v%3Aall')).toEqual(['#/inbox?mail=v%3Aall', 'back']);
   // Opened from somewhere else: that page's list, never where it came from.
   expect(way('#/s/srv/c/chan', '#/search?q=hello')).toEqual(['#/s/srv', 'replace']);
   expect(way('#/s/srv2/c/chan2', '#/s/srv/c/chan')).toEqual(['#/s/srv2', 'replace']);

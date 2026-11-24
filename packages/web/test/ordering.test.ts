@@ -194,15 +194,18 @@ describe('the inbox filter', () => {
   const group = { mail: false, direct: false };
   const mailOne = { mail: true, direct: true };
   const mailMany = { mail: true, direct: false };
-  test('direct messages, groups and mail split everything between them', () => {
+  test('direct messages and groups split everything; mail is a chat, so Mail cuts across them', () => {
     for (const x of [dm, group, mailOne, mailMany]) {
       expect(filterKeeps('all', x)).toBe(true);
-      expect([filterKeeps('direct', x), filterKeeps('groups', x), filterKeeps('mail', x)].filter(Boolean).length).toBe(1);
+      expect([filterKeeps('direct', x), filterKeeps('groups', x)].filter(Boolean).length).toBe(1);
+      expect(filterKeeps('mail', x)).toBe(x.mail);
     }
     expect(filterKeeps('direct', dm)).toBe(true);
-    expect(filterKeeps('direct', mailOne)).toBe(false);
+    expect(filterKeeps('direct', mailOne)).toBe(true);
     expect(filterKeeps('groups', group)).toBe(true);
+    expect(filterKeeps('groups', mailMany)).toBe(true);
     expect(filterKeeps('mail', mailMany)).toBe(true);
+    expect(filterKeeps('mail', dm)).toBe(false);
   });
   test('a stored chip from before the menu: People is the DMs, Unread is all', () => {
     expect(inboxFilterOf('people')).toBe('direct');

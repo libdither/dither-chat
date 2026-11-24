@@ -13,14 +13,14 @@ import { db, go, mailRev, pref } from '../../state.ts';
 import { mailChanged } from '../../versions.ts';
 import { Empty } from '../bits.tsx';
 import { Icon } from '../icons.tsx';
-import { listTime } from './MessageCard.tsx';
+import { listTime } from './listTime.ts';
 import { ThreadRow } from './ThreadRow.tsx';
 import { DitherOrb, Loading } from '../Loader.tsx';
 
 /** Inbox's mail not from a person, as one row where its newest sorts (slice 8): opening it is the Updates view. */
 function UpdatesRow({ fold }: { fold: UpdatesFold }) {
   return (
-    <button class={`row mail-row mail-updates-row ${fold.unread ? 'unread' : ''}`} data-row={fold.key} onClick={() => go({ view: 'mail', list: fold.key })}>
+    <button class={`row mail-row mail-updates-row ${fold.unread ? 'unread' : ''}`} data-row={fold.key} onClick={() => go({ view: 'inbox', mail: fold.key })}>
       <span class="row-avatar">
         <span class="mail-updates-icon">
           <Icon name="inbox" size={18} />
@@ -88,7 +88,10 @@ export function ThreadList({ list, active }: { list: string; active?: string }) 
   const fold = updatesFold(s, list);
   // Where it sorts among the rows by date (after the ranked ones); after them when it is older than all of them.
   const foldAt = fold ? threads.findIndex((t, i) => i >= head && t.lastAt < fold.lastAt) : -1;
-  const rows = threads.map((t) => <ThreadRow key={t.id} thread={t} active={t.id === active} account={s.accounts.get(t.accountId)} showAccount={showAccount} list={list} />);
+  const rows = threads.map((t) => {
+    const account = showAccount ? s.accounts.get(t.accountId) : undefined;
+    return <ThreadRow key={t.id} thread={t} active={t.id === active} dot={account?.color} dotTitle={account ? (account.address ?? account.label) : undefined} />;
+  });
   if (fold) rows.splice(foldAt < 0 ? rows.length : foldAt, 0, <UpdatesRow key={fold.key} fold={fold} />);
   // Where the ranked rows end: the rest are by date.
   if (head > 0 && rows.length > head)

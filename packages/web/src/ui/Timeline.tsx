@@ -29,6 +29,7 @@ import {
   netName,
   peerIdentity,
   faceOf,
+  personRouteOf,
   ruleIcon,
   ruleName,
   ruleOn,
@@ -69,7 +70,12 @@ import {
   timelineRev,
   timelines,
 } from '../state.ts';
+import { mailRev } from '../versions.ts';
+import { convById, isMailPlace, isMailThread, loadMailThread, mailThread, refill, threadsFailed } from '../mail/chats.ts';
 import { openPalette } from './Palette.tsx';
+import { BackBar, ElsewhereRows, MailSends, MailThreadHeader, MailWords, MailThreadLead, ReplySubject, SubjectChip, SubjectTag, answerEveryone, mailMessageMenu, onlyOf, pickSubject, subjectOf, threadPlaceholder } from './MailChat.tsx';
+import { threadRows } from '../mail/elsewhere.ts';
+import { openCompose, sendMailFromChat } from './mail/lazy.tsx';
 import { reactionContext } from '../reactions.ts';
 import { openAbout } from '../opening.ts';
 import { Avatar, Empty, FromChips, Menu, variantIcon } from './bits.tsx';
@@ -77,6 +83,7 @@ import { convPresence } from './PresenceDot.tsx';
 import { HoverReactions, InsertPicker, ReactionBar } from './Reactions.tsx';
 import { useLongPress } from './longpress.ts';
 import { Icon } from './icons.tsx';
+import { Video } from './Video.tsx';
 import { TriageWhy, tierIcon, tierName } from './Marks.tsx';
 import { Ticks } from './Ticks.tsx';
 import { historyOnMenu, openHistory } from '../messageHistory.ts';
@@ -586,7 +593,7 @@ function Attachments({ m, run, absorbed, layout, switchable }: { m: P.MessageVie
             a.gif && plainGifs() ? (
               <video class="att-video att-gif" data-att={i} src={a.url} autoplay loop muted playsInline preload="auto" aria-label={a.alt ?? 'GIF'} style={a.width && a.height ? { aspectRatio: `${a.width} / ${a.height}` } : undefined} />
             ) : (
-              <video class="att-video" data-att={i} src={a.url} controls preload="metadata" onPlay={() => played(m)} />
+              <Video src={a.url} att={i} name={a.name} facts={fileFacts(a)} width={a.width ?? a.info?.width} height={a.height ?? a.info?.height} label={a.alt} onPlay={() => played(m)} />
             );
           return withNote(a, veiled(a) ? <Veil a={a}>{video}</Veil> : video);
         }
@@ -717,7 +724,7 @@ function TriageNote({ m }: { m: P.MessageView }) {
  * draws them; `run`, the messages whose pictures this one draws after its own, when it ends a run of them; `absorbed`,
  * a message of a run whose pictures the run's last message draws.
  */
-const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, highlight, target, thread, who, whoIdent, net, tag, onTag, pictures, run, absorbed, chipRun }: { m: P.MessageView; grouped: boolean; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; who?: string; whoIdent?: string; net?: boolean; tag?: boolean; onTag?: (convId: string) => void; pictures: PictureLayout; run?: P.MessageView[]; absorbed?: boolean; chipRun?: P.MessageView[] }) {
+const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, highlight, target, thread, who, whoIdent, net, tag, onTag, pictures, run, absorbed, chipRun, subject, quoteAbove }: { m: P.MessageView; grouped: boolean; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; who?: string; whoIdent?: string; net?: boolean; tag?: boolean; onTag?: (convId: string) => void; pictures: PictureLayout; run?: P.MessageView[]; absorbed?: boolean; chipRun?: P.MessageView[]; subject?: boolean; quoteAbove?: boolean }) {
   if (counting) rendered('MessageItem');
   metaRev.value;
   // On a touch screen the action bar (it shows on hover) and the tooltips are not drawn: a long-press opens the same
@@ -731,8 +738,10 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
   const face = who !== undefined ? null : faceOf(m.authorId);
   const picture = face ? face.url : author?.avatar;
   const faceElsewhere = !!face?.network && face.network !== m.network && !self;
-  const conv = net || tag ? db.conversations.get(m.conversationId) : undefined;
+  const conv = net || tag ? convById(m.conversationId) : undefined;
   const chatPerson = tag ? chatPersonOf(conv) : null;
+  // A mail message (mail/chats.ts): its subject is its tag, its words are plain text, and it has mail's menu.
+  const mail = m.mail;
   const reply = () => onReply(m);
   // Right-click or hold: the innermost thing that has a menu of its own (a file, a link, a person), else the message.
   const menuAt = (target: EventTarget | null): MenuSpec | null => {
@@ -755,7 +764,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
     }
     const link = el?.closest<HTMLAnchorElement>('a[href]');
     if (link && /^https?:/i.test(link.href)) return linkMenu(link.href, m, reply);
-    return messageMenu(m, reply);
+    return mail ? mailMessageMenu(m, reply) : messageMenu(m, reply);
   };
   const press = useLongPress((e) => openMenu({ x: e.clientX, y: e.clientY }, menuAt(e.target)));
   const menuProps = { ...press, onContextMenu: (e: MouseEvent) => onMenu(() => menuAt(e.target))(e) };
@@ -820,7 +829,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
               {clock(m.ts)}
             </span>
             {/* A person's chat (ui/Pairs.tsx): where the route changes, which one, quietly. A click sends through it. */}
-            {conv && chatPerson && onTag && <RouteTag c={conv} directs={directsOf(chatPerson.id)} side={self ? 'mine' : who !== undefined ? 'theirs' : 'other'} onPick={() => onTag(conv.id)} />}
+            {mail ? (subject || mail.only) && <SubjectTag m={m} tag={!!subject} /> : conv && chatPerson && onTag && <RouteTag c={conv} directs={directsOf(chatPerson.id)} side={self ? 'mine' : who !== undefined ? 'theirs' : 'other'} onPick={() => onTag(conv.id)} />}
             {(m.editedTs || m.edits) && <Edited m={m} />}
             {m.movedAt && <Moved m={m} />}
             <DisappearsMark m={m} self={self} />
@@ -832,7 +841,9 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
             )}
           </div>
         )}
-        {m.deleted && m.gone?.kept ? (
+        {mail ? (
+          <MailWords m={m} quoteAbove={quoteAbove} />
+        ) : m.deleted && m.gone?.kept ? (
           <Gone m={m} layout={pictures} />
         ) : m.forward && !m.deleted ? (
           <ForwardCard m={m}>
@@ -879,7 +890,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
       </div>
       {hover && (
         <div class="msg-actions" data-track-area="message">
-          <HoverReactions m={m} />
+          {!mail && <HoverReactions m={m} />}
           {canEdit(m) && (
             <button class="icon-btn small" data-track="edit" title="Edit" onClick={() => startEditing(m)}>
               <Icon name="pencil" size={14} />
@@ -894,7 +905,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
             <Icon name="reply" size={15} />
           </button>
           {!m.deleted && m.kind !== 'encrypted' && (
-            <button class="icon-btn small" data-track="forward" title="Forward" aria-label="Forward" onClick={() => (forwarding.value = m)}>
+            <button class="icon-btn small" data-track="forward" title="Forward" aria-label="Forward" onClick={() => (mail ? openCompose({ kind: 'forward', messageId: m.id, threadId: mail.threadId, accountId: mail.accountId }) : (forwarding.value = m))}>
               <Icon name="forward" size={15} />
             </button>
           )}
@@ -905,7 +916,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
             aria-label="More"
             onClick={(e) => {
               const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              openMenu({ x: r.left, y: r.bottom + 4 }, messageMenu(m, reply), e.currentTarget);
+              openMenu({ x: r.left, y: r.bottom + 4 }, mail ? mailMessageMenu(m, reply) : messageMenu(m, reply), e.currentTarget);
             }}
           >
             <Icon name="more" size={15} />
@@ -1350,7 +1361,31 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
       ? -1
       : all.findIndex((m) => m.ts > firstUnreadTs && !isSelfIdentity(m.authorId));
   const groups = (prev: P.MessageView | null, m: P.MessageView) =>
-    !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId && prev.sms === m.sms;
+    !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId && prev.sms === m.sms && prev.mail?.threadId === m.mail?.threadId && !m.mail?.only;
+  // Mail (mail/chats.ts): the subject where the thread changes, except in the thread's own chat, which it names.
+  const ownThread = tkey.startsWith('c:mth_');
+  let lastThread: string | null = null;
+  // The day of the last thing drawn, for day lines: a message, or a row of what they wrote elsewhere.
+  let drawnDay: number | null = null;
+  // What a person wrote in threads with others (MailChat.tsx ElsewhereRows), a row per thread at its own time among the
+  // chat's own messages, under its own day.
+  const elsewherePerson = tkey.startsWith('p:') ? db.persons.get(tkey.slice(2)) : undefined;
+  const elsewhere = elsewherePerson ? threadRows(t?.elsewhere ?? []) : [];
+  let ew = 0;
+  const elsewhereUpTo = (ts: number) => {
+    while (ew < elsewhere.length && elsewhere[ew].ts <= ts) {
+      const from = ew;
+      const day = elsewhere[ew].ts;
+      while (ew < elsewhere.length && elsewhere[ew].ts <= ts && sameDay(elsewhere[ew].ts, day)) ew++;
+      if (drawnDay === null || !sameDay(drawnDay, day)) items.push(<div class="day-sep"><span>{dayLabel(day)}</span></div>);
+      drawnDay = elsewhere[ew - 1].ts;
+      items.push(<ElsewhereRows key={`ew-${elsewhere[from].place}`} view={`person:${elsewherePerson!.id}`} person={elsewherePerson!} rows={elsewhere.slice(from, ew)} />);
+      above = null;
+    }
+  };
+  // Before the first message drawn, nothing older than it: those are above, with older pages. At the start of the
+  // history they come first.
+  if (elsewhere.length && all[start] && (t?.hasMore || start > 0)) while (ew < elsewhere.length && elsewhere[ew].ts < all[start].ts) ew++;
   // One person's pictures one after another are one run, drawn by its last message (docs/pictures.md); a message of
   // it that is nothing but pictures has no row of its own. How each chat draws them, once per chat.
   const runs = pictureRuns(all, start, end, (p, m, i) => groups(p, m) && i !== unreadFrom);
@@ -1363,7 +1398,9 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
   for (let i = start; i < end; i++) {
     const m = all[i];
     const newDay = !prev || !sameDay(prev.ts, m.ts);
-    if (newDay) items.push(<div class="day-sep"><span>{dayLabel(m.ts)}</span></div>);
+    if (elsewhere.length) elsewhereUpTo(m.ts - 1);
+    if (drawnDay === null || !sameDay(drawnDay, m.ts)) items.push(<div class="day-sep"><span>{dayLabel(m.ts)}</span></div>);
+    drawnDay = m.ts;
     if (i === unreadFrom) items.push(<div class="new-sep"><span>New</span></div>);
     // A stream: the thread's name where it changes (stream.ts headBefore), and its messages grouped under it.
     if (stream && headBefore(prev, m, newDay)) {
@@ -1384,6 +1421,8 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
       continue;
     }
     const grouped = groups(above, m);
+    const subject = !!m.mail && !ownThread && m.mail.threadId !== lastThread;
+    if (m.mail) lastThread = m.mail.threadId;
     const target = m.replyToId ? (byId.get(m.replyToId) ?? quoted.get(m.replyToId) ?? null) : null;
     const thread = m.threadId ? (db.conversations.get(m.threadId) ?? null) : null;
     // All chats together: where the route changes, grouping breaks (above) and the head line says which route.
@@ -1408,10 +1447,16 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
         run={ends ? run : undefined}
         absorbed={!!run && !ends}
         chipRun={run && !chipped.has(run) ? (chipped.add(run), run) : undefined}
+        subject={subject}
+        quoteAbove={!!m.mail?.inReplyTo && prev?.mail?.messageId === m.mail.inReplyTo}
       />,
     );
     prev = above = m;
   }
+  if (elsewhere.length && end === all.length) elsewhereUpTo(Infinity);
+  // Your mail from here still in the outbox (MailChat.tsx): under the newest message.
+  const mailPlaces = end === all.length ? convIds.filter(isMailPlace) : [];
+  if (mailPlaces.length) items.push(<MailSends key="sends" places={mailPlaces} held={msgs} />);
 
   return (
     <div class="timeline-scroll" ref={scroller} onScroll={onScroll}>
@@ -1625,6 +1670,14 @@ export function Composer({ targets, placeholder, reply, clearReply, disabledReas
     if (v) localStorage.setItem(draftKey, v);
     else localStorage.removeItem(draftKey);
   };
+  // A mail sent from this box and undone comes back to it (mail/chats.ts refill), unless you have started another.
+  const back = refill.value;
+  useEffect(() => {
+    if (!back || (back.place !== targets.convId && back.place !== draft) || textNow.current.trim()) return;
+    refill.value = null;
+    type(back.text);
+    ta.current?.focus();
+  }, [back?.seq]);
   const cancelEdit = () => {
     if (edit) editDrafts.delete(edit.id);
     editing.value = null;
@@ -2139,8 +2192,54 @@ const touchKeyboard = () => matchMedia('(pointer: coarse)').matches;
 export function composerBlocker(c: P.ConversationView, accountId?: string): string | null {
   // An open message request is read-only until accepted (docs/add.md).
   if (heldRequest(db.requests, c.id)) return 'Accept the message request first, under Requests';
+  // Mail (mail/chats.ts): the mail account's own say on sending.
+  if (isMailPlace(c.id)) return mailBlocker(c.vantages[0]?.accountId);
   const vs = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a);
   return sendBlocker(c, (accountId && vs.find((a) => a.id === accountId)) || vs.find((a) => a.status === 'online') || vs[0]);
+}
+
+/** Why a mail account cannot send from a chat now, or null. */
+function mailBlocker(accountId: string | undefined): string | null {
+  const a = accountId ? db.mail.accounts.get(accountId) : undefined;
+  if (!a) return 'This mail account is gone';
+  if (a.level !== 'write') return `${a.address ?? a.label} is read-only here: dither-accounts did not grant sending`;
+  if (a.send.ok === false) return `Sending from ${a.address ?? a.label} is off${a.send.why ? `: ${a.send.why}` : ''}`;
+  return null;
+}
+
+/**
+ * A chat box's mail send (mail/chatsend.ts): into the thread the subject chip says (or the one replied to), the newest
+ * message of it as the timeline holds it answered. False when it did not go: the text stays in the box.
+ */
+function mailPost(place: string, tkey: string, reply: P.MessageView | null) {
+  return async (body: string) => {
+    const held = timelines.get(tkey)?.messages ?? [];
+    const pick = isMailThread(place) ? { threadId: place, subject: null } : subjectOf(place);
+    const threadId = reply?.mail?.threadId ?? pick.threadId;
+    const latest = [...held].reverse().find((m) => m.mail && m.mail.threadId === threadId) ?? null;
+    // A thread's box: everyone on it, or the one person its pill picked ("Only Alice", MailChat.tsx MailThreadLead).
+    const one = isMailThread(place) ? onlyOf(place) : null;
+    const r = await sendMailFromChat({ place, text: body, subject: reply ? null : pick.subject, threadId, replyTo: reply?.mail ? reply : null, latest, only: one ? [one] : null });
+    if (!r.ok) toast({ kind: 'error', title: 'The mail did not go', body: r.error });
+    else {
+      // A new subject is one mail's: the next goes on with the thread it starts, which the pill then follows.
+      if (pick.subject !== null && !reply) pickSubject(place, null);
+      // "Only Alice" is one mail's too: the pill goes back to everyone.
+      if (one) answerEveryone(place);
+    }
+    return r.ok;
+  };
+}
+
+/** The subjects of the mail threads a timeline holds, newest first: what the subject chip offers. */
+function heldSubjects(tkey: string): { threadId: string; subject: string }[] {
+  const out = new Map<string, string>();
+  const ms = timelines.get(tkey)?.messages ?? [];
+  for (let i = ms.length - 1; i >= 0; i--) {
+    const x = ms[i].mail;
+    if (x && !out.has(x.threadId)) out.set(x.threadId, x.subject);
+  }
+  return [...out].map(([threadId, subject]) => ({ threadId, subject }));
 }
 
 // ------------------------------------------------------------------ panes
@@ -2162,7 +2261,34 @@ function NotStartedNote({ c }: { c: P.ConversationView }) {
  */
 export function ConversationPane({ convId, onBack, focus }: { convId: string; onBack?: () => void; focus?: string }) {
   rev.value;
-  const c = db.conversations.get(convId);
+  mailRev.value;
+  // An email route or a mail thread is a conversation too (mail/chats.ts); a thread the page does not hold loads.
+  const c = convById(convId);
+  useEffect(() => {
+    if (!c && isMailThread(convId)) void loadMailThread(convId);
+  }, [convId, !c]);
+  if (!c && isMailThread(convId)) {
+    const failed = threadsFailed.get(convId);
+    return failed ? (
+      <section class="pane">
+        <Empty icon="mail" title="This thread did not load">
+          {failed}{' '}
+          <button class="link-btn" onClick={() => void loadMailThread(convId)}>
+            Try again
+          </button>
+        </Empty>
+      </section>
+    ) : (
+      <section class="pane">
+        <Loading fill label="Loading the thread…" />
+      </section>
+    );
+  }
+  // A thread between you and one person, opened from a mail list or a link, is part of their chat.
+  const t = isMailThread(convId) ? mailThread(convId) : undefined;
+  const route = t ? personRouteOf(t) : null;
+  const via = route ? chatPersonOf(route) : null;
+  if (route && via) return <PersonChat person={via} directs={directsOf(via.id)} at={route} onBack={onBack} msg={focus} />;
   const person = chatPersonOf(c);
   if (c && person) return <PersonChat person={person} directs={directsOf(person.id)} at={c} onBack={onBack} msg={focus} />;
   return <PlainPane convId={convId} onBack={onBack} focus={focus} />;
@@ -2170,12 +2296,23 @@ export function ConversationPane({ convId, onBack, focus }: { convId: string; on
 
 function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => void; focus?: string }) {
   rev.value;
-  const c = db.conversations.get(convId);
+  const c = convById(convId);
   const [reply, setReply] = useState<P.MessageView | null>(null);
   const unreadAt = useMemo(() => (c ? firstUnread([c]) : null), [convId]);
   useEffect(() => setReply(null), [convId]);
-  useEffect(() => void reactionContext(convId), [convId]);
+  useEffect(() => void (!isMailPlace(convId) && reactionContext(convId)), [convId]);
   if (!c) return <Empty icon="groups" title="Conversation not found" />;
+  // A mail thread as a chat of its own (mail/chats.ts): everyone on it answered, from the box.
+  if (isMailThread(c.id))
+    return (
+      <section class="pane mail-thread-pane">
+        <MailThreadHeader c={c} onBack={onBack} />
+        <BackBar place={c.id} />
+        <Timeline tkey={timelineKey('c', c.id)} convIds={[c.id]} onReply={setReply} firstUnreadTs={unreadAt} focus={focus} />
+        <TypingBar convIds={[c.id]} lead={<MailThreadLead c={c} tkey={timelineKey('c', c.id)} />} />
+        <Composer targets={{ convId: c.id }} placeholder={threadPlaceholder(c.id)} reply={reply} clearReply={() => setReply(null)} disabledReason={composerBlocker(c)} post={mailPost(c.id, timelineKey('c', c.id), reply)} />
+      </section>
+    );
   // A network's notifications about you: cards, and no composer (docs/feed.md).
   if (c.variant === 'feed')
     return (
@@ -2317,6 +2454,7 @@ export function ViewSwitch({ c, shows }: { c: P.ConversationView; shows: Channel
   );
 }
 
+
 /** A person's page: the chat with them. One conversation is that conversation's page; several are one chat over them. */
 export function PersonPane({ personId, onBack }: { personId: string; onBack?: () => void }) {
   rev.value;
@@ -2324,7 +2462,7 @@ export function PersonPane({ personId, onBack }: { personId: string; onBack?: ()
   const directs = directsOf(personId);
   if (!person) return <Empty icon="user" title="Person not found" />;
   if (!directs.length) return <Empty icon="user" title={`No chats with ${person.name}`} />;
-  if (directs.length === 1) return <PlainPane convId={directs[0].id} onBack={onBack} />;
+  if (directs.length === 1 && directs[0].network !== 'email') return <PlainPane convId={directs[0].id} onBack={onBack} />;
   return <PersonChat person={person} directs={directs} onBack={onBack} />;
 }
 
@@ -2341,10 +2479,11 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
   useEffect(() => void loadChat(person.id), [person.id]);
   // Where a message goes: the route of the message you are replying to, else the route in use (Pairs.tsx).
   const focus = (reply && directs.find((d) => d.id === reply.conversationId)) || focusedPair(person.id, directs, at?.id);
-  useEffect(() => void reactionContext(focus.id), [focus.id]);
+  useEffect(() => void (!isMailPlace(focus.id) && reactionContext(focus.id)), [focus.id]);
   // Showing one route's history follows the route you send through, so switching it in the message box switches both.
   const view = viewOf(person.id, directs) !== 'all' ? focus.id : 'all';
   const shown = view === 'all' ? directs : [focus];
+  const tkey = view === 'all' ? timelineKey('p', person.id) : timelineKey('c', view);
   const onFocus = (id: string) => {
     if (reply && reply.conversationId !== id) setReply(null);
     focusPair(person.id, focus.id, id, at?.id);
@@ -2363,7 +2502,7 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
       <NotStartedNote c={focus} />
       <Timeline
         key={view}
-        tkey={view === 'all' ? timelineKey('p', person.id) : timelineKey('c', view)}
+        tkey={tkey}
         convIds={shown.map((d) => d.id)}
         onReply={setReply}
         firstUnreadTs={unreadAt}
@@ -2371,17 +2510,30 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
         chat={{ badge: view === 'all' && badgeShows(directs), onFocus, onMissing }}
       />
       {/* The route line shares the typing line's row, over the box (docs/chats.md "The message box"). */}
-      <TypingBar convIds={shown.map((d) => d.id)} lead={!held && <PairLead person={person} directs={directs} focus={focus} onFocus={onFocus} />} />
+      <TypingBar
+        convIds={shown.map((d) => d.id)}
+        lead={
+          !held && (
+            <>
+              <PairLead person={person} directs={directs} focus={focus} onFocus={onFocus} />
+              {/* An email route: the thread it goes into, or a new subject (MailChat.tsx SubjectChip). */}
+              {focus.network === 'email' && !reply && <SubjectChip routeId={focus.id} subjects={heldSubjects(tkey)} />}
+              {focus.network === 'email' && reply?.mail && <ReplySubject m={reply} />}
+            </>
+          )
+        }
+      />
       {held ? (
         <RequestBar r={held} />
       ) : (
         <Composer
           targets={{ convId: focus.id }}
-          placeholder={`Message ${person.name}`}
+          placeholder={focus.network === 'email' ? `Email ${person.name}` : `Message ${person.name}`}
           reply={reply}
           clearReply={() => setReply(null)}
           disabledReason={composerBlocker(focus)}
           routed
+          post={isMailPlace(focus.id) ? mailPost(focus.id, tkey, reply) : undefined}
         />
       )}
     </section>

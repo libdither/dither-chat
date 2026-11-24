@@ -10,6 +10,7 @@ import { dataVersion, db, inbox, isSelfIdentity, mailTriage } from './state.ts';
 import { mailDataVersion, metaDataVersion } from './versions.ts';
 import { isMailItem, triageBoard, type Board, type BoardItem } from './board.ts';
 import { mailInboxRows, mailNames, scopeAccounts } from './mail/model.ts';
+import { routesByPerson } from './mail/chats.ts';
 import { accountName, chatKey, groupChats } from './chatroutes.ts';
 import { channelKey, groupChannels } from './channelrows.ts';
 import { isQuietConv } from './feed.ts';
@@ -122,7 +123,8 @@ export const netColor = (n: P.Network) => NETWORK_META[n].color;
 
 /** A hub is either a demo world or a real one (never both), so every account it knows is shown. */
 export function visibleAccount(id: string) {
-  return db.accounts.has(id);
+  // A mail account is an account too: its email routes and threads are chats (mail/chats.ts).
+  return db.accounts.has(id) || db.mail.accounts.has(id);
 }
 export function visibleConv(c: P.ConversationView) {
   return c.vantages.some((v) => visibleAccount(v.accountId));
@@ -983,7 +985,8 @@ export function folderConvs(f: P.FolderView): P.ConversationView[] {
 /** One pass over the conversations, not one per person: `people()` asks for every person on each `rev`. */
 function directsByPerson(): Map<string, P.ConversationView[]> {
   return memo('directsByPerson', () => {
-    const m = new Map<string, P.ConversationView[]>();
+    // A person's email routes are among their directs (mail/chats.ts): mail with them is part of their chat.
+    const m = routesByPerson();
     for (const c of db.conversations.values()) {
       if (c.shape !== 'direct' || !c.peerPersonId || !visibleConv(c)) continue;
       const l = m.get(c.peerPersonId);
@@ -1113,7 +1116,10 @@ export function heldByRequest(): Set<string> {
 export function chatPersonOf(c: P.ConversationView | null | undefined): P.PersonView | null {
   if (c?.shape !== 'direct' || !c.peerPersonId) return null;
   const p = db.persons.get(c.peerPersonId);
-  return p && !p.isSelf && directsOf(p.id).length > 1 ? p : null;
+  if (!p || p.isSelf) return null;
+  const ds = directsOf(p.id);
+  // Mail with them makes theirs a chat even alone: its subjects and what they wrote elsewhere are the chat's.
+  return ds.length > 1 || ds.some((d) => d.network === 'email') ? p : null;
 }
 
 /**
@@ -1212,9 +1218,67 @@ export function inboxRows(): InboxRow[] {
     const rows = mailRows();
     let scored = 0;
     for (const a of db.attention.values()) if (a.kind === 'mail') scored++;
-    mailMemo = { data, mail, rows: [...convs, ...rows], waiting: scored > rows.length };
+    mailMemo = { data, mail, rows: foldMailIntoChats(convs, rows), waiting: scored > rows.length };
   }
   return mailMemo.rows;
+}
+
+/**
+ * Mail as chats (docs/mail.md "Mail as chats"): a thread between you and one person is part of their chat, so its row
+ * is theirs. It joins the person's row (ranked by the best of the two, needing you if either does), or, where they
+ * have none yet, becomes the row of its email route. A thread with others stays a row of its own, which opens as a
+ * chat of its own.
+ */
+function foldMailIntoChats(convs: InboxRow[], mails: MailInboxRow[]): InboxRow[] {
+  const out = [...convs];
+  const byPerson = new Map<string, number>();
+  out.forEach((r, i) => {
+    if (r.kind !== 'conv') return;
+    const pid = r.chat?.person.id ?? (r.conv.shape === 'direct' ? r.conv.peerPersonId : null);
+    if (pid) byPerson.set(pid, i);
+  });
+  for (const m of mails) {
+    const route = personRouteOf(m.thread);
+    if (!route) {
+      out.push(m);
+      continue;
+    }
+    const pid = route.peerPersonId!;
+    const at = byPerson.get(pid);
+    const person = db.persons.get(pid);
+    if (at === undefined) {
+      byPerson.set(pid, out.length);
+      out.push({ kind: 'conv', key: chatKey(pid), conv: route, score: m.score, needs: m.needs, reasons: m.reasons, owedSince: m.owedSince, ...(person ? { chat: { person, routes: [route] } } : {}) });
+      continue;
+    }
+    const r = out[at] as ConvInboxRow;
+    const routes = r.chat?.routes ?? [r.conv];
+    const later = (m.thread.lastAt ?? 0) > (r.conv.lastMessageAt ?? 0);
+    out[at] = {
+      ...r,
+      key: chatKey(pid),
+      conv: later ? route : r.conv,
+      score: Math.max(r.score, m.score),
+      needs: r.needs || m.needs,
+      reasons: [...new Set([...r.reasons, ...m.reasons])],
+      owedSince: r.owedSince === null ? m.owedSince : m.owedSince === null ? r.owedSince : Math.min(r.owedSince, m.owedSince),
+      chat: { person: r.chat?.person ?? person!, routes: routes.includes(route) ? routes : later ? [route, ...routes] : [...routes, route] },
+    };
+  }
+  return out;
+}
+
+/** The email route a mail thread is part of, when it is between you and one person (the hub's place for it). */
+export function personRouteOf(t: P.MailThreadView): P.ConversationView | null {
+  if (t.class === 'bulk' || t.personIds.length !== 1 || t.participants > 2) return null;
+  const pid = t.personIds[0];
+  if (!db.persons.has(pid)) return null;
+  const theirs = t.from.find((f) => !f.self && f.personId === pid)?.email.toLowerCase();
+  for (const c of directsOf(pid)) {
+    if (c.network !== 'email' || c.vantages[0]?.accountId !== t.accountId) continue;
+    if (!theirs || c.nativeId === theirs) return c;
+  }
+  return null;
 }
 
 /**

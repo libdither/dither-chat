@@ -48,7 +48,6 @@ Two ways to go to the app's places with the keyboard
 | -------- | ------ | -------------- |
 | Inbox    | I      | 1              |
 | People   | P      | 2              |
-| Mail     | M      | 3              |
 | Calendar | C      | 4              |
 | Feed     | F      | 5              |
 | For you  | Y      |                |
@@ -66,8 +65,9 @@ Two ways to go to the app's places with the keyboard
   a place's letter hits the browsers' own keys: I (developer tools), C (inspect), M (responsive design), P
   (Firefox's private window) and N, T and W, which a page can't take at all. Super belongs to the desktop
   elsewhere (GNOME, KDE and Windows open docked apps with Super+number).
-- A place this hub doesn't offer (Mail without mail access, the Calendar without its account, the Feed without an
-  account with posts) has no key, and the numbers don't move up to fill its gap.
+- A place this hub doesn't offer (the Calendar without its account, the Feed without an account with posts) has no
+  key, and the numbers don't move up to fill its gap. 3 was Mail's until mail became chats (docs/mail.md "Mail as
+  chats"); it stays unused.
 - The calendar's frame passes its keys on, so both ways work with the calendar in focus, and the calendar's own
   letters (M for month, C for a new event, A for the agenda) don't take the letter that followed a G.
 - Each place's tooltip on the rail lists its keys, and the buttons carry their chord in `aria-keyshortcuts`
@@ -141,7 +141,8 @@ Escape is the back button of a keyboard (packages/web/src/escape.ts). One Escape
    How it sorts, search and Settings go where their back button goes (pages.ts `wayBack`), or for search and Settings,
    where you came from.
 
-A list (the inbox, People, a server, a folder, the calendar, the Feed, Mail) has nowhere to go and stays. Neither does a
+A list (the inbox, People, a server, a folder, the calendar, the Feed) has nowhere to go and stays; a mail list goes to
+the Inbox chip (docs/inbox.md "Mail lists"). Neither does a
 page while the cursor is in text being written (a message, a bio): a half-written message stays on screen. A one-line
 box is no such place, so Escape in search's box leaves search once its suggestions are closed.
 

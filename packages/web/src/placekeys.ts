@@ -5,16 +5,15 @@
  * mod key), and Firefox and Chromium switch tabs with it. Pure, so tests can import it; ui/PlaceKeys.tsx listens.
  */
 
-export type Place = 'inbox' | 'people' | 'mail' | 'calendar' | 'feed' | 'foryou' | 'settings' | 'accounts';
+export type Place = 'inbox' | 'people' | 'calendar' | 'feed' | 'foryou' | 'settings' | 'accounts';
 
 /**
  * The rail's top places in its order, with their numbers, then places with a letter only. The numbers are fixed: a
- * place the hub doesn't offer leaves its number unused.
+ * place the hub doesn't offer leaves its number unused, and 3 was Mail's, before mail became chats (docs/mail.md).
  */
 export const PLACES: readonly { place: Place; letter: string; digit?: number; label: string }[] = [
   { place: 'inbox', letter: 'i', digit: 1, label: 'Inbox' },
   { place: 'people', letter: 'p', digit: 2, label: 'People' },
-  { place: 'mail', letter: 'm', digit: 3, label: 'Mail' },
   { place: 'calendar', letter: 'c', digit: 4, label: 'Calendar' },
   { place: 'feed', letter: 'f', digit: 5, label: 'Feed' },
   { place: 'foryou', letter: 'y', label: 'For you' },

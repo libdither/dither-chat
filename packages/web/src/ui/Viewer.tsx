@@ -33,6 +33,7 @@ import { api } from '../state.ts';
 import { openAttachment, openWith } from './fileopen.tsx';
 import { Icon } from './icons.tsx';
 import { Loading } from './Loader.tsx';
+import { Video } from './Video.tsx';
 
 import { viewer, type ViewerImage } from '../viewer.ts';
 
@@ -136,7 +137,7 @@ function FileBox({ att }: { att: FileSource }) {
         ) : VIEWS[kind] ? (
           <FileBody kind={kind} att={a} info={info} language={info?.language ?? languageOf(att.name)} />
         ) : kind === 'video' ? (
-          <video class="fv-media" src={att.url} controls preload="metadata" />
+          <Video class="fv-video" src={att.url} width={info?.width} height={info?.height} label={name} autoPlay large />
         ) : kind === 'audio' ? (
           <audio class="fv-media" src={att.url} controls preload="metadata" />
         ) : (

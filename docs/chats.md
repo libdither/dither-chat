@@ -19,6 +19,8 @@ read from tables that already exist:
 
 - `person:<id>` is every direct conversation (`conversation.shape = 'direct'`) that has one of the person's identities
   among its participants. One route is listed for each of your accounts with a vantage on that conversation.
+  Mail with them alone adds a route by email for each of your mail accounts and address of theirs,
+  `email:<account>:<address>`, read with the chat but sent through mail's own send (docs/mail.md "Mail as chats").
 - A conversation id on its own is that conversation as a chat, one route per account of yours in it.
 
 So a merge, a split, a new account or a new DM changes the chat as soon as the tables change. There is nothing to keep

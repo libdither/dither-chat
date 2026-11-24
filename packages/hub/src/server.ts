@@ -4,8 +4,8 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, utime
 import { join, normalize, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type * as P from '@dither-chat/protocol';
-import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, parseCursor } from './chats.ts';
-import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
+import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, isEmailRoute, parseCursor } from './chats.ts';
+import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, RUNGS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { ACCOUNT_COLORS, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
@@ -66,6 +66,9 @@ import type { MailHub } from './mail/index.ts';
 import type { Notices } from './notices/index.ts';
 import type { Approvals } from './approvals.ts';
 import { mailPeople } from './mail/people.ts';
+import { mailPlaces } from './mail/places.ts';
+import { personPage } from './mail/chatpage.ts';
+import { isRung, setPlaceRung } from './rungs.ts';
 import { Adding, profileLinksOf, requestHeld, requestViews } from './add.ts';
 import { feedRefusalFor, isFeed } from './feed.ts';
 import { Posts, PostsError } from './posts.ts';
@@ -1619,7 +1622,7 @@ export class HubServer {
       const ref = chatRef(s, decodeURIComponent(m[1]));
       if (!ref) return bad('no such chat', 404);
       const id = chatIdOf(ref);
-      const convs = () => [...new Set(chatRoutes(s, ref).map((r) => r.conversationId))];
+      const convs = () => [...new Set(chatRoutes(s, ref).filter((r) => !isEmailRoute(r)).map((r) => r.conversationId))];
       if (!m[2] && method === 'GET') return ok(chatView(s, ref));
       if (!m[2] && method === 'PATCH') {
         const b = await body<{ route?: { conversationId?: unknown; accountId?: unknown } | null; name?: unknown }>();
@@ -1634,6 +1637,10 @@ export class HubServer {
         // A person's chat is their person timeline, so live events and sync (journal.ts) know it by the same key.
         const before = parseCursor(url.searchParams.get('before'));
         const limit = Math.min(num('limit') ?? 60, 200);
+        // With mail (docs/mail.md "Mail as chats"): their mail with you alone, merged in by the same cursor, and what
+        // they wrote in threads with others in the page's range.
+        const places = ref.kind === 'person' ? mailPlaces(this.opts.mail) : null;
+        if (ref.kind === 'person' && places?.chat) return ok(personPage(this.opts.mail!, places, s, ref.personId, before, limit));
         return ok(ref.kind === 'person' ? s.personTimeline(ref.personId, before, limit) : s.mergedTimeline([ref.conversationId], before, limit));
       }
       if (m[2] === '/messages' && method === 'POST') {
@@ -1650,6 +1657,16 @@ export class HubServer {
         return ok();
       }
       return bad('not found', 404);
+    }
+    // How much of a place a view shows, chosen (rungs.ts, docs/mail.md "Mail as chats"): null takes the choice back.
+    if (path === '/api/rungs' && method === 'PUT') {
+      const b = await body<{ view?: unknown; place?: unknown; rung?: unknown }>();
+      if (typeof b.view !== 'string' || !b.view || b.view.length > 300) return bad('view: a chat id');
+      if (typeof b.place !== 'string' || !b.place || b.place.length > 300) return bad('place: a place id');
+      if (b.rung !== null && !isRung(b.rung)) return bad(`rung: one of ${RUNGS.join(', ')}, or null`);
+      setPlaceRung(s.db, b.view, b.place, b.rung);
+      this.broadcast([{ t: 'rung', view: b.view, place: b.place, rung: b.rung }]);
+      return ok();
     }
     // A channel's stream: its own messages and every thread's, by time (docs/threads.md "The channel stream").
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/stream$/)) && method === 'GET') {
@@ -2575,7 +2592,9 @@ export class HubServer {
     const s = this.store;
     const ref = chatRef(s, chatId);
     if (!ref) return 'no such chat';
-    const routes = chatRoutes(s, ref);
+    // Mail is sent through POST /api/mail/send (docs/mail.md "Mail as chats"): a chat route by email is not one here.
+    if (b.route?.conversationId && isEmailRoute({ conversationId: b.route.conversationId })) return 'mail is sent through /api/mail/send';
+    const routes = chatRoutes(s, ref).filter((r) => !isEmailRoute(r));
     const asked = b.route ? routes.find((r) => r.conversationId === b.route!.conversationId && (!b.route!.accountId || r.accountId === b.route!.accountId)) : undefined;
     if (b.route && !asked) return 'that is not a route of this chat';
     const replied = !asked && b.replyTo ? s.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', b.replyTo) : null;

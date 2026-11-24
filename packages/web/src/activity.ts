@@ -52,8 +52,13 @@ function deviceLabel(ua = navigator.userAgent): string {
 // ------------------------------------------------------------------ where the user is
 
 function convPlace(id: string): Place {
-  // A mail thread, opened from an inbox row or a search.
+  // A mail thread, opened as a chat of its own from an inbox row, a link or a search.
   if (id.startsWith('mth_')) return { view: 'mail', conversationId: id };
+  // A person's email route (mail/chats.ts): a stay on its newest thread, which is what the inbox listed.
+  if (id.startsWith('email:')) {
+    const ch = db.mail.chats.get(id);
+    return { view: 'mail', conversationId: ch?.threadIds[0] ?? id, personId: ch?.personId ?? null };
+  }
   const c0 = db.conversations.get(id);
   const c = c0 ? placeConv(c0) : null;
   const root = c?.spaceIds.length ? rootCommunity(c.spaceIds[0]) : null;
@@ -77,9 +82,6 @@ function placeOf(r: Route): Place {
     // How it sorts is triage's own page.
     case 'model':
       return { view: 'triage' };
-    // A thread open on the Mail page, by its id: the learned order learns from mail opens too (docs/inbox.md).
-    case 'mail':
-      return r.thread ? { view: 'mail', conversationId: r.thread } : { view: 'mail' };
     default:
       return { view: r.view };
   }

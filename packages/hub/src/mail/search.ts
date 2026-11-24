@@ -232,6 +232,8 @@ export class MailSearch {
       if (v === 'unread') where.push('m.seen = 0 AND m.seen_local = 0');
       else if (v === 'read') where.push('(m.seen = 1 OR m.seen_local = 1)');
       else if (v === 'starred') where.push('m.flagged = 1');
+      // Mail not from a person: the Updates list's threads (store.ts listPage), so a search can stay in that list.
+      else if (v === 'update') where.push(`EXISTS (SELECT 1 FROM mail_thread ut WHERE ut.id = s.thread_id AND ut.class = 'bulk')`);
     }
     if (q.after !== null) (where.push('s.at >= ?'), args.push(q.after));
     if (q.before !== null) (where.push('s.at < ?'), args.push(q.before));
@@ -521,7 +523,8 @@ export function serverQuery(q: P.SearchQuery, form: ServerForm): string {
       else if (!role) out.push(`label:${gmailValue(v)}`);
     }
     if (q.has.includes('attachment')) out.push('has:attachment');
-    for (const v of q.is) out.push(v === 'starred' ? 'is:starred' : `is:${v}`);
+    // Updates are this hub's own sorting, which Gmail does not know: its hits are kept to them here.
+    for (const v of q.is) if (v !== 'update') out.push(v === 'starred' ? 'is:starred' : `is:${v}`);
     if (q.after !== null) out.push(`after:${gmailDay(q.after)}`);
     if (q.before !== null) out.push(`before:${gmailDay(q.before)}`);
     return out.join(' ');

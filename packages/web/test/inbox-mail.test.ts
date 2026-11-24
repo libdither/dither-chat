@@ -79,12 +79,12 @@ test('chats and mail rank as one by the hub’s score; muted mail sinks with mut
   expect(rank(muted)).toEqual(['cnv_dm', 'mth_lease', 'cnv_group', 'mth_sam']);
 });
 
-test('the filter: Direct messages and Groups are chats, Mail is mail', () => {
+test('the filter: mail is chats, so a thread with one person is a DM and one with more a group; Mail is what has mail', () => {
   const w = world(true);
   const shown = (f: 'all' | 'direct' | 'groups' | 'mail') => inboxView(null, w.rows, (k) => filterKeeps(f, w.rows.find((r) => r.key === k)!));
   expect(shown('all')).toEqual(['mth_sam', 'cnv_dm', 'mth_lease', 'cnv_group']);
-  expect(shown('direct')).toEqual(['cnv_dm']);
-  expect(shown('groups')).toEqual(['cnv_group']);
+  expect(shown('direct')).toEqual(['mth_sam', 'cnv_dm']);
+  expect(shown('groups')).toEqual(['mth_lease', 'cnv_group']);
   expect(shown('mail')).toEqual(['mth_sam', 'mth_lease']);
 });
 

@@ -67,17 +67,40 @@ far down, about 45 minutes after you last wrote. Now there is one order, and the
 the top for a few hours ([You were here](#you-were-here)).
 
 A filter button beside the search box opens a menu: **All**, **Direct messages** (DMs), **Groups** (the other
-chats: groups, rooms, notes to self), **Mail** (with a mail account). With a filter on, the button is tinted and
+chats: groups, rooms, notes to self), **Mail** (with a mail account: chats with mail in them). With a filter on, the button is tinted and
 says which (DMs, Groups, Mail). The choice is kept per device. Until 2026-11-09 these were chips under the search
 box, with People and Unread: a stored People became Direct messages, and Unread became All, where unread rows are
 bold.
 
+### Mail lists
+
+With Mail on, a row of chips under the search box goes to mail's other lists, shown in the inbox's place (docs/mail.md
+"Mail as chats"): always exactly **Inbox**, **Updates**, **Everything** and **More ⌄**, in one row that neither wraps
+nor scrolls, on a computer and a phone. More's menu has Starred and Sent, then each account's mailboxes; with one of
+them open, More is lit and says its name ("Starred ⌄"). The open list's chip is filled with the accent colour, in both
+themes, since the title stays "Inbox".
+
+A list keeps the Inbox's own header (`ui/Sidebar.tsx` `InboxSidebar` with `mail`, the list under it from
+`ui/mail/MailSidebar.tsx`): the title, the search box, the Mail filter and its +, which has New email. Nothing above the
+list moves as you change lists. The search box says which list it searches ("Search Updates") and keeps to it: Enter
+runs a mail search that starts with the list's operators (`mail/model.ts` `listSearch`: `in:inbox is:update` for
+Updates, `in:inbox` for Everything, `is:starred`, `in:sent`, `in:<mailbox>`, and `account:` for one account's), so the
+list's chip stays lit over its results; emptied, the list is back. In the Inbox chip the box is the app's search, as
+without the filter.
+
+From the Inbox a list is a step of its own; from one list to another replaces it, so back, and Escape, go to the Inbox
+chip first (`ui/MailChat.tsx` `toInboxChip`). Turning the Mail filter off goes back to the whole inbox. Chat requests and
+notices are not mail: under the Mail filter there is no Requests row.
+
 **Mail from people** is in the same list (docs/mail.md, slice 8): a thread in Inbox from someone you know that is
 unread, owes a reply, is recent or you just opened. It is scored by this formula on its own fold
 (`hub/src/mail/attention.ts`: you and one other is a DM, you in To a mention), and how you answer someone sums their
-mail and their chats. Its `AttentionView` has `kind: 'mail'` and the thread's id. The Mail filter shows only these;
-Direct messages and Groups only chats. Tapping one opens the reader beside the inbox. With no mail account nothing
-here changes.
+mail and their chats. Its `AttentionView` has `kind: 'mail'` and the thread's id. Mail is chats (docs/mail.md "Mail as chats"): a thread
+between you and one person is folded into that person's row (web `model.ts` `foldMailIntoChats`), so their chat and
+their mail are one row ranked by the better of the two; a thread with more people is a row of its own and opens as a
+group chat, named by its subject: the envelope tile, the subject without Re: or Fwd:, and "Jo: …" (`mail/model.ts`
+`threadName`, `threadSnippet`). Ctrl+K and search's Jump to find it by its people's names too. The Mail filter keeps rows with mail in them; Direct messages keeps people's rows, mail or not; Groups the
+rest. With no mail account nothing here changes.
 
 The score uses metadata only: who wrote, when, who replied to whom, mentions, the conversation's shape and member
 count, unread state, triage's stored decisions (the tier and the importance) and time spent and where you were
@@ -618,9 +641,11 @@ Mail threads from a person are rows of the same inbox (mail.md). One model for b
 mail**, learns from the opens of chats and mail threads alike, and when it is turned on chats and mail compete in one
 ranking. Until then it runs in shadow.
 
-- **Mail opens** are in the visit log as `mail` stays on the thread's id (`mth_…`), from the Mail page or an inbox row,
-  with the row's position when opened from the inbox, as a chat's (`web/src/activity.ts`). Before 2026-11-20 a mail
-  row's open was a `conversation` stay with the thread's id, and the Mail page's had none; the rebuild reads both.
+- **Mail opens** are in the visit log as `mail` stays on the thread's id (`mth_…`), from a thread's chat or an inbox
+  row, with the row's position when opened from the inbox, as a chat's (`web/src/activity.ts`). A person's chat open on
+  their email route counts as a stay on that route's newest thread. Before 2026-11-20 a mail row's open was a
+  `conversation` stay with the thread's id, and the Mail page's (gone since 2026-11-23) had none; the rebuild reads
+  both.
 - **The rebuild** (`rankhistory.ts`, `loadWorld`'s `mail`) adds every thread the one-list inbox may have listed: from a
   person, in Inbox, not muted, on an account not hidden, and, if personal only because the sender looks human, rated
   by mail triage. Their messages fold in the same time order as the chats' (a second query, merged by time), as
