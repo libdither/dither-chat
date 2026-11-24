@@ -236,7 +236,8 @@ counting as one feature.
 **Fitting** (`train`) finds the weights that best explain the examples, each example counting by its weight and only
 for the chance it says something about, while every weight is held toward zero (L2-regularised logistic regression,
 by coordinate Newton steps). It runs again after every mark and once a day, over everything, and takes well under a
-second; the daily one first reads again what you did, a few seconds on a busy hub.
+second; the daily one first reads again what you did, a few seconds on a busy hub. A mark refits only this live
+model; the candidate (below) learns at the daily refit.
 
 **The hierarchy is the penalties** (`lambda`): how firmly each kind of weight is held at zero.
 
@@ -771,9 +772,11 @@ notifies once. (Before calendar accounts it came as POST /api/calendar/notify, w
 
 ## The shadow model
 
-Next to the live model a **candidate** learns, and only watches (`votes.ts`, `shadow.ts`). Its chances are kept
-with every decision (`triage.shadow`); it decides nothing. It learns from the same marks and old votes, and from
-everything you did in the last two weeks, not only the newest ten in each conversation. And it weighs more:
+Next to the live model a **candidate** learns, and only watches (`votes.ts`, `shadow.ts`). It learns once a day (and
+when you ask), not after each mark: its content features cost a nearest-neighbour search per example, which held a
+busy hub for 20 to 40 s per mark. Its chances are kept with every decision (`triage.shadow`); it decides nothing. It
+learns from the same marks and old votes, and from everything you did in the last two weeks, not only the newest ten
+in each conversation. And it weighs more:
 
 - **Interaction features** (`interact.ts`), numbers worked out as of each message from only what came before, kept
   with the decision in `triage_input` when `DITHER_ACTIVITY_FEATURES=1` ([activity.md](activity.md)), and learned as

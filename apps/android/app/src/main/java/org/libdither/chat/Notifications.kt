@@ -29,6 +29,8 @@ import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.text.SpannableStringBuilder
 import android.text.Spanned
@@ -38,6 +40,7 @@ import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.roundToInt
 
 /**
@@ -868,6 +871,29 @@ object Looks {
 }
 
 /**
+ * A button's work from the shade, off the main thread. The broadcast stays open while it runs, so the process is not
+ * dropped under it, but never longer than [BROADCAST_HOLD_MS]: Android gives a notification's broadcast 10 s, and one
+ * still open after that is the app not responding, which ends a background app's process (and with it the work). The
+ * hub can take longer than that to answer; the work goes on past the hold for as long as the process does.
+ */
+private fun BroadcastReceiver.inBackground(name: String, work: () -> Unit) {
+    val pending = goAsync()
+    val finished = AtomicBoolean(false)
+    val finish = { if (finished.compareAndSet(false, true)) pending.finish() }
+    Thread({
+        try {
+            work()
+        } finally {
+            finish()
+        }
+    }, name).start()
+    Handler(Looper.getMainLooper()).postDelayed({ finish() }, BROADCAST_HOLD_MS)
+}
+
+/** 2 s under Android's 10 s for a broadcast: room for the main thread to be busy when the hold ends. */
+private const val BROADCAST_HOLD_MS = 8_000L
+
+/**
  * A reply typed into a notification goes through the hub's ordinary send, which decides whether it may go out at
  * all, as sw.js does in a browser. Sent, it joins the conversation's notification; on failure what was typed stays
  * readable in the notification.
@@ -878,23 +904,18 @@ class ReplyReceiver : BroadcastReceiver() {
         val text = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(Notifications.REPLY)?.toString()?.trim().orEmpty()
         if (text.isEmpty()) return
         val replyTo = intent.getStringExtra("replyTo")
-        val done = goAsync()
-        Thread {
-            try {
-                val body = JSONObject().put("body", text)
-                if (replyTo != null) body.put("replyTo", replyTo)
-                val (code, res) = runCatching { Hub.request(c, "POST", "/api/conversations/$conv/send", body, 60_000) }.getOrElse { 0 to "" }
-                if (code in 200..299) {
-                    Notifications.outcome(c, intent.getStringExtra("nid"), intent.getStringExtra("device"), "replied")
-                    Notifications.replied(c, conv, text)
-                } else {
-                    val why = if (code == 0) "Could not reach the hub" else Hub.errorOf(res).ifEmpty { "The hub answered $code" }
-                    Notifications.post(c, conv, "Reply not sent", "$why. You wrote: $text".take(1000), "/inbox/c/$conv", sticky = true)
-                }
-            } finally {
-                done.finish()
+        inBackground("dither-reply") {
+            val body = JSONObject().put("body", text)
+            if (replyTo != null) body.put("replyTo", replyTo)
+            val (code, res) = runCatching { Hub.request(c, "POST", "/api/conversations/$conv/send", body, 60_000) }.getOrElse { 0 to "" }
+            if (code in 200..299) {
+                Notifications.outcome(c, intent.getStringExtra("nid"), intent.getStringExtra("device"), "replied")
+                Notifications.replied(c, conv, text)
+            } else {
+                val why = if (code == 0) "Could not reach the hub" else Hub.errorOf(res).ifEmpty { "The hub answered $code" }
+                Notifications.post(c, conv, "Reply not sent", "$why. You wrote: $text".take(1000), "/inbox/c/$conv", sticky = true)
             }
-        }.start()
+        }
     }
 }
 
@@ -905,18 +926,13 @@ class RingReceiver : BroadcastReceiver() {
         val tag = intent.getStringExtra("tag") ?: "call:$call"
         // Silent at once: the hub's answer can take a moment, and a ring that goes on after Decline is wrong.
         Notifications.cancel(c, tag)
-        val done = goAsync()
-        Thread {
-            try {
-                val (code, res) = runCatching { Hub.request(c, "POST", "/api/calls/$call/decline", JSONObject(), 30_000) }.getOrElse { 0 to "" }
-                if (code !in 200..299) {
-                    val why = if (code == 0) "Could not reach the hub" else Hub.errorOf(res).ifEmpty { "The hub answered $code" }
-                    Notifications.post(c, tag, "Call not declined", "$why. It may still be ringing on your other devices.", null)
-                }
-            } finally {
-                done.finish()
+        inBackground("dither-decline") {
+            val (code, res) = runCatching { Hub.request(c, "POST", "/api/calls/$call/decline", JSONObject(), 30_000) }.getOrElse { 0 to "" }
+            if (code !in 200..299) {
+                val why = if (code == 0) "Could not reach the hub" else Hub.errorOf(res).ifEmpty { "The hub answered $code" }
+                Notifications.post(c, tag, "Call not declined", "$why. It may still be ringing on your other devices.", null)
             }
-        }.start()
+        }
     }
 }
 
@@ -940,14 +956,9 @@ class VoteReceiver : BroadcastReceiver() {
         val tag = intent.getStringExtra("tag")
         if (mark.closes && tag != null) Notifications.cancel(c, tag)
         val path = if (intent.getBooleanExtra("mail", false)) "/api/mail/triage/$message/vote" else "/api/messages/$message/feedback"
-        val done = goAsync()
-        Thread {
-            try {
-                val code = runCatching { Hub.request(c, "POST", path, mark.body()).first }.getOrDefault(0)
-                if (code in 200..299 && !mark.closes && tag != null) Notifications.marked(c, tag, mark)
-            } finally {
-                done.finish()
-            }
-        }.start()
+        inBackground("dither-mark") {
+            val code = runCatching { Hub.request(c, "POST", path, mark.body()).first }.getOrDefault(0)
+            if (code in 200..299 && !mark.closes && tag != null) Notifications.marked(c, tag, mark)
+        }
     }
 }
