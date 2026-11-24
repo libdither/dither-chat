@@ -6,6 +6,8 @@ runs a small version on every push that judges its counts, never its times ([In 
 hold sizes and counts of what the hub sends and the web build weighs ([Budgets](#budgets-sizes-and-counts-in-every-test-run)).
 `scripts/verify-response.ts` clicks every control on each kind of page and fails on a click that draws a whole list
 again ([Every click](#every-click-2026-11-20)).
+`scripts/verify-memory.ts` goes round the same pages again and again and fails when what the page holds keeps growing
+([Memory](#memory-2026-11-24)).
 
 ```sh
 bun scripts/verify-perf.ts                 # 3 runs each at 1× and 4× CPU, compared with scripts/perf-baseline.json
@@ -1021,6 +1023,73 @@ bun scripts/verify-response.ts --only "a DM"       # pages whose name has this i
 bun scripts/verify-response.ts --only control:react  # controls whose name has this in it
 bun scripts/verify-response.ts --cpu 4 --out x.json  # slower, and every click's numbers
 ```
+
+## Memory (2026-11-24)
+
+`scripts/verify-memory.ts` (CI's `memory` job) looks for leaks: what the page holds growing as it is used. Against a
+demo hub of its own on the perf world at a tenth of its size, a computer's page and a phone's go round the same pages
+again and again, side by side: the six conversations the perf runs open and a thread, the top of the biggest channel
+drawn (older messages from memory), the details panel opened and closed (on the computer), a person's page, their
+profile, Settings, Mail and Feed, back, and the inbox again. After each round the page is let settle, the garbage is
+collected twice (`HeapProfiler.collectGarbage`), and it counts:
+
+| count | from |
+|---|---|
+| `heap` | `Performance.getMetrics`'s JSHeapUsedSize: printed only |
+| `nodes`, `listeners`, `documents` | `Memory.getDOMCounters`: every DOM node alive, detached ones too, and event listeners |
+| `detached` | `DOM.getDetachedDomNodes`: nodes off the page that something still holds |
+| `elements` | the page's own elements |
+| `intervals`, `timeouts`, `objectUrls`, `sockets`, `observers` | counted from the start by a script before the app's (its `INIT`): intervals set and not cleared, timeouts pending (printed only), `URL.createObjectURL` not revoked, sockets open, Resize-, Intersection- and MutationObservers still observing and not collected |
+| `marks` | performance marks and measures kept |
+| `held.*` | the app's own caches, from `window.__ditherPerf.held()` (`sized` in perf.ts, under `?perf=1`): timelines, messages held in them, quoted messages, kept pages, identities, mail bodies, the maps state.ts keeps for the page's life |
+
+What is judged is growth from round 2 to the last (6 on the computer, 5 on the phone), never a size. The page's own
+counts (elements, nodes, listeners) may move by 2% in all, once; what the app keeps running or holds not at all; and
+nothing may grow in each of the last three rounds, however little: a leak grows every round, a clock's step once.
+`scripts/memory-known.json` (none yet) is where growth known to be needed would go, with why. A count that grew past
+what it may says where its new intervals, object URLs or observers were made.
+
+The first round is the warm-up: it loads three older pages of the biggest channel from the hub, so that the later
+rounds draw from memory. Every page from the hub stays in memory for as long as the page is open (`timelines` in
+store.ts, by design), so a round that loaded one more each time would grow by a page whatever else it did. The app's
+visits (`POST /api/usage`) are answered in the page, as in the click check, so the hub's order stays put.
+
+```sh
+bun scripts/verify-memory.ts                       # what CI runs, about two minutes
+bun scripts/verify-memory.ts --cycles 50 --phone-cycles 0 --cpu 4 --scale 1   # the long run, below
+bun scripts/verify-memory.ts --snapshots <dir>     # heap snapshots after round 2 and the last, for DevTools' Comparison
+```
+
+Other options: `--first` (the round growth is counted from), `--web <dist>`, `--out <file.json>` (every round's
+counts), `--keep`, `--verbose` (each step's time). The hub's resident memory (`/proc/<pid>/status`, it has no endpoint
+for its heap) is printed before and after, never judged.
+
+**Steady.** Five runs here and five on GitHub's runners (dispatched with `gh workflow run ci.yml --ref <branch>`), on
+2026-11-24: every judged count came out the same in rounds 2 to 6 and 2 to 5, in every run. The heap grew 190 to 260
+KB a round on the computer and 145 to 170 KB on the phone, which is why it is printed and not judged. The job takes
+about two minutes on a runner, beside `response`'s four, so the run takes no longer.
+
+**It catches one.** A page made to leak an interval, a click listener and a detached `div` on every visit to Settings
+failed on nodes, listeners and intervals, each +4 over four rounds.
+
+**What it found.** Every chat opened added a `dither:timeline` mark (`markPainted`, perf.ts) to the page's list of
+performance marks, which nothing emptied: nine a round, about 130 bytes each. Now each name keeps its last: the checks
+that wait for them watch with a `PerformanceObserver`, which sees each. `marks` holds at 4.
+
+**The long run** (2026-11-24, full-size world, 4× CPU, 50 rounds on the computer, a loaded machine, about 28 s a
+round): elements, nodes, listeners, intervals, object URLs, sockets, observers and every cache held still from round 2
+to 50, but for one step: the page's elements went 2,270 → 2,269 at round 11 and → 2,291 at round 22 (nodes 2,931 →
+2,962, listeners back to 771), and stayed. That is the inbox's rows changing as the hub's attention rescores (every
+five minutes), not growth, and why the page's counts may move once. The heap went from 17.5 MB after round 2 to 19.7
+MB after round 50: about 160 KB a round to round 10, and 23 KB a round from round 20 to 50 (19.0 to 19.7 MB). The
+hub's resident memory went from 230 MB before to 195 MB after (peak 389 MB).
+
+What the heap's growth is, from heap snapshots (`--snapshots`, compared by constructor) on the tenth-size world. From
+round 2 to 8 (the heap 11.1 to 12.2 MB): two thirds compiled code (V8's InstructionStream, Code, FeedbackVector: the
+JIT warming up), and a quarter the tables of perf.ts's own WeakMap and WeakSet that count renders (only under
+`?perf=1`). From round 10 to 30 (12.6 to 13.2 MB; the snapshots' totals 1.0 MB apart): compiled code again (about
+620 KB), the response bodies DevTools keeps for the check's own `Network.enable` (160 KB), and the browser's
+performance entries (long animation frames, paints, events). No object of the app's grew in number.
 
 ## Next
 

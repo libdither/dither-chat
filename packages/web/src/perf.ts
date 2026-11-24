@@ -1,10 +1,10 @@
 /**
- * What scripts/verify-perf.ts and scripts/verify-response.ts read from the page (docs/perf.md).
+ * What scripts/verify-perf.ts, scripts/verify-response.ts and scripts/verify-memory.ts read from the page (docs/perf.md).
  *
  * Marks are always made: `dither:content` and `dither:fresh` (main.tsx, state.ts), and `dither:timeline` once a
  * conversation switched to shows its newest message. Render counts are kept only with ?perf=1 in the address, on
  * window.__ditherPerf; without it each counted component pays one check of a constant, and preact's hooks are left
- * alone.
+ * alone. Also under ?perf=1, `__ditherPerf.held()` says how much the app's caches hold, for verify-memory.ts.
  */
 import { options } from 'preact';
 

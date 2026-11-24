@@ -8,7 +8,8 @@
  * What is judged is growth between the round after the warm-up (`--first`, 2) and the last (`--cycles`), never a size:
  * DOM elements on the page, DOM nodes alive (detached ones too), event listeners, intervals running, object URLs not
  * revoked, open sockets, observers still observing, and the app's own caches (perf.ts `sized`: timelines, messages
- * held, kept pages). Each may grow by its allowance (GATES) and by what scripts/memory-known.json lists, with a reason.
+ * held, kept pages). Each may grow by its allowance (GATES) and by what scripts/memory-known.json lists, with a reason,
+ * and none may grow in each of the last rounds (STEADY).
  * The JS heap and the hub's resident memory are printed, per round, and go in the job's summary.
  *
  *   bun scripts/verify-memory.ts                         # what CI runs: builds the app, seeds a world, starts a hub
@@ -56,13 +57,16 @@ const step = (c: Ctx, what: string) => {
 };
 
 /**
- * How much each count may grow from round FIRST to the last, at most, in all: what one round's noise can move it by.
- * A count that grows a little every round grows past it within a few. `heap` (bytes) is printed only.
+ * How much each count may grow from round FIRST to the last, in all, as a share of what it was. A count may move once:
+ * on the full-size world, 2026-11-24, the page's elements went 2,270 → 2,269 at round 11 and → 2,291 at round 22 and
+ * stayed there (the hub's attention rescores every five minutes and the list's rows changed), so the page's own counts
+ * may step by 2%. What the app keeps running or holds may not grow at all. And none may grow round after round (STEADY),
+ * however little: a leak grows every round, a clock's step once. `heap` (bytes) and `timeouts` are printed only.
  */
 const GATES: Record<string, number> = {
-  elements: 0,
-  nodes: 0,
-  listeners: 0,
+  elements: 0.02,
+  nodes: 0.02,
+  listeners: 0.02,
   intervals: 0,
   objectUrls: 0,
   sockets: 0,
@@ -82,6 +86,8 @@ const GATES: Record<string, number> = {
   'held.mailBodies': 0,
   'held.mailDetails': 0,
 };
+/** A gated count that grew from each round to the next, this many times in a row up to the last, fails whatever its size. */
+const STEADY = 3;
 /** Growth known when the check began, by count, with why: judged on top of GATES. It should only shrink. */
 const KNOWN_FILE = join(import.meta.dir, 'memory-known.json');
 const known: Record<string, { growth: number; why: string }> = existsSync(KNOWN_FILE) ? JSON.parse(readFileSync(KNOWN_FILE, 'utf8')).known : {};
@@ -490,18 +496,25 @@ for (const ps of passes) {
     const growth = z[k] - (a[k] ?? 0);
     const perRound = k === 'heap' ? `${((growth / (n - FIRST)) / 1024).toFixed(1)} KB` : (growth / (n - FIRST)).toFixed(2);
     const gate = GATES[k];
-    const allowed = gate === undefined ? null : gate + (known[`${ps.name} ${k}`]?.growth ?? 0);
-    const over = allowed !== null && growth > allowed;
+    const allowed = gate === undefined ? null : Math.floor(gate * (a[k] ?? 0)) + (known[`${ps.name} ${k}`]?.growth ?? 0);
+    // Grew in each of the last STEADY rounds: a leak, however small.
+    const xs = ps.samples.slice(FIRST - 1).map((x) => x[k] ?? 0);
+    const rising = xs.length > STEADY && xs.slice(-STEADY - 1).every((v, i, all) => i === 0 || v > all[i - 1]);
+    const over = allowed !== null && (growth > allowed || (rising && !known[`${ps.name} ${k}`]));
     if (over) failed++;
-    const verdict = over ? 'FAIL' : allowed === null ? 'printed' : 'ok';
+    const verdict = over ? (rising && growth <= allowed! ? 'FAIL (grew every round)' : 'FAIL') : allowed === null ? 'printed' : 'ok';
     rows.push({ pass: ps.name, k, first: a[k] ?? 0, last: z[k], growth, perRound, allowed, verdict });
     const show = (v: number) => (k === 'heap' ? `${(v / 1e6).toFixed(2)} MB` : String(v));
-    console.log(`${over ? 'FAIL ' : '     '}${k.padEnd(22)} ${show(a[k] ?? 0).padStart(10)} ${show(z[k]).padStart(10)}  ${(k === 'heap' ? `${(growth / 1e6).toFixed(2)} MB` : `${growth >= 0 ? '+' : ''}${growth}`).padStart(8)}  ${perRound}${allowed !== null && allowed > 0 ? `  (may grow ${allowed}${known[`${ps.name} ${k}`] ? `: ${known[`${ps.name} ${k}`].why}` : ''})` : ''}`);
+    console.log(`${over ? 'FAIL ' : '     '}${k.padEnd(22)} ${show(a[k] ?? 0).padStart(10)} ${show(z[k]).padStart(10)}  ${(k === 'heap' ? `${(growth / 1e6).toFixed(2)} MB` : `${growth >= 0 ? '+' : ''}${growth}`).padStart(8)}  ${perRound}${allowed !== null && allowed > 0 ? `  (may grow ${allowed}${known[`${ps.name} ${k}`] ? `: ${known[`${ps.name} ${k}`].why}` : ''})` : ''}${over && rising ? `  grew every round: ${xs.join(' ')}` : ''}`);
     if (over) {
       // Where what grew was made, for the counts the page can say that of.
-      const w = (ps.where.at(-1) as any)?.[k] as string[] | undefined;
-      const w0 = new Set((ps.where[FIRST - 1] as any)?.[k] ?? []);
-      if (w) for (const x of w.filter((x) => !w0.has(x)).slice(0, 5)) console.log(`        new: ${x}`);
+      const w = ((ps.where.at(-1) as any)?.[k] ?? []) as string[];
+      const was = new Map<string, number>();
+      for (const x of ((ps.where[FIRST - 1] as any)?.[k] ?? []) as string[]) was.set(x, (was.get(x) ?? 0) + 1);
+      const more = new Map<string, number>();
+      for (const x of w) if ((was.get(x) ?? 0) > 0) was.set(x, was.get(x)! - 1);
+      else more.set(x, (more.get(x) ?? 0) + 1);
+      for (const [x, n] of [...more].slice(0, 5)) console.log(`        ${n} more made at: ${x}`);
     }
   }
   console.log(`  heap by round (MB): ${ps.samples.map((s) => (s.heap / 1e6).toFixed(1)).join(' ')}`);
@@ -514,7 +527,7 @@ console.log(`${failed ? `${failed} grew past what they may` : 'nothing grew past
 if (OUT) writeFileSync(OUT, JSON.stringify({ world: world.counts, cycles: CYCLES, first: FIRST, cpu: CPU, scale: SCALE, hub: { before: hubBefore, after: hubAfter }, passes }, null, 1));
 if (process.env.GITHUB_STEP_SUMMARY) {
   const line = (r: (typeof rows)[number]) =>
-    `| ${r.verdict === 'FAIL' ? '**FAIL**' : r.verdict} | ${r.pass} | \`${r.k}\` | ${r.k === 'heap' ? (r.first / 1e6).toFixed(2) + ' MB' : r.first} | ${r.k === 'heap' ? (r.last / 1e6).toFixed(2) + ' MB' : r.last} | ${r.k === 'heap' ? (r.growth / 1e6).toFixed(2) + ' MB' : r.growth} | ${r.perRound} | ${r.allowed ?? ''} |`;
+    `| ${r.verdict.startsWith('FAIL') ? `**${r.verdict}**` : r.verdict} | ${r.pass} | \`${r.k}\` | ${r.k === 'heap' ? (r.first / 1e6).toFixed(2) + ' MB' : r.first} | ${r.k === 'heap' ? (r.last / 1e6).toFixed(2) + ' MB' : r.last} | ${r.k === 'heap' ? (r.growth / 1e6).toFixed(2) + ' MB' : r.growth} | ${r.perRound} | ${r.allowed ?? ''} |`;
   appendFileSync(
     process.env.GITHUB_STEP_SUMMARY,
     [
