@@ -96,6 +96,30 @@ Telegram and WhatsApp send it as a file). So a JPEG XL attached to a message, a 
 goes as a JPEG or PNG (`Uploads.common`), named for it (`holiday.jxl` → `holiday.jpg`); mail keeps the file as it is.
 Sending a kept picture on (forwarding) takes the original.
 
+### Downloading
+
+A plain media link is what this device shows best: on a browser that shows JPEG XL, a packed JPEG comes as JPEG XL.
+Saved under the network's name, `photo.jpg` would hold a JPEG XL. So the app saves through `?as=` on the same signed
+link (`packages/web/src/download.ts`, `mediaAs` in `server.ts`), and the hub names the download with the form's
+extension:
+
+| `?as=` | What comes back |
+| --- | --- |
+| `info` | JSON: what it came as and its size then (`type`, `size`, from `media_info` once packed), how it is kept (`kept`), what a plain fetch sends this device (`sent`, null when one is made for it), and the forms below that it can have (`as`) |
+| `original` | The bytes as they came, a packed picture rebuilt. Every Download and Save goes this way |
+| `jxl` | A JPEG repacked losslessly (the packed file when it is one), a PNG stored lossless |
+| `png` | A JPEG's or JPEG XL's pixels |
+| `jpeg` | A JPEG XL as the JPEG it was repacked from, else encoded at quality 92 |
+
+A JPEG offers JPEG XL and PNG, a PNG JPEG XL, a JPEG XL a JPEG and a PNG, anything else only itself (`downloadsAs`
+in the protocol package). `name` names it (the extension made the form's), else the URL's own name. A file not yet
+kept is fetched first. Conversions share the serving's memory and its two djxl at once; a PNG goes through cjxl at a
+low effort (`-e 5`, a fraction of a second for a 2560×1440 screenshot).
+
+The picture viewer shows `info` as a line under the name ("JPEG, 2.1 MB · kept as JPEG XL, 1.4 MB, shown here as
+JPEG XL"); its Download saves the original, and the button beside it lists the other forms. A picture's menu has
+Save Image As with the same forms.
+
 **Tools.** cjxl and djxl from `DITHER_JXL_DIR`, else PATH, else `nix build nixpkgs#libjxl.bin` (the live hub, whose
 PATH has none). Without them nothing is packed and every file goes as it is: a JPEG XL to every device, and to the
 network. `DITHER_JXL=0` turns it all off; `DITHER_JXL_PACK=0` only the packing.
@@ -155,7 +179,9 @@ installing installs no native binary.
 - `scripts/verify-desk.ts` covers Open File from the viewer and a click on a file with no viewer.
 - `packages/hub/test/jxl.test.ts`: telling a JPEG XL by its bytes and its size, the packer over a cache (what it packs
   and leaves), JPEGs back byte for byte, `/media` answering a device with and without JPEG XL, and a JPEG XL attached
-  going out as a JPEG. The parts that run cjxl and djxl skip without them; CI's hub job installs libjxl-tools.
+  going out as a JPEG, and `?as=` (what a picture is, each form, the names, refusals). The parts that run cjxl and djxl
+  skip without them; CI's hub job installs libjxl-tools.
+- `packages/web/test/download.test.ts`: which links take `?as=`, the forms each type offers, and the viewer's line.
 
 ## Not done
 

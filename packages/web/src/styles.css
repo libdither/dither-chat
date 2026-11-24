@@ -7652,10 +7652,27 @@ textarea.chip-box {
 .viewer-name {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  font-weight: 600;
+}
+.viewer-name > span,
+.viewer-name > .viewer-format {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 600;
+}
+.viewer-name > .viewer-format {
+  font-size: 12px;
+}
+@media (max-width: 600px) {
+  .viewer-name > .viewer-format {
+    white-space: normal;
+  }
+}
+.viewer-bar .viewer-as {
+  width: 28px;
+  margin-left: -6px;
 }
 .viewer-name small {
   color: rgb(255 255 255 / 0.7);

@@ -1,11 +1,12 @@
 import type { Server, ServerWebSocket, Socket, WebSocketHandler } from 'bun';
 import { createHmac } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type * as P from '@dither-chat/protocol';
+import type { DownloadAs } from '@dither-chat/protocol';
 import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, isEmailRoute, parseCursor } from './chats.ts';
-import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, RUNGS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, downloadsAs, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, RUNGS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { ACCOUNT_COLORS, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
@@ -24,9 +25,9 @@ import { type PaceConfig, READING, ReadingPace } from './readingpace.ts';
 import { realClock } from './clock.ts';
 import { NetSearch } from './netsearch.ts';
 import { linkPath, MediaArchiver } from './mediaarchive.ts';
-import { infoFor, MediaInfo } from './mediainfo.ts';
+import { infoFor, MediaInfo, mediaKey } from './mediainfo.ts';
 import { genericType } from './fileinfo.ts';
-import { mediaHeaders, SAFE_HEADERS, sniffMime } from './mediaheaders.ts';
+import { downloadDisposition, mediaHeaders, SAFE_HEADERS, sniffMime } from './mediaheaders.ts';
 import { findJxl, JxlServe, MediaPacker, PACKED_TYPES, takesJxl, type JxlTools } from './jxl.ts';
 import { JXL } from './jxlformat.ts';
 import { ImportSources } from './imports/sources.ts';
@@ -1037,7 +1038,7 @@ export class HubServer {
     if ((m = path.match(DAVE_FILE))) return this.daveFile(m[1]!, m[2]!);
     if (path === '/api/voice/sounds') return this.callSounds();
     if ((m = path.match(/^\/voice\/sounds\/([a-z0-9_]{1,40})\.mp3$/))) return this.callSound(m[1]);
-    if ((m = path.match(/^\/media\/([\w-]+)\/([\w-]+)$/))) return this.media(m[1], m[2], url.searchParams.get('a'), takesJxl(req));
+    if ((m = path.match(/^\/media\/([\w-]+)\/([\w-]+)$/))) return this.media(m[1], m[2], url.searchParams.get('a'), takesJxl(req), url.searchParams.get('as'), url.searchParams.get('name'));
     // Custom emoji inside message bodies: the id is all a body has, and it can only reach Discord's CDN.
     if ((m = path.match(/^\/emoji\/discord\/(\d+)(\.animated)?$/))) return this.fetchMedia(discordEmojiUrl(m[1], !!m[2]), null);
     if (path === '/api/errors' && req.method === 'POST') return this.clientError(req, clientIp(req, ip));
@@ -2884,12 +2885,87 @@ export class HubServer {
     return f && this.uploads.common(f, await this.jxlTools());
   }
 
-  /** `jxl`: the device shows JPEG XL (jxl.ts takesJxl). */
-  private async media(sig: string, b64: string, accountId: string | null, jxl = false): Promise<Response> {
+  /** `jxl`: the device shows JPEG XL (jxl.ts takesJxl). `as`: what it is, or a download in a chosen form (mediaAs). */
+  private async media(sig: string, b64: string, accountId: string | null, jxl = false, as: string | null = null, name: string | null = null): Promise<Response> {
     const raw = Buffer.from(b64, 'base64url').toString('utf8');
     const expect = createHmac('sha256', this.opts.secret).update(`${raw}|${accountId ?? ''}`).digest('base64url').slice(0, 16);
     if (sig !== expect) return new Response('bad signature', { status: 403 });
+    if (as !== null) return this.mediaAs(raw, accountId, as, name, jxl);
     return this.fetchMedia(raw, accountId, undefined, jxl);
+  }
+
+  /**
+   * Where a kept file's bytes are and what it is: the media cache's file, or its packed `.jxl` (`packed`), or a file
+   * under the hub's data. Null when it is not kept (yet).
+   */
+  private keptFile(raw: string): { src: string; key: string; type: string; packed: boolean; base: string } | null {
+    const key = mediaKey(raw);
+    const file = join(this.opts.dataDir, 'media-cache', key);
+    if (raw.startsWith('file://')) {
+      // One under the hub's data is read where it is; an account's own (fetchMedia asks the account) is in the cache.
+      const p = normalize(decodeURIComponent(raw.slice('file://'.length)));
+      if (resolve(p).startsWith(resolve(this.opts.dataDir) + '/')) return existsSync(p) && statSync(p).isFile() ? { src: p, key, type: this.diskType(p, key), packed: false, base: file } : null;
+    }
+    if (!existsSync(file + '.mime')) return null;
+    const type = this.trueType(key, readFileSync(file + '.mime', 'utf8'));
+    if (existsSync(file)) return { src: file, key, type, packed: false, base: file };
+    if (existsSync(file + '.jxl')) return { src: file + '.jxl', key, type, packed: true, base: file };
+    return null;
+  }
+
+  /** A file kept on disk (an import, Signal's own copy) has no type recorded: by its name, else by its first bytes. */
+  private diskType(p: string, key: string): string {
+    const f = Bun.file(p);
+    const named = f.type.split(';')[0];
+    if (named !== 'application/octet-stream') return f.type;
+    const fd = openSync(p, 'r');
+    const head = new Uint8Array(16);
+    try {
+      readSync(fd, head, 0, 16, 0);
+    } finally {
+      closeSync(fd);
+    }
+    return sniffMime(head) ?? this.trueType(key, named);
+  }
+
+  /**
+   * A kept file as the viewer's download menu asks for it (docs/files.md "Downloading"). `info`: what it came as, how it
+   * is kept and what this device is sent, as JSON. Otherwise a download (`attachment`, named `name` with the form's
+   * extension): `original` the bytes as they came (a packed picture rebuilt), `jxl`, `png` or `jpeg` converted.
+   */
+  private async mediaAs(raw: string, accountId: string | null, as: string, name: string | null, jxl: boolean): Promise<Response> {
+    if (as !== 'info' && !['original', 'jxl', 'png', 'jpeg'].includes(as)) return new Response('as: info, original, jxl, png or jpeg', { status: 400 });
+    let k = this.keptFile(raw);
+    if (!k) {
+      // Not fetched yet: fetched as showing it would, then looked at.
+      const res = await this.fetchMedia(raw, accountId, undefined, true);
+      await res.body?.cancel().catch(() => {});
+      if (!res.ok) return new Response('not found', { status: res.status });
+      k = this.keptFile(raw);
+      if (!k) return new Response('not kept', { status: 404 });
+    }
+    const essence = k.type.split(';')[0].trim().toLowerCase();
+    const forms = downloadsAs(essence);
+    if (as === 'info') {
+      const kept = statSync(k.src).size;
+      const known = k.packed ? (this.store.db.query('SELECT size FROM media_info WHERE key = ?').get(k.key) as { size: number } | null) : null;
+      // What a plain fetch of the link sends this device (serveKept): null when it is made for it (a JPEG XL turned
+      // into a JPEG or PNG).
+      const sent = k.packed ? (jxl ? JXL : essence) : essence === JXL && !jxl ? null : essence;
+      const body = { type: essence, size: k.packed ? (known?.size ?? null) : kept, kept: { type: k.packed ? JXL : essence, size: kept }, sent, as: forms };
+      return Response.json(body, { headers: { 'cache-control': 'no-store', ...SAFE_HEADERS } });
+    }
+    if (!forms.includes(as as DownloadAs)) return new Response(`a ${essence} file is not offered as ${as}`, { status: 400 });
+    const send = (body: BodyInit, mime: string) =>
+      new Response(body, { headers: { ...mediaHeaders(raw, k.key, mime), 'content-disposition': downloadDisposition(raw, k.key, mime, name) } });
+    if (as === 'original') {
+      if (!k.packed) return send(Bun.file(k.src), k.type);
+      const r = await this.jxlServe.rebuilt(k.key, k.src);
+      return r ? send(Buffer.from(r.bytes), r.mime) : new Response('this picture could not be rebuilt', { status: 503 });
+    }
+    if (as === 'jxl' && k.packed) return send(Bun.file(k.src), JXL);
+    const r = await this.jxlServe.as(k.key, k.src, k.packed ? JXL : essence, as as Exclude<DownloadAs, 'original'>, k.base);
+    return r ? send(Buffer.from(r.bytes), r.mime) : new Response('this picture could not be converted', { status: 503 });
   }
 
   /**
@@ -2988,10 +3064,8 @@ export class HubServer {
       // the account's own (an account dither-accounts made keeps its files in its own folder): asked of it below.
       const p = normalize(decodeURIComponent(raw.slice('file://'.length)));
       if (!existsSync(p) || !statSync(p).isFile()) return new Response('not found', { status: 404 });
-      // A file kept on disk (an import, Signal's own copy) has no type recorded: by its name, else by its first bytes.
       const f = Bun.file(p);
-      const named = f.type.split(';')[0];
-      const type = named !== 'application/octet-stream' ? f.type : (sniffMime(new Uint8Array(await f.slice(0, 16).arrayBuffer())) ?? this.trueType(key, named));
+      const type = this.diskType(p, key);
       const common = !jxl && type.split(';')[0] === JXL ? await this.jxlServe.common(key, p) : null;
       if (common) return new Response(Buffer.from(common.bytes), { headers: mediaHeaders(raw, key, common.mime) });
       return new Response(f, { headers: mediaHeaders(raw, key, type) });
