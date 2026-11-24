@@ -102,3 +102,19 @@ test('files queued after the packer ran dry are packed: none is left queued with
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('a big answer is compressed with a 4 MB window: what repeats further back than 2 MB is not sent again', async () => {
+  // Random ids listed once, then 2.5 MB of other text, then the same ids again: as a bootstrap's edges and its
+  // conversations name the same ids megabytes apart.
+  let seed = 3;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31);
+  const ids = Array.from({ length: 20_000 }, () => rnd().toString(36) + rnd().toString(36));
+  const filler = Array.from({ length: 100_000 }, (_, i) => `row ${i % 997} of the list`).join(',');
+  const body = { ids, filler, again: ids };
+  const res = (await compress(req('zstd'), Response.json(body)))!;
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  expect(JSON.parse(new TextDecoder().decode(Bun.zstdDecompressSync(bytes)))).toEqual(body);
+  // zstd's default window at level 3 (2 MB) sends the ids twice.
+  const twice = Bun.zstdCompressSync(Buffer.from(JSON.stringify(body)), { level: 3 }).byteLength;
+  expect(bytes.byteLength).toBeLessThan(twice * 0.8);
+});

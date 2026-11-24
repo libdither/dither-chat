@@ -13,6 +13,18 @@ import zlib from 'node:zlib';
 
 const TEXT = /^(application\/(json|javascript|manifest\+json|xml)|text\/|image\/svg\+xml)/;
 const MIN_BYTES = 1024;
+/**
+ * zstd's window, at most 4 MB: browsers take up to 8 MB in a zstd response (RFC 9659). Its default at level 3 is
+ * 2 MB, less than a bootstrap at full size (4.4 to 5.4 MB), so an id or a name repeated further back than that (a
+ * conversation's id in `edges`, then again in `conversations`) was sent again in full. With 4 MB the bootstrap goes
+ * out 4% smaller for about 3 ms more (docs/perf.md "The bootstrap's window"). zstd fits the window to a smaller
+ * answer by itself, so those come out byte for byte as before.
+ */
+const WINDOW_LOG = 22;
+const zstd = promisify((zlib as unknown as { zstdCompress: (b: Uint8Array, o: object, cb: (e: Error | null, r: Buffer) => void) => void }).zstdCompress);
+const ZSTD = (zlib as unknown as { constants: Record<string, number> }).constants;
+/** zstd at `level` with the window above, on a thread of the pool, not the hub's. */
+const zstdAt = (raw: Uint8Array, level: number) => zstd(raw, { params: { [ZSTD.ZSTD_c_compressionLevel]: level, [ZSTD.ZSTD_c_windowLog]: WINDOW_LOG } });
 
 type Encoding = 'zstd' | 'gzip';
 
@@ -43,8 +55,8 @@ export async function compress(req: Request, res: Response | undefined): Promise
   const headers = new Headers(res.headers);
   headers.append('vary', 'accept-encoding');
   if (raw.byteLength < MIN_BYTES) return new Response(raw, { status: res.status, headers });
-  // zstd on a thread of the pool, not the hub's: a bootstrap is megabytes, a few hundred ms to compress. The same bytes.
-  const body = new Uint8Array(enc === 'zstd' ? await Bun.zstdCompress(raw, { level: 3 }) : Bun.gzipSync(raw, { level: 4 }));
+  // zstd on a thread of the pool, not the hub's: a bootstrap is megabytes, a few hundred ms to compress.
+  const body = new Uint8Array(enc === 'zstd' ? await zstdAt(raw, 3) : Bun.gzipSync(raw, { level: 4 }));
   headers.set('content-encoding', enc);
   headers.delete('content-length');
   return new Response(body, { status: res.status, headers });
@@ -54,13 +66,6 @@ export async function compress(req: Request, res: Response | undefined): Promise
 const PACKABLE = /\.(js|mjs|css|html|json|webmanifest|svg|txt|xml)$/;
 /** zstd's hardest level short of its "ultra" ones: about 300 ms a megabyte here, once a file; the client unpacks it as fast as level 3. */
 const PACK_LEVEL = 19;
-/**
- * At most a 4 MB window: browsers take up to 8 MB in a zstd response (RFC 9659), and a file is packed by its own
- * size within that, so this only caps the rare file over 4 MB.
- */
-const PACK_WINDOW_LOG = 22;
-const zstd = promisify((zlib as unknown as { zstdCompress: (b: Uint8Array, o: object, cb: (e: Error | null, r: Buffer) => void) => void }).zstdCompress);
-const ZSTD = (zlib as unknown as { constants: Record<string, number> }).constants;
 
 /**
  * The web build's files, packed once with zstd at level 19 and kept in memory (docs/perf.md "The web build on the
@@ -148,7 +153,7 @@ export class PackedFiles {
         const st = statSync(file);
         const raw = readFileSync(file);
         if (raw.byteLength >= MIN_BYTES) {
-          const body = new Uint8Array(await zstd(raw, { params: { [ZSTD.ZSTD_c_compressionLevel]: PACK_LEVEL, [ZSTD.ZSTD_c_windowLog]: PACK_WINDOW_LOG } }));
+          const body = new Uint8Array(await zstdAt(raw, PACK_LEVEL));
           // Changed while it was packed: the next ask packs it again.
           const now = statSync(file);
           if (now.size === st.size && now.mtimeMs === st.mtimeMs) this.ready.set(file, { size: st.size, mtime: st.mtimeMs, body });
