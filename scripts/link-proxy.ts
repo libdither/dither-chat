@@ -6,6 +6,7 @@
  *   const link = await linkProxy(hubPort);    // listens on 127.0.0.1:<link.port>
  *   link.stall((c) => c.kind === 'ws');       // the live socket goes silent: open, but nothing gets through
  *   link.hangOn(/^POST \/api\/sync/);         // a request like that, and its connection, goes silent from then on
+ *   link.muteAfterHead((c) => c.kind === 'ws'); // new sockets open, and then nothing more crosses
  *   link.cut();                               // every connection closed at once
  *   link.shape({ bytesPerSec: 187_500, queueBytes: 375_000 });  // the hub's bytes through one queue, as a slow link
  *
@@ -22,6 +23,8 @@ export interface Conn {
   requests: string[];
   /** Silent: nothing more crosses, either way. */
   silent: boolean;
+  /** Silent once the hub's answer head has crossed (muteAfterHead). */
+  headOnly?: boolean;
   closed: boolean;
   openedAt: number;
   client: Socket;
@@ -35,6 +38,8 @@ export interface LinkProxy {
   stall(match: (c: Conn) => boolean, andNew?: boolean): void;
   /** A request whose line matches goes silent, and its connection with it, from now until `clear()`. */
   hangOn(line: RegExp): void;
+  /** Connections opened from now until `clear()` that match go silent once the hub's answer head is through: a socket opens, then says nothing. */
+  muteAfterHead(match: (c: Conn) => boolean): void;
   /** Nothing new goes silent (connections already silent stay so). */
   clear(): void;
   /** Close every connection, both ends, at once. */
@@ -51,6 +56,7 @@ const REQUEST_LINE = /(?:^|\r\n)((?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) \S+)
 export async function linkProxy(hubPort: number, hubHost = '127.0.0.1'): Promise<LinkProxy> {
   const conns: Conn[] = [];
   let stallNew: ((c: Conn) => boolean) | null = null;
+  let muteNew: ((c: Conn) => boolean) | null = null;
   let hang: RegExp | null = null;
   let nextId = 1;
 
@@ -103,6 +109,15 @@ export async function linkProxy(hubPort: number, hubHost = '127.0.0.1'): Promise
   };
   const toClient = (c: Conn, buf: Buffer) => {
     if (c.silent || c.closed) return;
+    if (c.headOnly) {
+      const end = buf.indexOf('\r\n\r\n');
+      if (end >= 0) {
+        c.headOnly = false;
+        toClient(c, buf.subarray(0, end + 4));
+        c.silent = true;
+        return;
+      }
+    }
     if (!shaping) return void c.client.write(buf);
     (backlog.get(c) ?? backlog.set(c, []).get(c)!).push(buf);
     admit();
@@ -123,7 +138,10 @@ export async function linkProxy(hubPort: number, hubHost = '127.0.0.1'): Promise
       const text = buf.toString('latin1');
       for (const m of text.matchAll(REQUEST_LINE)) {
         c.requests.push(m[1]);
-        if (c.kind === 'new') c.kind = /^GET \/api\/live\b/.test(m[1]) && /\r\nupgrade: websocket/i.test(text) ? 'ws' : 'http';
+        if (c.kind === 'new') {
+          c.kind = /^GET \/api\/live\b/.test(m[1]) && /\r\nupgrade: websocket/i.test(text) ? 'ws' : 'http';
+          if (muteNew?.(c)) c.headOnly = true;
+        }
         if (hang?.test(m[1])) c.silent = true;
       }
       if (c.kind !== 'new' && stallNew?.(c)) c.silent = true;
@@ -149,8 +167,12 @@ export async function linkProxy(hubPort: number, hubHost = '127.0.0.1'): Promise
     hangOn(line) {
       hang = line;
     },
+    muteAfterHead(match) {
+      muteNew = match;
+    },
     clear() {
       stallNew = null;
+      muteNew = null;
       hang = null;
     },
     cut() {
