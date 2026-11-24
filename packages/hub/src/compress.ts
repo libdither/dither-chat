@@ -17,7 +17,7 @@ const MIN_BYTES = 1024;
  * zstd's window, at most 4 MB: browsers take up to 8 MB in a zstd response (RFC 9659). Its default at level 3 is
  * 2 MB, less than a bootstrap at full size (4.4 to 5.4 MB), so an id or a name repeated further back than that (a
  * conversation's id in `edges`, then again in `conversations`) was sent again in full. With 4 MB the bootstrap goes
- * out 4.5% smaller at the same speed (docs/perf.md "The bootstrap's window"). zstd fits the window to a smaller
+ * out 4% smaller for about 3 ms more (docs/perf.md "The bootstrap's window"). zstd fits the window to a smaller
  * answer by itself, so those come out byte for byte as before.
  */
 const WINDOW_LOG = 22;
