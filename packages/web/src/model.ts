@@ -211,6 +211,20 @@ export function authorName(identityId: string | null | undefined): string {
   return p && !p.isSelf ? p.name : identityName(identityId);
 }
 
+/**
+ * The face an account's author is shown by (docs/chats.md, Names): their person's picture, else the account's own,
+ * with `id` for the initials' colour (the person's, so every account of theirs has one) and the network the picture
+ * came from. Your own accounts are shown as themselves.
+ */
+export function faceOf(identityId: string | null | undefined): { id: string; url: string | null; network: P.Network | null } {
+  const i = identityId ? db.identities.get(identityId) : undefined;
+  const p = personOf(identityId);
+  if (!p || p.isSelf || !p.avatar) return { id: p && !p.isSelf ? p.id : (identityId ?? ''), url: i?.avatar ?? null, network: i?.avatar ? i.network : null };
+  const theirs = p.identityIds.map((x) => db.identities.get(x));
+  const from = theirs.find((x) => x?.avatar === p.avatar) ?? db.identities.get(p.faceId ?? p.identityIds[0]);
+  return { id: p.id, url: p.avatar, network: from?.network ?? null };
+}
+
 export function peerIdentity(c: P.ConversationView): string | null {
   return c.participantIds.find((p) => !isSelfIdentity(p)) ?? null;
 }
@@ -229,7 +243,7 @@ export function convTitle(c: P.ConversationView | undefined | null): string {
       c.participantIds
         .filter((p) => !isSelfIdentity(p))
         .slice(0, 3)
-        .map(identityName)
+        .map(authorName)
         .join(', ') || 'Group'
     );
   return 'Unnamed';

@@ -48,7 +48,9 @@ Left:
   account: its chat (the person's page, sending there), else Start a chat on that network where an account of yours
   can, else Email. ⋯, a right-click or a hold opens the account's menu: the same, Set Nickname… (Change Nickname… and
   Remove Nickname once it has one, editing the name on the tile in place; only you see it, docs/chats.md "Names"),
-  Copy the handle and the id, Open on the network, Split Into Its Own Person. The merge hint and search sit under the tiles. Before 2026-11-11 the hero
+  Copy the handle and the id, Open on the network, Use This Name and Picture (Choose Name and Picture Automatically
+  on the one you chose), Split Into Its Own Person. The tile of the account they are shown by says "Their name and
+  picture" under its name (docs/chats.md "Names"). The merge hint and search sit under the tiles. Before 2026-11-11 the hero
   had a chip per handle and the right column a plain row per identity, with one picture for the person.
 - **Maybe the same person**: up to four Same person? suggestions with this person in them (docs/same-person.md), each
   with the other side's name and accounts, the chance, the strongest three pieces of evidence, Merge and Not the same;

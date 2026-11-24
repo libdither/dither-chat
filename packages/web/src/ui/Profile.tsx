@@ -153,7 +153,7 @@ function HandleChip({ i }: { i: P.IdentityView }) {
  * or starts one, or a mail), and its menu (⋯, right-click or hold) has the rest: your nickname for it, copy, open
  * on the network, split. With a nickname, the tile says it as the name and the account's own beneath it.
  */
-function AccountTile({ i, bio, since, go: open, goLabel, menu: menuOf }: { i: P.IdentityView; bio?: string; since?: string; go?: () => void; goLabel?: string; menu: (editNickname: () => void) => MenuSpec }) {
+function AccountTile({ i, bio, since, go: open, goLabel, menu: menuOf, face }: { i: P.IdentityView; bio?: string; since?: string; go?: () => void; goLabel?: string; menu: (editNickname: () => void) => MenuSpec; face?: 'chosen' | 'auto' }) {
   const [editing, setEditing] = useState(false);
   const menu = () => menuOf(() => setEditing(true));
   const ctx = useMenu(menu);
@@ -180,6 +180,11 @@ function AccountTile({ i, bio, since, go: open, goLabel, menu: menuOf }: { i: P.
           </button>
         </div>
         {i.nickname && <small class="pf-acct-own">their name: {ownName(i)}</small>}
+        {face && (
+          <small class="pf-acct-face" title={face === 'chosen' ? 'You chose this account: its name and picture are theirs everywhere' : 'Its name and picture are theirs everywhere; Use This Name and Picture on another account to change that'}>
+            <Icon name="user" size={11} /> Their name and picture{face === 'chosen' ? ' · your choice' : ''}
+          </small>
+        )}
         <span class="pf-acct-handle">
           <HandleChip i={i} />
           <small>
@@ -611,6 +616,10 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     if (openers(accounts, i.network).length) return { run: () => messageSomeone(i.id), label: `Start a chat with ${who}` };
     return null;
   };
+  // The account they are shown by (docs/chats.md, Names): its name and picture are theirs; null lets the hub choose.
+  const faceId = several ? (person?.faceId ?? null) : null;
+  const setFace = (face: string | null) =>
+    person && api(`/api/persons/${person.id}`, { method: 'PATCH', body: { face } }).catch((e) => toast({ kind: 'error', title: 'Could not change that', body: e.message }));
   const split = (i: P.IdentityView) => api(`/api/identities/${i.id}/split`, { body: {} }).then(() => toast({ kind: 'info', title: 'Split', body: `${i.displayName ?? i.handle ?? 'That identity'} is its own person again.` }));
   const accountMenu = (i: P.IdentityView, editNickname?: () => void): MenuSpec => {
     const r = reach(i);
@@ -625,7 +634,11 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           !!i.handle && i.handle !== i.nativeId && { label: 'Copy ID', icon: 'copy', run: () => copy(i.nativeId, 'Copied') },
           !!link && { label: `Open on ${netName(i.network)}`, icon: 'external', run: () => void window.open(link, '_blank', 'noreferrer') },
         ],
-        [several && !isSelf && { label: 'Split Into Its Own Person', icon: 'unlink', run: () => void split(i) }],
+        [
+          several && !isSelf && !!person && faceId !== i.id && { label: 'Use This Name and Picture', icon: 'user', track: 'use face', run: () => void setFace(i.id) },
+          several && !isSelf && !!person?.facePinned && faceId === i.id && { label: 'Choose Name and Picture Automatically', icon: 'refresh', track: 'unpin face', run: () => void setFace(null) },
+          several && !isSelf && { label: 'Split Into Its Own Person', icon: 'unlink', run: () => void split(i) },
+        ],
         [!!ownPicture?.dests.some((d) => d.key === i.id) && { label: 'Change Picture…', icon: 'image', track: 'change picture', run: () => setPicturing({ came: i.id }) }],
       ),
     };
@@ -780,7 +793,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           <div class="pf-acct-grid">
             {tiles.map((i) => {
               const r = reach(i);
-              return <AccountTile i={i} bio={bioOf.get(i.id)} since={sinceOf.get(i.id)} go={r?.run} goLabel={r?.label} menu={(edit) => accountMenu(i, edit)} />;
+              return <AccountTile i={i} bio={bioOf.get(i.id)} since={sinceOf.get(i.id)} go={r?.run} goLabel={r?.label} menu={(edit) => accountMenu(i, edit)} face={faceId === i.id ? (person?.facePinned ? 'chosen' : 'auto') : undefined} />;
             })}
           </div>
           {mergeUi}

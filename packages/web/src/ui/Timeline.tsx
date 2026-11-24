@@ -28,7 +28,7 @@ import {
   identityName,
   netName,
   peerIdentity,
-  personOf,
+  faceOf,
   ruleIcon,
   ruleName,
   ruleOn,
@@ -724,11 +724,13 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
   // actions. That is a third of a message's DOM nodes on a phone (docs/perf.md).
   const hover = !touchOnly.value;
   const author = m.authorId ? db.identities.get(m.authorId) : null;
-  const person = personOf(m.authorId);
   const self = isSelfIdentity(m.authorId);
   // In a person's chat, each account by its own name and picture (`who`); elsewhere theirs by the person's name.
   const name = who ?? (self ? identityName(m.authorId) || 'You' : authorName(m.authorId));
-  const picture = who !== undefined ? author?.avatar : (person?.avatar ?? author?.avatar);
+  // Their face elsewhere (model.ts faceOf): with the network's badge where the picture is from another network's account.
+  const face = who !== undefined ? null : faceOf(m.authorId);
+  const picture = face ? face.url : author?.avatar;
+  const faceElsewhere = !!face?.network && face.network !== m.network && !self;
   const conv = net || tag ? db.conversations.get(m.conversationId) : undefined;
   const chatPerson = tag ? chatPersonOf(conv) : null;
   const reply = () => onReply(m);
@@ -790,7 +792,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           </span>
         ) : (
           <button class="avatar-btn" data-identity={m.authorId ?? undefined} onClick={() => openProfile(m.authorId)} aria-label={`Profile of ${name}`}>
-            <Avatar id={(who !== undefined ? m.authorId : person?.id) ?? m.authorId ?? m.id} name={name} url={picture} size={36} network={net ? m.network : undefined} accountIds={net ? conv?.vantages.map((v) => v.accountId) : undefined} />
+            <Avatar id={(who !== undefined ? m.authorId : face?.id) || m.authorId || m.id} name={name} url={picture} size={36} network={net || faceElsewhere ? m.network : undefined} accountIds={net ? conv?.vantages.map((v) => v.accountId) : undefined} />
           </button>
         )}
       </div>

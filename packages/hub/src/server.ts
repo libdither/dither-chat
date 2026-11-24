@@ -2129,8 +2129,14 @@ export class HubServer {
       return ok();
     }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)$/)) && method === 'PATCH') {
-      const b = await body<{ name?: unknown; note?: unknown }>();
+      const b = await body<{ name?: unknown; note?: unknown; face?: unknown }>();
       if (b.name !== undefined) return bad(NICKNAME_MOVED);
+      // Shown by one of their accounts (its name and picture), or null to let the hub choose (docs/chats.md, Names).
+      if (b.face !== undefined) {
+        if (b.face !== null && typeof b.face !== 'string') return bad('face is an identity id or null');
+        if (!s.one('SELECT 1 FROM person WHERE id = ? AND is_self = 0', m[1])) return bad('no such person', 404);
+        if (!s.setPersonFace(m[1], b.face)) return bad('that account is not theirs');
+      }
       s.updatePerson(m[1], { ...(typeof b.note === 'string' ? { note: b.note } : {}) });
       // Kept on their networks too, where an account keeps notes (capability 'contactNotes').
       if (typeof b.note === 'string') this.people.pushPersonNote(m[1], b.note);
