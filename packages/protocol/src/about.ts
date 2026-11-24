@@ -405,6 +405,9 @@ export const ABOUT_RULES: Record<Network, AboutRules> = {
   substack: { conversation: [], space: [] },
   bluesky: { conversation: [], space: [] },
   lesswrong: { conversation: [], space: [] },
+  // Event sites: an event's name and picture are the host's, changed on the site (docs/events.md).
+  luma: { conversation: [], space: [] },
+  partiful: { conversation: [], space: [] },
   // Zulip: a channel's name, description, who may post, public or private, and whether new members see its history;
   // a topic's name (renaming moves its messages); the organization's name and description. Names are at most 60.
   zulip: {

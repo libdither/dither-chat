@@ -76,6 +76,8 @@ import { Adding, profileLinksOf, requestHeld, requestViews } from './add.ts';
 import { feedRefusalFor, isFeed } from './feed.ts';
 import { Posts, PostsError } from './posts.ts';
 import { Follows, type FollowConfig } from './follows.ts';
+import { Events } from './events.ts';
+import { eventsOf } from './eventseen.ts';
 import { Timelines } from './timelines.ts';
 import { TranslateError, Translator } from './translate.ts';
 import { calendarOff, type CalendarLink } from './calendar.ts';
@@ -371,6 +373,8 @@ export class HubServer {
   /** Posts you follow, read again for new replies (follows.ts, docs/feed.md "Following a post"). */
   readonly follows: Follows;
   readonly timelines: Timelines;
+  /** Events from Luma and Partiful: an event's page and RSVPs (events.ts, docs/events.md). */
+  readonly events: Events;
   /** Translating posts and messages: the network's own, or a translation server (translate.ts). */
   readonly translator: Translator;
   /** The account's own self, block, ignore and notes (accountself.ts). */
@@ -451,6 +455,7 @@ export class HubServer {
     this.posts = new Posts({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), changed: () => this.flush(), fresh: (ids) => this.opts.onFresh?.(ids) });
     // Through the same pace: a check never reads while a job or the gap fill does on that account.
     this.follows = new Follows({ store, posts: this.posts, online: (a) => sup.online(a), pace, config: opts.follow, changed: () => this.flush(), log: (l) => console.warn(l) });
+    this.events = new Events({ store, posts: this.posts, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     this.timelines = new Timelines({ store, posts: this.posts, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), files: (ids) => this.postFiles(ids), changed: () => this.flush() });
     this.translator = new Translator({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
@@ -1278,7 +1283,7 @@ export class HubServer {
     if ((m = path.match(/^\/api\/persons\/([\w-]+)\/profile$/)) || (m = path.match(/^\/api\/identities\/([\w-]+)\/profile$/))) {
       const p = s.profile(path.startsWith('/api/persons/') ? { personId: m[1] } : { identityId: m[1] });
       const mail = p && mailPeople(this.opts.mail)?.profile(p.identityIds);
-      return p ? ok({ ...p, abouts: this.people.kept(p.identityIds), links: profileLinksOf(s.db, p.identityIds), ...((i) => (i.length ? { ignored: i } : {}))(ignoredOf(s.db, p.identityIds)), ...(mail ? { mail } : {}) }) : bad('nobody by that id', 404);
+      return p ? ok({ ...p, abouts: this.people.kept(p.identityIds), links: profileLinksOf(s.db, p.identityIds), ...((ev) => (ev.length ? { events: ev } : {}))(eventsOf(s, p.identityIds)), ...((i) => (i.length ? { ignored: i } : {}))(ignoredOf(s.db, p.identityIds)), ...(mail ? { mail } : {}) }) : bad('nobody by that id', 404);
     }
     // Their message count per server, estimated from what the hub holds (msgcount.ts, docs/profile.md).
     if ((m = path.match(/^\/api\/(persons|identities)\/([\w-]+)\/activity$/))) {
@@ -1535,6 +1540,17 @@ export class HubServer {
         const r = await this.posts.unpublish(network, m[2], typeof b.account === 'string' && b.account ? b.account : undefined);
         this.flush();
         return ok(r);
+      } catch (e) {
+        return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
+      }
+    }
+    // An event (events.ts, docs/events.md): its page with every guest the site showed, and an RSVP sent as an account.
+    if ((m = path.match(/^\/api\/events\/([a-z]+)\/([A-Za-z0-9_.~:-]{1,120})(\/rsvp)?$/)) && (m[3] ? method === 'POST' : method === 'GET')) {
+      try {
+        if (!m[3]) return ok(this.events.page(m[1], m[2], url.searchParams.get('account')));
+        const v = await this.events.rsvp(m[1], m[2], await body<unknown>());
+        this.flush();
+        return ok(v);
       } catch (e) {
         return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
       }

@@ -74,6 +74,8 @@ Left:
   from them. Discord's mutual servers count even where they never wrote; the rest comes from messages and member
   lists the hub has. A server they wrote in says how many of their messages the hub holds there, and an estimate of
   how many they posted when one can be made (below, "Message counts").
+- **Events** (docs/events.md, "People"): the Luma and Partiful events any of their accounts hosted or went to, hosting
+  first, then upcoming soonest, then the past, each with when, where and their part; one opens the event's page.
 - **Mail** (docs/mail.md, "People"), for someone with an email address: their newest threads across your mail
   accounts, how many, and All mail with them. A thread opens in Mail.
 - **Recent posts** (X, [feed.md](feed.md#profiles)): their posts as their profile said them, pinned, reposts, replies

@@ -63,6 +63,8 @@ const SAMPLE: Record<P.Network, { native_id: string; handle?: string }> = {
   bluesky: { native_id: 'did:plc:ann', handle: 'ann.bsky.social' },
   lesswrong: { native_id: 'ann-id', handle: 'ann-l' },
   zulip: { native_id: 'chat.example.org/u/7', handle: 'ann@example.org' },
+  luma: { native_id: 'usr-ann', handle: 'annl' },
+  partiful: { native_id: 'pfann' },
 };
 
 test('ownKeys: what an account is known by, for Same person?', () => {
