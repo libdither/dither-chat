@@ -6,20 +6,24 @@
  * the older triage tables still come across on the way.
  */
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
 import { Store } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
+import { memTempDir } from './fixtures/memdir.ts';
 
 const NOW = Date.UTC(2026, 10, 3, 12);
 const open = (path: string) => new Store(path, (raw) => raw ?? null);
 
-/** A temp dir for one test's database, removed after. */
+/**
+ * A temp dir in memory for one test's database, removed after. Each test opens and closes its database a few times
+ * and copies it aside before migrating, and every close and copy syncs to disk: on a busy disk that took seconds a
+ * sync and timed these out (memdir.ts).
+ */
 async function inDir(name: string, fn: (path: string, dir: string) => void | Promise<void>) {
-  const dir = mkdtempSync(join(tmpdir(), `dither-${name}-`));
+  const dir = memTempDir(`dither-${name}-`);
   try {
     await fn(join(dir, 'hub.sqlite'), dir);
   } finally {
@@ -242,7 +246,7 @@ describe('older triage tables come across', () => {
 
   test('v1 feedback as votes, v2 as it was; a decision made since is kept in the table as it is now', () => {
     for (const v of ['v1', 'v2'] as const) {
-      const dir = mkdtempSync(join(tmpdir(), `dither-triage-${v}-`));
+      const dir = memTempDir(`dither-triage-${v}-`);
       try {
         const path = join(dir, 'hub.sqlite');
         const mid = older(path, v, false);
