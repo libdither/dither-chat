@@ -92,7 +92,7 @@ import { useChipBox } from './ChipBox.tsx';
 import { loadEmoji } from '../emoji.ts';
 import { isSticker, Sticker } from './Sticker.tsx';
 import { openViewer, Pictures } from './Pictures.tsx';
-import { PictureChip } from './PictureSwitch.tsx';
+import { heldByPictures, PictureChip } from './PictureSwitch.tsx';
 import { isPicture, onlyPictures, pictureRuns, picturesOf } from '../pictures.ts';
 import { pictureLayout } from '../arrange.ts';
 import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
@@ -1153,7 +1153,8 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
     // when a layout is forced before the ResizeObserver's turn (a measure in an effect), its scroll event comes first.
     const grew = el.scrollHeight !== heightSeen.current;
     heightSeen.current = el.scrollHeight;
-    if (following.current && grew && el.scrollTop !== 0) el.scrollTop = 0;
+    if (heldByPictures(el)) following.current = false;
+    else if (following.current && grew && el.scrollTop !== 0) el.scrollTop = 0;
     else following.current = !jumping.current && Math.abs(el.scrollTop) < FOLLOW && drawn.current.to === null && !t?.detached;
     // column-reverse: scrollTop is 0 at the bottom and negative going up.
     if (el.scrollHeight + el.scrollTop - el.clientHeight < 400) {
@@ -1306,7 +1307,8 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
     if (!el || !box || typeof ResizeObserver !== 'function') return;
     const stick = () => {
       heightSeen.current = el.scrollHeight;
-      if (following.current && el.scrollTop !== 0) el.scrollTop = 0;
+      // A run of pictures changing its way holds itself under the finger (PictureSwitch.tsx keepStill).
+      if (following.current && el.scrollTop !== 0 && !heldByPictures(el)) el.scrollTop = 0;
     };
     const ro = new ResizeObserver(stick);
     ro.observe(box);

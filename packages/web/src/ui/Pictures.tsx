@@ -13,7 +13,7 @@ import { fitPicture, mosaicRows, tileAspect, type PictureRef } from '../pictures
 import { viewer, type ViewerImage } from '../viewer.ts';
 import { AttachmentNote } from './MessageExtras.tsx';
 import { AltBadge, Veil, veiled } from './rich/parts.tsx';
-import { measurers, Morph, PictureRail, pinchHandlers, setUnfolded, switchOf, unfolded } from './PictureSwitch.tsx';
+import { keepStill, measurers, Morph, PictureRail, pinchHandlers, setUnfolded, switchOf, unfolded } from './PictureSwitch.tsx';
 
 /** A plain click opens the viewer; a middle or modified click still opens the file in a tab. */
 export function openViewer(e: MouseEvent, images: ViewerImage[], index: number) {
@@ -188,6 +188,9 @@ export function Pictures({ pics, layout, runKey, anchors, convId, rail }: { pics
     measurers.set(runKey, { host: () => host.current, pics, runKey, draw: drawRun });
     return () => void (measurers.get(runKey)?.pics === pics && measurers.delete(runKey));
   });
+  // While a slide is under way, and once more as it ends, what is under the finger is put back where it was before
+  // this draw is painted (PictureSwitch.tsx keepStill).
+  useLayoutEffect(() => keepStill(runKey));
   const anchorEls = anchors?.map((id) => <span class="pic-anchor" id={`m-${id}`} />);
   const pinch = switchable && !rail ? pinchHandlers(runKey, convId!, layout) : undefined;
   const { body, wide } = drawRun(pics, layout, runKey, layout === 'fold' && unfolded.value.has(runKey));

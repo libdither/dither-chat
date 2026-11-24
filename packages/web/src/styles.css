@@ -2360,6 +2360,11 @@ code {
 .pics-pinch {
   touch-action: pan-y;
 }
+/* While a run changes its way the switch holds it under the finger itself (PictureSwitch.tsx keepStill), so the
+   browser's scroll anchoring, which would hold some other message still, is off. */
+.timeline-scroll.pics-holding {
+  overflow-anchor: none;
+}
 /* While a slide is under way the run as it was stays in the page, out of sight, and the drawing between two ways is
    the block's size. */
 .pics-sliding > :not(.pics-morph-box) {
