@@ -5,8 +5,8 @@
  */
 import { signal } from '@preact/signals';
 import { arrange } from './arrange.ts';
-import { activityOfSpace, placePref, spaceUnread } from './model.ts';
-import { route } from './state.ts';
+import { activityOfSpace, spaceUnread } from './model.ts';
+import { db, route } from './state.ts';
 import { usageOf } from './usage.ts';
 
 const QUIET_AFTER = 180 * 86_400_000;
@@ -21,7 +21,7 @@ function isQuiet(key: string, now = Date.now()): boolean {
   const id = key.slice('space:'.length);
   const r = route.value;
   if (r.view === 'space' && r.space === id) return false;
-  if (placePref('space', id).pinned) return false;
+  if (db.placePrefs.get(`space:${id}`)?.pinned) return false;
   const u = spaceUnread(id);
   if (u.unread || u.badge) return false;
   if (usageOf('space', id)?.lastVisit) return false;

@@ -5,7 +5,8 @@
  *   - what changed meanwhile (a message in the open conversation) shows up from that delta;
  *   - a long drop shows the small notice (the rail's amber orb, ui/Offline.tsx), and it goes once the hub is back;
  *   - a send without the hub waits, says so, and goes out by itself when the hub is back;
- *   - a cold start from the device's snapshot resumes with a delta too;
+ *   - a cold start from the device's snapshot resumes with a delta too (by POST, or on the socket: docs/sync.md "On the
+ *     socket");
  *   - conversations opened before it open again at once from the pages the device kept, without the hub, and are
  *     caught up with a delta when it is back;
  *   - with --restart, a restarted hub (a deploy) is caught up from its journal as well.
@@ -57,6 +58,8 @@ page.on('Network.loadingFinished', (p) => reqs.has(p.requestId) && done.push({ u
 const since = (t: number, re: RegExp) => done.filter((d) => d.at >= t && re.test(d.url));
 const bytes = (xs: { bytes: number }[]) => xs.reduce((n, x) => n + x.bytes, 0);
 const offline = (on: boolean) => page.send('Network.emulateNetworkConditions', { offline: on, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+/** Whether a catch-up since `t` came on the socket (docs/sync.md "On the socket"); state.ts says so on its mark. */
+const onSocketSince = (t: number) => page.eval<boolean>(`performance.getEntriesByName('dither:fresh').some((m) => m.detail?.socket && performance.timeOrigin + m.startTime >= ${t})`);
 const freshCount = () => page.eval<number>(`performance.getEntriesByName('dither:fresh').length`);
 const notice = () => page.eval<boolean>(`!!document.querySelector('.rail .offline-orb')`);
 const shown = (text: string) => page.eval<boolean>(`[...document.querySelectorAll('.timeline-scroll .msg-body')].some(e => e.textContent.includes(${JSON.stringify(text)}))`);
@@ -170,7 +173,8 @@ t0 = Date.now();
 await page.send('Page.reload');
 await Bun.sleep(300);
 await page.until(`performance.getEntriesByName('dither:fresh').length > 0`, 15000);
-check('a cold start from the snapshot resumes with a delta', since(t0, /\/api\/sync/).length >= 1 && !since(t0, /\/api\/bootstrap/).length, since(t0, /\/api\//).map((d) => `${d.url.split('?')[0]} ${d.bytes} B`));
+const onSocket = await onSocketSince(t0);
+check('a cold start from the snapshot resumes with a delta', (onSocket || since(t0, /\/api\/sync/).length >= 1) && !since(t0, /\/api\/bootstrap/).length, [onSocket ? 'on the socket' : 'by POST', ...since(t0, /\/api\//).map((d) => `${d.url.split('?')[0]} ${d.bytes} B`)]);
 check('…and shows what was sent offline', await page.until(`[...document.querySelectorAll('.timeline-scroll .msg-body')].some(e => e.textContent.includes(${JSON.stringify(queued)}))`, 8000).then(() => true, () => false));
 
 // ------------------------------------------------------------------ kept pages, without the hub
@@ -215,7 +219,7 @@ if (restart) {
   }
   await hub(`/api/conversations/${conv.id}/send`, { body: after });
   await page.until(`performance.getEntriesByName('dither:fresh').length > ${fresh}`, 20000).catch(() => {});
-  check('a restarted hub is caught up from its journal', since(t0, /\/api\/sync/).length >= 1 && !since(t0, /\/api\/bootstrap/).length, since(t0, /\/api\//).map((d) => `${d.url.split('?')[0]} ${d.bytes} B`));
+  check('a restarted hub is caught up from its journal', ((await onSocketSince(t0)) || since(t0, /\/api\/sync/).length >= 1) && !since(t0, /\/api\/bootstrap/).length, since(t0, /\/api\//).map((d) => `${d.url.split('?')[0]} ${d.bytes} B`));
   check('…and what came after it shows', await page.until(`[...document.querySelectorAll('.timeline-scroll .msg-body')].some(e => e.textContent.includes(${JSON.stringify(after)}))`, 10000).then(() => true, () => false));
 }
 

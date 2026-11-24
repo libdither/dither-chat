@@ -52,3 +52,20 @@ test('scheduling again replaces the call waiting, and reset cancels it', () => {
   expect(t.waiting.size).toBe(0);
   expect(ran).toEqual(['second']);
 });
+
+test("the default timer is the global setTimeout called as a plain function, as a browser's must be", () => {
+  const real = globalThis.setTimeout;
+  const calls: number[] = [];
+  // A browser's setTimeout throws "Illegal invocation" when called on another object (this.later(...)).
+  globalThis.setTimeout = function (this: unknown, _f: () => void, ms?: number) {
+    if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
+    calls.push(ms ?? 0);
+    return 0;
+  } as unknown as typeof setTimeout;
+  try {
+    new RetryLater(5, 30).schedule(() => {});
+  } finally {
+    globalThis.setTimeout = real;
+  }
+  expect(calls).toEqual([5]);
+});
