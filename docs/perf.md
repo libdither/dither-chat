@@ -1227,6 +1227,16 @@ before, medians of each function's own time [spread]: on a cold load `metaMemo` 
 about 16 ms less. In a benchmark of the same passes in Bun on this world's bootstrap (least of 40 runs), working the
 rail, the badge, the servers' counts, the inbox and people out after a meta change took 8–9 ms instead of 10–14.
 
+### Times in lists (2026-11-24)
+
+Every list row says how long ago its last message was (format.ts `ago`): "5m", "3h", "Tue", "Oct 12". Its formatters
+were already made once, but each row older than a day still called one, and a formatter's call costs more than the
+rest of `ago` together: about 16 ms of a cold load's main thread at 4× (CPU profiles, `ago`'s own time). A day's label
+depends on its local date alone, so each weekday and each date is now formatted once and kept
+(`test/format.test.ts` checks every 37 minutes over 400 days against formatting each time, in several time zones). In
+Chrome at 4× over the perf world's 1,508 conversations' last-message times, three runs of nine rounds each, medians:
+11.5–14 ms before, 0.6–6 ms with no label kept yet, 0.5–1.6 ms once kept (a list drawn again).
+
 ## One setting at a time (2026-11-20)
 
 Opening the details panel (the chat header's panel button) was slow: on the full-size world at 4× CPU, 160 to 260 ms
