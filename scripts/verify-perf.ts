@@ -628,7 +628,15 @@ async function slowRun(cpu: number): Promise<Metrics> {
     put('open.ms', await openRow(page, row));
 
     // Until the service worker has the whole build (it claims the page once it has) and fetching ahead is done.
-    await page.until(`!!navigator.serviceWorker.controller`, 180_000).catch(() => console.warn('the service worker did not take over within three minutes'));
+    const took = await page.until(`!!navigator.serviceWorker.controller`, 90_000).then(
+      () => 1,
+      async () => {
+        const st = await page.eval(`navigator.serviceWorker.getRegistration().then((r) => JSON.stringify({ installing: r?.installing?.state, waiting: r?.waiting?.state, active: r?.active?.state }))`).catch((e) => e.message);
+        console.warn(`the service worker did not take over within 90 s: ${st}`);
+        return 0;
+      },
+    );
+    put('precache.tookOver', took, 'count');
     await page.until(`window.__ditherAhead?.idle`, 60_000).catch(() => console.warn('fetching ahead did not finish'));
     const kept = link.reqs.filter((r) => r.kind === 'precache' && r.at >= cold.origin);
     put('precache.requests', kept.length, 'count');
@@ -656,6 +664,8 @@ async function slowRun(cpu: number): Promise<Metrics> {
     put('relaunch.toContent.requests', r1.requests, 'count');
     put('relaunch.toContent.answers', r1.answers, 'count');
     put('relaunch.toContent.bytes', r1.bytes, 'bytes');
+    // The app itself from the network: none once the service worker has it.
+    put('relaunch.toContent.shell', link.reqs.filter((r) => r.at >= warm.origin && r.at <= warm.content && ['document', 'script', 'style'].includes(r.kind)).length, 'count');
     const r2 = upTo(warm.origin, warm.fresh);
     put('relaunch.toFresh.requests', r2.requests, 'count');
     put('relaunch.toFresh.bytes', r2.bytes, 'bytes');

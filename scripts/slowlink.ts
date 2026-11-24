@@ -92,8 +92,9 @@ class Pipe {
       if (q.length) this.turn.push(key);
       else this.queues.delete(key);
       this.freeAt += piece.length / this.rate;
-      const at = this.freeAt + this.delay;
-      setTimeout(() => flow.land(piece, at, req), Math.max(0, at - now));
+      const sent = { piece, at: this.freeAt + this.delay, req };
+      flow.air.push(sent);
+      setTimeout(() => flow.landTo(sent), Math.max(0, sent.at - now));
     }
     if (this.turn.length) this.timer = setTimeout(() => this.pump(), Math.max(0, this.freeAt - now));
   }
@@ -103,9 +104,20 @@ class Pipe {
 class Flow {
   private pending: Uint8Array[] = [];
   private ending = false;
+  /** Packets on their way, in the order sent. */
+  air: { piece: Uint8Array; at: number; req?: Req }[] = [];
   sock: { write(b: Uint8Array): number; end(): void } | null = null;
   constructor(public id: number) {}
-  land(piece: Uint8Array, at: number, req?: Req) {
+  /** Lands `last` and every packet sent before it, in order: timers rounded to the millisecond may fire out of order. */
+  landTo(last: { piece: Uint8Array; at: number; req?: Req }) {
+    if (!this.air.includes(last)) return;
+    for (;;) {
+      const x = this.air.shift()!;
+      this.land(x.piece, x.at, x.req);
+      if (x === last) return;
+    }
+  }
+  private land(piece: Uint8Array, at: number, req?: Req) {
     if (!piece.length) return this.end();
     if (req) {
       req.bytes += piece.length;
