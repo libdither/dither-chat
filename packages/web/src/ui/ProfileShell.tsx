@@ -98,8 +98,14 @@ export function Hero({
             </span>
           </button>
         ) : picture ? (
-          <button class={`pf-avatar pf-avatar-view ${square ? 'square' : ''}`} data-track="profile: view picture" onClick={() => (onView ? onView() : viewPicture(picture, name))} aria-label="View the picture" title={onView ? 'View their pictures, and choose the one shown' : 'View the picture'}>
+          <button class={`pf-avatar pf-avatar-view ${square ? 'square' : ''}`} data-track="profile: view picture" onClick={() => (onView ? onView() : viewPicture(picture, name))} aria-label={onView ? 'View their pictures and choose the one shown' : 'View the picture'} title={onView ? 'View their pictures, and choose the one shown' : 'View the picture'}>
             {pic}
+            {/* Several to choose from: a badge says so, as the camera does where you may change it. */}
+            {onView && (
+              <span class="pf-avatar-badge" aria-hidden="true">
+                <Icon name="image" size={13} />
+              </span>
+            )}
           </button>
         ) : (
           <span class={`pf-avatar ${square ? 'square' : ''}`}>{pic}</span>

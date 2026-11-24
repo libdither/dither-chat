@@ -21,7 +21,7 @@
  * the desktop helper or the Android app it can open the file in an app as well.
  *
  * A person's pictures, one from each of their accounts, open here from their profile to choose from (viewer.ts
- * `choose`): a row of them along the bottom, the one shown ticked, and a button to show the one in view instead.
+ * `choose`): a row of them along the bottom, the one shown ticked, and a button to use the one in view instead.
  */
 import type { FunctionComponent } from 'preact';
 import type * as P from '@dither-chat/protocol';
@@ -672,7 +672,7 @@ function ViewerBox({ images, start, choose }: { images: ViewerImage[]; start: nu
       }} />
       {images.length > 1 && i > 0 && (
         <button class="viewer-nav prev" onClick={() => page(-1)} aria-label="Previous image">
-          <Icon name="back" size={22} />
+          <Icon name="chevronLeft" size={22} />
         </button>
       )}
       {images.length > 1 && i < images.length - 1 && (
@@ -697,11 +697,11 @@ function ViewerBox({ images, start, choose }: { images: ViewerImage[]; start: nu
           {i === on ? (
             <span class="viewer-use on">
               <Icon name="check" size={16} />
-              Shown on their profile
+              Their picture
             </span>
           ) : (
             <button class="viewer-use" disabled={saving} data-track="viewer: use picture" onClick={() => void use()}>
-              Show This Picture
+              Use this picture
             </button>
           )}
         </div>

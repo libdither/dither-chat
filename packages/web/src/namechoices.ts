@@ -18,7 +18,8 @@ export function nameChoices(ids: P.IdentityView[], person: P.PersonView, faceNam
   const seen = new Set<string>();
   const sameNet = (i: P.IdentityView) => ids.filter((x) => x.network === i.network).length > 1;
   const chosen = person.nameFrom;
-  for (const i of ids)
+  // The main account's names first, then the others' in their order.
+  for (const i of [...ids].sort((a, b) => +(b.id === person.faceId) - +(a.id === person.faceId)))
     for (const field of ['nickname', 'display', 'handle'] as const) {
       const text = (field === 'nickname' ? i.nickname : field === 'display' ? i.displayName : i.handle)?.trim();
       // A phone number for a handle (Signal, WhatsApp) is no name to go by.
@@ -28,9 +29,11 @@ export function nameChoices(ids: P.IdentityView[], person: P.PersonView, faceNam
       out.push({ text, detail: `${FIELD_LABEL[field]} · ${where}`, from: { identityId: i.id, field }, on: !!chosen && chosen.identityId === i.id && chosen.field === field });
     }
   // Following the main account: its name stands first, and picking it clears the choice. The same text chosen from one
-  // field stays too, so the tick shows where it is.
-  const auto = { text: faceName, detail: ids.length > 1 ? 'Main account’s name, as it changes' : 'Its name as you see it, as it changes', from: null, on: !chosen };
-  return [auto, ...out.filter((c) => c.on || c.text !== faceName)];
+  // field stays too, so the tick shows where it is. A chosen name the account no longer has (a nickname removed) is
+  // not offered, and the main account's shows meanwhile: then it is ticked.
+  const kept = out.filter((c) => c.on || c.text !== faceName);
+  const auto = { text: faceName, detail: ids.length > 1 ? 'Follows their main account' : 'Follows your nickname, else their name', from: null, on: !kept.some((c) => c.on) };
+  return [auto, ...kept];
 }
 
 /** The pictures a person of several accounts may show, one per picture; `on` is the one showing. */
@@ -41,7 +44,10 @@ export function pictureChoices(ids: P.IdentityView[], person: P.PersonView, face
   for (const i of face ? [face, ...ids.filter((x) => x.id !== face.id)] : ids) {
     if (!i.avatar || seen.has(i.avatar)) continue;
     seen.add(i.avatar);
-    out.push({ id: i.id, url: i.avatar, label: accountName(i), detail: `${NETWORK_META[i.network].name}${i.id === face?.id ? ' · main account' : ''}`, on: false });
+    // Which account it is: its network and handle (two on one network look alike otherwise), and whether it is the main one.
+    const label = accountName(i);
+    const detail = [NETWORK_META[i.network].name, i.handle !== label && i.handle, i.id === face?.id && 'main account'].filter(Boolean).join(' · ');
+    out.push({ id: i.id, url: i.avatar, label, detail, on: false });
   }
   const showing = out.find((c) => c.id === person.pictureIdentityId) ?? out.find((c) => c.url === person.avatar) ?? out.find((c) => c.id === face?.id);
   if (showing) showing.on = true;

@@ -86,6 +86,8 @@ const tapItem = async (label: string, detail: string) => {
 /** The viewer closed, and the history entry it held given back: a page change before that is undone by it. */
 const viewerGone = () => p.until(`!document.querySelector('.viewer') && history.state?.layer == null`, 3000);
 const escape = () => p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+/** The name's chooser: the name itself, or the chevron beside a one-account name with its nickname pencil. */
+const NAME_BTN = '.pf-name-pick, .pf-name-swap';
 const heroName = () => p.eval<string>(`document.querySelector('.pf-title h1')?.innerText.trim() ?? ''`);
 const heroPic = () => p.eval<string>(`document.querySelector('.pf-avatar img')?.getAttribute('src') ?? ''`);
 const menuOpen = () => p.until(`!!document.querySelector('[role="menuitemradio"], [role="menuitem"]')`, 3000);
@@ -106,14 +108,17 @@ const shoot = async (file: string) => {
 try {
   await p.size(1280, 860);
   await p.goto(`${hub}/#/p/${kit.id}`);
-  await p.until(`!!document.querySelector('.profile-page .pf-name-swap')`, 15000);
+  await p.until(`!!document.querySelector('.profile-page :is(.pf-name-pick, .pf-name-swap)')`, 15000);
   const first = await heroName();
 
   // The name.
-  await click('.pf-name-swap');
+  await click(NAME_BTN);
   await menuOpen();
   let names = await items();
-  check(names[0]?.label === first && names[0].on && names[0].detail.startsWith('Main account'), 'the main account’s name first, ticked', names[0]);
+  check(names[0]?.label === first && names[0].on && names[0].detail === 'Follows their main account', 'the main account’s name first, ticked', names[0]);
+  // At the button's left edge, as Enter would open it too, not where the pointer was (a long menu moves up to fit).
+  const opened = await p.eval<{ btn: number; menu: number }>(`({ btn: document.querySelector('.pf-name-pick, .pf-name-swap').getBoundingClientRect().left, menu: document.querySelector('[role="menuitemradio"], [role="menuitem"]').getBoundingClientRect().left })`);
+  check(Math.abs(opened.menu - opened.btn) < 24, 'the menu opens at the name, not at the pointer', opened);
   check(names.some((n) => n.detail.startsWith('Display name')) && names.some((n) => n.detail.startsWith('Handle')), 'each account’s display names and handles', names.map((n) => `${n.label} — ${n.detail}`));
   check(!names.some((n) => /^\+?[\d\s]+$/.test(n.label)), 'no phone number among them');
   check(new Set(names.map((n) => n.label)).size === names.length, 'each name once');
@@ -124,7 +129,7 @@ try {
   check((await heroName()) === other.label, 'a handle chosen names them', { want: other.label, got: await heroName() });
   const saved = (await fetch(`${hub}/api/bootstrap`).then((r) => r.json())).persons.find((x: any) => x.id === kit.id);
   check(saved?.name === other.label && saved?.nameFrom?.field === 'handle', 'the hub keeps it', { name: saved?.name, nameFrom: saved?.nameFrom });
-  await click('.pf-name-swap');
+  await click(NAME_BTN);
   await menuOpen();
   names = await items();
   check(names.find((n) => n.on)?.label === other.label && !names[0].on, 'opened again, it is the one ticked', names.filter((n) => n.on));
@@ -133,24 +138,25 @@ try {
   check((await heroName()) === first, 'the main account’s name puts it back', await heroName());
 
   // The picture: their pictures in the viewer, to choose from.
+  check(await p.eval(`!!document.querySelector('.pf-avatar-view .pf-avatar-badge')`), 'a badge on their picture says there are more to choose from');
   const pic0 = await heroPic();
   await click('.pf-avatar-view');
   await p.until(`!!document.querySelector('.viewer .viewer-picks')`, 3000).catch(() => {});
   let view = await viewState();
   check(view.thumbs.length >= 5 && new Set(view.thumbs.map((t) => t.src)).size === view.thumbs.length, 'a picture for each account with one, each once', view.thumbs.length);
   check(view.at === view.on && view.src === pic0 && view.detail.includes('main account'), 'it opens on the one shown, the main account’s, ticked', view);
-  check(view.use === 'Shown on their profile', 'and says so', view.use);
+  check(view.use === 'Their picture', 'and says so', view.use);
   await shoot('picture-viewer.png');
   const k = view.thumbs.findIndex((_, n) => n !== view.on && n > 1);
   await click(`.viewer-thumb:nth-child(${k + 1})`);
   await p.until(`document.querySelector('.viewer-thumb.at') === document.querySelectorAll('.viewer-thumb')[${k}]`, 3000).catch(() => {});
   view = await viewState();
-  check(view.at === k && view.src === view.thumbs[k].src && view.use === 'Show This Picture', 'another one in view offers to show it', view);
+  check(view.at === k && view.src === view.thumbs[k].src && view.use === 'Use this picture', 'another one in view offers to show it', view);
   await shoot('picture-viewer-other.png');
   await click('.viewer-use');
-  await p.until(`document.querySelector('.viewer-use')?.textContent.includes('Shown')`, 5000).catch(() => {});
+  await p.until(`document.querySelector('.viewer-use')?.textContent.includes('Their picture')`, 5000).catch(() => {});
   view = await viewState();
-  check(view.on === k && view.use === 'Shown on their profile', 'shown, the tick moves to it', view);
+  check(view.on === k && view.use === 'Their picture', 'shown, the tick moves to it', view);
   const pic1 = view.thumbs[k].src;
   await escape();
   await viewerGone();
@@ -166,7 +172,7 @@ try {
   check((await viewState()).at === k - 1, 'the arrow keys page through them');
   await click('.viewer-thumb:nth-child(1)');
   await click('.viewer-use');
-  await p.until(`document.querySelector('.viewer-use')?.textContent.includes('Shown')`, 5000).catch(() => {});
+  await p.until(`document.querySelector('.viewer-use')?.textContent.includes('Their picture')`, 5000).catch(() => {});
   await escape();
   await viewerGone();
   await p.until(`document.querySelector('.pf-avatar img')?.getAttribute('src') === ${JSON.stringify(pic0)}`, 5000).catch(() => {});
@@ -177,8 +183,8 @@ try {
   // One account: its display name and its handle.
   await p.goto(`${hub}/#/p/${solo.id}`);
   // Their page, not the one before it still on its way out.
-  await p.until(`!!document.querySelector('.profile-page .pf-name-swap') && document.querySelector('.pf-title h1')?.innerText.trim().split('\\n')[0] === ${JSON.stringify(solo.name)}`, 15000);
-  await click('.pf-name-swap');
+  await p.until(`!!document.querySelector('.profile-page :is(.pf-name-pick, .pf-name-swap)') && document.querySelector('.pf-title h1')?.innerText.trim().split('\\n')[0] === ${JSON.stringify(solo.name)}`, 15000);
+  await click(NAME_BTN);
   await menuOpen();
   const one = await items();
   const i = ids.get(solo.identityIds[0]);
@@ -190,11 +196,12 @@ try {
   // A phone: the names as a sheet; the pictures full screen, swiped through.
   await p.size(390, 844, true);
   await p.goto(`${hub}/#/p/${kit.id}`);
-  await p.until(`!!document.querySelector('.profile-page .pf-name-swap') && document.querySelector('.pf-title h1')?.innerText.trim().split('\\n')[0] === ${JSON.stringify(first)}`, 15000);
+  await p.until(`!!document.querySelector('.profile-page :is(.pf-name-pick, .pf-name-swap)') && document.querySelector('.pf-title h1')?.innerText.trim().split('\\n')[0] === ${JSON.stringify(first)}`, 15000);
   await shoot('phone-hero.png');
-  await tap('.pf-name-swap');
+  await tap(NAME_BTN);
   await p.until(`!!document.querySelector('.cm-sheet [role^="menuitem"]')`, 3000).catch(() => {});
   check(await p.eval(`document.querySelectorAll('.cm-sheet .cm-detail').length >= 3`), 'on a phone, the names in a sheet');
+  check(await p.eval(`!document.querySelector('.cm-sheet .cm-label')`), 'its title said once, not again as a heading');
   await shoot('phone-name-sheet.png');
   const phoneName = names.find((n) => n.detail.startsWith('Display name') && n.label !== first)!;
   await tapItem(phoneName.label, phoneName.detail);
@@ -207,10 +214,10 @@ try {
   await swipe(350, 60, 420);
   await p.until(`document.querySelector('.viewer-thumb.at') === document.querySelectorAll('.viewer-thumb')[${v0.at + 1}]`, 3000).catch(() => {});
   const v1 = await viewState();
-  check(v1.at === v0.at + 1 && v1.use === 'Show This Picture', 'a swipe brings the next', v1);
+  check(v1.at === v0.at + 1 && v1.use === 'Use this picture', 'a swipe brings the next', v1);
   await shoot('phone-picture-viewer.png');
   await tap('.viewer-use');
-  await p.until(`document.querySelector('.viewer-use')?.textContent.includes('Shown')`, 5000).catch(() => {});
+  await p.until(`document.querySelector('.viewer-use')?.textContent.includes('Their picture')`, 5000).catch(() => {});
   const mine = (await fetch(`${hub}/api/bootstrap`).then((r) => r.json())).persons.find((x: any) => x.id === kit.id);
   check(mine?.avatar === v1.thumbs[v1.at].src, 'a tap shows it', { avatar: mine?.avatar?.slice(0, 40) });
   await escape();

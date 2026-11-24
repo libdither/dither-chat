@@ -131,19 +131,21 @@ and so does making that account main or splitting it off. The hub keeps both on 
 `PersonView.faceId`, `facePinned`, `pictureIdentityId`). Not on your own page: your own accounts go by the names you
 gave them on their networks.
 
-**Choosing from the hero.** A button beside their name (⇄, "Choose the name shown") opens **Name shown**: the main
-account's name as you see it first ("as it changes"), then each account's nickname of yours, display name and handle,
-each text once and each with what it is and where (`Display name · Discord (kit.work)`; a handle that is a phone
-number is left out). A pick names them everywhere their name shows, ticked when the menu opens again, and follows that
-account: a new display name renames them, and while it lacks that name (a nickname you removed) the main account's
-shows. The first entry puts the main account's back. The same for someone of one account, choosing among its
-nickname, display name and handle. Kept on the person (`person.name_identity_id` with `name_field`, set with `PATCH
+**Choosing from the hero.** Their name, with a chevron, is a button (for someone of one account, whose name has the
+nickname pencil, the chevron beside it) that opens **Name shown** under it: the main account's name as you see it
+first ("Follows their main account"), then the main account's other names, then each other account's nickname of
+yours, display name and handle, each text once and each with what it is and where (`Display name · Discord
+(kit.work)`; a handle that is a phone number is left out). A pick names them everywhere their name shows, ticked when
+the menu opens again, and follows that account: a new display name renames them, and while it lacks that name (a
+nickname you removed) the main account's shows, and is the one ticked. The first entry puts the main account's back.
+The same for someone of one account, choosing among its nickname, display name and handle. The Accounts card's note
+says where their name and picture come from when not from the main account. Kept on the person (`person.name_identity_id` with `name_field`, set with `PATCH
 /api/persons/:id { nameFrom: { identityId, field: nickname | display | handle } | null }`, refused whole for an
 account not theirs or a name it lacks; `PersonView.nameFrom`) and cleared when that account is split off. Where their
-accounts have more than one picture, their picture opens all of them in the image viewer, each once, the main
-account's first, starting on the one shown. Each has its account's name and network in the bar, and a row of them
+accounts have more than one picture, their picture has a badge (a picture on it) and opens all of them in the image viewer, each once, the main
+account's first, starting on the one shown. Each has its account's name, network and handle in the bar, and a row of them
 along the bottom: the one in view ringed, the one shown ticked. Swipe, click one in the row or use the arrow keys to
-page through them; **Show This Picture** shows the one in view (the main account's is `{ picture: null }`), and the
+page through them; **Use this picture** shows the one in view (the main account's is `{ picture: null }`), and the
 tick moves to it once the hub has it (viewer.ts `choose`). Helpers in `namechoices.ts`; checked end to end, on a
 computer and on a phone, by `scripts/verify-name-picture.ts` on the `multiaccount` demo.
 

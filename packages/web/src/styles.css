@@ -7724,8 +7724,9 @@ textarea.chip-box {
   flex-direction: column;
   align-items: center;
   gap: 12px;
-  padding: 28px 16px calc(16px + env(safe-area-inset-bottom));
-  background: linear-gradient(transparent, rgb(0 0 0 / 0.65) 40%);
+  /* Within PICKS_H (Viewer.tsx), so it never shades the picture above it. */
+  padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
+  background: linear-gradient(transparent, rgb(0 0 0 / 0.65) 30%);
   color: #fff;
   opacity: var(--viewer-bg, 1);
 }
@@ -11674,6 +11675,7 @@ html[data-theme='light'] .acc-dot {
 }
 /* Anyone else's picture opens full screen in the image viewer, to zoom. */
 .pf-avatar-view {
+  position: relative;
   display: block;
   border: 0;
   font: inherit;
@@ -18924,11 +18926,30 @@ h1:hover > .pair-nick-edit,
   border: 1px solid var(--border);
   background: var(--bg-center);
 }
-/* Beside a person's name: choose which of their names shows (Profile.tsx nameChoices). */
+/* A person's name, a button with a chevron, chooses which of their names shows (Profile.tsx nameChoices); for one
+   account, whose name has the nickname pencil, the chevron is a button of its own beside it. */
+.pf-name-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 40px;
+  margin: -4px 0 -4px -8px;
+  padding: 0 6px 0 8px;
+  border-radius: 10px;
+}
+.pf-name-pick > svg,
 .pf-name-swap {
-  vertical-align: middle;
-  margin-left: 6px;
-  width: 28px;
-  height: 28px;
+  flex: none;
   color: var(--muted);
+}
+.pf-name-pick:hover {
+  background: var(--bg-hover);
+}
+.pf-name-pick:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.pf-name-swap {
+  width: 36px;
+  height: 36px;
 }

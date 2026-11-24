@@ -754,6 +754,10 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const pictureChosen = (several && ids.find((i) => i.id === person?.pictureIdentityId)) || null;
   // It shows only while it has a picture and is not the main account's own; its entry stays to clear it.
   const pictureOf = pictureChosen?.avatar && pictureChosen.id !== speaker?.id ? pictureChosen : null;
+  // Their name chosen from another account than the main one (the hero's name menu), for the Accounts card's note.
+  const nameAcct = (person?.nameFrom && person.nameFrom.identityId !== speaker?.id && ids.find((i) => i.id === person.nameFrom!.identityId)) || null;
+  const gives = [!nameAcct && 'name', !pictureOf && 'picture'].filter(Boolean);
+  const notMain = [nameAcct && `name is from ${netName(nameAcct.network)}`, pictureOf && `picture ${nameAcct ? '' : 'is '}from ${netName(pictureOf.network)}`].filter(Boolean);
   /** Saved, or false where it could not be (said in a toast). */
   const sources = async (patch: { face?: string | null; picture?: string | null; nameFrom?: P.NameFrom | null }) =>
     !!person &&
@@ -816,9 +820,12 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   // Which name and which picture show for them, chosen in the hero (docs/profile.md "Which account speaks for them").
   const names = isSelf || !person ? [] : nameChoices(ids, person, identityName((speaker ?? first)?.id));
   const pictures = several && !isSelf && person ? pictureChoices(ids, person, speaker) : [];
-  const nameMenu = (e: MouseEvent) =>
+  const nicked = !several && nicknamable(first) && !first.isBot;
+  const nameMenu = (e: MouseEvent) => {
+    // Under the button, as the hero's other menus open (and Enter or Space has no pointer to open at).
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     openMenu(
-      { x: e.clientX, y: e.clientY },
+      { x: r.left, y: r.bottom + 4 },
       {
         label: 'Name shown',
         head: <div class="cm-sheet-title">Name shown</div>,
@@ -830,6 +837,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       },
       e.currentTarget,
     );
+  };
   // Their pictures, full screen, the one shown first in view: swipe or page through them and use another.
   const viewPictures = () => {
     const on = Math.max(0, pictures.findIndex((c) => c.on));
@@ -853,11 +861,21 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       accent={accent}
       title={
         <h1>
-          {/* One account: their name is its name, and the pencil gives that account a nickname. */}
-          {!several && nicknamable(first) && !first.isBot ? <NicknamedName i={first} label={name} title={first.nickname && !person?.nameFrom ? `Your nickname for ${ownName(first)}` : name} editing={naming} setEditing={setNaming} class="pf-name" /> : name}
-          {names.length > 1 && !naming && (
-            <button class="icon-btn pf-name-swap" data-track="profile: name shown" onClick={nameMenu} aria-label="Choose the name shown" title="Choose the name shown: a nickname, or one of their accounts’ names">
-              <Icon name="repeat" size={15} />
+          {/* One account: their name is its name, and the pencil gives that account a nickname; the chevron beside it
+              chooses among its names. Otherwise the name itself, with its chevron, opens the names to choose from. */}
+          {nicked ? (
+            <NicknamedName i={first} label={name} title={first.nickname && !person?.nameFrom ? `Your nickname for ${ownName(first)}` : name} editing={naming} setEditing={setNaming} class="pf-name" />
+          ) : names.length > 1 ? (
+            <button class="pf-name-pick" data-track="profile: name shown" onClick={nameMenu} aria-haspopup="menu" aria-label={`${name}, choose the name shown`} title="Choose the name shown: a nickname, or one of their accounts’ names">
+              {name}
+              <Icon name="chevronDown" size={18} />
+            </button>
+          ) : (
+            name
+          )}
+          {nicked && names.length > 1 && !naming && (
+            <button class="icon-btn pf-name-swap" data-track="profile: name shown" onClick={nameMenu} aria-haspopup="menu" aria-label="Choose the name shown" title="Choose the name shown: your nickname, their name or their handle">
+              <Icon name="chevronDown" size={18} />
             </button>
           )}
         </h1>
@@ -993,8 +1011,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
             <p class="pf-acct-note">
               {speaker ? (
                 <span>
-                  <NetGlyph network={speaker.network} size={11} /> {identityName(speaker.id)} speaks for them{person.facePinned ? '' : ' for now, as the account you talked with last'}: its name{pictureOf ? '' : ' and picture'} everywhere, its bio first in About.
-                  {pictureOf && ` Their picture is from ${netName(pictureOf.network)}.`}
+                  <NetGlyph network={speaker.network} size={11} /> {identityName(speaker.id)} speaks for them{person.facePinned ? '' : ' for now, as the account you talked with last'}: {gives.length ? `its ${gives.join(' and ')} everywhere, ` : ''}its bio first in About.
+                  {notMain.length > 0 && ` Their ${notMain.join(', their ')}.`}
                   {!person.facePinned && ' Make Main Account on one to keep it.'}
                 </span>
               ) : (
