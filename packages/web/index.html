@@ -40,7 +40,7 @@
             if (e.boot || e.taken || e.cold !== true || !e.openedAt) return;
             const c = new AbortController();
             e.abort = () => c.abort();
-            (e.boot = fetch('/api/bootstrap', { signal: c.signal })).catch(() => {});
+            (e.boot = fetch('/api/bootstrap?edges=spaces', { signal: c.signal })).catch(() => {});
           };
           const u = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/api/live';
           const ws = (e.ws = f ? new WebSocket(u + '?v=' + f.v + '&epoch=' + encodeURIComponent(f.epoch) + '&since=' + f.seq, ['dither-live', 'dither-resume']) : new WebSocket(u));

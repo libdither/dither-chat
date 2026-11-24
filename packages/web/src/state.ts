@@ -1354,6 +1354,8 @@ const PONG_WAIT = 3000;
 const SPARE_WAIT = 5000;
 /** A catch-up or bootstrap with nothing coming for this long is given up, as no answer (api.ts hubFetch). */
 const SYNC_QUIET = 20_000;
+/** Conversations' edges as positions beside them, not as edges of their own (syncmodel.ts indexEdges); index.html asks the same. */
+const BOOTSTRAP_PATH = '/api/bootstrap?edges=spaces';
 /**
  * A catch-up not answering is asked again on another connection after this many times the round trip the socket took
  * to open, at least HEDGE_MIN, HEDGE_TRIES times in all (api.ts hedged).
@@ -1450,7 +1452,7 @@ function bootstrap() {
     const asked = early?.at ?? Date.now();
     try {
       // As text too: the snapshot keeps the hub's answer as it came, without serializing it again.
-      const { res, text } = await hubFetch('/api/bootstrap', { quiet: SYNC_QUIET, signal: link.signal, early });
+      const { res, text } = await hubFetch(BOOTSTRAP_PATH, { quiet: SYNC_QUIET, signal: link.signal, early });
       if (res.status === 401) {
         let body: { setup?: boolean } | null = null;
         try {
