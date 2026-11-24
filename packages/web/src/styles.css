@@ -18833,3 +18833,18 @@ h1:hover > .pair-nick-edit,
   border: 1px solid var(--border);
   background: var(--bg-center);
 }
+
+/* The inbox row's loudness edge: how loud its latest message was, as a thin bar on its left. */
+.conv-row[data-loud] {
+  box-shadow: inset 3px 0 0 color-mix(in oklab, var(--accent) var(--loud-mix), transparent);
+}
+/* For you's "Worth seeing?" (ForYou.tsx): one card a day asks. */
+.fy-ask {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0 42px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}

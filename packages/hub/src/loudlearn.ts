@@ -59,7 +59,7 @@ const REASON_QUESTION: Record<P.WhyReason, string> = {
 };
 
 /** Asks the local model one yes/no question about a text: the chance of yes, or null. */
-export type Ask = (question: string, text: string) => Promise<number | null>;
+type Ask = (question: string, text: string) => Promise<number | null>;
 
 interface Saved {
   model: AttnModel;

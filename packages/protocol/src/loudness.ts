@@ -56,7 +56,7 @@ export interface LoudView {
   reasons: LoudReason[];
 }
 
-/** The answers the app can give about a message (POST /api/attention/answers). */
+/** The answers the app can give about a message (POST /api/loudness/answers). */
 export type AttnAnswer =
   | 'worth' // Worth it (a sound)
   | 'could_wait' // Could have waited
@@ -88,6 +88,21 @@ export const LOUDER_WHY: readonly WhyReason[] = ['time_sensitive', 'person_matte
 export type WhyWait = '10min' | 'hour' | 'tonight' | 'never' | 'now' | 'within_hour' | 'today';
 export const QUIETER_WAITS: readonly WhyWait[] = ['10min', 'hour', 'tonight', 'never'];
 export const LOUDER_WAITS: readonly WhyWait[] = ['now', 'within_hour', 'today'];
+/** The follow-up's chips, in words. */
+export const WHY_LABEL: Record<WhyReason, string> = {
+  could_wait: 'It could have waited',
+  not_chat: 'Not this chat',
+  not_person: 'Not this person',
+  not_topic: 'Not this topic',
+  bad_moment: 'Bad moment',
+  seen: 'Already seen it',
+  time_sensitive: 'It was time-sensitive',
+  person_matters: 'This person matters',
+  chat_matters: 'This chat matters',
+  topic_matters: 'This topic matters',
+  was_free: 'I was free',
+};
+export const WAIT_LABEL: Record<WhyWait, string> = { '10min': '10 minutes', hour: 'An hour', tonight: 'Tonight', never: 'Never needed it', now: 'Right away', within_hour: 'Within the hour', today: 'Today' };
 
 export interface AttnAnswerBody {
   messageId: string;
@@ -154,7 +169,7 @@ export interface AttentionPrefs {
 }
 export const DEFAULT_ATTENTION_PREFS: AttentionPrefs = { readily: 'learned', nextLook: 'both', times: ['12:00', '18:00'], computerFirst: true, ask: 'often', drifting: true };
 
-/** GET /api/attention: the mode, your settings, what it asks and has learned, for the app. */
+/** GET /api/loudness/state: the mode, your settings, what it asks and has learned, for the app. */
 export interface AttentionStateView {
   mode: AttentionMode;
   prefs: AttentionPrefs;

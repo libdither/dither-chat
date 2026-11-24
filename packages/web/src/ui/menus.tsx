@@ -11,9 +11,9 @@ import { AUTOMATIC, OLDER_RULE, authorName, convTitle, deepLink, directsOf, effe
 import { inheritedPictures, PICTURE_LABELS, setPlacePictures } from '../arrange.ts';
 import { deviceRule, myDevice, setDeviceRule } from '../devices.ts';
 import { android } from '../android.ts';
-import { alertToggle, isTier, lessToggle } from '../marks.ts';
+import { isTier } from '../marks.ts';
+import { answer, saidOf } from '../loudness.ts';
 import { phone } from '../phone.ts';
-import { mark } from '../triage.ts';
 import { desk, openLink } from '../desk.ts';
 import { asLabel, downloadsAs, hubMedia } from '../download.ts';
 import { pickerFor, quickReactions, reactionScope, reactorsFor, replacing, toggleReaction } from '../reactions.ts';
@@ -149,14 +149,13 @@ function TriageFoot({ m }: { m: P.MessageView }) {
   );
 }
 
-/** The two marks as ticked entries: "Should have alerted" (on an alert, "Alert was wrong") and "Less like this". */
+/** Louder and Quieter as ticked entries (they stand as the old marks: loudness.ts `markOf`). */
 function markEntries(m: P.MessageView): MenuEntry[] {
   if (!markable(m)) return [];
-  const alert = alertToggle(m.triage!);
-  const less = lessToggle(m.triage!);
+  const said = saidOf(m.triage);
   return [
-    { label: alert.label, checked: alert.on, track: m.triage!.decision === 'push' ? 'mark alert wrong' : 'mark alert', run: () => void mark(m, { alert: alert.send }) },
-    { label: less.label, checked: less.on, track: 'mark less', run: () => void mark(m, { less: less.send }) },
+    { label: 'Louder', checked: said === 'louder', track: 'mark louder', run: () => void answer(m, 'louder', 'sheet') },
+    { label: 'Quieter', checked: said === 'quieter', track: 'mark quieter', run: () => void answer(m, 'quieter', 'sheet') },
   ];
 }
 

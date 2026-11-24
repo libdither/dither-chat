@@ -11,7 +11,7 @@ type Row = Record<string, any>;
 /** A set time counts as due for this long after it, so a minute's tick never misses it. */
 const TIMES_SLACK = 10 * 60_000;
 
-export interface Bundle {
+interface Bundle {
   title: string;
   body: string;
   count: number;

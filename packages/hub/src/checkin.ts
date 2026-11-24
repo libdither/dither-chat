@@ -25,7 +25,7 @@ const DAY = 24 * HOUR;
 export const newId = (prefix: string) => `${prefix}_${Buffer.from(crypto.getRandomValues(new Uint8Array(12))).toString('base64url')}`;
 
 /** Questions a day by setting, before "Ask me less". */
-export const QUOTA: Record<P.AttentionPrefs['ask'], number> = { never: 0, rarely: 1, often: 3 };
+const QUOTA: Record<P.AttentionPrefs['ask'], number> = { never: 0, rarely: 1, often: 3 };
 /** Skips in a row that pause the check-ins, and for how long. */
 export const SKIPS_TO_PAUSE = 3;
 export const PAUSE = 7 * DAY;

@@ -40,17 +40,17 @@ export function attentionMode(v: string | undefined): P.AttentionMode {
 }
 
 /** How long each band keeps you from a message, roughly: the next look is when you next open the app or unlock. */
-export const DELAY: Record<Band, number> = { sound: 3 * MIN, show: 20 * MIN, next: 3 * HOUR, inbox: 8 * HOUR, unread: 24 * HOUR };
+const DELAY: Record<Band, number> = { sound: 3 * MIN, show: 20 * MIN, next: 3 * HOUR, inbox: 8 * HOUR, unread: 24 * HOUR };
 /**
  * What each band costs you before the moment is counted, against what a message is worth (want 1 is "surely glad").
  * The inbox's is what a message that keeps for days at your list level (0.6) gains by being ranked: so the inbox band
  * starts where the list did. Chosen by the replay (docs/notifications.md, "The numbers").
  */
-export const INTERRUPT: Record<Band, number> = { sound: 0.3, show: 0.15, next: 0.06, inbox: 0.036, unread: 0 };
+const INTERRUPT: Record<Band, number> = { sound: 0.3, show: 0.15, next: 0.06, inbox: 0.036, unread: 0 };
 /** The can-wait buckets' half-lives. */
-export const HALF_LIFE = [10 * MIN, HOUR, 6 * HOUR, 7 * DAY] as const;
+const HALF_LIFE = [10 * MIN, HOUR, 6 * HOUR, 7 * DAY] as const;
 /** P(needed within bucket k) = sigmoid(urgency + CUTS[k]); urgency is the log-odds of "needed within the hour". */
-export const CUTS = [-1.5, 0, 2] as const;
+const CUTS = [-1.5, 0, 2] as const;
 /** The alert chance of a message the local model was not asked about (learn.ts UNJUDGED). */
 const UNJUDGED = 0.02;
 /**
@@ -61,19 +61,19 @@ const UNREAD_CONVERSATION = 0.1;
 const startAlert = (alert: number | undefined, why: readonly string[]) => alert ?? (why.length ? UNREAD_CONVERSATION : UNJUDGED);
 
 /** The Conversation reasons' starting weights on want and on urgency, in log-odds. */
-export const WANT_START: Record<Why, number> = { dm: 1.2, followed: 0.8, about: 1.2, keyword: 0.8, wrote: 0.6, answers: 0.6 };
-export const WAIT_START: Record<Why, number> = { dm: 1.2, followed: 0.5, about: 1.2, keyword: 0.8, wrote: 1, answers: 0.8 };
+const WANT_START: Record<Why, number> = { dm: 1.2, followed: 0.8, about: 1.2, keyword: 0.8, wrote: 0.6, answers: 0.6 };
+const WAIT_START: Record<Why, number> = { dm: 1.2, followed: 0.5, about: 1.2, keyword: 0.8, wrote: 1, answers: 0.8 };
 /** You wrote there in the half hour before: a talk in progress goes stale in minutes. */
 const ACTIVE_WAIT = 2;
 /** How firmly a reason's weight is held at its start: a few answers move it. */
 const WHY_LAMBDA = 5;
 
 /** A sound's cost multipliers, in log, by kind of moment, before anything is learned. */
-export const MOMENT_START: Record<string, number> = { all: 0, desk: Math.log(3), 'hour:night': Math.log(1.5), 'hour:morning': 0, 'hour:day': 0, 'hour:evening': 0, burst5: Math.log(4), burst30: Math.log(1.5) };
+const MOMENT_START: Record<string, number> = { all: 0, desk: Math.log(3), 'hour:night': Math.log(1.5), 'hour:morning': 0, 'hour:day': 0, 'hour:evening': 0, burst5: Math.log(4), burst30: Math.log(1.5) };
 /** How far your answers may move a moment's cost from its start, in log. */
 const MOMENT_REACH = 1.5;
 /** Your nudge (Settings: how readily it sounds), on the cost of a sound. */
-export const NUDGE: Record<P.AttentionPrefs['readily'], number> = { less: 1.6, learned: 1, more: 0.6 };
+const NUDGE: Record<P.AttentionPrefs['readily'], number> = { less: 1.6, learned: 1, more: 0.6 };
 
 /** The moment a message arrives in. */
 export interface Moment {
@@ -87,7 +87,7 @@ export interface Moment {
   quiet: boolean;
 }
 
-export const hourKey = (h: number) => (h < 7 || h >= 23 ? 'hour:night' : h < 12 ? 'hour:morning' : h < 18 ? 'hour:day' : 'hour:evening');
+const hourKey = (h: number) => (h < 7 || h >= 23 ? 'hour:night' : h < 12 ? 'hour:morning' : h < 18 ? 'hour:day' : 'hour:evening');
 /** The moment's kinds, as model keys. */
 export function momentKeys(m: Pick<Moment, 'desk' | 'hour' | 'sinceSound'>): string[] {
   const out = ['all', hourKey(m.hour)];
@@ -135,13 +135,13 @@ const clampP = (p: number) => Math.max(0.001, Math.min(0.999, p));
 const logit = (p: number) => Math.log(clampP(p) / (1 - clampP(p)));
 
 /** The features of a message for the want and can-wait models: learn.ts's, and the reasons that hold. */
-export function attnFeatures(f: Facts, ws: readonly string[], why: readonly string[]): [string, number][] {
+function attnFeatures(f: Facts, ws: readonly string[], why: readonly string[]): [string, number][] {
   return [...features(f, ws), ...why.map((w) => [`why:${w}`, 1] as [string, number])];
 }
 const attnLambda = (k: string) => (k.startsWith('why:') ? WHY_LAMBDA : lambda(k));
 
 /** A person, not a channel, a bot or a mail list: owed is about people only. */
-export const isPerson = (f: Pick<Facts, 'shape' | 'bot' | 'author' | 'known' | 'mention' | 'reply'>) => !f.bot && !!f.author && (f.shape === 'direct' || (f.shape === 'group' && (!!f.known || !!f.mention || !!f.reply)));
+const isPerson = (f: Pick<Facts, 'shape' | 'bot' | 'author' | 'known' | 'mention' | 'reply'>) => !f.bot && !!f.author && (f.shape === 'direct' || (f.shape === 'group' && (!!f.known || !!f.mention || !!f.reply)));
 
 /** Where the parts stand for a message, in log-odds and costs, before the bands. */
 interface Resolved {
@@ -197,7 +197,7 @@ function owedStart(i: LoudInput): number {
   return base;
 }
 
-export interface LoudOut {
+interface LoudOut {
   loudness: number;
   band: Band;
   parts: P.LoudParts;
