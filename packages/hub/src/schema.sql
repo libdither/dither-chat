@@ -701,6 +701,17 @@ CREATE TABLE IF NOT EXISTS notification_event (
   PRIMARY KEY (notification_id, device, event)
 ) WITHOUT ROWID;
 
+-- A push the hub did not send (notify.ts, docs/notifications.md "One notification per conversation"): `watched`, the
+-- chat was open at its newest message on a computer in use; `capped`, a silent Conversation within its chat's ten
+-- minutes. Ids and times only; part of the log (deleted with it, kept for its retention).
+CREATE TABLE IF NOT EXISTS push_skip (
+  message_id      TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  why             TEXT NOT NULL,             -- watched, capped
+  at              INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS push_skip_at ON push_skip(at);
+
 -- The phone's list (phonelist.ts, docs/notifications.md "The phone's list"): one row per episode of a chat on the
 -- list, from its first list message that asked for the phone until the row went (or, held, would have gone). Kept
 -- whether or not the activity log is on, so the cap, the snoozes and the day's coins outlast a restart. Ids, times

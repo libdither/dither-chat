@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BURST_MS, Delivery, FORGET_MS, LIST_EVERY } from '../src/delivery.ts';
+import { BURST_MS, capped, CONVERSATION_EVERY, Delivery, FORGET_MS, LIST_EVERY } from '../src/delivery.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
 
@@ -29,7 +29,7 @@ describe('one notification per conversation', () => {
     store.ingest(sg, { t: 'identity', identity: { nativeId: 'bo', displayName: 'Bo', contact: true } });
     store.ingest(sg, { t: 'conversation', conversation: { nativeId: 'dm', shape: 'direct', participants: ['ann'] } });
     store.ingest(sg, { t: 'conversation', conversation: { nativeId: 'fam', shape: 'group', name: 'Family', avatarUrl: 'fam.png', participants: ['ann', 'bo'] } });
-    for (const g of ['club', 'crew', 'band']) store.ingest(sg, { t: 'conversation', conversation: { nativeId: g, shape: 'group', name: g, participants: ['ann', 'bo'] } });
+    for (const g of ['club', 'crew', 'band', 'team']) store.ingest(sg, { t: 'conversation', conversation: { nativeId: g, shape: 'group', name: g, participants: ['ann', 'bo'] } });
   });
   afterAll(() => {
     store.db.close();
@@ -166,6 +166,36 @@ describe('one notification per conversation', () => {
     store.markRead(conv('band'), t + LIST_EVERY + 1);
     expect(d.read(t + LIST_EVERY + 2).map((r) => r.id)).toEqual([conv('band')]);
     expect(d.listDue(conv('band'), t + LIST_EVERY + 60_000)).toBe(true);
+  });
+
+  test('which pushes are capped: a silent Conversation in a group or channel, not a DM and not about you', () => {
+    expect(capped('quiet', { shape: 'channel' })).toBe(true);
+    expect(capped('quiet', { shape: 'group' })).toBe(true);
+    expect(capped('quiet', { shape: 'direct' })).toBe(false);
+    for (const about of ['mention', 'reply', 'keyword', 'followed'] as const) expect(capped('quiet', { shape: 'channel', [about]: true })).toBe(false);
+    expect(capped('push', { shape: 'channel' })).toBe(false);
+    expect(capped('digest', { shape: 'channel' })).toBe(false);
+    expect(capped('quiet', null)).toBe(false);
+  });
+
+  test('a capped Conversation for a chat goes out at most every ten minutes, and at once after a read', () => {
+    const d = new Delivery(store, new Triage(store));
+    const t = Date.now() + 5 * 60 * 60_000;
+    expect(CONVERSATION_EVERY).toBe(10 * 60_000);
+    expect(d.conversationDue(conv('team'), t)).toBe(true);
+    say('q1', 'team', 'ann', t, 'anyone around', 'quiet');
+    d.plan(conv('team'), msg('q1'), 'quiet', false, t);
+    expect(d.conversationDue(conv('team'), t + 60_000)).toBe(false);
+    expect(d.conversationDue(conv('team'), t + CONVERSATION_EVERY - 1)).toBe(false);
+    expect(d.conversationDue(conv('team'), t + CONVERSATION_EVERY)).toBe(true);
+    expect(d.conversationDue(conv('fam'), t + 60_000)).toBe(true);
+    // A held one's line goes with the next push: what has not been read since.
+    say('q2', 'team', 'bo', t + 60_000, 'me', 'quiet');
+    say('q3', 'team', 'ann', t + CONVERSATION_EVERY, 'ok then', 'quiet');
+    expect(d.plan(conv('team'), msg('q3'), 'quiet', false, t + CONVERSATION_EVERY)!.lines.map((l) => l.body)).toEqual(['anyone around', 'me', 'ok then']);
+    store.markRead(conv('team'), t + CONVERSATION_EVERY + 1);
+    expect(d.read(t + CONVERSATION_EVERY + 2).map((r) => r.id)).toEqual([conv('team')]);
+    expect(d.conversationDue(conv('team'), t + CONVERSATION_EVERY + 60_000)).toBe(true);
   });
 
   test('a computer in use: nothing buzzes', () => {

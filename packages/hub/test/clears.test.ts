@@ -230,10 +230,10 @@ describe('who gets a clear', () => {
       store,
       push,
       phone: { list: () => ({ send: true }) as never, higher: () => {} },
-      activity: { notification: () => null, sent: () => {} },
+      activity: { notification: () => null, sent: () => {}, skipped: () => {} },
       devices: { addressed: () => false, quietOn: () => [] },
       delivery: { listDue: () => true, plan: () => null },
-      server: { notify: (ev) => void pages.push(ev), warm: async () => {} },
+      server: { notify: (ev) => void pages.push(ev), warm: async () => {}, watched: () => false },
     });
     notifier.message('Reminder', 'about this', 'cnv_r', 'msg_r', ['A reminder you set on Discord'], {}, 'held', 'push');
     await notifier.last;

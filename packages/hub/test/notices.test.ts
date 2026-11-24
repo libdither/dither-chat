@@ -638,11 +638,11 @@ describe('Notifier.notice', () => {
     const pages: Extract<P.ClientEvent, { t: 'notify' }>[] = [];
     const notifier = new Notifier({
       store: w.store,
-      activity: { notification: (n) => `nid-${n.messageId}`, sent: () => {} },
+      activity: { notification: (n) => `nid-${n.messageId}`, sent: () => {}, skipped: () => {} },
       devices,
       push: { desktops: () => ['reg-desk'], notify: async (title, body, conv, extra, skip = [], level = 'push') => (pushes.push({ title, body, conv, extra, skip, level }), { devices: 1, accepted: 1 }) },
       delivery,
-      server: { notify: (ev) => void pages.push(ev), warm: async () => {} },
+      server: { notify: (ev) => void pages.push(ev), warm: async () => {}, watched: () => false },
       phone: { list: () => ({ send: true }) as any, higher: () => {} },
     });
     const sent: NoticeDelivery[] = [];

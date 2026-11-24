@@ -48,6 +48,21 @@ export const VISIT_VIEWS: readonly VisitView[] = ['inbox', 'triage', 'foryou', '
 export type VisitSource = 'notification' | 'toast' | 'inbox' | 'triage' | 'foryou' | 'rail' | 'list' | 'search' | 'link' | 'back' | 'forward' | 'start' | 'resume' | 'other';
 export const VISIT_SOURCES: readonly VisitSource[] = ['notification', 'toast', 'inbox', 'triage', 'foryou', 'rail', 'list', 'search', 'link', 'back', 'forward', 'start', 'resume', 'other'];
 
+/**
+ * What a page tells the hub over its socket (not an HTTP call) whenever it changes, and again every `WATCH_EVERY`
+ * while it holds a chat: the chats it shows at their newest message while the page is in use (visible, focused, used
+ * in the last five minutes), none otherwise. The hub sends no push about those chats unless a rule of yours made it
+ * an alert (docs/notifications.md, "Read here, not pushed there").
+ */
+export interface ClientWatching {
+  t: 'watching';
+  /** The device's label, as its visits say: only a computer's (not a phone's) counts. */
+  label: string;
+  conversationIds: string[];
+}
+/** A page says what it watches again this often while it watches something; the hub forgets it after twice that. */
+export const WATCH_EVERY = 30_000;
+
 /** One stay, as the device sends it. Sent again while it lasts, with the same id: the hub keeps the latest. */
 export interface VisitRecord {
   /** Made by the device. */
