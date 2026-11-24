@@ -369,6 +369,8 @@ let askedAt = 0;
 let urgent = false;
 /** However often things keep changing (a run of chats fetched ahead), a save asked for is written within this. */
 export const SAVE_WITHIN_MS = 5000;
+/** And the hub's first answer on a device that keeps nothing yet, within this, at its first idle moment. */
+const FIRST_WITHIN_MS = 1000;
 
 /**
  * How long a save asked for now waits: `ms` after the last ask, but never past SAVE_WITHIN_MS after the first one not
@@ -394,9 +396,10 @@ export function persistSoon(bootstrapText?: string, ms = 1500) {
     () => {
       timer = undefined;
       const idle = (globalThis as any).requestIdleCallback as ((cb: () => void, o?: { timeout: number }) => void) | undefined;
-      // The first answer is written now, not at the next idle moment: a start is rarely idle, and until it is written an
-      // offline start has nothing to show.
-      if (idle && !urgent) idle(() => void persistNow(false), { timeout: 3000 });
+      // The first answer is written within a second (until it is written an offline start has nothing to show), but at
+      // the first idle moment in it: storing the 4–5 MB text holds the main thread for about 60 ms at 4× CPU, and right
+      // after the answer comes the list is still being drawn (docs/perf.md "The first snapshot").
+      if (idle) idle(() => void persistNow(false), { timeout: urgent ? FIRST_WITHIN_MS : 3000 });
       else void persistNow(false);
     },
     saveDelay({ now, askedAt, ms, first: urgent }),

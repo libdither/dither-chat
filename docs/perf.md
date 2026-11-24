@@ -901,6 +901,22 @@ goes out of sight, or to the next quiet save once it is ten minutes old. Counted
 over four opens: main wrote 4,544,244 to 4,655,541 characters per save, 134–156 ms in `JSON.stringify` and 116–154 ms
 in the store's `put`, all on the main thread; the branch writes 98,213 to 164,072 characters in 2–6 ms.
 
+### The first snapshot (2026-11-24)
+
+On a device that keeps nothing yet (a first start, or a deploy that changed the protocol) the hub's first answer is
+written at once, since until it is an offline start has nothing to show. Storing it is one `put` of the 4.5 MB text,
+which the page holds as a two-byte string (a name with an emoji in it is enough), and IndexedDB's copy of it holds the
+main thread: 61–77 ms at 4× in a cold load's CPU profile, while the list was still being drawn. It is now written at
+the first idle moment within a second (`FIRST_WITHIN_MS`), and leaving the page writes it as before.
+
+Storing it as a Blob instead takes no time in the `put`, but reading it back on a relaunch (`blob.text()`, 56–72 ms
+on the main thread) costs what reading the string does (44–62 ms), and making a Blob or bytes from the string costs
+80–95 ms: measured in Chrome at 4× on the perf world's bootstrap, seven rounds. So the format stays.
+
+Six and two cold loads of each at 4× on the full-size world, interleaved, on a machine at load average 30–130: from
+the hub's answer to the list, medians 1,540 → 1,210 ms and 1,161 → 826 ms, shorter in 7 of the 8 pairs. Relaunches
+read the snapshot as before (written when the page was hidden).
+
 ## The loading orb (2026-11-11)
 
 `1x.open.first.layouts` read 48–50 on main on 2026-11-11 against the baseline's 17 (#85, 2026-11-10), in two runs of
@@ -1236,6 +1252,16 @@ the edges and the places' categories are indexed with loops rather than `some`, 
 three channels with 1,000 to 3,000 topics index as before (`test/bootstrap-index.test.ts`). In Bun on the perf world's
 bootstrap plus three such channels (6,000 topics, three interleaved runs, medians of 21): `indexThreads` 31–36 → 0.5–0.8
 ms, applying the whole bootstrap 39–49 → 5–10 ms. On the perf world as it is, no change beyond noise.
+
+### Times in lists (2026-11-24)
+
+Every list row says how long ago its last message was (format.ts `ago`): "5m", "3h", "Tue", "Oct 12". Its formatters
+were already made once, but each row older than a day still called one, and a formatter's call costs more than the
+rest of `ago` together: about 16 ms of a cold load's main thread at 4× (CPU profiles, `ago`'s own time). A day's label
+depends on its local date alone, so each weekday and each date is now formatted once and kept
+(`test/format.test.ts` checks every 37 minutes over 400 days against formatting each time, in several time zones). In
+Chrome at 4× over the perf world's 1,508 conversations' last-message times, three runs of nine rounds each, medians:
+11.5–14 ms before, 0.6–6 ms with no label kept yet, 0.5–1.6 ms once kept (a list drawn again).
 
 ## One setting at a time (2026-11-20)
 
