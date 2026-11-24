@@ -17,7 +17,7 @@ import { NextUnreadKey } from './NextUnreadLazy.tsx';
 import { ForwardLayer } from './Forward.tsx';
 import { AppsHostLazy } from './apps/lazy.tsx';
 import { SendingLayer } from './SendExtras.tsx';
-import { IndexLayer } from './Indexing.tsx';
+import { indexing } from '../indexjobs.ts';
 import { ForYou, refreshForYou } from './ForYou.tsx';
 import { Palette } from './Palette.tsx';
 import { ReactionLayer } from './Reactions.tsx';
@@ -40,7 +40,8 @@ import { PaneEdge, usePaneWidths } from './PaneEdge.tsx';
 import { CallDock } from './Call.tsx';
 import { barShown, callBarOn } from './CallBar.tsx';
 import { RingCards } from './Ringing.tsx';
-import { Viewer } from './Viewer.tsx';
+import { viewer } from '../viewer.ts';
+import { fileViewer } from '../files.ts';
 import { PEEK, panel, usePager, type Rest } from './Pager.ts';
 import { Boot } from './Loader.tsx';
 import { applyUpdate, updateReady } from '../pwa.ts';
@@ -65,6 +66,11 @@ const SettingsPane = lazyPane(() => import('./Settings.tsx').then((m) => m.Setti
 const DirectoryPane = lazyPane(() => import('./Directory.tsx').then((m) => m.DirectoryPane), 'the directory');
 const HowItSorts = lazyPane(() => import('./HowItSorts.tsx').then((m) => m.HowItSorts), 'How it sorts');
 const AttentionPaneLazy = lazyPane(() => import('./HowItSorts.tsx').then((m) => m.AttentionPaneLazy), 'Your attention');
+// Layers over the app that draw nothing until they are opened: the picture and file viewer, the index dialog.
+const Viewer = lazyPane(() => import('./Viewer.tsx').then((m) => m.Viewer), 'the viewer', null);
+const IndexDialog = lazyPane(() => import('./Indexing.tsx').then((m) => m.IndexLayer), 'indexing', null);
+const ViewerLayer = () => (viewer.value || fileViewer.value ? <Viewer /> : null);
+const IndexLayer = () => (indexing.value ? <IndexDialog /> : null);
 
 /** A conversation's details panel: the person's, for a DM of someone reached by several routes (their chat's page). */
 function convDetail(id: string): { kind: 'conv' | 'person'; id: string } | undefined {
@@ -486,7 +492,7 @@ export function App() {
       <FindShortcut />
       <MailComposerLazy />
       <WhyFollowUpLazy />
-      <Viewer />
+      <ViewerLayer />
     </div>
   );
 }

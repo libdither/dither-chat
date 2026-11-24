@@ -5,7 +5,7 @@ import { convsUnder, convTitle, directsOf, folderConvs, placePref, railEntries, 
 import { db, go, markAllRead, patchPlaces, route, saveFolders } from '../state.ts';
 import { type MenuEntry } from './ContextMenu.tsx';
 import { arrangedRail, freezeOrder, organizing, sortOf } from '../arrange.ts';
-import { canIndex, startIndexing } from './Indexing.tsx';
+import { canIndex, startIndexing } from '../indexjobs.ts';
 import { FINDS_LABEL } from './MentionFinds.tsx';
 
 const randomId = () => 'fld_' + Math.random().toString(36).slice(2, 12);

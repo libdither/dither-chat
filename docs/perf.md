@@ -539,6 +539,12 @@ times are rough; the bytes are exact):
 | phone: list painted | 2,740 ms (2,316–4,760) | 2,431 ms (1,809–3,963) |
 | first open after a cold load, desktop: Settings, How it sorts | 180, 391 ms | 149, 308 ms |
 
+Then the layers that draw nothing until they are opened: the picture and file viewer (Viewer.tsx), the index dialog
+(Indexing.tsx; what the menus ask of it, whether a place can be indexed and opening the dialog, is in indexjobs.ts)
+and Organize (OrganizeServers.tsx; the sort menu and the rows' slides stay in Reorganize.tsx). They load with the
+pages, and a layer opened before its chunk is here shows a moment later. `shared/startup`: 857 KB (292.5 KB gzip) to
+817 KB (279.2 KB gzip).
+
 ### The startup set (2026-11-10)
 
 907 KB (278 KB gzip) in ten files: the entry (269 KB), `shared/Accounts` (353 KB), `shared/state` (72 KB), the

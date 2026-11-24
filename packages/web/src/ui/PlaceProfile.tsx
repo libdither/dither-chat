@@ -23,7 +23,7 @@ import { openConv } from '../opening.ts';
 import { Loading } from './Loader.tsx';
 import { peopleExtras } from './peopleExtras.ts';
 import { ResetSessionCard } from './ResetSession.tsx';
-import { canIndex, startIndexing } from './Indexing.tsx';
+import { canIndex, startIndexing } from '../indexjobs.ts';
 import { NetworkMute } from './NetworkMute.tsx';
 import { VoicePeople } from './Ringing.tsx';
 import { useServerParts } from './ServerPartsLazy.tsx';
