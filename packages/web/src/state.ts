@@ -12,7 +12,7 @@ import { hubTransport, UploadJob } from './upload.ts';
 import { href, parseHash, type Route } from './routes.ts';
 import { inboxFilterOf, type InboxFilter } from './ordering.ts';
 import { applyPlanEvent, calendarAt, calendarFromBootstrap, loadPlans } from './plans.ts';
-import { api } from './api.ts';
+import { api, hedged, hubFetch } from './api.ts';
 import { isLoginRefusal, login, needLogin } from './login.ts';
 import { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines, type Timeline } from './store.ts';
 import { convById, holdsMail, isMailPlace, isMailThread, mailPageUrl } from './mail/chats.ts';
@@ -1047,7 +1047,10 @@ async function deliver(tempId: string) {
   const post = () => {
     // A message of ours that comes after this may be this send's (settle).
     setPending(tempId, { postedAt: Date.now() });
-    return api<P.SendResult>(`/api/conversations/${o.conversationId}/send`, { body: { body: o.body, accountId: o.accountId, replyTo: o.replyTo, attachments: o.attachments, clientId, ...o.media, ...(o.silent ? { silent: true } : {}), ...(o.mentionReplied === false ? { mentionReplied: false } : {}) } });
+    const body = { body: o.body, accountId: o.accountId, replyTo: o.replyTo, attachments: o.attachments, clientId, ...o.media, ...(o.silent ? { silent: true } : {}), ...(o.mentionReplied === false ? { mentionReplied: false } : {}) };
+    // Given up with its socket, when that is found dead: its connection likely died too. The retry after the next
+    // catch-up carries the same clientId, so the hub answers it with the first one's answer rather than sending twice.
+    return api<P.SendResult>(`/api/conversations/${o.conversationId}/send`, { body, signal: link.signal });
   };
   try {
     if (o.files?.length && !o.attachments) await uploadAll();
@@ -1324,9 +1327,24 @@ function placeFailed(e: Error) {
 export const unreachable = signal(false);
 /** How long a drop goes unmentioned. */
 const NOTICE_AFTER = 4000;
-/** The heartbeat: a ping this often while in sight, and a socket that does not answer within PONG_WAIT is dead. */
+/**
+ * The heartbeat: a ping this often while in sight. A socket that does not answer within PONG_WAIT is raced against a
+ * new one (probe); with neither the pong nor the new socket within SPARE_WAIT more, it is dead.
+ */
 const PING_EVERY = 25_000;
 const PONG_WAIT = 3000;
+const SPARE_WAIT = 5000;
+/** A catch-up or bootstrap with nothing coming for this long is given up, as no answer (api.ts hubFetch). */
+const SYNC_QUIET = 20_000;
+/**
+ * A catch-up not answering is asked again on another connection after this many times the round trip the socket took
+ * to open, at least HEDGE_MIN, HEDGE_TRIES times in all (api.ts hedged).
+ */
+const HEDGE_ROUNDS = 4;
+const HEDGE_MIN = 1000;
+const HEDGE_TRIES = 8;
+/** How long the socket in use took to open: the link's round trip as it is now, queues included. */
+let openMs = 0;
 
 let ws: WebSocket | null = null;
 let backoff = 500;
@@ -1343,6 +1361,8 @@ let socketGen = 0;
  * Each carries whole objects, so one the answer already covers only sets the same thing again.
  */
 let held: P.ClientEvent[][] | null = null;
+/** Aborts what was asked over the socket in use (its catch-up, bootstrap and sends) once it is found dead or replaced. */
+let link = new AbortController();
 /** The hub process last synced with; a new one may serve a new build (pwa.ts). */
 let hubBoot: string | null = null;
 /** Waited for before the first sync: the snapshot read, so a cold start resumes from it rather than from nothing. */
@@ -1410,8 +1430,7 @@ function bootstrap() {
     const asked = Date.now();
     try {
       // As text too: the snapshot keeps the hub's answer as it came, without serializing it again.
-      const res = await fetch('/api/bootstrap');
-      const text = await res.text();
+      const { res, text } = await hubFetch('/api/bootstrap', { quiet: SYNC_QUIET, signal: link.signal });
       if (res.status === 401) {
         let body: { setup?: boolean } | null = null;
         try {
@@ -1437,7 +1456,10 @@ function bootstrap() {
       persistSoon(text);
       void flushOutgoing();
     } catch (e: any) {
-      toast({ kind: 'error', title: 'Could not load', body: String(e.message) });
+      // No answer: on the socket it was for, start again with a new one (the next sync asks again); one already
+      // replaced has its own on the way.
+      if (e instanceof TypeError) noAnswer(gen);
+      else toast({ kind: 'error', title: 'Could not load', body: String(e.message) });
     } finally {
       release();
     }
@@ -1460,12 +1482,13 @@ function resync() {
     let r: P.SyncResponse;
     const asked = Date.now();
     try {
-      r = await api<P.SyncResponse>('/api/sync', { body: { v: pos.v, epoch: pos.epoch, since: pos.seq, timelines: tls.map((t) => timelineRequest(t, t.from?.seq ?? pos.seq)) } satisfies P.SyncRequest });
+      const body = { v: pos.v, epoch: pos.epoch, since: pos.seq, timelines: tls.map((t) => timelineRequest(t, t.from?.seq ?? pos.seq)) } satisfies P.SyncRequest;
+      r = await hedged((o) => api<P.SyncResponse>('/api/sync', { body, quiet: SYNC_QUIET, ...o }), { every: Math.max(HEDGE_MIN, HEDGE_ROUNDS * openMs), tries: HEDGE_TRIES, signal: link.signal });
     } catch (e) {
       release();
-      // No answer: the socket is likely gone too, and the next one tries again. An answer that is an error (a hub
-      // without /api/sync) means starting over.
-      if (e instanceof TypeError) probe();
+      // No answer (or given up): the next socket tries again. An answer that is an error (a hub without /api/sync)
+      // means starting over.
+      if (e instanceof TypeError) noAnswer(gen);
       else void bootstrap();
       return;
     }
@@ -1495,6 +1518,15 @@ function resync() {
   });
 }
 
+/**
+ * A catch-up for socket `gen` got no answer. Still the socket in use: it answers pings but its catch-up did not come
+ * (a connection that died under the request), so it goes, and a new one after the backoff asks again. Without that the
+ * app would stay uncaught-up on a socket that looks fine.
+ */
+function noAnswer(gen: number) {
+  if (gen === socketGen && ws) dropped();
+}
+
 function sawHub(boot: string | undefined) {
   if (!boot) return;
   // A new hub process may have brought a new build: pwa.ts checks.
@@ -1517,24 +1549,32 @@ export function afterSync(): Promise<void> {
   return Promise.race([settle, socketOpen().then(() => chain).then(() => {})]);
 }
 
+const liveUrl = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live`;
+
 export function connect() {
   clearTimeout(retry);
   // Signed out: nothing to connect to until the sign-in screen has reloaded the page (login.ts).
   if (login.value) return;
   if (!connected.value) setConnected(false);
-  const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live`;
-  const sock = new WebSocket(url);
   socketStartedAt = Date.now();
+  use(new WebSocket(liveUrl()), socketStartedAt);
+  // The socket gets its own connection; this one opens the HTTP connection the sync will use, at the same time.
+  fetch('/api/health', { cache: 'no-store' }).catch(() => {});
+}
+
+/** `sock` is the live socket from now: a new one, or a spare that won its race (probe), already open. */
+function use(sock: WebSocket, startedAt: number) {
   ws = sock;
   synced = false;
   socketGen++;
-  // The socket gets its own connection; this one opens the HTTP connection the sync will use, at the same time.
-  fetch('/api/health', { cache: 'no-store' }).catch(() => {});
-  sock.onopen = () => {
+  link.abort();
+  link = new AbortController();
+  const onopen = () => {
     if (ws !== sock) return;
     setConnected(true);
     backoff = 500;
     openedAt = lastPong = Date.now();
+    openMs = openedAt - startedAt;
     markOpen?.();
     opened = markOpen = null;
     held ??= [];
@@ -1546,6 +1586,8 @@ export function connect() {
     if (e.data === 'pong') {
       lastPong = Date.now();
       clearTimeout(pongTimer);
+      // Late, but here before a new socket was: a busy link, not a dead socket.
+      endRace();
       return;
     }
     try {
@@ -1563,6 +1605,8 @@ export function connect() {
     if (sock.readyState === WebSocket.CLOSED && openedAt < socketStartedAt) void checkSignedIn();
     dropped();
   };
+  sock.onopen = onopen;
+  if (sock.readyState === WebSocket.OPEN) onopen();
 }
 
 let socketStartedAt = 0;
@@ -1578,19 +1622,24 @@ async function checkSignedIn() {
 
 /** The socket is gone, or as good as: forget it now rather than wait for its close to time out. */
 function dropped(since = Date.now()) {
-  const old = ws;
+  retire(ws);
   ws = null;
   synced = false;
-  clearTimeout(pongTimer);
-  if (old) {
-    old.onopen = old.onmessage = old.onclose = null;
-    try {
-      old.close();
-    } catch {}
-  }
+  link.abort();
+  endRace();
   setConnected(false, since);
   clearTimeout(retry);
   retry = setTimeout(connect, (backoff = Math.min(backoff * 2, 15_000)));
+}
+
+/** A socket no longer the app's: closed without a word to its handlers. */
+function retire(old: WebSocket | null) {
+  clearTimeout(pongTimer);
+  if (!old) return;
+  old.onopen = old.onmessage = old.onclose = null;
+  try {
+    old.close();
+  } catch {}
 }
 
 /** Back on the network or back in front of the user while disconnected: try now rather than at the end of the backoff. */
@@ -1620,12 +1669,15 @@ export function tryNow(): Promise<boolean> {
 }
 
 /**
- * Is the socket alive? A phone that slept or switched networks can hold one that looks open and is not: without an
- * answer within PONG_WAIT it is dropped and a new one opens at once.
+ * Is the socket alive? A phone that slept or switched networks can hold one that looks open and is not. Without an
+ * answer within PONG_WAIT, a new socket races the pong: on a dead socket the new one opens first and takes its place,
+ * with nothing shown; on a link busy with a download the pong was queued first and comes first, and the socket stays.
+ * A fixed wait cannot tell the two apart: behind a router's queue of 4 s at 1.5 Mbit/s a pong takes 4 s and more
+ * (scripts/verify-link.ts). Neither within SPARE_WAIT: the socket is dropped, and the notice shows.
  */
 function probe() {
   if (!ws || ws.readyState === WebSocket.CLOSED) return reconnectNow();
-  if (ws.readyState !== WebSocket.OPEN) return;
+  if (ws.readyState !== WebSocket.OPEN || race) return;
   const sock = ws;
   const sent = Date.now();
   try {
@@ -1635,11 +1687,46 @@ function probe() {
   }
   clearTimeout(pongTimer);
   pongTimer = setTimeout(() => {
-    if (ws === sock && lastPong < sent) {
-      dropped(sent);
-      reconnectNow();
-    }
+    if (ws === sock && lastPong < sent && !race) startRace(sock, sent);
   }, PONG_WAIT);
+}
+
+/** A new socket racing the pong of `old`'s ping at `sent` (probe). */
+let race: { spare: WebSocket; deadline: ReturnType<typeof setTimeout> } | null = null;
+
+function startRace(old: WebSocket, sent: number) {
+  const spare = new WebSocket(liveUrl());
+  const startedAt = Date.now();
+  const lost = () => {
+    if (race?.spare !== spare) return;
+    endRace();
+    if (ws !== old) return;
+    dropped(sent);
+    reconnectNow();
+  };
+  race = { spare, deadline: setTimeout(lost, SPARE_WAIT) };
+  spare.onopen = () => {
+    if (race?.spare !== spare) return;
+    if (ws !== old) return endRace();
+    clearTimeout(race.deadline);
+    race = null;
+    // The old one is dead: this one takes its place, and catches up with a delta like any new socket.
+    retire(old);
+    use(spare, startedAt);
+  };
+  // Refused or unreachable: the hub is out of reach.
+  spare.onclose = lost;
+}
+
+function endRace() {
+  if (!race) return;
+  const { spare, deadline } = race;
+  race = null;
+  clearTimeout(deadline);
+  spare.onopen = spare.onclose = null;
+  try {
+    spare.close();
+  } catch {}
 }
 
 if (typeof window !== 'undefined') {
