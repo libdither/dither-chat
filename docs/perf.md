@@ -1173,6 +1173,16 @@ rows look up the place's settings before making a default for it (`placePref` ma
 have none), the quiet shelf too, and `visibleConv` is a loop. Six cold loads of each at 4×, medians: the rail 214 → 166
 ms, the badge 78 → 60 ms, the inbox list 96 → 86 ms; a relaunch's rail and badge 25–35 ms less in all.
 
+### A channel's threads (2026-11-24)
+
+`indexThreads` (syncmodel.ts), run on each bootstrap and after every event that adds, moves or drops a thread, added
+each thread to its channel by copying the channel's list: quadratic in a channel's topics. The perf world has two
+threads a channel, but a busy Zulip or Matrix channel has a thousand topics or more. Now the lists grow in place, and
+the edges and the places' categories are indexed with loops rather than `some`, `findIndex` and copies. A test checks
+three channels with 1,000 to 3,000 topics index as before (`test/bootstrap-index.test.ts`). In Bun on the perf world's
+bootstrap plus three such channels (6,000 topics, three interleaved runs, medians of 21): `indexThreads` 31–36 → 0.5–0.8
+ms, applying the whole bootstrap 39–49 → 5–10 ms. On the perf world as it is, no change beyond noise.
+
 ## One setting at a time (2026-11-20)
 
 Opening the details panel (the chat header's panel button) was slow: on the full-size world at 4× CPU, 160 to 260 ms
