@@ -30,6 +30,7 @@ import { selfIdentities } from '../src/embeddings.ts';
 import type * as P from '@dither-chat/protocol';
 import { Attention, RESCORE_STEP } from '../src/attention.ts';
 import { startCheckpointer } from '../src/checkpoint.ts';
+import { memTempDir } from './fixtures/memdir.ts';
 import { CACHE_STEP, pruneMediaCache, pruneMediaCacheSteps } from '../src/housekeeping.ts';
 import { HubServer } from '../src/server.ts';
 import { EVENTS_STEP, Supervisor } from '../src/supervisor.ts';
@@ -413,7 +414,9 @@ describe('checkpoints', () => {
   });
 
   test("the hub's commits leave the log to the checkpointer's thread, which copies all of it back", async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'dither-stalls-checkpoint-'));
+    // 13 MB through the log twice, each copied back with an fsync of the database file (the worker's connection syncs
+    // in full): in memory, so a busy disk does not hold the test for seconds.
+    const dir = memTempDir('dither-stalls-checkpoint-');
     const file = join(dir, 'hub.sqlite');
     const store = new Store(file, (raw) => raw ?? null);
     const write = () => {
