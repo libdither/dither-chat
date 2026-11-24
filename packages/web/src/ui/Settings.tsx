@@ -25,7 +25,7 @@ import { SessionSettings } from './Login.tsx';
 import { MailAccessNote, MailAccountRows } from './mail/MailAccounts.tsx';
 import { MailReadSetting } from './mail/MailReadSetting.tsx';
 import { phone } from '../phone.ts';
-import { android } from '../android.ts';
+import { SECTIONS } from './settingsSections.ts';
 import { Sheet } from './Sheet.tsx';
 import { chosenTheme, followsSystem, Swatch, ThemeList } from './Themes.tsx';
 import { themeById } from '../themes.ts';
@@ -33,26 +33,6 @@ import { followsArchive, globalPictures, PICTURE_LABELS, setFollowArchive, setGl
 import { PICTURE_LAYOUTS, type PictureLayout } from '@dither-chat/protocol';
 import { applyCallInput, myInput } from '../call.ts';
 import { TranslateSettings } from './TranslateSettings.tsx';
-
-/** Settings' sections: listed beside them on a desktop, and in a sheet from their header on a phone. */
-export const SECTIONS: [title: string, icon: string, id: string][] = [
-  ['Notifications', 'bell', 'set-notifications'],
-  ['Push and quiet hours', 'bellOff', 'push'],
-  ['Each device', 'phone', 'set-devices'],
-  ['Keywords', 'at', 'set-keywords'],
-  ['Your rules', 'layers', 'set-overrides'],
-  ['Privacy', 'lock', 'set-privacy'],
-  ['Message history', 'clock', 'set-history'],
-  ['Indexing', 'archive', 'set-indexing'],
-  ['Adversarial features', 'eyeOff', 'set-adversarial'],
-  ['Usage', 'activity', 'set-usage'],
-  ['Appearance', 'eye', 'set-appearance'],
-  ['Translation', 'globe', 'set-translate'],
-  ['Mail', 'mail', 'set-mail'],
-  // The phone app opens links and files in the phone's apps by itself.
-  ...(android ? [] : ([['Desktop helper', 'monitor', 'set-desk']] as [string, string, string][])),
-  ['Signed-in devices', 'lock', 'set-sessions'],
-];
 
 /** A phone's way to any section without scrolling past the rest: a button in the header, and the sections in a sheet. */
 function SectionsButton() {

@@ -511,6 +511,27 @@ one of them loaded at startup anyway. The group puts them back together: 1,072 K
 1,079 KB (335 KB gzip) in 10 on main the day before. A lazy chunk imports what it shares with startup from that chunk,
 already loaded. A module only lazy chunks use is not in it.
 
+### Left out of the first load (2026-11-24)
+
+Coverage of a cold load (the DevTools protocol's precise coverage, mapped back through the source map) found three
+quarters of the startup chunk never ran before the list showed. The biggest share no first screen uses were whole
+pages, and those are now chunks of their own (ui/LazyPane.tsx `lazyPane`): a person's profile, a place's page,
+Settings, the directory and How it sorts. Each loads when it is first opened, and all of them a few seconds after the
+hub's data is in, one per idle moment, so a first open is drawn at once as before. Going to one of Settings' sections
+(its nav, Adversarial features, Indexing) waits for the section to be drawn (bits.tsx `showSection`). The list of
+sections, which the nav beside Settings reads, is in ui/settingsSections.ts.
+
+Full-size world, 4× CPU, main against this, interleaved, medians of seven (the machine's load was 6 to 20, so the
+times are rough; the bytes are exact):
+
+| | before | after |
+|---|---|---|
+| `shared/startup` | 1,050 KB (352.6 KB gzip) | 857 KB (292.5 KB gzip) |
+| desktop: list painted | 2,078 ms (1,776–2,431, and one stall of 17 s) | 1,960 ms (1,650–2,577) |
+| desktop: script run before the list | 740 ms (652–925) | 697 ms (565–916) |
+| phone: list painted | 2,740 ms (2,316–4,760) | 2,431 ms (1,809–3,963) |
+| first open after a cold load, desktop: Settings, How it sorts | 180, 391 ms | 149, 308 ms |
+
 ### The startup set (2026-11-10)
 
 907 KB (278 KB gzip) in ten files: the entry (269 KB), `shared/Accounts` (353 KB), `shared/state` (72 KB), the
