@@ -1,7 +1,7 @@
 /**
  * Right-click menus and forwarding, end to end against a demo hub, in headless Chromium: desktop menus by
  * mouse and keyboard, Shift+right-click left alone, the menu kept inside the window, a triaged message's two marks
- * ("Should have alerted", "Less like this") as ticked entries, a channel's notification rule (Automatic, Always
+ * ("Louder", "Quieter") as ticked entries, a channel's notification rule (Automatic, Always
  * alert, List only, Mute), the forward dialog, both kinds of forward arriving, and the phone's long-press sheet with
  * the marks under the reasons.
  *
@@ -153,28 +153,27 @@ const marksShown = () => p.eval<string[]>(`[...document.querySelectorAll('.cm .c
 await rightClick(markAt.x, markAt.y);
 const withMarks = await labels();
 console.log('     triaged message menu:', withMarks.join(' | '));
-const mi = withMarks.indexOf('Should have alerted');
-check(mi > 0 && withMarks[mi - 1] === '—' && withMarks[mi + 1] === 'Less like this' && withMarks[mi + 2] === '—', 'a triaged message has "Should have alerted" and "Less like this" in a group of their own');
-check((await marksShown()).join() === 'Should have alerted,Less like this', 'neither is ticked at first');
-check(!withMarks.some((l) => /Important|Active|Digest|Not interesting/.test(l)), 'and no level to vote it to');
+const mi = withMarks.indexOf('Louder');
+check(mi > 0 && withMarks[mi - 1] === '—' && withMarks[mi + 1] === 'Quieter' && withMarks[mi + 2] === '—', 'a triaged message has "Louder" and "Quieter" in a group of their own');
+check((await marksShown()).join() === 'Louder,Quieter', 'neither is ticked at first');
+check(!withMarks.some((l) => /Important|Active|Digest|Not interesting|Should have alerted|Less like this/.test(l)), 'and no level or old mark to pick');
 await p.shot(join(shots, 'desktop-message-marks.png'));
-await clickItem('Less like this');
+await clickItem('Quieter');
 await Bun.sleep(500);
-check((await menuOpen()) === 0 && (await marksOf()).less === true, 'choosing "Less like this" closes the menu and marks it on the hub');
+// Quieter on a Conversation stands as "Less like this" (docs/notifications.md, "Marks").
+check((await menuOpen()) === 0 && (await marksOf()).less === true, 'choosing "Quieter" closes the menu and stands as "Less like this" on the hub');
+await p.eval(`document.querySelector('.loud-follow-body') && [...document.querySelectorAll('.loud-actions .btn')].find((b) => b.textContent.includes('Skip'))?.click()`);
+await Bun.sleep(300);
 await rightClick(markAt.x, markAt.y);
-check((await marksShown()).join() === 'Should have alerted,Less like this ✓', 'the menu then shows it ticked');
-await clickItem('Less like this');
+check((await marksShown()).join() === 'Louder,Quieter ✓', 'the menu then shows it ticked');
+await clickItem('Louder');
 await Bun.sleep(500);
-check((await marksOf()).less === undefined, 'choosing the ticked one takes the mark back');
+check((await marksOf()).alert === true, '"Louder" stands as "Should have alerted" on the hub');
+await p.eval(`document.querySelector('.loud-follow-body') && [...document.querySelectorAll('.loud-actions .btn')].find((b) => b.textContent.includes('Skip'))?.click()`);
+await Bun.sleep(300);
 await rightClick(markAt.x, markAt.y);
-await clickItem('Should have alerted');
-await Bun.sleep(500);
-check((await marksOf()).alert === true, '"Should have alerted" marks it on the hub');
-await rightClick(markAt.x, markAt.y);
-check((await marksShown()).join() === 'Should have alerted ✓,Less like this', 'and shows ticked');
-await clickItem('Should have alerted');
-await Bun.sleep(500);
-check((await marksOf()).alert === undefined, 'and is taken back the same way');
+check((await marksShown()).join() === 'Louder ✓,Quieter', 'and shows ticked');
+await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
 await p.goto(`${hub}/#/s/${dither.id}/c/${general.id}`);
 await p.until(`document.querySelectorAll('.msg:not(.system) .msg-body').length > 2`, 15000);
 
@@ -284,12 +283,12 @@ const foot = await p.eval<{ title: string; reasons: number; marks: string[]; act
   `(() => { const f = document.querySelector('.cm-sheet .sheet-triage'); const ul = f?.querySelector('ul'); const fb = f?.querySelector('.triage-fb'); return { title: f?.querySelector('h4')?.textContent ?? '', reasons: ul?.querySelectorAll('li').length ?? 0, marks: [...(f?.querySelectorAll('[data-mark]') ?? [])].map((b) => b.textContent.trim()), actions: [...document.querySelectorAll('.cm-sheet .sheet-action')].map((b) => b.textContent.trim()), order: !!ul && !!fb && !!(ul.compareDocumentPosition(fb) & Node.DOCUMENT_POSITION_FOLLOWING) }; })()`,
 );
 console.log('     phone sheet, triaged:', foot.title, '|', foot.marks.join(' | '));
-check(foot.title.startsWith('Conversation:') && foot.reasons > 0 && foot.order && foot.marks.join() === 'Should have alerted,Less like this', 'a triaged message’s sheet says its tier and why, then has the two marks');
-check(!foot.actions.includes('Should have alerted') && !foot.actions.includes('Less like this'), 'and its actions do not repeat them');
+check(foot.title.startsWith('Conversation:') && foot.reasons > 0 && foot.order && foot.marks.join() === 'Louder,Quieter', 'a triaged message’s sheet says its tier and why, then has Louder and Quieter');
+check(!foot.actions.includes('Louder') && !foot.actions.includes('Quieter'), 'and its actions do not repeat them');
 await p.shot(join(shots, 'phone-message-marks.png'));
-await p.eval(`document.querySelector('.cm-sheet .sheet-triage [data-mark=alert]').click()`);
+await p.eval(`document.querySelector('.cm-sheet .sheet-triage [data-mark=louder]').click()`);
 await Bun.sleep(600);
-check((await p.eval<boolean>(`!document.querySelector('.cm-sheet')`)) && (await marksOf()).alert === true, 'tapping "Should have alerted" closes the sheet and marks it on the hub');
+check((await p.eval<boolean>(`!document.querySelector('.cm-sheet')`)) && (await marksOf()).alert === true, 'tapping "Louder" closes the sheet and stands as "Should have alerted" on the hub');
 
 console.log(p.errors.length ? `page errors:\n${p.errors.join('\n')}` : 'no page errors');
 await b.close();

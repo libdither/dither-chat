@@ -708,6 +708,8 @@ export class Attention {
   judge?: AttentionJudge;
   /** The activity log's per-place features (docs/activity.md): shown by `explain`, not scored yet. */
   activity?: Pick<ActivityStore, 'features'>;
+  /** Sort by a message's loudness rather than its importance (main.ts: DITHER_ATTENTION=on). */
+  byLoudness = false;
   /** Other rows of the inbox: mail threads (mail/attention.ts). */
   readonly sources: AttentionSource[] = [];
   /** How you answer an author elsewhere (their mail, mail/attention.ts), summed with their chat tallies. */
@@ -1063,8 +1065,9 @@ export class Attention {
     // Swiped away on the phone since: seen. It stays unread, and counts for nothing more here.
     const seen = pushedUnread && ((db.query('SELECT MAX(dismissed_at) AS at FROM notification WHERE conversation_id = ?').get(cid) as Row | null)?.at ?? 0) >= state.lastPush!.ts;
     if (pushedUnread && !seen) {
-      const t = db.query('SELECT decision, score, reasons FROM triage WHERE message_id = ?').get(state.lastPush!.id) as Row | null;
-      importance = t?.score ?? null;
+      const t = db.query('SELECT decision, score, reasons, loud FROM triage WHERE message_id = ?').get(state.lastPush!.id) as Row | null;
+      // Once the loudness decides (DITHER_ATTENTION=on), the inbox sorts by it: its owed and exploration stay.
+      importance = this.byLoudness && t?.loud != null ? t.loud / 100 : (t?.score ?? null);
       alerted = t?.decision === 'push' && now - state.lastPush!.ts <= PIN_FOR;
       // The list's rows have their importance; an alert or a Conversation says why it is one.
       if (!t || t.decision === 'push' || t.decision === 'quiet') pinged = (t ? (JSON.parse(t.reasons) as string[])[0] : null) ?? 'a message you have not read';

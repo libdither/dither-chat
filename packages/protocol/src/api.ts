@@ -340,6 +340,11 @@ export interface TriageView {
   judge?: number | null;
   /** The bar that answer was held to: lower in DMs and messages about you (learn.ts `ALERT_BAR`). With `judge`. */
   bar?: number;
+  /**
+   * Its loudness on the one scale, 0 to 100 (docs/notifications.md), when it was worked out: deciding, or in shadow.
+   * The whole of it, with its reasons, is GET /api/messages/:id/loudness (LoudView).
+   */
+  loudness?: number;
 }
 
 /**

@@ -8,7 +8,7 @@ import type { DownloadAs } from '@dither-chat/protocol';
 import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, isEmailRoute, parseCursor } from './chats.ts';
 import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, downloadsAs, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, RUNGS, sendBlocker, UPLOAD_CHUNK, WATCH_EVERY } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
-import { ACCOUNT_COLORS, type Store } from './store.ts';
+import { ACCOUNT_COLORS, loudViewOf, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
 import type { PushService } from './push.ts';
 import type { ReadQueue } from './readqueue.ts';
@@ -16,6 +16,7 @@ import { setNativeMute } from './nativemute.ts';
 import { markUnreadFrom } from './unread.ts';
 import { validQuietHours, type Triage } from './triage.ts';
 import type { TriageVotes } from './votes.ts';
+import type { LoudLearner } from './loudlearn.ts';
 import { selfIds, type Scorecard } from './scorecard.ts';
 import { attentionReport } from './attnreport.ts';
 import { cleanFileName, Uploads } from './uploads.ts';
@@ -171,6 +172,8 @@ interface ServerOpts {
   devices?: Devices;
   /** Your votes on triage and the rules learned from them (votes.ts, docs/notifications.md). */
   votes?: TriageVotes;
+  /** The loudness scale's answers, check-ins and settings (loudlearn.ts). */
+  loud?: LoudLearner;
   /** How the models did, day by day (scorecard.ts, docs/scorecard.md): GET /api/model/scores. */
   scorecard?: Scorecard;
   /** Fetch every remote attachment into the media cache soon after it arrives (mediaarchive.ts). A real hub, not a demo. */
@@ -666,6 +669,76 @@ export class HubServer {
     this.server?.stop(true);
     this.plain?.stop(true);
     for (const s of this.extra) s.stop(true);
+  }
+
+  /** Called when you look (the app opened, the phone unlocked): the next look's bundle goes (main.ts). */
+  onLook: ((why: 'open' | 'unlock') => void) | null = null;
+  /** How many messages wait for the next look. */
+  nextLookHeld: (() => number) | null = null;
+
+  private async loudRoute(path: string, method: string, body: <T>() => Promise<T>): Promise<Response | null> {
+    const bad = (msg: string, status = 400) => Response.json({ error: msg }, { status });
+    const L = this.opts.loud;
+    if (!L) return bad('No loudness here', 404);
+    const s = this.store;
+    const ok = (x: unknown = { ok: true }) => Response.json(x);
+    let m: RegExpMatchArray | null;
+    try {
+      if (path === '/api/loudness/state' && method === 'GET') return ok(L.view(Date.now(), this.nextLookHeld?.() ?? 0));
+      if (path === '/api/loudness/prefs' && method === 'PUT') {
+        L.setPrefs(await body<Partial<P.AttentionPrefs>>());
+        return ok(L.view(Date.now(), this.nextLookHeld?.() ?? 0));
+      }
+      // The app opened (or came back) and asks what to ask: a look, so the next look's bundle is let go.
+      if (path === '/api/loudness/checkins' && method === 'GET') {
+        this.onLook?.('open');
+        return ok(L.checkins.due(L.prefs()));
+      }
+      if ((m = path.match(/^\/api\/loudness\/checkins\/([\w-]+)$/)) && method === 'POST') {
+        const b = await body<{ answer?: unknown; skip?: unknown }>();
+        const r = L.checkin(m[1], b.skip === true ? null : typeof b.answer === 'string' ? b.answer : null);
+        this.flush();
+        return ok(r);
+      }
+      if (path === '/api/loudness/ask-less' && method === 'POST') {
+        L.checkins.askLess();
+        return ok(L.view(Date.now(), this.nextLookHeld?.() ?? 0));
+      }
+      if (path === '/api/loudness/answers' && method === 'POST') {
+        const b = await body<Partial<P.AttnAnswerBody>>();
+        const answers: P.AttnAnswer[] = ['worth', 'could_wait', 'shouldnt', 'sooner', 'fine', 'louder', 'quieter'];
+        const sources: P.AttnSource[] = ['checkin', 'sheet', 'notification', 'followup'];
+        if (typeof b.messageId !== 'string' || !answers.includes(b.answer as P.AttnAnswer)) return bad(`Say messageId and answer: one of ${answers.join(', ')}`);
+        const r = L.answer({ messageId: b.messageId, answer: b.answer as P.AttnAnswer, source: sources.includes(b.source as P.AttnSource) ? (b.source as P.AttnSource) : 'sheet', ...(b.scope === 'person' || b.scope === 'chat' ? { scope: b.scope } : {}), ...(typeof b.checkinId === 'string' ? { checkinId: b.checkinId } : {}) });
+        this.flush();
+        return ok(r);
+      }
+      if (path === '/api/loudness/why' && method === 'POST') {
+        const b = await body<Partial<P.WhyBody>>();
+        if (typeof b.answerId !== 'string') return bad('Say answerId');
+        return ok(await L.why({ answerId: b.answerId, ...(typeof b.reason === 'string' ? { reason: b.reason as P.WhyReason } : {}), ...(typeof b.wait === 'string' ? { wait: b.wait as P.WhyWait } : {}), ...(typeof b.text === 'string' ? { text: b.text } : {}), ...(typeof b.until === 'number' ? { until: b.until } : {}) }));
+      }
+      // The Android app saw the phone unlocked: a look.
+      if (path === '/api/loudness/look' && method === 'POST') {
+        const b = await body<{ why?: unknown }>();
+        this.onLook?.(b.why === 'unlock' ? 'unlock' : 'open');
+        return ok();
+      }
+      if (path === '/api/loudness/forget' && method === 'POST') {
+        const b = await body<{ key?: unknown; rejected?: unknown }>();
+        if (typeof b.key !== 'string' || typeof b.rejected !== 'boolean') return bad('Say key and rejected: true or false');
+        L.forget(b.key, b.rejected);
+        return ok(L.view(Date.now(), this.nextLookHeld?.() ?? 0));
+      }
+      // The Why sheet: a message's loudness, whole, with its reasons.
+      if ((m = path.match(/^\/api\/messages\/([\w-]+)\/loudness$/)) && method === 'GET') {
+        const raw = s.one<{ loud_view: string | null }>('SELECT loud_view FROM triage WHERE message_id = ?', m[1])?.loud_view;
+        return ok(raw ? loudViewOf(raw) : null);
+      }
+    } catch (e: any) {
+      return bad(e.message, 409);
+    }
+    return null;
   }
 
   flush(all = false) {
@@ -1204,7 +1277,11 @@ export class HubServer {
       // How well "needs a reply" chances matched what you did (needsreply.ts): by day, and in bins.
       if (path === '/api/attention/needs-reply' && method === 'GET') return ok(a.needsCalibration(Date.now(), Math.min(365, Math.max(1, num('days') ?? 60))));
       // The weekly report of what attention cost (attnreport.ts, docs/scorecard.md "The weekly report").
-      if (path === '/api/attention/report' && method === 'GET') return ok(attentionReport(this.store.db, { owed: () => a.list(), self: () => selfIds(this.store.db) }));
+      if (path === '/api/attention/report' && method === 'GET') {
+        const r = attentionReport(this.store.db, { owed: () => a.list(), self: () => selfIds(this.store.db) });
+        // Settings → "People you're drifting from" off: the report names no one.
+        return ok(this.opts.loud && !this.opts.loud.prefs().drifting ? { ...r, drifting: null } : r);
+      }
       if ((m = path.match(/^\/api\/attention\/([\w-]+)$/)) && method === 'GET') {
         const x = a.explain(m[1]);
         return x ? ok(x) : bad('not in the inbox', 404);
@@ -2143,11 +2220,18 @@ export class HubServer {
       }
       try {
         const r = this.opts.votes.mark(m[1], marks);
+        // The same as Louder / Quieter on the loudness scale (loudlearn.ts): the old marks are its aliases.
+        this.opts.loud?.fromMark(m[1], marks);
         this.flush();
         return ok(r);
       } catch (e: any) {
         return bad(e.message, 409);
       }
+    }
+    // The one loudness scale (loudlearn.ts, docs/notifications.md): its state and settings, check-ins, answers and why.
+    if (path.startsWith('/api/loudness/') || /^\/api\/messages\/[\w-]+\/loudness$/.test(path)) {
+      const r = await this.loudRoute(path, method, body);
+      if (r) return r;
     }
     if (path === '/api/triage/policy' && method === 'GET') {
       if (!this.opts.votes) return bad('No triage here', 404);

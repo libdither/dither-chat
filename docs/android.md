@@ -164,9 +164,16 @@ Reply sends through the hub. Which devices get a message at all is up to each de
 A push says which tier its message is in ([notifications.md](notifications.md)): `tier` is `push` for an alert,
 `quiet` for a Conversation and `digest` for a row of the ranked list, and `importance` (0 to 1) says where a list row
 comes. A hub from before the tiers sends only `level`, which is read as a Conversation when it is `quiet` and as an
-alert otherwise. Each tier has a channel, so Android's own settings can change one and leave the others:
-**Alerts** (`messages`, the only one that sounds), **Conversations (silent)** (`messages-quiet`) and **Ranked list
-(silent)** (`list`). The first two ids are older than the tiers, so a sound someone set on them stays.
+alert otherwise. Each has a channel, so Android's own settings can change one and leave the others: **Sound**
+(`messages`, the only one that sounds), **Shown now (silent)** (`messages-quiet`), **Next look (silent)**
+(`next-look`: the loudness scale's bundle, [notifications.md](notifications.md#next-look)) and **Ranked list
+(silent)** (`list`). The first two ids are older than the tiers and the scale, so a sound someone set on them stays,
+and their names follow the scale's bands.
+
+**The next look** is one notification, tag `next-look`, a push with `nextLook` (`{ count, chats }`): *Next look · N
+waiting*, opening the inbox; a new one takes its place. The app tells the hub you looked when the phone unlocks
+(`ACTION_USER_PRESENT`, `POST /api/loudness/look { why: "unlock" }`, at most once in three minutes). Android delivers
+that only to a receiver registered while the app runs, so it is registered when a push or the app starts the process.
 
 **An alert or a Conversation** is a conversation notification, as Discord, Signal and Google Messages post them
 (`Notifications.kt`, design in [research/notification-design.md](research/notification-design.md) §7–8):
@@ -233,15 +240,24 @@ Conversations section.
 **Swiped away.** Every kind reports `dismissed` from its delete intent, a list row also when the whole bundle is
 swiped. What the app cancels itself (a clear, a row that left the list, a mark) reports nothing.
 
-**Marks** ([notifications.md](notifications.md)) are buttons, after Reply where there is one:
+**Answers** ([notifications.md](notifications.md#answers)) are buttons, after Reply where there is one. A chat
+message's go to `/api/loudness/answers` as `{ messageId, answer, source: "notification" }`:
 
-| Row | Button | Sent to `/api/messages/<id>/feedback` | The row |
+| Row | Button | `answer` | The row |
 |---|---|---|---|
-| Alert | Not urgent | `{ "alert": false }` | goes |
-| Conversation | Should have alerted | `{ "alert": true }` | stays |
-| List | Less like this | `{ "less": true }` | goes |
-| List | Should have alerted | `{ "alert": true }` | stays |
-| Mail (`mailThreadId`), any tier | Less like this | `{ "less": true }`, to `/api/mail/triage/<id>/vote` | goes |
+| Sounded | Worth it | `worth` | goes |
+| Sounded | Could have waited | `could_wait` | goes |
+| Shown now | Louder | `louder` | stays |
+| List | Quieter | `quieter` | goes |
+| List | Louder | `louder` | stays |
+
+A notice keeps the marks from before, to `/api/messages/<id>/feedback`: *Not urgent* (`{ "alert": false }`) on one
+that sounded, *Should have alerted* (`{ "alert": true }`) on a silent one, *Less like this* (`{ "less": true }`) and
+*Should have alerted* on a list row. Mail (`mailThreadId`), any tier: *Less like this*, `{ "less": true }` to
+`/api/mail/triage/<id>/vote`.
+
+The next release after the scale is a minor one (the channels and the buttons change); its tag is pushed with the
+other releases'.
 
 A row that stays loses the button once the hub has taken the mark, so it shows that it went; if the hub could not be
 reached the button is still there. A push without `messageId` (a request) has no marks.

@@ -69,6 +69,8 @@ import { arrangeDrop, arrangedFolderItems, arrangedPeople, arrangedRail, snapsho
 import { openShelves, shelve, toggleShelf } from '../quiet.ts';
 import { inboxSnap, shownInbox } from '../inbox.ts';
 import { linkAccounts, PeopleAccountPicker, PeopleLinks, RequestsRow, usePeopleLinks } from './Requests.tsx';
+import { loudByConv, loudEdge, loudOf } from '../loudness.ts';
+import { CheckinLazy } from './LoudnessLazy.tsx';
 import { NoticesRow } from './Notices.tsx';
 import { nameMatches, peopleFilters, type PeopleFilter } from '../requests.ts';
 import { SortButton, SortIcon, useFlip } from './Reorganize.tsx';
@@ -181,6 +183,7 @@ const ConvRow = memo(function ConvRow({
   owedSince,
   needsP,
   chat,
+  loud,
 }: {
   c: P.ConversationView;
   active: boolean;
@@ -190,6 +193,8 @@ const ConvRow = memo(function ConvRow({
   owedSince?: number | null;
   needsP?: number | null;
   chat?: { person: P.PersonView; routes: P.ConversationView[] };
+  /** How loud its latest message was, 0 to 100 (docs/inbox.md "The loudness edge"): drawn while it is unread. */
+  loud?: number;
 }) {
   metaRev.value;
   const u = chat ? chatUnread(chat.routes) : unreadOf(c);
@@ -205,6 +210,7 @@ const ConvRow = memo(function ConvRow({
       title={why?.length ? why.join('\n') : undefined}
       data-row={chat ? chatKey(chat.person.id) : c.id}
       data-track={rowTrack(convKind(c.shape), !!u.unread, !!owedSince)}
+      {...loudEdge(u.unread ? loud : undefined)}
       {...ctx}
     >
       {isChannel && com ? (
@@ -326,7 +332,7 @@ function channelCount(c: P.ConversationView, threads: P.ConversationView[]) {
  * typing and dot. Its menu is the channel's, whose Mark As Read reads every thread. `unread`: the channel's threads
  * with something unread, listed or not.
  */
-const ChannelInboxRow = memo(function ChannelInboxRow({ c, rowKey, parts, unread, latest, active, why, owedSince, needsP }: { c: P.ConversationView; rowKey: string; parts: P.ConversationView[]; unread: P.ConversationView[]; latest: P.ConversationView; active: boolean; why?: string[]; owedSince?: number | null; needsP?: number | null }) {
+const ChannelInboxRow = memo(function ChannelInboxRow({ c, rowKey, parts, unread, latest, active, why, owedSince, needsP, loud }: { c: P.ConversationView; rowKey: string; parts: P.ConversationView[]; unread: P.ConversationView[]; latest: P.ConversationView; active: boolean; why?: string[]; owedSince?: number | null; needsP?: number | null; loud?: number }) {
   metaRev.value;
   const n = channelCount(c, unread);
   const muted = parts.every((p) => unreadOf(p).muted);
@@ -342,6 +348,7 @@ const ChannelInboxRow = memo(function ChannelInboxRow({ c, rowKey, parts, unread
       class={`row conv-row channel-row ${active ? 'active' : ''} ${n.unread ? 'unread' : ''} ${muted ? 'muted' : ''}`}
       onClick={opener(`inbox:${rowKey}`, () => openChannelRow(c.id))}
       title={why?.length ? why.join('\n') : undefined}
+      {...loudEdge(n.unread ? loud : undefined)}
       data-row={rowKey}
       data-track={rowTrack(convKind(c.shape), !!n.unread, !!owedSince)}
       {...ctx}
@@ -428,6 +435,7 @@ type InboxRowProps = {
   owedSince: number | null;
   needsP: number | null;
   latest?: string;
+  loud?: number;
 };
 /** The same chat: the inbox makes its rows again for each change, so a chat is the same person by the same routes. */
 const sameChat = (a?: RowChat, b?: RowChat) => a === b || (!!a && !!b && a.person === b.person && sameProps({ r: a.routes }, { r: b.routes }));
@@ -437,14 +445,14 @@ const sameChat = (a?: RowChat, b?: RowChat) => a === b || (!!a && !!b && a.perso
  * changes (memo.ts), so a message or a visit elsewhere draws the list again but not every row.
  */
 const InboxRowView = memo(
-  function InboxRowView({ rowKey, ids, conv, chat, channel, active, why, owedSince, needsP, latest }: InboxRowProps) {
+  function InboxRowView({ rowKey, ids, conv, chat, channel, active, why, owedSince, needsP, latest, loud }: InboxRowProps) {
     if (conv && channel) {
       // Whether a thread is muted is a setting: drawn again on the settings' version (`sameChannel` sees no change).
       metaRev.value;
       const { fold, below } = channelFold(conv, rowKey, channel.unread, channel.open);
       return (
         <MarkableRow rowKey={rowKey} kind="conversation" ids={ids} owedSince={owedSince} needsP={needsP} canNeed={!!latest} latest={latest} fold={fold} below={below}>
-          <ChannelInboxRow c={conv} rowKey={rowKey} parts={channel.parts} unread={channel.unread} latest={channel.latest} active={active} why={why} owedSince={owedSince} needsP={needsP} />
+          <ChannelInboxRow c={conv} rowKey={rowKey} parts={channel.parts} unread={channel.unread} latest={channel.latest} active={active} why={why} owedSince={owedSince} needsP={needsP} loud={loud} />
         </MarkableRow>
       );
     }
@@ -457,9 +465,9 @@ const InboxRowView = memo(
     return (
       <MarkableRow rowKey={rowKey} kind="conversation" ids={ids} owedSince={owedSince} needsP={needsP} canNeed={!!latest} latest={latest}>
         {chat ? (
-          <ConvRow c={conv} chat={chat} active={active} onClick={opener(`inbox:${rowKey}`, () => go({ view: 'inbox', conv: chatOpens(chat.person.id) ?? conv.id }))} why={why} owedSince={owedSince} needsP={needsP} />
+          <ConvRow c={conv} chat={chat} active={active} onClick={opener(`inbox:${rowKey}`, () => go({ view: 'inbox', conv: chatOpens(chat.person.id) ?? conv.id }))} why={why} owedSince={owedSince} needsP={needsP} loud={loud} />
         ) : (
-          <ConvRow c={conv} active={active} onClick={opener(`inbox:${conv.id}`, () => go({ view: 'inbox', conv: conv.id }))} why={why} owedSince={owedSince} needsP={needsP} />
+          <ConvRow c={conv} active={active} onClick={opener(`inbox:${conv.id}`, () => go({ view: 'inbox', conv: conv.id }))} why={why} owedSince={owedSince} needsP={needsP} loud={loud} />
         )}
       </MarkableRow>
     );
@@ -691,6 +699,7 @@ export function InboxSidebar({ activeConv, mail }: { activeConv?: string; mail?:
   useFlip(scroll, snap.v, '[data-row-key], [data-row]:not([data-row-key] [data-row])');
   // A person's chat is one row, active whichever of their DMs is open.
   const activeKey = activeConv ? inboxKeyOf(activeConv) : undefined;
+  const louds = loudByConv.value;
   const row = (r: InboxRow) => {
     const owedSince = r.needs ? r.owedSince : null;
     // A channel row's ↩ goes on the parts that rank it: a muted thread does not lift it, nor take its marks.
@@ -707,9 +716,9 @@ export function InboxSidebar({ activeConv, mail }: { activeConv?: string; mail?:
       const unread = unreadThreadsOf(r.conv.id);
       const threads = here && here !== r.conv && !unread.includes(here) ? [...unread, here] : unread;
       const channel = { parts: ch.parts, unread: threads, latest: ch.latest, open: here?.id };
-      return <InboxRowView key={r.key} rowKey={r.key} ids={ids} conv={r.conv} channel={channel} active={r.key === activeKey} why={r.reasons} owedSince={owedSince} needsP={needsP} latest={needsTarget(ch.latest)} />;
+      return <InboxRowView key={r.key} rowKey={r.key} ids={ids} conv={r.conv} channel={channel} active={r.key === activeKey} why={r.reasons} owedSince={owedSince} needsP={needsP} latest={needsTarget(ch.latest)} loud={loudOf(louds, ids)} />;
     }
-    return <InboxRowView key={r.key} rowKey={r.key} ids={ids} conv={r.conv} chat={r.chat} active={r.chat ? r.key === activeKey : r.conv.id === activeConv} why={r.reasons} owedSince={owedSince} needsP={needsP} latest={needsTarget(r.conv)} />;
+    return <InboxRowView key={r.key} rowKey={r.key} ids={ids} conv={r.conv} chat={r.chat} active={r.chat ? r.key === activeKey : r.conv.id === activeConv} why={r.reasons} owedSince={owedSince} needsP={needsP} latest={needsTarget(r.conv)} loud={loudOf(louds, ids)} />;
   };
   return (
     <div class="sidebar-inner inbox-side" data-track-area="inbox">
@@ -768,6 +777,7 @@ export function InboxSidebar({ activeConv, mail }: { activeConv?: string; mail?:
           </>
         )}
         {/* Chat requests and notices are not mail: the Mail filter leaves them out. */}
+        {filter !== 'mail' && <CheckinLazy />}
         {filter !== 'mail' && <RequestsRow />}
         {filter !== 'mail' && <NoticesRow />}
         {rows.slice(0, drawn).map(row)}

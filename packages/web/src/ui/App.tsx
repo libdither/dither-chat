@@ -50,6 +50,7 @@ import { applyUpdate, updateReady } from '../pwa.ts';
 import { noteChannel, readLastChannels, saveLastChannels, withLastChannel } from '../lastchannel.ts';
 import { counting, rendered } from '../perf.ts';
 import { MailComposerLazy } from './mail/lazy.tsx';
+import { WhyFollowUpLazy } from './LoudnessLazy.tsx';
 import { toInboxChip } from './MailChat.tsx';
 import { convById, isMailPlace } from '../mail/chats.ts';
 import { RequestsPane } from './Requests.tsx';
@@ -477,6 +478,7 @@ export function App() {
       <Palette />
       <FindShortcut />
       <MailComposerLazy />
+      <WhyFollowUpLazy />
       <Viewer />
     </div>
   );

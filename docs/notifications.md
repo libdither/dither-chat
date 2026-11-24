@@ -1,6 +1,125 @@
-# Notifications: three tiers, and what they learn from you
+# Notifications: one loudness scale, the tiers beside it, and what they learn from you
 
-Triage puts every new message from someone else in one of three tiers, below them, or silences it:
+Every new message from someone else gets a **loudness**, 0 to 100, on [one scale](#one-scale-loudness): what it is
+worth to see it now rather than later, against what an interruption costs at that moment. Where it falls says how it
+reaches you: it sounds, shows silently now, waits for your next look, sits in the inbox, or stays unread in its chat.
+It learns mostly from your answers: Louder and Quieter on a message, a few questions a day, and the buttons on a
+notification.
+
+The scale replaces [the three tiers](#the-tiers) (Alert, Conversation, List) once it is switched on. Until then it is
+worked out beside them, in shadow: shown on each message's bell and scored, while the tiers still decide what is sent.
+`DITHER_ATTENTION` on the hub picks: `tiers` (the scale off), `shadow` (the default) or `on`.
+
+## One scale: loudness
+
+| Band | Loudness | Reaches you |
+| --- | --- | --- |
+| **Sound** | 80 to 100 | sounds, with a heads-up; a notification on a computer |
+| **Show now** | 55 to 80 | a silent notification of its own on the phone, now |
+| **Next look** | 30 to 55 | held; one silent bundle, *Next look · N waiting*, when you unlock the phone or open the app, or at set times |
+| **Inbox** | 10 to 30 | nothing sent; listed in the inbox |
+| **Unread** | 0 to 10 | unread in its chat only |
+
+The number is worked out from four separate parts (`packages/hub/src/loudness.ts`):
+
+- **Want**: the chance you would be glad to have seen it at all. It starts from the importance (below) and the
+  Conversation reasons (a DM, about you, one of your keywords, a chat you wrote in, one where you answer), each with a
+  strong start.
+- **Can wait**: how long it can wait, as a chance over four half-lives (10 minutes, an hour, 6 hours, a week). It
+  starts from the local model's answer to the alert question, where it was asked, and the same reasons.
+- **Owed**: a person waiting on your reply (people only, never a channel), growing with how long they have waited.
+- **The moment's cost**: what a sound costs now. It starts at one and is dearer while a computer is in use, at night,
+  and minutes after another sound. It is learned for each kind of moment, from your answers about sounds then.
+
+What is lost by waiting is `want × Σ wait_k (1 − 2^(−delay/h_k)) + owed × min(delay, day) / day`. Each band has its
+delay (a sound 3 minutes, show 20 minutes, next look 3 hours, the inbox 8 hours, unread a day) and its interruption
+cost; the band picked is the one worth most, and the number sits within that band's range by how clearly it won. There
+is **no budget**: nothing caps the sounds a day. Settings shows how many sounded today, for your information, and has
+one nudge on what was learned: **Less readily / As it learned / More readily**.
+
+Your rules stay absolute: Always alert is 100, Mute 0, List only caps it at next look, quiet hours take the sound band
+away, and a message its sender sent silently goes no higher than show. Nothing explores on sounds: no message is made
+louder to learn from it. A notification's row keeps its loudest band for an hour, so a quieter message after a sound
+does not take its place silently.
+
+The decision codes stay the tiers' (`push`, `quiet`, `digest`, `drop`): with the scale on, sound is `push`, show
+`quiet`, next look and the inbox `digest`, unread `drop`. A message's `triage` carries `loudness`, the number; its
+bell fetches the whole of it (`GET /api/messages/:id/loudness`: band, parts and reasons).
+
+### Why, on every message
+
+A message's bell shows its tier's reasons, then the scale: where it sits, its band, and the reasons with how many
+points each moved it (each taken away in turn). Under them, **Louder** and **Quieter** for this person and for this
+chat, and *What it learned*, which opens its part of Settings.
+
+### Answers
+
+What you say about a message. Each answer changes only the part of the model it names.
+
+| From | Answers |
+| --- | --- |
+| A message's bell, menu or the phone's sheet | **Louder**, **Quieter** (for its kind, or for the person or chat) |
+| A notification that sounded | **Worth it**, **Could have waited** |
+| A silent one | **Louder** |
+| A list row | **Quieter**, **Louder** |
+| A check-in | about a sound: Worth it, Could have waited, Shouldn't have reached me; about a quiet one: Wish I'd known sooner, Fine where it was |
+
+After Louder, Quieter, Could have waited or Shouldn't have reached me it may ask **why**, once, and it can be skipped:
+chips (it could have waited, not this chat, not this person, not this topic, a bad moment, already seen it; or, for
+louder, time-sensitive, this person matters, this chat matters, this topic matters, I was free), how long it could
+have waited (or when you'd have wanted it), your own words, and an optional end date (*until …*). Your words are read
+by the local model on the hub's machine and mapped to a chip; they are not kept. It asks at most once a chat a day,
+and never twice in a row for the same answer.
+
+A reason routes the answer: *not this chat* moves only that chat's want, *not this person* the person's, *not this
+topic* the words, *it could have waited* and the wait chips only the can-wait part, *a bad moment* only the moment's
+cost. Louder and Quieter also stand as the marks they replace (below), so the tiers keep learning from them.
+
+### Check-ins
+
+A question at the top of the inbox (`checkin.ts`), in the app only: up to three a day, one about something that
+sounded and one about something that stayed quiet. Half are picked at random, with the chance each had of being picked
+kept, so the scorecard can weigh them back honestly; half where the model is least sure. **Ask me less** halves the
+rate; three skips in a row pause it for a week. For you asks one card a day, *Worth seeing?*
+([foryou.md](foryou.md)).
+
+### What it learns from
+
+Answers and check-ins count most (weight 1), as do the marks from before. Then what you did: a reply 0.3, an open of
+five seconds or more 0.1 (never one right after a sound, which says only that it sounded), a swipe 0.05. Each part is
+fitted with the same L2 pooling as the importance. *What it learned* in Settings lists what moved most, each with
+**Forget**.
+
+### Next look
+
+What lands in the next look's band waits (`nextlook.ts`), and goes in one silent notification when you unlock the
+phone (the Android app tells the hub), at the times you set (12:00 and 18:00 to start), or both. Opening the app counts
+as a look too: what was held is then in the inbox, and no bundle is sent.
+
+### Settings
+
+Settings → Notifications: how readily it sounds, when the next look comes, **the computer comes first** (while a
+computer is in use, a chat open and read there sends nothing to the phone), how often it asks, a note on people you're
+drifting from, and what it learned. Quiet hours stay where they were.
+
+### The replay
+
+`scripts/loudness-replay.ts` runs the scale as it starts (no answers yet) over the last 30 days of a hub's decisions,
+on a copy of its database, and writes counts only. On one person's hub (22 days with 50 or more decisions, 632,575
+decisions):
+
+| A day | Loudness | Tiers |
+| --- | --- | --- |
+| Messages that would sound | 4 | 5.8 |
+| Sounds on the devices (once a chat's five minutes) | 4 | 3.5 |
+| Busiest day's sounds | 9 | 17 |
+
+Of the 1,056 messages answered within 30 minutes, the scale put 84.7% at show or louder; the tiers made 82.1% an
+alert or a Conversation. Most of the rest are group messages with no Conversation reason, which the tiers miss too.
+
+## The tiers
+
+What decides until the scale is switched on (`DITHER_ATTENTION=on`). Triage puts every new message from someone else in one of three tiers, below them, or silences it:
 
 | Tier | `decision` | Decided by | Phone | Desktop | Inbox |
 | --- | --- | --- | --- | --- | --- |
@@ -291,14 +410,15 @@ chats opened within a day, quick answers), once the day's outcomes are in.
 
 ## Marks
 
-What you tell triage about a decision. Any decision that is not silent can be marked, from wherever it shows:
+What the tiers learn from. The app's **Louder** and **Quieter** stand as these marks (Louder as "Should have
+alerted", Quieter as "Alert was wrong" on an alert and "Less like this" elsewhere), and the route below still takes
+them as they were, from a page or a notification shown before the scale: each such mark is kept as an answer too.
 
-- **In the app**, two toggles on a message (its menu, the bell among its hover actions, and the phone's long-press
-  sheet): **Should have alerted**, which reads **Alert was wrong** on a message that alerted, and **Less like this**.
-  A ticked one is taken back by picking it again.
-- **On the notification itself** (the Android app, and `sw.js` in a browser): an alert has **Not urgent**, the same
-  as "Alert was wrong"; a Conversation row has **Should have alerted**; a list row has **Less like this** and
-  **Should have alerted**.
+- **In the app**, Louder and Quieter on a message (its menu, the bell among its hover actions, and the phone's
+  long-press sheet). Mail keeps **Less like this**.
+- **On the notification itself** (the Android app, and `sw.js` in a browser): the answers in [Answers](#answers). A
+  notice keeps the marks: **Not urgent** on an alert, **Should have alerted** on a Conversation, **Less like this**
+  and **Should have alerted** on a list row.
 - **On How it sorts** (`#/model`; from For you's header, the inbox button's menu and Settings → Notifications),
   which lists the last week under Alerts, Conversations, List and Below the list, one line per conversation with
   its importance, the two toggles and *Why*. The hub gives it the alerts and Conversations, newest first, the list
@@ -801,6 +921,14 @@ for seven more opened chats ([above](#importance)).
 
 ## What was removed
 
+With the loudness scale (2026-11):
+
+- **The marks' buttons**: *Should have alerted*, *Alert was wrong*, *Less like this* on a chat message, and *Not
+  urgent* on a notification. Louder and Quieter (and Worth it / Could have waited on a notification) took their place;
+  `POST /api/messages/:id/feedback` still takes the marks, and mail keeps Less like this.
+- **The tiers' names in the app**, once the scale is on: Alert, Conversation and List are its sound, show and next
+  look bands. Their codes stay.
+
 For someone who knew triage before the tiers (2026-11):
 
 - **The four levels** (Important, Active, Digest, Not interesting). Their codes are the tiers' now: `push` is Alert,
@@ -863,11 +991,21 @@ dry run.
 `POST /api/triage/policy/relearn`, `POST /api/triage/factors/:key { rejected }`, `GET /api/triage/shadow`,
 `PUT /api/rules`, `GET`/`PUT /api/quiet-hours`, `GET /api/inbox`, `GET /api/model/scores` ([scorecard.md](scorecard.md)).
 
-A message's `triage` (`P.TriageView`): `decision`, `score` (its importance), `reasons`, `decidedBy`, `probs`
-(`{ alert, important }`), `judge` (the local model's answer, when it was asked) with `bar` (the bar it was held to), `marks`, and `feedback` (a vote from
-before the tiers).
+The scale: `GET /api/loudness/state` (the mode, your settings, sounds today, what it asks and learned),
+`PUT /api/loudness/prefs`, `GET /api/loudness/checkins` (also a look), `POST /api/loudness/checkins/:id
+{ answer | skip }`, `POST /api/loudness/ask-less`, `POST /api/loudness/answers { messageId, answer, source, scope?,
+checkinId? }` (answers `{ answerId, why? }`), `POST /api/loudness/why { answerId, reason?, wait?, text?, until? }`,
+`POST /api/loudness/look { why: unlock | open }`, `POST /api/loudness/forget { key, rejected }`,
+`GET /api/messages/:id/loudness`. Types in `packages/protocol/src/loudness.ts`.
 
-Storage: `triage` (`decision`, `score`, `reasons`, `decided_by`, `facts` as JSON, `probs` and `shadow` as JSON
+A message's `triage` (`P.TriageView`): `decision`, `score` (its importance), `reasons`, `decidedBy`, `probs`
+(`{ alert, important }`), `judge` (the local model's answer, when it was asked) with `bar` (the bar it was held to), `marks`, `feedback` (a vote from
+before the tiers), and `loudness` (0 to 100, where the scale was worked out).
+
+Storage: the scale's number and view in `triage.loud` and `triage.loud_view`; answers in `attn_answer` (never your
+words), check-ins in `checkin` (with the chance each had of being picked), what waits for the next look in
+`next_look`; the scale's model in `meta` (`attn_model`), your settings (`attention_prefs`) and the check-ins' state
+(`checkin_state`). `triage` (`decision`, `score`, `reasons`, `decided_by`, `facts` as JSON, `probs` and `shadow` as JSON
 chances, `alert_mark`, `less_mark`, `marked_at`, `was`, and from before the tiers `feedback`, `explore`,
 `propensity`); the models in `meta` (`triage_policy`: `model`, `rejected`, and `candidate` for the shadow);
 `list_level`, `quiet_hours` and `tiers_at` in `meta` too; the phone's list in `phone_episode` and `phone_snooze`; the scorecard in `model_score`; what each desktop browser was alerted about and the clears it was sent in `push_shown` and `push_clear` (ids and times only), and when a push last reached a Firefox while its page was in use in `push_subscription.refilled_at`. Triage rows older than 90 days go when nothing can be

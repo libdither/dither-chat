@@ -34,8 +34,9 @@ const DAY = 24 * HOUR;
 /**
  * 2: the needs-reply chance's calibration (needsReply) and For you's opens, scored back over the days already kept.
  * 3: the cost side (sounds, stale pushes, checks with nothing new, and the people metrics), scored back the same way.
+ * 4: the loudness scale's check-ins and its comparison with the tiers (loudnessScores).
  */
-export const SCORE_VERSION = 3;
+export const SCORE_VERSION = 4;
 /** A notification was followed when you opened its chat within this long. */
 const FOLLOW_WITHIN = 3 * HOUR;
 /** A chat-day was opened when you opened the chat within this long of one of its messages. */
@@ -428,6 +429,57 @@ function* foryou(c: DayContext): Generator<number, ScoreRow[]> {
   return [row(c.day, 'foryou.clicked', share(clicked, rows.length), rows.length, { clicked }), row(c.day, 'foryou.clicked_explore', share(exploreClicked, explore.length), explore.length, { clicked: exploreClicked })];
 }
 
+/**
+ * The loudness scale (loudness.ts, checkin.ts): the check-ins' answers, weighted back by the chance each question had
+ * of being picked (only the random half counts, so the rates are honest), and how the loudness compares with the tiers
+ * on the same messages while it runs in shadow.
+ */
+export function* loudnessScores(c: DayContext): Generator<number, ScoreRow[]> {
+  const keys = ['attn.worth', 'attn.worth_shadow', 'attn.could_wait', 'attn.shouldnt', 'attn.missed', 'attn.asked', 'foryou.worth', 'shadow.sounds', 'shadow.agree', 'shadow.quick_show', 'shadow.quick_show_live'];
+  if (!c.db.query(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'checkin'`).get()) return keys.map((k) => row(c.day, k, null, 0));
+  const asked = c.db.query(`SELECT side, arm, propensity, shadow_band, answer, skipped FROM checkin WHERE created_at >= ? AND created_at < ? LIMIT 1000`).all(c.from, c.to) as Row[];
+  yield asked.length;
+  /** The weighted share of `yes` among the random half's answers that `of` keeps. */
+  const ips = (of: (r: Row) => boolean, yes: (r: Row) => boolean) => {
+    const rs = asked.filter((r) => r.arm === 'random' && r.answer && r.propensity > 0 && of(r));
+    const w = rs.reduce((s, r) => s + 1 / r.propensity, 0);
+    const y = rs.filter(yes).reduce((s, r) => s + 1 / r.propensity, 0);
+    return { value: rs.length ? Math.round((y / w) * 1000) / 1000 : null, n: rs.length };
+  };
+  const out: ScoreRow[] = [];
+  const put = (k: string, x: { value: number | null; n: number }) => out.push(row(c.day, k, x.value, x.n));
+  const sounded = (r: Row) => r.side === 'sounded';
+  put('attn.worth', ips(sounded, (r) => r.answer === 'worth'));
+  put('attn.worth_shadow', ips((r) => sounded(r) && r.shadow_band === 'sound', (r) => r.answer === 'worth'));
+  put('attn.could_wait', ips(sounded, (r) => r.answer === 'could_wait'));
+  put('attn.shouldnt', ips(sounded, (r) => r.answer === 'shouldnt'));
+  put('attn.missed', ips((r) => r.side === 'quiet', (r) => r.answer === 'sooner'));
+  put('foryou.worth', ips((r) => r.side === 'foryou', (r) => r.answer === 'glad'));
+  const shown = asked.filter((r) => r.side !== 'foryou');
+  out.push(row(c.day, 'attn.asked', shown.length, shown.length, { answered: shown.filter((r) => r.answer).length, skipped: shown.filter((r) => r.skipped).length }));
+  // The loudness beside the tiers, on the day's decisions about others' messages.
+  const self = c.self.length ? c.self : [''];
+  const ph = self.map(() => '?').join(',');
+  const ds = c.db
+    .query(
+      `SELECT t.decision, t.loud, EXISTS (SELECT 1 FROM message o WHERE o.conversation_id = m.conversation_id AND o.ts > m.ts AND o.ts <= m.ts + ${30 * MIN} AND o.author_id IN (${ph})) AS quick
+       FROM triage t INDEXED BY triage_created JOIN message m ON m.id = t.message_id
+       WHERE t.created_at >= ? AND t.created_at < ? AND t.loud IS NOT NULL AND t.decision != 'silent' LIMIT 200000`,
+    )
+    .all(...self, c.from, c.to) as Row[];
+  yield ds.length;
+  const band = (l: number) => (l >= 80 ? 'sound' : l >= 55 ? 'show' : l >= 30 ? 'next' : l >= 10 ? 'inbox' : 'unread');
+  const tierBand: Record<string, string> = { push: 'sound', quiet: 'show', digest: 'inbox', drop: 'unread' };
+  const sounds = ds.filter((r) => r.loud >= 80).length;
+  out.push(row(c.day, 'shadow.sounds', ds.length ? sounds : null, ds.length, { live: ds.filter((r) => r.decision === 'push').length }));
+  const agree = ds.filter((r) => band(r.loud) === tierBand[r.decision] || (band(r.loud) === 'next' && r.decision === 'digest')).length;
+  out.push(row(c.day, 'shadow.agree', share(agree, ds.length), ds.length));
+  const quick = ds.filter((r) => r.quick);
+  out.push(row(c.day, 'shadow.quick_show', share(quick.filter((r) => r.loud >= 55).length, quick.length), quick.length));
+  out.push(row(c.day, 'shadow.quick_show_live', share(quick.filter((r) => r.decision === 'push' || r.decision === 'quiet').length, quick.length), quick.length));
+  return out;
+}
+
 // ---------------------------------------------------------------- the cost side: attention and people
 
 /** Phones, by the label their page or app gave (delivery.ts): every other device is a computer. */
@@ -696,7 +748,7 @@ function* breadth(c: DayContext): Generator<number, ScoreRow[]> {
   return [row(c.day, 'people.breadth', recent.size, recent.size, { kept: both }), row(c.day, 'people.breadth_before', before.size, before.size)];
 }
 
-const SCORERS: DayScorer[] = [notified, decisions, unprompted, inbox, needsReply, foryou, sounds, stale, checks, peopleWait, owedLong, breadth];
+const SCORERS: DayScorer[] = [notified, decisions, unprompted, inbox, needsReply, foryou, sounds, stale, checks, peopleWait, owedLong, breadth, loudnessScores];
 
 /**
  * Your identities: what you wrote is by one of these. As interact.ts SELF_SQL, but on identity's person index: SQLite
@@ -868,6 +920,18 @@ export function seedDemoScores(db: Database, now: number) {
         ['people.owed_3d', Math.max(0, Math.round(3 - t + wob(i, 33))), 9 + (i % 4)],
         ['people.breadth', 24 + Math.round(2 * wob(i, 34) - 2 * t), 24],
         ['people.breadth_before', 26 + Math.round(wob(i, 35)), 26],
+        // The loudness scale: asked from the second week, its shadow from the start.
+        ['foryou.worth', i < 7 ? null : clamp(0.55 + 0.1 * t + 0.1 * wob(i, 26)), i < 7 ? 0 : 1],
+        ['attn.worth', i < 7 ? null : clamp(0.6 + 0.15 * t + 0.1 * wob(i, 27)), i < 7 ? 0 : 1 + (i % 2)],
+        ['attn.worth_shadow', i < 7 ? null : clamp(0.65 + 0.15 * t + 0.1 * wob(i, 28)), i < 7 ? 0 : 1],
+        ['attn.could_wait', i < 7 ? null : clamp(0.3 - 0.15 * t + 0.08 * wob(i, 29)), i < 7 ? 0 : 1 + (i % 2)],
+        ['attn.shouldnt', i < 7 ? null : clamp(0.1 - 0.05 * t + 0.04 * wob(i, 30)), i < 7 ? 0 : 1 + (i % 2)],
+        ['attn.missed', i < 7 ? null : clamp(0.12 - 0.04 * t + 0.05 * wob(i, 31)), i < 7 ? 0 : 1],
+        ['attn.asked', i < 7 ? 0 : 2 + (i % 2), i < 7 ? 0 : 2 + (i % 2)],
+        ['shadow.sounds', Math.max(0, Math.round(6 - 2 * t + 2 * wob(i, 32))), 900 + ((i * 37) % 300)],
+        ['shadow.agree', clamp(0.8 + 0.03 * wob(i, 33)), 900 + ((i * 37) % 300)],
+        ['shadow.quick_show', clamp(0.93 + 0.03 * wob(i, 34)), 20 + (i % 9)],
+        ['shadow.quick_show_live', clamp(0.9 + 0.03 * wob(i, 35)), 20 + (i % 9)],
       ];
       for (const [m, value, n] of v) put.run(day, m, value, n, now);
     }

@@ -107,7 +107,23 @@ function triageView(t: Row): P.TriageView {
     probs: probs && typeof probs.important === 'number' && typeof probs.alert === 'number' ? { alert: probs.alert, important: probs.important } : null,
     ...(Object.keys(marks).length ? { marks } : {}),
     ...(judge !== undefined ? { judge, bar: alertBar({ shape: facts!.shape ?? '', mention: !!facts!.mention, reply: !!facts!.reply }) } : {}),
+    // Only the number rides with every message; the Why sheet asks for the rest.
+    ...(typeof t.loud === 'number' ? { loudness: t.loud } : {}),
   };
+}
+
+/** What triage keeps of a message's loudness (loudness.ts), deciding or in shadow. */
+export interface StoredLoud extends P.LoudView {
+  /** The Conversation reasons that held, and the moment's kinds: what the answers about it teach. */
+  why?: string[];
+  moment?: string[];
+}
+
+/** A stored loudness as the Why sheet shows it. */
+export function loudViewOf(raw: string): P.LoudView | null {
+  const v = json<StoredLoud | null>(raw, null);
+  if (!v || typeof v.loudness !== 'number') return null;
+  return { loudness: v.loudness, band: v.band, live: !!v.live, ...(v.rule ? { rule: v.rule } : {}), ...(v.parts ? { parts: v.parts } : {}), reasons: v.reasons ?? [] };
 }
 
 export function previewText(body: string, kind: string): string {
@@ -327,7 +343,7 @@ export class Store {
       this.addColumns('vantage', { wildcards: 'INTEGER NOT NULL DEFAULT 0' });
       this.addColumns('identity', { status: 'TEXT', nickname: 'TEXT', net_nickname: 'TEXT', net_note: 'TEXT' });
       this.addColumns('category', { threshold: 'REAL' });
-      this.addColumns('triage', { shadow: 'TEXT', explore: 'TEXT', propensity: 'REAL', was: 'TEXT', alert_mark: 'INTEGER', less_mark: 'INTEGER', marked_at: 'INTEGER' });
+      this.addColumns('triage', { shadow: 'TEXT', explore: 'TEXT', propensity: 'REAL', was: 'TEXT', alert_mark: 'INTEGER', less_mark: 'INTEGER', marked_at: 'INTEGER', loud: 'REAL', loud_view: 'TEXT' });
       this.addColumns('owed_turn', { dismissed: 'INTEGER NOT NULL DEFAULT 0' });
       this.addColumns('notification', { alert: 'INTEGER' });
       this.addColumns('visit', { depth: 'INTEGER', seen_to_ts: 'INTEGER', owed_since: 'INTEGER', owed_shown: 'INTEGER', typed: 'INTEGER NOT NULL DEFAULT 0', draft_left: 'INTEGER', exit: 'TEXT', shadow_rank: 'INTEGER' });
@@ -2621,15 +2637,27 @@ export class Store {
 
 
   /** A decision, and what it was made from; with the shadow model's chances. Marks already given stay. */
-  setTriage(messageId: string, t: Pick<P.TriageView, 'decision' | 'score' | 'reasons' | 'decidedBy' | 'probs'> & { shadow?: P.TriageProbs }, facts?: unknown) {
+  setTriage(messageId: string, t: Pick<P.TriageView, 'decision' | 'score' | 'reasons' | 'decidedBy' | 'probs'> & { shadow?: P.TriageProbs; loud?: StoredLoud }, facts?: unknown) {
     this.db
       .query(
-        `INSERT INTO triage (message_id, decision, score, reasons, decided_by, facts, probs, shadow, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO triage (message_id, decision, score, reasons, decided_by, facts, probs, shadow, loud, loud_view, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (message_id) DO UPDATE SET decision = excluded.decision, score = excluded.score, reasons = excluded.reasons,
            decided_by = excluded.decided_by, facts = COALESCE(excluded.facts, facts), probs = excluded.probs, shadow = excluded.shadow,
-           created_at = excluded.created_at`,
+           loud = excluded.loud, loud_view = excluded.loud_view, created_at = excluded.created_at`,
       )
-      .run(messageId, t.decision, t.score, JSON.stringify(t.reasons), t.decidedBy, facts ? JSON.stringify(facts) : null, t.probs ? JSON.stringify(t.probs) : null, t.shadow ? JSON.stringify(t.shadow) : null, Date.now());
+      .run(
+        messageId,
+        t.decision,
+        t.score,
+        JSON.stringify(t.reasons),
+        t.decidedBy,
+        facts ? JSON.stringify(facts) : null,
+        t.probs ? JSON.stringify(t.probs) : null,
+        t.shadow ? JSON.stringify(t.shadow) : null,
+        t.loud ? t.loud.loudness : null,
+        t.loud ? JSON.stringify(t.loud) : null,
+        Date.now(),
+      );
   }
 
   /** Your marks on a decision: each given key is set (null takes that mark back); the others stay. */

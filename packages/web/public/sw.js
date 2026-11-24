@@ -319,16 +319,23 @@ async function dataUrl(canvas) {
 }
 
 /**
- * A mark from the notification (docs/notifications.md), by its tier: an alert ('push') can be said to be not urgent,
- * a Conversation ('quiet') that it should have alerted, a list row ('digest') that there should be less like it or
- * that it should have alerted. Each action is what it tells the hub (POST /api/messages/:id/feedback).
+ * Your say from the notification (docs/notifications.md, "Answers"), by how it reached you: one that sounded ('push')
+ * was worth it or could have waited; a silent one ('quiet') should have been louder; a list row ('digest') quieter or
+ * louder. Each is an answer (POST /api/loudness/answers). Mail keeps "Less like this" (POST
+ * /api/messages/:id/feedback); `wrong` and `alert` are the marks from before, kept for a notification shown then.
  */
 const MARKS = {
+  worth: { title: 'Worth it', answer: 'worth' },
+  could_wait: { title: 'Could have waited', answer: 'could_wait' },
+  louder: { title: 'Louder', answer: 'louder' },
+  quieter: { title: 'Quieter', answer: 'quieter' },
   wrong: { title: 'Not urgent', body: { alert: false } },
   alert: { title: 'Should have alerted', body: { alert: true } },
   less: { title: 'Less like this', body: { less: true } },
 };
-const TIER_MARKS = { push: ['wrong'], quiet: ['alert'], digest: ['less', 'alert'] };
+const TIER_MARKS = { push: ['worth', 'could_wait'], quiet: ['louder'], digest: ['quieter', 'louder'] };
+/** A notice (docs/notices.md) is not a message the scale weighs: it keeps the marks. */
+const NOTICE_MARKS = { push: ['wrong'], quiet: ['alert'], digest: ['less', 'alert'] };
 
 /** Title and body: a group's lines each say who wrote them, and the title counts them. */
 function grouped(d) {
@@ -350,16 +357,17 @@ async function show(d) {
   // A call ringing you (docs/calls.md "Ringing"): one per call, with Answer and Decline, kept up until it is handled.
   const ring = d.call && typeof d.call.id === 'string' ? d.call : null;
   if (ring) return showRing(d, ring);
-  const tag = cal ? `calendar:${cal.eventKey}` : d.conversationId ?? (d.requestId ? `request:${d.requestId}` : d.inbox ? 'dither-inbox' : 'dither');
+  // The next look's bundle (docs/notifications.md, "Next look") is one notification, each new one in the last's place.
+  const tag = cal ? `calendar:${cal.eventKey}` : d.nextLook ? 'next-look' : d.conversationId ?? (d.requestId ? `request:${d.requestId}` : d.inbox ? 'dither-inbox' : 'dither');
   const look = await looks(d);
   // Its tier (docs/notifications.md): an alert, a Conversation or a list row. A hub from before the tiers says only
   // `level`: 'quiet' for what is silent, else an alert.
   const tier = d.tier ?? (d.level === 'quiet' ? 'quiet' : 'push');
   const reply = d.conversationId && d.canReply && CAN_REPLY ? [{ action: 'reply', type: 'text', title: 'Reply', placeholder: 'Message' }] : [];
   // Mail takes only "Less like this" (docs/mail.md).
-  const marks = (d.messageId ? TIER_MARKS[tier] ?? [] : []).filter((a) => !d.mailThreadId || a === 'less').map((a) => ({ action: a, title: MARKS[a].title }));
-  // A browser shows two actions: Reply and the mark for an alert or a Conversation, both marks for a list row.
-  const actions = cal ? (cal.meetingUrl ? [{ action: 'join', title: 'Join' }] : []) : d.conversationId ? (tier === 'digest' ? [...marks, ...reply] : [...reply, ...marks, ...(marks.length ? [] : [{ action: 'open', title: 'Open' }])]) : [];
+  const marks = (d.messageId ? (d.mailThreadId ? (tier === 'push' ? [] : ['less']) : ((d.noticeId ? NOTICE_MARKS : TIER_MARKS)[tier] ?? [])) : []).map((a) => ({ action: a, title: MARKS[a].title }));
+  // A browser shows two actions: Reply and the mark where there is one, both where there are two (an alert, a list row).
+  const actions = cal ? (cal.meetingUrl ? [{ action: 'join', title: 'Join' }] : []) : d.conversationId ? (marks.length > 1 ? [...marks, ...reply] : [...reply, ...marks, ...(marks.length ? [] : [{ action: 'open', title: 'Open' }])]) : [];
   // One notification per conversation (docs/notifications.md): its unread lines. Only an alert may sound, and only
   // when the hub says so; an older hub does not say, and every alert sounds. A Conversation and a list row are shown
   // without sound or vibration.
@@ -566,7 +574,10 @@ self.addEventListener('notificationclick', (e) => {
   const mark = Object.hasOwn(MARKS, e.action) ? MARKS[e.action] : null;
   if (mark && mid) {
     e.notification.close();
-    e.waitUntil(fetch(`/api/messages/${encodeURIComponent(mid)}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(mark.body) }).catch(() => {}));
+    const req = mark.answer
+      ? { url: '/api/loudness/answers', body: { messageId: mid, answer: mark.answer, source: 'notification' } }
+      : { url: `/api/messages/${encodeURIComponent(mid)}/feedback`, body: mark.body };
+    e.waitUntil(fetch(req.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req.body) }).catch(() => {}));
     return;
   }
   e.notification.close();

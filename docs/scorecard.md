@@ -107,6 +107,24 @@ no budget: the counts are kept and shown as they are.
   - **Breadth** is everyone else in the conversations with people you wrote in, by person (or by account where there
     is none).
 
+## The loudness scale
+
+From the check-ins ([notifications.md](notifications.md#check-ins)), counting only the half picked at random and
+weighting each answer by one over the chance it had of being asked (inverse propensity), so the rates hold for
+everything that sounded or stayed quiet, not just what was asked:
+
+- `attn.worth`: of the sounds, the share worth it; `attn.worth_shadow`, the same for those the scale alone would have
+  sounded.
+- `attn.could_wait`, `attn.shouldnt`: of the sounds, could have waited, shouldn't have reached you.
+- `attn.missed`: of the quiet ones, wish I'd known sooner.
+- `attn.asked`: questions shown that day (with how many were answered and skipped).
+- `foryou.worth`: of For you's asked cards, glad I saw this.
+
+And the scale beside the tiers, while it runs in shadow: `shadow.sounds` (messages loud enough to sound),
+`shadow.agree` (the share in the same band as the tier), and of the messages you answered within 30 minutes, the share
+the scale put at show or louder (`shadow.quick_show`) against the share the tiers made an alert or a Conversation
+(`shadow.quick_show_live`). `SCORE_VERSION` 4 scores the days kept again with these.
+
 ## The weekly report
 
 `GET /api/attention/report` (`attnreport.ts`, `AttentionReport`), drawn by the page **Your attention**

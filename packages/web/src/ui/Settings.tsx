@@ -14,6 +14,7 @@ import { HeadOrb } from './Offline.tsx';
 import { DeviceRules } from './DeviceRules.tsx';
 import { percent } from './Marks.tsx';
 import { PushSettings } from './Push.tsx';
+import { LoudnessSettingsLazy } from './LoudnessLazy.tsx';
 import { PrivacySettings } from './Privacy.tsx';
 import { HistorySettings } from './HistorySettings.tsx';
 import { IndexingSettings } from './Indexing.tsx';
@@ -286,6 +287,9 @@ export function SettingsPane() {
             Alerts sound; conversations are people talking with you, silent; the list is everything else that is important enough, silent, the most important first.
           </p>
           <ListLevel />
+          <div id="set-loudness">
+            <LoudnessSettingsLazy />
+          </div>
           <button class="link-row set-sorts" data-track="how it sorts" onClick={() => go({ view: 'model' })}>
             <Icon name="sparkles" size={15} />
             <span>

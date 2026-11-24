@@ -137,6 +137,53 @@ export const SCORE_CHARTS: ScoreChart[] = [
       { key: 'foryou.clicked_explore', label: 'Items it was trying', kind: 'share', better: true },
     ],
   },
+  {
+    id: 'foryou-worth',
+    title: 'For you: worth seeing',
+    about: 'Of the For you cards it asked about at random, the share you said you were glad to see, weighted back by the chance each had of being asked.',
+    metrics: [{ key: 'foryou.worth', label: 'Glad I saw this', kind: 'share', better: true }],
+  },
+  {
+    id: 'attn-worth',
+    title: 'Sounds worth it',
+    about: 'Of the sounds it asked you about at random, the share you said were worth it, weighted back by the chance each had of being asked; and the same for those the loudness alone would have sounded.',
+    metrics: [
+      { key: 'attn.worth', label: 'What sounded', kind: 'share', better: true },
+      { key: 'attn.worth_shadow', label: 'Loud enough to sound', kind: 'share', better: true },
+    ],
+  },
+  {
+    id: 'attn-regret',
+    title: 'Interruptions you would rather have done without, and ones you missed',
+    about: 'Of the sounds asked about at random: could have waited, or should not have reached you. Of the quiet ones asked about at random: you wish you had known sooner.',
+    metrics: [
+      { key: 'attn.could_wait', label: 'Could have waited', kind: 'share', better: false },
+      { key: 'attn.shouldnt', label: "Shouldn't have reached me", kind: 'share', better: false },
+      { key: 'attn.missed', label: "Wish I'd known sooner", kind: 'share', better: false },
+    ],
+  },
+  {
+    id: 'attn-asked',
+    title: 'Questions asked',
+    about: 'Check-in questions shown that day, at most three.',
+    metrics: [{ key: 'attn.asked', label: 'Shown', kind: 'count', better: null }],
+  },
+  {
+    id: 'shadow-sounds',
+    title: 'The loudness beside the tiers: sounds',
+    about: 'Messages the loudness would have sounded that day, while the tiers decided (the tiers’ own alerts are in the line’s detail).',
+    metrics: [{ key: 'shadow.sounds', label: 'Loud enough to sound', kind: 'count', better: null }],
+  },
+  {
+    id: 'shadow-quick',
+    title: 'Quick answers shown at once',
+    about: 'Of the messages you answered within 30 minutes, the share the loudness put at "show" or louder, against the share the tiers made an alert or a Conversation; and how often the two agree on a band.',
+    metrics: [
+      { key: 'shadow.quick_show', label: 'Loudness', kind: 'share', better: true },
+      { key: 'shadow.quick_show_live', label: 'Tiers', kind: 'share', better: true },
+      { key: 'shadow.agree', label: 'Same band as the tiers', kind: 'share', better: null },
+    ],
+  },
   // The cost side (docs/scorecard.md, "The cost side"): what notifications took, and the people waiting on you.
   {
     id: 'attn-sounds',

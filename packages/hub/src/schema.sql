@@ -452,7 +452,9 @@ CREATE TABLE IF NOT EXISTS triage (
   was         TEXT,                          -- the level it was decided at before the tiers, when it was
   alert_mark  INTEGER,                       -- your mark: 1 it should have alerted, 0 the alert was wrong
   less_mark   INTEGER,                       -- your mark: 1 less like this
-  marked_at   INTEGER
+  marked_at   INTEGER,
+  loud        REAL,                          -- its loudness on the one scale, 0 to 100 (loudness.ts), deciding or in shadow
+  loud_view   TEXT                           -- JSON { band, live, parts, reasons, why, moment }: what the loudness was worked out from
 );
 CREATE INDEX IF NOT EXISTS triage_created ON triage(created_at);
 -- The inbox's picks by tier, best first (store.ts inboxQueries).
@@ -1147,3 +1149,57 @@ CREATE TABLE IF NOT EXISTS event_seen (
   PRIMARY KEY (identity_id, network, event_id)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS event_seen_event ON event_seen(network, event_id);
+
+-- Your answers about messages on the one loudness scale (loudlearn.ts, docs/notifications.md "What it learns from"): a
+-- check-in, Louder / Quieter, a notification's Worth it / Could have waited, and the optional why. Ids, codes and
+-- times only: free text is read by the local model and never kept.
+CREATE TABLE IF NOT EXISTS attn_answer (
+  id              TEXT PRIMARY KEY,
+  message_id      TEXT,
+  conversation_id TEXT,
+  author          TEXT,                      -- the person (else identity) who wrote it
+  answer          TEXT NOT NULL,             -- P.AttnAnswer
+  source          TEXT NOT NULL,             -- P.AttnSource
+  scope           TEXT,                      -- Louder / Quieter: 'person' | 'chat'; null: this kind of message
+  checkin_id      TEXT,
+  band            TEXT,                      -- the loudness band it had (shadow or live)
+  sounded         INTEGER NOT NULL DEFAULT 0, -- it sounded, as it was actually sent
+  why_asked       INTEGER NOT NULL DEFAULT 0, -- the app was told to ask why
+  reason          TEXT,                      -- P.WhyReason
+  wait            TEXT,                      -- P.WhyWait
+  texted          INTEGER NOT NULL DEFAULT 0, -- the reason came from your words (via the local model)
+  until           INTEGER,                   -- the change ends then
+  at              INTEGER NOT NULL,
+  why_at          INTEGER
+);
+CREATE INDEX IF NOT EXISTS attn_answer_at ON attn_answer(at);
+CREATE INDEX IF NOT EXISTS attn_answer_conv ON attn_answer(conversation_id, at);
+
+-- Check-in questions (checkin.ts): at most three a day, inside the app only, half picked at random (with the chance
+-- each had, for the scorecard's weighting) and half where the model is least sure.
+CREATE TABLE IF NOT EXISTS checkin (
+  id          TEXT PRIMARY KEY,
+  side        TEXT NOT NULL CHECK (side IN ('sounded', 'quiet', 'foryou')),
+  message_id  TEXT NOT NULL,
+  item_id     TEXT,                          -- For you: the served item
+  arm         TEXT NOT NULL CHECK (arm IN ('random', 'unsure')),
+  propensity  REAL NOT NULL,                 -- the chance this one was picked, given its side and day
+  pool        INTEGER NOT NULL,              -- how many it was picked from
+  live_band   TEXT,                          -- how it was actually sent, as a band
+  shadow_band TEXT,                          -- the loudness band beside it
+  created_at  INTEGER NOT NULL,
+  answer      TEXT,                          -- worth | could_wait | shouldnt | sooner | fine | glad | not
+  answered_at INTEGER,
+  skipped     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS checkin_created ON checkin(created_at);
+CREATE INDEX IF NOT EXISTS checkin_message ON checkin(message_id);
+
+-- Held for the next look (loudlearn.ts, DITHER_ATTENTION=on): one bundle when you next open the app, unlock the phone
+-- (Android app) or at the times you set.
+CREATE TABLE IF NOT EXISTS next_look (
+  message_id      TEXT PRIMARY KEY REFERENCES message(id) ON DELETE CASCADE,
+  conversation_id TEXT NOT NULL,
+  held_at         INTEGER NOT NULL,
+  quiet           INTEGER NOT NULL DEFAULT 0  -- held by quiet hours: it would have sounded
+);
