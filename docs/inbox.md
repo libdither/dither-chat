@@ -325,7 +325,15 @@ the list: [notifications.md](notifications.md)) counts too (`Attention.input`):
   the order learned. Its reason starts "Alerted you:". The pin lasts a day at most (`PIN_FOR`): what could not wait
   an hour is, a day later, an unread message like any other.
 - **Its importance**, 0 to 1, adds 25 times itself, whatever its tier. For a message on the list that is the row's
-  reason: "On your list: importance 72%".
+  reason: "On your list: importance 72%". With the loudness scale on (`DITHER_ATTENTION=on`,
+  [notifications.md](notifications.md#one-scale-loudness)) the importance is its loudness over 100 instead: how loud
+  it is now, with a person owed a reply already in it. The learned order and its exploring stay as they are.
+
+**The loudness edge.** A row whose latest message the page holds with a loudness of 30 or more (next look and above)
+has a thin bar on its left while it is unread, stronger the louder it was (`loudness.ts` `loudByConv`, `loudEdge`).
+
+**Check-ins.** A question about a notification, when there is one to ask, sits at the top of the list, above
+requests ([notifications.md](notifications.md#check-ins)).
 
 **Seen.** All three last until you read the conversation, or swipe its notification away on the phone: the app
 reports the swipe as `dismissed` ([activity.md](activity.md)), a dismissal at or after that message is read as

@@ -1277,7 +1277,11 @@ export class HubServer {
       // How well "needs a reply" chances matched what you did (needsreply.ts): by day, and in bins.
       if (path === '/api/attention/needs-reply' && method === 'GET') return ok(a.needsCalibration(Date.now(), Math.min(365, Math.max(1, num('days') ?? 60))));
       // The weekly report of what attention cost (attnreport.ts, docs/scorecard.md "The weekly report").
-      if (path === '/api/attention/report' && method === 'GET') return ok(attentionReport(this.store.db, { owed: () => a.list(), self: () => selfIds(this.store.db) }));
+      if (path === '/api/attention/report' && method === 'GET') {
+        const r = attentionReport(this.store.db, { owed: () => a.list(), self: () => selfIds(this.store.db) });
+        // Settings → "People you're drifting from" off: the report names no one.
+        return ok(this.opts.loud && !this.opts.loud.prefs().drifting ? { ...r, drifting: null } : r);
+      }
       if ((m = path.match(/^\/api\/attention\/([\w-]+)$/)) && method === 'GET') {
         const x = a.explain(m[1]);
         return x ? ok(x) : bad('not in the inbox', 404);
