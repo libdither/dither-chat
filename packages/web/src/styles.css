@@ -11570,7 +11570,16 @@ html[data-theme='light'] .acc-dot {
   color: inherit;
   cursor: pointer;
 }
-.pf-avatar-edit:focus-visible {
+/* Anyone else's picture opens full screen in the image viewer, to zoom. */
+.pf-avatar-view {
+  display: block;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  cursor: zoom-in;
+}
+.pf-avatar-edit:focus-visible,
+.pf-avatar-view:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }

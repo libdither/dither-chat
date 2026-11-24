@@ -11,6 +11,12 @@ import type { PresenceOf } from './PresenceDot.tsx';
 import { openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
 import { HeadOrb } from './Offline.tsx';
+import { viewer } from '../viewer.ts';
+
+/** The picture, filling the screen in the image viewer (ui/Viewer.tsx), where it can be zoomed further. */
+export function viewPicture(url: string, name: string) {
+  viewer.value = { images: [{ url, name, fill: true }], index: 0 };
+}
 
 export function ProfilePage({ title, onBack, children, label }: { title: string; onBack: () => void; children: ComponentChildren; label: string }) {
   return (
@@ -64,7 +70,10 @@ export function Hero({
   tags?: ComponentChildren;
   status?: ComponentChildren;
   actions?: ComponentChildren;
-  /** Where you may change the picture: it is a button, with a camera on it, that opens what you can do. */
+  /**
+   * Where you may change the picture: it is a button, with a camera on it, that opens what you can do (View Picture
+   * among it). Elsewhere a picture is a button that opens it full screen.
+   */
   onPicture?: (e: MouseEvent) => void;
   /** Whose status dot the picture shows (PresenceDot.tsx). */
   presence?: PresenceOf;
@@ -84,6 +93,10 @@ export function Hero({
             <span class="pf-avatar-badge" aria-hidden="true">
               <Icon name="camera" size={13} />
             </span>
+          </button>
+        ) : picture ? (
+          <button class={`pf-avatar pf-avatar-view ${square ? 'square' : ''}`} data-track="profile: view picture" onClick={() => viewPicture(picture, name)} aria-label="View the picture" title="View the picture">
+            {pic}
           </button>
         ) : (
           <span class={`pf-avatar ${square ? 'square' : ''}`}>{pic}</span>

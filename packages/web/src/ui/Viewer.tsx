@@ -228,7 +228,7 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
     const H = innerHeight;
     const nw = el?.naturalWidth || img.width || W;
     const nh = el?.naturalHeight || img.height || H;
-    const k = Math.min(W / nw, H / nh, 1);
+    const k = Math.min(W / nw, H / nh, img.fill ? Infinity : 1);
     return { w: nw * k, h: nh * k, W, H, nw };
   };
   /** As far as it zooms: MAX, or to twice the picture's own pixels where that is further. */
