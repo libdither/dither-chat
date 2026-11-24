@@ -106,7 +106,8 @@ export function OwnProfileFields({ identity, about, onSaved }: { identity: P.Ide
   const banner = () => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = 'image/png,image/jpeg,image/gif,image/webp';
+    // A JPEG XL goes to the network as a JPEG or PNG (hub uploads.ts common).
+    input.accept = 'image/png,image/jpeg,image/gif,image/webp,image/jxl';
     input.onchange = async () => {
       const f = input.files?.[0];
       if (!f) return;

@@ -51,8 +51,9 @@ export interface PictureTarget {
 /** What the editor opens on: a file, a picture by its path, or nothing yet (it asks for one). */
 export type PictureStart = { file?: Blob; url?: string };
 
-const TYPES = 'image/png,image/jpeg,image/gif,image/webp';
-const isPicture = (f: Blob) => /^image\/(png|jpeg|gif|webp)$/.test(f.type);
+// JPEG XL where the browser shows it: the picture is drawn again as a PNG or JPEG either way.
+const TYPES = 'image/png,image/jpeg,image/gif,image/webp,image/jxl';
+const isPicture = (f: Blob) => /^image\/(png|jpeg|gif|webp|jxl)$/.test(f.type);
 const netName = (n: P.Network) => NETWORK_META[n].name;
 const names = (ds: PictureDest[]) => {
   const l = ds.map((d) => d.label);
@@ -296,7 +297,7 @@ export function PictureEditor({ target, start, onClose }: { target: PictureTarge
     setBusy('loading');
     try {
       const b = await blob;
-      if (!isPicture(b)) throw new Error('A picture is a PNG, JPEG, GIF or WebP image.');
+      if (!isPicture(b)) throw new Error('A picture is a PNG, JPEG, GIF, WebP or JPEG XL image.');
       const p = await load(b);
       setPic((old) => (old && URL.revokeObjectURL(old.src), p));
       setAt(centred(p, frame));

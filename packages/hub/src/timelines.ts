@@ -31,7 +31,7 @@ interface TimelinesDeps {
   online: (accountId: string) => boolean;
   command: <T>(accountId: string, cmd: { t: 'home'; feed: P.HomeFeed; cursor?: string; count?: number } | { t: 'profile'; who: string }, timeoutMs?: number) => Promise<T>;
   /** Upload ids to files (uploads.ts), null when one is gone. */
-  files?: (ids: string[]) => P.OutgoingAttachment[] | null;
+  files?: (ids: string[]) => P.OutgoingAttachment[] | null | Promise<P.OutgoingAttachment[] | null>;
   changed?: () => void;
 }
 
@@ -598,7 +598,7 @@ export class Timelines {
     }
     if (r.replies !== undefined && !REPLY_GATES.includes(r.replies)) throw new PostsError('replies: everyone, following, mentioned or verified', 400);
     const ids = Array.isArray(r.media) ? r.media.filter((x): x is string => typeof x === 'string') : [];
-    const media = ids.length ? this.d.files?.(ids) : [];
+    const media = ids.length ? await this.d.files?.(ids) : [];
     if (ids.length && !media) throw new PostsError('A picture is gone from the hub: add it again.', 410);
     const key = r.key!;
     const results = await Promise.all(

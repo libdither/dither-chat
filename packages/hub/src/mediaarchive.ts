@@ -139,7 +139,7 @@ export class MediaArchiver {
   /** True when it fetched the file just now. */
   private async keep(url: string, account: string | null): Promise<boolean> {
     const key = new Bun.CryptoHasher('sha256').update(url).digest('hex');
-    if (existsSync(join(this.cacheDir, key))) return false;
+    if (existsSync(join(this.cacheDir, key)) || existsSync(join(this.cacheDir, key + '.jxl'))) return false;
     const fail = this.store.db.query('SELECT tries FROM media_archive_fail WHERE key = ?').get(key) as Row | null;
     if (fail) return false; // retry() takes these
     let ok = false;
