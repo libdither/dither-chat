@@ -40,7 +40,7 @@ export function attentionMode(v: string | undefined): P.AttentionMode {
 }
 
 /** How long each band keeps you from a message, roughly: the next look is when you next open the app or unlock. */
-export const DELAY: Record<Band, number> = { sound: 3 * MIN, show: 45 * MIN, next: 3 * HOUR, inbox: 8 * HOUR, unread: 24 * HOUR };
+export const DELAY: Record<Band, number> = { sound: 3 * MIN, show: 20 * MIN, next: 3 * HOUR, inbox: 8 * HOUR, unread: 24 * HOUR };
 /**
  * What each band costs you before the moment is counted, against what a message is worth (want 1 is "surely glad").
  * The inbox's is what a message that keeps for days at your list level (0.6) gains by being ranked: so the inbox band
@@ -53,10 +53,16 @@ export const HALF_LIFE = [10 * MIN, HOUR, 6 * HOUR, 7 * DAY] as const;
 export const CUTS = [-1.5, 0, 2] as const;
 /** The alert chance of a message the local model was not asked about (learn.ts UNJUDGED). */
 const UNJUDGED = 0.02;
+/**
+ * A Conversation message it did not answer for in time: not known to keep for days, so it starts near the share of
+ * Conversation messages the local model says cannot wait.
+ */
+const UNREAD_CONVERSATION = 0.1;
+const startAlert = (alert: number | undefined, why: readonly string[]) => alert ?? (why.length ? UNREAD_CONVERSATION : UNJUDGED);
 
 /** The Conversation reasons' starting weights on want and on urgency, in log-odds. */
 export const WANT_START: Record<Why, number> = { dm: 1.2, followed: 0.8, about: 1.2, keyword: 0.8, wrote: 0.6, answers: 0.6 };
-export const WAIT_START: Record<Why, number> = { dm: 0.6, followed: 0, about: 0.6, keyword: 0.3, wrote: 0.3, answers: 0 };
+export const WAIT_START: Record<Why, number> = { dm: 1.2, followed: 0.5, about: 1.2, keyword: 0.8, wrote: 1, answers: 0.8 };
 /** You wrote there in the half hour before: a talk in progress goes stale in minutes. */
 const ACTIVE_WAIT = 2;
 /** How firmly a reason's weight is held at its start: a few answers move it. */
@@ -204,7 +210,7 @@ export function loudness(i: LoudInput, m: AttnModel, readily: P.AttentionPrefs['
   const sum = (w: Record<string, number>, only?: (k: string) => boolean) => fs.reduce((s, [k, x]) => s + (only && !only(k) ? 0 : (w[k] ?? 0) * x), 0);
   const wantStart = i.why.reduce((s, w) => s + WANT_START[w], 0);
   const waitStart = i.why.reduce((s, w) => s + WAIT_START[w], 0) + (i.facts.active ? ACTIVE_WAIT : 0);
-  const alert = i.alert ?? UNJUDGED;
+  const alert = startAlert(i.alert, i.why);
   const author = i.facts.author ? `author:${i.facts.author}` : null;
   const owedMult = author ? 2 * sigmoid(m.owed[author] ?? 0) : 1;
   const keys = momentKeys(i.moment);
@@ -216,7 +222,8 @@ export function loudness(i: LoudInput, m: AttnModel, readily: P.AttentionPrefs['
     urgZ: logit(alert) + waitStart + sum(m.wait),
     owed: Math.min(1, owedStart(i) * owedMult),
     soundLog: keys.reduce((s, k) => s + mom(k), 0) + nudge,
-    showLog: deskLog + nudge / 2,
+    // A silent row costs the same at a desk: the computer coming first is about sounds.
+    showLog: nudge / 2,
     quiet: i.moment.quiet,
     ...(i.rule ? { rule: i.rule } : {}),
   };
@@ -236,7 +243,7 @@ export function loudness(i: LoudInput, m: AttnModel, readily: P.AttentionPrefs['
   const add = (text: string, n: number, key?: string) => {
     if (Math.abs(n) >= 1) reasons.push({ text, by: n, ...(key ? { key } : {}) });
   };
-  if (i.alert !== undefined) add(alert >= 0.5 ? "Can't wait an hour (local model: yes)" : 'Can wait an hour or more (local model)', by({ urgZ: r.urgZ - logit(alert) + logit(UNJUDGED) }));
+  if (i.alert !== undefined) add(alert >= 0.5 ? "Can't wait an hour (local model: yes)" : 'Can wait an hour or more (local model)', by({ urgZ: r.urgZ - logit(alert) + logit(startAlert(undefined, i.why)) }));
   if (i.facts.active) add('You were talking there just now', by({ urgZ: r.urgZ - ACTIVE_WAIT }));
   for (const w of i.why) add(CONVERSING_REASON[w], by({ wantZ: r.wantZ - WANT_START[w], urgZ: r.urgZ - WAIT_START[w] }), `why:${w}`);
   const learned = fs
@@ -253,7 +260,7 @@ export function loudness(i: LoudInput, m: AttnModel, readily: P.AttentionPrefs['
     add(`${what}: ${e.head === 'want' ? (e.z > 0 ? 'you said it matters' : 'you said it does not matter') : e.z > 0 ? 'you said it could not wait' : 'you said it could wait'}`, n, e.k);
   }
   if (r.owed > 0.05) add(`${namer && i.facts.author ? namer.person(i.facts.author) : 'They'} may be waiting on your reply`, by({ owed: 0 }), author ?? undefined);
-  if (i.moment.desk) add('A computer is in use', by({ soundLog: r.soundLog - deskLog, showLog: r.showLog - deskLog }));
+  if (i.moment.desk) add('A computer is in use', by({ soundLog: r.soundLog - deskLog }));
   if (keys.includes('burst5') || keys.includes('burst30')) add('A sound only minutes ago', by({ soundLog: r.soundLog - mom(keys.includes('burst5') ? 'burst5' : 'burst30') }));
   const hk = hourKey(i.moment.hour);
   if (Math.abs(mom(hk)) >= 0.1) add(hk === 'hour:night' ? 'Late at night' : `At this time of day`, by({ soundLog: r.soundLog - mom(hk) }));
@@ -322,7 +329,7 @@ export function trainAttn(examples: readonly AttnExample[], rejected: ReadonlySe
     const waitFs = all.filter(([k]) => !rejected.has(`wait|${k}`));
     if (e.want !== undefined && wantFs.length) rowsWant.push({ fs: wantFs, z0: logit(e.importance) + why.reduce((s, w) => s + (WANT_START[w] ?? 0), 0), y: e.want, c: e.weight });
     if (e.wait && waitFs.length) {
-      const z0 = logit(e.alert ?? UNJUDGED) + why.reduce((s, w) => s + (WAIT_START[w] ?? 0), 0) + (e.facts.active ? ACTIVE_WAIT : 0);
+      const z0 = logit(startAlert(e.alert, e.why)) + why.reduce((s, w) => s + (WAIT_START[w] ?? 0), 0) + (e.facts.active ? ACTIVE_WAIT : 0);
       e.wait.forEach((y, c) => y !== undefined && rowsWait.push({ fs: waitFs, z0: z0 + CUTS[c], y, c: e.weight }));
     }
     const a = e.facts.author ? `author:${e.facts.author}` : null;

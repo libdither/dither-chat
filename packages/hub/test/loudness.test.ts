@@ -49,8 +49,11 @@ describe('the scale', () => {
   test('a busy channel you do not take part in stays out of the way; one that keeps for days is not shown now', () => {
     const channel = loudness(input({ facts: facts({ shape: 'channel', author: 'p9', known: false }), importance: 0.2, alert: undefined, why: [] }), m);
     expect(['unread', 'inbox']).toContain(channel.band);
-    const keeps = loudness(input({ alert: 0.01 }), m);
+    // A group you are not talking in, that the network notifies: wanted, keeps for days, so it waits.
+    const keeps = loudness(input({ facts: facts({ shape: 'group' }), alert: undefined, why: [] }), m);
     expect(['next', 'inbox']).toContain(keeps.band);
+    // A friend's "ok" in a DM shows now, silently, as a Conversation did.
+    expect(loudness(input({ alert: 0.01 }), m).band).toBe('show');
   });
 
   test('a second sound within minutes costs more than the first', () => {
