@@ -192,6 +192,29 @@ describe('suggestions on a hub', () => {
     m.stop();
   });
 
+  test('a pair merged elsewhere (a profile, the details panel) is gone from the list at once, before the next run', async () => {
+    const m = new SameMatches({ store, file: null, jevUrl: null });
+    await m.refresh();
+    const key = pairKey(did('dee'), sid('uuid-dee'));
+    expect(m.view().suggestions.some((s) => s.key === key)).toBe(true);
+    // As the profile's merge box does: a person for each, then one merged into the other, with no run after.
+    const into = store.ensurePerson(did('dee'));
+    store.mergePersons(into, store.ensurePerson(sid('uuid-dee')));
+    const v = m.view();
+    expect(v.suggestions.some((s) => s.key === key)).toBe(false);
+    expect(v.faint?.some((s) => s.key === key)).toBe(false);
+    expect(v.groups.some((g) => g.sides.includes(did('dee')) || g.sides.includes(sid('uuid-dee')))).toBe(false);
+    // Split apart again, the next run offers them again (as the persons each now has).
+    store.splitIdentity(sid('uuid-dee'));
+    await m.refresh();
+    const has = (x: P.MatchSide, id: string) => x.identities.some((i) => i.id === id);
+    expect(m.view().suggestions.some((s) => (has(s.a, did('dee')) && has(s.b, sid('uuid-dee'))) || (has(s.b, did('dee')) && has(s.a, sid('uuid-dee'))))).toBe(true);
+    m.stop();
+    // Left as they were, accounts no person holds, for the tests after.
+    store.db.run(`UPDATE identity SET person_id = NULL WHERE id IN ('${did('dee')}', '${sid('uuid-dee')}')`);
+    store.db.run(`DELETE FROM person WHERE NOT EXISTS (SELECT 1 FROM identity i WHERE i.person_id = person.id) AND is_self = 0`);
+  });
+
   test('picture hashes are taken only as 16 hex digits, and a picture hashed is not asked for again', async () => {
     const m = new SameMatches({ store, file: null, jevUrl: null });
     store.db.query("UPDATE identity SET avatar_url = 'https://cdn.example/dee.png' WHERE id = ?").run(did('dee'));

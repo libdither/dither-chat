@@ -80,7 +80,9 @@ read, and asked again only when that changes. Nothing goes to a hosted service. 
 
 A run reads the database on a connection of its own in a worker, so the hub's thread never waits; it writes nothing.
 It runs when the list is first asked for, when it is older than 15 minutes, a few seconds after a merge or a decision
-(several clicks make one run), and from the page's refresh button. On a copy of a large hub it takes about a second.
+(several clicks make one run; a merge or split from a profile or the details panel counts too), and from the page's
+refresh button. On a copy of a large hub it takes about a second. Until the next run, the list it hands out leaves out
+any pair that has become one person since, or whose side was merged away.
 
 **Pictures.** The hub decodes no images, so the page hashes them: `GET /api/matches/pictures` hands it pictures to
 hash (the sides of pairs first, then people you have direct chats or groups with, then up to 300 people seen at

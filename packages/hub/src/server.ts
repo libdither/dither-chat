@@ -2272,6 +2272,7 @@ export class HubServer {
       const b = await body<{ into: string; from: string }>();
       s.mergePersons(b.into, b.from);
       this.flush();
+      this.matches.changed();
       return ok();
     }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)$/)) && method === 'PATCH') {
@@ -2308,6 +2309,7 @@ export class HubServer {
     if ((m = path.match(/^\/api\/identities\/([\w-]+)\/split$/)) && method === 'POST') {
       const personId = s.splitIdentity(m[1]);
       this.flush();
+      this.matches.changed();
       return ok({ personId });
     }
     if (path === '/api/folders' && method === 'PUT') {
