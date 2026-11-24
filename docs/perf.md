@@ -1076,7 +1076,7 @@ settings and what is where, the changes that move `metaRev`. They hold conversat
 replaces its conversation's object), and what reads the objects (unread counts, activity) is still worked out on
 `dataVersion`, from the ids. A notification level that depends on a native mute with an end is kept no later than
 that end (`metaMemo`'s `until`). Two kinds of change moved `metaRev` without changing what is where, and now say so
-(`changed('shown')`): people's names and pictures arriving with a page of messages, and what a message's reaction row
+(`changed('shown')`; the first is `changed('identity')` now, [below](#who-wrote-the-inbox-and-a-sync-that-changed-nothing-2026-11-24)): people's names and pictures arriving with a page of messages, and what a message's reaction row
 offers once a conversation's reaction context is known, both of which came with every first open; and a person, or an
 account already here, changing (the walk came back once in a trace of Mail's first open, after a meta change this
 did not name; these two are the likely ones, not checked). A folder opened or closed, here or from another device, moves
@@ -1085,6 +1085,32 @@ the rail, which reads `rev`, draws it.
 
 `test/model-memo.test.ts` holds it: a read changes the counts and the order at once, with the same walk; the walk is
 done again on a meta change; a level holds until a rule changes or a mute runs out.
+
+### Who wrote, the inbox, and a sync that changed nothing (2026-11-24)
+
+A cold load at 4× still worked out the rail, its counts and the badge four to six times after the bootstrap: every
+change moved `dataVersion`, and four kinds of change that none of them read came in the first seconds. The inbox's
+answer (`/api/inbox`) and the week's mail decisions; the 60 or so people who wrote what the inbox lists, each a
+`changed('shown')`; the hub's list of devices, sent at every start and taken as a meta change, which walked every
+server again; and, on a relaunch, the sync after the snapshot, which said `changed('meta')` whatever it brought.
+
+Now they say what they are. `changed('identity')` (identities from a page, the inbox, a sync, a call, a change log)
+moves `metaRev` for the names, `changed('inbox')` (the inbox's messages and the mail decisions) and
+`changed('devices')` move `rev`; none of them moves `placesDataVersion` (versions.ts), which the memos of places,
+counts, order, people's directs and the inbox's rows are keyed on (model.ts `placesMemo`). How it sorts' board reads
+the inbox and stays on `dataVersion`. A sync moves only what its own fields changed: `meta` for your person or the
+category provider, `shown` for the reaction usage, `list` for dither-accounts' view, `identity` for its identities;
+its events are classified as the socket's are.
+
+Counted in an instrumented build on the full-size world (each memo's runs, one cold load and one relaunch at 4×):
+the cold load works out the badge's total, the rail's entries and the inbox's rows once, not four to six times, and
+walks each server once, not twice (activity 172 runs, not 1,032; levels 1,166, not 2,330); the relaunch once, not two
+to three times. In a CPU profile, six cold loads and relaunches of each, interleaved, medians at 4×: the rail, the
+badge and the inbox list 415 → 284 ms of a cold load, the page's script in all 1,606 → 1,340 ms; a relaunch's script
+976 → 892 ms. Times to the list did not move beyond the noise of a loaded machine: the work saved came after it.
+
+What is still worked out again for every message or read (`changed('list')`): each server's activity and count, the
+badge's total and the rail's order, all from the conversations' objects, though one conversation changed.
 
 ## One setting at a time (2026-11-20)
 
