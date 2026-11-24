@@ -170,8 +170,9 @@ async function main() {
   const put = (k: string, v: number, kind: Kind) => (metrics[k] = { v: Math.round(v), kind });
   // ------------------------------------------------------------------ the hub's side, once the world has settled
   const hubSide = async () => {
-    put('hub.bootstrap.bytes', (await (await fetch(`${base}/api/bootstrap`)).arrayBuffer()).byteLength, 'bytes');
-    put('hub.bootstrap.ms', await timed('/api/bootstrap'), 'ms');
+    // As the app asks for it (state.ts BOOTSTRAP_PATH).
+    put('hub.bootstrap.bytes', (await (await fetch(`${base}/api/bootstrap?edges=spaces`)).arrayBuffer()).byteLength, 'bytes');
+    put('hub.bootstrap.ms', await timed('/api/bootstrap?edges=spaces'), 'ms');
     put('hub.inbox.ms', await timed('/api/inbox'), 'ms');
   };
   if (!WARMUP) await hubSide();

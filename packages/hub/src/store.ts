@@ -4106,7 +4106,12 @@ export class Store {
     }));
   }
 
-  bootstrap(): P.Bootstrap {
+  /**
+   * `edgesInConversations` (what the web app asks for, `?edges=spaces`): `edges` holds only edges between spaces, and
+   * `conversationEdges` the positions of each conversation's edges to its spaceIds, so no conversation's id is sent
+   * again for each place it is in (a tenth of the bootstrap's bytes at full size).
+   */
+  bootstrap(opts: { edgesInConversations?: boolean } = {}): P.Bootstrap {
     const db = this.db;
     const convRows = db.query('SELECT * FROM conversation').all() as Row[];
     const edges = (db.query('SELECT * FROM space_edge').all() as Row[]).map(edgeView);
@@ -4143,12 +4148,15 @@ export class Store {
 
     const links = pendingLinks(db);
     const threads = this.threadPartsOf(convRows);
+    const conversationEdges: (string | null)[][] = [];
     const conversations = convRows.map((r) => {
       const ps = (P_.get(r.id) ?? []).map((p) => p.identity_id);
       const peer = r.shape === 'direct' ? (personOf.get(ps.find((p) => !this.isSelf(p)) ?? '') ?? null) : null;
+      const es = E.get(r.id) ?? [];
+      conversationEdges.push(es.map((e) => e.position));
       return this.assembleConversation(
         r,
-        (E.get(r.id) ?? []).map((e) => e.parentId),
+        es.map((e) => e.parentId),
         ps,
         V.get(r.id) ?? [],
         r.last_message_id ? (lasts.get(r.last_message_id) ?? null) : null,
@@ -4174,7 +4182,7 @@ export class Store {
       persons,
       identities,
       spaces,
-      edges,
+      ...(opts.edgesInConversations ? { edges: edges.filter((e) => e.childKind === 'space'), conversationEdges } : { edges }),
       conversations,
       folders: this.folders(),
       placePrefs: this.placePrefs(),

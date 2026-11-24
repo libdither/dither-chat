@@ -1378,6 +1378,13 @@ of conversations (which repeat each conversation's `spaceIds`, with a position) 
 12 KB. Leaving out every null, false and empty field of conversations saves only 7 KB on the wire (1.3 MB of the
 4.4 MB before compression), identities' 2 KB, spaces' 1 KB. A higher level costs the hub's time on every bootstrap:
 level 6 gives 396 KB in 37 ms, level 9 376 KB in 42 ms.
+
+The edges of conversations are gone from the app's bootstrap since: it asks for `/api/bootstrap?edges=spaces`, whose
+`edges` hold only those between spaces, and `conversationEdges` beside `conversations` the positions of each one's
+edges, in its `spaceIds`' order (syncmodel.ts `indexEdges` makes the edges again). On the perf world at full size,
+4,035 KB against 3,567 KB before compression (−11.6%) and 383 KB against 353 KB on the wire (−7.7%); at a tenth, 432
+against 384 KB and 44.2 against 41.6 KB. Without `?edges=spaces` (an older page, dither-calendar, the scripts) the
+bootstrap is as it was.
 ## Memory (2026-11-24)
 
 `scripts/verify-memory.ts` (CI's `memory` job) looks for leaks: what the page holds growing as it is used. Against a
