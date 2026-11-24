@@ -133,7 +133,7 @@ export function SortButton({ scope, class: cls }: { scope: SortScope; class?: st
 
 // ------------------------------------------------------------------ the Organize view
 
-const Organize = lazyPane(() => import('./OrganizeServers.tsx').then((m) => m.Organize), 'Organize', null);
+const Organize = lazyPane(() => import('./OrganizeServers.tsx').then((m) => m.Organize), 'Organize', { layer: true });
 
 export function OrganizeView() {
   rev.value;

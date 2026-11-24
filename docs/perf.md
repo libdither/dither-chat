@@ -538,6 +538,28 @@ and Organize (OrganizeServers.tsx; the sort menu and the rows' slides stay in Re
 pages, and a layer opened before its chunk is here shows a moment later. `shared/startup`: 857 KB (292.5 KB gzip) to
 817 KB (279.2 KB gzip).
 
+Then the conversation itself (Timeline.tsx, with the composer, attachments, pictures and the rest only it uses: a
+chunk of 94 KB, 33 KB gzip). No first screen draws one (a phone starts on the list, a desktop on For you), but the next
+tap usually opens one, so its chunk loads at once when the hub's data is in, or at the first tap or key if that comes
+sooner (`whenTouched`), not at idle: loaded at idle, a conversation opened as the list came took twice as long, its
+first page asked for only once the chunk was here. A start straight into a conversation (a link, a notification) loads
+it as the app draws. `shared/startup`: 817 KB (279.2 KB gzip) to 718 KB (245.6 KB gzip).
+
+The three together, main against this, full size, 4×, interleaved, medians of ten (load 6 to 12; the bytes are exact,
+the times rough):
+
+| | main | after |
+|---|---|---|
+| startup set | 1,332 KB (406.7 KB gzip) | 1,000 KB (299.7 KB gzip) |
+| desktop: list painted | 3,006 ms (1,554–7,096) | 2,005 ms (1,590–6,027) |
+| desktop: script run before the list | 737 ms (542–1,245) | 657 ms (510–908) |
+| desktop: a conversation opened as the data came in | 758 ms (657–1,229) | 584 ms (432–1,240) |
+| …opened 1.5 s later | 464 ms (330–1,284) | 355 ms (351–483) |
+| phone: list painted | 2,470 ms (1,508–6,428) | 1,966 ms (1,458–6,900) |
+| phone: script run before the list | 760 ms (592–1,551) | 619 ms (539–833) |
+| phone: a conversation opened as the data came in | 644 ms (586–707) | 667 ms (607–738) |
+| …opened 1.5 s later | 466 ms (396–1,448) | 419 ms (414–525) |
+
 ### The startup set (2026-11-10)
 
 907 KB (278 KB gzip) in ten files: the entry (269 KB), `shared/Accounts` (353 KB), `shared/state` (72 KB), the
@@ -1288,8 +1310,11 @@ What these numbers point at, not done yet:
 - **A cold start asks for the bootstrap only once the socket is open**, two round trips after it began (650–660 ms
   there): `resync` runs from the socket's `onopen`. With no snapshot to resume from there is nothing to sync, and the
   bootstrap could go at once beside the socket, with frames that come meanwhile held as they are now.
-- **The startup script, 345 KB compressed**, is the longest wait of a cold start on a slow link: 2.6 s before any
-  of the app runs. Every KB off it is 5 ms there.
+- **The startup script, 245 KB compressed** since [Left out of the first load](#left-out-of-the-first-load-2026-11-24)
+  (345 KB before), is the longest wait of a cold start on a slow link. Every KB off it is 5 ms there. Of what is
+  left, the sidebar's and App's few uses keep Pairs.tsx, MailChat.tsx and Reactions.tsx whole in it (about 40 KB,
+  13 KB gzip, the rest of them used only by a conversation), and Requests.tsx's page and a profile's connections
+  (about 10 KB).
 
 - **The bootstrap is 4.4–5.4 MB**, two thirds of it conversations, and most of those channels nobody has written in.
   On the live hub's copy, leaving out null and default fields saves 25%, leaving out the 3,489 channels without
