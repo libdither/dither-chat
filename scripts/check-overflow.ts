@@ -217,9 +217,11 @@ try {
   const pages: [string, string][] = (
     [
       ["#/inbox", ".side-scroll .row"],
+      // A notifications conversation opens Activity: an event site's (docs/events.md) holds only the site's notices,
+      // drawn as slim rows (.feed-unit).
       ...[...chats.values()].map((id): [string, string] => [
         `#/c/${encodeURIComponent(id)}`,
-        ".msg, .feed-entry, .thread-post",
+        ".msg, .feed-entry, .thread-post, .feed-unit",
       ]),
       ...[...chats.values()]
         .slice(0, 3)

@@ -115,7 +115,7 @@ import { CAPTURE_ACCEPT, MEDIA_ACCEPT, opensSendScreen } from '../camera.ts';
 import { gifLinkOf, plainGifs } from '../gifs.ts';
 import { closePanel, openPanel, panelOpen, panelShown, phone, reducedMotion, touchOnly } from '../phone.ts';
 import { composerDone, composerTyped } from '../typing.ts';
-import { noteSeen } from '../activity.ts';
+import { noteNewest, noteSeen } from '../activity.ts';
 import { onMenu, openMenu, type MenuSpec } from './ContextMenu.tsx';
 import { ForwardCard, forwarding } from './Forward.tsx';
 import { InviteCards } from './InviteCard.tsx';
@@ -787,7 +787,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
   const gif = !m.deleted && !m.forward && !m.poll ? gifLinkOf(m) : null;
   return (
     <div
-      class={`msg ${grouped ? 'grouped' : target || m.quote ? '' : 'head'} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''}`}
+      class={`msg ${grouped ? 'grouped' : target || m.quote ? '' : 'head'} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''} ${m.blast ? 'blast' : ''}`}
       id={`m-${m.id}`}
       ref={(el) => void (el && swipeReply.set(el, () => onReply(m)))}
       {...menuProps}
@@ -856,6 +856,12 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
           </ForwardCard>
         ) : (
           <>
+            {/* An event host's blast to every guest (docs/events.md): an announcement, marked as one. */}
+            {m.blast && (
+              <span class="msg-blast">
+                <Icon name="announcement" size={12} /> Announcement to every guest
+              </span>
+            )}
             <RichHead m={m} />
             <StoryReplyLine m={m} />
             {m.poll ? <PollCardLazy m={m} fallback={<Body m={m} />} /> : gif ? null : <Body m={m.contacts ? withoutCardLines(m) : m} tail={ticks} />}
@@ -1159,8 +1165,12 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
     }
     return first;
   };
+  const watchKey = useRef({}).current;
+  useEffect(() => () => noteNewest(watchKey, null), []);
   const onScroll = () => {
     const el = scroller.current;
+    // Shown at the newest message (read as it comes): the hub sends the phones no push about it (activity.ts).
+    noteNewest(watchKey, el && drawn.current.to === null && !t?.detached && Math.abs(el.scrollTop) < 40 ? convIds : null);
     if (!el) return;
     // A scroll that comes with the content's height changed, while following, is the browser's anchoring and not you:
     // when a layout is forced before the ResizeObserver's turn (a measure in an effect), its scroll event comes first.

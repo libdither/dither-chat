@@ -73,8 +73,8 @@ test("LessWrong's: comments only, in Markdown, 100,000 characters, no pictures; 
   expect([LESSWRONG_RULES.words.reply, LESSWRONG_RULES.words.like]).toEqual(['Comment', 'Upvote']);
   expect(postFieldsProblem({ title: 'T' }, LESSWRONG_RULES, true, 'LessWrong')).toBe('A reply on LessWrong takes no title or place.');
   expect([timelineName('lesswrong', 'following'), timelineName('lesswrong', 'foryou')]).toEqual(['Subscribed', 'For you']);
-  // Every other network that has posts starts one here.
-  expect(Object.entries(POST_RULES).filter(([, r]) => r.replyOnly).map(([n]) => n)).toEqual(['lesswrong']);
+  // Every other network that has posts starts one here, but for the event sites, where nothing is posted.
+  expect(Object.entries(POST_RULES).filter(([, r]) => r.replyOnly).map(([n]) => n)).toEqual(['lesswrong', 'luma', 'partiful']);
 });
 
 test('a post id is opaque: Bluesky\'s `<did>~<rkey>` fits, LessWrong\'s `p-` and `c-` ones too, a slash or a space does not', () => {

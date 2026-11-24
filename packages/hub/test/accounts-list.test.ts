@@ -163,7 +163,7 @@ describe('the link to dither-accounts', () => {
 
   test('Proton Mail is a kind it asks to add; a hub that may not yet asks once', async () => {
     expect(ASKED_KINDS).toContain('proton');
-    await hub({ grants: [{ interface: 'accounts', kinds: ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x', 't3', 'zulip'] }], requests: [] });
+    await hub({ grants: [{ interface: 'accounts', kinds: ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'gmessages', 'messenger', 'instagram', 'x', 't3', 'zulip', 'luma', 'partiful'] }], requests: [] });
     expect(stub.asked).toContainEqual([expect.objectContaining({ interface: 'accounts', level: 'manage', kinds: ['proton'] })]);
   });
 

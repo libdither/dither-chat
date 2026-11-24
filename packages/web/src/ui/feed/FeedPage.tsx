@@ -16,7 +16,7 @@
  */
 import { Fragment, h, type ComponentChildren } from 'preact';
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META } from '@dither-chat/protocol';
+import { isEventNetwork, NETWORK_META } from '@dither-chat/protocol';
 // Their own paths, so the rules and the orders ride in this chunk, not the app's start.
 import { composeState, postFieldsProblem, postRulesFor, splitThread, timelineName, type PostRules } from '@dither-chat/protocol/compose';
 import { MIX_ORDERS, SHARE_WEIGHTS } from '@dither-chat/protocol/mix';
@@ -31,6 +31,7 @@ import { density, setDensity, type Density } from './look.ts';
 import { Row } from './Post.tsx';
 import { DENSITY_ICONS, flip, Seg, snap } from './Seg.tsx';
 import { dropAhead, preState, readAhead, seedPosts } from './threadcache.ts';
+import { EventCardLazy, EventViewLazy } from '../events/lazy.tsx';
 import { ThreadView } from './Thread.tsx';
 import { Unit } from './Units.tsx';
 
@@ -51,7 +52,7 @@ const normal = (s: string) => (s === 'home' ? 'following' : s);
 
 function parseSource(s: string): Src {
   if (s === 'activity' || s === 'mine' || s === 'drafts') return { kind: s };
-  const m = s.match(/^(.+):(following|foryou|mine|activity)$/);
+  const m = s.match(/^(.+):(following|foryou|explore|mine|activity)$/);
   if (m) return m[2] === 'mine' || m[2] === 'activity' ? { kind: m[2], account: m[1] } : { kind: 'line', account: m[1], feed: m[2] as P.HomeFeed };
   return { kind: 'mix', id: s, mix: mixes().find((x) => x.id === s) };
 }
@@ -77,7 +78,9 @@ const ORDER: Record<P.MixOrder, { name: string; line: string; icon: string }> = 
 const SHARE_WORDS = ['Off', 'Less', 'Even', 'More', 'Most'];
 /** A timeline's name on its account's network: X's Following and For you, Reddit's New and Best, Substack's Inbox and Notes. */
 const lineName = (account: string | undefined, feed: P.HomeFeed) => timelineName(accountOf(account)?.network ?? 'x', feed);
-const mixIcon = (id: string) => (id === 'following' ? 'users' : id === 'discover' ? 'sparkles' : 'rss');
+const mixIcon = (id: string) => (id === 'following' ? 'users' : id === 'discover' ? 'sparkles' : id === 'events' ? 'calendar' : 'rss');
+/** A source of events only (the Events feed, an event site's timeline): no composer over it (docs/events.md). */
+const eventsOnly = (s: Src) => (s.kind === 'mix' && s.id === 'events') || (s.kind === 'line' && isEventNetwork(accountOf(s.account)?.network));
 const onOf = (m: P.FeedMixView) => m.sources.filter((x) => x.share > 0);
 /** A timeline's colour in a feed's tuning and its mark on a card. */
 const hue = (i: number) => `hsl(${(i * 137 + 250) % 360} 65% 60%)`;
@@ -90,7 +93,7 @@ function titleOf(kit: Kit, s: Src): { title: string; sub: string; icon: string }
       return { title: s.mix?.name ?? 'Feed', sub: s.mix ? `${n} timeline${n === 1 ? '' : 's'} · ${ORDER[s.mix.order].name}` : '', icon: mixIcon(s.id) };
     }
     case 'line':
-      return { title: lineName(s.account, s.feed), sub: `${who} alone, in ${NETWORK_META[accountOf(s.account)?.network ?? 'x'].name}'s own order`, icon: s.feed === 'following' ? 'users' : 'sparkles' };
+      return { title: lineName(s.account, s.feed), sub: `${who} alone, in ${NETWORK_META[accountOf(s.account)?.network ?? 'x'].name}'s own order`, icon: s.feed === 'following' ? 'users' : s.feed === 'explore' ? 'calendar' : 'sparkles' };
     case 'activity':
       return { title: 'Activity', sub: who || 'Likes, replies, quotes and follows, from every account', icon: 'bell' };
     case 'mine':
@@ -224,12 +227,14 @@ export function FeedPane({ source, post, kit, onBack }: { source?: string; post?
   }, [at, !!mix]);
   const tune = !!mix && tuning.value;
   const [composing, setComposing] = useState(false);
-  const side = src ? (
+  const side = src && 'network' in src && isEventNetwork(src.network) ? (
+    <EventViewLazy key={post} network={src.network} event={src.post} kit={fk} onBack={() => (onBack && phone ? onBack() : toFeed(at))} />
+  ) : src ? (
     <ThreadView key={post} src={src} kit={fk} onBack={() => (onBack && phone ? onBack() : toFeed(at))} />
   ) : tune && !phone ? (
     <TunePanel mix={mix!} kit={kit} entries={l?.entries ?? []} onClose={() => (tuning.value = false)} />
   ) : null;
-  const composer = s.kind === 'mix' || s.kind === 'line' || s.kind === 'mine' ? (phone ? null : <FeedComposer kit={fk} fixed={s.kind === 'line' ? s.account : undefined} />) : null;
+  const composer = (s.kind === 'mix' || s.kind === 'line' || s.kind === 'mine') && !eventsOnly(s) ? (phone ? null : <FeedComposer kit={fk} fixed={s.kind === 'line' ? s.account : undefined} />) : null;
   return (
     <section class={`pane feed-page dens-${density.value} ${side ? 'with-post' : ''} ${phone ? 'is-phone' : ''}`} aria-label="Feed">
       <div class="feed-main">
@@ -241,7 +246,7 @@ export function FeedPane({ source, post, kit, onBack }: { source?: string; post?
         ) : (
           <EntriesList source={at} s={s} order={mix?.order} kit={fk} top={composer} />
         )}
-        {phone && s.kind !== 'activity' && accounts().some(startsPosts) && !(s.kind === 'line' && onlyAnswers(s.account)) && (
+        {phone && s.kind !== 'activity' && !eventsOnly(s) && accounts().some(startsPosts) && !(s.kind === 'line' && onlyAnswers(s.account)) && (
           <button class="feed-fab" aria-label="New post" onClick={() => setComposing(true)} data-composer="open">
             <kit.Icon name="pencil" size={22} />
           </button>
@@ -626,18 +631,25 @@ function EntriesList({ source, s, order, kit, top }: { source: string; s: Src; o
           </button>
         </p>
       )}
-      {l.entries.map((e) => (
-        <EntryCard
-          key={e.key}
-          e={e}
-          kit={kit}
-          via={on.length > 1 ? on : null}
-          acted={acted}
-          onActed={(id, st) => setActed((m) => new Map(m).set(id, st))}
-          answering={answering?.key === e.key ? answering.mode : null}
-          setAnswering={(mode) => setAnswering(mode ? { key: e.key, mode } : null)}
-        />
-      ))}
+      {l.entries.map((e) =>
+        e.post.event ? (
+          // An event (docs/events.md): its card, opening its page where a thread would open.
+          <div key={e.key} class="feed-entry" data-entry={e.key}>
+            <EventCardLazy e={e} kit={kit} reason={e.reason?.text} onOpen={() => kit.openPost(e.network, e.post.id)} />
+          </div>
+        ) : (
+          <EntryCard
+            key={e.key}
+            e={e}
+            kit={kit}
+            via={on.length > 1 ? on : null}
+            acted={acted}
+            onActed={(id, st) => setActed((m) => new Map(m).set(id, st))}
+            answering={answering?.key === e.key ? answering.mode : null}
+            setAnswering={(mode) => setAnswering(mode ? { key: e.key, mode } : null)}
+          />
+        ),
+      )}
       {l.reading === 'older' && <kit.Loading inline label="Older posts…" />}
       {l.loaded && !l.reading && !l.entries.length && !l.error && (
         <kit.Empty icon={empty[0]} title={empty[1]}>

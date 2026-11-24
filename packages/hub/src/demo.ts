@@ -22,6 +22,7 @@ import { DEMO_CALL_CAPS, DemoRings, demoCallRoom } from './democalls.ts';
 import { DemoStage, demoStageSeed } from './demostage.ts';
 import { DEMO_X2_ACCOUNT, DEMO_X_ACCOUNT, DemoX } from './demo-x.ts';
 import { DEMO_POST_ACCOUNTS, DemoPosts } from './demo-posts.ts';
+import { DEMO_EVENT_ACCOUNTS, DemoEvents } from './demo-events.ts';
 import { DEMO_ZULIP_ACCOUNT, DemoZulip, demoZulipOn } from './demo-zulip.ts';
 import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
@@ -3395,6 +3396,7 @@ export function demoFactory(acc: AccountRow, dir: string): InprocAdapter | null 
   if (acc.adapter !== 'demo') return null;
   if (acc.id === DEMO_X_ACCOUNT.id || acc.id === DEMO_X2_ACCOUNT.id) return new DemoX(acc, dir);
   if (DEMO_POST_ACCOUNTS.some((d) => d.id === acc.id)) return new DemoPosts(acc, dir);
+  if (DEMO_EVENT_ACCOUNTS.some((d) => d.id === acc.id)) return new DemoEvents(acc, dir);
   if (acc.id === DEMO_ZULIP_ACCOUNT.id) return new DemoZulip(acc, dir);
   const key = DEMO_ACCOUNTS.find((d) => d.id === acc.id)?.key;
   return key ? new DemoAdapter(key, acc, dir) : null;
@@ -3403,7 +3405,8 @@ export function demoFactory(acc: AccountRow, dir: string): InprocAdapter | null 
 /**
  * `x: false` leaves out the X accounts and their feed (docs/feed.md), and the Mastodon, Reddit, Lemmy, Substack, Bluesky
  * and LessWrong ones with them: scripts/perf-world.ts's world predates them. `posts: false` (or DITHER_DEMO_POSTS=0, for
- * the verify scripts written for X alone) leaves out only those six.
+ * the verify scripts written for X alone) leaves out only those six, and the Luma and Partiful accounts (demo-events.ts,
+ * docs/events.md) with them.
  */
 export function createDemoAccounts(store: Store, o: { x?: boolean; posts?: boolean } = {}): AccountRow[] {
   // A new world (a fresh hub, Reset demo, each test): names and settings changed in the last one start over.
@@ -3411,7 +3414,7 @@ export function createDemoAccounts(store: Store, o: { x?: boolean; posts?: boole
   for (const [c, f] of FIRST_CONVS) c.fact = f;
   for (const [x, f] of FIRST_SPACES) x.fact = f;
   const epoch = Date.now();
-  return [...DEMO_ACCOUNTS, ...(o.x === false ? [] : [DEMO_X_ACCOUNT, DEMO_X2_ACCOUNT]), ...(o.x === false || (o.posts ?? process.env.DITHER_DEMO_POSTS !== '0') === false ? [] : DEMO_POST_ACCOUNTS), ...(demoZulipOn() ? [DEMO_ZULIP_ACCOUNT] : [])].map((d) => store.createAccount({ id: d.id, network: d.network, label: d.label, color: d.color, adapter: 'demo', demo: true, config: { epoch } }));
+  return [...DEMO_ACCOUNTS, ...(o.x === false ? [] : [DEMO_X_ACCOUNT, DEMO_X2_ACCOUNT]), ...(o.x === false || (o.posts ?? process.env.DITHER_DEMO_POSTS !== '0') === false ? [] : [...DEMO_POST_ACCOUNTS, ...DEMO_EVENT_ACCOUNTS]), ...(demoZulipOn() ? [DEMO_ZULIP_ACCOUNT] : [])].map((d) => store.createAccount({ id: d.id, network: d.network, label: d.label, color: d.color, adapter: 'demo', demo: true, config: { epoch } }));
 }
 
 /** Hub-side organisation for the demo: merged people, folders, rules. Applied once. */

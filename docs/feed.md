@@ -115,11 +115,12 @@ conversation (`#/inbox/c/<feed>`, an old notification's) opens that account's Ac
 | --- | --- | --- |
 | Following | `#/feed/following` | a feed: every account's Following, newest first; a post two accounts follow once |
 | Discover | `#/feed/discover` | a feed: every account's For you, taking turns, each with its reason ("Alice Chen liked") |
+| Events | `#/feed/events` | a feed, there once an event site's account is: every Luma and Partiful account's Explore and Your events, taking turns, as event cards ([events.md](events.md#the-feeds)) |
 | a feed you made | `#/feed/m-<id>` | the timelines you chose, in the order you chose |
 | Activity | `#/feed/activity` | every account's notifications, by post ([The feed's page](#the-feeds-page)); a filter picks one account (`#/feed/<account>:activity`) |
 | Your posts | `#/feed/mine` | what your accounts posted, newest first; posts made in one press as one entry with "Also posted as"; a filter picks one account (`:mine`) |
 | Drafts | `#/feed/drafts` | posts kept for later and scheduled ones, with when and as whom |
-| one timeline alone | `#/feed/<account>:following`, `:foryou` | an account's own Following or For you, in its order (from Tune, a timeline's name) |
+| one timeline alone | `#/feed/<account>:following`, `:foryou`, `:explore` | an account's own Following or For you, in its order (from Tune, a timeline's name) |
 
 `#/feed/home`, Home's old route, is Following.
 
@@ -132,7 +133,8 @@ post link (Ctrl or ⌘ opens one in a new tab).
 A feed is home timelines from any of your accounts (and, later, any network) in one list. Each timeline in it has a
 **share**: Off, Less, Even, More or Most (weights 0, ½, 1, 2, 4). A post two timelines show is in it once, its card
 saying which timeline it came through ("@you · For you (+1)") when the feed takes more than one, and acting as that
-timeline's account. Following and Discover are always there; **New feed** makes another (every Following, taking
+timeline's account. Following and Discover are always there, and Events once an event site's account is (Following
+and Discover leave event sites out, docs/events.md); **New feed** makes another (every Following, taking
 turns, named "New feed" for you to change); you can change any of them, delete yours, and put Following or Discover
 back as they were.
 
@@ -327,6 +329,9 @@ and the feeds:
 | Substack | Inbox | Notes |
 | Bluesky | Following | Discover |
 | LessWrong | Subscribed (posts by the people whose new posts you subscribe to, the last 90 days) | For you (the front page's own feed: posts, quick takes and comment threads) |
+
+The event sites (Luma, Partiful) bring **Explore** (`explore`, their city's events) and **Your events** (`following`)
+instead, and no For you (`homeFeedsOf`; [events.md](events.md#the-feeds)).
 
 Deep comment trees come as `PostThread.replies` chains, as every network's do; a branch deeper than the page draws
 ends in "Continue this thread", which opens that comment as a thread of its own, read by its id.

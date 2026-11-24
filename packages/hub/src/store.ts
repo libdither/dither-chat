@@ -24,7 +24,7 @@ import { ingestServers } from './servers.ts';
 import { ingestApps } from './apps.ts';
 import { ingestThreadFacts, threadParts, type ThreadParts } from './threads.ts';
 import { type DueReminder, ingestSaved, savedTables } from './saved.ts';
-import { feedItemOf, feedView, postView } from './feed.ts';
+import { feedItemOf, feedView, postView, scrubEventGuests } from './feed.ts';
 import { keepAbout } from './people.ts';
 import { alertBar, type Facts } from './learn.ts';
 import { attachmentExtra, attachmentRich, embedViews, richView, type StoredExtra } from './rich.ts';
@@ -1529,7 +1529,7 @@ export class Store {
         f.mentionsSelf ? 1 : 0,
         f.mentionsSelf && f.mentionsAll ? 1 : 0,
         f.mentionsSelf && !f.mentionsAll && f.mentionsGroup ? 1 : 0,
-        f.extra || f.forward || f.silent ? JSON.stringify({ ...f.extra, ...(f.forward ? { forward: f.forward } : {}), ...(f.silent ? { silent: true } : {}) }) : null,
+        f.extra || f.forward || f.silent ? JSON.stringify({ ...scrubEventGuests(f.extra), ...(f.forward ? { forward: f.forward } : {}), ...(f.silent ? { silent: true } : {}) }) : null,
       );
     // A message that moved (a Zulip topic renamed or moved): it leaves the conversation it was in, which falls back to
     // its own newest message.

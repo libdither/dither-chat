@@ -31,6 +31,9 @@ export const NETWORK_FEATURES: Record<Network, AccountFeature[]> = {
   x: ['chat', 'feed'],
   t3: ['chat'],
   zulip: ['chat'],
+  // Event sites: their chats and event conversations, and the Feed page's events (docs/events.md).
+  luma: ['chat', 'feed'],
+  partiful: ['chat', 'feed'],
   email: ['mail'],
   calendar: ['chat', 'calendar'],
   // Posts only, on the Feed page (docs/feed.md): no chats.

@@ -52,6 +52,9 @@ export function externalProfile(i: P.IdentityView): string | null {
   if (i.network === 'discord') return /^\d+$/.test(i.nativeId) ? `https://discord.com/users/${i.nativeId}` : null;
   if (i.network === 'matrix') return `https://matrix.to/#/${encodeURIComponent(i.nativeId)}`;
   if (i.network === 'whatsapp') return /^\+\d{6,}$/.test(i.handle ?? '') ? `https://wa.me/${i.handle!.slice(1)}` : null;
+  // Event sites (docs/events.md): Luma's user page by handle or id, Partiful's by id.
+  if (i.network === 'luma') return `https://luma.com/user/${encodeURIComponent(i.handle || i.nativeId)}`;
+  if (i.network === 'partiful') return `https://partiful.com/u/${encodeURIComponent(i.nativeId)}`;
   if (i.network === 'zulip') {
     const m = i.nativeId.match(/^([^/]+)\/u\/(\d+)$/);
     return m ? `${zulipBase(m[1]!)}/#user/${m[2]}` : null;
@@ -1339,5 +1342,7 @@ export function deepLink(c: P.ConversationView): string | null {
   }
   if (c.network === 'matrix') return `https://matrix.to/#/${encodeURIComponent(base.nativeId.split('|')[0])}`;
   if (c.network === 'zulip') return zulipLink(c);
+  // A Partiful event's conversation is on its event's page (Luma's address is a slug the id does not give).
+  if (c.network === 'partiful' && c.nativeId.startsWith('event:')) return `https://partiful.com/e/${encodeURIComponent(c.nativeId.slice(6))}`;
   return null;
 }

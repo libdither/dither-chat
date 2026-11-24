@@ -19,7 +19,7 @@
  */
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
-import { MATCH_FAINT, MATCH_SHOWN, NETWORK_META } from '@dither-chat/protocol';
+import { isEventNetwork, MATCH_FAINT, MATCH_SHOWN, NETWORK_META } from '@dither-chat/protocol';
 
 type Row = Record<string, any>;
 type Network = P.Network;
@@ -36,6 +36,9 @@ export interface MatchRun {
   pictures: { identityId: string; url: string; via: string | null }[];
   ms: number;
 }
+
+/** Event hosts' and guests' pictures hashed in one run, after everyone else's: a party's list can be hundreds long. */
+const EVENT_PICTURES = 300;
 
 // ------------------------------------------------------------------ reading names
 
@@ -109,6 +112,10 @@ const SITES: { re: RegExp; site: string; network?: Network }[] = [
   { re: /(?:^|[\s(])\/?u\/([A-Za-z0-9_-]{3,20})\b/g, site: 'reddit', network: 'reddit' },
   { re: /(?:^|[\s/(])substack\.com\/@([A-Za-z0-9_-]{2,40})\b/g, site: 'substack', network: 'substack' },
   { re: /(?:^|[\s/(])(?:www\.)?lesswrong\.com\/users\/([A-Za-z0-9_-]{1,64})\b/g, site: 'lesswrong', network: 'lesswrong' },
+  { re: /(?:^|[\s/(])(?:www\.)?(?:luma\.com|lu\.ma)\/(?:user|u)\/([A-Za-z0-9_.-]{2,64})\b/g, site: 'luma', network: 'luma' },
+  { re: /(?:^|[\s/(])(?:www\.)?partiful\.com\/u\/([A-Za-z0-9_-]{2,64})\b/g, site: 'partiful', network: 'partiful' },
+  { re: /(?:^|[\s/(])(?:www\.)?linkedin\.com\/in\/([A-Za-z0-9_-]{3,100})\b/g, site: 'linkedin' },
+  { re: /(?:^|[\s/(])(?:www\.)?tiktok\.com\/@([A-Za-z0-9_.]{2,24})\b/g, site: 'tiktok' },
   { re: /(?:^|[\s/(])(?:www\.)?twitch\.tv\/([A-Za-z0-9_]{3,25})\b/g, site: 'twitch' },
   { re: /(?:^|[\s/(])(?:www\.)?youtube\.com\/@([A-Za-z0-9_.-]{3,30})\b/g, site: 'youtube' },
   { re: /(?:^|[\s/(])steamcommunity\.com\/(?:id|profiles)\/([A-Za-z0-9_-]{2,32})\b/g, site: 'steam' },
@@ -136,6 +143,9 @@ const LABEL_SITES: Record<string, { site: string; network?: Network }> = {
   steam: { site: 'steam' },
   spotify: { site: 'spotify' },
   tiktok: { site: 'tiktok' },
+  linkedin: { site: 'linkedin' },
+  luma: { site: 'luma', network: 'luma' },
+  partiful: { site: 'partiful', network: 'partiful' },
   mastodon: { site: 'mastodon', network: 'mastodon' },
   domain: { site: 'domain' },
   website: { site: 'domain' },
@@ -237,6 +247,9 @@ export function ownKeys(i: { network: Network; native_id: string; handle?: strin
   if (site && h) out.push({ key: `${site}:${h}`, text: `${net} ${i.handle}` });
   if (i.network === 'matrix') out.push({ key: `matrix:${i.native_id.toLowerCase()}`, text: `Matrix ${i.native_id}` });
   if (i.network === 'email') out.push({ key: `email:${i.native_id.toLowerCase()}`, text: i.native_id.toLowerCase() });
+  // Event sites (docs/events.md): Luma's profile link is its username, Partiful's the user id itself.
+  if (i.network === 'luma' && h) out.push({ key: `luma:${h}`, text: `Luma ${i.handle}` });
+  if (i.network === 'partiful') out.push({ key: `partiful:${i.native_id.toLowerCase()}`, text: `Partiful ${i.handle ?? i.native_id}` });
   // Zulip's handle is an address (none where the organization keeps addresses from members: the extractor sends none).
   if (i.network === 'zulip' && i.handle && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(i.handle.trim())) out.push({ key: `email:${i.handle.trim().toLowerCase()}`, text: i.handle.trim().toLowerCase() });
   const phone =
@@ -816,6 +829,9 @@ function sideView(s: Side): P.MatchSide {
   };
 }
 
+/** A side seen only on Luma or Partiful, with no chat or group of yours around them: a guest at someone's party. */
+const eventStranger = (s: Side) => !s.direct && !s.around.size && s.idents.every((i) => isEventNetwork(i.network));
+
 export function run(db: Database, opts: { now?: number; limit?: number } = {}): MatchRun {
   const t0 = performance.now();
   const now = opts.now ?? Date.now();
@@ -836,6 +852,8 @@ export function run(db: Database, opts: { now?: number; limit?: number } = {}): 
     const a = L.sides.get(x);
     const b = L.sides.get(y);
     if (!a || !b) continue;
+    // Two people met only on event sites' guest lists: strangers to you both, no one to merge (docs/events.md).
+    if (eventStranger(a) && eventStranger(b)) continue;
     const d = L.decisions.get(k);
     if (d && d.decision !== 'yes') continue;
     const s = compare(L, a, b, df);
@@ -887,7 +905,9 @@ export function run(db: Database, opts: { now?: number; limit?: number } = {}): 
     ask.push({ key: s.key, card: c, hash: h });
   }
 
-  // Pictures to hash: the sides of pairs first, then people you have direct chats or groups with.
+  // Pictures to hash: the sides of pairs first, then people you have direct chats or groups with, then event hosts and
+  // guests (docs/events.md), the latest seen first and EVENT_PICTURES at most, so a guest who is someone you know can
+  // turn up in Same person? by their picture alone.
   const pictures: MatchRun['pictures'] = [];
   const hashed = new Map<string, string>((db.query('SELECT identity_id, url FROM picture_hash').all() as Row[]).map((r) => [r.identity_id, r.url]));
   const seen = new Set<string>();
@@ -903,6 +923,16 @@ export function run(db: Database, opts: { now?: number; limit?: number } = {}): 
     want(s.b);
   }
   for (const s of L.sides.values()) if (s.direct || s.around.size) want(s);
+  let guests = 0;
+  for (const r of db.query('SELECT identity_id, MAX(seen_at) AS at FROM event_seen GROUP BY identity_id ORDER BY at DESC LIMIT ?').all(EVENT_PICTURES * 2) as Row[]) {
+    if (guests >= EVENT_PICTURES) break;
+    const s = L.sides.get(L.sideOf.get(r.identity_id) ?? '');
+    const i = s?.idents.find((x) => x.id === r.identity_id);
+    if (!s || !i || seen.has(i.id) || !i.avatar_url || hashed.get(i.id) === i.avatar_url || pictures.length >= 2000) continue;
+    seen.add(i.id);
+    pictures.push({ identityId: i.id, url: i.avatar_url, via: i.seen_via });
+    guests++;
+  }
 
   const decided = [...L.decisions.values()];
   return {

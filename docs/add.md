@@ -147,6 +147,7 @@ What each network will do once its adapter has it. **None of the real adapters d
 | Google Messages | phones | none | none | none: its spam folder has nothing to accept |
 | Zulip | a channel's link (`…/#narrow/channel/12-name`) or `#name`; people by email | Join (subscribe) | none; Message opens a DM | none: Zulip has no requests |
 | Instagram, X, Messenger | handles, profile names | none | Follow (Instagram, X) | message requests, follow requests |
+| Luma, Partiful | none: events come from Explore (docs/events.md) | RSVP, from an event's page | none | none |
 
 ### What a dither-accounts adapter would call
 

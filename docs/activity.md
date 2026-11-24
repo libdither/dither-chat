@@ -99,6 +99,14 @@ A dismissal is also how the inbox knows you saw a notification without opening i
 stays unread, and its alert, its boost and its importance stop counting there
 ([inbox.md](inbox.md#unread-alerts-and-importance)).
 
+### `push_skip`: pushes not sent
+
+A push the hub decided against for a message triage sent on (`activity.skipped` in `notify.ts`,
+[notifications.md](notifications.md#one-notification-per-conversation)): `watched`, its chat was open at its newest
+message on a computer in use; `capped`, a silent Conversation within its chat's ten minutes. The message, the
+conversation, `why` and when: count them with `SELECT why, COUNT(*) FROM push_skip WHERE at >= ? GROUP BY why`. Kept
+for the log's retention and deleted with it; nothing is kept while the log is off.
+
 ### `triage_input`: what triage knew when it decided
 
 With the flag on (below), the features triage saw are kept with its decision, so training uses what was known then,
@@ -213,7 +221,7 @@ Settings → Privacy → **Keep an activity log** (on by default):
   retention, at most 200,000 visits and 100,000 notifications are kept, oldest first out (`MAX_VISITS`,
   `MAX_NOTIFICATIONS`). Pruning runs at start and at most every 10 minutes as data arrives.
 - **Export my activity log** and **Export training examples**: the two files above.
-- **Delete activity log…**: everything in `visit`, `notification`, `notification_event` and `triage_input`. Usage
+- **Delete activity log…**: everything in `visit`, `notification`, `notification_event`, `push_skip` and `triage_input`. Usage
   totals, which order the sidebar, are separate and stay ("Reset Usage History…" in the sort menu clears those).
   The inbox's learned order goes back to its prior within half an hour, since what it learned came from the log.
 

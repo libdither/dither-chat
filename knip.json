@@ -36,6 +36,7 @@
         "src/ui/CallPanel.tsx",
         "src/ui/CallRoom.tsx",
         "src/ui/CallWindow.tsx",
+        "src/ui/events/Event.tsx",
         "src/ui/ChipLayer.ts",
         "src/ui/feed/FeedView.tsx",
         "src/ui/files/ArchiveView.tsx",

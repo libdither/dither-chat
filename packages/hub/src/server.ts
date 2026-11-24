@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import type * as P from '@dither-chat/protocol';
 import type { DownloadAs } from '@dither-chat/protocol';
 import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, isEmailRoute, parseCursor } from './chats.ts';
-import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, downloadsAs, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, RUNGS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, downloadsAs, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, RUNGS, sendBlocker, UPLOAD_CHUNK, WATCH_EVERY } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { ACCOUNT_COLORS, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
@@ -77,6 +77,8 @@ import { Adding, profileLinksOf, requestHeld, requestViews } from './add.ts';
 import { feedRefusalFor, isFeed } from './feed.ts';
 import { Posts, PostsError } from './posts.ts';
 import { Follows, type FollowConfig } from './follows.ts';
+import { Events } from './events.ts';
+import { eventsOf } from './eventseen.ts';
 import { Timelines } from './timelines.ts';
 import { TranslateError, Translator } from './translate.ts';
 import { calendarOff, type CalendarLink } from './calendar.ts';
@@ -85,6 +87,7 @@ import { ReplyMarks, type ReplyMark } from './replymarks.ts';
 import { mailAttention } from './mail/attention.ts';
 import { AnswerClock, clientReport, jobFailed, lossCovered, PerClientCap, reportedInRequest, reportError, withRequest } from './errors.ts';
 import { callRoute } from './callstate.ts';
+import { PHONE } from './delivery.ts';
 import { handlesPolls, pollRoute } from './polls.ts';
 import { SendExtras } from './sendextras.ts';
 import { reminderWords } from './saved.ts';
@@ -92,7 +95,8 @@ import { ASK_LEVEL, isChatKind, type ManagerLink } from './accounts-manager.ts';
 import { Auth, bearerOf, clientIp, COOKIE, cookieOf, fileTicket, fromOwnPage, MIN_PASSWORD, overHttps, sessionCookie, ticketGood, USER, type Who } from './auth.ts';
 
 
-type ClientData = { kind: 'client' };
+/** A page's socket, and what it says it is watching (`P.ClientWatching`), with when it said so. */
+type ClientData = { kind: 'client'; watching?: { label: string; conversationIds: string[]; at: number } };
 /** What a send carries (POST /api/conversations/:id/send, and a chat's /messages). */
 type SendBody = {
   body?: string;
@@ -372,6 +376,8 @@ export class HubServer {
   /** Posts you follow, read again for new replies (follows.ts, docs/feed.md "Following a post"). */
   readonly follows: Follows;
   readonly timelines: Timelines;
+  /** Events from Luma and Partiful: an event's page and RSVPs (events.ts, docs/events.md). */
+  readonly events: Events;
   /** Translating posts and messages: the network's own, or a translation server (translate.ts). */
   readonly translator: Translator;
   /** The account's own self, block, ignore and notes (accountself.ts). */
@@ -452,6 +458,7 @@ export class HubServer {
     this.posts = new Posts({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), changed: () => this.flush(), fresh: (ids) => this.opts.onFresh?.(ids) });
     // Through the same pace: a check never reads while a job or the gap fill does on that account.
     this.follows = new Follows({ store, posts: this.posts, online: (a) => sup.online(a), pace, config: opts.follow, changed: () => this.flush(), log: (l) => console.warn(l) });
+    this.events = new Events({ store, posts: this.posts, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     this.timelines = new Timelines({ store, posts: this.posts, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), files: (ids) => this.postFiles(ids), changed: () => this.flush() });
     this.translator = new Translator({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
@@ -571,6 +578,7 @@ export class HubServer {
           if (d.kind === 'client') {
             // The client's heartbeat: after a phone wakes, a dead socket shows in seconds rather than at a TCP timeout.
             if (msg === 'ping') ws.send('pong');
+            else if (typeof msg === 'string' && msg.startsWith('{')) self.clientSaid(ws as ServerWebSocket<ClientData>, msg);
           } else if (d.kind === 'adapter') self.sup.receive(ws as ServerWebSocket<AdapterSocketData>, msg);
           else if (d.kind === 'call') self.calls.message(ws as ServerWebSocket<CallSocketData>, msg);
           else if (d.kind === 'voice') self.calls.voiceMessage(ws as ServerWebSocket<VoiceSocketData>, msg);
@@ -1281,7 +1289,7 @@ export class HubServer {
     if ((m = path.match(/^\/api\/persons\/([\w-]+)\/profile$/)) || (m = path.match(/^\/api\/identities\/([\w-]+)\/profile$/))) {
       const p = s.profile(path.startsWith('/api/persons/') ? { personId: m[1] } : { identityId: m[1] });
       const mail = p && mailPeople(this.opts.mail)?.profile(p.identityIds);
-      return p ? ok({ ...p, abouts: this.people.kept(p.identityIds), links: profileLinksOf(s.db, p.identityIds), ...((i) => (i.length ? { ignored: i } : {}))(ignoredOf(s.db, p.identityIds)), ...(mail ? { mail } : {}) }) : bad('nobody by that id', 404);
+      return p ? ok({ ...p, abouts: this.people.kept(p.identityIds), links: profileLinksOf(s.db, p.identityIds), ...((ev) => (ev.length ? { events: ev } : {}))(eventsOf(s, p.identityIds)), ...((i) => (i.length ? { ignored: i } : {}))(ignoredOf(s.db, p.identityIds)), ...(mail ? { mail } : {}) }) : bad('nobody by that id', 404);
     }
     // Their message count per server, estimated from what the hub holds (msgcount.ts, docs/profile.md).
     if ((m = path.match(/^\/api\/(persons|identities)\/([\w-]+)\/activity$/))) {
@@ -1538,6 +1546,17 @@ export class HubServer {
         const r = await this.posts.unpublish(network, m[2], typeof b.account === 'string' && b.account ? b.account : undefined);
         this.flush();
         return ok(r);
+      } catch (e) {
+        return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
+      }
+    }
+    // An event (events.ts, docs/events.md): its page with every guest the site showed, and an RSVP sent as an account.
+    if ((m = path.match(/^\/api\/events\/([a-z]+)\/([A-Za-z0-9_.~:-]{1,120})(\/rsvp)?$/)) && (m[3] ? method === 'POST' : method === 'GET')) {
+      try {
+        if (!m[3]) return ok(this.events.page(m[1], m[2], url.searchParams.get('account')));
+        const v = await this.events.rsvp(m[1], m[2], await body<unknown>());
+        this.flush();
+        return ok(v);
       } catch (e) {
         return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
       }
@@ -3136,5 +3155,30 @@ export class HubServer {
   /** Queue a notification for connected clients. */
   notify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
     this.store.dirty.extra.push(ev);
+  }
+
+  /** A page's word over its socket: what it is watching (`P.ClientWatching`). Anything else is ignored. */
+  private clientSaid(ws: ServerWebSocket<ClientData>, msg: string, now = Date.now()) {
+    let m: Partial<P.ClientWatching>;
+    try {
+      m = JSON.parse(msg);
+    } catch {
+      return;
+    }
+    if (m?.t !== 'watching' || !Array.isArray(m.conversationIds)) return;
+    const ids = m.conversationIds.filter((x): x is string => typeof x === 'string').slice(0, 20);
+    ws.data.watching = ids.length ? { label: String(m.label ?? '').slice(0, 100), conversationIds: ids, at: now } : undefined;
+  }
+
+  /**
+   * Is this chat open at its newest message on a computer in use, as its page last said (within twice
+   * `P.WATCH_EVERY`)? Then a push about it would only buzz a phone about what is being read (notify.ts).
+   */
+  watched(conversationId: string, now = Date.now()): boolean {
+    for (const ws of this.clients) {
+      const w = ws.data.watching;
+      if (w && now - w.at <= 2 * WATCH_EVERY && !PHONE.test(w.label) && w.conversationIds.includes(conversationId)) return true;
+    }
+    return false;
   }
 }

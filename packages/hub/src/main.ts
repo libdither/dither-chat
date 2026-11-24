@@ -18,7 +18,7 @@ import { Approvals } from './approvals.ts';
 import { DemoApprovalLink } from './approvals-demo.ts';
 import { FakeNoticeSource, seedDemoNotices } from './notices/fake.ts';
 import { clearRead } from './clears.ts';
-import { Delivery } from './delivery.ts';
+import { capped, Delivery } from './delivery.ts';
 import { Notifier } from './notify.ts';
 import { listByPrior, PhoneList, phoneListBudget, phoneListMode } from './phonelist.ts';
 import { RequestNotifier, requestChain, type RequestNotice } from './requestnotify.ts';
@@ -234,7 +234,7 @@ async function triageOne(id: string, sp: Span) {
     );
     done = true;
     store.dirty.messages.set(id, true);
-    if (d.decision === 'push' || d.decision === 'quiet' || d.decision === 'digest') deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message', d.decision, d.score, listByPrior(d.facts));
+    if (d.decision === 'push' || d.decision === 'quiet' || d.decision === 'digest') deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message', d.decision, d.score, listByPrior(d.facts), { rule: !!d.alwaysNotify, capped: capped(d.decision, d.facts) });
     // The local model was too slow: the message went out silent, and is read again once it has had time.
     if (d.unjudged) setTimeout(() => void judgeLate(id), LATE_JUDGE_MS);
   } catch (e) {

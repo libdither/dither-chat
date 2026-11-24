@@ -288,6 +288,9 @@ export const COLLECT_PACE: Partial<Record<P.Network, { gapMs: number; perDay: nu
   // One GET /users/<id> a profile (its custom fields are asked once): about 1 of the 200 requests a minute Zulip
   // gives the account, which everything else the extractor does shares.
   zulip: { gapMs: 90_000, perDay: 400 },
+  // Event sites rate-limit hard and forbid scraping (docs/events.md): a profile now and then, never a crawl.
+  luma: { gapMs: 600_000, perDay: 60 },
+  partiful: { gapMs: 600_000, perDay: 60 },
 };
 /** A profile asked this recently is not asked again. */
 const COLLECT_FRESH_MS = 14 * 86_400_000;

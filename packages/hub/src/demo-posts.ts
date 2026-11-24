@@ -57,7 +57,7 @@ interface World {
   people: Person[];
   /** Every post and comment it knows, by id, each with what it answers. */
   posts: P.PostFact[];
-  home: Record<P.HomeFeed, { id: string; reason?: P.HomeReason }[]>;
+  home: Record<'following' | 'foryou', { id: string; reason?: P.HomeReason }[]>;
   /** Notifications, oldest first. */
   feed: { min: number; who: string; nativeId: string; body: string; item: P.FeedItem }[];
   /** Who liked, where the network names them (Mastodon's favourites, Substack's likes). */
@@ -589,6 +589,8 @@ export class DemoPosts implements InprocAdapter {
     switch (cmd.t) {
       case 'home': {
         this.homeLog.push({ feed: cmd.feed, ...(cmd.cursor ? { cursor: cmd.cursor } : {}), at: Date.now() });
+        // Only event sites have Explore (docs/events.md): refused as any feed the network has not.
+        if (cmd.feed === 'explore') return fail(`${net} has no Explore`);
         if (cmd.cursor) return reply({ items: [], more: null, top: null } satisfies P.HomePage);
         const own = cmd.feed === 'following' ? this.made.filter((p) => !p.replyTo && !this.deleted.has(p.id)).reverse().map((post) => ({ post })) : [];
         const items = this.w.home[cmd.feed].map((x) => ({ post: this.known(x.id), ...(x.reason ? { reason: x.reason } : {}) })).filter((x): x is P.HomeItem => !!x.post);

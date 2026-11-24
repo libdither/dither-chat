@@ -705,6 +705,17 @@ CREATE TABLE IF NOT EXISTS notification_event (
   PRIMARY KEY (notification_id, device, event)
 ) WITHOUT ROWID;
 
+-- A push the hub did not send (notify.ts, docs/notifications.md "One notification per conversation"): `watched`, the
+-- chat was open at its newest message on a computer in use; `capped`, a silent Conversation within its chat's ten
+-- minutes. Ids and times only; part of the log (deleted with it, kept for its retention).
+CREATE TABLE IF NOT EXISTS push_skip (
+  message_id      TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  why             TEXT NOT NULL,             -- watched, capped
+  at              INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS push_skip_at ON push_skip(at);
+
 -- The phone's list (phonelist.ts, docs/notifications.md "The phone's list"): one row per episode of a chat on the
 -- list, from its first list message that asked for the phone until the row went (or, held, would have gone). Kept
 -- whether or not the activity log is on, so the cap, the snoozes and the day's coins outlast a restart. Ids, times
@@ -1120,3 +1131,19 @@ END;
 CREATE TRIGGER IF NOT EXISTS people_dirty_change_log AFTER INSERT ON change_log WHEN new.target_kind = 'identity' AND new.field IN ('displayName', 'handle') BEGIN
   INSERT INTO people_dirty (id) SELECT new.target_id WHERE NOT EXISTS (SELECT 1 FROM people_dirty WHERE id = new.target_id);
 END;
+
+-- Who was seen at which event (docs/events.md "People"): hosts, and guests on a list the site showed by name. Never a
+-- guest of a list the host hid (guestsShown 'count' or 'hidden'): such a read removes the event's guest rows instead.
+-- rsvp: theirs when the site said it (your own account's, from the event's `rsvp`). The event is the post the hub logged
+-- as message `post:<event>` on its network.
+CREATE TABLE IF NOT EXISTS event_seen (
+  identity_id TEXT NOT NULL,
+  network     TEXT NOT NULL,
+  event_id    TEXT NOT NULL,
+  role        TEXT NOT NULL,                -- 'host' | 'guest'
+  rsvp        TEXT,
+  first_at    INTEGER NOT NULL,
+  seen_at     INTEGER NOT NULL,
+  PRIMARY KEY (identity_id, network, event_id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS event_seen_event ON event_seen(network, event_id);

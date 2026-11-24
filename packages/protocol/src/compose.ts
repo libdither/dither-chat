@@ -5,7 +5,7 @@
  * content warning, Reddit's and Lemmy's title, place and Markdown, Substack's Notes, Bluesky's 300, LessWrong's
  * comments. Pure, so the hub checks a post with the same count the page shows.
  */
-import type { ReplyGate } from './feed.ts';
+import type { HomeFeed, ReplyGate } from './feed.ts';
 
 export interface PostRules {
   /**
@@ -29,8 +29,10 @@ export interface PostRules {
   };
   /** The like button's picture: X's and Substack's heart, Mastodon's star, Reddit's and Lemmy's arrow up. */
   likeIcon: 'heart' | 'star' | 'upvote';
-  /** What the account's two home timelines are called there (HomeFeed 'following' and 'foryou'). */
-  timelines: { following: string; foryou: string };
+  /** What the account's home timelines are called there (HomeFeed 'following' and 'foryou'; an event site's 'explore'). */
+  timelines: { following: string; foryou: string; explore?: string };
+  /** The home timelines it has, in the order Tune lists them: Following and For you unless it says (event sites). */
+  feeds?: readonly HomeFeed[];
   /** At most this long, as `count` counts. */
   maxLength: number;
   /** A reply or comment, where the network allows less than a new post (Reddit: 10,000 in a comment, 40,000 in a post). */
@@ -219,15 +221,42 @@ export const LESSWRONG_RULES: PostRules = {
   replyOnly: true,
 };
 
+/**
+ * An event site's (Luma, Partiful; docs/events.md): its posts are events, read on the Feed page and never written from
+ * it. Nothing is liked, reposted, quoted or replied to as a post: a comment on a Partiful party goes in the party's
+ * conversation, an RSVP through the event's own buttons. Its timelines are Explore (the city's listing) and Your events
+ * (going, hosting, invited: upcoming first, then past), in the site's own order.
+ */
+export const EVENT_RULES: PostRules = {
+  words: { post: 'Post', reply: 'Comment', quote: 'Quote', placeholder: '', replyPlaceholder: 'Write a comment', quotePlaceholder: '', like: 'Like', unlike: 'Unlike', repost: 'Repost', unrepost: 'Undo repost', likedBy: 'Liked by', repostedBy: 'Reposted by' },
+  likeIcon: 'heart',
+  timelines: { following: 'Your events', foryou: 'For you', explore: 'Explore' },
+  feeds: ['explore', 'following'],
+  maxLength: 0,
+  count: 'chars',
+  urlLength: 0,
+  counter: 'text',
+  warnAt: 0,
+  markdown: false,
+  actions: { like: false, repost: false, quote: false, reply: false },
+  likersVisible: 'none',
+  media: { images: 0, gif: false, video: false },
+  replyGates: [],
+  replyOnly: true,
+};
+
 /** The rules of each network that has posts. */
-export const POST_RULES: Readonly<Record<string, PostRules>> = { x: X_RULES, mastodon: MASTODON_RULES, reddit: REDDIT_RULES, lemmy: LEMMY_RULES, substack: SUBSTACK_RULES, bluesky: BLUESKY_RULES, lesswrong: LESSWRONG_RULES };
+export const POST_RULES: Readonly<Record<string, PostRules>> = { x: X_RULES, mastodon: MASTODON_RULES, reddit: REDDIT_RULES, lemmy: LEMMY_RULES, substack: SUBSTACK_RULES, bluesky: BLUESKY_RULES, lesswrong: LESSWRONG_RULES, luma: EVENT_RULES, partiful: EVENT_RULES };
 export const postRulesFor = (network: string): PostRules | null => (Object.hasOwn(POST_RULES, network) ? POST_RULES[network]! : null);
 
 /** The rules for a reply or comment: the network's, with its reply limit where it has one. */
 export const rulesForReply = (rules: PostRules): PostRules => (rules.replyMaxLength === undefined ? rules : { ...rules, maxLength: rules.replyMaxLength });
 
 /** A timeline's name on its network: X's "For you", Reddit's "Best", Substack's "Notes". */
-export const timelineName = (network: string, feed: 'following' | 'foryou'): string => postRulesFor(network)?.timelines[feed] ?? (feed === 'following' ? 'Following' : 'For you');
+export const timelineName = (network: string, feed: HomeFeed): string => postRulesFor(network)?.timelines[feed] ?? (feed === 'following' ? 'Following' : feed === 'explore' ? 'Explore' : 'For you');
+
+/** The home timelines a network has: Following and For you, or what its rules say (an event site's Explore and Your events). */
+export const homeFeedsOf = (network: string): readonly HomeFeed[] => postRulesFor(network)?.feeds ?? ['following', 'foryou'];
 
 /**
  * A place as written in the composer ("r/rust", "rust", "!rust@lemmy.example", "rust@lemmy.example") as the network's name for

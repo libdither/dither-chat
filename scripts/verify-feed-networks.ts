@@ -72,7 +72,8 @@ const hub = Bun.spawn(['bun', join(root, 'packages/hub/src/main.ts'), '--demo', 
 await until(async () => (await fetch(`${base}/api/health`).catch(() => null))?.ok ?? false, 30_000, 'the hub did not start');
 let boot = await json('/api/bootstrap');
 if (!boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub');
-await until(async () => (boot = await json('/api/bootstrap')).conversations.filter((c: any) => c.variant === 'feed').length === 8, 15_000, 'eight feed conversations');
+// Eight networks with posts, and the two event sites (docs/events.md).
+await until(async () => (boot = await json('/api/bootstrap')).conversations.filter((c: any) => c.variant === 'feed').length === 10, 15_000, 'ten feed conversations');
 
 const { page, close } = await launch();
 const q = (s: string) => JSON.stringify(s);
