@@ -158,6 +158,15 @@ describe('suggestions on a hub', () => {
     store.db.query('DELETE FROM picture_hash').run();
   });
 
+  test('mostly flat pictures (letter pictures) count for nothing, however near their hashes', () => {
+    const put = store.db.query('INSERT OR REPLACE INTO picture_hash (identity_id, url, hash, at) VALUES (?, ?, ?, 0)');
+    // Initials on one colour: a few bits from the letters, the rest flat. Two bits apart, and from different people.
+    put.run(did('dee'), 'u1', '0000140c14000000');
+    put.run(sid('uuid-dee'), 'u2', '0000141c14000000');
+    expect(find(run(store.db), did('dee'), sid('uuid-dee'))?.evidence.some((e) => e.kind === 'picture') ?? false).toBe(false);
+    store.db.query('DELETE FROM picture_hash').run();
+  });
+
   test('Not the same keeps a pair out; Later for a month; merging makes one person and is learned as a yes', async () => {
     const m = new SameMatches({ store, file: null, jevUrl: null });
     await m.refresh();

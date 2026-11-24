@@ -362,7 +362,10 @@ What made the difference:
   order changes.
 - **`/api/inbox`** sorted a week of triage (200k rows on the live hub) for each of its picks. An index on the tier
   and score (`triage_tier_score`; `triage_level_score` before the tiers) lets each pick stop at its limit;
-  `test/inbox-plan.test.ts` checks the plans.
+  `test/inbox-plan.test.ts` checks the plans. Alerts and Conversations still sorted every one ever (the prune keeps
+  them): 50 ms on the perf world and 250 to 370 ms on a copy of the live hub by 2026-11-24, growing. Their decisions
+  now keep the message's time (`triage.message_ts`), and a partial index on it (`triage_notified`) lets that pick
+  stop at its limit too: 2.5 ms and 4 ms, the whole inbox 93 to 41 ms on the perf world.
 
 ## Scoped renders and a window
 
@@ -544,6 +547,41 @@ Then the layers that draw nothing until they are opened: the picture and file vi
 and Organize (OrganizeServers.tsx; the sort menu and the rows' slides stay in Reorganize.tsx). They load with the
 pages, and a layer opened before its chunk is here shows a moment later. `shared/startup`: 857 KB (292.5 KB gzip) to
 817 KB (279.2 KB gzip).
+
+Then the conversation itself (Timeline.tsx, with the composer, attachments, pictures and the rest only it uses: a
+chunk of 94 KB, 33 KB gzip). No first screen draws one (a phone starts on the list, a desktop on For you), but the next
+tap usually opens one, so its chunk loads at once when the hub's data is in, or at the first tap or key if that comes
+sooner (`whenTouched`), not at idle: loaded at idle, a conversation opened as the list came took twice as long, its
+first page asked for only once the chunk was here. A start straight into a conversation (a link, a notification) loads
+it as the app draws. `shared/startup`: 817 KB (279.2 KB gzip) to 718 KB (245.6 KB gzip).
+
+The three together, main against this, full size, 4×, interleaved, medians of ten (load 6 to 12; the bytes are exact,
+the times rough):
+
+| | main | after |
+|---|---|---|
+| startup set | 1,332 KB (406.7 KB gzip) | 1,000 KB (299.7 KB gzip) |
+| desktop: list painted | 3,006 ms (1,554–7,096) | 2,005 ms (1,590–6,027) |
+| desktop: script run before the list | 737 ms (542–1,245) | 657 ms (510–908) |
+| desktop: a conversation opened as the data came in | 758 ms (657–1,229) | 584 ms (432–1,240) |
+| …opened 1.5 s later | 464 ms (330–1,284) | 355 ms (351–483) |
+| phone: list painted | 2,470 ms (1,508–6,428) | 1,966 ms (1,458–6,900) |
+| phone: script run before the list | 760 ms (592–1,551) | 619 ms (539–833) |
+| phone: a conversation opened as the data came in | 644 ms (586–707) | 667 ms (607–738) |
+| …opened 1.5 s later | 466 ms (396–1,448) | 419 ms (414–525) |
+
+Then what the sidebar and App used of three files that are otherwise a conversation's or a layer's. The inbox's mail
+chips and tiles are in ui/MailLists.tsx (and MailLists.css), the rest of mail in a chat (MailChat.tsx) went into the
+conversation's chunk; a merge suggestion's picked pair and where it came from are in pairpick.ts, the page itself
+(Pairs.tsx) went with the conversation too; the reaction picker and who reacted (Reactions.tsx) are a layer loaded with
+the pages, and the emoji catalog still loads 4 s after start, as before. `shared/startup`: 718 KB (245.6 KB gzip) to
+665 KB (228.3 KB gzip); the conversation's chunk grew from 94 KB to 128 KB (33 to 44 KB gzip).
+
+Against the step before, full size, 4×, interleaved (load 9 to 22, so the times are rough): on a phone, medians of
+twelve, the list painted at 2,447 ms (2,004–6,844) instead of 2,659 ms (2,074–10,827), with 2,050 ms of main-thread
+work before it instead of 2,341; on a computer, in the seven pairs not overlapping a build, sooner in all seven (median
+1,792 ms against 2,144). A conversation opened as the data came in or 1.5 s later was as fast as before (each of the
+two quicker in half the pairs or more, within noise).
 
 ### The startup set (2026-11-10)
 
@@ -1173,6 +1211,22 @@ rows look up the place's settings before making a default for it (`placePref` ma
 have none), the quiet shelf too, and `visibleConv` is a loop. Six cold loads of each at 4×, medians: the rail 214 → 166
 ms, the badge 78 → 60 ms, the inbox list 96 → 86 ms; a relaunch's rail and badge 25–35 ms less in all.
 
+### Memo keys (2026-11-24)
+
+model.ts's memos were kept in one map each, by a key made of what is worked out and the place it is for:
+`'lvl:' + id`, `'su:' + id`, `'under:' + id`. Each lookup built that string and hashed it, hit or miss, and a first draw
+makes tens of thousands of them (every unread conversation's level in each count, each server's count, activity and
+conversations). In a cold load's CPU profile at 4× the two memo wrappers' own time was 46 ms (`metaMemo` 30,
+`placesMemo` 17), more than the levels they kept. Now each memo is kept by kind (a literal) and then by id, two maps,
+and an id from the hub is a string already hashed once. The rules are looked up by scope and then target the same way,
+and `unreadOf` is a loop rather than a filter and two maps.
+
+CPU profiles of five cold loads and relaunches of each at 4× on the full-size world, interleaved against the build
+before, medians of each function's own time [spread]: on a cold load `metaMemo` 37 [26–56] → 12 [6–15] ms, `unreadOf`
+16 [10–42] → 8 [3–10], `placesMemo` 17 [12–22] → 15 [7–17], `effectiveLevel` 7 → 3: about 40 ms less; on a relaunch
+about 16 ms less. In a benchmark of the same passes in Bun on this world's bootstrap (least of 40 runs), working the
+rail, the badge, the servers' counts, the inbox and people out after a meta change took 8–9 ms instead of 10–14.
+
 ### A channel's threads (2026-11-24)
 
 `indexThreads` (syncmodel.ts), run on each bootstrap and after every event that adds, moves or drops a thread, added
@@ -1394,6 +1448,13 @@ of conversations (which repeat each conversation's `spaceIds`, with a position) 
 12 KB. Leaving out every null, false and empty field of conversations saves only 7 KB on the wire (1.3 MB of the
 4.4 MB before compression), identities' 2 KB, spaces' 1 KB. A higher level costs the hub's time on every bootstrap:
 level 6 gives 396 KB in 37 ms, level 9 376 KB in 42 ms.
+
+The edges of conversations are gone from the app's bootstrap since: it asks for `/api/bootstrap?edges=spaces`, whose
+`edges` hold only those between spaces, and `conversationEdges` beside `conversations` the positions of each one's
+edges, in its `spaceIds`' order (syncmodel.ts `indexEdges` makes the edges again). On the perf world at full size,
+4,035 KB against 3,567 KB before compression (−11.6%) and 383 KB against 353 KB on the wire (−7.7%); at a tenth, 432
+against 384 KB and 44.2 against 41.6 KB. Without `?edges=spaces` (an older page, dither-calendar, the scripts) the
+bootstrap is as it was.
 ## Memory (2026-11-24)
 
 `scripts/verify-memory.ts` (CI's `memory` job) looks for leaks: what the page holds growing as it is used. Against a
@@ -1474,9 +1535,12 @@ What these numbers point at, not done yet:
   help ([above](#over-a-slow-link-2026-11-24), the end). With a bootstrap the live hub's size it may.
 - **The bootstrap now shares the link with the startup script** on a cold start: 405 KB of it came down beside the
   bootstrap. Each is wanted for the list; a smaller one of either is the next gain there.
-- **The startup script, 294 KB compressed** (345 KB before the hub packed it at level 19,
+- **The startup script, 196 KB compressed** (zstd at level 19, as the hub sends it) since [Left out of the first
+  load](#left-out-of-the-first-load-2026-11-24) (294 KB before; 345 KB before the hub packed it at level 19,
   [above](#the-web-build-on-the-wire-2026-11-24)), is the longest wait of a cold start on a slow link before any of
-  the app runs. Every KB off it is 5 ms there.
+  the app runs. Every KB off it is 5 ms there. Of what is left: Requests.tsx's page and a profile's connections (about
+  10 KB), the details panel (about 8 KB), and calls (about 35 KB, tied up with ringing, which has to be there from the
+  start).
 
 - **The bootstrap is 4.4–5.4 MB**, two thirds of it conversations, and most of those channels nobody has written in.
   On the live hub's copy, leaving out null and default fields saves 25%, leaving out the 3,489 channels without

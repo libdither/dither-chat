@@ -64,10 +64,21 @@ const clickItem = async (label: string, within = '') => {
   await click(at.x, at.y);
 };
 
+/**
+ * Opens a conversation and waits until it has switched (its `dither:timeline` mark, docs/perf.md): its newest message
+ * on screen or the hub's answer in. Before that the timeline may still re-anchor to its newest end, and a menu closes
+ * on any scroll, so a right-click on what it first drew can lose its menu.
+ */
+async function openConv(path: string, convId: string, ms = 15000) {
+  const t0 = Date.now() - 1;
+  await p.goto(`${hub}/#${path}`);
+  await p.until(`(() => { const m = performance.getEntriesByName('dither:timeline')[0]; return !!m && m.detail?.key === 'c:${convId}' && performance.timeOrigin + m.startTime >= ${t0}; })()`, ms);
+  await p.until(`document.querySelectorAll('.msg:not(.system) .msg-body').length > 2`, ms);
+}
+
 // ------------------------------------------------------------------ desktop
 await p.size(1280, 800);
-await p.goto(`${hub}/#/s/${dither.id}/c/${general.id}`);
-await p.until(`document.querySelectorAll('.msg:not(.system) .msg-body').length > 2`, 15000);
+await openConv(`/s/${dither.id}/c/${general.id}`, general.id);
 const msgSel = `.msg:not(.system):not(.pending) .msg-body`;
 let at = (await center(msgSel))!;
 await rightClick(at.x, at.y);
@@ -174,8 +185,7 @@ await Bun.sleep(300);
 await rightClick(markAt.x, markAt.y);
 check((await marksShown()).join() === 'Louder ✓,Quieter', 'and shows ticked');
 await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
-await p.goto(`${hub}/#/s/${dither.id}/c/${general.id}`);
-await p.until(`document.querySelectorAll('.msg:not(.system) .msg-body').length > 2`, 15000);
+await openConv(`/s/${dither.id}/c/${general.id}`, general.id);
 
 // the server in the rail, the accounts button
 at = (await center(`.rail-item[data-dnd-key^="space:"] .rail-btn`))!;
@@ -207,8 +217,7 @@ check(await p.eval(`document.querySelector('.fwd-card .fwd-card-src')?.textConte
 await p.shot(join(shots, 'desktop-incoming-forward.png'));
 
 // Forward a message from #general to #dev (native, demo) and to Housemates on Matrix (cross-network).
-await p.goto(`${hub}/#/s/${dither.id}/c/${general.id}`);
-await p.until(`document.querySelectorAll('.msg:not(.system) .msg-body').length > 2`, 10000);
+await openConv(`/s/${dither.id}/c/${general.id}`, general.id, 10000);
 at = (await center(msgSel))!;
 const original = await p.eval<string>(`document.querySelector(${JSON.stringify(msgSel)}).textContent`);
 await rightClick(at.x, at.y);
@@ -254,8 +263,7 @@ check(last.body.startsWith('forward test note\n\n↪ Forwarded from **') && last
 // ------------------------------------------------------------------ phone
 await p.size(390, 844, true);
 await p.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
-await p.goto(`${hub}/#/s/${dither.id}/c/${general.id}`);
-await p.until(`document.querySelectorAll('.msg:not(.system) .msg-body').length > 2`, 10000);
+await openConv(`/s/${dither.id}/c/${general.id}`, general.id, 10000);
 at = (await center(msgSel))!;
 await p.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: at.x, y: at.y }] });
 await Bun.sleep(650);

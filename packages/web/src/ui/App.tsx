@@ -20,7 +20,8 @@ import { SendingLayer } from './SendExtras.tsx';
 import { indexing } from '../indexjobs.ts';
 import { ForYou, refreshForYou } from './ForYou.tsx';
 import { Palette } from './Palette.tsx';
-import { ReactionLayer } from './Reactions.tsx';
+import { loadEmoji } from '../emoji.ts';
+import { pickerFor, reactorsFor } from '../reactions.ts';
 import { SamePane } from './SamePane.tsx';
 import { GraphPane } from './GraphPane.tsx';
 import { MessageHistoryLayer } from './MessageHistoryLazy.tsx';
@@ -29,11 +30,10 @@ import { Rail } from './Rail.tsx';
 import { TitleBar } from './TitleBar.tsx';
 import { FindShortcut, SearchPane } from './SearchLazy.tsx';
 import { SECTIONS } from './settingsSections.ts';
-import { lazyPane, preloadPagesLater } from './LazyPane.tsx';
+import { lazyPane, preloadPanes, whenTouched } from './LazyPane.tsx';
 import { showSection } from './bits.tsx';
 import { FolderSidebar, InboxSidebar, PeopleSidebar, SpaceSidebar, SpacesSidebar } from './Sidebar.tsx';
 import { homeRoute } from '../opening.ts';
-import { ConversationPane, PersonPane } from './Timeline.tsx';
 import { Toasts } from './Toasts.tsx';
 import { OfflineLayer } from './Offline.tsx';
 import { PaneEdge, usePaneWidths } from './PaneEdge.tsx';
@@ -49,7 +49,7 @@ import { noteChannel, readLastChannels, saveLastChannels, withLastChannel } from
 import { counting, rendered } from '../perf.ts';
 import { MailComposerLazy } from './mail/lazy.tsx';
 import { WhyFollowUpLazy } from './LoudnessLazy.tsx';
-import { toInboxChip } from './MailChat.tsx';
+import { toInboxChip } from './MailLists.tsx';
 import { convById, isMailPlace } from '../mail/chats.ts';
 import { RequestsPane } from './Requests.tsx';
 import { NoticesPaneLazy } from './Notices.tsx';
@@ -59,7 +59,9 @@ import { countKey } from '../clicklog.ts';
 import { FeedPaneLazy, FeedSidebarLazy, ThreadLazy } from './feed/lazy.tsx';
 import { isPostKey } from '../feed.ts';
 
-// Pages never on the first screen, each a chunk of its own (LazyPane.tsx).
+// Panes not on the first screen, each a chunk of its own (LazyPane.tsx). A conversation's loads as soon as the data is in.
+const ConversationPane = lazyPane(() => import('./Timeline.tsx').then((m) => m.ConversationPane), 'the conversation', { soon: true });
+const PersonPane = lazyPane(() => import('./Timeline.tsx').then((m) => m.PersonPane), 'the conversation', { soon: true });
 const ProfilePane = lazyPane(() => import('./Profile.tsx').then((m) => m.ProfilePane), 'the profile');
 const PlaceProfile = lazyPane(() => import('./PlaceProfile.tsx').then((m) => m.PlaceProfile), 'the page');
 const SettingsPane = lazyPane(() => import('./Settings.tsx').then((m) => m.SettingsPane), 'Settings');
@@ -67,10 +69,20 @@ const DirectoryPane = lazyPane(() => import('./Directory.tsx').then((m) => m.Dir
 const HowItSorts = lazyPane(() => import('./HowItSorts.tsx').then((m) => m.HowItSorts), 'How it sorts');
 const AttentionPaneLazy = lazyPane(() => import('./HowItSorts.tsx').then((m) => m.AttentionPaneLazy), 'Your attention');
 // Layers over the app that draw nothing until they are opened: the picture and file viewer, the index dialog.
-const Viewer = lazyPane(() => import('./Viewer.tsx').then((m) => m.Viewer), 'the viewer', null);
-const IndexDialog = lazyPane(() => import('./Indexing.tsx').then((m) => m.IndexLayer), 'indexing', null);
+const Viewer = lazyPane(() => import('./Viewer.tsx').then((m) => m.Viewer), 'the viewer', { layer: true });
+const IndexDialog = lazyPane(() => import('./Indexing.tsx').then((m) => m.IndexLayer), 'indexing', { layer: true });
+const Reactions = lazyPane(() => import('./Reactions.tsx').then((m) => m.ReactionLayer), 'reactions', { layer: true });
 const ViewerLayer = () => (viewer.value || fileViewer.value ? <Viewer /> : null);
 const IndexLayer = () => (indexing.value ? <IndexDialog /> : null);
+
+/** The reaction picker and who reacted, while one is open. The emoji catalog loads once the app is idle, so even the first picker opens whole rather than filling in. */
+function ReactionLayer() {
+  useEffect(() => {
+    const t = setTimeout(() => void loadEmoji(), 4000);
+    return () => clearTimeout(t);
+  }, []);
+  return pickerFor.value || reactorsFor.value ? <Reactions /> : null;
+}
 
 /** A conversation's details panel: the person's, for a DM of someone reached by several routes (their chat's page). */
 function convDetail(id: string): { kind: 'conv' | 'person'; id: string } | undefined {
@@ -366,11 +378,12 @@ export function App() {
   }, []);
   useEffect(() => installEscape(escapeApp), []);
   // The entry the app opened on takes go()'s shape once there is data to say where its page lives (state.ts).
+  // The panes left out of the first load (LazyPane.tsx): a conversation's at once, the rest at idle a little later; a
+  // tap or key before the data is in starts a conversation's.
   useEffect(() => {
-    if (loaded.value) adoptOpened();
+    if (loaded.value) (adoptOpened(), preloadPanes());
   }, [loaded.value]);
-  // The pages left out of the first load (LazyPane.tsx) load once the list is drawn and the app idle.
-  useEffect(preloadPagesLater, []);
+  useEffect(whenTouched, []);
 
   // On a phone the page you are on is a card over the lists; see Pager.ts.
   const detailRoute = isPage(r);

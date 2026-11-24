@@ -51,7 +51,7 @@ card). In rough order of strength:
 | `claims` | one side's profile names an account the other has; both ways or verified count more | 5.5 to 7 |
 | `contact` | the same phone number or email on both | 7 |
 | `name` | the same handle (3.8; a Matrix id's own part is its handle), a handle less its number that is the name on the other (`pippa22` and Pippa, 2.4), a rare full name (up to 3.7), close names (Jaro-Winkler), shared words; a phone number shown as a name is not one | to ~5 |
-| `picture` | the same picture (3.2), a similar one (1.6); a picture more than three sides have (a default) counts for nothing | 1.6 to 3.2 |
+| `picture` | the same picture (3.2), a similar one (1.6); a picture more than three sides have (a default) counts for nothing, nor does a mostly flat one (a letter picture: fewer than 12 of the hash's 64 bits set) | 1.6 to 3.2 |
 | `friends` | people known to be one person around both, weighted down by how big the group is | up to 3.5 |
 | `bio` | bios alike | up to 1.4 |
 | `handoff` | direct chats that hand over: one went quiet as the other began | 0.9 |
@@ -88,7 +88,10 @@ any pair that has become one person since, or whose side was merged away.
 hash (the sides of pairs first, then people you have direct chats or groups with, then up to 300 people seen at
 events, the latest first: docs/events.md "People"), the page draws each to a 9×8 canvas
 and makes a 64-bit difference hash, and `POST /api/matches/pictures` stores them in `picture_hash` with the URL they
-came from, so a changed picture is hashed again. The status line says "Comparing pictures" while it works.
+came from, so a changed picture is hashed again. The status line says "Comparing pictures" while it works, and once
+the page has sent its hashes it asks for a new run, so the list it shows has what the pictures said. A mostly flat
+picture (one colour with initials, as many networks make for people without one) hashes within a few bits of every
+other such picture, so a hash with fewer than 12 bits set is left out.
 
 ## The page
 

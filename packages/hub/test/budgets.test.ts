@@ -135,7 +135,8 @@ test('a cold start', async () => {
     await call('/api/devices/hello', { method: 'POST', body: { id: 'dev_budgets0001', label: 'Chromium on Linux', endpoint: null } }),
   ];
   // With no snapshot: the bootstrap, then the inbox and mail's triage (state.ts loadInbox), and the rest of the first screen.
-  const boot = await call('/api/bootstrap');
+  // As the app asks for it (state.ts BOOTSTRAP_PATH): conversations' edges as positions beside them.
+  const boot = await call('/api/bootstrap?edges=spaces');
   const b = boot.json as P.Bootstrap;
   got.push(boot);
   const inbox = await call('/api/inbox');

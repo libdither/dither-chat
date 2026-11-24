@@ -1574,8 +1574,14 @@ export interface Bootstrap {
   persons: PersonView[];
   identities: IdentityView[];
   spaces: SpaceView[];
+  /** Every edge; asked for with `?edges=spaces`, only those between spaces, with `conversationEdges` beside. */
   edges: SpaceEdgeView[];
   conversations: ConversationView[];
+  /**
+   * Asked for with `?edges=spaces`: each conversation's edges to its places, as their positions in the order of its
+   * spaceIds, by its index in `conversations`. Absent: `edges` holds them all.
+   */
+  conversationEdges?: (string | null)[][];
   folders: FolderView[];
   placePrefs: PlacePrefView[];
   categories: CategoryView[];

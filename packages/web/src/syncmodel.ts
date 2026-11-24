@@ -50,10 +50,16 @@ export function emptyDb() {
 }
 export type Db = ReturnType<typeof emptyDb>;
 
-function indexEdges(db: Db, edges: P.SpaceEdgeView[]) {
+/** A bootstrap's edges: all in `edges`, or (asked for with `?edges=spaces`) those of conversations from their spaceIds. */
+function indexEdges(db: Db, b: Pick<P.Bootstrap, 'edges' | 'conversations' | 'conversationEdges'>) {
   db.children.clear();
   db.parents.clear();
-  for (const e of edges) addEdge(db, e);
+  for (const e of b.edges) addEdge(db, e);
+  const at = b.conversationEdges;
+  if (!at) return;
+  b.conversations.forEach((c, i) => {
+    for (let k = 0; k < c.spaceIds.length; k++) addEdge(db, { parentId: c.spaceIds[k], childKind: 'conversation', childId: c.id, position: at[i]?.[k] ?? null });
+  });
 }
 
 /**
@@ -191,7 +197,7 @@ export function applyBootstrapTo(db: Db, b: P.Bootstrap) {
   db.sync = b.sync ?? null;
   db.requests = b.requests ?? [];
   applyMailBootstrap(db.mail, b.mail);
-  indexEdges(db, b.edges);
+  indexEdges(db, b);
   indexThreads(db);
 }
 

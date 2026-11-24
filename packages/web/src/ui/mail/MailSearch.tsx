@@ -10,7 +10,7 @@ import type * as P from '@dither-chat/protocol';
 import { bareSubject, searchList } from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { isGroupThread, senderLine, threadName } from '../../mail/model.ts';
-import { MailTile } from '../MailChat.tsx';
+import { MailTile } from '../MailLists.tsx';
 import { api, db, go, mailRev } from '../../state.ts';
 import { mailChanged } from '../../versions.ts';
 import { Avatar, Empty } from '../bits.tsx';

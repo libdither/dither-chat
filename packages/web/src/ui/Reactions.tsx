@@ -6,7 +6,7 @@ import { emojiNow, loadEmoji, searchEmoji, SKIN_TONES, skinOf } from '../emoji.t
 import { customMarkup } from '../emojiComplete.ts';
 import { authorName, faceOf } from '../model.ts';
 import { clearReactions, modOf } from '../moderate.ts';
-import { hasMine, knownReactionContext, pickerFor, quickReactions, reactedAt, reactionContext, reactionScope, reactionTip, reactorsFor, replacing, toggleReaction, whenText, whenTitle, type Picked } from '../reactions.ts';
+import { addLook, hasMine, keyText, knownReactionContext, pickerFor, quickReactions, reactedAt, reactionContext, reactionScope, reactionTip, reactorsFor, replacing, toggleReaction, whenText, whenTitle, type Picked } from '../reactions.ts';
 import { api, db, isSelfIdentity, pref, rev, setPrefs } from '../state.ts';
 import { phone, useLayer } from '../phone.ts';
 import { historyOnMenu, openHistory } from '../messageHistory.ts';
@@ -67,18 +67,6 @@ function pillTip(m: P.MessageView, r: P.ReactionView, mine: boolean) {
   const swap = !mine ? replacing(m) : undefined;
   const sub = [...lines, ...(r.style === 'super' ? ['Super reaction'] : []), ...(swap ? [`Joining replaces your ${keyText(swap)}`] : [])];
   return tipProps(text, sub.join('\n'), 'top');
-}
-
-/** A reaction as words, for a title: the emoji itself, or a custom one's :name:. */
-const keyText = (r: { key: string; emoji?: P.CustomEmojiView }) => (r.emoji ? `:${r.emoji.name}:` : r.key);
-
-/**
- * The add button's face. Where a network keeps one reaction per person (Signal, WhatsApp) and you already have one,
- * a pick replaces it rather than adding another, and the button says so: arrows where the plus was.
- */
-export function addLook(m: P.MessageView): { icon: string; title: string } {
-  const r = replacing(m);
-  return r ? { icon: 'smileSwap', title: `Change your reaction (${keyText(r)}): ${NETWORK_META[m.network].name} keeps one per person` } : { icon: 'smilePlus', title: 'Add reaction' };
 }
 
 const compact = (n: number) => (n < 1000 ? String(n) : n < 10_000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k` : `${Math.round(n / 1000)}k`);
@@ -706,14 +694,9 @@ export function InsertPicker({ conversationId, network, anchor, onInsert, onClos
   return <Picker target={{ kind: 'insert', conversationId, network, insert: onInsert }} anchor={anchor} onClose={onClose} inline={inline} />;
 }
 
-/** Mounted once at the app root. */
+/** The picker and who reacted, over the app while one is open (App.tsx ReactionLayer loads this chunk for them). */
 export function ReactionLayer() {
   rev.value;
-  // The catalog loads once the app is idle, so even the first picker opens whole rather than filling in.
-  useEffect(() => {
-    const t = setTimeout(() => void loadEmoji(), 4000);
-    return () => clearTimeout(t);
-  }, []);
   const p = pickerFor.value;
   const w = reactorsFor.value;
   return (

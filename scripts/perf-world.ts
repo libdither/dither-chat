@@ -158,7 +158,7 @@ export function seedWorld(dir: string, opts: { scale?: number; anchor?: number }
     const seen = store.db.query(`INSERT INTO message_seen (message_id, account_id) VALUES (?, ?)`);
     const att = store.db.query(`INSERT INTO attachment (id, message_id, kind, mime, name, width, height, url, position) VALUES (?, ?, 'image', 'image/svg+xml', 'pic.svg', 400, 300, ?, 0)`);
     const tally = store.db.query(`INSERT INTO reaction_tally (message_id, key, count) VALUES (?, ?, ?)`);
-    const tri = store.db.query(`INSERT INTO triage (message_id, decision, score, reasons, decided_by, created_at) VALUES (?, ?, ?, '[]', 'rules', ?)`);
+    const tri = store.db.query(`INSERT INTO triage (message_id, decision, score, reasons, decided_by, created_at, message_ts) VALUES (?, ?, ?, '[]', 'rules', ?, ?)`);
     const last = store.db.query(`UPDATE conversation SET last_message_id = ?, last_message_at = ? WHERE id = ?`);
     for (const [k, s] of sizes.entries()) {
       const { acc, conv: native, members, rooms } = s.at;
@@ -197,7 +197,7 @@ export function seedWorld(dir: string, opts: { scale?: number; anchor?: number }
           if (r < 0.012) rnd();
           const decision = !rooms.length ? (d < 0.01 ? 'push' : 'quiet') : d < 0.001 ? 'silent' : d < 0.002 ? 'push' : d < 0.012 ? 'quiet' : d < 0.04 ? 'digest' : 'drop';
           const score = decision === 'silent' ? null : decision === 'drop' ? Math.round(r * 550) / 1000 : decision === 'digest' ? Math.round(600 + r * 390) / 1000 : 0.8;
-          tri.run(id, decision, score, ts + 2_000);
+          tri.run(id, decision, score, ts + 2_000, ts);
           triaged++;
         }
         ids.push(id);

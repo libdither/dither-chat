@@ -71,7 +71,8 @@ interface Client {
 
 async function newClient(keys: string[]): Promise<Client> {
   const c: Client = { db: emptyDb(), timelines: new Map(), inbox: [], usage: await get('/api/usage'), regrouped: new Set() };
-  applyBootstrapTo(c.db, await get('/api/bootstrap'));
+  // As the app asks for it (state.ts BOOTSTRAP_PATH): conversations' edges as positions beside them.
+  applyBootstrapTo(c.db, await get('/api/bootstrap?edges=spaces'));
   c.inbox = (await get<P.InboxPage>('/api/inbox')).items.map((i) => i.message);
   for (const k of keys) c.timelines.set(k, await page(k));
   return c;
@@ -493,6 +494,23 @@ describe('a client applying deltas ends up where a fresh bootstrap puts it', () 
     expect(r.timelines.every((t) => !t.replace && t.messages.length === 0)).toBe(true);
     expect(r.inbox).toEqual([]);
     expect(JSON.stringify(r).length).toBeLessThan(2500);
+  });
+
+  test("a bootstrap with conversations' edges beside them reads as the one with every edge, in fewer bytes", async () => {
+    await resync(step);
+    const full = await get<P.Bootstrap>('/api/bootstrap');
+    const short = await get<P.Bootstrap>('/api/bootstrap?edges=spaces');
+    expect(full.conversationEdges).toBeUndefined();
+    expect(short.edges.every((e) => e.childKind === 'space')).toBe(true);
+    expect(short.conversationEdges!.length).toBe(short.conversations.length);
+    // Places with conversations in them, and at least one position: the test world has both.
+    expect(full.edges.filter((e) => e.childKind === 'conversation' && e.position !== null).length).toBeGreaterThan(0);
+    const a = emptyDb();
+    const b = emptyDb();
+    applyBootstrapTo(a, full);
+    applyBootstrapTo(b, short);
+    expect(norm(b)).toEqual(norm(a));
+    expect(JSON.stringify(short).length).toBeLessThan(JSON.stringify(full).length);
   });
 
   test('a bootstrap names the hub process as a sync does, so a page that reconnects by either sees a restart', async () => {
