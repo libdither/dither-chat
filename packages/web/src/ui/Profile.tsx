@@ -28,6 +28,7 @@ import { SameBox } from './SameBox.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
 import { copyEntries, identityMenu, personMenu } from './menus.tsx';
 import { nameChoices, pictureChoices } from '../namechoices.ts';
+import { viewer } from '../viewer.ts';
 import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, StatusEmoji, Tag, viewPicture } from './ProfileShell.tsx';
 import { ConnectActions, ProfileConnections } from './Requests.tsx';
 import { openConv } from '../opening.ts';
@@ -753,8 +754,13 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const pictureChosen = (several && ids.find((i) => i.id === person?.pictureIdentityId)) || null;
   // It shows only while it has a picture and is not the main account's own; its entry stays to clear it.
   const pictureOf = pictureChosen?.avatar && pictureChosen.id !== speaker?.id ? pictureChosen : null;
-  const sources = (patch: { face?: string | null; picture?: string | null; nameFrom?: P.NameFrom | null }) =>
-    person && api(`/api/persons/${person.id}`, { method: 'PATCH', body: patch }).catch((e) => toast({ kind: 'error', title: 'Could not save that', body: e.message }));
+  /** Saved, or false where it could not be (said in a toast). */
+  const sources = async (patch: { face?: string | null; picture?: string | null; nameFrom?: P.NameFrom | null }) =>
+    !!person &&
+    api(`/api/persons/${person.id}`, { method: 'PATCH', body: patch }).then(
+      () => true,
+      (e) => (toast({ kind: 'error', title: 'Could not save that', body: e.message }), false),
+    );
   const sinceOf = new Map(said.filter((a) => a.createdAt).map((a) => [a.identityId, monthYear(a.createdAt!)]));
   /** How to reach one account: its chat (the person's page, sending there), else start one, else mail it. */
   const reach = (i: P.IdentityView): { run: () => void; label: string } | null => {
@@ -824,20 +830,15 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       },
       e.currentTarget,
     );
-  const pictureMenu = (e: MouseEvent) =>
-    openMenu(
-      { x: e.clientX, y: e.clientY },
-      {
-        label: 'Picture',
-        head: <div class="cm-sheet-title">Picture</div>,
-        track: 'picture menu',
-        items: groups(
-          [!!picture && { label: 'View Picture', icon: 'image', track: 'picture: view', run: () => viewPicture(picture, name) }],
-          [{ kind: 'label', label: 'Picture shown' }, ...pictures.map((c): MenuEntry => ({ label: c.label, detail: c.detail, pic: c.url, radio: true, checked: c.on, track: 'picture: choose', run: () => void sources({ picture: c.id === speaker?.id ? null : c.id }) }))],
-        ),
-      },
-      e.currentTarget,
-    );
+  // Their pictures, full screen, the one shown first in view: swipe or page through them and use another.
+  const viewPictures = () => {
+    const on = Math.max(0, pictures.findIndex((c) => c.on));
+    viewer.value = {
+      images: pictures.map((c) => ({ url: c.url, name: c.label, detail: c.detail, fill: true })),
+      index: on,
+      choose: { on, pick: (k) => sources({ picture: pictures[k].id === speaker?.id ? null : pictures[k].id }) },
+    };
+  };
 
   const hero = (
     <Hero
@@ -845,7 +846,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       name={name}
       picture={picture}
       onPicture={ownPicture ? (e) => pe!.pictureMenu(e, ownPicture, setPicturing, picture ? () => viewPicture(picture, name) : undefined) : undefined}
-      pictureMenu={pictures.length > 1 ? pictureMenu : undefined}
+      onView={pictures.length > 1 ? viewPictures : undefined}
       presence={isSelf ? undefined : person ? { person: person.id } : { identity: first?.id }}
       network={nets.length === 1 ? nets[0] : undefined}
       banner={banner}

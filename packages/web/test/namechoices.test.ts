@@ -1,5 +1,5 @@
 /**
- * The hero's name and picture menus on a person's profile (namechoices.ts; docs/profile.md "Which account speaks for
+ * The hero's name menu and picture choice on a person's profile (namechoices.ts; docs/profile.md "Which account speaks for
  * them"): which names and pictures they offer, and which is ticked.
  */
 import { expect, test } from 'bun:test';

@@ -29,8 +29,6 @@ export type MenuEntry =
       sub?: MenuEntry[];
       /** A dot of this colour (any CSS background) before the label: a mail account's colour. */
       dot?: string;
-      /** A picture before the label, round: which account's picture it is. */
-      pic?: string;
       /** A second, smaller line under the label (a mail account's state); `warn` colours it and rings the dot. */
       detail?: string;
       warn?: boolean;
@@ -246,7 +244,6 @@ function Panel({ items, x, y, flipX, flipY, depth, onClose, onBack, autoFocus, t
               onClick={() => activate(i)}
             >
               {e.dot && <span class={`cm-dot ${e.warn ? 'warn' : ''}`} style={{ background: e.dot }} aria-hidden="true" />}
-              {e.pic && <img class="cm-pic" src={e.pic} alt="" aria-hidden="true" />}
               <Label e={e} />
               {!!e.count && <span class="cm-count">{e.count}</span>}
               {e.hint && <kbd class="cm-hint">{e.hint}</kbd>}
@@ -342,7 +339,6 @@ function SheetMenu({ spec, onClose }: { spec: MenuSpec; onClose: () => void }) {
             >
               <Icon name={e.sub ? 'chevronRight' : e.checked ? 'check' : (e.icon ?? 'chevronRight')} size={20} class={e.checked === false || (!e.icon && !e.sub && !e.checked) ? 'cm-blank' : ''} />
               {e.dot && <span class={`cm-dot ${e.warn ? 'warn' : ''}`} style={{ background: e.dot }} aria-hidden="true" />}
-              {e.pic && <img class="cm-pic" src={e.pic} alt="" aria-hidden="true" />}
               <Label e={e} />
               {!!e.count && <span class="cm-count">{e.count}</span>}
             </button>

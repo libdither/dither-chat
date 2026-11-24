@@ -140,10 +140,12 @@ shows. The first entry puts the main account's back. The same for someone of one
 nickname, display name and handle. Kept on the person (`person.name_identity_id` with `name_field`, set with `PATCH
 /api/persons/:id { nameFrom: { identityId, field: nickname | display | handle } | null }`, refused whole for an
 account not theirs or a name it lacks; `PersonView.nameFrom`) and cleared when that account is split off. Where their
-accounts have more than one picture, their picture opens a menu instead of the viewer: **View Picture**, then **Picture
-shown**, each account's picture once with its name and network, the main account's first (choosing it is `{ picture:
-null }`). Helpers in `namechoices.ts`; checked end to end by `scripts/verify-name-picture.ts` on the `multiaccount`
-demo.
+accounts have more than one picture, their picture opens all of them in the image viewer, each once, the main
+account's first, starting on the one shown. Each has its account's name and network in the bar, and a row of them
+along the bottom: the one in view ringed, the one shown ticked. Swipe, click one in the row or use the arrow keys to
+page through them; **Show This Picture** shows the one in view (the main account's is `{ picture: null }`), and the
+tick moves to it once the hub has it (viewer.ts `choose`). Helpers in `namechoices.ts`; checked end to end, on a
+computer and on a phone, by `scripts/verify-name-picture.ts` on the `multiaccount` demo.
 
 ### Your own bio
 
@@ -165,8 +167,8 @@ and its code under My code (docs/add.md, "QR codes"), come from the last time it
 ### Changing a picture
 
 A hero's picture you may not change is a button that opens it full screen in the image viewer (ui/Viewer.tsx), to
-zoom and pan (or, for someone whose accounts have several pictures, a menu with View Picture first and the pictures
-to choose from: "Which account speaks for them"); one you may change has **View Picture** first in its menu.
+zoom and pan (for someone whose accounts have several pictures, all of them, to choose the one shown: "Which account
+speaks for them"); one you may change has **View Picture** first in its menu.
 
 Where you may change a picture, the hero's picture is a button with a camera on it ("Change" over it on hover):
 a group's or server's where its About says `fields.avatar.canEdit`, and yours on each network whose profile lists

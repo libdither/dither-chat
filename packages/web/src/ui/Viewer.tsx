@@ -19,6 +19,9 @@
  * viewer in a chunk of its own (files/), loaded when such a file is first opened. On a phone they fill the screen; on a
  * wider screen they open in a box over the app, which a click beside it closes. The header always has Download; with
  * the desktop helper or the Android app it can open the file in an app as well.
+ *
+ * A person's pictures, one from each of their accounts, open here from their profile to choose from (viewer.ts
+ * `choose`): a row of them along the bottom, the one shown ticked, and a button to show the one in view instead.
  */
 import type { FunctionComponent } from 'preact';
 import type * as P from '@dither-chat/protocol';
@@ -37,14 +40,14 @@ import { Icon } from './icons.tsx';
 import { Loading } from './Loader.tsx';
 import { Video } from './Video.tsx';
 
-import { viewer, type ViewerImage } from '../viewer.ts';
+import { viewer, type ViewerChoice, type ViewerImage } from '../viewer.ts';
 
 ;
 
 export function Viewer() {
   const v = viewer.value;
   const f = fileViewer.value;
-  if (v) return <ViewerBox images={v.images} start={v.index} />;
+  if (v) return <ViewerBox images={v.images} start={v.index} choose={v.choose} />;
   return f ? <FileBox key={f.att.url} att={f.att} /> : null;
 }
 
@@ -202,10 +205,23 @@ const SLACK = 0.4;
 /** How fast a glide slows (ms for its speed to fall to a third), and how fast the wheel's zoom catches up. */
 const GLIDE_MS = 325;
 const EASE_MS = 45;
+/** Kept clear at the top and the bottom while choosing a picture, for the bar and the row of pictures. */
+const PICKS_H = 136;
 
-function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) {
+function ViewerBox({ images, start, choose }: { images: ViewerImage[]; start: number; choose?: ViewerChoice }) {
   const [i, setI] = useState(start);
   const img = images[i];
+  // The picture in use, moved once the hub has the new choice.
+  const [on, setOn] = useState(choose?.on ?? -1);
+  const [saving, setSaving] = useState(false);
+  const use = async () => {
+    if (!choose || saving) return;
+    const k = i;
+    setSaving(true);
+    const ok = await choose.pick(k);
+    setSaving(false);
+    if (ok !== false) setOn(k);
+  };
   // What the picture is and how the hub keeps it, for the line under its name and the forms to download it in.
   const [format, setFormat] = useState<{ url: string; f: MediaFormat } | null>(null);
   useEffect(() => {
@@ -225,7 +241,7 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
   const fitted = () => {
     const el = pic.current;
     const W = innerWidth;
-    const H = innerHeight;
+    const H = innerHeight - (choose ? 2 * PICKS_H : 0);
     const nw = el?.naturalWidth || img.width || W;
     const nh = el?.naturalHeight || img.height || H;
     const k = Math.min(W / nw, H / nh, img.fill ? Infinity : 1);
@@ -302,6 +318,8 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
     wheelTo.current = null;
     layout();
     show({ s: 1, x: 0, y: 0 });
+    // Choosing among more pictures than the row has room for: the one in view is kept in it.
+    root.current?.querySelector('.viewer-thumb.at')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [i]);
   // A turned phone or a resized window: fitted again, the zoom kept within the new edges.
   useEffect(() => {
@@ -372,7 +390,7 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
     };
 
     const down = (e: PointerEvent) => {
-      if ((e.target as HTMLElement).closest('.viewer-bar, .viewer-nav')) return;
+      if ((e.target as HTMLElement).closest('.viewer-bar, .viewer-nav, .viewer-picks')) return;
       el.setPointerCapture(e.pointerId);
       halt();
       wheelTo.current = null;
@@ -623,9 +641,9 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
         <span class="viewer-name">
           <span>
             {img.name ?? 'Image'}
-            {images.length > 1 && <small>{` ${i + 1} of ${images.length}`}</small>}
+            {images.length > 1 && !choose && <small>{` ${i + 1} of ${images.length}`}</small>}
           </span>
-          {format && format.url === img.url && <small class="viewer-format">{formatLine(format.f)}</small>}
+          {img.detail ? <small class="viewer-format">{img.detail}</small> : format && format.url === img.url && <small class="viewer-format">{formatLine(format.f)}</small>}
         </span>
         <button class="icon-btn" onClick={() => save(img.url, img.name)} aria-label="Download" title={format?.url === img.url && formLabel(format.f.type) ? `Download the ${formLabel(format.f.type)} as it came` : 'Download'}>
           <Icon name="download" size={20} />
@@ -661,6 +679,32 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
         <button class="viewer-nav next" onClick={() => page(1)} aria-label="Next image">
           <Icon name="chevronRight" size={22} />
         </button>
+      )}
+      {choose && (
+        <div class="viewer-picks">
+          <div class="viewer-thumbs">
+            {images.map((m, k) => (
+              <button class={`viewer-thumb ${k === i ? 'at' : ''}`} aria-label={`${m.name ?? 'Picture'}${m.detail ? `, ${m.detail}` : ''}${k === on ? ', shown' : ''}`} aria-current={k === i} title={m.name ?? undefined} data-track="viewer: picture" onClick={() => setI(k)}>
+                <img src={m.url} alt="" draggable={false} />
+                {k === on && (
+                  <span class="viewer-thumb-on" aria-hidden="true">
+                    <Icon name="check" size={11} />
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+          {i === on ? (
+            <span class="viewer-use on">
+              <Icon name="check" size={16} />
+              Shown on their profile
+            </span>
+          ) : (
+            <button class="viewer-use" disabled={saving} data-track="viewer: use picture" onClick={() => void use()}>
+              Show This Picture
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

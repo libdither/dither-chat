@@ -2,9 +2,9 @@
  * Choosing a person's name and picture from their profile's hero (namechoices.ts, docs/profile.md "Which account
  * speaks for them"), end to end against a demo hub in headless Chromium: the button beside the name lists the main
  * account's name and each account's nickname, display name and handle; a pick names them, ticked when the menu opens
- * again, and the main account's puts it back. Their picture opens a menu of each account's picture, View Picture
- * first; a pick shows it, and View Picture opens that one. One account's names on a page of their own. The same on a
- * phone, as a sheet.
+ * again, and the main account's puts it back. Their picture opens their accounts' pictures full screen, on the one
+ * shown, with a row of them to page through and a button that shows the one in view. One account's names on a page of
+ * their own. On a phone: the names as a sheet, the pictures swiped through.
  *
  *   DITHER_DEMO_SCENARIO=multiaccount bun run hub -- --demo --data <tmp> --port <port>
  *   bun scripts/verify-name-picture.ts http://127.0.0.1:<port> [/tmp/shots]
@@ -30,7 +30,9 @@ if (!kit || !solo) throw new Error('not the multiaccount scenario: no one with f
 
 let failures = 0;
 const check = (ok: unknown, what: string, detail: unknown = '') => {
-  console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}${detail !== '' ? `  ${JSON.stringify(detail)}` : ''}`);
+  // Pictures are long data URLs: their first characters say enough.
+  const said = JSON.stringify(detail, (_, v) => (typeof v === 'string' && v.length > 60 ? `${v.slice(0, 40)}…` : v));
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}${detail !== '' ? `  ${said}` : ''}`);
   if (!ok) failures++;
 };
 
@@ -62,11 +64,44 @@ const pick = async (label: string, detail?: string) => {
   if (!r) throw new Error(`no menu item ${label} ${detail ?? ''}`);
   for (const type of ['mousePressed', 'mouseReleased']) await p.send('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: 'left', clickCount: 1 });
 };
+/**
+ * A finger across the screen, from x0 to x1 at height y, still before it lifts: one lifted moving starts a fling, and
+ * Chrome takes the next tap as stopping that fling, with no click.
+ */
+const swipe = async (x0: number, x1: number, y: number) => {
+  await p.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x0, y }] });
+  for (let n = 1; n <= 8; n++) await p.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x0 + ((x1 - x0) * n) / 8, y }] });
+  await Bun.sleep(150);
+  await p.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x1, y: y + 1 }] });
+  await p.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+};
+const tapItem = async (label: string, detail: string) => {
+  // The sheet slides up: tapped mid-slide, the finger lands where the item no longer is.
+  await p.until(`document.getAnimations().every((a) => a.playState !== 'running')`, 3000);
+  const r = await p.eval<{ x: number; y: number } | null>(`(() => { const e = [...document.querySelectorAll('.cm-sheet [role^="menuitem"]')].find((b) => (b.querySelector('.cm-two > .cm-text') ?? b.querySelector('.cm-text'))?.textContent.trim() === ${JSON.stringify(label)} && b.querySelector('.cm-detail')?.textContent.trim() === ${JSON.stringify(detail)}); if (!e) return null; e.scrollIntoView({ block: 'nearest' }); const b = e.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; })()`);
+  if (!r) throw new Error(`no sheet item ${label} ${detail}`);
+  await p.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [r] });
+  await p.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+};
+/** The viewer closed, and the history entry it held given back: a page change before that is undone by it. */
+const viewerGone = () => p.until(`!document.querySelector('.viewer') && history.state?.layer == null`, 3000);
 const escape = () => p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
 const heroName = () => p.eval<string>(`document.querySelector('.pf-title h1')?.innerText.trim() ?? ''`);
 const heroPic = () => p.eval<string>(`document.querySelector('.pf-avatar img')?.getAttribute('src') ?? ''`);
 const menuOpen = () => p.until(`!!document.querySelector('[role="menuitemradio"], [role="menuitem"]')`, 3000);
 const menuShut = () => p.until(`!document.querySelector('[role="menuitemradio"], [role="menuitem"]')`, 3000);
+/** The viewer's pictures to choose from: each one's src, which is in view, which is shown, and the button. */
+const viewState = () =>
+  p.eval<{ thumbs: { src: string }[]; at: number; on: number; src: string; detail: string; use: string }>(
+    `(() => { const t = [...document.querySelectorAll('.viewer-thumb')]; return { thumbs: t.map((b) => ({ src: b.querySelector('img').getAttribute('src') })), at: t.findIndex((b) => b.classList.contains('at')), on: t.findIndex((b) => b.querySelector('.viewer-thumb-on')), src: document.querySelector('.viewer-img')?.getAttribute('src') ?? '', detail: document.querySelector('.viewer-format')?.textContent ?? '', use: document.querySelector('.viewer-use')?.textContent.trim() ?? '' }; })()`,
+  );
+
+/** The demo world's notices (an account stopped) would cover the screenshots. */
+const shoot = async (file: string) => {
+  if (!shots) return;
+  await p.eval(`document.getElementById('no-toasts') || document.head.append(Object.assign(document.createElement('style'), { id: 'no-toasts', textContent: '.toasts { display: none !important; }' }))`);
+  await p.shot(`${shots}/${file}`);
+};
 
 try {
   await p.size(1280, 860);
@@ -82,7 +117,7 @@ try {
   check(names.some((n) => n.detail.startsWith('Display name')) && names.some((n) => n.detail.startsWith('Handle')), 'each account’s display names and handles', names.map((n) => `${n.label} — ${n.detail}`));
   check(!names.some((n) => /^\+?[\d\s]+$/.test(n.label)), 'no phone number among them');
   check(new Set(names.map((n) => n.label)).size === names.length, 'each name once');
-  if (shots) await p.shot(`${shots}/name-menu.png`);
+  await shoot('name-menu.png');
   const other = names.find((n) => n.detail.startsWith('Handle') && n.label !== first)!;
   await pick(other.label, other.detail);
   await p.until(`document.querySelector('.pf-title h1')?.innerText.trim() === ${JSON.stringify(other.label)}`, 5000).catch(() => {});
@@ -97,64 +132,87 @@ try {
   await p.until(`document.querySelector('.pf-title h1')?.innerText.trim() === ${JSON.stringify(first)}`, 5000).catch(() => {});
   check((await heroName()) === first, 'the main account’s name puts it back', await heroName());
 
-  // The picture.
+  // The picture: their pictures in the viewer, to choose from.
   const pic0 = await heroPic();
   await click('.pf-avatar-view');
-  await menuOpen();
-  let pics = await items();
-  check(pics[0]?.label === 'View Picture', 'View Picture first', pics[0]);
-  const choices = await p.eval<string[]>(`[...document.querySelectorAll('.cm-pic')].map((i) => i.getAttribute('src'))`);
-  check(choices.length >= 5 && new Set(choices).size === choices.length, 'a picture for each account with one, each once', choices.length);
-  check(pics.filter((x) => x.on).length === 1 && pics[1]?.on && pics[1].detail.includes('main account'), 'the main account’s first, ticked', pics.slice(1, 3));
-  if (shots) await p.shot(`${shots}/picture-menu.png`);
-  const another = pics.slice(2).find((x) => !x.on)!;
-  await pick(another.label, another.detail);
-  await p.until(`document.querySelector('.pf-avatar img')?.getAttribute('src') !== ${JSON.stringify(pic0)}`, 5000).catch(() => {});
-  const pic1 = await heroPic();
-  check(pic1 && pic1 !== pic0, 'another account’s picture chosen shows', { pic0: pic0.slice(0, 40), pic1: pic1.slice(0, 40) });
+  await p.until(`!!document.querySelector('.viewer .viewer-picks')`, 3000).catch(() => {});
+  let view = await viewState();
+  check(view.thumbs.length >= 5 && new Set(view.thumbs.map((t) => t.src)).size === view.thumbs.length, 'a picture for each account with one, each once', view.thumbs.length);
+  check(view.at === view.on && view.src === pic0 && view.detail.includes('main account'), 'it opens on the one shown, the main account’s, ticked', view);
+  check(view.use === 'Shown on their profile', 'and says so', view.use);
+  await shoot('picture-viewer.png');
+  const k = view.thumbs.findIndex((_, n) => n !== view.on && n > 1);
+  await click(`.viewer-thumb:nth-child(${k + 1})`);
+  await p.until(`document.querySelector('.viewer-thumb.at') === document.querySelectorAll('.viewer-thumb')[${k}]`, 3000).catch(() => {});
+  view = await viewState();
+  check(view.at === k && view.src === view.thumbs[k].src && view.use === 'Show This Picture', 'another one in view offers to show it', view);
+  await shoot('picture-viewer-other.png');
+  await click('.viewer-use');
+  await p.until(`document.querySelector('.viewer-use')?.textContent.includes('Shown')`, 5000).catch(() => {});
+  view = await viewState();
+  check(view.on === k && view.use === 'Shown on their profile', 'shown, the tick moves to it', view);
+  const pic1 = view.thumbs[k].src;
+  await escape();
+  await viewerGone();
+  await p.until(`document.querySelector('.pf-avatar img')?.getAttribute('src') === ${JSON.stringify(pic1)}`, 5000).catch(() => {});
+  check((await heroPic()) === pic1, 'their profile shows it', { pic0: pic0.slice(0, 40), pic1: pic1.slice(0, 40) });
   check((await heroName()) === first, 'and their name stays', await heroName());
   await click('.pf-avatar-view');
-  await menuOpen();
-  pics = await items();
-  check(pics.find((x) => x.on)?.label === another.label, 'opened again, it is the one ticked', pics.filter((x) => x.on));
-  await pick('View Picture');
-  await p.until(`document.querySelector('.viewer .viewer-img')?.naturalWidth > 0`, 3000).catch(() => {});
-  check((await p.eval<string>(`document.querySelector('.viewer .viewer-img')?.getAttribute('src') ?? ''`)) === pic1, 'View Picture opens the one showing');
+  await p.until(`!!document.querySelector('.viewer .viewer-picks')`, 3000).catch(() => {});
+  view = await viewState();
+  check(view.at === k && view.on === k, 'opened again, it opens on that one, ticked', view);
+  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37 });
+  await p.until(`document.querySelector('.viewer-thumb.at') === document.querySelectorAll('.viewer-thumb')[${k - 1}]`, 3000).catch(() => {});
+  check((await viewState()).at === k - 1, 'the arrow keys page through them');
+  await click('.viewer-thumb:nth-child(1)');
+  await click('.viewer-use');
+  await p.until(`document.querySelector('.viewer-use')?.textContent.includes('Shown')`, 5000).catch(() => {});
   await escape();
-  await p.until(`!document.querySelector('.viewer')`, 3000);
-  await click('.pf-avatar-view');
-  await menuOpen();
-  pics = await items();
-  await pick(pics[1].label, pics[1].detail);
+  await viewerGone();
   await p.until(`document.querySelector('.pf-avatar img')?.getAttribute('src') === ${JSON.stringify(pic0)}`, 5000).catch(() => {});
   check((await heroPic()) === pic0, 'the main account’s picture puts it back');
+  const back = (await fetch(`${hub}/api/bootstrap`).then((r) => r.json())).persons.find((x: any) => x.id === kit.id);
+  check(!back?.pictureIdentityId, 'and the hub clears the choice', back?.pictureIdentityId);
 
   // One account: its display name and its handle.
   await p.goto(`${hub}/#/p/${solo.id}`);
-  await p.until(`!!document.querySelector('.profile-page .pf-name-swap')`, 15000);
+  // Their page, not the one before it still on its way out.
+  await p.until(`!!document.querySelector('.profile-page .pf-name-swap') && document.querySelector('.pf-title h1')?.innerText.trim().split('\\n')[0] === ${JSON.stringify(solo.name)}`, 15000);
   await click('.pf-name-swap');
   await menuOpen();
   const one = await items();
   const i = ids.get(solo.identityIds[0]);
   check(one.length === 2 && one[1].label === i.handle, 'one account: its name, then its handle', one);
-  if (shots) await p.shot(`${shots}/one-account-menu.png`);
+  await shoot('one-account-menu.png');
   await escape();
   await menuShut();
 
-  // A phone: the same as a sheet.
+  // A phone: the names as a sheet; the pictures full screen, swiped through.
   await p.size(390, 844, true);
   await p.goto(`${hub}/#/p/${kit.id}`);
-  await p.until(`!!document.querySelector('.profile-page .pf-name-swap')`, 15000);
-  await tap('.pf-avatar-view');
-  await p.until(`!!document.querySelector('.cm-sheet .cm-pic')`, 3000).catch(() => {});
-  check(await p.eval(`document.querySelectorAll('.cm-sheet .cm-pic').length >= 5`), 'on a phone, the pictures in a sheet');
-  if (shots) await p.shot(`${shots}/phone-picture-sheet.png`);
-  await escape();
-  await menuShut().catch(() => {});
+  await p.until(`!!document.querySelector('.profile-page .pf-name-swap') && document.querySelector('.pf-title h1')?.innerText.trim().split('\\n')[0] === ${JSON.stringify(first)}`, 15000);
+  await shoot('phone-hero.png');
   await tap('.pf-name-swap');
-  await p.until(`!!document.querySelector('.cm-sheet [role="menuitemradio"], .cm-sheet [role="menuitem"]')`, 3000).catch(() => {});
-  check(await p.eval(`document.querySelectorAll('.cm-sheet .cm-detail').length >= 3`), 'and the names');
-  if (shots) await p.shot(`${shots}/phone-name-sheet.png`);
+  await p.until(`!!document.querySelector('.cm-sheet [role^="menuitem"]')`, 3000).catch(() => {});
+  check(await p.eval(`document.querySelectorAll('.cm-sheet .cm-detail').length >= 3`), 'on a phone, the names in a sheet');
+  await shoot('phone-name-sheet.png');
+  const phoneName = names.find((n) => n.detail.startsWith('Display name') && n.label !== first)!;
+  await tapItem(phoneName.label, phoneName.detail);
+  await p.until(`document.querySelector('.pf-title h1')?.innerText.trim() === ${JSON.stringify(phoneName.label)}`, 5000).catch(() => {});
+  check((await heroName()) === phoneName.label, 'a tap names them', { want: phoneName.label, got: await heroName() });
+  await tap('.pf-avatar-view');
+  await p.until(`!!document.querySelector('.viewer .viewer-picks')`, 3000).catch(() => {});
+  const v0 = await viewState();
+  check(v0.thumbs.length >= 5 && v0.at === v0.on, 'the pictures full screen, on the one shown');
+  await swipe(350, 60, 420);
+  await p.until(`document.querySelector('.viewer-thumb.at') === document.querySelectorAll('.viewer-thumb')[${v0.at + 1}]`, 3000).catch(() => {});
+  const v1 = await viewState();
+  check(v1.at === v0.at + 1 && v1.use === 'Show This Picture', 'a swipe brings the next', v1);
+  await shoot('phone-picture-viewer.png');
+  await tap('.viewer-use');
+  await p.until(`document.querySelector('.viewer-use')?.textContent.includes('Shown')`, 5000).catch(() => {});
+  const mine = (await fetch(`${hub}/api/bootstrap`).then((r) => r.json())).persons.find((x: any) => x.id === kit.id);
+  check(mine?.avatar === v1.thumbs[v1.at].src, 'a tap shows it', { avatar: mine?.avatar?.slice(0, 40) });
   await escape();
 
   // The demo world's pictures point at network servers a demo hub never reaches (502): not this page's errors.
