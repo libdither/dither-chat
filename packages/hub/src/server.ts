@@ -2154,8 +2154,10 @@ export class HubServer {
       if (!idOrNull(b.face) || !idOrNull(b.picture)) return bad('face and picture are an identity id or null');
       if (b.face !== undefined || b.picture !== undefined) {
         if (!s.one('SELECT 1 FROM person WHERE id = ? AND is_self = 0', m[1])) return bad('no such person', 404);
-        if (b.face !== undefined && !s.setPersonFace(m[1], b.face as string | null)) return bad('that account is not theirs');
-        if (b.picture !== undefined && !s.setPersonPicture(m[1], b.picture as string | null)) return bad('that account is not theirs');
+        // Both checked before either is saved, so a refused request changes nothing.
+        for (const id of [b.face, b.picture]) if (typeof id === 'string' && !s.one('SELECT 1 FROM identity WHERE id = ? AND person_id = ?', id, m[1])) return bad('that account is not theirs');
+        if (b.face !== undefined) s.setPersonFace(m[1], b.face as string | null);
+        if (b.picture !== undefined) s.setPersonPicture(m[1], b.picture as string | null);
       }
       s.updatePerson(m[1], { ...(typeof b.note === 'string' ? { note: b.note } : {}) });
       // Kept on their networks too, where an account keeps notes (capability 'contactNotes').

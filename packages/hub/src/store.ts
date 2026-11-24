@@ -1241,7 +1241,7 @@ export class Store {
    * A person's name and picture, made again from their face (docs/chats.md, Names): the one account they are shown
    * by, its name as you see it and its picture (the picture account's when you chose one), else the picture of
    * another of theirs you talked with last. The face
-   * stays until you pin another, it leaves them, or (`rechoose`) a merge or split asks again; a new one is chosen by
+   * stays until you pin another, it leaves them, or (`rechoose`) you ask the hub to choose again; a new one is chosen by
    * chooseFace. Your own person is named by your accounts' networks, not here.
    */
   private refreshFace(pid: string, rechoose = false) {
@@ -1276,6 +1276,8 @@ export class Store {
   setPersonFace(pid: string, identityId: string | null): boolean {
     if (identityId !== null && !this.db.query('SELECT 1 FROM identity WHERE id = ? AND person_id = ?').get(identityId, pid)) return false;
     this.db.query('UPDATE person SET face_id = COALESCE(?, face_id), face_pinned = ? WHERE id = ?').run(identityId, identityId ? 1 : 0, pid);
+    // A picture account made main is no longer a picture of its own: their picture is the main account's again.
+    if (identityId) this.db.query('UPDATE person SET picture_identity_id = NULL WHERE id = ? AND picture_identity_id = ?').run(pid, identityId);
     this.refreshFace(pid, identityId === null);
     this.dirty.persons.add(pid);
     this.personsChanged?.([pid]);
@@ -1921,7 +1923,8 @@ export class Store {
    */
   updatePerson(id: string, patch: { name?: string; note?: string }) {
     if (patch.name !== undefined) {
-      // Shown by the account that goes by that name, as a merge would choose; a name none goes by stays as given.
+      // Shown by the account that goes by that name, as a merge would choose. A name none goes by is kept only until
+      // their face's account changes (refreshFace names them after it again).
       const face = (this.db.query('SELECT * FROM identity WHERE person_id = ?').all(id) as Row[]).find((i) => shownName(i) === patch.name);
       if (face) this.db.query('UPDATE person SET face_id = ? WHERE id = ?').run(face.id, id), this.refreshFace(id);
       else this.db.query(`UPDATE person SET name = ?, manual = 1, name_source = 'merge' WHERE id = ?`).run(patch.name, id);
@@ -2700,7 +2703,7 @@ export class Store {
   personView(r: Row, identityIds?: string[], vias?: Map<string, { via: string; url: string | null }[]>): P.PersonView {
     const ids = identityIds ?? (this.db.query('SELECT id FROM identity WHERE person_id = ?').all(r.id) as Row[]).map((x) => x.id);
     const avatar = !r.avatar_url ? null : vias ? this.media(r.avatar_url, pickVia(vias.get(r.id), r.avatar_url)) : this.personPicture(r.id, r.avatar_url);
-    return { id: r.id, name: r.name, avatar, starred: false, isSelf: !!r.is_self, identityIds: ids, nameSource: (r.name_source ?? 'network') as P.NameSource, ...(ids.length > 1 && r.face_id ? { faceId: r.face_id } : {}), ...(r.face_pinned ? { facePinned: true } : {}), ...(ids.length > 1 && r.picture_identity_id ? { pictureIdentityId: r.picture_identity_id } : {}) };
+    return { id: r.id, name: r.name, avatar, starred: false, isSelf: !!r.is_self, identityIds: ids, nameSource: (r.name_source ?? 'network') as P.NameSource, ...(ids.length > 1 && r.face_id ? { faceId: r.face_id } : {}), ...(ids.length > 1 && r.face_pinned ? { facePinned: true } : {}), ...(ids.length > 1 && r.picture_identity_id ? { pictureIdentityId: r.picture_identity_id } : {}) };
   }
 
   /**

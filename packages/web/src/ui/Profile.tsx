@@ -709,7 +709,9 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const several = ids.length > 1;
   // The account they are shown by, their face (docs/chats.md "Names"), and the one whose picture they show instead.
   const speaker = (several && ids.find((i) => i.id === person?.faceId)) || null;
-  const pictureOf = (several && ids.find((i) => i.id === person?.pictureIdentityId)) || null;
+  const pictureChosen = (several && ids.find((i) => i.id === person?.pictureIdentityId)) || null;
+  // It shows only while it has a picture and is not the main account's own; its entry stays to clear it.
+  const pictureOf = pictureChosen?.avatar && pictureChosen.id !== speaker?.id ? pictureChosen : null;
   const sources = (patch: { face?: string | null; picture?: string | null }) =>
     person && api(`/api/persons/${person.id}`, { method: 'PATCH', body: patch }).catch((e) => toast({ kind: 'error', title: 'Could not save that', body: e.message }));
   const sinceOf = new Map(said.filter((a) => a.createdAt).map((a) => [a.identityId, monthYear(a.createdAt!)]));
@@ -744,7 +746,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
               speaker?.id === i.id && person.facePinned
                 ? { label: 'Main Account', icon: 'star', checked: true, track: 'main account', run: () => void sources({ face: null }) }
                 : { label: 'Make Main Account', icon: 'star', track: 'main account', run: () => void sources({ face: i.id }) },
-              !!i.avatar && speaker?.id !== i.id && { label: pictureOf?.id === i.id ? 'Their Picture' : 'Use Its Picture', icon: 'image', checked: pictureOf?.id === i.id, track: 'use picture', run: () => void sources({ picture: pictureOf?.id === i.id ? null : i.id }) },
+              (pictureChosen?.id === i.id || (!!i.avatar && speaker?.id !== i.id)) && { label: pictureChosen?.id === i.id ? 'Their Picture' : 'Use Its Picture', icon: 'image', checked: pictureChosen?.id === i.id, track: 'use picture', run: () => void sources({ picture: pictureChosen?.id === i.id ? null : i.id }) },
             ]
           : [],
         [several && !isSelf && { label: 'Split Into Its Own Person', icon: 'unlink', run: () => void split(i) }],

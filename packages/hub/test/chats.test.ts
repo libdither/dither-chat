@@ -297,6 +297,19 @@ describe('faces: one account shows them, its name and its picture', () => {
     await call('PATCH', `/api/identities/${sigKit}`, { nickname: null });
   });
 
+  test('a picture from another account: refused whole when either account is not theirs, and cleared once made main', async () => {
+    const before = kitRow();
+    expect((await call('PATCH', `/api/persons/${kit}`, { face: work, picture: idn('discord', 'solo') })).status).toBe(400);
+    expect(kitRow()).toEqual(before);
+    expect((await call('PATCH', `/api/persons/${kit}`, { picture: 7 })).status).toBe(400);
+    expect((await call('PATCH', `/api/persons/${kit}`, { picture: work })).status).toBe(200);
+    expect(kitRow()).toMatchObject({ name: 'Kit', face_id: exe, avatar_url: 'https://cdn.example/work2.png' });
+    await call('PATCH', `/api/persons/${kit}`, { face: work });
+    expect(store.one('SELECT picture_identity_id FROM person WHERE id = ?', kit)).toEqual({ picture_identity_id: null });
+    await call('PATCH', `/api/persons/${kit}`, { face: null });
+    expect(kitRow()).toMatchObject({ name: 'Kit', face_id: exe, face_pinned: 0, avatar_url: 'https://cdn.example/exe2.png' });
+  });
+
   test('splitting off their face: another of theirs shows them, with its own picture', () => {
     store.ingest(main, { t: 'identity', identity: { nativeId: 'k-solo', handle: 'kit.solo', displayName: 'Kit Solo', avatarUrl: 'https://cdn.example/solo.png' } });
     const solo = idn('discord', 'k-solo');

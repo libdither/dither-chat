@@ -124,7 +124,7 @@ in About, and its banner shows where it has one (else Discord's). They follow it
 new picture, a nickname you give it. **Make Main Account** on one of their accounts (its Edit, or its menu) keeps
 that one; pressing it again (checked, **Main Account**) lets the hub choose again. **Use Its Picture** on another
 account takes the picture from that one instead, while it has one; pressing it again goes back to the main account's,
-and so does splitting that account off. The hub keeps both on the person (`person.face_id` with `face_pinned`, and
+and so does making that account main or splitting it off. The hub keeps both on the person (`person.face_id` with `face_pinned`, and
 `person.picture_identity_id`, set with `PATCH /api/persons/:id { face, picture }`, an identity id of theirs or null;
 `PersonView.faceId`, `facePinned`, `pictureIdentityId`). Not on your own page: your own accounts go by the names you
 gave them on their networks.
