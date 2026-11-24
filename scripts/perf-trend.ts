@@ -64,7 +64,9 @@ function night(): Night {
   const dir = opt('dir', 'out');
   const metrics: Record<string, Stat> = {};
   let world: Record<string, number> | undefined;
-  for (const f of readdirSync(dir).filter((f) => f.endsWith('.json')).sort()) {
+  // perf.json first, then the rest by name.
+  const files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort((a, b) => +(b === 'perf.json') - +(a === 'perf.json') || a.localeCompare(b));
+  for (const f of files) {
     const j = JSON.parse(readFileSync(join(dir, f), 'utf8'));
     if (!j?.metrics) continue;
     const prefix = f === 'perf.json' ? '' : `${basename(f, '.json')}.`;
@@ -101,7 +103,7 @@ function night(): Night {
 
 // ------------------------------------------------------------------ report: the last night against the nights before
 
-type Row = { k: string; kind: string; now: Stat; med7?: number; med30?: number; d7?: number; d30?: number; flag: string };
+type Row = { k: string; kind: string; now: Stat; med7?: number; med30?: number; flag: string };
 
 function load(): Night[] {
   const file = opt('history');
@@ -113,7 +115,10 @@ function load(): Night[] {
 }
 
 const pct = (now: number, was?: number) => (was === undefined ? undefined : was === 0 ? (now === 0 ? 0 : Infinity) : (now - was) / was);
-const showPct = (d?: number) => (d === undefined ? '' : !isFinite(d) ? 'new' : `${d >= 0 ? '+' : ''}${Math.round(d * 100)}%`);
+const showPct = (d?: number) => (d === undefined ? '' : !isFinite(d) ? 'from 0' : `${d >= 0 ? '+' : ''}${Math.round(d * 100)}%`);
+/** A time's change as a percentage, a count's as the difference itself (+40 nodes says more than +1%). */
+const change = (kind: string, now: number, was?: number) =>
+  was === undefined ? '' : isTime(kind) ? showPct(pct(now, was)) : now === was ? '±0' : `${now > was ? '+' : ''}${fmt(now - was)}`;
 const fmt = (x?: number) => (x === undefined ? '' : Number.isInteger(x) ? x.toLocaleString('en-US') : x.toLocaleString('en-US', { maximumFractionDigits: 1 }));
 
 /** Its flag, if any: a time past 15% (and 5 ms, or 2 frames) of the 7 nights' median, any other kind moved at all. */
@@ -137,7 +142,7 @@ function rowsOf(nights: Night[]): Row[] {
     const xs = before.map((n) => n.metrics[k]?.v).filter((x): x is number => typeof x === 'number');
     const med7 = xs.length ? median(xs.slice(-7)) : undefined;
     const med30 = xs.length ? median(xs.slice(-30)) : undefined;
-    return { k, kind: now.kind, now, med7, med30, d7: pct(now.v, med7), d30: pct(now.v, med30), flag: flagOf(now.kind, now.v, med7) };
+    return { k, kind: now.kind, now, med7, med30, flag: flagOf(now.kind, now.v, med7) };
   });
 }
 
@@ -147,7 +152,7 @@ function throttleDiffs(last: Night) {
   for (const [k, m] of Object.entries(last.metrics)) {
     const p = k.match(/^([pa]?)(\d+)x\.(.+)$/);
     if (!p || isTime(m.kind)) continue;
-    const g = `${p[1]}Nx.${p[3]}`; // "pNx.open.layouts": the phone's open, at every throttle
+    const g = `${PASSES[p[1]]} ${p[3]}`; // "phone open.layouts", at every throttle
     if (!groups.has(g)) groups.set(g, { k: g, kind: m.kind, vals: new Map() });
     groups.get(g)!.vals.set(p[2], m.v);
   }
@@ -157,15 +162,11 @@ function throttleDiffs(last: Night) {
 }
 
 const PASSES: Record<string, string> = { '': 'desktop', p: 'phone', a: 'fetching ahead' };
-const passName = (k: string) => {
-  const p = k.match(/^([pa]?)(\d+)x\./);
-  return p ? `${PASSES[p[1]]} ${p[2]}×` : k.split('.')[0];
-};
 
 function markdown(nights: Night[], rows: Row[]) {
   const last = nights[nights.length - 1];
   const line = (r: Row) =>
-    `| ${r.flag ? `**${r.flag}**` : ''} | \`${r.k}\` | ${r.kind} | ${fmt(r.now.v)} | ${r.now.n > 1 ? `${fmt(r.now.lo)}–${fmt(r.now.hi)}` : ''} | ${fmt(r.med7)} | ${showPct(r.d7)} | ${fmt(r.med30)} | ${showPct(r.d30)} |`;
+    `| ${r.flag ? `**${r.flag}**` : ''} | \`${r.k}\` | ${r.kind} | ${fmt(r.now.v)} | ${r.now.n > 1 ? `${fmt(r.now.lo)}–${fmt(r.now.hi)}` : ''} | ${fmt(r.med7)} | ${change(r.kind, r.now.v, r.med7)} | ${fmt(r.med30)} | ${change(r.kind, r.now.v, r.med30)} |`;
   const head = '| | metric | kind | last | its runs | 7-night median | change | 30-night median | change |\n|---|---|---|---|---|---|---|---|---|';
   const flagged = rows.filter((r) => r.flag);
   const diffs = throttleDiffs(last);
@@ -250,7 +251,7 @@ function charts(nights: Night[], rows: Row[]) {
     const legend = c.series
       .map((s, si) => {
         const r = flags.get(s.key);
-        return `<span class="key"><i class="sw s${Math.min(si, 7) + 1}"></i>${c.series.length > 1 ? `${esc(s.label)} ` : ''}<b>${r ? fmt(r.now.v) : '–'}</b>${r?.flag ? ` <em class="flag">▲ ${r.flag} ${showPct(r.d7)}</em>` : ''}</span>`;
+        return `<span class="key"><i class="sw s${Math.min(si, 7) + 1}"></i>${c.series.length > 1 ? `${esc(s.label)} ` : ''}<b>${r ? fmt(r.now.v) : '–'}</b>${r?.flag ? ` <em class="flag">▲ ${r.flag} ${change(r.kind, r.now.v, r.med7)}</em>` : ''}</span>`;
       })
       .join('');
     return `<figure class="chart${moved.length ? ' moved' : ''}" data-name="${esc(`${c.section} ${c.name}`.toLowerCase())}"><figcaption><code>${esc(c.name)}</code> <span class="kind">${esc(c.kind)}</span></figcaption>${svg.join('')}<div class="legend">${legend}</div></figure>`;
@@ -261,13 +262,13 @@ function charts(nights: Night[], rows: Row[]) {
 
 function short(v: number) {
   const a = Math.abs(v);
-  return a >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : a >= 1e4 ? `${Math.round(v / 1e3)}k` : a >= 100 ? String(Math.round(v)) : String(Math.round(v * 10) / 10);
+  return a >= 1e6 ? `${+(v / 1e6).toPrecision(3)}M` : a >= 1e4 ? `${+(v / 1e3).toPrecision(3)}k` : a >= 100 ? String(Math.round(v)) : String(Math.round(v * 10) / 10);
 }
 
 function html(nights: Night[], rows: Row[]) {
   const last = nights[nights.length - 1];
   const table = rows
-    .map((r) => `<tr><td>${r.flag ? `<b>${r.flag}</b>` : ''}</td><td><code>${esc(r.k)}</code></td><td>${r.kind}</td><td>${fmt(r.now.v)}</td><td>${r.now.n > 1 ? `${fmt(r.now.lo)}–${fmt(r.now.hi)}` : ''}</td><td>${fmt(r.med7)}</td><td>${showPct(r.d7)}</td><td>${fmt(r.med30)}</td><td>${showPct(r.d30)}</td></tr>`)
+    .map((r) => `<tr><td>${r.flag ? `<b>${r.flag}</b>` : ''}</td><td><code>${esc(r.k)}</code></td><td>${r.kind}</td><td>${fmt(r.now.v)}</td><td>${r.now.n > 1 ? `${fmt(r.now.lo)}–${fmt(r.now.hi)}` : ''}</td><td>${fmt(r.med7)}</td><td>${change(r.kind, r.now.v, r.med7)}</td><td>${fmt(r.med30)}</td><td>${change(r.kind, r.now.v, r.med30)}</td></tr>`)
     .join('\n');
   const flagged = rows.filter((r) => r.flag).length;
   return `<!doctype html>
@@ -283,7 +284,7 @@ body { margin: 0; padding: 16px; background: var(--page); color: var(--ink); fon
 header p { color: var(--ink2); margin: 4px 0; max-width: 70em; }
 .controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 12px 0; }
 input[type=search] { font: inherit; padding: 6px 8px; border: 1px solid var(--edge); border-radius: 6px; background: var(--surface); color: var(--ink); min-width: 16em; }
-h2 { font-size: 15px; margin: 20px 0 8px; text-transform: capitalize; }
+h2 { font-size: 15px; margin: 20px 0 8px; } h2::first-letter { text-transform: uppercase; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 10px; }
 .chart { margin: 0; padding: 8px 10px; background: var(--surface); border: 1px solid var(--grid); border-radius: 8px; min-width: 0; }
 .chart.moved { border-color: var(--flag); }

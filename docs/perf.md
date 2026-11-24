@@ -2,7 +2,8 @@
 
 `scripts/verify-perf.ts` times what the app feels like on a hub the size of the real one, and fails when a change
 makes it slower. Run it before and after a change that touches rendering, the sync model or the hub's hot queries. CI
-runs a small version on every push that judges its counts, never its times ([In CI](#in-ci---ci)), and ordinary tests
+runs a small version on every push that judges its counts, never its times ([In CI](#in-ci---ci)), a nightly run keeps
+every number at 1× and 4× and shows how they move ([Nightly trends](#nightly-trends)), and ordinary tests
 hold sizes and counts of what the hub sends and the web build weighs ([Budgets](#budgets-sizes-and-counts-in-every-test-run)).
 `scripts/verify-response.ts` clicks every control on each kind of page and fails on a click that draws a whole list
 again ([Every click](#every-click-2026-11-20)).
@@ -159,6 +160,49 @@ after a relaunch 16 to 18 (17 or 18), all within the two a tally may go over, th
 the 21 that fails; `long.reopen.nodes` 8214, the first run's (above); and the bootstrap's bytes, by an arriving message
 or so (`hub.bootstrap.bytes`, taken after the warm-up now, 539,634 against 539,665; `cold.bootstrapBytes` 539,733
 against 539,932).
+
+## Nightly trends
+
+CI judges counts at 1× on a tenth-size world and never looks at a time, so a slow creep passes every check, and the
+counts at 4× (renders batch differently on a slow CPU) were only ever looked at by hand. So once a night
+`.github/workflows/perf-nightly.yml` runs verify-perf at both throttles and keeps what it measured:
+
+```sh
+bun scripts/verify-perf.ts --scale 0.25 --runs 5 --warmup 1 --cpu 1,4 --phone-cpu 1,4 --ahead-cpu 1,4 \
+  --baseline <none> --out out/perf.json
+```
+
+- **When:** 04:41 UTC every night on main (stress.yml runs at 07:17, android-device.yml at 09:23), and by hand from
+  Actions > Perf nightly > Run workflow, which asks for the world's size, the runs, and whether to record the run.
+  NIGHTLY_DURATION
+- **Never red on a number.** It has no baseline: nothing is judged, and a ceiling or floor verify-perf reports is a
+  warning on the run. It fails only when measuring breaks (the build, the hub, a page that never answers).
+- **History:** each night is one JSON line on the `perf-history` branch (`history.jsonl`; a branch of data only,
+  never merged): the date, the commit, the runner (CPU, cores, memory, image, browser), the settings, the world's
+  counts, and every metric's median with the lowest and highest of its runs. A run on main is recorded; a run by hand
+  on another branch only when asked (`record`), else it goes in the summary only. Only the job that writes the line
+  may write to the repository, and only it.
+- **What it shows:** the job's summary has the last night against the medians of the 7 and 30 nights before it
+  (nights run with the same settings), flagging a time that moved more than 15% (and 5 ms, or 2 slow frames) and a
+  count, tally or byte size that moved at all; then the counts that came out different at 1× and 4×; then every
+  metric. Flags only: the job stays green. The artifact `perf-trend` is a page of small charts, one per step and
+  pass, a line per throttle, each night's median with the band of its runs, that needs nothing from the network
+  (light and dark). The artifact `perf-night` has the night's line and verify-perf's whole output.
+- **No key list.** `scripts/perf-trend.ts night` records whatever is in `out/*.json`: a new verify-perf metric is
+  recorded and charted the first night it appears. Another script's numbers are one line in the workflow, the script
+  writing `out/<name>.json` as `{ "metrics": { "<key>": { "v": 12, "kind": "ms", "runs": [11, 12, 14] } } }`
+  (verify-perf's own `--out` shape); its keys are kept as `<name>.<key>`. A kind of `ms` or `frames` is a time, any
+  other a count.
+
+The same page from the history, locally:
+
+```sh
+git fetch origin perf-history
+bun scripts/perf-trend.ts report --html /tmp/perf-trend.html      # the table on stdout, the charts in the file
+bun scripts/perf-trend.ts report --history <file.jsonl>             # a history of your own
+```
+
+NIGHTLY_SCALE
 
 ## Baselines and when to update them
 

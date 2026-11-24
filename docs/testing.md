@@ -27,6 +27,9 @@
 - A new push to a pull request cancels its older run. Runs on main never cancel each other.
 - The Android app has workflows of its own, outside `check`: android.yml (unit tests and the APK, when apps/android
   changes) and android-device.yml (the app on an emulator; [below](#android-on-an-emulator)).
+- Two workflows run once a night on main, outside `check`, and never block a merge: stress.yml (the hub's suite many
+  times over; [below](#the-stress-run)) and perf-nightly.yml (verify-perf at 1× and 4× CPU, five runs each, its
+  numbers kept on the `perf-history` branch and charted; [below](#the-nightly-perf-run)).
 - The run takes as long as its slowest job, and every job sets up in a few seconds, so a long step gets a job of its
   own rather than waiting behind another: `perf` (about 50 s of browser runs), `test-hub-mail` (one file of 20 to
   30 s) and `test-hub` (the other 69 files) run side by side. A code pull request's run took about 70 s on 2026-11-10,
@@ -208,6 +211,14 @@ failed. Nothing else happens: no issue, no message beyond GitHub's own.
 
 The same locally: `bun scripts/stress.ts --rerun-each=3`, and after `--`, files or `-t` for bun test. What it finds
 gets fixed. If that can't happen at once, the test is quarantined with a note naming the issue.
+
+### The nightly perf run
+
+`.github/workflows/perf-nightly.yml` runs `verify-perf` once a night (04:41 UTC) on a quarter-size world, at 1× and 4×
+CPU for the desktop, the phone and fetching ahead, five runs each, and by hand from Actions > Perf nightly > Run
+workflow. It judges nothing: each night's medians and spread go as one line onto the `perf-history` branch, and the
+job's summary flags what moved against the nights before (a time by 15%, a count at all), with a page of charts as the
+artifact `perf-trend`. It fails only when measuring breaks. docs/perf.md, "Nightly trends".
 
 ## Checks across the code
 
