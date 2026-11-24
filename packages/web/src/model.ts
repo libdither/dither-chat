@@ -145,7 +145,9 @@ export function visibleAccount(id: string) {
   return db.accounts.has(id) || db.mail.accounts.has(id);
 }
 export function visibleConv(c: P.ConversationView) {
-  return c.vantages.some((v) => visibleAccount(v.accountId));
+  // A loop, not `some` with a closure: this runs for every conversation in several passes of a first draw.
+  for (const v of c.vantages) if (visibleAccount(v.accountId)) return true;
+  return false;
 }
 function visibleSpace(s: P.SpaceView) {
   return s.accountIds.some(visibleAccount);
@@ -640,7 +642,8 @@ export function railEntries(which: 'shown' | 'hidden' = 'shown'): RailEntry[] {
     // Conversations you added to the rail and not to a folder: by id, since what is where moves only with settings.
     const railed = metaMemo('railed', () => {
       const inFolder = new Set(db.folders.flatMap((f) => f.items.map((i) => `${i.kind}:${i.id}`)));
-      return { inFolder, convs: [...db.conversations.values()].filter((c) => visibleConv(c) && !inFolder.has(`conversation:${c.id}`) && placePref('conversation', c.id).railed).map((c) => c.id) };
+      // Whether you added it first: most conversations have no place settings, and `placePref` makes them some.
+      return { inFolder, convs: [...db.conversations.values()].filter((c) => db.placePrefs.get(`conversation:${c.id}`)?.railed && visibleConv(c) && !inFolder.has(`conversation:${c.id}`)).map((c) => c.id) };
     });
     const entries: RailEntry[] = [
       // A folder inside a folder is drawn there, not at the top.
@@ -960,7 +963,10 @@ export function sumUnread(convs: P.ConversationView[]): Unread {
 export function totalUnread(): Unread {
   return placesMemo('totalUnread', () => {
     const held = heldByRequest();
-    return sumUnread([...db.conversations.values()].filter((c) => visibleConv(c) && !held.has(c.id) && !isQuietConv(c)));
+    // Something unread first: sumUnread adds nothing for the rest, and most of the world's conversations are read.
+    const out: P.ConversationView[] = [];
+    for (const c of db.conversations.values()) if (c.vantages.some((v) => v.unread || v.mentions) && visibleConv(c) && !held.has(c.id) && !isQuietConv(c)) out.push(c);
+    return sumUnread(out);
   });
 }
 
@@ -1195,7 +1201,7 @@ function convRows(): ConvInboxRow[] {
       // A network's notifications are the Feed page's Activity (docs/feed.md "The Feed page"); logged posts none.
       if ((!a && !inboxShape(c)) || !visibleConv(c) || held.has(c.id) || isQuietConv(c)) continue;
       const row: ConvInboxRow = a ? { kind: 'conv', key: c.id, conv: c, score: a.score, needs: a.needs, reasons: a.reasons, owedSince: a.owedSince } : unscored(c);
-      if (!row.needs && c.shape !== 'self' && placePref('conversation', c.id).hidden) continue;
+      if (!row.needs && c.shape !== 'self' && db.placePrefs.get(`conversation:${c.id}`)?.hidden) continue;
       const u = unreadOf(c);
       rows.push({ ...row, last: c.lastMessageAt ?? 0, unread: u.unread, badge: u.badge, muted: u.muted });
     }

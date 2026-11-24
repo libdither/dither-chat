@@ -1112,6 +1112,12 @@ badge and the inbox list 415 → 284 ms of a cold load, the page's script in all
 What is still worked out again for every message or read (`changed('list')`): each server's activity and count, the
 badge's total and the rail's order, all from the conversations' objects, though one conversation changed.
 
+Then the passes over every conversation that most of them leave at once: the badge's total asks whether a conversation
+has anything unread before whether it is shown (most are read), the rail's added conversations and the inbox's hidden
+rows look up the place's settings before making a default for it (`placePref` makes one for each of the 5,600 that
+have none), the quiet shelf too, and `visibleConv` is a loop. Six cold loads of each at 4×, medians: the rail 214 → 166
+ms, the badge 78 → 60 ms, the inbox list 96 → 86 ms; a relaunch's rail and badge 25–35 ms less in all.
+
 ## One setting at a time (2026-11-20)
 
 Opening the details panel (the chat header's panel button) was slow: on the full-size world at 4× CPU, 160 to 260 ms
