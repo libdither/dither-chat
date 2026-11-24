@@ -678,6 +678,14 @@ if (store.accounts().some((a) => a.demo)) applyDemoOverlay(store);
 startup.mark('adapters');
 server.start();
 startup.mark('http listen');
+// The web build's files packed hard once, on the thread pool, what index.html loads first (compress.ts PackedFiles).
+{
+  const began = performance.now();
+  void server.packed.packAll(webDist).then(() => {
+    const s = server.packed.stats();
+    if (s.files) console.log(`web build packed: ${s.files} files, ${Math.round(s.bytes / 1024)} KB to ${Math.round(s.packed / 1024)} KB as zstd in ${((performance.now() - began) / 1000).toFixed(1)} s`);
+  });
+}
 // Every hold-up of the event loop from here on, with what began in it, for the first ten minutes (stalls.ts).
 const stalls = new StallWatch({ record: stallFile?.push ?? null, spans: spansBetween }).begin();
 // Beside the stall log's summary: whether the checkpoints kept up, and how long the longest took on its own thread.
