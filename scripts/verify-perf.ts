@@ -603,12 +603,12 @@ async function slowRun(cpu: number): Promise<Metrics> {
     await page.send('Page.addScriptToEvaluateOnNewDocument', { source: INIT });
     await page.send('Page.addScriptToEvaluateOnNewDocument', { source: SOCKETS });
 
-    // Cold: nothing on the device, not even the app. Once the bootstrap is asked for, the app is brought back to the
-    // front, as someone who looked away while it loaded would: its heartbeat pings the socket (state.ts probe) while
-    // the link is at its busiest, and a pong later than PONG_WAIT drops a socket that was fine.
+    // Cold: nothing on the device, not even the app. Once the bootstrap has begun to come, the app is brought back to
+    // the front, as someone who looked away while it loaded would: its heartbeat pings the socket (state.ts probe)
+    // while the link is at its busiest, and a pong later than PONG_WAIT drops a socket that was fine.
     await page.goto(url);
     const n = link.reqs.length;
-    for (let i = 0; i < 1200 && !link.reqs.slice(n).some((r) => r.kind === 'bootstrap'); i++) await Bun.sleep(50);
+    for (let i = 0; i < 1200 && !link.reqs.slice(n).some((r) => r.kind === 'bootstrap' && r.first); i++) await Bun.sleep(50);
     await page.eval(`window.dispatchEvent(new Event('focus'))`);
     const cold = await marks();
     put('cold.content', cold.content - cold.origin);
