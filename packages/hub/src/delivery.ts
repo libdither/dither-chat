@@ -13,7 +13,7 @@ export const BURST_MS = 5 * 60_000;
 /** A chat's row in the phone's list is brought up to date at most this often: a busy channel is one row, not a stream of pushes. */
 export const LIST_EVERY = 10 * 60_000;
 /** Someone using a page on a computer this recently: a phone buzz adds nothing. */
-const ACTIVE_MS = 2 * 60_000;
+export const ACTIVE_MS = 2 * 60_000;
 const LINES = 6;
 const BODY = 200;
 /** A push carries about 4 KB, encrypted; what goes in stays under this. */
@@ -23,7 +23,7 @@ const BUDGET = 3500;
  * reading one then still takes it away.
  */
 export const FORGET_MS = 3 * 24 * 3_600_000;
-const PHONE = /android|iphone|ipad|\bios\b/i;
+export const PHONE = /android|iphone|ipad|\bios\b/i;
 
 /** A conversation read since it was notified, and the newest message its notifications showed (Delivery.read). */
 export interface Read {

@@ -6,7 +6,8 @@
  */
 
 /** How a metric's value reads. */
-export type ScoreKind = 'share' | 'count' | 'rank' | 'auc' | 'brier';
+/** `hours`: a time in hours, read as minutes under one. */
+export type ScoreKind = 'share' | 'count' | 'rank' | 'auc' | 'brier' | 'hours';
 
 export interface ScoreMetric {
   key: string;
@@ -136,6 +137,58 @@ export const SCORE_CHARTS: ScoreChart[] = [
       { key: 'foryou.clicked_explore', label: 'Items it was trying', kind: 'share', better: true },
     ],
   },
+  // The cost side (docs/scorecard.md, "The cost side"): what notifications took, and the people waiting on you.
+  {
+    id: 'attn-sounds',
+    title: 'Sounds a day',
+    about: 'Notifications that sounded on a device that day: an alert starting a burst, a ring, quiet hours’ summary.',
+    metrics: [{ key: 'attn.sounds', label: 'Sounds', kind: 'count', better: false }],
+  },
+  {
+    id: 'attn-sounds-computer',
+    title: 'Sounds per hour at a computer',
+    about: 'Sounds in the hours a computer was in use, over those hours: a sound there interrupts work.',
+    metrics: [{ key: 'attn.sounds_computer_hour', label: 'Sounds an hour', kind: 'count', better: false }],
+  },
+  {
+    id: 'attn-stale',
+    title: 'Pushes to a chat already being read',
+    about: 'Of the notifications sent to a device, the share sent while that chat was open on a computer and read past the message there.',
+    metrics: [{ key: 'attn.stale', label: 'Already read on a computer', kind: 'share', better: false }],
+  },
+  {
+    id: 'attn-checks',
+    title: 'Looks that found nothing',
+    about: 'Opens of the app with nothing new on the list or above since the last look, and notifications you tapped or swiped away after reading their chat on a computer.',
+    metrics: [
+      { key: 'attn.checks', label: 'Opened with nothing new', kind: 'count', better: false },
+      { key: 'attn.stale_shown', label: 'Still up after reading', kind: 'count', better: false },
+    ],
+  },
+  {
+    id: 'people-wait',
+    title: 'How long people wait for your reply',
+    about: 'For the replies you gave people that day (DMs and small groups), how long after they wrote to you: the median, and 9 in 10 within.',
+    metrics: [
+      { key: 'people.wait', label: 'Median', kind: 'hours', better: false },
+      { key: 'people.wait_p90', label: '90th percentile', kind: 'hours', better: false },
+    ],
+  },
+  {
+    id: 'people-owed',
+    title: 'Replies owed for over 3 days',
+    about: 'At the end of each day, the people (DMs and small groups) who had waited on a reply from you for more than 3 days.',
+    metrics: [{ key: 'people.owed_3d', label: 'Owed over 3 days', kind: 'count', better: false }],
+  },
+  {
+    id: 'people-breadth',
+    title: 'Who you talk with',
+    about: 'How many people you wrote to in the 30 days to each day, against the 30 days before them. Steady is good.',
+    metrics: [
+      { key: 'people.breadth', label: 'Last 30 days', kind: 'count', better: null },
+      { key: 'people.breadth_before', label: 'The 30 before', kind: 'count', better: null },
+    ],
+  },
 ];
 
 /** Every metric, in chart order. */
@@ -186,11 +239,53 @@ export function scoreTrend(view: ModelScoresView, metric: ScoreMetric, k = 7): {
   return { recent: scoreSpan(view, metric, end - k, end), before: scoreSpan(view, metric, end - 2 * k, end - k) };
 }
 
-/** A value as the page and the script print it: a share as a percent, an AUC or a rank to two places, a count whole. */
+/** A value as the page and the script print it: a share as a percent, an AUC or a rank to two places, a count whole, hours as hours or minutes. */
 export function formatScore(kind: ScoreKind, v: number | null): string {
   if (v === null || !Number.isFinite(v)) return '–';
   if (kind === 'share') return `${Math.round(v * 100)}%`;
   if (kind === 'count') return Number.isInteger(v) ? String(v) : v.toFixed(1);
   if (kind === 'brier') return v.toFixed(3);
+  if (kind === 'hours') return v < 1 ? `${Math.round(v * 60)} min` : `${v < 10 ? v.toFixed(1) : Math.round(v)} h`;
   return v.toFixed(2);
+}
+
+/**
+ * `GET /api/attention/report`: the weekly report of what attention cost (docs/scorecard.md, "The weekly report").
+ * Counts and times from the scorecard's days, the replies owed now, and at most one person drifting away. Ids only for
+ * the app to name from what it already holds; no budget, no names, no text.
+ */
+export interface AttentionReport {
+  /** The last 14 scored days, oldest first, and the newest still waiting for its outcomes. */
+  days: string[];
+  pending: string | null;
+  /** Sounds on each of `days` (null: not scored), and per hour a computer was in use. */
+  sounds: (number | null)[];
+  soundsComputerHour: (number | null)[];
+  /** The last 7 days against the 7 before. Sounds a day and stale shares are means; checks are totals. */
+  week: {
+    sounds: Pair;
+    stale: Pair;
+    checks: Pair;
+    staleShown: Pair;
+    /** Hours: the median and the 90th percentile, weighted by the replies of each day. */
+    wait: Pair;
+    waitP90: Pair;
+    owed3d: Pair;
+    /** People you wrote to in the 30 days to the last scored day, and the 30 before. */
+    breadth: { recent: number | null; before: number | null };
+  };
+  /** Replies owed to people now, longest waiting first (at most 8 of `total`). */
+  waiting: { conversationId: string; since: number; needs: number | null }[];
+  waitingTotal: number;
+  /**
+   * At most one person a week you used to talk with and have not in 4 weeks or more: someone you wrote to in several
+   * weeks of the 12 before. Chosen once a week (from the week's Monday), never notified.
+   */
+  drifting: { personId: string | null; identityId: string; conversationId: string | null; lastAt: number; weeks: number } | null;
+}
+
+/** A value over the last 7 days, and over the 7 before. */
+export interface Pair {
+  recent: number | null;
+  before: number | null;
 }

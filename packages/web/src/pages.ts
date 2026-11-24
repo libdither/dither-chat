@@ -65,6 +65,7 @@ export function isPage(r: Route): boolean {
     case 'requests':
     case 'notices':
     case 'model':
+    case 'attention':
       return true;
     default:
       return false;
@@ -80,6 +81,7 @@ export function opensOver(r: Route): boolean {
     case 'profile':
     case 'directory':
     case 'model':
+    case 'attention':
       return true;
     case 'accounts':
       return !!r.account;
@@ -116,6 +118,9 @@ export function ownList(r: Route, places: Places): Route {
     // How it sorts is reached from For you, Settings or the inbox's menu; opened directly, back goes to For you.
     case 'model':
       return { view: 'foryou' };
+    // Your attention is reached from Settings and How it sorts; opened directly, back goes to Settings.
+    case 'attention':
+      return { view: 'settings' };
     case 'profile':
       return places.placeHome(r) ?? { view: 'people' };
     case 'search': {

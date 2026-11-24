@@ -278,6 +278,14 @@ export function HowItSorts({ onBack }: { onBack?: () => void }) {
         )}
         <Learned />
         <NeedsReply />
+        <button class="link-row set-sorts" data-track="your attention" onClick={() => go({ view: 'attention' })}>
+          <Icon name="activity" size={15} />
+          <span>
+            <b>Your attention</b>
+            <small>How often notifications sounded, the people waiting on you, and who you talk with, over two weeks</small>
+          </span>
+          <Icon name="chevronRight" size={15} />
+        </button>
         <ScorecardLazy />
       </div>
     </section>
@@ -331,6 +339,29 @@ function NeedsReply() {
         </>
       )}
     </div>
+  );
+}
+
+/** Your attention (AttentionReport.tsx, docs/scorecard.md "The weekly report"): a chunk of its own, loaded when it opens. */
+type AttentionView = FunctionComponent<{ onBack?: () => void }>;
+let attentionPane: AttentionView | null = null;
+export function AttentionPaneLazy(p: { onBack?: () => void }) {
+  const [View, setView] = useState<AttentionView | null>(() => attentionPane);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (attentionPane) return;
+    import('./AttentionReport.tsx').then(
+      (m) => setView(() => (attentionPane = m.AttentionPane)),
+      () => setFailed(true),
+    );
+  }, []);
+  if (View) return <View {...p} />;
+  return (
+    <section class="pane board attention-page" aria-label="Your attention">
+      <div class="board-scroll">
+        <p class="muted">{failed ? 'Could not load Your attention. Check the connection to the hub, then try again.' : 'Loading…'}</p>
+      </div>
+    </section>
   );
 }
 

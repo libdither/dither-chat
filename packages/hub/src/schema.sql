@@ -567,6 +567,9 @@ CREATE TABLE IF NOT EXISTS owed_turn (
   dismissed       INTEGER NOT NULL DEFAULT 0,  -- 1: you marked it "No reply needed" (reply_mark)
   PRIMARY KEY (conversation_id, addressed)
 ) WITHOUT ROWID;
+-- The scorecard's people metrics (scorecard.ts): turns answered on a day, and turns begun in a span.
+CREATE INDEX IF NOT EXISTS owed_turn_answered ON owed_turn(answered_at) WHERE answered_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS owed_turn_addressed ON owed_turn(addressed);
 
 -- The chance a turn needs a reply as shown (needsreply.ts), kept once per open turn at 15 min, 1 h, 6 h and 1 day of
 -- age, to check against what you did (owed_turn): the calibration record (docs/inbox.md, "Needs a reply"). A year.
@@ -688,7 +691,8 @@ CREATE TABLE IF NOT EXISTS notification (
   tapped_at       INTEGER,
   dismissed_at    INTEGER,
   replied_at      INTEGER,
-  visit_id        TEXT                       -- the visit the tap led to
+  visit_id        TEXT,                      -- the visit the tap led to
+  alert           INTEGER                    -- 1: it sounded where it went (an alert's first push of a burst, a ring); NULL: from before this was kept
 );
 CREATE INDEX IF NOT EXISTS notification_sent ON notification(sent_at);
 CREATE INDEX IF NOT EXISTS notification_conv ON notification(conversation_id, sent_at);

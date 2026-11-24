@@ -246,6 +246,7 @@ try {
       ["#/requests", ".request-card, .empty"],
       ["#/directory", ".dir-card, .empty"],
       ["#/model", ".board-block"],
+      ["#/attention", ".board-block"],
       ["#/search?q=the", ".search-hit"],
     ] as [string, string][]
   ).filter(([h]) => !opt("only") || h.includes(opt("only")));

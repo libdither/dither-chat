@@ -157,6 +157,7 @@ const PAGES: PageCase[] = [
   { name: 'requests', view: 'requests', from: '#/inbox', to: '#/requests' },
   { name: 'notices', view: 'notices', from: '#/inbox', to: '#/notices' },
   { name: 'how it sorts', view: 'model', from: '#/foryou', to: '#/model' },
+  { name: 'your attention', view: 'attention', from: '#/settings', to: '#/attention' },
   { name: 'search, with the cursor in its box', view: 'search', from: '#/inbox', to: '#/search?q=pizza', focus: SEARCH_BOX, cursor: SEARCH_BOX },
   { name: 'searching one conversation', view: 'search', from: `#/inbox/c/${dm.id}`, to: `#/search?q=${e(`hi in:${dm.id}`)}`, cursor: SEARCH_BOX },
   { name: 'Settings', view: 'settings', from: '#/inbox', to: '#/settings' },
