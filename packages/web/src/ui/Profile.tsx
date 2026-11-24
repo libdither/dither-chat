@@ -27,7 +27,7 @@ import { ActivityCard } from './ActivityCard.tsx';
 import { SameBox } from './SameBox.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
 import { copyEntries, identityMenu, personMenu } from './menus.tsx';
-import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, StatusEmoji, Tag } from './ProfileShell.tsx';
+import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, StatusEmoji, Tag, viewPicture } from './ProfileShell.tsx';
 import { ConnectActions, ProfileConnections } from './Requests.tsx';
 import { openConv } from '../opening.ts';
 import { Loading } from './Loader.tsx';
@@ -771,7 +771,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       id={person?.id ?? first?.id ?? ''}
       name={name}
       picture={picture}
-      onPicture={ownPicture ? (e) => pe!.pictureMenu(e, ownPicture, setPicturing) : undefined}
+      onPicture={ownPicture ? (e) => pe!.pictureMenu(e, ownPicture, setPicturing, picture ? () => viewPicture(picture, name) : undefined) : undefined}
       presence={isSelf ? undefined : person ? { person: person.id } : { identity: first?.id }}
       network={nets.length === 1 ? nets[0] : undefined}
       banner={banner}
