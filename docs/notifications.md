@@ -64,6 +64,10 @@ What you say about a message. Each answer changes only the part of the model it 
 | A list row | **Quieter**, **Louder** |
 | A check-in | about a sound: Worth it, Could have waited, Shouldn't have reached me; about a quiet one: Wish I'd known sooner, Fine where it was |
 
+An answer from a notification's button takes the notification's place with a silent one: **Noted: Worth it** and what
+it changes ("More like this will sound."), which closes itself after four seconds once the hub has the answer, or
+**Answer not saved** and why (the hub refused it, or could not be reached), which stays.
+
 After Louder, Quieter, Could have waited or Shouldn't have reached me it may ask **why**, once, and it can be skipped:
 chips (it could have waited, not this chat, not this person, not this topic, a bad moment, already seen it; or, for
 louder, time-sensitive, this person matters, this chat matters, this topic matters, I was free), how long it could
