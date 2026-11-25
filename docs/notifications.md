@@ -118,7 +118,7 @@ browser), and each device's own word on where it showed it (`notification_event.
 |---|---|---|---|
 | where | lock screen (keyguard locked), heads-up (an alert with the screen on), shade, or a row of the phone's list | a browser notification | its toast (`inapp`) |
 | sound | silent for what is not an alert or under Do Not Disturb; else the ringer: sound, vibrate, silent | as the hub asked (a browser cannot say what the system did) | silent |
-| beside it | the tags of our other notifications showing | the tags of our other notifications showing | |
+| beside it | the tags of our other notifications showing | not known: asking the browser while another push is still being drawn drops that one for good | |
 | also | locked, screen on | whether a page of the app was open | |
 
 The tags beside it are turned into those chats' latest notifications at the time, so the picture shows them too.
