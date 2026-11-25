@@ -10,6 +10,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
+import { mentionsPing, sendsMentions } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { lowerForSend, lowerRefs, plainMention, plainNative, type RefResolve, storeResolve } from '../src/mentionrefs.ts';
 import { HubServer, mediaSigner } from '../src/server.ts';
@@ -24,6 +25,13 @@ const ZW = '​';
 describe('lowering, pure', () => {
   const look: RefResolve = (kind, id) =>
     ({ 'person:per_alice': { name: 'Alice Chen' }, 'person:per_bea': { nativeId: '42' }, 'identity:idn_bob': { name: 'Bob' }, 'identity:idn_cy': { nativeId: '@cy:example.org' }, 'person:per_evil': { name: 'everyone <@1> <#2> ok' } })[`${kind}:${id}`] ?? null;
+
+  test('which networks send a mention as their own, and which of those notify: Google Messages writes the name and notifies nobody', () => {
+    for (const n of ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'zulip', 'x'] as const) expect([sendsMentions(n), mentionsPing(n)]).toEqual([true, true]);
+    expect([sendsMentions('gmessages'), mentionsPing('gmessages')]).toEqual([true, false]);
+    for (const n of ['messenger', 'instagram', 'luma', 'partiful'] as const) expect([sendsMentions(n), mentionsPing(n)]).toEqual([false, false]);
+    expect(mentionsPing(undefined)).toBe(false);
+  });
 
   test('a person or account becomes their mention on this network, or a plain name', () => {
     expect(lowerRefs('hi <@person:per_alice>!', look)).toBe('hi @Alice Chen!');

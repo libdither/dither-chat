@@ -163,7 +163,8 @@ export function MentionPicker({
     };
     const onKey = (e: KeyboardEvent) => {
       const s = live.current;
-      if (!s.open || e.isComposing || e.target !== el) return;
+      // Not a key of an input method's word: Safari sends the Enter that ends one with isComposing false, but keyCode 229.
+      if (!s.open || e.isComposing || e.keyCode === 229 || e.target !== el) return;
       const n = s.rows.length;
       const stop = () => {
         e.preventDefault();
@@ -254,6 +255,8 @@ export function MentionPicker({
         {state === 'partial' && <span class="mp-state">{net} did not answer: people this hub knows</span>}
       </div>
       {shownRows.map((r, i) => {
+        // A phone hides handles, but not where two rows share a name: there the handle tells them apart.
+        const twin = !!r.handle && shownRows.some((o, j) => j !== i && o.name === r.name);
         const note = person ? (lead && !i ? 'the person' : null) : noteOf(r, network);
         const tint = r.kind === 'role' && r.color ? { color: r.color } : undefined;
         const who = r.kind === 'identity' || r.kind === 'person';
@@ -288,7 +291,7 @@ export function MentionPicker({
             <span class="mp-name" style={tint}>
               {!who ? `@${r.name}` : person && (i || !lead) ? `${r.name} · ${netName(r.network as P.Network)}` : r.name}
             </span>
-            {r.handle && <span class="mp-handle">{r.handle}</span>}
+            {r.handle && <span class={`mp-handle ${twin ? 'twin' : ''}`}>{r.handle}</span>}
             {note && <span class="mp-note">{note}</span>}
             <span class={`mp-ping ${r.pings ? '' : 'off'}`} title={r.pings ? `${net} notifies ${who ? 'them' : 'everyone it names'}` : 'Text only: nobody is notified'}>
               <Icon name={r.pings ? 'bell' : 'bellOff'} size={13} />
