@@ -1317,8 +1317,12 @@ export class HubServer {
       const a = this.opts.attention;
       if (!a) return bad('attention is off', 404);
       if (path === '/api/attention' && method === 'GET') return ok({ now: Date.now(), items: a.list() });
-      // Scores still to come out of what already happened (attention.ts `waiting`).
-      if (path === '/api/attention/waiting' && method === 'GET') return ok({ waiting: a.waiting });
+      // Scores still to come out of what already happened (attention.ts `waiting`). What changed is sent first, so a
+      // false here also means the hub has nothing more to say about it (verify-response.ts settle()).
+      if (path === '/api/attention/waiting' && method === 'GET') {
+        this.flush();
+        return ok({ waiting: a.waiting });
+      }
       // The learned order (ranker.ts): its mode and what it learned, as weights on named features.
       if (path === '/api/attention/model' && method === 'GET') return ok((a.judge as { view?: () => unknown } | undefined)?.view?.() ?? { mode: 'off' });
       // How well "needs a reply" chances matched what you did (needsreply.ts): by day, and in bins.

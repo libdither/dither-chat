@@ -1399,14 +1399,16 @@ controls (the rail's, the list's) are clicked there only. Each page has a hub of
 settled world (its hub has looked at every attachment, which a hub does 15 s after it starts and sends the messages
 again with), at a new address, so what an earlier page's clicks changed is not there and a page reads the same in
 any of CI's four parts. Nothing that sends,
-deletes, leaves, calls or signs out is pressed. After each click it waits until nothing has rendered, no request is
-out, no timeout a moment away (100 ms to 3 s) is pending and nothing has come on the socket for 700 ms, so what the
-click set off counts with it: a chat read 600 ms after it opens, the hub's answers, and the lists' re-sort, which
-waits until 4 s after the last touch and while the pointer is on a list, and asks again every 1.5 s (so the mouse
-leaves after each click, as a hand does). A page that is not still within 12 s fails, since
-what it was doing would land in the next click. Then it waits until the hub has no scores still to come
-(`GET /api/attention/waiting`: a conversation folded again waits 5 s first) and for the page to be still again. Then Escape or the address takes the click back, and the page is
-loaded again only when that did not get back to where it was.
+deletes, leaves, calls or signs out is pressed. After each click it waits for what the click set off to be done and
+drawn, by what the page and the hub say rather than by a quiet spell, which a busy machine never gives: in the page,
+no request out and no timeout a moment away (100 ms to 3 s) pending, then two frames; on the hub, no scores still to
+come (`GET /api/attention/waiting`, which sends what changed first: a conversation folded again waits 5 s); on each
+socket, a ping answered, so everything the hub sent before it has come. It goes round again while a round saw a
+render, a request or an event. So what the click set off counts with it: a chat read 600 ms after it opens, the hub's
+answers and scores, and the lists' re-sort, which waits until 4 s after the last touch and while the pointer is on a
+list, and asks again every 1.5 s (so the mouse leaves after each click, as a hand does). A page still busy a minute on
+fails, since what it was doing would land in the next click. Then Escape or the address takes the click back, and the
+page is loaded again only when that did not get back to where it was.
 
 The app's own clocks would land in whichever click is running when they strike, so the page holds them: every
 `setInterval` of 5 s or more (the usage tick that counts a visit 3 s into a place, the minute's re-sort, the ping),
