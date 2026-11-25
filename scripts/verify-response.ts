@@ -230,6 +230,17 @@ const INIT = `(() => {
     return id;
   };
   window.clearTimeout = function (id) { if (soon.delete(id)) __net.soon--; return ct.call(this, id); };
+  // Work put off until the page is idle (a timeline's next slice of messages, slices.ts) is waited for too: a click
+  // before it lands sees a timeline part drawn, and judges what it draws against a list that size.
+  const ric = window.requestIdleCallback, cic = window.cancelIdleCallback, idle = new Set();
+  if (ric) {
+    window.requestIdleCallback = function (fn, o) {
+      const id = ric.call(this, (d) => { if (idle.delete(id)) __net.soon--; fn(d); }, o);
+      idle.add(id), __net.soon++;
+      return id;
+    };
+    window.cancelIdleCallback = function (id) { if (idle.delete(id)) __net.soon--; return cic.call(this, id); };
+  }
   const f = window.fetch;
   window.fetch = function (input, init) {
     // A visit the usage tracker counted (usage.ts): answered here, so the hub's event does not land in the next click.
@@ -269,8 +280,9 @@ type Counts = { mounts: Record<string, number>; updates: Record<string, number>;
 
 /**
  * Until what the page and the hub were doing is done and drawn, by what each says rather than a quiet spell, which a
- * busy machine never gives (docs/testing.md, "No sleeps"). A round: in the page, no request out and no short timeout
- * waiting (INIT counts them: a chat's read 600 ms after it opens, a re-sort 4 s after the last touch), then two frames
+ * busy machine never gives (docs/testing.md, "No sleeps"). A round: in the page, no request out, no short timeout and
+ * no idle callback waiting (INIT counts them: a chat's read 600 ms after it opens, a re-sort 4 s after the last touch, a
+ * timeline's next slice), then two frames
  * for what they drew; on the hub, no scores still to come and what changed sent (GET /api/attention/waiting flushes
  * first); on each socket, a ping answered, so everything the hub sent before it has come. Again while a round saw a
  * render, a request or an event, since what came may set off more. False when that has not happened in `ms`: what the
