@@ -14,14 +14,15 @@ import type { Store } from './store.ts';
 import { arrivedCopy, fitArrived } from './arrived.ts';
 import { jobFailed } from './errors.ts';
 import { pushPayload } from './webpush.ts';
+import type { ComposedLook } from './activity.ts';
 
 interface NotifierDeps {
   /** With messageView and conversationView, a message's push carries a copy of it (arrived.ts). */
   store: Pick<Store, 'notifyLook' | 'one'> & Partial<Pick<Store, 'messageView' | 'conversationView'>>;
-  activity: Pick<ActivityStore, 'notification' | 'sent' | 'skipped'>;
+  activity: Pick<ActivityStore, 'notification' | 'sent' | 'skipped'> & Partial<Pick<ActivityStore, 'composed'>>;
   devices: Pick<Devices, 'addressed' | 'quietOn'>;
   push: Pick<PushService, 'desktops' | 'notify'>;
-  delivery: Pick<Delivery, 'listDue' | 'conversationDue' | 'plan'>;
+  delivery: Pick<Delivery, 'listDue' | 'conversationDue' | 'plan'> & Partial<Pick<Delivery, 'inUse'>>;
   server: Pick<HubServer, 'notify' | 'warm' | 'watched'>;
   /** Which list rows reach the phones (phonelist.ts). */
   phone: Pick<PhoneList, 'list' | 'higher'>;
@@ -52,6 +53,23 @@ export function sounded(level: 'push' | 'quiet', extra: { tier?: unknown; alert?
   return level === 'push' && (extra.tier ?? 'push') === 'push' && extra.alert !== false;
 }
 
+/** What a notification looked like beside its title and body, kept for the Notification calibration page (activity.ts `composed`). */
+function lookOf(extra: Record<string, unknown>, tier: Tier): ComposedLook {
+  const g = extra as { network?: unknown; icon?: unknown; count?: unknown; conv?: { title?: unknown; shape?: unknown }; lines?: { author?: unknown; body?: unknown; ts?: unknown }[]; keep?: unknown };
+  const conv = g.conv && typeof g.conv.title === 'string' && (g.conv.shape === 'direct' || g.conv.shape === 'group' || g.conv.shape === 'channel') ? { title: g.conv.title, shape: g.conv.shape as 'direct' | 'group' | 'channel' } : undefined;
+  const lines = Array.isArray(g.lines) ? g.lines.slice(-8).map((l) => ({ author: String(l.author ?? ''), body: String(l.body ?? '').slice(0, 300), ...(typeof l.ts === 'number' ? { ts: l.ts } : {}) })) : undefined;
+  return {
+    tier: ((extra.tier as Tier | undefined) ?? tier) as Tier,
+    ...(typeof g.network === 'string' ? { network: g.network } : {}),
+    // A picture inlined as data is left out: the page fetches the chat's picture itself.
+    ...(typeof g.icon === 'string' && !g.icon.startsWith('data:') ? { icon: g.icon } : {}),
+    ...(typeof g.count === 'number' ? { count: g.count } : {}),
+    ...(conv ? { conv } : {}),
+    ...(lines?.length ? { lines } : {}),
+    ...(g.keep === true ? { keep: true } : {}),
+  };
+}
+
 /** Room for the device id push.ts adds to each device's payload, when measuring what fits. */
 const DEVICE_ROOM = 'x'.repeat(40);
 
@@ -60,6 +78,15 @@ export class Notifier {
   last: Promise<unknown> = Promise.resolve();
 
   constructor(private d: NotifierDeps) {}
+
+  /** The words and the moment it went out with, for where you saw it (docs/notifications.md). */
+  private compose(nid: string, title: string, body: string, look: ComposedLook) {
+    try {
+      this.d.activity.composed?.(nid, { title, body, look, computerInUse: this.d.delivery.inUse ? this.d.delivery.inUse() : null });
+    } catch (e) {
+      jobFailed('push: compose', e);
+    }
+  }
 
   /**
    * An alert ('push') goes everywhere and sounds. A Conversation ('quiet') and a list row ('digest') go only to phones,
@@ -110,6 +137,7 @@ export class Notifier {
     const arrived = copy && fitArrived(pushPayload(title, body, conversationId, { ...extra, device: DEVICE_ROOM }), copy);
     if (arrived) extra.arrived = arrived;
     const sounds = sounded(level, extra);
+    if (nid) this.compose(nid, title, body, lookOf(extra, tier));
     this.last = server
       .warm(pictures(look, grouped))
       .then(() => push.notify(title, body, conversationId, extra, skip, level))
@@ -136,6 +164,7 @@ export class Notifier {
     const skip = n.level === 'push' ? quiet : [...quiet, ...push.desktops()];
     const grouped = delivery.plan(n.threadId, n.messageId, n.level, n.addressed);
     const extra = { ...n.look, ...mail, messageId: n.messageId, level, tier: n.level, ...(n.importance !== null ? { importance: n.importance } : {}), ...grouped, ...(nid ? { nid } : {}) };
+    if (nid) this.compose(nid, n.title, n.body, lookOf(extra, n.level));
     this.last = server
       .warm(pictures(n.look, grouped))
       .then(() => push.notify(n.title, n.body, n.threadId, extra, skip, level))
@@ -161,6 +190,7 @@ export class Notifier {
     const skip = n.level === 'push' ? quiet : [...quiet, ...push.desktops()];
     const grouped = delivery.plan(n.group, n.id, n.level, n.addressed);
     const extra = { ...n.look, noticeId: n.id, messageId: n.id, level, tier: n.level, ...(n.importance !== null ? { importance: n.importance } : {}), ...grouped, ...(nid ? { nid } : {}) };
+    if (nid) this.compose(nid, n.title, n.body, lookOf(extra, n.level));
     this.last = push
       .notify(n.title, n.body, n.group, extra, skip, level)
       .then((r) => nid && activity.sent(nid, r, sounded(level, extra)))

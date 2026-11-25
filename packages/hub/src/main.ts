@@ -38,6 +38,7 @@ import { attentionMode } from './loudness.ts';
 import { NextLook } from './nextlook.ts';
 import { TriageVotes } from './votes.ts';
 import { Scorecard, seedDemoScores } from './scorecard.ts';
+import { seedDemoCalibration } from './demo-calibration.ts';
 import { loadVapidKeys } from './webpush.ts';
 import { NightlyBackup, pruneMediaCacheSteps, rotateAdapterLogs, tightenPermissions } from './housekeeping.ts';
 import { StartupTrace } from './startup.ts';
@@ -160,6 +161,17 @@ const foryou = new ForYou(store, {
 // world has three invented weeks of it.
 const scorecard = new Scorecard(store.db);
 if (demo) seedDemoScores(store.db, Date.now());
+// A demo world's Notification calibration page (demo-calibration.ts): once its accounts have brought messages in.
+if (demo) {
+  const seedCalibration = setInterval(() => {
+    try {
+      if (seedDemoCalibration(store.db)) clearInterval(seedCalibration);
+    } catch (e) {
+      clearInterval(seedCalibration);
+      console.error('demo calibration', e);
+    }
+  }, 2000);
+}
 const attention = new Attention(store, triage);
 attention.byLoudness = loud.mode === 'on';
 // The inbox's learned order (ranker.ts, docs/inbox.md). DITHER_INBOX_RANK=shadow works it out without sorting by it; off.
@@ -431,6 +443,8 @@ setInterval(
     span('votes and held alerts', {}, () => {
       votes.daily();
       loud.daily();
+      // Questions for the Notification calibration page: new ones as the day's quota and pace allow, old ones dropped.
+      loud.checkins.fill(loud.prefs());
       // The next look at the times you set (DITHER_ATTENTION=on).
       if (nextLook.dueAt(loud.prefs(), Date.now())) flushNextLook('times');
       const held = triage.takeHeldSummary();

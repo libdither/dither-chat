@@ -27,6 +27,8 @@ export type Route =
   | { view: 'requests'; request?: string }
   /** What your accounts and services told you (docs/notices.md), `notice` the one to show. */
   | { view: 'notices'; notice?: string }
+  /** Notification calibration (docs/notifications.md, "Asking, without nagging"): questions about single notifications, waiting for you. */
+  | { view: 'calibration' }
   /** dither-calendar beside the hub (docs/calendar.md): `at` is the calendar's own hash without "#/", query and all. */
   | { view: 'calendar'; at?: string }
   /**
@@ -89,6 +91,8 @@ export function parseHash(h = location.hash): Route {
       return { view: 'requests', request: p[1] };
     case 'notices':
       return { view: 'notices', notice: p[1] };
+    case 'calibration':
+      return { view: 'calibration' };
     case 'feed': {
       // #/feed, #/feed/<source>, #/feed/<source>/p/<post key>
       const source = p[1] && p[1] !== 'p' ? p[1] : undefined;
@@ -145,6 +149,8 @@ export function href(r: Route): string {
       return `#/requests${r.request ? `/${e(r.request)}` : ''}`;
     case 'notices':
       return `#/notices${r.notice ? `/${e(r.notice)}` : ''}`;
+    case 'calibration':
+      return '#/calibration';
     case 'calendar':
       return r.at ? `#/calendar/${r.at}` : '#/calendar';
     case 'feed':

@@ -70,8 +70,8 @@ import { openShelves, shelve, toggleShelf } from '../quiet.ts';
 import { inboxSnap, shownInbox } from '../inbox.ts';
 import { linkAccounts, PeopleAccountPicker, PeopleLinks, RequestsRow, usePeopleLinks } from './Requests.tsx';
 import { loudByConv, loudEdge, loudOf } from '../loudness.ts';
-import { CheckinLazy } from './LoudnessLazy.tsx';
 import { NoticesRow } from './Notices.tsx';
+import { CalibrationRow } from './Calibration.tsx';
 import { nameMatches, peopleFilters, type PeopleFilter } from '../requests.ts';
 import { SortButton, SortIcon, useFlip } from './Reorganize.tsx';
 import { rememberSearch, SearchBox } from './SearchBox.tsx';
@@ -776,10 +776,10 @@ export function InboxSidebar({ activeConv, mail }: { activeConv?: string; mail?:
               ))}
           </>
         )}
-        {/* Chat requests and notices are not mail: the Mail filter leaves them out. */}
-        {filter !== 'mail' && <CheckinLazy />}
+        {/* Chat requests, notices and the questions about notifications are not mail: the Mail filter leaves them out. */}
         {filter !== 'mail' && <RequestsRow />}
         {filter !== 'mail' && <NoticesRow />}
+        {filter !== 'mail' && <CalibrationRow />}
         {rows.slice(0, drawn).map(row)}
         {more}
         {!rows.length && <p class="inbox-empty">{EMPTY[filter]}</p>}

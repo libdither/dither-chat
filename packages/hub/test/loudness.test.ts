@@ -271,8 +271,11 @@ describe('through the hub', () => {
     expect(new Set(qs.map((q) => q.side)).size).toBe(qs.length);
     const rows = store.raw<{ arm: string; propensity: number; pool: number }>('SELECT arm, propensity, pool FROM checkin');
     for (const r of rows) expect(r.propensity).toBeCloseTo(r.arm === 'random' ? 0.5 / r.pool : 0.5, 6);
-    // Open questions come back until answered; none new within the pace.
+    // Open questions wait until answered; none new within the pace.
     expect(loud.checkins.due(loud.prefs(), T + MIN).map((q) => q.id)).toEqual(qs.map((q) => q.id));
+    // Each says when it was asked and carries where it was seen (no notification went out in this test).
+    for (const q of qs) expect(q.askedAt).toBe(T);
+    for (const q of qs) expect(q.context.sent).toBeNull();
     const sounded = qs.find((q) => q.side === 'sounded');
     if (sounded) expect(() => loud.checkin(sounded.id, 'sooner')).toThrow();
     for (let i = 0; i < SKIPS_TO_PAUSE; i++) {
@@ -281,8 +284,11 @@ describe('through the hub', () => {
       loud.checkin(id, null, T);
     }
     expect(loud.checkins.state().pausedUntil).toBe(T + PAUSE);
-    expect(loud.checkins.due(loud.prefs(), T + 3 * HOUR).length).toBe(0);
-    loud.checkins.askLess(T);
+    // Paused: nothing new goes on the page, and what already waits stays there.
+    const waiting = loud.checkins.pendingCount();
+    expect(loud.checkins.due(loud.prefs(), T + 3 * HOUR).length).toBe(waiting);
+    expect(store.one<{ n: number }>('SELECT COUNT(*) AS n FROM checkin')!.n).toBe(qs.length + SKIPS_TO_PAUSE);
+    loud.checkins.askLess();
     expect(loud.checkins.state().rate).toBe(0.5);
     // Three a day at half the rate: one, and the half left over is a chance drawn once a day (0.1 < 0.5: it came up).
     expect(loud.checkins.quota(loud.prefs(), T)).toBe(2);
@@ -290,7 +296,7 @@ describe('through the hub', () => {
     expect(loud.checkins.quota(loud.prefs(), T + HOUR)).toBe(2);
     expect(loud.checkins.quota(loud.prefs(), T + 26 * HOUR)).toBe(1);
     // "Ask me less" to the floor: an eighth of three, so most days none, never a floor of one a day.
-    for (let i = 0; i < 4; i++) loud.checkins.askLess(T);
+    for (let i = 0; i < 4; i++) loud.checkins.askLess();
     expect(loud.checkins.quota(loud.prefs(), T + 50 * HOUR)).toBe(0);
     loud.checkins.random = () => 0.1;
     expect(loud.checkins.quota(loud.prefs(), T + 74 * HOUR)).toBe(1);

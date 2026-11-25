@@ -16191,6 +16191,11 @@ button.msg-edited.link:hover {
 .requests-row .row-preview {
   color: var(--text-faint);
 }
+/* Notification calibration's row (Calibration.tsx): a quiet count, not the accent's call for attention. */
+.calibration-row .requests-count {
+  background: var(--bg-hover);
+  color: var(--text-dim);
+}
 .requests-pane {
   overflow: hidden;
 }
@@ -18841,14 +18846,4 @@ h1:hover > .pair-nick-edit,
 /* The inbox row's loudness edge: how loud its latest message was, as a thin bar on its left. */
 .conv-row[data-loud] {
   box-shadow: inset 3px 0 0 color-mix(in oklab, var(--accent) var(--loud-mix), transparent);
-}
-/* For you's "Worth seeing?" (ForYou.tsx): one card a day asks. */
-.fy-ask {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin: 6px 0 0 42px;
-  font-size: 12.5px;
-  color: var(--text-dim);
 }

@@ -1,4 +1,5 @@
 /** Which devices get Web Push, which push servers the hub may send to, and keeping both honest. */
+import type { SentTo } from './activity.ts';
 import type * as P from '@dither-chat/protocol';
 import { BrowserClears, CLEAR_TOPIC, CLEAR_TTL } from './clears.ts';
 import type { Read } from './delivery.ts';
@@ -331,7 +332,7 @@ export class PushService {
    * Each device's payload names the device, so what it reports back about the push (activity.ts) says where it happened.
    * `quiet`: devices whose own rules keep this off them (devices.ts), by device id or, unlinked, by push id.
    */
-  async notify(title: string, body: string, conversationId: string | undefined, extra: Record<string, unknown>, quiet: string[] = [], level: 'push' | 'quiet' = 'push'): Promise<{ devices: number; accepted: number }> {
+  async notify(title: string, body: string, conversationId: string | undefined, extra: Record<string, unknown>, quiet: string[] = [], level: 'push' | 'quiet' = 'push'): Promise<{ devices: number; accepted: number; to?: SentTo[] }> {
     const skip = new Set(quiet);
     const rows = (this.store.db.query('SELECT * FROM push_subscription').all() as Row[]).filter((r) => !skip.has(r.device || r.id));
     // What a browser now shows under the conversation's tag, so reading it can take that away (clears.ts), noted as
@@ -350,7 +351,9 @@ export class PushService {
       return res;
     };
     const [results] = await Promise.all([Promise.all(rows.map(one)), this.toTopic(title, body, conversationId, level, clickHash(extra))]);
-    return { devices: rows.length, accepted: results.filter((r) => r.ok).length };
+    // Each registration it went to, for where you saw it (activity.ts notification_device).
+    const to = rows.map((r, i) => ({ id: r.id as string, label: (r.label as string) ?? '', android: r.clears === 1, ok: !!results[i]?.ok }));
+    return { devices: rows.length, accepted: results.filter((r) => r.ok).length, to };
   }
 
   /**

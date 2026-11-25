@@ -1,3 +1,4 @@
+import { calibrationStats } from './checkinstats.ts';
 import type { Server, ServerWebSocket, Socket, WebSocketHandler } from 'bun';
 import { createHmac } from 'node:crypto';
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
@@ -706,11 +707,19 @@ export class HubServer {
         L.setPrefs(await body<Partial<P.AttentionPrefs>>());
         return ok(L.view(Date.now(), this.nextLookHeld?.() ?? 0));
       }
-      // The app opened (or came back) and asks what to ask: a look, so the next look's bundle is let go.
+      // The app opened (or came back) and asks how many questions wait, for the Notification calibration row: a look,
+      // so the next look's bundle is let go.
+      if (path === '/api/loudness/checkins/count' && method === 'GET') {
+        this.onLook?.('open');
+        L.checkins.fill(L.prefs());
+        return ok({ pending: L.checkins.pendingCount() });
+      }
+      // The Notification calibration page: what waits, each with where you came across it.
       if (path === '/api/loudness/checkins' && method === 'GET') {
         this.onLook?.('open');
         return ok(L.checkins.due(L.prefs()));
       }
+      if (path === '/api/loudness/calibration' && method === 'GET') return ok(calibrationStats(s.db));
       if ((m = path.match(/^\/api\/loudness\/checkins\/([\w-]+)$/)) && method === 'POST') {
         const b = await body<{ answer?: unknown; skip?: unknown }>();
         const r = L.checkin(m[1], b.skip === true ? null : typeof b.answer === 'string' ? b.answer : null);

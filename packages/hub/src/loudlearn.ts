@@ -21,7 +21,7 @@ import type * as P from '@dither-chat/protocol';
 import { bandOf, DEFAULT_ATTENTION_PREFS, LOUDER_WHY, QUIETER_WHY } from '@dither-chat/protocol';
 import { words, type Facts, type Namer } from './learn.ts';
 import { answerWeight, ATTN_WEIGHTS, emptyAttnModel, learnedList, trainAttn, validAttnModel, type AttnExample, type AttnModel } from './loudness.ts';
-import { Checkins, newId, type CheckinState } from './checkin.ts';
+import { Checkins, lateWeight, newId, type CheckinState } from './checkin.ts';
 import { gatherOutcomes, LATE, OPEN_DWELL, type Outcome } from './labels.ts';
 import { previewText, type Store } from './store.ts';
 import { jobFailed } from './errors.ts';
@@ -111,16 +111,16 @@ export class LoudLearner {
   }
 
   /** A message's title and one line, for a check-in. */
-  private describe(messageId: string): { title: string; preview: string; conversationId: string | null } | null {
+  private describe(messageId: string): { title: string; preview: string; conversationId: string | null; network: string | null; shape: string | null } | null {
     const s = this.store;
     const m = s.one<Row>(
-      `SELECT m.body, m.kind, m.conversation_id, c.name, c.shape, COALESCE(p.name, i.display_name, i.handle) AS author
+      `SELECT m.body, m.kind, m.conversation_id, c.name, c.shape, c.network, COALESCE(p.name, i.display_name, i.handle) AS author
        FROM message m JOIN conversation c ON c.id = m.conversation_id LEFT JOIN identity i ON i.id = m.author_id LEFT JOIN person p ON p.id = i.person_id WHERE m.id = ?`,
       messageId,
     );
     if (!m) return null;
     const where = m.shape === 'direct' ? (m.author ?? 'Direct message') : `${m.name ?? 'A chat'}${m.author ? ` · ${m.author}` : ''}`;
-    return { title: where, preview: previewText(m.body ?? '', m.kind).slice(0, 160), conversationId: m.conversation_id };
+    return { title: where, preview: previewText(m.body ?? '', m.kind).slice(0, 160), conversationId: m.conversation_id, network: m.network ?? null, shape: m.shape ?? null };
   }
 
   // ------------------------------------------------------------ answers
@@ -273,22 +273,24 @@ export class LoudLearner {
     const s = this.store;
     const out: AttnExample[] = [];
     const rows = s.raw<Row>(
-      `SELECT a.*, t.facts, t.probs, t.loud_view, m.body FROM attn_answer a JOIN triage t ON t.message_id = a.message_id JOIN message m ON m.id = a.message_id
+      `SELECT a.*, t.facts, t.probs, t.loud_view, m.body, m.ts AS message_ts FROM attn_answer a JOIN triage t ON t.message_id = a.message_id JOIN message m ON m.id = a.message_id
        WHERE t.facts IS NOT NULL ORDER BY a.at DESC LIMIT 5000`,
     );
     for (const r of rows) {
       if (r.until != null && r.until <= now) continue;
       const base = baseOf(r);
       if (!base) continue;
-      out.push(...routed(r, base, answerWeight(r.at, now) * ATTN_WEIGHTS.answer));
+      // A check-in answered long after the message counts a little less (checkin.ts lateWeight).
+      const late = r.source === 'checkin' && typeof r.message_ts === 'number' ? lateWeight(r.at - r.message_ts) : 1;
+      out.push(...routed(r, base, answerWeight(r.at, now) * ATTN_WEIGHTS.answer * late));
     }
     // For you's answers: want, for the chat and the author.
     for (const r of s.raw<Row>(
-      `SELECT c.answer, c.answered_at, t.facts, t.probs, t.loud_view, m.body FROM checkin c JOIN triage t ON t.message_id = c.message_id JOIN message m ON m.id = c.message_id
+      `SELECT c.answer, c.answered_at, t.facts, t.probs, t.loud_view, m.body, m.ts AS message_ts FROM checkin c JOIN triage t ON t.message_id = c.message_id JOIN message m ON m.id = c.message_id
        WHERE c.side = 'foryou' AND c.answer IS NOT NULL AND t.facts IS NOT NULL ORDER BY c.answered_at DESC LIMIT 2000`,
     )) {
       const base = baseOf(r);
-      if (base) out.push({ ...base, want: r.answer === 'glad' ? 1 : 0, weight: answerWeight(r.answered_at, now) });
+      if (base) out.push({ ...base, want: r.answer === 'glad' ? 1 : 0, weight: answerWeight(r.answered_at, now) * lateWeight(r.answered_at - r.message_ts) });
     }
     return out;
   }
@@ -355,6 +357,7 @@ export class LoudLearner {
       soundsToday: sounds,
       asked: this.checkins.askedToday(now),
       answered: this.checkins.answeredToday(now),
+      pending: this.checkins.pendingCount(),
       pausedUntil: st.pausedUntil !== null && st.pausedUntil > now ? st.pausedUntil : null,
       rate: st.rate,
       held,

@@ -1,12 +1,12 @@
 /**
  * The loudness scale on the page (docs/notifications.md), a chunk of its own (LoudnessLazy.tsx): a message's Why
  * (the scale, the reasons with how far each moved it, Louder / Quieter for the person or the chat), the one optional
- * why after an answer, the check-in card at the top of the inbox, and its part of Settings.
+ * why after an answer, and its part of Settings. The questions themselves wait on their own page (CalibrationPane.tsx).
  */
 import { useEffect, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
 import { BAND_NAME, BAND_RANGE, LOUD_BANDS, LOUDER_WAITS, LOUDER_WHY, QUIETER_WAITS, QUIETER_WHY, WAIT_LABEL, WHY_LABEL } from '@dither-chat/protocol';
-import { answer, answerCheckin, askLess, attnState, checkins, fetchLoudness, forgetLearned, loadAttention, sendWhy, setAttentionPrefs, whyAsk } from '../loudness.ts';
+import { answer, attnState, fetchLoudness, forgetLearned, loadAttention, sendWhy, setAttentionPrefs, whyAsk } from '../loudness.ts';
 import { go } from '../state.ts';
 import { showSection } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -157,66 +157,6 @@ export function WhyFollowUp() {
   );
 }
 
-const CHECKIN_ANSWERS: Record<P.CheckinView['side'], { q: string; answers: [string, string][] }> = {
-  sounded: {
-    q: 'This sounded. Was it worth it?',
-    answers: [
-      ['worth', 'Worth it'],
-      ['could_wait', 'Could have waited'],
-      ['shouldnt', "Shouldn't have reached me"],
-    ],
-  },
-  quiet: {
-    q: 'This stayed quiet. Would you have wanted it sooner?',
-    answers: [
-      ['sooner', "Wish I'd known sooner"],
-      ['fine', 'Fine where it was'],
-    ],
-  },
-  foryou: {
-    q: 'Was this worth seeing?',
-    answers: [
-      ['glad', 'Glad I saw this'],
-      ['not', 'Not for me'],
-    ],
-  },
-};
-
-/** One check-in at a time, at the top of the inbox: answer it, skip it, or ask less. */
-export function CheckinCard() {
-  const c = checkins.value[0];
-  if (!c) return null;
-  const s = CHECKIN_ANSWERS[c.side];
-  return (
-    <div class="loud-checkin" data-checkin={c.side} role="group" aria-label="A question about a notification">
-      <div class="loud-checkin-q">
-        <Icon name={c.side === 'sounded' ? 'bell' : c.side === 'quiet' ? 'bellOff' : 'sparkles'} size={14} />
-        <b>{s.q}</b>
-      </div>
-      <button class="loud-checkin-msg" onClick={() => c.conversationId && go({ view: 'inbox', conv: c.conversationId, msg: c.messageId })}>
-        <span class="loud-checkin-title">{c.title}</span>
-        <span class="loud-checkin-preview">{c.preview}</span>
-        {c.note && <small>{c.note}</small>}
-      </button>
-      <div class="chip-row">
-        {s.answers.map(([a, label]) => (
-          <button class="chip-btn" data-answer={a} data-track={`checkin ${a}`} onClick={() => void answerCheckin(c, a)}>
-            {label}
-          </button>
-        ))}
-      </div>
-      <div class="loud-checkin-foot">
-        <button class="link-btn" data-track="checkin skip" onClick={() => void answerCheckin(c, null)}>
-          Skip
-        </button>
-        <button class="link-btn" data-track="checkin ask less" onClick={() => void askLess()}>
-          Ask me less
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function Choice<T extends string>({ value, options, onPick, label }: { value: T; options: [T, string][]; onPick: (v: T) => void; label: string }) {
   return (
     <div class="level-picker" role="radiogroup" aria-label={label}>
@@ -297,14 +237,19 @@ export function LoudnessSettings() {
         </span>
       </label>
       <b>Ask me</b>
-      <small>A question now and then at the top of the inbox, about something that sounded or stayed quiet. Your answers teach it most.</small>
+      <small>
+        Questions about something that sounded or stayed quiet wait on the Notification calibration page, never in your way: answer them when you get to them. Your answers teach it most.{' '}
+        <button class="link-btn" data-track="loud open calibration" onClick={() => go({ view: 'calibration' })}>
+          {s.pending ? `${s.pending} waiting` : 'Open it'}
+        </button>
+      </small>
       <Choice
         label="How often it asks"
         value={p.ask}
         onPick={(ask) => set({ ask })}
         options={[
           ['never', 'Never'],
-          ['rarely', 'Once a day'],
+          ['rarely', 'One a day'],
           ['often', 'Up to three a day'],
         ]}
       />

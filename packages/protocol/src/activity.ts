@@ -36,8 +36,10 @@ export type VisitView =
   /** The Feed page (docs/feed.md "The Feed page"): a source, or a post's thread on it. */
   | 'feed'
   /** Your attention (docs/scorecard.md, "The weekly report"). */
-  | 'attention';
-export const VISIT_VIEWS: readonly VisitView[] = ['inbox', 'triage', 'foryou', 'conversation', 'space', 'person', 'people', 'profile', 'folder', 'spaces', 'search', 'settings', 'accounts', 'directory', 'mail', 'requests', 'calendar', 'notices', 'feed', 'attention'];
+  | 'attention'
+  /** Notification calibration (docs/notifications.md, "Check-ins"). */
+  | 'calibration';
+export const VISIT_VIEWS: readonly VisitView[] = ['inbox', 'triage', 'foryou', 'conversation', 'space', 'person', 'people', 'profile', 'folder', 'spaces', 'search', 'settings', 'accounts', 'directory', 'mail', 'requests', 'calendar', 'notices', 'feed', 'attention', 'calibration'];
 
 /**
  * How the user got there. `notification`: a tap on a push (sw.js, the Android app); `toast`: on the in-app
@@ -156,6 +158,8 @@ export interface NotificationEvent {
   /** The push registration (sw.js, the Android app), or the page's device id. */
   device?: string;
   at?: number;
+  /** With `shown` (or `inapp`): where and how it showed (docs/notifications.md, "Where you saw it"). */
+  seen?: import('./loudness.ts').NotificationSeen;
 }
 
 export interface ActivitySettings {

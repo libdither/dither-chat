@@ -64,6 +64,7 @@ export function isPage(r: Route): boolean {
     case 'directory':
     case 'requests':
     case 'notices':
+    case 'calibration':
     case 'model':
     case 'attention':
       return true;
@@ -101,7 +102,9 @@ export function ownList(r: Route, places: Places): Route {
     // falls through
     case 'requests':
     case 'notices':
-      // A chat or a mail thread opened in the inbox (a notification opens one there too), and Requests and Notices, rows in it.
+    case 'calibration':
+      // A chat or a mail thread opened in the inbox (a notification opens one there too), and Requests, Notices and
+      // Notification calibration, rows in it.
       return { view: 'inbox' };
     case 'people':
       return { view: 'people' };

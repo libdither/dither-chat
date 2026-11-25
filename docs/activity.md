@@ -77,8 +77,11 @@ before 2026-11-12 each such start was logged as another tap of that push, a stay
 `notification` keeps the kind (`message`, `held` for the quiet-hours summary, `request` for a request waiting on you,
 docs/add.md; `ring` for a call ringing you, docs/calls.md; rows of kind `digest` are from before the tiers, when a daily digest notification existed), the message and
 conversation, when it was sent, how many registrations it went to and how many push servers took it, the first
-time any device said each outcome, and the visit the tap led to. `notification_event` keeps each device's word,
-once per device and outcome.
+time any device said each outcome, and the visit the tap led to; for 15 days also the words it went out with
+(`title`, `body`, `look`) and whether a computer was in use, for the Notification calibration page
+([notifications.md](notifications.md#where-you-saw-it)). `notification_device` keeps each registration it went to,
+by its label then. `notification_event` keeps each device's word, once per device and outcome, and with `shown` (or
+`inapp`) where and how it showed (`seen`: the surface, sound, locked, screen on, a page open, the tags beside it).
 
 | Outcome | Web Push (sw.js) | Android app |
 |---|---|---|
@@ -221,7 +224,7 @@ Settings → Privacy → **Keep an activity log** (on by default):
   retention, at most 200,000 visits and 100,000 notifications are kept, oldest first out (`MAX_VISITS`,
   `MAX_NOTIFICATIONS`). Pruning runs at start and at most every 10 minutes as data arrives.
 - **Export my activity log** and **Export training examples**: the two files above.
-- **Delete activity log…**: everything in `visit`, `notification`, `notification_event`, `push_skip` and `triage_input`. Usage
+- **Delete activity log…**: everything in `visit`, `notification`, `notification_event`, `notification_device`, `push_skip` and `triage_input`. Usage
   totals, which order the sidebar, are separate and stay ("Reset Usage History…" in the sort menu clears those).
   The inbox's learned order goes back to its prior within half an hour, since what it learned came from the log.
 
