@@ -1243,6 +1243,16 @@ before, medians of each function's own time [spread]: on a cold load `metaMemo` 
 about 16 ms less. In a benchmark of the same passes in Bun on this world's bootstrap (least of 40 runs), working the
 rail, the badge, the servers' counts, the inbox and people out after a meta change took 8–9 ms instead of 10–14.
 
+### A channel's threads (2026-11-24)
+
+`indexThreads` (syncmodel.ts), run on each bootstrap and after every event that adds, moves or drops a thread, added
+each thread to its channel by copying the channel's list: quadratic in a channel's topics. The perf world has two
+threads a channel, but a busy Zulip or Matrix channel has a thousand topics or more. Now the lists grow in place, and
+the edges and the places' categories are indexed with loops rather than `some`, `findIndex` and copies. A test checks
+three channels with 1,000 to 3,000 topics index as before (`test/bootstrap-index.test.ts`). In Bun on the perf world's
+bootstrap plus three such channels (6,000 topics, three interleaved runs, medians of 21): `indexThreads` 31–36 → 0.5–0.8
+ms, applying the whole bootstrap 39–49 → 5–10 ms. On the perf world as it is, no change beyond noise.
+
 ### Times in lists (2026-11-24)
 
 Every list row says how long ago its last message was (format.ts `ago`): "5m", "3h", "Tue", "Oct 12". Its formatters
