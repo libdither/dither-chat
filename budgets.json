@@ -254,7 +254,7 @@
     "js/src/ui/Scorecard.tsx.bytes": { "measured": 5902, "budget": 6021 },
     "js/src/ui/Scorecard.tsx.gzip": { "measured": 2585, "budget": 2633 },
     "js/src/ui/Search.tsx.bytes": { "measured": 18950, "budget": 19304, "reason": "Search as you type (docs/search.md \"In the app\"): search's page loads as a chunk of its own when first opened, with its tabs, filter chips, Jump to and top matches, so startup does not carry them" },
-    "js/src/ui/Search.tsx.gzip": { "measured": 7119, "budget": 7214, "reason": "Search as you type (docs/search.md \"In the app\"): search's page loads as a chunk of its own when first opened, with its tabs, filter chips, Jump to and top matches, so startup does not carry them" },
+    "js/src/ui/Search.tsx.gzip": { "measured": 7231, "budget": 7300, "reason": "Search: a chat picked after in: becomes the In chip, not its id in the box (docs/search.md \"In the app\"); before that, search as you type with its tabs, filter chips, Jump to and top matches" },
     "js/src/ui/SendLists.tsx.bytes": { "measured": 6877, "budget": 7004 },
     "js/src/ui/SendLists.tsx.gzip": { "measured": 2485, "budget": 2526 },
     "js/src/ui/ServerParts.tsx.bytes": { "measured": 10779, "budget": 10926 },
