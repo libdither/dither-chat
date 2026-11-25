@@ -63,10 +63,7 @@ export function seedWorld(dir: string, opts: { scale?: number; anchor?: number }
   const sentence = (n: number) => Array.from({ length: n }, () => pick(WORDS)).join(' ');
   const n = (x: number) => Math.max(1, Math.round(x * scale));
 
-  // The last midnight, less a minute: the newest seeded message is "yesterday, 23:59" whenever this runs.
-  const midnight = new Date();
-  midnight.setHours(0, 0, 0, 0);
-  const anchor = opts.anchor ?? midnight.getTime() - 60_000;
+  const anchor = opts.anchor ?? worldAnchor();
 
   const ingest = (acc: typeof disc, ev: P.AdapterEvent) => store.ingest(acc, ev);
   const self = { disc: 'self-d', sig: 'self-s' };
@@ -237,6 +234,13 @@ export function seedWorld(dir: string, opts: { scale?: number; anchor?: number }
   };
   store.db.close();
   return world;
+}
+
+/** The last midnight, less a minute: the newest seeded message is "yesterday, 23:59" whenever a world is seeded. */
+export function worldAnchor(now = new Date()): number {
+  const midnight = new Date(now);
+  midnight.setHours(0, 0, 0, 0);
+  return midnight.getTime() - 60_000;
 }
 
 function biggestDirect<T extends { at: { conv: string }; n: number }>(sizes: T[]): T {
