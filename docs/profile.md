@@ -131,9 +131,9 @@ and so does making that account main or splitting it off. The hub keeps both on 
 `PersonView.faceId`, `facePinned`, `pictureIdentityId`). Not on your own page: your own accounts go by the names you
 gave them on their networks.
 
-**Choosing from the hero.** Their name is text a click copies, with "×2" after it where two of their accounts have
-it (hover for which). Under it, always shown, a line of their other names ("also"), each once with its own "×N" where
-it is shared, a click copying it; handles stay off it (the Accounts card has them), and the line wraps. The pencil
+**Choosing from the hero.** Their name is text a click copies, with nothing after it but the pencil. Under it,
+always shown, a line of their other names ("also"), each once with "×N" where it is shared (hover for which
+accounts), a click copying it; handles stay off it (the Accounts card has them), and the line wraps. The pencil
 beside the name turns it into a field, the name selected, with every name of theirs listed under it: the main
 account's name as you see it first ("Main account's", following it as it changes, once, with the marks of the
 accounts that share it), then their other names, then their handles ("Handle"), each text once with its accounts'

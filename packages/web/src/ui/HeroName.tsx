@@ -1,6 +1,6 @@
 /**
- * A person's name in their profile's hero (docs/profile.md "Choosing from the hero"): the name, a click copies it; a
- * mark where more than one of their accounts has it; their other names on a line under it, a click copies each; and a
+ * A person's name in their profile's hero (docs/profile.md "Choosing from the hero"): the name, a click copies it; their
+ * other names on a line under it, a click copies each, with a mark where more than one of their accounts has one; and a
  * pencil that turns the name into a field with their names listed under it, to pick one or to type a nickname.
  */
 import { Fragment } from 'preact';
@@ -12,10 +12,10 @@ import { NetBadge } from './bits.tsx';
 import { Icon } from './icons.tsx';
 
 /** "×2" after a name more than one of their accounts has, the accounts on hover. */
-function Shared({ e, big }: { e: NameEntry | undefined; big?: boolean }) {
-  if (!e || e.refs.length < 2) return null;
+function Shared({ e }: { e: NameEntry }) {
+  if (e.refs.length < 2) return null;
   return (
-    <span class={`pf-name-shared ${big ? 'big' : ''}`} title={`${e.text}: ${whereFrom(e)}`} aria-label={`on ${e.refs.length} of their accounts`}>
+    <span class="pf-name-shared" title={`${e.text}: ${whereFrom(e)}`} aria-label={`on ${e.refs.length} of their accounts`}>
       ×{e.refs.length}
     </span>
   );
@@ -23,7 +23,6 @@ function Shared({ e, big }: { e: NameEntry | undefined; big?: boolean }) {
 
 export function HeroName({
   name,
-  entries,
   also,
   rows,
   nickname,
@@ -33,8 +32,6 @@ export function HeroName({
   onNickname,
 }: {
   name: string;
-  /** Every name of theirs, for the marks. */
-  entries: NameEntry[];
   /** The line under the name. */
   also: NameEntry[];
   /** The names to pick from (namechoices.ts nameRows); empty where none may be chosen. */
@@ -96,7 +93,6 @@ export function HeroName({
     }
   };
 
-  const ownEntry = entries.find((e) => e.text === name);
   return (
     <>
       {editing ? (
@@ -143,7 +139,6 @@ export function HeroName({
           <button class="pf-name-copy" data-track="name: copy" title={`Copy “${name}”`} onClick={() => void copy(name, 'Name copied')}>
             {name}
           </button>
-          <Shared e={ownEntry} big />
           {canEdit && (
             <button class="pf-name-btn pen" data-track="name: edit" title="Change the name shown, or give them a nickname" aria-label="Change the name shown" onClick={() => setEditing(true)}>
               <Icon name="pencil" size={16} />

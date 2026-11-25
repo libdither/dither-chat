@@ -1,7 +1,7 @@
 /**
  * Choosing a person's name and picture from their profile's hero (namechoices.ts, ui/HeroName.tsx, docs/profile.md
- * "Choosing from the hero"), end to end against a demo hub in headless Chromium: the name, a click copies it, with
- * "×2" where two of their accounts have it; their other names on a line under it, each once and a click copying it;
+ * "Choosing from the hero"), end to end against a demo hub in headless Chromium: the name, a click copies it, with no
+ * mark after it; their other names on a line under it, each once with "×2" where two accounts have it, a click copying it;
  * the pencil turns the name into a field with their names under it, the main account's first and once, each with its
  * accounts' marks; a pick names them, ticked when it opens again, and the first row puts it back; a name typed is
  * your nickname for their main account and the name shown. Their picture opens their accounts' pictures full screen,
@@ -123,13 +123,14 @@ try {
   await stubClipboard();
   await click('.pf-name-copy');
   check(await copied(first), 'a click on the name copies it', first);
-  const sharing = kitIds.filter((i: any) => i.nickname === first || i.displayName === first || i.handle === first).length;
-  const mark = await p.eval<string>(`document.querySelector('.pf-name-line .pf-name-shared')?.textContent.trim() ?? ''`);
-  check(sharing > 1 ? mark === `×${sharing}` : mark === '', 'the name says how many of their accounts have it', { sharing, mark });
   let also = await alsoLine();
   check(also.length > 0 && !also.some((a) => a.text === first), 'their other names under it, not the one shown again', also);
   check(new Set(also.map((a) => a.text)).size === also.length, 'each name once on the line', also);
   check(also.every((a) => named.has(a.text) || !handles.has(a.text)), 'no handles on the line', also);
+  const on = (t: string) => kitIds.filter((i: any) => i.nickname === t || i.displayName === t || i.handle === t).length;
+  const sharing = on(first);
+  check(!(await p.eval<boolean>(`!!document.querySelector('.pf-name-line .pf-name-shared')`)), 'no mark after the name itself', first);
+  check(also.every((a) => a.mark === (on(a.text) > 1 ? `×${on(a.text)}` : '')), 'a name on the line says how many of their accounts have it', also);
   await click('.pf-also-name');
   check(await copied(also[0].text), 'a click on one copies it', also[0].text);
 

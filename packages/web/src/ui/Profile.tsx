@@ -857,7 +857,6 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         ) : (
           <HeroName
             name={name}
-            entries={entries}
             also={alsoNames(entries, name)}
             rows={nameRowsOf}
             nickname={mayNickname}

@@ -18967,10 +18967,6 @@ button.pair-last:hover {
   font-variant-numeric: tabular-nums;
   cursor: help;
 }
-.pf-name-shared.big {
-  font-size: 14px;
-  margin-left: -4px;
-}
 .pf-name-btn {
   flex: none;
   display: inline-grid;
