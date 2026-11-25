@@ -133,9 +133,9 @@ the person's name as every conversation does.
 
 **Where you set one.** On a person's profile, each account's tile has Set Nickname…, Change Nickname… and Remove
 Nickname in its menu (⋯), which edit the name on the tile in place; a tile with a nickname shows it as the name and
-the account's own beneath it, muted ("their name: kitty"). The name at the top of their profile opens Name shown,
-which has Set Nickname… under each account (docs/profile.md, "Choosing from the hero"), and a person of one account
-has the same entries under More. The menu of an author, a picture or a mention has them for that
+the account's own beneath it, muted ("their name: kitty"). The pencil by the name at the top of their profile takes a
+name typed as your nickname for their main account (docs/profile.md, "Choosing from the hero"), and a person of one
+account has the tile's entries under More. The menu of an author, a picture or a mention has them for that
 account. A chat of one route has the pencil by its name, for the account at the other end; a chat of several routes
 has none, since its name is made of the accounts' (it links to the profile, where the tiles are). Leaving the editor
 empty takes the nickname away. Your own accounts take none.

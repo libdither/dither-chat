@@ -20,14 +20,15 @@ import { api, db, go, isSelfIdentity, openMessage, openProfile, rev, setRule, to
 import { messageSomeone } from './Palette.tsx';
 import { Avatar, Empty, Linked, NetBadge, NetGlyph } from './bits.tsx';
 import { isQuietConv } from '../feed.ts';
-import { copy, groups, openMenu, useMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
+import { copy, groups, useMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
-import { nicknamable, nicknameEntries, NicknameInput, ownName } from './Nickname.tsx';
+import { nicknamable, nicknameEntries, NicknameInput, ownName, saveNickname } from './Nickname.tsx';
 import { ActivityCard } from './ActivityCard.tsx';
 import { SameBox } from './SameBox.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
 import { copyEntries, identityMenu, personMenu } from './menus.tsx';
-import { type NameChoice, nameChoices, pictureChoices } from '../namechoices.ts';
+import { alsoNames, nameEntries, nameRows, pictureChoices } from '../namechoices.ts';
+import { HeroName } from './HeroName.tsx';
 import { viewer } from '../viewer.ts';
 import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, StatusEmoji, Tag, viewPicture } from './ProfileShell.tsx';
 import { ConnectActions, ProfileConnections } from './Requests.tsx';
@@ -819,40 +820,16 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
 
   // Which name and which picture show for them, chosen in the hero (docs/profile.md "Which account speaks for them").
   // In the Accounts card's order (by network), the main account's first.
-  const names = isSelf || !person ? null : nameChoices(tiles, person, identityName((speaker ?? first)?.id));
+  const mainAcct = speaker ?? first;
+  const entries = isSelf ? [] : nameEntries(tiles, mainAcct?.id);
+  const nameRowsOf = !isSelf && person ? nameRows(entries, person, identityName(mainAcct?.id), several) : [];
+  // A name typed in the hero is your nickname for their mainAcct account, and the name shown (a choice made goes back to it).
+  const mayNickname = !isSelf && nicknamable(mainAcct) && !mainAcct.isBot;
+  const nicknameMain = async (text: string) => {
+    if (!mainAcct || !(await saveNickname(mainAcct.id, text))) return;
+    if (person?.nameFrom) void sources({ nameFrom: null });
+  };
   const pictures = several && !isSelf && person ? pictureChoices(ids, person, speaker) : [];
-  const choice = (c: NameChoice): MenuEntry => ({ label: c.text, detail: c.detail, radio: true, checked: c.on, track: 'name: choose', run: () => void sources({ nameFrom: c.from }) });
-  /** The name's menu's row for one account's nickname: it opens the editor in place of the name. */
-  const nickRow = (i: P.IdentityView | undefined): MenuEntry | false =>
-    !isSelf && nicknamable(i) && !i.isBot && { label: i.nickname ? 'Change Nickname…' : 'Set Nickname…', icon: 'pencil', track: 'name: nickname', run: () => setNaming(i.id) };
-  // The name's menu: the main account's name, then each account's names under its heading with its nickname; one
-  // account's names need no heading.
-  const nameItems: MenuEntry[] = !names
-    ? groups([nickRow(first)])
-    : several
-      ? groups(
-          [{ kind: 'label', label: 'Name shown' }, choice(names.auto)],
-          ...names.accounts.map((a) => {
-            const rows = [...a.names.map(choice), nickRow(a.i)].filter(Boolean) as MenuEntry[];
-            return rows.length ? [{ kind: 'label', label: a.heading } as MenuEntry, ...rows] : [];
-          }),
-        )
-      : groups([{ kind: 'label', label: 'Name shown' }, ...[names.auto, ...names.accounts.flatMap((a) => a.names)].map(choice)], [nickRow(first)]);
-  // Nothing to choose but a nickname: the name opens its editor.
-  const nickOnly = nameItems.filter((e) => 'radio' in e).length < 2 && !!nickRow(first) && !several;
-  const nicking = (naming && ids.find((i) => i.id === naming)) || null;
-  /** A nickname set here is the name shown: the main account's follows by itself, another account's is chosen. */
-  const nicknamed = (i: P.IdentityView) => (v: string | null) => {
-    if (!v || !person) return;
-    const want: P.NameFrom | null = !several || i.id === (speaker ?? first)?.id ? null : { identityId: i.id, field: 'nickname' };
-    const now = person.nameFrom ?? null;
-    if (now?.identityId !== want?.identityId || now?.field !== want?.field) void sources({ nameFrom: want });
-  };
-  const nameMenu = (e: MouseEvent) => {
-    // Under the button, as the hero's other menus open (and Enter or Space has no pointer to open at).
-    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    openMenu({ x: r.left, y: r.bottom + 4 }, { label: 'Name shown', head: <div class="cm-sheet-title">Name shown</div>, track: 'name menu', items: nameItems }, e.currentTarget);
-  };
   // Their pictures, full screen, the one shown first in view: swipe or page through them and use another.
   const viewPictures = () => {
     const on = Math.max(0, pictures.findIndex((c) => c.on));
@@ -875,25 +852,21 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       banner={banner}
       accent={accent}
       title={
-        <h1>
-          {/* The name opens the names to choose from, with each account's nickname to set; with nothing to choose
-              but a nickname, the editor at once. */}
-          {nicking ? (
-            <NicknameInput i={nicking} onDone={() => setNaming(null)} onSaved={nicknamed(nicking)} />
-          ) : nickOnly ? (
-            <button class="pf-name-pick" data-track="profile: nickname" onClick={() => setNaming(first!.id)} aria-label={`${name}, give them a nickname`} title={`Give ${ownName(first!)} a nickname (only you see it)`}>
-              {name}
-              <Icon name="pencil" size={16} />
-            </button>
-          ) : nameItems.length ? (
-            <button class="pf-name-pick" data-track="profile: name shown" onClick={nameMenu} aria-haspopup="menu" aria-label={`${name}, choose the name shown`} title="Choose the name shown, or set a nickname">
-              {name}
-              <Icon name="chevronDown" size={18} />
-            </button>
-          ) : (
-            name
-          )}
-        </h1>
+        isSelf ? (
+          <h1>{name}</h1>
+        ) : (
+          <HeroName
+            name={name}
+            entries={entries}
+            also={alsoNames(entries, name)}
+            rows={nameRowsOf}
+            nickname={mayNickname}
+            editing={naming !== null}
+            setEditing={(on) => setNaming(on ? (mainAcct?.id ?? '') : null)}
+            onPick={(r) => void sources({ nameFrom: r.from })}
+            onNickname={(t) => void nicknameMain(t)}
+          />
+        )
       }
       sub={
         <span class="pf-handles">

@@ -6,42 +6,57 @@ import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 import { accountName } from './chatroutes.ts';
 
-const FIELD_LABEL: Record<P.NameField, string> = { nickname: 'Your nickname', display: 'Display name', handle: 'Handle' };
+/** One of their accounts having a name, and which of its names it is. */
+export type NameRef = { i: P.IdentityView; field: P.NameField };
+/** A name of theirs, once however many of their accounts have it. */
+export type NameEntry = { text: string; refs: NameRef[] };
+/** A row of the name picker: `from` null puts the main account's name back. */
+export type NameRow = { text: string; refs: NameRef[]; detail: string; from: P.NameFrom | null; on: boolean };
 
-export type NameChoice = { text: string; detail: string; from: P.NameFrom | null; on: boolean };
+// A phone number for a handle (Signal, WhatsApp) is no name to go by.
+const PHONE = /^[+\d][\d\s()-]*$/;
 
 /**
- * The names a person may be shown by (docs/profile.md "Which account speaks for them"): the main account's as you see
- * it (`faceName`), following it as it changes, then each account's under its heading (the main account's first): your
- * nickname for it, its display name and its handle, each text once in an account. `from` null: the main account's again.
+ * Every name of theirs (docs/profile.md "Choosing from the hero"), each text once with the accounts that have it, one
+ * ref an account: names first (your nicknames, their display names), then handles; the main account's first in each.
  */
-export function nameChoices(ids: P.IdentityView[], person: P.PersonView, faceName: string): { auto: NameChoice; accounts: { i: P.IdentityView; heading: string; names: NameChoice[] }[] } {
+export function nameEntries(ids: P.IdentityView[], mainId: string | undefined): NameEntry[] {
+  const sorted = [...ids].sort((a, b) => +(b.id === mainId) - +(a.id === mainId));
+  const out = new Map<string, NameEntry>();
+  for (const pass of [['nickname', 'display'], ['handle']] as const)
+    for (const i of sorted)
+      for (const field of pass) {
+        const text = (field === 'nickname' ? i.nickname : field === 'display' ? i.displayName : i.handle)?.trim();
+        if (!text || (field === 'handle' && PHONE.test(text))) continue;
+        let e = out.get(text);
+        if (!e) out.set(text, (e = { text, refs: [] }));
+        if (!e.refs.some((r) => r.i.id === i.id)) e.refs.push({ i, field });
+      }
+  return [...out.values()];
+}
+
+/** The line under their name: their other names, handles left out (the Accounts card has them). */
+export const alsoNames = (entries: NameEntry[], shown: string) => entries.filter((e) => e.text !== shown && e.refs.some((r) => r.field !== 'handle'));
+
+/** Where a name is from, for its tooltip: each account's network and handle. */
+export const whereFrom = (e: NameEntry) => e.refs.map((r) => [NETWORK_META[r.i.network].name, r.i.handle && !PHONE.test(r.i.handle) && r.i.handle].filter(Boolean).join(' ')).join(', ');
+
+/**
+ * The picker's rows: the main account's name as you see it (`faceName`) first, following it as it changes, with the
+ * accounts that share it; then each other name. The tick is on the name chosen, or on the first row while nothing is
+ * (or the account chosen lacks it now: a nickname removed).
+ */
+export function nameRows(entries: NameEntry[], person: P.PersonView, faceName: string, several: boolean): NameRow[] {
   const chosen = person.nameFrom;
-  const sameNet = (i: P.IdentityView) => ids.filter((x) => x.network === i.network).length > 1;
-  // The main account's names first, then the others' in their order.
-  const sorted = [...ids].sort((a, b) => +(b.id === person.faceId) - +(a.id === person.faceId));
-  const accounts = sorted.map((i) => {
-    const seen = new Set<string>();
-    const names: NameChoice[] = [];
-    for (const field of ['nickname', 'display', 'handle'] as const) {
-      const text = (field === 'nickname' ? i.nickname : field === 'display' ? i.displayName : i.handle)?.trim();
-      // A phone number for a handle (Signal, WhatsApp) is no name to go by.
-      if (!text || seen.has(text) || (field === 'handle' && /^[+\d][\d\s()-]*$/.test(text))) continue;
-      seen.add(text);
-      const on = !!chosen && chosen.identityId === i.id && chosen.field === field;
-      // The main account's name stands first already, as the one that follows it; the same text chosen from one
-      // field stays, so the tick shows where it is.
-      if (i === sorted[0] && text === faceName && !on) continue;
-      names.push({ text, detail: FIELD_LABEL[field], from: { identityId: i.id, field }, on });
-    }
-    // Which account: its network, its handle where two share one, and whether it is the main one.
-    const heading = [NETWORK_META[i.network].name, sameNet(i) && i.handle, i.id === person.faceId && ids.length > 1 && 'main account'].filter(Boolean).join(' · ');
-    return { i, heading, names };
-  });
-  // A chosen name the account no longer has (a nickname removed) is not offered, and the main account's shows
-  // meanwhile: then it is ticked.
-  const auto = { text: faceName, detail: ids.length > 1 ? 'Follows their main account' : 'Follows your nickname, else their name', from: null, on: !accounts.some((a) => a.names.some((c) => c.on)) };
-  return { auto, accounts };
+  const has = (e: NameEntry) => !!chosen && e.refs.some((r) => r.i.id === chosen.identityId && r.field === chosen.field);
+  const hit = entries.find(has);
+  const label = (e: NameEntry) => (e.refs.every((r) => r.field === 'nickname') ? 'Your nickname' : e.refs.every((r) => r.field === 'handle') ? 'Handle' : '');
+  const rows: NameRow[] = [{ text: faceName, refs: entries.find((e) => e.text === faceName)?.refs ?? [], detail: several ? "Main account's" : '', from: null, on: !hit || hit.text === faceName }];
+  for (const e of entries) {
+    if (e.text === faceName) continue;
+    rows.push({ text: e.text, refs: e.refs, detail: label(e), from: { identityId: e.refs[0].i.id, field: e.refs[0].field }, on: has(e) });
+  }
+  return rows;
 }
 
 /** The pictures a person of several accounts may show, one per picture; `on` is the one showing. */
