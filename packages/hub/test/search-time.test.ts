@@ -4,11 +4,11 @@
  * top matches above the newest, and people search kept current as names change.
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { searchKey, Store, type AccountRow } from '../src/store.ts';
 import { whole } from '../src/slices.ts';
+import { memTempDir } from './fixtures/memdir.ts';
 
 let dir: string;
 let store: Store;
@@ -32,7 +32,9 @@ function all(q: string, limit = 3): string[] {
 }
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'dither-search-time-'));
+  // In memory: each test opens and closes a database file, and a close syncs it to disk. On a busy disk that took
+  // tens of seconds and timed these out (memdir.ts). One test opens the file again, so it is a file, not ':memory:'.
+  dir = memTempDir('dither-search-time-');
   store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
   d = store.createAccount({ network: 'discord', label: 'd', color: '#000', adapter: 'discord' });
   store.ingest(d, { t: 'identity', identity: { nativeId: 'ann', displayName: 'Ann' } });

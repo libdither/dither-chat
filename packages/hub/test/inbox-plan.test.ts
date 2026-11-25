@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Store } from '../src/store.ts';
+import { memTempDir } from './fixtures/memdir.ts';
 
 /**
  * /api/inbox reads a week of triage, which on a real hub is a few hundred thousand rows: each pick must walk an index
@@ -92,7 +92,8 @@ describe('the inbox query', () => {
 
 describe("alerts and Conversations keep their message's time", () => {
   test('when decided, decided again, and (for those decided before) when the hub opens', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'inbox-plan-'));
+    // Opened again from its file, so a file: in memory, where closing it does not wait on a busy disk (memdir.ts).
+    const dir = memTempDir('inbox-plan-');
     try {
       const path = join(dir, 'hub.sqlite');
       let store = new Store(path, () => null);

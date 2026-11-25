@@ -3,8 +3,7 @@
  * and with what, secrets written whole, triage that survives a crash, migrations copied first, and the upkeep.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
@@ -18,7 +17,9 @@ import { Triage } from '../src/triage.ts';
 import { NightlyBackup, pruneMediaCache, rotateAdapterLogs, tightenPermissions } from '../src/housekeeping.ts';
 import { memTempDir } from './fixtures/memdir.ts';
 
-const dir = mkdtempSync(join(tmpdir(), 'dither-hard-'));
+// In memory: secret files, the server's token file, databases closed and opened again, the copy before a migration and
+// the nightly copy all sync to disk, and on a busy disk each sync can take seconds (memdir.ts).
+const dir = memTempDir('dither-hard-');
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe('the names the hub answers to', () => {
@@ -105,10 +106,9 @@ describe('adapters the hub starts', () => {
 });
 
 describe('secret.json', () => {
-  // Every write syncs the file and its directory: in memory, so a busy disk does not hold the test for seconds.
-  const acct = memTempDir('dither-hard-secret-');
+  const acct = join(dir, 'secret');
+  mkdirSync(acct);
   const p = join(acct, 'secret.json');
-  afterAll(() => rmSync(acct, { recursive: true, force: true }));
 
   test('written whole, private, with the last good copy kept', () => {
     writeSecretFile(p, { a: 1 });
