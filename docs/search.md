@@ -131,8 +131,9 @@ Case and accents fold on both sides: `zoe` finds Zoë. (`from:` is still `LIKE`,
 - **The box** (the search page and the inbox's) lists the operators when empty, under recent searches. Typing a word
   lists operators it starts; after `from:`, `in:` and the rest it lists values. Up and Down choose, Enter or Tab take
   (with a value half typed, the first is chosen already), Escape closes; with the list closed, Escape leaves search
-  for where you were (docs/desktop.md "Escape and back"). A direct chat goes in as its id, shown as a
-  chip under the box rather than in the text.
+  for where you were (docs/desktop.md "Escape and back"). A chat picked after `in:` goes in as its id
+  (names repeat, and a direct chat has none), shown as the In chip under the box rather than in the text; the box keeps
+  the words. An `in:` typed with a name replaces the chip.
 - **Tabs** under the box: All, Messages, People, Chats, Pictures (`has:image`, as a grid), Links (`has:link`), Files
   (`has:file`). A tab adds its `has:` to what is sent, not to the box.
 - **Filter chips**, one row: From, In (both pick from what Ctrl+K would jump to, or take a name as typed), Date (today,

@@ -585,13 +585,31 @@ export default function SearchPane({ q, onBack }: { q: string; onBack?: () => vo
   useEffect(() => {
     if (q !== sent.current) (sent.current = q, setDraft(typed));
   }, [q]);
+  // A chat's id in the box (opened before the chats had loaded) moves to the chip once they have.
+  useEffect(() => {
+    if (scope && searchOp(draft, 'in') === scope.id) setDraft(setSearchOp(draft, 'in', null));
+  }, [scope?.id]);
+  const pending = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // The box's words as a query: an in: typed there replaces the chip's, and with none the chip's still holds.
+  const full = (t: string) => (scope && !searchOp(t, 'in') ? setSearchOp(t, 'in', scope.id) : t);
+  // A chat picked from in:'s suggestions comes in as its id: it becomes the chip at once, and the box keeps the words.
+  const edit = (t: string) => {
+    const id = searchOp(t, 'in');
+    if (!id || !(db.conversations.has(id) || db.persons.has(id))) return setDraft(t);
+    // The words typed before the pick are still waiting to go out: they would put the id back. (An effect's cleanup
+    // runs after the next paint, too late to stop them.)
+    clearTimeout(pending.current);
+    const words = setSearchOp(t, 'in', null);
+    setDraft(words && /\s$/.test(t) ? words + ' ' : words);
+    set(setSearchOp(words, 'in', id));
+  };
   // As you type: the search goes out a moment after the last key, no Enter needed.
   useEffect(() => {
-    const next = scope ? setSearchOp(draft, 'in', scope.id) : draft;
+    const next = full(draft);
     if (next === q) return;
-    const t = setTimeout(() => set(next), TYPE_PAUSE_MS);
-    return () => clearTimeout(t);
-  }, [draft]);
+    pending.current = setTimeout(() => set(next), TYPE_PAUSE_MS);
+    return () => clearTimeout(pending.current);
+  }, [draft, scope?.id]);
   const focusAsked = focusSearch.value;
   useEffect(() => {
     const el = box.current;
@@ -671,12 +689,12 @@ export default function SearchPane({ q, onBack }: { q: string; onBack?: () => vo
           class="search-main"
           inputRef={box}
           value={draft}
-          setValue={setDraft}
+          setValue={edit}
           onDown={first}
           busy={loading}
           placeholder={scope ? `Search in ${scope.label}` : 'Search messages, people and places'}
           submit={(t) => {
-            const next = scope ? setSearchOp(t, 'in', scope.id) : t;
+            const next = full(t);
             rememberSearch(next);
             set(next);
           }}

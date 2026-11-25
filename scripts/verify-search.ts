@@ -77,6 +77,23 @@ try {
   await key('Escape');
   check((await rows()).length === 0, 'Escape closes the list');
 
+  // A chat picked from in:'s list becomes the In chip; its id never shows in the box.
+  await clearBox();
+  await closeList();
+  await type('hello in:gener');
+  await p.until(`[...document.querySelectorAll('.search-suggest-row')].some((r) => r.textContent.includes('general') && !r.textContent.includes('community'))`, 3000).catch(() => {});
+  await p.eval(`[...document.querySelectorAll('.search-suggest-row')].find((r) => r.textContent.includes('general') && !r.textContent.includes('community')).click()`);
+  await p.until(`!!document.querySelector('.search-scope')`, 3000).catch(() => {});
+  const picked = { box: await p.eval<string>(`document.querySelector('${box}').value`), hash: await hash(), chip: await p.eval<string>(`document.querySelector('.search-scope')?.textContent ?? ''`) };
+  const pickedId = picked.hash.match(/in:(cnv_\S+?)(?:&|\s|$)/)?.[1];
+  check(picked.box === 'hello ' && !!pickedId && boot.conversations.some((c: any) => c.id === pickedId) && picked.chip.includes('general'), 'a chat picked from in: is the In chip, the box keeps the words', picked);
+  await type('world');
+  await p.until(`decodeURIComponent(location.hash).includes('hello world')`, 3000).catch(() => {});
+  check((await hash()).includes(`in:${pickedId}`) && (await p.eval<string>(`document.querySelector('${box}').value`)) === 'hello world', 'typing on keeps the chip', await hash());
+  await p.eval(`document.querySelector('.search-scope button').click()`);
+  await p.until(`!document.querySelector('.search-scope')`, 3000).catch(() => {});
+  check(!(await hash()).includes('in:'), "the chip's × searches everywhere", await hash());
+
   await clearBox();
   await closeList();
   await type('hackaton');
@@ -158,7 +175,8 @@ try {
   await key('f', 2);
   check((await p.eval(`document.activeElement === document.querySelector('${box}')`)) === true, 'Ctrl+F again goes to the box');
   // The list must sit on top of what is below it, not be clipped by it.
-  const onTop = () => p.eval<boolean>(`(() => { const r = document.querySelector('.search-suggest-row'); if (!r) return false; const b = r.getBoundingClientRect(); const at = document.elementFromPoint(b.left + 30, b.top + b.height / 2); return !!at && r.contains(at); })()`);
+  // Every row, so the ones under a toast (a demo message arriving, above everything for a moment) do not decide it.
+  const onTop = () => p.eval<boolean>(`(() => { const rs = [...document.querySelectorAll('.search-suggest-row')]; const at = (r) => { const b = r.getBoundingClientRect(); return document.elementFromPoint(b.left + 30, b.top + b.height / 2); }; return rs.length > 0 && rs.every((r) => { const e = at(r); return !!e && (r.contains(e) || !!e.closest('.toasts')); }) && rs.some((r) => r.contains(at(r))); })()`);
   await p.goto(`${hub}/#/`);
   await p.until(`!!document.querySelector('.sidebar .search-box input')`, 8000);
   await p.eval(`document.querySelector('.sidebar .search-box input').focus()`);
