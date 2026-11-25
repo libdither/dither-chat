@@ -25,7 +25,8 @@ function worker(opts: { canReply?: boolean; fetch?: (url: string, init: any) => 
     fetched.push({ url, body: init.body ? JSON.parse(init.body) : undefined, method: init.method });
     return (opts.fetch ?? (async () => Response.json({ ok: true })))(url, init);
   };
-  new Function('self', 'fetch', 'NotificationEvent', 'caches', src)(self, fetchStub, NotificationEvent, {});
+  // No waiting in a test: a timer runs at once (the "Noted" a mark leaves closes after one).
+  new Function('self', 'fetch', 'NotificationEvent', 'caches', 'setTimeout', src)(self, fetchStub, NotificationEvent, {}, (fn: () => void) => fn());
   const run = async (type: string, e: any) => {
     let done: Promise<unknown> = Promise.resolve();
     listeners[type]({ ...e, waitUntil: (p: Promise<unknown>) => (done = p) });
@@ -329,6 +330,21 @@ test('a mark from the notification tells the hub what it says, closes it, and op
     expect(w.closed).toEqual(['it']);
     expect(w.opened).toEqual([]);
   }
+  // In its place a silent "Noted", which closes itself, and only itself: a push since then stays.
+  const w = worker({ showing: [{ tag: 'cnv_1', data: { noted: true } }, { tag: 'cnv_1', data: { messageId: 'msg_2' } }] });
+  await w.click({ conversationId: 'cnv_1', messageId: 'msg_1' }, 'could_wait');
+  expect(w.shown).toHaveLength(1);
+  expect(w.shown[0]).toMatchObject({ title: 'Noted: Could have waited', o: { body: 'More like this will wait.', tag: 'cnv_1', silent: true, data: { conversationId: 'cnv_1', noted: true } } });
+  expect(w.closed).toEqual(['it', 'other:cnv_1']);
+  // A refusal, or no hub: "Answer not saved" says why, and stays.
+  const refused = worker({ fetch: async () => Response.json({ error: 'No such message' }, { status: 409 }) });
+  await refused.click({ conversationId: 'cnv_1', messageId: 'msg_1' }, 'worth');
+  expect(refused.shown[0]).toMatchObject({ title: 'Answer not saved', o: { body: 'Worth it: No such message.', tag: 'cnv_1', silent: true } });
+  expect(refused.shown[0].o.data.noted).toBeUndefined();
+  expect(refused.closed).toEqual(['it']);
+  const down = worker({ fetch: async () => Promise.reject(new TypeError('Failed to fetch')) });
+  await down.click({ conversationId: 'cnv_1', messageId: 'msg_1' }, 'louder');
+  expect(down.shown[0].o.body).toBe('Louder: Could not reach the hub.');
   // Without a message, or with an action from a notification shown before the tiers, it opens the conversation.
   const none = worker();
   await none.click({ conversationId: 'cnv_1' }, 'less');
