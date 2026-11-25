@@ -5,7 +5,8 @@
  *
  * A click fails when it draws most of a list again: ten or more of one component on the page, and at least half of
  * them rendered again by the click, as every message did when the details panel opened (2026-11-20). What the click
- * set off counts too, until the page is still: the requests it made, the hub's answers on the socket, what they drew.
+ * set off counts too, until the page and the hub say it is done (settle): the requests it made, the hub's answers and
+ * scores, what they drew.
  * The app's clocks are held so they never land in a click (INIT); each page runs them, and a visit the hub hears of,
  * as cases of their own (BACKGROUND).
  *
@@ -114,11 +115,6 @@ async function startHub(dir: string) {
   await until(async () => (await getJson('/api/bootstrap')).accounts.every((a: any) => a.status === 'online'), 30_000, 'demo accounts not online');
   await journalStill();
 }
-/**
- * Until the hub has no scores still to come out of what already happened (GET /api/attention/waiting): a change can
- * score again only 5 s later, which would land in a later click.
- */
-const scored = () => until(async () => !(await getJson('/api/attention/waiting')).waiting, 20_000, 'the hub kept scoring for 20 s');
 /** The demo world settles for a few seconds after its accounts come online: until its journal stands still. */
 async function journalStill() {
   let seq = -1;
@@ -143,21 +139,26 @@ await startHub(seeded);
   db.close();
   await journalStill();
 }
+// The three big chats read (a chat is read a moment after it opens, which would land in its page's first click), and
+// what that scores again scored (GET /api/attention/waiting: a conversation folded again waits 5 s first), once here
+// rather than on every page's hub.
+{
+  const [channel, , dm, group] = world.open;
+  for (const c of [channel, dm, group]) await fetch(`${base}/api/conversations/${c.id}/read`, { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: '{}' });
+  await until(async () => !(await getJson('/api/attention/waiting')).waiting, 120_000, 'the hub was still scoring the reads after 2 minutes');
+}
 const boot = await getJson('/api/bootstrap');
 if (!boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub');
 // Stopped, so the copies hold everything it wrote.
 running.hub!.kill();
 await running.hub!.exited;
 running.hub = undefined;
-/** A fresh copy of the settled world, its three big chats read (a chat is read a moment after it opens, which would
- * land in its page's first click). */
+/** A fresh copy of the settled world. */
 async function freshHub() {
   const dir = join(work, `data-${hubs + 1}`);
   cpSync(seeded, dir, { recursive: true });
   await startHub(dir);
   rmSync(join(work, `data-${hubs - 1}`), { recursive: true, force: true });
-  for (const c of [bigChannel, bigDm, bigGroup]) await fetch(`${base}/api/conversations/${c.id}/read`, { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: '{}' });
-  await scored();
 }
 
 // ------------------------------------------------------------------ the pages
@@ -240,13 +241,25 @@ const INIT = `(() => {
   const W = window.WebSocket;
   // The hub's events by kind, so a click's line says what came while it settled.
   window.__events = [];
+  // Each open socket, with the pings sent on it and the pongs back: once every ping has its pong, all the hub wrote
+  // before them has come (settle()).
+  window.__socks = new Set();
   window.WebSocket = class extends W {
     constructor(...a) {
       super(...a);
+      this.pings = 0;
+      this.pongs = 0;
+      __socks.add(this);
+      this.addEventListener('close', () => __socks.delete(this));
       this.addEventListener('message', (e) => {
+        if (e.data === 'pong') return void this.pongs++;
         __net.ws++;
         try { for (const ev of JSON.parse(e.data)) __events.push(ev.t); } catch (err) {}
       });
+    }
+    send(d) {
+      if (d === 'ping') this.pings++;
+      return super.send(d);
     }
   };
   try { new PerformanceObserver((l) => { for (const e of l.getEntries()) __lt.push([e.startTime, e.duration]); }).observe({ type: 'longtask', buffered: true }); } catch (e) {}
@@ -255,22 +268,53 @@ const COMPONENTS = 'JSON.parse(JSON.stringify(window.__ditherPerf.components))';
 type Counts = { mounts: Record<string, number>; updates: Record<string, number>; live: Record<string, number>; again: Record<string, number> };
 
 /**
- * Until nothing has rendered, no request is out and nothing came on the socket for `quiet` ms (or `ms` have gone).
- * Short timeouts count as in flight (INIT), so a chat's read 600 ms after it opens is waited for, and the hub's answer,
- * and a re-sort of the lists, which waits until 4 s after the last touch and asks again every 1.5 s (arrange.ts).
- * False when the page was never still: what it was doing would land in the next click.
+ * Until what the page and the hub were doing is done and drawn, by what each says rather than a quiet spell, which a
+ * busy machine never gives (docs/testing.md, "No sleeps"). A round: in the page, no request out and no short timeout
+ * waiting (INIT counts them: a chat's read 600 ms after it opens, a re-sort 4 s after the last touch), then two frames
+ * for what they drew; on the hub, no scores still to come and what changed sent (GET /api/attention/waiting flushes
+ * first); on each socket, a ping answered, so everything the hub sent before it has come. Again while a round saw a
+ * render, a request or an event, since what came may set off more. False when that has not happened in `ms`: what the
+ * page was doing would land in the next click.
  */
-async function settle(p: Page, quiet = 700, ms = 12_000): Promise<boolean> {
-  const sig = () => p.eval<string>(`JSON.stringify([window.__ditherPerf?.components.updates, window.__ditherPerf?.components.mounts, window.__net?.done, window.__net?.ws, window.__net?.inflight || window.__net?.soon ? Math.random() : 0])`);
-  let last = await sig();
-  let still = Date.now();
+async function settle(p: Page, ms = 60_000): Promise<boolean> {
   const end = Date.now() + ms;
-  while (Date.now() < end && Date.now() - still < quiet) {
-    await Bun.sleep(50);
+  const sig = () => p.eval<string>(`JSON.stringify([window.__ditherPerf?.components.updates, window.__ditherPerf?.components.mounts, window.__net?.done, window.__net?.ws])`);
+  let last = await sig();
+  while (Date.now() < end) {
+    const left = end - Date.now();
+    const idle = await p.eval<boolean>(`(async () => {
+      const frame = () => new Promise((r) => requestAnimationFrame(r));
+      const end = performance.now() + ${left};
+      while (__net.inflight || __net.soon) {
+        if (performance.now() > end) return false;
+        await frame();
+      }
+      await frame();
+      await frame();
+      return true;
+    })()`);
+    if (!idle) return false;
+    try {
+      await until(async () => !(await getJson('/api/attention/waiting')).waiting, Math.max(0, end - Date.now()), 'scoring');
+    } catch {
+      return false;
+    }
+    const answered = await p.eval<boolean>(`(async () => {
+      const socks = [...__socks].filter((s) => s.readyState === 1);
+      for (const s of socks) s.send('ping');
+      const end = performance.now() + ${Math.max(0, end - Date.now())};
+      while (socks.some((s) => s.readyState === 1 && s.pongs < s.pings)) {
+        if (performance.now() > end) return false;
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      return true;
+    })()`);
+    if (!answered) return false;
     const now = await sig();
-    if (now !== last) (last = now), (still = Date.now());
+    if (now === last) return true;
+    last = now;
   }
-  return Date.now() - still >= quiet;
+  return false;
 }
 async function metrics(p: Page) {
   const r = await p.send<{ metrics: { name: string; value: number }[] }>('Performance.getMetrics');
@@ -347,9 +391,7 @@ try {
     await p.goto(`${base}/?perf=1&ahead=0${c.at}`);
     // Drawn from the device's copy first, then again with the hub's data (dither:fresh): after both.
     await p.until(`!!window.__ditherPerf && performance.getEntriesByName('dither:fresh').length > 0 && !!document.querySelector('.pane, .sidebar')`, 30_000);
-    await settle(p, 500);
-    await scored();
-    await settle(p, 500);
+    await settle(p);
     await rest();
     reloads++;
   }
@@ -365,7 +407,7 @@ try {
     const at = await p.eval<{ x: number; y: number } | null>(
       `(() => { const all = [...document.querySelectorAll(${JSON.stringify(c.hover)})]; const el = all[all.length - 1]; if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.x + Math.min(r.width / 2, 120), y: r.y + Math.min(r.height / 2, 10) }; })()`,
     );
-    if (at) await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...at }), await settle(p, 150);
+    if (at) await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...at }), await settle(p);
   }
   /** Where the page is: the same after a click was taken back (Escape, back) means no reload is needed. Not how many
    * elements it has: back on a chat, its timeline draws another window of messages. */
@@ -382,7 +424,7 @@ try {
       if (await overlay()) await p.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...ESCAPE }), await p.send('Input.dispatchKeyEvent', { type: 'keyUp', ...ESCAPE });
       else if ((await p.eval<string>('location.hash')) !== hash) await p.eval(`location.hash = ${JSON.stringify(hash)}; 0`);
       else break;
-      await settle(p, 150);
+      await settle(p);
       await hover(c);
     }
     if ((await p.eval<string>(STATE)) !== state) await start(c), await hover(c);
@@ -404,10 +446,8 @@ try {
     const ms = await p.eval<number>(`Promise.race([window.__click, new Promise((r) => setTimeout(() => r(-1), 5000))])`);
     // The mouse leaves, as a hand does: a list does not re-sort under the pointer (arrange.ts), and that re-sort counts.
     await rest();
-    if (!(await settle(p))) fail(`${page.name} / ${name}: the page was never still for 700 ms in 12 s`);
-    // The scores the click set off on the hub, and what they draw.
-    await scored();
-    await settle(p);
+    // What the click set off, on the page and on the hub (the scores, and what they draw).
+    if (!(await settle(p))) fail(`${page.name} / ${name}: the page and the hub were still busy a minute on`);
     const after = await p.eval<Counts>(COMPONENTS);
     const m1 = await metrics(p);
     const lts = await p.eval<[number, number][]>(`__lt.slice(${lt0})`);
