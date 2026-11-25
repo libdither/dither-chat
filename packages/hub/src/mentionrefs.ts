@@ -7,8 +7,12 @@
  *  - anything else becomes plain `@Name`, which pings nobody. The owner's decision (2026-11-13): a friend who is not
  *    on the chat's network gets the text and nothing else, never a DM or any other notification.
  * An id the hub does not know becomes `@someone`: the raw id never goes out. References inside code stay as written.
+ *
+ * On a network that has no mentions of its own (not in MENTION_NETWORKS: Messenger, Instagram, Partiful, Luma…) its
+ * own `<@nativeId>` would go out as written too, so there every mention is a plain name.
  */
 import type * as P from '@dither-chat/protocol';
+import { mentionsPing } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import type { Store } from './store.ts';
 
@@ -41,16 +45,27 @@ function lowerText(text: string, resolve: RefResolve): string {
   });
 }
 
-/** The body with every reference outside code lowered as `resolve` says. Pure. */
-export function lowerRefs(body: string, resolve: RefResolve): string {
-  if (!hasRefs(body)) return body;
+/** `f` on each part of the body outside code. */
+function outsideCode(body: string, f: (text: string) => string): string {
   let out = '';
   let at = 0;
   for (const m of body.matchAll(CODE)) {
-    out += lowerText(body.slice(at, m.index), resolve) + m[0];
+    out += f(body.slice(at, m.index)) + m[0];
     at = m.index! + m[0].length;
   }
-  return out + lowerText(body.slice(at), resolve);
+  return out + f(body.slice(at));
+}
+
+/** The body with every reference outside code lowered as `resolve` says. Pure. */
+export function lowerRefs(body: string, resolve: RefResolve): string {
+  if (!hasRefs(body)) return body;
+  return outsideCode(body, (t) => lowerText(t, resolve));
+}
+
+/** A network's own mentions outside code, `<@nativeId>`, as plain names, for a network that has none. Pure. */
+export function plainNative(body: string, name: (nativeId: string) => string | null): string {
+  if (!body.includes('<@')) return body;
+  return outsideCode(body, (t) => t.replace(/<@!?([^>\s]+)>/g, (_, id: string) => plainMention(name(id) ?? 'someone')));
 }
 
 type Row = Record<string, any>;
@@ -61,7 +76,9 @@ type Row = Record<string, any>;
  * Names: an account's own (its display name, then handle), else its person's; a person's name.
  */
 export function storeResolve(store: Store, conversationId: string): RefResolve {
-  const network = store.one<{ network: P.Network }>('SELECT network FROM conversation WHERE id = ?', conversationId)?.network;
+  const at = store.one<{ network: P.Network }>('SELECT network FROM conversation WHERE id = ?', conversationId)?.network;
+  // A network without mentions of its own mentions nobody: each is a name.
+  const network = mentionsPing(at) ? at : undefined;
   return (kind, id) => {
     if (kind === 'identity') {
       const i = store.one<Row>('SELECT i.network, i.native_id, i.display_name, i.handle, p.name AS person FROM identity i LEFT JOIN person p ON p.id = i.person_id WHERE i.id = ?', id);
@@ -85,8 +102,14 @@ export function storeResolve(store: Store, conversationId: string): RefResolve {
 
 /** The body as it goes out from this account into this conversation: references lowered unless it takes them ('personRefs'). */
 export function lowerForSend(store: Store, conversationId: string, caps: readonly P.Capability[], body: string): string {
-  if (!hasRefs(body) || caps.includes('personRefs')) return body;
-  return lowerRefs(body, storeResolve(store, conversationId));
+  if (caps.includes('personRefs') || !body.includes('<@')) return body;
+  const out = lowerRefs(body, storeResolve(store, conversationId));
+  const network = store.one<{ network: P.Network }>('SELECT network FROM conversation WHERE id = ?', conversationId)?.network;
+  if (!network || mentionsPing(network)) return out;
+  return plainNative(out, (nativeId) => {
+    const i = store.one<Row>('SELECT i.display_name, i.handle, p.name AS person FROM identity i LEFT JOIN person p ON p.id = i.person_id WHERE i.id = ?', hubId('idn', network, nativeId));
+    return i ? i.display_name || i.handle || i.person || null : null;
+  });
 }
 
 /** Mentions as plain names, so a re-sent message pings nobody; channel and emoji tokens as text another network can show. */

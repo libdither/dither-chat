@@ -20,7 +20,7 @@
  * decayed), then when they last spoke here.
  */
 import type * as P from '@dither-chat/protocol';
-import { identityRef, MENTION_SCOPES, personRef } from '@dither-chat/protocol';
+import { identityRef, MENTION_SCOPES, mentionsPing, personRef } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { sumTallies, type Tally } from './attention.ts';
 import { storeResolve } from './mentionrefs.ts';
@@ -264,7 +264,7 @@ export async function mentionables(d: MentionDeps, conversationId: string, param
       kind: 'identity',
       // Where references are kept, one the hub stores is named by reference, so the account says who it is.
       insert: refs && i ? `${identityRef(i.id)} ` : `<@${nativeId}> `,
-      pings: !refs,
+      pings: !refs && mentionsPing(network),
       section: 'here',
       name,
       network,
@@ -437,7 +437,7 @@ function personSections(
 
 /** One of a person's accounts as a row: its mention on this network (pings), else a reference (does not). */
 function accountRow(r: Row, v: P.IdentityView | undefined, personName: string, personId: string, section: P.MentionRow['section'], network: P.Network, refs: boolean): P.MentionRow {
-  const on = r.network === network && !refs;
+  const on = r.network === network && !refs && mentionsPing(network);
   return {
     kind: 'identity',
     insert: on ? `<@${r.native_id}> ` : `${identityRef(r.id)} `,

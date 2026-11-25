@@ -6,7 +6,8 @@
  * people from the hub alone, and a phone's width. Then Step 3: the About's "@ finds" set to Here and friends brings
  * the friends section (and Only on Discord narrows it), a friend with no Discord account goes out as a plain @Name, and
  * a person's accounts open with →: their Discord one goes out as its mention and their Signal one as a plain name.
- * Those are the only messages sent, to the demo world. And the chips in the box: a picked mention reads as its name,
+ * Those, and one sent with the list open (the list must close with the box emptied), are the only messages sent, to
+ * the demo world. And the chips in the box: a picked mention reads as its name,
  * drawn as a chip, while the body keeps its token; the caret steps over it, Backspace takes it whole and undo brings it
  * back, a token typed whole becomes one, a copy pastes back as one, the draft keeps the token, and a click on it opens
  * the person's page once the box has the caret.
@@ -172,6 +173,67 @@ try {
   check('a new @ opens it again, and Tab puts @everyone in', text === `<@${quinn.nativeId}> and @everyone `, text);
   await clear();
 
+  // ------------------------------------------------------------------ the list's rows and the box changing under it
+
+  // Sent with the list open: the box empties with no input event, and the list goes with it.
+  await type('ping @qui');
+  await page.until(`document.querySelector('.mp-pop .ec-opt.on .mp-name')?.textContent === 'Quinn'`, 5000);
+  await page.eval(`document.querySelector('.composer .send-btn').click()`);
+  await page.until(`${box}.value === ''`, 5000);
+  await page.until(`!document.querySelector('.mp-pop')`, 2000).catch(() => {});
+  check('Send with the list open empties the box and closes the list', !(await open()));
+  await key('Enter', 13);
+  await page.until(`${box}.value !== ''`, 500).catch(() => {});
+  check('…so Enter then puts nobody in', (await raw()) === '', await raw());
+
+  // A chosen row stays chosen when the hub's rows come in another order.
+  await clear();
+  await type('@q');
+  await page.until(`document.querySelectorAll('.mp-pop .mp-name').length > 1`, 5000);
+  await key('ArrowDown', 40);
+  const chosen = await picked();
+  await page.until(`!document.querySelector('.mp-pop .mp-state')`, 5000);
+  check("the row chosen before the hub's answer is still the one chosen after it", (await picked()) === chosen, { chosen, after: await picked() });
+  await clear();
+
+  // Another chat's rows never stay on: #dev's people are not in a Matrix room's list.
+  const room = boot.conversations.find((c) => c.network === 'matrix' && c.name === 'libdither')!;
+  const devOnly = boot.identities.filter((i) => i.network === 'discord').map((i) => i.displayName);
+  await type('@');
+  await page.until(`document.querySelectorAll('.mp-pop .mp-name').length > 0`, 5000);
+  await clear();
+  await page.goto(`${base}/#/c/${room.id}`);
+  await page.until(`!!${box}`, 10000);
+  await type('@');
+  await page.until(`document.querySelectorAll('.mp-pop .mp-name').length > 0`, 5000);
+  const inRoom = await listed();
+  const insertedBy = async (i: number) => {
+    await clear();
+    await type('@');
+    await page.until(`document.querySelectorAll('.mp-pop .mp-name').length > ${i}`, 5000);
+    for (let n = 0; n < i; n++) await key('ArrowDown', 40);
+    await key('Enter', 13);
+    await page.until(`!document.querySelector('.mp-pop')`, 3000).catch(() => {});
+    return value();
+  };
+  const inserted = await insertedBy(0);
+  check("a Matrix room's list holds none of #dev's people at first", !inRoom.some((n) => devOnly.includes(n) && !boot.identities.some((i) => i.network === 'matrix' && i.displayName === n)) && !/<@\d{6,}>/.test(inserted), { inRoom, inserted });
+  await clear();
+
+  // The box made again (the window narrowed to a phone's): the list follows the new one.
+  await page.goto(`${base}/#/c/${dev.id}`);
+  await page.until(`!!${box} && document.querySelectorAll('.msg').length > 1`, 20000);
+  await page.size(390, 844, true);
+  await page.until(`!!${box}`, 5000);
+  await clear();
+  await type('@qu');
+  await page.until(`!!document.querySelector('.mp-pop .mp-name')`, 5000).catch(() => {});
+  check('after the box is made again at a phone width, an @ still opens the list', await open());
+  await clear();
+  await page.size(1280, 860);
+  await page.until(`!!${box}`, 5000);
+  await clear();
+
   // ------------------------------------------------------------------ chips in the box
 
   const caret = () => page.eval<number>(`${box}.selectionStart`);
@@ -225,6 +287,15 @@ try {
   await Bun.sleep(150);
   text = await value();
   check('…and undo brings it back, whole', text === `hi <@${quinn.nativeId}> ` && (await chipsDrawn()).join('|') === '@Quinn', text);
+  // Ctrl+Backspace from past the space after it: the chip and the space go in one step, and one undo brings both back.
+  await page.eval(`(() => { const t = ${box}; t.focus(); t.setSelectionRange(t.value.length, t.value.length); })()`);
+  await keyMod('Backspace', 'Backspace', 8, 2, ['deleteWordBackward']);
+  await page.until(`!document.querySelector('.chip-copy .chip-m')`, 2000).catch(() => {});
+  const wordGone = await shown();
+  await keyMod('z', 'KeyZ', 90, 2, ['undo']);
+  await page.until(`!!document.querySelector('.chip-copy .chip-m')`, 2000).catch(() => {});
+  text = await value();
+  check('Ctrl+Backspace after the chip and its space takes both, and one undo brings both back', wordGone === 'hi ' && text === `hi <@${quinn.nativeId}> `, { wordGone, text });
   const draft = await page.eval<string | null>(`localStorage.getItem(${JSON.stringify(`dither-chat:draft:${dev.id}`)})`);
   check('the draft keeps the token, not the name', draft === `hi <@${quinn.nativeId}> `, draft);
   await page.goto(`${base}/#/c/${climb.id}`);

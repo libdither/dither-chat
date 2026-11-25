@@ -32,7 +32,8 @@ export function insertAtCaret(el: HTMLTextAreaElement, text: string, focus = tru
   el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
 }
 
-export function EmojiComplete({ ta, convId, network }: { ta: { current: HTMLTextAreaElement | null }; convId: string; network?: P.Network }) {
+/** `el` is the box itself, for drawing again when it is made again; listeners go on `ta.current`. */
+export function EmojiComplete({ ta, convId, network }: { ta: { current: HTMLTextAreaElement | null }; el?: HTMLTextAreaElement | null; convId: string; network?: P.Network }) {
   const [trig, setTrig] = useState<Trigger | null>(null);
   const [sel, setSel] = useState(0);
   const [catalog, setCatalog] = useState<EmojiCategory[] | null>(null);

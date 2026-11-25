@@ -24,7 +24,10 @@ const END = '\u{E007F}';
 const TOKEN = /<@(?:&\d{1,32}|(?:person|identity):(?:per|idn)_[\w-]{1,64}|!?[!-;=?-~]{1,128})>/g;
 /** A chip in the box: an @, the token's tags (`<@`, its id, `>`), the rest of the name, the cancel tag. */
 const CHIP = /@(\u{E003C}\u{E0040}[\u{E0021}-\u{E003D}\u{E003F}-\u{E007E}]{1,140}\u{E003E})([^\n\u{E0000}-\u{E007F}]{0,80})\u{E007F}/gu;
-const TAGS = /[\u{E0000}-\u{E007F}]/gu;
+/** A flag made of tags (🏴 then a region's tags, as England's), which stays; or any other tag character, which goes. */
+const TAGS = /(\u{1F3F4}[\u{E0020}-\u{E007E}]+\u{E007F})|[\u{E0000}-\u{E007F}]/gu;
+/** Every tag character but a flag's. */
+const untag = (s: string) => s.replace(TAGS, (_, flag?: string) => flag ?? '');
 
 export interface Chip {
   /** Where it is in the box's text: from its @ to past its cancel tag. */
@@ -37,8 +40,8 @@ export interface Chip {
 
 const tagged = (s: string) => String.fromCodePoint(...[...s].map((c) => TAG + c.charCodeAt(0)));
 const untagged = (s: string) => String.fromCodePoint(...[...s].map((c) => c.codePointAt(0)! - TAG));
-/** What a name can hold after its @: one line, no backtick (code would start there), no tag characters. */
-const cleanName = (s: string) => [...s.replace(/^@/, '').replace(/[\n\r`]/g, ' ').replace(TAGS, '')].slice(0, 64).join('');
+/** What a name can hold after its @: one line, no backtick (code would start there), no tag characters, a flag's neither. */
+const cleanName = (s: string) => [...s.replace(/^@/, '').replace(/[\n\r`]/g, ' ').replace(/[\u{E0000}-\u{E007F}]/gu, '')].slice(0, 64).join('');
 
 /** The chip for a token, as the box holds it, its name always starting with @; a token not in plain ASCII stays itself. */
 export function chipText(token: string, label: string): string {
@@ -51,15 +54,15 @@ export function chipsIn(shown: string): Chip[] {
   return [...shown.matchAll(CHIP)].map((m) => ({ start: m.index, end: m.index + m[0].length, token: untagged(m[1]), label: '@' + m[2] }));
 }
 
-/** The body the box's text sends: each chip its token, and no tag character left anywhere. */
+/** The body the box's text sends: each chip its token, and no tag character left but a flag's. */
 export function toBody(shown: string): string {
   if (!shown.includes('\uDB40')) return shown;
-  return shown.replace(CHIP, (_, t: string) => untagged(t)).replace(TAGS, '');
+  return untag(shown.replace(CHIP, (_, t: string) => untagged(t)));
 }
 
 /** What a copy of it reads elsewhere: the names as shown. */
 export function toPlain(shown: string): string {
-  return shown.includes('\uDB40') ? shown.replace(TAGS, '') : shown;
+  return shown.includes('\uDB40') ? untag(shown) : shown;
 }
 
 /** The box's text for a body: each token `name` knows becomes its chip; one inside code, or unknown, stays as written. */

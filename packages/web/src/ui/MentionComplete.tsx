@@ -10,6 +10,12 @@ import { findMentionTrigger } from '../mentionComplete.ts';
 
 export interface MentionProps {
   ta: { current: HTMLTextAreaElement | null };
+  /**
+   * The box itself and its text: a component is drawn again only when its props change, and the list must follow a
+   * box made again (its listeners move to it) and text the app set itself (a send empties the box with no input event).
+   */
+  el?: HTMLTextAreaElement | null;
+  text?: string;
   convId: string;
   network?: P.Network;
   /** The account the composer sends from: the one the hub asks. */
