@@ -1019,6 +1019,39 @@ Six and two cold loads of each at 4× on the full-size world, interleaved, on a 
 the hub's answer to the list, medians 1,540 → 1,210 ms and 1,161 → 826 ms, shorter in 7 of the 8 pairs. Relaunches
 read the snapshot as before (written when the page was hidden).
 
+## Fonts at the first layout (2026-11-25)
+
+On Linux, Chrome's page asks the browser process for each font family by name, and the browser process asks
+fontconfig; the page waits for the answer. A trace of a cold load at 4× on the full-size world (the `fonts` and
+`disabled-by-default-fonts` categories: `FontDataManager::onMatchFamilyStyle` names each family) showed 14 lookups
+before the list showed, 107–150 ms of the main thread with the fontconfig fallback and the per-size render settings:
+
+- `ui-sans-serif`, the stack's first family, is a real family only in Safari. Chrome looks it up as a literal name,
+  finds nothing, and does so once per weight: four lookups, about 30 ms. `system-ui`, next, gave the desktop's font.
+- One emoji on screen (a ❤️) sends Chrome down the rest of the stack for that character: `-apple-system`, `Segoe UI`,
+  `Roboto`, `Helvetica Neue`, `Arial`, then its standard font, each a lookup (about 25 ms), then fontconfig's search
+  for a font that has it (`GetFallbackFontForCharacter`, 25–32 ms the first time, nothing after).
+- The monospace stack is first looked up after the list shows; the emoji pickers' stacks only when one opens.
+
+`--font` is now `system-ui, sans-serif`, which is the font the old stack showed wherever `system-ui` is known (every
+current browser): San Francisco on Apple's systems, Segoe UI on Windows, Roboto on Android, the desktop's font on
+Linux. In headless Chromium on Linux every text node on screen renders in the same faces before and after
+(`CSS.getPlatformFontsForNode`: DejaVu Sans and its bold, Noto Color Emoji for emoji), on the inbox at desktop and
+phone size and in two open conversations. Six cold loads of each at 4×, interleaved: 6 lookups instead of 14, and
+the font time before the list 114 → 70 ms (medians). In verify-perf's A/B (`--only desktop --cpu 4 --runs 5`) that
+is inside the noise: the list 1,378 → 1,362 ms (p 0.55), a relaunch's list 621 → 589 ms (p 1.0).
+
+Tried and not kept:
+
+- **`sans-serif` alone**: Chrome's sans-serif on Linux is Arial, which fontconfig gives as Liberation Sans, so the
+  font changed, and it was no faster (74 ms). It would be Helvetica on a Mac and Arial on Windows too.
+- **`system-ui, sans-serif, 'Noto Color Emoji'`**: the emoji is found by name, so fontconfig's search goes (45 ms
+  instead of 70), but it puts that emoji font ahead of the one the system picks (a Linux desktop set to another emoji
+  font, or Noto installed on Windows), and in the A/B it was no faster (1,465 ms, p 0.84).
+
+What is left there is the per-size render settings (`GetWebFontRenderStyleForStrike`, a fontconfig match for each
+face and size: 22 of them, about 30 ms) and the emoji search, each paid once per browser start, on Linux only.
+
 ## The loading orb (2026-11-11)
 
 `1x.open.first.layouts` read 48–50 on main on 2026-11-11 against the baseline's 17 (#85, 2026-11-10), in two runs of

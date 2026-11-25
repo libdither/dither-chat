@@ -9,7 +9,11 @@
   --net-signal: #3a91f5;
   --net-matrix: #0dbd8b;
 
-  --font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  /* The OS's own UI font everywhere (San Francisco, Segoe UI, Roboto, the desktop's font on Linux). Each family a
+     browser lacks is a font lookup on the first layout: on Linux, Chrome asks fontconfig through its browser process
+     for `ui-sans-serif` once per weight, and for every family after it when a glyph is missing (docs/perf.md, "Fonts
+     at the first layout"). */
+  --font: system-ui, sans-serif;
   --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Fira Code', Menlo, monospace;
 
   --rail-w: 72px;
