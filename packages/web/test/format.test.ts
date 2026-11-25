@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { clock, dayLabel, fullTime, stamp } from '../src/format.ts';
+import { ago, clock, dayLabel, fullTime, stamp } from '../src/format.ts';
 
 // The formatters are made once (format.ts); they must say exactly what the per-call toLocale*String did.
 describe('dates and times', () => {
@@ -28,5 +28,17 @@ describe('dates and times', () => {
     expect(stamp(at(2026, 10, 4), now)).toBe(`${new Date(at(2026, 10, 4)).toLocaleDateString(undefined, { weekday: 'short' })} ${t}`);
     expect(stamp(at(2026, 9, 1), now)).toBe(`${new Date(at(2026, 9, 1)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${t}`);
     expect(stamp(at(2025, 9, 1), now)).toBe(`${new Date(at(2025, 9, 1)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}, ${t}`);
+  });
+  test("a list's ages: each day's label kept, the same as formatting every time", () => {
+    const weekday = new Intl.DateTimeFormat(undefined, { weekday: 'short' });
+    const day = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+    const now = new Date(2026, 10, 7, 15, 0).getTime();
+    // Every 37 minutes back over 400 days: each weekday and day, twice or more, both sides of midnight and of DST.
+    for (let ts = now; ts > now - 400 * 86_400_000; ts -= 37 * 60_000) {
+      const d = now - ts;
+      const want = d < 60_000 ? 'now' : d < 3_600_000 ? `${Math.floor(d / 60_000)}m` : d < 86_400_000 && new Date(ts).getDate() === new Date(now).getDate() ? `${Math.floor(d / 3_600_000)}h` : d < 6 * 86_400_000 ? weekday.format(ts) : day.format(ts);
+      expect(ago(ts, now)).toBe(want);
+    }
+    expect(ago(null, now)).toBe('');
   });
 });

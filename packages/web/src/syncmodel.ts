@@ -62,16 +62,25 @@ function indexEdges(db: Db, b: Pick<P.Bootstrap, 'edges' | 'conversations' | 'co
   });
 }
 
+/**
+ * An edge into both indexes; one already there (the same child of the same parent) is replaced in its place. Loops,
+ * not `some` and `findIndex` with closures: a bootstrap adds 5,500 of them (docs/perf.md "Applying the bootstrap").
+ */
 function addEdge(db: Db, e: P.SpaceEdgeView) {
-  const c = db.children.get(e.parentId) ?? [];
-  if (!c.some((x) => x.childId === e.childId && x.childKind === e.childKind)) c.push(e);
-  else c.splice(c.findIndex((x) => x.childId === e.childId && x.childKind === e.childKind), 1, e);
-  db.children.set(e.parentId, c);
-  const p = db.parents.get(e.childId) ?? [];
-  const i = p.findIndex((x) => x.parentId === e.parentId);
-  if (i >= 0) p[i] = e;
-  else p.push(e);
-  db.parents.set(e.childId, p);
+  const c = db.children.get(e.parentId);
+  if (!c) db.children.set(e.parentId, [e]);
+  else {
+    let i = 0;
+    while (i < c.length && (c[i].childId !== e.childId || c[i].childKind !== e.childKind)) i++;
+    c[i] = e;
+  }
+  const p = db.parents.get(e.childId);
+  if (!p) db.parents.set(e.childId, [e]);
+  else {
+    let i = 0;
+    while (i < p.length && p[i].parentId !== e.parentId) i++;
+    p[i] = e;
+  }
 }
 
 function removeEdge(db: Db, parentId: string, childId: string) {
@@ -91,8 +100,12 @@ function dropEdgesOf(db: Db, id: string) {
 
 export function indexThreads(db: Db) {
   db.threads.clear();
+  // A list grown in place, not copied for each thread: a busy Zulip channel has a thousand topics.
   for (const c of db.conversations.values()) {
-    if (c.parentId) db.threads.set(c.parentId, [...(db.threads.get(c.parentId) ?? []), c.id]);
+    if (!c.parentId) continue;
+    const l = db.threads.get(c.parentId);
+    if (l) l.push(c.id);
+    else db.threads.set(c.parentId, [c.id]);
   }
 }
 
@@ -156,7 +169,9 @@ function setCategories(db: Db, cats: P.CategoryView[], place: P.PlaceCategoryVie
   db.placeCategories = new Map();
   for (const x of place) {
     const k = `${x.kind}:${x.id}`;
-    db.placeCategories.set(k, [...(db.placeCategories.get(k) ?? []), x]);
+    const l = db.placeCategories.get(k);
+    if (l) l.push(x);
+    else db.placeCategories.set(k, [x]);
   }
 }
 

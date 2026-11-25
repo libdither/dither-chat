@@ -25,7 +25,9 @@ biggest conversation, 15), `--web <dist>` (a build to use instead of building on
 numbers), `--baseline <file>`, `--keep` (leave the temp dir with the world, the build and the hub's log), `--css <css>`
 (added to every page, to try a style change without a build), `--work <dir>` (an empty dir to work in instead of a
 temp dir, kept afterwards), `--size <w>x<h>` (1280x800; below 700 wide it emulates a phone, as `--size 390x844`),
-`--scale` (the world's size against the live hub's, 1), `--ci` (below).
+`--scale` (the world's size against the live hub's, 1), `--ci` (below). For trying a change ([A/B a change](#ab-a-change)):
+`--only <pass>[,<pass>]` (`desktop`, `phone`, `ahead`, `slow`), `--ab <distA>,<distB>[,...]`, `--keep-world <dir>`,
+`--age <dir>` and `--world <dir>`. `--help` prints the script's own summary.
 
 It takes about eight minutes, three of them the slow link's pass. It builds the web app, seeds a world in a temp dir, starts its own demo hub on it
 (`--demo`, with the demo's random chatter off, `DITHER_DEMO_CHATTER=0`), and drives a fresh headless Chromium per
@@ -138,6 +140,106 @@ two App renders and three of the inbox list per switch, none of App and at most 
 and at most 250 messages drawn on a reopen. Over the slow link: one catch-up a start (`socket.resyncs` 0), and none of the
 app's own files fetched on a relaunch; and floors: the service worker took the page over,
 and the relaunch drew its list from the snapshot. An `--update` over one of them fails and writes nothing.
+
+## A/B a change
+
+Times on a shared machine move 5–30% between runs, so a change is measured against its base in the same hub, the
+runs of each taking turns. Seeding a full-size world takes about 90 s on a loaded machine; keep one and reuse it.
+
+```sh
+# Each build into a directory of its own (packages/web, on the base and then on the change):
+bunx --bun vite build --outDir /tmp/ab/base --emptyOutDir
+bunx --bun vite build --outDir /tmp/ab/cand --emptyOutDir
+# Seed once, and keep the world as seeded (a quick desktop run here; any passes will do):
+bun scripts/verify-perf.ts --keep-world /tmp/ab/world --only desktop --cpu 4 --runs 1 --web /tmp/ab/base
+# Then as often as you like: one hub, both builds in turn, five runs each.
+bun scripts/verify-perf.ts --world /tmp/ab/world --ab /tmp/ab/base,/tmp/ab/cand --only desktop,phone --cpu 4 --runs 5
+```
+
+- **`--ab <distA>,<distB>[,...]`**: one hub on one world, serving each build in turn from one path (a link swapped
+  between runs; the hub reads its files as they are asked for, so nothing restarts). The runs go A B, B A, A B… so a
+  hub that drifts from run to run drifts under each build alike: each run's arriving message adds to the long
+  timeline (`long.reopen.nodes` comes down by about five a run), and each run's opens move the inbox's order. Every
+  run is a fresh browser with an empty profile, as in a normal run, so nothing of one build's device (its kept
+  pages, its service worker, its HTTP cache) reaches the next. An A/B takes one warm-up run (`--warmup 1`) with A
+  before each desktop throttle, so the first run on a fresh hub, which draws more, is no build's. The output is each
+  build's median and range (lowest–highest) for every key, side by side, the difference from A in units and per cent,
+  and `p`: an exact Mann-Whitney test of the two builds' runs, how often a random split of them lands as far apart.
+  Under 0.05 is marked `*`; with five runs each the least it can be is 0.008 (every run of one build above every run
+  of the other), with three 0.1, so take five. Ceilings and floors are judged for every build; no baseline is.
+  `--out` writes `{ world, hub, ab: [{ label, dir, metrics, runs }] }`, which perf-trend.ts does not read.
+- **`--only <pass>[,<pass>]`**: just those passes (`desktop`, `phone`, `ahead`, `slow`), as if the others' throttles
+  were `0`.
+- **`--keep-world <dir>`**: after seeding, a copy of the world as seeded, before the hub ever ran on it, with a
+  `world.json` beside it: its scale, its day, the counts, the conversations the passes open, and a hash of each file
+  that seeds it or lays out its database (perf-world.ts, the hub's demo.ts, store.ts and schemas, the protocol's ids).
+- **`--world <dir>`**: a copy of a kept world instead of a seed (the kept one is never touched), in a second or two.
+  Refused, never used as it is, when its scale is not this run's (`--scale`), when it was seeded on another day (the
+  seed's messages are anchored at the last midnight, so a world kept yesterday is a day older than today's), or when
+  one of those files changed; the error says which. The demo accounts date their own messages from when they were
+  made (an `epoch` in their settings), so a reused world is given now as that time: what a seed made now would have.
+- **`--age <dir>`**: the fetching-ahead pass measures an inbox whose order the passes before it have moved (their
+  opens, the messages read, the arriving messages), and in a nightly-like run they take 20–30 minutes. `--age` keeps
+  the hub as the ahead pass first finds it: right before that pass, its database copied while it runs (`VACUUM INTO`,
+  a consistent copy) with the rest of its data dir, and once the pass's first run has looked, the inbox's first 12 rows
+  as it saw them. Run the passes you want it aged by once, then reuse the result for the ahead pass alone:
+
+  ```sh
+  bun scripts/verify-perf.ts --age /tmp/ab/aged --cpu 1,4 --phone-cpu 1,4 --ahead-cpu 4 --slow-cpu 0 --runs 5 --warmup 1
+  bun scripts/verify-perf.ts --world /tmp/ab/aged --only ahead --ab /tmp/ab/base,/tmp/ab/cand --runs 5
+  ```
+
+  An aged world runs only with `--only ahead` (or `ahead,slow`): any other pass would age it further. It is not
+  dated again as a kept one is (what the earlier passes did happened when they did), so three things make sure the
+  ahead pass measures the order a real run had at that point:
+
+  1. **What a restart takes back is put back.** A real run never restarts its hub; a reuse starts one on the copy, and
+     each demo account sends its world again as it starts, with each conversation's read point as the demo began it.
+     The hub counts unread again from there: two demo direct chats that a first start leaves with nothing unread come
+     back with two and three unread, and one of them jumped into the fourth row. So once the hub has settled, each
+     conversation whose read point or unread count differs from the aged copy's is marked read again as the app marks
+     it (`POST /api/conversations/:id/read`), up to the copy's read point, or up to its newest message where the copy
+     had nothing unread.
+  2. **The hub's scores are compared.** The aging run keeps the hub's 40 best inbox scores (the bootstrap's
+     `attention`) with the world; the reuse prints any that moved more than a point or left the 40. They drift with the
+     minutes since (a reply waited on grows older); the learned order's exploring (docs/inbox.md) does not move them
+     here, since a seeded world has no opens old enough for the order to have learned from, so it samples nothing.
+  3. **The rows are checked.** The ahead pass's first run must find the same 12 rows in the same order as the run that
+     aged the world did, or the script stops, prints both lists and the scores that moved with their reasons, and says
+     to age it again.
+
+  Tested on 2026-11-24 ([below](#ab-a-change-tested-2026-11-24)).
+
+### A/B a change: tested (2026-11-24)
+
+On this machine with other agents' runs beside it (load average 8 to 42), a full-size world:
+
+- **Keeping and reusing.** The kept world is 232 MB; a copy takes 0.1–3.5 s, against about 90 s to seed. The hub then
+  starts in 3–7 s on a quiet machine and took 18–27 s at load 20–27 (its `startup:` line: models 8.2 s, adapters 4.4 s,
+  first scoring 4.3 s, against 2.0, 0.7 and 0.2 s quiet). That went past the 30 s the script used to give a hub to
+  answer in 6 of 14 starts; it now waits until the hub answers or its process ends (three minutes at most),
+  and shows the end of its log when it does not.
+- **Main against itself** (two copies of one build, `--only desktop,phone --cpu 4 --phone-cpu 4 --runs 5`): every count
+  and tally the same; of about 150 keys, 2 had `p` under 0.05 (`p4x.typing.keyMax`, `p4x.you.busy`), fewer than chance
+  gives one time in 20. Times were wide: the desktop's cold load 2.0–10.1 s in one build's five runs.
+- **Main against a build that waits 200 ms before its first draw** (a busy loop before `render` in main.tsx), the same
+  settings: the relaunch's longest task 337 → 551 ms (p 0.01), its list 630 → 841 ms (p 0.10), and App renders on a
+  cold load 2 → 3 in every run (p 0.01). The cold load's list did not move (2,352 → 1,849 ms, p 0.22): since the
+  bootstrap is asked for from `index.html` the first draw happens while it is still coming, so 200 ms there is off the
+  critical path. On CI's tenth-size world at 1× the same build moved the cold list 466 → 766 ms (two runs each).
+- **Aging.** On a tenth-size world (aged after `--cpu 1 --phone-cpu 1 --runs 2`) the first reuse found the demo's two
+  chats unread again and one at the fourth row, and stopped; with them marked read again, reuses found the aging run's
+  12 rows, and the second run's bytes fetched ahead matched the aging run's (23,173 and 20,706 against 23,172 and
+  21,175). At full size (aged after `--cpu 4 --phone-cpu 4 --runs 1 --warmup 1`) the reuse found the same 12 rows and
+  the hub's scores at the moment the page read them were the aging run's to the decimal. One earlier full-size aging
+  did not: the phone pass's last visit, which its browser sends as it closes, reached the hub after the aging run's
+  ahead pass had drawn its list, so the copy (which had it) put that chat third. The reuse stopped, as it should; aging
+  now waits for the hub's journal to stand still before it copies.
+
+When the ahead pass's check that the next three rows were kept fails ("the next three rows were not all kept"), it
+prints what the device had: the rows it wanted, the first 20 rows on screen, each marked `K` when its page is in
+IndexedDB and `F` when it was fetched ahead, the pages fetched ahead and where the opens came from, and every key in
+the page store.
 
 ## In CI (`--ci`)
 
@@ -901,6 +1003,22 @@ goes out of sight, or to the next quiet save once it is ten minutes old. Counted
 over four opens: main wrote 4,544,244 to 4,655,541 characters per save, 134–156 ms in `JSON.stringify` and 116–154 ms
 in the store's `put`, all on the main thread; the branch writes 98,213 to 164,072 characters in 2–6 ms.
 
+### The first snapshot (2026-11-24)
+
+On a device that keeps nothing yet (a first start, or a deploy that changed the protocol) the hub's first answer is
+written at once, since until it is an offline start has nothing to show. Storing it is one `put` of the 4.5 MB text,
+which the page holds as a two-byte string (a name with an emoji in it is enough), and IndexedDB's copy of it holds the
+main thread: 61–77 ms at 4× in a cold load's CPU profile, while the list was still being drawn. It is now written at
+the first idle moment within a second (`FIRST_WITHIN_MS`), and leaving the page writes it as before.
+
+Storing it as a Blob instead takes no time in the `put`, but reading it back on a relaunch (`blob.text()`, 56–72 ms
+on the main thread) costs what reading the string does (44–62 ms), and making a Blob or bytes from the string costs
+80–95 ms: measured in Chrome at 4× on the perf world's bootstrap, seven rounds. So the format stays.
+
+Six and two cold loads of each at 4× on the full-size world, interleaved, on a machine at load average 30–130: from
+the hub's answer to the list, medians 1,540 → 1,210 ms and 1,161 → 826 ms, shorter in 7 of the 8 pairs. Relaunches
+read the snapshot as before (written when the page was hidden).
+
 ## The loading orb (2026-11-11)
 
 `1x.open.first.layouts` read 48–50 on main on 2026-11-11 against the baseline's 17 (#85, 2026-11-10), in two runs of
@@ -1226,6 +1344,26 @@ before, medians of each function's own time [spread]: on a cold load `metaMemo` 
 16 [10–42] → 8 [3–10], `placesMemo` 17 [12–22] → 15 [7–17], `effectiveLevel` 7 → 3: about 40 ms less; on a relaunch
 about 16 ms less. In a benchmark of the same passes in Bun on this world's bootstrap (least of 40 runs), working the
 rail, the badge, the servers' counts, the inbox and people out after a meta change took 8–9 ms instead of 10–14.
+
+### A channel's threads (2026-11-24)
+
+`indexThreads` (syncmodel.ts), run on each bootstrap and after every event that adds, moves or drops a thread, added
+each thread to its channel by copying the channel's list: quadratic in a channel's topics. The perf world has two
+threads a channel, but a busy Zulip or Matrix channel has a thousand topics or more. Now the lists grow in place, and
+the edges and the places' categories are indexed with loops rather than `some`, `findIndex` and copies. A test checks
+three channels with 1,000 to 3,000 topics index as before (`test/bootstrap-index.test.ts`). In Bun on the perf world's
+bootstrap plus three such channels (6,000 topics, three interleaved runs, medians of 21): `indexThreads` 31–36 → 0.5–0.8
+ms, applying the whole bootstrap 39–49 → 5–10 ms. On the perf world as it is, no change beyond noise.
+
+### Times in lists (2026-11-24)
+
+Every list row says how long ago its last message was (format.ts `ago`): "5m", "3h", "Tue", "Oct 12". Its formatters
+were already made once, but each row older than a day still called one, and a formatter's call costs more than the
+rest of `ago` together: about 16 ms of a cold load's main thread at 4× (CPU profiles, `ago`'s own time). A day's label
+depends on its local date alone, so each weekday and each date is now formatted once and kept
+(`test/format.test.ts` checks every 37 minutes over 400 days against formatting each time, in several time zones). In
+Chrome at 4× over the perf world's 1,508 conversations' last-message times, three runs of nine rounds each, medians:
+11.5–14 ms before, 0.6–6 ms with no label kept yet, 0.5–1.6 ms once kept (a list drawn again).
 
 ## One setting at a time (2026-11-20)
 
