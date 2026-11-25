@@ -343,14 +343,16 @@ async function dataUrl(canvas) {
  * /api/messages/:id/feedback); `wrong` and `alert` are the marks from before, kept for a notification shown then.
  */
 const MARKS = {
-  worth: { title: 'Worth it', answer: 'worth' },
-  could_wait: { title: 'Could have waited', answer: 'could_wait' },
-  louder: { title: 'Louder', answer: 'louder' },
-  quieter: { title: 'Quieter', answer: 'quieter' },
-  wrong: { title: 'Not urgent', body: { alert: false } },
-  alert: { title: 'Should have alerted', body: { alert: true } },
-  less: { title: 'Less like this', body: { less: true } },
+  worth: { title: 'Worth it', answer: 'worth', said: 'More like this will sound.' },
+  could_wait: { title: 'Could have waited', answer: 'could_wait', said: 'More like this will wait.' },
+  louder: { title: 'Louder', answer: 'louder', said: 'More like this will come louder.' },
+  quieter: { title: 'Quieter', answer: 'quieter', said: 'More like this will come quieter.' },
+  wrong: { title: 'Not urgent', body: { alert: false }, said: 'Fewer like this will alert.' },
+  alert: { title: 'Should have alerted', body: { alert: true }, said: 'More like this will alert.' },
+  less: { title: 'Less like this', body: { less: true }, said: 'Less like this will reach you.' },
 };
+/** How long "Noted" stays in an answered notification's place before it closes itself. */
+const NOTED_MS = 4000;
 const TIER_MARKS = { push: ['worth', 'could_wait'], quiet: ['louder'], digest: ['quieter', 'louder'] };
 /** A notice (docs/notices.md) is not a message the scale weighs: it keeps the marks. */
 const NOTICE_MARKS = { push: ['wrong'], quiet: ['alert'], digest: ['less', 'alert'] };
@@ -574,6 +576,33 @@ async function sendReply(n, conv, text, replyTo) {
   await self.registration.showNotification('Reply not sent', { body: `${error}. You wrote: ${text}`.slice(0, 1000), tag: n.tag, renotify: true, requireInteraction: true, icon: '/icon-192.png', badge: '/icon-192.png', data: { conversationId: conv, keep: true } });
 }
 
+/**
+ * An answer from a notification's button. A button that only closed the notification would look the same whether the
+ * hub took it or not, so in its place a silent "Noted" says it did, and closes itself; or "Answer not saved" says why
+ * not, and stays.
+ */
+async function sendMark(n, mark, mid) {
+  const req = mark.answer
+    ? { url: '/api/loudness/answers', body: { messageId: mid, answer: mark.answer, source: 'notification' } }
+    : { url: `/api/messages/${encodeURIComponent(mid)}/feedback`, body: mark.body };
+  let error = null;
+  try {
+    const res = await fetch(req.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req.body), signal: AbortSignal.timeout(30_000) });
+    if (!res.ok) error = (await res.json().catch(() => null))?.error ?? `The hub answered ${res.status}`;
+  } catch (err) {
+    error = err?.name === 'TimeoutError' ? 'The hub did not answer in time' : 'Could not reach the hub';
+  }
+  const o = { tag: n.tag, silent: true, icon: '/icon-192.png', badge: '/icon-192.png' };
+  if (error) {
+    await self.registration.showNotification('Answer not saved', { ...o, body: `${mark.title}: ${error}.`, data: { conversationId: n.data?.conversationId } });
+    return;
+  }
+  await self.registration.showNotification(`Noted: ${mark.title}`, { ...o, body: mark.said, data: { conversationId: n.data?.conversationId, noted: true } });
+  await new Promise((r) => setTimeout(r, NOTED_MS));
+  // Only the "Noted": a push for the chat may have taken its place since.
+  for (const shown of await self.registration.getNotifications({ tag: n.tag })) if (shown.data?.noted) shown.close();
+}
+
 self.addEventListener('notificationclick', (e) => {
   const { conversationId: conv, inbox, replyTo } = e.notification.data ?? {};
   const ringing = e.notification.data?.call;
@@ -592,10 +621,7 @@ self.addEventListener('notificationclick', (e) => {
   const mark = Object.hasOwn(MARKS, e.action) ? MARKS[e.action] : null;
   if (mark && mid) {
     e.notification.close();
-    const req = mark.answer
-      ? { url: '/api/loudness/answers', body: { messageId: mid, answer: mark.answer, source: 'notification' } }
-      : { url: `/api/messages/${encodeURIComponent(mid)}/feedback`, body: mark.body };
-    e.waitUntil(fetch(req.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req.body) }).catch(() => {}));
+    e.waitUntil(sendMark(e.notification, mark, mid));
     return;
   }
   e.notification.close();
