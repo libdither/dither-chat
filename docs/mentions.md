@@ -41,7 +41,8 @@ the box for an `@` being typed (`mentionComplete.ts`) and loads the list the fir
 
 When it opens. As for the `:` emoji list: after a space, the start of a line, or an opening bracket or quote. So
 `name@host`, a mail address and a written `<@id>` never open it, and nor does an `@` inside `code`, a ``` block or a
-URL. A bare `@` opens it on the people here before anything is typed. The query runs to the caret, up to 32 characters,
+URL. An `@` after an opening backtick still being typed counts as code, but not after a lone backtick inside a word
+(``it`s``, typed for an apostrophe). A bare `@` opens it on the people here before anything is typed. The query runs to the caret, up to 32 characters,
 with no space, `@`, `<`, `>` or backtick in it.
 
 Rows. They come at once from what this device holds: the conversation's participants, and who wrote in its loaded
@@ -52,20 +53,26 @@ a minute, so typing back over a name draws at once and asks nothing. An answer w
 not kept, and the rows this device had stay below it. While the hub is asked, the head says "asking Discord…"; after a
 partial answer it says the network did not answer.
 
-Each row shows a picture with its network's badge, the name, the handle, and a bell: the network notifies them. A row
+Each row shows a picture with its network's badge, the name, the handle, and a bell: the network notifies them. On a
+phone the handle shows only where two rows share a name, to tell them apart. A row
 with a struck-through bell is text only: the others see a plain @Name and nobody is notified (Step 3's friends from other
 networks). A role row is drawn in the role's colour. @everyone and @here appear only when the network says you may write
 them here.
 
 Sections. Past the people here come Friends and Everyone you know, as the place's setting says (below), each under a
 header; with the people here alone there are no headers. A person's row shows the networks they are on. Its bell is
-struck through when they have no account on this chat's network: you get a plain @Name.
+struck through when they have no account on this chat's network: you get a plain @Name. It is struck through too when
+their account on this network is known not to be in the chat, which the network would not notify: everyone in it who
+matches is known when the network answered for letters typed with fewer than 10 people (Discord's member search stops
+there), or when a direct chat or a group the network does not answer for lists its members (Signal, WhatsApp). With
+nothing typed, or in a channel the network did not answer for, the bell stays.
 
 Keys, as in the emoji list: arrows move, Enter or Tab puts the row in, Escape closes the list for that `@` until a new
 one is typed. On someone with several accounts, → (or the arrow at the row's end) opens them, each as "Alice ·
 Discord", "Alice · Signal" with its own bell; a person from friends or everyone comes first, as what their row puts in.
 Enter or a click on such a person opens them too, while on someone here it puts in their mention here, as before. ← or
-Escape goes back to the list. Tab always puts the row in as it is.
+Escape goes back to the list. Tab always puts the row in as it is. An Enter that ends an input method's word (Japanese,
+Chinese…) never picks a row or sends, Safari's included (it says `isComposing` false, but keyCode 229).
 
 A row here for someone the hub knows as one person on other networks too carries those accounts (`accounts`), so you
 can name one of them: in a Discord channel, Theo's Signal account is put in by reference and goes out as plain @Theo K. The list listens on the composer in the capture phase, so the composer's own Enter (send) and Escape
@@ -220,8 +227,9 @@ does a row here for an account the hub stores; none pings, since the calendar no
 - A network without mentions of its own (not in `MENTION_NETWORKS`, packages/protocol/src/mentions.ts: Messenger,
   Instagram, Partiful, Luma and the rest) would send a token as written, so there every mention is a plain name: a
   reference as above, and its own `<@nativeId>` as the account's display name (else handle, else person), or
-  `@someone` (`plainNative`). Its rows in the @ list have the struck-through bell. Google Messages and X are in the list:
-  their adapters write `<@nativeId>` out as the name themselves.
+  `@someone` (`plainNative`). Its rows in the @ list have the struck-through bell. Google Messages and X are in the list
+  (`sendsMentions`): their adapters write `<@nativeId>` out as the name themselves. Google Messages notifies nobody, so
+  its rows have the struck-through bell too (`mentionsPing`).
 
 **The owner's decision (2026-11-13): a friend who is not on the chat's network gets the plain `@Name` text only.** The
 hub never sends them a DM or any other notification outside the chat.

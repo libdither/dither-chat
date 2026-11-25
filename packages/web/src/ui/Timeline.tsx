@@ -1897,8 +1897,9 @@ export function Composer({ targets, placeholder, reply, clearReply, disabledReas
       }}
       enterkeyhint={touchKeyboard() ? 'enter' : 'send'}
       onKeyDown={(e) => {
-        // A phone keyboard has no Shift+Enter, so there Enter is a new line and the button sends.
-        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && (!touchKeyboard() || e.ctrlKey || e.metaKey)) {
+        // A phone keyboard has no Shift+Enter, so there Enter is a new line and the button sends. Not the Enter that ends
+        // an input method's word: Safari sends it with isComposing false, but keyCode 229.
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229 && (!touchKeyboard() || e.ctrlKey || e.metaKey)) {
           e.preventDefault();
           countKey('composer: send (Enter)');
           submit();

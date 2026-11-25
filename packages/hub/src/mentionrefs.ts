@@ -12,7 +12,7 @@
  * own `<@nativeId>` would go out as written too, so there every mention is a plain name.
  */
 import type * as P from '@dither-chat/protocol';
-import { mentionsPing } from '@dither-chat/protocol';
+import { sendsMentions } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import type { Store } from './store.ts';
 
@@ -78,7 +78,7 @@ type Row = Record<string, any>;
 export function storeResolve(store: Store, conversationId: string): RefResolve {
   const at = store.one<{ network: P.Network }>('SELECT network FROM conversation WHERE id = ?', conversationId)?.network;
   // A network without mentions of its own mentions nobody: each is a name.
-  const network = mentionsPing(at) ? at : undefined;
+  const network = sendsMentions(at) ? at : undefined;
   return (kind, id) => {
     if (kind === 'identity') {
       const i = store.one<Row>('SELECT i.network, i.native_id, i.display_name, i.handle, p.name AS person FROM identity i LEFT JOIN person p ON p.id = i.person_id WHERE i.id = ?', id);
@@ -105,7 +105,7 @@ export function lowerForSend(store: Store, conversationId: string, caps: readonl
   if (caps.includes('personRefs') || !body.includes('<@')) return body;
   const out = lowerRefs(body, storeResolve(store, conversationId));
   const network = store.one<{ network: P.Network }>('SELECT network FROM conversation WHERE id = ?', conversationId)?.network;
-  if (!network || mentionsPing(network)) return out;
+  if (!network || sendsMentions(network)) return out;
   return plainNative(out, (nativeId) => {
     const i = store.one<Row>('SELECT i.display_name, i.handle, p.name AS person FROM identity i LEFT JOIN person p ON p.id = i.person_id WHERE i.id = ?', hubId('idn', network, nativeId));
     return i ? i.display_name || i.handle || i.person || null : null;

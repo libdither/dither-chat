@@ -96,7 +96,8 @@ export function EmojiComplete({ ta, convId, network }: { ta: { current: HTMLText
     };
     const onKey = (e: KeyboardEvent) => {
       const s = live.current;
-      if (!s.open || e.isComposing || e.target !== el) return;
+      // Not a key of an input method's word: Safari sends the Enter that ends one with isComposing false, but keyCode 229.
+      if (!s.open || e.isComposing || e.keyCode === 229 || e.target !== el) return;
       const n = s.results.length;
       const stop = () => {
         e.preventDefault();
