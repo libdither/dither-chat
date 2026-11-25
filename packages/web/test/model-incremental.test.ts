@@ -195,3 +195,56 @@ test('a read under one server leaves the others as they were', () => {
     else expect(s.under).toBe(before.spaces[i].under);
   }
 });
+
+/** The rail as it was sorted before it kept its order (a stable sort of folders, servers by activity, then rooms). */
+function railBefore(which: 'shown' | 'hidden'): string[] {
+  const inFolder = new Set(db.folders.flatMap((f) => f.items.map((i) => `${i.kind}:${i.id}`)));
+  const railed = [...db.conversations.values()].filter((c) => db.placePrefs.get(`conversation:${c.id}`)?.railed && M.visibleConv(c) && !inFolder.has(`conversation:${c.id}`));
+  const entries = [
+    ...db.folders.filter((f) => !inFolder.has(`folder:${f.id}`)).map((f) => ({ key: `folder:${f.id}`, act: Math.max(0, ...M.folderConvs(f).map((c) => c.lastMessageAt ?? 0)) })),
+    ...M.allCommunities().filter((s) => !inFolder.has(`space:${s.id}`)).map((s) => ({ key: `space:${s.id}`, act: M.activityOfSpace(s.id) })),
+    ...railed.map((c) => ({ key: `conversation:${c.id}`, act: c.lastMessageAt ?? 0 })),
+  ].map((x) => ({ ...x, pref: M.placePref(x.key.split(':')[0] as P.PlaceKind, x.key.slice(x.key.indexOf(':') + 1)) }));
+  return entries
+    .filter((x) => x.pref.hidden === (which === 'hidden'))
+    .sort((a, b) => {
+      const pa = a.pref, pb = b.pref;
+      if (pa.pinned !== pb.pinned) return pa.pinned ? -1 : 1;
+      if ((pa.position === null) !== (pb.position === null)) return pa.position !== null ? -1 : 1;
+      if (pa.position !== null && pb.position !== null) return pa.position - pb.position;
+      if (a.key.startsWith('folder:') !== b.key.startsWith('folder:')) return a.key.startsWith('folder:') ? -1 : 1;
+      return b.act - a.act;
+    })
+    .map((x) => x.key);
+}
+
+for (const seed of [11, 12, 13, 14, 15, 16]) {
+  test(`seed ${seed}: the rail sorted again after messages is the stable sort's order, with places given the same spot and the same times`, () => {
+    const r = rng(seed);
+    const { ids, spaces, pick, chance } = world(r);
+    // Servers with nothing in them (all at no activity), pins and shared spots, a second folder with one.
+    for (const id of ['e0', 'e1', 'e2']) db.spaces.set(id, { id, network: 'discord', nativeId: id, kind: 'community', name: id, topic: null, icon: null, accountIds: ['acc1'], nativeMute: null });
+    for (const id of [...spaces.filter((s) => !s.includes('-')), 'e0', 'e1', 'e2'])
+      if (chance(0.6)) db.placePrefs.set(`space:${id}`, { kind: 'space', id, position: pick([null, null, 1, 1, 2]), pinned: chance(0.2), hidden: chance(0.1), open: false, railed: false });
+    // Folders with no place given order by their latest message too.
+    db.folders = [...db.folders, { id: 'f2', name: 'g', icon: null, color: null, items: [{ kind: 'conversation', id: 'gr0' }] }, { id: 'f3', name: 'h', icon: null, color: null, items: [{ kind: 'conversation', id: 'gr1' }] }];
+    db.placePrefs.set('folder:f2', { kind: 'folder', id: 'f2', position: pick([null, null, 1]), pinned: false, hidden: false, open: false, railed: false });
+    changed('meta');
+    expect(M.railEntries().map((e) => e.key)).toEqual(railBefore('shown'));
+    // Messages at a few times only, so servers tie on activity.
+    const times = [clock, clock + 1000, clock + 2000];
+    for (let step = 0; step < 80; step++) {
+      const id = chance(0.3) ? pick(['gr0', 'gr1']) : pick(ids);
+      const c = db.conversations.get(id)!;
+      const read = chance(0.3);
+      const before = M.railEntries();
+      db.conversations.set(id, { ...c, lastMessageAt: read ? c.lastMessageAt : pick(times), vantages: c.vantages.map((v) => ({ ...v, unread: read ? 0 : v.unread + 1 })) });
+      changed('list', new Set([id]));
+      const after = M.railEntries();
+      expect(after.map((e) => e.key)).toEqual(railBefore('shown'));
+      expect(M.railEntries('hidden').map((e) => e.key)).toEqual(railBefore('hidden'));
+      // A read moves no activity: the very same list, so what draws it need not.
+      if (read && !after.some((e) => e.kind === 'conversation' && e.conv.id === id)) expect(after).toBe(before);
+    }
+  });
+}

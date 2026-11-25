@@ -700,52 +700,126 @@ export function placePref(kind: P.PlaceKind, id: string) {
 
 export type RailEntry = { key: string; kind: 'folder'; folder: P.FolderView } | { key: string; kind: 'space'; space: P.SpaceView } | { key: string; kind: 'conversation'; conv: P.ConversationView };
 
-const placeActivity = (e: RailEntry) =>
-  e.kind === 'folder' ? Math.max(0, ...folderConvs(e.folder).map((c) => c.lastMessageAt ?? 0)) : e.kind === 'space' ? activityOfSpace(e.space.id) : (e.conv.lastMessageAt ?? 0);
+/** The latest message in a folder: a loop, not a spread of every conversation in it. */
+function folderActivity(convs: readonly P.ConversationView[]): number {
+  let max = 0;
+  for (const c of convs) if ((c.lastMessageAt ?? 0) > max) max = c.lastMessageAt!;
+  return max;
+}
+const placeActivity = (e: RailEntry) => (e.kind === 'folder' ? folderActivity(folderConvs(e.folder)) : e.kind === 'space' ? activityOfSpace(e.space.id) : (e.conv.lastMessageAt ?? 0));
+
+/** A rail entry with what orders it: its settings, activity, and where it came in the list it was made from. */
+type RailItem = { e: RailEntry; pref: P.PlacePrefView; act: number; group: number; base: number; fc?: readonly P.ConversationView[] };
+/** What a rail list was sorted from, to sort it again when only some conversations' last messages moved. */
+type RailOrder = { items: RailItem[]; under: Map<string, RailItem[]> | null };
+const railOrders = new WeakMap<readonly RailEntry[], RailOrder>();
+
+/**
+ * Pinned, then what you arranged, then folders, then by activity; entries alike in all that keep the order they were
+ * listed in: folders as you made them, servers by activity and then as they are, then conversations you added.
+ */
+function railBefore(a: RailItem, b: RailItem): number {
+  const pa = a.pref, pb = b.pref;
+  if (pa.pinned !== pb.pinned) return pa.pinned ? -1 : 1;
+  if ((pa.position === null) !== (pb.position === null)) return pa.position !== null ? -1 : 1;
+  if (pa.position === null) {
+    if ((a.e.kind === 'folder') !== (b.e.kind === 'folder')) return a.e.kind === 'folder' ? -1 : 1;
+    if (a.act !== b.act) return b.act - a.act;
+  } else if (pa.position !== pb.position) return pa.position - pb.position!;
+  // The same place you gave both: as listed, where servers are listed by activity.
+  else if (a.group === 1 && b.group === 1 && a.act !== b.act) return b.act - a.act;
+  return a.group - b.group || a.base - b.base;
+}
+
+function sortedRail(items: RailItem[], under: RailOrder['under']): RailEntry[] {
+  items.sort(railBefore);
+  const out = items.map((x) => x.e);
+  railOrders.set(out, { items, under });
+  return out;
+}
+
+/**
+ * After a message or a read: the entries holding a changed conversation take their activity again, and the list is
+ * sorted again from what it was sorted from, or kept as it is when no activity moved. An added conversation that
+ * changed holds the conversation's new copy, so the list is made again (undefined).
+ */
+function railUpdate(prev: RailEntry[], ids: ReadonlySet<string>): RailEntry[] | undefined {
+  const o = railOrders.get(prev);
+  if (!o) return undefined;
+  // Each server's conversations, once per list made: what is under a server moves only with what is where.
+  if (!o.under) {
+    o.under = new Map();
+    for (const x of o.items)
+      if (x.e.kind === 'space')
+        for (const id of idsUnder(x.e.space.id)) {
+          const l = o.under.get(id);
+          if (l) l.push(x);
+          else o.under.set(id, [x]);
+        }
+  }
+  let moved = false;
+  const again = (x: RailItem, act: number) => {
+    if (act !== x.act) (x.act = act), (moved = true);
+  };
+  for (const x of o.items) {
+    if (x.e.kind === 'conversation' && ids.has(x.e.conv.id)) return undefined;
+    // A folder's conversations can be people's chats: few folders, so each is looked at, and its activity taken again
+    // only when they are a new list (folderConvs keeps the one it has while none of them changed).
+    if (x.e.kind === 'folder') {
+      const fc = folderConvs(x.e.folder);
+      if (fc !== x.fc) again(x, folderActivity((x.fc = fc)));
+    }
+  }
+  for (const id of ids) for (const x of o.under.get(id) ?? []) if (x.e.kind === 'space') again(x, activityOfSpace(x.e.space.id));
+  return moved ? sortedRail([...o.items], o.under) : prev;
+}
 
 /**
  * Top-level sidebar entries in display order: pinned, then what you arranged, then the rest (folders, then by activity).
  * Communities are listed by default; a conversation only once you add it. Whatever sits in a folder lives there instead.
  */
 export function railEntries(which: 'shown' | 'hidden' = 'shown'): RailEntry[] {
-  return placesMemo('rail', which, () => {
-    // Conversations you added to the rail and not to a folder: by id, since what is where moves only with settings.
-    const railed = metaMemo('railed', '', () => {
-      const inFolder = new Set(db.folders.flatMap((f) => f.items.map((i) => `${i.kind}:${i.id}`)));
-      // Whether you added it first: most conversations have no place settings, and `placePref` makes them some.
-      return { inFolder, convs: [...db.conversations.values()].filter((c) => db.placePrefs.get(`conversation:${c.id}`)?.railed && visibleConv(c) && !inFolder.has(`conversation:${c.id}`)).map((c) => c.id) };
-    });
-    const entries: RailEntry[] = [
+  return placesMemo(
+    'rail',
+    which,
+    () => {
+      // Conversations you added to the rail and not to a folder: by id, since what is where moves only with settings.
+      const railed = metaMemo('railed', '', () => {
+        const inFolder = new Set(db.folders.flatMap((f) => f.items.map((i) => `${i.kind}:${i.id}`)));
+        // Whether you added it first: most conversations have no place settings, and `placePref` makes them some.
+        return { inFolder, convs: [...db.conversations.values()].filter((c) => db.placePrefs.get(`conversation:${c.id}`)?.railed && visibleConv(c) && !inFolder.has(`conversation:${c.id}`)).map((c) => c.id) };
+      });
+      const items: RailItem[] = [];
+      const add = (e: RailEntry, group: number, base: number) => {
+        const pref = placePref(e.kind, e.key.slice(e.key.indexOf(':') + 1));
+        // Each entry's place and activity once, not in every comparison of the sort.
+        if (pref.hidden !== (which === 'hidden')) return;
+        if (e.kind !== 'folder') items.push({ e, pref, act: placeActivity(e), group, base });
+        else {
+          const fc = folderConvs(e.folder);
+          items.push({ e, pref, act: folderActivity(fc), group, base, fc });
+        }
+      };
       // A folder inside a folder is drawn there, not at the top.
-      ...db.folders.filter((folder) => !railed.inFolder.has(`folder:${folder.id}`)).map((folder): RailEntry => ({ key: `folder:${folder.id}`, kind: 'folder', folder })),
-      ...allCommunities()
-        .filter((s) => !railed.inFolder.has(`space:${s.id}`))
-        .map((space): RailEntry => ({ key: `space:${space.id}`, kind: 'space', space })),
-      ...railed.convs.flatMap((id): RailEntry[] => {
+      db.folders.forEach((folder, i) => !railed.inFolder.has(`folder:${folder.id}`) && add({ key: `folder:${folder.id}`, kind: 'folder', folder }, 0, i));
+      topCommunities().forEach((space, i) => !railed.inFolder.has(`space:${space.id}`) && add({ key: `space:${space.id}`, kind: 'space', space }, 1, i));
+      railed.convs.forEach((id, i) => {
         const conv = db.conversations.get(id);
-        return conv ? [{ key: `conversation:${id}`, kind: 'conversation', conv }] : [];
-      }),
-    ];
-    // Each entry's place and activity once, not in every comparison of the sort.
-    const all = entries.map((e) => ({ e, pref: placePref(e.kind, e.key.slice(e.key.indexOf(':') + 1)), act: placeActivity(e) }));
-    return all
-      .filter((x) => x.pref.hidden === (which === 'hidden'))
-      .sort((a, b) => {
-        const pa = a.pref, pb = b.pref;
-        if (pa.pinned !== pb.pinned) return pa.pinned ? -1 : 1;
-        if ((pa.position === null) !== (pb.position === null)) return pa.position !== null ? -1 : 1;
-        if (pa.position !== null && pb.position !== null) return pa.position - pb.position;
-        if ((a.e.kind === 'folder') !== (b.e.kind === 'folder')) return a.e.kind === 'folder' ? -1 : 1;
-        return b.act - a.act;
-      })
-      .map((x) => x.e);
-  });
+        if (conv) add({ key: `conversation:${id}`, kind: 'conversation', conv }, 2, i);
+      });
+      return sortedRail(items, null);
+    },
+    railUpdate,
+  );
 }
 
+/** Communities not inside another one you can see, as they are listed. */
+const topCommunities = () =>
+  metaMemo('communities', '', () => [...db.spaces.values()].filter((s) => s.kind === 'community' && visibleSpace(s) && !spaceParents(s.id).some((p) => p.kind === 'community' && visibleSpace(p))));
 
 export function allCommunities(): P.SpaceView[] {
   return placesMemo('allCommunities', '', () => {
-    const top = metaMemo('communities', '', () => [...db.spaces.values()].filter((s) => s.kind === 'community' && visibleSpace(s) && !spaceParents(s.id).some((p) => p.kind === 'community' && visibleSpace(p))));
+    const top = topCommunities();
     const act = new Map(top.map((s) => [s.id, activityOfSpace(s.id)]));
     return [...top].sort((a, b) => act.get(b.id)! - act.get(a.id)!);
   });
