@@ -4,6 +4,16 @@
  * (Discord server channels, Matrix rooms in a space, Telegram supergroups). Nothing in an answer is stored.
  */
 
+import type { Network } from './ontology.ts';
+
+/**
+ * The networks whose accounts send `<@nativeId>` as the network's own mention (Google Messages and X write it out as
+ * the name). Elsewhere (Messenger, Instagram, Partiful, Luma and the rest) it would go out as written, so the hub turns
+ * every mention into a plain @Name on send there (mentionrefs.ts), and the @ list says nobody is notified.
+ */
+export const MENTION_NETWORKS: readonly Network[] = ['discord', 'signal', 'matrix', 'whatsapp', 'telegram', 'zulip', 'gmessages', 'x'];
+export const mentionsPing = (network: Network | undefined) => !!network && MENTION_NETWORKS.includes(network);
+
 /** One account the network would notify if named in this conversation. */
 export interface MentionablePerson {
   /** Native identity id, as `<@nativeId>` in a body. */

@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
-import { lowerForSend, lowerRefs, plainMention, type RefResolve, storeResolve } from '../src/mentionrefs.ts';
+import { lowerForSend, lowerRefs, plainMention, plainNative, type RefResolve, storeResolve } from '../src/mentionrefs.ts';
 import { HubServer, mediaSigner } from '../src/server.ts';
 import { Store } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
@@ -62,6 +62,12 @@ describe('lowering, pure', () => {
     expect(plainMention('')).toBe('@someone');
   });
 
+  test("a network's own mentions as names, outside code, for a network that has none", () => {
+    const name = (id: string) => ({ '7': 'Jules', '8': 'everyone' })[id] ?? null;
+    expect(plainNative('hi <@7>, <@!8> and <@9> `<@7>`', name)).toBe(`hi @Jules, @${ZW}everyone and @someone \`<@7>\``);
+    expect(plainNative('no mentions', () => 'x')).toBe('no mentions');
+  });
+
   test('a body without references is the same string', () => {
     const body = 'plain <@1> text';
     expect(lowerRefs(body, () => {
@@ -78,6 +84,7 @@ describe('the store and the routes', () => {
   let dcAcc = '';
   let calAcc = '';
   const dc = hubId('cnv', 'discord', '200');
+  const ms = hubId('cnv', 'messenger', 'm-chat');
   const cal = hubId('cnv', 'calendar', 'cal-chat');
   const alicePerson = () => store.one<{ person_id: string }>('SELECT person_id FROM identity WHERE id = ?', hubId('idn', 'signal', 'aci-alice'))!.person_id;
   const bea = hubId('idn', 'discord', '2');
@@ -108,6 +115,12 @@ describe('the store and the routes', () => {
     store.ingest(c, { t: 'hello', network: 'calendar', version: '1', capabilities: ['send', 'personRefs'] });
     store.ingest(c, { t: 'status', status: 'online', self: { nativeId: 'me', isSelf: true } });
     store.ingest(c, { t: 'conversation', conversation: { nativeId: 'cal-chat', shape: 'direct', name: 'Calendar', participants: ['me'] } });
+    // Messenger: no mentions of its own, so its adapter would send a token as written.
+    const m = store.createAccount({ network: 'messenger', label: 'ms', color: '#000', adapter: 'meta' });
+    store.ingest(m, { t: 'hello', network: 'messenger', version: '1', capabilities: ['send'] });
+    store.ingest(m, { t: 'status', status: 'online', self: { nativeId: 'm-me', isSelf: true } });
+    store.ingest(m, { t: 'identity', identity: { nativeId: 'm-jules', displayName: 'Jules', contact: true } });
+    store.ingest(m, { t: 'conversation', conversation: { nativeId: 'm-chat', shape: 'group', name: 'Crew', participants: ['m-me', 'm-jules'] } });
     store.flush();
   });
   afterAll(() => {
@@ -161,6 +174,14 @@ describe('the store and the routes', () => {
     const r = await post(`/api/messages/${hubId('msg', 'discord', '300')}/forward`, { targets: [{ conversationId: dc }], note: `for <@person:${alicePerson()}>` });
     expect(r.status).toBe(200);
     expect(sent.at(-1)).toMatchObject({ note: 'for @Alice Chen' });
+  });
+
+  test('on a network without mentions (Messenger) every mention is a plain name: its own token and references', async () => {
+    const jules = hubId('idn', 'messenger', 'm-jules');
+    expect(storeResolve(store, ms)('identity', jules)).toEqual({ name: 'Jules' });
+    const r = await post(`/api/conversations/${ms}/send`, { body: `hi <@m-jules> <@identity:${jules}> <@person:${alicePerson()}> <@m-gone> \`<@m-jules>\`` });
+    expect(r.status).toBe(200);
+    expect(sent.at(-1)).toMatchObject({ t: 'send', conversation: 'm-chat', body: 'hi @Jules @Jules @Alice Chen @someone `<@m-jules>`' });
   });
 
   test("an account with 'personRefs' (the calendar) gets references as written", async () => {

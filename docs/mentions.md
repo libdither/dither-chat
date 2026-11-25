@@ -46,7 +46,8 @@ with no space, `@`, `<`, `>` or backtick in it.
 
 Rows. They come at once from what this device holds: the conversation's participants, and who wrote in its loaded
 messages, best name match first, then who spoke last. 150 ms after the typing stops, the hub is asked, and its rows
-replace them. The hub's rows include what it stores and what the network says, in the hub's order. An answer is kept for
+replace them. The hub's rows include what it stores and what the network says, in the hub's order; a row chosen with
+the keys or the pointer stays chosen when they come. Rows are only ever the chat's: another chat's never stay on. An answer is kept for
 a minute, so typing back over a name draws at once and asks nothing. An answer without the network's part (`partial`) is
 not kept, and the rows this device had stay below it. While the hub is asked, the head says "asking Discord…"; after a
 partial answer it says the network did not answer.
@@ -215,7 +216,12 @@ does a row here for an account the hub stores; none pings, since the calendar no
 - References inside code (an inline span or a fenced block) are left as written.
 - A name is written so it can make no token and ping nobody: every `<` and `@` in it is followed by a zero-width
   space, and so is the leading @ before everyone, here, room, channel or all.
-- Roles, `<@nativeId>` and @everyone are left as they are.
+- Roles, `<@nativeId>` and @everyone are left as they are, on a network with mentions of its own.
+- A network without mentions of its own (not in `MENTION_NETWORKS`, packages/protocol/src/mentions.ts: Messenger,
+  Instagram, Partiful, Luma and the rest) would send a token as written, so there every mention is a plain name: a
+  reference as above, and its own `<@nativeId>` as the account's display name (else handle, else person), or
+  `@someone` (`plainNative`). Its rows in the @ list have the struck-through bell. Google Messages and X are in the list:
+  their adapters write `<@nativeId>` out as the name themselves.
 
 **The owner's decision (2026-11-13): a friend who is not on the chat's network gets the plain `@Name` text only.** The
 hub never sends them a DM or any other notification outside the chat.

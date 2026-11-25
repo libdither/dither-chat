@@ -1,7 +1,7 @@
 import { isArrivedCopy } from '../arrived.ts';
 import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, durationLabel, NETWORK_META, RULE_LABEL, RULE_LEVELS, sendBlocker, showsGone, showsInline, type PictureLayout } from '@dither-chat/protocol';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import { ago, clock, dayLabel, fullTime, sameDay } from '../format.ts';
 import { retention } from '../history.ts';
@@ -1648,6 +1648,14 @@ export function Composer({ targets, placeholder, reply, clearReply, disabledReas
   const draftKey = `dither-chat:draft:${draft ?? targets.convId}`;
   const [text, setText] = useState(() => localStorage.getItem(draftKey) ?? '');
   const ta = useRef<HTMLTextAreaElement>(null);
+  // The box is made again at times (a computer's window narrowed to a phone's, the poll maker closed). The @ and :
+  // lists listen on it, and are drawn again only when their props change: they are given the box, so a new one draws
+  // them again and they move their listeners to it.
+  const [taEl, setTaEl] = useState<HTMLTextAreaElement | null>(null);
+  const taRef = useCallback((el: HTMLTextAreaElement | null) => {
+    ta.current = el;
+    if (el) setTaEl(el);
+  }, []);
   const textNow = useRef(text);
   textNow.current = text;
   const edit = editing.value?.conversationId === targets.convId ? editing.value : null;
@@ -1869,7 +1877,7 @@ export function Composer({ targets, placeholder, reply, clearReply, disabledReas
   };
   const field = (
     <textarea
-      ref={ta}
+      ref={taRef}
       data-track="text box"
       rows={1}
       value={chips.shown}
@@ -2015,9 +2023,9 @@ export function Composer({ targets, placeholder, reply, clearReply, disabledReas
         }
       />
       {viewOnceChip}
-      <EmojiComplete ta={ta} convId={targets.convId} network={conv?.network} />
+      <EmojiComplete ta={ta} el={taEl} convId={targets.convId} network={conv?.network} />
       {!edit && <SlashCommandsLazy ta={ta} convId={targets.convId} accountId={sender?.id} text={text} />}
-      <MentionComplete ta={ta} convId={targets.convId} network={conv?.network} accountId={sender?.id} />
+      <MentionComplete ta={ta} el={taEl} text={text} convId={targets.convId} network={conv?.network} accountId={sender?.id} />
       {attaching && (
         <>
           <input

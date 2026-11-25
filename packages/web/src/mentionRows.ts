@@ -5,6 +5,7 @@
  * it replaces the first rows, and is kept a minute so typing back over a name asks nothing again.
  */
 import type * as P from '@dither-chat/protocol';
+import { mentionsPing } from '@dither-chat/protocol';
 import { accountName } from './chatroutes.ts';
 import { api, db, isSelfIdentity, timelines } from './state.ts';
 
@@ -43,7 +44,7 @@ export function localRows(conversationId: string, query: string, max = 20): P.Me
       row: {
         kind: 'identity',
         insert: `<@${i.nativeId}> `,
-        pings: true,
+        pings: mentionsPing(i.network),
         section: 'here',
         name,
         network: i.network,

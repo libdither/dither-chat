@@ -227,6 +227,16 @@ describe('networks without the command', () => {
   });
 });
 
+describe('networks without mentions of their own', () => {
+  test('a Luma or Partiful chat lists its people, as names that notify nobody: the hub writes them out on send', async () => {
+    for (const [network, name] of [['luma', 'Climbing crew'], ['partiful', 'Dumpling Folding Party']] as const) {
+      const v = await view(conv(network, name));
+      expect(v.rows.length).toBeGreaterThan(0);
+      expect(v.rows.every((r) => !r.pings)).toBe(true);
+    }
+  });
+});
+
 describe('Zulip', () => {
   test('@everyone and @here where the extractor says you may, as text its extractor turns into @**all** and @**topic**', async () => {
     const z = store.createAccount({ network: 'zulip', label: 'Zulip', color: '#6492FE', adapter: 'zulip' });
