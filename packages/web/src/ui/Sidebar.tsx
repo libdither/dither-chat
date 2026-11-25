@@ -59,7 +59,7 @@ import { chatMenu, conversationMenu, folderMenuSpec, openPlaceMenu, personMenu, 
 import { accountMenu } from './accountMenu.tsx';
 import { MarkableRow } from './ReplyMark.tsx';
 import { needsReplyLabel, needsReplyOf } from '../replymarks.ts';
-import { pickedRoute } from './Pairs.tsx';
+import { pickedRoute } from '../pairpick.ts';
 import { chatKey } from '../chatroutes.ts';
 import { threadDialog } from '../threads.ts';
 import { subThreads } from '../channelrows.ts';
@@ -70,8 +70,8 @@ import { openShelves, shelve, toggleShelf } from '../quiet.ts';
 import { inboxSnap, shownInbox } from '../inbox.ts';
 import { linkAccounts, PeopleAccountPicker, PeopleLinks, RequestsRow, usePeopleLinks } from './Requests.tsx';
 import { loudByConv, loudEdge, loudOf } from '../loudness.ts';
-import { CheckinLazy } from './LoudnessLazy.tsx';
 import { NoticesRow } from './Notices.tsx';
+import { CalibrationRow } from './Calibration.tsx';
 import { nameMatches, peopleFilters, type PeopleFilter } from '../requests.ts';
 import { SortButton, SortIcon, useFlip } from './Reorganize.tsx';
 import { rememberSearch, SearchBox } from './SearchBox.tsx';
@@ -81,7 +81,7 @@ import { memo, sameProps } from './memo.ts';
 import { convKind, rowTrack } from '../clicks.ts';
 import { useShown } from './more.tsx';
 import { VoicePeople } from './Ringing.tsx';
-import { MailListChips, MailTile } from './MailChat.tsx';
+import { MailListChips, MailTile } from './MailLists.tsx';
 import { CallMark } from './CallBar.tsx';
 
 // ------------------------------------------------------------------ navigation helpers
@@ -776,10 +776,10 @@ export function InboxSidebar({ activeConv, mail }: { activeConv?: string; mail?:
               ))}
           </>
         )}
-        {/* Chat requests and notices are not mail: the Mail filter leaves them out. */}
-        {filter !== 'mail' && <CheckinLazy />}
+        {/* Chat requests, notices and the questions about notifications are not mail: the Mail filter leaves them out. */}
         {filter !== 'mail' && <RequestsRow />}
         {filter !== 'mail' && <NoticesRow />}
+        {filter !== 'mail' && <CalibrationRow />}
         {rows.slice(0, drawn).map(row)}
         {more}
         {!rows.length && <p class="inbox-empty">{EMPTY[filter]}</p>}

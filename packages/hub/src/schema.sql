@@ -456,11 +456,14 @@ CREATE TABLE IF NOT EXISTS triage (
   less_mark   INTEGER,                       -- your mark: 1 less like this
   marked_at   INTEGER,
   loud        REAL,                          -- its loudness on the one scale, 0 to 100 (loudness.ts), deciding or in shadow
-  loud_view   TEXT                           -- JSON { band, live, parts, reasons, why, moment }: what the loudness was worked out from
+  loud_view   TEXT,                          -- JSON { band, live, parts, reasons, why, moment }: what the loudness was worked out from
+  message_ts  INTEGER                        -- the message's ts, kept with the decision (setTriage) for triage_notified
 );
 CREATE INDEX IF NOT EXISTS triage_created ON triage(created_at);
 -- The inbox's picks by tier, best first (store.ts inboxQueries).
 CREATE INDEX IF NOT EXISTS triage_tier_score ON triage(decision, score);
+-- Alerts and Conversations newest first: the inbox's notified pick walks it and stops at its limit.
+CREATE INDEX IF NOT EXISTS triage_notified ON triage(message_ts) WHERE decision IN ('push', 'quiet');
 CREATE INDEX IF NOT EXISTS triage_feedback ON triage(feedback_at) WHERE feedback IS NOT NULL;
 CREATE INDEX IF NOT EXISTS triage_marked ON triage(marked_at) WHERE marked_at IS NOT NULL;
 
@@ -696,7 +699,13 @@ CREATE TABLE IF NOT EXISTS notification (
   dismissed_at    INTEGER,
   replied_at      INTEGER,
   visit_id        TEXT,                      -- the visit the tap led to
-  alert           INTEGER                    -- 1: it sounded where it went (an alert's first push of a burst, a ring); NULL: from before this was kept
+  alert           INTEGER,                   -- 1: it sounded where it went (an alert's first push of a burst, a ring); NULL: from before this was kept
+  -- What the devices drew, for the Notification calibration page (docs/notifications.md, "Where you saw it"): the words
+  -- the hub sent, kept WORDS_KEPT (activity.ts) and then cleared; the rest stays with the row.
+  title           TEXT,
+  body            TEXT,
+  look            TEXT,                      -- JSON: network, icon, tier, count, conv { title, shape }, lines [{ author, body, ts }]
+  computer_in_use INTEGER                    -- 1: a computer had the app in use when it went out
 );
 CREATE INDEX IF NOT EXISTS notification_sent ON notification(sent_at);
 CREATE INDEX IF NOT EXISTS notification_conv ON notification(conversation_id, sent_at);
@@ -706,7 +715,18 @@ CREATE TABLE IF NOT EXISTS notification_event (
   device          TEXT NOT NULL DEFAULT '',  -- push registration id, or the page's device id
   event           TEXT NOT NULL,
   at              INTEGER NOT NULL,
+  seen            TEXT,                      -- JSON P.NotificationSeen: where and how it showed, as the device said
   PRIMARY KEY (notification_id, device, event)
+) WITHOUT ROWID;
+-- Each push registration a notification went to (push.ts), for where you saw it: the device, by its label then.
+CREATE TABLE IF NOT EXISTS notification_device (
+  notification_id TEXT NOT NULL,
+  device          TEXT NOT NULL,             -- push_subscription.id
+  label           TEXT NOT NULL,
+  android         INTEGER NOT NULL DEFAULT 0, -- the Android app (it takes clears), else a browser
+  sounds          INTEGER NOT NULL DEFAULT 0, -- sent to sound there
+  ok              INTEGER NOT NULL DEFAULT 0, -- its push server took it
+  PRIMARY KEY (notification_id, device)
 ) WITHOUT ROWID;
 
 -- A push the hub did not send (notify.ts, docs/notifications.md "One notification per conversation"): `watched`, the
@@ -1177,8 +1197,9 @@ CREATE TABLE IF NOT EXISTS attn_answer (
 CREATE INDEX IF NOT EXISTS attn_answer_at ON attn_answer(at);
 CREATE INDEX IF NOT EXISTS attn_answer_conv ON attn_answer(conversation_id, at);
 
--- Check-in questions (checkin.ts): at most three a day, inside the app only, half picked at random (with the chance
--- each had, for the scorecard's weighting) and half where the model is least sure.
+-- Check-in questions (checkin.ts): up to three a day by your setting, waiting on the Notification calibration page
+-- (at most QUEUE_CAP open, none older than EXPIRE_AFTER), half picked at random (with the chance each had, for the
+-- scorecard's weighting) and half where the model is least sure.
 CREATE TABLE IF NOT EXISTS checkin (
   id          TEXT PRIMARY KEY,
   side        TEXT NOT NULL CHECK (side IN ('sounded', 'quiet', 'foryou')),
@@ -1192,7 +1213,8 @@ CREATE TABLE IF NOT EXISTS checkin (
   created_at  INTEGER NOT NULL,
   answer      TEXT,                          -- worth | could_wait | shouldnt | sooner | fine | glad | not
   answered_at INTEGER,
-  skipped     INTEGER NOT NULL DEFAULT 0
+  skipped     INTEGER NOT NULL DEFAULT 0,
+  expired_at  INTEGER                        -- dropped unanswered: too old, or past the queue's cap
 );
 CREATE INDEX IF NOT EXISTS checkin_created ON checkin(created_at);
 CREATE INDEX IF NOT EXISTS checkin_message ON checkin(message_id);

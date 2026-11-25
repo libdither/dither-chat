@@ -264,11 +264,13 @@ export async function readSnapshot(): Promise<Snapshot | null> {
   return r && r.schema === SCHEMA && r.savedAt > s.savedAt ? { ...s, rest: r.rest } : s;
 }
 
-export const dropSnapshot = () =>
+export const dropSnapshot = () => (
+  keepSyncFrom(null),
   tx('readwrite', (st) => {
     st.delete(REST_KEY);
     return st.delete(KEY);
-  }).catch(() => {});
+  }).catch(() => {})
+);
 
 /** Every kept page too: what a start that could not render drops (main.tsx). */
 export const dropPages = () =>
@@ -346,7 +348,20 @@ let savedRev = -1;
 let bootstrapAt = 0;
 /** How old the stored bootstrap gets while the app stays in sight before a quiet moment writes it again. */
 const BOOTSTRAP_EVERY_MS = 10 * 60_000;
-let pending: { text: string; rev: number } | null = null;
+let pending: { text: string; rev: number; sync: P.SyncPosition | null } | null = null;
+
+/**
+ * The stored bootstrap's journal position, where index.html reads it before the app's script has come, to have the
+ * live socket bring the catch-up from it (docs/sync.md "On the socket"). Written once the bootstrap is stored, so it is
+ * never ahead of it; state.ts checks it against the snapshot all the same.
+ */
+const SYNC_FROM_KEY = 'dither-chat:sync-from';
+function keepSyncFrom(sync: P.SyncPosition | null) {
+  try {
+    if (sync) localStorage.setItem(SYNC_FROM_KEY, JSON.stringify({ v: sync.v, epoch: sync.epoch, seq: sync.seq }));
+    else localStorage.removeItem(SYNC_FROM_KEY);
+  } catch {}
+}
 let timer: ReturnType<typeof setTimeout> | undefined;
 /** When the first save not yet written was asked for. */
 let askedAt = 0;
@@ -354,6 +369,8 @@ let askedAt = 0;
 let urgent = false;
 /** However often things keep changing (a run of chats fetched ahead), a save asked for is written within this. */
 export const SAVE_WITHIN_MS = 5000;
+/** And the hub's first answer on a device that keeps nothing yet, within this, at its first idle moment. */
+const FIRST_WITHIN_MS = 1000;
 
 /**
  * How long a save asked for now waits: `ms` after the last ask, but never past SAVE_WITHIN_MS after the first one not
@@ -370,7 +387,7 @@ export function saveDelay(o: { now: number; askedAt: number; ms: number; first: 
  * bootstrap is serialized again from `db`, which is what happens when the app goes out of sight.
  */
 export function persistSoon(bootstrapText?: string, ms = 1500) {
-  if (bootstrapText) pending = { text: bootstrapText, rev: dataVersion() };
+  if (bootstrapText) pending = { text: bootstrapText, rev: dataVersion(), sync: db.sync };
   if (bootstrapText && !bootstrapAt) urgent = true;
   const now = Date.now();
   if (timer === undefined) askedAt = now;
@@ -379,9 +396,10 @@ export function persistSoon(bootstrapText?: string, ms = 1500) {
     () => {
       timer = undefined;
       const idle = (globalThis as any).requestIdleCallback as ((cb: () => void, o?: { timeout: number }) => void) | undefined;
-      // The first answer is written now, not at the next idle moment: a start is rarely idle, and until it is written an
-      // offline start has nothing to show.
-      if (idle && !urgent) idle(() => void persistNow(false), { timeout: 3000 });
+      // The first answer is written within a second (until it is written an offline start has nothing to show), but at
+      // the first idle moment in it: storing the 4–5 MB text holds the main thread for about 60 ms at 4× CPU, and right
+      // after the answer comes the list is still being drawn (docs/perf.md "The first snapshot").
+      if (idle) idle(() => void persistNow(false), { timeout: urgent ? FIRST_WITHIN_MS : 3000 });
       else void persistNow(false);
     },
     saveDelay({ now, askedAt, ms, first: urgent }),
@@ -401,12 +419,15 @@ async function persistNow(full = true) {
   urgent = false;
   if (!loaded.value || fromSnapshot) return;
   let text: string | null = null;
+  /** The position of the bootstrap stored here. */
+  let sync: P.SyncPosition | null = null;
   if (pending) {
     // What the hub sent, as it sent it. Anything since is caught by the save when the app goes out of sight.
-    ({ text, rev: savedRev } = pending);
+    ({ text, rev: savedRev, sync } = pending);
     pending = null;
   } else if (savedRev !== dataVersion() && (full || Date.now() - bootstrapAt > BOOTSTRAP_EVERY_MS)) {
     savedRev = dataVersion();
+    sync = db.sync;
     text = JSON.stringify(currentBootstrap());
   }
   // Both writes are on their way before anything is awaited: on pagehide the page can be gone before one finishes.
@@ -426,7 +447,10 @@ async function persistNow(full = true) {
     tx('readwrite', (st) => {
       st.delete(REST_KEY);
       return st.put(s, KEY);
-    }).catch((e) => console.warn('snapshot not saved', e)),
+    }).then(
+      () => keepSyncFrom(sync),
+      (e) => console.warn('snapshot not saved', e),
+    ),
   ]);
 }
 

@@ -138,7 +138,10 @@ export interface WhyResult {
   reason: WhyReason | null;
 }
 
-/** A check-in question at the top of the inbox (checkin.ts). */
+/**
+ * A check-in question (checkin.ts), waiting on the Notification calibration page (docs/notifications.md, "Asking,
+ * without nagging") until you answer, skip, or it gets too old.
+ */
 export interface CheckinView {
   id: string;
   /** 'sounded': it sounded; 'quiet': it stayed quiet; 'foryou': a For you card. */
@@ -147,9 +150,110 @@ export interface CheckinView {
   conversationId: string | null;
   title: string;
   preview: string;
+  /** When the message came. */
   at: number;
+  /** When the question was put on the page. */
+  askedAt: number;
   /** "you answered it 5 h later" */
   note?: string;
+  /** Where and how you came across it, as far as the hub knows. */
+  context: SeenContext;
+}
+
+/** Where a device drew a notification (the device's own word, `NotificationSeen`). */
+export type SeenSurface = 'heads_up' | 'shade' | 'lock' | 'list_row' | 'browser' | 'toast';
+/** Whether it made itself heard there. */
+export type SeenSound = 'sound' | 'vibrate' | 'silent';
+
+/** One device a notification went to, and what it said happened there. */
+export interface SeenDevice {
+  label: string;
+  /** 'android': the Android app; 'browser': a browser's push (desktop or phone); 'page': an open page's toast. */
+  kind: 'android' | 'browser' | 'page';
+  phone: boolean;
+  /** The hub sent it to sound here (an alert's first push of a burst). The device's own setting may still have silenced it: `sound`. */
+  meantToSound: boolean;
+  surface: SeenSurface | null;
+  sound: SeenSound | null;
+  locked: boolean | null;
+  screenOn: boolean | null;
+  /** A page of the app was open (not in front) on that device. */
+  pageOpen: boolean | null;
+  delivered: number | null;
+  shown: number | null;
+  /** Not shown: the app was in front there. */
+  suppressed: number | null;
+  tapped: number | null;
+  dismissed: number | null;
+  /** What else of ours was showing beside it, as the device said (null: it did not say). */
+  beside: { title: string; body: string; at: number }[] | null;
+}
+
+/** A notification as the hub composed it: the words the devices drew, kept a little while for this page. */
+export interface SeenSent {
+  at: number;
+  /** null: the words are no longer kept (older than WORDS_KEPT) or from before they were. */
+  title: string | null;
+  body: string | null;
+  /** A group of lines (several messages in one notification), each with who wrote it. */
+  lines: { author: string; body: string; ts?: number }[];
+  count: number;
+  conv: { title: string; shape: 'direct' | 'group' | 'channel' } | null;
+  network: string | null;
+  icon: string | null;
+  tier: 'push' | 'quiet' | 'digest';
+  sounded: boolean;
+  /** A computer had the app in use when it went out. */
+  computerInUse: boolean | null;
+  devices: SeenDevice[];
+}
+
+/** Where and how you came across a message (docs/notifications.md, "Where you saw it"). */
+export interface SeenContext {
+  /** The notification that carried it; null when none went out. */
+  sent: SeenSent | null;
+  /** Why no notification went out: its chat was open on a computer in use, or a silent one within its ten minutes. */
+  notSent: 'watched' | 'capped' | null;
+  /** The first time you opened its chat after it came: from which list, on which device. */
+  opened: { at: number; source: string; device: string; phone: boolean } | null;
+  /** For you served it: where on the page, and whether a device said it was on screen. */
+  forYou: { position: number; servedAt: number; shownAt: number | null; ms: number | null } | null;
+  /** Its row in the inbox, as drawn from the message itself. */
+  row: { title: string; preview: string; at: number; network: string | null; shape: string | null };
+  /** What the hub cannot say, in words. */
+  unknown: string[];
+}
+
+/** The device's word on where it showed a notification (sw.js, the Android app, a page's toast). Codes only. */
+export interface NotificationSeen {
+  surface?: SeenSurface;
+  sound?: SeenSound;
+  locked?: boolean;
+  screenOn?: boolean;
+  pageOpen?: boolean;
+  /** Tags (conversation ids) of the other notifications of ours showing beside it. */
+  beside?: string[];
+}
+
+/** GET /api/loudness/calibration: the numbers at the top of the Notification calibration page. */
+export interface CalibrationStats {
+  /** Sounds a day, from the scorecard's days (attn.sounds): the means of the last 7 and 30 days scored, and each day. */
+  sounds: { last7: number | null; last30: number | null; days: { day: string; n: number | null }[] };
+  /** The scorecard's weighted shares over the last 30 days (attn.worth, attn.missed): honest, from the random half. */
+  worth: { value: number | null; n: number };
+  missed: { value: number | null; n: number };
+  /** Straight counts of your answers over the last 30 days, every question. */
+  answers: { worth: number; couldWait: number; shouldnt: number; sooner: number; fine: number; glad: number; not: number };
+  pending: number;
+  answered: number;
+  skipped: number;
+  expired: number;
+  /** Time from the question going on the page to your answer, the mean and the median (ms), over the last 30 days. */
+  delay: { mean: number | null; median: number | null };
+  /** How old the message was when you answered, the mean (ms): late answers count a little less in what is learned. */
+  age: { mean: number | null };
+  /** The model's chance you wanted it, against what you answered, in bins (sounded: worth it; quiet: wish I'd known sooner). */
+  calibration: { bins: { lo: number; hi: number; predicted: number; observed: number; n: number }[]; brier: number | null; n: number };
 }
 
 /** The attention settings (Settings → Notifications). */
@@ -162,7 +266,7 @@ export interface AttentionPrefs {
   times: string[];
   /** While a computer is in use, the phone stays silent and nothing reaches it for a chat open and read there. */
   computerFirst: boolean;
-  /** Ask "was that worth it?": never, rarely (one a day), up to three a day. */
+  /** How many questions a day go on the Notification calibration page: never, rarely (one a day), up to three a day. */
   ask: 'never' | 'rarely' | 'often';
   /** A note on people you're drifting from, in the weekly report. */
   drifting: boolean;
@@ -178,6 +282,8 @@ export interface AttentionStateView {
   /** Check-ins asked and answered today. */
   asked: number;
   answered: number;
+  /** Waiting on the Notification calibration page. */
+  pending: number;
   /** Paused after three skips in a row, until then. */
   pausedUntil: number | null;
   /** "Ask me less" halves this each time. */

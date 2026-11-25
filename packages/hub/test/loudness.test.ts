@@ -4,8 +4,7 @@
  * with their chance kept; and the tiers deciding while it runs in shadow.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { bandOf } from '@dither-chat/protocol';
@@ -17,6 +16,7 @@ import { Store, type AccountRow } from '../src/store.ts';
 import { dayBounds, dayOf, loudnessScores } from '../src/scorecard.ts';
 import { Triage } from '../src/triage.ts';
 import { TriageVotes } from '../src/votes.ts';
+import { memTempDir } from './fixtures/memdir.ts';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -174,7 +174,7 @@ describe('through the hub', () => {
   };
 
   beforeAll(() => {
-    dir = mkdtempSync(join(tmpdir(), 'dither-loud-'));
+    dir = memTempDir('dither-loud-');
     store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
     acc = store.createAccount({ network: 'signal', label: 's', color: '#000', adapter: 'signal' });
     store.ingest(acc, { t: 'status', status: 'online', self: { nativeId: 'me', isSelf: true, displayName: 'Me' } });
@@ -271,8 +271,11 @@ describe('through the hub', () => {
     expect(new Set(qs.map((q) => q.side)).size).toBe(qs.length);
     const rows = store.raw<{ arm: string; propensity: number; pool: number }>('SELECT arm, propensity, pool FROM checkin');
     for (const r of rows) expect(r.propensity).toBeCloseTo(r.arm === 'random' ? 0.5 / r.pool : 0.5, 6);
-    // Open questions come back until answered; none new within the pace.
+    // Open questions wait until answered; none new within the pace.
     expect(loud.checkins.due(loud.prefs(), T + MIN).map((q) => q.id)).toEqual(qs.map((q) => q.id));
+    // Each says when it was asked and carries where it was seen (no notification went out in this test).
+    for (const q of qs) expect(q.askedAt).toBe(T);
+    for (const q of qs) expect(q.context.sent).toBeNull();
     const sounded = qs.find((q) => q.side === 'sounded');
     if (sounded) expect(() => loud.checkin(sounded.id, 'sooner')).toThrow();
     for (let i = 0; i < SKIPS_TO_PAUSE; i++) {
@@ -281,12 +284,62 @@ describe('through the hub', () => {
       loud.checkin(id, null, T);
     }
     expect(loud.checkins.state().pausedUntil).toBe(T + PAUSE);
-    expect(loud.checkins.due(loud.prefs(), T + 3 * HOUR).length).toBe(0);
-    loud.checkins.askLess(T);
+    // Paused: nothing new goes on the page, and what already waits stays there.
+    const waiting = loud.checkins.pendingCount();
+    expect(loud.checkins.due(loud.prefs(), T + 3 * HOUR).length).toBe(waiting);
+    expect(store.one<{ n: number }>('SELECT COUNT(*) AS n FROM checkin')!.n).toBe(qs.length + SKIPS_TO_PAUSE);
+    loud.checkins.askLess();
     expect(loud.checkins.state().rate).toBe(0.5);
-    expect(loud.checkins.quota(loud.prefs())).toBe(1);
+    // Three a day at half the rate: one, and the half left over is a chance drawn once a day (0.1 < 0.5: it came up).
+    expect(loud.checkins.quota(loud.prefs(), T)).toBe(2);
+    loud.checkins.random = () => 0.9;
+    expect(loud.checkins.quota(loud.prefs(), T + HOUR)).toBe(2);
+    expect(loud.checkins.quota(loud.prefs(), T + 26 * HOUR)).toBe(1);
+    // "Ask me less" to the floor: an eighth of three, so most days none, never a floor of one a day.
+    for (let i = 0; i < 4; i++) loud.checkins.askLess();
+    expect(loud.checkins.quota(loud.prefs(), T + 50 * HOUR)).toBe(0);
+    loud.checkins.random = () => 0.1;
+    expect(loud.checkins.quota(loud.prefs(), T + 74 * HOUR)).toBe(1);
+    store.setMetaValue('checkin_state', null);
     loud.setPrefs({ ask: 'never' });
     expect(loud.checkins.quota(loud.prefs())).toBe(0);
+  });
+
+  test('"could have waited" and "shouldn\'t have reached me" still teach the tiers, as "Not urgent" and "Less like this" did', async () => {
+    const T = Date.now();
+    const a = post('dm', 'ann', T - 20 * MIN);
+    expect((await decide(a, T - 20 * MIN)).decision).toBe('push');
+    loud.answer({ messageId: a, answer: 'could_wait', source: 'notification' });
+    expect(store.one<{ alert_mark: number }>('SELECT alert_mark FROM triage WHERE message_id = ?', a)!.alert_mark).toBe(0);
+    const b = post('g', 'cy', T - 19 * MIN, 'lunch pics from saturday');
+    expect((await decide(b, T - 19 * MIN)).decision).not.toBe('push');
+    loud.answer({ messageId: b, answer: 'shouldnt', source: 'checkin' });
+    expect(store.one<{ less_mark: number }>('SELECT less_mark FROM triage WHERE message_id = ?', b)!.less_mark).toBe(1);
+  });
+
+  test('a mark taken back on the old route takes back its answer', async () => {
+    const T = Date.now();
+    const a = post('dm', 'ann', T - 18 * MIN);
+    await decide(a, T - 18 * MIN);
+    loud.fromMark(a, { alert: true });
+    expect(store.raw('SELECT 1 FROM attn_answer WHERE message_id = ?', a).length).toBe(1);
+    loud.fromMark(a, { alert: null });
+    expect(store.raw('SELECT 1 FROM attn_answer WHERE message_id = ?', a).length).toBe(0);
+  });
+
+  test('a check-in asks "this sounded" only about what actually sounded', async () => {
+    const T = new Date(2030, 0, 20, 12).getTime();
+    store.db.exec('DELETE FROM checkin');
+    store.setMetaValue('checkin_state', null);
+    loud.setPrefs({ ask: 'often' });
+    const a = post('dm', 'ann', T - 2 * HOUR);
+    const d = await decide(a, T - 2 * HOUR);
+    expect(d.decision).toBe('push');
+    store.db.query('UPDATE triage SET created_at = ? WHERE message_id = ?').run(T - HOUR, a);
+    // Decided an alert, but no push of it played a sound (a burst, a computer in use): not on the sounded side.
+    expect(loud.checkins.pick('sounded', 'random', T)).toBeNull();
+    store.db.query(`INSERT INTO notification (id, kind, message_id, sent_at, alert) VALUES ('n1', 'message', ?, ?, 1)`).run(a, T - HOUR);
+    expect(loud.checkins.pick('sounded', 'random', T)).not.toBeNull();
   });
 
   test('For you asks one card a day, at random among the first ten, with its chance', () => {

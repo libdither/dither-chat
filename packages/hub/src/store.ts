@@ -347,9 +347,11 @@ export class Store {
       this.addColumns('vantage', { wildcards: 'INTEGER NOT NULL DEFAULT 0' });
       this.addColumns('identity', { status: 'TEXT', nickname: 'TEXT', net_nickname: 'TEXT', net_note: 'TEXT' });
       this.addColumns('category', { threshold: 'REAL' });
-      this.addColumns('triage', { shadow: 'TEXT', explore: 'TEXT', propensity: 'REAL', was: 'TEXT', alert_mark: 'INTEGER', less_mark: 'INTEGER', marked_at: 'INTEGER', loud: 'REAL', loud_view: 'TEXT' });
+      this.addColumns('triage', { shadow: 'TEXT', explore: 'TEXT', propensity: 'REAL', was: 'TEXT', alert_mark: 'INTEGER', less_mark: 'INTEGER', marked_at: 'INTEGER', loud: 'REAL', loud_view: 'TEXT', message_ts: 'INTEGER' });
       this.addColumns('owed_turn', { dismissed: 'INTEGER NOT NULL DEFAULT 0' });
-      this.addColumns('notification', { alert: 'INTEGER' });
+      this.addColumns('notification', { alert: 'INTEGER', title: 'TEXT', body: 'TEXT', look: 'TEXT', computer_in_use: 'INTEGER' });
+      this.addColumns('notification_event', { seen: 'TEXT' });
+      this.addColumns('checkin', { expired_at: 'INTEGER' });
       this.addColumns('visit', { depth: 'INTEGER', seen_to_ts: 'INTEGER', owed_since: 'INTEGER', owed_shown: 'INTEGER', typed: 'INTEGER NOT NULL DEFAULT 0', draft_left: 'INTEGER', exit: 'TEXT', shadow_rank: 'INTEGER' });
       this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'", face_id: 'TEXT', face_pinned: 'INTEGER NOT NULL DEFAULT 0', picture_identity_id: 'TEXT', name_identity_id: 'TEXT', name_field: 'TEXT' });
       this.addColumns('attachment', { alt: 'TEXT', extra: 'TEXT' });
@@ -368,6 +370,7 @@ export class Store {
       this.adoptOldReactions(reactionsBefore);
       this.clearStars();
       this.toTiers();
+      this.notifiedTimes();
       this.sourceNames();
       this.nicknamesToAccounts();
       this.facesOnce();
@@ -391,6 +394,14 @@ export class Store {
     if (!this.db.query(`SELECT 1 FROM meta WHERE key = 'search_time_ready'`).get() && !this.db.query('SELECT 1 FROM message LIMIT 1').get())
       this.db.exec(`INSERT INTO meta (key, value) VALUES ('search_time_ready', '1')`);
     this.searchTimeReady = !!this.db.query(`SELECT 1 FROM meta WHERE key = 'search_time_ready'`).get();
+  }
+
+  /**
+   * The message's time on alerts and Conversations decided before their decision kept it (setTriage), for the inbox's
+   * notified pick (triage_notified). Along that index, so with none left to fill it reads nothing.
+   */
+  private notifiedTimes() {
+    this.db.exec(`UPDATE triage SET message_ts = (SELECT ts FROM message WHERE id = triage.message_id) WHERE decision IN ('push', 'quiet') AND message_ts IS NULL`);
   }
 
   /** The schema this database was last opened with: '' for one from before it was recorded, null for a new one. */
@@ -2665,10 +2676,11 @@ export class Store {
   setTriage(messageId: string, t: Pick<P.TriageView, 'decision' | 'score' | 'reasons' | 'decidedBy' | 'probs'> & { shadow?: P.TriageProbs; loud?: StoredLoud }, facts?: unknown) {
     this.db
       .query(
-        `INSERT INTO triage (message_id, decision, score, reasons, decided_by, facts, probs, shadow, loud, loud_view, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO triage (message_id, decision, score, reasons, decided_by, facts, probs, shadow, loud, loud_view, created_at, message_ts)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, (SELECT ts FROM message WHERE id = ?1))
          ON CONFLICT (message_id) DO UPDATE SET decision = excluded.decision, score = excluded.score, reasons = excluded.reasons,
            decided_by = excluded.decided_by, facts = COALESCE(excluded.facts, facts), probs = excluded.probs, shadow = excluded.shadow,
-           loud = excluded.loud, loud_view = excluded.loud_view, created_at = excluded.created_at`,
+           loud = excluded.loud, loud_view = excluded.loud_view, created_at = excluded.created_at, message_ts = excluded.message_ts`,
       )
       .run(
         messageId,
@@ -3537,7 +3549,8 @@ export class Store {
    * The inbox's picks. Alerts and Conversations have their own share, so a busy list cannot push them out; the list
    * is what matters most, not what came last; and the most important of what fell below it, to mark. A week of
    * triage is hundreds of thousands of rows, so each walks an index and stops at its limit
-   * (test/inbox-plan.test.ts): the few alerts and conversations from triage_tier_score; the list and below by
+   * (test/inbox-plan.test.ts): alerts and Conversations newest first along triage_notified, by the message's time
+   * kept on its decision (they are kept for good, so sorting them all grew without end); the list and below by
    * importance, best first, then (with what is left of the limit) the many without a score, newest first along
    * message_ts. That is ORDER BY score DESC, ts DESC with no score last, as one query had it, without sorting the week.
    */
@@ -3550,7 +3563,12 @@ export class Store {
         : `SELECT m.* FROM message m CROSS JOIN triage t ON t.message_id = m.id WHERE ${at} = '${level}' AND t.score IS NULL AND ${ok} ORDER BY m.ts DESC LIMIT ?`;
     const drop = Math.max(sinceTs, now - 2 * 86_400_000);
     return [
-      { pick: 'notified', limit: 150, since: sinceTs, sql: `SELECT m.* FROM triage t CROSS JOIN message m ON m.id = t.message_id WHERE ${at} IN ('push', 'quiet') AND ${ok} ORDER BY m.ts DESC LIMIT ?` },
+      {
+        pick: 'notified',
+        limit: 150,
+        since: sinceTs,
+        sql: `SELECT m.* FROM triage t INDEXED BY triage_notified CROSS JOIN message m ON m.id = t.message_id WHERE ${at} IN ('push', 'quiet') AND t.message_ts >= ? AND m.deleted = 0 ORDER BY t.message_ts DESC LIMIT ?`,
+      },
       { pick: 'digest', limit: 300, since: sinceTs, sql: byLevel('digest', true) },
       { pick: 'digest', limit: 300, since: sinceTs, sql: byLevel('digest', false) },
       { pick: 'drop', limit: 40, since: drop, sql: byLevel('drop', true) },
@@ -4131,7 +4149,12 @@ export class Store {
     }));
   }
 
-  bootstrap(): P.Bootstrap {
+  /**
+   * `edgesInConversations` (what the web app asks for, `?edges=spaces`): `edges` holds only edges between spaces, and
+   * `conversationEdges` the positions of each conversation's edges to its spaceIds, so no conversation's id is sent
+   * again for each place it is in (a tenth of the bootstrap's bytes at full size).
+   */
+  bootstrap(opts: { edgesInConversations?: boolean } = {}): P.Bootstrap {
     const db = this.db;
     const convRows = db.query('SELECT * FROM conversation').all() as Row[];
     const edges = (db.query('SELECT * FROM space_edge').all() as Row[]).map(edgeView);
@@ -4168,12 +4191,15 @@ export class Store {
 
     const links = pendingLinks(db);
     const threads = this.threadPartsOf(convRows);
+    const conversationEdges: (string | null)[][] = [];
     const conversations = convRows.map((r) => {
       const ps = (P_.get(r.id) ?? []).map((p) => p.identity_id);
       const peer = r.shape === 'direct' ? (personOf.get(ps.find((p) => !this.isSelf(p)) ?? '') ?? null) : null;
+      const es = E.get(r.id) ?? [];
+      conversationEdges.push(es.map((e) => e.position));
       return this.assembleConversation(
         r,
-        (E.get(r.id) ?? []).map((e) => e.parentId),
+        es.map((e) => e.parentId),
         ps,
         V.get(r.id) ?? [],
         r.last_message_id ? (lasts.get(r.last_message_id) ?? null) : null,
@@ -4199,7 +4225,7 @@ export class Store {
       persons,
       identities,
       spaces,
-      edges,
+      ...(opts.edgesInConversations ? { edges: edges.filter((e) => e.childKind === 'space'), conversationEdges } : { edges }),
       conversations,
       folders: this.folders(),
       placePrefs: this.placePrefs(),

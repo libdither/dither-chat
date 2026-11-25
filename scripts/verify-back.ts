@@ -156,6 +156,7 @@ const PAGES: PageCase[] = [
   { name: 'the directory', view: 'directory', from: '#/inbox', to: '#/directory' },
   { name: 'requests', view: 'requests', from: '#/inbox', to: '#/requests' },
   { name: 'notices', view: 'notices', from: '#/inbox', to: '#/notices' },
+  { name: 'notification calibration', view: 'calibration', from: '#/inbox', to: '#/calibration' },
   { name: 'how it sorts', view: 'model', from: '#/foryou', to: '#/model' },
   { name: 'your attention', view: 'attention', from: '#/settings', to: '#/attention' },
   { name: 'search, with the cursor in its box', view: 'search', from: '#/inbox', to: '#/search?q=pizza', focus: SEARCH_BOX, cursor: SEARCH_BOX },

@@ -20,6 +20,8 @@ export const LIST_EVERY = 10 * 60_000;
 export const CONVERSATION_EVERY = 10 * 60_000;
 /** Someone using a page on a computer this recently: a phone buzz adds nothing. */
 export const ACTIVE_MS = 2 * 60_000;
+/** How long the answer of `inUse` is kept. */
+const IN_USE_FOR = 5_000;
 const LINES = 6;
 const BODY = 200;
 /** A push carries about 4 KB, encrypted; what goes in stays under this. */
@@ -166,8 +168,15 @@ export class Delivery {
 
   /** A computer is in use (the loudness's moment, loudness.ts). */
   inUse(now = Date.now()): boolean {
-    return this.elsewhere(now);
+    // Asked for every message (not only when a push is planned), and visit has no index on end_at: keep the answer a
+    // few seconds. Visits reach the hub in batches anyway, so this is no staler than what it reads.
+    const c = this.inUseAt;
+    if (c && now >= c.at && now - c.at < IN_USE_FOR) return c.yes;
+    const yes = this.elsewhere(now);
+    this.inUseAt = { at: now, yes };
+    return yes;
   }
+  private inUseAt: { at: number; yes: boolean } | null = null;
 
   /** Someone is at a computer with the app in use. Phones pass this way only while their app is open, which suppresses anyway. */
   private elsewhere(now: number): boolean {

@@ -26,6 +26,37 @@ const timelineRevs = new Map<string, Signal<number>>();
 let version = 0;
 /** Moves on every change to `db` at once, before the signals do: memos keyed on it are never stale. */
 export const dataVersion = () => version;
+let placesVersion = 0;
+/**
+ * The same, but not for who wrote (identities that came with a page of messages or the inbox, `changed('identity')`)
+ * nor the inbox's messages (`changed('inbox')`): what counts, finds and orders conversations, places and people reads
+ * neither (model.ts `placesMemo`), so the inbox arriving after a start does not work out the rail and the badge again.
+ */
+export const placesDataVersion = () => placesVersion;
+/**
+ * What each of the last moves of `placesDataVersion` changed, by the version it moved to: the conversations whose last
+ * message, counts or inbox score it changed (`changed('list', ids)`), and nothing else a place, a count or an order
+ * reads; or null, anything. A message or a read changes one conversation, and model.ts works out again only what holds
+ * it (`placesMemo`'s update), not the counts and order of every place from all of them.
+ */
+const placesLog = new Map<number, ReadonlySet<string> | null>();
+const LOG_KEPT = 64;
+/** More conversations than this at once (a sync after a while away): worked out again whole. */
+const SCOPED_MAX = 64;
+const NONE: ReadonlySet<string> = new Set();
+/** The conversations changed since `placesDataVersion` was `v`, as above; null when anything may have. */
+export function convsChangedSince(v: number): ReadonlySet<string> | null {
+  if (v === placesVersion) return NONE;
+  if (v === placesVersion - 1) return placesLog.get(placesVersion) ?? null;
+  const out = new Set<string>();
+  for (let i = v + 1; i <= placesVersion; i++) {
+    const ids = placesLog.get(i);
+    if (!ids) return null;
+    for (const id of ids) out.add(id);
+    if (out.size > SCOPED_MAX) return null;
+  }
+  return out;
+}
 let metaVersion = 0;
 /**
  * The same for names, settings and what is where (a change that moves `metaRev`), not a conversation's last message
@@ -50,11 +81,21 @@ let scheduled = false;
  * 'shown': only how things already where they are look (people's names and pictures, what a message's reaction row
  * offers), which moves `metaRev` but not what is where. 'open': only which folders are open, which moves what is where
  * (`metaDataVersion`) but nothing a message or a row shows, so `metaRev` stays and the rail draws it from `rev`.
+ * 'identity': only identities, the names and pictures of who wrote: as 'shown', but `placesDataVersion` stays.
+ * 'inbox': only the inbox's messages (`inbox`, `mailTriage`), and 'devices' only the hub's list of devices: `rev`
+ * moves, `placesDataVersion` stays.
+ * `convs` with 'list': all that changed were these conversations' last messages, counts and inbox scores (an empty set:
+ * nothing a place, a count or an order reads, such as reactions' usage); see `convsChangedSince`.
  */
-export function changed(kind: 'list' | 'meta' | 'shown' | 'open') {
+export function changed(kind: 'list' | 'meta' | 'shown' | 'open' | 'identity' | 'inbox' | 'devices', convs?: ReadonlySet<string>) {
   version++;
+  if (kind !== 'identity' && kind !== 'inbox' && kind !== 'devices') {
+    placesVersion++;
+    placesLog.set(placesVersion, kind === 'list' && convs && convs.size <= SCOPED_MAX ? convs : null);
+    placesLog.delete(placesVersion - LOG_KEPT);
+  }
   dirty.list = true;
-  if (kind === 'meta' || kind === 'shown') dirty.meta = true;
+  if (kind === 'meta' || kind === 'shown' || kind === 'identity') dirty.meta = true;
   if (kind === 'meta' || kind === 'open') metaVersion++;
   schedule();
 }

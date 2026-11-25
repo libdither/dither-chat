@@ -38,6 +38,7 @@ import { attentionMode } from './loudness.ts';
 import { NextLook } from './nextlook.ts';
 import { TriageVotes } from './votes.ts';
 import { Scorecard, seedDemoScores } from './scorecard.ts';
+import { seedDemoCalibration } from './demo-calibration.ts';
 import { loadVapidKeys } from './webpush.ts';
 import { NightlyBackup, pruneMediaCacheSteps, rotateAdapterLogs, tightenPermissions } from './housekeeping.ts';
 import { StartupTrace } from './startup.ts';
@@ -160,6 +161,17 @@ const foryou = new ForYou(store, {
 // world has three invented weeks of it.
 const scorecard = new Scorecard(store.db);
 if (demo) seedDemoScores(store.db, Date.now());
+// A demo world's Notification calibration page (demo-calibration.ts): once its accounts have brought messages in.
+if (demo) {
+  const seedCalibration = setInterval(() => {
+    try {
+      if (seedDemoCalibration(store.db)) clearInterval(seedCalibration);
+    } catch (e) {
+      clearInterval(seedCalibration);
+      console.error('demo calibration', e);
+    }
+  }, 2000);
+}
 const attention = new Attention(store, triage);
 attention.byLoudness = loud.mode === 'on';
 // The inbox's learned order (ranker.ts, docs/inbox.md). DITHER_INBOX_RANK=shadow works it out without sorting by it; off.
@@ -187,6 +199,8 @@ if (loud.mode === 'on') delivery.keepTop = 3_600_000;
 triage.momentOf = (now) => ({ desk: delivery.inUse(now), sinceSound: lastSoundAt !== null && lastSoundAt <= now ? now - lastSoundAt : null });
 // A person waiting on you: the inbox's needs-reply chance, more the longer they have waited (up to twice, at a day).
 triage.owedOf = (cid) => {
+  // Before the first (sliced) scores are in, view() would score every chat at once on triage's thread.
+  if (!attention.hasScores) return null;
   const v = attention.view(cid);
   if (!v?.needsReply || !v.owedSince) return null;
   return v.needsReply * (1 + Math.min(1, Math.max(0, Date.now() - v.owedSince) / 86_400_000));
@@ -429,6 +443,8 @@ setInterval(
     span('votes and held alerts', {}, () => {
       votes.daily();
       loud.daily();
+      // Questions for the Notification calibration page: new ones as the day's quota and pace allow, old ones dropped.
+      loud.checkins.fill(loud.prefs());
       // The next look at the times you set (DITHER_ATTENTION=on).
       if (nextLook.dueAt(loud.prefs(), Date.now())) flushNextLook('times');
       const held = triage.takeHeldSummary();
@@ -676,6 +692,14 @@ if (store.accounts().some((a) => a.demo)) applyDemoOverlay(store);
 startup.mark('adapters');
 server.start();
 startup.mark('http listen');
+// The web build's files packed hard once, on the thread pool, what index.html loads first (compress.ts PackedFiles).
+{
+  const began = performance.now();
+  void server.packed.packAll(webDist).then(() => {
+    const s = server.packed.stats();
+    if (s.files) console.log(`web build packed: ${s.files} files, ${Math.round(s.bytes / 1024)} KB to ${Math.round(s.packed / 1024)} KB as zstd in ${((performance.now() - began) / 1000).toFixed(1)} s`);
+  });
+}
 // Every hold-up of the event loop from here on, with what began in it, for the first ten minutes (stalls.ts).
 const stalls = new StallWatch({ record: stallFile?.push ?? null, spans: spansBetween }).begin();
 // Beside the stall log's summary: whether the checkpoints kept up, and how long the longest took on its own thread.

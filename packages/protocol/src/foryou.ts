@@ -24,8 +24,6 @@ export interface ForYouItem {
   also?: string[];
   /** Why it is here, in words. */
   reasons: string[];
-  /** Ask "Glad I saw this / Not for me" on it: the check-in's id (POST /api/loudness/checkins/:id, answer glad or not). */
-  ask?: string;
 }
 
 export interface ForYouPage {

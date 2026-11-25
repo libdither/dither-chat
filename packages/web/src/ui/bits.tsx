@@ -206,8 +206,18 @@ export function showSection(id: string, behavior: ScrollBehavior = 'smooth') {
   const to = () => document.getElementById(id)?.scrollIntoView({ behavior, block: 'start' });
   // Parts of the page drawn later (Later.tsx) are drawn first, the section's own or those below it, and it is gone to
   // once they are.
-  if (drawLater()) requestAnimationFrame(to);
-  else to();
+  if (drawLater()) return void requestAnimationFrame(to);
+  if (document.getElementById(id)) return void to();
+  // Settings is a chunk of its own (LazyPane.tsx): opened a moment ago, it may not be drawn yet. Once it is, the same.
+  const mo = new MutationObserver(() => {
+    const later = drawLater();
+    if (!later && !document.getElementById(id)) return;
+    mo.disconnect();
+    clearTimeout(t);
+    requestAnimationFrame(to);
+  });
+  const t = setTimeout(() => mo.disconnect(), 10_000);
+  mo.observe(document.body, { childList: true, subtree: true });
 }
 
 /** Opens Settings at Adversarial features. */

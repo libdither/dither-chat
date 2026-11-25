@@ -59,6 +59,21 @@ journal, as after restoring an older database) or:
 
 Without `since`, only the timelines: that is how a conversation kept in the snapshot catches up when it is opened.
 
+### On the socket
+
+The same answer, without timelines, can come as the live socket's first frame, so a socket that opens is already
+caught up, with no request after it and no round trip more. The client asks for it on the socket's URL,
+`/api/live?v=<v>&epoch=<epoch>&since=<seq>`, offering the subprotocols `dither-live` and `dither-resume`
+(`LIVE_PROTOCOL`, `LIVE_RESUME` in `packages/protocol`). A hub that can answers `dither-resume`, and when the socket
+opens, in one task: flushes, reads the answer for that position (`{ resume: <the answer> }`, or `{ resume: null }` if
+it failed), sends it, and only then adds the socket to the ones it broadcasts to. Every frame after it is newer, so
+nothing falls between the answer and the live frames and nothing comes twice, which a POST cannot promise: its answer
+and the socket's frames come over different connections. An answer over 2 KB goes gzip'd as a binary frame, as the
+POST's answer goes compressed; the client reads it with `DecompressionStream`, and one without it never asks.
+
+An older hub takes the first subprotocol offered (Bun does that by itself) or none, and sends nothing of the kind; an
+older client never asks. Either way the catch-up is the POST, as before.
+
 ## What counts as a change
 
 Each mutation a client can see goes through the store's `dirty` sets, `Store.flush()` turns them into events, and
@@ -94,7 +109,22 @@ adapter announcing the same things again, and a send retried after a lost answer
   keeps too, so a cold start resumes from the snapshot rather than starting over. It waits for the snapshot read
   (at most 1.5 s) before asking. Only a refusal leads to a full bootstrap. Frames that arrive while a sync is in
   flight are held and applied after its answer, in order, so the answer cannot undo them.
-- **Timelines**: held ones are caught up in the same request; a kept page ([below](#kept-pages)) catches up from its
+- **On the socket** ([above](#on-the-socket)): a socket the app opens after a drop asks from its copy's position, and
+  `index.html`'s from the stored snapshot's, which `snapshot.ts` keeps in `localStorage` (`dither-chat:sync-from`)
+  once the snapshot is written, never before. The app uses the answer only for a copy at that position or past it in
+  the same journal, and only if the answer is not older than the copy; anything else, or no answer within the wait
+  after which a POST would be asked again (below, [A bad link](#a-bad-link)), and it asks by POST as before. Held
+  timelines are not in it: they are asked for by POST beside it, and the frames that come meanwhile are held until
+  both are in. A relaunch over a slow link has the hub's data a round trip sooner (docs/perf.md). A spare socket racing
+  a late pong never asks: the old socket's frames could be newer than its answer.
+- **Before the app's script**: `index.html` opens the live socket itself, so it is open by the time the app's script
+  has come (seconds on a slow link), and `connect` takes it over with the frames it got meanwhile, which are held as
+  any others. On a device that keeps no snapshot (it looks in IndexedDB for one, without making the database), it
+  also asks for the bootstrap once that socket is open: the same order as the app's own, socket first, so nothing
+  that happens in between is missed, and the bootstrap no longer waits for the script, the snapshot read and a second
+  handshake. The app reads that answer as its own; a snapshot found after all, or the socket replaced before the
+  answer was read, gives it up.
+- **Timelines**: held ones are caught up in the same request (beside the socket's answer, in a request of their own); a kept page ([below](#kept-pages)) catches up from its
   own position when opened. A pull to refresh still reloads everything.
 - **Heartbeat**: a `ping` text frame every 25 s while in sight, and at once on `visibilitychange`, `focus`, `online`
   and `pageshow`. Without a `pong` within 3 s a new socket races it: if the new one opens first, the old one was dead

@@ -103,3 +103,26 @@ test('hubFetch: a hub that never answers is given up after `quiet`, and a droppe
     server.stop(true);
   }
 });
+
+test("hubFetch: a request asked for already (index.html's bootstrap) is read, not asked again, and given up as any other", async () => {
+  let asked = 0;
+  // Answers the first request; the rest it takes and says nothing.
+  const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => (++asked === 1 ? Response.json({ hello: 1 }) : new Promise<Response>(() => {})) });
+  try {
+    const url = `http://127.0.0.1:${server.port}/api/bootstrap`;
+    const got = await hubFetch(url, { quiet: 1000, early: { res: fetch(url), abort: () => {} } });
+    expect(JSON.parse(got.text)).toEqual({ hello: 1 });
+    expect(asked).toBe(1);
+
+    // One that never answers: `quiet` gives it up, through its own abort.
+    const c = new AbortController();
+    let aborted = 0;
+    const res = fetch(url, { signal: c.signal });
+    const quiet = await hubFetch(url, { quiet: 50, early: { res, abort: () => (aborted++, c.abort()) } }).catch((e) => e);
+    expect(quiet).toBeInstanceOf(TypeError);
+    expect(quiet.message).toMatch(/did not answer/);
+    expect(aborted).toBe(1);
+  } finally {
+    server.stop(true);
+  }
+});

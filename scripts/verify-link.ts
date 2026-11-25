@@ -6,6 +6,8 @@
  *   1. a stalled socket: the live socket stays open and nothing crosses it (a phone that slept, a NAT that forgot it).
  *      The next probe finds it, a new one opens, one delta catches up, and a message from elsewhere shows, with no
  *      notice;
+ *   1b. a socket that opens and then says nothing, not even the catch-up it asked for (docs/sync.md "On the socket"): the
+ *      catch-up comes by POST once the wait for it is over, and the message sent meanwhile shows;
  *   2. a hanging catch-up: the socket works but POST /api/sync never answers. It is given up after SYNC_QUIET with
  *      nothing coming, and tried again on a new socket; frames held meanwhile are applied, and a send made meanwhile
  *      goes out once. Then every open connection dies without a word while new ones work (a phone waking): the probe
@@ -192,6 +194,25 @@ try {
     check(syncs.length === 1 && !(await fetches(t0, BOOT)).length, '…from one delta, no bootstrap', { syncs: syncs.length });
     check(!(await orbSeen()), 'no notice for it');
     check((await shownCount(away)) === 1, '…shown once');
+  }
+
+  console.log('1b. a new socket opens and then says nothing, not even its catch-up');
+  {
+    const before = (await sockets()).length;
+    const t0 = Date.now();
+    link.muteAfterHead((c) => c.kind === 'ws');
+    link.cut();
+    const away = `while the new socket said nothing ${stamp()}`;
+    await hub(`/api/conversations/${conv.id}/send`, { body: away });
+    await p.until(`__link.sockets.length > ${before} && __link.sockets.at(-1).open > 0`, 10_000);
+    const opened = (await sockets()).at(-1)!.open;
+    check(await untilShown(away), 'the catch-up comes by POST instead, and the message sent meanwhile shows', `${Date.now() - opened} ms after the socket opened`);
+    check(!(await fetches(t0, BOOT)).length, '…without a bootstrap');
+    check((await shownCount(away)) === 1, '…shown once');
+    // The silent socket goes, and the next one works.
+    link.clear();
+    link.cut();
+    await settled();
   }
 
   // ------------------------------------------------------------------ 2. a hanging catch-up

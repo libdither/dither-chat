@@ -89,7 +89,7 @@ list's chip stays lit over its results; emptied, the list is back. In the Inbox 
 without the filter.
 
 From the Inbox a list is a step of its own; from one list to another replaces it, so back, and Escape, go to the Inbox
-chip first (`ui/MailChat.tsx` `toInboxChip`). Turning the Mail filter off goes back to the whole inbox. Chat requests and
+chip first (`ui/MailLists.tsx` `toInboxChip`). Turning the Mail filter off goes back to the whole inbox. Chat requests and
 notices are not mail: under the Mail filter there is no Requests row.
 
 **Mail from people** is in the same list (docs/mail.md, slice 8): a thread in Inbox from someone you know that is
@@ -332,8 +332,8 @@ the list: [notifications.md](notifications.md)) counts too (`Attention.input`):
 **The loudness edge.** A row whose latest message the page holds with a loudness of 30 or more (next look and above)
 has a thin bar on its left while it is unread, stronger the louder it was (`loudness.ts` `loudByConv`, `loudEdge`).
 
-**Check-ins.** A question about a notification, when there is one to ask, sits at the top of the list, above
-requests ([notifications.md](notifications.md#check-ins)).
+**Notification calibration.** While questions about notifications wait, a quiet row under Requests and Notices
+counts them and opens their page ([notifications.md](notifications.md#check-ins)); nothing is asked in the list itself.
 
 **Seen.** All three last until you read the conversation, or swipe its notification away on the phone: the app
 reports the swipe as `dismissed` ([activity.md](activity.md)), a dismissal at or after that message is read as
@@ -520,7 +520,7 @@ in the order on screen, a DM as its person, then the rest by the latest message.
 | `GET /api/attention/needs-reply` | `?days=60`: how the "needs a reply" chances held up (`NeedsReplyCalibration`): by day, in bins, against the table's |
 | `GET /api/attention/report` | the weekly report of what attention cost (`AttentionReport`, [scorecard.md](scorecard.md#the-weekly-report)): sounds a day, stale pushes, checks with nothing new, people waiting on you, waits, breadth, at most one drifting person |
 | `GET /api/attention/model` | the learned order: its mode, when it last learned and from how many opens, its prior, what it learned as changes to weights on named features, the examination curve (fitted, the guess, and how often the list was on screen down to each row), and exploring (`explore`) |
-| `GET /api/attention/waiting` | `{ waiting }`: whether scores are still to come out of what already happened (a conversation to send, to fold, or stale and waiting out its 5 s); scripts/verify-response.ts waits for false after each click |
+| `GET /api/attention/waiting` | `{ waiting }`: whether scores are still to come out of what already happened (a conversation to send, to fold, or stale and waiting out its 5 s). It sends what changed first, so false also means nothing is left to go out; scripts/verify-response.ts waits for false after each click |
 | `POST /api/attention/rebuild` | `{ conversations?: string[] }`: fold these, or all, again from the start |
 | `POST /api/messages/:id/reply-mark` | `{ mark: 'none' \| 'needs' \| null, surface?, device? }` on a message from someone else: set, change or take back a mark (null) → `{ mark, marked }`, the messages it touched (other routes included) |
 | `POST /api/mail/messages/:id/reply-mark` | the same on a mail message |

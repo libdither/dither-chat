@@ -158,6 +158,15 @@ describe('suggestions on a hub', () => {
     store.db.query('DELETE FROM picture_hash').run();
   });
 
+  test('mostly flat pictures (letter pictures) count for nothing, however near their hashes', () => {
+    const put = store.db.query('INSERT OR REPLACE INTO picture_hash (identity_id, url, hash, at) VALUES (?, ?, ?, 0)');
+    // Initials on one colour: a few bits from the letters, the rest flat. Two bits apart, and from different people.
+    put.run(did('dee'), 'u1', '0000140c14000000');
+    put.run(sid('uuid-dee'), 'u2', '0000141c14000000');
+    expect(find(run(store.db), did('dee'), sid('uuid-dee'))?.evidence.some((e) => e.kind === 'picture') ?? false).toBe(false);
+    store.db.query('DELETE FROM picture_hash').run();
+  });
+
   test('Not the same keeps a pair out; Later for a month; merging makes one person and is learned as a yes', async () => {
     const m = new SameMatches({ store, file: null, jevUrl: null });
     await m.refresh();
@@ -190,6 +199,29 @@ describe('suggestions on a hub', () => {
     expect(m.view().suggestions.some((s) => s.a.id === did('ann') || s.b.id === did('ann'))).toBe(false);
     expect(() => m.merge([did('me-d'), did('bo')])).toThrow();
     m.stop();
+  });
+
+  test('a pair merged elsewhere (a profile, the details panel) is gone from the list at once, before the next run', async () => {
+    const m = new SameMatches({ store, file: null, jevUrl: null });
+    await m.refresh();
+    const key = pairKey(did('dee'), sid('uuid-dee'));
+    expect(m.view().suggestions.some((s) => s.key === key)).toBe(true);
+    // As the profile's merge box does: a person for each, then one merged into the other, with no run after.
+    const into = store.ensurePerson(did('dee'));
+    store.mergePersons(into, store.ensurePerson(sid('uuid-dee')));
+    const v = m.view();
+    expect(v.suggestions.some((s) => s.key === key)).toBe(false);
+    expect(v.faint?.some((s) => s.key === key)).toBe(false);
+    expect(v.groups.some((g) => g.sides.includes(did('dee')) || g.sides.includes(sid('uuid-dee')))).toBe(false);
+    // Split apart again, the next run offers them again (as the persons each now has).
+    store.splitIdentity(sid('uuid-dee'));
+    await m.refresh();
+    const has = (x: P.MatchSide, id: string) => x.identities.some((i) => i.id === id);
+    expect(m.view().suggestions.some((s) => (has(s.a, did('dee')) && has(s.b, sid('uuid-dee'))) || (has(s.b, did('dee')) && has(s.a, sid('uuid-dee'))))).toBe(true);
+    m.stop();
+    // Left as they were, accounts no person holds, for the tests after.
+    store.db.run(`UPDATE identity SET person_id = NULL WHERE id IN ('${did('dee')}', '${sid('uuid-dee')}')`);
+    store.db.run(`DELETE FROM person WHERE NOT EXISTS (SELECT 1 FROM identity i WHERE i.person_id = person.id) AND is_self = 0`);
   });
 
   test('picture hashes are taken only as 16 hex digits, and a picture hashed is not asked for again', async () => {

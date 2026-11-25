@@ -27,11 +27,11 @@ import { closeMenu, copy, groups, menuPoint, openMenu, type MenuEntry, type Menu
 import { DEVICE_LEVELS } from './DeviceRules.tsx';
 import { forwarding } from './Forward.tsx';
 import { appsFor, can } from '../apps.ts';
-import { addLook } from './Reactions.tsx';
+import { addLook } from '../reactions.ts';
 import { Icon } from './icons.tsx';
 import { nicknameEntries } from './Nickname.tsx';
 import { openAbout } from '../opening.ts';
-import { canIndex, startIndexing } from './Indexing.tsx';
+import { canIndex, startIndexing } from '../indexjobs.ts';
 import { arrangeEntries, folderEntries, placeConvs } from './Organize.tsx';
 import { openConv } from '../opening.ts';
 import { viewer, type ViewerImage } from '../viewer.ts';

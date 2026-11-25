@@ -116,8 +116,18 @@ export const FILING_MESSAGE_ACTIONS: MessageAction[] = [
 // ------------------------------------------------------------------ a row
 
 const ARM = 88;
-/** When a long press or a swipe ended: the click the browser makes of it is not a tap, wherever it lands. */
-let swallowUntil = 0;
+/**
+ * Where and until when a long press or a swipe ended: the click the browser makes of it, landing where the finger
+ * lifted, is not a tap, whichever row is there by then (an archived row slides away). A tap somewhere else is a tap,
+ * however soon: picking a second row right after the long press that picked the first.
+ */
+let lifted = { until: 0, x: 0, y: 0 };
+/** The lift's click, once: a lift makes one click at most, and the next one there is a tap. */
+const liftClick = (e: MouseEvent) => {
+  const it = Date.now() < lifted.until && Math.hypot(e.clientX - lifted.x, e.clientY - lifted.y) <= 16;
+  if (it) lifted = { until: 0, x: 0, y: 0 };
+  return it;
+};
 
 /** Around each thread row: swipes, selection, the menu. */
 export const FilingRow: RowWrapper = ({ thread: t, children }) => {
@@ -125,7 +135,7 @@ export const FilingRow: RowWrapper = ({ thread: t, children }) => {
   const on = selected.value.has(t.id);
   const fg = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
-  const g = useRef<{ x0: number; y0: number; mode: null | 'x' | 'y'; dx: number; w: number; side: string; timer?: ReturnType<typeof setTimeout>; armed: boolean } | null>(null);
+  const g = useRef<{ x0: number; y0: number; x: number; y: number; mode: null | 'x' | 'y'; dx: number; w: number; side: string; timer?: ReturnType<typeof setTimeout>; armed: boolean } | null>(null);
   const a = acc(t);
   const right = inInbox(t) && canMove(t, 'archive');
   const left = canWrite(a, 'flag.seen');
@@ -140,20 +150,23 @@ export const FilingRow: RowWrapper = ({ thread: t, children }) => {
   const onTouchStart = (e: TouchEvent) => {
     if (e.touches.length !== 1) return;
     const p = e.touches[0];
-    g.current = { x0: p.clientX, y0: p.clientY, mode: null, dx: 0, w: 0, side: '', armed: false };
+    g.current = { x0: p.clientX, y0: p.clientY, x: p.clientX, y: p.clientY, mode: null, dx: 0, w: 0, side: '', armed: false };
     // A long press picks it.
     g.current.timer = setTimeout(() => {
-      if (!g.current || g.current.mode) return;
+      const s = g.current;
+      if (!s || s.mode) return;
       g.current = null;
       haptic(10);
       toggleSelected(t.id);
-      swallowUntil = Date.now() + 600;
+      lifted = { until: Date.now() + 600, x: s.x, y: s.y };
     }, 450);
   };
   const onTouchMove = (e: TouchEvent) => {
     const s = g.current;
     if (!s) return;
     const p = e.touches[0];
+    s.x = p.clientX;
+    s.y = p.clientY;
     const dx = p.clientX - s.x0;
     const dy = p.clientY - s.y0;
     if (!s.mode) {
@@ -186,7 +199,7 @@ export const FilingRow: RowWrapper = ({ thread: t, children }) => {
     if (!s) return;
     clearTimeout(s.timer);
     if (s.mode !== 'x') return;
-    swallowUntil = Date.now() + 500;
+    lifted = { until: Date.now() + 500, x: s.x, y: s.y };
     box.current?.classList.remove('armed');
     if (s.armed && s.dx > 0) {
       setX(s.w || 400, 180);
@@ -206,7 +219,7 @@ export const FilingRow: RowWrapper = ({ thread: t, children }) => {
       e.preventDefault();
       e.stopPropagation();
     };
-    if (Date.now() < swallowUntil) return pick();
+    if (liftClick(e)) return pick();
     const avatar = (e.target as HTMLElement).closest('.row-avatar');
     if (picking || avatar || e.ctrlKey || e.metaKey || e.shiftKey) {
       pick();

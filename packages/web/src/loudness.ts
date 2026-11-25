@@ -1,6 +1,6 @@
 /**
  * The loudness scale's side of the page (docs/notifications.md): your answers about a message (Louder / Quieter on
- * its bell, a check-in at the top of the inbox, a notification's action), the one optional why after some of them,
+ * its bell, a question on the Notification calibration page, a notification's action), the one optional why after some of them,
  * the settings, and what it learned. The hub keeps it all (loudlearn.ts); this holds what is shown.
  */
 import { computed, signal } from '@preact/signals';
@@ -10,8 +10,12 @@ import { loadPolicy } from './triage.ts';
 
 /** The mode, settings and what it learned, as of the last look (GET /api/loudness/state). */
 export const attnState = signal<P.AttentionStateView | null>(null);
-/** The check-ins to show at the top of the inbox. */
-export const checkins = signal<P.CheckinView[]>([]);
+/** How many questions wait on the Notification calibration page: its row's count in the inbox. */
+export const checkinCount = signal(0);
+/** The questions on the page, with where you came across each; null until it opens. */
+export const checkins = signal<P.CheckinView[] | null>(null);
+/** The numbers at the top of the page. */
+export const calibration = signal<P.CalibrationStats | null>(null);
 /** The follow-up being asked: after Quieter, Could have waited or Shouldn't have reached me, or after Louder. */
 export const whyAsk = signal<{ answerId: string; side: 'quieter' | 'louder' } | null>(null);
 
@@ -21,11 +25,24 @@ export async function loadAttention() {
   } catch {}
 }
 
-/** Asks the hub what to ask. Also a look: the hub lets go of the next look's bundle. */
+/** How many questions wait. Also a look: the hub lets go of the next look's bundle. */
+export async function loadCheckinCount() {
+  try {
+    checkinCount.value = (await api<{ pending: number }>('/api/loudness/checkins/count')).pending;
+  } catch {}
+}
+
+/** The page's questions and numbers. */
 export async function loadCheckins() {
   try {
-    checkins.value = await api<P.CheckinView[]>('/api/loudness/checkins');
-  } catch {}
+    const [list, stats] = await Promise.all([api<P.CheckinView[]>('/api/loudness/checkins'), api<P.CalibrationStats>('/api/loudness/calibration')]);
+    checkins.value = list;
+    checkinCount.value = list.length;
+    calibration.value = stats;
+  } catch (e) {
+    if (!checkins.value) checkins.value = [];
+    failed('Could not load the questions')(e as Error);
+  }
 }
 
 const failed = (title: string) => (e: Error) => toast({ kind: 'error', title, body: e.message });
@@ -84,7 +101,8 @@ export async function sendWhy(b: P.WhyBody): Promise<P.WhyResult | null> {
 
 /** A check-in answered, or skipped (null). */
 export async function answerCheckin(c: Pick<P.CheckinView, 'id'>, a: string | null) {
-  checkins.value = checkins.value.filter((x) => x.id !== c.id);
+  if (checkins.value) checkins.value = checkins.value.filter((x) => x.id !== c.id);
+  checkinCount.value = Math.max(0, checkinCount.value - 1);
   try {
     const r = await api<P.AttnAnswerResult | { ok: true }>(`/api/loudness/checkins/${c.id}`, { body: a === null ? { skip: true } : { answer: a } });
     if (r && 'why' in r && r.why) whyAsk.value = { answerId: r.answerId, side: r.why };
@@ -93,9 +111,8 @@ export async function answerCheckin(c: Pick<P.CheckinView, 'id'>, a: string | nu
   }
 }
 
-/** "Ask me less": halves how many it asks. */
+/** "Ask me less": halves how many it asks from now on; what already waits stays. */
 export async function askLess() {
-  checkins.value = [];
   try {
     attnState.value = await api<P.AttentionStateView>('/api/loudness/ask-less', { body: {} });
   } catch (e) {

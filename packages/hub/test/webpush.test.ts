@@ -106,7 +106,7 @@ describe('the service', () => {
     expect(Buffer.from(r.body).includes('hello')).toBe(false);
     expect(() => decrypt(r.body, other.ua, other.auth)).toThrow();
     expect(svc.devices()[0]).toMatchObject({ label: 'Phone', lastError: null });
-    expect(await svc.notify('Daily digest: 2 messages', 'Kitchen (2).', undefined, { inbox: true, nid: 'n1' })).toEqual({ devices: 1, accepted: 1 });
+    expect(await svc.notify('Daily digest: 2 messages', 'Kitchen (2).', undefined, { inbox: true, nid: 'n1' })).toEqual({ devices: 1, accepted: 1, to: [{ id, label: 'Phone', android: false, ok: true }] });
     expect(JSON.parse(decrypt(received.at(-1)!.body, d.ua, d.auth))).toEqual({ title: 'Daily digest: 2 messages', body: 'Kitchen (2).', inbox: true, nid: 'n1', device: id });
     expect(svc.devices()[0].lastOkAt).not.toBeNull();
     svc.remove({ endpoint: ep('a') });
