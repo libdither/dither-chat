@@ -1365,6 +1365,23 @@ depends on its local date alone, so each weekday and each date is now formatted 
 Chrome at 4× over the perf world's 1,508 conversations' last-message times, three runs of nine rounds each, medians:
 11.5–14 ms before, 0.6–6 ms with no label kept yet, 0.5–1.6 ms once kept (a list drawn again).
 
+### The rail's order between messages (2026-11-24)
+
+The rail's entries in order (model.ts `railEntries`) were worked out whole after every message or read: each
+server's activity through its memo (173 servers on the perf world), each entry's settings, and a sort. Now the list
+keeps what it was sorted from (each entry's settings, activity and where it was listed), and a message or a read
+takes the activity again only of the servers holding a changed conversation (an index from conversation to server,
+made once per list) and of folders whose conversations are a new list, then sorts that again; when no activity moved
+(a read) it is the very same list. A changed conversation added to the rail on its own makes the list again, since
+the entry holds its copy. Entries alike in everything the order looks at keep the order the stable sort gave them:
+`test/model-incremental.test.ts` checks the order after runs of messages at a few shared times, with servers given the
+same spot, pinned, hidden and empty, against that sort.
+
+Arriving messages at 4× on the full-size world, CPU profiles of four arrivals each, base and branch interleaved on two
+hubs and then swapped between them (the two copies of the world had drifted apart, and one cost twice the other in
+the inbox), medians per arrival of `railEntries`' time: 6 → 2 ms on one hub and 14 → 4 ms on the other; the rail in
+all, 19 → 13 and 42 → 34 ms. In Bun on the perf world's bootstrap, 0.20–0.43 → 0.03–0.10 ms.
+
 ## One setting at a time (2026-11-20)
 
 Opening the details panel (the chat header's panel button) was slow: on the full-size world at 4× CPU, 160 to 260 ms
